@@ -1,0 +1,33 @@
+[package]
+name = "octodev"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.28.0", features = ["full"] }
+crossterm = "0.26.1"
+walkdir = "2.3.3"
+parking_lot = "0.12.1"
+qdrant-client = "1.13.0"
+serde = "1.0.217"
+tree-sitter = "0.24.7"
+tree-sitter-php = "0.23.11"
+tree-sitter-rust = "0.23.2"
+tree-sitter-python = "0.23.6"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-json = "0.24.8"
+tree-sitter-markdown = "0.7.1"
+tree-sitter-go = "0.23.4"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-bash = "0.23.3"
+uuid = { version = "1.12.0", features = ["v4"] }
+tree-sitter-typescript = "0.23.2"
+tree-sitter-ruby = "0.23.1"
+reqwest = { version = "0.12.12", features = ["json"] }
+anyhow = "1.0.95"
+serde_json = "1.0.136"
+sha2 = "0.10.8"
+clap = { version = "4.5.26", features = ["derive"] }
+
+[build-dependencies]
+cc="*"

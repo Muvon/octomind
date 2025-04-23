@@ -1,12 +1,12 @@
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Default)]
 pub struct IndexState {
 	pub current_directory: PathBuf,
-	pub files: HashMap<PathBuf, String>,
+	pub indexed_files: usize,
+	pub embedding_calls: usize,
 	pub indexing_complete: bool,
 }
 

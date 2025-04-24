@@ -1,0 +1,139 @@
+# OctoDev - Smart Codebase Assistant
+
+OctoDev is a command-line tool that helps developers navigate and understand their codebase using semantic search capabilities. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
+
+## Features
+
+- **Semantic Code Search**: Find code by meaning rather than just keywords
+- **Natural Language Queries**: Search your codebase with plain English questions
+- **Multiple Language Support**: Works with Rust, PHP, Python, JavaScript, TypeScript, JSON, Go, C++, Bash, and Ruby
+- **Symbol Awareness**: Understands code structure and can expand symbol references
+- **Live File Watching**: Automatically updates the index when your code changes
+- **Configurable Embedding Providers**: Works with either FastEmbed (offline) or Jina (cloud) for embeddings
+
+## Installation
+
+### Prerequisites
+
+- Rust and Cargo installed on your system
+- Qdrant database (automatically runs in embedded mode if not found)
+
+### Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/muvon/octodev.git
+cd octodev
+
+# Build the project
+cargo build --release
+
+# Optional: Add to your PATH
+cp target/release/octodev /usr/local/bin/
+```
+
+## Usage
+
+### Indexing Your Codebase
+
+Before searching, you need to index your codebase:
+
+```bash
+# Index the current directory
+octodev index
+
+# Index a specific directory
+octodev index /path/to/your/project
+```
+
+### Searching Your Codebase
+
+Once indexed, you can search your codebase using natural language:
+
+```bash
+# Basic search
+octodev search "how does authentication work"
+
+# Search with expanded symbols (follows references)
+octodev search --expand "user registration process"
+
+# Get results in JSON format
+octodev search --json "database connection setup"
+```
+
+### Watch Mode
+
+Start a watcher that automatically reindexes when files change:
+
+```bash
+octodev watch
+```
+
+### Configuration
+
+OctoDev uses a configuration file stored in `.octodev.toml` in your project directory. You can create or modify this using the `config` command:
+
+```bash
+# Create default configuration
+octodev config
+
+# Set the embedding provider
+octodev config --provider fastembed
+
+# Configure Jina provider
+octodev config --provider jina --jina-key YOUR_API_KEY
+
+# Configure FastEmbed models
+octodev config --fastembed-code-model all-MiniLM-L6-v2 --fastembed-text-model all-MiniLM-L6-v2
+```
+
+## Configuration Options
+
+### Embedding Providers
+
+OctoDev supports two embedding providers:
+
+1. **FastEmbed** (default): Works offline, doesn't require API keys, but may have smaller context windows
+2. **Jina**: Cloud-based, requires an API key, provides high-quality embeddings
+
+### FastEmbed Models
+
+Available models:
+- `all-MiniLM-L6-v2` (default)
+- `all-MiniLM-L12-v2`
+- `multilingual-e5-small`
+- `multilingual-e5-base`
+- `multilingual-e5-large`
+
+### Jina Models
+
+Default models:
+- Code: `jina-embeddings-v2-base-code`
+- Text: `jina-embeddings-v3`
+
+## How It Works
+
+OctoDev uses a combination of techniques to build a searchable index of your codebase:
+
+1. **Tree-sitter Parsing**: Analyzes code syntax to extract meaningful blocks and symbols
+2. **Vector Embeddings**: Converts code blocks to numerical vectors capturing semantic meaning
+3. **Qdrant Database**: Stores and retrieves embeddings for efficient similarity search
+4. **Symbol Tracking**: Maintains relationships between code symbols for reference expansion
+
+When you search, OctoDev converts your natural language query into the same vector space and finds the closest matching code blocks.
+
+## Troubleshooting
+
+### Common Issues
+
+- **Slow Indexing**: For large codebases, initial indexing may take some time, especially when downloading models for the first time.
+- **Missing Dependencies**: Make sure you have the required Rust version (use rustup to update if needed).
+- **Qdrant Connection**: If you have an existing Qdrant server running on port 6334, OctoDev will use it; otherwise, it will operate in embedded mode.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+[Add your license information here]

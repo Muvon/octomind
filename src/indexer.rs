@@ -1,6 +1,7 @@
 use crate::content;
 use crate::state::SharedState;
 use crate::store::{Store, CodeBlock, TextBlock};
+use crate::config::Config;
 use std::fs;
 use walkdir::WalkDir;
 use tree_sitter::Parser;
@@ -25,7 +26,7 @@ fn detect_language(path: &std::path::Path) -> Option<&str> {
     }
 }
 
-pub async fn index_files(store: &Store, state: SharedState) -> Result<()> {
+pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> Result<()> {
 	let current_dir = state.read().current_directory.clone();
 	let mut code_blocks_batch = Vec::new();
 	let mut text_blocks_batch = Vec::new();
@@ -55,13 +56,13 @@ pub async fn index_files(store: &Store, state: SharedState) -> Result<()> {
 				let code_blocks_len = code_blocks_batch.len();
 				if code_blocks_len >= BATCH_SIZE {
 					embedding_calls += code_blocks_len;
-					process_code_blocks_batch(&store, &code_blocks_batch).await?;
+					process_code_blocks_batch(&store, &code_blocks_batch, config).await?;
 					code_blocks_batch.clear();
 				}
 				let text_blocks_len = text_blocks_batch.len();
 				if text_blocks_len >= BATCH_SIZE {
 					embedding_calls += text_blocks_len;
-					process_text_blocks_batch(&store, &text_blocks_batch).await?;
+					process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
 					text_blocks_batch.clear();
 				}
 			}
@@ -70,11 +71,11 @@ pub async fn index_files(store: &Store, state: SharedState) -> Result<()> {
 
 	// Process remaining items
 	if !code_blocks_batch.is_empty() {
-		process_code_blocks_batch(&store, &code_blocks_batch).await?;
+		process_code_blocks_batch(&store, &code_blocks_batch, config).await?;
 		embedding_calls += code_blocks_batch.len();
 	}
 	if !text_blocks_batch.is_empty() {
-		process_text_blocks_batch(&store, &text_blocks_batch).await?;
+		process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
 		embedding_calls += text_blocks_batch.len();
 	}
 
@@ -102,7 +103,7 @@ async fn process_file(
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
         "json" => tree_sitter_json::LANGUAGE,
         // Skipping markdown due to type conversion issues
-        // "markdown" => tree_sitter_markdown::language().into(), 
+        // "markdown" => tree_sitter_markdown::language().into(),
         "go" => tree_sitter_go::LANGUAGE,
         "cpp" => tree_sitter_cpp::LANGUAGE,
         "bash" => tree_sitter_bash::LANGUAGE,
@@ -115,62 +116,37 @@ async fn process_file(
         // If parsing fails, just return an empty tree
         parser.parse("", None).unwrap()
     });
-    
-    let mut cursor = tree.walk();
-    let mut has_traversed = false;
 
-    // Try to go to first child, if not then the file is empty or unparseable
+    let mut cursor = tree.walk();
+    // let mut has_traversed = false;
+
+    // Try to go to first child, if not then the file is empty or unparsable
     if cursor.goto_first_child() {
-        has_traversed = true;
+        // has_traversed = true;
         // Process each top-level node
         loop {
             let node = cursor.node();
-            
+
             // Extract meaningful code blocks based on the node type
             let kind = node.kind();
-            
+
             // Skip tiny nodes or ones that don't represent meaningful code blocks
-            if node.end_byte() - node.start_byte() < 10 || 
-               kind.contains("comment") || 
-               kind == "string" || 
+            if node.end_byte() - node.start_byte() < 10 ||
+               kind.contains("comment") ||
+               kind == "string" ||
                kind == "string_literal" {
                 if !cursor.goto_next_sibling() {
                     break;
                 }
                 continue;
             }
-            
+
             let content = contents[node.start_byte()..node.end_byte()].to_string();
             let content_hash = content::calculate_content_hash(&content);
 
             // Extract symbols from the node
-            let mut symbols = vec![node.kind().to_string()];
-            
-            // For function/method declarations, extract the name
-            if kind.contains("function") || kind.contains("method") || 
-               kind.contains("class") || kind.contains("struct") || 
-               kind.contains("enum") || kind.contains("interface") {
-                // This is a simplified approach, ideally we'd parse differently per language
-                let mut symbol_cursor = node.walk();
-                if symbol_cursor.goto_first_child() {
-                    loop {
-                        let symbol_node = symbol_cursor.node();
-                        let symbol_kind = symbol_node.kind();
-                        
-                        if symbol_kind.contains("identifier") || 
-                           symbol_kind.contains("name") || 
-                           symbol_kind == "identifier" {
-                            let symbol_text = contents[symbol_node.start_byte()..symbol_node.end_byte()].to_string();
-                            symbols.push(symbol_text);
-                            break;
-                        }
-                        
-                        if !symbol_cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
+            // Replace the existing symbols extraction with:
+            let symbols = extract_symbols(node, contents);
 
             if !store.content_exists(&content_hash, "code_blocks").await? {
                 code_blocks_batch.push(CodeBlock {
@@ -189,7 +165,7 @@ async fn process_file(
             }
         }
     }
-    
+
     // Always store the full file content for context searches
     let content_hash = content::calculate_content_hash(contents);
     if !store.content_exists(&content_hash, "text_blocks").await? {
@@ -205,16 +181,55 @@ async fn process_file(
     Ok(())
 }
 
-async fn process_code_blocks_batch(store: &Store, blocks: &[CodeBlock]) -> Result<()> {
+async fn process_code_blocks_batch(store: &Store, blocks: &[CodeBlock], config: &Config) -> Result<()> {
 	let contents: Vec<String> = blocks.iter().map(|block| block.content.clone()).collect();
-	let embeddings = content::generate_embeddings_batch(contents, "jina-embeddings-v2-base-code").await?;
+	let embeddings = content::generate_embeddings_batch(contents, true, config).await?;
 	store.store_code_blocks(blocks, embeddings).await?;
 	Ok(())
 }
 
-async fn process_text_blocks_batch(store: &Store, blocks: &[TextBlock]) -> Result<()> {
+async fn process_text_blocks_batch(store: &Store, blocks: &[TextBlock], config: &Config) -> Result<()> {
 	let contents: Vec<String> = blocks.iter().map(|block| block.content.clone()).collect();
-	let embeddings = content:: generate_embeddings_batch(contents, "jina-embeddings-v3").await?;
+	let embeddings = content::generate_embeddings_batch(contents, false, config).await?;
 	store.store_text_blocks(blocks, embeddings).await?;
 	Ok(())
+}
+
+// Extract symbols from the node using a recursive approach
+fn extract_symbols(node: tree_sitter::Node, contents: &str) -> Vec<String> {
+    let mut symbols = Vec::new();
+
+    // Add the node kind as a symbol type
+    symbols.push(node.kind().to_string());
+
+    // Extract identifiers recursively
+    extract_identifiers(node, contents, &mut symbols);
+
+    symbols
+}
+
+fn extract_identifiers(node: tree_sitter::Node, contents: &str, symbols: &mut Vec<String>) {
+    // Check if this node is an identifier
+    let kind = node.kind();
+    if kind.contains("identifier") ||
+       kind.contains("name") ||
+       kind == "identifier" {
+        if let Some(symbol_text) = node.utf8_text(contents.as_bytes()).ok() {
+            // Only add non-empty identifiers
+            if !symbol_text.trim().is_empty() {
+                symbols.push(symbol_text.to_string());
+            }
+        }
+    }
+
+    // Recursively check children
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            extract_identifiers(cursor.node(), contents, symbols);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
 }

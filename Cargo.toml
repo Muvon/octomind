@@ -30,6 +30,10 @@ sha2 = "0.10.8"
 clap = { version = "4.5.26", features = ["derive"] }
 notify = "6.1.1"
 notify-debouncer-mini = "0.4.1"
+fastembed = "4.7.0"
+toml = "0.8.14"
+serde_derive = "1.0.217"
+lazy_static = "1.4.0"
 
 [build-dependencies]
 cc="*"

@@ -1,8 +1,52 @@
 use crate::store::CodeBlock;
+use crate::config::{Config, EmbeddingProvider};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::sync::{Arc, Mutex};
+use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
+
+// Create a lazy-loaded FastEmbed embedding model cache
+lazy_static::lazy_static! {
+	static ref CODE_EMBEDDING_MODEL: Arc<Mutex<Option<Arc<TextEmbedding>>>> = Arc::new(Mutex::new(None));
+	static ref TEXT_EMBEDDING_MODEL: Arc<Mutex<Option<Arc<TextEmbedding>>>> = Arc::new(Mutex::new(None));
+}
+
+// Initialize models on first use
+fn get_code_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedding>> {
+	let mut model_guard = CODE_EMBEDDING_MODEL.lock().unwrap();
+
+	if model_guard.is_none() {
+		let model = TextEmbedding::try_new(
+			InitOptions::new(model_name).with_show_download_progress(true),
+		)
+			.context("Failed to initialize FastEmbed code model")?;
+
+		*model_guard = Some(Arc::new(model));
+	}
+
+	// We know it's not None because we just set it if it was
+	Ok(model_guard.as_ref().unwrap().clone())
+}
+
+fn get_text_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedding>> {
+	let mut model_guard = TEXT_EMBEDDING_MODEL.lock().unwrap();
+
+	if model_guard.is_none() {
+		println!("Initializing text embedding model {:?}...", model_name);
+
+		let model = TextEmbedding::try_new(
+			InitOptions::new(model_name).with_show_download_progress(true),
+		)
+			.context("Failed to initialize FastEmbed text model")?;
+
+		*model_guard = Some(Arc::new(model));
+	}
+
+	// We know it's not None because we just set it if it was
+	Ok(model_guard.as_ref().unwrap().clone())
+}
 
 pub fn calculate_content_hash(contents: &str) -> String {
 	let mut hasher = Sha256::new();
@@ -10,8 +54,33 @@ pub fn calculate_content_hash(contents: &str) -> String {
 	format!("{:x}", hasher.finalize())
 }
 
-pub async fn generate_embeddings(contents: &str, model: &str) -> Result<Vec<f32>> {
-	let result = generate_embeddings_batch(vec![contents.to_string()], &model).await?;
+// Generate embeddings based on the configured provider
+pub async fn generate_embeddings(contents: &str, is_code: bool, config: &Config) -> Result<Vec<f32>> {
+	match config.embedding_provider {
+		EmbeddingProvider::Jina => {
+			let model = if is_code {
+				&config.jina.code_model
+			} else {
+				&config.jina.text_model
+			};
+
+			generate_jina_embeddings(contents, model, config).await
+		},
+		EmbeddingProvider::FastEmbed => {
+			let model = if is_code {
+				&config.fastembed.code_model
+			} else {
+				&config.fastembed.text_model
+			};
+
+			generate_fastembed_embeddings(contents, model, is_code).await
+		}
+	}
+}
+
+// Generate embeddings with Jina API
+async fn generate_jina_embeddings(contents: &str, model: &str, config: &Config) -> Result<Vec<f32>> {
+	let result = generate_jina_embeddings_batch(vec![contents.to_string()], model, config).await?;
 
 	match result.first() {
 		Some(value) => Ok(value.to_vec()),
@@ -19,17 +88,81 @@ pub async fn generate_embeddings(contents: &str, model: &str) -> Result<Vec<f32>
 	}
 }
 
-pub async fn generate_embeddings_batch(texts: Vec<String>, model: &str) -> Result<Vec<Vec<f32>>> {
+// Generate embeddings with FastEmbed
+async fn generate_fastembed_embeddings(contents: &str, model: &str, is_code: bool) -> Result<Vec<f32>> {
+	// Use tokio to offload the CPU-intensive embedding generation
+	let contents = contents.to_string();
+	let model_name = map_model_to_fastembed(model);
+
+	let embedding = tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
+		let model = if is_code {
+			get_code_embedding_model(model_name)?
+		} else {
+			get_text_embedding_model(model_name)?
+		};
+
+		let embedding = model.embed(vec![contents], None)?;
+
+		if embedding.is_empty() {
+			return Err(anyhow::anyhow!("No embeddings were generated"));
+		}
+
+		Ok(embedding[0].clone())
+	}).await??;
+
+	Ok(embedding)
+}
+
+// Map the text model name to the corresponding FastEmbed model
+fn map_model_to_fastembed(model: &str) -> EmbeddingModel {
+	match model {
+		"all-MiniLM-L6-v2" => EmbeddingModel::AllMiniLML6V2,
+		"all-MiniLM-L12-v2" => EmbeddingModel::AllMiniLML12V2,
+		"multilingual-e5-small" => EmbeddingModel::MultilingualE5Small,
+		"multilingual-e5-base" => EmbeddingModel::MultilingualE5Base,
+		"multilingual-e5-large" => EmbeddingModel::MultilingualE5Large,
+		_ => panic!("Unsupported embedding model: {}", model),
+	}
+}
+
+// Generate batch embeddings based on the configured provider
+pub async fn generate_embeddings_batch(texts: Vec<String>, is_code: bool, config: &Config) -> Result<Vec<Vec<f32>>> {
+	match config.embedding_provider {
+		EmbeddingProvider::Jina => {
+			let model = if is_code {
+				&config.jina.code_model
+			} else {
+				&config.jina.text_model
+			};
+
+			generate_jina_embeddings_batch(texts, model, config).await
+		},
+		EmbeddingProvider::FastEmbed => {
+			let model = if is_code {
+				&config.fastembed.code_model
+			} else {
+				&config.fastembed.text_model
+			};
+
+			generate_fastembed_embeddings_batch(texts, model, is_code).await
+		}
+	}
+}
+
+async fn generate_jina_embeddings_batch(texts: Vec<String>, model: &str, config: &Config) -> Result<Vec<Vec<f32>>> {
 	let client = Client::new();
-	let jina_api_key = std::env::var("JINA_API_KEY")
-		.context("JINA_API_KEY environment variable not set")?;
+	let jina_api_key = match &config.jina_api_key {
+		Some(key) => key.clone(),
+		None => std::env::var("JINA_API_KEY")
+			.context("JINA_API_KEY environment variable not set or not configured in .octodev.toml")?
+	};
 
 	let response = client
 		.post("https://api.jina.ai/v1/embeddings")
 		.header("Authorization", format!("Bearer {}", jina_api_key))
 		.json(&json!({
-		"input": texts,
-		"model": model,
+			"input": texts,
+			"model": model,
 		}))
 		.send()
 	.await?;
@@ -53,53 +186,75 @@ pub async fn generate_embeddings_batch(texts: Vec<String>, model: &str) -> Resul
 	Ok(embeddings)
 }
 
-pub fn render_code_blocks(blocks: &[CodeBlock]) {
-    if blocks.is_empty() {
-        println!("No code blocks found for the query.");
-        return;
-    }
-    
-    println!("Found {} code blocks:\n", blocks.len());
+async fn generate_fastembed_embeddings_batch(texts: Vec<String>, model: &str, is_code: bool) -> Result<Vec<Vec<f32>>> {
+	// Use tokio to offload the CPU-intensive embedding generation to a blocking thread
+	// let model_name = model.to_string();
 
-    // Group blocks by file path for better organization
-    let mut blocks_by_file: std::collections::HashMap<String, Vec<&CodeBlock>> = std::collections::HashMap::new();
-    
-    for block in blocks {
-        blocks_by_file
-            .entry(block.path.clone())
-            .or_insert_with(Vec::new)
-            .push(block);
-    }
-    
-    // Print results organized by file
-    for (file_path, file_blocks) in blocks_by_file.iter() {
-        println!("╔══════════════════ File: {} ══════════════════", file_path);
-        
-        for (idx, block) in file_blocks.iter().enumerate() {
-            println!("║");
-            println!("║ Block {} of {} in file", idx + 1, file_blocks.len());
-            println!("║ Language: {}", block.language);
-            println!("║ Lines: {}-{}", block.start_line, block.end_line);
-            
-            if !block.symbols.is_empty() {
-                println!("║ Symbols:");
-                for symbol in &block.symbols {
-                    // Only show non-type symbols to users
-                    if !symbol.contains("_") {
-                        println!("║   • {}", symbol);
-                    }
-                }
-            }
+	let model_name = map_model_to_fastembed(model);
+	let embeddings = tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
+		let model = if is_code {
+			get_code_embedding_model(model_name)?
+		} else {
+			get_text_embedding_model(model_name)?
+		};
 
-            println!("║ Content:");
-            println!("║ ┌────────────────────────────────────");
-            for line in block.content.lines() {
-                println!("║ │ {}", line);
-            }
-            println!("║ └────────────────────────────────────");
-        }
-        
-        println!("╚════════════════════════════════════════\n");
-    }
+		// Convert Vec<String> to Vec<&str>
+		let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+
+		let embeddings = model.embed(text_refs, None)?;
+
+		Ok(embeddings)
+	}).await??;
+
+	Ok(embeddings)
 }
 
+pub fn render_code_blocks(blocks: &[CodeBlock]) {
+	if blocks.is_empty() {
+		println!("No code blocks found for the query.");
+		return;
+	}
+
+	println!("Found {} code blocks:\n", blocks.len());
+
+	// Group blocks by file path for better organization
+	let mut blocks_by_file: std::collections::HashMap<String, Vec<&CodeBlock>> = std::collections::HashMap::new();
+
+	for block in blocks {
+		blocks_by_file
+			.entry(block.path.clone())
+			.or_insert_with(|| Vec::new())
+			.push(block);
+	}
+
+	// Print results organized by file
+	for (file_path, file_blocks) in blocks_by_file.iter() {
+		println!("╔══════════════════ File: {} ══════════════════", file_path);
+
+		for (idx, block) in file_blocks.iter().enumerate() {
+			println!("║");
+			println!("║ Block {} of {} in file", idx + 1, file_blocks.len());
+			println!("║ Language: {}", block.language);
+			println!("║ Lines: {}-{}", block.start_line, block.end_line);
+
+			if !block.symbols.is_empty() {
+				println!("║ Symbols:");
+				for symbol in &block.symbols {
+					// Only show non-type symbols to users
+					if !symbol.contains("_") {
+						println!("║   • {}", symbol);
+					}
+				}
+			}
+
+			println!("║ Content:");
+			println!("║ ┌────────────────────────────────────");
+			for line in block.content.lines() {
+				println!("║ │ {}", line);
+			}
+			println!("║ └────────────────────────────────────");
+		}
+
+		println!("╚════════════════════════════════════════\n");
+	}
+}

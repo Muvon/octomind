@@ -82,34 +82,28 @@ impl Store {
 	pub fn new() -> Result<Self> {
 		// Get current directory
 		let current_dir = std::env::current_dir()?;
-		
+
 		// Create .octodev directory if it doesn't exist
 		let octodev_dir = current_dir.join(".octodev");
 		if !octodev_dir.exists() {
 			std::fs::create_dir_all(&octodev_dir)?;
 		}
-		
-		// Use local storage mode instead of connecting to a server
-		let qdrant_dir = octodev_dir.join("qdrant");
-		
+
 		// Create a local Qdrant client
 		// Try to connect to a local server or fall back to in-memory mode
 		let config = qdrant_client::config::QdrantConfig::from_url(&format!("http://localhost:6334"));
-		let mode = "in-memory";
-		
-		println!("Using {} storage mode for Qdrant", mode);
-		
+
 		let client = qdrant_client::Qdrant::new(config)
 			.map_err(|e| anyhow::anyhow!(e.to_string()))?;
-		
+
 		Ok(Self { client })
 	}
 
 	pub async fn initialize_collections(&self) -> Result<()> {
 		for collection_name in ["code_blocks", "text_blocks"] {
 			let dimension = match collection_name {
-				"code_blocks" => 768,
-				"text_blocks" => 1024,
+				"code_blocks" => 384,
+				"text_blocks" => 384,
 				_ => unreachable!(),
 			};
 			match self.client.collection_info(collection_name).await {

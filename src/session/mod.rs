@@ -3,12 +3,14 @@
 mod openrouter; // OpenRouter API client
 pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
+pub mod mcp;        // MCP protocol support
 
 pub use chat::*;
 pub use openrouter::*;
+pub use mcp::*;
 
 // Re-export constants
-pub const CLAUDE_MODEL: &str = "anthropic/claude-3-sonnet-20240229";
+// Constants moved to config
 
 use std::fs::{self, OpenOptions, File};
 use std::path::PathBuf;
@@ -155,7 +157,24 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
     writeln!(file, "{}", content)?;
     Ok(())
 }
-pub fn create_system_prompt(_project_dir: &PathBuf) -> String {
-	format!("You are an AI coding assistant")
+pub fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
+	let mut prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
+	
+	// Add MCP tools information if enabled
+	if config.mcp.enabled {
+		let functions = mcp::get_available_functions(config);
+		if !functions.is_empty() {
+			prompt.push_str("\n\nYou have access to the following tools:");
+			
+			for function in &functions {
+				prompt.push_str(&format!("\n\n- {} - {}", function.name, function.description));
+			}
+			
+			prompt.push_str("\n\nTo use a tool, respond with the following format:\n");
+			prompt.push_str("<function_calls>[{\"tool_name\": \"tool_name\", \"parameters\": {\"param1\": \"value1\"}}]</function_calls>");
+		}
+	}
+	
+	prompt
 }
 

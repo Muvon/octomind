@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::{Serialize, Deserialize};
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::config::Config;
 
 // Store raw request/response for logging
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -18,11 +19,17 @@ pub struct OpenRouterExchange {
 const OPENROUTER_API_KEY_ENV: &str = "OPENROUTER_API_KEY";
 const OPENROUTER_API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
-// Get OpenRouter API key from environment
-pub fn get_api_key() -> Result<String, anyhow::Error> {
+// Get OpenRouter API key from config, falling back to environment
+pub fn get_api_key(config: &Config) -> Result<String, anyhow::Error> {
+    // First check the config file
+    if let Some(key) = &config.openrouter.api_key {
+        return Ok(key.clone());
+    }
+    
+    // Then fall back to environment variable
     match env::var(OPENROUTER_API_KEY_ENV) {
         Ok(key) => Ok(key),
-        Err(_) => Err(anyhow::anyhow!("OPENROUTER_API_KEY environment variable not set"))
+        Err(_) => Err(anyhow::anyhow!("OpenRouter API key not found in config or environment"))
     }
 }
 
@@ -48,17 +55,38 @@ pub async fn chat_completion(
 	messages: Vec<Message>,
 	model: &str,
 	temperature: f32,
+	config: &Config,
 ) -> Result<(String, OpenRouterExchange)> {
 	// Get API key
-	let api_key = get_api_key()?;
+	let api_key = get_api_key(config)?;
 
 	// Create the request body
-	let request_body = serde_json::json!({
+	let mut request_body = serde_json::json!({
 		"model": model,
 		"messages": messages,
 		"temperature": temperature,
 		"max_tokens": 2048,
 	});
+	
+	// Add tool definitions if MCP is enabled
+	if config.mcp.enabled {
+		let functions = crate::session::mcp::get_available_functions(config);
+		if !functions.is_empty() {
+			let tools = functions.iter().map(|f| {
+				serde_json::json!({
+					"type": "function",
+					"function": {
+						"name": f.name,
+						"description": f.description,
+						"parameters": f.parameters
+					}
+				})
+			}).collect::<Vec<_>>();
+			
+			request_body["tools"] = serde_json::json!(tools);
+			request_body["tool_choice"] = serde_json::json!("auto");
+		}
+	}
 
 	// Create HTTP client
 	let client = Client::new();
@@ -101,14 +129,60 @@ pub async fn chat_completion(
 	}
 
 	// Extract content from response
-	let content = response_json
+	let message = response_json
 		.get("choices")
 		.and_then(|choices| choices.get(0))
 		.and_then(|choice| choice.get("message"))
-		.and_then(|message| message.get("content"))
-		.and_then(|content| content.as_str())
-		.ok_or_else(|| anyhow::anyhow!("Invalid response format from OpenRouter: {}", response_text))?
-		.to_string();
+		.ok_or_else(|| anyhow::anyhow!("Invalid response format from OpenRouter: {}", response_text))?;
+	
+	// Check if the response contains tool calls
+	let mut content = String::new();
+	
+	// First check for content
+	if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
+		content = text.to_string();
+	}
+	
+	// Then check for tool calls
+	if let Some(tool_calls) = message.get("tool_calls") {
+		if !tool_calls.is_array() || tool_calls.as_array().unwrap().is_empty() {
+			// No tool calls found
+			if content.is_empty() {
+				return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
+			}
+		} else {
+			// Found tool calls, format them according to the MCP protocol
+			let formatted_tool_calls = tool_calls.as_array().unwrap().iter().map(|tool_call| {
+				let empty_obj = serde_json::json!({});
+				let function = tool_call.get("function").unwrap_or(&empty_obj);
+				let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+				let arguments = function.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
+				
+				// Parse the arguments string to a JSON value
+				let params: serde_json::Value = serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
+				
+				serde_json::json!({
+					"tool_name": name,
+					"parameters": params
+				})
+			}).collect::<Vec<_>>();
+			
+			// Format the tool calls as MCP function calls
+			let mut mcp_calls = format!("<function_calls>{}\n</function_calls>", 
+				serde_json::to_string(&formatted_tool_calls).unwrap_or_else(|_| "[]".to_string()));
+			
+			// If there's content, prepend it
+			if !content.is_empty() {
+				mcp_calls = format!("{}
+
+{}", content, mcp_calls);
+			}
+			
+			content = mcp_calls;
+		}
+	} else if content.is_empty() {
+		return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
+	}
 
 	// Create exchange record for logging
 	let exchange = OpenRouterExchange {

@@ -60,6 +60,14 @@ struct ConfigArgs {
     #[arg(long)]
     jina_key: Option<String>,
 
+    /// Set the OpenRouter API key
+    #[arg(long)]
+    openrouter_key: Option<String>,
+    
+    /// Set the OpenRouter model
+    #[arg(long)]
+    openrouter_model: Option<String>,
+
     /// Set the code embedding model for FastEmbed
     #[arg(long)]
     fastembed_code_model: Option<String>,
@@ -67,6 +75,14 @@ struct ConfigArgs {
     /// Set the text embedding model for FastEmbed
     #[arg(long)]
     fastembed_text_model: Option<String>,
+    
+    /// Enable MCP protocol
+    #[arg(long)]
+    mcp_enable: Option<bool>,
+    
+    /// Set MCP providers
+    #[arg(long)]
+    mcp_providers: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -79,13 +95,9 @@ struct SessionArgs {
     #[arg(long, short)]
     resume: Option<String>,
     
-    /// Use OpenRouter model instead of default
+    /// Use a specific model instead of the one configured in config
     #[arg(long)]
-    openrouter: bool,
-    
-    /// OpenRouter model to use
-    #[arg(long, default_value = session::chat::CLAUDE_MODEL)]
-    model: String,
+    model: Option<String>,
 }
 
 #[tokio::main]
@@ -157,6 +169,20 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
         modified = true;
     }
 
+    // Update OpenRouter API key if specified
+    if let Some(openrouter_key) = &args.openrouter_key {
+        config.openrouter.api_key = Some(openrouter_key.clone());
+        println!("Set OpenRouter API key in configuration");
+        modified = true;
+    }
+    
+    // Update OpenRouter model if specified
+    if let Some(openrouter_model) = &args.openrouter_model {
+        config.openrouter.model = openrouter_model.clone();
+        println!("Set OpenRouter model to {}", openrouter_model);
+        modified = true;
+    }
+
     // Update FastEmbed code model if specified
     if let Some(code_model) = &args.fastembed_code_model {
         config.fastembed.code_model = code_model.clone();
@@ -168,6 +194,24 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
     if let Some(text_model) = &args.fastembed_text_model {
         config.fastembed.text_model = text_model.clone();
         println!("Set FastEmbed text model to {}", text_model);
+        modified = true;
+    }
+    
+    // Enable/disable MCP protocol
+    if let Some(enable_mcp) = args.mcp_enable {
+        config.mcp.enabled = enable_mcp;
+        println!("MCP protocol {}", if enable_mcp { "enabled" } else { "disabled" });
+        modified = true;
+    }
+    
+    // Update MCP providers if specified
+    if let Some(providers) = &args.mcp_providers {
+        let provider_list: Vec<String> = providers
+            .split(',') 
+            .map(|s| s.trim().to_string()) 
+            .collect();
+        config.mcp.providers = provider_list;
+        println!("Set MCP providers to: {}", providers);
         modified = true;
     }
 
@@ -184,13 +228,24 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
     // Show current configuration
     println!("\nCurrent configuration:");
     println!("Embedding provider: {:?}", config.embedding_provider);
+    
     if let Some(key) = &config.jina_api_key {
         println!("Jina API key: {}", "*".repeat(key.len()));
     } else {
         println!("Jina API key: Not set (will use JINA_API_KEY environment variable if available)");
     }
+    
+    if let Some(key) = &config.openrouter.api_key {
+        println!("OpenRouter API key: {}", "*".repeat(key.len()));
+    } else {
+        println!("OpenRouter API key: Not set (will use OPENROUTER_API_KEY environment variable if available)");
+    }
+    
+    println!("OpenRouter model: {}", config.openrouter.model);
     println!("FastEmbed code model: {}", config.fastembed.code_model);
     println!("FastEmbed text model: {}", config.fastembed.text_model);
+    println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
+    println!("MCP providers: {}", config.mcp.providers.join(", "));
 
     Ok(())
 }

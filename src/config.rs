@@ -66,6 +66,47 @@ impl Default for JinaConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OpenRouterConfig {
+    #[serde(default = "default_openrouter_model")]
+    pub model: String,
+    pub api_key: Option<String>,
+}
+
+fn default_openrouter_model() -> String {
+    "anthropic/claude-3-sonnet-20240229".to_string()
+}
+
+impl Default for OpenRouterConfig {
+    fn default() -> Self {
+        Self {
+            model: default_openrouter_model(),
+            api_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_providers")]
+    pub providers: Vec<String>,
+}
+
+fn default_mcp_providers() -> Vec<String> {
+    vec!["shell".to_string()]
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            providers: default_mcp_providers(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     #[serde(default)]
     pub embedding_provider: EmbeddingProvider,
@@ -74,6 +115,10 @@ pub struct Config {
     #[serde(default)]
     pub jina: JinaConfig,
     pub jina_api_key: Option<String>,
+    #[serde(default)]
+    pub openrouter: OpenRouterConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
     #[serde(skip)]
     config_path: Option<PathBuf>,
 }
@@ -85,6 +130,8 @@ impl Default for Config {
             fastembed: FastEmbedConfig::default(),
             jina: JinaConfig::default(),
             jina_api_key: None,
+            openrouter: OpenRouterConfig::default(),
+            mcp: McpConfig::default(),
             config_path: None,
         }
     }
@@ -117,9 +164,12 @@ impl Config {
             // Store the config path for potential future saving
             config.config_path = Some(config_path);
 
-            // Check environment variable for API key even if config exists
+            // Check environment variable for API keys even if config exists
             if config.jina_api_key.is_none() {
                 config.jina_api_key = std::env::var("JINA_API_KEY").ok();
+            }
+            if config.openrouter.api_key.is_none() {
+                config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
             }
 
             Ok(config)
@@ -139,9 +189,12 @@ impl Config {
             fs::write(&config_path, config_str)
                 .context(format!("Failed to write config to {}", config_path.display()))?;
             
-            // Check environment variable for API key even if config exists
+            // Check environment variable for API keys even if config exists
             if config.jina_api_key.is_none() {
                 config.jina_api_key = std::env::var("JINA_API_KEY").ok();
+            }
+            if config.openrouter.api_key.is_none() {
+                config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
             }
             
             Ok(config)
@@ -150,8 +203,9 @@ impl Config {
             let mut config = Config::default();
             config.config_path = Some(config_path);
 
-            // Check environment variable for API key
+            // Check environment variables for API keys
             config.jina_api_key = std::env::var("JINA_API_KEY").ok();
+            config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
 
             Ok(config)
         }

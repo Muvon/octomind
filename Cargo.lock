@@ -2651,6 +2651,7 @@ dependencies = [
  "openrouter-rs",
  "parking_lot",
  "qdrant-client",
+ "regex",
  "reqwest",
  "rustyline",
  "serde",

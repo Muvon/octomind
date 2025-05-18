@@ -89,8 +89,13 @@ impl Store {
 			std::fs::create_dir_all(&octodev_dir)?;
 		}
 
-		// Create a local Qdrant client
-		// Try to connect to a local server or fall back to in-memory mode
+		// Create qdrant storage directory
+		let qdrant_dir = octodev_dir.join("qdrant");
+		if !qdrant_dir.exists() {
+			std::fs::create_dir_all(&qdrant_dir)?;
+		}
+
+		// Create a local Qdrant client - setup to use local files in .octodev/qdrant
 		let config = qdrant_client::config::QdrantConfig::from_url(&format!("http://localhost:6334"));
 
 		let client = qdrant_client::Qdrant::new(config)

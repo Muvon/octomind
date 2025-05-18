@@ -1,4 +1,12 @@
-use crate::content;
+// Indexer module for OctoDev
+// Handles code indexing, embedding, and search functionality
+
+mod embed; // Embedding generation - moving from content.rs
+mod search; // Search functionality
+
+pub use embed::*;
+pub use search::*;
+
 use crate::state::SharedState;
 use crate::store::{Store, CodeBlock, TextBlock};
 use crate::config::Config;
@@ -7,7 +15,8 @@ use walkdir::WalkDir;
 use tree_sitter::{Parser, Node};
 use anyhow::Result;
 
-fn detect_language(path: &std::path::Path) -> Option<&str> {
+// Detect language based on file extension
+pub fn detect_language(path: &std::path::Path) -> Option<&str> {
     match path.extension()?.to_str()? {
         "rs" => Some("rust"),
         "php" => Some("php"),
@@ -24,6 +33,7 @@ fn detect_language(path: &std::path::Path) -> Option<&str> {
     }
 }
 
+// Main function to index files
 pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> Result<()> {
     let current_dir = state.read().current_directory.clone();
     let mut code_blocks_batch = Vec::new();
@@ -80,6 +90,7 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
     Ok(())
 }
 
+// Processes a single file, extracting code blocks and adding them to the batch
 async fn process_file(
     store: &Store,
     contents: &str,
@@ -109,7 +120,7 @@ async fn process_file(
     extract_meaningful_regions(tree.root_node(), contents, language, &mut code_regions);
 
     for region in code_regions {
-        let content_hash = content::calculate_content_hash(&region.content);
+        let content_hash = calculate_content_hash(&region.content);
         if !store.content_exists(&content_hash, "code_blocks").await? {
             code_blocks_batch.push(CodeBlock {
                 path: file_path.to_string(),
@@ -123,7 +134,7 @@ async fn process_file(
         }
     }
 
-    let content_hash = content::calculate_content_hash(contents);
+    let content_hash = calculate_content_hash(contents);
     if !store.content_exists(&content_hash, "text_blocks").await? {
         text_blocks_batch.push(TextBlock {
             path: file_path.to_string(),
@@ -257,14 +268,14 @@ fn extract_identifiers(node: Node, contents: &str, symbols: &mut Vec<String>) {
 
 async fn process_code_blocks_batch(store: &Store, blocks: &[CodeBlock], config: &Config) -> Result<()> {
     let contents: Vec<String> = blocks.iter().map(|b| b.content.clone()).collect();
-    let embeddings = content::generate_embeddings_batch(contents, true, config).await?;
+    let embeddings = generate_embeddings_batch(contents, true, config).await?;
     store.store_code_blocks(blocks, embeddings).await?;
     Ok(())
 }
 
 async fn process_text_blocks_batch(store: &Store, blocks: &[TextBlock], config: &Config) -> Result<()> {
     let contents: Vec<String> = blocks.iter().map(|b| b.content.clone()).collect();
-    let embeddings = content::generate_embeddings_batch(contents, false, config).await?;
+    let embeddings = generate_embeddings_batch(contents, false, config).await?;
     store.store_text_blocks(blocks, embeddings).await?;
     Ok(())
 }

@@ -157,24 +157,21 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
     writeln!(file, "{}", content)?;
     Ok(())
 }
-pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
-	let mut prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
-	
+pub async fn create_system_prompt(project_dir: &PathBuf, _config: &crate::config::Config) -> String {
+	let prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
+
 	// Add MCP tools information if enabled
-	if config.mcp.enabled {
-		let functions = mcp::get_available_functions(config).await;
-		if !functions.is_empty() {
-			prompt.push_str("\n\nYou have access to the following tools:");
-			
-			for function in &functions {
-				prompt.push_str(&format!("\n\n- {} - {}", function.name, function.description));
-			}
-			
-			prompt.push_str("\n\nTo use a tool, respond with the following format:\n");
-			prompt.push_str("<function_calls>[{\"tool_name\": \"tool_name\", \"parameters\": {\"param1\": \"value1\"}}]</function_calls>");
-		}
-	}
-	
+	// if config.mcp.enabled {
+	// 	let functions = mcp::get_available_functions(config).await;
+	// 	if !functions.is_empty() {
+	// 		prompt.push_str("\n\nYou have access to the following tools:");
+
+	// 		for function in &functions {
+	// 			prompt.push_str(&format!("\n\n- {} - {}", function.name, function.description));
+	// 		}
+	// 	}
+	// }
+
 	prompt
 }
 

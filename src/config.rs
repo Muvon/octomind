@@ -86,6 +86,20 @@ impl Default for OpenRouterConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum McpServerMode {
+    #[serde(rename = "http")]
+    Http,
+    #[serde(rename = "stdin")]
+    Stdin,
+}
+
+impl Default for McpServerMode {
+    fn default() -> Self {
+        Self::Http
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct McpServerConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -97,9 +111,19 @@ pub struct McpServerConfig {
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    // Communication mode - http or stdin
+    #[serde(default)]
+    pub mode: McpServerMode,
+    // Timeout in seconds for tool execution
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
     // Common config
     #[serde(default)]
     pub tools: Vec<String>,  // Empty means all tools are enabled
+}
+
+fn default_timeout() -> u64 {
+    30 // Default timeout of 30 seconds
 }
 
 impl Default for McpServerConfig {
@@ -111,6 +135,8 @@ impl Default for McpServerConfig {
             auth_token: None,
             command: None,
             args: Vec::new(),
+            mode: McpServerMode::Http,
+            timeout_seconds: default_timeout(),
             tools: Vec::new(),
         }
     }

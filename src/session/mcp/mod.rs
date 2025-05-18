@@ -57,7 +57,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 	for result in results {
 		// Determine the category of the tool
 		let category = guess_tool_category(&result.tool_name);
-		
+
 		// Create a horizontal separator with tool name
 		let title = format!(" {} | {} ", result.tool_name, category);
 		let separator_length = 70.max(title.len() + 4);
@@ -154,6 +154,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 			}
 		}
 	}
+
+	// Debug output
+	// println!("Functions: {:?}", functions);
 
 	functions
 }

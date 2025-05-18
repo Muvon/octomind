@@ -249,7 +249,9 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
                 command: None,
                 args: Vec::new(),
                 auth_token: None,
+                mode: octodev::config::McpServerMode::Http, // Default to HTTP mode
                 tools: Vec::new(),
+                timeout_seconds: 30, // Default timeout
             };
             
             // Process remaining parts
@@ -274,6 +276,20 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
                         },
                         "token" | "auth_token" => {
                             server.auth_token = Some(value.to_string());
+                        },
+                        "mode" => {
+                            match value.to_lowercase().as_str() {
+                                "http" => server.mode = octodev::config::McpServerMode::Http,
+                                "stdin" => server.mode = octodev::config::McpServerMode::Stdin,
+                                _ => println!("Unknown server mode: {}, defaulting to HTTP", value),
+                            }
+                        },
+                        "timeout" | "timeout_seconds" => {
+                            if let Ok(timeout) = value.parse::<u64>() {
+                                server.timeout_seconds = timeout;
+                            } else {
+                                println!("Invalid timeout value: {}, using default", value);
+                            }
                         },
                         _ => {
                             println!("Unknown server config key: {}", key);

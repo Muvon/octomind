@@ -86,11 +86,44 @@ impl Default for OpenRouterConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpServerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,
+    // URL mode configuration (for remote servers)
+    pub url: Option<String>,
+    pub auth_token: Option<String>,
+    // Local mode configuration (for running servers locally)
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    // Common config
+    #[serde(default)]
+    pub tools: Vec<String>,  // Empty means all tools are enabled
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: "".to_string(),
+            url: None,
+            auth_token: None,
+            command: None,
+            args: Vec::new(),
+            tools: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct McpConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_mcp_providers")]
     pub providers: Vec<String>,
+    #[serde(default)]
+    pub servers: Vec<McpServerConfig>,
 }
 
 fn default_mcp_providers() -> Vec<String> {
@@ -102,6 +135,7 @@ impl Default for McpConfig {
         Self {
             enabled: false,
             providers: default_mcp_providers(),
+            servers: Vec::new(),
         }
     }
 }

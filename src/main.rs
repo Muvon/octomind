@@ -83,6 +83,10 @@ struct ConfigArgs {
     /// Set MCP providers
     #[arg(long)]
     mcp_providers: Option<String>,
+    
+    /// Add/configure MCP server (format: name,url=X|command=Y,args=Z)
+    #[arg(long)]
+    mcp_server: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -107,6 +111,18 @@ async fn main() -> Result<(), anyhow::Error> {
     // Load configuration - ensure .octodev directory exists
     let config = Config::load()?;
 
+    // Setup cleanup for MCP server processes when the program exits
+    let result = run_with_cleanup(args, config).await;
+    
+    // Make sure to clean up any started server processes
+    if let Err(e) = octodev::session::mcp::server::cleanup_servers() {
+        eprintln!("Warning: Error cleaning up MCP servers: {}", e);
+    }
+    
+    result
+}
+
+async fn run_with_cleanup(args: OctodevArgs, config: Config) -> Result<(), anyhow::Error> {
     // Handle the config command separately
     if let Commands::Config(config_args) = &args.command {
         return handle_config_command(config_args, config);
@@ -213,6 +229,78 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
         config.mcp.providers = provider_list;
         println!("Set MCP providers to: {}", providers);
         modified = true;
+    }
+    
+    // Configure MCP server if specified
+    if let Some(server_config) = &args.mcp_server {
+        // Parse server config string: name,url=X|command=Y,args=Z
+        let parts: Vec<&str> = server_config.split(',').collect();
+        
+        if parts.len() < 2 {
+            println!("Invalid MCP server configuration format. Expected format: name,url=X|command=Y,args=Z");
+        } else {
+            let name = parts[0].trim().to_string();
+            
+            // Create a new server config
+            let mut server = octodev::config::McpServerConfig {
+                enabled: true,
+                name: name.clone(),
+                url: None,
+                command: None,
+                args: Vec::new(),
+                auth_token: None,
+                tools: Vec::new(),
+            };
+            
+            // Process remaining parts
+            for part in &parts[1..] {
+                let kv: Vec<&str> = part.split('=').collect();
+                if kv.len() == 2 {
+                    let key = kv[0].trim();
+                    let value = kv[1].trim();
+                    
+                    match key {
+                        "url" => {
+                            server.url = Some(value.to_string());
+                        },
+                        "command" => {
+                            server.command = Some(value.to_string());
+                        },
+                        "args" => {
+                            server.args = value.split(' ')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        },
+                        "token" | "auth_token" => {
+                            server.auth_token = Some(value.to_string());
+                        },
+                        _ => {
+                            println!("Unknown server config key: {}", key);
+                        }
+                    }
+                }
+            }
+            
+            // Validate the server config
+            if server.url.is_none() && server.command.is_none() {
+                println!("Error: Either url or command must be specified for MCP server");
+            } else {
+                // Enable MCP if not already enabled
+                if !config.mcp.enabled {
+                    config.mcp.enabled = true;
+                    println!("Automatically enabled MCP protocol for server integration");
+                }
+                
+                // Remove any existing server with the same name
+                config.mcp.servers.retain(|s| s.name != name);
+                
+                // Add the new server
+                config.mcp.servers.push(server);
+                println!("Added/updated MCP server: {}", name);
+                modified = true;
+            }
+        }
     }
 
     // If no modifications were made, create a default config

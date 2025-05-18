@@ -7,6 +7,8 @@ use anyhow::Result;
 use regex::Regex;
 
 pub mod shell;
+pub mod server;
+pub mod process;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCall {
@@ -53,8 +55,11 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 	let mut output = String::new();
 
 	for result in results {
+		// Determine the category of the tool
+		let category = guess_tool_category(&result.tool_name);
+		
 		// Create a horizontal separator with tool name
-		let title = format!(" {} | {} ", result.tool_name, guess_tool_category(&result.tool_name));
+		let title = format!(" {} | {} ", result.tool_name, category);
 		let separator_length = 70.max(title.len() + 4);
 		let dashes = "─".repeat(separator_length - title.len());
 
@@ -107,12 +112,26 @@ fn guess_tool_category(tool_name: &str) -> &'static str {
 		name if name.contains("image") || name.contains("photo") => "media",
 		name if name.contains("web") || name.contains("http") => "web",
 		name if name.contains("db") || name.contains("database") => "database",
-		_ => "tool",
+		name if name.contains("browser") => "browser",
+		name if name.contains("terminal") => "terminal",
+		name if name.contains("video") => "video",
+		name if name.contains("audio") => "audio",
+		name if name.contains("location") || name.contains("map") => "location",
+		name if name.contains("google") => "google",
+		name if name.contains("weather") => "weather",
+		name if name.contains("calculator") || name.contains("math") => "math",
+		name if name.contains("news") => "news",
+		name if name.contains("email") => "email",
+		name if name.contains("calendar") => "calendar",
+		name if name.contains("translate") => "translation",
+		name if name.contains("github") => "github",
+		name if name.contains("git") => "git",
+		_ => "external",
 	}
 }
 
 // Gather available functions from enabled providers
-pub fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
+pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	let mut functions = Vec::new();
 
 	// Only gather functions if MCP is enabled
@@ -125,6 +144,17 @@ pub fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunctio
 		functions.push(shell::get_function_definition());
 	}
 
+	// Add server functions if any servers are enabled
+	if !config.mcp.servers.is_empty() {
+		for server in &config.mcp.servers {
+			if server.enabled {
+				if let Ok(server_functions) = super::mcp::server::get_server_functions(server).await {
+					functions.extend(server_functions);
+				}
+			}
+		}
+	}
+
 	functions
 }
 
@@ -135,16 +165,35 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
 
-	match call.tool_name.as_str() {
-		"shell" => {
-			if config.mcp.providers.contains(&"shell".to_string()) {
-				shell::execute_shell_command(call).await
-			} else {
-				Err(anyhow::anyhow!("Shell provider is not enabled"))
-			}
-		},
-		_ => Err(anyhow::anyhow!("Unknown tool: {}", call.tool_name)),
+	// Try to execute locally if provider is enabled
+	if call.tool_name == "shell" {
+		if config.mcp.providers.contains(&"shell".to_string()) {
+			return shell::execute_shell_command(call).await;
+		} else {
+			return Err(anyhow::anyhow!("Shell provider is not enabled"));
+		}
 	}
+
+	// Try to find a server that can handle this tool
+	let mut last_error = anyhow::anyhow!("No servers available to process this tool");
+	for server in &config.mcp.servers {
+		if server.enabled {
+			// Check if this server supports the tool
+			if server.tools.is_empty() || server.tools.contains(&call.tool_name) {
+				// Try to execute the tool on this server
+				match super::mcp::server::execute_tool_call(call, server).await {
+					Ok(result) => return Ok(result),
+					Err(err) => {
+						last_error = err;
+						// Continue trying other servers
+					}
+				}
+			}
+		}
+	}
+
+	// If we get here, no server could handle the tool call
+	Err(anyhow::anyhow!("Failed to execute tool '{}': {}", call.tool_name, last_error))
 }
 
 // Execute multiple tool calls

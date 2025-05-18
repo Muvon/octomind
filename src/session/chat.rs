@@ -371,7 +371,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {
 		// Create system prompt
-		let system_prompt = create_system_prompt(&current_dir, config);
+		let system_prompt = create_system_prompt(&current_dir, config).await;
 		chat_session.add_system_message(&system_prompt)?;
 
 		// Add assistant welcome message

@@ -157,12 +157,12 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
     writeln!(file, "{}", content)?;
     Ok(())
 }
-pub fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
+pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
 	let mut prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
 	
 	// Add MCP tools information if enabled
 	if config.mcp.enabled {
-		let functions = mcp::get_available_functions(config);
+		let functions = mcp::get_available_functions(config).await;
 		if !functions.is_empty() {
 			prompt.push_str("\n\nYou have access to the following tools:");
 			

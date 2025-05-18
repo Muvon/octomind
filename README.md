@@ -10,6 +10,7 @@ OctoDev is a command-line tool that helps developers navigate and understand the
 - **Symbol Awareness**: Understands code structure and can expand symbol references
 - **Live File Watching**: Automatically updates the index when your code changes
 - **Configurable Embedding Providers**: Works with either FastEmbed (offline) or Jina (cloud) for embeddings
+- **MCP Protocol Support**: Integrates with external MCP servers for additional tools and capabilities
 
 ## Installation
 
@@ -71,7 +72,7 @@ octodev watch
 
 ### Configuration
 
-OctoDev uses a configuration file stored in `.octodev.toml` in your project directory. You can create or modify this using the `config` command:
+OctoDev uses a configuration file stored in `.octodev/config.toml` in your project directory. You can create or modify this using the `config` command:
 
 ```bash
 # Create default configuration
@@ -110,6 +111,58 @@ Available models:
 Default models:
 - Code: `jina-embeddings-v2-base-code`
 - Text: `jina-embeddings-v3`
+
+### MCP Configuration
+
+OctoDev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. You can configure MCP in your `.octodev/config.toml` file:
+
+```toml
+[mcp]
+enabled = true
+providers = ["shell"]
+
+# External MCP server configuration - URL based
+[[mcp.servers]]
+enabled = true
+name = "RemoteWebSearch"
+url = "https://mcp.so/server/webSearch-Tools"
+auth_token = "your_token_if_needed"  # Optional
+tools = []  # Empty means all tools are enabled
+
+# Local MCP server configuration - Running as a local process
+[[mcp.servers]]
+enabled = true
+name = "LocalWebSearch"
+command = "python"  # Command to execute
+args = ["-m", "websearch_server", "--port", "8008"]  # Arguments to pass
+tools = []  # Empty means all tools are enabled
+```
+
+#### Setting up a Local MCP Server
+
+You can run an MCP server locally by providing the command and arguments to execute:
+
+1. Create a `.octodev/config.toml` file if you don't have one (or run `octodev config`)
+2. Add a local MCP server configuration:
+
+```toml
+[mcp]
+enabled = true
+providers = ["shell"]
+
+[[mcp.servers]]
+enabled = true
+name = "WebSearch"
+command = "python"  # Or any other command to start your server
+args = ["-m", "websearch_server", "--port", "8008"]
+```
+
+3. OctoDev will start the server process when needed and clean it up when the program exits.
+
+#### Current MCP Providers
+
+- **shell**: Allows the AI to run shell commands in your terminal (enabled by adding "shell" to providers list)
+- **External MCP Servers**: Any MCP-compatible server can be added in the `[[mcp.servers]]` section
 
 ## How It Works
 

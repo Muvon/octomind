@@ -12,6 +12,8 @@
 - Shell commands available as a tool when MCP is enabled
 - Configure MCP with: `octodev config --mcp-enable true --mcp-providers "shell"`
 - Tools are used automatically during sessions with results visible to the user
+- External MCP servers can now be integrated for additional capabilities
+- Web search and browsing functionality available through external MCP servers
 
 ### Configuration Updates
 - Enhanced configuration system to include OpenRouter and MCP settings
@@ -63,5 +65,50 @@ AI is using tools:
 }
 
 AI: Here are the files in the current directory:
+...
+```
+
+### Using External MCP Servers
+You can integrate external MCP servers like the webSearch-Tools from mcp.so or run them locally.
+Add to your `.octodev/config.toml`:
+
+```toml
+[mcp]
+enabled = true
+providers = ["shell"]
+
+# Remote server
+[[mcp.servers]]
+enabled = true
+name = "RemoteWebSearch"
+url = "https://mcp.so/server/webSearch-Tools"
+
+# Or local server
+[[mcp.servers]]
+enabled = true
+name = "LocalWebSearch"
+command = "python"
+args = ["-m", "websearch_server", "--port", "8008"]
+```
+
+Example interaction with web search:
+
+```
+> What are the new features in Rust 1.75?
+
+AI is using tools:
+- Executing: webSearch
+
+**Tool Call**: webSearch | web
+**Result**:
+{
+  "success": true,
+  "output": "[Search results for 'Rust 1.75 new features']",
+  "parameters": {
+    "query": "Rust 1.75 new features"
+  }
+}
+
+AI: Rust 1.75, released on December 28, 2023, introduced several new features:
 ...
 ```

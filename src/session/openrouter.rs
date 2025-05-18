@@ -70,7 +70,7 @@ pub async fn chat_completion(
 	
 	// Add tool definitions if MCP is enabled
 	if config.mcp.enabled {
-		let functions = crate::session::mcp::get_available_functions(config);
+		let functions = crate::session::mcp::get_available_functions(config).await;
 		if !functions.is_empty() {
 			let tools = functions.iter().map(|f| {
 				serde_json::json!({

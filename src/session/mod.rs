@@ -14,6 +14,7 @@ pub use mcp::*;
 use std::fs::{self, OpenOptions, File};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::{BufRead, BufReader};
 use serde::{Serialize, Deserialize};
 use std::io::Write;
 
@@ -129,11 +130,10 @@ impl Session {
             let info_json = serde_json::to_string(&self.info)?;
             append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
 
-            // Save all messages
+            // Save all messages without prefixes - simpler format
             for message in &self.messages {
                 let message_json = serde_json::to_string(message)?;
-                let prefix = message.role.to_uppercase();
-                append_to_session_file(session_file, &format!("{}: {}", prefix, message_json))?;
+                append_to_session_file(session_file, &message_json)?;
             }
 
             Ok(())
@@ -154,6 +154,47 @@ pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
     }
 
     Ok(sessions_dir)
+}
+
+// Get a list of available sessions
+pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::Error> {
+    let sessions_dir = get_sessions_dir()?;
+    let mut sessions = Vec::new();
+    
+    if !sessions_dir.exists() {
+        return Ok(sessions);
+    }
+    
+    for entry in fs::read_dir(sessions_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() && path.extension().map_or(false, |ext| ext == "jsonl") {
+            // Read just the first line to get session info
+            if let Ok(file) = File::open(&path) {
+                let reader = BufReader::new(file);
+                let first_line = reader.lines().next();
+                
+                if let Some(Ok(line)) = first_line {
+                    if let Some(content) = line.strip_prefix("SUMMARY: ") {
+                        if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
+                            let name = path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            
+                            sessions.push((name, info));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sort sessions by creation time (newest first)
+    sessions.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+    
+    Ok(sessions)
 }
 
 // Helper function to load a session from file
@@ -188,6 +229,15 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
             // Parse assistant message
             let message: Message = serde_json::from_str(content)?;
             messages.push(message);
+        } else if !line.starts_with("EXCHANGE: ") {
+            // Skip exchange lines, but try to parse anything else
+            // This is a more flexible approach for future changes
+            if line.contains("\"role\":") && line.contains("\"content\":") {
+                // This looks like a valid message JSON - try to parse it
+                if let Ok(message) = serde_json::from_str::<Message>(line) {
+                    messages.push(message);
+                }
+            }
         }
     }
 

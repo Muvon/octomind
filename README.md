@@ -62,6 +62,40 @@ octodev search --expand "user registration process"
 octodev search --json "database connection setup"
 ```
 
+### Interactive Sessions
+
+OctoDev includes an AI coding assistant that can help you understand and modify your codebase:
+
+```bash
+# Start a new interactive session
+octodev session
+
+# Start with a specific name (or resume if exists)
+octodev session -n my_session
+
+# Resume an existing session
+octodev session -r my_session
+
+# Use a specific model
+octodev session --model anthropic/claude-3.5-sonnet
+```
+
+#### Session Commands
+
+While in an interactive session, you can use the following commands:
+
+- `/help` - Show help for all available commands
+- `/exit` or `/quit` - Exit the session
+- `/list` - List all available sessions
+- `/session [name]` - Switch to another session or create a new one (empty creates fresh session)
+- `/clear` - Clear the screen
+- `/save` - Save the current session
+- `/cache` - Mark a cache checkpoint for token saving
+
+#### Session Caching
+
+OctoDev supports token caching with providers like OpenRouter to save costs when reusing large prompts or context. The system prompt is automatically cached, and you can mark user messages for caching with the `/cache` command.
+
 ### Watch Mode
 
 Start a watcher that automatically reindexes when files change:

@@ -1,13 +1,15 @@
 // Chat session implementation
 
-use crate::config::Config;
 use crate::store::Store;
-use crate::session::{Session, get_sessions_dir, load_session, create_system_prompt, openrouter};
+use crate::config::Config;
+use crate::session::{Session, get_sessions_dir, load_session, create_system_prompt, openrouter, list_available_sessions};
 use std::io::{self, Write};
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use ctrlc;
 use super::commands::*;
 use super::input::read_user_input;
@@ -28,8 +30,28 @@ impl ChatSession {
 	pub fn new(name: String, model: Option<String>, config: &Config) -> Self {
 		let model_name = model.unwrap_or_else(|| config.openrouter.model.clone());
 
+		// Create a new session with initial info
+		let session_info = crate::session::SessionInfo {
+			name: name.clone(),
+			created_at: SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			model: model_name.clone(),
+			provider: "openrouter".to_string(),
+			input_tokens: 0,
+			output_tokens: 0,
+			cached_tokens: 0,
+			total_cost: 0.0,
+			duration_seconds: 0,
+		};
+
 		Self {
-			session: Session::new(name, model_name.clone(), "openrouter".to_string()),
+			session: Session {
+				info: session_info,
+				messages: Vec::new(),
+				session_file: None,
+			},
 			last_response: String::new(),
 			model: model_name,
 			temperature: 0.7, // Default temperature
@@ -57,32 +79,96 @@ impl ChatSession {
 
 		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
 
-		// Load or create session
-		if (resume.is_some() || (name.is_some() && session_file.exists())) && session_file.exists() {
-			println!("Resuming session: {}", session_name);
-			let session = load_session(&session_file)?;
+		// Check if we should load or create a session
+		let should_resume = (resume.is_some() || (name.is_some() && session_file.exists())) && session_file.exists();
 
-			// Create chat session from loaded session
-			let mut chat_session = ChatSession {
-				session,
-				last_response: String::new(),
-				model: model.unwrap_or_else(|| config.openrouter.model.clone()),
-				temperature: 0.7,
-				estimated_cost: 0.0,
-			};
+		if should_resume {
+			use colored::*;
+			
+			// Try to load session
+			match load_session(&session_file) {
+				Ok(session) => {
+					// When session is loaded successfully, show its info
+					println!("{}", format!("✓ Resuming session: {}", session_name).bright_green());
+					
+					// Show a brief summary of the session
+					let created_time = DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
+						.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+						.unwrap_or_else(|| "Unknown".to_string());
+					
+					// Simplify model name
+					let model_parts: Vec<&str> = session.info.model.split('/').collect();
+					let model_name = if model_parts.len() > 1 { model_parts[1] } else { &session.info.model };
+					
+					// Calculate total tokens
+					let total_tokens = session.info.input_tokens + session.info.output_tokens + session.info.cached_tokens;
+					
+					println!("{} {}", "Created:".blue(), created_time.white());
+					println!("{} {}", "Model:".blue(), model_name.yellow());
+					println!("{} {}", "Messages:".blue(), session.messages.len().to_string().white());
+					println!("{} {}", "Tokens:".blue(), total_tokens.to_string().bright_blue());
+					println!("{} ${:.5}", "Cost:".blue(), session.info.total_cost.to_string().bright_magenta());
+					
+					// Create chat session from loaded session
+					let mut chat_session = ChatSession {
+						session,
+						last_response: String::new(),
+						model: model.unwrap_or_else(|| config.openrouter.model.clone()),
+						temperature: 0.7,
+						estimated_cost: 0.0,
+					};
 
-			// Get last assistant response if any
-			for msg in chat_session.session.messages.iter().rev() {
-				if msg.role == "assistant" {
-					chat_session.last_response = msg.content.clone();
-					break;
+					// Update the estimated cost from the loaded session
+					chat_session.estimated_cost = chat_session.session.info.total_cost;
+
+					// Get last assistant response if any
+					for msg in chat_session.session.messages.iter().rev() {
+						if msg.role == "assistant" {
+							chat_session.last_response = msg.content.clone();
+							break;
+						}
+					}
+
+					Ok(chat_session)
+				},
+				Err(e) => {
+					// If loading fails, inform the user and create a new session
+					println!("{}: {}", format!("Failed to load session {}", session_name).bright_red(), e);
+					println!("{}", "Creating a new session instead...".yellow());
+					
+					// Generate a new unique session name
+					let timestamp = std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs();
+					let new_session_name = format!("session_{}", timestamp);
+					let new_session_file = sessions_dir.join(format!("{}.jsonl", new_session_name));
+					
+					println!("{}", format!("Starting new session: {}", new_session_name).bright_green());
+					
+					// Create file if it doesn't exist
+					if !new_session_file.exists() {
+						let file = File::create(&new_session_file)?;
+						drop(file);
+					}
+					
+					let mut chat_session = ChatSession::new(new_session_name, model, config);
+					chat_session.session.session_file = Some(new_session_file);
+					
+					// Immediately save the session info to ensure SUMMARY is written
+					let info_json = serde_json::to_string(&chat_session.session.info)?;
+					crate::session::append_to_session_file(
+						chat_session.session.session_file.as_ref().unwrap(), 
+						&format!("SUMMARY: {}", info_json)
+					)?;
+					
+					Ok(chat_session)
 				}
 			}
-
-			Ok(chat_session)
 		} else {
 			// Create new session
-			println!("Starting new session: {}", session_name);
+			use colored::*;
+			println!("{}", format!("Starting new session: {}", session_name).bright_green());
 
 			// Create session file if it doesn't exist
 			if !session_file.exists() {
@@ -92,6 +178,13 @@ impl ChatSession {
 
 			let mut chat_session = ChatSession::new(session_name, model, config);
 			chat_session.session.session_file = Some(session_file);
+			
+			// Immediately save the session info to ensure SUMMARY is written
+			let info_json = serde_json::to_string(&chat_session.session.info)?;
+			crate::session::append_to_session_file(
+				chat_session.session.session_file.as_ref().unwrap(), 
+				&format!("SUMMARY: {}", info_json)
+			)?;
 
 			Ok(chat_session)
 		}
@@ -110,7 +203,7 @@ impl ChatSession {
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
-			crate::session::append_to_session_file(session_file, &format!("SYSTEM: {}", message_json))?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 
 		Ok(())
@@ -124,7 +217,7 @@ impl ChatSession {
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
-			crate::session::append_to_session_file(session_file, &format!("USER: {}", message_json))?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 
 		Ok(())
@@ -208,12 +301,12 @@ impl ChatSession {
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&message)?;
-			crate::session::append_to_session_file(session_file, &format!("ASSISTANT: {}", message_json))?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
 
 			// If we have a raw exchange, save it as well
 			if let Some(ex) = exchange {
 				let exchange_json = serde_json::to_string(&ex)?;
-				crate::session::append_to_session_file(session_file, &format!("EXCHANGE: {}", exchange_json))?;
+				crate::session::append_to_session_file(session_file, &exchange_json)?;
 			}
 		}
 
@@ -224,7 +317,16 @@ impl ChatSession {
 	pub fn process_command(&mut self, input: &str) -> Result<bool> {
 		use colored::*;
 
-		match input.trim() {
+		// Extract command and potential parameters
+		let input_parts: Vec<&str> = input.trim().split_whitespace().collect();
+		let command = input_parts[0];
+		let params = if input_parts.len() > 1 {
+			&input_parts[1..]
+		} else {
+			&[]
+		};
+
+		match command {
 			EXIT_COMMAND | QUIT_COMMAND => {
 				println!("{}", "Ending session. Your conversation has been saved.".bright_green());
 				return Ok(true);
@@ -236,6 +338,8 @@ impl ChatSession {
 				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
 				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
 				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message to save on tokens with supported models");
+				println!("{} - {}", LIST_COMMAND.cyan(), "List all available sessions");
+				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 
 				// Additional info about caching
@@ -277,6 +381,105 @@ impl ChatSession {
 					Err(e) => {
 						println!("{}: {}", "Failed to add cache checkpoint".bright_red(), e);
 					}
+				}
+			},
+			LIST_COMMAND => {
+				match list_available_sessions() {
+					Ok(sessions) => {
+						if sessions.is_empty() {
+							println!("{}", "No sessions found.".bright_yellow());
+						} else {
+							println!("{}", "\nAvailable sessions:\n".bright_cyan());
+							println!("{:<20} {:<25} {:<15} {:<10} {:<10}", 
+								"Name".cyan(), 
+								"Created".cyan(), 
+								"Model".cyan(), 
+								"Tokens".cyan(),
+								"Cost".cyan());
+							
+							println!("{}", "─".repeat(80).cyan());
+							
+							for (name, info) in sessions {
+								// Format date from timestamp
+								let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
+									.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+									.unwrap_or_else(|| "Unknown".to_string());
+								
+								// Determine if this is the current session
+								let is_current = match &self.session.session_file {
+									Some(path) => path.file_stem().and_then(|s| s.to_str()).unwrap_or("") == name,
+									None => false,
+								};
+								
+								let name_display = if is_current {
+									format!("{} (current)", name).bright_green()
+								} else {
+									name.white()
+								};
+								
+								// Simplify model name - strip provider prefix if present
+								let model_parts: Vec<&str> = info.model.split('/').collect();
+								let model_name = if model_parts.len() > 1 { model_parts[1] } else { &info.model };
+								
+								// Calculate total tokens
+								let total_tokens = info.input_tokens + info.output_tokens + info.cached_tokens;
+								
+								println!("{:<20} {:<25} {:<15} {:<10} ${:<.5}", 
+									name_display, 
+									created_time.blue(), 
+									model_name.yellow(), 
+									total_tokens.to_string().bright_blue(),
+									info.total_cost.to_string().bright_magenta());
+							}
+							
+							println!();
+							println!("{}", "You can switch to another session with:".blue());
+							println!("{}", "  /session <session_name>".bright_green());
+							println!("{}", "  /session (creates a new session)".bright_green());
+							println!();
+						}
+					},
+					Err(e) => {
+						println!("{}: {}", "Failed to list sessions".bright_red(), e);
+					}
+				}
+			},
+			SESSION_COMMAND => {
+				// Handle session switching
+				if params.is_empty() {
+					// If no session name provided, create a new session with a random name
+					// Use the same timestamp-based naming convention as in the main function
+					let timestamp = std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs();
+					let new_session_name = format!("session_{}", timestamp);
+					
+					println!("{}", format!("Creating new session: {}", new_session_name).bright_green());
+					
+					// Save current session before switching - no need to save here
+					// The main loop will handle saving before switching
+					
+					// Set the session name to return
+					self.session.info.name = new_session_name;
+					return Ok(true);
+				} else {
+					// Get the session name from the parameters
+					let new_session_name = params.join(" ");
+					let current_session_path = self.session.session_file.clone();
+					
+					// Check if we're already in this session
+					if let Some(current_path) = &current_session_path {
+						if current_path.file_stem().and_then(|s| s.to_str()).unwrap_or("") == new_session_name {
+							println!("{}", "You are already in this session.".blue());
+							return Ok(false);
+						}
+					}
+					
+					// Return a signal to the main loop with the session name to switch to
+					// We'll use a specific return code that tells the main loop to switch sessions
+					self.session.info.name = new_session_name;
+					return Ok(true);
 				}
 			},
 			_ => return Ok(false), // Not a command
@@ -456,7 +659,45 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if input.starts_with('/') {
 			let exit = chat_session.process_command(&input)?;
 			if exit {
-				break;
+				// First check if it's a session switch command
+				if input.starts_with(SESSION_COMMAND) {
+					// We need to switch to another session
+					let new_session_name = chat_session.session.info.name.clone();
+					
+					// Save current session before switching
+					chat_session.save()?;
+					
+					// Initialize the new session
+					let new_chat_session = ChatSession::initialize(
+						Some(new_session_name), // Use the name from the command
+						None,
+						None, // Keep using the default model
+						config
+					)?;
+					
+					// Replace the current chat session
+					chat_session = new_chat_session;
+					
+					// Print the last few messages for context with colors
+					if !chat_session.session.messages.is_empty() {
+						let last_messages = chat_session.session.messages.iter().rev().take(3).collect::<Vec<_>>();
+						use colored::*;
+
+						for msg in last_messages.iter().rev() {
+							if msg.role == "assistant" {
+								println!("{}", msg.content.bright_green());
+							} else if msg.role == "user" {
+								println!("> {}", msg.content.bright_blue());
+							}
+						}
+					}
+					
+					// Continue with the session
+					continue;
+				} else {
+					// It's a regular exit command
+					break;
+				}
 			}
 			continue;
 		}

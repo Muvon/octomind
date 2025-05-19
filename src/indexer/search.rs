@@ -35,7 +35,12 @@ pub fn render_code_blocks(blocks: &[CodeBlock]) {
 
 			if !block.symbols.is_empty() {
 				println!("║ Symbols:");
-				for symbol in &block.symbols {
+				// Deduplicate symbols in display
+				let mut display_symbols = block.symbols.clone();
+				display_symbols.sort();
+				display_symbols.dedup();
+				
+				for symbol in display_symbols {
 					// Only show non-type symbols to users
 					if !symbol.contains("_") {
 						println!("║   • {}", symbol);
@@ -87,7 +92,7 @@ pub async fn expand_symbols(store: &Store, code_blocks: Vec<CodeBlock>) -> Resul
     symbol_refs.sort();
     symbol_refs.dedup();
 
-    println!("Found {} symbols to expand", symbol_refs.len());
+    println!("Found {} unique symbols to expand", symbol_refs.len());
 
     // For each symbol, find code blocks that contain it
     for symbol in symbol_refs {

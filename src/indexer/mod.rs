@@ -3,6 +3,7 @@
 
 mod embed; // Embedding generation - moving from content.rs
 mod search; // Search functionality
+mod languages; // Language-specific processors
 
 pub use embed::*;
 pub use search::*;
@@ -169,24 +170,20 @@ async fn process_file(
     text_blocks_batch: &mut Vec<TextBlock>,
 ) -> Result<()> {
     let mut parser = Parser::new();
-    let ts_lang = match language {
-        "rust" => tree_sitter_rust::LANGUAGE,
-        "php" => tree_sitter_php::LANGUAGE_PHP,
-        "python" => tree_sitter_python::LANGUAGE,
-        "javascript" => tree_sitter_javascript::LANGUAGE,
-        "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-        "json" => tree_sitter_json::LANGUAGE,
-        "go" => tree_sitter_go::LANGUAGE,
-        "cpp" => tree_sitter_cpp::LANGUAGE,
-        "bash" => tree_sitter_bash::LANGUAGE,
-        "ruby" => tree_sitter_ruby::LANGUAGE,
-        _ => return Ok(()),
+    
+    // Get the language implementation
+    let lang_impl = match languages::get_language(language) {
+        Some(impl_) => impl_,
+        None => return Ok(()),  // Skip unsupported languages
     };
-    parser.set_language(&ts_lang.into())?;
-
+    
+    // Set the parser language
+    parser.set_language(&lang_impl.get_ts_language())?;
+    
     let tree = parser.parse(contents, None).unwrap_or_else(|| parser.parse("", None).unwrap());
     let mut code_regions = Vec::new();
-    extract_meaningful_regions(tree.root_node(), contents, language, &mut code_regions);
+    
+    extract_meaningful_regions(tree.root_node(), contents, &lang_impl, &mut code_regions);
 
     for region in code_regions {
         // Use a hash that's unique to both content and path
@@ -226,46 +223,28 @@ struct CodeRegion {
     end_line: usize,
 }
 
-/// Returns Tree-sitter node kinds considered meaningful per language.
-fn get_meaningful_kinds(language: &str) -> Vec<&'static str> {
-    match language {
-        "rust" => vec!["function_item", "struct_item", "enum_item", "impl_item"],
-        "javascript" | "typescript" => vec![
-            "function_declaration", "method_definition", "class_declaration", "arrow_function",
-        ],
-        "python" => vec!["function_definition", "class_definition"],
-        "go" => vec!["function_declaration", "method_declaration"],
-        "cpp" => vec!["function_definition", "class_specifier", "struct_specifier"],
-        "php" => vec![
-            "function_definition", "class_declaration", "method_declaration",
-            "trait_declaration", "interface_declaration",
-        ],
-        "bash" => vec!["function_definition"],
-        "ruby" => vec!["method", "class"],
-        _ => Vec::new(),
-    }
-}
-
 /// Recursively extracts meaningful regions based on node kinds.
 fn extract_meaningful_regions(
     node: Node,
     contents: &str,
-    language: &str,
+    lang_impl: &Box<dyn languages::Language>,
     regions: &mut Vec<CodeRegion>,
 ) {
-    let meaningful_kinds = get_meaningful_kinds(language);
+    let meaningful_kinds = lang_impl.get_meaningful_kinds();
     let node_kind = node.kind();
+    
     if meaningful_kinds.contains(&node_kind) {
         let (combined_content, start_line) = combine_with_preceding_comments(node, contents);
         let end_line = node.end_position().row;
-        let symbols = extract_symbols(node, contents);
+        let symbols = lang_impl.extract_symbols(node, contents);
         regions.push(CodeRegion { content: combined_content, symbols, start_line, end_line });
         return;
     }
+    
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            extract_meaningful_regions(cursor.node(), contents, language, regions);
+            extract_meaningful_regions(cursor.node(), contents, lang_impl, regions);
             if !cursor.goto_next_sibling() { break; }
         }
     }
@@ -292,48 +271,6 @@ fn combine_with_preceding_comments(node: Node, contents: &str) -> (String, usize
     }
     snippet.push_str(&contents[node.start_byte()..node.end_byte()]);
     (snippet, combined_start)
-}
-
-/// Extracts symbols for a code block.
-fn extract_symbols(node: Node, contents: &str) -> Vec<String> {
-    let mut symbols = Vec::new();
-    match node.kind() {
-        "function_item" => {
-            for child in node.children(&mut node.walk()) {
-                if child.kind() == "identifier" {
-                    if let Ok(n) = child.utf8_text(contents.as_bytes()) { symbols.push(n.to_string()); }
-                    break;
-                }
-            }
-        }
-        "struct_item" | "enum_item" | "impl_item" => {
-            for child in node.children(&mut node.walk()) {
-                if child.kind() == "identifier" || child.kind().contains("name") {
-                    if let Ok(n) = child.utf8_text(contents.as_bytes()) { symbols.push(n.to_string()); }
-                    break;
-                }
-            }
-        }
-        _ => extract_identifiers(node, contents, &mut symbols),
-    }
-    symbols
-}
-
-/// Recursively collect identifier-like nodes.
-fn extract_identifiers(node: Node, contents: &str, symbols: &mut Vec<String>) {
-    let kind = node.kind();
-    if (kind.contains("identifier") || kind.contains("name")) && kind != "property_identifier" {
-        if let Ok(text) = node.utf8_text(contents.as_bytes()) {
-            let t = text.trim(); if !t.is_empty() { symbols.push(t.to_string()); }
-        }
-    }
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            extract_identifiers(cursor.node(), contents, symbols);
-            if !cursor.goto_next_sibling() { break; }
-        }
-    }
 }
 
 async fn process_code_blocks_batch(store: &Store, blocks: &[CodeBlock], config: &Config) -> Result<()> {

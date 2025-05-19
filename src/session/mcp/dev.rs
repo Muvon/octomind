@@ -66,7 +66,7 @@ pub fn get_text_editor_function() -> McpFunction {
 			The `command` parameter specifies the operation to perform. Allowed options are:
 			- `view`: View the content of one or multiple files. The path parameter accepts either a single string path or an array of paths.
 			- `write`: Create or overwrite file(s). For single file, use a string path and string file_text. For multiple files, use arrays for both paths and file_texts (must be same length).
-			- `str_replace`: Replace a string in a file with a new string.
+			- `str_replace`: Replace strings in one or multiple files. For single file, provide string path, old_str and new_str. For multiple files, provide arrays for paths, old_strs, and new_strs (all arrays must be the same length).
 			- `undo_edit`: Undo the last edit made to a file.
 
 			To use the view command, you can either provide a single file path as a string or an array of file paths to view multiple files at once.
@@ -78,9 +78,13 @@ pub fn get_text_editor_function() -> McpFunction {
 To write multiple files at once (paths and file_texts arrays must have the same length):
 `{\"command\": \"write\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"file_text\": [\"content1\", \"content2\"]}`
 
-			To use the str_replace command, you must specify both `old_str` and `new_str` - the `old_str` needs to exactly match one
-			unique section of the original file, including any whitespace. Make sure to include enough context that the match is not
-			ambiguous. The entire original string will be replaced with `new_str`.".to_string(),
+			To use the str_replace command for a single file:
+`{\"command\": \"str_replace\", \"path\": \"/path/to/file.txt\", \"old_str\": \"text to replace\", \"new_str\": \"replacement text\"}`
+
+To perform string replacements in multiple files at once (recommended):
+`{\"command\": \"str_replace\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"old_str\": [\"text1 to replace\", \"text2 to replace\"], \"new_str\": [\"replacement1\", \"replacement2\"]}`
+
+The `old_str` needs to exactly match one unique section of the file, including whitespace. Each string replacement is processed independently.".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],
@@ -104,8 +108,26 @@ To write multiple files at once (paths and file_texts arrays must have the same 
 					"enum": ["view", "write", "str_replace", "undo_edit"],
 					"description": "Allowed options are: `view`, `write`, `str_replace`, undo_edit`.",
 				},
-				"old_str": {"type": "string"},
-				"new_str": {"type": "string"},
+				"old_str": {
+					"description": "String(s) to replace. Can be a single string or an array of strings matching the path array length.",
+					"oneOf": [
+						{"type": "string"},
+						{
+							"type": "array",
+							"items": {"type": "string"}
+						}
+					]
+				},
+				"new_str": {
+					"description": "Replacement string(s). Can be a single string or an array of strings matching paths and old_strs.",
+					"oneOf": [
+						{"type": "string"},
+						{
+							"type": "array",
+							"items": {"type": "string"}
+						}
+					]
+				},
 				"file_text": {
 					"description": "Content to write to file(s). Can be a string for a single file or an array of strings matching the path array length.",
 					"oneOf": [
@@ -306,20 +328,62 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			}
 		},
 		"str_replace" => {
-			let path = match path_value.as_str() {
-				Some(p) => p,
-				_ => return Err(anyhow!("'path' parameter must be a string for str_replace operations")),
-			};
-
-			let old_str = match call.parameters.get("old_str") {
-				Some(Value::String(s)) => s.clone(),
-				_ => return Err(anyhow!("Missing or invalid 'old_str' parameter")),
-			};
-			let new_str = match call.parameters.get("new_str") {
-				Some(Value::String(s)) => s.clone(),
-				_ => return Err(anyhow!("Missing or invalid 'new_str' parameter")),
-			};
-			replace_string_in_file(Path::new(path), &old_str, &new_str).await
+			// Support either a single path or arrays for multiple files
+			match path_value {
+				Value::String(p) => {
+					// Single file replacement
+					let old_str = match call.parameters.get("old_str") {
+						Some(Value::String(s)) => s.clone(),
+						_ => return Err(anyhow!("Missing or invalid 'old_str' parameter")),
+					};
+					let new_str = match call.parameters.get("new_str") {
+						Some(Value::String(s)) => s.clone(),
+						_ => return Err(anyhow!("Missing or invalid 'new_str' parameter")),
+					};
+					replace_string_in_file(Path::new(p), &old_str, &new_str).await
+				},
+				Value::Array(paths) => {
+					// Multiple files replacement - preferred method
+					let old_str_value = match call.parameters.get("old_str") {
+						Some(value) => value,
+						_ => return Err(anyhow!("Missing 'old_str' parameter for str_replace operations")),
+					};
+					
+					let new_str_value = match call.parameters.get("new_str") {
+						Some(value) => value,
+						_ => return Err(anyhow!("Missing 'new_str' parameter for str_replace operations")),
+					};
+					
+					match (old_str_value, new_str_value) {
+						(Value::Array(old_strs), Value::Array(new_strs)) => {
+							// Convert arrays to strings
+							let path_strings: Result<Vec<String>, _> = paths.iter()
+								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
+								.map(|r| r.map(|s| s.to_string()))
+								.collect();
+								
+							let old_str_strings: Result<Vec<String>, _> = old_strs.iter()
+								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in old_str array")))
+								.map(|r| r.map(|s| s.to_string()))
+								.collect();
+								
+							let new_str_strings: Result<Vec<String>, _> = new_strs.iter()
+								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in new_str array")))
+								.map(|r| r.map(|s| s.to_string()))
+								.collect();
+								
+							match (path_strings, old_str_strings, new_str_strings) {
+								(Ok(paths), Ok(old_strs), Ok(new_strs)) => {
+									str_replace_multiple(&paths, &old_strs, &new_strs).await
+								},
+								_ => Err(anyhow!("Invalid strings in arrays")),
+							}
+						},
+						_ => Err(anyhow!("Both 'old_str' and 'new_str' must be arrays for multiple file replacements")),
+					}
+				},
+				_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
+			}
 		},
 		"undo_edit" => {
 			let path = match path_value.as_str() {
@@ -601,7 +665,7 @@ async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<M
 	})
 }
 
-// Replace a string in a file
+// Replace a string in a single file - optimized format for consistency
 async fn replace_string_in_file(path: &Path, old_str: &str, new_str: &str) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Err(anyhow!("File does not exist: {}", path.display()));
@@ -632,21 +696,110 @@ async fn replace_string_in_file(path: &Path, old_str: &str, new_str: &str) -> Re
 	let position = content.find(old_str).unwrap();
 	let start_line = content[..position].matches('\n').count() + 1;
 
+	// Return in the same format as multiple replacements for consistency
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
 		result: json!({
 			"success": true,
-			"output": format!("Successfully replaced string at line {}", start_line),
-			"path": path.to_string_lossy(),
-			"old_size": old_str.len(),
-			"new_size": new_str.len(),
-			"line": start_line,
-			"parameters": {
-				"command": "str_replace",
+			"files": [{
 				"path": path.to_string_lossy(),
-				"old_str": old_str,
-				"new_str": new_str
+				"success": true,
+				"line": start_line,
+				"old_size": old_str.len(),
+				"new_size": new_str.len()
+			}],
+			"count": 1
+		}),
+	})
+}
+
+// Replace strings in multiple files
+async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &[String]) -> Result<McpToolResult> {
+	let mut results = Vec::with_capacity(paths.len());
+	let mut failures = Vec::new();
+
+	// Ensure all arrays have matching length
+	if paths.len() != old_strs.len() || paths.len() != new_strs.len() {
+		return Err(anyhow!(
+			"Mismatch in array lengths. Expected {} paths, {} old strings, and {} new strings to all match.", 
+			paths.len(), old_strs.len(), new_strs.len()
+		));
+	}
+
+	// Process each file replacement
+	for (idx, path_str) in paths.iter().enumerate() {
+		let path = Path::new(path_str);
+		let old_str = &old_strs[idx];
+		let new_str = &new_strs[idx];
+		let path_display = path.display().to_string();
+
+		// Check if file exists
+		if !path.exists() {
+			failures.push(format!("File does not exist: {}", path_display));
+			continue;
+		}
+
+		// Try to read the file content
+		let content = match tokio_fs::read_to_string(path).await {
+			Ok(content) => content,
+			Err(e) => {
+				failures.push(format!("Failed to read {}: {}", path_display, e));
+				continue;
 			}
+		};
+
+		// Check if old_str appears exactly once
+		let occurrences = content.matches(old_str).count();
+		if occurrences == 0 {
+			failures.push(format!("String to replace does not exist in {}", path_display));
+			continue;
+		}
+		if occurrences > 1 {
+			failures.push(format!(
+				"String appears {} times in {}. It should appear exactly once.", 
+				occurrences, path_display
+			));
+			continue;
+		}
+
+		// Try to save history for undo
+		if let Err(e) = save_file_history(path).await {
+			failures.push(format!("Failed to save history for {}: {}", path_display, e));
+			// But continue with the replacement operation
+		}
+
+		// Replace the string
+		let new_content = content.replace(old_str, new_str);
+
+		// Write the new content
+		match tokio_fs::write(path, new_content).await {
+			Ok(_) => {
+				// Find line number for reporting
+				let position = content.find(old_str).unwrap(); // Safe because we checked occurrences
+				let start_line = content[..position].matches('\n').count() + 1;
+				
+				results.push(json!({
+					"path": path_display,
+					"success": true,
+					"line": start_line,
+					"old_size": old_str.len(),
+					"new_size": new_str.len()
+				}));
+			},
+			Err(e) => {
+				failures.push(format!("Failed to write to {}: {}", path_display, e));
+			}
+		};
+	}
+
+	// Return success if at least one file was modified
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		result: json!({
+			"success": !results.is_empty(),
+			"files": results,
+			"count": results.len(),
+			"failed": failures
 		}),
 	})
 }

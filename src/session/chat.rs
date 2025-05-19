@@ -25,15 +25,17 @@ const QUIT_COMMAND: &str = "/quit";
 const COPY_COMMAND: &str = "/copy";
 const CLEAR_COMMAND: &str = "/clear";
 const SAVE_COMMAND: &str = "/save";
+const CACHE_COMMAND: &str = "/cache";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 6] = [
+pub const COMMANDS: [&str; 7] = [
 	HELP_COMMAND,
 	EXIT_COMMAND,
 	QUIT_COMMAND,
 	COPY_COMMAND,
 	CLEAR_COMMAND,
 	SAVE_COMMAND,
+	CACHE_COMMAND,
 ];
 
 // Chat session manager for interactive coding sessions
@@ -224,6 +226,7 @@ impl ChatSession {
 				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
 				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
 				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
+				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 			},
 			COPY_COMMAND => {
@@ -239,6 +242,21 @@ impl ChatSession {
 					println!("{}: {}", "Failed to save session".bright_red(), e);
 				} else {
 					println!("{}", "Session saved successfully.".bright_green());
+				}
+			},
+			CACHE_COMMAND => {
+				match self.session.add_cache_checkpoint() {
+					Ok(true) => {
+						println!("{}", "Cache checkpoint added at the last user message. This will be used for future requests.".bright_green());
+						// Save the session with the cached message
+						let _ = self.save();
+					},
+					Ok(false) => {
+						println!("{}", "No user messages found to mark as a cache checkpoint.".bright_yellow());
+					},
+					Err(e) => {
+						println!("{}: {}", "Failed to add cache checkpoint".bright_red(), e);
+					}
 				}
 			},
 			_ => return Ok(false), // Not a command

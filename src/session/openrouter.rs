@@ -49,15 +49,33 @@ pub fn get_api_key(config: &Config) -> Result<String, anyhow::Error> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
 	pub role: String,
-	pub content: String,
+	pub content: serde_json::Value,  // Can be string or object with cache_control
 }
 
 // Convert our session messages to OpenRouter format
 pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 	messages.iter().map(|msg| {
-		Message {
-			role: msg.role.clone(),
-			content: msg.content.clone(),
+		// Handle cache breakpoints using Anthropic format
+		if msg.cached {
+			// Create a multipart message with a cache control block
+			Message {
+				role: msg.role.clone(),
+				content: serde_json::json!([
+					{
+						"type": "text",
+						"text": msg.content,
+						"cache_control": {
+							"type": "ephemeral"
+						}
+					}
+				]),
+			}
+		} else {
+			// Regular message
+			Message {
+				role: msg.role.clone(),
+				content: serde_json::json!(msg.content),
+			}
 		}
 	}).collect()
 }

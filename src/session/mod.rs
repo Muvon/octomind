@@ -23,6 +23,12 @@ pub struct Message {
     pub role: String,
     pub content: String,
     pub timestamp: u64,
+    #[serde(default = "default_cache_marker")]
+    pub cached: bool,  // Marks if this message is a cache breakpoint
+}
+
+fn default_cache_marker() -> bool {
+    false
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -75,10 +81,29 @@ impl Session {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            cached: false,  // Default to not cached
         };
 
         self.messages.push(message.clone());
         message
+    }
+    
+    // Add a cache checkpoint - marks the last user message as a cache breakpoint
+    pub fn add_cache_checkpoint(&mut self) -> Result<bool, anyhow::Error> {
+        // Only user messages can be marked as cache breakpoints
+        let mut marked = false;
+        
+        // Find the last user message and mark it as a cache breakpoint
+        for i in (0..self.messages.len()).rev() {
+            let msg = &mut self.messages[i];
+            if msg.role == "user" {
+                msg.cached = true;
+                marked = true;
+                break;
+            }
+        }
+        
+        Ok(marked)
     }
 
     // Save the session to a file

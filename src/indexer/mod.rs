@@ -11,9 +11,10 @@ use crate::state::SharedState;
 use crate::store::{Store, CodeBlock, TextBlock};
 use crate::config::Config;
 use std::fs;
-use walkdir::WalkDir;
+// We're using ignore::WalkBuilder instead of walkdir::WalkDir
 use tree_sitter::{Parser, Node};
 use anyhow::Result;
+use ignore;
 
 // Detect language based on file extension
 pub fn detect_language(path: &std::path::Path) -> Option<&str> {
@@ -41,12 +42,25 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 
     const BATCH_SIZE: usize = 10;
     let mut embedding_calls = 0;
-
-    for entry in WalkDir::new(current_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
+    
+    // Use the ignore crate to respect .gitignore files
+    let walker = ignore::WalkBuilder::new(&current_dir)
+        .hidden(false)  // Don't ignore hidden files (unless in .gitignore)
+        .git_ignore(true)  // Respect .gitignore files
+        .git_global(true) // Respect global git ignore files
+        .git_exclude(true) // Respect .git/info/exclude files
+        .build();
+        
+    for result in walker {
+        let entry = match result {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        
+        // Skip directories, only process files
+        if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+            continue;
+        }
         if let Some(language) = detect_language(entry.path()) {
             if let Ok(contents) = fs::read_to_string(entry.path()) {
                 let file_path = entry.path().to_string_lossy().to_string();
@@ -90,6 +104,61 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
     Ok(())
 }
 
+// Function to handle file changes (for watch mode)
+pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config) -> Result<()> {
+    // First, let's remove any existing code blocks for this file path
+    store.remove_blocks_by_path(file_path).await?;
+    
+    // Now, if the file still exists, check if it should be indexed based on .gitignore rules
+    let path = std::path::Path::new(file_path);
+    if path.exists() {
+        // Create a matcher that respects .gitignore rules
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
+        
+        // Try to add .gitignore files from the project root up to the file's directory
+        let parent_path = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let gitignore_path = parent_path.join(".gitignore");
+        if gitignore_path.exists() {
+            let _ = builder.add(&gitignore_path);
+        }
+        
+        // Build the matcher
+        if let Ok(matcher) = builder.build() {
+            // Check if the file should be ignored
+            if matcher.matched(path, path.is_dir()).is_ignore() {
+                // File is in .gitignore, so don't index it
+                return Ok(());
+            }
+        }
+        
+        // File is not ignored, so proceed with indexing
+        if let Some(language) = detect_language(path) {
+            if let Ok(contents) = fs::read_to_string(path) {
+                let mut code_blocks_batch = Vec::new();
+                let mut text_blocks_batch = Vec::new();
+                
+                process_file(
+                    store,
+                    &contents,
+                    file_path,
+                    language,
+                    &mut code_blocks_batch,
+                    &mut text_blocks_batch,
+                ).await?;
+                
+                if !code_blocks_batch.is_empty() {
+                    process_code_blocks_batch(store, &code_blocks_batch, config).await?;
+                }
+                if !text_blocks_batch.is_empty() {
+                    process_text_blocks_batch(store, &text_blocks_batch, config).await?;
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 // Processes a single file, extracting code blocks and adding them to the batch
 async fn process_file(
     store: &Store,
@@ -120,7 +189,8 @@ async fn process_file(
     extract_meaningful_regions(tree.root_node(), contents, language, &mut code_regions);
 
     for region in code_regions {
-        let content_hash = calculate_content_hash(&region.content);
+        // Use a hash that's unique to both content and path
+        let content_hash = calculate_unique_content_hash(&region.content, file_path);
         if !store.content_exists(&content_hash, "code_blocks").await? {
             code_blocks_batch.push(CodeBlock {
                 path: file_path.to_string(),
@@ -134,7 +204,7 @@ async fn process_file(
         }
     }
 
-    let content_hash = calculate_content_hash(contents);
+    let content_hash = calculate_unique_content_hash(contents, file_path);
     if !store.content_exists(&content_hash, "text_blocks").await? {
         text_blocks_batch.push(TextBlock {
             path: file_path.to_string(),

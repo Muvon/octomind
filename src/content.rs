@@ -40,7 +40,8 @@ fn get_text_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedd
 	let mut model_guard = TEXT_EMBEDDING_MODEL.lock().unwrap();
 
 	if model_guard.is_none() {
-		println!("Initializing text embedding model {:?}...", model_name);
+		// Debug output
+		// println!("Initializing text embedding model {:?}...", model_name);
 
 		// Create cache directory if it doesn't exist
 		let cache_dir = std::path::PathBuf::from(".octodev/fastembed");

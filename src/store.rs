@@ -173,7 +173,7 @@ impl Store {
                 SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
                 FROM code_blocks
                 ORDER BY embedding_distance DESC
-                LIMIT 10;
+                LIMIT 50;
             "#)
 			.bind(("query_embedding", embedding))
 			.await?;
@@ -238,5 +238,24 @@ impl Store {
 		};
 
 		Ok(Some(code_block))
+	}
+
+	// Remove all blocks associated with a file path
+	pub async fn remove_blocks_by_path(&self, file_path: &str) -> Result<()> {
+		// Delete all code blocks with the given path
+		let result = self.db
+			.query("DELETE FROM code_blocks WHERE path = $path")
+			.bind(("path", file_path))
+			.await?;
+		result.check()?;
+
+		// Delete all text blocks with the given path
+		let result = self.db
+			.query("DELETE FROM text_blocks WHERE path = $path")
+			.bind(("path", file_path))
+			.await?;
+		result.check()?;
+
+		Ok(())
 	}
 }

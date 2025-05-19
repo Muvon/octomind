@@ -41,7 +41,8 @@ fn get_text_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedd
 	let mut model_guard = TEXT_EMBEDDING_MODEL.lock().unwrap();
 
 	if model_guard.is_none() {
-		println!("Initializing text embedding model {:?}...", model_name);
+		// Debug output
+		// println!("Initializing text embedding model {:?}...", model_name);
 
 		// Create cache directory if it doesn't exist
 		let cache_dir = std::path::PathBuf::from(".octodev/fastembed");
@@ -64,6 +65,14 @@ fn get_text_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedd
 pub fn calculate_content_hash(contents: &str) -> String {
 	let mut hasher = Sha256::new();
 	hasher.update(contents.as_bytes());
+	format!("{:x}", hasher.finalize())
+}
+
+// Calculate a unique hash for a content that includes the file path
+pub fn calculate_unique_content_hash(contents: &str, file_path: &str) -> String {
+	let mut hasher = Sha256::new();
+	hasher.update(contents.as_bytes());
+	hasher.update(file_path.as_bytes());
 	format!("{:x}", hasher.finalize())
 }
 

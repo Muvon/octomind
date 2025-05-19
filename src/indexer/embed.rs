@@ -19,8 +19,14 @@ fn get_code_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedd
 	let mut model_guard = CODE_EMBEDDING_MODEL.lock().unwrap();
 
 	if model_guard.is_none() {
+		// Create cache directory if it doesn't exist
+		let cache_dir = std::path::PathBuf::from(".octodev/fastembed");
+		std::fs::create_dir_all(&cache_dir).context("Failed to create FastEmbed cache directory")?;
+
 		let model = TextEmbedding::try_new(
-			InitOptions::new(model_name).with_show_download_progress(true),
+			InitOptions::new(model_name)
+				.with_show_download_progress(true)
+				.with_cache_dir(cache_dir),
 		)
 			.context("Failed to initialize FastEmbed code model")?;
 
@@ -37,8 +43,14 @@ fn get_text_embedding_model(model_name: EmbeddingModel) -> Result<Arc<TextEmbedd
 	if model_guard.is_none() {
 		println!("Initializing text embedding model {:?}...", model_name);
 
+		// Create cache directory if it doesn't exist
+		let cache_dir = std::path::PathBuf::from(".octodev/fastembed");
+		std::fs::create_dir_all(&cache_dir).context("Failed to create FastEmbed cache directory")?;
+
 		let model = TextEmbedding::try_new(
-			InitOptions::new(model_name).with_show_download_progress(true),
+			InitOptions::new(model_name)
+				.with_show_download_progress(true)
+				.with_cache_dir(cache_dir),
 		)
 			.context("Failed to initialize FastEmbed text model")?;
 

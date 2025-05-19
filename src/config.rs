@@ -207,6 +207,8 @@ pub struct Config {
 	pub openrouter: OpenRouterConfig,
 	#[serde(default)]
 	pub mcp: McpConfig,
+	// Custom system prompt (optional - falls back to default if not provided)
+	pub system: Option<String>,
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
 }
@@ -220,6 +222,7 @@ impl Default for Config {
 			jina_api_key: None,
 			openrouter: OpenRouterConfig::default(),
 			mcp: McpConfig::default(),
+			system: None, // No custom system prompt by default
 			config_path: None,
 		}
 	}

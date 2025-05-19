@@ -87,6 +87,10 @@ struct ConfigArgs {
     /// Add/configure MCP server (format: name,url=X|command=Y,args=Z)
     #[arg(long)]
     mcp_server: Option<String>,
+
+    /// Set custom system prompt (or 'default' to reset to default)
+    #[arg(long)]
+    system: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -319,6 +323,20 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
         }
     }
 
+    // Update system prompt if specified
+    if let Some(system_prompt) = &args.system {
+        if system_prompt.to_lowercase() == "default" {
+            // Reset to default
+            config.system = None;
+            println!("Reset system prompt to default");
+        } else {
+            // Set custom prompt
+            config.system = Some(system_prompt.clone());
+            println!("Set custom system prompt");
+        }
+        modified = true;
+    }
+
     // If no modifications were made, create a default config
     if !modified {
         let config_path = Config::create_default_config()?;
@@ -350,6 +368,13 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
     println!("FastEmbed text model: {}", config.fastembed.text_model);
     println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
     println!("MCP providers: {}", config.mcp.providers.join(", "));
+    
+    // Show system prompt status
+    if let Some(_) = &config.system {
+        println!("System prompt: Custom");
+    } else {
+        println!("System prompt: Default");
+    }
 
     Ok(())
 }

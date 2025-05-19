@@ -264,6 +264,12 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
     Ok(())
 }
 pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
+	// If a custom system prompt is defined in the config, use it
+	if let Some(custom_prompt) = &config.system {
+		return custom_prompt.clone();
+	}
+
+	// Otherwise, use the default system prompt
 	let mut prompt = format!(
 		"You are an Octodev – top notch AI coding assistant helping with the codebase in {}
 

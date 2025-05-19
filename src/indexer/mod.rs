@@ -192,7 +192,7 @@ async fn process_file(
             code_blocks_batch.push(CodeBlock {
                 path: file_path.to_string(),
                 hash: content_hash,
-                language: language.to_string(),
+                language: lang_impl.name().to_string(),
                 content: region.content,
                 symbols: region.symbols,
                 start_line: region.start_line,
@@ -205,6 +205,7 @@ async fn process_file(
     if !store.content_exists(&content_hash, "text_blocks").await? {
         text_blocks_batch.push(TextBlock {
             path: file_path.to_string(),
+            language: lang_impl.name().to_string(),
             hash: content_hash,
             content: contents.to_string(),
             start_line: 0,

@@ -20,6 +20,7 @@ pub struct CodeBlock {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TextBlock {
 	pub path: String,
+	pub language: String,
 	pub content: String,
 	pub start_line: usize,
 	pub end_line: usize,
@@ -96,6 +97,7 @@ impl Store {
         self.db.query("
             DEFINE TABLE text_blocks SCHEMALESS;
             DEFINE FIELD path ON text_blocks TYPE string;
+            DEFINE FIELD language ON text_blocks TYPE string;
             DEFINE FIELD content ON text_blocks TYPE string;
             DEFINE FIELD start_line ON text_blocks TYPE int;
             DEFINE FIELD end_line ON text_blocks TYPE int;
@@ -148,10 +150,11 @@ impl Store {
 			let id = Uuid::new_v4().to_string();
 
 			let result = self.db
-				.query("CREATE text_blocks SET id = $id, path = $path, content = $content,
+				.query("CREATE text_blocks SET id = $id, path = $path, language = $language, content = $content,
 					start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
 				.bind(("id", &id))
 				.bind(("path", &block.path))
+				.bind(("language", &block.language))
 				.bind(("content", &block.content))
 				.bind(("start_line", block.start_line as i64))
 				.bind(("end_line", block.end_line as i64))

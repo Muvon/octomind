@@ -129,7 +129,7 @@ async fn run_with_cleanup(args: OctodevArgs, config: Config) -> Result<(), anyho
     }
 
     // Initialize the store
-    let store = Store::new()?;
+    let store = Store::new().await?;
     store.initialize_collections().await?;
 
     // Execute the appropriate command
@@ -377,7 +377,7 @@ async fn index_codebase(store: &Store, config: &Config) -> Result<(), anyhow::Er
 async fn search_codebase(store: &Store, args: &SearchArgs, config: &Config) -> Result<(), anyhow::Error> {
     let current_dir = std::env::current_dir()?;
     let octodev_dir = current_dir.join(".octodev");
-    let index_path = octodev_dir.join("qdrant");
+    let index_path = octodev_dir.join("storage");
 
     // Check if we have an index already; if not, create one
     if !index_path.exists() {

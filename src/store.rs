@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-
-use qdrant_client::qdrant::{Condition, CreateCollectionBuilder, Filter, Query, QueryPointsBuilder, ScrollPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder};
-use qdrant_client::qdrant::{PointStruct, Value, Distance};
-use qdrant_client::{Qdrant, Payload};
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use surrealdb::Surreal;
+use surrealdb::engine::local::Db;
+use surrealdb::opt::RecordId;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -27,59 +26,26 @@ pub struct TextBlock {
 	pub hash: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Record {
+    id: RecordId,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VectorSearch {
+    id: RecordId,
+    embedding_distance: f32,
+    embedding_vector: Vec<f32>,
+    #[serde(flatten)]
+    payload: HashMap<String, serde_json::Value>,
+}
+
 pub struct Store {
-	client: Qdrant,
-}
-
-impl From<CodeBlock> for Payload {
-	fn from(block: CodeBlock) -> Self {
-		let mut payload = Payload::new();
-		payload.insert("path".to_string(), Value::from(block.path));
-		payload.insert("language".to_string(), Value::from(block.language));
-		payload.insert("content".to_string(), Value::from(block.content));
-		payload.insert("symbols".to_string(), Value::from(block.symbols));
-		payload.insert("start_line".to_string(), Value::from(block.start_line as i64));
-		payload.insert("end_line".to_string(), Value::from(block.end_line as i64));
-		payload.insert("hash".to_string(), Value::from(block.hash));
-		payload
-	}
-}
-impl From<TextBlock> for Payload {
-	fn from(block: TextBlock) -> Self {
-		let mut payload = Payload::new();
-		payload.insert("path".to_string() , Value::from(block.path));
-		payload.insert("content".to_string(), Value::from(block.content));
-		payload.insert("start_line".to_string(), Value::from(block.start_line as i64));
-		payload.insert("end_line".to_string(), Value::from(block.end_line as i64));
-		payload.insert("hash".to_string()
-			, Value::from(block.hash));
-		payload
-	}
-}
-
-impl From<HashMap<String, Value>> for CodeBlock {
-	fn from(payload: HashMap<String, Value>) -> Self {
-		let start_line: i64 = payload.get("start_line").unwrap().as_integer().unwrap();
-		let end_line: i64 = payload.get("end_line").unwrap().as_integer().unwrap();
-		let path: String = payload.get("path").unwrap().as_str().unwrap().to_string();
-		let hash: String = payload.get("hash").unwrap().as_str().unwrap().to_string();
-		let language: String = payload.get("language").unwrap().as_str().unwrap().to_string();
-		let content: String = payload.get("content").unwrap().as_str().unwrap().to_string();
-		let symbols: Vec<String> = payload.get("symbols").unwrap().as_list().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
-		Self {
-			path: path.clone(),
-			hash: hash.clone(),
-			language: language.clone(),
-			content: content.clone(),
-			symbols: symbols.clone(),
-			start_line: start_line as usize,
-			end_line: end_line as usize,
-		}
-	}
+	db: Surreal<Db>,
 }
 
 impl Store {
-	pub fn new() -> Result<Self> {
+	pub async fn new() -> Result<Self> {
 		// Get current directory
 		let current_dir = std::env::current_dir()?;
 
@@ -89,128 +55,188 @@ impl Store {
 			std::fs::create_dir_all(&octodev_dir)?;
 		}
 
-		// Create qdrant storage directory
-		let qdrant_dir = octodev_dir.join("qdrant");
-		if !qdrant_dir.exists() {
-			std::fs::create_dir_all(&qdrant_dir)?;
+		// Create surrealdb storage directory
+		let surreal_dir = octodev_dir.join("storage");
+		if !surreal_dir.exists() {
+			std::fs::create_dir_all(&surreal_dir)?;
 		}
 
-		// Create a local Qdrant client - setup to use local files in .octodev/qdrant
-		let config = qdrant_client::config::QdrantConfig::from_url(&format!("http://localhost:6334"));
+		// Convert the path to a string for the file-based database
+		let storage_path = surreal_dir.to_str().unwrap();
 
-		let client = qdrant_client::Qdrant::new(config)
+		// Create a connection to the RocksDB storage engine
+		let db = Surreal::new::<surrealdb::engine::local::RocksDb>(storage_path)
+			.await
 			.map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-		Ok(Self { client })
+        // Select a specific namespace / database
+        db.use_ns("octodev").use_db("octodev").await?;
+
+		Ok(Self { db })
 	}
 
 	pub async fn initialize_collections(&self) -> Result<()> {
-		for collection_name in ["code_blocks", "text_blocks"] {
-			let dimension = match collection_name {
-				"code_blocks" => 384,
-				"text_blocks" => 384,
-				_ => unreachable!(),
-			};
-			match self.client.collection_info(collection_name).await {
-				Ok(_) => (),
-				Err(_) => {
-					self.client
-						.create_collection(
-							CreateCollectionBuilder::new(collection_name)
-								.vectors_config(VectorParamsBuilder::new(dimension, Distance::Cosine)),
-						)
-					.await?;
-				}
-			}
-		}
+        // Initialize tables with schema - vector search enabled
+        // For code_blocks
+        self.db.query("
+            DEFINE TABLE code_blocks SCHEMALESS;
+            DEFINE FIELD path ON code_blocks TYPE string;
+            DEFINE FIELD language ON code_blocks TYPE string;
+            DEFINE FIELD content ON code_blocks TYPE string;
+            DEFINE FIELD symbols ON code_blocks TYPE array;
+            DEFINE FIELD start_line ON code_blocks TYPE int;
+            DEFINE FIELD end_line ON code_blocks TYPE int;
+            DEFINE FIELD hash ON code_blocks TYPE string;
+            DEFINE FIELD embedding_vector ON code_blocks TYPE array;
+            DEFINE INDEX code_blocks_hash ON TABLE code_blocks COLUMNS hash UNIQUE;
+        ")
+        .await?;
+
+        // For text_blocks
+        self.db.query("
+            DEFINE TABLE text_blocks SCHEMALESS;
+            DEFINE FIELD path ON text_blocks TYPE string;
+            DEFINE FIELD content ON text_blocks TYPE string;
+            DEFINE FIELD start_line ON text_blocks TYPE int;
+            DEFINE FIELD end_line ON text_blocks TYPE int;
+            DEFINE FIELD hash ON text_blocks TYPE string;
+            DEFINE FIELD embedding_vector ON text_blocks TYPE array;
+            DEFINE INDEX text_blocks_hash ON TABLE text_blocks COLUMNS hash UNIQUE;
+        ")
+        .await?;
+
 		Ok(())
 	}
 
 	pub async fn content_exists(&self, hash: &str, collection: &str) -> Result<bool> {
-		let filter = Filter::must([Condition::matches("hash", hash.to_string())]);
-		let response = self
-			.client
-			.scroll(
-				ScrollPointsBuilder::new(collection)
-					.filter(filter)
-					.limit(1)
-					.with_payload(false)
-					.with_vectors(false),
-			)
-		.await?;
-		Ok(!response.result.is_empty())
+		let query = format!("SELECT * FROM {} WHERE hash = $hash LIMIT 1", collection);
+		let mut result = self.db
+			.query(query)
+			.bind(("hash", hash))
+			.await?;
+
+		let records: Vec<Record> = result.take(0)?;
+		Ok(!records.is_empty())
 	}
 
 	pub async fn store_code_blocks(&self, blocks: &[CodeBlock], embeddings: Vec<Vec<f32>>) -> Result<()> {
-		let points: Vec<PointStruct> = blocks
-			.iter()
-			.zip(embeddings.iter())
-			.map(|(block, embedding)| {
-				PointStruct::new(Uuid::new_v4().to_string(), (*embedding).clone(), (*block).clone())
-			})
-			.collect();
+		for (block, embedding) in blocks.iter().zip(embeddings.iter()) {
+			let id = Uuid::new_v4().to_string();
 
-		self.client
-			.upsert_points(UpsertPointsBuilder::new("code_blocks".to_string(), points).wait(true))
-		.await?;
+			let result = self.db
+				.query("CREATE code_blocks SET id = $id, path = $path, language = $language, content = $content,
+					symbols = $symbols, start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
+				.bind(("id", &id))
+				.bind(("path", &block.path))
+				.bind(("language", &block.language))
+				.bind(("content", &block.content))
+				.bind(("symbols", &block.symbols))
+				.bind(("start_line", block.start_line as i64))
+				.bind(("end_line", block.end_line as i64))
+				.bind(("hash", &block.hash))
+				.bind(("embedding", embedding))
+				.await?;
+
+			result.check()?;
+		}
 
 		Ok(())
 	}
 
 	pub async fn store_text_blocks(&self, blocks: &[TextBlock], embeddings: Vec<Vec<f32>>) -> Result<()> {
-		let points: Vec<PointStruct> = blocks
-			.iter()
-			.zip(embeddings.iter())
-			.map(|(block, embedding)| {
-				PointStruct::new(Uuid::new_v4().to_string(), (*embedding).clone(), (*block).clone())
-			})
-			.collect();
+		for (block, embedding) in blocks.iter().zip(embeddings.iter()) {
+			let id = Uuid::new_v4().to_string();
 
-		self.client
-			.upsert_points(UpsertPointsBuilder::new("text_blocks".to_string(), points).wait(true))
-		.await?;
+			let result = self.db
+				.query("CREATE text_blocks SET id = $id, path = $path, content = $content,
+					start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
+				.bind(("id", &id))
+				.bind(("path", &block.path))
+				.bind(("content", &block.content))
+				.bind(("start_line", block.start_line as i64))
+				.bind(("end_line", block.end_line as i64))
+				.bind(("hash", &block.hash))
+				.bind(("embedding", embedding))
+				.await?;
+
+			result.check()?;
+		}
 
 		Ok(())
 	}
 
 	pub async fn get_code_blocks(&self, embedding: Vec<f32>) -> Result<Vec<CodeBlock>> {
-		let query = Query::new_nearest(embedding);
-		let response = self.client
-			.query(
-				QueryPointsBuilder::new("code_blocks")
-					.query(query)
-					.with_payload(true)
-					.limit(10)
-			)
-		.await?;
+		// Using a SurrealQL query with vector similarity using dot product
+        // Note: We could use cosine similarity as in Qdrant, but SurrealDB's vector_dot is available by default
+		let mut result = self.db
+			.query(r#"
+                SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
+                FROM code_blocks
+                ORDER BY embedding_distance DESC
+                LIMIT 10;
+            "#)
+			.bind(("query_embedding", embedding))
+			.await?;
 
-		let result: Vec<CodeBlock> = response.result
+		let vector_results: Vec<VectorSearch> = result.take(0)?;
+
+		// Convert results to CodeBlock structs
+		let results: Vec<CodeBlock> = vector_results
 			.into_iter()
-			.map(|point| point.payload)
-			.fold(Vec::new(), |mut acc, payload| {
-				acc.push(payload.into());
-				acc
-			});
+			.map(|vr| {
+				CodeBlock {
+					path: vr.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					language: vr.payload.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					content: vr.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					symbols: vr.payload.get("symbols")
+						.and_then(|v| v.as_array())
+						.map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
+						.unwrap_or_default(),
+					start_line: vr.payload.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+					end_line: vr.payload.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+					hash: vr.payload.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+				}
+			})
+			.collect();
 
-		Ok(result)
+		Ok(results)
 	}
 
 	pub async fn get_code_block_by_symbol(&self, symbol: &str) -> Result<Option<CodeBlock>> {
-		let filter = Filter::must([Condition::matches("symbols", symbol.to_string())]);
-		let response = self.client
-			.query(
-				QueryPointsBuilder::new("code_blocks")
-					.filter(filter)
-					.with_payload(true)
-					.limit(1)
-			)
-		.await?;
+        // Query by symbol
+		let mut result = self.db
+			.query(r#"
+                SELECT *
+                FROM code_blocks
+                WHERE $symbol IN symbols
+                LIMIT 1;
+            "#)
+			.bind(("symbol", symbol))
+			.await?;
 
-		if response.result.is_empty() {
-			Ok(None)
-		} else {
-			let block: CodeBlock = response.result[0].payload.clone().into();
-			Ok(Some(block))
+		// Process the result
+		let records: Vec<serde_json::Value> = result.take(0)?;
+
+		if records.is_empty() {
+			return Ok(None);
 		}
+
+		// Convert the first record to a CodeBlock
+		let record = &records[0];
+
+		let code_block = CodeBlock {
+			path: record.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+			language: record.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+			content: record.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+			symbols: record.get("symbols")
+				.and_then(|v| v.as_array())
+				.map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
+				.unwrap_or_default(),
+			start_line: record.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+			end_line: record.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+			hash: record.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+		};
+
+		Ok(Some(code_block))
 	}
 }

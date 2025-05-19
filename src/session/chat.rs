@@ -359,7 +359,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	// Ensure there's an index
 	let current_dir = std::env::current_dir()?;
 	let octodev_dir = current_dir.join(".octodev");
-	let index_path = octodev_dir.join("qdrant");
+	let index_path = octodev_dir.join("storage");
 	if !index_path.exists() {
 		println!("No index found. Indexing current directory first...");
 		crate::indexer::index_files(store, crate::state::create_shared_state(), config).await?;

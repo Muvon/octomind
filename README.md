@@ -17,7 +17,7 @@ OctoDev is a command-line tool that helps developers navigate and understand the
 ### Prerequisites
 
 - Rust and Cargo installed on your system
-- Qdrant database (automatically runs in embedded mode if not found)
+- No additional dependencies - embedded SurrealDB is used for storage
 
 ### Building from Source
 
@@ -170,7 +170,7 @@ OctoDev uses a combination of techniques to build a searchable index of your cod
 
 1. **Tree-sitter Parsing**: Analyzes code syntax to extract meaningful blocks and symbols
 2. **Vector Embeddings**: Converts code blocks to numerical vectors capturing semantic meaning
-3. **Qdrant Database**: Stores and retrieves embeddings for efficient similarity search
+3. **SurrealDB Database**: Stores and retrieves embeddings for efficient similarity search
 4. **Symbol Tracking**: Maintains relationships between code symbols for reference expansion
 
 When you search, OctoDev converts your natural language query into the same vector space and finds the closest matching code blocks.
@@ -181,7 +181,7 @@ When you search, OctoDev converts your natural language query into the same vect
 
 - **Slow Indexing**: For large codebases, initial indexing may take some time, especially when downloading models for the first time.
 - **Missing Dependencies**: Make sure you have the required Rust version (use rustup to update if needed).
-- **Qdrant Connection**: If you have an existing Qdrant server running on port 6334, OctoDev will use it; otherwise, it will operate in embedded mode.
+- **Storage Path**: Data is stored in the `.octodev/storage` directory using SurrealDB's RocksDB backend.
 
 ## Contributing
 

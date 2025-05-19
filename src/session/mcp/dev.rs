@@ -65,15 +65,18 @@ pub fn get_text_editor_function() -> McpFunction {
 
 			The `command` parameter specifies the operation to perform. Allowed options are:
 			- `view`: View the content of one or multiple files. The path parameter accepts either a single string path or an array of paths.
-			- `write`: Create or overwrite a file with the given content
+			- `write`: Create or overwrite file(s). For single file, use a string path and string file_text. For multiple files, use arrays for both paths and file_texts (must be same length).
 			- `str_replace`: Replace a string in a file with a new string.
 			- `undo_edit`: Undo the last edit made to a file.
 
 			To use the view command, you can either provide a single file path as a string or an array of file paths to view multiple files at once.
 			For example: `{\"path\": \"/path/to/file.txt\"}` or `{\"path\": [\"/path/to/file1.txt\", \"/path/to/file2.txt\"]}`.
 
-			To use the write command, you must specify `file_text` which will become the new content of the file. Be careful with
-			existing files! This is a full overwrite, so you must include everything - not just sections you are modifying.
+			To use the write command for a single file:
+`{\"command\": \"write\", \"path\": \"/path/to/file.txt\", \"file_text\": \"content\"}`
+
+To write multiple files at once (paths and file_texts arrays must have the same length):
+`{\"command\": \"write\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"file_text\": [\"content1\", \"content2\"]}`
 
 			To use the str_replace command, you must specify both `old_str` and `new_str` - the `old_str` needs to exactly match one
 			unique section of the original file, including any whitespace. Make sure to include enough context that the match is not
@@ -103,7 +106,16 @@ pub fn get_text_editor_function() -> McpFunction {
 				},
 				"old_str": {"type": "string"},
 				"new_str": {"type": "string"},
-				"file_text": {"type": "string"}
+				"file_text": {
+					"description": "Content to write to file(s). Can be a string for a single file or an array of strings matching the path array length.",
+					"oneOf": [
+						{"type": "string"},
+						{
+							"type": "array",
+							"items": {"type": "string"}
+						}
+					]
+				}
 			}
 		}),
 	}
@@ -252,16 +264,46 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			}
 		},
 		"write" => {
-			let path = match path_value.as_str() {
-				Some(p) => p,
-				_ => return Err(anyhow!("'path' parameter must be a string for write operations")),
-			};
-
-			let file_text = match call.parameters.get("file_text") {
-				Some(Value::String(txt)) => txt.clone(),
-				_ => return Err(anyhow!("Missing or invalid 'file_text' parameter")),
-			};
-			write_file(Path::new(path), &file_text).await
+			// Support either a single path/content or arrays for multiple files
+			match path_value {
+				Value::String(p) => {
+					// Single file write
+					let file_text = match call.parameters.get("file_text") {
+						Some(Value::String(txt)) => txt.clone(),
+						_ => return Err(anyhow!("Missing or invalid 'file_text' parameter for single file write")),
+					};
+					write_file(Path::new(p), &file_text).await
+				},
+				Value::Array(paths) => {
+					// Multiple files write
+					let file_text_value = match call.parameters.get("file_text") {
+						Some(value) => value,
+						_ => return Err(anyhow!("Missing 'file_text' parameter for write operations")),
+					};
+					
+					match file_text_value {
+						Value::Array(contents) => {
+							// Convert path and content arrays to strings
+							let path_strings: Result<Vec<String>, _> = paths.iter()
+								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
+								.map(|r| r.map(|s| s.to_string()))
+								.collect();
+								
+							let content_strings: Result<Vec<String>, _> = contents.iter()
+								.map(|c| c.as_str().ok_or_else(|| anyhow!("Invalid content in array")))
+								.map(|r| r.map(|s| s.to_string()))
+								.collect();
+								
+							match (path_strings, content_strings) {
+								(Ok(paths), Ok(contents)) => write_multiple_files(&paths, &contents).await,
+								(Err(e), _) | (_, Err(e)) => Err(e),
+							}
+						},
+						_ => return Err(anyhow!("'file_text' must be an array for multiple file writes")),
+					}
+				},
+				_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
+			}
 		},
 		"str_replace" => {
 			let path = match path_value.as_str() {
@@ -463,7 +505,7 @@ async fn view_file(path: &Path) -> Result<McpToolResult> {
 	})
 }
 
-// Write content to a file
+// Write content to a single file
 async fn write_file(path: &Path, content: &str) -> Result<McpToolResult> {
 	// Save the current content for undo if the file exists
 	if path.exists() {
@@ -480,18 +522,82 @@ async fn write_file(path: &Path, content: &str) -> Result<McpToolResult> {
 	// Write the content to the file
 	tokio_fs::write(path, content).await?;
 
-	// Return success
+	// Return success in the same format as multiple file write for consistency
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
 		result: json!({
 			"success": true,
-			"output": format!("Successfully wrote {} bytes to {}", content.len(), path.to_string_lossy()),
-			"path": path.to_string_lossy(),
-			"parameters": {
-			"command": "write",
-			"path": path.to_string_lossy()
+			"files": [{
+				"path": path.to_string_lossy(),
+				"success": true,
+				"size": content.len()
+			}],
+			"count": 1
+		}),
+	})
+}
+
+// Write content to multiple files
+async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<McpToolResult> {
+	let mut results = Vec::with_capacity(paths.len());
+	let mut failures = Vec::new();
+
+	// Ensure paths and contents match in length
+	if paths.len() != contents.len() {
+		return Err(anyhow!(
+			"Mismatch in path and content arrays. Expected {} paths and {} contents to match.", 
+			paths.len(), contents.len()
+		));
+	}
+
+	// Process each file in the list
+	for (idx, path_str) in paths.iter().enumerate() {
+		let path = Path::new(path_str);
+		let content = &contents[idx];
+		let path_display = path.display().to_string();
+
+		// Try to save history for undo if the file exists
+		if path.exists() {
+			if let Err(e) = save_file_history(path).await {
+				failures.push(format!("Failed to save history for {}: {}", path_display, e));
+				// But continue with the write operation
+			}
 		}
-	}),
+
+		// Create parent directories if needed
+		if let Some(parent) = path.parent() {
+			if !parent.exists() {
+				if let Err(e) = tokio_fs::create_dir_all(parent).await {
+					failures.push(format!("Failed to create directories for {}: {}", path_display, e));
+					continue; // Skip this file if we can't create the directory
+				}
+			}
+		}
+
+		// Write the content to the file
+		match tokio_fs::write(path, content).await {
+			Ok(_) => {
+				results.push(json!({
+					"path": path_display,
+					"success": true,
+					"size": content.len()
+				}));
+			},
+			Err(e) => {
+				failures.push(format!("Failed to write to {}: {}", path_display, e));
+			}
+		};
+	}
+
+	// Return success if at least one file was written
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		result: json!({
+			"success": !results.is_empty(),
+			"files": results,
+			"count": results.len(),
+			"failed": failures
+		}),
 	})
 }
 

@@ -139,9 +139,42 @@ impl ChatSession {
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
 			if let Some(usage) = &ex.usage {
+				// Calculate regular and cached tokens
+				let mut regular_prompt_tokens = usage.prompt_tokens;
+				let mut cached_tokens = 0;
+
+				// Check prompt_tokens_details for cached_tokens
+				if let Some(details) = &usage.prompt_tokens_details {
+					if let Some(cached) = details.get("cached_tokens") {
+						if let serde_json::Value::Number(num) = cached {
+							if let Some(num_u64) = num.as_u64() {
+								cached_tokens = num_u64;
+								// Adjust regular tokens to account for cached tokens
+								regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+							}
+						}
+					}
+				}
+
+				// Fall back to breakdown field if prompt_tokens_details didn't have cached tokens
+				if cached_tokens == 0 {
+					if let Some(breakdown) = &usage.breakdown {
+						if let Some(cached) = breakdown.get("cached") {
+							if let serde_json::Value::Number(num) = cached {
+								if let Some(num_u64) = num.as_u64() {
+									cached_tokens = num_u64;
+									// Adjust regular tokens to account for cached tokens
+									regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+								}
+							}
+						}
+					}
+				}
+
 				// Update session token counts
-				self.session.info.input_tokens += usage.prompt_tokens;
+				self.session.info.input_tokens += regular_prompt_tokens;
 				self.session.info.output_tokens += usage.completion_tokens;
+				self.session.info.cached_tokens += cached_tokens;
 
 				// If OpenRouter provided cost data, use it (preferred)
 				if let Some(cost_credits) = usage.cost {
@@ -153,7 +186,7 @@ impl ChatSession {
 					self.estimated_cost = self.session.info.total_cost;
 				} else {
 					// Fallback to configured pricing if OpenRouter didn't provide cost
-					let input_cost = usage.prompt_tokens as f64 * config.openrouter.pricing.input_price;
+					let input_cost = regular_prompt_tokens as f64 * config.openrouter.pricing.input_price;
 					let output_cost = usage.completion_tokens as f64 * config.openrouter.pricing.output_price;
 					let current_cost = input_cost + output_cost;
 
@@ -207,9 +240,11 @@ impl ChatSession {
 
 				// Additional info about caching
 				println!("{}", "** About Cache Checkpoints **".bright_yellow());
+				println!("{}", "The system message with function declarations is automatically cached.");
 				println!("{}", "When using /cache, your last user message will be marked for caching.");
 				println!("{}", "This is useful for large text blocks like code snippets that don't change between requests.");
 				println!("{}", "The model provider will charge less for cached content in subsequent requests.");
+				println!("{}", "Cached tokens will be displayed in the usage statistics after your next message.");
 				println!("{}", "Best practice: Use separate messages with the most data-heavy part marked for caching.\n");
 			},
 			COPY_COMMAND => {
@@ -228,10 +263,11 @@ impl ChatSession {
 				}
 			},
 			CACHE_COMMAND => {
-				match self.session.add_cache_checkpoint() {
+				match self.session.add_cache_checkpoint(false) {
 					Ok(true) => {
 						println!("{}", "Cache checkpoint added at the last user message. This will be used for future requests.".bright_green());
 						println!("{}", "Note: For large text blocks, it's best to split them into separate messages with the cached part containing most of the data.".bright_yellow());
+						println!("{}", "You'll see the cached token count in the usage summary for your next message.".bright_blue());
 						// Save the session with the cached message
 						let _ = self.save();
 					},
@@ -338,6 +374,14 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Create system prompt
 		let system_prompt = create_system_prompt(&current_dir, config).await;
 		chat_session.add_system_message(&system_prompt)?;
+
+		// Mark system message with function declarations as cached by default
+		// This ensures all heavy initial context is cached to save on tokens
+		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
+			if cached {
+				println!("{}", "System prompt has been marked for caching to save tokens in future interactions.".yellow());
+			}
+		}
 
 		// Add assistant welcome message
 		let welcome_message = format!(

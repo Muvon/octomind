@@ -16,6 +16,7 @@ pub struct TokenUsage {
     pub cost: Option<u64>,  // Cost in OpenRouter credits (100,000 credits = $1 USD)
     pub completion_tokens_details: Option<serde_json::Value>,
     pub prompt_tokens_details: Option<serde_json::Value>,
+    pub breakdown: Option<std::collections::HashMap<String, serde_json::Value>>,  // Legacy field for cached tokens
 }
 
 // Store raw request/response for logging
@@ -294,6 +295,20 @@ pub async fn chat_completion(
 				let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
 					.map(|v| v.clone());
 
+				// Extract breakdown info (cached tokens, etc)
+				let breakdown = usage_obj.get("breakdown")
+					.and_then(|b| {
+						if let Some(obj) = b.as_object() {
+							let mut map = std::collections::HashMap::new();
+							for (k, v) in obj {
+								map.insert(k.clone(), v.clone());
+							}
+							Some(map)
+						} else {
+							None
+						}
+					});
+
 				// No token usage logging here - moved to after response handling in chat.rs
 
 				Some(TokenUsage {
@@ -303,6 +318,7 @@ pub async fn chat_completion(
 					cost,
 					completion_tokens_details,
 					prompt_tokens_details,
+					breakdown,
 				})
 			} else {
 				None
@@ -361,6 +377,20 @@ pub async fn chat_completion(
 		let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
 			.map(|v| v.clone());
 
+		// Extract breakdown info (cached tokens, etc)
+		let breakdown = usage_obj.get("breakdown")
+			.and_then(|b| {
+				if let Some(obj) = b.as_object() {
+					let mut map = std::collections::HashMap::new();
+					for (k, v) in obj {
+						map.insert(k.clone(), v.clone());
+					}
+					Some(map)
+				} else {
+					None
+				}
+			});
+
 		// No token usage logging here - moved to after response handling in chat.rs
 
 		Some(TokenUsage {
@@ -370,6 +400,7 @@ pub async fn chat_completion(
 			cost,
 			completion_tokens_details,
 			prompt_tokens_details,
+			breakdown,
 		})
 	} else {
 		None

@@ -38,6 +38,7 @@ pub struct SessionInfo {
     pub provider: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cached_tokens: u64,  // Added to track cached tokens separately
     pub total_cost: f64,
     pub duration_seconds: u64,
 }
@@ -63,6 +64,7 @@ impl Session {
                 provider,
                 input_tokens: 0,
                 output_tokens: 0,
+                cached_tokens: 0,
                 total_cost: 0.0,
                 duration_seconds: 0,
             },
@@ -87,18 +89,30 @@ impl Session {
         message
     }
     
-    // Add a cache checkpoint - marks the last user message as a cache breakpoint
-    pub fn add_cache_checkpoint(&mut self) -> Result<bool, anyhow::Error> {
-        // Only user messages can be marked as cache breakpoints
+    // Add a cache checkpoint - marks a message as a cache breakpoint
+    // By default, it targets the last user message, but system=true targets the system message
+    pub fn add_cache_checkpoint(&mut self, system: bool) -> Result<bool, anyhow::Error> {
+        // Only user or system messages can be marked as cache breakpoints
         let mut marked = false;
         
-        // Find the last user message and mark it as a cache breakpoint
-        for i in (0..self.messages.len()).rev() {
-            let msg = &mut self.messages[i];
-            if msg.role == "user" {
-                msg.cached = true;
-                marked = true;
-                break;
+        if system {
+            // Find the first system message and mark it
+            for msg in self.messages.iter_mut() {
+                if msg.role == "system" {
+                    msg.cached = true;
+                    marked = true;
+                    break;
+                }
+            }
+        } else {
+            // Find the last user message and mark it as a cache breakpoint
+            for i in (0..self.messages.len()).rev() {
+                let msg = &mut self.messages[i];
+                if msg.role == "user" {
+                    msg.cached = true;
+                    marked = true;
+                    break;
+                }
             }
         }
         
@@ -158,6 +172,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
             // Add the new fields for token tracking
             old_info.input_tokens = 0;
             old_info.output_tokens = 0;
+            old_info.cached_tokens = 0;  // Initialize new cached_tokens field
             old_info.total_cost = 0.0;
             old_info.duration_seconds = 0;
             session_info = Some(old_info);
@@ -198,20 +213,20 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
     writeln!(file, "{}", content)?;
     Ok(())
 }
-pub async fn create_system_prompt(project_dir: &PathBuf, _config: &crate::config::Config) -> String {
-	let prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
+pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
+	let mut prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
 
 	// Add MCP tools information if enabled
-	// if config.mcp.enabled {
-	// 	let functions = mcp::get_available_functions(config).await;
-	// 	if !functions.is_empty() {
-	// 		prompt.push_str("\n\nYou have access to the following tools:");
+	if config.mcp.enabled {
+		let functions = mcp::get_available_functions(config).await;
+		if !functions.is_empty() {
+			prompt.push_str("\n\nYou have access to the following tools:");
 
-	// 		for function in &functions {
-	// 			prompt.push_str(&format!("\n\n- {} - {}", function.name, function.description));
-	// 		}
-	// 	}
-	// }
+			for function in &functions {
+				prompt.push_str(&format!("\n\n- {} - {}", function.name, function.description));
+			}
+		}
+	}
 
 	prompt
 }

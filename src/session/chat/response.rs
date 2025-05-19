@@ -264,13 +264,31 @@ pub async fn process_response(
 
 	// Display cumulative token usage
 	println!();
-	println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
-	println!("{} {} prompt, {} completion, {} total, ${:.5}",
+	println!("{}", "── session usage ────────────────────────────────────────".bright_cyan());
+	
+	// Format token usage with cached tokens
+	let cached = chat_session.session.info.cached_tokens;
+	let prompt = chat_session.session.info.input_tokens;
+	let completion = chat_session.session.info.output_tokens;
+	let total = prompt + completion + cached;
+	
+	println!("{} {} prompt ({} cached), {} completion, {} total, ${:.5}",
 		"tokens:".bright_blue(),
-		chat_session.session.info.input_tokens,
-		chat_session.session.info.output_tokens,
-		chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
+		prompt,
+		cached,
+		completion,
+		total,
 		chat_session.session.info.total_cost);
+	
+	// If we have cached tokens, show the savings percentage
+	if cached > 0 {
+		let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
+		println!("{} {:.1}% of prompt tokens ({} tokens saved)",
+			"cached:".bright_green(),
+			saving_pct,
+			cached);
+	}
+	
 	println!();
 
 	Ok(())

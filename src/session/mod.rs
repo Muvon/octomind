@@ -31,6 +31,10 @@ pub struct SessionInfo {
     pub created_at: u64,
     pub model: String,
     pub provider: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_cost: f64,
+    pub duration_seconds: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -52,6 +56,10 @@ impl Session {
                     .as_secs(),
                 model,
                 provider,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_cost: 0.0,
+                duration_seconds: 0,
             },
             messages: Vec::new(),
             session_file: None,
@@ -79,9 +87,9 @@ impl Session {
             // Clear the file first
             let _ = File::create(session_file)?;
 
-            // Save session info
+            // Save session info as the first line (summary)
             let info_json = serde_json::to_string(&self.info)?;
-            append_to_session_file(session_file, &format!("INFO: {}", info_json))?;
+            append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
 
             // Save all messages
             for message in &self.messages {
@@ -117,9 +125,18 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
     let mut messages = Vec::new();
 
     for line in content.lines() {
-        if let Some(content) = line.strip_prefix("INFO: ") {
-            // Parse session info
+        if let Some(content) = line.strip_prefix("SUMMARY: ") {
+            // Parse session info (from first line)
             session_info = Some(serde_json::from_str(content)?);
+        } else if let Some(content) = line.strip_prefix("INFO: ") {
+            // Parse old session info format for backward compatibility
+            let mut old_info: SessionInfo = serde_json::from_str(content)?;
+            // Add the new fields for token tracking
+            old_info.input_tokens = 0;
+            old_info.output_tokens = 0;
+            old_info.total_cost = 0.0;
+            old_info.duration_seconds = 0;
+            session_info = Some(old_info);
         } else if let Some(content) = line.strip_prefix("SYSTEM: ") {
             // Parse system message
             let message: Message = serde_json::from_str(content)?;

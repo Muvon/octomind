@@ -7,12 +7,24 @@ use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::Config;
 
+// OpenRouter response with token usage
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub cost: Option<u64>,  // Cost in OpenRouter credits (100,000 credits = $1 USD)
+    pub completion_tokens_details: Option<serde_json::Value>,
+    pub prompt_tokens_details: Option<serde_json::Value>,
+}
+
 // Store raw request/response for logging
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OpenRouterExchange {
-	pub request: serde_json::Value,
-	pub response: serde_json::Value,
-	pub timestamp: u64,
+    pub request: serde_json::Value,
+    pub response: serde_json::Value,
+    pub timestamp: u64,
+    pub usage: Option<TokenUsage>,
 }
 
 // Default OpenRouter API key environment variable name
@@ -66,6 +78,9 @@ pub async fn chat_completion(
 		"messages": messages,
 		"temperature": temperature,
 		"max_tokens": 256,
+		"usage": {
+			"include": true  // Enable usage tracking
+		},
 	});
 
 	// Add tool definitions if MCP is enabled
@@ -193,6 +208,55 @@ pub async fn chat_completion(
 				}
 			}
 
+			// Extract token usage from the response
+			let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
+				let prompt_tokens = usage_obj.get("prompt_tokens")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
+				let completion_tokens = usage_obj.get("completion_tokens")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
+				let total_tokens = usage_obj.get("total_tokens")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
+				let cost = usage_obj.get("cost")
+					.and_then(|v| v.as_u64());
+				let completion_tokens_details = usage_obj.get("completion_tokens_details")
+					.map(|v| v.clone());
+				let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
+					.map(|v| v.clone());
+
+				// Log token usage
+				use colored::*;
+				if let Some(cost_value) = cost {
+					// Convert from credits to dollars (100,000 credits = $1)
+					let cost_dollars = cost_value as f64 / 100000.0;
+					println!("{} {} prompt, {} completion, {} total, ${:.5}", 
+						"Token usage:".bright_blue(),
+						prompt_tokens, 
+						completion_tokens, 
+						total_tokens,
+						cost_dollars);
+				} else {
+					println!("{} {} prompt, {} completion, {} total", 
+						"Token usage:".bright_blue(),
+						prompt_tokens, 
+						completion_tokens, 
+						total_tokens);
+				}
+
+				Some(TokenUsage {
+					prompt_tokens,
+					completion_tokens,
+					total_tokens,
+					cost,
+					completion_tokens_details,
+					prompt_tokens_details,
+				})
+			} else {
+				None
+			};
+
 			// Create the exchange record for logging
 			let exchange = OpenRouterExchange {
 				request: request_body,
@@ -201,6 +265,7 @@ pub async fn chat_completion(
 					.duration_since(UNIX_EPOCH)
 					.unwrap_or_default()
 					.as_secs(),
+				usage,
 			};
 
 			// Format tool calls in MCP-compatible format for parsing
@@ -227,6 +292,55 @@ pub async fn chat_completion(
 		return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
 	}
 
+	// Extract token usage from the response
+	let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
+		let prompt_tokens = usage_obj.get("prompt_tokens")
+			.and_then(|v| v.as_u64())
+			.unwrap_or(0);
+		let completion_tokens = usage_obj.get("completion_tokens")
+			.and_then(|v| v.as_u64())
+			.unwrap_or(0);
+		let total_tokens = usage_obj.get("total_tokens")
+			.and_then(|v| v.as_u64())
+			.unwrap_or(0);
+		let cost = usage_obj.get("cost")
+			.and_then(|v| v.as_u64());
+		let completion_tokens_details = usage_obj.get("completion_tokens_details")
+			.map(|v| v.clone());
+		let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
+			.map(|v| v.clone());
+
+		// Log token usage if available
+		use colored::*;
+		if let Some(cost_value) = cost {
+			// Convert from credits to dollars (100,000 credits = $1)
+			let cost_dollars = cost_value as f64 / 100000.0;
+			println!("{} {} prompt, {} completion, {} total, ${:.5}", 
+				"Token usage:".bright_blue(),
+				prompt_tokens, 
+				completion_tokens, 
+				total_tokens,
+				cost_dollars);
+		} else {
+			println!("{} {} prompt, {} completion, {} total", 
+				"Token usage:".bright_blue(),
+				prompt_tokens, 
+				completion_tokens, 
+				total_tokens);
+		}
+
+		Some(TokenUsage {
+			prompt_tokens,
+			completion_tokens,
+			total_tokens,
+			cost,
+			completion_tokens_details,
+			prompt_tokens_details,
+		})
+	} else {
+		None
+	};
+
 	// Create exchange record for logging
 	let exchange = OpenRouterExchange {
 		request: request_body,
@@ -235,6 +349,7 @@ pub async fn chat_completion(
 			.duration_since(UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs(),
+		usage,
 	};
 
 	Ok((content, exchange))

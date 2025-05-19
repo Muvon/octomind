@@ -42,6 +42,7 @@ pub struct ChatSession {
 	pub last_response: String,
 	pub model: String,
 	pub temperature: f32,
+	pub estimated_cost: f64,
 }
 
 impl ChatSession {
@@ -54,6 +55,7 @@ impl ChatSession {
 			last_response: String::new(),
 			model: model_name,
 			temperature: 0.7, // Default temperature
+			estimated_cost: 0.0, // Initialize estimated cost as zero
 		}
 	}
 
@@ -88,6 +90,7 @@ impl ChatSession {
 				last_response: String::new(),
 				model: model.unwrap_or_else(|| config.openrouter.model.clone()),
 				temperature: 0.7,
+				estimated_cost: 0.0,
 			};
 
 			// Get last assistant response if any
@@ -150,10 +153,46 @@ impl ChatSession {
 	}
 
 	// Add an assistant message
-	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>) -> Result<()> {
+	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>, config: &Config) -> Result<()> {
 		// Add message to session
 		let message = self.session.add_message("assistant", content);
 		self.last_response = content.to_string();
+		
+		// Update token counts and estimated costs if we have usage data
+		if let Some(ex) = &exchange {
+			if let Some(usage) = &ex.usage {
+				// Update session token counts
+				self.session.info.input_tokens += usage.prompt_tokens;
+				self.session.info.output_tokens += usage.completion_tokens;
+				
+				// If OpenRouter provided cost data, use it (preferred)
+				if let Some(cost_credits) = usage.cost {
+					// Convert from credits to dollars (100,000 credits = $1)
+					let cost_dollars = cost_credits as f64 / 100000.0;
+					
+					// Update total cost
+					self.session.info.total_cost += cost_dollars;
+					self.estimated_cost = self.session.info.total_cost;
+				} else {
+					// Fallback to configured pricing if OpenRouter didn't provide cost
+					let input_cost = usage.prompt_tokens as f64 * config.openrouter.pricing.input_price;
+					let output_cost = usage.completion_tokens as f64 * config.openrouter.pricing.output_price;
+					let current_cost = input_cost + output_cost;
+					
+					// Update total cost
+					self.session.info.total_cost += current_cost;
+					self.estimated_cost = self.session.info.total_cost;
+				}
+				
+				// Update session duration
+				let current_time = std::time::SystemTime::now()
+					.duration_since(std::time::UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs();
+				let start_time = self.session.info.created_at;
+				self.session.info.duration_seconds = current_time - start_time;
+			}
+		}
 
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
@@ -215,7 +254,7 @@ const LOADING_FRAMES: [&str; 8] = [
 ];
 
 // Read user input with support for multiline input and command completion
-pub fn read_user_input() -> Result<String> {
+pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 	// Configure rustyline
 	let config = RustylineConfig::builder()
 		.completion_type(CompletionType::List)
@@ -231,8 +270,12 @@ pub fn read_user_input() -> Result<String> {
 	use crate::session::chat_helper::CommandHelper;
 	editor.set_helper(Some(CommandHelper::new()));
 
-	// Set prompt with colors if terminal supports them
-	let prompt = "> ".bright_blue().to_string();
+	// Set prompt with colors if terminal supports them and include cost estimation
+	let prompt = if estimated_cost > 0.0 {
+		format!("[~${:.2}] > ", estimated_cost).bright_blue().to_string()
+	} else {
+		"> ".bright_blue().to_string()
+	};
 
 	// Read line with command completion
 	match editor.readline(&prompt) {
@@ -388,7 +431,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			"Hello! I'm ready to help you with your code in `{}`. What would you like to do?",
 			current_dir.file_name().unwrap_or_default().to_string_lossy()
 		);
-		chat_session.add_assistant_message(&welcome_message, None)?;
+		chat_session.add_assistant_message(&welcome_message, None, config)?;
 
 		// Print welcome message with colors if terminal supports them
 		use colored::*;
@@ -421,8 +464,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Reset the cancel flag before each interaction
 		cancel_flag.store(false, Ordering::SeqCst);
 
-		// Read user input with command completion
-		let input = read_user_input()?;
+		// Read user input with command completion and cost estimation
+		let input = read_user_input(chat_session.estimated_cost)?;
 
 		// Check if the input is an exit command from Ctrl+D
 		if input == "/exit" || input == "/quit" {
@@ -537,7 +580,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						}
 
 						// Add assistant message with the initial response
-						chat_session.add_assistant_message(&content, Some(exchange.clone()))?;
+						chat_session.add_assistant_message(&content, Some(exchange.clone()), config)?;
 
 						// Display results
 						if !tool_results.is_empty() {
@@ -603,7 +646,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							match final_response.unwrap() {
 								Ok(Ok((final_content, final_exchange))) => {
 									// Add assistant message with the final response
-									chat_session.add_assistant_message(&final_content, Some(final_exchange))?;
+									chat_session.add_assistant_message(&final_content, Some(final_exchange), config)?;
 
 									// Print assistant response with color if terminal supports it
 									use colored::*;
@@ -623,7 +666,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						}
 					} else {
 						// No tool calls, just regular content
-						chat_session.add_assistant_message(&content, Some(exchange))?;
+						chat_session.add_assistant_message(&content, Some(exchange), config)?;
 
 						// Print assistant response with color if terminal supports it
 						use colored::*;
@@ -631,7 +674,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					}
 				} else {
 					// MCP not enabled, just show content
-					chat_session.add_assistant_message(&content, Some(exchange))?;
+					chat_session.add_assistant_message(&content, Some(exchange), config)?;
 
 					// Print assistant response with color if terminal supports it
 					use colored::*;

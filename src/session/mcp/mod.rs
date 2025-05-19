@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use anyhow::Result;
 use regex::Regex;
+use colored;
 
 pub mod shell;
 pub mod server;
@@ -52,6 +53,8 @@ pub fn parse_tool_calls(content: &str) -> Vec<McpToolCall> {
 
 // Format tool results to be shown to the user
 pub fn format_tool_results(results: &[McpToolResult]) -> String {
+	use colored::*;
+
 	let mut output = String::new();
 
 	for result in results {
@@ -59,11 +62,18 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 		let category = guess_tool_category(&result.tool_name);
 
 		// Create a horizontal separator with tool name
-		let title = format!(" {} | {} ", result.tool_name, category);
+		let title = format!(" {} | {} ",
+				result.tool_name.bright_cyan(),
+				category.bright_blue())
+		;
+
 		let separator_length = 70.max(title.len() + 4);
 		let dashes = "─".repeat(separator_length - title.len());
 
-		output.push_str(&format!("\n──{}{}────\n", title, dashes));
+		// Format the separator with colors if terminal supports them
+		let separator = format!("\n──{}{}────\n", title, dashes.dimmed());
+
+		output.push_str(&separator);
 
 		// Format the parameters if available
 		if let Some(params) = result.result.get("parameters") {
@@ -81,7 +91,9 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 					value_str
 				};
 
-				output.push_str(&format!("{}: {}\n", key, displayed_value));
+				output.push_str(&format!("{}: {}\n",
+						key.yellow(),
+						displayed_value))
 			}
 		}
 
@@ -96,8 +108,17 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 			result.result.to_string().replace("\\n", "\n")
 		};
 
-		output.push_str("\nOutput:\n");
-		output.push_str(&format!("```\n{}\n```\n", result_output));
+		// Check if there's an error
+		let is_error = if let Some(success) = result.result.get("success") {
+			!success.as_bool().unwrap_or(true)
+		} else {
+			false
+		};
+
+		// Just print the output directly without any wrapping
+		if is_error {
+			output.push_str(&result_output.bright_red());
+		}
 	}
 
 	output

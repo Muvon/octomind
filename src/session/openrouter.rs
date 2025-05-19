@@ -96,7 +96,7 @@ pub async fn chat_completion(
 		.header("Authorization", format!("Bearer {}", api_key))
 		.header("Content-Type", "application/json")
 		.header("HTTP-Referer", "https://github.com/muvon/octodev")
-		.header("X-Title", "OctoDev")
+		.header("X-Title", "Octodev")
 		.json(&request_body)
 		.send()
 	.await?;
@@ -148,7 +148,7 @@ pub async fn chat_completion(
 		if tool_calls.is_array() && !tool_calls.as_array().unwrap().is_empty() {
 			// Parse the tool calls into a format the MCP handler can use
 			let mut mcp_tool_calls = Vec::new();
-			
+
 			// Iterate through the tool calls array
 			for tool_call in tool_calls.as_array().unwrap() {
 				// Extract the function information
@@ -163,19 +163,19 @@ pub async fn chat_completion(
 								serde_json::Value::String(args.to_string())
 							}
 						};
-						
+
 						// Create an MCP tool call
 						let _tool_id = tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
 						let mcp_call = crate::session::mcp::McpToolCall {
 							tool_name: name.to_string(),
 							parameters: params,
 						};
-						
+
 						mcp_tool_calls.push(mcp_call);
 					}
 				} else if let (Some(_id), Some(name)) = (
 					tool_call.get("id").and_then(|i| i.as_str()),
-					tool_call.get("name").and_then(|n| n.as_str()) 
+					tool_call.get("name").and_then(|n| n.as_str())
 				) {
 					// Handle the direct tool call format (used by some models)
 					let params = if let Some(params_obj) = tool_call.get("parameters") {
@@ -183,16 +183,16 @@ pub async fn chat_completion(
 					} else {
 						serde_json::json!({})
 					};
-					
+
 					let mcp_call = crate::session::mcp::McpToolCall {
 						tool_name: name.to_string(),
 						parameters: params,
 					};
-					
+
 					mcp_tool_calls.push(mcp_call);
 				}
 			}
-			
+
 			// Create the exchange record for logging
 			let exchange = OpenRouterExchange {
 				request: request_body,
@@ -202,11 +202,11 @@ pub async fn chat_completion(
 					.unwrap_or_default()
 					.as_secs(),
 			};
-			
+
 			// Format tool calls in MCP-compatible format for parsing
 			let tool_calls_json = serde_json::to_string(&mcp_tool_calls).unwrap_or_else(|_| "[]".to_string());
 			let formatted_tool_calls = format!("<function_calls>{}\n</function_calls>", tool_calls_json);
-			
+
 			// If there's already content, keep it and append the tool calls in MCP format
 			if !content.is_empty() {
 				content = format!("{}
@@ -216,10 +216,10 @@ pub async fn chat_completion(
 				// If there's no content, just use the formatted tool calls
 				content = formatted_tool_calls;
 			}
-			
+
 			// Return with the properly formatted tool calls that MCP parser can handle
 			return Ok((content, exchange));
-			
+
 		} else if content.is_empty() {
 			return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
 		}

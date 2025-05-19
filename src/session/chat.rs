@@ -12,6 +12,7 @@ use anyhow::Result;
 use ctrlc;
 use rustyline::error::ReadlineError;
 use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
+use colored::Colorize;
 
 // Model choices (moved to config, kept here for backward compatibility)
 pub const CLAUDE_MODEL: &str = "anthropic/claude-3-sonnet-20240229";
@@ -171,18 +172,20 @@ impl ChatSession {
 
 	// Process user commands
 	pub fn process_command(&mut self, input: &str) -> Result<bool> {
+		use colored::*;
+
 		match input.trim() {
 			EXIT_COMMAND | QUIT_COMMAND => {
-				println!("Ending session. Your conversation has been saved.");
+				println!("{}", "Ending session. Your conversation has been saved.".bright_green());
 				return Ok(true);
 			},
 			HELP_COMMAND => {
 				println!("\nAvailable commands:\n");
-				println!("{} or {} - Exit the session", EXIT_COMMAND, QUIT_COMMAND);
-				println!("{} - Copy last response to clipboard", COPY_COMMAND);
-				println!("{} - Clear the screen", CLEAR_COMMAND);
-				println!("{} - Save the session", SAVE_COMMAND);
-				println!("{} - Show this help message\n", HELP_COMMAND);
+				println!("{} or {} - {}", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
+				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
+				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
+				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
+				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 			},
 			COPY_COMMAND => {
 				println!("Clipboard functionality is disabled in this version.");
@@ -194,9 +197,9 @@ impl ChatSession {
 			},
 			SAVE_COMMAND => {
 				if let Err(e) = self.save() {
-					println!("Failed to save session: {}", e);
+					println!("{}: {}", "Failed to save session".bright_red(), e);
 				} else {
-					println!("Session saved successfully.");
+					println!("{}", "Session saved successfully.".bright_green());
 				}
 			},
 			_ => return Ok(false), // Not a command
@@ -228,11 +231,11 @@ pub fn read_user_input() -> Result<String> {
 	use crate::session::chat_helper::CommandHelper;
 	editor.set_helper(Some(CommandHelper::new()));
 
-	// Set prompt
-	let prompt = "> ";
+	// Set prompt with colors if terminal supports them
+	let prompt = "> ".bright_blue().to_string();
 
 	// Read line with command completion
-	match editor.readline(prompt) {
+	match editor.readline(&prompt) {
 		Ok(line) => {
 			// Add to history
 			let _ = editor.add_history_entry(line.clone());
@@ -257,6 +260,8 @@ pub fn read_user_input() -> Result<String> {
 
 // Show loading animation while waiting for response
 async fn show_loading_animation(cancel_flag: Arc<AtomicBool>) -> Result<()> {
+	use colored::*;
+
 	let mut stdout = stdout();
 	let mut frame_idx = 0;
 
@@ -264,9 +269,13 @@ async fn show_loading_animation(cancel_flag: Arc<AtomicBool>) -> Result<()> {
 	execute!(stdout, cursor::SavePosition)?;
 
 	while !cancel_flag.load(Ordering::SeqCst) {
-		// Display frame
+		// Display frame with color if supported
 		execute!(stdout, cursor::RestorePosition)?;
-		print!(" {} Generating response...", LOADING_FRAMES[frame_idx]);
+
+		print!(" {} {}",
+			LOADING_FRAMES[frame_idx].cyan(),
+			"Generating response...".bright_blue());
+
 		stdout.flush()?;
 
 		// Update frame index
@@ -381,16 +390,19 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		);
 		chat_session.add_assistant_message(&welcome_message, None)?;
 
-		// Print welcome message
-		println!("AI: {}", welcome_message);
+		// Print welcome message with colors if terminal supports them
+		use colored::*;
+		println!("{}", welcome_message.bright_green());
 	} else {
-		// Print the last few messages for context
+		// Print the last few messages for context with colors if terminal supports them
 		let last_messages = chat_session.session.messages.iter().rev().take(3).collect::<Vec<_>>();
+		use colored::*;
+
 		for msg in last_messages.iter().rev() {
 			if msg.role == "assistant" {
-				println!("AI: {}", msg.content);
+				println!("{}", msg.content.bright_green());
 			} else if msg.role == "user" {
-				println!("> {}", msg.content);
+				println!("> {}", msg.content.bright_blue());
 			}
 		}
 	}
@@ -487,13 +499,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					let tool_calls = mcp::parse_tool_calls(&content);
 
 					if !tool_calls.is_empty() {
-						println!("\n⬇️  AI is using tools...");
-
 						// Execute all tool calls in parallel
 						let mut tool_tasks = Vec::new();
 
 						for tool_call in tool_calls.clone() {
-							println!("  - Executing: {}", tool_call.tool_name);
+							// Print colorful tool execution message
+							use colored::*;
+							println!("  - Executing: {}", tool_call.tool_name.yellow());
 
 							// Execute in a tokio task
 							let config_clone = config.clone();
@@ -510,9 +522,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							match task.await {
 								Ok(result) => match result {
 									Ok(res) => tool_results.push(res),
-									Err(e) => println!("  - Error executing tool: {}", e),
+									Err(e) => {
+										// Print colorful error message
+										use colored::*;
+										println!("  - {}: {}", "Error executing tool".bright_red(), e);
+									},
 								},
-								Err(e) => println!("  - Task error: {}", e),
+								Err(e) => {
+									// Print colorful task error message
+									use colored::*;
+									println!("  - {}: {}", "Task error".bright_red(), e);
+								},
 							}
 						}
 
@@ -585,34 +605,49 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 									// Add assistant message with the final response
 									chat_session.add_assistant_message(&final_content, Some(final_exchange))?;
 
-									// Print assistant response
-									println!("\nAI: {}", final_content);
+									// Print assistant response with color if terminal supports it
+									use colored::*;
+									println!("\n{}", final_content.bright_green());
 								},
 								Ok(Err(e)) => {
-									println!("\nError calling OpenRouter: {}", e);
+									// Print colorful error message
+									use colored::*;
+									println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
 								},
 								Err(e) => {
-									println!("\nTask error: {}", e);
+									// Print colorful task error message
+									use colored::*;
+									println!("\n{}: {}", "Task error".bright_red(), e);
 								}
 							}
 						}
 					} else {
 						// No tool calls, just regular content
 						chat_session.add_assistant_message(&content, Some(exchange))?;
-						println!("\nAI: {}", content);
+
+						// Print assistant response with color if terminal supports it
+						use colored::*;
+						println!("\n{}", content.bright_green());
 					}
 				} else {
 					// MCP not enabled, just show content
 					chat_session.add_assistant_message(&content, Some(exchange))?;
-					println!("\nAI: {}", content);
+
+					// Print assistant response with color if terminal supports it
+					use colored::*;
+					println!("\n{}", content.bright_green());
 				}
 			},
 			Ok(Err(e)) => {
-				println!("\nError calling OpenRouter: {}", e);
-				println!("Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.");
+				// Print colorful error message
+				use colored::*;
+				println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
+				println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
 			},
 			Err(e) => {
-				println!("\nTask error: {}", e);
+				// Print colorful task error message
+				use colored::*;
+				println!("\n{}: {}", "Task error".bright_red(), e);
 			}
 		}
 	}

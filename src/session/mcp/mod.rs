@@ -7,7 +7,7 @@ use anyhow::Result;
 use regex::Regex;
 use colored;
 
-pub mod shell;
+pub mod dev;
 pub mod server;
 pub mod process;
 
@@ -128,6 +128,8 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
 		"shell" => "system",
+		"text_editor" => "developer",
+		"list_files" => "filesystem",
 		name if name.contains("file") || name.contains("editor") => "developer",
 		name if name.contains("search") || name.contains("find") => "search",
 		name if name.contains("image") || name.contains("photo") => "media",
@@ -160,9 +162,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 		return functions;
 	}
 
-	// Add shell function if enabled
+	// Add developer tools if enabled
 	if config.mcp.providers.contains(&"shell".to_string()) {
-		functions.push(shell::get_function_definition());
+		functions.extend(dev::get_all_functions());
 	}
 
 	// Add server functions if any servers are enabled
@@ -190,12 +192,17 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	}
 
 	// Try to execute locally if provider is enabled
-	if call.tool_name == "shell" {
-		if config.mcp.providers.contains(&"shell".to_string()) {
-			return shell::execute_shell_command(call).await;
-		} else {
-			return Err(anyhow::anyhow!("Shell provider is not enabled"));
+	if config.mcp.providers.contains(&"shell".to_string()) {
+		// Handle developer tools
+		if call.tool_name == "shell" {
+			return dev::execute_shell_command(call).await;
+		} else if call.tool_name == "text_editor" {
+			return dev::execute_text_editor(call).await;
+		} else if call.tool_name == "list_files" {
+			return dev::execute_list_files(call).await;
 		}
+	} else {
+		return Err(anyhow::anyhow!("Developer tools are not enabled"));
 	}
 
 	// Try to find a server that can handle this tool

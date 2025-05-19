@@ -89,13 +89,13 @@ impl Session {
         self.messages.push(message.clone());
         message
     }
-    
+
     // Add a cache checkpoint - marks a message as a cache breakpoint
     // By default, it targets the last user message, but system=true targets the system message
     pub fn add_cache_checkpoint(&mut self, system: bool) -> Result<bool, anyhow::Error> {
         // Only user or system messages can be marked as cache breakpoints
         let mut marked = false;
-        
+
         if system {
             // Find the first system message and mark it
             for msg in self.messages.iter_mut() {
@@ -116,7 +116,7 @@ impl Session {
                 }
             }
         }
-        
+
         Ok(marked)
     }
 
@@ -160,21 +160,21 @@ pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
 pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::Error> {
     let sessions_dir = get_sessions_dir()?;
     let mut sessions = Vec::new();
-    
+
     if !sessions_dir.exists() {
         return Ok(sessions);
     }
-    
+
     for entry in fs::read_dir(sessions_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_file() && path.extension().map_or(false, |ext| ext == "jsonl") {
             // Read just the first line to get session info
             if let Ok(file) = File::open(&path) {
                 let reader = BufReader::new(file);
                 let first_line = reader.lines().next();
-                
+
                 if let Some(Ok(line)) = first_line {
                     if let Some(content) = line.strip_prefix("SUMMARY: ") {
                         if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
@@ -182,7 +182,7 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
                                 .and_then(|s| s.to_str())
                                 .unwrap_or_default()
                                 .to_string();
-                            
+
                             sessions.push((name, info));
                         }
                     }
@@ -190,10 +190,10 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
             }
         }
     }
-    
+
     // Sort sessions by creation time (newest first)
     sessions.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
-    
+
     Ok(sessions)
 }
 
@@ -264,7 +264,30 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
     Ok(())
 }
 pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
-	let mut prompt = format!("You are an AI coding assistant helping with the codebase in {}", project_dir.display());
+	let mut prompt = format!(
+		"You are an Octodev – top notch AI coding assistant helping with the codebase in {}
+
+When answering code questions:
+• Provide validated, working code solutions
+• Keep responses clear and concise
+• Focus on practical solutions and industry best practices
+
+Code Quality Guidelines:
+• Avoid unnecessary abstractions - solve problems directly
+• Balance file size and readability - don't create overly large files
+• Don't over-fragment code across multiple files unnecessarily
+
+Approach Problems Like a Developer:
+1. Analyze the problem thoroughly first
+2. Think through solutions sequentially
+3. Solve step-by-step with a clear thought process
+
+When working with files:
+1. First understand which files you need to read/write
+2. Process files efficiently, preferably in a single operation when possible
+3. Utilize the provided tools for file operations",
+		project_dir.display()
+	);
 
 	// Add MCP tools information if enabled
 	if config.mcp.enabled {

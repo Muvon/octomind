@@ -249,18 +249,26 @@ pub async fn chat_completion(
 				if let Some(cost_value) = cost {
 					// Convert from credits to dollars (100,000 credits = $1)
 					let cost_dollars = cost_value as f64 / 100000.0;
+					// Cancel the loading animation first to clear the line
+					println!();
+					println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
 					println!("{} {} prompt, {} completion, {} total, ${:.5}", 
-						"Token usage:".bright_blue(),
+						"tokens:".bright_blue(),
 						prompt_tokens, 
 						completion_tokens, 
 						total_tokens,
 						cost_dollars);
+					println!();
 				} else {
+					// Cancel the loading animation first to clear the line
+					println!();
+					println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
 					println!("{} {} prompt, {} completion, {} total", 
-						"Token usage:".bright_blue(),
+						"tokens:".bright_blue(),
 						prompt_tokens, 
 						completion_tokens, 
 						total_tokens);
+					println!();
 				}
 
 				Some(TokenUsage {
@@ -333,18 +341,26 @@ pub async fn chat_completion(
 		if let Some(cost_value) = cost {
 			// Convert from credits to dollars (100,000 credits = $1)
 			let cost_dollars = cost_value as f64 / 100000.0;
+			// Cancel the loading animation first to clear the line
+			println!();
+			println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
 			println!("{} {} prompt, {} completion, {} total, ${:.5}", 
-				"Token usage:".bright_blue(),
+				"tokens:".bright_blue(),
 				prompt_tokens, 
 				completion_tokens, 
 				total_tokens,
 				cost_dollars);
+			println!();
 		} else {
+			// Cancel the loading animation first to clear the line
+			println!();
+			println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
 			println!("{} {} prompt, {} completion, {} total", 
-				"Token usage:".bright_blue(),
+				"tokens:".bright_blue(),
 				prompt_tokens, 
 				completion_tokens, 
 				total_tokens);
+			println!();
 		}
 
 		Some(TokenUsage {

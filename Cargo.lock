@@ -3733,6 +3733,7 @@ dependencies = [
  "crossterm",
  "ctrlc",
  "fastembed",
+ "futures",
  "ignore",
  "lazy_static",
  "notify",

@@ -153,7 +153,9 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
                 "arguments": parameters
             });
 
-            println!("Sending HTTP request to {} with {}s timeout", execute_url, server.timeout_seconds);
+
+			// Debug output
+            // println!("Sending HTTP request to {} with {}s timeout", execute_url, server.timeout_seconds);
             // Make request to execute tool
             let response = client.post(&execute_url)
                 .headers(headers)

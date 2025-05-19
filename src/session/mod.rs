@@ -5,7 +5,6 @@ pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
 pub mod mcp;        // MCP protocol support
 
-pub use chat::*;
 pub use openrouter::*;
 pub use mcp::*;
 

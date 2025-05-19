@@ -2,41 +2,17 @@
 
 use crate::config::Config;
 use crate::store::Store;
-use super::{Session, get_sessions_dir, load_session, create_system_prompt, openrouter, mcp};
-use crossterm::{cursor, execute};
-use std::io::{self, Write, stdout};
+use crate::session::{Session, get_sessions_dir, load_session, create_system_prompt, openrouter};
+use std::io::{self, Write};
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use anyhow::Result;
 use ctrlc;
-use rustyline::error::ReadlineError;
-use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
-use colored::Colorize;
-
-// Model choices (moved to config, kept here for backward compatibility)
-pub const CLAUDE_MODEL: &str = "anthropic/claude-3.7-sonnet";
-pub const DEFAULT_MODEL: &str = CLAUDE_MODEL;
-
-// Chat commands
-const HELP_COMMAND: &str = "/help";
-const EXIT_COMMAND: &str = "/exit";
-const QUIT_COMMAND: &str = "/quit";
-const COPY_COMMAND: &str = "/copy";
-const CLEAR_COMMAND: &str = "/clear";
-const SAVE_COMMAND: &str = "/save";
-const CACHE_COMMAND: &str = "/cache";
-
-// List of all available commands for autocomplete
-pub const COMMANDS: [&str; 7] = [
-	HELP_COMMAND,
-	EXIT_COMMAND,
-	QUIT_COMMAND,
-	COPY_COMMAND,
-	CLEAR_COMMAND,
-	SAVE_COMMAND,
-	CACHE_COMMAND,
-];
+use super::commands::*;
+use super::input::read_user_input;
+use super::response::process_response;
+use super::animation::show_loading_animation;
 
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
@@ -134,7 +110,7 @@ impl ChatSession {
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
-			super::append_to_session_file(session_file, &format!("SYSTEM: {}", message_json))?;
+			crate::session::append_to_session_file(session_file, &format!("SYSTEM: {}", message_json))?;
 		}
 
 		Ok(())
@@ -148,7 +124,7 @@ impl ChatSession {
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
-			super::append_to_session_file(session_file, &format!("USER: {}", message_json))?;
+			crate::session::append_to_session_file(session_file, &format!("USER: {}", message_json))?;
 		}
 
 		Ok(())
@@ -199,12 +175,12 @@ impl ChatSession {
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&message)?;
-			super::append_to_session_file(session_file, &format!("ASSISTANT: {}", message_json))?;
+			crate::session::append_to_session_file(session_file, &format!("ASSISTANT: {}", message_json))?;
 
 			// If we have a raw exchange, save it as well
 			if let Some(ex) = exchange {
 				let exchange_json = serde_json::to_string(&ex)?;
-				super::append_to_session_file(session_file, &format!("EXCHANGE: {}", exchange_json))?;
+				crate::session::append_to_session_file(session_file, &format!("EXCHANGE: {}", exchange_json))?;
 			}
 		}
 
@@ -272,95 +248,6 @@ impl ChatSession {
 
 		Ok(false) // Continue session
 	}
-}
-
-// Animation frames for loading indicator
-const LOADING_FRAMES: [&str; 8] = [
-	"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
-];
-
-// Read user input with support for multiline input and command completion
-pub fn read_user_input(estimated_cost: f64) -> Result<String> {
-	// Configure rustyline
-	let config = RustylineConfig::builder()
-		.completion_type(CompletionType::List)
-		.edit_mode(EditMode::Emacs)
-		.auto_add_history(true) // Automatically add lines to history
-		.bell_style(rustyline::config::BellStyle::None) // No bell
-		.build();
-
-	// Create editor with our custom helper
-	let mut editor = Editor::with_config(config)?;
-
-	// Add command completion
-	use crate::session::chat_helper::CommandHelper;
-	editor.set_helper(Some(CommandHelper::new()));
-
-	// Set prompt with colors if terminal supports them and include cost estimation
-	let prompt = if estimated_cost > 0.0 {
-		format!("[~${:.2}] > ", estimated_cost).bright_blue().to_string()
-	} else {
-		"> ".bright_blue().to_string()
-	};
-
-	// Read line with command completion
-	match editor.readline(&prompt) {
-		Ok(line) => {
-			// Add to history
-			let _ = editor.add_history_entry(line.clone());
-			Ok(line)
-		},
-		Err(ReadlineError::Interrupted) => {
-			// Ctrl+C
-			println!("\nCancelled");
-			Ok(String::new())
-		},
-		Err(ReadlineError::Eof) => {
-			// Ctrl+D
-			println!("\nExiting session.");
-			Ok("/exit".to_string())
-		},
-		Err(err) => {
-			println!("Error: {:?}", err);
-			Ok(String::new())
-		}
-	}
-}
-
-// Show loading animation while waiting for response
-async fn show_loading_animation(cancel_flag: Arc<AtomicBool>) -> Result<()> {
-	use colored::*;
-
-	let mut stdout = stdout();
-	let mut frame_idx = 0;
-
-	// Save cursor position
-	execute!(stdout, cursor::SavePosition)?;
-
-	while !cancel_flag.load(Ordering::SeqCst) {
-		// Display frame with color if supported
-		execute!(stdout, cursor::RestorePosition)?;
-
-		print!(" {} {}",
-			LOADING_FRAMES[frame_idx].cyan(),
-			"Generating response...".bright_blue());
-
-		stdout.flush()?;
-
-		// Update frame index
-		frame_idx = (frame_idx + 1) % LOADING_FRAMES.len();
-
-		// Delay
-		tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-	}
-
-	// Clear loading message
-	execute!(stdout, cursor::RestorePosition)?;
-	print!("                             "); // Clear loading message
-	execute!(stdout, cursor::RestorePosition)?;
-	stdout.flush()?;
-
-	Ok(())
 }
 
 // Run an interactive session
@@ -477,18 +364,35 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	}
 
 	// Set up a shared cancellation flag that can be set by Ctrl+C
-	let cancel_flag = Arc::new(AtomicBool::new(false));
-	let cancel_flag_clone = cancel_flag.clone();
+	let ctrl_c_pressed = Arc::new(AtomicBool::new(false));
+	let ctrl_c_pressed_clone = ctrl_c_pressed.clone();
 
 	// Set up Ctrl+C handler
 	ctrlc::set_handler(move || {
-		cancel_flag_clone.store(true, Ordering::SeqCst);
+		// If already set, do a hard exit to break out of any operation
+		if ctrl_c_pressed_clone.load(Ordering::SeqCst) {
+			println!("\nForcing exit due to repeated Ctrl+C...");
+			std::process::exit(130); // 130 is standard exit code for SIGINT
+		}
+
+		ctrl_c_pressed_clone.store(true, Ordering::SeqCst);
+		println!("\nCtrl+C pressed, will cancel after current operation completes.");
+		println!("Press Ctrl+C again to force immediate exit.");
 	}).expect("Error setting Ctrl+C handler");
 
 	// Main interaction loop
 	loop {
-		// Reset the cancel flag before each interaction
-		cancel_flag.store(false, Ordering::SeqCst);
+		// Check if Ctrl+C was pressed
+		if ctrl_c_pressed.load(Ordering::SeqCst) {
+			// Reset for next time
+			ctrl_c_pressed.store(false, Ordering::SeqCst);
+			println!("\nOperation cancelled.");
+			continue;
+		}
+
+		// Create a fresh cancellation flag for this iteration
+		// Each request gets its own cancellation flag derived from the global one
+		let operation_cancelled = Arc::new(AtomicBool::new(false));
 
 		// Read user input with command completion and cost estimation
 		let input = read_user_input(chat_session.estimated_cost)?;
@@ -523,233 +427,75 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		let model = chat_session.model.clone();
 		let temperature = chat_session.temperature;
 		let config_clone = config.clone();
-		let api_task = tokio::spawn(async move {
-			openrouter::chat_completion(or_messages, &model, temperature, &config_clone).await
-		});
 
 		// Create a task to show loading animation
-		let animation_cancel_flag = cancel_flag.clone();
+		let animation_cancel = operation_cancelled.clone();
 		let animation_task = tokio::spawn(async move {
-			let _ = show_loading_animation(animation_cancel_flag).await;
+			let _ = show_loading_animation(animation_cancel).await;
 		});
 
-		// Poll for completion or cancellation
-		let mut response = None;
-		let mut was_cancelled = false;
-
-		tokio::select! {
-			result = api_task => {
-				response = Some(result);
-			},
-				_ = async {
-					while !cancel_flag.load(Ordering::SeqCst) {
-						tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-					}
-				} => {
-				was_cancelled = true;
+		// Start a separate task to monitor for Ctrl+C
+		let op_cancelled = operation_cancelled.clone();
+		let ctrlc_flag = ctrl_c_pressed.clone();
+		let _cancel_monitor = tokio::spawn(async move {
+			while !op_cancelled.load(Ordering::SeqCst) {
+				// Check if global Ctrl+C flag is set
+				if ctrlc_flag.load(Ordering::SeqCst) {
+					// Set the operation cancellation flag
+					op_cancelled.store(true, Ordering::SeqCst);
+					break; // Exit the loop once cancelled
+				}
+				tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 			}
-		}
+		});
 
-		// Stop the animation
-		cancel_flag.store(true, Ordering::SeqCst);
+		// Now directly perform the API call - no nested tokio tasks
+		let api_result = openrouter::chat_completion(
+			or_messages,
+			&model,
+			temperature,
+			&config_clone
+		).await;
+
+		// Stop the animation - but use TRUE to stop it, not false!
+		operation_cancelled.store(true, Ordering::SeqCst);
 		let _ = animation_task.await;
+		
+		// Create a new cancellation flag for processing the response
+		// This is crucial - we need a fresh flag for each response processing cycle
+		let process_cancelled = Arc::new(AtomicBool::new(false));
 
-		// Handle cancellation or response
-		if was_cancelled {
-			println!("\nRequest cancelled by user.");
+		// Check if Ctrl+C was pressed (and the operation was cancelled)
+		if ctrl_c_pressed.load(Ordering::SeqCst) {
+			// Already handled at the start of the loop
+			ctrl_c_pressed.store(false, Ordering::SeqCst);
+			println!("\nOperation cancelled by user.");
 			continue;
 		}
 
 		// Process the response
-		match response.unwrap() {
-			Ok(Ok((content, exchange))) => {
-				// Check for tool calls if MCP is enabled
-				if config.mcp.enabled {
-					let tool_calls = mcp::parse_tool_calls(&content);
+		match api_result {
+			Ok((content, exchange)) => {
+				// Process the response, handling tool calls recursively
+				let process_result = process_response(
+					content,
+					exchange,
+					&mut chat_session,
+					config,
+					process_cancelled.clone()
+				).await;
 
-					if !tool_calls.is_empty() {
-						// Execute all tool calls in parallel
-						let mut tool_tasks = Vec::new();
-
-						for tool_call in tool_calls.clone() {
-							// Print colorful tool execution message
-							use colored::*;
-							println!("  - Executing: {}", tool_call.tool_name.yellow());
-
-							// Execute in a tokio task
-							let config_clone = config.clone();
-							let task = tokio::spawn(async move {
-								mcp::execute_tool_call(&tool_call, &config_clone).await
-							});
-
-							tool_tasks.push(task);
-						}
-
-						// Collect all results
-						let mut tool_results = Vec::new();
-						for task in tool_tasks {
-							match task.await {
-								Ok(result) => match result {
-									Ok(res) => tool_results.push(res),
-									Err(e) => {
-										// Print colorful error message
-										use colored::*;
-										println!("  - {}: {}", "Error executing tool".bright_red(), e);
-									},
-								},
-								Err(e) => {
-									// Print colorful task error message
-									use colored::*;
-									println!("  - {}: {}", "Task error".bright_red(), e);
-								},
-							}
-						}
-
-						// Add assistant message with the initial response
-						chat_session.add_assistant_message(&content, Some(exchange.clone()), config)?;
-
-						// Display results
-						if !tool_results.is_empty() {
-							let formatted = mcp::format_tool_results(&tool_results);
-							println!("{}", formatted);
-
-							// Create user message with tool results
-							let tool_results_message = serde_json::to_string(&tool_results)
-								.unwrap_or_else(|_| "[]".to_string());
-
-							let tool_message = format!("<function_results>\n{}\n</function_results>",
-								tool_results_message);
-
-							chat_session.add_user_message(&tool_message)?;
-
-							// Call the AI again with the tool results
-							let or_messages = openrouter::convert_messages(&chat_session.session.messages);
-
-							// Set cancel flag to false for the new request
-							cancel_flag.store(false, Ordering::SeqCst);
-
-							// Call OpenRouter in a separate task
-							let model = chat_session.model.clone();
-							let temperature = chat_session.temperature;
-							let config_clone = config.clone();
-							let api_task = tokio::spawn(async move {
-								openrouter::chat_completion(or_messages, &model, temperature, &config_clone).await
-							});
-
-							// Create a task to show loading animation
-							let animation_cancel_flag = cancel_flag.clone();
-							let animation_task = tokio::spawn(async move {
-								let _ = show_loading_animation(animation_cancel_flag).await;
-							});
-
-							// Poll for completion or cancellation
-							let mut final_response = None;
-							let mut was_cancelled = false;
-
-							tokio::select! {
-								result = api_task => {
-									final_response = Some(result);
-								},
-									_ = async {
-										while !cancel_flag.load(Ordering::SeqCst) {
-											tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-										}
-									} => {
-									was_cancelled = true;
-								}
-							}
-
-							// Stop the animation
-							cancel_flag.store(true, Ordering::SeqCst);
-							let _ = animation_task.await;
-
-							if was_cancelled {
-								println!("\nRequest cancelled by user.");
-								continue;
-							}
-
-							// Process the final response
-							match final_response.unwrap() {
-								Ok(Ok((final_content, final_exchange))) => {
-									// Add assistant message with the final response
-									chat_session.add_assistant_message(&final_content, Some(final_exchange), config)?;
-
-									// Print assistant response with color if terminal supports it
-									use colored::*;
-									println!("\n{}", final_content.bright_green());
-
-									// Display cumulative token usage
-									println!();
-									println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
-									println!("{} {} prompt, {} completion, {} total, ${:.5}",
-										"tokens:".bright_blue(),
-										chat_session.session.info.input_tokens,
-										chat_session.session.info.output_tokens,
-										chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
-										chat_session.session.info.total_cost);
-									println!();
-								},
-								Ok(Err(e)) => {
-									// Print colorful error message
-									use colored::*;
-									println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
-								},
-								Err(e) => {
-									// Print colorful task error message
-									use colored::*;
-									println!("\n{}: {}", "Task error".bright_red(), e);
-								}
-							}
-						}
-					} else {
-						// No tool calls, just regular content
-						chat_session.add_assistant_message(&content, Some(exchange), config)?;
-
-						// Print assistant response with color if terminal supports it
-						use colored::*;
-						println!("\n{}", content.bright_green());
-
-						// Display cumulative token usage
-						println!();
-						println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
-						println!("{} {} prompt, {} completion, {} total, ${:.5}",
-							"tokens:".bright_blue(),
-							chat_session.session.info.input_tokens,
-							chat_session.session.info.output_tokens,
-							chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
-							chat_session.session.info.total_cost);
-						println!();
-					}
-				} else {
-					// MCP not enabled, just show content
-					chat_session.add_assistant_message(&content, Some(exchange), config)?;
-
-					// Print assistant response with color if terminal supports it
+				if let Err(e) = process_result {
+					// Print colorful error message
 					use colored::*;
-					println!("\n{}", content.bright_green());
-
-					// Display cumulative token usage
-					println!();
-					println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
-					println!("{} {} prompt, {} completion, {} total, ${:.5}",
-						"tokens:".bright_blue(),
-						chat_session.session.info.input_tokens,
-						chat_session.session.info.output_tokens,
-						chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
-						chat_session.session.info.total_cost);
-					println!();
+					println!("\n{}: {}", "Error processing response".bright_red(), e);
 				}
 			},
-			Ok(Err(e)) => {
+			Err(e) => {
 				// Print colorful error message
 				use colored::*;
 				println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
 				println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
-			},
-			Err(e) => {
-				// Print colorful task error message
-				use colored::*;
-				println!("\n{}: {}", "Task error".bright_red(), e);
 			}
 		}
 	}

@@ -86,7 +86,8 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				.stderr(Stdio::piped());
 
 			// Start the process
-			println!("Starting MCP server (HTTP mode): {}", server.name);
+			// Debug output
+			// println!("Starting MCP server (HTTP mode): {}", server.name);
 			let child = cmd.spawn()
 				.map_err(|e| anyhow::anyhow!("Failed to start MCP server '{}': {}", server.name, e))?;
 
@@ -113,7 +114,8 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 
 				// Try to connect to the server
 				if can_connect(&server_url).await {
-					println!("MCP server started: {} at {}", server.name, server_url);
+					// Debug output
+					// println!("MCP server started: {} at {}", server.name, server_url);
 					return Ok(server_url);
 				}
 
@@ -128,7 +130,8 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				.stderr(Stdio::piped());
 
 			// Start the process
-			println!("Starting MCP server (stdin mode): {}", server.name);
+			// Debug output
+			// println!("Starting MCP server (stdin mode): {}", server.name);
 			let mut child = cmd.spawn()
 				.map_err(|e| anyhow::anyhow!("Failed to start MCP server '{}': {}", server.name, e))?;
 
@@ -185,7 +188,8 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 
 			// Return a pseudo-URL for stdin-based servers
 			let stdin_url = format!("stdin://{}", server.name);
-			println!("MCP server started and initialized (stdin mode): {} at {}", server.name, stdin_url);
+			// Debug output
+			// println!("MCP server started and initialized (stdin mode): {} at {}", server.name, stdin_url);
 			return Ok(stdin_url);
 		}
 	}
@@ -427,7 +431,8 @@ pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<
 
 // Execute a tool on a stdin-based server
 pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfig) -> Result<McpToolResult> {
-	println!("Executing tool '{}' on server '{}'", call.tool_name, server.name);
+	// Debug output
+	// println!("Executing tool '{}' on server '{}'", call.tool_name, server.name);
 
 	// Create a call_tool request message following the MCP protocol
 	let message = json!({
@@ -549,7 +554,8 @@ pub async fn communicate_with_stdin_server_extended_timeout(server_name: &str, m
 	let request_id_clone = request_id;
 
 	// Execute with extended timeout to prevent hanging forever but allow long-running operations
-	println!("Sending message to server '{}' with {}s timeout", server_name, timeout_seconds);
+	// Debug output
+	// println!("Sending message to server '{}' with {}s timeout", server_name, timeout_seconds);
 	let timeout_future = tokio::time::timeout(std::time::Duration::from_secs(timeout_seconds), tokio::task::spawn_blocking(move || {
 		// Get a lock on the process
 		let mut process = server_process.lock().unwrap();
@@ -563,7 +569,8 @@ pub async fn communicate_with_stdin_server_extended_timeout(server_name: &str, m
 					.to_string();
 				message_str.push('\n');
 
-				println!("Sending message to stdin: {}", message_str);
+				// Debug output
+				// println!("Sending message to stdin: {}", message_str);
 
 				// Write the message to the process's stdin
 				writer.write_all(message_str.as_bytes())
@@ -614,7 +621,8 @@ pub fn stop_all_servers() -> Result<()> {
 
 	for (name, process_arc) in processes.iter() {
 		let mut process = process_arc.lock().unwrap();
-		println!("Stopping MCP server: {}", name);
+		// Debug output
+		// println!("Stopping MCP server: {}", name);
 		if let Err(e) = process.kill() {
 			eprintln!("Failed to kill MCP server '{}': {}", name, e);
 		}

@@ -227,13 +227,18 @@ pub async fn chat_completion(
 				// Extract the function information
 				if let Some(function) = tool_call.get("function") {
 					if let (Some(name), Some(args)) = (function.get("name").and_then(|n| n.as_str()),
-												  function.get("arguments").and_then(|a| a.as_str())) {
+										  function.get("arguments").and_then(|a| a.as_str())) {
 						// Parse the arguments as JSON
-						let params = match serde_json::from_str::<serde_json::Value>(args) {
-							Ok(json_params) => json_params,
-							Err(_) => {
-								// Fallback: use arguments as a raw string if parsing fails
-								serde_json::Value::String(args.to_string())
+						let params = if args.trim().is_empty() {
+							// Empty arguments should be an empty object, not an empty string
+							serde_json::json!({})
+						} else {
+							match serde_json::from_str::<serde_json::Value>(args) {
+								Ok(json_params) => json_params,
+								Err(_) => {
+									// Fallback: use arguments as a raw string if parsing fails
+									serde_json::Value::String(args.to_string())
+								}
 							}
 						};
 
@@ -252,7 +257,12 @@ pub async fn chat_completion(
 				) {
 					// Handle the direct tool call format (used by some models)
 					let params = if let Some(params_obj) = tool_call.get("parameters") {
-						params_obj.clone()
+						// Ensure even empty parameters are formatted as objects, not strings
+						if params_obj.is_string() && params_obj.as_str().unwrap_or("").is_empty() {
+							serde_json::json!({})
+						} else {
+							params_obj.clone()
+						}
 					} else {
 						serde_json::json!({})
 					};

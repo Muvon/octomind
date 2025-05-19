@@ -14,7 +14,7 @@ struct CommandCompleter {
 
 impl CommandCompleter {
     fn new() -> Self {
-        let commands = super::chat::COMMANDS.iter().map(|&s| s.to_string()).collect();
+        let commands = crate::session::chat::COMMANDS.iter().map(|&s| s.to_string()).collect();
         Self { commands }
     }
 }

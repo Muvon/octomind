@@ -55,23 +55,63 @@ pub struct Message {
 // Convert our session messages to OpenRouter format
 pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 	messages.iter().map(|msg| {
-		// Handle cache breakpoints using Anthropic format
+		// Handle cache breakpoints
 		if msg.cached {
-			// Create a multipart message with a cache control block
-			Message {
-				role: msg.role.clone(),
-				content: serde_json::json!([
-					{
-						"type": "text",
-						"text": msg.content,
-						"cache_control": {
-							"type": "ephemeral"
-						}
+			// For a cached message, we need to create a multipart message with cache control
+			// This is compatible with Anthropic, Google, and others that support caching
+			if msg.content.contains("\n") {
+				// For multiline content, create a message with multiple parts
+				// The first part is regular text, the second part has cache_control
+				let parts: Vec<&str> = msg.content.splitn(2, "\n").collect();
+				if parts.len() > 1 {
+					Message {
+						role: msg.role.clone(),
+						content: serde_json::json!([
+							{
+								"type": "text",
+								"text": parts[0],
+							},
+							{
+								"type": "text",
+								"text": parts[1],
+								"cache_control": {
+									"type": "ephemeral"
+								}
+							}
+						]),
 					}
-				]),
+				} else {
+					// Fallback if splitting failed
+					Message {
+						role: msg.role.clone(),
+						content: serde_json::json!([
+							{
+								"type": "text",
+								"text": msg.content,
+								"cache_control": {
+									"type": "ephemeral"
+								}
+							}
+						]),
+					}
+				}
+			} else {
+				// For single-line content, just wrap it in cache_control
+				Message {
+					role: msg.role.clone(),
+					content: serde_json::json!([
+						{
+							"type": "text",
+							"text": msg.content,
+							"cache_control": {
+								"type": "ephemeral"
+							}
+						}
+					]),
+				}
 			}
 		} else {
-			// Regular message
+			// Regular message, no caching
 			Message {
 				role: msg.role.clone(),
 				content: serde_json::json!(msg.content),
@@ -244,32 +284,7 @@ pub async fn chat_completion(
 				let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
 					.map(|v| v.clone());
 
-				// Log token usage
-				use colored::*;
-				if let Some(cost_value) = cost {
-					// Convert from credits to dollars (100,000 credits = $1)
-					let cost_dollars = cost_value as f64 / 100000.0;
-					// Cancel the loading animation first to clear the line
-					println!();
-					println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
-					println!("{} {} prompt, {} completion, {} total, ${:.5}", 
-						"tokens:".bright_blue(),
-						prompt_tokens, 
-						completion_tokens, 
-						total_tokens,
-						cost_dollars);
-					println!();
-				} else {
-					// Cancel the loading animation first to clear the line
-					println!();
-					println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
-					println!("{} {} prompt, {} completion, {} total", 
-						"tokens:".bright_blue(),
-						prompt_tokens, 
-						completion_tokens, 
-						total_tokens);
-					println!();
-				}
+				// No token usage logging here - moved to after response handling in chat.rs
 
 				Some(TokenUsage {
 					prompt_tokens,
@@ -336,32 +351,7 @@ pub async fn chat_completion(
 		let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
 			.map(|v| v.clone());
 
-		// Log token usage if available
-		use colored::*;
-		if let Some(cost_value) = cost {
-			// Convert from credits to dollars (100,000 credits = $1)
-			let cost_dollars = cost_value as f64 / 100000.0;
-			// Cancel the loading animation first to clear the line
-			println!();
-			println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
-			println!("{} {} prompt, {} completion, {} total, ${:.5}", 
-				"tokens:".bright_blue(),
-				prompt_tokens, 
-				completion_tokens, 
-				total_tokens,
-				cost_dollars);
-			println!();
-		} else {
-			// Cancel the loading animation first to clear the line
-			println!();
-			println!("── {} ────────────────────────────────────────", "usage".bright_cyan());
-			println!("{} {} prompt, {} completion, {} total", 
-				"tokens:".bright_blue(),
-				prompt_tokens, 
-				completion_tokens, 
-				total_tokens);
-			println!();
-		}
+		// No token usage logging here - moved to after response handling in chat.rs
 
 		Some(TokenUsage {
 			prompt_tokens,

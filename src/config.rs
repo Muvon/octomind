@@ -100,7 +100,7 @@ impl Default for PricingConfig {
 }
 
 fn default_openrouter_model() -> String {
-    "anthropic/claude-3-sonnet-20240229".to_string()
+    "anthropic/claude-3.7-sonnet".to_string()
 }
 
 impl Default for OpenRouterConfig {
@@ -239,10 +239,10 @@ impl Config {
         let current_dir = std::env::current_dir()?;
         let octodev_dir = Self::ensure_octodev_dir()?;
         let config_path = octodev_dir.join("config.toml");
-        
+
         // Check for legacy config at root
         let legacy_config_path = current_dir.join(".octodev.toml");
-        
+
         if config_path.exists() {
             let config_str = fs::read_to_string(&config_path)
                 .context(format!("Failed to read config from {}", config_path.display()))?;
@@ -267,16 +267,16 @@ impl Config {
                 .context(format!("Failed to read legacy config from {}", legacy_config_path.display()))?;
             let mut config: Config = toml::from_str(&config_str)
                 .context("Failed to parse TOML configuration")?;
-            
+
             // Set the new config path
             config.config_path = Some(config_path.clone());
-            
+
             // Save to new location
             let config_str = toml::to_string(&config)
                 .context("Failed to serialize configuration to TOML")?;
             fs::write(&config_path, config_str)
                 .context(format!("Failed to write config to {}", config_path.display()))?;
-            
+
             // Check environment variable for API keys even if config exists
             if config.jina_api_key.is_none() {
                 config.jina_api_key = std::env::var("JINA_API_KEY").ok();
@@ -284,7 +284,7 @@ impl Config {
             if config.openrouter.api_key.is_none() {
                 config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
             }
-            
+
             Ok(config)
         } else {
             // Create default config

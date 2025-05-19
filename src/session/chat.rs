@@ -15,7 +15,7 @@ use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
 use colored::Colorize;
 
 // Model choices (moved to config, kept here for backward compatibility)
-pub const CLAUDE_MODEL: &str = "anthropic/claude-3-sonnet-20240229";
+pub const CLAUDE_MODEL: &str = "anthropic/claude-3.7-sonnet";
 pub const DEFAULT_MODEL: &str = CLAUDE_MODEL;
 
 // Chat commands
@@ -159,19 +159,19 @@ impl ChatSession {
 		// Add message to session
 		let message = self.session.add_message("assistant", content);
 		self.last_response = content.to_string();
-		
+
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
 			if let Some(usage) = &ex.usage {
 				// Update session token counts
 				self.session.info.input_tokens += usage.prompt_tokens;
 				self.session.info.output_tokens += usage.completion_tokens;
-				
+
 				// If OpenRouter provided cost data, use it (preferred)
 				if let Some(cost_credits) = usage.cost {
 					// Convert from credits to dollars (100,000 credits = $1)
 					let cost_dollars = cost_credits as f64 / 100000.0;
-					
+
 					// Update total cost
 					self.session.info.total_cost += cost_dollars;
 					self.estimated_cost = self.session.info.total_cost;
@@ -180,12 +180,12 @@ impl ChatSession {
 					let input_cost = usage.prompt_tokens as f64 * config.openrouter.pricing.input_price;
 					let output_cost = usage.completion_tokens as f64 * config.openrouter.pricing.output_price;
 					let current_cost = input_cost + output_cost;
-					
+
 					// Update total cost
 					self.session.info.total_cost += current_cost;
 					self.estimated_cost = self.session.info.total_cost;
 				}
-				
+
 				// Update session duration
 				let current_time = std::time::SystemTime::now()
 					.duration_since(std::time::UNIX_EPOCH)
@@ -221,13 +221,20 @@ impl ChatSession {
 				return Ok(true);
 			},
 			HELP_COMMAND => {
-				println!("\nAvailable commands:\n");
+				println!("{}", "\nAvailable commands:\n".bright_cyan());
 				println!("{} or {} - {}", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
 				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
 				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
 				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
-				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message");
+				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message to save on tokens with supported models");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
+
+				// Additional info about caching
+				println!("{}", "** About Cache Checkpoints **".bright_yellow());
+				println!("{}", "When using /cache, your last user message will be marked for caching.");
+				println!("{}", "This is useful for large text blocks like code snippets that don't change between requests.");
+				println!("{}", "The model provider will charge less for cached content in subsequent requests.");
+				println!("{}", "Best practice: Use separate messages with the most data-heavy part marked for caching.\n");
 			},
 			COPY_COMMAND => {
 				println!("Clipboard functionality is disabled in this version.");
@@ -248,6 +255,7 @@ impl ChatSession {
 				match self.session.add_cache_checkpoint() {
 					Ok(true) => {
 						println!("{}", "Cache checkpoint added at the last user message. This will be used for future requests.".bright_green());
+						println!("{}", "Note: For large text blocks, it's best to split them into separate messages with the cached part containing most of the data.".bright_yellow());
 						// Save the session with the cached message
 						let _ = self.save();
 					},
@@ -669,6 +677,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 									// Print assistant response with color if terminal supports it
 									use colored::*;
 									println!("\n{}", final_content.bright_green());
+
+									// Display cumulative token usage
+									println!();
+									println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
+									println!("{} {} prompt, {} completion, {} total, ${:.5}",
+										"tokens:".bright_blue(),
+										chat_session.session.info.input_tokens,
+										chat_session.session.info.output_tokens,
+										chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
+										chat_session.session.info.total_cost);
+									println!();
 								},
 								Ok(Err(e)) => {
 									// Print colorful error message
@@ -689,6 +708,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						// Print assistant response with color if terminal supports it
 						use colored::*;
 						println!("\n{}", content.bright_green());
+
+						// Display cumulative token usage
+						println!();
+						println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
+						println!("{} {} prompt, {} completion, {} total, ${:.5}",
+							"tokens:".bright_blue(),
+							chat_session.session.info.input_tokens,
+							chat_session.session.info.output_tokens,
+							chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
+							chat_session.session.info.total_cost);
+						println!();
 					}
 				} else {
 					// MCP not enabled, just show content
@@ -697,6 +727,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// Print assistant response with color if terminal supports it
 					use colored::*;
 					println!("\n{}", content.bright_green());
+
+					// Display cumulative token usage
+					println!();
+					println!("── {} ────────────────────────────────────────", "session usage".bright_cyan());
+					println!("{} {} prompt, {} completion, {} total, ${:.5}",
+						"tokens:".bright_blue(),
+						chat_session.session.info.input_tokens,
+						chat_session.session.info.output_tokens,
+						chat_session.session.info.input_tokens + chat_session.session.info.output_tokens,
+						chat_session.session.info.total_cost);
+					println!();
 				}
 			},
 			Ok(Err(e)) => {

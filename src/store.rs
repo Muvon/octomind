@@ -15,6 +15,9 @@ pub struct CodeBlock {
 	pub start_line: usize,
 	pub end_line: usize,
 	pub hash: String,
+	// Optional distance field for relevance sorting (higher is more relevant)
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub distance: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -169,49 +172,53 @@ impl Store {
 	}
 
 	pub async fn get_code_blocks(&self, embedding: Vec<f32>) -> Result<Vec<CodeBlock>> {
-		// Using a SurrealQL query with vector similarity using dot product
-        // Note: We could use cosine similarity as in Qdrant, but SurrealDB's vector_dot is available by default
-		let mut result = self.db
-			.query(r#"
-                SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
-                FROM code_blocks
-                ORDER BY embedding_distance DESC
-                LIMIT 50;
-            "#)
-			.bind(("query_embedding", embedding))
-			.await?;
+    // Using a SurrealQL query with vector similarity using dot product
+    // Note: We could use cosine similarity as in Qdrant, but SurrealDB's vector_dot is available by default
+    // Added secondary sort by id to ensure consistent ordering for results with same distance
+    let mut result = self.db
+        .query(r#"
+            SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
+            FROM code_blocks
+            ORDER BY embedding_distance DESC, id ASC
+            LIMIT 50;
+        "#)
+        .bind(("query_embedding", embedding))
+        .await?;
 
-		let vector_results: Vec<VectorSearch> = result.take(0)?;
+    let vector_results: Vec<VectorSearch> = result.take(0)?;
 
-		// Convert results to CodeBlock structs
-		let results: Vec<CodeBlock> = vector_results
-			.into_iter()
-			.map(|vr| {
-				CodeBlock {
-					path: vr.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					language: vr.payload.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					content: vr.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					symbols: vr.payload.get("symbols")
-						.and_then(|v| v.as_array())
-						.map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
-						.unwrap_or_default(),
-					start_line: vr.payload.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-					end_line: vr.payload.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-					hash: vr.payload.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-				}
-			})
-			.collect();
+    // Convert results to CodeBlock structs with distance information
+    let results: Vec<CodeBlock> = vector_results
+        .into_iter()
+        .map(|vr| {
+            let distance = vr.embedding_distance;
+            CodeBlock {
+                path: vr.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                language: vr.payload.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                content: vr.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                symbols: vr.payload.get("symbols")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default(),
+                start_line: vr.payload.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+                end_line: vr.payload.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+                hash: vr.payload.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                distance: Some(distance),
+            }
+        })
+        .collect();
 
-		Ok(results)
-	}
+    Ok(results)
+}
 
 	pub async fn get_code_block_by_symbol(&self, symbol: &str) -> Result<Option<CodeBlock>> {
-        // Query by symbol
+        // Query by symbol - added ORDER BY id for consistency
 		let mut result = self.db
 			.query(r#"
                 SELECT *
                 FROM code_blocks
                 WHERE $symbol IN symbols
+                ORDER BY id ASC
                 LIMIT 1;
             "#)
 			.bind(("symbol", symbol))
@@ -238,6 +245,7 @@ impl Store {
 			start_line: record.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
 			end_line: record.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
 			hash: record.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+			distance: None,  // No relevance score for symbol lookup
 		};
 
 		Ok(Some(code_block))

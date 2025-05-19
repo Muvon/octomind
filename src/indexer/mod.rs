@@ -197,6 +197,7 @@ async fn process_file(
                 symbols: region.symbols,
                 start_line: region.start_line,
                 end_line: region.end_line,
+                distance: None,  // No relevance score when indexing
             });
         }
     }

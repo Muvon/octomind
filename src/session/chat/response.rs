@@ -74,6 +74,13 @@ pub async fn process_response(
 	config: &Config,
 	operation_cancelled: Arc<AtomicBool>
 ) -> Result<()> {
+	// First, add the user message before processing response
+	let last_message = chat_session.session.messages.last();
+	if last_message.map_or(true, |msg| msg.role != "user") {
+		// This is an edge case - the content variable here is the AI response, not user input
+		// We should have added the user message earlier in the main run_interactive_session
+		println!("{}", "Warning: User message not found in session. This is unexpected.".yellow());
+	}
 	// Initialize tool error tracker with max of 3 consecutive errors
 	let mut error_tracker = ToolErrorTracker::new(3);
 	

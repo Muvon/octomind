@@ -314,7 +314,7 @@ impl ChatSession {
 	}
 
 	// Process user commands
-	pub fn process_command(&mut self, input: &str) -> Result<bool> {
+	pub fn process_command(&mut self, input: &str, config: &Config) -> Result<bool> {
 		use colored::*;
 
 		// Extract command and potential parameters
@@ -340,6 +340,7 @@ impl ChatSession {
 				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message to save on tokens with supported models");
 				println!("{} - {}", LIST_COMMAND.cyan(), "List all available sessions");
 				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
+				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 
 				// Additional info about caching
@@ -350,6 +351,17 @@ impl ChatSession {
 				println!("{}", "The model provider will charge less for cached content in subsequent requests.");
 				println!("{}", "Cached tokens will be displayed in the usage statistics after your next message.");
 				println!("{}", "Best practice: Use separate messages with the most data-heavy part marked for caching.\n");
+
+				// Add information about layered architecture
+				println!("{}", "** About Layered Processing **".bright_yellow());
+				println!("{}", "The layered architecture processes your queries through multiple AI layers:");
+				println!("{}", "1. Query Processor: Improves your initial query");
+				println!("{}", "2. Context Generator: Gathers relevant context information");
+				println!("{}", "3. Developer: Executes the actual development work (uses Claude)");
+				println!("{}", "4. Summarizer: Summarizes the changes made");
+				println!("{}", "5. Next Request: Suggests potential next steps");
+				println!("{}", "6. Session Reviewer: Manages token usage\n");
+				println!("{}", "Toggle layered processing with /layers command.\n");
 			},
 			COPY_COMMAND => {
 				println!("Clipboard functionality is disabled in this version.");
@@ -364,6 +376,26 @@ impl ChatSession {
 					println!("{}: {}", "Failed to save session".bright_red(), e);
 				} else {
 					println!("{}", "Session saved successfully.".bright_green());
+				}
+			},
+			LAYERS_COMMAND => {
+				// Toggle layered processing
+				// Use the current config directly - no need to load it separately
+				let mut new_config = config.clone(); // Clone the current config
+				new_config.openrouter.enable_layers = !config.openrouter.enable_layers;
+				
+				// Save the config
+				new_config.save()?;
+				
+				// Show the new state
+				if new_config.openrouter.enable_layers {
+					println!("{}", "Layered processing architecture is now ENABLED.".bright_green());
+					println!("{}", "Your queries will now be processed through multiple AI models.".bright_yellow());
+					println!("{}", "Configuration has been saved to disk.");
+				} else {
+					println!("{}", "Layered processing architecture is now DISABLED.".bright_yellow());
+					println!("{}", "Using standard single-model processing with Claude.".bright_blue());
+					println!("{}", "Configuration has been saved to disk.");
 				}
 			},
 			CACHE_COMMAND => {
@@ -657,7 +689,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check if this is a command
 		if input.starts_with('/') {
-			let exit = chat_session.process_command(&input)?;
+			let exit = chat_session.process_command(&input, config)?;
 			if exit {
 				// First check if it's a session switch command
 				if input.starts_with(SESSION_COMMAND) {
@@ -702,50 +734,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			continue;
 		}
 
-		// Add user message
-		chat_session.add_user_message(&input)?;
-
-		// Convert messages to OpenRouter format
-		let or_messages = openrouter::convert_messages(&chat_session.session.messages);
-
-		// Call OpenRouter in a separate task
-		let model = chat_session.model.clone();
-		let temperature = chat_session.temperature;
-		let config_clone = config.clone();
-
-		// Create a task to show loading animation
-		let animation_cancel = operation_cancelled.clone();
-		let animation_task = tokio::spawn(async move {
-			let _ = show_loading_animation(animation_cancel).await;
-		});
-
-		// Start a separate task to monitor for Ctrl+C
-		let op_cancelled = operation_cancelled.clone();
-		let ctrlc_flag = ctrl_c_pressed.clone();
-		let _cancel_monitor = tokio::spawn(async move {
-			while !op_cancelled.load(Ordering::SeqCst) {
-				// Check if global Ctrl+C flag is set
-				if ctrlc_flag.load(Ordering::SeqCst) {
-					// Set the operation cancellation flag
-					op_cancelled.store(true, Ordering::SeqCst);
-					break; // Exit the loop once cancelled
-				}
-				tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-			}
-		});
-
-		// Now directly perform the API call - no nested tokio tasks
-		let api_result = openrouter::chat_completion(
-			or_messages,
-			&model,
-			temperature,
-			&config_clone
-		).await;
-
-		// Stop the animation - but use TRUE to stop it, not false!
-		operation_cancelled.store(true, Ordering::SeqCst);
-		let _ = animation_task.await;
-		
 		// Create a new cancellation flag for processing the response
 		// This is crucial - we need a fresh flag for each response processing cycle
 		let process_cancelled = Arc::new(AtomicBool::new(false));
@@ -758,29 +746,93 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			continue;
 		}
 
-		// Process the response
-		match api_result {
-			Ok((content, exchange)) => {
-				// Process the response, handling tool calls recursively
-				let process_result = process_response(
-					content,
-					exchange,
-					&mut chat_session,
-					config,
-					process_cancelled.clone()
-				).await;
+		// Add user message
+		// (This moved to process_response or process_layered_response)
 
-				if let Err(e) = process_result {
-					// Print colorful error message
-					use colored::*;
-					println!("\n{}: {}", "Error processing response".bright_red(), e);
-				}
-			},
-			Err(e) => {
+		// Check if layered architecture is enabled
+		if config.openrouter.enable_layers {
+			// Process using layered architecture
+			let process_result = super::process_layered_response(
+				&input,
+				&mut chat_session,
+				config,
+				process_cancelled.clone()
+			).await;
+
+			if let Err(e) = process_result {
 				// Print colorful error message
 				use colored::*;
-				println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
-				println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
+				println!("\n{}: {}", "Error processing response".bright_red(), e);
+			}
+		} else {
+			// Add user message for standard processing flow
+			chat_session.add_user_message(&input)?;
+			
+			// Convert messages to OpenRouter format
+			let or_messages = openrouter::convert_messages(&chat_session.session.messages);
+
+			// Call OpenRouter in a separate task
+			let model = chat_session.model.clone();
+			let temperature = chat_session.temperature;
+			let config_clone = config.clone();
+
+			// Create a task to show loading animation
+			let animation_cancel = operation_cancelled.clone();
+			let animation_task = tokio::spawn(async move {
+				let _ = show_loading_animation(animation_cancel).await;
+			});
+
+			// Start a separate task to monitor for Ctrl+C
+			let op_cancelled = operation_cancelled.clone();
+			let ctrlc_flag = ctrl_c_pressed.clone();
+			let _cancel_monitor = tokio::spawn(async move {
+				while !op_cancelled.load(Ordering::SeqCst) {
+					// Check if global Ctrl+C flag is set
+					if ctrlc_flag.load(Ordering::SeqCst) {
+						// Set the operation cancellation flag
+						op_cancelled.store(true, Ordering::SeqCst);
+						break; // Exit the loop once cancelled
+					}
+					tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+				}
+			});
+
+			// Now directly perform the API call - no nested tokio tasks
+			let api_result = openrouter::chat_completion(
+				or_messages,
+				&model,
+				temperature,
+				&config_clone
+			).await;
+
+			// Stop the animation - but use TRUE to stop it, not false!
+			operation_cancelled.store(true, Ordering::SeqCst);
+			let _ = animation_task.await;
+			
+			// Process the response
+			match api_result {
+				Ok((content, exchange)) => {
+					// Process the response, handling tool calls recursively
+					let process_result = process_response(
+						content,
+						exchange,
+						&mut chat_session,
+						config,
+						process_cancelled.clone()
+					).await;
+
+					if let Err(e) = process_result {
+						// Print colorful error message
+						use colored::*;
+						println!("\n{}: {}", "Error processing response".bright_red(), e);
+					}
+				},
+				Err(e) => {
+					// Print colorful error message
+					use colored::*;
+					println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
+					println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
+				}
 			}
 		}
 	}

@@ -72,6 +72,22 @@ pub struct OpenRouterConfig {
 	pub api_key: Option<String>,
 	#[serde(default)]
 	pub pricing: PricingConfig,
+	// Layer configurations for the new layered architecture
+	#[serde(default)]
+	pub enable_layers: bool,
+	// Layer-specific model configurations
+	#[serde(default)]
+	pub query_processor_model: Option<String>,
+	#[serde(default)]
+	pub context_generator_model: Option<String>,
+	#[serde(default)]
+	pub developer_model: Option<String>,
+	#[serde(default)]
+	pub summarizer_model: Option<String>,
+	#[serde(default)]
+	pub next_request_model: Option<String>,
+	#[serde(default)]
+	pub session_reviewer_model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -109,6 +125,13 @@ impl Default for OpenRouterConfig {
 			model: default_openrouter_model(),
 			api_key: None,
 			pricing: PricingConfig::default(),
+			enable_layers: false, // Disabled by default
+			query_processor_model: Some("openai/gpt-4o".to_string()),
+			context_generator_model: Some("openai/gpt-4o".to_string()),
+			developer_model: None, // Use the main model by default
+			summarizer_model: Some("openai/gpt-4o".to_string()),
+			next_request_model: Some("openai/gpt-4o".to_string()),
+			session_reviewer_model: Some("openai/gpt-4o".to_string()),
 		}
 	}
 }

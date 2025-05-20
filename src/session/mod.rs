@@ -4,9 +4,11 @@ mod openrouter; // OpenRouter API client
 pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
 pub mod mcp;        // MCP protocol support
+mod layers;         // Layered architecture implementation
 
 pub use openrouter::*;
 pub use mcp::*;
+pub use layers::*;
 
 // Re-export constants
 // Constants moved to config

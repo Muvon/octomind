@@ -10,9 +10,10 @@ pub const SAVE_COMMAND: &str = "/save";
 pub const CACHE_COMMAND: &str = "/cache";
 pub const LIST_COMMAND: &str = "/list";
 pub const SESSION_COMMAND: &str = "/session";
+pub const LAYERS_COMMAND: &str = "/layers";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 9] = [
+pub const COMMANDS: [&str; 10] = [
 	HELP_COMMAND,
 	EXIT_COMMAND,
 	QUIT_COMMAND,
@@ -22,4 +23,5 @@ pub const COMMANDS: [&str; 9] = [
 	CACHE_COMMAND,
 	LIST_COMMAND,
 	SESSION_COMMAND,
+	LAYERS_COMMAND,
 ];

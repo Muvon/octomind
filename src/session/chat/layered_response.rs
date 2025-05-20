@@ -28,7 +28,7 @@ pub async fn process_layered_response(
     });
     
     // Process through the layers using the new modular layered architecture
-    let final_output: String = match crate::session::layers::process_with_layers(
+    let layer_output: String = match crate::session::layers::process_with_layers(
         input,
         &mut chat_session.session,
         config,
@@ -47,8 +47,39 @@ pub async fn process_layered_response(
     operation_cancelled.store(true, Ordering::SeqCst);
     let _ = animation_task.await;
     
-    // Create a dummy exchange for token tracking
-    // In a production system, we'd track tokens for each layer
+    // Check for tool calls in the developer layer output
+    if config.mcp.enabled && crate::session::mcp::parse_tool_calls(&layer_output).len() > 0 {
+        // Process the response with tool handling using the existing process_response function
+        // Create a dummy exchange for initial processing
+        let dummy_exchange = openrouter::OpenRouterExchange {
+            request: serde_json::json!({}),
+            response: serde_json::json!({}),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            usage: Some(openrouter::TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cost: None,
+                completion_tokens_details: None,
+                prompt_tokens_details: None,
+                breakdown: None,
+            }),
+        };
+        
+        // Process the response with tool calls using the existing handler
+        return super::response::process_response(
+            layer_output,
+            dummy_exchange,
+            chat_session,
+            config,
+            operation_cancelled
+        ).await;
+    }
+    
+    // If no tool calls, just add the final output to the chat session with a dummy exchange for token tracking
     let dummy_exchange = openrouter::OpenRouterExchange {
         request: serde_json::json!({}),
         response: serde_json::json!({}),
@@ -68,10 +99,10 @@ pub async fn process_layered_response(
     };
     
     // Add the final output to the chat session
-    chat_session.add_assistant_message(&final_output, Some(dummy_exchange), config)?;
+    chat_session.add_assistant_message(&layer_output, Some(dummy_exchange), config)?;
     
     // Print assistant response with color
-    println!("\n{}", final_output.bright_green());
+    println!("\n{}", layer_output.bright_green());
     
     // Just show a short summary with the total cost
     // Detailed breakdowns are available via the /info command

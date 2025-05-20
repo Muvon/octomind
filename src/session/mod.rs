@@ -15,62 +15,84 @@ pub use layers::{LayerType, LayerConfig, LayerResult, Layer, process_with_layers
 
 // System prompts for layer types
 pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
-    match layer_type {
-        layers::LayerType::QueryProcessor => {
-            "You are an expert query processor in the OctoDev system. \
-            Your job is to analyze the user's query and improve it to create clearer \
-            instructions for the development team. Focus on understanding the real intent \
-            behind user requests, adding specificity where needed, and formatting the \
-            request in a way that will lead to the most effective implementation. \
-            Create a concise yet comprehensive set of instructions. Don't include any \
-            explanations to the user, just return the improved query.".to_string()
-        },
-        layers::LayerType::ContextGenerator => {
-            "You are the context gathering specialist for the OctoDev system. \
-            Your task is to identify what information would be most relevant to \
-            complete the user's request. Think about what files, code snippets, \
-            or project details would help solve this problem. You will execute \
-            tool calls as needed to gather this information, then compile it into \
-            a clear context package that will be cached for efficient processing. \
-            Be thorough but focused - collect everything needed but avoid irrelevant information.".to_string()
-        },
-        layers::LayerType::Developer => {
-            "You are OctoDev's core developer AI. Using the improved instructions \
-            and context provided, implement the requested changes or provide solutions \
-            to the user's coding problems. Execute tool calls as needed to accomplish \
-            tasks and provide clear explanations of your work. Focus on delivering \
-            high-quality, working solutions with clear documentation. Be thorough in \
-            testing your changes and ensuring they meet the requirements.".to_string()
-        },
-        layers::LayerType::Summarizer => {
-            "You are the summarization expert for OctoDev. Your job is to create \
-            a concise summary of the work that was done in response to the user's \
-            request. Focus on what changes were made, why they were made, and what \
-            the outcome was. You should also update documentation files as needed: \
-            1. Update README.md with relevant information about new features or changes \
-            2. Add an entry to CHANGES.md with the date and a description of changes made \
-            If these files don't exist, you should suggest creating them. This summary \
-            should be clear, informative, and focused on the technical details.".to_string()
-        },
-        layers::LayerType::NextRequest => {
-            "You are the forward-thinking component of OctoDev. Based on the work \
-            just completed, suggest what the user might want to do next. Provide \
-            thoughtful suggestions for next steps or further improvements that would \
-            be logical to pursue. Format these as questions or commands the user \
-            could type, making it easy for them to continue their workflow. Try to \
-            anticipate logical next steps in the development process.".to_string()
-        },
-        layers::LayerType::SessionReviewer => {
-            "You are the session management specialist for OctoDev. Your job is to \
-            review the current session state, identify what information should be \
-            retained in context for future interactions, and what can be summarized \
-            or removed to optimize token usage. When the conversation history gets \
-            too long or reaches a token threshold, you'll condense it into a concise \
-            summary that preserves the essential context. This summary will be \
-            cached automatically to save tokens in future interactions. Focus on \
-            extracting the most important technical details and requirements.".to_string()
-        },
-    }
+	match layer_type {
+		layers::LayerType::QueryProcessor => {
+			"You are an expert query processor and requirement analyst in the OctoDev system. \
+				Analyze the user's request and return ONLY an improved, clarified version of the task. \
+				Transform vague or ambiguous requests into specific, actionable instructions. \
+				Identify unstated requirements, technical constraints, and implementation details that would be needed. \
+				Structure the output as a clear set of development tasks or requirements. \
+				Include relevant technical specifics, edge cases to handle, and success criteria when possible. \
+				DO NOT include any meta-commentary, explanations of your process, or direct responses to the user. \
+				DO NOT preface your response with phrases like 'Here's an improved version' or 'Improved task:'. \
+				Return ONLY the refined task description that a developer could immediately work from.".to_string()
+		},
+		layers::LayerType::ContextGenerator => {
+			"You are the context gathering specialist for the OctoDev system. \
+				\
+				Your primary responsibilities are to: \
+				1. Analyze the user's request to identify ALL information needed for resolution \
+				2. Methodically gather relevant context through available tools \
+				3. Construct a comprehensive context package that will be cached for downstream processing \
+				\
+				CONTEXT IDENTIFICATION PROCESS: \
+				- Determine the programming language, frameworks, and technologies involved \
+				- Identify relevant files, classes, functions, configurations, or dependencies \
+				- Consider what implementation patterns or architectural decisions may impact the solution \
+				- Assess if environment configuration, build settings, or runtime details are relevant \
+				\
+				INFORMATION GATHERING GUIDELINES: \
+				- Always check for existing implementations of similar functionality in the codebase \
+				- Retrieve complete file contents when structure or relationships are important \
+				- For large files, focus on the most relevant sections (class definitions, function signatures) \
+				- Collect documentation, READMEs, or comments that explain design decisions \
+				- When imports or dependencies are referenced, fetch their definitions if needed \
+				\
+				CONTEXT ORGANIZATION:
+				- Group related information logically \
+				- Prioritize the most directly relevant content first \
+				- Include file paths and versions when appropriate \
+				- Add brief annotations about why each piece of context is relevant \
+				\
+				Remember: Be thorough but targeted - gather everything necessary for task completion while avoiding information overload. Your context package directly impacts the quality and efficiency of the solution.".to_string()
+		},
+		layers::LayerType::Developer => {
+			"You are OctoDev's core developer AI. Using the improved instructions \
+				and context provided, implement the requested changes or provide solutions \
+				to the user's coding problems. Execute tool calls as needed to accomplish \
+				tasks and provide clear explanations of your work. Focus on delivering \
+				high-quality, working solutions with clear documentation. Be thorough in \
+				testing your changes and ensuring they meet the requirements.".to_string()
+		},
+		layers::LayerType::Summarizer => {
+			"You are the summarization expert for OctoDev. Your job is to create \
+				a concise summary of the work that was done in response to the user's \
+				request. Focus on what changes were made, why they were made, and what \
+				the outcome was. You should also update documentation files as needed: \
+				1. Update README.md with relevant information about new features or changes \
+				2. Add an entry to CHANGES.md with the date and a description of changes made \
+				If these files don't exist, you should suggest creating them. This summary \
+				should be clear, informative, and focused on the technical details.".to_string()
+		},
+		layers::LayerType::NextRequest => {
+			"You are the forward-thinking component of OctoDev. Based on the work \
+				just completed, suggest what the user might want to do next. Provide \
+				thoughtful suggestions for next steps or further improvements that would \
+				be logical to pursue. Format these as questions or commands the user \
+				could type, making it easy for them to continue their workflow. Try to \
+				anticipate logical next steps in the development process.".to_string()
+		},
+		layers::LayerType::SessionReviewer => {
+			"You are the session management specialist for OctoDev. Your job is to \
+				review the current session state, identify what information should be \
+				retained in context for future interactions, and what can be summarized \
+				or removed to optimize token usage. When the conversation history gets \
+				too long or reaches a token threshold, you'll condense it into a concise \
+				summary that preserves the essential context. This summary will be \
+				cached automatically to save tokens in future interactions. Focus on \
+				extracting the most important technical details and requirements.".to_string()
+		},
+	}
 }
 
 use std::fs::{self, OpenOptions, File};
@@ -82,291 +104,291 @@ use std::io::Write;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
-    pub role: String,
-    pub content: String,
-    pub timestamp: u64,
-    #[serde(default = "default_cache_marker")]
-    pub cached: bool,  // Marks if this message is a cache breakpoint
+	pub role: String,
+	pub content: String,
+	pub timestamp: u64,
+	#[serde(default = "default_cache_marker")]
+	pub cached: bool,  // Marks if this message is a cache breakpoint
 }
 
 fn default_cache_marker() -> bool {
-    false
+	false
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionInfo {
-    pub name: String,
-    pub created_at: u64,
-    pub model: String,
-    pub provider: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cached_tokens: u64,  // Added to track cached tokens separately
-    pub total_cost: f64,
-    pub duration_seconds: u64,
-    pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
+	pub name: String,
+	pub created_at: u64,
+	pub model: String,
+	pub provider: String,
+	pub input_tokens: u64,
+	pub output_tokens: u64,
+	pub cached_tokens: u64,  // Added to track cached tokens separately
+	pub total_cost: f64,
+	pub duration_seconds: u64,
+	pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LayerStats {
-    pub layer_type: String,
-    pub model: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost: f64,
-    pub timestamp: u64,
+	pub layer_type: String,
+	pub model: String,
+	pub input_tokens: u64,
+	pub output_tokens: u64,
+	pub cost: f64,
+	pub timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Session {
-    pub info: SessionInfo,
-    pub messages: Vec<Message>,
-    pub session_file: Option<PathBuf>,
+	pub info: SessionInfo,
+	pub messages: Vec<Message>,
+	pub session_file: Option<PathBuf>,
 }
 
 impl Session {
-    // Create a new session
-    pub fn new(name: String, model: String, provider: String) -> Self {
-        Self {
-            info: SessionInfo {
-                name,
-                created_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                model,
-                provider,
-                input_tokens: 0,
-                output_tokens: 0,
-                cached_tokens: 0,
-                total_cost: 0.0,
-                duration_seconds: 0,
-                layer_stats: Vec::new(), // Initialize empty layer stats
-            },
-            messages: Vec::new(),
-            session_file: None,
-        }
-    }
+	// Create a new session
+	pub fn new(name: String, model: String, provider: String) -> Self {
+		Self {
+			info: SessionInfo {
+				name,
+				created_at: SystemTime::now()
+					.duration_since(UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs(),
+				model,
+				provider,
+				input_tokens: 0,
+				output_tokens: 0,
+				cached_tokens: 0,
+				total_cost: 0.0,
+				duration_seconds: 0,
+				layer_stats: Vec::new(), // Initialize empty layer stats
+			},
+			messages: Vec::new(),
+			session_file: None,
+		}
+	}
 
-    // Add a message to the session
-    pub fn add_message(&mut self, role: &str, content: &str) -> Message {
-        let message = Message {
-            role: role.to_string(),
-            content: content.to_string(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            cached: false,  // Default to not cached
-        };
+	// Add a message to the session
+	pub fn add_message(&mut self, role: &str, content: &str) -> Message {
+		let message = Message {
+			role: role.to_string(),
+			content: content.to_string(),
+			timestamp: SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			cached: false,  // Default to not cached
+		};
 
-        self.messages.push(message.clone());
-        message
-    }
+		self.messages.push(message.clone());
+		message
+	}
 
-    // Add a cache checkpoint - marks a message as a cache breakpoint
-    // By default, it targets the last user message, but system=true targets the system message
-    pub fn add_cache_checkpoint(&mut self, system: bool) -> Result<bool, anyhow::Error> {
-        // Only user or system messages can be marked as cache breakpoints
-        let mut marked = false;
+	// Add a cache checkpoint - marks a message as a cache breakpoint
+	// By default, it targets the last user message, but system=true targets the system message
+	pub fn add_cache_checkpoint(&mut self, system: bool) -> Result<bool, anyhow::Error> {
+		// Only user or system messages can be marked as cache breakpoints
+		let mut marked = false;
 
-        if system {
-            // Find the first system message and mark it
-            for msg in self.messages.iter_mut() {
-                if msg.role == "system" {
-                    msg.cached = true;
-                    marked = true;
-                    break;
-                }
-            }
-        } else {
-            // Find the last user message and mark it as a cache breakpoint
-            for i in (0..self.messages.len()).rev() {
-                let msg = &mut self.messages[i];
-                if msg.role == "user" {
-                    msg.cached = true;
-                    marked = true;
-                    break;
-                }
-            }
-        }
+		if system {
+			// Find the first system message and mark it
+			for msg in self.messages.iter_mut() {
+				if msg.role == "system" {
+					msg.cached = true;
+					marked = true;
+					break;
+				}
+			}
+		} else {
+			// Find the last user message and mark it as a cache breakpoint
+			for i in (0..self.messages.len()).rev() {
+				let msg = &mut self.messages[i];
+				if msg.role == "user" {
+					msg.cached = true;
+					marked = true;
+					break;
+				}
+			}
+		}
 
-        Ok(marked)
-    }
-    
-    // Add statistics for a specific layer
-    pub fn add_layer_stats(&mut self, 
-        layer_type: &str, 
-        model: &str,
-        input_tokens: u64, 
-        output_tokens: u64, 
-        cost: f64
-    ) {
-        // Create the layer stats entry
-        let stats = LayerStats {
-            layer_type: layer_type.to_string(),
-            model: model.to_string(),
-            input_tokens,
-            output_tokens,
-            cost,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        };
-        
-        // Add to the session info
-        self.info.layer_stats.push(stats);
-        
-        // Also update the overall session totals
-        self.info.input_tokens += input_tokens;
-        self.info.output_tokens += output_tokens;
-        self.info.total_cost += cost;
-    }
+		Ok(marked)
+	}
 
-    // Save the session to a file
-    pub fn save(&self) -> Result<(), anyhow::Error> {
-        if let Some(session_file) = &self.session_file {
-            // Clear the file first
-            let _ = File::create(session_file)?;
+	// Add statistics for a specific layer
+	pub fn add_layer_stats(&mut self,
+		layer_type: &str,
+		model: &str,
+		input_tokens: u64,
+		output_tokens: u64,
+		cost: f64
+	) {
+		// Create the layer stats entry
+		let stats = LayerStats {
+			layer_type: layer_type.to_string(),
+			model: model.to_string(),
+			input_tokens,
+			output_tokens,
+			cost,
+			timestamp: SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+		};
 
-            // Save session info as the first line (summary)
-            let info_json = serde_json::to_string(&self.info)?;
-            append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
+		// Add to the session info
+		self.info.layer_stats.push(stats);
 
-            // Save all messages without prefixes - simpler format
-            for message in &self.messages {
-                let message_json = serde_json::to_string(message)?;
-                append_to_session_file(session_file, &message_json)?;
-            }
+		// Also update the overall session totals
+		self.info.input_tokens += input_tokens;
+		self.info.output_tokens += output_tokens;
+		self.info.total_cost += cost;
+	}
 
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("No session file specified"))
-        }
-    }
+	// Save the session to a file
+	pub fn save(&self) -> Result<(), anyhow::Error> {
+		if let Some(session_file) = &self.session_file {
+			// Clear the file first
+			let _ = File::create(session_file)?;
+
+			// Save session info as the first line (summary)
+			let info_json = serde_json::to_string(&self.info)?;
+			append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
+
+			// Save all messages without prefixes - simpler format
+			for message in &self.messages {
+				let message_json = serde_json::to_string(message)?;
+				append_to_session_file(session_file, &message_json)?;
+			}
+
+			Ok(())
+		} else {
+			Err(anyhow::anyhow!("No session file specified"))
+		}
+	}
 }
 
 // Get sessions directory path
 pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
-    let current_dir = std::env::current_dir()?;
-    let octodev_dir = current_dir.join(".octodev");
-    let sessions_dir = octodev_dir.join("sessions");
+	let current_dir = std::env::current_dir()?;
+	let octodev_dir = current_dir.join(".octodev");
+	let sessions_dir = octodev_dir.join("sessions");
 
-    if !sessions_dir.exists() {
-        fs::create_dir_all(&sessions_dir)?;
-    }
+	if !sessions_dir.exists() {
+		fs::create_dir_all(&sessions_dir)?;
+	}
 
-    Ok(sessions_dir)
+	Ok(sessions_dir)
 }
 
 // Get a list of available sessions
 pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::Error> {
-    let sessions_dir = get_sessions_dir()?;
-    let mut sessions = Vec::new();
+	let sessions_dir = get_sessions_dir()?;
+	let mut sessions = Vec::new();
 
-    if !sessions_dir.exists() {
-        return Ok(sessions);
-    }
+	if !sessions_dir.exists() {
+		return Ok(sessions);
+	}
 
-    for entry in fs::read_dir(sessions_dir)? {
-        let entry = entry?;
-        let path = entry.path();
+	for entry in fs::read_dir(sessions_dir)? {
+		let entry = entry?;
+		let path = entry.path();
 
-        if path.is_file() && path.extension().map_or(false, |ext| ext == "jsonl") {
-            // Read just the first line to get session info
-            if let Ok(file) = File::open(&path) {
-                let reader = BufReader::new(file);
-                let first_line = reader.lines().next();
+		if path.is_file() && path.extension().map_or(false, |ext| ext == "jsonl") {
+			// Read just the first line to get session info
+			if let Ok(file) = File::open(&path) {
+				let reader = BufReader::new(file);
+				let first_line = reader.lines().next();
 
-                if let Some(Ok(line)) = first_line {
-                    if let Some(content) = line.strip_prefix("SUMMARY: ") {
-                        if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
-                            let name = path.file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or_default()
-                                .to_string();
+				if let Some(Ok(line)) = first_line {
+					if let Some(content) = line.strip_prefix("SUMMARY: ") {
+						if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
+							let name = path.file_stem()
+								.and_then(|s| s.to_str())
+								.unwrap_or_default()
+								.to_string();
 
-                            sessions.push((name, info));
-                        }
-                    }
-                }
-            }
-        }
-    }
+							sessions.push((name, info));
+						}
+					}
+				}
+			}
+		}
+	}
 
-    // Sort sessions by creation time (newest first)
-    sessions.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+	// Sort sessions by creation time (newest first)
+	sessions.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
 
-    Ok(sessions)
+	Ok(sessions)
 }
 
 // Helper function to load a session from file
 pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
-    let content = fs::read_to_string(session_file)?;
-    let mut session_info: Option<SessionInfo> = None;
-    let mut messages = Vec::new();
+	let content = fs::read_to_string(session_file)?;
+	let mut session_info: Option<SessionInfo> = None;
+	let mut messages = Vec::new();
 
-    for line in content.lines() {
-        if let Some(content) = line.strip_prefix("SUMMARY: ") {
-            // Parse session info (from first line)
-            session_info = Some(serde_json::from_str(content)?);
-        } else if let Some(content) = line.strip_prefix("INFO: ") {
-            // Parse old session info format for backward compatibility
-            let mut old_info: SessionInfo = serde_json::from_str(content)?;
-            // Add the new fields for token tracking
-            old_info.input_tokens = 0;
-            old_info.output_tokens = 0;
-            old_info.cached_tokens = 0;  // Initialize new cached_tokens field
-            old_info.total_cost = 0.0;
-            old_info.duration_seconds = 0;
-            old_info.layer_stats = Vec::new(); // Initialize empty layer stats
-            session_info = Some(old_info);
-        } else if let Some(content) = line.strip_prefix("SYSTEM: ") {
-            // Parse system message
-            let message: Message = serde_json::from_str(content)?;
-            messages.push(message);
-        } else if let Some(content) = line.strip_prefix("USER: ") {
-            // Parse user message
-            let message: Message = serde_json::from_str(content)?;
-            messages.push(message);
-        } else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
-            // Parse assistant message
-            let message: Message = serde_json::from_str(content)?;
-            messages.push(message);
-        } else if !line.starts_with("EXCHANGE: ") {
-            // Skip exchange lines, but try to parse anything else
-            // This is a more flexible approach for future changes
-            if line.contains("\"role\":") && line.contains("\"content\":") {
-                // This looks like a valid message JSON - try to parse it
-                if let Ok(message) = serde_json::from_str::<Message>(line) {
-                    messages.push(message);
-                }
-            }
-        }
-    }
+	for line in content.lines() {
+		if let Some(content) = line.strip_prefix("SUMMARY: ") {
+			// Parse session info (from first line)
+			session_info = Some(serde_json::from_str(content)?);
+		} else if let Some(content) = line.strip_prefix("INFO: ") {
+			// Parse old session info format for backward compatibility
+			let mut old_info: SessionInfo = serde_json::from_str(content)?;
+			// Add the new fields for token tracking
+			old_info.input_tokens = 0;
+			old_info.output_tokens = 0;
+			old_info.cached_tokens = 0;  // Initialize new cached_tokens field
+			old_info.total_cost = 0.0;
+			old_info.duration_seconds = 0;
+			old_info.layer_stats = Vec::new(); // Initialize empty layer stats
+			session_info = Some(old_info);
+		} else if let Some(content) = line.strip_prefix("SYSTEM: ") {
+			// Parse system message
+			let message: Message = serde_json::from_str(content)?;
+			messages.push(message);
+		} else if let Some(content) = line.strip_prefix("USER: ") {
+			// Parse user message
+			let message: Message = serde_json::from_str(content)?;
+			messages.push(message);
+		} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
+			// Parse assistant message
+			let message: Message = serde_json::from_str(content)?;
+			messages.push(message);
+		} else if !line.starts_with("EXCHANGE: ") {
+			// Skip exchange lines, but try to parse anything else
+			// This is a more flexible approach for future changes
+			if line.contains("\"role\":") && line.contains("\"content\":") {
+				// This looks like a valid message JSON - try to parse it
+				if let Ok(message) = serde_json::from_str::<Message>(line) {
+					messages.push(message);
+				}
+			}
+		}
+	}
 
-    if let Some(info) = session_info {
-        let session = Session {
-            info,
-            messages,
-            session_file: Some(session_file.clone()),
-        };
-        Ok(session)
-    } else {
-        Err(anyhow::anyhow!("Invalid session file: missing session info"))
-    }
+	if let Some(info) = session_info {
+		let session = Session {
+			info,
+			messages,
+			session_file: Some(session_file.clone()),
+		};
+		Ok(session)
+	} else {
+		Err(anyhow::anyhow!("Invalid session file: missing session info"))
+	}
 }
 
 // Helper function to append to session file
 pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(), anyhow::Error> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(session_file)?;
+	let mut file = OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(session_file)?;
 
-    writeln!(file, "{}", content)?;
-    Ok(())
+	writeln!(file, "{}", content)?;
+	Ok(())
 }
 pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
 	// If a custom system prompt is defined in the config, use it

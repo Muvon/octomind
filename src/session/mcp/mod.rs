@@ -227,6 +227,22 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	Err(anyhow::anyhow!("Failed to execute tool '{}': {}", call.tool_name, last_error))
 }
 
+// Execute a tool call with layer-specific restrictions
+pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config::Config, layer_config: &crate::session::layers::LayerConfig) -> Result<McpToolResult> {
+	// Check if tools are enabled for this layer
+	if !layer_config.enable_tools {
+		return Err(anyhow::anyhow!("Tool execution is disabled for this layer"));
+	}
+	
+	// Check if specific tool is allowed for this layer
+	if !layer_config.allowed_tools.is_empty() && !layer_config.allowed_tools.contains(&call.tool_name) {
+		return Err(anyhow::anyhow!("Tool '{}' is not allowed for this layer", call.tool_name));
+	}
+	
+	// Pass to regular tool execution
+	execute_tool_call(call, config).await
+}
+
 // Execute multiple tool calls
 pub async fn execute_tool_calls(calls: &[McpToolCall], config: &crate::config::Config) -> Vec<Result<McpToolResult>> {
 	let mut results = Vec::new();

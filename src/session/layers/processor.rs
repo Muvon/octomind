@@ -7,6 +7,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use async_trait::async_trait;
+use colored::Colorize;
 
 // Base processor that handles common functionality for all layers
 pub struct LayerProcessor {
@@ -225,6 +226,104 @@ impl Layer for LayerProcessor {
             self.config.temperature,
             config
         ).await?;
+        
+        // Check if the layer response contains tool calls
+        if config.mcp.enabled && self.config.enable_tools {
+            let tool_calls = crate::session::mcp::parse_tool_calls(&output);
+            
+            // If there are tool calls, process them
+            if !tool_calls.is_empty() {
+                // Create a new session-like context for tool responses
+                let mut tool_session = Vec::new();
+                let output_clone = output.clone();
+                
+                // Process tool calls
+                println!("{}", "Executing tools within layer...".yellow());
+                
+                // Execute all tool calls and collect results
+                let mut tool_results = Vec::new();
+                
+                for tool_call in &tool_calls {
+                    println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
+                    let result = match crate::session::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
+                        Ok(res) => res,
+                        Err(e) => {
+                            println!("{} {}", "Tool execution error:".red(), e);
+                            continue;
+                        }
+                    };
+                    
+                    // Add result to collection
+                    tool_results.push(result);
+                }
+                
+                // If we have results, format them and send back to the model
+                if !tool_results.is_empty() {
+                    // Format the results
+                    let formatted = crate::session::mcp::format_tool_results(&tool_results);
+                    println!("{}", formatted);
+                    
+                    // Create the format expected by the model
+                    let tool_results_message = serde_json::to_string(&tool_results)
+                        .unwrap_or_else(|_| "[]".to_string());
+                    
+                    let tool_message = format!("<fnr>\n{}\n</fnr>",
+                        tool_results_message);
+                    
+                    // Add the original messages
+                    tool_session.extend(messages);
+                    
+                    // Add assistant's response with tool calls
+                    tool_session.push(crate::session::Message {
+                        role: "assistant".to_string(),
+                        content: output_clone,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        cached: false,
+                    });
+                    
+                    // Add tool results as user message
+                    tool_session.push(crate::session::Message {
+                        role: "user".to_string(),
+                        content: tool_message,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        cached: false,
+                    });
+                    
+                    // Convert to OpenRouter format
+                    let tool_or_messages = openrouter::convert_messages(&tool_session);
+                    
+                    // Call the model again with tool results
+                    match openrouter::chat_completion(
+                        tool_or_messages,
+                        &self.config.model,
+                        self.config.temperature,
+                        config
+                    ).await {
+                        Ok((new_output, new_exchange)) => {
+                            // Extract token usage if available
+                            let token_usage = new_exchange.usage.clone();
+                            
+                            // Return the result with the updated output
+                            return Ok(LayerResult {
+                                output: new_output,
+                                exchange: new_exchange,
+                                token_usage,
+                            });
+                        },
+                        Err(e) => {
+                            println!("{} {}", "Error processing tool results:".red(), e);
+                            // Continue with the original output
+                        }
+                    }
+                }
+            }
+        }
         
         // Extract token usage if available
         let token_usage = exchange.usage.clone();

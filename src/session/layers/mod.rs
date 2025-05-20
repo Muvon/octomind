@@ -65,16 +65,26 @@ pub struct LayerConfig {
     pub model: String,
     pub system_prompt: String,
     pub temperature: f32,
+    pub enable_tools: bool,
+    pub allowed_tools: Vec<String>, // Empty means all tools are allowed
 }
 
 impl LayerConfig {
     pub fn new(layer_type: LayerType) -> Self {
+        // By default, enable tools only for Developer layer
+        let enable_tools = match layer_type {
+            LayerType::Developer => true,
+            _ => false,
+        };
+        
         Self {
             layer_type,
             enabled: true,
             model: layer_type.default_model().to_string(),
             system_prompt: super::get_layer_system_prompt(layer_type),
             temperature: 0.7,
+            enable_tools,
+            allowed_tools: Vec::new(), // Empty means all tools are allowed
         }
     }
 }

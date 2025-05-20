@@ -25,6 +25,8 @@ impl LayeredOrchestrator {
                 model: LayerType::QueryProcessor.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::QueryProcessor),
                 temperature: 0.7,
+                enable_tools: false, // By default, only enable tools for Developer
+                allowed_tools: Vec::new(),
             }),
             LayerProcessor::new(LayerConfig {
                 layer_type: LayerType::ContextGenerator,
@@ -32,6 +34,8 @@ impl LayeredOrchestrator {
                 model: LayerType::ContextGenerator.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::ContextGenerator),
                 temperature: 0.7,
+                enable_tools: true, // Enable tools for context gathering
+                allowed_tools: vec!["shell".to_string(), "text_editor".to_string(), "list_files".to_string()],
             }),
             LayerProcessor::new(LayerConfig {
                 layer_type: LayerType::Developer,
@@ -39,6 +43,8 @@ impl LayeredOrchestrator {
                 model: LayerType::Developer.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::Developer),
                 temperature: 0.7,
+                enable_tools: true, // Enable tools for main development
+                allowed_tools: Vec::new(), // All tools available
             }),
             LayerProcessor::new(LayerConfig {
                 layer_type: LayerType::Summarizer,
@@ -46,6 +52,8 @@ impl LayeredOrchestrator {
                 model: LayerType::Summarizer.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::Summarizer),
                 temperature: 0.7,
+                enable_tools: false,
+                allowed_tools: Vec::new(),
             }),
             LayerProcessor::new(LayerConfig {
                 layer_type: LayerType::NextRequest,
@@ -53,6 +61,8 @@ impl LayeredOrchestrator {
                 model: LayerType::NextRequest.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::NextRequest),
                 temperature: 0.7,
+                enable_tools: false,
+                allowed_tools: Vec::new(),
             }),
             LayerProcessor::new(LayerConfig {
                 layer_type: LayerType::SessionReviewer,
@@ -60,6 +70,8 @@ impl LayeredOrchestrator {
                 model: LayerType::SessionReviewer.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::SessionReviewer),
                 temperature: 0.7,
+                enable_tools: false,
+                allowed_tools: Vec::new(),
             }),
         ];
         
@@ -147,16 +159,19 @@ impl LayeredOrchestrator {
             let layer_type = layer.get_type();
             println!("{}", format!("───── Layer: {} ─────", layer_type.as_str()).bright_yellow());
             
-            // Show minimal information
-            println!("{}", "Processing...".bright_blue());
-            
             // Process the layer
+            println!("{}", "Input:".bright_blue());
+            println!("{}", current_input);
+            
             let result = layer.process(
                 &current_input,
                 session,
                 config,
                 operation_cancelled.clone()
             ).await?;
+            
+            println!("{}", "Output:".bright_green());
+            println!("{}", result.output);
             
             // For Context Generator, print a message indicating successful context gathering
             if layer_type == LayerType::ContextGenerator {

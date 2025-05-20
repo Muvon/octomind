@@ -15,13 +15,18 @@ pub struct LayeredOrchestrator {
 }
 
 impl LayeredOrchestrator {
-	pub fn new() -> Self {
-		// Create 4-layer architecture
+	// Create from config
+	pub fn from_config(config: &Config) -> Self {
+		// Create 3-layer architecture (excluding Reducer which is now manual only via /done)
 		let layers = vec![
 			LayerProcessor::new(LayerConfig {
 				layer_type: LayerType::QueryProcessor,
 				enabled: true,
-				model: LayerType::QueryProcessor.default_model().to_string(),
+				model: if let Some(model) = &config.openrouter.query_processor_model {
+					model.clone()
+				} else {
+					LayerType::QueryProcessor.default_model().to_string()
+				},
 				system_prompt: get_layer_system_prompt(LayerType::QueryProcessor),
 				temperature: 0.7,
 				enable_tools: false, // No tools for QueryProcessor
@@ -30,7 +35,11 @@ impl LayeredOrchestrator {
 			LayerProcessor::new(LayerConfig {
 				layer_type: LayerType::ContextGenerator,
 				enabled: true,
-				model: LayerType::ContextGenerator.default_model().to_string(),
+				model: if let Some(model) = &config.openrouter.context_generator_model {
+					model.clone()
+				} else {
+					LayerType::ContextGenerator.default_model().to_string()
+				},
 				system_prompt: get_layer_system_prompt(LayerType::ContextGenerator),
 				temperature: 0.7,
 				enable_tools: true, // Enable tools for context gathering
@@ -39,20 +48,15 @@ impl LayeredOrchestrator {
 			LayerProcessor::new(LayerConfig {
 				layer_type: LayerType::Developer,
 				enabled: true,
-				model: LayerType::Developer.default_model().to_string(),
+				model: if let Some(model) = &config.openrouter.developer_model {
+					model.clone()
+				} else {
+					config.openrouter.model.clone()
+				},
 				system_prompt: get_layer_system_prompt(LayerType::Developer),
 				temperature: 0.7,
 				enable_tools: true, // Enable tools for main development
 				allowed_tools: Vec::new(), // All tools available
-			}),
-			LayerProcessor::new(LayerConfig {
-				layer_type: LayerType::Reducer,
-				enabled: true,
-				model: LayerType::Reducer.default_model().to_string(),
-				system_prompt: get_layer_system_prompt(LayerType::Reducer),
-				temperature: 0.7,
-				enable_tools: false, // No tools for Reducer
-				allowed_tools: Vec::new(),
 			}),
 		];
 
@@ -61,43 +65,7 @@ impl LayeredOrchestrator {
 		}
 	}
 
-	// Create from config
-	pub fn from_config(config: &Config) -> Self {
-		let mut orchestrator = Self::new();
-
-		// Update models based on config
-		for layer in &mut orchestrator.layers {
-			match layer.get_type() {
-				LayerType::QueryProcessor => {
-					if let Some(model) = &config.openrouter.query_processor_model {
-						layer.config.model = model.clone();
-					}
-				},
-				LayerType::ContextGenerator => {
-					if let Some(model) = &config.openrouter.context_generator_model {
-						layer.config.model = model.clone();
-					}
-				},
-				LayerType::Developer => {
-					if let Some(model) = &config.openrouter.developer_model {
-						layer.config.model = model.clone();
-					} else {
-						// Use the main model if no specific developer model
-						layer.config.model = config.openrouter.model.clone();
-					}
-				},
-				LayerType::Reducer => {
-					if let Some(model) = &config.openrouter.reducer_model {
-						layer.config.model = model.clone();
-					}
-				}
-			}
-		}
-
-		orchestrator
-	}
-
-	// Process user input through the 4-layer architecture
+	// Process user input through the 3-layer architecture
 	pub async fn process(
 		&self,
 		input: &str,
@@ -114,8 +82,8 @@ impl LayeredOrchestrator {
 		let mut total_cost = 0.0;
 
 		// Debug information for user
-		println!("{}", "═════════════ 4-Layer Processing Pipeline ═════════════".bright_cyan());
-		println!("{}", "Starting 4-layer processing".bright_green());
+		println!("{}", "═════════════ 3-Layer Processing Pipeline ═════════════".bright_cyan());
+		println!("{}", "Starting 3-layer processing".bright_green());
 		println!();
 
 		// Process through each layer sequentially
@@ -192,39 +160,6 @@ impl LayeredOrchestrator {
 
 			// Update input for next layer
 			current_input = result.output.clone();
-
-			// Always apply context reduction after Reducer layer completes
-			if layer_type == LayerType::Reducer {
-				// The Reducer layer output becomes the new cached context
-				// Clear the session and start fresh
-				let system_message = session.messages.iter()
-					.find(|m| m.role == "system")
-					.cloned();
-
-				// Store user message if it exists to prevent warning
-				let user_message = session.messages.iter()
-					.find(|m| m.role == "user")
-					.cloned();
-
-				session.messages.clear();
-
-				// Restore system message
-				if let Some(system) = system_message {
-					session.messages.push(system);
-				}
-
-				// Add back the user message to prevent 'warning: user message not found' issues
-				if let Some(user) = user_message {
-					session.messages.push(user);
-				}
-
-				// Add Reducer's output as a cached context for next iteration
-				session.add_message("assistant", &result.output);
-				let last_index = session.messages.len() - 1;
-				session.messages[last_index].cached = true;
-
-				println!("{}", "Session context optimized for next interaction".bright_green());
-			}
 		}
 
 		// Display completion info

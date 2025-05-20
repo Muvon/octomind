@@ -5,29 +5,44 @@ pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
 pub mod mcp;        // MCP protocol support
 mod layers;         // Layered architecture implementation
+mod project_context; // Project context collection and management
 
 pub use openrouter::*;
 pub use mcp::*;
 pub use layers::{LayerType, LayerConfig, LayerResult, Layer, process_with_layers};
+pub use project_context::ProjectContext;
 
 // Re-export constants
 // Constants moved to config
 
 // System prompts for layer types
 pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
+	// Get current directory for project context
+	let project_dir = std::env::current_dir().unwrap_or_default();
+	
+	// Collect project context information
+	let project_context = ProjectContext::collect(&project_dir);
+	let context_info = project_context.format_for_prompt();
+	let context_section = if !context_info.is_empty() {
+		format!("\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n", context_info)
+	} else {
+		String::new()
+	};
+	
 	match layer_type {
 		layers::LayerType::QueryProcessor => {
-			"You are an expert query processor and requirement analyst in the OctoDev system. \
+			format!("You are an expert query processor and requirement analyst in the OctoDev system. \
 				Your only job is to analyze the user's request and return an improved, clarified version of the task. \
 				Transform vague or ambiguous requests into specific, actionable instructions. \
 				Identify unstated requirements, technical constraints, and implementation details that would be needed. \
 				Structure the output as a clear set of development tasks or requirements. \
 				Include relevant technical specifics, edge cases to handle, and success criteria when possible. \
 				DO NOT use tools or explore the codebase - that will be done in a later stage. \
-				Return only the refined task description that clearly explains what needs to be done.".to_string()
+				Return only the refined task description that clearly explains what needs to be done.{}" 
+				, context_section)
 		},
 		layers::LayerType::ContextGenerator => {
-			"You are the context gathering specialist for the OctoDev system. \
+			format!("You are the context gathering specialist for the OctoDev system. \
 				\
 				Your primary responsibilities are to: \
 				1. Take the original query and the improved instructions from the query processor \
@@ -50,10 +65,11 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 				- When imports or dependencies are referenced, fetch their definitions if needed \
 				\
 				Your output should be a well-organized collection of context information that the developer can use to solve the task. \
-				Begin your response with the refined task from the query processor, then include all the relevant context you've gathered.".to_string()
+				Begin your response with the refined task from the query processor, then include all the relevant context you've gathered.{}"
+				, context_section)
 		},
 		layers::LayerType::Developer => {
-			"You are OctoDev's core developer AI. You are responsible for implementing the requested changes and providing solutions. \
+			format!("You are OctoDev's core developer AI. You are responsible for implementing the requested changes and providing solutions. \
 				\
 				You will receive: \
 				1. A processed query with clear instructions on what needs to be done \
@@ -75,10 +91,11 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 				- Documentation updates \
 				- Suggestions for next steps \
 				\
-				Maintain a clear view of the full system architecture even when working on specific components.".to_string()
+				Maintain a clear view of the full system architecture even when working on specific components.{}"
+				, context_section)
 		},
 		layers::LayerType::Reducer => {
-			"You are the session optimizer for OctoDev, responsible for consolidating information and preparing for the next interaction. \
+			format!("You are the session optimizer for OctoDev, responsible for consolidating information and preparing for the next interaction. \
 				\
 				Your responsibilities: \
 				1. Review the original request and the developer's solution \
@@ -89,7 +106,8 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 				This condensed information will be cached to reduce token usage in the next iteration. \
 				Focus on extracting the most important technical details while removing unnecessary verbosity. \
 				Your output will be used as context for the next user interaction, so it must contain all essential information \
-				while being as concise as possible.".to_string()
+				while being as concise as possible.{}"
+				, context_section)
 		},
 	}
 }
@@ -389,37 +407,29 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 	writeln!(file, "{}", content)?;
 	Ok(())
 }
+
 pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
 	// If a custom system prompt is defined in the config, use it
 	if let Some(custom_prompt) = &config.system {
 		return custom_prompt.clone();
 	}
 
-	// Otherwise, use the default system prompt
+	// Collect project context information (README.md, CHANGES.md, git info, file tree)
+	let project_context = ProjectContext::collect(project_dir);
+	
+	// Build the base system prompt
 	let mut prompt = format!(
-		"You are an Octodev – top notch AI coding assistant helping with the codebase in {}
-
-When answering code questions:
-• Provide validated, working code solutions
-• Keep responses clear and concise
-• Focus on practical solutions and industry best practices
-
-Code Quality Guidelines:
-• Avoid unnecessary abstractions - solve problems directly
-• Balance file size and readability - don't create overly large files
-• Don't over-fragment code across multiple files unnecessarily
-
-Approach Problems Like a Developer:
-1. Analyze the problem thoroughly first
-2. Think through solutions sequentially
-3. Solve step-by-step with a clear thought process
-
-When working with files:
-1. First understand which files you need to read/write
-2. Process files efficiently, preferably in a single operation when possible
-3. Utilize the provided tools for file operations",
+		"You are an Octodev – top notch AI coding assistant helping with the codebase in {}\n\nWhen answering code questions:\n• Provide validated, working code solutions\n• Keep responses clear and concise\n• Focus on practical solutions and industry best practices\n\nCode Quality Guidelines:\n• Avoid unnecessary abstractions - solve problems directly\n• Balance file size and readability - don't create overly large files\n• Don't over-fragment code across multiple files unnecessarily\n\nApproach Problems Like a Developer:\n1. Analyze the problem thoroughly first\n2. Think through solutions sequentially\n3. Solve step-by-step with a clear thought process\n\nWhen working with files:\n1. First understand which files you need to read/write\n2. Process files efficiently, preferably in a single operation when possible\n3. Utilize the provided tools for file operations",
 		project_dir.display()
 	);
+
+	// Add Project Context Information
+	let context_info = project_context.format_for_prompt();
+	if !context_info.is_empty() {
+		prompt.push_str("\n\n==== PROJECT CONTEXT ====\n\n");
+		prompt.push_str(&context_info);
+		prompt.push_str("\n\n==== END PROJECT CONTEXT ====\n");
+	}
 
 	// Add MCP tools information if enabled
 	if config.mcp.enabled {

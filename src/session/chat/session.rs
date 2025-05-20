@@ -29,44 +29,44 @@ impl ChatSession {
 	// Display detailed information about the session, including layer-specific stats
 	pub fn display_session_info(&self) {
 		use colored::*;
-		
+
 		// Display overall session metrics
 		println!("{}", "───────────── Session Information ─────────────".bright_cyan());
-		
+
 		// Session basics
 		println!("{} {}", "Session name:".yellow(), self.session.info.name.bright_white());
 		println!("{} {}", "Main model:".yellow(), self.session.info.model.bright_white());
-		
+
 		// Total token usage
 		let total_tokens = self.session.info.input_tokens + self.session.info.output_tokens + self.session.info.cached_tokens;
 		println!("{} {}", "Total tokens:".yellow(), total_tokens.to_string().bright_white());
-		println!("{} {} input, {} output, {} cached", 
+		println!("{} {} input, {} output, {} cached",
 			"Breakdown:".yellow(),
 			self.session.info.input_tokens.to_string().bright_blue(),
 			self.session.info.output_tokens.to_string().bright_green(),
 			self.session.info.cached_tokens.to_string().bright_magenta());
-		
+
 		// Cost information
 		println!("{} ${:.5}", "Total cost:".yellow(), self.session.info.total_cost);
-		
+
 		// Messages count
 		println!("{} {}", "Messages:".yellow(), self.session.messages.len());
-		
+
 		// Display layered stats if available
 		if !self.session.info.layer_stats.is_empty() {
 			println!();
 			println!("{}", "───────────── Layer-by-Layer Statistics ─────────────".bright_cyan());
-			
+
 			// Group by layer type
 			let mut layer_stats: std::collections::HashMap<String, Vec<&crate::session::LayerStats>> = std::collections::HashMap::new();
-			
+
 			// Group stats by layer type
 			for stat in &self.session.info.layer_stats {
 				layer_stats.entry(stat.layer_type.clone())
 					.or_insert_with(Vec::new)
 					.push(stat);
 			}
-			
+
 			// Print stats for each layer type
 			for (layer_type, stats) in layer_stats.iter() {
 				// Add special highlighting for context optimization
@@ -75,37 +75,37 @@ impl ChatSession {
 				} else {
 					format!("Layer: {}", layer_type).bright_yellow()
 				};
-				
+
 				println!("{}", layer_display);
-				
+
 				// Count total tokens and cost for this layer type
 				let mut total_input = 0;
 				let mut total_output = 0;
 				let mut total_cost = 0.0;
-				
+
 				// Count executions
 				let executions = stats.len();
-				
+
 				for stat in stats {
 					total_input += stat.input_tokens;
 					total_output += stat.output_tokens;
 					total_cost += stat.cost;
 				}
-				
+
 				// Print the stats
 				println!("  {}: {}", "Model".blue(), stats[0].model);
 				println!("  {}: {}", "Executions".blue(), executions);
-				println!("  {}: {} input, {} output", 
-					"Tokens".blue(), 
+				println!("  {}: {} input, {} output",
+					"Tokens".blue(),
 					total_input.to_string().bright_white(),
 					total_output.to_string().bright_white());
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
-				
+
 				// Add special note for context optimization
 				if layer_type == "context_optimization" {
 					println!("  {}", "Note: These are costs for optimizing context between interactions".bright_cyan());
 				}
-				
+
 				println!();
 			}
 		} else {
@@ -113,7 +113,7 @@ impl ChatSession {
 			println!("{}", "No layer-specific statistics available.".bright_yellow());
 			println!("{}", "This may be because the session was created before layered architecture was enabled.".bright_yellow());
 		}
-		
+
 		println!();
 	}
 
@@ -176,31 +176,31 @@ impl ChatSession {
 
 		if should_resume {
 			use colored::*;
-			
+
 			// Try to load session
 			match load_session(&session_file) {
 				Ok(session) => {
 					// When session is loaded successfully, show its info
 					println!("{}", format!("✓ Resuming session: {}", session_name).bright_green());
-					
+
 					// Show a brief summary of the session
 					let created_time = DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
 						.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
 						.unwrap_or_else(|| "Unknown".to_string());
-					
+
 					// Simplify model name
 					let model_parts: Vec<&str> = session.info.model.split('/').collect();
 					let model_name = if model_parts.len() > 1 { model_parts[1] } else { &session.info.model };
-					
+
 					// Calculate total tokens
 					let total_tokens = session.info.input_tokens + session.info.output_tokens + session.info.cached_tokens;
-					
+
 					println!("{} {}", "Created:".blue(), created_time.white());
 					println!("{} {}", "Model:".blue(), model_name.yellow());
 					println!("{} {}", "Messages:".blue(), session.messages.len().to_string().white());
 					println!("{} {}", "Tokens:".blue(), total_tokens.to_string().bright_blue());
 					println!("{} ${:.5}", "Cost:".blue(), session.info.total_cost.to_string().bright_magenta());
-					
+
 					// Create chat session from loaded session
 					let mut chat_session = ChatSession {
 						session,
@@ -227,7 +227,7 @@ impl ChatSession {
 					// If loading fails, inform the user and create a new session
 					println!("{}: {}", format!("Failed to load session {}", session_name).bright_red(), e);
 					println!("{}", "Creating a new session instead...".yellow());
-					
+
 					// Generate a new unique session name
 					let timestamp = std::time::SystemTime::now()
 						.duration_since(std::time::UNIX_EPOCH)
@@ -235,25 +235,25 @@ impl ChatSession {
 						.as_secs();
 					let new_session_name = format!("session_{}", timestamp);
 					let new_session_file = sessions_dir.join(format!("{}.jsonl", new_session_name));
-					
+
 					println!("{}", format!("Starting new session: {}", new_session_name).bright_green());
-					
+
 					// Create file if it doesn't exist
 					if !new_session_file.exists() {
 						let file = File::create(&new_session_file)?;
 						drop(file);
 					}
-					
+
 					let mut chat_session = ChatSession::new(new_session_name, model, config);
 					chat_session.session.session_file = Some(new_session_file);
-					
+
 					// Immediately save the session info to ensure SUMMARY is written
 					let info_json = serde_json::to_string(&chat_session.session.info)?;
 					crate::session::append_to_session_file(
-						chat_session.session.session_file.as_ref().unwrap(), 
+						chat_session.session.session_file.as_ref().unwrap(),
 						&format!("SUMMARY: {}", info_json)
 					)?;
-					
+
 					Ok(chat_session)
 				}
 			}
@@ -270,11 +270,11 @@ impl ChatSession {
 
 			let mut chat_session = ChatSession::new(session_name, model, config);
 			chat_session.session.session_file = Some(session_file);
-			
+
 			// Immediately save the session info to ensure SUMMARY is written
 			let info_json = serde_json::to_string(&chat_session.session.info)?;
 			crate::session::append_to_session_file(
-				chat_session.session.session_file.as_ref().unwrap(), 
+				chat_session.session.session_file.as_ref().unwrap(),
 				&format!("SUMMARY: {}", info_json)
 			)?;
 
@@ -328,7 +328,7 @@ impl ChatSession {
 				let mut regular_prompt_tokens = usage.prompt_tokens;
 				let mut cached_tokens = 0;
 
-				// Check prompt_tokens_details for cached_tokens
+				// Check prompt_tokens_details for cached_tokens first
 				if let Some(details) = &usage.prompt_tokens_details {
 					if let Some(cached) = details.get("cached_tokens") {
 						if let serde_json::Value::Number(num) = cached {
@@ -342,7 +342,7 @@ impl ChatSession {
 				}
 
 				// Fall back to breakdown field if prompt_tokens_details didn't have cached tokens
-				if cached_tokens == 0 {
+				if cached_tokens == 0 && usage.prompt_tokens > 0 {
 					if let Some(breakdown) = &usage.breakdown {
 						if let Some(cached) = breakdown.get("cached") {
 							if let serde_json::Value::Number(num) = cached {
@@ -351,6 +351,18 @@ impl ChatSession {
 									// Adjust regular tokens to account for cached tokens
 									regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 								}
+							}
+						}
+					}
+				}
+
+				// Check for cached tokens in the base API response for models that report differently
+				if cached_tokens == 0 && usage.prompt_tokens > 0 {
+					if let Some(response) = &ex.response.get("usage") {
+						if let Some(cached) = response.get("cached_tokens") {
+							if let Some(num) = cached.as_u64() {
+								cached_tokens = num;
+								regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 							}
 						}
 					}
@@ -434,6 +446,7 @@ impl ChatSession {
 				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
 				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
 				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
+				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context and restart layered processing for next message");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 
 				// Additional info about caching
@@ -447,13 +460,14 @@ impl ChatSession {
 
 				// Add information about layered architecture
 				println!("{}", "** About Layered Processing **".bright_yellow());
-				println!("{}", "The layered architecture processes your queries through multiple AI layers:");
+				println!("{}", "The layered architecture processes your initial query through multiple AI layers:");
 				println!("{}", "1. Query Processor: Improves your initial query");
 				println!("{}", "2. Context Generator: Gathers relevant context information");
-				println!("{}", "3. Developer: Executes the actual development work (uses Claude)");
-				println!("{}", "4. Summarizer: Summarizes the changes made");
-				println!("{}", "5. Next Request: Suggests potential next steps");
-				println!("{}", "6. Session Reviewer: Manages token usage\n");
+				println!("{}", "3. Developer: Executes the actual development work");
+				println!("{}", "The Reducer functionality is available through the /done command.");
+				println!("{}", "Only the first message in a session uses the full layered architecture.");
+				println!("{}", "Subsequent messages use direct communication with the developer model.");
+				println!("{}", "Use the /done command to optimize context and restart the layered pipeline.");
 				println!("{}", "Toggle layered processing with /layers command.\n");
 			},
 			COPY_COMMAND => {
@@ -484,26 +498,26 @@ impl ChatSession {
 						config.clone()
 					}
 				};
-				
+
 				// Toggle the setting
 				loaded_config.openrouter.enable_layers = !loaded_config.openrouter.enable_layers;
-				
+
 				// Save the updated config
 				if let Err(e) = loaded_config.save() {
 					println!("{}: {}", "Failed to save configuration".bright_red(), e);
 					return Ok(false);
 				}
-				
+
 				// Show the new state
 				if loaded_config.openrouter.enable_layers {
 					println!("{}", "Layered processing architecture is now ENABLED.".bright_green());
 					println!("{}", "Your queries will now be processed through multiple AI models.".bright_yellow());
 				} else {
 					println!("{}", "Layered processing architecture is now DISABLED.".bright_yellow());
-					println!("{}", "Using standard single-model processing with Claude.".bright_blue());
+					// println!("{}", "Using standard single-model processing with Claude.".bright_blue());
 				}
 				println!("{}", "Configuration has been saved to disk.");
-				
+
 				// Return a special code that indicates we should reload the config in the main loop
 				// This will ensure all future commands use the updated config
 				return Ok(true);
@@ -532,48 +546,48 @@ impl ChatSession {
 							println!("{}", "No sessions found.".bright_yellow());
 						} else {
 							println!("{}", "\nAvailable sessions:\n".bright_cyan());
-							println!("{:<20} {:<25} {:<15} {:<10} {:<10}", 
-								"Name".cyan(), 
-								"Created".cyan(), 
-								"Model".cyan(), 
+							println!("{:<20} {:<25} {:<15} {:<10} {:<10}",
+								"Name".cyan(),
+								"Created".cyan(),
+								"Model".cyan(),
 								"Tokens".cyan(),
 								"Cost".cyan());
-							
+
 							println!("{}", "─".repeat(80).cyan());
-							
+
 							for (name, info) in sessions {
 								// Format date from timestamp
 								let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
 									.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
 									.unwrap_or_else(|| "Unknown".to_string());
-								
+
 								// Determine if this is the current session
 								let is_current = match &self.session.session_file {
 									Some(path) => path.file_stem().and_then(|s| s.to_str()).unwrap_or("") == name,
 									None => false,
 								};
-								
+
 								let name_display = if is_current {
 									format!("{} (current)", name).bright_green()
 								} else {
 									name.white()
 								};
-								
+
 								// Simplify model name - strip provider prefix if present
 								let model_parts: Vec<&str> = info.model.split('/').collect();
 								let model_name = if model_parts.len() > 1 { model_parts[1] } else { &info.model };
-								
+
 								// Calculate total tokens
 								let total_tokens = info.input_tokens + info.output_tokens + info.cached_tokens;
-								
-								println!("{:<20} {:<25} {:<15} {:<10} ${:<.5}", 
-									name_display, 
-									created_time.blue(), 
-									model_name.yellow(), 
+
+								println!("{:<20} {:<25} {:<15} {:<10} ${:<.5}",
+									name_display,
+									created_time.blue(),
+									model_name.yellow(),
 									total_tokens.to_string().bright_blue(),
 									info.total_cost.to_string().bright_magenta());
 							}
-							
+
 							println!();
 							println!("{}", "You can switch to another session with:".blue());
 							println!("{}", "  /session <session_name>".bright_green());
@@ -596,12 +610,12 @@ impl ChatSession {
 						.unwrap_or_default()
 						.as_secs();
 					let new_session_name = format!("session_{}", timestamp);
-					
+
 					println!("{}", format!("Creating new session: {}", new_session_name).bright_green());
-					
+
 					// Save current session before switching - no need to save here
 					// The main loop will handle saving before switching
-					
+
 					// Set the session name to return
 					self.session.info.name = new_session_name;
 					return Ok(true);
@@ -609,7 +623,7 @@ impl ChatSession {
 					// Get the session name from the parameters
 					let new_session_name = params.join(" ");
 					let current_session_path = self.session.session_file.clone();
-					
+
 					// Check if we're already in this session
 					if let Some(current_path) = &current_session_path {
 						if current_path.file_stem().and_then(|s| s.to_str()).unwrap_or("") == new_session_name {
@@ -617,7 +631,7 @@ impl ChatSession {
 							return Ok(false);
 						}
 					}
-					
+
 					// Return a signal to the main loop with the session name to switch to
 					// We'll use a specific return code that tells the main loop to switch sessions
 					self.session.info.name = new_session_name;
@@ -710,7 +724,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		config
 	)?;
 
-	// Start the interactive session
+	// Track if the first message has been processed through layers
+	let mut first_message_processed = !chat_session.session.messages.is_empty();
 	println!("Interactive coding session started. Type your questions/requests.");
 	println!("Type /help for available commands.");
 
@@ -802,16 +817,38 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check if this is a command
 		if input.starts_with('/') {
+			// Handle special /done command separately
+			if input.trim() == "/done" {
+				// Reset first_message_processed to false so that the next message goes through layers again
+				first_message_processed = false;
+
+				// Apply reducer functionality to optimize context
+				let result = super::perform_context_reduction(
+					&mut chat_session,
+					&current_config,
+					operation_cancelled.clone()
+				).await;
+
+				if let Err(e) = result {
+					use colored::*;
+					println!("{}: {}", "Error performing context reduction".bright_red(), e);
+				} else {
+					use colored::*;
+					println!("{}", "\nNext message will be processed through the full layered architecture.".bright_green());
+				}
+				continue;
+			}
+
 			let exit = chat_session.process_command(&input, &current_config)?;
 			if exit {
 				// First check if it's a session switch command
 				if input.starts_with(SESSION_COMMAND) {
 					// We need to switch to another session
 					let new_session_name = chat_session.session.info.name.clone();
-					
+
 					// Save current session before switching
 					chat_session.save()?;
-					
+
 					// Initialize the new session
 					let new_chat_session = ChatSession::initialize(
 						Some(new_session_name), // Use the name from the command
@@ -819,10 +856,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						None, // Keep using the default model
 						&current_config
 					)?;
-					
+
 					// Replace the current chat session
 					chat_session = new_chat_session;
-					
+
+					// Reset first message flag for new session
+					first_message_processed = !chat_session.session.messages.is_empty();
+
 					// Print the last few messages for context with colors
 					if !chat_session.session.messages.is_empty() {
 						let last_messages = chat_session.session.messages.iter().rev().take(3).collect::<Vec<_>>();
@@ -836,7 +876,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							}
 						}
 					}
-					
+
 					// Continue with the session
 					continue;
 				} else if input.starts_with(LAYERS_COMMAND) {
@@ -878,9 +918,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Add user message
 		// (This moved to process_response or process_layered_response)
 
-		// Check if layered architecture is enabled
-		if current_config.openrouter.enable_layers {
-			// Process using layered architecture
+		// Check if layered architecture is enabled AND this is the first message
+		if current_config.openrouter.enable_layers && !first_message_processed {
+			// Process using layered architecture for the first message only
 			let process_result = super::process_layered_response(
 				&input,
 				&mut chat_session,
@@ -893,10 +933,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				use colored::*;
 				println!("\n{}: {}", "Error processing response".bright_red(), e);
 			}
+
+			// Mark that we've processed the first message through layers
+			first_message_processed = true;
 		} else {
 			// Add user message for standard processing flow
 			chat_session.add_user_message(&input)?;
-			
+
 			// Convert messages to OpenRouter format
 			let or_messages = openrouter::convert_messages(&chat_session.session.messages);
 
@@ -937,17 +980,19 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// Stop the animation - but use TRUE to stop it, not false!
 			operation_cancelled.store(true, Ordering::SeqCst);
 			let _ = animation_task.await;
-			
+
 			// Process the response
 			match api_result {
 				Ok((content, exchange)) => {
 					// Process the response, handling tool calls recursively
+					// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
+					let tool_process_cancelled = Arc::new(AtomicBool::new(false));
 					let process_result = process_response(
 						content,
 						exchange,
 						&mut chat_session,
 						&current_config,
-						process_cancelled.clone()
+						tool_process_cancelled.clone()
 					).await;
 
 					if let Err(e) = process_result {

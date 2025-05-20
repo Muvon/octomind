@@ -85,18 +85,21 @@ octodev session --model anthropic/claude-3.7-sonnet
 
 #### Layered Architecture
 
-OctoDev sessions use a 4-layer AI architecture for enhanced code understanding and modification:
+OctoDev's first message in each session uses a specialized 3-layer AI architecture for enhanced code understanding and modification:
 
 1. **Query Processor**: Analyzes and improves your initial query for clearer instructions (no tools)
 2. **Context Generator**: Gathers all necessary code context using tools to explore the codebase
 3. **Developer**: Executes the actual coding tasks and produces comprehensive responses using tools
-4. **Reducer**: Updates documentation and optimizes context for the next interaction (no tools)
 
-This specialized approach brings several benefits:
+The **Reducer** layer functionality is still available but now invoked manually through the `/done` command instead of automatically running after every interaction. This gives you control over when to optimize context.
+
+After the first message, subsequent interactions go directly to the Developer model for more efficient conversation flow. You can explicitly request context optimization and restart the full layered pipeline at any time using the `/done` command.
+
+This architecture brings several benefits:
 - Improved task specialization with each layer focused on what it does best
 - Optimized token usage through systematic context management
 - Clearer responsibility boundaries between layers
-- Better documentation maintenance with a dedicated layer
+- Better documentation maintenance with on-demand context reduction
 - Cost efficiency by using simpler models for less complex tasks
 - Enhanced tools utilization with tools available only to layers that need them
 
@@ -113,6 +116,7 @@ While in an interactive session, you can use the following commands:
 - `/clear` - Clear the screen
 - `/save` - Save the current session
 - `/cache` - Mark a cache checkpoint for token saving
+- `/done` - Optimize the session context and restart the layered processing for the next message
 - `/layers` - Toggle layered processing architecture on/off
 - `/info` - Display detailed token and cost breakdowns by layer
 

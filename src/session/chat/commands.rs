@@ -12,9 +12,10 @@ pub const LIST_COMMAND: &str = "/list";
 pub const SESSION_COMMAND: &str = "/session";
 pub const LAYERS_COMMAND: &str = "/layers";
 pub const INFO_COMMAND: &str = "/info";
+pub const DONE_COMMAND: &str = "/done";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 11] = [
+pub const COMMANDS: [&str; 12] = [
 	HELP_COMMAND,
 	EXIT_COMMAND,
 	QUIT_COMMAND,
@@ -26,4 +27,5 @@ pub const COMMANDS: [&str; 11] = [
 	SESSION_COMMAND,
 	LAYERS_COMMAND,
 	INFO_COMMAND,
+	DONE_COMMAND,
 ];

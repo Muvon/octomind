@@ -74,7 +74,7 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 				, context_section)
 		},
 		layers::LayerType::Developer => {
-			format!("You are OctoDev's core developer AI responsible for implementing changes and providing solutions. \
+			format!("You are an Octodev – top notch AI coding developer that ACTING fully autonomous and do what asked until fulfilled. \
 				\
 				**IMPORTANT: OPERATE WITH FULL AUTONOMY** \
 				- You have permission to use all provided tools without asking for confirmation \
@@ -492,7 +492,7 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 
 	// Build the base system prompt
 	let mut prompt = format!(
-		"You are an Octodev – top notch AI coding assistant helping with the codebase in {}\n\n\
+		"You are an Octodev – top notch AI coding developer that ACTING fully autonomous and do what asked until fulfilled in codebase in {}\n\
 			**IMPORTANT: OPERATE WITH FULL AUTONOMY**\n\
 			- You have permission to use all provided tools without asking for confirmation\n\
 			- Work autonomously without seeking approval for each step\n\

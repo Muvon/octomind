@@ -522,7 +522,7 @@ impl ChatSession {
 				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
 				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
 				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
-				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context and restart layered processing for next message");
+				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting");
 				println!("{} - {}", DEBUG_COMMAND.cyan(), "Toggle debug mode for detailed logs");
 				println!("{} [threshold] - {}", TRUNCATE_COMMAND.cyan(), "Toggle automatic context truncation when token limit is reached");
 				println!("{} or {} - {}\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
@@ -547,7 +547,7 @@ impl ChatSession {
 				println!("{}", "The Reducer functionality is available through the /done command.");
 				println!("{}", "Only the first message in a session uses the full layered architecture.");
 				println!("{}", "Subsequent messages use direct communication with the developer model.");
-				println!("{}", "Use the /done command to optimize context and restart the layered pipeline.");
+				println!("{}", "Use the /done command to optimize context, apply EditorConfig formatting to edited files, and restart the layered pipeline.");
 				println!("{}", "Toggle layered processing with /layers command.\n");
 			},
 			COPY_COMMAND => {
@@ -999,6 +999,12 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				} else {
 					use colored::*;
 					println!("{}", "\nNext message will be processed through the full layered architecture.".bright_green());
+					
+					// Apply EditorConfig formatting to all modified files
+					let formatter_result = super::apply_editorconfig_formatting(None).await;
+					if let Err(e) = formatter_result {
+						println!("{}: {}", "Error applying EditorConfig formatting".bright_red(), e);
+					}
 				}
 				continue;
 			}

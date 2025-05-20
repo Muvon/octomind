@@ -7,6 +7,7 @@ mod animation;
 mod layered_response;
 mod context_reduction;
 mod context_truncation;
+mod editorconfig_formatter;
 
 // Re-export main structures and functions
 pub use session::ChatSession;
@@ -17,6 +18,7 @@ pub use layered_response::process_layered_response;
 pub use animation::show_loading_animation;
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
+pub use editorconfig_formatter::apply_editorconfig_formatting;
 
 // Re-export the main run_interactive_session function
 pub use session::run_interactive_session;

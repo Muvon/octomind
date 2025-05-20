@@ -34,12 +34,12 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		Ok(line) => {
 			// Add to history
 			let _ = editor.add_history_entry(line.clone());
-			
+
 			// Log user input only if it's not a command (doesn't start with '/')
 			if !line.trim().starts_with('/') {
 				let _ = crate::session::logger::log_user_request(&line);
 			}
-			
+
 			Ok(line)
 		},
 		Err(ReadlineError::Interrupted) => {

@@ -329,7 +329,7 @@ impl ChatSession {
 		// Add message to session
 		let message = self.session.add_message("assistant", content);
 		self.last_response = content.to_string();
-		
+
 		// Log the assistant response
 		let _ = crate::session::logger::log_assistant_response(content);
 
@@ -1170,7 +1170,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				temperature,
 				&config_clone
 			).await;
-			
+
 			// Debug log the API call result if debug mode is enabled
 			if config_clone.openrouter.debug {
 				if let Err(ref e) = api_result {

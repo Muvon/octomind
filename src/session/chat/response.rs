@@ -152,10 +152,10 @@ pub async fn process_response(
 					let config_clone = config.clone();
 					let tool_id = format!("tool_{}", Uuid::new_v4().simple());
 					let params_clone = tool_call.parameters.clone();
-					
+
 					// Log the tool request
 					let _ = crate::session::logger::log_tool_request(&tool_name, &params_clone, &tool_id);
-					
+
 					let task = tokio::spawn(async move {
 						mcp::execute_tool_call(&tool_call, &config_clone).await
 					});
@@ -330,12 +330,12 @@ pub async fn process_response(
 								chat_session.session.info.input_tokens += regular_prompt_tokens;
 								chat_session.session.info.output_tokens += usage.completion_tokens;
 								chat_session.session.info.cached_tokens += cached_tokens;
-								
+
 								// Update current token tracking for auto-cache threshold logic
 								// Only count input tokens, not completion tokens
 								chat_session.session.current_non_cached_tokens += regular_prompt_tokens;
 								chat_session.session.current_total_tokens += regular_prompt_tokens + cached_tokens;
-								
+
 								// Check if we should automatically move the cache marker
 								if let Ok(true) = chat_session.session.check_auto_cache_threshold(config) {
 									use colored::*;

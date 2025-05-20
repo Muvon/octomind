@@ -32,16 +32,16 @@ pub struct TextBlock {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Record {
-    id: RecordId,
+	id: RecordId,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct VectorSearch {
-    id: RecordId,
-    embedding_distance: f32,
-    embedding_vector: Vec<f32>,
-    #[serde(flatten)]
-    payload: HashMap<String, serde_json::Value>,
+	id: RecordId,
+	embedding_distance: f32,
+	embedding_vector: Vec<f32>,
+	#[serde(flatten)]
+	payload: HashMap<String, serde_json::Value>,
 }
 
 pub struct Store {
@@ -73,42 +73,42 @@ impl Store {
 			.await
 			.map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-        // Select a specific namespace / database
-        db.use_ns("octodev").use_db("octodev").await?;
+		// Select a specific namespace / database
+		db.use_ns("octodev").use_db("octodev").await?;
 
 		Ok(Self { db })
 	}
 
 	pub async fn initialize_collections(&self) -> Result<()> {
-        // Initialize tables with schema - vector search enabled
-        // For code_blocks
-        self.db.query("
-            DEFINE TABLE code_blocks SCHEMALESS;
-            DEFINE FIELD path ON code_blocks TYPE string;
-            DEFINE FIELD language ON code_blocks TYPE string;
-            DEFINE FIELD content ON code_blocks TYPE string;
-            DEFINE FIELD symbols ON code_blocks TYPE array;
-            DEFINE FIELD start_line ON code_blocks TYPE int;
-            DEFINE FIELD end_line ON code_blocks TYPE int;
-            DEFINE FIELD hash ON code_blocks TYPE string;
-            DEFINE FIELD embedding_vector ON code_blocks TYPE array;
-            DEFINE INDEX code_blocks_hash ON TABLE code_blocks COLUMNS hash UNIQUE;
-        ")
-        .await?;
+		// Initialize tables with schema - vector search enabled
+		// For code_blocks
+		self.db.query("
+DEFINE TABLE code_blocks SCHEMALESS;
+DEFINE FIELD path ON code_blocks TYPE string;
+DEFINE FIELD language ON code_blocks TYPE string;
+DEFINE FIELD content ON code_blocks TYPE string;
+DEFINE FIELD symbols ON code_blocks TYPE array;
+DEFINE FIELD start_line ON code_blocks TYPE int;
+DEFINE FIELD end_line ON code_blocks TYPE int;
+DEFINE FIELD hash ON code_blocks TYPE string;
+DEFINE FIELD embedding_vector ON code_blocks TYPE array;
+DEFINE INDEX code_blocks_hash ON TABLE code_blocks COLUMNS hash UNIQUE;
+")
+		.await?;
 
-        // For text_blocks
-        self.db.query("
-            DEFINE TABLE text_blocks SCHEMALESS;
-            DEFINE FIELD path ON text_blocks TYPE string;
-            DEFINE FIELD language ON text_blocks TYPE string;
-            DEFINE FIELD content ON text_blocks TYPE string;
-            DEFINE FIELD start_line ON text_blocks TYPE int;
-            DEFINE FIELD end_line ON text_blocks TYPE int;
-            DEFINE FIELD hash ON text_blocks TYPE string;
-            DEFINE FIELD embedding_vector ON text_blocks TYPE array;
-            DEFINE INDEX text_blocks_hash ON TABLE text_blocks COLUMNS hash UNIQUE;
-        ")
-        .await?;
+		// For text_blocks
+		self.db.query("
+DEFINE TABLE text_blocks SCHEMALESS;
+DEFINE FIELD path ON text_blocks TYPE string;
+DEFINE FIELD language ON text_blocks TYPE string;
+DEFINE FIELD content ON text_blocks TYPE string;
+DEFINE FIELD start_line ON text_blocks TYPE int;
+DEFINE FIELD end_line ON text_blocks TYPE int;
+DEFINE FIELD hash ON text_blocks TYPE string;
+DEFINE FIELD embedding_vector ON text_blocks TYPE array;
+DEFINE INDEX text_blocks_hash ON TABLE text_blocks COLUMNS hash UNIQUE;
+")
+		.await?;
 
 		Ok(())
 	}
@@ -118,7 +118,7 @@ impl Store {
 		let mut result = self.db
 			.query(query)
 			.bind(("hash", hash))
-			.await?;
+		.await?;
 
 		let records: Vec<Record> = result.take(0)?;
 		Ok(!records.is_empty())
@@ -130,7 +130,7 @@ impl Store {
 
 			let result = self.db
 				.query("CREATE code_blocks SET id = $id, path = $path, language = $language, content = $content,
-					symbols = $symbols, start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
+symbols = $symbols, start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
 				.bind(("id", &id))
 				.bind(("path", &block.path))
 				.bind(("language", &block.language))
@@ -140,7 +140,7 @@ impl Store {
 				.bind(("end_line", block.end_line as i64))
 				.bind(("hash", &block.hash))
 				.bind(("embedding", embedding))
-				.await?;
+			.await?;
 
 			result.check()?;
 		}
@@ -154,7 +154,7 @@ impl Store {
 
 			let result = self.db
 				.query("CREATE text_blocks SET id = $id, path = $path, language = $language, content = $content,
-					start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
+start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
 				.bind(("id", &id))
 				.bind(("path", &block.path))
 				.bind(("language", &block.language))
@@ -163,7 +163,7 @@ impl Store {
 				.bind(("end_line", block.end_line as i64))
 				.bind(("hash", &block.hash))
 				.bind(("embedding", embedding))
-				.await?;
+			.await?;
 
 			result.check()?;
 		}
@@ -172,57 +172,57 @@ impl Store {
 	}
 
 	pub async fn get_code_blocks(&self, embedding: Vec<f32>) -> Result<Vec<CodeBlock>> {
-    // Using a SurrealQL query with vector similarity using dot product
-    // Note: We could use cosine similarity as in Qdrant, but SurrealDB's vector_dot is available by default
-    // Added secondary sort by id to ensure consistent ordering for results with same distance
-    let mut result = self.db
-        .query(r#"
-            SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
-            FROM code_blocks
-            ORDER BY embedding_distance DESC, id ASC
-            LIMIT 50;
-        "#)
-        .bind(("query_embedding", embedding))
-        .await?;
-
-    let vector_results: Vec<VectorSearch> = result.take(0)?;
-
-    // Convert results to CodeBlock structs with distance information
-    let results: Vec<CodeBlock> = vector_results
-        .into_iter()
-        .map(|vr| {
-            let distance = vr.embedding_distance;
-            CodeBlock {
-                path: vr.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                language: vr.payload.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                content: vr.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                symbols: vr.payload.get("symbols")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
-                    .unwrap_or_default(),
-                start_line: vr.payload.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-                end_line: vr.payload.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-                hash: vr.payload.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                distance: Some(distance),
-            }
-        })
-        .collect();
-
-    Ok(results)
-}
-
-	pub async fn get_code_block_by_symbol(&self, symbol: &str) -> Result<Option<CodeBlock>> {
-        // Query by symbol - added ORDER BY id for consistency
+		// Using a SurrealQL query with vector similarity using dot product
+		// Note: We could use cosine similarity as in Qdrant, but SurrealDB's vector_dot is available by default
+		// Added secondary sort by id to ensure consistent ordering for results with same distance
 		let mut result = self.db
 			.query(r#"
-                SELECT *
-                FROM code_blocks
-                WHERE $symbol IN symbols
-                ORDER BY id ASC
-                LIMIT 1;
-            "#)
+						SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
+						FROM code_blocks
+						ORDER BY embedding_distance DESC, id ASC
+						LIMIT 50;
+				"#)
+			.bind(("query_embedding", embedding))
+		.await?;
+
+		let vector_results: Vec<VectorSearch> = result.take(0)?;
+
+		// Convert results to CodeBlock structs with distance information
+		let results: Vec<CodeBlock> = vector_results
+			.into_iter()
+			.map(|vr| {
+				let distance = vr.embedding_distance;
+				CodeBlock {
+					path: vr.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					language: vr.payload.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					content: vr.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					symbols: vr.payload.get("symbols")
+						.and_then(|v| v.as_array())
+						.map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
+						.unwrap_or_default(),
+					start_line: vr.payload.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+					end_line: vr.payload.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
+					hash: vr.payload.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+					distance: Some(distance),
+				}
+			})
+			.collect();
+
+		Ok(results)
+	}
+
+	pub async fn get_code_block_by_symbol(&self, symbol: &str) -> Result<Option<CodeBlock>> {
+		// Query by symbol - added ORDER BY id for consistency
+		let mut result = self.db
+			.query(r#"
+								SELECT *
+								FROM code_blocks
+								WHERE $symbol IN symbols
+								ORDER BY id ASC
+								LIMIT 1;
+						"#)
 			.bind(("symbol", symbol))
-			.await?;
+		.await?;
 
 		// Process the result
 		let records: Vec<serde_json::Value> = result.take(0)?;
@@ -257,14 +257,14 @@ impl Store {
 		let result = self.db
 			.query("DELETE FROM code_blocks WHERE path = $path")
 			.bind(("path", file_path))
-			.await?;
+		.await?;
 		result.check()?;
 
 		// Delete all text blocks with the given path
 		let result = self.db
 			.query("DELETE FROM text_blocks WHERE path = $path")
 			.bind(("path", file_path))
-			.await?;
+		.await?;
 		result.check()?;
 
 		Ok(())

@@ -10,23 +10,23 @@ use crate::config::Config;
 // OpenRouter response with token usage
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TokenUsage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-    #[serde(default)]
-    pub cost: Option<f64>,  // Cost in dollars as floating point number
-    pub completion_tokens_details: Option<serde_json::Value>,
-    pub prompt_tokens_details: Option<serde_json::Value>,
-    pub breakdown: Option<std::collections::HashMap<String, serde_json::Value>>,  // Legacy field for cached tokens
+	pub prompt_tokens: u64,
+	pub completion_tokens: u64,
+	pub total_tokens: u64,
+	#[serde(default)]
+	pub cost: Option<f64>,  // Cost in dollars as floating point number
+	pub completion_tokens_details: Option<serde_json::Value>,
+	pub prompt_tokens_details: Option<serde_json::Value>,
+	pub breakdown: Option<std::collections::HashMap<String, serde_json::Value>>,  // Legacy field for cached tokens
 }
 
 // Store raw request/response for logging
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OpenRouterExchange {
-    pub request: serde_json::Value,
-    pub response: serde_json::Value,
-    pub timestamp: u64,
-    pub usage: Option<TokenUsage>,
+	pub request: serde_json::Value,
+	pub response: serde_json::Value,
+	pub timestamp: u64,
+	pub usage: Option<TokenUsage>,
 }
 
 // Default OpenRouter API key environment variable name
@@ -97,9 +97,9 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 								"type": "text",
 								"text": msg.content,
 								"cache_control": {
-									"type": "ephemeral"
-								}
+								"type": "ephemeral"
 							}
+						}
 						]),
 					}
 				}
@@ -112,9 +112,9 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 							"type": "text",
 							"text": msg.content,
 							"cache_control": {
-								"type": "ephemeral"
-							}
+							"type": "ephemeral"
 						}
+					}
 					]),
 				}
 			}
@@ -258,7 +258,7 @@ pub async fn chat_completion(
 				// Extract the function information
 				if let Some(function) = tool_call.get("function") {
 					if let (Some(name), Some(args)) = (function.get("name").and_then(|n| n.as_str()),
-										  function.get("arguments").and_then(|a| a.as_str())) {
+						function.get("arguments").and_then(|a| a.as_str())) {
 						// Parse the arguments as JSON
 						let params = if args.trim().is_empty() {
 							// Empty arguments should be an empty object, not an empty string

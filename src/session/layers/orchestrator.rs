@@ -99,11 +99,11 @@ impl LayeredOrchestrator {
 			// Process the layer
 			println!("{}", "Input:".bright_blue());
 			println!("{}", current_input);
-			
+
 			// Clear any previous animation line and show current cost
 			print!("\r                                                                  \r");
 			println!("{} ${:.5}", "Generating response with current cost:".bright_cyan(), total_cost);
-			
+
 			// Debug info for caching
 			println!("{}", "System message will be cached for this layer".bright_magenta());
 
@@ -140,7 +140,7 @@ impl LayeredOrchestrator {
 				// Try to get cost from the TokenUsage struct first
 				if let Some(cost) = usage.cost {
 					// Display the layer cost
-					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens)", 
+					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens)",
 						cost, usage.prompt_tokens, usage.completion_tokens).bright_magenta());
 
 					// Add the stats to the session
@@ -161,10 +161,10 @@ impl LayeredOrchestrator {
 					let cost_from_raw = result.exchange.response.get("usage")
 						.and_then(|u| u.get("cost"))
 						.and_then(|c| c.as_f64());
-						
+
 					if let Some(cost) = cost_from_raw {
 						// Log that we had to get cost from raw response
-						println!("{}", format!("Layer cost (from raw): ${:.5} (Input: {} tokens, Output: {} tokens)", 
+						println!("{}", format!("Layer cost (from raw): ${:.5} (Input: {} tokens, Output: {} tokens)",
 							cost, usage.prompt_tokens, usage.completion_tokens).bright_magenta());
 
 						// Add the stats to the session
@@ -184,11 +184,11 @@ impl LayeredOrchestrator {
 						// ERROR - OpenRouter did not provide cost data
 						println!("{} {}", "ERROR: Layer".bright_red(), layer_type.as_str().bright_yellow());
 						println!("{}", "OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
-						
+
 						// Still track tokens
 						total_input_tokens += usage.prompt_tokens;
 						total_output_tokens += usage.completion_tokens;
-						
+
 						// Print the raw response for debugging
 						if config.openrouter.debug {
 							println!("{}", "Raw OpenRouter response for debug:".bright_red());
@@ -201,7 +201,7 @@ impl LayeredOrchestrator {
 			} else {
 				println!("{} {}", "ERROR: No usage data for layer".bright_red(), layer_type.as_str().bright_yellow());
 			}
-			
+
 			// If no usage data was returned at all, that's an error
 			let layer_has_usage = if let Some(_) = &result.token_usage {
 				true

@@ -69,8 +69,8 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 
 		// Create a horizontal separator with tool name
 		let title = format!(" {} | {} ",
-				result.tool_name.bright_cyan(),
-				category.bright_blue())
+			result.tool_name.bright_cyan(),
+			category.bright_blue())
 		;
 
 		let separator_length = 70.max(title.len() + 4);
@@ -98,8 +98,8 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 				};
 
 				output.push_str(&format!("{}: {}\n",
-						key.yellow(),
-						displayed_value))
+					key.yellow(),
+					displayed_value))
 			}
 		}
 
@@ -213,23 +213,23 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 		// Handle developer tools
 		if call.tool_name == "shell" {
 			let result = dev::execute_shell_command(call).await?;
-			
+
 			// Check if result is large - warn user if it exceeds threshold
 			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
 			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
 				// Create a modified result that warns about the size
 				use colored::Colorize;
-				println!("{}", format!("⚠️  WARNING: Shell command produced a large output ({} tokens)", 
+				println!("{}", format!("⚠️  WARNING: Shell command produced a large output ({} tokens)",
 					estimated_tokens).bright_yellow());
 				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
-				
+
 				// Ask user for confirmation before proceeding
 				print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
 				std::io::stdout().flush().unwrap();
-				
+
 				let mut input = String::new();
 				std::io::stdin().read_line(&mut input).unwrap_or_default();
-				
+
 				if !input.trim().to_lowercase().starts_with('y') {
 					// User declined, return a truncated result with explanation
 					let truncated_result = McpToolResult {
@@ -240,31 +240,31 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 					};
 					return Ok(truncated_result);
 				}
-				
+
 				// User confirmed, continue with original result
 				println!("{}", "Proceeding with full output...".bright_green());
 			}
-			
+
 			return Ok(result);
 		} else if call.tool_name == "text_editor" {
 			let result = dev::execute_text_editor(call).await?;
-			
+
 			// Check if result is large - warn user if it exceeds threshold
 			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
 			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
 				// Create a modified result that warns about the size
 				use colored::Colorize;
-				println!("{}", format!("⚠️  WARNING: Text editor produced a large output ({} tokens)", 
+				println!("{}", format!("⚠️  WARNING: Text editor produced a large output ({} tokens)",
 					estimated_tokens).bright_yellow());
 				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
-				
+
 				// Ask user for confirmation before proceeding
 				print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
 				std::io::stdout().flush().unwrap();
-				
+
 				let mut input = String::new();
 				std::io::stdin().read_line(&mut input).unwrap_or_default();
-				
+
 				if !input.trim().to_lowercase().starts_with('y') {
 					// User declined, return a truncated result with explanation
 					let truncated_result = McpToolResult {
@@ -275,11 +275,11 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 					};
 					return Ok(truncated_result);
 				}
-				
+
 				// User confirmed, continue with original result
 				println!("{}", "Proceeding with full output...".bright_green());
 			}
-			
+
 			return Ok(result);
 		} else if call.tool_name == "list_files" {
 			return dev::execute_list_files(call).await;
@@ -302,17 +302,17 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 						if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
 							// Create a modified result that warns about the size
 							use colored::Colorize;
-							println!("{}", format!("⚠️  WARNING: External tool produced a large output ({} tokens)", 
+							println!("{}", format!("⚠️  WARNING: External tool produced a large output ({} tokens)",
 								estimated_tokens).bright_yellow());
 							println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
-							
+
 							// Ask user for confirmation before proceeding
 							print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
 							std::io::stdout().flush().unwrap();
-							
+
 							let mut input = String::new();
 							std::io::stdin().read_line(&mut input).unwrap_or_default();
-							
+
 							if !input.trim().to_lowercase().starts_with('y') {
 								// User declined, return a truncated result with explanation
 								let truncated_result = McpToolResult {
@@ -323,11 +323,11 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 								};
 								return Ok(truncated_result);
 							}
-							
+
 							// User confirmed, continue with original result
 							println!("{}", "Proceeding with full output...".bright_green());
 						}
-						
+
 						return Ok(result);
 					},
 					Err(err) => {
@@ -349,12 +349,12 @@ pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config:
 	if !layer_config.enable_tools {
 		return Err(anyhow::anyhow!("Tool execution is disabled for this layer"));
 	}
-	
+
 	// Check if specific tool is allowed for this layer
 	if !layer_config.allowed_tools.is_empty() && !layer_config.allowed_tools.contains(&call.tool_name) {
 		return Err(anyhow::anyhow!("Tool '{}' is not allowed for this layer", call.tool_name));
 	}
-	
+
 	// Pass to regular tool execution
 	execute_tool_call(call, config).await
 }

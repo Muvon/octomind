@@ -1,4 +1,4 @@
-// Developer MCP provider with enhanced functionality - optimized for token efficiency
+// Developer MCP provider with enhanced functionality
 // Based on the reference implementation with additional developer tools
 
 use std::process::Command;
@@ -64,39 +64,33 @@ pub fn get_text_editor_function() -> McpFunction {
 		description: "Perform text editing operations on files.
 
 			The `command` parameter specifies the operation to perform. Allowed options are:
-			- `view`: View the content of one or multiple files in a single operation.
-			- `write`: Create or overwrite file(s) in a single operation.
-			- `str_replace`: Replace strings in one or multiple files in a single operation.
+			- `view`: View the content of one or multiple files. The path parameter accepts either a single string path or an array of paths.
+			- `write`: Create or overwrite file(s). For single file, use a string path and string file_text. For multiple files, use arrays for both paths and file_texts (must be same length).
+			- `str_replace`: Replace strings in one or multiple files. For single file, provide string path, old_str and new_str. For multiple files, provide arrays for paths, old_strs, and new_strs (all arrays must be the same length).
 			- `undo_edit`: Undo the last edit made to a file.
 
-			**IMPORTANT**: For best performance and token efficiency, you should ALWAYS prefer to make multiple file changes in a single operation instead of making individual calls for each file.
+			To use the view command, you can either provide a single file path as a string or an array of file paths to view multiple files at once.
+			For example: `{\"path\": \"/path/to/file.txt\"}` or `{\"path\": [\"/path/to/file1.txt\", \"/path/to/file2.txt\"]}`.
 
-			Examples of efficient batch operations:
+			To use the write command for a single file:
+`{\"command\": \"write\", \"path\": \"/path/to/file.txt\", \"file_text\": \"content\"}`
 
-			1. To view multiple files at once:
-			```json
-			{\"command\": \"view\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"]}
-			```
+To write multiple files at once (paths and file_texts arrays must have the same length):
+`{\"command\": \"write\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"file_text\": [\"content1\", \"content2\"]}`
 
-			2. To write multiple files at once:
-			```json
-			{\"command\": \"write\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"file_text\": [\"content1\", \"content2\"]}
-			```
+			To use the str_replace command for a single file:
+`{\"command\": \"str_replace\", \"path\": \"/path/to/file.txt\", \"old_str\": \"text to replace\", \"new_str\": \"replacement text\"}`
 
-			3. To perform multiple string replacements in different files:
-			```json
-			{\"command\": \"str_replace\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"old_str\": [\"text1 to replace\", \"text2 to replace\"], \"new_str\": [\"replacement1\", \"replacement2\"]}
-			```
+To perform string replacements in multiple files at once (recommended):
+`{\"command\": \"str_replace\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"old_str\": [\"text1 to replace\", \"text2 to replace\"], \"new_str\": [\"replacement1\", \"replacement2\"]}`
 
-			The `old_str` needs to exactly match one unique section of the file, including whitespace. Each string replacement is processed independently.
-
-			For single file operations, you can use a string instead of an array, but batch operations are strongly preferred for efficiency.".to_string(),
+The `old_str` needs to exactly match one unique section of the file, including whitespace. Each string replacement is processed independently.".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],
 			"properties": {
 				"path": {
-					"description": "Absolute path to file(s). Can be a single path string or an array of path strings for batch operations (preferred).",
+					"description": "Absolute path to file(s). Can be a single path string or an array of path strings.",
 					"oneOf": [
 						{
 							"type": "string"
@@ -225,6 +219,9 @@ Error: {}", stdout, stderr)
 					"success": success,
 					"output": combined,
 					"code": status_code,
+					"parameters": {
+						"command": command
+					},
 					"message": if success {
 						format!("Command executed successfully with exit code {}", status_code)
 					} else {
@@ -236,6 +233,9 @@ Error: {}", stdout, stderr)
 				"success": false,
 				"output": format!("Failed to execute command: {}", e),
 				"code": -1,
+				"parameters": {
+					"command": command
+				},
 				"message": format!("Failed to execute command: {}", e)
 			}),
 		}
@@ -302,7 +302,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						Some(value) => value,
 						_ => return Err(anyhow!("Missing 'file_text' parameter for write operations")),
 					};
-
+					
 					match file_text_value {
 						Value::Array(contents) => {
 							// Convert path and content arrays to strings
@@ -310,12 +310,12 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-
+								
 							let content_strings: Result<Vec<String>, _> = contents.iter()
 								.map(|c| c.as_str().ok_or_else(|| anyhow!("Invalid content in array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-
+								
 							match (path_strings, content_strings) {
 								(Ok(paths), Ok(contents)) => write_multiple_files(&paths, &contents).await,
 								(Err(e), _) | (_, Err(e)) => Err(e),
@@ -348,12 +348,12 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						Some(value) => value,
 						_ => return Err(anyhow!("Missing 'old_str' parameter for str_replace operations")),
 					};
-
+					
 					let new_str_value = match call.parameters.get("new_str") {
 						Some(value) => value,
 						_ => return Err(anyhow!("Missing 'new_str' parameter for str_replace operations")),
 					};
-
+					
 					match (old_str_value, new_str_value) {
 						(Value::Array(old_strs), Value::Array(new_strs)) => {
 							// Convert arrays to strings
@@ -361,17 +361,17 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-
+								
 							let old_str_strings: Result<Vec<String>, _> = old_strs.iter()
 								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in old_str array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-
+								
 							let new_str_strings: Result<Vec<String>, _> = new_strs.iter()
 								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in new_str array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-
+								
 							match (path_strings, old_str_strings, new_str_strings) {
 								(Ok(paths), Ok(old_strs), Ok(new_strs)) => {
 									str_replace_multiple(&paths, &old_strs, &new_strs).await
@@ -474,14 +474,26 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 					"output": output_str,
 					"files": files,
 					"count": files.len(),
-					"type": output_type
-				})
+					"type": output_type,
+					"parameters": {
+					"directory": directory,
+					"pattern": pattern,
+					"content": content,
+					"max_depth": max_depth
+				}
+			})
 			},
 			Err(e) => json!({
 				"success": false,
 				"output": format!("Failed to list files: {}", e),
 				"files": [],
-				"count": 0
+				"count": 0,
+				"parameters": {
+					"directory": directory,
+					"pattern": pattern,
+					"content": content,
+					"max_depth": max_depth
+				}
 			}),
 		}
 	}).await?;
@@ -597,7 +609,7 @@ async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<M
 	// Ensure paths and contents match in length
 	if paths.len() != contents.len() {
 		return Err(anyhow!(
-			"Mismatch in path and content arrays. Expected {} paths and {} contents to match.",
+			"Mismatch in path and content arrays. Expected {} paths and {} contents to match.", 
 			paths.len(), contents.len()
 		));
 	}
@@ -709,7 +721,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 	// Ensure all arrays have matching length
 	if paths.len() != old_strs.len() || paths.len() != new_strs.len() {
 		return Err(anyhow!(
-			"Mismatch in array lengths. Expected {} paths, {} old strings, and {} new strings to all match.",
+			"Mismatch in array lengths. Expected {} paths, {} old strings, and {} new strings to all match.", 
 			paths.len(), old_strs.len(), new_strs.len()
 		));
 	}
@@ -744,7 +756,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 		}
 		if occurrences > 1 {
 			failures.push(format!(
-				"String appears {} times in {}. It should appear exactly once.",
+				"String appears {} times in {}. It should appear exactly once.", 
 				occurrences, path_display
 			));
 			continue;
@@ -765,7 +777,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 				// Find line number for reporting
 				let position = content.find(old_str).unwrap(); // Safe because we checked occurrences
 				let start_line = content[..position].matches('\n').count() + 1;
-
+				
 				results.push(json!({
 					"path": path_display,
 					"success": true,
@@ -832,7 +844,11 @@ async fn undo_edit(path: &Path) -> Result<McpToolResult> {
 				"success": true,
 				"output": format!("Successfully undid the last edit to {}", path.to_string_lossy()),
 				"path": path.to_string_lossy(),
-				"history_remaining": history_remaining
+				"history_remaining": history_remaining,
+				"parameters": {
+					"command": "undo_edit",
+					"path": path.to_string_lossy()
+				}
 			}),
 		})
 	} else {

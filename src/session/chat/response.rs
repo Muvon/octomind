@@ -16,8 +16,27 @@ use uuid::Uuid;
 
 // Function to remove function_calls blocks from content
 fn remove_function_calls(content: &str) -> String {
-	let re = Regex::new(r"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>").unwrap_or_else(|_| Regex::new(r"<function_calls>.+</function_calls>").unwrap());
-	re.replace_all(content, "").trim().to_string()
+	// Use multiple regex patterns to catch different function call formats
+	let patterns = [
+		r#"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>"#,
+		r#"```(json)?\s*\[?\s*\{\s*"tool_name":.+?\}\s*\]?\s*```"#,
+		r#"^\s*\{\s*"tool_name":.+?\}\s*$"#
+	];
+
+	let mut result = content.to_string();
+	
+	for pattern in patterns {
+		if let Ok(re) = Regex::new(pattern) {
+			result = re.replace_all(&result, "").to_string();
+		}
+	}
+
+	// Also remove "I'll use the X tool" phrases that often accompany function calls
+	if let Ok(re) = Regex::new(r#"(?i)I'?ll use the \w+ tool[^\n]*"#) {
+		result = re.replace_all(&result, "").to_string();
+	}
+
+	result.trim().to_string()
 }
 
 // Structure to track tool call errors to detect loops

@@ -36,18 +36,87 @@ pub fn parse_tool_calls(content: &str) -> Vec<McpToolCall> {
 	let mut tool_calls = Vec::new();
 
 	// Look for <function_calls> or <function_calls> blocks (various formats)
-	if let Some(re) = Regex::new(r"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>").ok() {
-		for cap in re.captures_iter(content) {
-			if let Some(json_str) = cap.get(2) {
-				// Try to parse as an array or as a single object
-				if let Ok(calls) = serde_json::from_str::<Vec<McpToolCall>>(json_str.as_str()) {
-					tool_calls.extend(calls);
-				} else if let Ok(call) = serde_json::from_str::<McpToolCall>(json_str.as_str()) {
-					tool_calls.push(call);
+	let patterns = [
+		// Standard MCP format
+		r#"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>"#,
+		// Alternative format sometimes used by Claude
+		r#"```(json)?\s*\[?\s*\{\s*"tool_name":.+?\}\s*\]?\s*```"#,
+		// Another variation
+		r#"\{\s*"tool_name":.+?\}\s*"#
+	];
+
+	for pattern in patterns {
+		if let Some(re) = Regex::new(pattern).ok() {
+			for cap in re.captures_iter(content) {
+				let json_str = if cap.len() > 1 && cap.get(2).is_some() {
+					cap.get(2).unwrap().as_str().to_string()
 				} else {
-					// Debug: failed to parse tool call JSON
-					if cfg!(debug_assertions) {
-						println!("Failed to parse tool call JSON: {}", json_str.as_str());
+					// For patterns without capture groups, use the whole match
+					let matched = cap.get(0).unwrap().as_str();
+					// Clean up: remove code blocks and whitespace
+					let cleaned = matched.replace("```json", "");
+					let cleaned = cleaned.replace("```", "");
+					cleaned.trim().to_string()
+				};
+
+				// Try to parse as an array
+				if let Ok(calls) = serde_json::from_str::<Vec<McpToolCall>>(&json_str) {
+					tool_calls.extend(calls);
+					continue;
+				}
+
+				// Try to parse as a single object
+				if let Ok(call) = serde_json::from_str::<McpToolCall>(&json_str) {
+					tool_calls.push(call);
+					continue;
+				}
+
+				// Try to parse with array brackets added
+				if let Ok(calls) = serde_json::from_str::<Vec<McpToolCall>>(&format!("[{}]", json_str)) {
+					tool_calls.extend(calls);
+					continue;
+				}
+
+				// Debug: failed to parse tool call JSON
+				if cfg!(debug_assertions) {
+					println!("Failed to parse tool call JSON: {}", json_str);
+				}
+			}
+		}
+	}
+
+	// Additional fallback for Claude-specific format - look for patterns like "I'll use the X tool"
+	// followed by function-like calls
+	if tool_calls.is_empty() {
+		if let Some(re) = Regex::new(r#"(?i)I'?ll use the (\w+) tool.+?\{\s*"tool_name".+?\}"#).ok() {
+			for cap in re.captures_iter(content) {
+				if let Some(full_match) = cap.get(0) {
+					let tool_text = full_match.as_str();
+					// Extract the JSON object
+					if let Some(start) = tool_text.find('{') {
+						let json_part = &tool_text[start..];
+						// Find matching closing brace (simple method, doesn't handle nested objects well)
+						let mut brace_count = 0;
+						let mut end_pos = 0;
+						
+						for (i, c) in json_part.char_indices() {
+							if c == '{' {
+								brace_count += 1;
+							} else if c == '}' {
+								brace_count -= 1;
+								if brace_count == 0 {
+									end_pos = i + 1;
+									break;
+								}
+							}
+						}
+						
+						if end_pos > 0 {
+							let json_obj = &json_part[..end_pos];
+							if let Ok(call) = serde_json::from_str::<McpToolCall>(json_obj) {
+								tool_calls.push(call);
+							}
+						}
 					}
 				}
 			}

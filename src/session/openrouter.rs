@@ -188,6 +188,8 @@ pub async fn chat_completion(
 			}).collect::<Vec<_>>();
 
 			request_body["tools"] = serde_json::json!(tools);
+			// Always use "auto" to ensure more consistent tool usage
+			// This is especially important for Claude which needs this directive
 			request_body["tool_choice"] = serde_json::json!("auto");
 		}
 	}

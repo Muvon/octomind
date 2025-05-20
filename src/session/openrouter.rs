@@ -58,13 +58,13 @@ pub struct Message {
 pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 	// Add debug tracking for cached messages
 	let mut cached_count = 0;
-	
+
 	let result = messages.iter().map(|msg| {
 		// Handle cache breakpoints - but only if cached flag is explicitly true
 		if msg.cached {
 			// Increment cached count for debugging
 			cached_count += 1;
-			
+
 			// For a cached message, we need to create a multipart message with cache control
 			// This is compatible with Anthropic, Google, and others that support caching
 			if msg.content.contains("\n") {
@@ -126,13 +126,13 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 			}
 		}
 	}).collect();
-	
+
 	// Log debug info for cached messages
 	if cached_count > 0 {
 		use colored::*;
 		println!("{}", format!("{} system/user messages marked for caching", cached_count).bright_magenta());
 	}
-	
+
 	result
 }
 
@@ -155,6 +155,18 @@ pub async fn chat_completion(
 		"max_tokens": 200,
 		"usage": {
 			"include": true  // Always enable usage tracking for all requests
+		},
+		"provider": {
+			"order": [
+				"Anthropic",
+				"OpenAI",
+				"Amazon Bedrock",
+				"Azure",
+				"Cloudflare",
+				"Google Vertex",
+				"xAI",
+			],
+			"allow_fallbacks": true,
 		},
 	});
 

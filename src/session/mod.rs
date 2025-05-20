@@ -6,11 +6,13 @@ mod chat_helper;    // Chat command completion
 pub mod mcp;        // MCP protocol support
 mod layers;         // Layered architecture implementation
 mod project_context; // Project context collection and management
+mod token_counter;  // Token counting utilities
 
 pub use openrouter::*;
 pub use mcp::*;
 pub use layers::{LayerType, LayerConfig, LayerResult, Layer, process_with_layers};
 pub use project_context::ProjectContext;
+pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export token counting functions
 
 // Re-export constants
 // Constants moved to config
@@ -237,7 +239,7 @@ impl Session {
 
 		// Save the session immediately when adding a cache checkpoint
 		if marked {
-			if let Some(session_file) = &self.session_file {
+			if let Some(_) = &self.session_file {
 				let _ = self.save();
 			}
 		}

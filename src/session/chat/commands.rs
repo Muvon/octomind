@@ -2,6 +2,7 @@
 
 // Chat commands
 pub const HELP_COMMAND: &str = "/help";
+pub const HELP_COMMAND_ALT: &str = "/?";
 pub const EXIT_COMMAND: &str = "/exit";
 pub const QUIT_COMMAND: &str = "/quit";
 pub const COPY_COMMAND: &str = "/copy";
@@ -14,10 +15,12 @@ pub const LAYERS_COMMAND: &str = "/layers";
 pub const INFO_COMMAND: &str = "/info";
 pub const DONE_COMMAND: &str = "/done";
 pub const DEBUG_COMMAND: &str = "/debug";
+pub const TRUNCATE_COMMAND: &str = "/truncate";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 13] = [
+pub const COMMANDS: [&str; 15] = [
 	HELP_COMMAND,
+	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
 	QUIT_COMMAND,
 	COPY_COMMAND,
@@ -30,4 +33,5 @@ pub const COMMANDS: [&str; 13] = [
 	INFO_COMMAND,
 	DONE_COMMAND,
 	DEBUG_COMMAND,
+	TRUNCATE_COMMAND,
 ];

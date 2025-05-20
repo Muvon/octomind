@@ -81,6 +81,12 @@ pub async fn process_response(
 	config: &Config,
 	operation_cancelled: Arc<AtomicBool>
 ) -> Result<()> {
+	// Check if operation has been cancelled at the very start
+	if operation_cancelled.load(Ordering::SeqCst) {
+		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		return Ok(());
+	}
+
 	// First, add the user message before processing response
 	let last_message = chat_session.session.messages.last();
 	if last_message.map_or(true, |msg| msg.role != "user") {
@@ -96,6 +102,12 @@ pub async fn process_response(
 	let mut current_exchange = exchange;
 
 	loop {
+		// Check for cancellation at the start of each loop iteration
+		if operation_cancelled.load(Ordering::SeqCst) {
+			println!("{}", "\nOperation cancelled by user.".bright_yellow());
+			return Ok(());
+		}
+
 		// Check for tool calls if MCP is enabled
 		if config.mcp.enabled {
 			let tool_calls = mcp::parse_tool_calls(&current_content);
@@ -194,6 +206,7 @@ pub async fn process_response(
 					}
 				}
 
+				// Modify process_response to check for the operation_cancelled flag immediately after extracting tool results
 				// Display results
 				if !tool_results.is_empty() {
 					let formatted = mcp::format_tool_results(&tool_results);

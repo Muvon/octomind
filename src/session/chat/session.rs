@@ -16,6 +16,7 @@ use super::commands::*;
 use super::input::read_user_input;
 use super::response::process_response;
 use super::animation::show_loading_animation;
+use super::context_truncation::check_and_truncate_context;
 
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
@@ -501,6 +502,7 @@ impl ChatSession {
 				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
 				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context and restart layered processing for next message");
 				println!("{} - {}", DEBUG_COMMAND.cyan(), "Toggle debug mode for detailed logs");
+				println!("{} [threshold] - {}", TRUNCATE_COMMAND.cyan(), "Toggle automatic context truncation when token limit is reached");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 
 				// Additional info about caching
@@ -609,8 +611,49 @@ impl ChatSession {
 				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);
 			},
+			TRUNCATE_COMMAND => {
+				// Toggle auto-truncation mode
+				// First, load the config from disk to ensure we have the latest values
+				let mut loaded_config = match crate::config::Config::load() {
+					Ok(cfg) => cfg,
+					Err(_) => {
+						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
+						config.clone()
+					}
+				};
+
+				// Toggle the setting
+				loaded_config.openrouter.enable_auto_truncation = !loaded_config.openrouter.enable_auto_truncation;
+
+				// Update token thresholds if parameters were provided
+				if params.len() >= 1 {
+					if let Ok(threshold) = params[0].parse::<usize>() {
+						loaded_config.openrouter.max_request_tokens_threshold = threshold;
+						println!("{}", format!("Max request token threshold set to {} tokens", threshold).bright_green());
+					}
+				}
+
+				// Save the updated config
+				if let Err(e) = loaded_config.save() {
+					println!("{}: {}", "Failed to save configuration".bright_red(), e);
+					return Ok(false);
+				}
+
+				// Show the new state
+				if loaded_config.openrouter.enable_auto_truncation {
+					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
+					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.", 
+						loaded_config.openrouter.max_request_tokens_threshold).bright_yellow());
+				} else {
+					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
+					println!("{}", "You'll need to manually reduce context when it gets too large.".bright_blue());
+				}
+				println!("{}", "Configuration has been saved to disk.");
+
+				// Return a special code that indicates we should reload the config in the main loop
+				return Ok(true);
+			},
 			CACHE_COMMAND => {
-				// Default behavior - cache the last user message
 				match self.session.add_cache_checkpoint(false) {
 					Ok(true) => {
 						println!("{}", "Cache checkpoint added at the last user message. This will be used for future requests.".bright_green());
@@ -1034,6 +1077,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// Add user message for standard processing flow
 			chat_session.add_user_message(&input)?;
 
+			// Check if we need to truncate the context to stay within token limits
+			let truncate_cancelled = Arc::new(AtomicBool::new(false));
+			check_and_truncate_context(&mut chat_session, &current_config, truncate_cancelled.clone()).await?;
+
 			// Ensure system message is cached before making API calls
 			// This is important for token savings since system message typically contains
 			// all the function definitions and is unlikely to change
@@ -1084,7 +1131,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						op_cancelled.store(true, Ordering::SeqCst);
 						break; // Exit the loop once cancelled
 					}
-					tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+					tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 				}
 			});
 

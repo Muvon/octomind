@@ -87,6 +87,15 @@ pub struct OpenRouterConfig {
 	pub developer_model: Option<String>,
 	#[serde(default)]
 	pub reducer_model: Option<String>,
+	// Maximum response tokens warning threshold
+	#[serde(default = "default_mcp_response_warning_threshold")]
+	pub mcp_response_warning_threshold: usize,
+	// Maximum request tokens threshold (for automatic context truncation)
+	#[serde(default = "default_max_request_tokens_threshold")]
+	pub max_request_tokens_threshold: usize,
+	// Enable automatic context truncation when max threshold is reached
+	#[serde(default)]
+	pub enable_auto_truncation: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -103,6 +112,14 @@ fn default_input_price() -> f64 {
 
 fn default_output_price() -> f64 {
 	0.000002 // Default price per output token in USD, adjust based on model
+}
+
+fn default_mcp_response_warning_threshold() -> usize {
+	10000 // Default threshold for warning about large MCP responses (10k tokens)
+}
+
+fn default_max_request_tokens_threshold() -> usize {
+	12000 // Default threshold for auto-truncation (12k tokens)
 }
 
 impl Default for PricingConfig {
@@ -130,6 +147,9 @@ impl Default for OpenRouterConfig {
 			context_generator_model: Some("openai/gpt-4o".to_string()),
 			developer_model: None, // Use the main model by default
 			reducer_model: Some("openai/gpt-4o".to_string()),
+			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
+			max_request_tokens_threshold: default_max_request_tokens_threshold(),
+			enable_auto_truncation: false, // Disabled by default
 		}
 	}
 }

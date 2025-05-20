@@ -14,6 +14,9 @@ OctoDev is a command-line tool that helps developers navigate and understand the
 - **Optimized Multi-layered Architecture**: Uses specialized AI models for different aspects of code assistance
 - **Detailed Cost and Token Tracking**: Tracks usage by layer and optimizes token consumption
 - **MCP Protocol Support**: Integrates with external MCP servers for additional tools and capabilities
+- **Context Management**: Automatic context truncation to stay within token limits
+- **Token Protection**: Warnings and confirmations for potentially costly operations
+- **Interruptible Processing**: Ctrl+C instantly cancels operations for better user control
 
 ## Installation
 
@@ -118,7 +121,9 @@ While in an interactive session, you can use the following commands:
 - `/cache` - Mark a cache checkpoint for token saving
 - `/done` - Optimize the session context and restart the layered processing for the next message
 - `/layers` - Toggle layered processing architecture on/off
+- `/truncate [threshold]` - Toggle automatic context truncation when token limit is reached
 - `/info` - Display detailed token and cost breakdowns by layer
+- `/debug` - Toggle debug mode for detailed logs
 
 #### Session Caching
 
@@ -188,9 +193,19 @@ query_processor_model = "openai/gpt-4o"       # Model for query processing
 context_generator_model = "openai/gpt-4o"     # Model for context gathering
 developer_model = "anthropic/claude-3.7-sonnet" # Model for development tasks
 reducer_model = "openai/gpt-4o"               # Model for context reduction
+
+# Token management settings
+mcp_response_warning_threshold = 10000        # Warn for large tool outputs (tokens)
+max_request_tokens_threshold = 12000          # Max tokens before auto-truncation
+enable_auto_truncation = false               # Auto context truncation setting
 ```
 
 You can customize which model is used for each layer. If a specific layer model is not defined, it will use the main model specified in the `model` parameter. This allows you to optimize costs by using less expensive models for simpler tasks while reserving more powerful models for complex development work.
+
+The token management settings help control costs and prevent token limits from being exceeded:
+- `mcp_response_warning_threshold`: When an MCP tool (like shell commands or file operations) generates output larger than this threshold, the user will be prompted to confirm or reject the result.
+- `max_request_tokens_threshold`: When context size exceeds this threshold and auto-truncation is enabled, older messages will be automatically trimmed.
+- `enable_auto_truncation`: Toggle automatic context management (can also be toggled via the `/truncate` command).
 
 ### MCP Configuration
 
@@ -278,6 +293,15 @@ This architecture ensures optimal token usage and focused expertise at each stag
 - **Slow Indexing**: For large codebases, initial indexing may take some time, especially when downloading models for the first time.
 - **Missing Dependencies**: Make sure you have the required Rust version (use rustup to update if needed).
 - **Storage Path**: Data is stored in the `.octodev/storage` directory using SurrealDB's RocksDB backend.
+- **Token Limits**: If you encounter token limit issues, try:
+  - Using the `/truncate` command to enable automatic context management
+  - Setting a higher `max_request_tokens_threshold` in the config
+  - Using `/cache` to mark system messages or large user inputs for caching
+  - Using `/done` to optimize context between interactions
+- **Large Tool Outputs**: When tools generate very large outputs, you'll be prompted to confirm. If you frequently encounter this:
+  - Adjust the `mcp_response_warning_threshold` setting in your config
+  - Modify your tool-usage patterns to be more specific (e.g., limit file listings, be specific with file paths)
+  - Try using `grep` or other filtering tools to reduce output size
 
 ## Contributing
 

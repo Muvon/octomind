@@ -6,6 +6,7 @@ use serde_json::Value;
 use anyhow::Result;
 use regex::Regex;
 use colored;
+use std::io::Write;
 
 pub mod dev;
 pub mod server;
@@ -197,9 +198,75 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	if config.mcp.providers.contains(&"shell".to_string()) {
 		// Handle developer tools
 		if call.tool_name == "shell" {
-			return dev::execute_shell_command(call).await;
+			let result = dev::execute_shell_command(call).await?;
+			
+			// Check if result is large - warn user if it exceeds threshold
+			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
+			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
+				// Create a modified result that warns about the size
+				use colored::Colorize;
+				println!("{}", format!("⚠️  WARNING: Shell command produced a large output ({} tokens)", 
+					estimated_tokens).bright_yellow());
+				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
+				
+				// Ask user for confirmation before proceeding
+				print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
+				std::io::stdout().flush().unwrap();
+				
+				let mut input = String::new();
+				std::io::stdin().read_line(&mut input).unwrap_or_default();
+				
+				if !input.trim().to_lowercase().starts_with('y') {
+					// User declined, return a truncated result with explanation
+					let truncated_result = McpToolResult {
+						tool_name: result.tool_name,
+						result: serde_json::json!({
+							"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
+						}),
+					};
+					return Ok(truncated_result);
+				}
+				
+				// User confirmed, continue with original result
+				println!("{}", "Proceeding with full output...".bright_green());
+			}
+			
+			return Ok(result);
 		} else if call.tool_name == "text_editor" {
-			return dev::execute_text_editor(call).await;
+			let result = dev::execute_text_editor(call).await?;
+			
+			// Check if result is large - warn user if it exceeds threshold
+			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
+			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
+				// Create a modified result that warns about the size
+				use colored::Colorize;
+				println!("{}", format!("⚠️  WARNING: Text editor produced a large output ({} tokens)", 
+					estimated_tokens).bright_yellow());
+				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
+				
+				// Ask user for confirmation before proceeding
+				print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
+				std::io::stdout().flush().unwrap();
+				
+				let mut input = String::new();
+				std::io::stdin().read_line(&mut input).unwrap_or_default();
+				
+				if !input.trim().to_lowercase().starts_with('y') {
+					// User declined, return a truncated result with explanation
+					let truncated_result = McpToolResult {
+						tool_name: result.tool_name,
+						result: serde_json::json!({
+							"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
+						}),
+					};
+					return Ok(truncated_result);
+				}
+				
+				// User confirmed, continue with original result
+				println!("{}", "Proceeding with full output...".bright_green());
+			}
+			
+			return Ok(result);
 		} else if call.tool_name == "list_files" {
 			return dev::execute_list_files(call).await;
 		}
@@ -215,7 +282,40 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			if server.tools.is_empty() || server.tools.contains(&call.tool_name) {
 				// Try to execute the tool on this server
 				match super::mcp::server::execute_tool_call(call, server).await {
-					Ok(result) => return Ok(result),
+					Ok(result) => {
+						// Check if result is large - warn user if it exceeds threshold
+						let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
+						if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
+							// Create a modified result that warns about the size
+							use colored::Colorize;
+							println!("{}", format!("⚠️  WARNING: External tool produced a large output ({} tokens)", 
+								estimated_tokens).bright_yellow());
+							println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
+							
+							// Ask user for confirmation before proceeding
+							print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
+							std::io::stdout().flush().unwrap();
+							
+							let mut input = String::new();
+							std::io::stdin().read_line(&mut input).unwrap_or_default();
+							
+							if !input.trim().to_lowercase().starts_with('y') {
+								// User declined, return a truncated result with explanation
+								let truncated_result = McpToolResult {
+									tool_name: result.tool_name,
+									result: serde_json::json!({
+										"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
+									}),
+								};
+								return Ok(truncated_result);
+							}
+							
+							// User confirmed, continue with original result
+							println!("{}", "Proceeding with full output...".bright_green());
+						}
+						
+						return Ok(result);
+					},
 					Err(err) => {
 						last_error = err;
 						// Continue trying other servers

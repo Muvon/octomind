@@ -1,6 +1,6 @@
 # OctoDev - Smart Codebase Assistant
 
-OctoDev is a command-line tool that helps developers navigate and understand their codebase using semantic search capabilities. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
+OctoDev is a command-line tool that helps developers navigate and understand their codebase using semantic search capabilities and AI-powered assistance. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
 
 ## Features
 
@@ -10,7 +10,8 @@ OctoDev is a command-line tool that helps developers navigate and understand the
 - **Symbol Awareness**: Understands code structure and can expand symbol references
 - **Live File Watching**: Automatically updates the index when your code changes
 - **Configurable Embedding Providers**: Works with either FastEmbed (offline) or Jina (cloud) for embeddings
-- **Multi-layered AI Architecture**: Uses specialized AI models for different aspects of code assistance
+- **AI-Powered Code Assistance**: Helps you understand and modify your codebase
+- **Optimized Multi-layered Architecture**: Uses specialized AI models for different aspects of code assistance
 - **Detailed Cost and Token Tracking**: Tracks usage by layer and optimizes token consumption
 - **MCP Protocol Support**: Integrates with external MCP servers for additional tools and capabilities
 
@@ -84,16 +85,22 @@ octodev session --model anthropic/claude-3.7-sonnet
 
 #### Layered Architecture
 
-OctoDev sessions support an advanced multi-layered AI architecture for enhanced code understanding and modification:
+OctoDev sessions use a 4-layer AI architecture for enhanced code understanding and modification:
 
-- **Query Processor**: Improves your initial query for clearer instructions
-- **Context Generator**: Gathers all necessary code context before processing
-- **Developer**: Executes the actual coding tasks using Claude model
-- **Summarizer**: Creates summaries and updates documentation automatically
-- **Next Request**: Suggests logical next steps for your workflow
-- **Session Reviewer**: Manages context and token usage for efficiency
+1. **Query Processor**: Analyzes and improves your initial query for clearer instructions (no tools)
+2. **Context Generator**: Gathers all necessary code context using tools to explore the codebase
+3. **Developer**: Executes the actual coding tasks and produces comprehensive responses using tools
+4. **Reducer**: Updates documentation and optimizes context for the next interaction (no tools)
 
-This layered approach allows each specialized model to focus on what it does best, resulting in more accurate and comprehensive assistance. Enable layered processing with the `/layers` command in any session.
+This specialized approach brings several benefits:
+- Improved task specialization with each layer focused on what it does best
+- Optimized token usage through systematic context management
+- Clearer responsibility boundaries between layers
+- Better documentation maintenance with a dedicated layer
+- Cost efficiency by using simpler models for less complex tasks
+- Enhanced tools utilization with tools available only to layers that need them
+
+Enable layered processing with the `/layers` command in any session.
 
 #### Session Commands
 
@@ -176,9 +183,7 @@ enable_layers = true                   # Enable layered architecture
 query_processor_model = "openai/gpt-4o"       # Model for query processing
 context_generator_model = "openai/gpt-4o"     # Model for context gathering
 developer_model = "anthropic/claude-3.7-sonnet" # Model for development tasks
-summarizer_model = "openai/gpt-4o"            # Model for summarization
-next_request_model = "openai/gpt-4o"          # Model for suggesting next steps
-session_reviewer_model = "openai/gpt-4o"      # Model for session management
+reducer_model = "openai/gpt-4o"               # Model for context reduction
 ```
 
 You can customize which model is used for each layer. If a specific layer model is not defined, it will use the main model specified in the `model` parameter. This allows you to optimize costs by using less expensive models for simpler tasks while reserving more powerful models for complex development work.
@@ -244,7 +249,23 @@ OctoDev uses a combination of techniques to build a searchable index of your cod
 3. **SurrealDB Database**: Stores and retrieves embeddings for efficient similarity search
 4. **Symbol Tracking**: Maintains relationships between code symbols for reference expansion
 
-When you search, OctoDev converts your natural language query into the same vector space and finds the closest matching code blocks.
+For AI assistance, OctoDev uses a specialized 4-layer architecture:
+
+```
+User Input
+    ↓
+Query Processor (Improves the query, no tools)
+    ↓
+Context Generator (Gathers necessary information using tools)
+    ↓
+Developer (Implements solution and produces response using tools)
+    ↓
+Reducer (Updates documentation and optimizes context for next interaction)
+    ↓
+User Response
+```
+
+This architecture ensures optimal token usage and focused expertise at each stage of processing.
 
 ## Troubleshooting
 

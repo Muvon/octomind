@@ -69,7 +69,14 @@ impl ChatSession {
 			
 			// Print stats for each layer type
 			for (layer_type, stats) in layer_stats.iter() {
-				println!("{}", format!("Layer: {}", layer_type).bright_yellow());
+				// Add special highlighting for context optimization
+				let layer_display = if layer_type == "context_optimization" {
+					format!("Layer: {}", layer_type).bright_magenta()
+				} else {
+					format!("Layer: {}", layer_type).bright_yellow()
+				};
+				
+				println!("{}", layer_display);
 				
 				// Count total tokens and cost for this layer type
 				let mut total_input = 0;
@@ -93,6 +100,12 @@ impl ChatSession {
 					total_input.to_string().bright_white(),
 					total_output.to_string().bright_white());
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
+				
+				// Add special note for context optimization
+				if layer_type == "context_optimization" {
+					println!("  {}", "Note: These are costs for optimizing context between interactions".bright_cyan());
+				}
+				
 				println!();
 			}
 		} else {

@@ -53,11 +53,11 @@ impl LayerProcessor {
                 });
             },
             LayerType::ContextGenerator => {
-                // Pass both the original query and the processed query
+                // Pass both the original query and the processed query from QueryProcessor
                 let original_query = session.messages.iter()
                     .find(|m| m.role == "user")
                     .map(|m| m.content.clone())
-                    .unwrap_or_else(|| input.to_string());
+                    .unwrap_or_else(|| "No original query found".to_string());
                     
                 messages.push(Message {
                     role: "user".to_string(),
@@ -67,24 +67,19 @@ impl LayerProcessor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
-                    cached: false, // Never use caching in layer processors except for Developer layer
+                    cached: false,
                 });
             },
             LayerType::Developer => {
-                // For developer, include all previous context
-                let mut context = String::new();
-                
-                // Look for context generator output
-                for msg in session.messages.iter() {
-                    if msg.role == "assistant" {
-                        context = msg.content.clone();
-                        break;
-                    }
-                }
-                
+                // For Developer, include the processed query and context from ContextGenerator
                 messages.push(Message {
                     role: "user".to_string(),
-                    content: format!("Processed query: {}\n\nContext: {}", input, context),
+                    content: format!("Task: {}\n\nContext Information: {}", 
+                                    session.messages.iter()
+                                        .find(|m| m.role == "assistant" && m.content.contains("Processed query:"))
+                                        .map(|m| m.content.split("Processed query:").nth(1).unwrap_or(""))
+                                        .unwrap_or(input),
+                                    input),
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -92,91 +87,19 @@ impl LayerProcessor {
                     cached: false,
                 });
             },
-            LayerType::Summarizer => {
-                // For summarizer, include the developer output
-                let mut developer_output = String::new();
-                for msg in session.messages.iter().rev() {
-                    if msg.role == "assistant" {
-                        developer_output = msg.content.clone();
-                        break;
-                    }
-                }
-                
-                // Find the original user query
+            LayerType::Reducer => {
+                // For Reducer, include the original request and the Developer's output
                 let original_query = session.messages.iter()
                     .find(|m| m.role == "user")
                     .map(|m| m.content.clone())
-                    .unwrap_or_else(|| input.to_string());
+                    .unwrap_or_else(|| "No original query found".to_string());
+                
+                let developer_output = input; // Developer output from previous layer
                 
                 messages.push(Message {
                     role: "user".to_string(),
-                    content: format!(
-                        "Original query: {}\n\nDeveloper output: {}\n\nPlease create a summary and update documentation:",
-                        original_query, developer_output
-                    ),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    cached: false,
-                });
-            },
-            LayerType::NextRequest => {
-                // For next request suggestions, include the summary
-                let mut summary = String::new();
-                for msg in session.messages.iter().rev() {
-                    if msg.role == "assistant" {
-                        summary = msg.content.clone();
-                        break;
-                    }
-                }
-                
-                messages.push(Message {
-                    role: "user".to_string(),
-                    content: format!(
-                        "Based on the work just completed: {}\n\nWhat are logical next steps or commands the user might want to execute?",
-                        summary
-                    ),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    cached: false,
-                });
-            },
-            LayerType::SessionReviewer => {
-                // For session reviewer, include the complete history
-                let mut history = String::new();
-                for msg in &session.messages {
-                    let role_display = match msg.role.as_str() {
-                        "user" => "User",
-                        "assistant" => "Assistant",
-                        "system" => "System",
-                        _ => continue,
-                    };
-                    
-                    history.push_str(&format!("{}:\n{}\n\n", role_display, msg.content));
-                }
-                
-                // Get token count estimate (rough calculation)
-                let token_count = history.split_whitespace().count();
-                let token_threshold = 4000; // Example threshold
-                
-                messages.push(Message {
-                    role: "user".to_string(),
-                    content: format!(
-                        "Current session has approximately {} tokens. Threshold is {} tokens.\n\n\
-                        Current conversation history:\n{}\n\n\
-                        {}\n\nPlease create a condensed summary of this conversation that preserves all important context.",
-                        token_count,
-                        token_threshold,
-                        history,
-                        if token_count > token_threshold {
-                            "TOKEN THRESHOLD EXCEEDED - Session reduction required."
-                        } else {
-                            "Token count is still under threshold, but please provide a summary for future reference."
-                        }
-                    ),
+                    content: format!("Original request: {}\n\nDeveloper solution: {}", 
+                                     original_query, developer_output),
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()

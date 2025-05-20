@@ -1,7 +1,7 @@
 // Layer orchestration and pipeline management
 
 use crate::config::Config;
-use crate::session::{Session, get_layer_system_prompt};
+use crate::session::{Session, get_layer_system_prompt, Message, openrouter};
 use super::{LayerType, LayerConfig, Layer};
 use super::processor::LayerProcessor;
 use anyhow::Result;
@@ -17,7 +17,7 @@ pub struct LayeredOrchestrator {
 
 impl LayeredOrchestrator {
     pub fn new() -> Self {
-        // Create default configuration with all layers
+        // Create 4-layer architecture
         let layers = vec![
             LayerProcessor::new(LayerConfig {
                 layer_type: LayerType::QueryProcessor,
@@ -25,7 +25,7 @@ impl LayeredOrchestrator {
                 model: LayerType::QueryProcessor.default_model().to_string(),
                 system_prompt: get_layer_system_prompt(LayerType::QueryProcessor),
                 temperature: 0.7,
-                enable_tools: false, // By default, only enable tools for Developer
+                enable_tools: false, // No tools for QueryProcessor 
                 allowed_tools: Vec::new(),
             }),
             LayerProcessor::new(LayerConfig {
@@ -47,30 +47,12 @@ impl LayeredOrchestrator {
                 allowed_tools: Vec::new(), // All tools available
             }),
             LayerProcessor::new(LayerConfig {
-                layer_type: LayerType::Summarizer,
+                layer_type: LayerType::Reducer,
                 enabled: true,
-                model: LayerType::Summarizer.default_model().to_string(),
-                system_prompt: get_layer_system_prompt(LayerType::Summarizer),
+                model: LayerType::Reducer.default_model().to_string(),
+                system_prompt: get_layer_system_prompt(LayerType::Reducer),
                 temperature: 0.7,
-                enable_tools: false,
-                allowed_tools: Vec::new(),
-            }),
-            LayerProcessor::new(LayerConfig {
-                layer_type: LayerType::NextRequest,
-                enabled: true,
-                model: LayerType::NextRequest.default_model().to_string(),
-                system_prompt: get_layer_system_prompt(LayerType::NextRequest),
-                temperature: 0.7,
-                enable_tools: false,
-                allowed_tools: Vec::new(),
-            }),
-            LayerProcessor::new(LayerConfig {
-                layer_type: LayerType::SessionReviewer,
-                enabled: true,
-                model: LayerType::SessionReviewer.default_model().to_string(),
-                system_prompt: get_layer_system_prompt(LayerType::SessionReviewer),
-                temperature: 0.7,
-                enable_tools: false,
+                enable_tools: false, // No tools for Reducer
                 allowed_tools: Vec::new(),
             }),
         ];
@@ -106,28 +88,18 @@ impl LayeredOrchestrator {
                         layer.config.model = config.openrouter.model.clone();
                     }
                 },
-                LayerType::Summarizer => {
+                LayerType::Reducer => {
                     if let Some(model) = &config.openrouter.summarizer_model {
                         layer.config.model = model.clone();
                     }
-                },
-                LayerType::NextRequest => {
-                    if let Some(model) = &config.openrouter.next_request_model {
-                        layer.config.model = model.clone();
-                    }
-                },
-                LayerType::SessionReviewer => {
-                    if let Some(model) = &config.openrouter.session_reviewer_model {
-                        layer.config.model = model.clone();
-                    }
-                },
+                }
             }
         }
         
         orchestrator
     }
     
-    // Process user input through all layers
+    // Process user input through the simplified layers
     pub async fn process(
         &self,
         input: &str,
@@ -136,7 +108,6 @@ impl LayeredOrchestrator {
         operation_cancelled: Arc<AtomicBool>
     ) -> Result<String> {
         let mut current_input = input.to_string();
-        let mut outputs = Vec::new();
         let mut developer_output = String::new();
         
         // For total token/cost tracking across all layers
@@ -146,7 +117,7 @@ impl LayeredOrchestrator {
         
         // Debug information for user
         println!("{}", "═════════════ Layered Processing Pipeline ═════════════".bright_cyan());
-        println!("{}", "Starting layered processing with modular AI architecture".bright_green());
+        println!("{}", "Starting simplified layered processing".bright_green());
         println!();
         
         // Process through each layer sequentially
@@ -173,16 +144,27 @@ impl LayeredOrchestrator {
             println!("{}", "Output:".bright_green());
             println!("{}", result.output);
             
-            // For Context Generator, print a message indicating successful context gathering
-            if layer_type == LayerType::ContextGenerator {
-                println!("{}", "Context gathered successfully".bright_green());
-            }
-            // For Developer layer, indicate we're now executing the main work
-            else if layer_type == LayerType::Developer {
-                println!("{}", "Executing developer tasks...".bright_yellow());
+            // Layer-specific messages
+            match layer_type {
+                LayerType::QueryProcessor => {
+                    println!("{}", "Query processed and improved".bright_green());
+                },
+                LayerType::ContextGenerator => {
+                    println!("{}", "Context gathered successfully".bright_green());
+                },
+                LayerType::Developer => {
+                    println!("{}", "Development tasks completed".bright_green());
+                    // Store the developer output to return to the user
+                    developer_output = result.output.clone();
+                },
+                LayerType::Reducer => {
+                    println!("{}", "Documentation updated and context optimized".bright_green());
+                    // Note: We don't need to explicitly call reduce_session_context anymore
+                    // The Reducer layer handles both documentation updates and context management
+                }
             }
             
-            // Silently track layer stats without displaying
+            // Track token usage stats
             if let Some(usage) = &result.token_usage {
                 // Calculate cost if available, or estimate it
                 let cost = if let Some(cost_credits) = usage.cost {
@@ -206,58 +188,40 @@ impl LayeredOrchestrator {
                     cost
                 );
                 
-            // Update totals for summary
+                // Update totals for summary
                 total_input_tokens += usage.prompt_tokens;
                 total_output_tokens += usage.completion_tokens;
                 total_cost += cost;
             }
             
-            // Store the result for this layer
-            outputs.push((layer_type, result.output.clone()));
-            
-            // Special handling for the Developer layer
-            if layer_type == LayerType::Developer {
-                developer_output = result.output.clone();
-            }
-            
             // Update input for next layer
-            current_input = result.output;
+            current_input = result.output.clone();
             
-            // Apply session review/reduction if token threshold exceeded
-            if layer_type == LayerType::SessionReviewer {
-                // Get token count estimate
-                let token_count = self.estimate_token_count(session);
+            // Special handling after Reducer layer completes
+            if layer_type == LayerType::Reducer {
+                // The Reducer layer output becomes the new cached context
+                // Clear the session and start fresh
+                let system_message = session.messages.iter()
+                    .find(|m| m.role == "system")
+                    .cloned();
                 
-                if token_count > self.token_threshold {
-                    println!("{}", "Token threshold exceeded - applying session reduction".bright_red());
-                    
-                    // Replace session with condensed version
-                    let condensed_summary = current_input.clone();
-                    
-                    // Clear most messages but keep system and the summary
-                    let system_message = session.messages.iter()
-                        .find(|m| m.role == "system")
-                        .cloned();
-                    
-                    // Create a new reduced session
-                    session.messages.clear();
-                    
-                    // Restore system message
-                    if let Some(system) = system_message {
-                        session.messages.push(system);
-                    }
-                    
-                    // Add summary as cached context
-                    session.add_message("assistant", &condensed_summary);
-                    let last_index = session.messages.len() - 1;
-                    session.messages[last_index].cached = true;
-                    
-                    println!("{}", "Session reduced successfully - context preserved and cached".bright_green());
+                session.messages.clear();
+                
+                // Restore system message
+                if let Some(system) = system_message {
+                    session.messages.push(system);
                 }
+                
+                // Add Reducer's output as a cached context for next iteration
+                session.add_message("assistant", &result.output);
+                let last_index = session.messages.len() - 1;
+                session.messages[last_index].cached = true;
+                
+                println!("{}", "Session context optimized for next interaction".bright_green());
             }
         }
         
-        // Display minimal completion info
+        // Display completion info
         println!();
         println!("{}", "Processing completed".bright_green());
         
@@ -270,6 +234,150 @@ impl LayeredOrchestrator {
         
         // The Developer layer's output is what we want to return to the user
         Ok(developer_output)
+    }
+    
+    // Reduce session context to optimize token usage for future interactions
+    async fn reduce_session_context(
+        &self,
+        session: &mut Session,
+        config: &Config,
+        developer_output: &str,
+        operation_cancelled: Arc<AtomicBool>
+    ) -> Result<()> {
+        println!("{}", "Applying context reduction for next interaction".bright_yellow());
+        
+        // Get the current token count estimate
+        let token_count = self.estimate_token_count(session);
+        
+        if token_count > self.token_threshold {
+            println!("{}", "Token threshold exceeded - optimizing session context".bright_blue());
+            
+            // Check if operation was cancelled
+            if operation_cancelled.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("Operation cancelled"));
+            }
+            
+            // Save the system message
+            let system_message = session.messages.iter()
+                .find(|m| m.role == "system")
+                .cloned();
+            
+            // Extract key information from the developer output
+            let condensed_information = format!("Previous work summary: {}", developer_output);
+            
+            // Create a temporary reduced session for generating optimized context
+            let mut reduced_messages = Vec::new();
+            
+            // Add system message if exists
+            if let Some(system) = &system_message {
+                reduced_messages.push(system.clone());
+            }
+            
+            // Add the condensed information as a user message
+            reduced_messages.push(Message {
+                role: "user".to_string(),
+                content: "Please create a condensed summary of the conversation that preserves all key information for future reference. Focus on technical details, code changes, and important context.".to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                cached: false,
+            });
+            
+            // Create a message with the developer output as context
+            reduced_messages.push(Message {
+                role: "user".to_string(),
+                content: condensed_information.clone(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                cached: false,
+            });
+            
+            // Convert to OpenRouter format
+            let or_messages = openrouter::convert_messages(&reduced_messages);
+            
+            // Check if operation was cancelled
+            if operation_cancelled.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("Operation cancelled"));
+            }
+            
+            // Get a simpler model to optimize the context
+            let model = "openai/gpt-3.5-turbo";
+            
+            // Call the model to generate the optimized context
+            match openrouter::chat_completion(
+                or_messages,
+                model,
+                0.7, // moderate temperature
+                config
+            ).await {
+                Ok((optimized_context, exchange)) => {
+                    // Track the token usage for this optimization step
+                    if let Some(usage) = &exchange.usage {
+                        // Calculate cost if available, or estimate it
+                        let cost = if let Some(cost_credits) = usage.cost {
+                            // Convert from credits to dollars (100,000 credits = $1)
+                            cost_credits as f64 / 100000.0
+                        } else {
+                            // Fallback to estimating cost using model pricing
+                            let input_price = config.openrouter.pricing.input_price;
+                            let output_price = config.openrouter.pricing.output_price;
+                            let input_cost = usage.prompt_tokens as f64 * input_price;
+                            let output_cost = usage.completion_tokens as f64 * output_price;
+                            input_cost + output_cost
+                        };
+                        
+                        // Add context optimization stats to session
+                        session.add_layer_stats(
+                            "context_optimization",
+                            model,
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            cost
+                        );
+                    }
+                    
+                    // Clear the session and start fresh
+                    session.messages.clear();
+                    
+                    // Restore system message
+                    if let Some(system) = system_message {
+                        session.messages.push(system);
+                    }
+                    
+                    // Add optimized context as a cached message
+                    session.add_message("assistant", &optimized_context);
+                    let last_index = session.messages.len() - 1;
+                    session.messages[last_index].cached = true;
+                    
+                    println!("{}", "Session context reduced and optimized for next interaction".bright_green());
+                },
+                Err(e) => {
+                    // If optimization fails, fall back to simple context pruning
+                    println!("{} {}", "Context optimization error:".red(), e);
+                    println!("{}", "Falling back to simple context reduction".yellow());
+                    
+                    // Clear the session and start fresh
+                    session.messages.clear();
+                    
+                    // Restore system message
+                    if let Some(system) = system_message {
+                        session.messages.push(system);
+                    }
+                    
+                    // Add condensed information as a cached message
+                    session.add_message("assistant", &condensed_information);
+                    let last_index = session.messages.len() - 1;
+                    session.messages[last_index].cached = true;
+                }
+            }
+        } else {
+            println!("{}", "Token count within threshold - preserving full context".bright_green());
+        }
+        
+        Ok(())
     }
     
     // Estimate token count for a session (rough approximation)

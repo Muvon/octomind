@@ -103,6 +103,7 @@ pub async fn process_response(
 				// Early exit if cancellation was requested
 				if operation_cancelled.load(Ordering::SeqCst) {
 					println!("{}", "\nOperation cancelled by user.".bright_yellow());
+					// Do NOT add any confusing message to the session
 					return Ok(());
 				}
 
@@ -133,6 +134,7 @@ pub async fn process_response(
 					// Check for cancellation between tool result processing
 					if operation_cancelled.load(Ordering::SeqCst) {
 						println!("{}", "\nOperation cancelled by user.".bright_yellow());
+						// Do NOT add any confusing message to the session
 						return Ok(());
 					}
 					
@@ -183,6 +185,7 @@ pub async fn process_response(
 					// Check for cancellation before making another request
 					if operation_cancelled.load(Ordering::SeqCst) {
 						println!("{}", "\nOperation cancelled by user.".bright_yellow());
+						// Do NOT add any confusing message to the session
 						return Ok(());
 					}
 					

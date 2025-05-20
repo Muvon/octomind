@@ -37,9 +37,9 @@ pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>) -> Result<()> 
 		tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 	}
 
-	// Clear loading message
+	// Clear loading message completely and print a newline
 	execute!(stdout, cursor::RestorePosition)?;
-	print!("                             "); // Clear loading message
+	print!("                                        "); // Clear the entire loading message with spaces
 	execute!(stdout, cursor::RestorePosition)?;
 	stdout.flush()?;
 

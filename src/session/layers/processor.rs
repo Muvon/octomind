@@ -229,6 +229,101 @@ impl Layer for LayerProcessor {
                         config
                     ).await {
                         Ok((new_output, new_exchange)) => {
+                            // Check if the new output contains more tool calls
+                            let new_tool_calls = crate::session::mcp::parse_tool_calls(&new_output);
+                            
+                            if !new_tool_calls.is_empty() {
+                                // Process recursive tool calls
+                                println!("{}", "Found recursive tool calls, processing...".yellow());
+                                
+                                // Create a new session for tool responses
+                                let mut recursive_tool_session = Vec::new();
+                                let recursive_output_clone = new_output.clone();
+                                
+                                // Add all messages up to this point
+                                recursive_tool_session.extend(tool_session);
+                                
+                                // Add assistant's response with new tool calls
+                                recursive_tool_session.push(crate::session::Message {
+                                    role: "assistant".to_string(),
+                                    content: recursive_output_clone,
+                                    timestamp: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    cached: false,
+                                });
+                                
+                                // Execute all tool calls and collect results
+                                let mut recursive_tool_results = Vec::new();
+                                
+                                for tool_call in &new_tool_calls {
+                                    println!("{} {}", "Recursive tool call:".yellow(), tool_call.tool_name);
+                                    let result = match crate::session::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
+                                        Ok(res) => res,
+                                        Err(e) => {
+                                            println!("{} {}", "Tool execution error:".red(), e);
+                                            continue;
+                                        }
+                                    };
+                                    
+                                    // Add result to collection
+                                    recursive_tool_results.push(result);
+                                }
+                                
+                                // If we have results, format them and send back to the model
+                                if !recursive_tool_results.is_empty() {
+                                    // Format the results
+                                    let recursive_formatted = crate::session::mcp::format_tool_results(&recursive_tool_results);
+                                    println!("{}", recursive_formatted);
+                                    
+                                    // Create the format expected by the model
+                                    let recursive_results_message = serde_json::to_string(&recursive_tool_results)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    
+                                    let recursive_tool_message = format!("<fnr>\n{}\n</fnr>",
+                                        recursive_results_message);
+                                    
+                                    // Add tool results as user message
+                                    recursive_tool_session.push(crate::session::Message {
+                                        role: "user".to_string(),
+                                        content: recursive_tool_message,
+                                        timestamp: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs(),
+                                        cached: false,
+                                    });
+                                    
+                                    // Convert to OpenRouter format
+                                    let recursive_or_messages = openrouter::convert_messages(&recursive_tool_session);
+                                    
+                                    // Call the model again with recursive tool results
+                                    match openrouter::chat_completion(
+                                        recursive_or_messages,
+                                        &self.config.model,
+                                        self.config.temperature,
+                                        config
+                                    ).await {
+                                        Ok((final_output, final_exchange)) => {
+                                            // Extract token usage if available
+                                            let token_usage = final_exchange.usage.clone();
+                                            
+                                            // Return the result with the final output
+                                            return Ok(LayerResult {
+                                                output: final_output,
+                                                exchange: final_exchange,
+                                                token_usage,
+                                            });
+                                        },
+                                        Err(e) => {
+                                            println!("{} {}", "Error processing recursive tool results:".red(), e);
+                                            // Fall back to the non-recursive output
+                                        }
+                                    }
+                                }
+                            }
+                            
                             // Extract token usage if available
                             let token_usage = new_exchange.usage.clone();
                             

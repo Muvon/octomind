@@ -18,7 +18,7 @@ pub async fn process_layered_response(
 ) -> Result<()> {
     println!("{}", "Using layered processing architecture...".cyan());
     
-    // Add user message
+    // Add user message to the session at the beginning
     chat_session.add_user_message(input)?;
     
     // Create a task to show loading animation
@@ -79,7 +79,8 @@ pub async fn process_layered_response(
         ).await;
     }
     
-    // If no tool calls, just add the final output to the chat session with a dummy exchange for token tracking
+    // If no tool calls, add the output to session for message history
+    // but don't print it or process it again since it's already been processed
     let dummy_exchange = openrouter::OpenRouterExchange {
         request: serde_json::json!({}),
         response: serde_json::json!({}),
@@ -98,7 +99,7 @@ pub async fn process_layered_response(
         }),
     };
     
-    // Add the final output to the chat session
+    // Add the output to the message history without further processing
     chat_session.add_assistant_message(&layer_output, Some(dummy_exchange), config)?;
     
     // Print assistant response with color

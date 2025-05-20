@@ -201,11 +201,21 @@ impl LayeredOrchestrator {
 					.find(|m| m.role == "system")
 					.cloned();
 
+				// Store user message if it exists to prevent warning
+				let user_message = session.messages.iter()
+					.find(|m| m.role == "user")
+					.cloned();
+
 				session.messages.clear();
 
 				// Restore system message
 				if let Some(system) = system_message {
 					session.messages.push(system);
+				}
+
+				// Add back the user message to prevent 'warning: user message not found' issues
+				if let Some(user) = user_message {
+					session.messages.push(user);
 				}
 
 				// Add Reducer's output as a cached context for next iteration

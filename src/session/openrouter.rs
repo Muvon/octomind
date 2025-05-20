@@ -136,7 +136,7 @@ pub async fn chat_completion(
 		"model": model,
 		"messages": messages,
 		"temperature": temperature,
-		"max_tokens": 4096,
+		"max_tokens": 200,
 		"usage": {
 			"include": true  // Enable usage tracking
 		},

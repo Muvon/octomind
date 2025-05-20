@@ -872,7 +872,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
 			// Already handled at the start of the loop
 			ctrl_c_pressed.store(false, Ordering::SeqCst);
-			println!("\nOperation cancelled by user.");
 			continue;
 		}
 

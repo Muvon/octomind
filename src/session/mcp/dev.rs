@@ -61,30 +61,64 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 pub fn get_text_editor_function() -> McpFunction {
 	McpFunction {
 		name: "text_editor".to_string(),
-		description: "Perform text editing operations on files.
+		description: "Perform text editing operations on files, optimized for multi-file operations.
 
-			The `command` parameter specifies the operation to perform. Allowed options are:
-			- `view`: View the content of one or multiple files. The path parameter accepts either a single string path or an array of paths.
-			- `write`: Create or overwrite file(s). For single file, use a string path and string file_text. For multiple files, use arrays for both paths and file_texts (must be same length).
-			- `str_replace`: Replace strings in one or multiple files. For single file, provide string path, old_str and new_str. For multiple files, provide arrays for paths, old_strs, and new_strs (all arrays must be the same length).
-			- `undo_edit`: Undo the last edit made to a file.
+			The `command` parameter specifies the operation to perform on the file system. This tool is specifically designed to handle batch operations across multiple files when possible, improving efficiency and consistency.
 
-			To use the view command, you can either provide a single file path as a string or an array of file paths to view multiple files at once.
-			For example: `{\"path\": \"/path/to/file.txt\"}` or `{\"path\": [\"/path/to/file1.txt\", \"/path/to/file2.txt\"]}`.
+			Available Commands:
 
-			To use the write command for a single file:
-`{\"command\": \"write\", \"path\": \"/path/to/file.txt\", \"file_text\": \"content\"}`
+			`view`: Examine content of one or multiple files simultaneously
+			- **Single file**: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
+			- **Multiple files** (recommended): `{\"command\": \"view\", \"path\": [\"src/main.rs\", \"src/lib.rs\", \"Cargo.toml\"]}`
+			- Returns content of all requested files for comprehensive analysis or reference
 
-To write multiple files at once (paths and file_texts arrays must have the same length):
-`{\"command\": \"write\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"file_text\": [\"content1\", \"content2\"]}`
+			`write`: Create or overwrite one or multiple files in a single operation
+			- **Single file**: `{\"command\": \"write\", \"path\": \"src/main.rs\", \"file_text\": \"fn main() {...}\"}`
+			- **Multiple files** (recommended):
+			```
+			{
+			\"command\": \"write\",
+			\"path\": [\"src/models.rs\", \"src/views.rs\"],
+			\"file_text\": [\"pub struct Model {...}\", \"pub fn render() {...}\"]
+			}
+			```
+			- Paths and file_texts arrays must have matching indices and equal length
 
-			To use the str_replace command for a single file:
-`{\"command\": \"str_replace\", \"path\": \"/path/to/file.txt\", \"old_str\": \"text to replace\", \"new_str\": \"replacement text\"}`
+			`str_replace`: Perform text replacement across one or multiple files
+			- **Single file**:
+			```
+			{
+			\"command\": \"str_replace\",
+			\"path\": \"src/lib.rs\",
+			\"old_str\": \"fn old_name()\",
+			\"new_str\": \"fn new_name()\"
+			}
+			```
+			- **Multiple files** (recommended):
+			```
+			{
+			\"command\": \"str_replace\",
+			\"path\": [\"src/lib.rs\", \"src/main.rs\"],
+			\"old_str\": [\"struct OldName\", \"use crate::OldName\"],
+			\"new_str\": [\"struct NewName\", \"use crate::NewName\"]
+			}
+			```
+			- All three arrays (paths, old_strs, new_strs) must have equal length
+			- The `old_str` must exactly match text in the file, including whitespace
+			- Ideal for consistent renaming or updating patterns across the codebase
 
-To perform string replacements in multiple files at once (recommended):
-`{\"command\": \"str_replace\", \"path\": [\"/path/file1.txt\", \"/path/file2.txt\"], \"old_str\": [\"text1 to replace\", \"text2 to replace\"], \"new_str\": [\"replacement1\", \"replacement2\"]}`
+			`undo_edit`: Revert the most recent edit made to a specified file
+			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`
+			- Useful for rolling back changes when needed
 
-The `old_str` needs to exactly match one unique section of the file, including whitespace. Each string replacement is processed independently.".to_string(),
+			Best Practices:
+			1. **Always prefer multi-file operations** when working with related files
+			2. Each string replacement is processed independently
+			3. Ensure exact matching for string replacements including whitespace and formatting
+			4. Use the array parameters for batch operations rather than making multiple separate calls
+			5. For complex refactoring, consider combining view and write operations
+
+			This tool enables efficient code management across multiple files, supporting comprehensive refactoring and codebase-wide changes.".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],
@@ -302,7 +336,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						Some(value) => value,
 						_ => return Err(anyhow!("Missing 'file_text' parameter for write operations")),
 					};
-					
+
 					match file_text_value {
 						Value::Array(contents) => {
 							// Convert path and content arrays to strings
@@ -310,12 +344,12 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-								
+
 							let content_strings: Result<Vec<String>, _> = contents.iter()
 								.map(|c| c.as_str().ok_or_else(|| anyhow!("Invalid content in array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-								
+
 							match (path_strings, content_strings) {
 								(Ok(paths), Ok(contents)) => write_multiple_files(&paths, &contents).await,
 								(Err(e), _) | (_, Err(e)) => Err(e),
@@ -348,12 +382,12 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						Some(value) => value,
 						_ => return Err(anyhow!("Missing 'old_str' parameter for str_replace operations")),
 					};
-					
+
 					let new_str_value = match call.parameters.get("new_str") {
 						Some(value) => value,
 						_ => return Err(anyhow!("Missing 'new_str' parameter for str_replace operations")),
 					};
-					
+
 					match (old_str_value, new_str_value) {
 						(Value::Array(old_strs), Value::Array(new_strs)) => {
 							// Convert arrays to strings
@@ -361,17 +395,17 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-								
+
 							let old_str_strings: Result<Vec<String>, _> = old_strs.iter()
 								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in old_str array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-								
+
 							let new_str_strings: Result<Vec<String>, _> = new_strs.iter()
 								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in new_str array")))
 								.map(|r| r.map(|s| s.to_string()))
 								.collect();
-								
+
 							match (path_strings, old_str_strings, new_str_strings) {
 								(Ok(paths), Ok(old_strs), Ok(new_strs)) => {
 									str_replace_multiple(&paths, &old_strs, &new_strs).await
@@ -609,7 +643,7 @@ async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<M
 	// Ensure paths and contents match in length
 	if paths.len() != contents.len() {
 		return Err(anyhow!(
-			"Mismatch in path and content arrays. Expected {} paths and {} contents to match.", 
+			"Mismatch in path and content arrays. Expected {} paths and {} contents to match.",
 			paths.len(), contents.len()
 		));
 	}
@@ -721,7 +755,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 	// Ensure all arrays have matching length
 	if paths.len() != old_strs.len() || paths.len() != new_strs.len() {
 		return Err(anyhow!(
-			"Mismatch in array lengths. Expected {} paths, {} old strings, and {} new strings to all match.", 
+			"Mismatch in array lengths. Expected {} paths, {} old strings, and {} new strings to all match.",
 			paths.len(), old_strs.len(), new_strs.len()
 		));
 	}
@@ -756,7 +790,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 		}
 		if occurrences > 1 {
 			failures.push(format!(
-				"String appears {} times in {}. It should appear exactly once.", 
+				"String appears {} times in {}. It should appear exactly once.",
 				occurrences, path_display
 			));
 			continue;
@@ -777,7 +811,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 				// Find line number for reporting
 				let position = content.find(old_str).unwrap(); // Safe because we checked occurrences
 				let start_line = content[..position].matches('\n').count() + 1;
-				
+
 				results.push(json!({
 					"path": path_display,
 					"success": true,

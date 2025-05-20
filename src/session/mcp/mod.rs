@@ -115,9 +115,11 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 			false
 		};
 
-		// Just print the output directly without any wrapping
+		// Print the output content regardless of error state
 		if is_error {
 			output.push_str(&result_output.bright_red());
+		} else {
+			output.push_str(&result_output);
 		}
 	}
 

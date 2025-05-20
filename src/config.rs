@@ -75,6 +75,9 @@ pub struct OpenRouterConfig {
 	// Layer configurations for the new layered architecture
 	#[serde(default)]
 	pub enable_layers: bool,
+	// Debug mode setting
+	#[serde(default)]
+	pub debug: bool,
 	// Layer-specific model configurations
 	#[serde(default)]
 	pub query_processor_model: Option<String>,
@@ -122,6 +125,7 @@ impl Default for OpenRouterConfig {
 			api_key: None,
 			pricing: PricingConfig::default(),
 			enable_layers: false, // Disabled by default
+			debug: false,
 			query_processor_model: Some("openai/gpt-4o".to_string()),
 			context_generator_model: Some("openai/gpt-4o".to_string()),
 			developer_model: None, // Use the main model by default

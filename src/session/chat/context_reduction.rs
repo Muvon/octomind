@@ -17,10 +17,11 @@ pub async fn perform_context_reduction(
 ) -> Result<()> {
     println!("{}", "Performing context reduction and optimization...".cyan());
     
-    // Create a task to show loading animation
+    // Create a task to show loading animation with current cost
     let animation_cancel = operation_cancelled.clone();
+    let current_cost = chat_session.session.info.total_cost;
     let animation_task = tokio::spawn(async move {
-        let _ = show_loading_animation(animation_cancel).await;
+        let _ = show_loading_animation(animation_cancel, current_cost).await;
     });
 
     // Extract elements from the session to create an optimized version

@@ -13,7 +13,7 @@ const LOADING_FRAMES: [&str; 8] = [
 ];
 
 // Show loading animation while waiting for response
-pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>) -> Result<()> {
+pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> Result<()> {
 	let mut stdout = stdout();
 	let mut frame_idx = 0;
 
@@ -24,9 +24,10 @@ pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>) -> Result<()> 
 		// Display frame with color if supported
 		execute!(stdout, cursor::RestorePosition)?;
 
-		print!(" {} {}",
+		print!(" {} {} ${:.5}",
 			LOADING_FRAMES[frame_idx].cyan(),
-			"Generating response...".bright_blue());
+			"Generating response...".bright_blue(),
+			cost);
 
 		stdout.flush()?;
 

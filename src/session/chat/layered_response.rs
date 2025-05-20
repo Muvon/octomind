@@ -22,10 +22,11 @@ pub async fn process_layered_response(
     // Add user message to the session at the beginning
     chat_session.add_user_message(input)?;
 
-    // Create a task to show loading animation
+    // Create a task to show loading animation with current cost
     let animation_cancel = operation_cancelled.clone();
+    let current_cost = chat_session.session.info.total_cost;
     let animation_task = tokio::spawn(async move {
-        let _ = show_loading_animation(animation_cancel).await;
+        let _ = show_loading_animation(animation_cancel, current_cost).await;
     });
 
     // Process through the layers using the new modular layered architecture

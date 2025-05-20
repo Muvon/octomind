@@ -11,6 +11,13 @@ use anyhow::Result;
 use std::collections::HashMap;
 use serde_json;
 use super::animation::show_loading_animation;
+use regex::Regex;
+
+// Function to remove function_calls blocks from content
+fn remove_function_calls(content: &str) -> String {
+	let re = Regex::new(r"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>").unwrap_or_else(|_| Regex::new(r"<function_calls>.+</function_calls>").unwrap());
+	re.replace_all(content, "").trim().to_string()
+}
 
 // Structure to track tool call errors to detect loops
 #[derive(Default)]
@@ -94,11 +101,12 @@ pub async fn process_response(
 			let tool_calls = mcp::parse_tool_calls(&current_content);
 
 			if !tool_calls.is_empty() {
-				// Add assistant message with the initial response containing tool calls
-				chat_session.add_assistant_message(&current_content, Some(current_exchange.clone()), config)?;
+				// Add assistant message with the response but strip the function_calls block
+				let clean_content = remove_function_calls(&current_content);
+				chat_session.add_assistant_message(&clean_content, Some(current_exchange.clone()), config)?;
 
-				// Display assistant response with tool calls
-				println!("\n{}", current_content.bright_green());
+				// Display assistant response with tool calls removed from display
+				println!("\n{}", clean_content.bright_green());
 				
 				// Early exit if cancellation was requested
 				if operation_cancelled.load(Ordering::SeqCst) {
@@ -111,8 +119,10 @@ pub async fn process_response(
 				let mut tool_tasks = Vec::new();
 
 				for tool_call in tool_calls.clone() {
-					// Print colorful tool execution message
-					println!("  - Executing: {}", tool_call.tool_name.yellow());
+					// Print colorful tool execution message if debug is enabled
+					if config.openrouter.debug {
+						println!("  - Executing: {}", tool_call.tool_name.yellow());
+					}
 
 					// Clone tool_name separately for tool task tracking
 					let tool_name = tool_call.tool_name.clone();
@@ -147,11 +157,14 @@ pub async fn process_response(
 							},
 							Err(e) => {
 								_has_error = true;
-								println!("  - {}: {}", "Error executing tool".bright_red(), e);
+								if config.openrouter.debug {
+									println!("  - {}: {}", "Error executing tool".bright_red(), e);
+								}
 								
 								// Track errors for this tool
 								let loop_detected = error_tracker.record_error(&tool_name);
 								if loop_detected {
+									// Always show loop detection errors as they're critical
 									println!("{}", format!("  - Loop detected: {} failed {} times in a row. Breaking out of tool call loop.", 
 										tool_name, error_tracker.max_consecutive_errors).bright_red());
 									
@@ -165,14 +178,18 @@ pub async fn process_response(
 									tool_results.push(error_result);
 								} else {
 									// Don't break the loop yet - we need 3 consecutive errors for the same tool
-									println!("{}", format!("  - Tool '{}' failed {} of {} times. Continuing execution.", 
-										tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors).yellow());
+									if config.openrouter.debug {
+										println!("{}", format!("  - Tool '{}' failed {} of {} times. Continuing execution.", 
+											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors).yellow());
+									}
 								}
 							},
 						},
 						Err(e) => {
 							_has_error = true;
-							println!("  - {}: {}", "Task error".bright_red(), e);
+							if config.openrouter.debug {
+								println!("  - {}: {}", "Task error".bright_red(), e);
+							}
 						},
 					}
 				}
@@ -206,8 +223,9 @@ pub async fn process_response(
 
 					// Create a task to show loading animation
 					let animation_cancel_flag = fresh_cancel.clone();
+					let current_cost = chat_session.session.info.total_cost;
 					let animation_task = tokio::spawn(async move {
-						let _ = show_loading_animation(animation_cancel_flag).await;
+						let _ = show_loading_animation(animation_cancel_flag, current_cost).await;
 					});
 
 					// Call OpenRouter for the follow-up response
@@ -241,6 +259,7 @@ pub async fn process_response(
 							break;
 						},
 						Err(e) => {
+							// Critical errors should always be shown
 							println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
 							return Ok(());
 						}
@@ -267,10 +286,12 @@ pub async fn process_response(
 	}
 
 	// No tool calls (or MCP not enabled), just add the response
-	chat_session.add_assistant_message(&current_content, Some(current_exchange.clone()), config)?;
+	// Remove any function_calls blocks if they exist but weren't processed earlier
+	let clean_content = remove_function_calls(&current_content);
+	chat_session.add_assistant_message(&clean_content, Some(current_exchange.clone()), config)?;
 
 	// Print assistant response with color
-	println!("\n{}", current_content.bright_green());
+	println!("\n{}", clean_content.bright_green());
 
 	// Display cumulative token usage
 	println!();

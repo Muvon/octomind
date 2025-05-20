@@ -381,6 +381,11 @@ impl ChatSession {
 					// Update total cost
 					self.session.info.total_cost += cost_dollars;
 					self.estimated_cost = self.session.info.total_cost;
+					
+					// Log the actual cost received from the API for debugging
+					if config.openrouter.debug {
+						println!("Debug: Adding ${:.5} from OpenRouter credits {}", cost_dollars, cost_credits);
+					}
 				} else {
 					// Fallback to configured pricing if OpenRouter didn't provide cost
 					let input_cost = regular_prompt_tokens as f64 * config.openrouter.pricing.input_price;
@@ -390,6 +395,11 @@ impl ChatSession {
 					// Update total cost
 					self.session.info.total_cost += current_cost;
 					self.estimated_cost = self.session.info.total_cost;
+					
+					// Log the calculated cost for debugging
+					if config.openrouter.debug {
+						println!("Debug: Adding ${:.5} calculated from tokens (no OpenRouter cost provided)", current_cost);
+					}
 				}
 
 				// Update session duration
@@ -447,6 +457,7 @@ impl ChatSession {
 				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
 				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
 				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context and restart layered processing for next message");
+				println!("{} - {}", DEBUG_COMMAND.cyan(), "Toggle debug mode for detailed logs");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 
 				// Additional info about caching
@@ -520,6 +531,39 @@ impl ChatSession {
 
 				// Return a special code that indicates we should reload the config in the main loop
 				// This will ensure all future commands use the updated config
+				return Ok(true);
+			},
+			DEBUG_COMMAND => {
+				// Toggle debug mode
+				// First, load the config from disk to ensure we have the latest values
+				let mut loaded_config = match crate::config::Config::load() {
+					Ok(cfg) => cfg,
+					Err(_) => {
+						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
+						config.clone()
+					}
+				};
+
+				// Toggle the setting
+				loaded_config.openrouter.debug = !loaded_config.openrouter.debug;
+
+				// Save the updated config
+				if let Err(e) = loaded_config.save() {
+					println!("{}: {}", "Failed to save configuration".bright_red(), e);
+					return Ok(false);
+				}
+
+				// Show the new state
+				if loaded_config.openrouter.debug {
+					println!("{}", "Debug mode is now ENABLED.".bright_green());
+					println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
+				} else {
+					println!("{}", "Debug mode is now DISABLED.".bright_yellow());
+					println!("{}", "Only essential information will be displayed.".bright_blue());
+				}
+				println!("{}", "Configuration has been saved to disk.");
+
+				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);
 			},
 			CACHE_COMMAND => {
@@ -879,8 +923,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 					// Continue with the session
 					continue;
-				} else if input.starts_with(LAYERS_COMMAND) {
-					// This is a layers command that requires config reload
+				} else if input.starts_with(LAYERS_COMMAND) || input.starts_with(DEBUG_COMMAND) {
+					// This is a command that requires config reload
 					// Reload the configuration
 					match crate::config::Config::load() {
 						Ok(updated_config) => {
@@ -948,10 +992,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			let temperature = chat_session.temperature;
 			let config_clone = current_config.clone();
 
-			// Create a task to show loading animation
+			// Create a task to show loading animation with current cost
 			let animation_cancel = operation_cancelled.clone();
+			let current_cost = chat_session.session.info.total_cost;
 			let animation_task = tokio::spawn(async move {
-				let _ = show_loading_animation(animation_cancel).await;
+				let _ = show_loading_animation(animation_cancel, current_cost).await;
 			});
 
 			// Start a separate task to monitor for Ctrl+C

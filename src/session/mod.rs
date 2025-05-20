@@ -163,6 +163,9 @@ pub struct Session {
 	pub info: SessionInfo,
 	pub messages: Vec<Message>,
 	pub session_file: Option<PathBuf>,
+	// Track token counts for non-cached messages in current interaction
+	pub current_non_cached_tokens: u64,
+	pub current_total_tokens: u64,
 }
 
 impl Session {
@@ -186,6 +189,8 @@ impl Session {
 			},
 			messages: Vec::new(),
 			session_file: None,
+			current_non_cached_tokens: 0,
+			current_total_tokens: 0,
 		}
 	}
 
@@ -237,14 +242,51 @@ impl Session {
 			}
 		}
 
-		// Save the session immediately when adding a cache checkpoint
+		// Reset token counters when adding a cache checkpoint
 		if marked {
+			self.current_non_cached_tokens = 0;
+			self.current_total_tokens = 0;
+			
+			// Save the session immediately when adding a cache checkpoint
 			if let Some(_) = &self.session_file {
 				let _ = self.save();
 			}
 		}
 
 		Ok(marked)
+	}
+	
+	// Add a cache checkpoint if the token threshold is reached
+	// Returns true if a checkpoint was added, false otherwise
+	pub fn check_auto_cache_threshold(&mut self, config: &crate::config::Config) -> Result<bool, anyhow::Error> {
+		// Check if the threshold is 0 or 100, which disables auto-cache
+		let threshold = config.openrouter.cache_tokens_pct_threshold;
+		if threshold == 0 || threshold == 100 {
+			return Ok(false);
+		}
+		
+		// If there are no messages or if we haven't tracked any tokens yet, nothing to do
+		if self.messages.is_empty() || self.current_total_tokens == 0 {
+			return Ok(false);
+		}
+		
+		// Calculate the percentage of non-cached tokens
+		let non_cached_percentage = (self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
+		
+		// Check if we've reached the threshold
+		if non_cached_percentage as u8 >= threshold {
+			// Add a cache checkpoint at the last user message
+			let result = self.add_cache_checkpoint(false);
+			
+			// If successful, reset the token counters
+			if let Ok(true) = result {
+				self.current_non_cached_tokens = 0;
+				self.current_total_tokens = 0;
+				return Ok(true);
+			}
+		}
+		
+		Ok(false)
 	}
 
 	// Add statistics for a specific layer
@@ -404,6 +446,8 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			info,
 			messages,
 			session_file: Some(session_file.clone()),
+			current_non_cached_tokens: 0,
+			current_total_tokens: 0,
 		};
 		Ok(session)
 	} else {

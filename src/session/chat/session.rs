@@ -145,10 +145,12 @@ impl ChatSession {
 				info: session_info,
 				messages: Vec::new(),
 				session_file: None,
+				current_non_cached_tokens: 0,
+				current_total_tokens: 0,
 			},
 			last_response: String::new(),
 			model: model_name,
-			temperature: 0.7, // Default temperature
+			temperature: 0.2, // Default temperature
 			estimated_cost: 0.0, // Initialize estimated cost as zero
 		}
 	}
@@ -208,7 +210,7 @@ impl ChatSession {
 						session,
 						last_response: String::new(),
 						model: model.unwrap_or_else(|| config.openrouter.model.clone()),
-						temperature: 0.7,
+						temperature: 0.2,
 						estimated_cost: 0.0,
 					};
 
@@ -375,23 +377,35 @@ impl ChatSession {
 				self.session.info.output_tokens += usage.completion_tokens;
 				self.session.info.cached_tokens += cached_tokens;
 
+				// Update current token tracking for auto-cache threshold logic
+				// Only count input tokens, not completion tokens
+				self.session.current_non_cached_tokens += regular_prompt_tokens;
+				self.session.current_total_tokens += regular_prompt_tokens + cached_tokens;
+
+				// Check if we should automatically move the cache marker
+				if let Ok(true) = self.session.check_auto_cache_threshold(config) {
+					use colored::*;
+					println!("{}", "Auto-cache threshold reached - adding cache checkpoint at last user message.".bright_yellow());
+					println!("{}", "This will reduce token usage for future requests.".bright_yellow());
+				}
+
 				// If OpenRouter provided cost data, use it directly
 				if let Some(cost) = usage.cost {
 					// OpenRouter credits = dollars, use the value directly
 					self.session.info.total_cost += cost;
 					self.estimated_cost = self.session.info.total_cost;
-					
+
 					// Log the actual cost received from the API for debugging
 					if config.openrouter.debug {
-						println!("Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})", 
+						println!("Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})",
 							cost, self.session.info.total_cost);
-						
+
 						// Enhanced debug: dump full usage object
 						println!("Debug: Full usage object:");
 						if let Ok(usage_str) = serde_json::to_string_pretty(usage) {
 							println!("{}", usage_str);
 						}
-						
+
 						// Look for any cache-related fields
 						if let Some(breakdown) = &usage.breakdown {
 							println!("Debug: Usage breakdown:");
@@ -399,7 +413,7 @@ impl ChatSession {
 								println!("  {} = {}", key, value);
 							}
 						}
-						
+
 						// Check if there's a raw usage object with additional fields
 						if let Some(raw_usage) = ex.response.get("usage") {
 							println!("Debug: Raw usage from response:");
@@ -413,34 +427,34 @@ impl ChatSession {
 					let cost_from_raw = ex.response.get("usage")
 						.and_then(|u| u.get("cost"))
 						.and_then(|c| c.as_f64());
-						
+
 					if let Some(cost) = cost_from_raw {
 						// Use the cost value directly
 						self.session.info.total_cost += cost;
 						self.estimated_cost = self.session.info.total_cost;
-						
+
 						// Log that we had to fetch cost from raw response
 						if config.openrouter.debug {
-							println!("Debug: Using cost from raw response: ${:.5} (total now: ${:.5})", 
+							println!("Debug: Using cost from raw response: ${:.5} (total now: ${:.5})",
 								cost, self.session.info.total_cost);
 						}
 					} else {
 						// ERROR - OpenRouter did not provide cost data
 						println!("{}", "ERROR: OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
-						
+
 						// Dump the raw response JSON to debug
 						if config.openrouter.debug {
 							println!("{}", "Raw OpenRouter response:".bright_red());
 							if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
 								println!("{}", resp_str);
 							}
-							
+
 							// Check if usage tracking was explicitly requested
 							let has_usage_flag = ex.request.get("usage")
 								.and_then(|u| u.get("include"))
 								.and_then(|i| i.as_bool())
 								.unwrap_or(false);
-								
+
 							println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
 						}
 					}
@@ -491,7 +505,7 @@ impl ChatSession {
 			},
 			HELP_COMMAND => {
 				println!("{}", "\nAvailable commands:\n".bright_cyan());
-				println!("{} or {} - {}", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
+				println!("{} - {}", HELP_COMMAND.cyan(), "Show this help message");
 				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
 				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
 				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
@@ -503,7 +517,7 @@ impl ChatSession {
 				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context and restart layered processing for next message");
 				println!("{} - {}", DEBUG_COMMAND.cyan(), "Toggle debug mode for detailed logs");
 				println!("{} [threshold] - {}", TRUNCATE_COMMAND.cyan(), "Toggle automatic context truncation when token limit is reached");
-				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
+				println!("{} or {} - {}\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
 
 				// Additional info about caching
 				println!("{}", "** About Cache Checkpoints **".bright_yellow());
@@ -512,7 +526,9 @@ impl ChatSession {
 				println!("{}", "This is useful for large text blocks like code snippets that don't change between requests.");
 				println!("{}", "The model provider will charge less for cached content in subsequent requests.");
 				println!("{}", "Cached tokens will be displayed in the usage statistics after your next message.");
-				println!("{}", "Best practice: Use separate messages with the most data-heavy part marked for caching.\n");
+				println!("{}", "Best practice: Use separate messages with the most data-heavy part marked for caching.");
+				println!("{}", "Automatic caching: When non-cached tokens reach a configured threshold,");
+				println!("{}", "    a cache checkpoint will be automatically placed (configurable via config.toml).\n");
 
 				// Add information about layered architecture
 				println!("{}", "** About Layered Processing **".bright_yellow());
@@ -642,7 +658,7 @@ impl ChatSession {
 				// Show the new state
 				if loaded_config.openrouter.enable_auto_truncation {
 					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
-					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.", 
+					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.",
 						loaded_config.openrouter.max_request_tokens_threshold).bright_yellow());
 				} else {
 					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
@@ -1085,7 +1101,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// This is important for token savings since system message typically contains
 			// all the function definitions and is unlikely to change
 			let mut system_message_cached = false;
-			
+
 			// Check if system message is already cached
 			for msg in &chat_session.session.messages {
 				if msg.role == "system" && msg.cached {
@@ -1093,7 +1109,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					break;
 				}
 			}
-			
+
 			// If system message not already cached, add a cache checkpoint
 			if !system_message_cached {
 				if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {

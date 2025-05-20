@@ -28,7 +28,7 @@ impl LayeredOrchestrator {
 					LayerType::QueryProcessor.default_model().to_string()
 				},
 				system_prompt: get_layer_system_prompt(LayerType::QueryProcessor),
-				temperature: 0.7,
+				temperature: 0.2,
 				enable_tools: false, // No tools for QueryProcessor
 				allowed_tools: Vec::new(),
 			}),
@@ -41,7 +41,7 @@ impl LayeredOrchestrator {
 					LayerType::ContextGenerator.default_model().to_string()
 				},
 				system_prompt: get_layer_system_prompt(LayerType::ContextGenerator),
-				temperature: 0.7,
+				temperature: 0.2,
 				enable_tools: true, // Enable tools for context gathering
 				allowed_tools: vec!["shell".to_string(), "text_editor".to_string(), "list_files".to_string()],
 			}),
@@ -54,7 +54,7 @@ impl LayeredOrchestrator {
 					config.openrouter.model.clone()
 				},
 				system_prompt: get_layer_system_prompt(LayerType::Developer),
-				temperature: 0.7,
+				temperature: 0.2,
 				enable_tools: true, // Enable tools for main development
 				allowed_tools: Vec::new(), // All tools available
 			}),

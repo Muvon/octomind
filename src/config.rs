@@ -96,6 +96,10 @@ pub struct OpenRouterConfig {
 	// Enable automatic context truncation when max threshold is reached
 	#[serde(default)]
 	pub enable_auto_truncation: bool,
+	// Threshold percentage for automatic cache marker movement
+	// 0 or 100 disables auto-cache, any value between 1-99 enables it
+	#[serde(default = "default_cache_tokens_pct_threshold")]
+	pub cache_tokens_pct_threshold: u8,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -120,6 +124,10 @@ fn default_mcp_response_warning_threshold() -> usize {
 
 fn default_max_request_tokens_threshold() -> usize {
 	12000 // Default threshold for auto-truncation (12k tokens)
+}
+
+fn default_cache_tokens_pct_threshold() -> u8 {
+	50 // Default 50% threshold for automatic cache marker movement
 }
 
 impl Default for PricingConfig {
@@ -150,6 +158,7 @@ impl Default for OpenRouterConfig {
 			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false, // Disabled by default
+			cache_tokens_pct_threshold: default_cache_tokens_pct_threshold(),
 		}
 	}
 }

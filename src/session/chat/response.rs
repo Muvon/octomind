@@ -313,6 +313,18 @@ pub async fn process_response(
 								chat_session.session.info.input_tokens += regular_prompt_tokens;
 								chat_session.session.info.output_tokens += usage.completion_tokens;
 								chat_session.session.info.cached_tokens += cached_tokens;
+								
+								// Update current token tracking for auto-cache threshold logic
+								// Only count input tokens, not completion tokens
+								chat_session.session.current_non_cached_tokens += regular_prompt_tokens;
+								chat_session.session.current_total_tokens += regular_prompt_tokens + cached_tokens;
+								
+								// Check if we should automatically move the cache marker
+								if let Ok(true) = chat_session.session.check_auto_cache_threshold(config) {
+									use colored::*;
+									println!("{}", "Auto-cache threshold reached during tool calls - adding cache checkpoint at last user message.".bright_yellow());
+									println!("{}", "This will reduce token usage for future requests.".bright_yellow());
+								}
 
 								// Update cost
 								if let Some(cost) = usage.cost {

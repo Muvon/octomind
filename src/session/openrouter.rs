@@ -152,7 +152,9 @@ pub async fn chat_completion(
 		"model": model,
 		"messages": messages,
 		"temperature": temperature,
-		"max_tokens": 200,
+		"top_p": 0.3,
+		"repetition_penalty": 1.1,
+		// "max_tokens": 200,
 		"usage": {
 			"include": true  // Always enable usage tracking for all requests
 		},

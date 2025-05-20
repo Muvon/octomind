@@ -76,7 +76,7 @@ impl LayerConfig {
             enabled: true,
             model: layer_type.default_model().to_string(),
             system_prompt: super::get_layer_system_prompt(layer_type),
-            temperature: 0.7,
+            temperature: 0.2,
             enable_tools,
             allowed_tools, // Empty means all tools are allowed, otherwise specific tools
         }

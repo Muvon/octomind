@@ -195,8 +195,8 @@ developer_model = "anthropic/claude-3.7-sonnet" # Model for development tasks
 reducer_model = "openai/gpt-4o"               # Model for context reduction
 
 # Token management settings
-mcp_response_warning_threshold = 10000        # Warn for large tool outputs (tokens)
-max_request_tokens_threshold = 12000          # Max tokens before auto-truncation
+mcp_response_warning_threshold = 20000        # Warn for large tool outputs (tokens)
+max_request_tokens_threshold = 50000          # Max tokens before auto-truncation
 enable_auto_truncation = false               # Auto context truncation setting
 ```
 

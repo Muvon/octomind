@@ -271,7 +271,8 @@ impl Session {
 			self.current_non_cached_tokens = 0;
 			self.current_total_tokens = 0;
 
-			// Save the session immediately when adding a cache checkpoint
+			// After adding a cache checkpoint, make sure we explicitly save the state
+			// to ensure proper synchronization between cache flags and token tracking
 			if let Some(_) = &self.session_file {
 				let _ = self.save();
 			}
@@ -306,6 +307,12 @@ impl Session {
 			if let Ok(true) = result {
 				self.current_non_cached_tokens = 0;
 				self.current_total_tokens = 0;
+
+				// After adding a cache checkpoint, make sure state is properly saved
+				// This is critical for preventing state inconsistencies
+				if let Some(_) = &self.session_file {
+					let _ = self.save();
+				}
 				return Ok(true);
 			}
 		}

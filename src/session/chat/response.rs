@@ -24,7 +24,7 @@ fn remove_function_calls(content: &str) -> String {
 	];
 
 	let mut result = content.to_string();
-	
+
 	for pattern in patterns {
 		if let Ok(re) = Regex::new(pattern) {
 			result = re.replace_all(&result, "").to_string();
@@ -360,6 +360,15 @@ pub async fn process_response(
 									use colored::*;
 									println!("{}", "Auto-cache threshold reached during tool calls - adding cache checkpoint at last user message.".bright_yellow());
 									println!("{}", "This will reduce token usage for future requests.".bright_yellow());
+
+									// Set an environment variable to signal that auto-cache was triggered
+									// This will be detected by the tool call executor
+									std::env::set_var("OCTODEV_AUTO_CACHE_TRIGGERED", "1");
+
+									// Important fix: Break out of the recursive tool processing loop when
+									// auto-cache threshold is reached to avoid state inconsistency
+									// This prevents the AI from stopping unexpectedly when the cache threshold is reached
+									return Ok(());
 								}
 
 								// Update cost

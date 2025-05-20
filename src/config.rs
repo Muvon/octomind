@@ -119,15 +119,15 @@ fn default_output_price() -> f64 {
 }
 
 fn default_mcp_response_warning_threshold() -> usize {
-	10000 // Default threshold for warning about large MCP responses (10k tokens)
+	20000 // Default threshold for warning about large MCP responses (20k tokens)
 }
 
 fn default_max_request_tokens_threshold() -> usize {
-	12000 // Default threshold for auto-truncation (12k tokens)
+	50000 // Default threshold for auto-truncation (50k tokens)
 }
 
 fn default_cache_tokens_pct_threshold() -> u8 {
-	50 // Default 50% threshold for automatic cache marker movement
+	40 // Default 40% threshold for automatic cache marker movement
 }
 
 impl Default for PricingConfig {

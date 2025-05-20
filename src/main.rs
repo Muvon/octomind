@@ -339,8 +339,17 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
 
 	// If no modifications were made, create a default config
 	if !modified {
-		let config_path = Config::create_default_config()?;
-		println!("Created default configuration file at: {}", config_path.display());
+		// Check if config file already exists
+		let octodev_dir = Config::ensure_octodev_dir()?;
+		let config_path = octodev_dir.join("config.toml");
+		
+		if config_path.exists() {
+			println!("Configuration file already exists at: {}", config_path.display());
+			println!("No changes were made to the configuration.");
+		} else {
+			let config_path = Config::create_default_config()?;
+			println!("Created default configuration file at: {}", config_path.display());
+		}
 	} else {
 		// Save the updated configuration
 		config.save()?;

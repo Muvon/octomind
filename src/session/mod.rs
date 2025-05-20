@@ -7,6 +7,7 @@ pub mod mcp;        // MCP protocol support
 mod layers;         // Layered architecture implementation
 mod project_context; // Project context collection and management
 mod token_counter;  // Token counting utilities
+pub mod logger;     // Request/response logging utilities
 
 pub use openrouter::*;
 pub use mcp::*;

@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use serde_json;
 use super::animation::show_loading_animation;
 use regex::Regex;
+use uuid::Uuid;
 
 // Function to remove function_calls blocks from content
 fn remove_function_calls(content: &str) -> String {
@@ -149,18 +150,24 @@ pub async fn process_response(
 
 					// Execute in a tokio task
 					let config_clone = config.clone();
+					let tool_id = format!("tool_{}", Uuid::new_v4().simple());
+					let params_clone = tool_call.parameters.clone();
+					
+					// Log the tool request
+					let _ = crate::session::logger::log_tool_request(&tool_name, &params_clone, &tool_id);
+					
 					let task = tokio::spawn(async move {
 						mcp::execute_tool_call(&tool_call, &config_clone).await
 					});
 
-					tool_tasks.push((tool_name, task));
+					tool_tasks.push((tool_name, task, tool_id));
 				}
 
 				// Collect all results
 				let mut tool_results = Vec::new();
 				let mut _has_error = false;
 
-				for (tool_name, task) in tool_tasks {
+				for (tool_name, task, tool_id) in tool_tasks {
 					// Check for cancellation between tool result processing
 					if operation_cancelled.load(Ordering::SeqCst) {
 						println!("{}", "\nOperation cancelled by user.".bright_yellow());
@@ -173,6 +180,8 @@ pub async fn process_response(
 							Ok(res) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
+								// Log the tool response
+								let _ = crate::session::logger::log_tool_response(&res.result, &tool_id);
 								tool_results.push(res);
 							},
 							Err(e) => {

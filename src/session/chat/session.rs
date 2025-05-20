@@ -310,6 +310,11 @@ impl ChatSession {
 		// Add message to session
 		self.session.add_message("user", content);
 
+		// Log the user message if not already logged from input
+		if !content.starts_with("<fnr>") {
+			let _ = crate::session::logger::log_user_request(content);
+		}
+
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
@@ -324,6 +329,9 @@ impl ChatSession {
 		// Add message to session
 		let message = self.session.add_message("assistant", content);
 		self.last_response = content.to_string();
+		
+		// Log the assistant response
+		let _ = crate::session::logger::log_assistant_response(content);
 
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {

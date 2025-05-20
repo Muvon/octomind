@@ -10,6 +10,8 @@ OctoDev is a command-line tool that helps developers navigate and understand the
 - **Symbol Awareness**: Understands code structure and can expand symbol references
 - **Live File Watching**: Automatically updates the index when your code changes
 - **Configurable Embedding Providers**: Works with either FastEmbed (offline) or Jina (cloud) for embeddings
+- **Multi-layered AI Architecture**: Uses specialized AI models for different aspects of code assistance
+- **Detailed Cost and Token Tracking**: Tracks usage by layer and optimizes token consumption
 - **MCP Protocol Support**: Integrates with external MCP servers for additional tools and capabilities
 
 ## Installation

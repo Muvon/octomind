@@ -262,8 +262,8 @@ impl Config {
 	}
 
 	pub fn load() -> Result<Self> {
-		let current_dir = std::env::current_dir()?;
-		let config_path = current_dir.join(".octodev.toml");
+		let octodev_dir = Self::ensure_octodev_dir()?;
+		let config_path = octodev_dir.join("config.toml");
 
 		if config_path.exists() {
 			let config_str = fs::read_to_string(&config_path)
@@ -297,23 +297,15 @@ impl Config {
 	}
 
 	pub fn save(&self) -> Result<()> {
-		if let Some(config_path) = &self.config_path {
-			let config_str = toml::to_string(self)
-				.context("Failed to serialize configuration to TOML")?;
-			fs::write(config_path, config_str)
-				.context(format!("Failed to write config to {}", config_path.display()))?;
-			Ok(())
-		} else {
-			let octodev_dir = Self::ensure_octodev_dir()?;
-			let config_path = octodev_dir.join("config.toml");
+		let octodev_dir = Self::ensure_octodev_dir()?;
+		let config_path = octodev_dir.join("config.toml");
 
-			let config_str = toml::to_string(self)
-				.context("Failed to serialize configuration to TOML")?;
-			fs::write(&config_path, config_str)
-				.context(format!("Failed to write config to {}", config_path.display()))?;
+		let config_str = toml::to_string(self)
+			.context("Failed to serialize configuration to TOML")?;
+		fs::write(&config_path, config_str)
+			.context(format!("Failed to write config to {}", config_path.display()))?;
 
-			Ok(())
-		}
+		Ok(())
 	}
 
 	pub fn create_default_config() -> Result<PathBuf> {

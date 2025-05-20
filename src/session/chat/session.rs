@@ -463,23 +463,37 @@ impl ChatSession {
 			},
 			LAYERS_COMMAND => {
 				// Toggle layered processing
-				// Use the current config directly - no need to load it separately
-				let mut new_config = config.clone(); // Clone the current config
-				new_config.openrouter.enable_layers = !config.openrouter.enable_layers;
+				// First, load the config from disk to ensure we have the latest values
+				let mut loaded_config = match crate::config::Config::load() {
+					Ok(cfg) => cfg,
+					Err(_) => {
+						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
+						config.clone()
+					}
+				};
 				
-				// Save the config
-				new_config.save()?;
+				// Toggle the setting
+				loaded_config.openrouter.enable_layers = !loaded_config.openrouter.enable_layers;
+				
+				// Save the updated config
+				if let Err(e) = loaded_config.save() {
+					println!("{}: {}", "Failed to save configuration".bright_red(), e);
+					return Ok(false);
+				}
 				
 				// Show the new state
-				if new_config.openrouter.enable_layers {
+				if loaded_config.openrouter.enable_layers {
 					println!("{}", "Layered processing architecture is now ENABLED.".bright_green());
 					println!("{}", "Your queries will now be processed through multiple AI models.".bright_yellow());
-					println!("{}", "Configuration has been saved to disk.");
 				} else {
 					println!("{}", "Layered processing architecture is now DISABLED.".bright_yellow());
 					println!("{}", "Using standard single-model processing with Claude.".bright_blue());
-					println!("{}", "Configuration has been saved to disk.");
 				}
+				println!("{}", "Configuration has been saved to disk.");
+				
+				// Return a special code that indicates we should reload the config in the main loop
+				// This will ensure all future commands use the updated config
+				return Ok(true);
 			},
 			CACHE_COMMAND => {
 				match self.session.add_cache_checkpoint(false) {
@@ -742,6 +756,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		println!("Press Ctrl+C again to force immediate exit.");
 	}).expect("Error setting Ctrl+C handler");
 
+	// We need to handle configuration reloading, so keep our own copy that we can update
+	let mut current_config = config.clone();
+
 	// Main interaction loop
 	loop {
 		// Check if Ctrl+C was pressed
@@ -772,7 +789,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check if this is a command
 		if input.starts_with('/') {
-			let exit = chat_session.process_command(&input, config)?;
+			let exit = chat_session.process_command(&input, &current_config)?;
 			if exit {
 				// First check if it's a session switch command
 				if input.starts_with(SESSION_COMMAND) {
@@ -787,7 +804,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						Some(new_session_name), // Use the name from the command
 						None,
 						None, // Keep using the default model
-						config
+						&current_config
 					)?;
 					
 					// Replace the current chat session
@@ -807,6 +824,23 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						}
 					}
 					
+					// Continue with the session
+					continue;
+				} else if input.starts_with(LAYERS_COMMAND) {
+					// This is a layers command that requires config reload
+					// Reload the configuration
+					match crate::config::Config::load() {
+						Ok(updated_config) => {
+							// Update our current config
+							current_config = updated_config;
+							use colored::Colorize;
+							println!("{}", "Configuration reloaded successfully".bright_green());
+						},
+						Err(e) => {
+							use colored::Colorize;
+							println!("{}: {}", "Error reloading configuration".bright_red(), e);
+						}
+					}
 					// Continue with the session
 					continue;
 				} else {
@@ -833,12 +867,12 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// (This moved to process_response or process_layered_response)
 
 		// Check if layered architecture is enabled
-		if config.openrouter.enable_layers {
+		if current_config.openrouter.enable_layers {
 			// Process using layered architecture
 			let process_result = super::process_layered_response(
 				&input,
 				&mut chat_session,
-				config,
+				&current_config,
 				process_cancelled.clone()
 			).await;
 
@@ -857,7 +891,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// Call OpenRouter in a separate task
 			let model = chat_session.model.clone();
 			let temperature = chat_session.temperature;
-			let config_clone = config.clone();
+			let config_clone = current_config.clone();
 
 			// Create a task to show loading animation
 			let animation_cancel = operation_cancelled.clone();
@@ -900,7 +934,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						content,
 						exchange,
 						&mut chat_session,
-						config,
+						&current_config,
 						process_cancelled.clone()
 					).await;
 

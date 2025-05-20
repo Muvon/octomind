@@ -66,7 +66,7 @@ impl LayerProcessor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
-                    cached: true, // Mark context for caching
+                    cached: false, // Never use caching in layer processors except for Developer layer
                 });
             },
             LayerType::Developer => {

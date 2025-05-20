@@ -56,7 +56,7 @@ pub struct Message {
 // Convert our session messages to OpenRouter format
 pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 	messages.iter().map(|msg| {
-		// Handle cache breakpoints
+		// Handle cache breakpoints - but only if cached flag is explicitly true
 		if msg.cached {
 			// For a cached message, we need to create a multipart message with cache control
 			// This is compatible with Anthropic, Google, and others that support caching

@@ -1159,6 +1159,15 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				temperature,
 				&config_clone
 			).await;
+			
+			// Debug log the API call result if debug mode is enabled
+			if config_clone.openrouter.debug {
+				if let Err(ref e) = api_result {
+					println!("{}", format!("Debug: API call error: {}", e).bright_red());
+				} else {
+					println!("{}", "Debug: API call completed successfully".green());
+				}
+			}
 
 			// Stop the animation - but use TRUE to stop it, not false!
 			operation_cancelled.store(true, Ordering::SeqCst);

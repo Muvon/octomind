@@ -35,7 +35,7 @@ pub struct McpFunction {
 pub fn parse_tool_calls(content: &str) -> Vec<McpToolCall> {
 	let mut tool_calls = Vec::new();
 
-	// Look for <function_calls> or <function_calls> blocks (Claude format)
+	// Look for <function_calls> or <function_calls> blocks (various formats)
 	if let Some(re) = Regex::new(r"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>").ok() {
 		for cap in re.captures_iter(content) {
 			if let Some(json_str) = cap.get(2) {
@@ -44,6 +44,11 @@ pub fn parse_tool_calls(content: &str) -> Vec<McpToolCall> {
 					tool_calls.extend(calls);
 				} else if let Ok(call) = serde_json::from_str::<McpToolCall>(json_str.as_str()) {
 					tool_calls.push(call);
+				} else {
+					// Debug: failed to parse tool call JSON
+					if cfg!(debug_assertions) {
+						println!("Failed to parse tool call JSON: {}", json_str.as_str());
+					}
 				}
 			}
 		}
@@ -189,6 +194,15 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 
 // Execute a tool call
 pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Debug logging for tool execution
+	if config.openrouter.debug {
+		use colored::*;
+		println!("{}", format!("Debug: Executing tool call: {}", call.tool_name).bright_blue());
+		if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
+			println!("{}", format!("Debug: Tool parameters: {}", params).bright_blue());
+		}
+	}
+
 	// Only execute if MCP is enabled
 	if !config.mcp.enabled {
 		return Err(anyhow::anyhow!("MCP is not enabled"));

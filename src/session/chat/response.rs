@@ -112,6 +112,14 @@ pub async fn process_response(
 		if config.mcp.enabled {
 			let tool_calls = mcp::parse_tool_calls(&current_content);
 
+			// Add debug logging for tool calls when debug mode is enabled
+			if config.openrouter.debug && !tool_calls.is_empty() {
+				println!("{}", format!("Debug: Found {} tool calls in response", tool_calls.len()).yellow());
+				for (i, call) in tool_calls.iter().enumerate() {
+					println!("{}", format!("  Tool call {}: {} with params: {}", i+1, call.tool_name, call.parameters).yellow());
+				}
+			}
+
 			if !tool_calls.is_empty() {
 				// Add assistant message with the response but strip the function_calls block
 				let clean_content = remove_function_calls(&current_content);
@@ -406,6 +414,10 @@ pub async fn process_response(
 							// Check if there are more tools to process in the new content
 							let more_tools = mcp::parse_tool_calls(&current_content);
 							if !more_tools.is_empty() {
+								// Log if debug mode is enabled
+								if config.openrouter.debug {
+									println!("{}", format!("Debug: Found {} more tool calls to process recursively", more_tools.len()).yellow());
+								}
 								// Continue processing the new content with tool calls
 								continue;
 							}
@@ -423,6 +435,10 @@ pub async fn process_response(
 					// No tool results - check if there were more tools to execute
 					let more_tools = mcp::parse_tool_calls(&current_content);
 					if !more_tools.is_empty() {
+						// Log if debug mode is enabled
+						if config.openrouter.debug {
+							println!("{}", format!("Debug: Found {} more tool calls to process (no previous tool results)", more_tools.len()).yellow());
+						}
 						// If there are more tool calls later in the response, continue processing
 						continue;
 					} else {

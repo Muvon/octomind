@@ -218,6 +218,11 @@ impl Session {
 					break;
 				}
 			}
+			
+			// If we couldn't find a system message, return a specific error
+			if !marked {
+				return Ok(false); // No system message found
+			}
 		} else {
 			// Find the last user message and mark it as a cache breakpoint
 			for i in (0..self.messages.len()).rev() {
@@ -227,6 +232,13 @@ impl Session {
 					marked = true;
 					break;
 				}
+			}
+		}
+
+		// Save the session immediately when adding a cache checkpoint
+		if marked {
+			if let Some(session_file) = &self.session_file {
+				let _ = self.save();
 			}
 		}
 

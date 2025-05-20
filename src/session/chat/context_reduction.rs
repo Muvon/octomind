@@ -78,6 +78,8 @@ pub async fn perform_context_reduction(
     };
     
     // Call the model
+    // Always include the usage parameter to ensure we get cost data
+    println!("{} {}", "Using model for context reduction:".bright_blue(), reducer_model.bright_yellow());
     let reduction_result = openrouter::chat_completion(
         or_messages,
         &reducer_model,
@@ -123,27 +125,45 @@ pub async fn perform_context_reduction(
             
             // Save stats for the reduction
             if let Some(usage) = &exchange.usage {
-                // Calculate cost if available, or estimate it
-                let cost = if let Some(cost_credits) = usage.cost {
-                    // Convert from credits to dollars (100,000 credits = $1)
-                    cost_credits as f64 / 100000.0
+                // Only use cost if provided directly from OpenRouter
+                if let Some(cost) = usage.cost {
+                    println!("{}", format!("Context reduction cost: ${:.5}", cost).bright_magenta());
+                    
+                    // Add the stats to the session
+                    chat_session.session.add_layer_stats(
+                        "context_optimization",
+                        &reducer_model,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        cost
+                    );
+                    
+                    // Update the overall cost in the session
+                    chat_session.session.info.total_cost += cost;
+                    chat_session.estimated_cost = chat_session.session.info.total_cost;
                 } else {
-                    // Fallback to estimating cost using model pricing
-                    let input_price = config.openrouter.pricing.input_price;
-                    let output_price = config.openrouter.pricing.output_price;
-                    let input_cost = usage.prompt_tokens as f64 * input_price;
-                    let output_cost = usage.completion_tokens as f64 * output_price;
-                    input_cost + output_cost
-                };
-                
-                // Add the stats to the session
-                chat_session.session.add_layer_stats(
-                    "context_optimizer",
-                    &reducer_model,
-                    usage.prompt_tokens,
-                    usage.completion_tokens,
-                    cost
-                );
+                    // ERROR - OpenRouter did not provide cost data
+                    println!("{}", "ERROR: OpenRouter did not provide cost data for context reduction".bright_red());
+                    println!("{}", "Make sure usage.include=true is set!".bright_red());
+                    
+                    // Print the raw response for debugging
+                    if config.openrouter.debug {
+                        println!("{}", "Raw OpenRouter response for debug:".bright_red());
+                        if let Ok(resp_str) = serde_json::to_string_pretty(&exchange.response) {
+                            println!("{}", resp_str);
+                        }
+                        
+                        // Check if usage tracking was explicitly requested
+                        let has_usage_flag = exchange.request.get("usage")
+                            .and_then(|u| u.get("include"))
+                            .and_then(|i| i.as_bool())
+                            .unwrap_or(false);
+                            
+                        println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
+                    }
+                }
+            } else {
+                println!("{}", "ERROR: No usage data for context reduction".bright_red());
             }
             
             println!("{}", "Session context optimized for next interaction".bright_green());

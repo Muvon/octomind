@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use ctrlc;
+use colored::Colorize;
 use super::commands::*;
 use super::input::read_user_input;
 use super::response::process_response;
@@ -373,32 +374,74 @@ impl ChatSession {
 				self.session.info.output_tokens += usage.completion_tokens;
 				self.session.info.cached_tokens += cached_tokens;
 
-				// If OpenRouter provided cost data, use it (preferred)
-				if let Some(cost_credits) = usage.cost {
-					// Convert from credits to dollars (100,000 credits = $1)
-					let cost_dollars = cost_credits as f64 / 100000.0;
-
-					// Update total cost
-					self.session.info.total_cost += cost_dollars;
+				// If OpenRouter provided cost data, use it directly
+				if let Some(cost) = usage.cost {
+					// OpenRouter credits = dollars, use the value directly
+					self.session.info.total_cost += cost;
 					self.estimated_cost = self.session.info.total_cost;
 					
 					// Log the actual cost received from the API for debugging
 					if config.openrouter.debug {
-						println!("Debug: Adding ${:.5} from OpenRouter credits {}", cost_dollars, cost_credits);
+						println!("Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})", 
+							cost, self.session.info.total_cost);
+						
+						// Enhanced debug: dump full usage object
+						println!("Debug: Full usage object:");
+						if let Ok(usage_str) = serde_json::to_string_pretty(usage) {
+							println!("{}", usage_str);
+						}
+						
+						// Look for any cache-related fields
+						if let Some(breakdown) = &usage.breakdown {
+							println!("Debug: Usage breakdown:");
+							for (key, value) in breakdown {
+								println!("  {} = {}", key, value);
+							}
+						}
+						
+						// Check if there's a raw usage object with additional fields
+						if let Some(raw_usage) = ex.response.get("usage") {
+							println!("Debug: Raw usage from response:");
+							if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
+								println!("{}", raw_str);
+							}
+						}
 					}
 				} else {
-					// Fallback to configured pricing if OpenRouter didn't provide cost
-					let input_cost = regular_prompt_tokens as f64 * config.openrouter.pricing.input_price;
-					let output_cost = usage.completion_tokens as f64 * config.openrouter.pricing.output_price;
-					let current_cost = input_cost + output_cost;
-
-					// Update total cost
-					self.session.info.total_cost += current_cost;
-					self.estimated_cost = self.session.info.total_cost;
-					
-					// Log the calculated cost for debugging
-					if config.openrouter.debug {
-						println!("Debug: Adding ${:.5} calculated from tokens (no OpenRouter cost provided)", current_cost);
+					// No explicit cost data, look at the raw response to check if it contains cost data
+					let cost_from_raw = ex.response.get("usage")
+						.and_then(|u| u.get("cost"))
+						.and_then(|c| c.as_f64());
+						
+					if let Some(cost) = cost_from_raw {
+						// Use the cost value directly
+						self.session.info.total_cost += cost;
+						self.estimated_cost = self.session.info.total_cost;
+						
+						// Log that we had to fetch cost from raw response
+						if config.openrouter.debug {
+							println!("Debug: Using cost from raw response: ${:.5} (total now: ${:.5})", 
+								cost, self.session.info.total_cost);
+						}
+					} else {
+						// ERROR - OpenRouter did not provide cost data
+						println!("{}", "ERROR: OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
+						
+						// Dump the raw response JSON to debug
+						if config.openrouter.debug {
+							println!("{}", "Raw OpenRouter response:".bright_red());
+							if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
+								println!("{}", resp_str);
+							}
+							
+							// Check if usage tracking was explicitly requested
+							let has_usage_flag = ex.request.get("usage")
+								.and_then(|u| u.get("include"))
+								.and_then(|i| i.as_bool())
+								.unwrap_or(false);
+								
+							println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
+						}
 					}
 				}
 
@@ -451,7 +494,7 @@ impl ChatSession {
 				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
 				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
 				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
-				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message to save on tokens with supported models");
+				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message");
 				println!("{} - {}", LIST_COMMAND.cyan(), "List all available sessions");
 				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
 				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
@@ -462,8 +505,8 @@ impl ChatSession {
 
 				// Additional info about caching
 				println!("{}", "** About Cache Checkpoints **".bright_yellow());
-				println!("{}", "The system message with function declarations is automatically cached.");
-				println!("{}", "When using /cache, your last user message will be marked for caching.");
+				println!("{}", "The system message with function definitions is automatically cached for all sessions.");
+				println!("{}", "Use '/cache' to mark your last user message for caching.");
 				println!("{}", "This is useful for large text blocks like code snippets that don't change between requests.");
 				println!("{}", "The model provider will charge less for cached content in subsequent requests.");
 				println!("{}", "Cached tokens will be displayed in the usage statistics after your next message.");
@@ -567,6 +610,7 @@ impl ChatSession {
 				return Ok(true);
 			},
 			CACHE_COMMAND => {
+				// Default behavior - cache the last user message
 				match self.session.add_cache_checkpoint(false) {
 					Ok(true) => {
 						println!("{}", "Cache checkpoint added at the last user message. This will be used for future requests.".bright_green());
@@ -784,7 +828,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
 			if cached {
 				println!("{}", "System prompt has been marked for caching to save tokens in future interactions.".yellow());
+				// Save the session to ensure the cached status is persisted
+				let _ = chat_session.save();
+			} else {
+				println!("{}", "Warning: Failed to mark system prompt for caching.".red());
 			}
+		} else {
+			println!("{}", "Error: Could not set cache checkpoint for system message.".bright_red());
 		}
 
 		// Add assistant welcome message
@@ -984,6 +1034,30 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// Add user message for standard processing flow
 			chat_session.add_user_message(&input)?;
 
+			// Ensure system message is cached before making API calls
+			// This is important for token savings since system message typically contains
+			// all the function definitions and is unlikely to change
+			let mut system_message_cached = false;
+			
+			// Check if system message is already cached
+			for msg in &chat_session.session.messages {
+				if msg.role == "system" && msg.cached {
+					system_message_cached = true;
+					break;
+				}
+			}
+			
+			// If system message not already cached, add a cache checkpoint
+			if !system_message_cached {
+				if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
+					if cached {
+						println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
+						// Save the session to ensure the cached status is persisted
+						let _ = chat_session.save();
+					}
+				}
+			}
+
 			// Convert messages to OpenRouter format
 			let or_messages = openrouter::convert_messages(&chat_session.session.messages);
 
@@ -1014,7 +1088,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				}
 			});
 
-			// Now directly perform the API call - no nested tokio tasks
+			// Now directly perform the API call - ensure usage parameter is included
+			// for consistent cost tracking across all API requests
 			let api_result = openrouter::chat_completion(
 				or_messages,
 				&model,

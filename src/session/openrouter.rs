@@ -13,7 +13,8 @@ pub struct TokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
-    pub cost: Option<u64>,  // Cost in OpenRouter credits (100,000 credits = $1 USD)
+    #[serde(default)]
+    pub cost: Option<f64>,  // Cost in dollars as floating point number
     pub completion_tokens_details: Option<serde_json::Value>,
     pub prompt_tokens_details: Option<serde_json::Value>,
     pub breakdown: Option<std::collections::HashMap<String, serde_json::Value>>,  // Legacy field for cached tokens
@@ -55,9 +56,15 @@ pub struct Message {
 
 // Convert our session messages to OpenRouter format
 pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
-	messages.iter().map(|msg| {
+	// Add debug tracking for cached messages
+	let mut cached_count = 0;
+	
+	let result = messages.iter().map(|msg| {
 		// Handle cache breakpoints - but only if cached flag is explicitly true
 		if msg.cached {
+			// Increment cached count for debugging
+			cached_count += 1;
+			
 			// For a cached message, we need to create a multipart message with cache control
 			// This is compatible with Anthropic, Google, and others that support caching
 			if msg.content.contains("\n") {
@@ -118,7 +125,15 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 				content: serde_json::json!(msg.content),
 			}
 		}
-	}).collect()
+	}).collect();
+	
+	// Log debug info for cached messages
+	if cached_count > 0 {
+		use colored::*;
+		println!("{}", format!("{} system/user messages marked for caching", cached_count).bright_magenta());
+	}
+	
+	result
 }
 
 // Send a chat completion request to OpenRouter
@@ -132,13 +147,14 @@ pub async fn chat_completion(
 	let api_key = get_api_key(config)?;
 
 	// Create the request body
+	// Always include usage tracking to ensure cost information is returned
 	let mut request_body = serde_json::json!({
 		"model": model,
 		"messages": messages,
 		"temperature": temperature,
 		"max_tokens": 200,
 		"usage": {
-			"include": true  // Enable usage tracking
+			"include": true  // Always enable usage tracking for all requests
 		},
 	});
 
@@ -289,7 +305,7 @@ pub async fn chat_completion(
 					.and_then(|v| v.as_u64())
 					.unwrap_or(0);
 				let cost = usage_obj.get("cost")
-					.and_then(|v| v.as_u64());
+					.and_then(|v| v.as_f64());
 				let completion_tokens_details = usage_obj.get("completion_tokens_details")
 					.map(|v| v.clone());
 				let prompt_tokens_details = usage_obj.get("prompt_tokens_details")
@@ -371,7 +387,7 @@ pub async fn chat_completion(
 			.and_then(|v| v.as_u64())
 			.unwrap_or(0);
 		let cost = usage_obj.get("cost")
-			.and_then(|v| v.as_u64());
+			.and_then(|v| v.as_f64());
 		let completion_tokens_details = usage_obj.get("completion_tokens_details")
 			.map(|v| v.clone());
 		let prompt_tokens_details = usage_obj.get("prompt_tokens_details")

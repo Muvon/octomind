@@ -28,6 +28,7 @@ impl LayerProcessor {
         let mut messages = Vec::new();
         
         // System message with layer-specific prompt
+        // Always mark system messages as cached to save tokens
         messages.push(Message {
             role: "system".to_string(),
             content: self.config.system_prompt.clone(),
@@ -35,7 +36,7 @@ impl LayerProcessor {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            cached: false,
+            cached: true, // Mark system messages as cached by default
         });
         
         // Add appropriate user message based on layer type
@@ -222,13 +223,43 @@ impl Layer for LayerProcessor {
                     let tool_or_messages = openrouter::convert_messages(&tool_session);
                     
                     // Call the model again with tool results
+                    // Ensure usage parameter is included for consistent cost tracking
                     match openrouter::chat_completion(
                         tool_or_messages,
                         &self.config.model,
                         self.config.temperature,
                         config
                     ).await {
-                        Ok((new_output, new_exchange)) => {
+                                        Ok((new_output, new_exchange)) => {
+                                            // Log cost information for debugging
+                                            if let Some(usage) = &new_exchange.usage {
+                                                if let Some(cost) = usage.cost {
+                                                    println!("{} ${:.5}", "Tool call response cost:".bright_magenta(), cost);
+                                                } else {
+                                                    // Try to get cost from raw response
+                                                    let cost_from_raw = new_exchange.response.get("usage")
+                                                        .and_then(|u| u.get("cost"))
+                                                        .and_then(|c| c.as_f64());
+                                                        
+                                                    if let Some(cost) = cost_from_raw {
+                                                        println!("{} ${:.5} (from raw response)", "Tool call response cost:".bright_magenta(), cost);
+                                                    } else {
+                                                        println!("{}", "ERROR: OpenRouter did not provide cost data for tool call response".bright_red());
+                                                        println!("{}", "Make sure usage.include=true is set!".bright_red());
+                                                        
+                                                        // Check if usage tracking was explicitly requested
+                                                        let has_usage_flag = new_exchange.request.get("usage")
+                                                            .and_then(|u| u.get("include"))
+                                                            .and_then(|i| i.as_bool())
+                                                            .unwrap_or(false);
+                                                            
+                                                        println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
+                                                    }
+                                                }
+                                            } else {
+                                                println!("{}", "ERROR: No usage data for tool call response".bright_red());
+                                            }
+                            
                             // Check if the new output contains more tool calls
                             let new_tool_calls = crate::session::mcp::parse_tool_calls(&new_output);
                             
@@ -299,6 +330,7 @@ impl Layer for LayerProcessor {
                                     let recursive_or_messages = openrouter::convert_messages(&recursive_tool_session);
                                     
                                     // Call the model again with recursive tool results
+                                    // Ensure usage parameter is included for consistent cost tracking
                                     match openrouter::chat_completion(
                                         recursive_or_messages,
                                         &self.config.model,
@@ -308,6 +340,35 @@ impl Layer for LayerProcessor {
                                         Ok((final_output, final_exchange)) => {
                                             // Extract token usage if available
                                             let token_usage = final_exchange.usage.clone();
+                                            
+                                            // Log cost information for debugging
+                                            if let Some(usage) = &final_exchange.usage {
+                                                if let Some(cost) = usage.cost {
+                                                    println!("{} ${:.5}", "Recursive tool call cost:".bright_magenta(), cost);
+                                                } else {
+                                                    // Try to get cost from raw response
+                                                    let cost_from_raw = final_exchange.response.get("usage")
+                                                        .and_then(|u| u.get("cost"))
+                                                        .and_then(|c| c.as_f64());
+                                                        
+                                                    if let Some(cost) = cost_from_raw {
+                                                        println!("{} ${:.5} (from raw response)", "Recursive tool call cost:".bright_magenta(), cost);
+                                                    } else {
+                                                        println!("{}", "ERROR: OpenRouter did not provide cost data for recursive tool call".bright_red());
+                                                        println!("{}", "Make sure usage.include=true is set!".bright_red());
+                                                        
+                                                        // Check if usage tracking was explicitly requested
+                                                        let has_usage_flag = final_exchange.request.get("usage")
+                                                            .and_then(|u| u.get("include"))
+                                                            .and_then(|i| i.as_bool())
+                                                            .unwrap_or(false);
+                                                            
+                                                        println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
+                                                    }
+                                                }
+                                            } else {
+                                                println!("{}", "ERROR: No usage data for recursive tool call".bright_red());
+                                            }
                                             
                                             // Return the result with the final output
                                             return Ok(LayerResult {

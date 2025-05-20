@@ -21,6 +21,30 @@ pub async fn process_layered_response(
 
     // Add user message to the session at the beginning
     chat_session.add_user_message(input)?;
+    
+    // Ensure system message is cached before processing with layers
+    // This is important because system messages contain all the function definitions
+    // and developer context needed for the layered processing
+    let mut system_message_cached = false;
+    
+    // Check if system message is already cached
+    for msg in &chat_session.session.messages {
+        if msg.role == "system" && msg.cached {
+            system_message_cached = true;
+            break;
+        }
+    }
+    
+    // If system message not already cached, add a cache checkpoint
+    if !system_message_cached {
+        if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
+            if cached {
+                println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
+                // Save the session to ensure the cached status is persisted
+                let _ = chat_session.save();
+            }
+        }
+    }
 
     // Create a task to show loading animation with current cost
     let animation_cancel = operation_cancelled.clone();
@@ -48,6 +72,9 @@ pub async fn process_layered_response(
     // Stop the animation
     operation_cancelled.store(true, Ordering::SeqCst);
     let _ = animation_task.await;
+    
+    // Display status message for layered sessions
+    println!("{}", "Using layered processing with caching - system messages are automatically cached".bright_cyan());
 
     // Check for tool calls in the developer layer output
     if config.mcp.enabled && crate::session::mcp::parse_tool_calls(&layer_output).len() > 0 {
@@ -55,23 +82,19 @@ pub async fn process_layered_response(
         let fresh_tool_cancellation = Arc::new(AtomicBool::new(false));
 
         // Process the response with tool handling using the existing process_response function
-        // Create a dummy exchange for initial processing
+        // Create a dummy exchange that reflects usage tracking was enabled
         let dummy_exchange = openrouter::OpenRouterExchange {
-            request: serde_json::json!({}),
+            request: serde_json::json!({
+                "usage": {
+                    "include": true
+                }
+            }),
             response: serde_json::json!({}),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            usage: Some(openrouter::TokenUsage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
-                cost: None,
-                completion_tokens_details: None,
-                prompt_tokens_details: None,
-                breakdown: None,
-            }),
+            usage: None,  // Don't include usage info to avoid double-counting costs
         };
 
         // Process the response with tool calls using the existing handler with fresh cancellation flag
@@ -86,25 +109,25 @@ pub async fn process_layered_response(
 
     // If no tool calls, add the output to session for message history
     // but don't print it or process it again since it's already been processed
+    // Note: Don't create a dummy exchange with zero costs - this interferes with the
+    // cost tracking. Instead, create a realistic exchange that properly reflects
+    // the costs that were already tracked in the layer statistics.
     let dummy_exchange = openrouter::OpenRouterExchange {
-        request: serde_json::json!({}),
+        request: serde_json::json!({
+            "usage": {
+                "include": true
+            }
+        }),
         response: serde_json::json!({}),
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        usage: Some(openrouter::TokenUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-            cost: None,
-            completion_tokens_details: None,
-            prompt_tokens_details: None,
-            breakdown: None,
-        }),
+        usage: None,  // Don't include any usage info to avoid double-counting
     };
 
-    // Add the output to the message history without further processing
+    // Add the output to the message history without further cost accounting
+    // since costs have already been tracked in the session layer_stats
     chat_session.add_assistant_message(&layer_output, Some(dummy_exchange), config)?;
 
     // Print assistant response with color

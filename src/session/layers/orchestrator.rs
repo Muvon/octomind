@@ -99,6 +99,13 @@ impl LayeredOrchestrator {
 			// Process the layer
 			println!("{}", "Input:".bright_blue());
 			println!("{}", current_input);
+			
+			// Clear any previous animation line and show current cost
+			print!("\r                                                                  \r");
+			println!("{} ${:.5}", "Generating response with current cost:".bright_cyan(), total_cost);
+			
+			// Debug info for caching
+			println!("{}", "System message will be cached for this layer".bright_magenta());
 
 			let result = layer.process(
 				&current_input,
@@ -130,32 +137,80 @@ impl LayeredOrchestrator {
 
 			// Track token usage stats
 			if let Some(usage) = &result.token_usage {
-				// Calculate cost if available, or estimate it
-				let cost = if let Some(cost_credits) = usage.cost {
-					// Convert from credits to dollars (100,000 credits = $1)
-					cost_credits as f64 / 100000.0
+				// Try to get cost from the TokenUsage struct first
+				if let Some(cost) = usage.cost {
+					// Display the layer cost
+					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens)", 
+						cost, usage.prompt_tokens, usage.completion_tokens).bright_magenta());
+
+					// Add the stats to the session
+					session.add_layer_stats(
+						layer_type.as_str(),
+						&layer.config.model,
+						usage.prompt_tokens,
+						usage.completion_tokens,
+						cost
+					);
+
+					// Update totals for summary
+					total_input_tokens += usage.prompt_tokens;
+					total_output_tokens += usage.completion_tokens;
+					total_cost += cost;
 				} else {
-					// Fallback to estimating cost using model pricing
-					let input_price = config.openrouter.pricing.input_price;
-					let output_price = config.openrouter.pricing.output_price;
-					let input_cost = usage.prompt_tokens as f64 * input_price;
-					let output_cost = usage.completion_tokens as f64 * output_price;
-					input_cost + output_cost
-				};
+					// Try to get cost from raw response JSON if not in TokenUsage
+					let cost_from_raw = result.exchange.response.get("usage")
+						.and_then(|u| u.get("cost"))
+						.and_then(|c| c.as_f64());
+						
+					if let Some(cost) = cost_from_raw {
+						// Log that we had to get cost from raw response
+						println!("{}", format!("Layer cost (from raw): ${:.5} (Input: {} tokens, Output: {} tokens)", 
+							cost, usage.prompt_tokens, usage.completion_tokens).bright_magenta());
 
-				// Add the stats to the session
-				session.add_layer_stats(
-					layer_type.as_str(),
-					&layer.config.model,
-					usage.prompt_tokens,
-					usage.completion_tokens,
-					cost
-				);
+						// Add the stats to the session
+						session.add_layer_stats(
+							layer_type.as_str(),
+							&layer.config.model,
+							usage.prompt_tokens,
+							usage.completion_tokens,
+							cost
+						);
 
-				// Update totals for summary
-				total_input_tokens += usage.prompt_tokens;
-				total_output_tokens += usage.completion_tokens;
-				total_cost += cost;
+						// Update totals for summary
+						total_input_tokens += usage.prompt_tokens;
+						total_output_tokens += usage.completion_tokens;
+						total_cost += cost;
+					} else {
+						// ERROR - OpenRouter did not provide cost data
+						println!("{} {}", "ERROR: Layer".bright_red(), layer_type.as_str().bright_yellow());
+						println!("{}", "OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
+						
+						// Still track tokens
+						total_input_tokens += usage.prompt_tokens;
+						total_output_tokens += usage.completion_tokens;
+						
+						// Print the raw response for debugging
+						if config.openrouter.debug {
+							println!("{}", "Raw OpenRouter response for debug:".bright_red());
+							if let Ok(resp_str) = serde_json::to_string_pretty(&result.exchange.response) {
+								println!("{}", resp_str);
+							}
+						}
+					}
+				}
+			} else {
+				println!("{} {}", "ERROR: No usage data for layer".bright_red(), layer_type.as_str().bright_yellow());
+			}
+			
+			// If no usage data was returned at all, that's an error
+			let layer_has_usage = if let Some(_) = &result.token_usage {
+				true
+			} else {
+				false
+			};
+
+			if !layer_has_usage {
+				println!("{} {}", "ERROR: No token usage or cost information for layer".bright_red(), layer_type.as_str().bright_yellow());
 			}
 
 			// Update input for next layer
@@ -171,7 +226,8 @@ impl LayeredOrchestrator {
 			total_input_tokens + total_output_tokens,
 			total_input_tokens,
 			total_output_tokens).bright_blue());
-		println!("{}", format!("Estimated cost: ${:.4}", total_cost).bright_blue());
+		println!("{}", format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue());
+		println!("{}", "Use /info for detailed cost breakdown by layer".bright_blue());
 
 		// The Developer layer's output is what we want to return to the user
 		Ok(developer_output)

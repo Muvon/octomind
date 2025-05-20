@@ -83,11 +83,7 @@ pub struct OpenRouterConfig {
 	#[serde(default)]
 	pub developer_model: Option<String>,
 	#[serde(default)]
-	pub summarizer_model: Option<String>,
-	#[serde(default)]
-	pub next_request_model: Option<String>,
-	#[serde(default)]
-	pub session_reviewer_model: Option<String>,
+	pub reducer_model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -129,9 +125,7 @@ impl Default for OpenRouterConfig {
 			query_processor_model: Some("openai/gpt-4o".to_string()),
 			context_generator_model: Some("openai/gpt-4o".to_string()),
 			developer_model: None, // Use the main model by default
-			summarizer_model: Some("openai/gpt-4o".to_string()),
-			next_request_model: Some("openai/gpt-4o".to_string()),
-			session_reviewer_model: Some("openai/gpt-4o".to_string()),
+			reducer_model: Some("openai/gpt-4o".to_string()),
 		}
 	}
 }

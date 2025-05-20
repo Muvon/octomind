@@ -26,6 +26,84 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
+	// Display detailed information about the session, including layer-specific stats
+	pub fn display_session_info(&self) {
+		use colored::*;
+		
+		// Display overall session metrics
+		println!("{}", "───────────── Session Information ─────────────".bright_cyan());
+		
+		// Session basics
+		println!("{} {}", "Session name:".yellow(), self.session.info.name.bright_white());
+		println!("{} {}", "Main model:".yellow(), self.session.info.model.bright_white());
+		
+		// Total token usage
+		let total_tokens = self.session.info.input_tokens + self.session.info.output_tokens + self.session.info.cached_tokens;
+		println!("{} {}", "Total tokens:".yellow(), total_tokens.to_string().bright_white());
+		println!("{} {} input, {} output, {} cached", 
+			"Breakdown:".yellow(),
+			self.session.info.input_tokens.to_string().bright_blue(),
+			self.session.info.output_tokens.to_string().bright_green(),
+			self.session.info.cached_tokens.to_string().bright_magenta());
+		
+		// Cost information
+		println!("{} ${:.5}", "Total cost:".yellow(), self.session.info.total_cost);
+		
+		// Messages count
+		println!("{} {}", "Messages:".yellow(), self.session.messages.len());
+		
+		// Display layered stats if available
+		if !self.session.info.layer_stats.is_empty() {
+			println!();
+			println!("{}", "───────────── Layer-by-Layer Statistics ─────────────".bright_cyan());
+			
+			// Group by layer type
+			let mut layer_stats: std::collections::HashMap<String, Vec<&crate::session::LayerStats>> = std::collections::HashMap::new();
+			
+			// Group stats by layer type
+			for stat in &self.session.info.layer_stats {
+				layer_stats.entry(stat.layer_type.clone())
+					.or_insert_with(Vec::new)
+					.push(stat);
+			}
+			
+			// Print stats for each layer type
+			for (layer_type, stats) in layer_stats.iter() {
+				println!("{}", format!("Layer: {}", layer_type).bright_yellow());
+				
+				// Count total tokens and cost for this layer type
+				let mut total_input = 0;
+				let mut total_output = 0;
+				let mut total_cost = 0.0;
+				
+				// Count executions
+				let executions = stats.len();
+				
+				for stat in stats {
+					total_input += stat.input_tokens;
+					total_output += stat.output_tokens;
+					total_cost += stat.cost;
+				}
+				
+				// Print the stats
+				println!("  {}: {}", "Model".blue(), stats[0].model);
+				println!("  {}: {}", "Executions".blue(), executions);
+				println!("  {}: {} input, {} output", 
+					"Tokens".blue(), 
+					total_input.to_string().bright_white(),
+					total_output.to_string().bright_white());
+				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
+				println!();
+			}
+		} else {
+			println!();
+			println!("{}", "No layer-specific statistics available.".bright_yellow());
+			println!("{}", "This may be because the session was created before layered architecture was enabled.".bright_yellow());
+		}
+		
+		println!();
+	}
+
 	// Create a new chat session
 	pub fn new(name: String, model: Option<String>, config: &Config) -> Self {
 		let model_name = model.unwrap_or_else(|| config.openrouter.model.clone());
@@ -44,6 +122,7 @@ impl ChatSession {
 			cached_tokens: 0,
 			total_cost: 0.0,
 			duration_seconds: 0,
+			layer_stats: Vec::new(), // Initialize empty layer stats
 		};
 
 		Self {
@@ -340,6 +419,7 @@ impl ChatSession {
 				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message to save on tokens with supported models");
 				println!("{} - {}", LIST_COMMAND.cyan(), "List all available sessions");
 				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
+				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
 				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
 				println!("{} - {}\n", HELP_COMMAND.cyan(), "Show this help message");
 
@@ -377,6 +457,9 @@ impl ChatSession {
 				} else {
 					println!("{}", "Session saved successfully.".bright_green());
 				}
+			},
+			INFO_COMMAND => {
+				self.display_session_info();
 			},
 			LAYERS_COMMAND => {
 				// Toggle layered processing

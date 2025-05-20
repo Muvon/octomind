@@ -77,8 +77,21 @@ octodev session -n my_session
 octodev session -r my_session
 
 # Use a specific model
-octodev session --model anthropic/claude-3.5-sonnet
+octodev session --model anthropic/claude-3.7-sonnet
 ```
+
+#### Layered Architecture
+
+OctoDev sessions support an advanced multi-layered AI architecture for enhanced code understanding and modification:
+
+- **Query Processor**: Improves your initial query for clearer instructions
+- **Context Generator**: Gathers all necessary code context before processing
+- **Developer**: Executes the actual coding tasks using Claude model
+- **Summarizer**: Creates summaries and updates documentation automatically
+- **Next Request**: Suggests logical next steps for your workflow
+- **Session Reviewer**: Manages context and token usage for efficiency
+
+This layered approach allows each specialized model to focus on what it does best, resulting in more accurate and comprehensive assistance. Enable layered processing with the `/layers` command in any session.
 
 #### Session Commands
 
@@ -91,6 +104,8 @@ While in an interactive session, you can use the following commands:
 - `/clear` - Clear the screen
 - `/save` - Save the current session
 - `/cache` - Mark a cache checkpoint for token saving
+- `/layers` - Toggle layered processing architecture on/off
+- `/info` - Display detailed token and cost breakdowns by layer
 
 #### Session Caching
 
@@ -145,6 +160,26 @@ Available models:
 Default models:
 - Code: `jina-embeddings-v2-base-code`
 - Text: `jina-embeddings-v3`
+
+### Layered Architecture Configuration
+
+OctoDev's layered architecture can be configured in your `.octodev/config.toml` file:
+
+```toml
+[openrouter]
+model = "anthropic/claude-3.7-sonnet"  # Main model for Developer layer
+enable_layers = true                   # Enable layered architecture
+
+# Configure models for each layer (optional)
+query_processor_model = "openai/gpt-4o"       # Model for query processing
+context_generator_model = "openai/gpt-4o"     # Model for context gathering
+developer_model = "anthropic/claude-3.7-sonnet" # Model for development tasks
+summarizer_model = "openai/gpt-4o"            # Model for summarization
+next_request_model = "openai/gpt-4o"          # Model for suggesting next steps
+session_reviewer_model = "openai/gpt-4o"      # Model for session management
+```
+
+You can customize which model is used for each layer. If a specific layer model is not defined, it will use the main model specified in the `model` parameter. This allows you to optimize costs by using less expensive models for simpler tasks while reserving more powerful models for complex development work.
 
 ### MCP Configuration
 

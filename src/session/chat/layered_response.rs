@@ -3,7 +3,6 @@
 use crate::config::Config;
 use crate::session::openrouter;
 use crate::session::chat::session::ChatSession;
-use crate::session::layers::LayeredProcessor;
 use colored::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,9 +18,6 @@ pub async fn process_layered_response(
 ) -> Result<()> {
     println!("{}", "Using layered processing architecture...".cyan());
     
-    // Create the layered processor
-    let layered_processor = LayeredProcessor::from_config(config);
-    
     // Add user message
     chat_session.add_user_message(input)?;
     
@@ -31,8 +27,8 @@ pub async fn process_layered_response(
         let _ = show_loading_animation(animation_cancel).await;
     });
     
-    // Process through the layers
-    let final_output = match layered_processor.process(
+    // Process through the layers using the new modular layered architecture
+    let final_output: String = match crate::session::layers::process_with_layers(
         input,
         &mut chat_session.session,
         config,
@@ -77,33 +73,12 @@ pub async fn process_layered_response(
     // Print assistant response with color
     println!("\n{}", final_output.bright_green());
     
-    // Display cumulative token usage
+    // Just show a short summary with the total cost
+    // Detailed breakdowns are available via the /info command
     println!();
-    println!("{}", "── session usage ────────────────────────────────────────".bright_cyan());
-    
-    // Format token usage with cached tokens
-    let cached = chat_session.session.info.cached_tokens;
-    let prompt = chat_session.session.info.input_tokens;
-    let completion = chat_session.session.info.output_tokens;
-    let total = prompt + completion + cached;
-    
-    println!("{} {} prompt ({} cached), {} completion, {} total, ${:.5}",
-        "tokens:".bright_blue(),
-        prompt,
-        cached,
-        completion,
-        total,
-        chat_session.session.info.total_cost);
-    
-    // If we have cached tokens, show the savings percentage
-    if cached > 0 {
-        let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
-        println!("{} {:.1}% of prompt tokens ({} tokens saved)",
-            "cached:".bright_green(),
-            saving_pct,
-            cached);
-    }
-    
+    println!("{} ${:.5}", "Session total cost:".bright_cyan(), 
+             chat_session.session.info.total_cost);
+    println!("{}", "Use /info to see detailed token and cost breakdowns by layer".bright_blue());
     println!();
     
     Ok(())

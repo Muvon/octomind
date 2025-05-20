@@ -8,10 +8,70 @@ mod layers;         // Layered architecture implementation
 
 pub use openrouter::*;
 pub use mcp::*;
-pub use layers::*;
+pub use layers::{LayerType, LayerConfig, LayerResult, Layer, process_with_layers};
 
 // Re-export constants
 // Constants moved to config
+
+// System prompts for layer types
+pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
+    match layer_type {
+        layers::LayerType::QueryProcessor => {
+            "You are an expert query processor in the OctoDev system. \
+            Your job is to analyze the user's query and improve it to create clearer \
+            instructions for the development team. Focus on understanding the real intent \
+            behind user requests, adding specificity where needed, and formatting the \
+            request in a way that will lead to the most effective implementation. \
+            Create a concise yet comprehensive set of instructions. Don't include any \
+            explanations to the user, just return the improved query.".to_string()
+        },
+        layers::LayerType::ContextGenerator => {
+            "You are the context gathering specialist for the OctoDev system. \
+            Your task is to identify what information would be most relevant to \
+            complete the user's request. Think about what files, code snippets, \
+            or project details would help solve this problem. You will execute \
+            tool calls as needed to gather this information, then compile it into \
+            a clear context package that will be cached for efficient processing. \
+            Be thorough but focused - collect everything needed but avoid irrelevant information.".to_string()
+        },
+        layers::LayerType::Developer => {
+            "You are OctoDev's core developer AI. Using the improved instructions \
+            and context provided, implement the requested changes or provide solutions \
+            to the user's coding problems. Execute tool calls as needed to accomplish \
+            tasks and provide clear explanations of your work. Focus on delivering \
+            high-quality, working solutions with clear documentation. Be thorough in \
+            testing your changes and ensuring they meet the requirements.".to_string()
+        },
+        layers::LayerType::Summarizer => {
+            "You are the summarization expert for OctoDev. Your job is to create \
+            a concise summary of the work that was done in response to the user's \
+            request. Focus on what changes were made, why they were made, and what \
+            the outcome was. You should also update documentation files as needed: \
+            1. Update README.md with relevant information about new features or changes \
+            2. Add an entry to CHANGES.md with the date and a description of changes made \
+            If these files don't exist, you should suggest creating them. This summary \
+            should be clear, informative, and focused on the technical details.".to_string()
+        },
+        layers::LayerType::NextRequest => {
+            "You are the forward-thinking component of OctoDev. Based on the work \
+            just completed, suggest what the user might want to do next. Provide \
+            thoughtful suggestions for next steps or further improvements that would \
+            be logical to pursue. Format these as questions or commands the user \
+            could type, making it easy for them to continue their workflow. Try to \
+            anticipate logical next steps in the development process.".to_string()
+        },
+        layers::LayerType::SessionReviewer => {
+            "You are the session management specialist for OctoDev. Your job is to \
+            review the current session state, identify what information should be \
+            retained in context for future interactions, and what can be summarized \
+            or removed to optimize token usage. When the conversation history gets \
+            too long or reaches a token threshold, you'll condense it into a concise \
+            summary that preserves the essential context. This summary will be \
+            cached automatically to save tokens in future interactions. Focus on \
+            extracting the most important technical details and requirements.".to_string()
+        },
+    }
+}
 
 use std::fs::{self, OpenOptions, File};
 use std::path::PathBuf;
@@ -44,6 +104,17 @@ pub struct SessionInfo {
     pub cached_tokens: u64,  // Added to track cached tokens separately
     pub total_cost: f64,
     pub duration_seconds: u64,
+    pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LayerStats {
+    pub layer_type: String,
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost: f64,
+    pub timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -70,6 +141,7 @@ impl Session {
                 cached_tokens: 0,
                 total_cost: 0.0,
                 duration_seconds: 0,
+                layer_stats: Vec::new(), // Initialize empty layer stats
             },
             messages: Vec::new(),
             session_file: None,
@@ -120,6 +192,36 @@ impl Session {
         }
 
         Ok(marked)
+    }
+    
+    // Add statistics for a specific layer
+    pub fn add_layer_stats(&mut self, 
+        layer_type: &str, 
+        model: &str,
+        input_tokens: u64, 
+        output_tokens: u64, 
+        cost: f64
+    ) {
+        // Create the layer stats entry
+        let stats = LayerStats {
+            layer_type: layer_type.to_string(),
+            model: model.to_string(),
+            input_tokens,
+            output_tokens,
+            cost,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        
+        // Add to the session info
+        self.info.layer_stats.push(stats);
+        
+        // Also update the overall session totals
+        self.info.input_tokens += input_tokens;
+        self.info.output_tokens += output_tokens;
+        self.info.total_cost += cost;
     }
 
     // Save the session to a file
@@ -218,6 +320,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
             old_info.cached_tokens = 0;  // Initialize new cached_tokens field
             old_info.total_cost = 0.0;
             old_info.duration_seconds = 0;
+            old_info.layer_stats = Vec::new(); // Initialize empty layer stats
             session_info = Some(old_info);
         } else if let Some(content) = line.strip_prefix("SYSTEM: ") {
             // Parse system message

@@ -8,12 +8,14 @@ mod layers;         // Layered architecture implementation
 mod project_context; // Project context collection and management
 mod token_counter;  // Token counting utilities
 pub mod logger;     // Request/response logging utilities
+mod model_utils;    // Model-specific utility functions
 
 pub use openrouter::*;
 pub use mcp::*;
 pub use layers::{LayerType, LayerConfig, LayerResult, Layer, process_with_layers};
 pub use project_context::ProjectContext;
 pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export token counting functions
+pub use model_utils::model_supports_caching;
 
 // Re-export constants
 // Constants moved to config
@@ -22,7 +24,7 @@ pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export tok
 pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 	// Get current directory for project context
 	let project_dir = std::env::current_dir().unwrap_or_default();
-	
+
 	// Collect project context information
 	let project_context = ProjectContext::collect(&project_dir);
 	let context_info = project_context.format_for_prompt();
@@ -31,7 +33,7 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 	} else {
 		String::new()
 	};
-	
+
 	match layer_type {
 		layers::LayerType::QueryProcessor => {
 			format!("You are an expert query processor and requirement analyst in the OctoDev system. \
@@ -41,7 +43,7 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 				Structure the output as a clear set of development tasks or requirements. \
 				Include relevant technical specifics, edge cases to handle, and success criteria when possible. \
 				DO NOT use tools or explore the codebase - that will be done in a later stage. \
-				Return only the refined task description that clearly explains what needs to be done.{}" 
+				Return only the refined task description that clearly explains what needs to be done.{}"
 				, context_section)
 		},
 		layers::LayerType::ContextGenerator => {
@@ -72,30 +74,34 @@ pub fn get_layer_system_prompt(layer_type: layers::LayerType) -> String {
 				, context_section)
 		},
 		layers::LayerType::Developer => {
-			format!("You are OctoDev's core developer AI. You are responsible for implementing the requested changes and providing solutions. \
+			format!("You are OctoDev's core developer AI. You are responsible for implementing the requested changes and providing solutions with complete autonomy. \
 				\
-				You will receive: \
-				1. A processed query with clear instructions on what needs to be done \
+				**OPERATING INSTRUCTIONS:** \
+				- Work in fully autonomous mode without asking for confirmations \
+				- Use all available tools proactively without seeking permission \
+				- Complete tasks end-to-end on your own initiative \
+				\
+				**INPUT:** \
+				1. A processed query with instructions on what needs to be done \
 				2. Context information gathered by the context generator \
 				\
-				Your job is to: \
-				1. Understand the task and context thoroughly \
-				2. Execute the necessary actions using tools to complete the task \
-				3. If the context is missing anything, use tools to gather additional information as needed \
-				4. Provide clear explanations of your work and reasoning \
-				5. Update documentation (README.md, CHANGES.md) when appropriate \
-				6. Suggest next steps or improvements when relevant \
+				**YOUR RESPONSIBILITIES:** \
+				1. Thoroughly analyze the task and context \
+				2. Execute all necessary actions using available tools \
+				3. Proactively gather any missing information with appropriate tools \
+				4. Implement changes directly across relevant files \
+				5. Test your implementations when possible \
+				6. Suggest next steps or improvements \
 				\
-				Your output should include: \
-				- A summary of what you understood from the task \
-				- Description of the changes you've implemented \
-				- Code snippets or file changes you've made \
-				- Explanations of your implementation choices \
-				- Documentation updates \
-				- Suggestions for next steps \
+				**OUTPUT STRUCTURE:** \
+				1. Brief summary of your understanding of the task \
+				2. Description of implemented changes \
+				3. Code snippets or file modifications made \
+				4. Explanation of implementation decisions \
+				5. Documentation updates \
+				6. Next steps or future improvements \
 				\
-				Maintain a clear view of the full system architecture even when working on specific components.{}"
-				, context_section)
+				Always maintain a holistic view of the system architecture while working on specific components. Your goal is to deliver complete, production-ready solutions without requiring additional input or confirmation.{}", context_section)
 		},
 		layers::LayerType::Reducer => {
 			format!("You are the session optimizer for OctoDev, responsible for consolidating information and preparing for the next interaction. \
@@ -221,12 +227,13 @@ impl Session {
 			// Find the first system message and mark it
 			for msg in self.messages.iter_mut() {
 				if msg.role == "system" {
-					msg.cached = true;
+					// Only mark as cached if the model supports it
+					msg.cached = crate::session::model_supports_caching(&self.info.model);
 					marked = true;
 					break;
 				}
 			}
-			
+
 			// If we couldn't find a system message, return a specific error
 			if !marked {
 				return Ok(false); // No system message found
@@ -236,7 +243,8 @@ impl Session {
 			for i in (0..self.messages.len()).rev() {
 				let msg = &mut self.messages[i];
 				if msg.role == "user" {
-					msg.cached = true;
+					// Only mark as cached if the model supports it
+					msg.cached = crate::session::model_supports_caching(&self.info.model);
 					marked = true;
 					break;
 				}
@@ -247,7 +255,7 @@ impl Session {
 		if marked {
 			self.current_non_cached_tokens = 0;
 			self.current_total_tokens = 0;
-			
+
 			// Save the session immediately when adding a cache checkpoint
 			if let Some(_) = &self.session_file {
 				let _ = self.save();
@@ -256,7 +264,7 @@ impl Session {
 
 		Ok(marked)
 	}
-	
+
 	// Add a cache checkpoint if the token threshold is reached
 	// Returns true if a checkpoint was added, false otherwise
 	pub fn check_auto_cache_threshold(&mut self, config: &crate::config::Config) -> Result<bool, anyhow::Error> {
@@ -265,20 +273,20 @@ impl Session {
 		if threshold == 0 || threshold == 100 {
 			return Ok(false);
 		}
-		
+
 		// If there are no messages or if we haven't tracked any tokens yet, nothing to do
 		if self.messages.is_empty() || self.current_total_tokens == 0 {
 			return Ok(false);
 		}
-		
+
 		// Calculate the percentage of non-cached tokens
 		let non_cached_percentage = (self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
-		
+
 		// Check if we've reached the threshold
 		if non_cached_percentage as u8 >= threshold {
 			// Add a cache checkpoint at the last user message
 			let result = self.add_cache_checkpoint(false);
-			
+
 			// If successful, reset the token counters
 			if let Ok(true) = result {
 				self.current_non_cached_tokens = 0;
@@ -286,7 +294,7 @@ impl Session {
 				return Ok(true);
 			}
 		}
-		
+
 		Ok(false)
 	}
 
@@ -475,7 +483,7 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 
 	// Collect project context information (README.md, CHANGES.md, git info, file tree)
 	let project_context = ProjectContext::collect(project_dir);
-	
+
 	// Build the base system prompt
 	let mut prompt = format!(
 		"You are an Octodev – top notch AI coding assistant helping with the codebase in {}\n\nWhen answering code questions:\n• Provide validated, working code solutions\n• Keep responses clear and concise\n• Focus on practical solutions and industry best practices\n\nCode Quality Guidelines:\n• Avoid unnecessary abstractions - solve problems directly\n• Balance file size and readability - don't create overly large files\n• Don't over-fragment code across multiple files unnecessarily\n\nApproach Problems Like a Developer:\n1. Analyze the problem thoroughly first\n2. Think through solutions sequentially\n3. Solve step-by-step with a clear thought process\n\nWhen working with files:\n1. First understand which files you need to read/write\n2. Process files efficiently, preferably in a single operation when possible\n3. Utilize the provided tools for file operations",

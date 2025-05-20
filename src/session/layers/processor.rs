@@ -28,7 +28,9 @@ impl LayerProcessor {
         let mut messages = Vec::new();
         
         // System message with layer-specific prompt
-        // Always mark system messages as cached to save tokens
+        // Only mark system messages as cached if the model supports it
+        let should_cache = crate::session::model_supports_caching(&self.config.model);
+        
         messages.push(Message {
             role: "system".to_string(),
             content: self.config.system_prompt.clone(),
@@ -36,7 +38,7 @@ impl LayerProcessor {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            cached: true, // Mark system messages as cached by default
+            cached: should_cache, // Only cache if model supports it
         });
         
         // Add appropriate user message based on layer type

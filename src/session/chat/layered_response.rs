@@ -38,7 +38,7 @@ pub async fn process_layered_response(
     // If system message not already cached, add a cache checkpoint
     if !system_message_cached {
         if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
-            if cached {
+            if cached && crate::session::model_supports_caching(&chat_session.model) {
                 println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
                 // Save the session to ensure the cached status is persisted
                 let _ = chat_session.save();
@@ -74,7 +74,7 @@ pub async fn process_layered_response(
     let _ = animation_task.await;
     
     // Display status message for layered sessions
-    println!("{}", "Using layered processing with caching - system messages are automatically cached".bright_cyan());
+    println!("{}", "Using layered processing with model-specific caching - only supported models will use caching".bright_cyan());
 
     // Check for tool calls in the developer layer output
     if config.mcp.enabled && crate::session::mcp::parse_tool_calls(&layer_output).len() > 0 {

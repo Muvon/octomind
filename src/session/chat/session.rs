@@ -893,10 +893,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Mark system message with function declarations as cached by default
 		// This ensures all heavy initial context is cached to save on tokens
 		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
-			if cached {
+			if cached && crate::session::model_supports_caching(&chat_session.model) {
 				println!("{}", "System prompt has been marked for caching to save tokens in future interactions.".yellow());
 				// Save the session to ensure the cached status is persisted
 				let _ = chat_session.save();
+			} else if !crate::session::model_supports_caching(&chat_session.model) {
+				// Don't show warning for models that don't support caching
+				println!("{}", "Note: This model doesn't support caching, but system prompt is still optimized.".blue());
 			} else {
 				println!("{}", "Warning: Failed to mark system prompt for caching.".red());
 			}
@@ -1121,7 +1124,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// If system message not already cached, add a cache checkpoint
 			if !system_message_cached {
 				if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
-					if cached {
+					if cached && crate::session::model_supports_caching(&chat_session.model) {
 						println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
 						// Save the session to ensure the cached status is persisted
 						let _ = chat_session.save();

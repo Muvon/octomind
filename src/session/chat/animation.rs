@@ -34,8 +34,8 @@ pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> 
 		// Update frame index
 		frame_idx = (frame_idx + 1) % LOADING_FRAMES.len();
 
-		// Delay
-		tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+		// Shorter delay to be more responsive to cancellation
+		tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 	}
 
 	// Clear loading message completely and print a newline

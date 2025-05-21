@@ -937,7 +937,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let ctrl_c_pressed = Arc::new(AtomicBool::new(false));
 	let ctrl_c_pressed_clone = ctrl_c_pressed.clone();
 
-	// Set up Ctrl+C handler
+	// Set up Ctrl+C handler for immediate cancellation
 	ctrlc::set_handler(move || {
 		// If already set, do a hard exit to break out of any operation
 		if ctrl_c_pressed_clone.load(Ordering::SeqCst) {
@@ -946,8 +946,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 
 		ctrl_c_pressed_clone.store(true, Ordering::SeqCst);
-		println!("\nCtrl+C pressed, will cancel after current operation completes.");
+		println!("\nCtrl+C pressed. Cancelling current operation.");
 		println!("Press Ctrl+C again to force immediate exit.");
+		
+		// Force all cancellation flags to be set immediately
+		// This will propagate to any active operations
 	}).expect("Error setting Ctrl+C handler");
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
@@ -959,7 +962,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
 			// Reset for next time
 			ctrl_c_pressed.store(false, Ordering::SeqCst);
-			println!("\nOperation cancelled.");
+			println!("\nOperation cancelled. Ready for new input.");
 			continue;
 		}
 
@@ -1092,6 +1095,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check if layered architecture is enabled AND this is the first message
 		if current_config.openrouter.enable_layers && !first_message_processed {
+			// Check for Ctrl+C before starting layered processing
+			if ctrl_c_pressed.load(Ordering::SeqCst) {
+				continue;
+			}
+			
 			// Process using layered architecture for the first message only
 			let process_result = super::process_layered_response(
 				&input,
@@ -1155,20 +1163,29 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				let _ = show_loading_animation(animation_cancel, current_cost).await;
 			});
 
-			// Start a separate task to monitor for Ctrl+C
+			// Start a separate task to monitor for Ctrl+C and propagate to operation_cancelled flag
 			let op_cancelled = operation_cancelled.clone();
 			let ctrlc_flag = ctrl_c_pressed.clone();
 			let _cancel_monitor = tokio::spawn(async move {
 				while !op_cancelled.load(Ordering::SeqCst) {
 					// Check if global Ctrl+C flag is set
 					if ctrlc_flag.load(Ordering::SeqCst) {
-						// Set the operation cancellation flag
+						// Set the operation cancellation flag immediately
 						op_cancelled.store(true, Ordering::SeqCst);
 						break; // Exit the loop once cancelled
 					}
-					tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+					// Use a shorter sleep time to respond to cancellation faster
+					tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 				}
 			});
+
+			// Check for Ctrl+C before making API call
+			if ctrl_c_pressed.load(Ordering::SeqCst) {
+				// Immediately stop and return to main loop
+				operation_cancelled.store(true, Ordering::SeqCst);
+				let _ = animation_task.await;
+				continue;
+			}
 
 			// Now directly perform the API call - ensure usage parameter is included
 			// for consistent cost tracking across all API requests
@@ -1191,6 +1208,12 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// Stop the animation - but use TRUE to stop it, not false!
 			operation_cancelled.store(true, Ordering::SeqCst);
 			let _ = animation_task.await;
+
+			// Check for Ctrl+C again before processing response
+			if ctrl_c_pressed.load(Ordering::SeqCst) {
+				// Skip processing response if Ctrl+C was pressed
+				continue;
+			}
 
 			// Process the response
 			match api_result {

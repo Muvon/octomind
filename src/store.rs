@@ -1,10 +1,16 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use surrealdb::Surreal;
-use surrealdb::engine::local::Db;
-use surrealdb::opt::RecordId;
 use uuid::Uuid;
+
+// Arrow imports
+use arrow::array::{Array, FixedSizeListArray, Float32Array, StringArray, UInt32Array};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
+
+// LanceDB imports
+use lancedb::{connect, Connection, index::Index, query::{ExecutableQuery, QueryBase}};
+use futures::TryStreamExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CodeBlock {
@@ -30,29 +36,246 @@ pub struct TextBlock {
 	pub hash: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Record {
-	id: RecordId,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct VectorSearch {
-	id: RecordId,
-	embedding_distance: f32,
-	embedding_vector: Vec<f32>,
-	#[serde(flatten)]
-	payload: HashMap<String, serde_json::Value>,
-}
-
 pub struct Store {
-	db: Surreal<Db>,
+	db: Connection,
+	vector_dim: usize,  // Size of embedding vectors
 }
 
-// Implementing Drop to ensure the connection is closed
+// Helper struct for converting between Arrow RecordBatch and our domain models
+struct BatchConverter {
+    vector_dim: usize,
+}
+
+impl BatchConverter {
+    fn new(vector_dim: usize) -> Self {
+        Self { vector_dim }
+    }
+
+    // Convert a CodeBlock to a RecordBatch
+    fn code_block_to_batch(&self, blocks: &[CodeBlock], embeddings: &[Vec<f32>]) -> Result<RecordBatch> {
+        // Ensure we have the same number of blocks and embeddings
+        if blocks.len() != embeddings.len() {
+            return Err(anyhow::anyhow!("Number of blocks and embeddings must match"));
+        }
+
+        if blocks.is_empty() {
+            return Err(anyhow::anyhow!("Empty blocks array"));
+        }
+
+        // Create schema
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("path", DataType::Utf8, false),
+            Field::new("language", DataType::Utf8, false),
+            Field::new("content", DataType::Utf8, false),
+            Field::new("symbols", DataType::Utf8, true),  // Storing serialized JSON of symbols
+            Field::new("start_line", DataType::UInt32, false),
+            Field::new("end_line", DataType::UInt32, false),
+            Field::new("hash", DataType::Utf8, false),
+            Field::new(
+                "embedding",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    self.vector_dim as i32,
+                ),
+                true,
+            ),
+        ]));
+
+        // Create arrays
+        let ids: Vec<String> = blocks.iter().map(|_| Uuid::new_v4().to_string()).collect();
+        let paths: Vec<&str> = blocks.iter().map(|b| b.path.as_str()).collect();
+        let languages: Vec<&str> = blocks.iter().map(|b| b.language.as_str()).collect();
+        let contents: Vec<&str> = blocks.iter().map(|b| b.content.as_str()).collect();
+        let symbols: Vec<String> = blocks.iter().map(|b| serde_json::to_string(&b.symbols).unwrap_or_default()).collect();
+        let start_lines: Vec<u32> = blocks.iter().map(|b| b.start_line as u32).collect();
+        let end_lines: Vec<u32> = blocks.iter().map(|b| b.end_line as u32).collect();
+        let hashes: Vec<&str> = blocks.iter().map(|b| b.hash.as_str()).collect();
+
+        // Create the embedding fixed size list array
+        let mut flattened_embeddings = Vec::with_capacity(blocks.len() * self.vector_dim);
+        for embedding in embeddings {
+            flattened_embeddings.extend_from_slice(embedding);
+        }
+        let values = Float32Array::from(flattened_embeddings);
+
+        // Create the fixed size list array
+        let embedding_array = FixedSizeListArray::new(
+            Arc::new(Field::new("item", DataType::Float32, true)),
+            self.vector_dim as i32,
+            Arc::new(values),
+            None, // No validity buffer - all values are valid
+        );
+
+        // Create record batch
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(ids)),
+                Arc::new(StringArray::from(paths)),
+                Arc::new(StringArray::from(languages)),
+                Arc::new(StringArray::from(contents)),
+                Arc::new(StringArray::from(symbols)),
+                Arc::new(UInt32Array::from(start_lines)),
+                Arc::new(UInt32Array::from(end_lines)),
+                Arc::new(StringArray::from(hashes)),
+                Arc::new(embedding_array),
+            ],
+        )?;
+
+        Ok(batch)
+    }
+
+    // Convert a TextBlock to a RecordBatch
+    fn text_block_to_batch(&self, blocks: &[TextBlock], embeddings: &[Vec<f32>]) -> Result<RecordBatch> {
+        // Ensure we have the same number of blocks and embeddings
+        if blocks.len() != embeddings.len() {
+            return Err(anyhow::anyhow!("Number of blocks and embeddings must match"));
+        }
+
+        if blocks.is_empty() {
+            return Err(anyhow::anyhow!("Empty blocks array"));
+        }
+
+        // Create schema
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("path", DataType::Utf8, false),
+            Field::new("language", DataType::Utf8, false),
+            Field::new("content", DataType::Utf8, false),
+            Field::new("start_line", DataType::UInt32, false),
+            Field::new("end_line", DataType::UInt32, false),
+            Field::new("hash", DataType::Utf8, false),
+            Field::new(
+                "embedding",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    self.vector_dim as i32,
+                ),
+                true,
+            ),
+        ]));
+
+        // Create arrays
+        let ids: Vec<String> = blocks.iter().map(|_| Uuid::new_v4().to_string()).collect();
+        let paths: Vec<&str> = blocks.iter().map(|b| b.path.as_str()).collect();
+        let languages: Vec<&str> = blocks.iter().map(|b| b.language.as_str()).collect();
+        let contents: Vec<&str> = blocks.iter().map(|b| b.content.as_str()).collect();
+        let start_lines: Vec<u32> = blocks.iter().map(|b| b.start_line as u32).collect();
+        let end_lines: Vec<u32> = blocks.iter().map(|b| b.end_line as u32).collect();
+        let hashes: Vec<&str> = blocks.iter().map(|b| b.hash.as_str()).collect();
+
+        // Create the embedding fixed size list array
+        let mut flattened_embeddings = Vec::with_capacity(blocks.len() * self.vector_dim);
+        for embedding in embeddings {
+            flattened_embeddings.extend_from_slice(embedding);
+        }
+        let values = Float32Array::from(flattened_embeddings);
+
+        // Create the fixed size list array
+        let embedding_array = FixedSizeListArray::new(
+            Arc::new(Field::new("item", DataType::Float32, true)),
+            self.vector_dim as i32,
+            Arc::new(values),
+            None, // No validity buffer - all values are valid
+        );
+
+        // Create record batch
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(ids)),
+                Arc::new(StringArray::from(paths)),
+                Arc::new(StringArray::from(languages)),
+                Arc::new(StringArray::from(contents)),
+                Arc::new(UInt32Array::from(start_lines)),
+                Arc::new(UInt32Array::from(end_lines)),
+                Arc::new(StringArray::from(hashes)),
+                Arc::new(embedding_array),
+            ],
+        )?;
+
+        Ok(batch)
+    }
+
+    // Convert a RecordBatch to a Vec of CodeBlocks
+    fn batch_to_code_blocks(&self, batch: &RecordBatch, distances: Option<Vec<f32>>) -> Result<Vec<CodeBlock>> {
+        let num_rows = batch.num_rows();
+        let mut code_blocks = Vec::with_capacity(num_rows);
+
+        let path_array = batch.column_by_name("path")
+            .ok_or_else(|| anyhow::anyhow!("'path' column not found"))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("'path' column is not a StringArray"))?;
+
+        let language_array = batch.column_by_name("language")
+            .ok_or_else(|| anyhow::anyhow!("'language' column not found"))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("'language' column is not a StringArray"))?;
+
+        let content_array = batch.column_by_name("content")
+            .ok_or_else(|| anyhow::anyhow!("'content' column not found"))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("'content' column is not a StringArray"))?;
+
+        let symbols_array = batch.column_by_name("symbols")
+            .ok_or_else(|| anyhow::anyhow!("'symbols' column not found"))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("'symbols' column is not a StringArray"))?;
+
+        let start_line_array = batch.column_by_name("start_line")
+            .ok_or_else(|| anyhow::anyhow!("'start_line' column not found"))?
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .ok_or_else(|| anyhow::anyhow!("'start_line' column is not a UInt32Array"))?;
+
+        let end_line_array = batch.column_by_name("end_line")
+            .ok_or_else(|| anyhow::anyhow!("'end_line' column not found"))?
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .ok_or_else(|| anyhow::anyhow!("'end_line' column is not a UInt32Array"))?;
+
+        let hash_array = batch.column_by_name("hash")
+            .ok_or_else(|| anyhow::anyhow!("'hash' column not found"))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("'hash' column is not a StringArray"))?;
+
+        for i in 0..num_rows {
+            let symbols: Vec<String> = if symbols_array.is_null(i) {
+                Vec::new()
+            } else {
+                match serde_json::from_str(symbols_array.value(i)) {
+                    Ok(symbols) => symbols,
+                    Err(_) => Vec::new(),
+                }
+            };
+
+            let distance = distances.as_ref().map(|d| d[i]);
+
+            code_blocks.push(CodeBlock {
+                path: path_array.value(i).to_string(),
+                language: language_array.value(i).to_string(),
+                content: content_array.value(i).to_string(),
+                symbols,
+                start_line: start_line_array.value(i) as usize,
+                end_line: end_line_array.value(i) as usize,
+                hash: hash_array.value(i).to_string(),
+                distance,
+            });
+        }
+
+        Ok(code_blocks)
+    }
+}
+
+// Implementing Drop for the Store
 impl Drop for Store {
     fn drop(&mut self) {
-        // We can't run async code in drop, so we just print a message
-        // The connection will be closed when the Surreal<Db> is dropped
         if cfg!(debug_assertions) {
             println!("Store instance dropped, database connection released");
         }
@@ -67,221 +290,233 @@ impl Store {
 		// Create .octodev directory if it doesn't exist
 		let octodev_dir = current_dir.join(".octodev");
 		if !octodev_dir.exists() {
-			std::fs::create_dir_all(&octodev_dir)?;
+			std::fs::create_dir_all(&octodev_dir)?
 		}
 
-		// Create surrealdb storage directory
-		let surreal_dir = octodev_dir.join("storage");
-		if !surreal_dir.exists() {
-			std::fs::create_dir_all(&surreal_dir)?;
+		// Create lancedb storage directory
+		let lance_dir = octodev_dir.join("lancedb");
+		if !lance_dir.exists() {
+			std::fs::create_dir_all(&lance_dir)?
 		}
 
 		// Convert the path to a string for the file-based database
-		let storage_path = surreal_dir.to_str().unwrap();
+		let storage_path = lance_dir.to_str().unwrap();
 
-		// Create a connection to the RocksDB storage engine
-		let db = Surreal::new::<surrealdb::engine::local::RocksDb>(storage_path)
-			.await
-			.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+		// Connect to LanceDB
+		let db = connect(storage_path).execute().await?;
 
-		// Select a specific namespace / database
-		db.use_ns("octodev").use_db("octodev").await?;
-
-		Ok(Self { db })
+		Ok(Self {
+			db,
+			vector_dim: 1536, // Default embedding dimension (e.g., for OpenAI embeddings)
+		})
 	}
 
 	pub async fn initialize_collections(&self) -> Result<()> {
-		// Initialize tables with schema - vector search enabled
-		// For code_blocks
-		self.db.query("
-DEFINE TABLE code_blocks SCHEMALESS;
-DEFINE FIELD path ON code_blocks TYPE string;
-DEFINE FIELD language ON code_blocks TYPE string;
-DEFINE FIELD content ON code_blocks TYPE string;
-DEFINE FIELD symbols ON code_blocks TYPE array;
-DEFINE FIELD start_line ON code_blocks TYPE int;
-DEFINE FIELD end_line ON code_blocks TYPE int;
-DEFINE FIELD hash ON code_blocks TYPE string;
-DEFINE FIELD embedding_vector ON code_blocks TYPE array;
-DEFINE INDEX code_blocks_hash ON TABLE code_blocks COLUMNS hash UNIQUE;
-")
-		.await?;
+		// Check if tables exist, if not create them
+		let table_names = self.db.table_names().execute().await?;
 
-		// For text_blocks
-		self.db.query("
-DEFINE TABLE text_blocks SCHEMALESS;
-DEFINE FIELD path ON text_blocks TYPE string;
-DEFINE FIELD language ON text_blocks TYPE string;
-DEFINE FIELD content ON text_blocks TYPE string;
-DEFINE FIELD start_line ON text_blocks TYPE int;
-DEFINE FIELD end_line ON text_blocks TYPE int;
-DEFINE FIELD hash ON text_blocks TYPE string;
-DEFINE FIELD embedding_vector ON text_blocks TYPE array;
-DEFINE INDEX text_blocks_hash ON TABLE text_blocks COLUMNS hash UNIQUE;
-")
-		.await?;
+		// Create code_blocks table if it doesn't exist
+		if !table_names.contains(&"code_blocks".to_string()) {
+			// Create empty table with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("path", DataType::Utf8, false),
+				Field::new("language", DataType::Utf8, false),
+				Field::new("content", DataType::Utf8, false),
+				Field::new("symbols", DataType::Utf8, true),
+				Field::new("start_line", DataType::UInt32, false),
+				Field::new("end_line", DataType::UInt32, false),
+				Field::new("hash", DataType::Utf8, false),
+				Field::new(
+					"embedding",
+					DataType::FixedSizeList(
+						Arc::new(Field::new("item", DataType::Float32, true)),
+						self.vector_dim as i32,
+					),
+					true,
+				),
+			]));
+
+			let table = self.db.create_empty_table("code_blocks", schema).execute().await?;
+
+			// Create vector index on the embedding column
+			table.create_index(&["embedding"], Index::Auto).execute().await?;
+		}
+
+		// Create text_blocks table if it doesn't exist
+		if !table_names.contains(&"text_blocks".to_string()) {
+			// Create empty table with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("path", DataType::Utf8, false),
+				Field::new("language", DataType::Utf8, false),
+				Field::new("content", DataType::Utf8, false),
+				Field::new("start_line", DataType::UInt32, false),
+				Field::new("end_line", DataType::UInt32, false),
+				Field::new("hash", DataType::Utf8, false),
+				Field::new(
+					"embedding",
+					DataType::FixedSizeList(
+						Arc::new(Field::new("item", DataType::Float32, true)),
+						self.vector_dim as i32,
+					),
+					true,
+				),
+			]));
+
+			let table = self.db.create_empty_table("text_blocks", schema).execute().await?;
+
+			// Create vector index on the embedding column
+			table.create_index(&["embedding"], Index::Auto).execute().await?;
+		}
 
 		Ok(())
 	}
 
 	pub async fn content_exists(&self, hash: &str, collection: &str) -> Result<bool> {
-		let query = format!("SELECT * FROM {} WHERE hash = $hash LIMIT 1", collection);
-		let mut result = self.db
-			.query(query)
-			.bind(("hash", hash))
-		.await?;
+		let table = self.db.open_table(collection).execute().await?;
 
-		let records: Vec<Record> = result.take(0)?;
-		Ok(!records.is_empty())
+		// Query to check if a record with the given hash exists
+		let results = table
+			.query()
+			.only_if(&format!("hash = '{}'", hash))
+			.limit(1)
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+			.await?;
+
+		Ok(!results.is_empty() && results[0].num_rows() > 0)
 	}
 
 	pub async fn store_code_blocks(&self, blocks: &[CodeBlock], embeddings: Vec<Vec<f32>>) -> Result<()> {
-		for (block, embedding) in blocks.iter().zip(embeddings.iter()) {
-			let id = Uuid::new_v4().to_string();
-
-			let result = self.db
-				.query("CREATE code_blocks SET id = $id, path = $path, language = $language, content = $content,
-symbols = $symbols, start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
-				.bind(("id", &id))
-				.bind(("path", &block.path))
-				.bind(("language", &block.language))
-				.bind(("content", &block.content))
-				.bind(("symbols", &block.symbols))
-				.bind(("start_line", block.start_line as i64))
-				.bind(("end_line", block.end_line as i64))
-				.bind(("hash", &block.hash))
-				.bind(("embedding", embedding))
-			.await?;
-
-			result.check()?;
+		if blocks.is_empty() {
+			return Ok(());
 		}
+
+		// Convert blocks to RecordBatch
+		let converter = BatchConverter::new(self.vector_dim);
+		let batch = converter.code_block_to_batch(blocks, &embeddings)?;
+
+		// Open or create the table
+		let table = self.db.open_table("code_blocks").execute().await?;
+
+		// Create an iterator that yields this single batch
+        use std::iter::once;
+        let batch_clone = batch.clone();
+        let schema = batch_clone.schema();
+        let batches = once(Ok(batch));
+        let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
+
+		// Add the batch to the table
+		table.add(batch_reader).execute().await?;
 
 		Ok(())
 	}
 
 	pub async fn store_text_blocks(&self, blocks: &[TextBlock], embeddings: Vec<Vec<f32>>) -> Result<()> {
-		for (block, embedding) in blocks.iter().zip(embeddings.iter()) {
-			let id = Uuid::new_v4().to_string();
-
-			let result = self.db
-				.query("CREATE text_blocks SET id = $id, path = $path, language = $language, content = $content,
-start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector = $embedding")
-				.bind(("id", &id))
-				.bind(("path", &block.path))
-				.bind(("language", &block.language))
-				.bind(("content", &block.content))
-				.bind(("start_line", block.start_line as i64))
-				.bind(("end_line", block.end_line as i64))
-				.bind(("hash", &block.hash))
-				.bind(("embedding", embedding))
-			.await?;
-
-			result.check()?;
+		if blocks.is_empty() {
+			return Ok(());
 		}
+
+		// Convert blocks to RecordBatch
+		let converter = BatchConverter::new(self.vector_dim);
+		let batch = converter.text_block_to_batch(blocks, &embeddings)?;
+
+		// Open or create the table
+		let table = self.db.open_table("text_blocks").execute().await?;
+
+		// Create an iterator that yields this single batch
+        use std::iter::once;
+        let batch_clone = batch.clone();
+        let schema = batch_clone.schema();
+        let batches = once(Ok(batch));
+        let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
+
+		// Add the batch to the table
+		table.add(batch_reader).execute().await?;
 
 		Ok(())
 	}
 
 	pub async fn get_code_blocks(&self, embedding: Vec<f32>) -> Result<Vec<CodeBlock>> {
-		// Using a SurrealQL query with vector similarity using dot product
-		// Note: We could use cosine similarity as in Qdrant, but SurrealDB's vector_dot is available by default
-		// Added secondary sort by id to ensure consistent ordering for results with same distance
-		let mut result = self.db
-			.query(r#"
-						SELECT *, vector::dot(embedding_vector, $query_embedding) AS embedding_distance
-						FROM code_blocks
-						ORDER BY embedding_distance DESC, id ASC
-						LIMIT 50;
-				"#)
-			.bind(("query_embedding", embedding))
-		.await?;
+		// Open the table
+		let table = self.db.open_table("code_blocks").execute().await?;
 
-		let vector_results: Vec<VectorSearch> = result.take(0)?;
+		// Perform vector search
+		let results = table
+			.query()
+			.nearest_to(embedding.as_slice())?  // Pass as slice instead of reference to Vec
+			.limit(50)  // Limit to 50 results
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+			.await?;
 
-		// Convert results to CodeBlock structs with distance information
-		let results: Vec<CodeBlock> = vector_results
-			.into_iter()
-			.map(|vr| {
-				let distance = vr.embedding_distance;
-				CodeBlock {
-					path: vr.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					language: vr.payload.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					content: vr.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					symbols: vr.payload.get("symbols")
-						.and_then(|v| v.as_array())
-						.map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
-						.unwrap_or_default(),
-					start_line: vr.payload.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-					end_line: vr.payload.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-					hash: vr.payload.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-					distance: Some(distance),
-				}
-			})
+		if results.is_empty() || results[0].num_rows() == 0 {
+			return Ok(Vec::new());
+		}
+
+		// Extract _distance column which contains similarity scores
+		let distance_column = results[0].column_by_name("_distance")
+			.ok_or_else(|| anyhow::anyhow!("Distance column not found"))?;
+
+		let distance_array = distance_column.as_any()
+			.downcast_ref::<Float32Array>()
+			.ok_or_else(|| anyhow::anyhow!("Could not downcast distance column to Float32Array"))?;
+
+		// Convert distances to Vec<f32>
+		let distances: Vec<f32> = (0..distance_array.len())
+			.map(|i| distance_array.value(i))
 			.collect();
 
-		Ok(results)
+		// Convert results to CodeBlock structs
+		let converter = BatchConverter::new(self.vector_dim);
+		let code_blocks = converter.batch_to_code_blocks(&results[0], Some(distances))?;
+
+		Ok(code_blocks)
 	}
 
 	pub async fn get_code_block_by_symbol(&self, symbol: &str) -> Result<Option<CodeBlock>> {
-		// Query by symbol - added ORDER BY id for consistency
-		let mut result = self.db
-			.query(r#"
-								SELECT *
-								FROM code_blocks
-								WHERE $symbol IN symbols
-								ORDER BY id ASC
-								LIMIT 1;
-						"#)
-			.bind(("symbol", symbol))
-		.await?;
+		// Open the table
+		let table = self.db.open_table("code_blocks").execute().await?;
 
-		// Process the result
-		let records: Vec<serde_json::Value> = result.take(0)?;
+		// Filter by symbols using LIKE for substring match
+		let results = table
+			.query()
+			.only_if(&format!("symbols LIKE '%{}%'", symbol))
+			.limit(1)
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+			.await?;
 
-		if records.is_empty() {
+		if results.is_empty() || results[0].num_rows() == 0 {
 			return Ok(None);
 		}
 
-		// Convert the first record to a CodeBlock
-		let record = &records[0];
+		// Convert results to CodeBlock structs
+		let converter = BatchConverter::new(self.vector_dim);
+		let code_blocks = converter.batch_to_code_blocks(&results[0], None)?;
 
-		let code_block = CodeBlock {
-			path: record.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-			language: record.get("language").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-			content: record.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-			symbols: record.get("symbols")
-				.and_then(|v| v.as_array())
-				.map(|a| a.iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect())
-				.unwrap_or_default(),
-			start_line: record.get("start_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-			end_line: record.get("end_line").and_then(|v| v.as_i64()).unwrap_or_default() as usize,
-			hash: record.get("hash").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-			distance: None,  // No relevance score for symbol lookup
-		};
-
-		Ok(Some(code_block))
+		// Return the first (and only) code block
+		Ok(code_blocks.into_iter().next())
 	}
 
 	// Remove all blocks associated with a file path
 	pub async fn remove_blocks_by_path(&self, file_path: &str) -> Result<()> {
-		// Delete all code blocks with the given path
-		let result = self.db
-			.query("DELETE FROM code_blocks WHERE path = $path")
-			.bind(("path", file_path))
-		.await?;
-		result.check()?;
+		// Delete from code_blocks table
+		let code_blocks_table = self.db.open_table("code_blocks").execute().await?;
+		code_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
 
-		// Delete all text blocks with the given path
-		let result = self.db
-			.query("DELETE FROM text_blocks WHERE path = $path")
-			.bind(("path", file_path))
-		.await?;
-		result.check()?;
+		// Delete from text_blocks table
+		let text_blocks_table = self.db.open_table("text_blocks").execute().await?;
+		text_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
 
 		Ok(())
 	}
 
-	// Close the database connection explicitly
+	// Close the database connection explicitly (for debugging or cleanup)
 	pub async fn close(self) -> Result<()> {
 		// The database connection is closed automatically when the Store is dropped
 		// This method is provided for explicit control over connection lifetime

@@ -257,6 +257,9 @@ pub struct Config {
 	pub openrouter: OpenRouterConfig,
 	#[serde(default)]
 	pub mcp: McpConfig,
+	// Layer configuration
+	#[serde(default)]
+	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 	// Custom system prompt (optional - falls back to default if not provided)
 	pub system: Option<String>,
 	#[serde(skip)]
@@ -272,6 +275,7 @@ impl Default for Config {
 			jina_api_key: None,
 			openrouter: OpenRouterConfig::default(),
 			mcp: McpConfig::default(),
+			layers: None, // No custom layer configs by default
 			system: None, // No custom system prompt by default
 			config_path: None,
 		}

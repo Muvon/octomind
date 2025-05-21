@@ -46,9 +46,14 @@ pub async fn perform_context_reduction(
 	let mut messages = Vec::new();
 
 	// System message with reducer-specific prompt
+	// Get the raw prompt and process the placeholders
+	let system_prompt = crate::session::helper_functions::get_raw_system_prompt("reducer");
+	let project_dir = std::env::current_dir().unwrap_or_default();
+	let processed_prompt = crate::session::process_placeholders(&system_prompt, &project_dir);
+
 	messages.push(crate::session::Message {
 		role: "system".to_string(),
-		content: crate::session::get_layer_system_prompt(crate::session::LayerType::Reducer),
+		content: processed_prompt,
 		timestamp: std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()

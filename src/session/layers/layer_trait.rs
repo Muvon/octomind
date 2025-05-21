@@ -86,7 +86,7 @@ pub trait Layer {
 					.collect::<Vec<_>>()
 					.join("\n\n");
 
-				format!("Current input: {}\n\nPrevious context: {}", input, history)
+				format!("Task:\n{}\n\nContext:\n{}", input, history)
 			},
 			InputMode::Summary => {
 				// For summary mode, we'd use some logic to summarize previous context

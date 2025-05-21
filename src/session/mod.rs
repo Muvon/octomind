@@ -416,6 +416,11 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 			• Avoid unnecessary abstractions - solve problems directly\n\
 			• Balance file size and readability\n\
 			• Don't over-fragment code across multiple files\n\n\
+			**MISSING CONTEXT COLLECTION CHECKLIST:**\n\
+			1. Examine key project files to understand the codebase structure \
+			2. Use semantic_code view to understand interfaces and code signatures \
+			2. If needed, use semantic_code search for relevant implementation patterns \
+			3. As a last resort, use text_editor to view specific file contents \
 			**WHEN WORKING WITH FILES:**\n\
 			1. First understand which files you need to read/write\n\
 			2. Process files efficiently, preferably in a single operation\n\

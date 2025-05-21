@@ -244,20 +244,90 @@ impl Session {
 		self.info.total_cost += cost;
 	}
 
-	// Save the session to a file
+	// Save the session to a file - optimized for efficiency
 	pub fn save(&self) -> Result<(), anyhow::Error> {
 		if let Some(session_file) = &self.session_file {
-			// Clear the file first
-			let _ = File::create(session_file)?;
+			// Check if the file already exists - if not, create it
+			let create_new = !session_file.exists();
 
-			// Save session info as the first line (summary)
-			let info_json = serde_json::to_string(&self.info)?;
-			append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
+			if create_new {
+				// Create the file and write all messages
+				let _ = File::create(session_file)?;
 
-			// Save all messages without prefixes - simpler format
-			for message in &self.messages {
-				let message_json = serde_json::to_string(message)?;
-				append_to_session_file(session_file, &message_json)?;
+				// Save session info as the first line (summary)
+				let info_json = serde_json::to_string(&self.info)?;
+				append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
+
+				// Save all messages without prefixes - simpler format
+				for message in &self.messages {
+					let message_json = serde_json::to_string(message)?;
+					append_to_session_file(session_file, &message_json)?;
+				}
+			} else {
+				// Optimized approach - only overwrite if the file structure needs to change
+				// Read the first line to check if summary needs updating
+				let mut needs_full_rewrite = true;
+
+				if let Ok(file) = File::open(session_file) {
+					let reader = BufReader::new(file);
+					if let Some(Ok(first_line)) = reader.lines().next() {
+						if first_line.starts_with("SUMMARY: ") {
+							let info_json = serde_json::to_string(&self.info)?;
+							let summary_line = format!("SUMMARY: {}", info_json);
+
+							// We can just update the first line and append messages
+							needs_full_rewrite = false;
+
+							// Create a temporary file with the updated summary
+							let temp_path = session_file.with_extension("jsonl.tmp");
+							let mut temp_file = File::create(&temp_path)?;
+							writeln!(temp_file, "{}\r", summary_line)?;
+
+							// Copy all lines except the first from the original file
+							let file = File::open(session_file)?;
+							let reader = BufReader::new(file);
+							let mut lines = reader.lines();
+							let _ = lines.next(); // Skip the first line (old summary)
+
+							// Count messages from file for efficient comparison
+							let mut message_count = 0;
+							for line in lines {
+								if let Ok(line) = line {
+									if !line.is_empty() && !line.starts_with("EXCHANGE: ") {
+										message_count += 1;
+										writeln!(temp_file, "{}\r", line)?;
+									}
+								}
+							}
+
+							// Append any new messages that weren't in the file
+							if self.messages.len() > message_count {
+								for message in &self.messages[message_count..] {
+									let message_json = serde_json::to_string(message)?;
+									writeln!(temp_file, "{}\r", message_json)?;
+								}
+							}
+
+							// Replace the original file with the temporary file
+							fs::rename(temp_path, session_file)?;
+						}
+					}
+				}
+
+				// If we need to rewrite the whole file, do so
+				if needs_full_rewrite {
+					let _ = File::create(session_file)?;
+
+					// Save session info as the first line (summary)
+					let info_json = serde_json::to_string(&self.info)?;
+					append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
+
+					// Save all messages without prefixes - simpler format
+					for message in &self.messages {
+						let message_json = serde_json::to_string(message)?;
+						append_to_session_file(session_file, &message_json)?;
+					}
+				}
 			}
 
 			Ok(())
@@ -321,45 +391,62 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 	Ok(sessions)
 }
 
-// Helper function to load a session from file
+// Helper function to load a session from file - optimized to use streams
 pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
-	let content = fs::read_to_string(session_file)?;
+	// Ensure the file exists
+	if !session_file.exists() {
+		return Err(anyhow::anyhow!("Session file does not exist"));
+	}
+
+	// Open the file
+	let file = File::open(session_file)?;
+	let reader = BufReader::new(file);
 	let mut session_info: Option<SessionInfo> = None;
 	let mut messages = Vec::new();
 
-	for line in content.lines() {
-		if let Some(content) = line.strip_prefix("SUMMARY: ") {
+	// Process the file line by line to avoid loading the entire file into memory
+	for line in reader.lines() {
+		let line = line?;
+
+		if line.starts_with("SUMMARY: ") {
 			// Parse session info (from first line)
-			session_info = Some(serde_json::from_str(content)?);
-		} else if let Some(content) = line.strip_prefix("INFO: ") {
+			if let Some(content) = line.strip_prefix("SUMMARY: ") {
+				session_info = Some(serde_json::from_str(content)?);
+			}
+		} else if line.starts_with("INFO: ") {
 			// Parse old session info format for backward compatibility
-			let mut old_info: SessionInfo = serde_json::from_str(content)?;
-			// Add the new fields for token tracking
-			old_info.input_tokens = 0;
-			old_info.output_tokens = 0;
-			old_info.cached_tokens = 0;  // Initialize new cached_tokens field
-			old_info.total_cost = 0.0;
-			old_info.duration_seconds = 0;
-			old_info.layer_stats = Vec::new(); // Initialize empty layer stats
-			session_info = Some(old_info);
-		} else if let Some(content) = line.strip_prefix("SYSTEM: ") {
-			// Parse system message
-			let message: Message = serde_json::from_str(content)?;
-			messages.push(message);
-		} else if let Some(content) = line.strip_prefix("USER: ") {
-			// Parse user message
-			let message: Message = serde_json::from_str(content)?;
-			messages.push(message);
-		} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
-			// Parse assistant message
-			let message: Message = serde_json::from_str(content)?;
-			messages.push(message);
-		} else if !line.starts_with("EXCHANGE: ") {
-			// Skip exchange lines, but try to parse anything else
-			// This is a more flexible approach for future changes
+			if let Some(content) = line.strip_prefix("INFO: ") {
+				let mut old_info: SessionInfo = serde_json::from_str(content)?;
+				// Add the new fields for token tracking
+				old_info.input_tokens = 0;
+				old_info.output_tokens = 0;
+				old_info.cached_tokens = 0;  // Initialize new cached_tokens field
+				old_info.total_cost = 0.0;
+				old_info.duration_seconds = 0;
+				old_info.layer_stats = Vec::new(); // Initialize empty layer stats
+				session_info = Some(old_info);
+			}
+		} else if !line.starts_with("EXCHANGE: ") && !line.is_empty() {
+			// Try different formats, prioritizing standard JSONL
 			if line.contains("\"role\":") && line.contains("\"content\":") {
-				// This looks like a valid message JSON - try to parse it
-				if let Ok(message) = serde_json::from_str::<Message>(line) {
+				// This looks like a message JSON - try to parse it
+				if let Ok(message) = serde_json::from_str::<Message>(&line) {
+					messages.push(message);
+					continue;
+				}
+			}
+
+			// Try legacy prefixed formats if JSON parsing fails
+			if let Some(content) = line.strip_prefix("SYSTEM: ") {
+				if let Ok(message) = serde_json::from_str::<Message>(content) {
+					messages.push(message);
+				}
+			} else if let Some(content) = line.strip_prefix("USER: ") {
+				if let Ok(message) = serde_json::from_str::<Message>(content) {
+					messages.push(message);
+				}
+			} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
+				if let Ok(message) = serde_json::from_str::<Message>(content) {
 					messages.push(message);
 				}
 			}
@@ -380,14 +467,15 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	}
 }
 
-// Helper function to append to session file
+// Helper function to append to session file with optimized line endings
 pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(), anyhow::Error> {
 	let mut file = OpenOptions::new()
 		.create(true)
 		.append(true)
 		.open(session_file)?;
 
-	writeln!(file, "{}", content)?;
+	// Use a consistent line ending regardless of platform
+	writeln!(file, "{}\n", content)?;
 	Ok(())
 }
 

@@ -111,6 +111,12 @@ pub async fn perform_context_reduction(
 				.find(|m| m.role == "user")
 				.cloned();
 
+			// Find and preserve any tool calls from the session
+			let tool_call_messages = chat_session.session.messages.iter()
+				.filter(|m| m.content.contains("tool_call_id") && m.content.contains("\"role\":\"tool\""))
+				.cloned()
+				.collect::<Vec<_>>();
+
 			chat_session.session.messages.clear();
 
 			// Restore system message
@@ -121,6 +127,11 @@ pub async fn perform_context_reduction(
 			// Add back the user message to prevent 'warning: user message not found' issues
 			if let Some(user) = user_message {
 				chat_session.session.messages.push(user);
+			}
+
+			// Restore any tool call messages to maintain tool context
+			for tool_msg in tool_call_messages {
+				chat_session.session.messages.push(tool_msg);
 			}
 
 			// Add the reduced content as a cached context for next iteration

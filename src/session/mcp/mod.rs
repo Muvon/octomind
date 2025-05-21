@@ -140,43 +140,43 @@ fn guess_tool_category(tool_name: &str) -> &'static str {
 
 // Parse a model's response to extract tool calls - kept for backward compatibility
 pub fn parse_tool_calls(_content: &str) -> Vec<McpToolCall> {
-    // This function is kept for backward compatibility but is no longer used directly
-    // as we now prefer to pass tool calls directly as structs
-    Vec::new()
+	// This function is kept for backward compatibility but is no longer used directly
+	// as we now prefer to pass tool calls directly as structs
+	Vec::new()
 }
 
 // Structure to represent tool responses for OpenAI/Claude format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponseMessage {
-    pub role: String,
-    pub tool_call_id: String,
-    pub name: String,
-    pub content: String,
+	pub role: String,
+	pub tool_call_id: String,
+	pub name: String,
+	pub content: String,
 }
 
 // Convert tool results to proper messages
 pub fn tool_results_to_messages(results: &[McpToolResult]) -> Vec<ToolResponseMessage> {
-    let mut messages = Vec::new();
-    
-    for result in results {
-        messages.push(ToolResponseMessage {
-            role: "tool".to_string(),
-            tool_call_id: result.tool_id.clone(),
-            name: result.tool_name.clone(),
-            content: serde_json::to_string(&result.result).unwrap_or_default(),
-        });
-    }
-    
-    messages
+	let mut messages = Vec::new();
+
+	for result in results {
+		messages.push(ToolResponseMessage {
+			role: "tool".to_string(),
+			tool_call_id: result.tool_id.clone(),
+			name: result.tool_name.clone(),
+			content: serde_json::to_string(&result.result).unwrap_or_default(),
+		});
+	}
+
+	messages
 }
 
 // Ensure tool calls have valid IDs
 pub fn ensure_tool_call_ids(calls: &mut Vec<McpToolCall>) {
-    for call in calls.iter_mut() {
-        if call.tool_id.is_empty() {
-            call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
-        }
-    }
+	for call in calls.iter_mut() {
+		if call.tool_id.is_empty() {
+			call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
+		}
+	}
 }
 
 // Gather available functions from enabled providers

@@ -209,32 +209,45 @@ You can use it to find files by name pattern or search for files containing spec
 	}
 }
 
-// Define the view_signatures function
-pub fn get_view_signatures_function() -> McpFunction {
+// Define the semantic_code_function for both view signatures and search
+pub fn get_semantic_code_function() -> McpFunction {
 	McpFunction {
-		name: "view_signatures".to_string(),
-		description: "Display function signatures and method declarations from files in the codebase.
+		name: "semantic_code".to_string(),
+		description: "Analyze and search code in the repository using both structural and semantic methods.
 
-This tool analyzes source code files to extract function/method signatures, class definitions, and other meaningful code structures.
-It shows a summary of what each file contains without displaying the entire implementation.
+This tool can operate in two modes:
 
-For each item found, it shows:
-- The item type (function, method, class, etc.)
-- The name of the item
-- Line range where it's defined
-- Any documentation comments associated with it
+1. **Signatures View Mode**: Extracts function/method signatures and other declarations from code files to understand APIs without looking at the entire implementation.
+2. **Semantic Search Mode**: Searches for code that matches a natural language query using semantic embeddings.
 
-This is useful for understanding the API and structure of code files without needing to view all the implementation details.".to_string(),
+Use signatures mode when you want to understand what functions/methods are available in specific files.
+Use search mode when you want to find specific functionality based on a natural language description of what the code does.
+
+The tool returns results formatted in a clean, token-efficient Markdown output.".to_string(),
 		parameters: json!({
 			"type": "object",
-			"required": ["files"],
+			"required": ["mode"],
 			"properties": {
+				"mode": {
+					"type": "string",
+					"enum": ["signatures", "search"],
+					"description": "The mode to use: 'signatures' to view function signatures and declarations, 'search' to perform semantic code search"
+				},
 				"files": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "Files to analyze. Can include glob patterns (e.g., 'src/*.rs', 'src/**/*.py')."
+					"description": "[For signatures mode] Files to analyze. Can include glob patterns (e.g., 'src/*.rs', 'src/**/*.py')."
+				},
+				"query": {
+					"type": "string",
+					"description": "[For search mode] Natural language query to search for code"
+				},
+				"expand": {
+					"type": "boolean",
+					"description": "[For search mode] Whether to expand symbols in search results to include related code",
+					"default": false
 				}
 			}
 		}),
@@ -735,6 +748,187 @@ pub async fn execute_view_signatures(call: &McpToolCall) -> Result<McpToolResult
 	})
 }
 
+// Execute semantic_code function (both signatures and search modes)
+pub async fn execute_semantic_code(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Extract mode parameter
+	let mode = match call.parameters.get("mode") {
+		Some(Value::String(m)) => m.as_str(),
+		_ => return Err(anyhow!("Missing or invalid 'mode' parameter. Must be 'signatures' or 'search'")),
+	};
+
+	match mode {
+		"signatures" => execute_signatures_mode(call).await,
+		"search" => execute_search_mode(call, store, config).await,
+		_ => Err(anyhow!("Invalid mode: {}. Must be 'signatures' or 'search'", mode)),
+	}
+}
+
+// Implementation of signatures mode
+async fn execute_signatures_mode(call: &McpToolCall) -> Result<McpToolResult> {
+	// Extract files parameter
+	let files = match call.parameters.get("files") {
+		Some(Value::Array(files_array)) => {
+			// Convert JSON array to Vec<String>
+			files_array.iter()
+				.filter_map(|v| v.as_str().map(|s| s.to_string()))
+				.collect::<Vec<String>>()
+		},
+		_ => return Err(anyhow!("Missing or invalid 'files' parameter, expected an array of strings")),
+	};
+
+	if files.is_empty() {
+		return Err(anyhow!("No files specified"));
+	}
+
+	// Get current directory for resolving paths
+	let current_dir = std::env::current_dir()?;
+
+	// Process file patterns and find matching files
+	let mut matching_files = Vec::new();
+
+	for pattern in &files {
+		// Use glob pattern matching
+		let glob_pattern = match globset::Glob::new(pattern) {
+			Ok(g) => g.compile_matcher(),
+			Err(e) => {
+				return Err(anyhow!("Invalid glob pattern '{}': {}", pattern, e));
+			}
+		};
+
+		// Use ignore crate to respect .gitignore files while finding files
+		let walker = ignore::WalkBuilder::new(&current_dir)
+			.hidden(false)  // Don't ignore hidden files (unless in .gitignore)
+			.git_ignore(true)  // Respect .gitignore files
+			.git_global(true) // Respect global git ignore files
+			.git_exclude(true) // Respect .git/info/exclude files
+			.build();
+
+		for result in walker {
+			let entry = match result {
+				Ok(entry) => entry,
+				Err(_) => continue,
+			};
+			
+			// Skip directories, only process files
+			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+				continue;
+			}
+			
+			// See if this file matches our pattern
+			let relative_path = entry.path().strip_prefix(&current_dir).unwrap_or(entry.path());
+			if glob_pattern.is_match(relative_path) {
+				matching_files.push(entry.path().to_path_buf());
+			}
+		}
+	}
+
+	if matching_files.is_empty() {
+		return Ok(McpToolResult {
+			tool_name: "semantic_code".to_string(),
+			result: json!({
+				"success": true,
+				"output": "No matching files found.",
+				"files": [],
+				"count": 0,
+				"parameters": {
+					"mode": "signatures",
+					"files": files
+				}
+			}),
+		});
+	}
+
+	// Extract signatures from matching files using the indexer module
+	let signatures = match crate::indexer::extract_file_signatures(&matching_files) {
+		Ok(sigs) => sigs,
+		Err(e) => return Err(anyhow!("Failed to extract signatures: {}", e)),
+	};
+
+	// Format the results as markdown
+	let markdown_output = crate::indexer::signatures_to_markdown(&signatures);
+
+	// Return the result with both text and structured data
+	Ok(McpToolResult {
+		tool_name: "semantic_code".to_string(),
+		result: json!({
+			"success": true,
+			"output": markdown_output,
+			"files_analyzed": matching_files.len(),
+			"signatures_found": signatures.iter().fold(0, |acc, file| acc + file.signatures.len()),
+			"parameters": {
+				"mode": "signatures",
+				"files": files
+			}
+		}),
+	})
+}
+
+// Implementation of search mode
+async fn execute_search_mode(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Extract query parameter
+	let query = match call.parameters.get("query") {
+		Some(Value::String(q)) => q.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'query' parameter, expected a string")),
+	};
+
+	if query.trim().is_empty() {
+		return Err(anyhow!("Query cannot be empty"));
+	}
+
+	// Extract optional expand parameter
+	let expand = call.parameters.get("expand")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false);
+
+	// Get current directory for checking index
+	let current_dir = std::env::current_dir()?;
+	let octodev_dir = current_dir.join(".octodev");
+	let index_path = octodev_dir.join("storage");
+
+	// Check if we have an index, which is required for search
+	if !index_path.exists() {
+		return Err(anyhow!("No index found. Please run 'octodev index' first before using search."));
+	}
+
+	// Generate embeddings for the query
+	let embeddings = match crate::indexer::generate_embeddings(&query, true, config).await {
+		Ok(emb) => emb,
+		Err(e) => return Err(anyhow!("Failed to generate query embeddings: {}", e)),
+	};
+
+	// Search for matching code blocks
+	let mut results = match store.get_code_blocks(embeddings).await {
+		Ok(res) => res,
+		Err(e) => return Err(anyhow!("Failed to search for code blocks: {}", e)),
+	};
+
+	// If expand flag is set, expand symbols in the results
+	if expand {
+		results = match crate::indexer::expand_symbols(store, results).await {
+			Ok(expanded) => expanded,
+			Err(e) => return Err(anyhow!("Failed to expand symbols: {}", e)),
+		};
+	}
+
+	// Format the results as markdown
+	let markdown_output = crate::indexer::code_blocks_to_markdown(&results);
+
+	// Return the result
+	Ok(McpToolResult {
+		tool_name: "semantic_code".to_string(),
+		result: json!({
+			"success": true,
+			"output": markdown_output,
+			"blocks_found": results.len(),
+			"parameters": {
+				"mode": "search",
+				"query": query,
+				"expand": expand
+			}
+		}),
+	})
+}
+
 // Helper function to detect language based on file extension
 fn detect_language(ext: &str) -> &str {
 	match ext {
@@ -1184,6 +1378,6 @@ pub fn get_all_functions() -> Vec<McpFunction> {
 		get_shell_function(),
 		get_text_editor_function(),
 		get_list_files_function(),
-		get_view_signatures_function(),
+		get_semantic_code_function(),
 	]
 }

@@ -280,6 +280,174 @@ fn map_node_kind_to_simple(kind: &str) -> String {
     }
 }
 
+/// Render signatures and search results as markdown output (more efficient for AI tools)
+pub fn render_to_markdown<T: std::fmt::Display>(_title: &str, content: T) -> String {
+    format!("{}", content)
+}
+
+/// Render signatures as markdown string
+pub fn signatures_to_markdown(signatures: &[FileSignature]) -> String {
+    let mut markdown = String::new();
+
+    if signatures.is_empty() {
+        markdown.push_str("No signatures found.");
+        return markdown;
+    }
+
+    markdown.push_str(&format!("# Found signatures in {} files\n\n", signatures.len()));
+
+    for file in signatures {
+        markdown.push_str(&format!("## File: {}\n", file.path));
+        markdown.push_str(&format!("**Language:** {}\n\n", file.language));
+        
+        // Show file comment if available
+        if let Some(comment) = &file.file_comment {
+            markdown.push_str("### File description\n");
+            markdown.push_str(&format!("> {}\n\n", comment.replace("\n", "\n> ")));
+        }
+        
+        if file.signatures.is_empty() {
+            markdown.push_str("*No signatures found in this file.*\n\n");
+        } else {
+            for signature in &file.signatures {
+                // Display line range if it spans multiple lines, otherwise just the start line
+                let line_display = if signature.start_line == signature.end_line {
+                    format!("{}", signature.start_line + 1)
+                } else {
+                    format!("{}-{}", signature.start_line + 1, signature.end_line + 1)
+                };
+                
+                markdown.push_str(&format!("### {} `{}` (line {})\n", signature.kind, signature.name, line_display));
+                
+                // Show description if available
+                if let Some(desc) = &signature.description {
+                    markdown.push_str(&format!("> {}\n\n", desc.replace("\n", "\n> ")));
+                }
+                
+                // Format the signature for display
+                markdown.push_str("```");
+                
+                // Add language identifier for syntax highlighting when possible
+                if !file.language.is_empty() && file.language != "text" {
+                    markdown.push_str(&file.language);
+                }
+                markdown.push_str("\n");
+                
+                let lines = signature.signature.lines().collect::<Vec<_>>();
+                if lines.len() > 5 {
+                    // Show first 5 lines only to conserve tokens
+                    for line in lines.iter().take(5) {
+                        markdown.push_str(&format!("{}", line));
+                        markdown.push_str("\n");
+                    }
+                    // If signature is too long, note how many lines are omitted
+                    markdown.push_str(&format!("// ... {} more lines\n", lines.len() - 5));
+                } else {
+                    for line in &lines {
+                        markdown.push_str(&format!("{}", line));
+                        markdown.push_str("\n");
+                    }
+                }
+                markdown.push_str("```\n\n");
+            }
+        }
+        
+        // Add spacing between files
+        markdown.push_str("---\n\n");
+    }
+
+    markdown
+}
+
+/// Render code blocks (search results) as markdown string
+pub fn code_blocks_to_markdown(blocks: &[CodeBlock]) -> String {
+    let mut markdown = String::new();
+
+    if blocks.is_empty() {
+        markdown.push_str("No code blocks found for the query.");
+        return markdown;
+    }
+
+    markdown.push_str(&format!("# Found {} code blocks\n\n", blocks.len()));
+
+    // Group blocks by file path for better organization
+    let mut blocks_by_file: std::collections::HashMap<String, Vec<&CodeBlock>> = std::collections::HashMap::new();
+
+    for block in blocks {
+        blocks_by_file
+            .entry(block.path.clone())
+            .or_insert_with(|| Vec::new())
+            .push(block);
+    }
+
+    // Print results organized by file
+    for (file_path, file_blocks) in blocks_by_file.iter() {
+        markdown.push_str(&format!("## File: {}\n\n", file_path));
+
+        for (idx, block) in file_blocks.iter().enumerate() {
+            markdown.push_str(&format!("### Block {} of {}\n", idx + 1, file_blocks.len()));
+            markdown.push_str(&format!("**Language:** {}  ", block.language));
+            markdown.push_str(&format!("**Lines:** {}-{}  ", block.start_line, block.end_line));
+
+            // Show relevance score if available
+            if let Some(distance) = block.distance {
+                markdown.push_str(&format!("**Relevance:** {:.4}  ", distance));
+            }
+            markdown.push_str("\n");
+
+            if !block.symbols.is_empty() {
+                markdown.push_str("**Symbols:**  \n");
+                // Deduplicate symbols in display
+                let mut display_symbols = block.symbols.clone();
+                display_symbols.sort();
+                display_symbols.dedup();
+
+                for symbol in display_symbols {
+                    // Only show non-type symbols to users
+                    if !symbol.contains("_") {
+                        markdown.push_str(&format!("- `{}`  \n", symbol));
+                    }
+                }
+            }
+
+            markdown.push_str("```");
+            // Add language for syntax highlighting
+            if !block.language.is_empty() && block.language != "text" {
+                markdown.push_str(&block.language);
+            }
+            markdown.push_str("\n");
+            
+            // Get the lines and determine if we need to truncate
+            let lines: Vec<&str> = block.content.lines().collect();
+            if lines.len() > 15 {
+                // Show first 10 lines
+                for line in lines.iter().take(10) {
+                    markdown.push_str(&format!("{}", line));
+                    markdown.push_str("\n");
+                }
+                // Note how many lines are omitted
+                markdown.push_str(&format!("// ... {} more lines omitted\n", lines.len() - 15));
+                // Show last 5 lines
+                for line in lines.iter().skip(lines.len() - 5) {
+                    markdown.push_str(&format!("{}", line));
+                    markdown.push_str("\n");
+                }
+            } else {
+                // If not too long, show all lines
+                for line in lines {
+                    markdown.push_str(&format!("{}", line));
+                    markdown.push_str("\n");
+                }
+            }
+            markdown.push_str("```\n\n");
+        }
+
+        markdown.push_str("---\n\n");
+    }
+
+    markdown
+}
+
 /// Render signatures as text output
 pub fn render_signatures_text(signatures: &[FileSignature]) {
     if signatures.is_empty() {

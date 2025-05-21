@@ -276,6 +276,9 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	if !config.mcp.enabled {
 		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
+	
+	// Get store for tools that need it
+	let store = crate::store::Store::new().await?;
 
 	// Try to execute locally if provider is enabled
 	if config.mcp.providers.contains(&"shell".to_string()) {
@@ -369,8 +372,8 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			return Ok(result);
 		} else if call.tool_name == "list_files" {
 			return dev::execute_list_files(call).await;
-		} else if call.tool_name == "view_signatures" {
-			return dev::execute_view_signatures(call).await;
+		} else if call.tool_name == "semantic_code" {
+			return dev::execute_semantic_code(call, &store, config).await;
 		}
 	} else {
 		return Err(anyhow::anyhow!("Developer tools are not enabled"));

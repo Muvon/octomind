@@ -39,7 +39,7 @@ enum Commands {
 	Session(SessionArgs),
 }
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 struct SearchArgs {
 	/// Search query
 	query: String,
@@ -51,6 +51,10 @@ struct SearchArgs {
 	/// Output in JSON format
 	#[arg(long)]
 	json: bool,
+
+	/// Output in Markdown format
+	#[arg(long)]
+	md: bool,
 }
 
 #[derive(Args)]
@@ -119,6 +123,10 @@ struct ViewArgs {
 	/// Output in JSON format
 	#[arg(long)]
 	json: bool,
+
+	/// Output in Markdown format
+	#[arg(long)]
+	md: bool,
 }
 
 #[tokio::main]
@@ -453,6 +461,10 @@ async fn search_codebase(store: &Store, args: &SearchArgs, config: &Config) -> R
 	// Output the results
 	if args.json {
 		indexer::render_results_json(&results)?
+	} else if args.md {
+		// Use markdown format
+		let markdown = indexer::code_blocks_to_markdown(&results);
+		println!("{}", markdown);
 	} else {
 		indexer::render_code_blocks(&results);
 	}
@@ -523,6 +535,10 @@ async fn view_file_signatures(_store: &Store, args: &ViewArgs, _config: &Config)
 	// Display results in the requested format
 	if args.json {
 		indexer::render_signatures_json(&signatures)?;
+	} else if args.md {
+		// Use markdown format
+		let markdown = indexer::signatures_to_markdown(&signatures);
+		println!("{}", markdown);
 	} else {
 		indexer::render_signatures_text(&signatures);
 	}

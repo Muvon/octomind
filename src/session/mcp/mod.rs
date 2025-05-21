@@ -7,6 +7,7 @@ use anyhow::Result;
 use regex::Regex;
 use colored;
 use std::io::Write;
+use uuid;
 
 pub mod dev;
 pub mod server;
@@ -16,12 +17,16 @@ pub mod process;
 pub struct McpToolCall {
 	pub tool_name: String,
 	pub parameters: Value,
+	#[serde(default)]
+	pub tool_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolResult {
 	pub tool_name: String,
 	pub result: Value,
+	#[serde(default)]
+	pub tool_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,19 +65,35 @@ pub fn parse_tool_calls(content: &str) -> Vec<McpToolCall> {
 				};
 
 				// Try to parse as an array
-				if let Ok(calls) = serde_json::from_str::<Vec<McpToolCall>>(&json_str) {
+				if let Ok(mut calls) = serde_json::from_str::<Vec<McpToolCall>>(&json_str) {
+					// Ensure each tool has an ID
+					for call in &mut calls {
+						if call.tool_id.is_empty() {
+							call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
+						}
+					}
 					tool_calls.extend(calls);
 					continue;
 				}
 
 				// Try to parse as a single object
-				if let Ok(call) = serde_json::from_str::<McpToolCall>(&json_str) {
+				if let Ok(mut call) = serde_json::from_str::<McpToolCall>(&json_str) {
+					// Ensure the tool has an ID
+					if call.tool_id.is_empty() {
+						call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
+					}
 					tool_calls.push(call);
 					continue;
 				}
 
 				// Try to parse with array brackets added
-				if let Ok(calls) = serde_json::from_str::<Vec<McpToolCall>>(&format!("[{}]", json_str)) {
+				if let Ok(mut calls) = serde_json::from_str::<Vec<McpToolCall>>(&format!("[{}]", json_str)) {
+					// Ensure each tool has an ID
+					for call in &mut calls {
+						if call.tool_id.is_empty() {
+							call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
+						}
+					}
 					tool_calls.extend(calls);
 					continue;
 				}
@@ -298,7 +319,9 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	if config.mcp.providers.contains(&"shell".to_string()) {
 		// Handle developer tools
 		if call.tool_name == "shell" {
-			let result = dev::execute_shell_command(call).await?;
+			let mut result = dev::execute_shell_command(call).await?;
+			// Add the tool_id to the result
+			result.tool_id = call.tool_id.clone();
 
 			// Check if result is large - warn user if it exceeds threshold
 			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
@@ -320,6 +343,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 					// User declined, return a truncated result with explanation
 					let truncated_result = McpToolResult {
 						tool_name: result.tool_name,
+						tool_id: call.tool_id.clone(),
 						result: serde_json::json!({
 							"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
 						}),
@@ -355,6 +379,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 					// User declined, return a truncated result with explanation
 					let truncated_result = McpToolResult {
 						tool_name: result.tool_name,
+						tool_id: call.tool_id.clone(),
 						result: serde_json::json!({
 							"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
 						}),
@@ -409,6 +434,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 								// User declined, return a truncated result with explanation
 								let truncated_result = McpToolResult {
 									tool_name: result.tool_name,
+									tool_id: call.tool_id.clone(),
 									result: serde_json::json!({
 										"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
 									}),

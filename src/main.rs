@@ -559,7 +559,7 @@ async fn view_file_signatures(_store: &Store, args: &ViewArgs, _config: &Config)
 
 async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Result<(), anyhow::Error> {
 	let current_dir = std::env::current_dir()?;
-	
+
 	// Only show verbose output if not in quiet mode
 	if !args.quiet {
 		println!("Starting watch mode for current directory: {}", current_dir.display());
@@ -590,10 +590,10 @@ async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Res
 
 	// Get the debounce time from args or use default
 	let debounce_secs = args.debounce.unwrap_or(2);
-	
+
 	// Copy quiet flag to capture in closure
 	let quiet_mode = args.quiet;
-	
+
 	// Create a debounced watcher to call our tx sender when files change
 	let mut debouncer = new_debouncer(
 		Duration::from_secs(debounce_secs),
@@ -605,7 +605,7 @@ async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Res
 						let path = event.path.to_string_lossy();
 						!path.contains(".octodev") && !path.contains("target/") && !path.contains(".git/")
 					}).count();
-					
+
 					if relevant_events > 0 {
 						let _ = tx.send(());
 					}
@@ -645,7 +645,7 @@ async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Res
 
 				// Reindex the codebase
 				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await; // Give a bit of time for all file changes to complete
-				
+
 				if !args.quiet {
 					// Use regular indexing with progress in non-quiet mode
 					index_codebase(store, &config).await?;

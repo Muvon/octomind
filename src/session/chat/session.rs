@@ -875,7 +875,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	} else {
 		println!("Using existing index from {}", index_path.display());
 	}
-	
+
 	// Start a watcher in the background to keep the index updated
 	println!("Starting watcher to keep index updated during session...");
 	indexer::start_watcher_in_background(store, config).await?;
@@ -955,7 +955,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		ctrl_c_pressed_clone.store(true, Ordering::SeqCst);
 		println!("\nCtrl+C pressed. Cancelling current operation.");
 		println!("Press Ctrl+C again to force immediate exit.");
-		
+
 		// Force all cancellation flags to be set immediately
 		// This will propagate to any active operations
 	}).expect("Error setting Ctrl+C handler");
@@ -1106,7 +1106,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			if ctrl_c_pressed.load(Ordering::SeqCst) {
 				continue;
 			}
-			
+
 			// Process using layered architecture for the first message only
 			let process_result = super::process_layered_response(
 				&input,
@@ -1251,7 +1251,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 		}
 	}
-	
+
 	// Clean up the watcher when the session ends
 	let _ = crate::session::indexer::cleanup_watcher().await;
 

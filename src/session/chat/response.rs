@@ -177,8 +177,12 @@ pub async fn process_response(
 					// Log the tool request
 					let _ = crate::session::logger::log_tool_request(&tool_name, &params_clone, &tool_id);
 
+					let tool_id_for_task = tool_id.clone();
 					let task = tokio::spawn(async move {
-						mcp::execute_tool_call(&tool_call, &config_clone).await
+						let mut call_with_id = tool_call.clone();
+						// Ensure the tool_id is set in the call
+						call_with_id.tool_id = tool_id_for_task.clone();
+						mcp::execute_tool_call(&call_with_id, &config_clone).await
 					});
 
 					tool_tasks.push((tool_name, task, tool_id));
@@ -224,6 +228,7 @@ pub async fn process_response(
 									// Add a synthetic result with error message for the AI to see
 									let error_result = mcp::McpToolResult {
 										tool_name: tool_name.clone(),
+										tool_id: tool_id.clone(),
 										result: serde_json::json!({
 											"error": "Tool execution failed multiple times. Please check parameters and try a different approach."
 										}),
@@ -266,10 +271,23 @@ pub async fn process_response(
 					// Create a fresh cancellation flag for the next phase
 					let fresh_cancel = Arc::new(AtomicBool::new(false));
 
-					// Create user message with tool results
-					let tool_results_message = serde_json::to_string(&tool_results)
+					// Format tool results in OpenAI format with proper tool_call_id
+					let mut formatted_tool_results = Vec::new();
+
+					for tool_result in &tool_results {
+						formatted_tool_results.push(serde_json::json!({
+							"role": "tool",
+							"tool_call_id": tool_result.tool_id,
+							"name": tool_result.tool_name,
+							"content": serde_json::to_string(&tool_result.result).unwrap_or_default(),
+						}));
+					}
+
+					// Convert to string
+					let tool_results_message = serde_json::to_string(&formatted_tool_results)
 						.unwrap_or_else(|_| "[]".to_string());
 
+					// We're transitioning away from <fnr> format but keeping backward compatibility for now
 					let tool_message = format!("<fnr>\n{}\n</fnr>",
 						tool_results_message);
 

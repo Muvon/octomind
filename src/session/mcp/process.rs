@@ -454,6 +454,7 @@ pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfi
 			// Return a formatted error as the tool result rather than failing
 			return Ok(McpToolResult {
 				tool_name: call.tool_name.clone(),
+				tool_id: call.tool_id.clone(),
 				result: json!({
 					"output": {
 						"error": true,
@@ -484,6 +485,7 @@ pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfi
 
 		return Ok(McpToolResult {
 			tool_name: call.tool_name.clone(),
+			tool_id: call.tool_id.clone(),
 			result: json!({
 				"output": output,
 				"parameters": call.parameters
@@ -499,6 +501,7 @@ pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfi
 	// Create tool result
 	let tool_result = McpToolResult {
 		tool_name: call.tool_name.clone(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"output": output,
 			"parameters": call.parameters

@@ -194,6 +194,7 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 			// Create tool result
 			let tool_result = McpToolResult {
 				tool_name: tool_name.clone(),
+				tool_id: call.tool_id.clone(),
 				result: json!({
 					"output": output,
 					"parameters": parameters

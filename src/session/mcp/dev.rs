@@ -322,6 +322,7 @@ Error: {}", stdout, stderr)
 
 	Ok(McpToolResult {
 		tool_name: "shell".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: output,
 	})
 }
@@ -347,7 +348,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			match path_value {
 				Value::String(p) => {
 					// Single file view
-					view_file(Path::new(p)).await
+					view_file(call, Path::new(p)).await
 				},
 				Value::Array(paths) => {
 					// Multiple files view
@@ -357,7 +358,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						.collect();
 
 					match path_strings {
-						Ok(path_strs) => view_multiple_files(&path_strs).await,
+						Ok(path_strs) => view_multiple_files(call, &path_strs).await,
 						Err(e) => Err(e),
 					}
 				},
@@ -373,7 +374,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						Some(Value::String(txt)) => txt.clone(),
 						_ => return Err(anyhow!("Missing or invalid 'file_text' parameter for single file write")),
 					};
-					write_file(Path::new(p), &file_text).await
+					write_file(call, Path::new(p), &file_text).await
 				},
 				Value::Array(paths) => {
 					// Multiple files write
@@ -396,7 +397,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 								.collect();
 
 							match (path_strings, content_strings) {
-								(Ok(paths), Ok(contents)) => write_multiple_files(&paths, &contents).await,
+								(Ok(paths), Ok(contents)) => write_multiple_files(call, &paths, &contents).await,
 								(Err(e), _) | (_, Err(e)) => Err(e),
 							}
 						},
@@ -419,7 +420,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 						Some(Value::String(s)) => s.clone(),
 						_ => return Err(anyhow!("Missing or invalid 'new_str' parameter")),
 					};
-					replace_string_in_file(Path::new(p), &old_str, &new_str).await
+					replace_string_in_file(call, Path::new(p), &old_str, &new_str).await
 				},
 				Value::Array(paths) => {
 					// Multiple files replacement - preferred method
@@ -453,7 +454,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 
 							match (path_strings, old_str_strings, new_str_strings) {
 								(Ok(paths), Ok(old_strs), Ok(new_strs)) => {
-									str_replace_multiple(&paths, &old_strs, &new_strs).await
+									str_replace_multiple(call, &paths, &old_strs, &new_strs).await
 								},
 								_ => Err(anyhow!("Invalid strings in arrays")),
 							}
@@ -470,7 +471,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 				_ => return Err(anyhow!("'path' parameter must be a string for undo_edit operations")),
 			};
 
-			undo_edit(Path::new(path)).await
+			undo_edit(call, Path::new(path)).await
 		},
 		_ => Err(anyhow!("Invalid command: {}", command)),
 	}
@@ -579,6 +580,7 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 
 	Ok(McpToolResult {
 		tool_name: "list_files".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: output,
 	})
 }
@@ -645,6 +647,7 @@ pub async fn execute_view_signatures(call: &McpToolCall) -> Result<McpToolResult
 	if matching_files.is_empty() {
 		return Ok(McpToolResult {
 			tool_name: "view_signatures".to_string(),
+			tool_id: call.tool_id.clone(),
 			result: json!({
 				"success": true,
 				"output": "No matching files found.",
@@ -736,6 +739,8 @@ pub async fn execute_view_signatures(call: &McpToolCall) -> Result<McpToolResult
 	// Return the result with both text and structured data
 	Ok(McpToolResult {
 		tool_name: "view_signatures".to_string(),
+
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"output": output,
@@ -825,6 +830,8 @@ async fn execute_signatures_mode(call: &McpToolCall) -> Result<McpToolResult> {
 	if matching_files.is_empty() {
 		return Ok(McpToolResult {
 			tool_name: "semantic_code".to_string(),
+
+			tool_id: call.tool_id.clone(),
 			result: json!({
 				"success": true,
 				"output": "No matching files found.",
@@ -850,6 +857,8 @@ async fn execute_signatures_mode(call: &McpToolCall) -> Result<McpToolResult> {
 	// Return the result with both text and structured data
 	Ok(McpToolResult {
 		tool_name: "semantic_code".to_string(),
+
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"output": markdown_output,
@@ -916,6 +925,8 @@ async fn execute_search_mode(call: &McpToolCall, store: &crate::store::Store, co
 	// Return the result
 	Ok(McpToolResult {
 		tool_name: "semantic_code".to_string(),
+
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"output": markdown_output,
@@ -955,7 +966,7 @@ fn detect_language(ext: &str) -> &str {
 }
 
 // View the content of a file - optimized for token usage
-async fn view_file(path: &Path) -> Result<McpToolResult> {
+async fn view_file(call: &McpToolCall, path: &Path) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Err(anyhow!("File does not exist: {}", path.display()));
 	}
@@ -978,9 +989,10 @@ async fn view_file(path: &Path) -> Result<McpToolResult> {
 		.and_then(|e| e.to_str())
 		.unwrap_or("");
 
-	// Return a single file in the same format as multiple files for consistency
-	Ok(McpToolResult {
+	// Create result
+	let result = McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"files": [{
@@ -991,11 +1003,14 @@ async fn view_file(path: &Path) -> Result<McpToolResult> {
 			}],
 			"count": 1
 		}),
-	})
+	};
+
+	// Return a single file in the same format as multiple files for consistency
+	Ok(result)
 }
 
 // Write content to a single file
-async fn write_file(path: &Path, content: &str) -> Result<McpToolResult> {
+async fn write_file(call: &McpToolCall, path: &Path, content: &str) -> Result<McpToolResult> {
 	// Save the current content for undo if the file exists
 	if path.exists() {
 		save_file_history(path).await?;
@@ -1011,9 +1026,10 @@ async fn write_file(path: &Path, content: &str) -> Result<McpToolResult> {
 	// Write the content to the file
 	tokio_fs::write(path, content).await?;
 
-	// Return success in the same format as multiple file write for consistency
-	Ok(McpToolResult {
+	// Create result
+	let result = McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"files": [{
@@ -1023,11 +1039,14 @@ async fn write_file(path: &Path, content: &str) -> Result<McpToolResult> {
 			}],
 			"count": 1
 		}),
-	})
+	};
+
+	// Return success in the same format as multiple file write for consistency
+	Ok(result)
 }
 
 // Write content to multiple files
-async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<McpToolResult> {
+async fn write_multiple_files(call: &McpToolCall, paths: &[String], contents: &[String]) -> Result<McpToolResult> {
 	let mut results = Vec::with_capacity(paths.len());
 	let mut failures = Vec::new();
 
@@ -1081,6 +1100,7 @@ async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<M
 	// Return success if at least one file was written
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": !results.is_empty(),
 			"files": results,
@@ -1091,7 +1111,7 @@ async fn write_multiple_files(paths: &[String], contents: &[String]) -> Result<M
 }
 
 // Replace a string in a single file - optimized format for consistency
-async fn replace_string_in_file(path: &Path, old_str: &str, new_str: &str) -> Result<McpToolResult> {
+async fn replace_string_in_file(call: &McpToolCall, path: &Path, old_str: &str, new_str: &str) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Err(anyhow!("File does not exist: {}", path.display()));
 	}
@@ -1124,6 +1144,7 @@ async fn replace_string_in_file(path: &Path, old_str: &str, new_str: &str) -> Re
 	// Return in the same format as multiple replacements for consistency
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"files": [{
@@ -1139,7 +1160,7 @@ async fn replace_string_in_file(path: &Path, old_str: &str, new_str: &str) -> Re
 }
 
 // Replace strings in multiple files
-async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &[String]) -> Result<McpToolResult> {
+async fn str_replace_multiple(call: &McpToolCall, paths: &[String], old_strs: &[String], new_strs: &[String]) -> Result<McpToolResult> {
 	let mut results = Vec::with_capacity(paths.len());
 	let mut failures = Vec::new();
 
@@ -1220,6 +1241,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 	// Return success if at least one file was modified
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": !results.is_empty(),
 			"files": results,
@@ -1230,7 +1252,7 @@ async fn str_replace_multiple(paths: &[String], old_strs: &[String], new_strs: &
 }
 
 // Undo the last edit to a file
-async fn undo_edit(path: &Path) -> Result<McpToolResult> {
+async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult> {
 	let path_str = path.to_string_lossy().to_string();
 
 	// First retrieve the previous content while holding the lock
@@ -1265,6 +1287,7 @@ async fn undo_edit(path: &Path) -> Result<McpToolResult> {
 
 		Ok(McpToolResult {
 			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
 			result: json!({
 				"success": true,
 				"output": format!("Successfully undid the last edit to {}", path.to_string_lossy()),
@@ -1282,7 +1305,7 @@ async fn undo_edit(path: &Path) -> Result<McpToolResult> {
 }
 
 // View multiple files at once with optimized token usage
-async fn view_multiple_files(paths: &[String]) -> Result<McpToolResult> {
+async fn view_multiple_files(call: &McpToolCall, paths: &[String]) -> Result<McpToolResult> {
 	let mut files = Vec::with_capacity(paths.len());
 	let mut failures = Vec::new();
 
@@ -1338,6 +1361,7 @@ async fn view_multiple_files(paths: &[String]) -> Result<McpToolResult> {
 	// Create optimized result
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": !files.is_empty(),
 			"files": files,

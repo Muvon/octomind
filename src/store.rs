@@ -62,6 +62,14 @@ impl BatchConverter {
             return Err(anyhow::anyhow!("Empty blocks array"));
         }
 
+        // Check if all embedding vectors have the expected dimension
+        for (i, embedding) in embeddings.iter().enumerate() {
+            if embedding.len() != self.vector_dim {
+                return Err(anyhow::anyhow!("Embedding at index {} has dimension {} but expected {}",
+                                           i, embedding.len(), self.vector_dim));
+            }
+        }
+
         // Create schema
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -107,6 +115,18 @@ impl BatchConverter {
             None, // No validity buffer - all values are valid
         );
 
+        // Verify all arrays have the same length
+        let expected_len = blocks.len();
+        assert_eq!(ids.len(), expected_len, "ids array length mismatch");
+        assert_eq!(paths.len(), expected_len, "paths array length mismatch");
+        assert_eq!(languages.len(), expected_len, "languages array length mismatch");
+        assert_eq!(contents.len(), expected_len, "contents array length mismatch");
+        assert_eq!(symbols.len(), expected_len, "symbols array length mismatch");
+        assert_eq!(start_lines.len(), expected_len, "start_lines array length mismatch");
+        assert_eq!(end_lines.len(), expected_len, "end_lines array length mismatch");
+        assert_eq!(hashes.len(), expected_len, "hashes array length mismatch");
+        assert_eq!(embedding_array.len(), expected_len, "embedding_array length mismatch");
+
         // Create record batch
         let batch = RecordBatch::try_new(
             schema,
@@ -135,6 +155,14 @@ impl BatchConverter {
 
         if blocks.is_empty() {
             return Err(anyhow::anyhow!("Empty blocks array"));
+        }
+
+        // Check if all embedding vectors have the expected dimension
+        for (i, embedding) in embeddings.iter().enumerate() {
+            if embedding.len() != self.vector_dim {
+                return Err(anyhow::anyhow!("Embedding at index {} has dimension {} but expected {}",
+                                           i, embedding.len(), self.vector_dim));
+            }
         }
 
         // Create schema
@@ -179,6 +207,17 @@ impl BatchConverter {
             Arc::new(values),
             None, // No validity buffer - all values are valid
         );
+
+        // Verify all arrays have the same length
+        let expected_len = blocks.len();
+        assert_eq!(ids.len(), expected_len, "ids array length mismatch");
+        assert_eq!(paths.len(), expected_len, "paths array length mismatch");
+        assert_eq!(languages.len(), expected_len, "languages array length mismatch");
+        assert_eq!(contents.len(), expected_len, "contents array length mismatch");
+        assert_eq!(start_lines.len(), expected_len, "start_lines array length mismatch");
+        assert_eq!(end_lines.len(), expected_len, "end_lines array length mismatch");
+        assert_eq!(hashes.len(), expected_len, "hashes array length mismatch");
+        assert_eq!(embedding_array.len(), expected_len, "embedding_array length mismatch");
 
         // Create record batch
         let batch = RecordBatch::try_new(
@@ -302,12 +341,29 @@ impl Store {
 		// Convert the path to a string for the file-based database
 		let storage_path = lance_dir.to_str().unwrap();
 
+		// Load the config to get the embedding provider and model info
+		let config = crate::config::Config::load()?;
+		let vector_dim = match config.embedding_provider {
+			crate::config::EmbeddingProvider::Jina => 1536, // Jina models typically use 1536 dimensions
+			crate::config::EmbeddingProvider::FastEmbed => {
+				// FastEmbed models - determine dimension based on model name
+				match config.fastembed.code_model.as_str() {
+					"all-MiniLM-L6-v2" => 384,
+					"all-MiniLM-L12-v2" => 384,
+					"multilingual-e5-small" => 384,
+					"multilingual-e5-base" => 768,
+					"multilingual-e5-large" => 1024,
+					_ => 384, // Default to 384 for unknown FastEmbed models
+				}
+			}
+		};
+
 		// Connect to LanceDB
 		let db = connect(storage_path).execute().await?;
 
 		Ok(Self {
 			db,
-			vector_dim: 1536, // Default embedding dimension (e.g., for OpenAI embeddings)
+			vector_dim,
 		})
 	}
 
@@ -337,10 +393,9 @@ impl Store {
 				),
 			]));
 
-			let table = self.db.create_empty_table("code_blocks", schema).execute().await?;
+			let _table = self.db.create_empty_table("code_blocks", schema).execute().await?;
 
-			// Create vector index on the embedding column
-			table.create_index(&["embedding"], Index::Auto).execute().await?;
+			// Note: We'll create the index later when we have data
 		}
 
 		// Create text_blocks table if it doesn't exist
@@ -364,10 +419,9 @@ impl Store {
 				),
 			]));
 
-			let table = self.db.create_empty_table("text_blocks", schema).execute().await?;
+			let _table = self.db.create_empty_table("text_blocks", schema).execute().await?;
 
-			// Create vector index on the embedding column
-			table.create_index(&["embedding"], Index::Auto).execute().await?;
+			// Note: We'll create the index later when we have data
 		}
 
 		Ok(())
@@ -394,6 +448,14 @@ impl Store {
 			return Ok(());
 		}
 
+		// Check for dimension mismatches and handle them
+		for (i, embedding) in embeddings.iter().enumerate() {
+			if embedding.len() != self.vector_dim {
+				return Err(anyhow::anyhow!("Embedding at index {} has dimension {} but expected {}",
+									   i, embedding.len(), self.vector_dim));
+			}
+		}
+
 		// Convert blocks to RecordBatch
 		let converter = BatchConverter::new(self.vector_dim);
 		let batch = converter.code_block_to_batch(blocks, &embeddings)?;
@@ -411,12 +473,27 @@ impl Store {
 		// Add the batch to the table
 		table.add(batch_reader).execute().await?;
 
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
+
 		Ok(())
 	}
 
 	pub async fn store_text_blocks(&self, blocks: &[TextBlock], embeddings: Vec<Vec<f32>>) -> Result<()> {
 		if blocks.is_empty() {
 			return Ok(());
+		}
+
+		// Check for dimension mismatches and handle them
+		for (i, embedding) in embeddings.iter().enumerate() {
+			if embedding.len() != self.vector_dim {
+				return Err(anyhow::anyhow!("Embedding at index {} has dimension {} but expected {}",
+					i, embedding.len(), self.vector_dim));
+			}
 		}
 
 		// Convert blocks to RecordBatch
@@ -427,21 +504,48 @@ impl Store {
 		let table = self.db.open_table("text_blocks").execute().await?;
 
 		// Create an iterator that yields this single batch
-        use std::iter::once;
-        let batch_clone = batch.clone();
-        let schema = batch_clone.schema();
-        let batches = once(Ok(batch));
-        let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
+		use std::iter::once;
+		let batch_clone = batch.clone();
+		let schema = batch_clone.schema();
+		let batches = once(Ok(batch));
+		let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
 
 		// Add the batch to the table
 		table.add(batch_reader).execute().await?;
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
 
 		Ok(())
 	}
 
 	pub async fn get_code_blocks(&self, embedding: Vec<f32>) -> Result<Vec<CodeBlock>> {
+		// Check embedding dimension
+		if embedding.len() != self.vector_dim {
+			return Err(anyhow::anyhow!("Search embedding has dimension {} but expected {}",
+				embedding.len(), self.vector_dim));
+		}
+
 		// Open the table
 		let table = self.db.open_table("code_blocks").execute().await?;
+
+		// Check if the table has any data
+		let row_count = table.count_rows(None).await?;
+		if row_count == 0 {
+			// No data, return empty vector
+			return Ok(Vec::new());
+		}
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
 
 		// Perform vector search
 		let results = table
@@ -451,7 +555,7 @@ impl Store {
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()
-			.await?;
+		.await?;
 
 		if results.is_empty() || results[0].num_rows() == 0 {
 			return Ok(Vec::new());
@@ -481,6 +585,13 @@ impl Store {
 		// Open the table
 		let table = self.db.open_table("code_blocks").execute().await?;
 
+		// Check if the table has any data
+		let row_count = table.count_rows(None).await?;
+		if row_count == 0 {
+			// No data, return None
+			return Ok(None);
+		}
+
 		// Filter by symbols using LIKE for substring match
 		let results = table
 			.query()
@@ -489,7 +600,7 @@ impl Store {
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()
-			.await?;
+		.await?;
 
 		if results.is_empty() || results[0].num_rows() == 0 {
 			return Ok(None);
@@ -505,13 +616,20 @@ impl Store {
 
 	// Remove all blocks associated with a file path
 	pub async fn remove_blocks_by_path(&self, file_path: &str) -> Result<()> {
-		// Delete from code_blocks table
-		let code_blocks_table = self.db.open_table("code_blocks").execute().await?;
-		code_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
+		// Check if tables exist
+		let table_names = self.db.table_names().execute().await?;
 
-		// Delete from text_blocks table
-		let text_blocks_table = self.db.open_table("text_blocks").execute().await?;
-		text_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
+		// Delete from code_blocks table if it exists
+		if table_names.contains(&"code_blocks".to_string()) {
+			let code_blocks_table = self.db.open_table("code_blocks").execute().await?;
+			code_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
+		}
+
+		// Delete from text_blocks table if it exists
+		if table_names.contains(&"text_blocks".to_string()) {
+			let text_blocks_table = self.db.open_table("text_blocks").execute().await?;
+			text_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
+		}
 
 		Ok(())
 	}

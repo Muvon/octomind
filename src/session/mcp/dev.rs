@@ -808,12 +808,12 @@ async fn execute_signatures_mode(call: &McpToolCall) -> Result<McpToolResult> {
 				Ok(entry) => entry,
 				Err(_) => continue,
 			};
-			
+
 			// Skip directories, only process files
 			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
 				continue;
 			}
-			
+
 			// See if this file matches our pattern
 			let relative_path = entry.path().strip_prefix(&current_dir).unwrap_or(entry.path());
 			if glob_pattern.is_match(relative_path) {

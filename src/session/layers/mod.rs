@@ -9,11 +9,11 @@ pub use orchestrator::LayeredOrchestrator;
 
 // Main function to process using the layered architecture
 pub async fn process_with_layers(
-    input: &str,
-    session: &mut crate::session::Session,
-    config: &crate::config::Config,
-    operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>
+	input: &str,
+	session: &mut crate::session::Session,
+	config: &crate::config::Config,
+	operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>
 ) -> anyhow::Result<String> {
-    let orchestrator = LayeredOrchestrator::from_config(config);
-    orchestrator.process(input, session, config, operation_cancelled).await
+	let orchestrator = LayeredOrchestrator::from_config(config);
+	orchestrator.process(input, session, config, operation_cancelled).await
 }

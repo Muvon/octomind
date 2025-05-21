@@ -159,9 +159,11 @@ pub async fn process_response(
 				let mut tool_tasks = Vec::new();
 
 				for tool_call in tool_calls.clone() {
-					// Print colorful tool execution message if debug is enabled
+					// Always print tool call execution, but with different level of detail based on debug mode
 					if config.openrouter.debug {
-						println!("  - Executing: {}", tool_call.tool_name.yellow());
+						println!("  - Executing: {} with params: {}", tool_call.tool_name.yellow(), serde_json::to_string_pretty(&tool_call.parameters).unwrap_or_default().yellow());
+					} else {
+						println!("  - Executing tool: {}", tool_call.tool_name.yellow());
 					}
 
 					// Clone tool_name separately for tool task tracking
@@ -207,13 +209,16 @@ pub async fn process_response(
 								_has_error = true;
 								if config.openrouter.debug {
 									println!("  - {}: {}", "Error executing tool".bright_red(), e);
+								} else {
+									// Show minimal error info without debug mode
+									println!("  - {}", "Tool execution failed".bright_red());
 								}
 
 								// Track errors for this tool
 								let loop_detected = error_tracker.record_error(&tool_name);
 								if loop_detected {
 									// Always show loop detection errors as they're critical
-									println!("{}", format!("  - Loop detected: {} failed {} times in a row. Breaking out of tool call loop.",
+									println!("{}", format!("  - Loop detected: {} failed {} times in a row",
 										tool_name, error_tracker.max_consecutive_errors).bright_red());
 
 									// Add a synthetic result with error message for the AI to see
@@ -237,6 +242,9 @@ pub async fn process_response(
 							_has_error = true;
 							if config.openrouter.debug {
 								println!("  - {}: {}", "Task error".bright_red(), e);
+							} else {
+								// Show minimal error info without debug mode
+								println!("  - {}", "Internal task error".bright_red());
 							}
 						},
 					}
@@ -506,31 +514,43 @@ pub async fn process_response(
 	// Print assistant response with color
 	println!("\n{}", clean_content.bright_green());
 
-	// Display cumulative token usage
+	// Display cumulative token usage - minimal output when debug is disabled
 	println!();
-	println!("{}", "── session usage ────────────────────────────────────────".bright_cyan());
+	if config.openrouter.debug {
+		// Detailed output in debug mode
+		println!("{}", "── session usage ────────────────────────────────────────".bright_cyan());
 
-	// Format token usage with cached tokens
-	let cached = chat_session.session.info.cached_tokens;
-	let prompt = chat_session.session.info.input_tokens;
-	let completion = chat_session.session.info.output_tokens;
-	let total = prompt + completion + cached;
+		// Format token usage with cached tokens
+		let cached = chat_session.session.info.cached_tokens;
+		let prompt = chat_session.session.info.input_tokens;
+		let completion = chat_session.session.info.output_tokens;
+		let total = prompt + completion + cached;
 
-	println!("{} {} prompt ({} cached), {} completion, {} total, ${:.5}",
-		"tokens:".bright_blue(),
-		prompt,
-		cached,
-		completion,
-		total,
-		chat_session.session.info.total_cost);
+		println!("{} {} prompt ({} cached), {} completion, {} total, ${:.5}",
+			"tokens:".bright_blue(),
+			prompt,
+			cached,
+			completion,
+			total,
+			chat_session.session.info.total_cost);
 
-	// If we have cached tokens, show the savings percentage
-	if cached > 0 {
-		let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
-		println!("{} {:.1}% of prompt tokens ({} tokens saved)",
-			"cached:".bright_green(),
-			saving_pct,
-			cached);
+		// If we have cached tokens, show the savings percentage
+		if cached > 0 {
+			let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
+			println!("{} {:.1}% of prompt tokens ({} tokens saved)",
+				"cached:".bright_green(),
+				saving_pct,
+				cached);
+		}
+	} else {
+		// Minimal output when debug is disabled
+		let total = chat_session.session.info.input_tokens +
+		chat_session.session.info.output_tokens +
+		chat_session.session.info.cached_tokens;
+		println!("{} {} tokens, ${:.5}",
+			"Session usage:".bright_blue(),
+			total,
+			chat_session.session.info.total_cost);
 	}
 
 	println!();

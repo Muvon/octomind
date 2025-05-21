@@ -366,7 +366,7 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
 		// Check if config file already exists
 		let octodev_dir = Config::ensure_octodev_dir()?;
 		let config_path = octodev_dir.join("config.toml");
-		
+
 		if config_path.exists() {
 			println!("Configuration file already exists at: {}", config_path.display());
 			println!("No changes were made to the configuration.");
@@ -475,7 +475,7 @@ async fn search_codebase(store: &Store, args: &SearchArgs, config: &Config) -> R
 async fn view_file_signatures(_store: &Store, args: &ViewArgs, _config: &Config) -> Result<(), anyhow::Error> {
 	// Get current directory
 	let current_dir = std::env::current_dir()?;
-	
+
 	// Make sure we have an index
 	let octodev_dir = current_dir.join(".octodev");
 	let index_path = octodev_dir.join("storage");
@@ -486,7 +486,7 @@ async fn view_file_signatures(_store: &Store, args: &ViewArgs, _config: &Config)
 
 	// Get files matching patterns
 	let mut matching_files = Vec::new();
-	
+
 	for pattern in &args.files {
 		// Use glob pattern matching
 		let glob_pattern = match globset::Glob::new(pattern) {
@@ -510,12 +510,12 @@ async fn view_file_signatures(_store: &Store, args: &ViewArgs, _config: &Config)
 				Ok(entry) => entry,
 				Err(_) => continue,
 			};
-			
+
 			// Skip directories, only process files
 			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
 				continue;
 			}
-			
+
 			// See if this file matches our pattern
 			let relative_path = entry.path().strip_prefix(&current_dir).unwrap_or(entry.path());
 			if glob_pattern.is_match(relative_path) {

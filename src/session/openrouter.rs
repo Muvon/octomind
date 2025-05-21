@@ -127,10 +127,21 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 		}
 	}).collect();
 
-	// Log debug info for cached messages
+	// Log debug info for cached messages only if debug mode is enabled
 	if cached_count > 0 {
-		use colored::*;
-		println!("{}", format!("{} system/user messages marked for caching", cached_count).bright_magenta());
+		// Get config to check debug flag
+		let config = match crate::config::Config::load() {
+			Ok(cfg) => cfg,
+			Err(_) => {
+				// If we can't load config, assume debug is false
+				crate::config::Config::default()
+			}
+		};
+
+		if config.openrouter.debug {
+			use colored::*;
+			println!("{}", format!("{} system/user messages marked for caching", cached_count).bright_magenta());
+		}
 	}
 
 	result

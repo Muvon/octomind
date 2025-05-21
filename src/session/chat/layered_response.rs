@@ -73,8 +73,12 @@ pub async fn process_layered_response(
 	operation_cancelled.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
 
-	// Display status message for layered sessions
-	println!("{}", "Using layered processing with model-specific caching - only supported models will use caching".bright_cyan());
+	// Display status message for layered sessions - minimal for non-debug
+	if config.openrouter.debug {
+		println!("{}", "Using layered processing with model-specific caching - only supported models will use caching".bright_cyan());
+	} else {
+		println!("{}", "Using layered processing".bright_cyan());
+	}
 
 	// Check for tool calls in the developer layer output
 	if config.mcp.enabled && crate::session::mcp::parse_tool_calls(&layer_output).len() > 0 {
@@ -140,9 +144,14 @@ pub async fn process_layered_response(
 	// Just show a short summary with the total cost
 	// Detailed breakdowns are available via the /info command
 	println!();
-	println!("{} ${:.5}", "Session total cost:".bright_cyan(),
-		chat_session.session.info.total_cost);
-	println!("{}", "Use /info to see detailed token and cost breakdowns by layer".bright_blue());
+	if config.openrouter.debug {
+		println!("{} ${:.5}", "Session total cost:".bright_cyan(),
+			chat_session.session.info.total_cost);
+		println!("{}", "Use /info to see detailed token and cost breakdowns by layer".bright_blue());
+	} else {
+		println!("{} ${:.5}", "Cost:".bright_cyan(),
+			chat_session.session.info.total_cost);
+	}
 	println!();
 
 	Ok(())

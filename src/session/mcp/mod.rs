@@ -276,7 +276,7 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	if !config.mcp.enabled {
 		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
-	
+
 	// Get store for tools that need it - only if semantic_code is needed
 	let store_option = if call.tool_name == "semantic_code" {
 		Some(crate::store::Store::new().await?)

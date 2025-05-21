@@ -26,10 +26,16 @@ pub async fn check_and_truncate_context(
 		return Ok(());
 	}
 
-	// We need to truncate - inform the user
-	println!("{}", format!("\nℹ️  Message history exceeds configured token limit ({} > {})",
-		current_tokens, config.openrouter.max_request_tokens_threshold).bright_blue());
-	println!("{}", "Automatically truncating older messages to reduce context size.".bright_blue());
+	// We need to truncate - inform the user with minimal info
+	if config.openrouter.debug {
+		// Detailed output in debug mode
+		println!("{}", format!("\nℹ️  Message history exceeds configured token limit ({} > {})",
+			current_tokens, config.openrouter.max_request_tokens_threshold).bright_blue());
+		println!("{}", "Automatically truncating older messages to reduce context size.".bright_blue());
+	} else {
+		// Minimal output when debug is disabled
+		println!("{}", "Truncating message history to reduce token usage".bright_blue());
+	}
 
 	// Strategy: Keep system message, last 2-3 exchanges, and remove older user/assistant exchanges
 	let mut system_message = None;
@@ -80,12 +86,16 @@ pub async fn check_and_truncate_context(
 	// Replace session messages with truncated version
 	chat_session.session.messages = truncated_messages;
 
-	// Calculate how many tokens we saved
+	// Calculate how many tokens we saved and display based on debug mode
 	let new_token_count = crate::session::estimate_message_tokens(&chat_session.session.messages);
 	let tokens_saved = current_tokens.saturating_sub(new_token_count);
 
-	println!("{}", format!("Truncation complete: {} tokens removed, new context size: {} tokens.",
-		tokens_saved, new_token_count).bright_green());
+	if config.openrouter.debug {
+		println!("{}", format!("Truncation complete: {} tokens removed, new context size: {} tokens.",
+			tokens_saved, new_token_count).bright_green());
+	} else {
+		println!("{}", format!("Reduced context size by {} tokens", tokens_saved).bright_green());
+	}
 
 	// Save the session with truncated messages
 	chat_session.save()?;

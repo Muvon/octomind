@@ -1,10 +1,8 @@
 // MCP Protocol Implementation
-// Based on Claude Sonnet protocol for tool use
 
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use anyhow::Result;
-use regex::Regex;
 use colored;
 use std::io::Write;
 use uuid;
@@ -34,117 +32,6 @@ pub struct McpFunction {
 	pub name: String,
 	pub description: String,
 	pub parameters: Value,
-}
-
-// Parse a model's response to extract tool calls
-pub fn parse_tool_calls(content: &str) -> Vec<McpToolCall> {
-	let mut tool_calls = Vec::new();
-
-	// Look for <function_calls> or <function_calls> blocks (various formats)
-	let patterns = [
-		// Standard MCP format
-		r#"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>"#,
-		// Alternative format sometimes used by Claude
-		r#"```(json)?\s*\[?\s*\{\s*"tool_name":.+?\}\s*\]?\s*```"#,
-		// Another variation
-		r#"\{\s*"tool_name":.+?\}\s*"#
-	];
-
-	for pattern in patterns {
-		if let Some(re) = Regex::new(pattern).ok() {
-			for cap in re.captures_iter(content) {
-				let json_str = if cap.len() > 1 && cap.get(2).is_some() {
-					cap.get(2).unwrap().as_str().to_string()
-				} else {
-					// For patterns without capture groups, use the whole match
-					let matched = cap.get(0).unwrap().as_str();
-					// Clean up: remove code blocks and whitespace
-					let cleaned = matched.replace("```json", "");
-					let cleaned = cleaned.replace("```", "");
-					cleaned.trim().to_string()
-				};
-
-				// Try to parse as an array
-				if let Ok(mut calls) = serde_json::from_str::<Vec<McpToolCall>>(&json_str) {
-					// Ensure each tool has an ID
-					for call in &mut calls {
-						if call.tool_id.is_empty() {
-							call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
-						}
-					}
-					tool_calls.extend(calls);
-					continue;
-				}
-
-				// Try to parse as a single object
-				if let Ok(mut call) = serde_json::from_str::<McpToolCall>(&json_str) {
-					// Ensure the tool has an ID
-					if call.tool_id.is_empty() {
-						call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
-					}
-					tool_calls.push(call);
-					continue;
-				}
-
-				// Try to parse with array brackets added
-				if let Ok(mut calls) = serde_json::from_str::<Vec<McpToolCall>>(&format!("[{}]", json_str)) {
-					// Ensure each tool has an ID
-					for call in &mut calls {
-						if call.tool_id.is_empty() {
-							call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
-						}
-					}
-					tool_calls.extend(calls);
-					continue;
-				}
-
-				// Debug: failed to parse tool call JSON
-				if cfg!(debug_assertions) {
-					println!("Failed to parse tool call JSON: {}", json_str);
-				}
-			}
-		}
-	}
-
-	// Additional fallback for Claude-specific format - look for patterns like "I'll use the X tool"
-	// followed by function-like calls
-	if tool_calls.is_empty() {
-		if let Some(re) = Regex::new(r#"(?i)I'?ll use the (\w+) tool.+?\{\s*"tool_name".+?\}"#).ok() {
-			for cap in re.captures_iter(content) {
-				if let Some(full_match) = cap.get(0) {
-					let tool_text = full_match.as_str();
-					// Extract the JSON object
-					if let Some(start) = tool_text.find('{') {
-						let json_part = &tool_text[start..];
-						// Find matching closing brace (simple method, doesn't handle nested objects well)
-						let mut brace_count = 0;
-						let mut end_pos = 0;
-
-						for (i, c) in json_part.char_indices() {
-							if c == '{' {
-								brace_count += 1;
-							} else if c == '}' {
-								brace_count -= 1;
-								if brace_count == 0 {
-									end_pos = i + 1;
-									break;
-								}
-							}
-						}
-
-						if end_pos > 0 {
-							let json_obj = &json_part[..end_pos];
-							if let Ok(call) = serde_json::from_str::<McpToolCall>(json_obj) {
-								tool_calls.push(call);
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	tool_calls
 }
 
 // Format tool results to be shown to the user
@@ -251,6 +138,47 @@ fn guess_tool_category(tool_name: &str) -> &'static str {
 	}
 }
 
+// Parse a model's response to extract tool calls - kept for backward compatibility
+pub fn parse_tool_calls(_content: &str) -> Vec<McpToolCall> {
+    // This function is kept for backward compatibility but is no longer used directly
+    // as we now prefer to pass tool calls directly as structs
+    Vec::new()
+}
+
+// Structure to represent tool responses for OpenAI/Claude format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResponseMessage {
+    pub role: String,
+    pub tool_call_id: String,
+    pub name: String,
+    pub content: String,
+}
+
+// Convert tool results to proper messages
+pub fn tool_results_to_messages(results: &[McpToolResult]) -> Vec<ToolResponseMessage> {
+    let mut messages = Vec::new();
+    
+    for result in results {
+        messages.push(ToolResponseMessage {
+            role: "tool".to_string(),
+            tool_call_id: result.tool_id.clone(),
+            name: result.tool_name.clone(),
+            content: serde_json::to_string(&result.result).unwrap_or_default(),
+        });
+    }
+    
+    messages
+}
+
+// Ensure tool calls have valid IDs
+pub fn ensure_tool_call_ids(calls: &mut Vec<McpToolCall>) {
+    for call in calls.iter_mut() {
+        if call.tool_id.is_empty() {
+            call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
+        }
+    }
+}
+
 // Gather available functions from enabled providers
 pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	let mut functions = Vec::new();
@@ -275,9 +203,6 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 			}
 		}
 	}
-
-	// Debug output
-	// println!("Functions: {:?}", functions);
 
 	functions
 }

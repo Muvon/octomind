@@ -97,7 +97,7 @@ pub async fn perform_context_reduction(
 	let _ = animation_task.await;
 
 	match reduction_result {
-		Ok((reduced_content, exchange)) => {
+		Ok((reduced_content, exchange, _)) => {
 			println!("{}", "Context reduction complete".bright_green());
 			println!("{}", reduced_content.bright_blue());
 

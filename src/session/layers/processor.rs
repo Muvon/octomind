@@ -97,7 +97,7 @@ impl Layer for LayerProcessor {
 		let or_messages = openrouter::convert_messages(&messages);
 
 		// Call the model
-		let (output, exchange) = openrouter::chat_completion(
+		let (output, exchange, direct_tool_calls) = openrouter::chat_completion(
 			or_messages,
 			&self.config.model,
 			self.config.temperature,
@@ -106,7 +106,12 @@ impl Layer for LayerProcessor {
 
 		// Check if the layer response contains tool calls
 		if config.mcp.enabled && self.config.enable_tools {
-			let tool_calls = crate::session::mcp::parse_tool_calls(&output);
+			// First try to use directly returned tool calls, then fall back to parsing if needed
+			let tool_calls = if let Some(ref calls) = direct_tool_calls {
+				calls
+			} else {
+				&crate::session::mcp::parse_tool_calls(&output)
+			};
 
 			// If there are tool calls, process them
 			if !tool_calls.is_empty() {
@@ -120,7 +125,7 @@ impl Layer for LayerProcessor {
 				// Execute all tool calls and collect results
 				let mut tool_results = Vec::new();
 
-				for tool_call in &tool_calls {
+				for tool_call in tool_calls {
 					println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
 
 					// Check if tool is allowed for this layer
@@ -148,8 +153,20 @@ impl Layer for LayerProcessor {
 					let formatted = crate::session::mcp::format_tool_results(&tool_results);
 					println!("{}", formatted);
 
-					// Create the format expected by the model
-					let tool_results_message = serde_json::to_string(&tool_results)
+					// Format tool results in a consistent way to match standard mode
+					let mut formatted_tool_results = Vec::new();
+
+					for tool_result in &tool_results {
+						formatted_tool_results.push(serde_json::json!({
+							"role": "tool",
+							"tool_call_id": tool_result.tool_id.clone(),
+							"name": tool_result.tool_name.clone(),
+							"content": serde_json::to_string(&tool_result.result).unwrap_or_default(),
+						}));
+					}
+
+					// Convert to string
+					let tool_results_message = serde_json::to_string(&formatted_tool_results)
 						.unwrap_or_else(|_| "[]".to_string());
 
 					let tool_message = format!("<fnr>\n{}\n</fnr>",
@@ -190,7 +207,7 @@ impl Layer for LayerProcessor {
 						self.config.temperature,
 						config
 					).await {
-						Ok((new_output, new_exchange)) => {
+						Ok((new_output, new_exchange, next_tool_calls)) => {
 							// Extract token usage if available
 							let token_usage = new_exchange.usage.clone();
 
@@ -199,6 +216,7 @@ impl Layer for LayerProcessor {
 								output: new_output,
 								exchange: new_exchange,
 								token_usage,
+								tool_calls: next_tool_calls,
 							});
 						},
 						Err(e) => {
@@ -218,6 +236,7 @@ impl Layer for LayerProcessor {
 			output,
 			exchange,
 			token_usage,
+			tool_calls: direct_tool_calls,
 		})
 	}
 }

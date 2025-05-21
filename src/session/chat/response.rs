@@ -93,10 +93,11 @@ impl ToolErrorTracker {
 	}
 }
 
-// Process a response, handling tool calls recursively
+// Function to process response, handling tool calls recursively
 pub async fn process_response(
 	content: String,
 	exchange: openrouter::OpenRouterExchange,
+	tool_calls: Option<Vec<mcp::McpToolCall>>,
 	chat_session: &mut ChatSession,
 	config: &Config,
 	operation_cancelled: Arc<AtomicBool>
@@ -130,17 +131,26 @@ pub async fn process_response(
 
 		// Check for tool calls if MCP is enabled
 		if config.mcp.enabled {
-			let tool_calls = mcp::parse_tool_calls(&current_content);
+			// First get any directly passed tool calls, falling back to parsing the content if needed
+			let current_tool_calls = if let Some(calls) = tool_calls.clone() {
+				if !calls.is_empty() {
+					calls
+				} else {
+					mcp::parse_tool_calls(&current_content) // Fallback
+				}
+			} else {
+				mcp::parse_tool_calls(&current_content) // Fallback
+			};
 
 			// Add debug logging for tool calls when debug mode is enabled
-			if config.openrouter.debug && !tool_calls.is_empty() {
-				println!("{}", format!("Debug: Found {} tool calls in response", tool_calls.len()).yellow());
-				for (i, call) in tool_calls.iter().enumerate() {
+			if config.openrouter.debug && !current_tool_calls.is_empty() {
+				println!("{}", format!("Debug: Found {} tool calls in response", current_tool_calls.len()).yellow());
+				for (i, call) in current_tool_calls.iter().enumerate() {
 					println!("{}", format!("  Tool call {}: {} with params: {}", i+1, call.tool_name, call.parameters).yellow());
 				}
 			}
 
-			if !tool_calls.is_empty() {
+			if !current_tool_calls.is_empty() {
 				// Add assistant message with the response but strip the function_calls block
 				let clean_content = remove_function_calls(&current_content);
 				chat_session.add_assistant_message(&clean_content, Some(current_exchange.clone()), config)?;
@@ -158,7 +168,7 @@ pub async fn process_response(
 				// Execute all tool calls in parallel
 				let mut tool_tasks = Vec::new();
 
-				for tool_call in tool_calls.clone() {
+				for tool_call in current_tool_calls.clone() {
 					// Always print tool call execution, but with different level of detail based on debug mode
 					if config.openrouter.debug {
 						println!("  - Executing: {} with params: {}", tool_call.tool_name.yellow(), serde_json::to_string_pretty(&tool_call.parameters).unwrap_or_default().yellow());
@@ -321,7 +331,15 @@ pub async fn process_response(
 					let _ = animation_task.await;
 
 					match follow_up_result {
-						Ok((next_content, next_exchange)) => {
+						Ok((next_content, next_exchange, next_tool_calls)) => {
+							// Store direct tool calls for efficient processing if they exist
+							let has_more_tools = if let Some(calls) = next_tool_calls {
+								!calls.is_empty()
+							} else {
+								// Fall back to parsing if no direct tool calls
+								!mcp::parse_tool_calls(&next_content).is_empty()
+							};
+
 							// Update current content for next iteration
 							current_content = next_content;
 							current_exchange = next_exchange;
@@ -468,11 +486,10 @@ pub async fn process_response(
 							}
 
 							// Check if there are more tools to process in the new content
-							let more_tools = mcp::parse_tool_calls(&current_content);
-							if !more_tools.is_empty() {
+							if has_more_tools {
 								// Log if debug mode is enabled
 								if config.openrouter.debug {
-									println!("{}", format!("Debug: Found {} more tool calls to process recursively", more_tools.len()).yellow());
+									println!("{}", format!("Debug: Found more tool calls to process recursively").yellow());
 								}
 								// Continue processing the new content with tool calls
 								continue;
@@ -488,7 +505,7 @@ pub async fn process_response(
 						}
 					}
 				} else {
-					// No tool results - check if there were more tools to execute
+					// No tool results - check if there were more tools to execute directly
 					let more_tools = mcp::parse_tool_calls(&current_content);
 					if !more_tools.is_empty() {
 						// Log if debug mode is enabled

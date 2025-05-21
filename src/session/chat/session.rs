@@ -334,6 +334,11 @@ impl ChatSession {
 		// Log the assistant response
 		let _ = crate::session::logger::log_assistant_response(content);
 
+		// Log the raw exchange if available
+		if let Some(ex) = &exchange {
+			let _ = crate::session::logger::log_raw_exchange(ex);
+		}
+
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
 			if let Some(usage) = &ex.usage {
@@ -1224,13 +1229,14 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 			// Process the response
 			match api_result {
-				Ok((content, exchange)) => {
+				Ok((content, exchange, tool_calls)) => {
 					// Process the response, handling tool calls recursively
 					// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
 					let tool_process_cancelled = Arc::new(AtomicBool::new(false));
 					let process_result = process_response(
 						content,
 						exchange,
+						tool_calls,
 						&mut chat_session,
 						&current_config,
 						tool_process_cancelled.clone()

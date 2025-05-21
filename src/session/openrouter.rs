@@ -205,7 +205,7 @@ pub async fn chat_completion(
 	model: &str,
 	temperature: f32,
 	config: &Config,
-) -> Result<(String, OpenRouterExchange)> {
+) -> Result<(String, OpenRouterExchange, Option<Vec<crate::session::mcp::McpToolCall>>)> {
 	// Get API key
 	let api_key = get_api_key(config)?;
 
@@ -326,11 +326,11 @@ pub async fn chat_completion(
 		content = text.to_string();
 	}
 
-	// Then check for tool calls
+	// Check if the response contains tool calls
 	if let Some(tool_calls) = message.get("tool_calls") {
 		if tool_calls.is_array() && !tool_calls.as_array().unwrap().is_empty() {
-			// Parse the tool calls into a format the MCP handler can use
-			let mut mcp_tool_calls = Vec::new();
+			// Extract the tool calls directly and ensure they have valid IDs
+			let mut extracted_tool_calls = Vec::new();
 
 			// Iterate through the tool calls array
 			for tool_call in tool_calls.as_array().unwrap() {
@@ -360,7 +360,7 @@ pub async fn chat_completion(
 							tool_id: tool_id.to_string(),
 						};
 
-						mcp_tool_calls.push(mcp_call);
+						extracted_tool_calls.push(mcp_call);
 					}
 				} else if let (Some(_id), Some(name)) = (
 					tool_call.get("id").and_then(|i| i.as_str()),
@@ -385,9 +385,12 @@ pub async fn chat_completion(
 						tool_id: tool_id.to_string(),
 					};
 
-					mcp_tool_calls.push(mcp_call);
+					extracted_tool_calls.push(mcp_call);
 				}
 			}
+
+			// Ensure all tool calls have valid IDs
+			crate::session::mcp::ensure_tool_call_ids(&mut extracted_tool_calls);
 
 			// Extract token usage from the response
 			let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
@@ -447,22 +450,8 @@ pub async fn chat_completion(
 				usage,
 			};
 
-			// Format tool calls in MCP-compatible format for parsing
-			let tool_calls_json = serde_json::to_string(&mcp_tool_calls).unwrap_or_else(|_| "[]".to_string());
-			let formatted_tool_calls = format!("<function_calls>{}\n</function_calls>", tool_calls_json);
-
-			// If there's already content, keep it and append the tool calls in MCP format
-			if !content.is_empty() {
-				content = format!("{}
-
-{}", content, formatted_tool_calls);
-			} else {
-				// If there's no content, just use the formatted tool calls
-				content = formatted_tool_calls;
-			}
-
-			// Return with the properly formatted tool calls that MCP parser can handle
-			return Ok((content, exchange));
+			// Directly return the extracted tool calls
+			return Ok((content, exchange, Some(extracted_tool_calls)));
 
 		} else if content.is_empty() {
 			return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
@@ -529,5 +518,5 @@ pub async fn chat_completion(
 		usage,
 	};
 
-	Ok((content, exchange))
+	Ok((content, exchange, None))
 }

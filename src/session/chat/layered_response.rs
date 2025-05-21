@@ -81,7 +81,7 @@ pub async fn process_layered_response(
 	}
 
 	// Check for tool calls in the developer layer output
-	if config.mcp.enabled && crate::session::mcp::parse_tool_calls(&layer_output).len() > 0 {
+	if config.mcp.enabled {
 		// Create a new cancellation flag to avoid any "Operation cancelled" messages when not requested
 		let fresh_tool_cancellation = Arc::new(AtomicBool::new(false));
 
@@ -93,22 +93,37 @@ pub async fn process_layered_response(
 					"include": true
 				}
 			}),
-			response: serde_json::json!({}),
+			response: serde_json::json!({"choices": [{"message": {"content": ""}}]}),
 			timestamp: std::time::SystemTime::now()
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs(),
-			usage: None,  // Don't include usage info to avoid double-counting costs
+			usage: Some(openrouter::TokenUsage {
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+				cost: Some(0.0),
+				prompt_tokens_details: None,
+				completion_tokens_details: None,
+				breakdown: None,
+			}),
 		};
 
-		// Process the response with tool calls using the existing handler with fresh cancellation flag
-		return super::response::process_response(
-			layer_output,
-			dummy_exchange,
-			chat_session,
-			config,
-			fresh_tool_cancellation
-		).await;
+		// First check if there are any direct tool calls from processing, or parse from output if needed
+		let tool_calls = crate::session::mcp::parse_tool_calls(&layer_output);
+
+		// If we have tool calls, process them
+		if !tool_calls.is_empty() {
+			// Process the response with tool calls using the existing handler with fresh cancellation flag
+			return super::response::process_response(
+				layer_output,
+				dummy_exchange,
+				Some(tool_calls),
+				chat_session,
+				config,
+				fresh_tool_cancellation
+			).await;
+		}
 	}
 
 	// If no tool calls, add the output to session for message history
@@ -122,12 +137,20 @@ pub async fn process_layered_response(
 				"include": true
 			}
 		}),
-		response: serde_json::json!({}),
+		response: serde_json::json!({"choices": [{"message": {"content": ""}}]}),
 		timestamp: std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs(),
-		usage: None,  // Don't include any usage info to avoid double-counting
+		usage: Some(openrouter::TokenUsage {
+			prompt_tokens: 0,
+			completion_tokens: 0,
+			total_tokens: 0,
+			cost: Some(0.0),
+			prompt_tokens_details: None,
+			completion_tokens_details: None,
+			breakdown: None,
+		}),
 	};
 
 	// Add the output to the message history without further cost accounting

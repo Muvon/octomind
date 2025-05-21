@@ -3774,6 +3774,7 @@ dependencies = [
  "editorconfig",
  "fastembed",
  "futures",
+ "globset",
  "ignore",
  "lazy_static",
  "notify",

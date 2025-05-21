@@ -207,7 +207,7 @@ fn default_timeout() -> u64 {
 impl Default for McpServerConfig {
 	fn default() -> Self {
 		Self {
-			enabled: false,
+			enabled: true,
 			name: "".to_string(),
 			url: None,
 			auth_token: None,

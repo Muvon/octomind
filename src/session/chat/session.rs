@@ -395,6 +395,8 @@ impl ChatSession {
 					use colored::*;
 					println!("{}", "Auto-cache threshold reached - adding cache checkpoint at last user message.".bright_yellow());
 					println!("{}", "This will reduce token usage for future requests.".bright_yellow());
+					// Note: No need to set environment variables or add additional cache checkpoints
+					// The check_auto_cache_threshold function already handles adding the checkpoint
 				}
 
 				// If OpenRouter provided cost data, use it directly
@@ -999,7 +1001,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				} else {
 					use colored::*;
 					println!("{}", "\nNext message will be processed through the full layered architecture.".bright_green());
-					
+
 					// Apply EditorConfig formatting to all modified files
 					let formatter_result = super::apply_editorconfig_formatting(None).await;
 					if let Err(e) = formatter_result {

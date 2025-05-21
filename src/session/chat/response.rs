@@ -360,15 +360,8 @@ pub async fn process_response(
 									use colored::*;
 									println!("{}", "Auto-cache threshold reached during tool calls - adding cache checkpoint at last user message.".bright_yellow());
 									println!("{}", "This will reduce token usage for future requests.".bright_yellow());
-
-									// Set an environment variable to signal that auto-cache was triggered
-									// This will be detected by the tool call executor
-									std::env::set_var("OCTODEV_AUTO_CACHE_TRIGGERED", "1");
-
-									// Important fix: Break out of the recursive tool processing loop when
-									// auto-cache threshold is reached to avoid state inconsistency
-									// This prevents the AI from stopping unexpectedly when the cache threshold is reached
-									return Ok(());
+									// Note: The check_auto_cache_threshold function already handles adding the cache checkpoint
+									// No need to set environment variables, return early, or any other special handling
 								}
 
 								// Update cost

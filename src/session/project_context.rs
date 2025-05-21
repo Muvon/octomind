@@ -53,7 +53,8 @@ impl ProjectContext {
 		if path.exists() && path.is_file() {
 			match fs::read_to_string(&path) {
 				Ok(content) => {
-					println!("{} {}", "Loaded context from:".green(), path.display());
+					// Debug output
+					// println!("{} {}", "Loaded context from:".green(), path.display());
 					Some(content)
 				},
 				Err(e) => {
@@ -86,7 +87,8 @@ impl ProjectContext {
 				if let Ok(output) = output {
 					if output.status.success() {
 						let files_list = String::from_utf8_lossy(&output.stdout).to_string();
-						println!("{}", "Collected file tree from git".green());
+						// Debug output
+						// println!("{}", "Collected file tree from git".green());
 						return Some(files_list);
 					}
 				}
@@ -103,7 +105,8 @@ impl ProjectContext {
 		if let Ok(output) = rg_output {
 			if output.status.success() {
 				let files_list = String::from_utf8_lossy(&output.stdout).to_string();
-				println!("{}", "Collected file tree using ripgrep".green());
+				// Debug output
+				// println!("{}", "Collected file tree using ripgrep".green());
 				return Some(files_list);
 			}
 		}
@@ -111,7 +114,8 @@ impl ProjectContext {
 		// Last fallback: just use a basic file list
 		match Self::list_files_manually(project_dir) {
 			Ok(files) => {
-				println!("{}", "Collected file tree manually".yellow());
+				// Debug output
+				// println!("{}", "Collected file tree manually".yellow());
 				Some(files)
 			},
 			Err(_) => {
@@ -162,7 +166,8 @@ impl ProjectContext {
 			if output.status.success() {
 				let status = String::from_utf8_lossy(&output.stdout).to_string();
 				if !status.trim().is_empty() {
-					println!("{}", "Collected git status".green());
+					// Debug output
+					// println!("{}", "Collected git status".green());
 					return Some(status);
 				}
 			}
@@ -181,7 +186,8 @@ impl ProjectContext {
 			if output.status.success() {
 				let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
 				if !branch.is_empty() {
-					println!("{} {}", "Current git branch:".green(), branch);
+					// Debug output
+					// println!("{} {}", "Current git branch:".green(), branch);
 					return Some(branch);
 				}
 			}

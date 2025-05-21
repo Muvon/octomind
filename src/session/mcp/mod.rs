@@ -331,23 +331,6 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 				println!("{}", "Proceeding with full output...".bright_green());
 			}
 
-			// Check for auto-cache reached flag (special case for sessions using this tool)
-			// This is a simplified approach since we can't easily access the session
-			// Look for an env variable signal that might be set by the response processor
-			if let Ok(value) = std::env::var("OCTODEV_AUTO_CACHE_TRIGGERED") {
-				if value == "1" {
-					// Return a result that signals auto-cache has been reached
-					let mut modified_result = result.clone();
-					// Add a special field to signal that auto-cache was triggered
-					if let serde_json::Value::Object(ref mut map) = modified_result.result {
-						map.insert("auto_cache_triggered".to_string(), serde_json::Value::Bool(true));
-					}
-					// Reset the env variable
-					std::env::set_var("OCTODEV_AUTO_CACHE_TRIGGERED", "0");
-					return Ok(modified_result);
-				}
-			}
-
 			return Ok(result);
 		} else if call.tool_name == "text_editor" {
 			let result = dev::execute_text_editor(call).await?;
@@ -472,35 +455,9 @@ pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config:
 pub async fn execute_tool_calls(calls: &[McpToolCall], config: &crate::config::Config) -> Vec<Result<McpToolResult>> {
 	let mut results = Vec::new();
 
-	// Track if we've hit the auto-cache threshold during tool execution
-	let mut auto_cache_triggered = false;
-
 	for call in calls {
-		// If auto-cache was triggered, stop executing tools to prevent state inconsistency
-		if auto_cache_triggered {
-			// Add a message indicating we're stopping tool execution due to cache threshold
-			results.push(Ok(McpToolResult {
-				tool_name: call.tool_name.clone(),
-				result: serde_json::json!({
-					"output": "[Tool execution skipped - auto-cache threshold reached. Please continue the conversation to complete the task.]"
-				}),
-			}));
-			continue;
-		}
-
 		// Execute the tool call
 		let result = execute_tool_call(call, config).await;
-
-		// Check if we need to stop further tool execution
-		if let Ok(ref tool_result) = result {
-			// Check if this is a special signal indicating auto-cache was triggered
-			if let Some(message) = tool_result.result.get("auto_cache_triggered") {
-				if message.as_bool().unwrap_or(false) {
-					auto_cache_triggered = true;
-				}
-			}
-		}
-
 		results.push(result);
 	}
 

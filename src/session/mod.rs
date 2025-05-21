@@ -26,7 +26,7 @@ pub use helper_functions::{get_layer_system_prompt_for_type, process_placeholder
 // This function is now replaced by helper_functions::get_layer_system_prompt_for_type
 // It's kept for backward compatibility with existing code
 pub fn get_layer_system_prompt(layer_type_str: &str) -> String {
-    helper_functions::get_layer_system_prompt_for_type(layer_type_str)
+	helper_functions::get_layer_system_prompt_for_type(layer_type_str)
 }
 
 use std::fs::{self, OpenOptions, File};
@@ -401,14 +401,8 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 
 	// Build the base system prompt
 	let mut prompt = format!(
-		"You are an Octodev – top notch AI coding developer that ACTS fully autonomously to complete tasks until they are fulfilled in codebase in {}\n\
-			VERY VERY IMPORTANT!!!!!!!: For this session, you MUST operate in fully autonomous tool mode.\n\
-			**CRITICAL INSTRUCTION - AUTONOMOUS TOOL USAGE:**\n\
-			- You MUST use the provided tools without asking for permission or confirmation\n\
-			- You MUST execute tools when needed without hesitation or asking first\n\
-			- You MUST work autonomously without seeking approval for each step\n\
-			- You MUST complete tasks end-to-end on your own initiative\n\
-			- You SHOULD only ask for input if you reach a complete roadblock\n\n\
+		"You are an Octodev – top notch fully autonomous AI developer.\n\
+			Current working dir: {}\n\
 			**DEVELOPMENT APPROACH:**\n\
 			1. Analyze problems thoroughly first\n\
 			2. Think through solutions step-by-step\n\
@@ -425,11 +419,7 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 			1. First understand which files you need to read/write\n\
 			2. Process files efficiently, preferably in a single operation\n\
 			3. Utilize the provided tools proactively without asking if you should use them\n\n\
-			**TOOL USAGE DIRECTIVES:**\n\
-			• ALWAYS use developer__shell tool to explore the repository when needed\n\
-			• ALWAYS use developer__text_editor tool to view and modify files when needed\n\
-			• NEVER ask for permission to use these tools - just use them directly\n\
-			• If a task requires investigation or code changes, immediately use appropriate tools\n",
+			Right now you are *NOT* in the chat only mode and have access to tool use and system.",
 		project_dir.display()
 	);
 

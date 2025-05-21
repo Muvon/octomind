@@ -130,6 +130,10 @@ pub async fn process_layered_response(
 	// since costs have already been tracked in the session layer_stats
 	chat_session.add_assistant_message(&layer_output, Some(dummy_exchange), config)?;
 
+	// Update the estimated cost to reflect the current total cost
+	// This ensures the prompt will display the correct cost estimate for the next interaction
+	chat_session.estimated_cost = chat_session.session.info.total_cost;
+
 	// Print assistant response with color
 	println!("\n{}", layer_output.bright_green());
 

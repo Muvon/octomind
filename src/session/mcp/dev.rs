@@ -209,6 +209,38 @@ You can use it to find files by name pattern or search for files containing spec
 	}
 }
 
+// Define the view_signatures function
+pub fn get_view_signatures_function() -> McpFunction {
+	McpFunction {
+		name: "view_signatures".to_string(),
+		description: "Display function signatures and method declarations from files in the codebase.
+
+This tool analyzes source code files to extract function/method signatures, class definitions, and other meaningful code structures.
+It shows a summary of what each file contains without displaying the entire implementation.
+
+For each item found, it shows:
+- The item type (function, method, class, etc.)
+- The name of the item
+- Line range where it's defined
+- Any documentation comments associated with it
+
+This is useful for understanding the API and structure of code files without needing to view all the implementation details.".to_string(),
+		parameters: json!({
+			"type": "object",
+			"required": ["files"],
+			"properties": {
+				"files": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"description": "Files to analyze. Can include glob patterns (e.g., 'src/*.rs', 'src/**/*.py')."
+				}
+			}
+		}),
+	}
+}
+
 // Execute a shell command
 pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract command parameter
@@ -535,6 +567,171 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 	Ok(McpToolResult {
 		tool_name: "list_files".to_string(),
 		result: output,
+	})
+}
+
+// Execute view_signatures command
+pub async fn execute_view_signatures(call: &McpToolCall) -> Result<McpToolResult> {
+	// Extract files parameter
+	let files = match call.parameters.get("files") {
+		Some(Value::Array(files_array)) => {
+			// Convert JSON array to Vec<String>
+			files_array.iter()
+				.filter_map(|v| v.as_str().map(|s| s.to_string()))
+				.collect::<Vec<String>>()
+		},
+		_ => return Err(anyhow!("Missing or invalid 'files' parameter, expected an array of strings")),
+	};
+
+	if files.is_empty() {
+		return Err(anyhow!("No files specified"));
+	}
+
+	// Get current directory for resolving paths
+	let current_dir = std::env::current_dir()?;
+
+	// Process file patterns and find matching files
+	let mut matching_files = Vec::new();
+
+	for pattern in &files {
+		// Use glob pattern matching
+		let glob_pattern = match globset::Glob::new(pattern) {
+			Ok(g) => g.compile_matcher(),
+			Err(e) => {
+				return Err(anyhow!("Invalid glob pattern '{}': {}", pattern, e));
+			}
+		};
+
+		// Use ignore crate to respect .gitignore files while finding files
+		let walker = ignore::WalkBuilder::new(&current_dir)
+			.hidden(false)  // Don't ignore hidden files (unless in .gitignore)
+			.git_ignore(true)  // Respect .gitignore files
+			.git_global(true) // Respect global git ignore files
+			.git_exclude(true) // Respect .git/info/exclude files
+			.build();
+
+		for result in walker {
+			let entry = match result {
+				Ok(entry) => entry,
+				Err(_) => continue,
+			};
+
+			// Skip directories, only process files
+			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+				continue;
+			}
+
+			// See if this file matches our pattern
+			let relative_path = entry.path().strip_prefix(&current_dir).unwrap_or(entry.path());
+			if glob_pattern.is_match(relative_path) {
+				matching_files.push(entry.path().to_path_buf());
+			}
+		}
+	}
+
+	if matching_files.is_empty() {
+		return Ok(McpToolResult {
+			tool_name: "view_signatures".to_string(),
+			result: json!({
+				"success": true,
+				"output": "No matching files found.",
+				"files": [],
+				"count": 0,
+				"parameters": {
+					"files": files
+				}
+			}),
+		});
+	}
+
+	// Extract signatures from matching files using the indexer module
+	let signatures = match crate::indexer::extract_file_signatures(&matching_files) {
+		Ok(sigs) => sigs,
+		Err(e) => return Err(anyhow!("Failed to extract signatures: {}", e)),
+	};
+
+	// Format the results as text output
+	let mut output = String::new();
+
+	// Add header information
+	if signatures.is_empty() {
+		output.push_str("No signatures found.\n");
+	} else {
+		output.push_str(&format!("Found signatures in {} files:\n\n", signatures.len()));
+
+		// Process each file
+		for file in &signatures {
+			output.push_str(&format!("╔══════════════════ File: {} ══════════════════\n", file.path));
+			output.push_str(&format!("║ Language: {}\n", file.language));
+
+			// Show file comment if available
+			if let Some(comment) = &file.file_comment {
+				output.push_str("║\n");
+				output.push_str("║ File description:\n");
+				for line in comment.lines() {
+					output.push_str(&format!("║   {}\n", line));
+				}
+			}
+
+			if file.signatures.is_empty() {
+				output.push_str("║\n");
+				output.push_str("║ No signatures found in this file.\n");
+			} else {
+				for signature in &file.signatures {
+					output.push_str("║\n");
+
+					// Display line range if it spans multiple lines, otherwise just the start line
+					let line_display = if signature.start_line == signature.end_line {
+						format!("{}", signature.start_line + 1)
+					} else {
+						format!("{}-{}", signature.start_line + 1, signature.end_line + 1)
+					};
+
+					output.push_str(&format!("║ {} `{}` (line {})\n", signature.kind, signature.name, line_display));
+
+					// Show description if available
+					if let Some(desc) = &signature.description {
+						output.push_str("║ Description:\n");
+						for line in desc.lines() {
+							output.push_str(&format!("║   {}\n", line));
+						}
+					}
+
+					// Format the signature for display
+					output.push_str("║ Signature:\n");
+					let lines = signature.signature.lines().collect::<Vec<_>>();
+					if lines.len() > 1 {
+						output.push_str("║ ┌────────────────────────────────────\n");
+						for line in lines.iter().take(5) {
+							output.push_str(&format!("║ │ {}\n", line));
+						}
+						// If signature is too long, truncate it
+						if lines.len() > 5 {
+							output.push_str(&format!("║ │ ... ({} more lines)\n", lines.len() - 5));
+						}
+						output.push_str("║ └────────────────────────────────────\n");
+					} else if !lines.is_empty() {
+						output.push_str(&format!("║   {}\n", lines[0]));
+					}
+				}
+			}
+
+			output.push_str("╚════════════════════════════════════════\n\n");
+		}
+	}
+
+	// Return the result with both text and structured data
+	Ok(McpToolResult {
+		tool_name: "view_signatures".to_string(),
+		result: json!({
+			"success": true,
+			"output": output,
+			"files_analyzed": matching_files.len(),
+			"signatures_found": signatures.iter().fold(0, |acc, file| acc + file.signatures.len()),
+			"parameters": {
+				"files": files
+			}
+		}),
 	})
 }
 
@@ -987,5 +1184,6 @@ pub fn get_all_functions() -> Vec<McpFunction> {
 		get_shell_function(),
 		get_text_editor_function(),
 		get_list_files_function(),
+		get_view_signatures_function(),
 	]
 }

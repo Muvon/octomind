@@ -369,6 +369,8 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			return Ok(result);
 		} else if call.tool_name == "list_files" {
 			return dev::execute_list_files(call).await;
+		} else if call.tool_name == "view_signatures" {
+			return dev::execute_view_signatures(call).await;
 		}
 	} else {
 		return Err(anyhow::anyhow!("Developer tools are not enabled"));

@@ -48,6 +48,17 @@ pub struct Store {
 	db: Surreal<Db>,
 }
 
+// Implementing Drop to ensure the connection is closed
+impl Drop for Store {
+    fn drop(&mut self) {
+        // We can't run async code in drop, so we just print a message
+        // The connection will be closed when the Surreal<Db> is dropped
+        if cfg!(debug_assertions) {
+            println!("Store instance dropped, database connection released");
+        }
+    }
+}
+
 impl Store {
 	pub async fn new() -> Result<Self> {
 		// Get current directory
@@ -267,6 +278,13 @@ start_line = $start_line, end_line = $end_line, hash = $hash, embedding_vector =
 		.await?;
 		result.check()?;
 
+		Ok(())
+	}
+
+	// Close the database connection explicitly
+	pub async fn close(self) -> Result<()> {
+		// The database connection is closed automatically when the Store is dropped
+		// This method is provided for explicit control over connection lifetime
 		Ok(())
 	}
 }

@@ -277,9 +277,23 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
 	
-	// Get store for tools that need it
-	let store = crate::store::Store::new().await?;
+	// Get store for tools that need it - only if semantic_code is needed
+	let store_option = if call.tool_name == "semantic_code" {
+		Some(crate::store::Store::new().await?)
+	} else {
+		None
+	};
 
+	let result = try_execute_tool_call(call, config, store_option.as_ref()).await;
+
+	// Explicitly drop the store if it was created
+	drop(store_option);
+
+	result
+}
+
+// Internal function to actually execute the tool call
+async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Config, store_option: Option<&crate::store::Store>) -> Result<McpToolResult> {
 	// Try to execute locally if provider is enabled
 	if config.mcp.providers.contains(&"shell".to_string()) {
 		// Handle developer tools
@@ -291,7 +305,7 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
 				// Create a modified result that warns about the size
 				use colored::Colorize;
-				println!("{}", format!("⚠️  WARNING: Shell command produced a large output ({} tokens)",
+				println!("{}", format!("! WARNING: Shell command produced a large output ({} tokens)",
 					estimated_tokens).bright_yellow());
 				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
 
@@ -343,7 +357,7 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
 				// Create a modified result that warns about the size
 				use colored::Colorize;
-				println!("{}", format!("⚠️  WARNING: Text editor produced a large output ({} tokens)",
+				println!("{}", format!("! WARNING: Text editor produced a large output ({} tokens)",
 					estimated_tokens).bright_yellow());
 				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
 
@@ -373,7 +387,11 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 		} else if call.tool_name == "list_files" {
 			return dev::execute_list_files(call).await;
 		} else if call.tool_name == "semantic_code" {
-			return dev::execute_semantic_code(call, &store, config).await;
+			if let Some(store) = store_option {
+				return dev::execute_semantic_code(call, store, config).await;
+			} else {
+				return Err(anyhow::anyhow!("Store not initialized for semantic_code tool"));
+			}
 		}
 	} else {
 		return Err(anyhow::anyhow!("Developer tools are not enabled"));
@@ -393,7 +411,7 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 						if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
 							// Create a modified result that warns about the size
 							use colored::Colorize;
-							println!("{}", format!("⚠️  WARNING: External tool produced a large output ({} tokens)",
+							println!("{}", format!("! WARNING: External tool produced a large output ({} tokens)",
 								estimated_tokens).bright_yellow());
 							println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
 

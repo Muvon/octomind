@@ -634,10 +634,58 @@ impl Store {
 		Ok(())
 	}
 
+	pub async fn get_code_block_by_hash(&self, hash: &str) -> Result<CodeBlock> {
+		// Open the table
+		let table = self.db.open_table("code_blocks").execute().await?;
+
+		// Check if the table has any data
+		let row_count = table.count_rows(None).await?;
+		if row_count == 0 {
+			// No data, return error
+			return Err(anyhow::anyhow!("No data in code_blocks table"));
+		}
+
+		// Filter by hash for exact match
+		let results = table
+			.query()
+			.only_if(&format!("hash = '{}'", hash))
+			.limit(1)
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+		.await?;
+
+		if results.is_empty() || results[0].num_rows() == 0 {
+			return Err(anyhow::anyhow!("Code block with hash {} not found", hash));
+		}
+
+		// Convert results to CodeBlock structs
+		let converter = BatchConverter::new(self.vector_dim);
+		let code_blocks = converter.batch_to_code_blocks(&results[0], None)?;
+
+		// Return the first (and only) code block
+		code_blocks.into_iter().next().ok_or_else(|| anyhow::anyhow!("Failed to convert result to CodeBlock"))
+	}
+
 	// Close the database connection explicitly (for debugging or cleanup)
 	pub async fn close(self) -> Result<()> {
 		// The database connection is closed automatically when the Store is dropped
 		// This method is provided for explicit control over connection lifetime
+		Ok(())
+	}
+
+	// Clear all tables (remove all records)
+	pub async fn clear_all_tables(&self) -> Result<()> {
+		// Get table names
+		let table_names = self.db.table_names().execute().await?;
+
+		// Remove all data from each table
+		for table_name in table_names {
+			let table = self.db.open_table(&table_name).execute().await?;
+			table.delete("TRUE").await?;
+			println!("Cleared table: {}", table_name);
+		}
+
 		Ok(())
 	}
 }

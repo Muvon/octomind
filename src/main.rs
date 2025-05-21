@@ -21,7 +21,7 @@ struct OctodevArgs {
 #[derive(Subcommand)]
 enum Commands {
 	/// Index the current directory's codebase
-	Index,
+	Index(IndexArgs),
 
 	/// Search the codebase with a natural language query
 	Search(SearchArgs),
@@ -37,6 +37,13 @@ enum Commands {
 
 	/// Start an interactive coding session
 	Session(SessionArgs),
+
+	/// Query and explore the code relationship graph (GraphRAG)
+	#[command(name = "graphrag")]
+	GraphRAG(GraphRAGArgs),
+
+	/// Clear all database tables (useful for debugging)
+	Clear,
 }
 
 #[derive(Args, Debug)]
@@ -95,6 +102,10 @@ struct ConfigArgs {
 	#[arg(long)]
 	mcp_server: Option<String>,
 
+	/// Enable GraphRAG for code relationship analysis
+	#[arg(long)]
+	graphrag_enable: Option<bool>,
+
 	/// Set custom system prompt (or 'default' to reset to default)
 	#[arg(long)]
 	system: Option<String>,
@@ -116,6 +127,47 @@ struct SessionArgs {
 }
 
 #[derive(Args, Debug)]
+struct GraphRAGArgs {
+	/// The operation to perform on the GraphRAG knowledge graph
+	#[arg(value_enum)]
+	operation: GraphRAGOperation,
+
+	/// The query to search for (used with the search operation)
+	#[arg(long)]
+	query: Option<String>,
+
+	/// The node ID to get information about (used with get_node and get_relationships operations)
+	#[arg(long)]
+	node_id: Option<String>,
+
+	/// The source node ID for path finding (used with find_path operation)
+	#[arg(long)]
+	source_id: Option<String>,
+
+	/// The target node ID for path finding (used with find_path operation)
+	#[arg(long)]
+	target_id: Option<String>,
+
+	/// The maximum path depth to consider (used with find_path operation)
+	#[arg(long, default_value = "3")]
+	max_depth: usize,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum GraphRAGOperation {
+	/// Search for nodes that match a semantic query
+	Search,
+	/// Get detailed information about a specific node
+	GetNode,
+	/// Get relationships involving a specific node
+	GetRelationships,
+	/// Find paths between two nodes in the graph
+	FindPath,
+	/// Get an overview of the entire graph structure
+	Overview,
+}
+
+#[derive(Args, Debug)]
 struct ViewArgs {
 	/// Files to view (may include glob patterns)
 	files: Vec<String>,
@@ -127,6 +179,13 @@ struct ViewArgs {
 	/// Output in Markdown format
 	#[arg(long)]
 	md: bool,
+}
+
+#[derive(Args, Debug)]
+struct IndexArgs {
+	/// Force reindex files that have been previously indexed
+	#[arg(long)]
+	reindex: bool,
 }
 
 #[derive(Args, Debug)]
@@ -170,8 +229,8 @@ async fn run_with_cleanup(args: OctodevArgs, config: Config) -> Result<(), anyho
 
 	// Execute the appropriate command
 	match &args.command {
-		Commands::Index => {
-			index_codebase(&store, &config).await?
+		Commands::Index(index_args) => {
+			index_codebase(&store, &config, index_args).await?
 		},
 		Commands::Search(search_args) => {
 			search_codebase(&store, search_args, &config).await?
@@ -184,6 +243,12 @@ async fn run_with_cleanup(args: OctodevArgs, config: Config) -> Result<(), anyho
 		},
 		Commands::Session(session_args) => {
 			session::chat::run_interactive_session(session_args, &store, &config).await?
+		},
+		Commands::GraphRAG(graphrag_args) => {
+			execute_graphrag_command(&store, graphrag_args, &config).await?
+		},
+		Commands::Clear => {
+			clear_tables(&store).await?
 		},
 		Commands::Config(_) => unreachable!(), // Already handled above
 	}
@@ -256,6 +321,13 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
 	if let Some(enable_mcp) = args.mcp_enable {
 		config.mcp.enabled = enable_mcp;
 		println!("MCP protocol {}", if enable_mcp { "enabled" } else { "disabled" });
+		modified = true;
+	}
+
+	// Enable/disable GraphRAG
+	if let Some(enable_graphrag) = args.graphrag_enable {
+		config.graphrag.enabled = enable_graphrag;
+		println!("GraphRAG {}", if enable_graphrag { "enabled" } else { "disabled" });
 		modified = true;
 	}
 
@@ -412,6 +484,7 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
 	println!("FastEmbed text model: {}", config.fastembed.text_model);
 	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
 	println!("MCP providers: {}", config.mcp.providers.join(", "));
+	println!("GraphRAG: {}", if config.graphrag.enabled { "enabled" } else { "disabled" });
 
 	// Show system prompt status
 	if let Some(_) = &config.system {
@@ -423,12 +496,26 @@ fn handle_config_command(args: &ConfigArgs, mut config: Config) -> Result<(), an
 	Ok(())
 }
 
-async fn index_codebase(store: &Store, config: &Config) -> Result<(), anyhow::Error> {
+/// Clear all database tables
+async fn clear_tables(store: &Store) -> Result<(), anyhow::Error> {
+	println!("Clearing all database tables...");
+	store.clear_all_tables().await?;
+	println!("Successfully cleared all tables.");
+	Ok(())
+}
+
+async fn index_codebase(store: &Store, config: &Config, args: &IndexArgs) -> Result<(), anyhow::Error> {
 	let current_dir = std::env::current_dir()?;
 	println!("Indexing current directory: {}", current_dir.display());
 
 	let state = state::create_shared_state();
 	state.write().current_directory = current_dir;
+
+	// Set reindex flag in state if requested
+	if args.reindex {
+		println!("Reindex flag set - forcing reindex of all files");
+		state.write().force_reindex = true;
+	}
 
 	// Spawn the progress display task
 	let progress_handle = tokio::spawn(display_indexing_progress(state.clone()));
@@ -451,7 +538,7 @@ async fn search_codebase(store: &Store, args: &SearchArgs, config: &Config) -> R
 	// Check if we have an index already; if not, create one
 	if !index_path.exists() {
 		println!("No index found. Indexing current directory first");
-		index_codebase(store, config).await?
+		index_codebase(store, config, &IndexArgs { reindex: false }).await?
 	}
 
 	println!("Searching for: {}", args.query);
@@ -569,7 +656,7 @@ async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Res
 	// Do initial indexing
 	if !args.quiet {
 		// If not in quiet mode, use the regular indexing with progress display
-		index_codebase(store, config).await?;
+		index_codebase(store, config, &IndexArgs { reindex: false }).await?;
 	} else {
 		// In quiet mode, just do the indexing without progress display
 		let state = state::create_shared_state();
@@ -648,7 +735,7 @@ async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Res
 
 				if !args.quiet {
 					// Use regular indexing with progress in non-quiet mode
-					index_codebase(store, &config).await?;
+					index_codebase(store, &config, &IndexArgs { reindex: false }).await?;
 				} else {
 					// In quiet mode, just do the indexing without progress display
 					indexer::index_files(store, state.clone(), &config).await?;
@@ -693,4 +780,275 @@ async fn display_indexing_progress(state: Arc<RwLock<state::IndexState>>) {
 	}
 
 	println!("\rIndexing complete! Total files indexed: {}", state.read().indexed_files);
+}
+
+/// Execute a GraphRAG command
+async fn execute_graphrag_command(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Result<(), anyhow::Error> {
+	// Check if the graph has been built (look for the graph.json file)
+	let current_dir = std::env::current_dir()?;
+	let graph_path = current_dir.join(".octodev/graph.json");
+
+	// Check if GraphRAG is enabled in the config
+	if !config.graphrag.enabled {
+		eprintln!("Error: GraphRAG is not enabled in your configuration.");
+		eprintln!("To enable it, run:\n  octodev config --graphrag-enable true");
+		eprintln!("Then run 'octodev index' to build the knowledge graph.");
+		return Ok(());
+	}
+
+	// Check if the graph exists
+	if !graph_path.exists() {
+		eprintln!("Error: GraphRAG knowledge graph has not been built yet.");
+		eprintln!("Run 'octodev index' to build the knowledge graph.");
+		return Ok(());
+	}
+	
+	// Initialize the GraphBuilder
+	let graph_builder = match indexer::GraphBuilder::new(config.clone()).await {
+		Ok(builder) => builder,
+		Err(e) => {
+			eprintln!("Failed to initialize the GraphRAG system: {}", e);
+			return Ok(());
+		}
+	};
+
+	// Execute the requested operation
+	match args.operation {
+		GraphRAGOperation::Search => {
+			// Validate required parameters
+			let query = match &args.query {
+				Some(q) => q,
+				None => {
+					eprintln!("Error: 'query' parameter is required for search operation.");
+					eprintln!("Example: octodev graphrag search --query \"find all database connections\"");
+					return Ok(());
+				}
+			};
+
+			// Search for nodes
+			println!("Searching for: {}", query);
+			let nodes = graph_builder.search_nodes(query).await?;
+
+			// Display results
+			if nodes.is_empty() {
+				println!("No matching nodes found.");
+			} else {
+				println!("Found {} matching nodes:\n", nodes.len());
+				for node in &nodes {
+					println!("\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550} Node: {} \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}", node.name);
+					println!("\u{2551} ID: {}", node.id);
+					println!("\u{2551} Kind: {}", node.kind);
+					println!("\u{2551} Path: {}", node.path);
+					println!("\u{2551} Description: {}", node.description);
+					println!("\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\n");
+				}
+			}
+		},
+		GraphRAGOperation::GetNode => {
+			// Validate required parameters
+			let node_id = match &args.node_id {
+				Some(id) => id,
+				None => {
+					eprintln!("Error: 'node_id' parameter is required for get_node operation.");
+					eprintln!("Example: octodev graphrag get-node --node_id \"src/main.rs/main\"");
+					return Ok(());
+				}
+			};
+
+			// Get the graph
+			let graph = graph_builder.get_graph().await?;
+
+			// Get node details
+			match graph.nodes.get(node_id) {
+				Some(node) => {
+					println!("\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550} Node: {} \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}", node.name);
+					println!("\u{2551} ID: {}", node.id);
+					println!("\u{2551} Kind: {}", node.kind);
+					println!("\u{2551} Path: {}", node.path);
+					println!("\u{2551} Description: {}", node.description);
+					if !node.symbols.is_empty() {
+						println!("\u{2551} Symbols:");
+						for symbol in &node.symbols {
+							println!("\u{2551}   - {}", symbol);
+						}
+					}
+					println!("\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
+				},
+				None => println!("Node not found: {}", node_id),
+			}
+		},
+		GraphRAGOperation::GetRelationships => {
+			// Validate required parameters
+			let node_id = match &args.node_id {
+				Some(id) => id,
+				None => {
+					eprintln!("Error: 'node_id' parameter is required for get_relationships operation.");
+					eprintln!("Example: octodev graphrag get-relationships --node_id \"src/main.rs/main\"");
+					return Ok(());
+				}
+			};
+
+			// Get the graph
+			let graph = graph_builder.get_graph().await?;
+
+			// Check if the node exists
+			if !graph.nodes.contains_key(node_id) {
+				println!("Node not found: {}", node_id);
+				return Ok(());
+			}
+
+			// Find relationships where this node is either source or target
+			let relationships: Vec<_> = graph.relationships.iter()
+				.filter(|rel| rel.source == *node_id || rel.target == *node_id)
+				.collect();
+
+			if relationships.is_empty() {
+				println!("No relationships found for node: {}", node_id);
+			} else {
+				println!("Found {} relationships for node {}:\n", relationships.len(), node_id);
+
+				// Outgoing relationships
+				let outgoing: Vec<_> = relationships.iter()
+					.filter(|rel| rel.source == *node_id)
+					.collect();
+				
+				if !outgoing.is_empty() {
+					println!("Outgoing Relationships:");
+					for rel in outgoing {
+						let target_name = graph.nodes.get(&rel.target)
+							.map(|n| n.name.clone())
+							.unwrap_or_else(|| rel.target.clone());
+						
+						println!("  - {} \u{2192} {} ({}): {}", 
+							rel.relation_type,
+							target_name,
+							rel.target,
+							rel.description);
+					}
+					println!();
+				}
+
+				// Incoming relationships
+				let incoming: Vec<_> = relationships.iter()
+					.filter(|rel| rel.target == *node_id)
+					.collect();
+				
+				if !incoming.is_empty() {
+					println!("Incoming Relationships:");
+					for rel in incoming {
+						let source_name = graph.nodes.get(&rel.source)
+							.map(|n| n.name.clone())
+							.unwrap_or_else(|| rel.source.clone());
+						
+						println!("  - {} \u{2190} {} ({}): {}", 
+							rel.relation_type,
+							source_name,
+							rel.source,
+							rel.description);
+					}
+				}
+			}
+		},
+		GraphRAGOperation::FindPath => {
+			// Validate required parameters
+			let source_id = match &args.source_id {
+				Some(id) => id,
+				None => {
+					eprintln!("Error: 'source_id' parameter is required for find_path operation.");
+					eprintln!("Example: octodev graphrag find-path --source_id \"src/main.rs/main\" --target_id \"src/config.rs/load\"");
+					return Ok(());
+				}
+			};
+
+			let target_id = match &args.target_id {
+				Some(id) => id,
+				None => {
+					eprintln!("Error: 'target_id' parameter is required for find_path operation.");
+					eprintln!("Example: octodev graphrag find-path --source_id \"src/main.rs/main\" --target_id \"src/config.rs/load\"");
+					return Ok(());
+				}
+			};
+
+			// Find paths
+			println!("Finding paths from {} to {} (max depth: {})...", source_id, target_id, args.max_depth);
+			let paths = graph_builder.find_paths(source_id, target_id, args.max_depth).await?;
+
+			// Get the graph for node name lookup
+			let graph = graph_builder.get_graph().await?;
+
+			// Display results
+			if paths.is_empty() {
+				println!("No paths found between these nodes within the specified depth.");
+			} else {
+				println!("Found {} paths:\n", paths.len());
+
+				for (i, path) in paths.iter().enumerate() {
+					println!("Path {}:", i + 1);
+					
+					// Display each node in the path
+					for (j, node_id) in path.iter().enumerate() {
+						let node_name = graph.nodes.get(node_id)
+							.map(|n| n.name.clone())
+							.unwrap_or_else(|| node_id.clone());
+						
+						if j > 0 {
+							// Look up the relationship
+							let prev_id = &path[j-1];
+							let rel = graph.relationships.iter()
+								.find(|r| r.source == *prev_id && r.target == *node_id);
+							
+							if let Some(rel) = rel {
+								print!(" --{}-> ", rel.relation_type);
+							} else {
+								print!(" -> ");
+							}
+						}
+						
+						print!("{} ({})", node_name, node_id);
+					}
+					println!("\n");
+				}
+			}
+		},
+		GraphRAGOperation::Overview => {
+			// Get the graph
+			let graph = graph_builder.get_graph().await?;
+
+			// Get statistics
+			let node_count = graph.nodes.len();
+			let relationship_count = graph.relationships.len();
+
+			// Count node types
+			let mut node_types = std::collections::HashMap::new();
+			for node in graph.nodes.values() {
+				*node_types.entry(node.kind.clone()).or_insert(0) += 1;
+			}
+
+			// Count relationship types
+			let mut rel_types = std::collections::HashMap::new();
+			for rel in &graph.relationships {
+				*rel_types.entry(rel.relation_type.clone()).or_insert(0) += 1;
+			}
+
+			// Display overview
+			println!("GraphRAG Knowledge Graph Overview");
+			println!("=================================\n");
+			println!("The knowledge graph contains {} nodes and {} relationships.\n", node_count, relationship_count);
+
+			// Node type statistics
+			println!("Node Types:");
+			for (kind, count) in node_types.iter() {
+				println!("  - {}: {} nodes", kind, count);
+			}
+			println!();
+
+			// Relationship type statistics
+			println!("Relationship Types:");
+			for (rel_type, count) in rel_types.iter() {
+				println!("  - {}: {} relationships", rel_type, count);
+			}
+		}
+	}
+
+	Ok(())
 }

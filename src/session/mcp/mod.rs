@@ -325,6 +325,8 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			} else {
 				return Err(anyhow::anyhow!("Store not initialized for semantic_code tool"));
 			}
+		} else if call.tool_name == "graphrag" {
+			return dev::execute_graphrag(call, config).await;
 		}
 	} else {
 		return Err(anyhow::anyhow!("Developer tools are not enabled"));

@@ -8,6 +8,8 @@ pub struct IndexState {
 	pub indexed_files: usize,
 	pub embedding_calls: usize,
 	pub indexing_complete: bool,
+	pub status_message: String,
+	pub force_reindex: bool,
 }
 
 pub type SharedState = Arc<RwLock<IndexState>>;

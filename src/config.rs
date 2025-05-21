@@ -16,6 +16,34 @@ impl Default for EmbeddingProvider {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GraphRagConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_description_model")]
+    pub description_model: String,
+    #[serde(default = "default_relationship_model")]
+    pub relationship_model: String,
+}
+
+fn default_description_model() -> String {
+    "openai/gpt-4o".to_string()
+}
+
+fn default_relationship_model() -> String {
+    "openai/gpt-4o".to_string()
+}
+
+impl Default for GraphRagConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            description_model: default_description_model(),
+            relationship_model: default_relationship_model(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FastEmbedConfig {
 	#[serde(default = "default_code_model")]
 	pub code_model: String,
@@ -252,6 +280,8 @@ pub struct Config {
 	pub fastembed: FastEmbedConfig,
 	#[serde(default)]
 	pub jina: JinaConfig,
+	#[serde(default)]
+	pub graphrag: GraphRagConfig,
 	pub jina_api_key: Option<String>,
 	#[serde(default)]
 	pub openrouter: OpenRouterConfig,
@@ -272,6 +302,7 @@ impl Default for Config {
 			embedding_provider: EmbeddingProvider::default(),
 			fastembed: FastEmbedConfig::default(),
 			jina: JinaConfig::default(),
+			graphrag: GraphRagConfig::default(),
 			jina_api_key: None,
 			openrouter: OpenRouterConfig::default(),
 			mcp: McpConfig::default(),

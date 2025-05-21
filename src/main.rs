@@ -30,7 +30,7 @@ enum Commands {
 	View(ViewArgs),
 
 	/// Watch for changes in the codebase and reindex automatically
-	Watch,
+	Watch(WatchArgs),
 
 	/// Generate a default configuration file
 	Config(ConfigArgs),
@@ -129,6 +129,17 @@ struct ViewArgs {
 	md: bool,
 }
 
+#[derive(Args, Debug)]
+struct WatchArgs {
+	/// Run in quiet mode with less output
+	#[arg(long, short)]
+	quiet: bool,
+
+	/// Change debounce time in seconds
+	#[arg(long, short)]
+	debounce: Option<u64>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
 	let args = OctodevArgs::parse();
@@ -168,8 +179,8 @@ async fn run_with_cleanup(args: OctodevArgs, config: Config) -> Result<(), anyho
 		Commands::View(view_args) => {
 			view_file_signatures(&store, view_args, &config).await?
 		},
-		Commands::Watch => {
-			watch_codebase(&store, &config).await?
+		Commands::Watch(watch_args) => {
+			watch_codebase(&store, &config, watch_args).await?
 		},
 		Commands::Session(session_args) => {
 			session::chat::run_interactive_session(session_args, &store, &config).await?
@@ -546,15 +557,29 @@ async fn view_file_signatures(_store: &Store, args: &ViewArgs, _config: &Config)
 	Ok(())
 }
 
-async fn watch_codebase(store: &Store, config: &Config) -> Result<(), anyhow::Error> {
+async fn watch_codebase(store: &Store, config: &Config, args: &WatchArgs) -> Result<(), anyhow::Error> {
 	let current_dir = std::env::current_dir()?;
-	println!("Starting watch mode for current directory: {}", current_dir.display());
-	println!("Initial indexing...");
+	
+	// Only show verbose output if not in quiet mode
+	if !args.quiet {
+		println!("Starting watch mode for current directory: {}", current_dir.display());
+		println!("Initial indexing...");
+	}
 
 	// Do initial indexing
-	index_codebase(store, config).await?;
+	if !args.quiet {
+		// If not in quiet mode, use the regular indexing with progress display
+		index_codebase(store, config).await?;
+	} else {
+		// In quiet mode, just do the indexing without progress display
+		let state = state::create_shared_state();
+		state.write().current_directory = current_dir.clone();
+		indexer::index_files(store, state.clone(), config).await?;
+	}
 
-	println!("Watching for changes (press Ctrl+C to stop)...");
+	if !args.quiet {
+		println!("Watching for changes (press Ctrl+C to stop)...");
+	}
 
 	// Setup the file watcher with debouncer
 	use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
@@ -563,17 +588,33 @@ async fn watch_codebase(store: &Store, config: &Config) -> Result<(), anyhow::Er
 
 	let (tx, rx) = channel();
 
+	// Get the debounce time from args or use default
+	let debounce_secs = args.debounce.unwrap_or(2);
+	
+	// Copy quiet flag to capture in closure
+	let quiet_mode = args.quiet;
+	
 	// Create a debounced watcher to call our tx sender when files change
 	let mut debouncer = new_debouncer(
-		Duration::from_secs(2),
+		Duration::from_secs(debounce_secs),
 		move |res: Result<Vec<DebouncedEvent>, notify::Error>| {
 			match res {
 				Ok(events) => {
-					if !events.is_empty() {
+					// Filter out events from .octodev directory to prevent reindexing loops
+					let relevant_events = events.iter().filter(|event| {
+						let path = event.path.to_string_lossy();
+						!path.contains(".octodev") && !path.contains("target/") && !path.contains(".git/")
+					}).count();
+					
+					if relevant_events > 0 {
 						let _ = tx.send(());
 					}
-				}
-				Err(e) => eprintln!("Error in file watcher: {:?}", e),
+				},
+				Err(e) => {
+					if !quiet_mode {
+						eprintln!("Error in file watcher: {:?}", e);
+					}
+				},
 			}
 		},
 	)?;
@@ -592,7 +633,9 @@ async fn watch_codebase(store: &Store, config: &Config) -> Result<(), anyhow::Er
 		// Wait for changes
 		match rx.recv() {
 			Ok(()) => {
-				println!("\nDetected file changes, reindexing...");
+				if !args.quiet {
+					println!("\nDetected file changes, reindexing...");
+				}
 
 				// Reset the indexing state
 				let mut state_guard = state.write();
@@ -602,10 +645,19 @@ async fn watch_codebase(store: &Store, config: &Config) -> Result<(), anyhow::Er
 
 				// Reindex the codebase
 				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await; // Give a bit of time for all file changes to complete
-				index_codebase(store, &config).await?;
-			}
+				
+				if !args.quiet {
+					// Use regular indexing with progress in non-quiet mode
+					index_codebase(store, &config).await?;
+				} else {
+					// In quiet mode, just do the indexing without progress display
+					indexer::index_files(store, state.clone(), &config).await?;
+				}
+			},
 			Err(e) => {
-				eprintln!("Watch error: {:?}", e);
+				if !args.quiet {
+					eprintln!("Watch error: {:?}", e);
+				}
 				break;
 			}
 		}

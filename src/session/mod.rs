@@ -10,6 +10,7 @@ mod token_counter;  // Token counting utilities
 pub mod logger;     // Request/response logging utilities
 mod model_utils;    // Model-specific utility functions
 mod helper_functions; // Helper functions for layers and other components
+pub mod indexer;    // Indexer integration for sessions
 
 pub use openrouter::*;
 pub use mcp::*;

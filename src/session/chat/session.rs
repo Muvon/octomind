@@ -17,6 +17,7 @@ use super::input::read_user_input;
 use super::response::process_response;
 use super::animation::show_loading_animation;
 use super::context_truncation::check_and_truncate_context;
+use crate::session::indexer;
 
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
@@ -864,14 +865,20 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 	};
 
-	// Ensure there's an index
+	// Check if there's an index, and if not, run indexer
 	let current_dir = std::env::current_dir()?;
 	let octodev_dir = current_dir.join(".octodev");
 	let index_path = octodev_dir.join("storage");
 	if !index_path.exists() {
-		println!("No index found. Indexing current directory first...");
-		crate::indexer::index_files(store, crate::state::create_shared_state(), config).await?;
+		// Run the indexer directly using our indexer integration
+		indexer::index_current_directory(store, config).await?
+	} else {
+		println!("Using existing index from {}", index_path.display());
 	}
+	
+	// Start a watcher in the background to keep the index updated
+	println!("Starting watcher to keep index updated during session...");
+	indexer::start_watcher_in_background(store, config).await?;
 
 	// Create or load session
 	let mut chat_session = ChatSession::initialize(
@@ -1244,6 +1251,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 		}
 	}
+	
+	// Clean up the watcher when the session ends
+	let _ = crate::session::indexer::cleanup_watcher().await;
 
 	Ok(())
 }

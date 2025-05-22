@@ -1508,3 +1508,64 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 	dot_product / (a_norm * b_norm)
 }
+
+// Render GraphRAG nodes to JSON format
+pub fn render_graphrag_nodes_json(nodes: &[CodeNode]) -> Result<(), anyhow::Error> {
+	let json = serde_json::to_string_pretty(nodes)?;
+	println!("{}", json);
+	Ok(())
+}
+
+// Render GraphRAG nodes to Markdown format
+pub fn graphrag_nodes_to_markdown(nodes: &[CodeNode]) -> String {
+	let mut markdown = String::new();
+
+	if nodes.is_empty() {
+		markdown.push_str("No matching nodes found.");
+		return markdown;
+	}
+
+	markdown.push_str(&format!("# Found {} GraphRAG nodes\n\n", nodes.len()));
+
+	// Group nodes by file path for better organization
+	let mut nodes_by_file: std::collections::HashMap<String, Vec<&CodeNode>> = std::collections::HashMap::new();
+
+	for node in nodes {
+		nodes_by_file
+			.entry(node.path.clone())
+			.or_insert_with(|| Vec::new())
+			.push(node);
+	}
+
+	// Print results organized by file
+	for (file_path, file_nodes) in nodes_by_file.iter() {
+		markdown.push_str(&format!("## File: {}\n\n", file_path));
+
+		for node in file_nodes {
+			markdown.push_str(&format!("### {} `{}`\n", node.kind, node.name));
+			markdown.push_str(&format!("**ID:** {}  \n", node.id));
+			markdown.push_str(&format!("**Description:** {}  \n", node.description));
+
+			if !node.symbols.is_empty() {
+				markdown.push_str("**Symbols:**  \n");
+				// Display symbols
+				let mut display_symbols = node.symbols.clone();
+				display_symbols.sort();
+				display_symbols.dedup();
+
+				for symbol in display_symbols {
+					// Only show non-type symbols to users
+					if !symbol.contains("_") {
+						markdown.push_str(&format!("- `{}`  \n", symbol));
+					}
+				}
+			}
+
+			markdown.push_str("\n");
+		}
+
+		markdown.push_str("---\n\n");
+	}
+
+	markdown
+}

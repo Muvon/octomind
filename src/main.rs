@@ -151,6 +151,14 @@ struct GraphRAGArgs {
 	/// The maximum path depth to consider (used with find_path operation)
 	#[arg(long, default_value = "3")]
 	max_depth: usize,
+
+	/// Output in JSON format
+	#[arg(long)]
+	json: bool,
+
+	/// Output in Markdown format
+	#[arg(long)]
+	md: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -834,18 +842,28 @@ async fn execute_graphrag_command(_store: &Store, args: &GraphRAGArgs, config: &
 			println!("Searching for: {}", query);
 			let nodes = graph_builder.search_nodes(query).await?;
 
-			// Display results
-			if nodes.is_empty() {
-				println!("No matching nodes found.");
+			// Display results in the requested format
+			if args.json {
+				// Use JSON format
+				indexer::graphrag::render_graphrag_nodes_json(&nodes)?
+			} else if args.md {
+				// Use markdown format
+				let markdown = indexer::graphrag::graphrag_nodes_to_markdown(&nodes);
+				println!("{}", markdown);
 			} else {
-				println!("Found {} matching nodes:\n", nodes.len());
-				for node in &nodes {
-					println!("\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550} Node: {} \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}", node.name);
-					println!("\u{2551} ID: {}", node.id);
-					println!("\u{2551} Kind: {}", node.kind);
-					println!("\u{2551} Path: {}", node.path);
-					println!("\u{2551} Description: {}", node.description);
-					println!("\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\n");
+				// Use default text format
+				if nodes.is_empty() {
+					println!("No matching nodes found.");
+				} else {
+					println!("Found {} matching nodes:\n", nodes.len());
+					for node in &nodes {
+						println!("\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550} Node: {} \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}", node.name);
+						println!("\u{2551} ID: {}", node.id);
+						println!("\u{2551} Kind: {}", node.kind);
+						println!("\u{2551} Path: {}", node.path);
+						println!("\u{2551} Description: {}", node.description);
+						println!("\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\n");
+					}
 				}
 			}
 		},

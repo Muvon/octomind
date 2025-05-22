@@ -784,22 +784,11 @@ async fn display_indexing_progress(state: Arc<RwLock<state::IndexState>>) {
 
 /// Execute a GraphRAG command
 async fn execute_graphrag_command(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Result<(), anyhow::Error> {
-	// Check if the graph has been built (look for the graph.json file)
-	let current_dir = std::env::current_dir()?;
-	let graph_path = current_dir.join(".octodev/graph.json");
-
 	// Check if GraphRAG is enabled in the config
 	if !config.graphrag.enabled {
 		eprintln!("Error: GraphRAG is not enabled in your configuration.");
 		eprintln!("To enable it, run:\n  octodev config --graphrag-enable true");
 		eprintln!("Then run 'octodev index' to build the knowledge graph.");
-		return Ok(());
-	}
-
-	// Check if the graph exists
-	if !graph_path.exists() {
-		eprintln!("Error: GraphRAG knowledge graph has not been built yet.");
-		eprintln!("Run 'octodev index' to build the knowledge graph.");
 		return Ok(());
 	}
 	
@@ -811,6 +800,22 @@ async fn execute_graphrag_command(_store: &Store, args: &GraphRAGArgs, config: &
 			return Ok(());
 		}
 	};
+	
+	// Get the current graph from the builder (this will load from database in the future)
+	let graph = match graph_builder.get_graph().await {
+		Ok(g) => g,
+		Err(e) => {
+			eprintln!("Failed to load the GraphRAG knowledge graph: {}", e);
+			return Ok(());
+		}
+	};
+	
+	// If the graph is empty, advise to run indexing
+	if graph.nodes.is_empty() {
+		eprintln!("GraphRAG knowledge graph is empty.");
+		eprintln!("Run 'octodev index' to build the knowledge graph.");
+		return Ok(());
+	}
 
 	// Execute the requested operation
 	match args.operation {

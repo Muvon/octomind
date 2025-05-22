@@ -26,11 +26,11 @@ pub struct GraphRagConfig {
 }
 
 fn default_description_model() -> String {
-    "openai/gpt-4o".to_string()
+    "openai/gpt-4.1-nano".to_string()
 }
 
 fn default_relationship_model() -> String {
-    "openai/gpt-4o".to_string()
+    "openai/gpt-4.1-nano".to_string()
 }
 
 impl Default for GraphRagConfig {
@@ -179,10 +179,10 @@ impl Default for OpenRouterConfig {
 			pricing: PricingConfig::default(),
 			enable_layers: false, // Disabled by default
 			debug: false,
-			query_processor_model: Some("openai/gpt-4o".to_string()),
-			context_generator_model: Some("openai/gpt-4o".to_string()),
+			query_processor_model: Some("openai/gpt-4.1-nano".to_string()),
+			context_generator_model: Some("openai/gpt-4.1-nano".to_string()),
 			developer_model: None, // Use the main model by default
-			reducer_model: Some("openai/gpt-4o".to_string()),
+			reducer_model: Some("openai/gpt-4.1-nano".to_string()),
 			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false, // Disabled by default

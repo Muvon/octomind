@@ -1419,6 +1419,7 @@ finding connections between different parts of the code.
 
 Operations:
 - `search`: Find code nodes that match a semantic query
+  - Use with `task_focused: true` for an optimized, token-efficient view focused on your specific task
 - `get_node`: Get detailed information about a specific node by ID
 - `get_relationships`: Find relationships involving a specific node
 - `find_path`: Find paths between two nodes in the graph
@@ -1438,6 +1439,11 @@ from a structural perspective.".to_string(),
 				"query": {
 					"type": "string",
 					"description": "[For search operation] The semantic query to search for"
+				},
+				"task_focused": {
+					"type": "boolean",
+					"description": "[For search operation] Whether to use task-focused optimization to provide a more concise, relevant view",
+					"default": false
 				},
 				"node_id": {
 					"type": "string",
@@ -1501,43 +1507,90 @@ pub async fn execute_graphrag(call: &McpToolCall, config: &crate::config::Config
 
 // Search for nodes in the graph
 async fn execute_graphrag_search(call: &McpToolCall, graph_builder: &crate::indexer::GraphBuilder) -> Result<McpToolResult> {
-	// Extract query parameter
-	let query = match call.parameters.get("query") {
-		Some(Value::String(q)) => q.clone(),
-		_ => return Err(anyhow!("Missing or invalid 'query' parameter for search operation")),
-	};
+    // Extract query parameter
+    let query = match call.parameters.get("query") {
+        Some(Value::String(q)) => q.clone(),
+        _ => return Err(anyhow!("Missing or invalid 'query' parameter for search operation")),
+    };
 
-	// Search for nodes
-	let nodes = graph_builder.search_nodes(&query).await?;
+    // Check for task-focused flag
+    let task_focused = call.parameters.get("task_focused")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+        
+    if task_focused {
+        // Use the graph optimizer for task-focused search
+        let store = crate::store::Store::new().await?;
+        let config = crate::config::Config::load().unwrap_or_default();
+        
+        // Get the full graph
+        let full_graph = graph_builder.get_graph().await?;
+        
+        // Generate embeddings for the query
+        let query_embedding = crate::indexer::generate_embeddings(&query, false, &config).await?;
+        
+        // Create optimizer with token budget
+        let optimizer = crate::indexer::graph_optimization::GraphOptimizer::new(2000);
+        
+        // Get all code blocks
+        let code_blocks = store.get_code_blocks(query_embedding.clone()).await?;
+        
+        // Generate a task-focused view
+        let task_view = optimizer.generate_task_focused_view(
+            &query,
+            &query_embedding,
+            &full_graph,
+            &code_blocks
+        ).await?;
+        
+        // Return the optimized view
+        return Ok(McpToolResult {
+            tool_name: "graphrag".to_string(),
+            tool_id: call.tool_id.clone(),
+            result: json!({
+                "success": true,
+                "output": task_view,
+                "task_focused": true,
+                "parameters": {
+                    "operation": "search",
+                    "query": query,
+                    "task_focused": true
+                }
+            }),
+        });
+    }
 
-	// Format the results as markdown
-	let mut markdown = String::from(format!("# GraphRAG Search Results for '{}'\n\n", query));
-	markdown.push_str(&format!("Found {} matching nodes\n\n", nodes.len()));
+    // Traditional node search (without task focusing)
+    let nodes = graph_builder.search_nodes(&query).await?;
 
-	// Add each node to the markdown output
-	for node in &nodes {
-		markdown.push_str(&format!("## {}\n", node.name));
-		markdown.push_str(&format!("**ID**: {}\n", node.id));
-		markdown.push_str(&format!("**Kind**: {}\n", node.kind));
-		markdown.push_str(&format!("**Path**: {}\n", node.path));
-		markdown.push_str(&format!("**Description**: {}\n\n", node.description));
-	}
+    // Format the results as markdown
+    let mut markdown = String::from(format!("# GraphRAG Search Results for '{}'\n\n", query));
+    markdown.push_str(&format!("Found {} matching nodes\n\n", nodes.len()));
 
-	// Return the results
-	Ok(McpToolResult {
-		tool_name: "graphrag".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"success": true,
-			"output": markdown,
-			"count": nodes.len(),
-			"nodes": nodes,
-			"parameters": {
-				"operation": "search",
-				"query": query
-			}
-		}),
-	})
+    // Add each node to the markdown output
+    for node in &nodes {
+        markdown.push_str(&format!("## {}\n", node.name));
+        markdown.push_str(&format!("**ID**: {}\n", node.id));
+        markdown.push_str(&format!("**Kind**: {}\n", node.kind));
+        markdown.push_str(&format!("**Path**: {}\n", node.path));
+        markdown.push_str(&format!("**Description**: {}\n\n", node.description));
+    }
+
+    // Return the results
+    Ok(McpToolResult {
+        tool_name: "graphrag".to_string(),
+        tool_id: call.tool_id.clone(),
+        result: json!({
+            "success": true,
+            "output": markdown,
+            "count": nodes.len(),
+            "nodes": nodes,
+            "parameters": {
+                "operation": "search",
+                "query": query
+            }
+        }),
+    })
 }
 
 // Get details about a specific node

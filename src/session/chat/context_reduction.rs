@@ -3,94 +3,127 @@
 use crate::config::Config;
 use crate::session::openrouter;
 use crate::session::chat::session::ChatSession;
+use crate::indexer::graph_optimization::GraphOptimizer;
+use crate::indexer::graphrag::GraphBuilder;
+use crate::store::Store;
 use colored::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use anyhow::Result;
 use super::animation::show_loading_animation;
 
-// Process context reduction (extracted from reducer layer)
+/// Process context reduction (extracted from reducer layer)
 pub async fn perform_context_reduction(
-	chat_session: &mut ChatSession,
-	config: &Config,
-	operation_cancelled: Arc<AtomicBool>
+    chat_session: &mut ChatSession,
+    config: &Config,
+    operation_cancelled: Arc<AtomicBool>
 ) -> Result<()> {
-	println!("{}", "Performing context reduction and optimization...".cyan());
+    println!("{}", "Performing context reduction and optimization...".cyan());
 
-	// Create a task to show loading animation with current cost
-	let animation_cancel = operation_cancelled.clone();
-	let current_cost = chat_session.session.info.total_cost;
-	let animation_task = tokio::spawn(async move {
-		let _ = show_loading_animation(animation_cancel, current_cost).await;
-	});
+    // Create a task to show loading animation with current cost
+    let animation_cancel = operation_cancelled.clone();
+    let current_cost = chat_session.session.info.total_cost;
+    let animation_task = tokio::spawn(async move {
+        let _ = show_loading_animation(animation_cancel, current_cost).await;
+    });
 
-	// Extract elements from the session to create an optimized version
-	// First get the original user request and the current context
-	let user_message = chat_session.session.messages.iter()
-		.find(|m| m.role == "user")
-		.map(|m| m.content.clone())
-		.unwrap_or_else(|| "No original query found".to_string());
+    // Extract elements from the session to create an optimized version
+    // First get the original user request and the current context
+    let user_message = chat_session.session.messages.iter()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_else(|| "No original query found".to_string());
 
-	// Get the last assistant message as the context
-	let assistant_message = chat_session.session.messages.iter()
-		.filter(|m| m.role == "assistant")
-		.last()
-		.map(|m| m.content.clone())
-		.unwrap_or_else(|| "No assistant response found".to_string());
+    // Get the last assistant message as the context
+    let assistant_message = chat_session.session.messages.iter()
+        .filter(|m| m.role == "assistant")
+        .last()
+        .map(|m| m.content.clone())
+        .unwrap_or_else(|| "No assistant response found".to_string());
 
-	// Create a message for the reducer to summarize everything
-	let reducer_input = format!("Original request: {}\n\nDeveloper solution: {}",
-		user_message, assistant_message);
+    // If GraphRAG is enabled, generate a task-specific code graph summary
+    let mut code_graph_summary = String::new();
+    if config.graphrag.enabled {
+        // This requires access to the store
+        let store = match Store::new().await {
+            Ok(store) => store,
+            Err(e) => {
+                println!("{}: {}", "Warning: Failed to access code store for GraphRAG".bright_yellow(), e);
+                return Ok(());
+            }
+        };
+        
+        // Get the graph builder and access the full graph
+        match generate_task_focused_graph_summary(&user_message, &store, config).await {
+            Ok(summary) => {
+                code_graph_summary = summary;
+                println!("{}", "Generated task-focused code graph summary".bright_green());
+            },
+            Err(e) => {
+                println!("{}: {}", "Warning: Failed to generate code graph summary".bright_yellow(), e);
+            }
+        }
+    }
 
-	// Create messages for the OpenRouter API
-	let mut messages = Vec::new();
+    // Create a message for the reducer to summarize everything
+    let mut reducer_input = format!("Original request: {}\n\nDeveloper solution: {}",
+        user_message, assistant_message);
+        
+    // Add the code graph summary if available
+    if !code_graph_summary.is_empty() {
+        reducer_input.push_str("\n\nRelevant code information:\n");
+        reducer_input.push_str(&code_graph_summary);
+    }
 
-	// System message with reducer-specific prompt
-	// Get the raw prompt and process the placeholders
-	let system_prompt = crate::session::helper_functions::get_raw_system_prompt("reducer");
-	let project_dir = std::env::current_dir().unwrap_or_default();
-	let processed_prompt = crate::session::process_placeholders(&system_prompt, &project_dir);
+    // Create messages for the OpenRouter API
+    let mut messages = Vec::new();
 
-	messages.push(crate::session::Message {
-		role: "system".to_string(),
-		content: processed_prompt,
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		cached: false,
-	});
+    // System message with reducer-specific prompt
+    // Get the raw prompt and process the placeholders
+    let system_prompt = crate::session::helper_functions::get_raw_system_prompt("reducer");
+    let project_dir = std::env::current_dir().unwrap_or_default();
+    let processed_prompt = crate::session::process_placeholders(&system_prompt, &project_dir);
 
-	// Add user message with the context to reduce
-	messages.push(crate::session::Message {
-		role: "user".to_string(),
-		content: reducer_input,
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		cached: false,
-	});
+    messages.push(crate::session::Message {
+        role: "system".to_string(),
+        content: processed_prompt,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        cached: false,
+    });
 
-	// Convert to OpenRouter format
-	let or_messages = openrouter::convert_messages(&messages);
+    // Add user message with the context to reduce
+    messages.push(crate::session::Message {
+        role: "user".to_string(),
+        content: reducer_input,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        cached: false,
+    });
 
-	// Choose what model to use for reduction
-	// Try to use the reducer model if configured, otherwise use GPT-4o as fallback
-	let reducer_model = match &config.openrouter.reducer_model {
-		Some(model) => model.clone(),
-		None => "openai/gpt-4o".to_string(),
-	};
+    // Convert to OpenRouter format
+    let or_messages = openrouter::convert_messages(&messages);
 
-	// Call the model
-	// Always include the usage parameter to ensure we get cost data
-	println!("{} {}", "Using model for context reduction:".bright_blue(), reducer_model.bright_yellow());
-	let reduction_result = openrouter::chat_completion(
-		or_messages,
-		&reducer_model,
-		0.7, // Moderate temperature
-		config
-	).await;
+    // Choose what model to use for reduction
+    // Try to use the reducer model if configured, otherwise use GPT-4o as fallback
+    let reducer_model = match &config.openrouter.reducer_model {
+        Some(model) => model.clone(),
+        None => "openai/gpt-4.1-nano".to_string(),
+    };
+
+    // Call the model
+    // Always include the usage parameter to ensure we get cost data
+    println!("{} {}", "Using model for context reduction:".bright_blue(), reducer_model.bright_yellow());
+    let reduction_result = openrouter::chat_completion(
+        or_messages,
+        &reducer_model,
+        0.7, // Moderate temperature
+        config
+    ).await;
 
 	// Stop the animation
 	operation_cancelled.store(true, Ordering::SeqCst);
@@ -195,4 +228,38 @@ pub async fn perform_context_reduction(
 			Err(anyhow::anyhow!("Context reduction failed: {}", e))
 		}
 	}
+}
+
+/// Generate a task-focused graph summary for the given user query
+async fn generate_task_focused_graph_summary(
+    user_query: &str,
+    store: &Store,
+    config: &Config
+) -> Result<String> {
+    // Initialize the GraphBuilder and get the full graph
+    let graph_builder = GraphBuilder::new(config.clone()).await?;
+    let full_graph = graph_builder.get_graph().await?;
+    
+    if full_graph.nodes.is_empty() {
+        return Err(anyhow::anyhow!("No nodes in the graph"));
+    }
+    
+    // Generate embeddings for the user query
+    let query_embedding = crate::indexer::generate_embeddings(user_query, false, config).await?;
+    
+    // Create a GraphOptimizer with an approximate token budget
+    let optimizer = GraphOptimizer::new(2000); // 2000 tokens is a reasonable budget for the graph summary
+    
+    // Get all code blocks from the store for potential snippets
+    let code_blocks = store.get_code_blocks(query_embedding.clone()).await?;
+    
+    // Generate a task-focused view
+    let task_view = optimizer.generate_task_focused_view(
+        user_query,
+        &query_embedding,
+        &full_graph,
+        &code_blocks
+    ).await?;
+    
+    Ok(task_view)
 }

@@ -189,10 +189,10 @@ model = "anthropic/claude-3.7-sonnet"  # Main model for Developer layer
 enable_layers = true                   # Enable layered architecture
 
 # Configure models for each layer (optional)
-query_processor_model = "openai/gpt-4o"       # Model for query processing
-context_generator_model = "openai/gpt-4o"     # Model for context gathering
+query_processor_model = "openai/gpt-4.1-nano"       # Model for query processing
+context_generator_model = "openai/gpt-4.1-nano"     # Model for context gathering
 developer_model = "anthropic/claude-3.7-sonnet" # Model for development tasks
-reducer_model = "openai/gpt-4o"               # Model for context reduction
+reducer_model = "openai/gpt-4.1-nano"               # Model for context reduction
 
 # Token management settings
 mcp_response_warning_threshold = 20000        # Warn for large tool outputs (tokens)

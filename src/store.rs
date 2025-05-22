@@ -423,6 +423,45 @@ impl Store {
 
 			// Note: We'll create the index later when we have data
 		}
+		
+		// Create graphrag_nodes table if it doesn't exist
+		if !table_names.contains(&"graphrag_nodes".to_string()) {
+			// Create empty table with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("name", DataType::Utf8, false),
+				Field::new("kind", DataType::Utf8, false),
+				Field::new("path", DataType::Utf8, false),
+				Field::new("description", DataType::Utf8, false),
+				Field::new("symbols", DataType::Utf8, true),  // JSON serialized
+				Field::new("hash", DataType::Utf8, false),
+				Field::new(
+					"embedding",
+					DataType::FixedSizeList(
+						Arc::new(Field::new("item", DataType::Float32, true)),
+						self.vector_dim as i32,
+					),
+					true,
+				),
+			]));
+
+			let _table = self.db.create_empty_table("graphrag_nodes", schema).execute().await?;
+		}
+		
+		// Create graphrag_relationships table if it doesn't exist
+		if !table_names.contains(&"graphrag_relationships".to_string()) {
+			// Create empty table with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("source", DataType::Utf8, false),
+				Field::new("target", DataType::Utf8, false),
+				Field::new("relation_type", DataType::Utf8, false),
+				Field::new("description", DataType::Utf8, false),
+				Field::new("confidence", DataType::Float32, false),
+			]));
+
+			let _table = self.db.create_empty_table("graphrag_relationships", schema).execute().await?;
+		}
 
 		Ok(())
 	}
@@ -687,5 +726,201 @@ impl Store {
 		}
 
 		Ok(())
+	}
+
+	// Get the vector dimension of the store
+	pub fn get_vector_dim(&self) -> usize {
+		return self.vector_dim;
+	}
+
+	// Check if tables exist in the database
+	pub async fn tables_exist(&self, table_names: &[&str]) -> Result<bool> {
+		let existing_tables = self.db.table_names().execute().await?;
+		for table in table_names {
+			if !existing_tables.contains(&table.to_string()) {
+				return Ok(false);
+			}
+		}
+		return Ok(true);
+	}
+
+	// Store graph nodes in the database
+	pub async fn store_graph_nodes(&self, node_batch: RecordBatch) -> Result<()> {
+		// Open or create the table
+		let table = self.db.open_table("graphrag_nodes").execute().await?;
+
+		// Create an iterator that yields this single batch
+		use std::iter::once;
+		let schema = node_batch.schema();
+		let batches = once(Ok(node_batch));
+		let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
+
+		// Add the batch to the table
+		table.add(batch_reader).execute().await?;
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
+
+		Ok(())
+	}
+
+	// Store graph relationships in the database
+	pub async fn store_graph_relationships(&self, rel_batch: RecordBatch) -> Result<()> {
+		// Open or create the table
+		let table = self.db.open_table("graphrag_relationships").execute().await?;
+
+		// Create an iterator that yields this single batch
+		use std::iter::once;
+		let schema = rel_batch.schema();
+		let batches = once(Ok(rel_batch));
+		let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
+
+		// Add the batch to the table
+		table.add(batch_reader).execute().await?;
+
+		Ok(())
+	}
+
+	// Clear all graph nodes from the database
+	pub async fn clear_graph_nodes(&self) -> Result<()> {
+		let table_names = self.db.table_names().execute().await?;
+		if table_names.contains(&"graphrag_nodes".to_string()) {
+			let table = self.db.open_table("graphrag_nodes").execute().await?;
+			table.delete("TRUE").await?;
+		}
+		Ok(())
+	}
+
+	// Clear all graph relationships from the database
+	pub async fn clear_graph_relationships(&self) -> Result<()> {
+		let table_names = self.db.table_names().execute().await?;
+		if table_names.contains(&"graphrag_relationships".to_string()) {
+			let table = self.db.open_table("graphrag_relationships").execute().await?;
+			table.delete("TRUE").await?;
+		}
+		Ok(())
+	}
+
+	// Search for graph nodes by vector similarity
+	pub async fn search_graph_nodes(&self, embedding: &[f32], limit: usize) -> Result<RecordBatch> {
+		// Check embedding dimension
+		if embedding.len() != self.vector_dim {
+			return Err(anyhow::anyhow!("Search embedding has dimension {} but expected {}",
+				embedding.len(), self.vector_dim));
+		}
+
+		// Open the table
+		let table = self.db.open_table("graphrag_nodes").execute().await?;
+
+		// Check if the table has any data
+		let row_count = table.count_rows(None).await?;
+		if row_count == 0 {
+			// Create an empty record batch with the right schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("name", DataType::Utf8, false),
+				Field::new("kind", DataType::Utf8, false),
+				Field::new("path", DataType::Utf8, false),
+				Field::new("description", DataType::Utf8, false),
+				Field::new("symbols", DataType::Utf8, true),
+				Field::new("hash", DataType::Utf8, false),
+				Field::new(
+					"embedding",
+					DataType::FixedSizeList(
+						Arc::new(Field::new("item", DataType::Float32, true)),
+						self.vector_dim as i32,
+					),
+					true,
+				),
+			]));
+			return Ok(RecordBatch::new_empty(schema));
+		}
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?;
+		}
+
+		// Perform vector search
+		let results = table
+			.query()
+			.nearest_to(embedding)?  // Vector search
+			.limit(limit)           // No conversion needed
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+			.await?;
+
+		if results.is_empty() || results[0].num_rows() == 0 {
+			// Create an empty record batch with the right schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("name", DataType::Utf8, false),
+				Field::new("kind", DataType::Utf8, false),
+				Field::new("path", DataType::Utf8, false),
+				Field::new("description", DataType::Utf8, false),
+				Field::new("symbols", DataType::Utf8, true),
+				Field::new("hash", DataType::Utf8, false),
+				Field::new(
+					"embedding",
+					DataType::FixedSizeList(
+						Arc::new(Field::new("item", DataType::Float32, true)),
+						self.vector_dim as i32,
+					),
+					true,
+				),
+			]));
+			return Ok(RecordBatch::new_empty(schema));
+		}
+
+		Ok(results[0].clone())
+	}
+
+	// Get all graph relationships
+	pub async fn get_graph_relationships(&self) -> Result<RecordBatch> {
+		// Open the table
+		let table_names = self.db.table_names().execute().await?;
+		if !table_names.contains(&"graphrag_relationships".to_string()) {
+			// Return empty batch with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("source", DataType::Utf8, false),
+				Field::new("target", DataType::Utf8, false),
+				Field::new("relation_type", DataType::Utf8, false),
+				Field::new("description", DataType::Utf8, false),
+				Field::new("confidence", DataType::Float32, false),
+			]));
+			return Ok(RecordBatch::new_empty(schema));
+		}
+
+		let table = self.db.open_table("graphrag_relationships").execute().await?;
+
+		// Get all relationships
+		let results = table
+			.query()
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+			.await?;
+
+		if results.is_empty() || results[0].num_rows() == 0 {
+			// Return empty batch with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("source", DataType::Utf8, false),
+				Field::new("target", DataType::Utf8, false),
+				Field::new("relation_type", DataType::Utf8, false),
+				Field::new("description", DataType::Utf8, false),
+				Field::new("confidence", DataType::Float32, false),
+			]));
+			return Ok(RecordBatch::new_empty(schema));
+		}
+
+		Ok(results[0].clone())
 	}
 }

@@ -5,10 +5,12 @@ mod embed; // Embedding generation - moving from content.rs
 mod search; // Search functionality
 mod languages; // Language-specific processors
 pub mod graphrag; // GraphRAG generation for code relationships
+pub mod graph_optimization; // Task-focused graph extraction and optimization
 
 pub use embed::*;
 pub use search::*;
 pub use graphrag::*;
+pub use graph_optimization::*;
 
 use crate::state::SharedState;
 use crate::state;
@@ -593,8 +595,8 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		embedding_calls += text_blocks_batch.len();
 	}
 
-	// Build GraphRAG from all collected code blocks if enabled
-	if config.graphrag.enabled {
+	// Build GraphRAG from all collected code blocks if enabled and if we found any blocks
+	if config.graphrag.enabled && !all_code_blocks.is_empty() {
 		let mut state_guard = state.write();
 		state_guard.status_message = "Building GraphRAG knowledge graph...".to_string();
 		drop(state_guard);
@@ -602,21 +604,15 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		// Print status
 		println!("Building GraphRAG knowledge graph from {} code blocks...", all_code_blocks.len());
 		
-		// Debug: Print information about what blocks we found
-		for (i, block) in all_code_blocks.iter().enumerate().take(5) {
-			println!("  Block {}: path={}, symbols={:?}", i, block.path, block.symbols);
-		}
-		if all_code_blocks.len() > 5 {
-			println!("  ... and {} more blocks", all_code_blocks.len() - 5);
-		}
-		
 		// Initialize GraphBuilder
 		let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
 		
-		// Process all code blocks to build the graph
+		// Process code blocks to build the graph
 		graph_builder.process_code_blocks(&all_code_blocks).await?;
 		
 		println!("GraphRAG knowledge graph built successfully.");
+	} else if config.graphrag.enabled {
+		println!("No code blocks found or modified - GraphRAG knowledge graph remains unchanged.");
 	}
 
 	let mut state_guard = state.write();
@@ -678,8 +674,9 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 					process_text_blocks_batch(store, &text_blocks_batch, config).await?;
 				}
 				
-				// Update GraphRAG if enabled
+				// Update GraphRAG if enabled and we have new blocks
 				if config.graphrag.enabled && !all_code_blocks.is_empty() {
+					println!("GraphRAG: Processing {} blocks from changed file: {}", all_code_blocks.len(), file_path);
 					let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
 					graph_builder.process_code_blocks(&all_code_blocks).await?;
 				}
@@ -720,12 +717,12 @@ async fn process_file(
 
 	extract_meaningful_regions(tree.root_node(), contents, &lang_impl, &mut code_regions);
 
+	// Track the number of blocks we added to all_code_blocks for GraphRAG
+	let mut graphrag_blocks_added = 0;
+
 	for region in code_regions {
 		// Use a hash that's unique to both content and path
 		let content_hash = calculate_unique_content_hash(&region.content, file_path);
-		
-		// Debug print - commented out to reduce output size
-		// println!("Checking code region: path={}, hash={}, symbols={:?}", file_path, content_hash, region.symbols);
 		
 		// Skip the check if force_reindex is true
 		let exists = !force_reindex && store.content_exists(&content_hash, "code_blocks").await?;
@@ -734,8 +731,8 @@ async fn process_file(
 				path: file_path.to_string(),
 				hash: content_hash,
 				language: lang_impl.name().to_string(),
-				content: region.content.clone(),  // Clone here
-				symbols: region.symbols.clone(),  // Clone here
+				content: region.content.clone(),
+				symbols: region.symbols.clone(),
 				start_line: region.start_line,
 				end_line: region.end_line,
 				distance: None,  // No relevance score when indexing
@@ -745,22 +742,23 @@ async fn process_file(
 			code_blocks_batch.push(code_block.clone());
 			
 			// Add to all code blocks for GraphRAG
-			all_code_blocks.push(code_block);
-			// println!("Added block to GraphRAG: path={}, symbols={:?}", file_path, region.symbols);
-		} else {
-			// If skipping because block exists, but we need for GraphRAG, fetch from store
 			if config.graphrag.enabled {
-				if let Ok(existing_block) = store.get_code_block_by_hash(&content_hash).await {
-					// Add the existing block to the GraphRAG collection
-					all_code_blocks.push(existing_block);
-				}
+				all_code_blocks.push(code_block);
+				graphrag_blocks_added += 1;
 			}
-			// println!("Skipping existing block: path={}, hash={}", file_path, content_hash);
+		} else if config.graphrag.enabled {
+			// If skipping because block exists, but we need for GraphRAG, fetch from store
+			if let Ok(existing_block) = store.get_code_block_by_hash(&content_hash).await {
+				// Add the existing block to the GraphRAG collection
+				all_code_blocks.push(existing_block);
+				graphrag_blocks_added += 1;
+			}
 		}
 	}
 
 	let content_hash = calculate_unique_content_hash(contents, file_path);
-	if !store.content_exists(&content_hash, "text_blocks").await? {
+	let text_exists = !force_reindex && store.content_exists(&content_hash, "text_blocks").await?;
+	if !text_exists {
 		text_blocks_batch.push(TextBlock {
 			path: file_path.to_string(),
 			language: lang_impl.name().to_string(),
@@ -769,6 +767,11 @@ async fn process_file(
 			start_line: 0,
 			end_line: contents.lines().count(),
 		});
+	}
+
+	// If we're in verbose mode and GraphRAG is enabled, log what we found
+	if config.graphrag.enabled && graphrag_blocks_added > 0 {
+		println!("GraphRAG: Added {} blocks from {}", graphrag_blocks_added, file_path);
 	}
 
 	Ok(())

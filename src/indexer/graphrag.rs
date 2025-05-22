@@ -60,7 +60,7 @@ Code:
 
 Description:"#;
 
-// A prompt template for extracting relationships
+// A prompt template for extracting relationships for a single pair
 const RELATIONSHIP_PROMPT: &str = r#"You are an expert code analyzer.
 Your task is to identify relationships between two code entities and return them in JSON format.
 
@@ -90,6 +90,40 @@ Only respond with a JSON object containing the following fields:
 - exists: Boolean indicating whether a relationship exists at all
 
 Only return the JSON response and nothing else. If you do not detect any relationship, set exists to false."#;
+
+// Define a constant for multi-relationship batching
+const MULTI_REL_BATCH_PROMPT: &str = r#"You are an expert code analyzer.
+Your task is to identify relationships between multiple pairs of code entities and return them in JSON format.
+
+I will provide you with multiple pairs of code entities to analyze. For each pair, determine if there's a relationship between them.
+
+Format your response as a JSON array where each element contains:
+- source_id: ID of the source entity
+- target_id: ID of the target entity
+- relation_type: A simple relationship type like "calls", "imports", "extends", "implements", "uses", "defines", "references", etc.
+- description: A brief description of this relationship (max 1 sentence)
+- confidence: A number between 0.0 and 1.0 representing your confidence in this relationship
+- exists: Boolean indicating whether a relationship exists at all
+
+Only include pairs where a relationship exists (exists=true).
+
+Here are the code entity pairs to analyze:
+
+{pairs}
+
+Respond with a JSON array of relationships.
+"#;
+
+// Helper struct for batch relationship analysis request
+#[derive(Debug, Serialize, Deserialize)]
+struct BatchRelationshipResult {
+	source_id: String,
+	target_id: String,
+	relation_type: String,
+	description: String,
+	confidence: f32,
+	exists: bool,
+}
 
 // Manages the creation and storage of the code graph
 pub struct GraphBuilder {
@@ -286,41 +320,41 @@ impl GraphBuilder {
 
 		Ok(())
 	}
-	
+
 	// Save just the newly added nodes and relationships in batches
 	async fn save_graph_incremental(&self, new_nodes: &[CodeNode], new_relationships: &[CodeRelationship]) -> Result<()> {
 		if new_nodes.is_empty() && new_relationships.is_empty() {
 			// Nothing to save
 			return Ok(());
 		}
-		
+
 		// First, save any new nodes
 		if !new_nodes.is_empty() {
 			println!("Incrementally saving {} new GraphRAG nodes to database...", new_nodes.len());
-			
+
 			// Create a HashMap for the batch conversion function
 			let nodes_map: HashMap<String, CodeNode> = new_nodes.iter()
 				.map(|node| (node.id.clone(), node.clone()))
 				.collect();
-				
+
 			// Convert just these nodes to a RecordBatch
 			let nodes_batch = self.nodes_to_batch(&nodes_map).await?;
-			
+
 			// Store the nodes in the database (appending to existing data)
 			self.store.store_graph_nodes(nodes_batch).await?;
 		}
-		
+
 		// Now save any new relationships
 		if !new_relationships.is_empty() {
 			println!("Incrementally saving {} new GraphRAG relationships to database...", new_relationships.len());
-			
+
 			// Convert just these relationships to a RecordBatch
 			let rel_batch = self.relationships_to_batch(new_relationships).await?;
-			
+
 			// Store the relationships in the database (appending to existing data)
 			self.store.store_graph_relationships(rel_batch).await?;
 		}
-		
+
 		println!("GraphRAG knowledge graph incrementally updated successfully.");
 		Ok(())
 	}
@@ -445,11 +479,11 @@ impl GraphBuilder {
 		let mut new_nodes = Vec::new();
 		let mut processed_count = 0;
 		let mut skipped_count = 0;
-		
+
 		// Constants for batch processing
 		const BATCH_SIZE: usize = 20;  // Number of nodes to process before saving
 		const DESC_BATCH_SIZE: usize = 5;  // Number of descriptions to generate in a single batch
-		
+
 		// Prepare for batch description generation
 		let mut desc_batch = Vec::with_capacity(DESC_BATCH_SIZE);
 		let mut desc_blocks = Vec::with_capacity(DESC_BATCH_SIZE);
@@ -477,54 +511,54 @@ impl GraphBuilder {
 				_ => true
 			};
 			drop(graph); // Release the lock
-			
+
 			if needs_processing {
 				// Add to the description batch
 				desc_batch.push(block.content.clone());
 				desc_blocks.push(block.clone());
 				desc_names.push(node_name);
 				desc_ids.push(node_id);
-				
+
 				// Process batch if we've reached the batch size
 				if desc_batch.len() >= DESC_BATCH_SIZE {
 					let batch_nodes = self.process_description_batch(
 						&desc_batch, &desc_blocks, &desc_names, &desc_ids
 					).await?;
 					new_nodes.extend(batch_nodes);
-					
+
 					// Clear batch buffers
 					desc_batch.clear();
 					desc_blocks.clear();
 					desc_names.clear();
 					desc_ids.clear();
-					
+
 					processed_count += DESC_BATCH_SIZE;
-					
+
 					// Process and save if we've reached BATCH_SIZE nodes
 					if new_nodes.len() >= BATCH_SIZE {
 						let batch_nodes = new_nodes.clone();
-						
+
 						// Discover relationships and save this batch
 						let relationships = self.discover_relationships_batch(&batch_nodes).await?;
 						if !relationships.is_empty() {
 							let mut graph = self.graph.write().await;
 							graph.relationships.extend(relationships.clone());
 							drop(graph);
-							
+
 							// Save incrementally
 							self.save_graph_incremental(&batch_nodes, &relationships).await?;
 						} else {
 							// Save just the nodes incrementally
 							self.save_graph_incremental(&batch_nodes, &[]).await?;
 						}
-						
+
 						// Clear the new_nodes for the next batch
 						new_nodes.clear();
 					}
 				}
 			}
 		}
-		
+
 		// Process any remaining blocks in the description batch
 		if !desc_batch.is_empty() {
 			let batch_nodes = self.process_description_batch(
@@ -537,14 +571,14 @@ impl GraphBuilder {
 		// Process any remaining nodes
 		if !new_nodes.is_empty() {
 			let batch_nodes = new_nodes.clone();
-			
+
 			// Discover relationships for the final batch
 			let relationships = self.discover_relationships_batch(&batch_nodes).await?;
 			if !relationships.is_empty() {
 				let mut graph = self.graph.write().await;
 				graph.relationships.extend(relationships.clone());
 				drop(graph);
-				
+
 				// Save the final batch incrementally
 				self.save_graph_incremental(&batch_nodes, &relationships).await?;
 			} else {
@@ -558,27 +592,27 @@ impl GraphBuilder {
 
 		Ok(())
 	}
-	
+
 	// Process a batch of descriptions in one API call
 	async fn process_description_batch(
-		&self, 
-		content_batch: &[String], 
-		blocks: &[CodeBlock], 
-		names: &[String], 
+		&self,
+		content_batch: &[String],
+		blocks: &[CodeBlock],
+		names: &[String],
 		ids: &[String]
 	) -> Result<Vec<CodeNode>> {
 		let mut new_nodes = Vec::new();
-		
+
 		// Generate descriptions in a batch
 		let descriptions = self.extract_descriptions_batch(content_batch).await?;
-		
+
 		// Process each node with its description
 		for i in 0..descriptions.len() {
 			let block = &blocks[i];
 			let node_name = &names[i];
 			let node_id = &ids[i];
 			let description = &descriptions[i];
-			
+
 			// Generate embedding for the node
 			let embedding = self.generate_embedding(&format!("{} {}", node_name, description)).await?;
 
@@ -598,35 +632,35 @@ impl GraphBuilder {
 			let mut graph = self.graph.write().await;
 			graph.nodes.insert(node_id.clone(), node.clone());
 			drop(graph);
-			
+
 			new_nodes.push(node);
 		}
-		
+
 		Ok(new_nodes)
 	}
-	
+
 	// Extract descriptions for a batch of code blocks in one API call
 	async fn extract_descriptions_batch(&self, code_blocks: &[String]) -> Result<Vec<String>> {
 		if code_blocks.is_empty() {
 			return Ok(Vec::new());
 		}
-		
+
 		// If there's just one block, use the single-block method
 		if code_blocks.len() == 1 {
 			let description = self.extract_description(&code_blocks[0]).await?;
 			return Ok(vec![description]);
 		}
-		
+
 		println!("Generating {} descriptions in a batch", code_blocks.len());
-		
+
 		// Prepare a batch prompt for multiple code blocks
 		let mut batch_prompt = String::from("You are an expert code summarizer. Provide brief, clear descriptions of what each code block does. \n");
 		batch_prompt.push_str("Limit each description to 2 sentences maximum, focusing only on the main functionality. \n");
 		batch_prompt.push_str("Don't list parameters or mention \"this code\" or \"this function\". \n");
 		batch_prompt.push_str("Don't use codeblocks or formatting. \n\n");
-		batch_prompt.push_str("Format your response as a JSON array with one description per code block. \n\n");
+		batch_prompt.push_str("Respond with a JSON object that has a 'descriptions' field containing an array with one description per code block. \n\n");
 		batch_prompt.push_str("Code blocks to describe: \n\n");
-		
+
 		// Add each code block
 		for (i, code) in code_blocks.iter().enumerate() {
 			// Truncate code if it's too long
@@ -635,21 +669,29 @@ impl GraphBuilder {
 			} else {
 				code.clone()
 			};
-			
+
 			batch_prompt.push_str(&format!("Block #{}: ```\n{}\n```\n\n", i+1, truncated_code));
 		}
-		
-		// Prepare the JSON schema for the response
+
+		// Prepare the JSON schema for the response - using an object with array property
+		// as required by OpenAI
 		let schema = json!({
-			"type": "array",
-			"items": {
-				"type": "string",
-				"description": "A brief description of the code block"
+			"type": "object",
+			"properties": {
+				"descriptions": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"description": "A brief description of the code block"
+					},
+					"minItems": code_blocks.len(),
+					"maxItems": code_blocks.len()
+				}
 			},
-			"minItems": code_blocks.len(),
-			"maxItems": code_blocks.len()
+			"required": ["descriptions"],
+			"additionalProperties": false
 		});
-		
+
 		// Call the LLM with the batch prompt
 		match self.call_llm(
 			&self.config.graphrag.description_model,
@@ -673,7 +715,7 @@ impl GraphBuilder {
 						}).collect()
 					}
 				};
-				
+
 				// Cleanup and truncate descriptions
 				let cleaned_descriptions: Vec<String> = descriptions.iter().map(|desc| {
 					let description = desc.trim();
@@ -683,7 +725,7 @@ impl GraphBuilder {
 						description.to_string()
 					}
 				}).collect();
-				
+
 				Ok(cleaned_descriptions)
 			},
 			Err(e) => {
@@ -700,13 +742,13 @@ impl GraphBuilder {
 			}
 		}
 	}
-	
+
 	// Discover relationships in a batch and return them without modifying the graph
 	async fn discover_relationships_batch(&self, new_nodes: &[CodeNode]) -> Result<Vec<CodeRelationship>> {
 		if new_nodes.is_empty() {
 			return Ok(Vec::new());
 		}
-		
+
 		println!("Discovering relationships among {} nodes in batch", new_nodes.len());
 
 		// Get a read lock on the graph to access existing nodes
@@ -715,47 +757,156 @@ impl GraphBuilder {
 			graph.nodes.values().cloned().collect::<Vec<CodeNode>>()
 		}; // The lock is released when the block ends
 
-		let mut new_relationships = Vec::new();
 		let mut relationship_candidates = Vec::new();
 
 		// First pass: collect all potential relationship pairs to analyze
 		for source_node in new_nodes {
 			// Find similar nodes based on embeddings for efficiency
 			let candidate_nodes = self.find_similar_nodes(source_node, &nodes_from_graph, 3)?;
-			
+
 			for target_node in candidate_nodes {
 				// Skip self-relationships
 				if source_node.id == target_node.id {
 					continue;
 				}
-				
+
 				// Add to candidates list
 				relationship_candidates.push((source_node.clone(), target_node.clone()));
 			}
 		}
-		
+
 		// Process relationship candidates in batches
 		const REL_BATCH_SIZE: usize = 5; // Number of relationships to analyze in a single batch
 		let total_candidates = relationship_candidates.len();
-		
-		for chunk in relationship_candidates.chunks(REL_BATCH_SIZE) {
-			let mut batch_results = Vec::new();
-			
-			// Process this chunk of candidates
-			for (source, target) in chunk {
-				// Analyze the relationship individually for now
-				// Future improvement: create a batched version of analyze_relationship
-				if let Some(relationship) = self.analyze_relationship(source, target).await? {
-					batch_results.push(relationship);
-				}
-			}
-			
-			// Add this batch of relationships to our results
-			new_relationships.extend(batch_results);
+
+		// If no candidates, return empty result
+		if relationship_candidates.is_empty() {
+			return Ok(Vec::new());
 		}
-		
+
+		// Use the optimized batch analysis if we have multiple candidates
+		if relationship_candidates.len() >= 2 {
+			let results = self.analyze_relationships_batch(&relationship_candidates).await?;
+			println!("Found {} relationships from {} candidates using batch analysis", results.len(), total_candidates);
+			return Ok(results);
+		}
+
+		// Fallback to individual analysis for small batches
+		let mut new_relationships = Vec::new();
+		for (source, target) in relationship_candidates {
+			if let Some(relationship) = self.analyze_relationship(&source, &target).await? {
+				new_relationships.push(relationship);
+			}
+		}
+
 		println!("Found {} relationships from {} candidates", new_relationships.len(), total_candidates);
 		Ok(new_relationships)
+	}
+
+	// Analyze a batch of relationship candidates in a single API call
+	async fn analyze_relationships_batch(&self, candidates: &[(CodeNode, CodeNode)]) -> Result<Vec<CodeRelationship>> {
+		println!("Analyzing batch of {} potential relationships", candidates.len());
+
+		// Prepare the prompt with multiple pairs
+		let mut pairs_content = String::new();
+
+		// Add each pair to the prompt
+		for (i, (source, target)) in candidates.iter().enumerate() {
+			pairs_content.push_str(&format!("Pair #{}:\n", i+1));
+			pairs_content.push_str(&format!("Source ID: {}\n", source.id));
+			pairs_content.push_str(&format!("Source Name: {}\n", source.name));
+			pairs_content.push_str(&format!("Source Kind: {}\n", source.kind));
+			pairs_content.push_str(&format!("Source Description: {}\n", source.description));
+			pairs_content.push_str(&format!("Source Code: ```\n{}\n```\n\n", self.get_truncated_node_code(source)));
+
+			pairs_content.push_str(&format!("Target ID: {}\n", target.id));
+			pairs_content.push_str(&format!("Target Name: {}\n", target.name));
+			pairs_content.push_str(&format!("Target Kind: {}\n", target.kind));
+			pairs_content.push_str(&format!("Target Description: {}\n", target.description));
+			pairs_content.push_str(&format!("Target Code: ```\n{}\n```\n\n", self.get_truncated_node_code(target)));
+			pairs_content.push_str("-------------------\n\n");
+		}
+
+		// Create the final prompt
+		let prompt = MULTI_REL_BATCH_PROMPT.replace("{pairs}", &pairs_content);
+
+let schema = json!({
+    "type": "object",
+    "properties": {
+        "relationships": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "target_id": {"type": "string"},
+                    "relation_type": {"type": "string"},
+                    "description": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "exists": {"type": "boolean"}
+                },
+                "required": ["source_id", "target_id", "relation_type", "description", "confidence", "exists"],
+				"additionalProperties": false
+
+            }
+        }
+    },
+    "required": ["relationships"],
+	"additionalProperties": false
+});
+
+		// Call the relationship detection model
+		match self.call_llm(
+			&self.config.graphrag.relationship_model,
+			prompt,
+			Some(schema),
+		).await {
+			Ok(response) => {
+// Parse the JSON object response
+let response_obj: serde_json::Value = match serde_json::from_str(&response) {
+    Ok(obj) => obj,
+    Err(e) => {
+        eprintln!("Failed to parse batch relationship response: {} - Error: {}", response, e);
+        return Ok(Vec::new());
+    }
+};
+
+// Extract the relationships array
+let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relationships").and_then(|r| r.as_array()) {
+    Some(array) => {
+        match serde_json::from_value(serde_json::Value::Array(array.clone())) {
+            Ok(results) => results,
+            Err(e) => {
+                eprintln!("Failed to convert relationships array: {}", e);
+                Vec::new()
+            }
+        }
+    },
+    None => {
+        eprintln!("Warning: 'relationships' field not found or not an array");
+        Vec::new()
+    }
+};
+				// Convert batch results to CodeRelationships
+				let relationships: Vec<CodeRelationship> = batch_results.into_iter()
+					.filter(|r| r.exists) // Only include relationships that exist
+					.map(|r| CodeRelationship {
+						source: r.source_id,
+						target: r.target_id,
+						relation_type: r.relation_type,
+						description: r.description,
+						confidence: r.confidence,
+					})
+					.collect();
+
+				Ok(relationships)
+			},
+			Err(e) => {
+				// If API call fails, log the error and return empty list
+				eprintln!("Warning: Failed to analyze batch relationships: {}", e);
+				Ok(Vec::new())
+			}
+		}
 	}
 
 	// Extract the node name from a code block
@@ -1029,7 +1180,7 @@ impl GraphBuilder {
 			"role": "user",
 			"content": prompt
 		}],
-			"max_tokens": 200
+			// "max_tokens": 200
 		});
 
 		// Only add response_format if schema is provided
@@ -1109,11 +1260,31 @@ impl GraphBuilder {
 
 		// Calculate similarity to each node
 		let mut similarities: Vec<(f32, CodeNode)> = Vec::new();
+		let query_lower = query.to_lowercase();
+		
 		for node in nodes_array {
+			// Calculate semantic similarity
 			let similarity = cosine_similarity(&query_embedding, &node.embedding);
-			// Only include reasonably similar nodes (threshold 0.6)
-			if similarity > 0.6 {
-				similarities.push((similarity, node));
+			
+			// Check if the query is a substring of various node fields
+			// This handles specific cases like searching for "impl"
+			let name_contains = node.name.to_lowercase().contains(&query_lower);
+			let kind_contains = node.kind.to_lowercase().contains(&query_lower);
+			let desc_contains = node.description.to_lowercase().contains(&query_lower);
+			let symbols_contain = node.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
+			
+			// Use a lower threshold for semantic similarity (0.5 instead of 0.6)
+			// OR include if the query is a substring of any important field
+			if similarity > 0.5 || name_contains || kind_contains || desc_contains || symbols_contain {
+				// Boost similarity score for exact matches to ensure they appear at the top
+				let boosted_similarity = if name_contains || kind_contains || symbols_contain {
+					// Ensure exact matches get higher priority
+					0.9_f32.max(similarity)
+				} else {
+					similarity
+				};
+				
+				similarities.push((boosted_similarity, node));
 			}
 		}
 
@@ -1138,14 +1309,15 @@ impl GraphBuilder {
 			return Ok(Vec::new()); // No nodes in database
 		}
 
-		// Search for nodes similar to the query
-		let node_batch = self.store.search_graph_nodes(&query_embedding, 20).await?;
+		// Search for nodes similar to the query (increased limit to 50)
+		let node_batch = self.store.search_graph_nodes(&query_embedding, 50).await?;
 		if node_batch.num_rows() == 0 {
 			return Ok(Vec::new());
 		}
 
 		// Process the results into CodeNode objects
 		let mut nodes = Vec::new();
+		let query_lower = query.to_lowercase();
 
 		// Extract columns from the batch
 		let id_array = node_batch.column_by_name("id").unwrap().as_any().downcast_ref::<arrow::array::StringArray>().unwrap();
@@ -1194,21 +1366,56 @@ impl GraphBuilder {
 				embedding.push(embedding_values.value(embedding_offset + j));
 			}
 
-			// Create the node
-			let node = CodeNode {
-				id,
-				name,
-				kind,
-				path,
-				description,
-				symbols,
-				hash,
-				embedding,
-			};
+			// Calculate semantic similarity
+			let similarity = cosine_similarity(&query_embedding, &embedding);
+			
+			// Check if the query is a substring of various node fields
+			let name_contains = name.to_lowercase().contains(&query_lower);
+			let kind_contains = kind.to_lowercase().contains(&query_lower);
+			let desc_contains = description.to_lowercase().contains(&query_lower);
+			let symbols_contain = symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
+			
+			// Use a lower threshold for semantic similarity (0.5 instead of 0.6)
+			// OR include if the query is a substring of any important field
+			if similarity > 0.5 || name_contains || kind_contains || desc_contains || symbols_contain {
+				// Create the node
+				let node = CodeNode {
+					id,
+					name,
+					kind,
+					path,
+					description,
+					symbols,
+					hash,
+					embedding,
+				};
 
-			// Add to results
-			nodes.push(node);
+				// Add to results
+				nodes.push(node);
+			}
 		}
+
+		// Sort nodes by relevance (exact matches first, then by similarity)
+		nodes.sort_by(|a, b| {
+			let a_contains = a.name.to_lowercase().contains(&query_lower) || 
+			               a.kind.to_lowercase().contains(&query_lower) ||
+			               a.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
+			
+			let b_contains = b.name.to_lowercase().contains(&query_lower) || 
+			               b.kind.to_lowercase().contains(&query_lower) ||
+			               b.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
+			
+			if a_contains && !b_contains {
+				return std::cmp::Ordering::Less;
+			} else if !a_contains && b_contains {
+				return std::cmp::Ordering::Greater;
+			} else {
+				// Both contain or both don't contain, sort by similarity
+				let a_sim = cosine_similarity(&query_embedding, &a.embedding);
+				let b_sim = cosine_similarity(&query_embedding, &b.embedding);
+				return b_sim.partial_cmp(&a_sim).unwrap_or(std::cmp::Ordering::Equal);
+			}
+		});
 
 		Ok(nodes)
 	}

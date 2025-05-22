@@ -45,21 +45,86 @@ pub async fn display_indexing_progress(state: Arc<RwLock<state::IndexState>>) {
 	let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 	let mut spinner_idx = 0;
 	let mut last_indexed = 0;
+	let mut last_graphrag_blocks = 0;
+	let mut last_graphrag_files = 0;
+	let mut indexing_complete = false;
 
-	while !state.read().indexing_complete {
-		let current_indexed = state.read().indexed_files;
-		if current_indexed != last_indexed {
-			print!("\r{} Indexing: {} files",
-				spinner_chars[spinner_idx],
-				current_indexed
-			);
+	while !indexing_complete {
+		// Gather all necessary state in local variables before the await
+		let current_indexed;
+		let graphrag_blocks;
+		let graphrag_files;
+		let status_message;
+		let graphrag_enabled;
+		
+		{
+			let current_state = state.read();
+			current_indexed = current_state.indexed_files;
+			graphrag_blocks = current_state.graphrag_blocks;
+			graphrag_files = current_state.graphrag_files.len();
+			status_message = current_state.status_message.clone();
+			graphrag_enabled = current_state.graphrag_enabled;
+			indexing_complete = current_state.indexing_complete; // Update our loop control variable
+			// Lock is dropped here when we exit the scope
+		}
+
+		// Exit early if indexing is complete
+		if indexing_complete {
+			break;
+		}
+
+		// Only redraw if something changed or on spinner change
+		if current_indexed != last_indexed || 
+		   graphrag_blocks != last_graphrag_blocks || 
+		   graphrag_files != last_graphrag_files {
+			// Clear the line and move cursor to beginning with \r
+			print!("\r");
+			
+			// Build display string
+			if !graphrag_enabled {
+				print!("{} Indexing: {} files",
+					spinner_chars[spinner_idx],
+					current_indexed
+				);
+			} else {
+				print!("{} Indexing: {} files{}{}",
+					spinner_chars[spinner_idx],
+					current_indexed,
+					if graphrag_blocks > 0 { format!(", GraphRAG: {} blocks", graphrag_blocks) } else { String::new() },
+					if graphrag_files > 0 { format!(", {} files", graphrag_files) } else { String::new() }
+				);
+			}
+			
+			// Add status message if there is one
+			if !status_message.is_empty() {
+				print!(": {}", status_message);
+			}
+			
 			std::io::stdout().flush().unwrap();
 			last_indexed = current_indexed;
+			last_graphrag_blocks = graphrag_blocks;
+			last_graphrag_files = graphrag_files;
 		} else {
-			print!("\r{} Indexing: {} files",
-				spinner_chars[spinner_idx],
-				current_indexed
-			);
+			// Just update the spinner
+			print!("\r");
+			if !graphrag_enabled {
+				print!("{} Indexing: {} files",
+					spinner_chars[spinner_idx],
+					current_indexed
+				);
+			} else {
+				print!("{} Indexing: {} files{}{}",
+					spinner_chars[spinner_idx],
+					current_indexed,
+					if graphrag_blocks > 0 { format!(", GraphRAG: {} blocks", graphrag_blocks) } else { String::new() },
+					if graphrag_files > 0 { format!(", {} files", graphrag_files) } else { String::new() }
+				);
+			}
+			
+			// Add status message if there is one
+			if !status_message.is_empty() {
+				print!(": {}", status_message);
+			}
 			std::io::stdout().flush().unwrap();
 		}
 
@@ -67,5 +132,26 @@ pub async fn display_indexing_progress(state: Arc<RwLock<state::IndexState>>) {
 		tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 	}
 
-	println!("\rIndexing complete! Total files indexed: {}", state.read().indexed_files);
+	// Final summary message
+	let final_indexed;
+	let final_graphrag_enabled;
+	let final_graphrag_blocks;
+	let final_graphrag_files;
+	
+	{
+		let final_state = state.read();
+		final_indexed = final_state.indexed_files;
+		final_graphrag_enabled = final_state.graphrag_enabled;
+		final_graphrag_blocks = final_state.graphrag_blocks;
+		final_graphrag_files = final_state.graphrag_files.len();
+	}
+	
+	if !final_graphrag_enabled {
+		print!("\r");
+		println!("Indexing complete! Total files indexed: {}", final_indexed);
+	} else {
+		print!("\r");
+		println!("Indexing complete! Files: {}, GraphRAG: {} blocks across {} files", 
+			final_indexed, final_graphrag_blocks, final_graphrag_files);
+	}
 }

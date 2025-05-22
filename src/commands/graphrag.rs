@@ -241,7 +241,7 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 				Some(id) => id,
 				None => {
 					eprintln!("Error: 'source_id' parameter is required for find_path operation.");
-					eprintln!("Example: octodev graphrag find-path --source_id \"src/main.rs/main\" --target_id \"src/config.rs/load\"");
+					eprintln!("Example: octodev graphrag find-path --source-id \"src/main.rs/main\" --target-id \"src/config.rs/load\"");
 					return Ok(());
 				}
 			};
@@ -250,7 +250,7 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 				Some(id) => id,
 				None => {
 					eprintln!("Error: 'target_id' parameter is required for find_path operation.");
-					eprintln!("Example: octodev graphrag find-path --source_id \"src/main.rs/main\" --target_id \"src/config.rs/load\"");
+					eprintln!("Example: octodev graphrag find-path --source-id \"src/main.rs/main\" --target-id \"src/config.rs/load\"");
 					return Ok(());
 				}
 			};

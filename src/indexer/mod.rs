@@ -539,6 +539,14 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 	const BATCH_SIZE: usize = 10;
 	let mut embedding_calls = 0;
 
+	// Initialize GraphRAG state if enabled
+	{
+		let mut state_guard = state.write();
+		state_guard.graphrag_enabled = config.graphrag.enabled;
+		state_guard.graphrag_blocks = 0;
+		state_guard.graphrag_files.clear();
+	}
+
 	// Use the ignore crate to respect .gitignore files
 	let walker = ignore::WalkBuilder::new(&current_dir)
 		.hidden(false)  // Don't ignore hidden files (unless in .gitignore)
@@ -568,7 +576,8 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 					&mut code_blocks_batch,
 					&mut text_blocks_batch,
 					&mut all_code_blocks,
-					config
+					config,
+					state.clone()
 				).await?;
 
 				state.write().indexed_files += 1;
@@ -600,19 +609,16 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		let mut state_guard = state.write();
 		state_guard.status_message = "Building GraphRAG knowledge graph...".to_string();
 		drop(state_guard);
-		
-		// Print status
-		println!("Building GraphRAG knowledge graph from {} code blocks...", all_code_blocks.len());
-		
+
 		// Initialize GraphBuilder
 		let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
 		
 		// Process code blocks to build the graph
-		graph_builder.process_code_blocks(&all_code_blocks).await?;
+		graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
 		
-		println!("GraphRAG knowledge graph built successfully.");
-	} else if config.graphrag.enabled {
-		println!("No code blocks found or modified - GraphRAG knowledge graph remains unchanged.");
+		// Update final state
+		let mut state_guard = state.write();
+		state_guard.status_message = "".to_string();
 	}
 
 	let mut state_guard = state.write();
@@ -624,6 +630,15 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 
 // Function to handle file changes (for watch mode)
 pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config) -> Result<()> {
+	// Create a state for tracking changes
+	let state = state::create_shared_state();
+	{
+		let mut state_guard = state.write();
+		state_guard.graphrag_enabled = config.graphrag.enabled;
+		state_guard.graphrag_blocks = 0;
+		state_guard.graphrag_files.clear();
+	}
+
 	// First, let's remove any existing code blocks for this file path
 	store.remove_blocks_by_path(file_path).await?;
 
@@ -664,7 +679,8 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 					&mut code_blocks_batch,
 					&mut text_blocks_batch,
 					&mut all_code_blocks,
-					config
+					config,
+					state.clone()
 				).await?;
 
 				if !code_blocks_batch.is_empty() {
@@ -676,9 +692,8 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 				
 				// Update GraphRAG if enabled and we have new blocks
 				if config.graphrag.enabled && !all_code_blocks.is_empty() {
-					println!("GraphRAG: Processing {} blocks from changed file: {}", all_code_blocks.len(), file_path);
 					let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
-					graph_builder.process_code_blocks(&all_code_blocks).await?;
+					graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
 				}
 			}
 		}
@@ -697,6 +712,7 @@ async fn process_file(
 	text_blocks_batch: &mut Vec<TextBlock>,
 	all_code_blocks: &mut Vec<CodeBlock>,
 	config: &Config,
+	state: SharedState,
 ) -> Result<()> {
 	let mut parser = Parser::new();
 	
@@ -769,9 +785,11 @@ async fn process_file(
 		});
 	}
 
-	// If we're in verbose mode and GraphRAG is enabled, log what we found
+	// Update GraphRAG state if enabled and blocks were added
 	if config.graphrag.enabled && graphrag_blocks_added > 0 {
-		println!("GraphRAG: Added {} blocks from {}", graphrag_blocks_added, file_path);
+		let mut state_guard = state.write();
+		state_guard.graphrag_blocks += graphrag_blocks_added;
+		state_guard.graphrag_files.insert(file_path.to_string());
 	}
 
 	Ok(())

@@ -10,6 +10,10 @@ pub struct IndexState {
 	pub indexing_complete: bool,
 	pub status_message: String,
 	pub force_reindex: bool,
+	// GraphRAG state tracking
+	pub graphrag_enabled: bool,
+	pub graphrag_blocks: usize,
+	pub graphrag_files: std::collections::HashSet<String>,
 }
 
 pub type SharedState = Arc<RwLock<IndexState>>;

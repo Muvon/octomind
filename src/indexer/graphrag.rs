@@ -15,6 +15,7 @@ use serde_json::json;
 use fastembed::{TextEmbedding, EmbeddingModel, InitOptions};
 use std::fs;
 use std::path::Path;
+use crate::state::SharedState;
 
 // A node in the code graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,8 +332,6 @@ impl GraphBuilder {
 
 		// First, save any new nodes
 		if !new_nodes.is_empty() {
-			println!("Incrementally saving {} new GraphRAG nodes to database...", new_nodes.len());
-
 			// Create a HashMap for the batch conversion function
 			let nodes_map: HashMap<String, CodeNode> = new_nodes.iter()
 				.map(|node| (node.id.clone(), node.clone()))
@@ -347,8 +346,6 @@ impl GraphBuilder {
 
 		// Now save any new relationships
 		if !new_relationships.is_empty() {
-			println!("Incrementally saving {} new GraphRAG relationships to database...", new_relationships.len());
-
 			// Convert just these relationships to a RecordBatch
 			let rel_batch = self.relationships_to_batch(new_relationships).await?;
 
@@ -356,7 +353,6 @@ impl GraphBuilder {
 			self.store.store_graph_relationships(rel_batch).await?;
 		}
 
-		println!("GraphRAG knowledge graph incrementally updated successfully.");
 		Ok(())
 	}
 
@@ -475,7 +471,7 @@ impl GraphBuilder {
 	}
 
 	// Process a batch of code blocks and update the graph with batching and incremental saving
-	pub async fn process_code_blocks(&self, code_blocks: &[CodeBlock]) -> Result<()> {
+	pub async fn process_code_blocks(&self, code_blocks: &[CodeBlock], state: Option<SharedState>) -> Result<()> {
 		// Create nodes for code blocks that are new or have changed
 		let mut new_nodes = Vec::new();
 		let mut processed_count = 0;
@@ -588,8 +584,15 @@ impl GraphBuilder {
 			}
 		}
 
-		// Report total processing stats
-		println!("GraphRAG: Completed processing {} new/changed nodes (skipped {} unchanged)", processed_count, skipped_count);
+		// If we have state, update the completed message
+		if let Some(state) = state {
+			// Use the state to update progress instead of printing
+			let mut state_guard = state.write();
+			state_guard.status_message = format!("GraphRAG processing complete: {} new/changed nodes", processed_count);
+		} else {
+			// Report total processing stats if no state provided
+			println!("GraphRAG: Completed processing {} new/changed nodes (skipped {} unchanged)", processed_count, skipped_count);
+		}
 
 		Ok(())
 	}
@@ -652,8 +655,6 @@ impl GraphBuilder {
 			return Ok(vec![description]);
 		}
 
-		println!("Generating {} descriptions in a batch", code_blocks.len());
-
 		// Prepare a batch prompt for multiple code blocks
 		let mut batch_prompt = String::from("You are an expert code summarizer. Provide brief, clear descriptions of what each code block does. \n");
 		batch_prompt.push_str("Limit each description to 2 sentences maximum, focusing only on the main functionality. \n");
@@ -704,7 +705,7 @@ impl GraphBuilder {
 				let descriptions: Vec<String> = match serde_json::from_str(&response) {
 					Ok(descs) => descs,
 					Err(e) => {
-						eprintln!("Warning: Failed to parse descriptions batch: {}", e);
+						eprintln!("Error parsing descriptions batch: {}", e);
 						// Fallback: generate placeholder descriptions
 						code_blocks.iter().map(|code| {
 							let first_line = code.lines().next().unwrap_or("").trim();
@@ -750,8 +751,6 @@ impl GraphBuilder {
 			return Ok(Vec::new());
 		}
 
-		println!("Discovering relationships among {} nodes in batch", new_nodes.len());
-
 		// Get a read lock on the graph to access existing nodes
 		let nodes_from_graph = {
 			let graph = self.graph.read().await;
@@ -785,13 +784,12 @@ impl GraphBuilder {
 		// Use the optimized batch analysis if we have multiple candidates
 		if relationship_candidates.len() >= 2 {
 			let results = self.analyze_relationships_batch(&relationship_candidates).await?;
-			println!("Found {} relationships from {} candidates using batch analysis", results.len(), relationship_candidates.len());
 			return Ok(results);
 		}
 
 		// Fallback to individual analysis for small batches
 		let mut new_relationships = Vec::new();
-		let candidates_count = relationship_candidates.len();
+		let _candidates_count = relationship_candidates.len();
 
 		for (source, target) in relationship_candidates {
 			if let Some(relationship) = self.analyze_relationship(&source, &target).await? {
@@ -799,14 +797,11 @@ impl GraphBuilder {
 			}
 		}
 
-		println!("Found {} relationships from {} candidates", new_relationships.len(), candidates_count);
 		Ok(new_relationships)
 	}
 
 	// Analyze a batch of relationship candidates in a single API call
 	async fn analyze_relationships_batch(&self, candidates: &[(CodeNode, CodeNode)]) -> Result<Vec<CodeRelationship>> {
-		println!("Analyzing batch of {} potential relationships", candidates.len());
-
 		// Prepare the prompt with multiple pairs
 		let mut pairs_content = String::new();
 
@@ -830,30 +825,30 @@ impl GraphBuilder {
 		// Create the final prompt
 		let prompt = MULTI_REL_BATCH_PROMPT.replace("{pairs}", &pairs_content);
 
-let schema = json!({
-    "type": "object",
-    "properties": {
-        "relationships": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "source_id": {"type": "string"},
-                    "target_id": {"type": "string"},
-                    "relation_type": {"type": "string"},
-                    "description": {"type": "string"},
-                    "confidence": {"type": "number"},
-                    "exists": {"type": "boolean"}
-                },
-                "required": ["source_id", "target_id", "relation_type", "description", "confidence", "exists"],
-				"additionalProperties": false
+		let schema = json!({
+			"type": "object",
+			"properties": {
+				"relationships": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"source_id": {"type": "string"},
+							"target_id": {"type": "string"},
+							"relation_type": {"type": "string"},
+							"description": {"type": "string"},
+							"confidence": {"type": "number"},
+							"exists": {"type": "boolean"}
+						},
+						"required": ["source_id", "target_id", "relation_type", "description", "confidence", "exists"],
+						"additionalProperties": false
 
-            }
-        }
-    },
-    "required": ["relationships"],
-	"additionalProperties": false
-});
+					}
+				}
+			},
+			"required": ["relationships"],
+			"additionalProperties": false
+		});
 
 		// Call the relationship detection model
 		match self.call_llm(
@@ -862,31 +857,31 @@ let schema = json!({
 			Some(schema),
 		).await {
 			Ok(response) => {
-// Parse the JSON object response
-let response_obj: serde_json::Value = match serde_json::from_str(&response) {
-    Ok(obj) => obj,
-    Err(e) => {
-        eprintln!("Failed to parse batch relationship response: {} - Error: {}", response, e);
-        return Ok(Vec::new());
-    }
-};
+				// Parse the JSON object response
+				let response_obj: serde_json::Value = match serde_json::from_str(&response) {
+					Ok(obj) => obj,
+					Err(e) => {
+						eprintln!("Failed to parse batch relationship response: {}", e);
+						return Ok(Vec::new());
+					}
+				};
 
-// Extract the relationships array
-let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relationships").and_then(|r| r.as_array()) {
-    Some(array) => {
-        match serde_json::from_value(serde_json::Value::Array(array.clone())) {
-            Ok(results) => results,
-            Err(e) => {
-                eprintln!("Failed to convert relationships array: {}", e);
-                Vec::new()
-            }
-        }
-    },
-    None => {
-        eprintln!("Warning: 'relationships' field not found or not an array");
-        Vec::new()
-    }
-};
+				// Extract the relationships array
+				let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relationships").and_then(|r| r.as_array()) {
+					Some(array) => {
+						match serde_json::from_value(serde_json::Value::Array(array.clone())) {
+							Ok(results) => results,
+							Err(e) => {
+								eprintln!("Failed to convert relationships array: {}", e);
+								Vec::new()
+							}
+						}
+					},
+					None => {
+						eprintln!("Warning: 'relationships' field not found or not an array");
+						Vec::new()
+					}
+				};
 				// Convert batch results to CodeRelationships
 				let relationships: Vec<CodeRelationship> = batch_results.into_iter()
 					.filter(|r| r.exists) // Only include relationships that exist
@@ -1059,8 +1054,6 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 
 	// Analyze the relationship between two nodes using an LLM
 	async fn analyze_relationship(&self, source: &CodeNode, target: &CodeNode) -> Result<Option<CodeRelationship>> {
-		println!("Analyzing relationship between {} and {}", source.name, target.name);
-
 		// Prepare the prompt with the node information
 		let prompt = RELATIONSHIP_PROMPT
 			.replace("{source_name}", &source.name)
@@ -1111,7 +1104,7 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 					Ok(result) => result,
 					Err(e) => {
 						// If we can't parse the response, log it and return None
-						eprintln!("Failed to parse relationship response: {} - Error: {}", response, e);
+						eprintln!("Failed to parse relationship response: {}", e);
 						return Ok(None);
 					}
 				};
@@ -1165,9 +1158,6 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 
 	// Call an LLM with the given prompt
 	async fn call_llm(&self, model_name: &str, prompt: String, json_schema: Option<serde_json::Value>) -> Result<String> {
-		// Debug print for model name
-		println!("Using model: {}", model_name);
-
 		// Check if we have an API key configured
 		let api_key = match &self.config.openrouter.api_key {
 			Some(key) => key.clone(),

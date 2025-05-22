@@ -80,7 +80,7 @@ pub async fn process_layered_response(
 		println!("{}", "Using layered processing".bright_cyan());
 	}
 
-	// Check for tool calls in the developer layer output
+	// Check for tool calls in the output from the last layer
 	if config.mcp.enabled {
 		// Create a new cancellation flag to avoid any "Operation cancelled" messages when not requested
 		let fresh_tool_cancellation = Arc::new(AtomicBool::new(false));

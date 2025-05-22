@@ -112,6 +112,7 @@ pub struct OpenRouterConfig {
 	#[serde(default)]
 	pub context_generator_model: Option<String>,
 	#[serde(default)]
+	// DEPRECATED: Specific model for developer layer (will be removed in future)
 	pub developer_model: Option<String>,
 	#[serde(default)]
 	pub reducer_model: Option<String>,

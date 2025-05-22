@@ -23,23 +23,19 @@ impl LayeredOrchestrator {
 			// Load each layer if it exists and is enabled in config
 			for layer_config in layer_configs {
 				if layer_config.enabled {
-					match layer_config.name.as_str() {
-						"query_processor" => {
+						if layer_config.name.as_str() == "query_processor" {
 							layers.push(Box::new(QueryProcessorLayer::new(layer_config.clone())));
-						},
-						"context_generator" => {
+						} else if layer_config.name.as_str() == "context_generator" {
 							layers.push(Box::new(ContextGeneratorLayer::new(layer_config.clone())));
-						},
-						"developer" => {
-							layers.push(Box::new(DeveloperLayer::new(layer_config.clone())));
-						},
-						"reducer" => {
+						} else if layer_config.name.as_str() == "reducer" {
 							layers.push(Box::new(ReducerLayer::new(layer_config.clone())));
-						},
-						_ => {
+						} else if layer_config.name.as_str() == "developer" {
+							// Skip developer layer - it's been removed from the system
+							println!("{}", "The developer layer has been removed. The main session will handle development tasks directly.".yellow());
+						} else {
+							// Unknown layer type
 							println!("{} {}", "Unknown layer type:".yellow(), layer_config.name);
 						}
-					}
 				}
 			}
 
@@ -57,7 +53,7 @@ impl LayeredOrchestrator {
 
 	// Create default layers when no config is provided
 	fn create_default_layers(config: &Config) -> Self {
-		// Create 3-layer architecture (excluding Reducer which is activated manually)
+		// Create 2-layer architecture (Query Processor and Context Generator)
 		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
 
 		// Query Processor
@@ -82,16 +78,6 @@ impl LayeredOrchestrator {
 		context_config.model = context_model;
 		layers.push(Box::new(ContextGeneratorLayer::new(context_config)));
 
-		// Developer
-		let developer_model = if let Some(model) = &config.openrouter.developer_model {
-			model.clone()
-		} else {
-			config.openrouter.model.clone()
-		};
-
-		let developer_config = DeveloperLayer::default_config("developer", &developer_model);
-		layers.push(Box::new(DeveloperLayer::new(developer_config)));
-
 		Self { layers }
 	}
 
@@ -104,7 +90,6 @@ impl LayeredOrchestrator {
 		operation_cancelled: Arc<AtomicBool>
 	) -> Result<String> {
 		let mut current_input = input.to_string();
-		let mut final_output = String::new();
 
 		// For total token/cost tracking across all layers
 		let mut total_input_tokens = 0;
@@ -216,10 +201,8 @@ impl LayeredOrchestrator {
 				println!("{} {}", "ERROR: No usage data for layer".bright_red(), layer_name.bright_yellow());
 			}
 
-			// If developer layer, save the result to return to the user
-			if layer_name == "developer" {
-				final_output = result.output.clone();
-			}
+			// We no longer need to track specific layers as we always use the last layer's output
+			// Just track token usage and costs
 
 			// Update input for next layer
 			current_input = result.output.clone();
@@ -237,12 +220,8 @@ impl LayeredOrchestrator {
 		println!("{}", format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue());
 		println!("{}", "Use /info for detailed cost breakdown by layer".bright_blue());
 
-		// The Developer layer's output is what we want to return to the user
-		// If no Developer layer was configured, return the last layer's output
-		if final_output.is_empty() {
-			Ok(current_input)
-		} else {
-			Ok(final_output)
-		}
+		// Return the last layer's output
+		// Previously we were specially looking for the developer layer, but now we just use the last layer's output
+		Ok(current_input)
 	}
 }

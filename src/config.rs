@@ -106,16 +106,6 @@ pub struct OpenRouterConfig {
 	// Debug mode setting
 	#[serde(default)]
 	pub debug: bool,
-	// Layer-specific model configurations
-	#[serde(default)]
-	pub query_processor_model: Option<String>,
-	#[serde(default)]
-	pub context_generator_model: Option<String>,
-	#[serde(default)]
-	// DEPRECATED: Specific model for developer layer (will be removed in future)
-	pub developer_model: Option<String>,
-	#[serde(default)]
-	pub reducer_model: Option<String>,
 	// Maximum response tokens warning threshold
 	#[serde(default = "default_mcp_response_warning_threshold")]
 	pub mcp_response_warning_threshold: usize,
@@ -180,10 +170,6 @@ impl Default for OpenRouterConfig {
 			pricing: PricingConfig::default(),
 			enable_layers: false, // Disabled by default
 			debug: false,
-			query_processor_model: Some("openai/gpt-4.1-nano".to_string()),
-			context_generator_model: Some("openai/gpt-4.1-nano".to_string()),
-			developer_model: None, // Use the main model by default
-			reducer_model: Some("openai/gpt-4.1-nano".to_string()),
 			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false, // Disabled by default
@@ -289,6 +275,8 @@ pub struct Config {
 	#[serde(default)]
 	pub mcp: McpConfig,
 	// Layer configuration
+	// Note: To configure specific models for each layer, add them to this section
+	// rather than using global model settings
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 	// Custom system prompt (optional - falls back to default if not provided)

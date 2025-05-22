@@ -108,12 +108,9 @@ pub async fn perform_context_reduction(
     // Convert to OpenRouter format
     let or_messages = openrouter::convert_messages(&messages);
 
-    // Choose what model to use for reduction
-    // Try to use the reducer model if configured, otherwise use GPT-4o as fallback
-    let reducer_model = match &config.openrouter.reducer_model {
-        Some(model) => model.clone(),
-        None => "openai/gpt-4.1-nano".to_string(),
-    };
+    // Choose the model to use for reduction from the reducer layer's default config
+    let reducer_config = crate::session::layers::types::ReducerLayer::default_config("reducer");
+    let reducer_model = reducer_config.model;
 
     // Call the model
     // Always include the usage parameter to ensure we get cost data

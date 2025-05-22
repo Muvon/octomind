@@ -52,30 +52,16 @@ impl LayeredOrchestrator {
 	}
 
 	// Create default layers when no config is provided
-	fn create_default_layers(config: &Config) -> Self {
+	fn create_default_layers(_config: &Config) -> Self {
 		// Create 2-layer architecture (Query Processor and Context Generator)
 		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
 
-		// Query Processor
-		let query_model = if let Some(model) = &config.openrouter.query_processor_model {
-			model.clone()
-		} else {
-			"openai/gpt-4.1-nano".to_string()
-		};
-
-		let mut query_config = QueryProcessorLayer::default_config("query_processor");
-		query_config.model = query_model;
+		// Query Processor - use the default model from its implementation
+		let query_config = QueryProcessorLayer::default_config("query_processor");
 		layers.push(Box::new(QueryProcessorLayer::new(query_config)));
 
-		// Context Generator
-		let context_model = if let Some(model) = &config.openrouter.context_generator_model {
-			model.clone()
-		} else {
-			"google/gemini-2.5-flash-preview".to_string()
-		};
-
-		let mut context_config = ContextGeneratorLayer::default_config("context_generator");
-		context_config.model = context_model;
+		// Context Generator - use the default model from its implementation
+		let context_config = ContextGeneratorLayer::default_config("context_generator");
 		layers.push(Box::new(ContextGeneratorLayer::new(context_config)));
 
 		Self { layers }

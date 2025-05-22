@@ -333,13 +333,13 @@ impl Store {
 		}
 
 		// Create lancedb storage directory
-		let lance_dir = octodev_dir.join("lancedb");
-		if !lance_dir.exists() {
-			std::fs::create_dir_all(&lance_dir)?
+		let index_path = octodev_dir.join("storage");
+		if !index_path.exists() {
+			std::fs::create_dir_all(&index_path)?
 		}
 
 		// Convert the path to a string for the file-based database
-		let storage_path = lance_dir.to_str().unwrap();
+		let storage_path = index_path.to_str().unwrap();
 
 		// Load the config to get the embedding provider and model info
 		let config = crate::config::Config::load()?;
@@ -423,7 +423,7 @@ impl Store {
 
 			// Note: We'll create the index later when we have data
 		}
-		
+
 		// Create graphrag_nodes table if it doesn't exist
 		if !table_names.contains(&"graphrag_nodes".to_string()) {
 			// Create empty table with schema
@@ -447,7 +447,7 @@ impl Store {
 
 			let _table = self.db.create_empty_table("graphrag_nodes", schema).execute().await?;
 		}
-		
+
 		// Create graphrag_relationships table if it doesn't exist
 		if !table_names.contains(&"graphrag_relationships".to_string()) {
 			// Create empty table with schema
@@ -704,6 +704,21 @@ impl Store {
 
 		// Return the first (and only) code block
 		code_blocks.into_iter().next().ok_or_else(|| anyhow::anyhow!("Failed to convert result to CodeBlock"))
+	}
+
+	// Flush the database to ensure all data is persisted
+	pub async fn flush(&self) -> Result<()> {
+		// Get all tables
+		let table_names = self.db.table_names().execute().await?;
+
+		// Open and flush each table
+		for table_name in table_names {
+			let table = self.db.open_table(&table_name).execute().await?;
+			// Perform a null operation to ensure any pending writes are flushed
+			let _ = table.count_rows(None).await?;
+		}
+
+		Ok(())
 	}
 
 	// Close the database connection explicitly (for debugging or cleanup)

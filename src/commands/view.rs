@@ -22,12 +22,11 @@ pub async fn execute(_store: &Store, args: &ViewArgs, _config: &Config) -> Resul
 	// Get current directory
 	let current_dir = std::env::current_dir()?;
 
-	// Make sure we have an index
+	// Note: View command doesn't require an index as it parses files directly
 	let octodev_dir = current_dir.join(".octodev");
 	let index_path = octodev_dir.join("storage");
 	if !index_path.exists() {
-		println!("No index found. You can use 'octodev index' to create one if needed.");
-		// Note: Unlike search, we proceed without indexing since we'll parse files directly
+		println!("Note: No index found. The view command works without an index, but you can run 'octodev index' to create one if needed for other commands.");
 	}
 
 	// Get files matching patterns

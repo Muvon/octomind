@@ -544,7 +544,6 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		let mut state_guard = state.write();
 		state_guard.graphrag_enabled = config.graphrag.enabled;
 		state_guard.graphrag_blocks = 0;
-		state_guard.graphrag_files.clear();
 	}
 
 	// Use the ignore crate to respect .gitignore files
@@ -612,10 +611,10 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 
 		// Initialize GraphBuilder
 		let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
-		
+
 		// Process code blocks to build the graph
 		graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
-		
+
 		// Update final state
 		let mut state_guard = state.write();
 		state_guard.status_message = "".to_string();
@@ -624,6 +623,9 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 	let mut state_guard = state.write();
 	state_guard.indexing_complete = true;
 	state_guard.embedding_calls = embedding_calls;
+
+	// Flush the store to ensure all data is persisted
+	store.flush().await?;
 
 	Ok(())
 }
@@ -636,7 +638,6 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 		let mut state_guard = state.write();
 		state_guard.graphrag_enabled = config.graphrag.enabled;
 		state_guard.graphrag_blocks = 0;
-		state_guard.graphrag_files.clear();
 	}
 
 	// First, let's remove any existing code blocks for this file path
@@ -689,12 +690,15 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 				if !text_blocks_batch.is_empty() {
 					process_text_blocks_batch(store, &text_blocks_batch, config).await?;
 				}
-				
+
 				// Update GraphRAG if enabled and we have new blocks
 				if config.graphrag.enabled && !all_code_blocks.is_empty() {
 					let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
 					graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
 				}
+
+				// Explicitly flush to ensure all data is persisted
+				store.flush().await?;
 			}
 		}
 	}
@@ -715,7 +719,7 @@ async fn process_file(
 	state: SharedState,
 ) -> Result<()> {
 	let mut parser = Parser::new();
-	
+
 	// Get force_reindex flag from state
 	let force_reindex = state::create_shared_state().read().force_reindex;
 
@@ -739,7 +743,7 @@ async fn process_file(
 	for region in code_regions {
 		// Use a hash that's unique to both content and path
 		let content_hash = calculate_unique_content_hash(&region.content, file_path);
-		
+
 		// Skip the check if force_reindex is true
 		let exists = !force_reindex && store.content_exists(&content_hash, "code_blocks").await?;
 		if !exists {
@@ -753,10 +757,10 @@ async fn process_file(
 				end_line: region.end_line,
 				distance: None,  // No relevance score when indexing
 			};
-			
+
 			// Add to batch for embedding
 			code_blocks_batch.push(code_block.clone());
-			
+
 			// Add to all code blocks for GraphRAG
 			if config.graphrag.enabled {
 				all_code_blocks.push(code_block);
@@ -789,7 +793,6 @@ async fn process_file(
 	if config.graphrag.enabled && graphrag_blocks_added > 0 {
 		let mut state_guard = state.write();
 		state_guard.graphrag_blocks += graphrag_blocks_added;
-		state_guard.graphrag_files.insert(file_path.to_string());
 	}
 
 	Ok(())
@@ -817,7 +820,7 @@ fn extract_meaningful_regions(
 		let (combined_content, start_line) = combine_with_preceding_comments(node, contents);
 		let end_line = node.end_position().row;
 		let symbols = lang_impl.extract_symbols(node, contents);
-		
+
 		// Only create a region if we have meaningful content
 		if !combined_content.trim().is_empty() {
 			// Ensure we have at least one symbol by using the node kind if necessary
@@ -826,12 +829,12 @@ fn extract_meaningful_regions(
 				// Create a default symbol from the node kind
 				final_symbols.push(format!("{}_{}", node_kind, start_line));
 			}
-			
-			regions.push(CodeRegion { 
-				content: combined_content, 
-				symbols: final_symbols, 
-				start_line, 
-				end_line 
+
+			regions.push(CodeRegion {
+				content: combined_content,
+				symbols: final_symbols,
+				start_line,
+				end_line
 			});
 		}
 		return;

@@ -13,7 +13,6 @@ pub struct IndexState {
 	// GraphRAG state tracking
 	pub graphrag_enabled: bool,
 	pub graphrag_blocks: usize,
-	pub graphrag_files: std::collections::HashSet<String>,
 }
 
 pub type SharedState = Arc<RwLock<IndexState>>;

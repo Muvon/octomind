@@ -4,8 +4,6 @@ use octodev::config::Config;
 use octodev::store::Store;
 use octodev::indexer;
 
-use super::index::IndexArgs;
-
 #[derive(Args, Debug)]
 pub struct SearchArgs {
 	/// Search query
@@ -29,10 +27,9 @@ pub async fn execute(store: &Store, args: &SearchArgs, config: &Config) -> Resul
 	let octodev_dir = current_dir.join(".octodev");
 	let index_path = octodev_dir.join("storage");
 
-	// Check if we have an index already; if not, create one
+	// Check if we have an index already; if not, inform the user but don't auto-index
 	if !index_path.exists() {
-		println!("No index found. Indexing current directory first");
-		super::index::execute(store, config, &IndexArgs { reindex: false }).await?
+		return Err(anyhow::anyhow!("No index found. Please run 'octodev index' first to create an index."));
 	}
 
 	println!("Searching for: {}", args.query);

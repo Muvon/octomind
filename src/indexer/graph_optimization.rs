@@ -192,7 +192,8 @@ impl TaskFocusedSubgraph {
 
 /// Functions for extracting task-specific subgraphs
 pub struct GraphOptimizer {
-    max_token_budget: usize,
+    // Uses token budget to limit the size of the extracted subgraph
+    pub max_token_budget: usize,
 }
 
 impl GraphOptimizer {
@@ -218,6 +219,11 @@ impl GraphOptimizer {
             
             // Extract concepts from the node name and description
             self.extract_key_concepts(&mut subgraph, node, *relevance);
+            
+            // Check if we've reached our token budget
+            if subgraph.estimated_token_count() > self.max_token_budget {
+                break;
+            }
         }
         
         // 3. Find direct relationships between these nodes
@@ -240,6 +246,11 @@ impl GraphOptimizer {
                 additional_nodes.insert(relationship.target.clone());
             } else if node_ids.contains(&relationship.target) && !node_ids.contains(&relationship.source) {
                 additional_nodes.insert(relationship.source.clone());
+            }
+            
+            // Check if we're exceeding our token budget
+            if subgraph.estimated_token_count() > self.max_token_budget {
+                break;
             }
         }
         

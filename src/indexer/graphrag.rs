@@ -280,6 +280,7 @@ impl GraphBuilder {
 	}
 
 	// Save the graph to database with support for incremental updates
+	#[allow(dead_code)]
 	async fn save_graph(&self) -> Result<()> {
 		// Get a read lock on the graph
 		let graph = self.graph.read().await;
@@ -664,8 +665,8 @@ impl GraphBuilder {
 		// Add each code block
 		for (i, code) in code_blocks.iter().enumerate() {
 			// Truncate code if it's too long
-			let truncated_code = if code.len() > 1000 {
-				format!("{} [...]", &code[0..1000])
+			let truncated_code = if code.len() > 1200 {
+				format!("{} [...]", &code[0..1200])
 			} else {
 				code.clone()
 			};
@@ -719,8 +720,8 @@ impl GraphBuilder {
 				// Cleanup and truncate descriptions
 				let cleaned_descriptions: Vec<String> = descriptions.iter().map(|desc| {
 					let description = desc.trim();
-					if description.len() > 200 {
-						format!("{} [...]", &description[0..197])
+					if description.len() > 400 {
+						format!("{} [...]", &description[0..400])
 					} else {
 						description.to_string()
 					}
@@ -776,9 +777,6 @@ impl GraphBuilder {
 		}
 
 		// Process relationship candidates in batches
-		const REL_BATCH_SIZE: usize = 5; // Number of relationships to analyze in a single batch
-		let total_candidates = relationship_candidates.len();
-
 		// If no candidates, return empty result
 		if relationship_candidates.is_empty() {
 			return Ok(Vec::new());
@@ -787,19 +785,21 @@ impl GraphBuilder {
 		// Use the optimized batch analysis if we have multiple candidates
 		if relationship_candidates.len() >= 2 {
 			let results = self.analyze_relationships_batch(&relationship_candidates).await?;
-			println!("Found {} relationships from {} candidates using batch analysis", results.len(), total_candidates);
+			println!("Found {} relationships from {} candidates using batch analysis", results.len(), relationship_candidates.len());
 			return Ok(results);
 		}
 
 		// Fallback to individual analysis for small batches
 		let mut new_relationships = Vec::new();
+		let candidates_count = relationship_candidates.len();
+
 		for (source, target) in relationship_candidates {
 			if let Some(relationship) = self.analyze_relationship(&source, &target).await? {
 				new_relationships.push(relationship);
 			}
 		}
 
-		println!("Found {} relationships from {} candidates", new_relationships.len(), total_candidates);
+		println!("Found {} relationships from {} candidates", new_relationships.len(), candidates_count);
 		Ok(new_relationships)
 	}
 
@@ -951,8 +951,8 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 	// Extract a description of the code block using a lightweight LLM
 	async fn extract_description(&self, code: &str) -> Result<String> {
 		// Truncate code if it's too long
-		let truncated_code = if code.len() > 1000 {
-			format!("{} [...]\n(code truncated due to length)", &code[0..1000])
+		let truncated_code = if code.len() > 1200 {
+			format!("{} [...]\n(code truncated due to length)", &code[0..1200])
 		} else {
 			code.to_string()
 		};
@@ -989,6 +989,7 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 	}
 
 	// Discover relationships between nodes
+	#[allow(dead_code)]
 	async fn discover_relationships(&self, new_nodes: &[CodeNode]) -> Result<()> {
 		println!("Discovering relationships among {} nodes", new_nodes.len());
 
@@ -1261,18 +1262,18 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 		// Calculate similarity to each node
 		let mut similarities: Vec<(f32, CodeNode)> = Vec::new();
 		let query_lower = query.to_lowercase();
-		
+
 		for node in nodes_array {
 			// Calculate semantic similarity
 			let similarity = cosine_similarity(&query_embedding, &node.embedding);
-			
+
 			// Check if the query is a substring of various node fields
 			// This handles specific cases like searching for "impl"
 			let name_contains = node.name.to_lowercase().contains(&query_lower);
 			let kind_contains = node.kind.to_lowercase().contains(&query_lower);
 			let desc_contains = node.description.to_lowercase().contains(&query_lower);
 			let symbols_contain = node.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
-			
+
 			// Use a lower threshold for semantic similarity (0.5 instead of 0.6)
 			// OR include if the query is a substring of any important field
 			if similarity > 0.5 || name_contains || kind_contains || desc_contains || symbols_contain {
@@ -1283,7 +1284,7 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 				} else {
 					similarity
 				};
-				
+
 				similarities.push((boosted_similarity, node));
 			}
 		}
@@ -1368,13 +1369,13 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 
 			// Calculate semantic similarity
 			let similarity = cosine_similarity(&query_embedding, &embedding);
-			
+
 			// Check if the query is a substring of various node fields
 			let name_contains = name.to_lowercase().contains(&query_lower);
 			let kind_contains = kind.to_lowercase().contains(&query_lower);
 			let desc_contains = description.to_lowercase().contains(&query_lower);
 			let symbols_contain = symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
-			
+
 			// Use a lower threshold for semantic similarity (0.5 instead of 0.6)
 			// OR include if the query is a substring of any important field
 			if similarity > 0.5 || name_contains || kind_contains || desc_contains || symbols_contain {
@@ -1397,14 +1398,14 @@ let batch_results: Vec<BatchRelationshipResult> = match response_obj.get("relati
 
 		// Sort nodes by relevance (exact matches first, then by similarity)
 		nodes.sort_by(|a, b| {
-			let a_contains = a.name.to_lowercase().contains(&query_lower) || 
+			let a_contains = a.name.to_lowercase().contains(&query_lower) ||
 			               a.kind.to_lowercase().contains(&query_lower) ||
 			               a.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
-			
-			let b_contains = b.name.to_lowercase().contains(&query_lower) || 
+
+			let b_contains = b.name.to_lowercase().contains(&query_lower) ||
 			               b.kind.to_lowercase().contains(&query_lower) ||
 			               b.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
-			
+
 			if a_contains && !b_contains {
 				return std::cmp::Ordering::Less;
 			} else if !a_contains && b_contains {

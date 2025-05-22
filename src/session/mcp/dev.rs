@@ -1398,13 +1398,20 @@ async fn save_file_history(path: &Path) -> Result<()> {
 
 // Get all available developer functions
 pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![
+	let mut functions = vec![
 		get_shell_function(),
 		get_text_editor_function(),
 		get_list_files_function(),
 		get_semantic_code_function(),
-		get_graphrag_function(),
-	]
+	];
+	
+	// Only add GraphRAG function if the feature is enabled in the config
+	let config = crate::config::Config::load().unwrap_or_default();
+	if config.graphrag.enabled {
+		functions.push(get_graphrag_function());
+	}
+	
+	functions
 }
 
 // Define the GraphRAG function
@@ -1563,18 +1570,8 @@ async fn execute_graphrag_search(call: &McpToolCall, graph_builder: &crate::inde
     // Traditional node search (without task focusing)
     let nodes = graph_builder.search_nodes(&query).await?;
 
-    // Format the results as markdown
-    let mut markdown = String::from(format!("# GraphRAG Search Results for '{}'\n\n", query));
-    markdown.push_str(&format!("Found {} matching nodes\n\n", nodes.len()));
-
-    // Add each node to the markdown output
-    for node in &nodes {
-        markdown.push_str(&format!("## {}\n", node.name));
-        markdown.push_str(&format!("**ID**: {}\n", node.id));
-        markdown.push_str(&format!("**Kind**: {}\n", node.kind));
-        markdown.push_str(&format!("**Path**: {}\n", node.path));
-        markdown.push_str(&format!("**Description**: {}\n\n", node.description));
-    }
+    // Format the results as markdown using the official formatter
+    let markdown = crate::indexer::graphrag::graphrag_nodes_to_markdown(&nodes);
 
     // Return the results
     Ok(McpToolResult {

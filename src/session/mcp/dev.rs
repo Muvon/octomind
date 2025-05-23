@@ -42,19 +42,22 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 	}
 }
 
-// Define the semantic_code_function for both view signatures and search
+// Define the semantic_code_function for signatures and search modes
 pub fn get_semantic_code_function() -> McpFunction {
 	McpFunction {
 		name: "semantic_code".to_string(),
 		description: "Analyze and search code in the repository using both structural and semantic methods.
 
-This tool can operate in two modes:
+This tool can operate in multiple modes:
 
-1. **Signatures View Mode**: Extracts function/method signatures and other declarations from code files to understand APIs without looking at the entire implementation.
-2. **Semantic Search Mode**: Searches for code that matches a natural language query using semantic embeddings.
+1. **signatures**: Extracts function/method signatures and other declarations from code files to understand APIs without looking at the entire implementation.
+2. **search**: Searches across all content types (code, docs, and text) using semantic embeddings.
+3. **codesearch**: Searches only within code blocks using semantic embeddings.
+4. **docsearch**: Searches only within documentation/markdown content.
+5. **textsearch**: Searches only within text files and other readable content.
 
 Use signatures mode when you want to understand what functions/methods are available in specific files.
-Use search mode when you want to find specific functionality based on a natural language description of what the code does.
+Use the search modes when you want to find specific functionality across different content types.
 
 The tool returns results formatted in a clean, token-efficient Markdown output.".to_string(),
 		parameters: json!({
@@ -63,8 +66,8 @@ The tool returns results formatted in a clean, token-efficient Markdown output."
 			"properties": {
 				"mode": {
 					"type": "string",
-					"enum": ["signatures", "search"],
-					"description": "The mode to use: 'signatures' to view function signatures and declarations, 'search' to perform semantic code search"
+					"enum": ["signatures", "search", "codesearch", "docsearch", "textsearch"],
+					"description": "The mode to use: 'signatures' to view function signatures, 'search' for combined search across all content, 'codesearch' for code only, 'docsearch' for docs only, 'textsearch' for text files only"
 				},
 				"files": {
 					"type": "array",
@@ -75,12 +78,91 @@ The tool returns results formatted in a clean, token-efficient Markdown output."
 				},
 				"query": {
 					"type": "string",
-					"description": "[For search mode] Natural language query to search for code"
+					"description": "[For search modes] Natural language query to search for"
 				},
 				"expand": {
 					"type": "boolean",
-					"description": "[For search mode] Whether to expand symbols in search results to include related code",
+					"description": "[For search modes] Whether to expand symbols in search results to include related code",
 					"default": false
+				}
+			}
+		}),
+	}
+}
+
+// Define the code_search function for semantic code search only
+pub fn get_code_search_function() -> McpFunction {
+	McpFunction {
+		name: "code_search".to_string(),
+		description: "Perform semantic search specifically within code blocks using embeddings.
+
+This searches only through semantically indexed code blocks, which include functions, methods, classes,
+and other meaningful code structures. It uses tree-sitter parsing and semantic embeddings to find
+code that matches your natural language query.
+
+Use this when you want to find specific code functionality or implementations.".to_string(),
+		parameters: json!({
+			"type": "object",
+			"required": ["query"],
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "Natural language query to search for in code blocks"
+				},
+				"expand": {
+					"type": "boolean",
+					"description": "Whether to expand symbols in search results to include related code",
+					"default": false
+				}
+			}
+		}),
+	}
+}
+
+// Define the docs_search function for document search only
+pub fn get_docs_search_function() -> McpFunction {
+	McpFunction {
+		name: "docs_search".to_string(),
+		description: "Perform semantic search specifically within documentation content.
+
+This searches only through markdown documentation files that have been indexed. Content is split
+by headers and sections to provide meaningful, contextual search results from README files,
+documentation, and other markdown content.
+
+Use this when you want to find information in project documentation or README files.".to_string(),
+		parameters: json!({
+			"type": "object",
+			"required": ["query"],
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "Natural language query to search for in documentation"
+				}
+			}
+		}),
+	}
+}
+
+// Define the text_search function for text content search only  
+pub fn get_text_search_function() -> McpFunction {
+	McpFunction {
+		name: "text_search".to_string(),
+		description: "Perform semantic search specifically within text files and other readable content.
+
+This searches through chunked text content from various file types including configuration files,
+logs, data files, and other text-based content that isn't code or markdown documentation.
+Content is chunked into 2000-character segments with overlap for better search granularity.
+
+Supported file types: txt, log, xml, html, css, sql, csv, yaml, toml, ini, conf, and others.
+
+Use this when you want to find information in configuration files, logs, or other text content.".to_string(),
+		parameters: json!({
+			"type": "object",
+			"required": ["query"],
+			"properties": {
+				"query": {
+					"type": "string", 
+					"description": "Natural language query to search for in text content"
 				}
 			}
 		}),
@@ -328,18 +410,21 @@ pub async fn execute_view_signatures(call: &McpToolCall) -> Result<McpToolResult
 	})
 }
 
-// Execute semantic_code function (both signatures and search modes)
+// Execute semantic_code function (all modes)
 pub async fn execute_semantic_code(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
 	// Extract mode parameter
 	let mode = match call.parameters.get("mode") {
 		Some(Value::String(m)) => m.as_str(),
-		_ => return Err(anyhow!("Missing or invalid 'mode' parameter. Must be 'signatures' or 'search'")),
+		_ => return Err(anyhow!("Missing or invalid 'mode' parameter. Must be 'signatures', 'search', 'codesearch', 'docsearch', or 'textsearch'")),
 	};
 
 	match mode {
 		"signatures" => execute_signatures_mode(call).await,
 		"search" => execute_search_mode(call, store, config).await,
-		_ => Err(anyhow!("Invalid mode: {}. Must be 'signatures' or 'search'", mode)),
+		"codesearch" => execute_codesearch_mode(call, store, config).await,
+		"docsearch" => execute_docsearch_mode(call, store, config).await,
+		"textsearch" => execute_textsearch_mode(call, store, config).await,
+		_ => Err(anyhow!("Invalid mode: {}. Must be 'signatures', 'search', 'codesearch', 'docsearch', or 'textsearch'", mode)),
 	}
 }
 
@@ -447,7 +532,7 @@ async fn execute_signatures_mode(call: &McpToolCall) -> Result<McpToolResult> {
 	})
 }
 
-// Implementation of search mode
+// Implementation of search mode (combined search across all content types)
 async fn execute_search_mode(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
 	// Extract query parameter
 	let query = match call.parameters.get("query") {
@@ -480,7 +565,108 @@ async fn execute_search_mode(call: &McpToolCall, store: &crate::store::Store, co
 		Err(e) => return Err(anyhow!("Failed to generate query embeddings: {}", e)),
 	};
 
-	// Search for matching code blocks
+	// Search across all content types
+	let code_results = match store.get_code_blocks(embeddings.clone()).await {
+		Ok(res) => res,
+		Err(e) => return Err(anyhow!("Failed to search for code blocks: {}", e)),
+	};
+
+	let doc_results = match store.get_document_blocks(embeddings.clone()).await {
+		Ok(res) => res,
+		Err(e) => return Err(anyhow!("Failed to search for document blocks: {}", e)),
+	};
+
+	let text_results = match store.get_text_blocks(embeddings).await {
+		Ok(res) => res,
+		Err(e) => return Err(anyhow!("Failed to search for text blocks: {}", e)),
+	};
+
+	// If expand flag is set, expand symbols in code results
+	let mut final_code_results = code_results;
+	if expand {
+		final_code_results = match crate::indexer::expand_symbols(store, final_code_results).await {
+			Ok(expanded) => expanded,
+			Err(e) => return Err(anyhow!("Failed to expand symbols: {}", e)),
+		};
+	}
+
+	// Create combined markdown output
+	let mut combined_markdown = String::new();
+
+	if !doc_results.is_empty() {
+		combined_markdown.push_str("# Documentation Results\n\n");
+		combined_markdown.push_str(&crate::indexer::document_blocks_to_markdown(&doc_results));
+		combined_markdown.push_str("\n");
+	}
+
+	if !final_code_results.is_empty() {
+		combined_markdown.push_str("# Code Results\n\n");
+		combined_markdown.push_str(&crate::indexer::code_blocks_to_markdown(&final_code_results));
+		combined_markdown.push_str("\n");
+	}
+
+	if !text_results.is_empty() {
+		combined_markdown.push_str("# Text Results\n\n");
+		combined_markdown.push_str(&crate::indexer::text_blocks_to_markdown(&text_results));
+	}
+
+	if combined_markdown.is_empty() {
+		combined_markdown.push_str("No results found for the query.");
+	}
+
+	// Return the result
+	Ok(McpToolResult {
+		tool_name: "semantic_code".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": true,
+			"output": combined_markdown,
+			"code_blocks_found": final_code_results.len(),
+			"doc_blocks_found": doc_results.len(),
+			"text_blocks_found": text_results.len(),
+			"total_results": final_code_results.len() + doc_results.len() + text_results.len(),
+			"parameters": {
+				"mode": "search",
+				"query": query,
+				"expand": expand
+			}
+		}),
+	})
+}
+
+// Implementation of codesearch mode (code blocks only)
+async fn execute_codesearch_mode(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Extract query parameter
+	let query = match call.parameters.get("query") {
+		Some(Value::String(q)) => q.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'query' parameter, expected a string")),
+	};
+
+	if query.trim().is_empty() {
+		return Err(anyhow!("Query cannot be empty"));
+	}
+
+	// Extract optional expand parameter
+	let expand = call.parameters.get("expand")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false);
+
+	// Check if we have an index
+	let current_dir = std::env::current_dir()?;
+	let octodev_dir = current_dir.join(".octodev");
+	let index_path = octodev_dir.join("storage");
+
+	if !index_path.exists() {
+		return Err(anyhow!("No index found. Please run 'octodev index' first before using search."));
+	}
+
+	// Generate embeddings for the query
+	let embeddings = match crate::indexer::generate_embeddings(&query, true, config).await {
+		Ok(emb) => emb,
+		Err(e) => return Err(anyhow!("Failed to generate query embeddings: {}", e)),
+	};
+
+	// Search for matching code blocks only
 	let mut results = match store.get_code_blocks(embeddings).await {
 		Ok(res) => res,
 		Err(e) => return Err(anyhow!("Failed to search for code blocks: {}", e)),
@@ -500,16 +686,119 @@ async fn execute_search_mode(call: &McpToolCall, store: &crate::store::Store, co
 	// Return the result
 	Ok(McpToolResult {
 		tool_name: "semantic_code".to_string(),
-
 		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": true,
 			"output": markdown_output,
 			"blocks_found": results.len(),
 			"parameters": {
-				"mode": "search",
+				"mode": "codesearch",
 				"query": query,
 				"expand": expand
+			}
+		}),
+	})
+}
+
+// Implementation of docsearch mode (documentation blocks only)
+async fn execute_docsearch_mode(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Extract query parameter
+	let query = match call.parameters.get("query") {
+		Some(Value::String(q)) => q.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'query' parameter, expected a string")),
+	};
+
+	if query.trim().is_empty() {
+		return Err(anyhow!("Query cannot be empty"));
+	}
+
+	// Check if we have an index
+	let current_dir = std::env::current_dir()?;
+	let octodev_dir = current_dir.join(".octodev");
+	let index_path = octodev_dir.join("storage");
+
+	if !index_path.exists() {
+		return Err(anyhow!("No index found. Please run 'octodev index' first before using search."));
+	}
+
+	// Generate embeddings for the query
+	let embeddings = match crate::indexer::generate_embeddings(&query, false, config).await {
+		Ok(emb) => emb,
+		Err(e) => return Err(anyhow!("Failed to generate query embeddings: {}", e)),
+	};
+
+	// Search for matching document blocks only
+	let results = match store.get_document_blocks(embeddings).await {
+		Ok(res) => res,
+		Err(e) => return Err(anyhow!("Failed to search for document blocks: {}", e)),
+	};
+
+	// Format the results as markdown
+	let markdown_output = crate::indexer::document_blocks_to_markdown(&results);
+
+	// Return the result
+	Ok(McpToolResult {
+		tool_name: "semantic_code".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": true,
+			"output": markdown_output,
+			"blocks_found": results.len(),
+			"parameters": {
+				"mode": "docsearch",
+				"query": query
+			}
+		}),
+	})
+}
+
+// Implementation of textsearch mode (text blocks only)
+async fn execute_textsearch_mode(call: &McpToolCall, store: &crate::store::Store, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Extract query parameter
+	let query = match call.parameters.get("query") {
+		Some(Value::String(q)) => q.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'query' parameter, expected a string")),
+	};
+
+	if query.trim().is_empty() {
+		return Err(anyhow!("Query cannot be empty"));
+	}
+
+	// Check if we have an index
+	let current_dir = std::env::current_dir()?;
+	let octodev_dir = current_dir.join(".octodev");
+	let index_path = octodev_dir.join("storage");
+
+	if !index_path.exists() {
+		return Err(anyhow!("No index found. Please run 'octodev index' first before using search."));
+	}
+
+	// Generate embeddings for the query
+	let embeddings = match crate::indexer::generate_embeddings(&query, false, config).await {
+		Ok(emb) => emb,
+		Err(e) => return Err(anyhow!("Failed to generate query embeddings: {}", e)),
+	};
+
+	// Search for matching text blocks only
+	let results = match store.get_text_blocks(embeddings).await {
+		Ok(res) => res,
+		Err(e) => return Err(anyhow!("Failed to search for text blocks: {}", e)),
+	};
+
+	// Format the results as markdown
+	let markdown_output = crate::indexer::text_blocks_to_markdown(&results);
+
+	// Return the result
+	Ok(McpToolResult {
+		tool_name: "semantic_code".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": true,
+			"output": markdown_output,
+			"blocks_found": results.len(),
+			"parameters": {
+				"mode": "textsearch",
+				"query": query
 			}
 		}),
 	})

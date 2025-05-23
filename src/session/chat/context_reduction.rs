@@ -92,6 +92,8 @@ pub async fn perform_context_reduction(
 			.unwrap_or_default()
 			.as_secs(),
 		cached: false,
+		tool_call_id: None,
+		name: None,
 	});
 
 	// Add user message with the context to reduce
@@ -103,6 +105,8 @@ pub async fn perform_context_reduction(
 			.unwrap_or_default()
 			.as_secs(),
 		cached: false,
+		tool_call_id: None,
+		name: None,
 	});
 
 	// Convert to OpenRouter format

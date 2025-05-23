@@ -77,6 +77,8 @@ pub async fn check_and_truncate_context(
 			.unwrap_or_default()
 			.as_secs(),
 		cached: false,
+		tool_call_id: None,
+		name: None,
 	};
 	truncated_messages.push(summary_msg);
 

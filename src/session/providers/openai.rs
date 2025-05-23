@@ -12,27 +12,27 @@ use crate::log_debug;
 /// OpenAI pricing constants (per 1M tokens in USD)
 /// Source: https://openai.com/pricing (as of January 2025)
 const PRICING: &[(&str, f64, f64)] = &[
-    // Model, Input price per 1M tokens, Output price per 1M tokens
-    ("gpt-4o", 2.50, 10.00),
-    ("gpt-4o-mini", 0.15, 0.60),
-    ("gpt-4-turbo", 10.00, 30.00),
-    ("gpt-4", 30.00, 60.00),
-    ("gpt-3.5-turbo", 0.50, 1.50),
-    ("o1-preview", 15.00, 60.00),
-    ("o1-mini", 3.00, 12.00),
-    ("chatgpt-4o-latest", 2.50, 10.00), // Same as gpt-4o
+	// Model, Input price per 1M tokens, Output price per 1M tokens
+	("gpt-4o", 2.50, 10.00),
+	("gpt-4o-mini", 0.15, 0.60),
+	("gpt-4-turbo", 10.00, 30.00),
+	("gpt-4", 30.00, 60.00),
+	("gpt-3.5-turbo", 0.50, 1.50),
+	("o1-preview", 15.00, 60.00),
+	("o1-mini", 3.00, 12.00),
+	("chatgpt-4o-latest", 2.50, 10.00), // Same as gpt-4o
 ];
 
 /// Calculate cost for OpenAI models
 fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Option<f64> {
-    for (pricing_model, input_price, output_price) in PRICING {
-        if model.contains(pricing_model) {
-            let input_cost = (prompt_tokens as f64 / 1_000_000.0) * input_price;
-            let output_cost = (completion_tokens as f64 / 1_000_000.0) * output_price;
-            return Some(input_cost + output_cost);
-        }
-    }
-    None
+	for (pricing_model, input_price, output_price) in PRICING {
+		if model.contains(pricing_model) {
+			let input_cost = (prompt_tokens as f64 / 1_000_000.0) * input_price;
+			let output_cost = (completion_tokens as f64 / 1_000_000.0) * output_price;
+			return Some(input_cost + output_cost);
+		}
+	}
+	None
 }
 
 /// OpenAI provider implementation

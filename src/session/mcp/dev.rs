@@ -143,7 +143,7 @@ Use this when you want to find information in project documentation or README fi
 	}
 }
 
-// Define the text_search function for text content search only  
+// Define the text_search function for text content search only
 pub fn get_text_search_function() -> McpFunction {
 	McpFunction {
 		name: "text_search".to_string(),
@@ -161,7 +161,7 @@ Use this when you want to find information in configuration files, logs, or othe
 			"required": ["query"],
 			"properties": {
 				"query": {
-					"type": "string", 
+					"type": "string",
 					"description": "Natural language query to search for in text content"
 				}
 			}

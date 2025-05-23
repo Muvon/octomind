@@ -27,7 +27,7 @@ impl ChatSession {
 
 		// Messages count and tool calls
 		println!("{} {}", "Messages:".yellow(), self.session.messages.len());
-		
+
 		// Tool calls information
 		if self.session.info.tool_calls > 0 {
 			println!("{} {}", "Tool calls:".yellow(), self.session.info.tool_calls.to_string().bright_cyan());

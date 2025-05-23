@@ -1214,7 +1214,7 @@ const ALLOWED_TEXT_EXTENSIONS: &[&str] = &[
 	"log",
 	"xml",
 	"html",
-	"htm", 
+	"htm",
 	"css",
 	"sql",
 	"csv",
@@ -1244,18 +1244,18 @@ fn is_allowed_text_extension(path: &std::path::Path) -> bool {
 			return ALLOWED_TEXT_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());
 		}
 	}
-	
+
 	// Also check for files without extensions that have common text names
 	if let Some(file_name) = path.file_name() {
 		if let Some(name_str) = file_name.to_str() {
 			let name_lower = name_str.to_lowercase();
-			return matches!(name_lower.as_str(), 
+			return matches!(name_lower.as_str(),
 				"readme" | "license" | "changelog" | "authors" | "contributors" |
 				"makefile" | "dockerfile" | "gitignore" | ".gitignore"
 			);
 		}
 	}
-	
+
 	false
 }
 
@@ -1303,7 +1303,7 @@ fn chunk_text(content: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
 }
 
 /// Process an unsupported file as chunked text blocks
-/// Only processes files with whitelisted extensions to avoid indexing 
+/// Only processes files with whitelisted extensions to avoid indexing
 /// binary files, lock files, and other non-useful content.
 /// Supported extensions: txt, log, xml, html, css, sql, csv, yaml, toml, ini, conf, etc.
 /// Chunk size: 2000 characters with 200 character overlap.

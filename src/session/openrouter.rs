@@ -80,7 +80,7 @@ pub async fn chat_completion(
 ) -> Result<(String, OpenRouterExchange, Option<Vec<crate::session::mcp::McpToolCall>>, Option<String>)> {
 	// Use the new provider system
 	let response = crate::session::chat_completion_with_provider(&messages, model, temperature, config).await?;
-	
+
 	// Convert ProviderExchange back to OpenRouterExchange for backward compatibility
 	let openrouter_exchange = OpenRouterExchange {
 		request: response.exchange.request,
@@ -96,6 +96,6 @@ pub async fn chat_completion(
 			breakdown: usage.breakdown,
 		}),
 	};
-	
+
 	Ok((response.content, openrouter_exchange, response.tool_calls, response.finish_reason))
 }

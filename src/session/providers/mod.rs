@@ -108,11 +108,11 @@ impl ProviderFactory {
 		if let Some(pos) = model.find(':') {
 			let provider = model[..pos].to_string();
 			let model_name = model[pos + 1..].to_string();
-			
+
 			if provider.is_empty() || model_name.is_empty() {
 				return Err(anyhow::anyhow!("Invalid model format. Use 'provider:model' (e.g., 'openai:gpt-4o')"));
 			}
-			
+
 			Ok((provider, model_name))
 		} else {
 			Err(anyhow::anyhow!("Invalid model format '{}'. Must specify provider like 'openai:gpt-4o' or 'openrouter:anthropic/claude-3.5-sonnet'", model))
@@ -171,11 +171,11 @@ mod tests {
 		// Test without provider prefix (should fail now)
 		let result = ProviderFactory::parse_model("anthropic/claude-3.5-sonnet");
 		assert!(result.is_err());
-		
+
 		// Test empty provider
 		let result = ProviderFactory::parse_model(":gpt-4o");
 		assert!(result.is_err());
-		
+
 		// Test empty model
 		let result = ProviderFactory::parse_model("openai:");
 		assert!(result.is_err());

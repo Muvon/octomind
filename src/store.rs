@@ -423,7 +423,7 @@ impl BatchConverter {
 		Ok(code_blocks)
 	}
 
-	// Convert a RecordBatch to a Vec of TextBlocks  
+	// Convert a RecordBatch to a Vec of TextBlocks
 	fn batch_to_text_blocks(&self, batch: &RecordBatch, distances: Option<Vec<f32>>) -> Result<Vec<TextBlock>> {
 		let num_rows = batch.num_rows();
 		let mut text_blocks = Vec::with_capacity(num_rows);

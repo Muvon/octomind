@@ -599,12 +599,12 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 					"count": files.len(),
 					"type": output_type,
 					"parameters": {
-						"directory": directory,
-						"pattern": pattern,
-						"content": content,
-						"max_depth": max_depth
-					}
-				})
+					"directory": directory,
+					"pattern": pattern,
+					"content": content,
+					"max_depth": max_depth
+				}
+			})
 			},
 			Err(e) => json!({
 				"success": false,
@@ -1100,7 +1100,7 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 		NodeData::Element { name, attrs, .. } => {
 			let tag_name = &name.local;
 			let attrs = attrs.borrow();
-			
+
 			match tag_name.as_ref() {
 				"h1" => {
 					markdown.push_str("\n# ");
@@ -1162,7 +1162,7 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 					let href = attrs.iter()
 						.find(|attr| &*attr.name.local == "href")
 						.map(|attr| attr.value.to_string());
-					
+
 					if let Some(url) = href {
 						markdown.push('[');
 						process_children(node, markdown, depth)?;
@@ -1211,7 +1211,7 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 						.find(|attr| &*attr.name.local == "alt")
 						.map(|attr| attr.value.to_string())
 						.unwrap_or_else(|| "".to_string());
-					
+
 					if let Some(url) = src {
 						markdown.push_str(&format!("![{}]({})", alt, url));
 					}
@@ -1255,7 +1255,7 @@ fn process_children(node: &Handle, markdown: &mut String, depth: usize) -> Resul
 // Clean up the generated Markdown
 fn clean_markdown(markdown: &str) -> String {
 	let mut lines: Vec<&str> = markdown.lines().collect();
-	
+
 	// Remove leading and trailing empty lines
 	while let Some(&first) = lines.first() {
 		if first.trim().is_empty() {
@@ -1264,7 +1264,7 @@ fn clean_markdown(markdown: &str) -> String {
 			break;
 		}
 	}
-	
+
 	while let Some(&last) = lines.last() {
 		if last.trim().is_empty() {
 			lines.pop();
@@ -1272,11 +1272,11 @@ fn clean_markdown(markdown: &str) -> String {
 			break;
 		}
 	}
-	
+
 	// Collapse multiple consecutive empty lines into at most two
 	let mut result = Vec::new();
 	let mut empty_count = 0;
-	
+
 	for line in lines {
 		if line.trim().is_empty() {
 			empty_count += 1;
@@ -1288,6 +1288,6 @@ fn clean_markdown(markdown: &str) -> String {
 			result.push(line);
 		}
 	}
-	
+
 	result.join("\n")
 }

@@ -2,6 +2,7 @@
 
 use super::core::ChatSession;
 use crate::config::Config;
+use crate::{log_info, log_debug};
 use crate::session::openrouter;
 use anyhow::Result;
 use colored::Colorize;
@@ -118,11 +119,7 @@ impl ChatSession {
 
 				// Check if we should automatically move the cache marker
 				if let Ok(true) = self.session.check_auto_cache_threshold(config) {
-					use colored::*;
-					println!("{}", "Auto-cache threshold reached - adding cache checkpoint at last user message.".bright_yellow());
-					println!("{}", "This will reduce token usage for future requests.".bright_yellow());
-					// Note: No need to set environment variables or add additional cache checkpoints
-					// The check_auto_cache_threshold function already handles adding the checkpoint
+					log_info!("{}", "Auto-cache threshold reached - adding cache checkpoint at last user message.");
 				}
 
 				// If OpenRouter provided cost data, use it directly
@@ -132,29 +129,15 @@ impl ChatSession {
 					self.estimated_cost = self.session.info.total_cost;
 
 					// Log the actual cost received from the API for debugging
-					if config.openrouter.debug {
+					if config.openrouter.log_level.is_debug_enabled() {
 						println!("Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})",
 							cost, self.session.info.total_cost);
 
-						// Enhanced debug: dump full usage object
-						println!("Debug: Full usage object:");
-						if let Ok(usage_str) = serde_json::to_string_pretty(usage) {
-							println!("{}", usage_str);
-						}
-
-						// Look for any cache-related fields
-						if let Some(breakdown) = &usage.breakdown {
-							println!("Debug: Usage breakdown:");
-							for (key, value) in breakdown {
-								println!("  {} = {}", key, value);
-							}
-						}
-
 						// Check if there's a raw usage object with additional fields
 						if let Some(raw_usage) = ex.response.get("usage") {
-							println!("Debug: Raw usage from response:");
+							log_debug!("Raw usage from response:");
 							if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
-								println!("{}", raw_str);
+								log_debug!("{}", raw_str);
 							}
 						}
 					}
@@ -170,7 +153,7 @@ impl ChatSession {
 						self.estimated_cost = self.session.info.total_cost;
 
 						// Log that we had to fetch cost from raw response
-						if config.openrouter.debug {
+						if config.openrouter.log_level.is_debug_enabled() {
 							println!("Debug: Using cost from raw response: ${:.5} (total now: ${:.5})",
 								cost, self.session.info.total_cost);
 						}
@@ -179,7 +162,7 @@ impl ChatSession {
 						println!("{}", "ERROR: OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
 
 						// Dump the raw response JSON to debug
-						if config.openrouter.debug {
+						if config.openrouter.log_level.is_debug_enabled() {
 							println!("{}", "Raw OpenRouter response:".bright_red());
 							if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
 								println!("{}", resp_str);

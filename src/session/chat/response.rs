@@ -1,6 +1,7 @@
 // Response processing module
 
 use crate::config::Config;
+use crate::{log_debug, log_info};
 use crate::session::openrouter;
 use crate::session::mcp;
 use crate::session::chat::session::ChatSession;
@@ -50,7 +51,7 @@ fn print_assistant_response(content: &str, config: &Config) {
 			}
 			Err(e) => {
 				// Fallback to plain text if markdown rendering fails
-				if config.openrouter.debug {
+				if config.openrouter.log_level.is_debug_enabled() {
 					println!("{}: {}", "Warning: Markdown rendering failed".yellow(), e);
 				}
 				println!("{}", content.bright_green());
@@ -133,13 +134,12 @@ pub async fn process_response(
 	}
 
 	// Debug logging for finish_reason and tool calls
-	if config.openrouter.debug {
-		use colored::*;
+	if config.openrouter.log_level.is_debug_enabled() {
 		if let Some(ref reason) = finish_reason {
-			println!("{}", format!("Debug: Processing response with finish_reason: {}", reason).bright_cyan());
+			log_debug!("Processing response with finish_reason: {}", reason);
 		}
 		if let Some(ref calls) = tool_calls {
-			println!("{}", format!("Debug: Processing {} tool calls", calls.len()).bright_cyan());
+			log_debug!("Processing {} tool calls", calls.len());
 		}
 	}
 
@@ -178,10 +178,10 @@ pub async fn process_response(
 			};
 
 			// Add debug logging for tool calls when debug mode is enabled
-			if config.openrouter.debug && !current_tool_calls.is_empty() {
-				println!("{}", format!("Debug: Found {} tool calls in response", current_tool_calls.len()).yellow());
+			if config.openrouter.log_level.is_debug_enabled() && !current_tool_calls.is_empty() {
+				log_debug!("Found {} tool calls in response", current_tool_calls.len());
 				for (i, call) in current_tool_calls.iter().enumerate() {
-					println!("{}", format!("  Tool call {}: {} with params: {}", i+1, call.tool_name, call.parameters).yellow());
+					log_debug!("  Tool call {}: {} with params: {}", i+1, call.tool_name, call.parameters);
 				}
 			}
 
@@ -189,7 +189,7 @@ pub async fn process_response(
 				// CRITICAL FIX: We need to add the assistant message with tool_calls PRESERVED
 				// The standard add_assistant_message only stores text content, but we need
 				// to preserve the tool_calls from the original API response for proper conversation flow
-				
+
 				// Extract the original tool_calls from the exchange response if they exist
 				let original_tool_calls = current_exchange.response
 					.get("choices")
@@ -217,7 +217,7 @@ pub async fn process_response(
 
 				// Update last response and handle exchange/cost tracking if provided
 				chat_session.last_response = current_content.clone();
-				
+
 				// Handle cost tracking from the exchange (same logic as add_assistant_message)
 				if let Some(exchange) = &Some(current_exchange.clone()) {
 					if let Some(usage) = &exchange.usage {
@@ -261,8 +261,8 @@ pub async fn process_response(
 							chat_session.session.info.total_cost += cost;
 							chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-							if config.openrouter.debug {
-								println!("Debug: Adding ${:.5} from initial API (total now: ${:.5})",
+							if config.openrouter.log_level.is_debug_enabled() {
+								log_debug!("Adding ${:.5} from initial API (total now: ${:.5})",
 									cost, chat_session.session.info.total_cost);
 							}
 						}
@@ -291,11 +291,7 @@ pub async fn process_response(
 
 				for tool_call in current_tool_calls.clone() {
 					// Always print tool call execution, but with different level of detail based on debug mode
-					if config.openrouter.debug {
-						println!("  - Executing: {} with params: {}", tool_call.tool_name.yellow(), serde_json::to_string_pretty(&tool_call.parameters).unwrap_or_default().yellow());
-					} else {
-						println!("  - Executing tool: {}", tool_call.tool_name.yellow());
-					}
+					log_info!("Executing: {} with params: {}", tool_call.tool_name, serde_json::to_string_pretty(&tool_call.parameters).unwrap_or_default());
 
 					// Increment tool call counter
 					chat_session.session.info.tool_calls += 1;
@@ -348,7 +344,7 @@ pub async fn process_response(
 							},
 							Err(e) => {
 								_has_error = true;
-								if config.openrouter.debug {
+								if config.openrouter.log_level.is_debug_enabled() {
 									println!("  - {}: {}", "Error executing tool".bright_red(), e);
 								} else {
 									// Show minimal error info without debug mode
@@ -373,7 +369,7 @@ pub async fn process_response(
 									tool_results.push(error_result);
 								} else {
 									// Don't break the loop yet - we need 3 consecutive errors for the same tool
-									if config.openrouter.debug {
+									if config.openrouter.log_level.is_debug_enabled() {
 										println!("{}", format!("  - Tool '{}' failed {} of {} times. Continuing execution.",
 											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors).yellow());
 									}
@@ -382,7 +378,7 @@ pub async fn process_response(
 						},
 						Err(e) => {
 							_has_error = true;
-							if config.openrouter.debug {
+							if config.openrouter.log_level.is_debug_enabled() {
 								println!("  - {}: {}", "Task error".bright_red(), e);
 							} else {
 								// Show minimal error info without debug mode
@@ -493,10 +489,9 @@ pub async fn process_response(
 							current_exchange = next_exchange;
 
 							// Debug logging for follow-up finish_reason
-							if config.openrouter.debug {
-								use colored::*;
+							if config.openrouter.log_level.is_debug_enabled() {
 								if let Some(ref reason) = next_finish_reason {
-									println!("{}", format!("Debug: Follow-up finish_reason: {}", reason).bright_cyan());
+									log_debug!("Debug: Follow-up finish_reason: {}", reason);
 								}
 							}
 
@@ -504,29 +499,29 @@ pub async fn process_response(
 							let should_continue_conversation = match next_finish_reason.as_deref() {
 								Some("tool_calls") => {
 									// Model wants to make more tool calls
-									if config.openrouter.debug {
-										println!("{}", "Debug: finish_reason is 'tool_calls', continuing conversation".bright_cyan());
+									if config.openrouter.log_level.is_debug_enabled() {
+										log_debug!("Debug: finish_reason is 'tool_calls', continuing conversation");
 									}
 									true
 								}
 								Some("stop") | Some("length") => {
 									// Model finished normally or hit length limit
-									if config.openrouter.debug {
-										println!("{}", format!("Debug: finish_reason is '{}', ending conversation", next_finish_reason.as_deref().unwrap()).bright_cyan());
+									if config.openrouter.log_level.is_debug_enabled() {
+										log_debug!("Debug: finish_reason is '{}', ending conversation", next_finish_reason.as_deref().unwrap());
 									}
 									false
 								}
 								Some(other) => {
 									// Unknown finish_reason, be conservative and continue
-									if config.openrouter.debug {
-										println!("{}", format!("Debug: Unknown finish_reason '{}', continuing conversation", other).bright_yellow());
+									if config.openrouter.log_level.is_debug_enabled() {
+										log_debug!("Debug: Unknown finish_reason '{}', continuing conversation", other);
 									}
 									true
 								}
 								None => {
 									// No finish_reason, check for tool calls
-									if config.openrouter.debug {
-										println!("{}", "Debug: No finish_reason, checking for tool calls".bright_cyan());
+									if config.openrouter.log_level.is_debug_enabled() {
+										log_debug!("Debug: No finish_reason, checking for tool calls");
 									}
 									has_more_tools
 								}
@@ -589,11 +584,7 @@ pub async fn process_response(
 
 								// Check if we should automatically move the cache marker
 								if let Ok(true) = chat_session.session.check_auto_cache_threshold(config) {
-									use colored::*;
-									println!("{}", "Auto-cache threshold reached during tool calls - adding cache checkpoint at last user message.".bright_yellow());
-									println!("{}", "This will reduce token usage for future requests.".bright_yellow());
-									// Note: The check_auto_cache_threshold function already handles adding the cache checkpoint
-									// No need to set environment variables, return early, or any other special handling
+									log_info!("{}", "Auto-cache threshold reached during tool calls - adding cache checkpoint at last user message.");
 								}
 
 								// Update cost
@@ -602,7 +593,7 @@ pub async fn process_response(
 									chat_session.session.info.total_cost += cost;
 									chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-									if config.openrouter.debug {
+									if config.openrouter.log_level.is_debug_enabled() {
 										println!("Debug: Adding ${:.5} from tool response API (total now: ${:.5})",
 											cost, chat_session.session.info.total_cost);
 
@@ -644,7 +635,7 @@ pub async fn process_response(
 										chat_session.session.info.total_cost += cost;
 										chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-										if config.openrouter.debug {
+										if config.openrouter.log_level.is_debug_enabled() {
 											println!("Debug: Using cost ${:.5} from raw response for tool response (total now: ${:.5})",
 												cost, chat_session.session.info.total_cost);
 										}
@@ -662,7 +653,7 @@ pub async fn process_response(
 										println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
 
 										// Dump the raw response for debugging
-										if config.openrouter.debug {
+										if config.openrouter.log_level.is_debug_enabled() {
 											if let Ok(resp_str) = serde_json::to_string_pretty(&current_exchange.response) {
 												println!("Partial response JSON:\n{}", resp_str);
 											}
@@ -676,7 +667,7 @@ pub async fn process_response(
 							// Check if there are more tools to process in the new content
 							if should_continue_conversation {
 								// Log if debug mode is enabled
-								if config.openrouter.debug {
+								if config.openrouter.log_level.is_debug_enabled() {
 									println!("{}", format!("Debug: Continuing conversation due to finish_reason or tool calls").yellow());
 								}
 								// Continue processing the new content with tool calls
@@ -697,7 +688,7 @@ pub async fn process_response(
 					let more_tools = mcp::parse_tool_calls(&current_content);
 					if !more_tools.is_empty() {
 						// Log if debug mode is enabled
-						if config.openrouter.debug {
+						if config.openrouter.log_level.is_debug_enabled() {
 							println!("{}", format!("Debug: Found {} more tool calls to process (no previous tool results)", more_tools.len()).yellow());
 						}
 						// If there are more tool calls later in the response, continue processing
@@ -739,43 +730,30 @@ pub async fn process_response(
 
 	// Display cumulative token usage - minimal output when debug is disabled
 	println!();
-	if config.openrouter.debug {
-		// Detailed output in debug mode
-		println!("{}", "── session usage ────────────────────────────────────────".bright_cyan());
 
-		// Format token usage with cached tokens
-		let cached = chat_session.session.info.cached_tokens;
-		let prompt = chat_session.session.info.input_tokens;
-		let completion = chat_session.session.info.output_tokens;
-		let total = prompt + completion + cached;
+	// Detailed output in debug mode
+	log_info!("{}", "── session usage ────────────────────────────────────────");
 
-		println!("{} {} prompt ({} cached), {} completion, {} total, ${:.5}",
-			"tokens:".bright_blue(),
-			prompt,
-			cached,
-			completion,
-			total,
-			chat_session.session.info.total_cost);
+	// Format token usage with cached tokens
+	let cached = chat_session.session.info.cached_tokens;
+	let prompt = chat_session.session.info.input_tokens;
+	let completion = chat_session.session.info.output_tokens;
+	let total = prompt + completion + cached;
 
-		// If we have cached tokens, show the savings percentage
-		if cached > 0 {
-			let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
-			println!("{} {:.1}% of prompt tokens ({} tokens saved)",
-				"cached:".bright_green(),
-				saving_pct,
-				cached);
-		}
-	} else {
-		// Minimal output when debug is disabled
-		let total = chat_session.session.info.input_tokens +
-		chat_session.session.info.output_tokens +
-		chat_session.session.info.cached_tokens;
-		println!("{} {} tokens, ${:.5}",
-			"Session usage:".bright_blue(),
-			total,
-			chat_session.session.info.total_cost);
+	log_info!("tokens: {} prompt ({} cached), {} completion, {} total, ${:.5}",
+		prompt,
+		cached,
+		completion,
+		total,
+		chat_session.session.info.total_cost);
+
+	// If we have cached tokens, show the savings percentage
+	if cached > 0 {
+		let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
+		log_info!("cached: {:.1}% of prompt tokens ({} tokens saved)",
+			saving_pct,
+			cached);
 	}
-
 	println!();
 
 	Ok(())

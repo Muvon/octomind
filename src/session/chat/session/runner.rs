@@ -1,6 +1,7 @@
 // Interactive session runner
 
 use super::core::ChatSession;
+use crate::{log_debug, log_info};
 use crate::store::Store;
 use crate::config::Config;
 use crate::session::{create_system_prompt, openrouter};
@@ -13,7 +14,6 @@ use super::super::animation::show_loading_animation;
 use super::super::context_truncation::check_and_truncate_context;
 use super::super::commands::*;
 use crate::session::indexer;
-use colored::Colorize;
 
 // Run an interactive session
 pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
@@ -85,11 +85,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Run the indexer directly using our indexer integration
 		indexer::index_current_directory(store, config).await?
 	} else {
-		println!("Using existing index from {}", index_path.display());
+		log_info!("Using existing index from {}", index_path.display());
 	}
 
 	// Start a watcher in the background to keep the index updated
-	println!("Starting watcher to keep index updated during session...");
+	log_info!("Starting watcher to keep index updated during session...");
 	indexer::start_watcher_in_background(store, config).await?;
 
 	// Create or load session
@@ -115,22 +115,22 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// This ensures all heavy initial context is cached to save on tokens
 		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
 			if cached && crate::session::model_supports_caching(&chat_session.model) {
-				println!("{}", "System prompt has been marked for caching to save tokens in future interactions.".yellow());
+				log_info!("System prompt has been marked for caching to save tokens in future interactions.");
 				// Save the session to ensure the cached status is persisted
 				let _ = chat_session.save();
 			} else if !crate::session::model_supports_caching(&chat_session.model) {
 				// Don't show warning for models that don't support caching
-				println!("{}", "Note: This model doesn't support caching, but system prompt is still optimized.".blue());
+				log_info!("Note: This model doesn't support caching, but system prompt is still optimized.");
 			} else {
-				println!("{}", "Warning: Failed to mark system prompt for caching.".red());
+				log_info!("Warning: Failed to mark system prompt for caching.");
 			}
 		} else {
-			println!("{}", "Error: Could not set cache checkpoint for system message.".bright_red());
+			log_info!("Error: Could not set cache checkpoint for system message.");
 		}
 
 		// Add assistant welcome message
 		let welcome_message = format!(
-			"Hello! I'm ready to help you with your code in `{}`. What would you like to do?",
+			"Hello! Octodev ready to serve you. Working dir: {}",
 			current_dir.file_name().unwrap_or_default().to_string_lossy()
 		);
 		chat_session.add_assistant_message(&welcome_message, None, config)?;
@@ -146,6 +146,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		for msg in last_messages.iter().rev() {
 			if msg.role == "assistant" {
 				println!("{}", msg.content.bright_green());
+			} else if msg.role == "tool" {
+				log_debug!(msg.content);
 			} else if msg.role == "user" {
 				println!("> {}", msg.content.bright_blue());
 			}
@@ -174,6 +176,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
 	let mut current_config = config.clone();
+
+	// Set the thread-local config for logging macros
+	crate::config::set_thread_config(&current_config);
 
 	// Main interaction loop
 	loop {
@@ -273,19 +278,19 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 					// Continue with the session
 					continue;
-				} else if input.starts_with(LAYERS_COMMAND) || input.starts_with(DEBUG_COMMAND) {
+				} else if input.starts_with(LAYERS_COMMAND) || input.starts_with(DEBUG_COMMAND) || input.starts_with(LOGLEVEL_COMMAND) {
 					// This is a command that requires config reload
 					// Reload the configuration
 					match crate::config::Config::load() {
 						Ok(updated_config) => {
 							// Update our current config
 							current_config = updated_config;
-							use colored::Colorize;
-							println!("{}", "Configuration reloaded successfully".bright_green());
+							// Update thread config for logging macros
+							crate::config::set_thread_config(&current_config);
+							log_info!("Configuration reloaded successfully");
 						},
 						Err(e) => {
-							use colored::Colorize;
-							println!("{}: {}", "Error reloading configuration".bright_red(), e);
+							log_info!("Error reloading configuration: {}", e);
 						}
 					}
 					// Continue with the session
@@ -340,7 +345,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// Mark that we've processed the first message through layers
 					first_message_processed = true;
 
-					println!("{}", "Layers processing complete. Using enhanced input for main model.".bright_cyan());
+					log_info!("{}", "Layers processing complete. Using enhanced input for main model.");
 				},
 				Err(e) => {
 					// Print colorful error message and continue with original input
@@ -378,7 +383,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if !system_message_cached {
 			if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
 				if cached && crate::session::model_supports_caching(&chat_session.model) {
-					println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
+					log_info!("{}", "System message has been automatically marked for caching to save tokens.");
 					// Save the session to ensure the cached status is persisted
 					let _ = chat_session.save();
 				}
@@ -432,15 +437,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			temperature,
 			&config_clone
 		).await;
-
-		// Debug log the API call result if debug mode is enabled
-		if config_clone.openrouter.debug {
-			if let Err(ref e) = api_result {
-				println!("{}", format!("Debug: API call error: {}", e).bright_red());
-			} else {
-				println!("{}", "Debug: API call completed successfully".green());
-			}
-		}
 
 		// Stop the animation - but use TRUE to stop it, not false!
 		operation_cancelled.store(true, Ordering::SeqCst);

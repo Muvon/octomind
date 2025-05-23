@@ -2,6 +2,7 @@
 
 use crate::session::chat::session::ChatSession;
 use crate::config::Config;
+use crate::log_conditional;
 use anyhow::Result;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -27,15 +28,11 @@ pub async fn check_and_truncate_context(
 	}
 
 	// We need to truncate - inform the user with minimal info
-	if config.openrouter.debug {
-		// Detailed output in debug mode
-		println!("{}", format!("\nℹ️  Message history exceeds configured token limit ({} > {})",
-			current_tokens, config.openrouter.max_request_tokens_threshold).bright_blue());
-		println!("{}", "Automatically truncating older messages to reduce context size.".bright_blue());
-	} else {
-		// Minimal output when debug is disabled
-		println!("{}", "Truncating message history to reduce token usage".bright_blue());
-	}
+	log_conditional!(
+		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nAutomatically truncating older messages to reduce context size.",
+			current_tokens, config.openrouter.max_request_tokens_threshold).bright_blue(),
+		default: "Truncating message history to reduce token usage".bright_blue()
+	);
 
 	// Strategy: Keep system message, last 2-3 exchanges, and remove older user/assistant exchanges
 	let mut system_message = None;
@@ -93,12 +90,11 @@ pub async fn check_and_truncate_context(
 	let new_token_count = crate::session::estimate_message_tokens(&chat_session.session.messages);
 	let tokens_saved = current_tokens.saturating_sub(new_token_count);
 
-	if config.openrouter.debug {
-		println!("{}", format!("Truncation complete: {} tokens removed, new context size: {} tokens.",
-			tokens_saved, new_token_count).bright_green());
-	} else {
-		println!("{}", format!("Reduced context size by {} tokens", tokens_saved).bright_green());
-	}
+	log_conditional!(
+		debug: format!("Truncation complete: {} tokens removed, new context size: {} tokens.",
+			tokens_saved, new_token_count).bright_green(),
+		default: format!("Reduced context size by {} tokens", tokens_saved).bright_green()
+	);
 
 	// Save the session with truncated messages
 	chat_session.save()?;

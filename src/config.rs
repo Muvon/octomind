@@ -4,6 +4,152 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum LogLevel {
+	#[serde(rename = "none")]
+	None,
+	#[serde(rename = "info")]
+	Info,
+	#[serde(rename = "debug")]
+	Debug,
+}
+
+impl Default for LogLevel {
+	fn default() -> Self {
+		Self::None
+	}
+}
+
+impl LogLevel {
+	/// Check if info logging is enabled
+	pub fn is_info_enabled(&self) -> bool {
+		matches!(self, LogLevel::Info | LogLevel::Debug)
+	}
+
+	/// Check if debug logging is enabled
+	pub fn is_debug_enabled(&self) -> bool {
+		matches!(self, LogLevel::Debug)
+	}
+
+	/// Convert the old debug boolean to LogLevel for backward compatibility
+	pub fn from_debug_flag(debug: bool) -> Self {
+		if debug { LogLevel::Debug } else { LogLevel::None }
+	}
+}
+
+/// Logging macros for different log levels
+/// These macros automatically check the current log level and only print if appropriate
+use std::cell::RefCell;
+
+thread_local! {
+	static CURRENT_CONFIG: RefCell<Option<Config>> = RefCell::new(None);
+}
+
+/// Set the current config for the thread (to be used by logging macros)
+pub fn set_thread_config(config: &Config) {
+	CURRENT_CONFIG.with(|c| {
+		*c.borrow_mut() = Some(config.clone());
+	});
+}
+
+/// Get the current config for the thread
+pub fn with_thread_config<F, R>(f: F) -> Option<R>
+where
+	F: FnOnce(&Config) -> R,
+{
+	CURRENT_CONFIG.with(|c| {
+		if let Some(ref config) = *c.borrow() {
+			Some(f(config))
+		} else {
+			None
+		}
+	})
+}
+
+/// Info logging macro with automatic cyan coloring
+/// Shows info messages when log level is Info OR Debug
+#[macro_export]
+macro_rules! log_info {
+	($fmt:expr) => {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_info_enabled()) {
+			if should_log {
+				use colored::Colorize;
+				println!("{}", $fmt.cyan());
+			}
+		}
+	};
+	($fmt:expr, $($arg:expr),*) => {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_info_enabled()) {
+			if should_log {
+				use colored::Colorize;
+				println!("{}", format!($fmt, $($arg),*).cyan());
+			}
+		}
+	};
+}
+
+/// Debug logging macro with automatic bright blue coloring
+#[macro_export]
+macro_rules! log_debug {
+	($fmt:expr) => {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_debug_enabled()) {
+			if should_log {
+				use colored::Colorize;
+				println!("{}", $fmt.bright_blue());
+			}
+		}
+	};
+	($fmt:expr, $($arg:expr),*) => {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_debug_enabled()) {
+			if should_log {
+				use colored::Colorize;
+				println!("{}", format!($fmt, $($arg),*).bright_blue());
+			}
+		}
+	};
+}
+
+/// Conditional logging - prints different messages based on log level
+#[macro_export]
+macro_rules! log_conditional {
+	(debug: $debug_msg:expr, info: $info_msg:expr, none: $none_msg:expr) => {
+		if let Some(level) = $crate::config::with_thread_config(|config| config.openrouter.log_level.clone()) {
+			match level {
+				$crate::config::LogLevel::Debug => println!("{}", $debug_msg),
+				$crate::config::LogLevel::Info => println!("{}", $info_msg),
+				$crate::config::LogLevel::None => println!("{}", $none_msg),
+			}
+		} else {
+			// Fallback if no config is set
+			println!("{}", $none_msg);
+		}
+	};
+	(debug: $debug_msg:expr, default: $default_msg:expr) => {
+		if let Some(should_debug) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_debug_enabled()) {
+			if should_debug {
+				println!("{}", $debug_msg);
+			} else {
+				println!("{}", $default_msg);
+			}
+		} else {
+			// Fallback if no config is set
+			println!("{}", $default_msg);
+		}
+	};
+	(info: $info_msg:expr, default: $default_msg:expr) => {
+		if let Some(should_info) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_info_enabled()) {
+			if should_info {
+				println!("{}", $info_msg);
+			} else {
+				println!("{}", $default_msg);
+			}
+		} else {
+			// Fallback if no config is set  
+			println!("{}", $default_msg);
+		}
+	};
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum EmbeddingProvider {
 	Jina,
 	FastEmbed,
@@ -103,9 +249,9 @@ pub struct OpenRouterConfig {
 	// Layer configurations for the new layered architecture
 	#[serde(default)]
 	pub enable_layers: bool,
-	// Debug mode setting
+	// Log level setting (replaces debug mode)
 	#[serde(default)]
-	pub debug: bool,
+	pub log_level: LogLevel,
 	// Maximum response tokens warning threshold
 	#[serde(default = "default_mcp_response_warning_threshold")]
 	pub mcp_response_warning_threshold: usize,
@@ -172,7 +318,7 @@ impl Default for OpenRouterConfig {
 			api_key: None,
 			pricing: PricingConfig::default(),
 			enable_layers: false, // Disabled by default
-			debug: false,
+			log_level: LogLevel::default(),
 			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false, // Disabled by default

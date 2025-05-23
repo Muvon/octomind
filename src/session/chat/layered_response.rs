@@ -79,7 +79,7 @@ pub async fn process_layered_response(
 	let _ = animation_task.await;
 
 	// Display status message for layered sessions - minimal for non-debug
-	if config.openrouter.debug {
+	if config.openrouter.log_level.is_debug_enabled() {
 		println!("{}", "Using layered processing with model-specific caching - only supported models will use caching".bright_cyan());
 	} else {
 		println!("{}", "Using layered processing".bright_cyan());

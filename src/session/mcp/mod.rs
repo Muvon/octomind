@@ -3,7 +3,7 @@
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use anyhow::Result;
-use colored;
+use crate::log_debug;
 use std::io::Write;
 use uuid;
 
@@ -220,12 +220,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 // Execute a tool call
 pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
 	// Debug logging for tool execution
-	if config.openrouter.debug {
-		use colored::*;
-		println!("{}", format!("Debug: Executing tool call: {}", call.tool_name).bright_blue());
-		if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
-			println!("{}", format!("Debug: Tool parameters: {}", params).bright_blue());
-		}
+	log_debug!("Debug: Executing tool call: {}", call.tool_name);
+	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
+		log_debug!("Debug: Tool parameters: {}", params);
 	}
 
 	// Only execute if MCP is enabled
@@ -253,7 +250,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	// Try to execute locally if provider is enabled
 	if config.mcp.providers.contains(&"core".to_string()) {
 		// Handle developer tools
-		if call.tool_name == "core" {
+		if call.tool_name == "shell" {
 			let mut result = dev::execute_shell_command(call).await?;
 			// Add the tool_id to the result
 			result.tool_id = call.tool_id.clone();

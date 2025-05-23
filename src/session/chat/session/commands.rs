@@ -1,7 +1,7 @@
 // Session command processing
 
 use super::core::ChatSession;
-use crate::config::Config;
+use crate::{config::{Config, LogLevel}, log_info};
 use std::io::{self, Write};
 use anyhow::Result;
 use colored::Colorize;
@@ -38,7 +38,7 @@ impl ChatSession {
 				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
 				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
 				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting");
-				println!("{} - {}", DEBUG_COMMAND.cyan(), "Toggle debug mode for detailed logs");
+				println!("{} [level] - {}", LOGLEVEL_COMMAND.cyan(), "Set logging level: none, info, or debug");
 				println!("{} [threshold] - {}", TRUNCATE_COMMAND.cyan(), "Toggle automatic context truncation when token limit is reached");
 				println!("{} or {} - {}\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
 
@@ -111,15 +111,14 @@ impl ChatSession {
 					println!("{}", "Layered processing architecture is now DISABLED.".bright_yellow());
 					// println!("{}", "Using standard single-model processing with Claude.".bright_blue());
 				}
-				println!("{}", "Configuration has been saved to disk.");
+				log_info!("Configuration has been saved to disk.");
 
 				// Return a special code that indicates we should reload the config in the main loop
 				// This will ensure all future commands use the updated config
 				return Ok(true);
 			},
-			DEBUG_COMMAND => {
-				// Toggle debug mode
-				// First, load the config from disk to ensure we have the latest values
+			LOGLEVEL_COMMAND => {
+				// Handle log level command
 				let mut loaded_config = match crate::config::Config::load() {
 					Ok(cfg) => cfg,
 					Err(_) => {
@@ -128,8 +127,31 @@ impl ChatSession {
 					}
 				};
 
-				// Toggle the setting
-				loaded_config.openrouter.debug = !loaded_config.openrouter.debug;
+				if params.is_empty() {
+					// Show current log level
+					let current_level = match loaded_config.openrouter.log_level {
+						LogLevel::None => "none",
+						LogLevel::Info => "info",
+						LogLevel::Debug => "debug",
+					};
+					println!("{}", format!("Current log level: {}", current_level).bright_cyan());
+					println!("{}", "Available levels: none, info, debug".bright_yellow());
+					return Ok(false);
+				}
+
+				// Parse the requested log level
+				let new_level = match params[0].to_lowercase().as_str() {
+					"none" => LogLevel::None,
+					"info" => LogLevel::Info,
+					"debug" => LogLevel::Debug,
+					_ => {
+						println!("{}", "Invalid log level. Use: none, info, or debug".bright_red());
+						return Ok(false);
+					}
+				};
+
+				// Update the configuration
+				loaded_config.openrouter.log_level = new_level.clone();
 
 				// Save the updated config
 				if let Err(e) = loaded_config.save() {
@@ -138,14 +160,56 @@ impl ChatSession {
 				}
 
 				// Show the new state
-				if loaded_config.openrouter.debug {
+				match new_level {
+					LogLevel::None => {
+						println!("{}", "Log level set to NONE.".bright_yellow());
+						println!("{}", "Only essential information will be displayed.".bright_blue());
+					},
+					LogLevel::Info => {
+						println!("{}", "Log level set to INFO.".bright_green());
+						println!("{}", "Moderate logging will be shown.".bright_yellow());
+					},
+					LogLevel::Debug => {
+						println!("{}", "Log level set to DEBUG.".bright_green());
+						println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
+					}
+				}
+				log_info!("Configuration has been saved to disk.");
+
+				// Return a special code that indicates we should reload the config in the main loop
+				return Ok(true);
+			},
+			DEBUG_COMMAND => {
+				// Backward compatibility - toggle between none and debug
+				let mut loaded_config = match crate::config::Config::load() {
+					Ok(cfg) => cfg,
+					Err(_) => {
+						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
+						config.clone()
+					}
+				};
+
+				// Toggle between none and debug for backward compatibility
+				loaded_config.openrouter.log_level = match loaded_config.openrouter.log_level {
+					LogLevel::Debug => LogLevel::None,
+					_ => LogLevel::Debug,
+				};
+
+				// Save the updated config
+				if let Err(e) = loaded_config.save() {
+					println!("{}: {}", "Failed to save configuration".bright_red(), e);
+					return Ok(false);
+				}
+
+				// Show the new state
+				if loaded_config.openrouter.log_level.is_debug_enabled() {
 					println!("{}", "Debug mode is now ENABLED.".bright_green());
 					println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
 				} else {
 					println!("{}", "Debug mode is now DISABLED.".bright_yellow());
 					println!("{}", "Only essential information will be displayed.".bright_blue());
 				}
-				println!("{}", "Configuration has been saved to disk.");
+				log_info!("Configuration has been saved to disk.");
 
 				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);
@@ -187,7 +251,7 @@ impl ChatSession {
 					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
 					println!("{}", "You'll need to manually reduce context when it gets too large.".bright_blue());
 				}
-				println!("{}", "Configuration has been saved to disk.");
+				log_info!("Configuration has been saved to disk.");
 
 				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);

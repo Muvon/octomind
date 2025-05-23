@@ -5,6 +5,8 @@ use rustyline::error::ReadlineError;
 use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
 use colored::*;
 
+use crate::log_info;
+
 // Read user input with support for multiline input and command completion
 pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 	// Configure rustyline
@@ -49,7 +51,7 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		},
 		Err(ReadlineError::Eof) => {
 			// Ctrl+D
-			println!("\nExiting session.");
+			log_info!("\nExiting session.");
 			Ok("/exit".to_string())
 		},
 		Err(err) => {

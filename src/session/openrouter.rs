@@ -6,6 +6,7 @@ use serde::{Serialize, Deserialize};
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::Config;
+use crate::log_debug;
 
 // OpenRouter response with token usage
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -135,7 +136,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 				Err(_) => crate::config::Config::default()
 			};
 
-			if config.openrouter.debug {
+			if config.openrouter.log_level.is_debug_enabled() {
 				use colored::*;
 				println!("{}", format!("Debug: Converting tool message - ID: {}, Name: {}, Content: {:.100}...",
 					tool_call_id, name, msg.content).bright_magenta());
@@ -239,7 +240,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 					Err(_) => crate::config::Config::default()
 				};
 
-				if config.openrouter.debug {
+				if config.openrouter.log_level.is_debug_enabled() {
 					use colored::*;
 					println!("{}", format!("Debug: Restored tool_calls for assistant message from stored data").bright_green());
 				}
@@ -340,7 +341,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 			}
 		};
 
-		if config.openrouter.debug {
+		if config.openrouter.log_level.is_debug_enabled() {
 			use colored::*;
 			println!("{}", format!("{} system/user messages marked for caching", cached_count).bright_magenta());
 		}
@@ -495,7 +496,7 @@ pub async fn chat_completion(
 			error_details.push(format!("Type: {}", type_));
 		}
 
-		if config.openrouter.debug {
+		if config.openrouter.log_level.is_debug_enabled() {
 			error_details.push(format!("Raw response: {}", response_text));
 		}
 
@@ -518,15 +519,11 @@ pub async fn chat_completion(
 		.and_then(|fr| fr.as_str())
 		.map(|s| s.to_string());
 
-	// Debug logging for finish_reason
-	if config.openrouter.debug {
-		use colored::*;
 		if let Some(ref reason) = finish_reason {
-			println!("{}", format!("Debug: Finish reason: {}", reason).bright_yellow());
+			log_debug!("Finish reason: {}", reason);
 		} else {
-			println!("{}", "Debug: No finish_reason in response".bright_yellow());
+			log_debug!("No finish_reason in response");
 		}
-	}
 
 	// Check if the response contains tool calls
 	let mut content = String::new();
@@ -534,17 +531,6 @@ pub async fn chat_completion(
 	// First check for content
 	if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
 		content = text.to_string();
-	}
-
-	// Debug logging for message content and tool calls
-	if config.openrouter.debug {
-		use colored::*;
-		println!("{}", format!("Debug: Response content: '{}'", content).bright_yellow());
-		if let Some(tool_calls) = message.get("tool_calls") {
-			println!("{}", format!("Debug: Tool calls present: {}", !tool_calls.as_array().unwrap_or(&vec![]).is_empty()).bright_yellow());
-		} else {
-			println!("{}", "Debug: No tool calls in response".bright_yellow());
-		}
 	}
 
 	// Check if the response contains tool calls
@@ -677,7 +663,7 @@ pub async fn chat_completion(
 		} else if content.is_empty() {
 			// If content is empty but we have a valid response structure, treat it as a valid empty response
 			// This can happen when the model responds to tool results with no additional text
-			if config.openrouter.debug {
+			if config.openrouter.log_level.is_debug_enabled() {
 				use colored::*;
 				println!("{}", "Debug: Received valid response with empty content and no tool calls".bright_yellow());
 			}
@@ -688,7 +674,7 @@ pub async fn chat_completion(
 		if content.is_empty() {
 			// If content is empty and no tool_calls field, this could be a valid empty response
 			// This happens when the model responds to tool results with no additional text
-			if config.openrouter.debug {
+			if config.openrouter.log_level.is_debug_enabled() {
 				use colored::*;
 				println!("{}", "Debug: Received valid response with empty content and no tool_calls field".bright_yellow());
 			}

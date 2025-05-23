@@ -15,10 +15,11 @@ pub const LAYERS_COMMAND: &str = "/layers";
 pub const INFO_COMMAND: &str = "/info";
 pub const DONE_COMMAND: &str = "/done";
 pub const DEBUG_COMMAND: &str = "/debug";
+pub const LOGLEVEL_COMMAND: &str = "/loglevel";
 pub const TRUNCATE_COMMAND: &str = "/truncate";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 15] = [
+pub const COMMANDS: [&str; 16] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -33,5 +34,6 @@ pub const COMMANDS: [&str; 15] = [
 	INFO_COMMAND,
 	DONE_COMMAND,
 	DEBUG_COMMAND,
+	LOGLEVEL_COMMAND,
 	TRUNCATE_COMMAND,
 ];

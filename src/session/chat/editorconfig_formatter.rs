@@ -29,13 +29,13 @@ pub async fn apply_editorconfig_formatting(modified_files: Option<Vec<PathBuf>>)
 		}
 	};
 
-	if config.openrouter.debug {
+	if config.openrouter.log_level.is_debug_enabled() {
 		println!("{}", "Found .editorconfig file".green());
 	}
 
 	// Determine which files to process
 	let files_to_format = if let Some(files) = modified_files {
-		if config.openrouter.debug {
+		if config.openrouter.log_level.is_debug_enabled() {
 			println!("{} {} files", "Processing".blue(), files.len());
 		}
 		files
@@ -43,18 +43,18 @@ pub async fn apply_editorconfig_formatting(modified_files: Option<Vec<PathBuf>>)
 		// Try to get modified files from git
 		match get_modified_files_from_git() {
 			Ok(git_files) if !git_files.is_empty() => {
-				if config.openrouter.debug {
+				if config.openrouter.log_level.is_debug_enabled() {
 					println!("{} {} files from git", "Processing".blue(), git_files.len());
 				}
 				git_files
 			}
 			_ => {
 				// Fallback: Process all files respecting .gitignore
-				if config.openrouter.debug {
+				if config.openrouter.log_level.is_debug_enabled() {
 					println!("{}", "No git changes detected or git not available, processing all files...".yellow());
 				}
 				let all_files = collect_files_respecting_gitignore(&current_dir)?;
-				if config.openrouter.debug {
+				if config.openrouter.log_level.is_debug_enabled() {
 					println!("{} {} files from project", "Processing".blue(), all_files.len());
 				}
 				all_files
@@ -107,7 +107,7 @@ async fn format_file(file_path: &Path) -> Result<bool> {
 	let properties = match editorconfig::get_config(file_path) {
 		Ok(props) => props,
 		Err(e) => {
-			if config.openrouter.debug {
+			if config.openrouter.log_level.is_debug_enabled() {
 				println!("{} {}: {}", "Error getting EditorConfig properties for".yellow(),
 					file_path.display(), e);
 			}
@@ -124,7 +124,7 @@ async fn format_file(file_path: &Path) -> Result<bool> {
 	let mut file = match File::open(file_path) {
 		Ok(f) => f,
 		Err(e) => {
-			if config.openrouter.debug {
+			if config.openrouter.log_level.is_debug_enabled() {
 				println!("{} {}: {}", "Error reading file".yellow(), file_path.display(), e);
 			}
 			return Ok(false);
@@ -137,7 +137,7 @@ async fn format_file(file_path: &Path) -> Result<bool> {
 		if e.kind() == ErrorKind::InvalidData {
 			return Ok(false);
 		}
-		if config.openrouter.debug {
+		if config.openrouter.log_level.is_debug_enabled() {
 			println!("{} {}: {}", "Error reading file content".yellow(), file_path.display(), e);
 		}
 		return Ok(false);
@@ -319,7 +319,7 @@ fn collect_files_respecting_gitignore(dir: &Path) -> Result<Vec<PathBuf>> {
 					}
 				};
 
-				if config.openrouter.debug {
+				if config.openrouter.log_level.is_debug_enabled() {
 					println!("{}: {}", "Warning: Error walking directory".yellow(), e);
 				}
 			}

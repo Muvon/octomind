@@ -239,11 +239,6 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 					Ok(cfg) => cfg,
 					Err(_) => crate::config::Config::default()
 				};
-
-				if config.openrouter.log_level.is_debug_enabled() {
-					use colored::*;
-					println!("{}", format!("Debug: Restored tool_calls for assistant message from stored data").bright_green());
-				}
 			}
 
 			result.push(assistant_message);

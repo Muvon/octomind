@@ -156,6 +156,7 @@ pub async fn process_response(
 	// Process original content first, then any follow-up tool calls
 	let mut current_content = content.clone();
 	let mut current_exchange = exchange;
+	let mut current_tool_calls_param = tool_calls.clone(); // Track the tool_calls parameter
 
 	loop {
 		// Check for cancellation at the start of each loop iteration
@@ -166,15 +167,18 @@ pub async fn process_response(
 
 		// Check for tool calls if MCP is enabled
 		if config.mcp.enabled {
-			// First get any directly passed tool calls, falling back to parsing the content if needed
-			let current_tool_calls = if let Some(calls) = tool_calls.clone() {
+			// CRITICAL FIX: Use current_tool_calls_param for the first iteration only
+			// For subsequent iterations, we should NOT reuse the same tool calls
+			let current_tool_calls = if let Some(calls) = current_tool_calls_param.take() {
+				// Use the tool calls from the API response only once
 				if !calls.is_empty() {
 					calls
 				} else {
 					mcp::parse_tool_calls(&current_content) // Fallback
 				}
 			} else {
-				mcp::parse_tool_calls(&current_content) // Fallback
+				// For follow-up iterations, parse from content if any new tool calls exist
+				mcp::parse_tool_calls(&current_content)
 			};
 
 			// Add debug logging for tool calls when debug mode is enabled
@@ -477,7 +481,7 @@ pub async fn process_response(
 					match follow_up_result {
 						Ok((next_content, next_exchange, next_tool_calls, next_finish_reason)) => {
 							// Store direct tool calls for efficient processing if they exist
-							let has_more_tools = if let Some(calls) = next_tool_calls {
+							let has_more_tools = if let Some(ref calls) = next_tool_calls {
 								!calls.is_empty()
 							} else {
 								// Fall back to parsing if no direct tool calls
@@ -487,6 +491,8 @@ pub async fn process_response(
 							// Update current content for next iteration
 							current_content = next_content;
 							current_exchange = next_exchange;
+							// CRITICAL FIX: Set the tool calls parameter for the next iteration
+							current_tool_calls_param = next_tool_calls;
 
 							// Debug logging for follow-up finish_reason
 							if config.openrouter.log_level.is_debug_enabled() {

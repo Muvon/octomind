@@ -99,15 +99,19 @@ pub struct ProviderFactory;
 
 impl ProviderFactory {
 	/// Parse a model string in format "provider:model" and return (provider_name, model_name)
-	/// If no provider prefix is found, defaults to "openrouter"
-	pub fn parse_model(model: &str) -> (String, String) {
+	/// Provider prefix is now REQUIRED
+	pub fn parse_model(model: &str) -> Result<(String, String)> {
 		if let Some(pos) = model.find(':') {
 			let provider = model[..pos].to_string();
 			let model_name = model[pos + 1..].to_string();
-			(provider, model_name)
+			
+			if provider.is_empty() || model_name.is_empty() {
+				return Err(anyhow::anyhow!("Invalid model format. Use 'provider:model' (e.g., 'openai:gpt-4o')"));
+			}
+			
+			Ok((provider, model_name))
 		} else {
-			// Default to openrouter if no provider specified
-			("openrouter".to_string(), model.to_string())
+			Err(anyhow::anyhow!("Invalid model format '{}'. Must specify provider like 'openai:gpt-4o' or 'openrouter:anthropic/claude-3.5-sonnet'", model))
 		}
 	}
 
@@ -124,7 +128,7 @@ impl ProviderFactory {
 
 	/// Get the appropriate provider for a given model string
 	pub fn get_provider_for_model(model: &str) -> Result<(Box<dyn AiProvider>, String)> {
-		let (provider_name, model_name) = Self::parse_model(model);
+		let (provider_name, model_name) = Self::parse_model(model)?;
 		let provider = Self::create_provider(&provider_name)?;
 
 		// Verify the provider supports this model
@@ -147,19 +151,30 @@ mod tests {
 	#[test]
 	fn test_parse_model() {
 		// Test with provider prefix
-		let (provider, model) = ProviderFactory::parse_model("openrouter:anthropic/claude-3.5-sonnet");
+		let result = ProviderFactory::parse_model("openrouter:anthropic/claude-3.5-sonnet");
+		assert!(result.is_ok());
+		let (provider, model) = result.unwrap();
 		assert_eq!(provider, "openrouter");
 		assert_eq!(model, "anthropic/claude-3.5-sonnet");
 
 		// Test with different provider
-		let (provider, model) = ProviderFactory::parse_model("openai:gpt-4o");
+		let result = ProviderFactory::parse_model("openai:gpt-4o");
+		assert!(result.is_ok());
+		let (provider, model) = result.unwrap();
 		assert_eq!(provider, "openai");
 		assert_eq!(model, "gpt-4o");
 
-		// Test without provider prefix (should default to openrouter)
-		let (provider, model) = ProviderFactory::parse_model("anthropic/claude-3.5-sonnet");
-		assert_eq!(provider, "openrouter");
-		assert_eq!(model, "anthropic/claude-3.5-sonnet");
+		// Test without provider prefix (should fail now)
+		let result = ProviderFactory::parse_model("anthropic/claude-3.5-sonnet");
+		assert!(result.is_err());
+		
+		// Test empty provider
+		let result = ProviderFactory::parse_model(":gpt-4o");
+		assert!(result.is_err());
+		
+		// Test empty model
+		let result = ProviderFactory::parse_model("openai:");
+		assert!(result.is_err());
 	}
 
 	#[test]

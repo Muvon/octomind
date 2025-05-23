@@ -24,5 +24,5 @@ pub use editorconfig_formatter::apply_editorconfig_formatting;
 pub use markdown::{MarkdownRenderer, is_markdown_content};
 
 // Model constants
-pub const CLAUDE_MODEL: &str = "anthropic/claude-sonnet-4";
+pub const CLAUDE_MODEL: &str = "openrouter:anthropic/claude-sonnet-4";
 pub const DEFAULT_MODEL: &str = CLAUDE_MODEL;

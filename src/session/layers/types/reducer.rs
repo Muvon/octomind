@@ -19,7 +19,7 @@ impl ReducerLayer {
 		LayerConfig {
 			name: name.to_string(),
 			enabled: true,
-			model: "openai/o4-mini".to_string(),
+			model: "openrouter:openai/o4-mini".to_string(),
 			system_prompt: crate::session::helper_functions::get_raw_system_prompt("reducer"),
 			temperature: 0.2,
 			enable_tools: false, // No tools for Reducer

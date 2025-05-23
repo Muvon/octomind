@@ -19,7 +19,7 @@ impl ContextGeneratorLayer {
 		LayerConfig {
 			name: name.to_string(),
 			enabled: true,
-			model: "google/gemini-2.5-flash-preview".to_string(),
+			model: "openrouter:google/gemini-2.5-flash-preview".to_string(),
 			system_prompt: crate::session::helper_functions::get_raw_system_prompt("context_generator"),
 			temperature: 0.2,
 			enable_tools: true, // Enable tools for context gathering

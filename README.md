@@ -58,19 +58,14 @@ OctoDev supports multiple AI providers through an extensible architecture. You c
 
 ### Model Format
 
-You can specify models in two ways:
+All models must now be specified with the `provider:model` format:
 
-#### Legacy Format (defaults to OpenRouter)
 ```bash
-# These use OpenRouter by default
-octodev session --model "anthropic/claude-3.5-sonnet"
-octodev session --model "openai/gpt-4o"
-```
-
-#### Provider-Specific Format
-```bash
-# Explicitly specify the provider
+# OpenRouter models
 octodev session --model "openrouter:anthropic/claude-3.5-sonnet"
+octodev session --model "openrouter:openai/gpt-4o"
+
+# OpenAI models (direct)
 octodev session --model "openai:gpt-4o"
 octodev session --model "openai:o1-preview"
 ```
@@ -80,9 +75,9 @@ octodev session --model "openai:o1-preview"
 Configure providers in your `.octodev/config.toml`:
 
 ```toml
-# Default OpenRouter configuration
+# Default model must use provider:model format
 [openrouter]
-model = "anthropic/claude-sonnet-4"
+model = "openrouter:anthropic/claude-sonnet-4"
 api_key = "your_openrouter_key"  # Optional, can use env var
 
 # You can also set provider-specific models for different modes
@@ -154,9 +149,6 @@ octodev session -r my_session
 # Use a specific model with provider
 octodev session --model "openai:gpt-4o"
 octodev session --model "openrouter:anthropic/claude-sonnet-4"
-
-# Use legacy format (defaults to OpenRouter)
-octodev session --model "anthropic/claude-3.5-haiku"
 
 # Combine options
 octodev session --mode=chat --model="openai:gpt-4o-mini" -n chat_session

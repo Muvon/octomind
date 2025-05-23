@@ -19,7 +19,7 @@ impl QueryProcessorLayer {
 		LayerConfig {
 			name: name.to_string(),
 			enabled: true,
-			model: "openai/gpt-4.1-nano".to_string(),
+			model: "openrouter:openai/gpt-4.1-nano".to_string(),
 			system_prompt: crate::session::helper_functions::get_raw_system_prompt("query_processor"),
 			temperature: 0.2,
 			enable_tools: false, // No tools for QueryProcessor

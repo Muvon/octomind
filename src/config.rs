@@ -172,11 +172,11 @@ pub struct GraphRagConfig {
 }
 
 fn default_description_model() -> String {
-	"openai/gpt-4.1-nano".to_string()
+	"openrouter:openai/gpt-4.1-nano".to_string()
 }
 
 fn default_relationship_model() -> String {
-	"openai/gpt-4.1-nano".to_string()
+	"openrouter:openai/gpt-4.1-nano".to_string()
 }
 
 impl Default for GraphRagConfig {
@@ -308,7 +308,7 @@ impl Default for PricingConfig {
 }
 
 fn default_openrouter_model() -> String {
-	"anthropic/claude-sonnet-4".to_string()
+	"openrouter:anthropic/claude-sonnet-4".to_string()
 }
 
 impl Default for OpenRouterConfig {
@@ -590,10 +590,17 @@ impl Config {
 		Ok(octodev_dir)
 	}
 
-	/// Validate the configuration for common issues
+	/// Validate the configuration for common issues  
 	pub fn validate(&self) -> Result<()> {
 		// Validate OpenRouter model name
-		self.validate_openrouter_model()?;
+		if let Err(e) = self.validate_openrouter_model() {
+			eprintln!("Configuration validation warning: {}", e);
+			eprintln!("The application will continue, but you may want to fix these issues.");
+			eprintln!("Update your .octodev/config.toml to use the new format:");
+			eprintln!("  Before: model = \"anthropic/claude-3.5-sonnet\"");
+			eprintln!("  After:  model = \"openrouter:anthropic/claude-3.5-sonnet\"");
+			// Don't return error, just warn
+		}
 
 		// Validate threshold values
 		self.validate_thresholds()?;
@@ -612,20 +619,39 @@ impl Config {
 	fn validate_openrouter_model(&self) -> Result<()> {
 		let model = &self.openrouter.model;
 
-		// Check if model starts with a valid provider prefix
-		let has_valid_prefix = model.contains('/') &&
-		(model.starts_with("anthropic/") ||
-		model.starts_with("openai/") ||
-		model.starts_with("meta-llama/") ||
-		model.starts_with("google/") ||
-		model.starts_with("mistralai/") ||
-		model.starts_with("perplexity/"));
-
-		if !has_valid_prefix {
+		// Check if model has the required provider:model format
+		if !model.contains(':') {
 			return Err(anyhow!(
-				"Invalid OpenRouter model format: '{}'. Expected format: 'provider/model-name'",
+				"Invalid model format: '{}'. Must use 'provider:model' format (e.g., 'openrouter:anthropic/claude-3.5-sonnet', 'openai:gpt-4o')",
 				model
 			));
+		}
+
+		// Parse and validate using the provider factory
+		match crate::session::ProviderFactory::parse_model(model) {
+			Ok((provider_name, model_name)) => {
+				// Try to create the provider to validate it exists
+				match crate::session::ProviderFactory::create_provider(&provider_name) {
+					Ok(provider) => {
+						// Check if the provider supports this model
+						if !provider.supports_model(&model_name) {
+							return Err(anyhow!(
+								"Provider '{}' does not support model '{}'. Check the provider documentation for supported models.",
+								provider_name, model_name
+							));
+						}
+					},
+					Err(_) => {
+						return Err(anyhow!(
+							"Unsupported provider: '{}'. Supported providers: openrouter, openai",
+							provider_name
+						));
+					}
+				}
+			},
+			Err(e) => {
+				return Err(anyhow!("Model validation failed: {}", e));
+			}
 		}
 
 		Ok(())
@@ -806,22 +832,27 @@ mod tests {
 	fn test_valid_openrouter_models() {
 		let mut config = Config::default();
 
-		// Test valid models
+		// Test valid models with proper provider:model format
 		let valid_models = [
-			"anthropic/claude-3.5-haiku",
-			"anthropic/claude-3.5-sonnet",
-			"anthropic/claude-3.7-sonnet",
-			"anthropic/claude-sonnet-4",
-			"anthropic/claude-opus-4",
-			"openai/gpt-4o",
-			"openai/gpt-4o-mini",
-			"openai/gpt-4.1",
-			"openai/gpt-4.1-mini",
-			"openai/gpt-4.1-nano",
-			"openai/o4-mini",
-			"openai/o4-mini-high",
-			"google/gemini-2.5-flash-preview",
-			"google/gemini-2.5-pro-preview",
+			"openrouter:anthropic/claude-3.5-haiku",
+			"openrouter:anthropic/claude-3.5-sonnet",
+			"openrouter:anthropic/claude-3.7-sonnet",
+			"openrouter:anthropic/claude-sonnet-4",
+			"openrouter:anthropic/claude-opus-4",
+			"openrouter:openai/gpt-4o",
+			"openrouter:openai/gpt-4o-mini",
+			"openrouter:openai/gpt-4.1",
+			"openrouter:openai/gpt-4.1-mini",
+			"openrouter:openai/gpt-4.1-nano",
+			"openrouter:openai/o4-mini",
+			"openrouter:openai/o4-mini-high",
+			"openrouter:google/gemini-2.5-flash-preview",
+			"openrouter:google/gemini-2.5-pro-preview",
+			"openai:gpt-4o",
+			"openai:gpt-4o-mini",
+			"openai:gpt-3.5-turbo",
+			"openai:o1-preview",
+			"openai:o1-mini",
 		];
 
 		for model in valid_models {
@@ -834,12 +865,15 @@ mod tests {
 	fn test_invalid_openrouter_models() {
 		let mut config = Config::default();
 
-		// Test invalid models
+		// Test invalid models (old format without provider prefix)
 		let invalid_models = [
 			"gpt-4",  // Missing provider prefix
+			"anthropic/claude-3.5-sonnet",  // Old format
 			"openai-gpt-4",  // Wrong separator
-			"unknown/model",  // Unknown provider
+			"unknown:model",  // Unknown provider
 			"",  // Empty string
+			"openai:",  // Empty model
+			":gpt-4o",  // Empty provider
 		];
 
 		for model in invalid_models {

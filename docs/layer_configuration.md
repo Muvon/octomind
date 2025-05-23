@@ -66,7 +66,7 @@ input_mode = "Last"
 [[layers]]
 name = "developer"
 enabled = true
-model = "anthropic/claude-3.7-sonnet"
+model = "anthropic/claude-sonnet-4"
 system_prompt = "Custom system prompt for developer."
 temperature = 0.3
 enable_tools = true

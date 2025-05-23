@@ -10,7 +10,7 @@ code_model = "jina-embeddings-v2-base-code"
 text_model = "jina-embeddings-v3"
 
 [openrouter]
-model = "anthropic/claude-3.7-sonnet"
+model = "anthropic/claude-sonnet-4"
 api_key = "your-openrouter-api-key"
 enable_layers = true
 debug = true
@@ -55,7 +55,7 @@ input_mode = "Last"
 [[layers]]
 name = "developer"
 enabled = true
-model = "anthropic/claude-3.7-sonnet"
+model = "anthropic/claude-sonnet-4"
 system_prompt = "Custom system prompt for developer. You implement the solution based on context provided."
 temperature = 0.3
 enable_tools = true

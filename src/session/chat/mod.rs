@@ -21,5 +21,5 @@ pub use context_truncation::check_and_truncate_context;
 pub use editorconfig_formatter::apply_editorconfig_formatting;
 
 // Model constants
-pub const CLAUDE_MODEL: &str = "anthropic/claude-3.7-sonnet";
+pub const CLAUDE_MODEL: &str = "anthropic/claude-sonnet-4";
 pub const DEFAULT_MODEL: &str = CLAUDE_MODEL;

@@ -83,7 +83,7 @@ octodev session -n my_session
 octodev session -r my_session
 
 # Use a specific model
-octodev session --model anthropic/claude-3.7-sonnet
+octodev session --model anthropic/claude-sonnet-4
 ```
 
 #### Layered Architecture
@@ -185,13 +185,13 @@ OctoDev's layered architecture can be configured in your `.octodev/config.toml` 
 
 ```toml
 [openrouter]
-model = "anthropic/claude-3.7-sonnet"  # Main model for Developer layer
+model = "anthropic/claude-sonnet-4"  # Main model for Developer layer
 enable_layers = true                   # Enable layered architecture
 
 # Configure models for each layer (optional)
 query_processor_model = "openai/gpt-4.1-nano"       # Model for query processing
 context_generator_model = "openai/gpt-4.1-nano"     # Model for context gathering
-developer_model = "anthropic/claude-3.7-sonnet" # Model for development tasks
+developer_model = "anthropic/claude-sonnet-4" # Model for development tasks
 reducer_model = "openai/gpt-4.1-nano"               # Model for context reduction
 
 # Token management settings

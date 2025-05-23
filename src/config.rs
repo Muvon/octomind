@@ -159,7 +159,7 @@ impl Default for PricingConfig {
 }
 
 fn default_openrouter_model() -> String {
-	"anthropic/claude-3.7-sonnet".to_string()
+	"anthropic/claude-sonnet-4".to_string()
 }
 
 impl Default for OpenRouterConfig {

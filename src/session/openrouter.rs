@@ -268,7 +268,7 @@ pub async fn chat_completion(
 
 			// Add web search tool if using Claude 3.7 Sonnet
 			if let Some(model) = request_body.get("model").and_then(|m| m.as_str()) {
-				if model.contains("claude-3.7-sonnet") {
+				if model.contains("claude-sonnet-4") {
 					tools.push(serde_json::json!({
 						"type": "web_search_20250305",
 						"name": "web_search"

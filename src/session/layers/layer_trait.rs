@@ -66,6 +66,10 @@ pub trait Layer {
 	fn name(&self) -> &str;
 	fn config(&self) -> &LayerConfig;
 
+	// Process the input through this layer
+	// Each layer handles its own function calls with its own model
+	// The process function is responsible for executing any function calls
+	// and incorporating their results into the final output
 	async fn process(
 		&self,
 		input: &str,
@@ -76,22 +80,36 @@ pub trait Layer {
 
 	// Helper function to prepare input based on input_mode
 	fn prepare_input(&self, input: &str, session: &Session) -> String {
+		// Each layer processes input in its own isolated context
+		// The input mode determines what part of the previous context is used
 		match self.config().input_mode {
-			InputMode::Last => input.to_string(),
+			InputMode::Last => {
+				// In Last mode, we just use the last message content as provided
+				// This is the default and most common mode for layer-to-layer communication
+				input.to_string()
+			},
 			InputMode::All => {
-				// For "all" mode, we'd include session context and history
-				// This is a simplified example, actual implementation may be more complex
+				// For "all" mode, we format the entire conversation context to include
+				// the original user request and any relevant message history
+				let mut context = String::new();
+
+				// Add previous assistant messages if available for context
 				let history = session.messages.iter()
 					.filter(|m| m.role == "assistant")
 					.map(|m| m.content.clone())
-					.collect::<Vec<_>>()
-					.join("\n\n");
+					.collect::<Vec<_>>();
 
-				format!("Task:\n{}\n\nContext:\n{}", input, history)
+				// Format as a structured prompt with original input and context
+				if !history.is_empty() {
+					context = format!("Previous conversation context:\n{}\n\n",
+						history.join("\n\n"));
+				}
+
+				format!("User request:\n{}\n\n{}", input, context)
 			},
 			InputMode::Summary => {
-				// For summary mode, we'd use some logic to summarize previous context
-				// This would typically call a function to generate a summary
+				// For summary mode, we generate a concise summary of the conversation
+				// This helps maintain context while reducing token usage
 				crate::session::summarize_context(session, input)
 			}
 		}

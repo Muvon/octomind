@@ -44,6 +44,10 @@ pub struct Message {
 	pub timestamp: u64,
 	#[serde(default = "default_cache_marker")]
 	pub cached: bool,  // Marks if this message is a cache breakpoint
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>, // For tool messages: the name of the tool
 }
 
 fn default_cache_marker() -> bool {
@@ -120,6 +124,8 @@ impl Session {
 				.unwrap_or_default()
 				.as_secs(),
 			cached: false,  // Default to not cached
+			tool_call_id: None, // Default to no tool_call_id
+			name: None, // Default to no name
 		};
 
 		self.messages.push(message.clone());

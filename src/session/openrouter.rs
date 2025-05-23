@@ -112,6 +112,22 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 					continue;
 				}
 			}
+		} else if msg.role == "tool" {
+			// This is a standard tool response message from our updated format
+			// Get the tool call id and name from the message
+			let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
+			let name = msg.name.clone().unwrap_or_default();
+			
+			// Create a properly formatted tool message for OpenRouter/OpenAI format
+			result.push(Message {
+				role: "tool".to_string(),
+				content: serde_json::json!({
+					"tool_call_id": tool_call_id,
+					"name": name,
+					"content": msg.content
+				}),
+			});
+			continue;
 		}
 
 		// Handle cache breakpoints - but only if cached flag is explicitly true

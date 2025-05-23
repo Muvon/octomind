@@ -47,6 +47,8 @@ impl LayerProcessor {
 				.unwrap_or_default()
 				.as_secs(),
 			cached: should_cache, // Only cache if model supports it
+			tool_call_id: None, // No tool_call_id for system messages
+			name: None, // No name for system messages
 		});
 
 		// Add user message with the input
@@ -58,6 +60,8 @@ impl LayerProcessor {
 				.unwrap_or_default()
 				.as_secs(),
 			cached: false,
+			tool_call_id: None, // No tool_call_id for user messages
+			name: None, // No name for user messages
 		});
 
 		messages
@@ -90,8 +94,13 @@ impl Layer for LayerProcessor {
 		// Prepare input based on input_mode
 		let processed_input = self.prepare_input(input, session);
 
-		// Create messages for this layer
+		// Create a separate session context for this layer
+		// This ensures each layer operates in isolation
+		let mut layer_session = Vec::new();
+
+		// Create messages for this layer and add to isolated session
 		let messages = self.create_messages(&processed_input, session);
+		layer_session.extend(messages.clone());
 
 		// Convert to OpenRouter format
 		let or_messages = openrouter::convert_messages(&messages);
@@ -115,12 +124,8 @@ impl Layer for LayerProcessor {
 
 			// If there are tool calls, process them
 			if !tool_calls.is_empty() {
-				// Create a new session-like context for tool responses
-				let mut tool_session = Vec::new();
+				// Process tool calls within our isolated layer session
 				let output_clone = output.clone();
-
-				// Process tool calls
-				println!("{}", "Executing tools within layer...".yellow());
 
 				// Execute all tool calls and collect results
 				let mut tool_results = Vec::new();
@@ -147,36 +152,16 @@ impl Layer for LayerProcessor {
 					tool_results.push(result);
 				}
 
-				// If we have results, format them and send back to the model
+				// If we have results, send them back to the model to get a final response
 				if !tool_results.is_empty() {
-					// Format the results
-					let formatted = crate::session::mcp::format_tool_results(&tool_results);
-					println!("{}", formatted);
+					// Format the results in a way the model can understand
+					println!("{}", "Processing tool results...".cyan());
 
-					// Format tool results in a consistent way to match standard mode
-					let mut formatted_tool_results = Vec::new();
-
-					for tool_result in &tool_results {
-						formatted_tool_results.push(serde_json::json!({
-							"role": "tool",
-							"tool_call_id": tool_result.tool_id.clone(),
-							"name": tool_result.tool_name.clone(),
-							"content": serde_json::to_string(&tool_result.result).unwrap_or_default(),
-						}));
-					}
-
-					// Convert to string
-					let tool_results_message = serde_json::to_string(&formatted_tool_results)
-						.unwrap_or_else(|_| "[]".to_string());
-
-					let tool_message = format!("<fnr>\n{}\n</fnr>",
-						tool_results_message);
-
-					// Add the original messages
-					tool_session.extend(messages);
+					// Add the original messages to our layer session
+					layer_session.extend(messages.clone());
 
 					// Add assistant's response with tool calls
-					tool_session.push(crate::session::Message {
+					layer_session.push(crate::session::Message {
 						role: "assistant".to_string(),
 						content: output_clone,
 						timestamp: std::time::SystemTime::now()
@@ -184,23 +169,31 @@ impl Layer for LayerProcessor {
 							.unwrap_or_default()
 							.as_secs(),
 						cached: false,
+						tool_call_id: None, // No tool_call_id for assistant messages
+						name: None, // No name for assistant messages
 					});
 
-					// Add tool results as user message
-					tool_session.push(crate::session::Message {
-						role: "user".to_string(),
-						content: tool_message,
-						timestamp: std::time::SystemTime::now()
-							.duration_since(std::time::UNIX_EPOCH)
-							.unwrap_or_default()
-							.as_secs(),
-						cached: false,
-					});
+					// Add each tool result as a tool message in standard OpenRouter format
+					for tool_result in &tool_results {
+						// Use standard OpenRouter format for tool messages
+						layer_session.push(crate::session::Message {
+							role: "tool".to_string(),
+							content: serde_json::to_string(&tool_result.result).unwrap_or_default(),
+							timestamp: std::time::SystemTime::now()
+								.duration_since(std::time::UNIX_EPOCH)
+								.unwrap_or_default()
+								.as_secs(),
+							cached: false,
+							tool_call_id: Some(tool_result.tool_id.clone()), // Include the tool_call_id
+							name: Some(tool_result.tool_name.clone()), // Include the tool name
+						});
+					}
 
 					// Convert to OpenRouter format
-					let tool_or_messages = openrouter::convert_messages(&tool_session);
+					let tool_or_messages = openrouter::convert_messages(&layer_session);
 
 					// Call the model again with tool results
+					// Important: We use THIS LAYER'S model to process the function call results
 					match openrouter::chat_completion(
 						tool_or_messages,
 						&self.config.model,

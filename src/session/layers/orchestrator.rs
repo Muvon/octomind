@@ -88,6 +88,7 @@ impl LayeredOrchestrator {
 		println!();
 
 		// Process through each layer sequentially
+		// Each layer operates in its own isolated session and handles its own function calls
 		for layer in &self.layers {
 			// Skip if operation cancelled
 			if operation_cancelled.load(Ordering::SeqCst) {
@@ -118,6 +119,8 @@ impl LayeredOrchestrator {
 				}
 			}
 
+			// Process this layer with its own isolated session
+			// The only input it receives is the output from the previous layer
 			let result = layer.process(
 				&current_input,
 				session,
@@ -187,10 +190,7 @@ impl LayeredOrchestrator {
 				println!("{} {}", "ERROR: No usage data for layer".bright_red(), layer_name.bright_yellow());
 			}
 
-			// We no longer need to track specific layers as we always use the last layer's output
-			// Just track token usage and costs
-
-			// Update input for next layer
+			// Take the output from this layer and use it as input for the next layer
 			current_input = result.output.clone();
 		}
 
@@ -206,8 +206,11 @@ impl LayeredOrchestrator {
 		println!("{}", format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue());
 		println!("{}", "Use /info for detailed cost breakdown by layer".bright_blue());
 
-		// Return the last layer's output
-		// Previously we were specially looking for the developer layer, but now we just use the last layer's output
+		// Return the final layer's output to be used as starting point for the main chat session
+		// This output contains all the necessary context and information from the layer processing
+		// When integrated into the main session via layered_response.rs, it becomes the foundation
+		// for the entire conversation context, ensuring all the work done by the layers is preserved
+		// and available for subsequent messages in the main chat flow.
 		Ok(current_input)
 	}
 }

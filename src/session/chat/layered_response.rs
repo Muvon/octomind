@@ -1,7 +1,6 @@
 // Layered response processing implementation
 
 use crate::config::Config;
-use crate::session::openrouter;
 use crate::session::chat::session::ChatSession;
 use colored::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,12 +9,13 @@ use anyhow::Result;
 use super::animation::show_loading_animation;
 
 // Process a response using the layered architecture
+// Returns the final processed text that should be used as input for the main model
 pub async fn process_layered_response(
 	input: &str,
 	chat_session: &mut ChatSession,
 	config: &Config,
 	operation_cancelled: Arc<AtomicBool>
-) -> Result<()> {
+) -> Result<String> {
 	// Debug output
 	// println!("{}", "Using layered processing architecture...".cyan());
 
@@ -53,7 +53,12 @@ pub async fn process_layered_response(
 		let _ = show_loading_animation(animation_cancel, current_cost).await;
 	});
 
-	// Process through the layers using the new modular layered architecture
+	// Process through the layers using the modular layered architecture
+	// Each layer operates on its own session context and passes only the necessary output
+	// to the next layer, ensuring proper isolation
+	//
+	// IMPORTANT: Each layer handles its own function calls internally with its own model
+	// using the process method in processor.rs
 	let layer_output: String = match crate::session::layers::process_with_layers(
 		input,
 		&mut chat_session.session,
@@ -80,102 +85,7 @@ pub async fn process_layered_response(
 		println!("{}", "Using layered processing".bright_cyan());
 	}
 
-	// Check for tool calls in the output from the last layer
-	if config.mcp.enabled {
-		// Create a new cancellation flag to avoid any "Operation cancelled" messages when not requested
-		let fresh_tool_cancellation = Arc::new(AtomicBool::new(false));
-
-		// Process the response with tool handling using the existing process_response function
-		// Create a dummy exchange that reflects usage tracking was enabled
-		let dummy_exchange = openrouter::OpenRouterExchange {
-			request: serde_json::json!({
-				"usage": {
-					"include": true
-				}
-			}),
-			response: serde_json::json!({"choices": [{"message": {"content": ""}}]}),
-			timestamp: std::time::SystemTime::now()
-				.duration_since(std::time::UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_secs(),
-			usage: Some(openrouter::TokenUsage {
-				prompt_tokens: 0,
-				completion_tokens: 0,
-				total_tokens: 0,
-				cost: Some(0.0),
-				prompt_tokens_details: None,
-				completion_tokens_details: None,
-				breakdown: None,
-			}),
-		};
-
-		// First check if there are any direct tool calls from processing, or parse from output if needed
-		let tool_calls = crate::session::mcp::parse_tool_calls(&layer_output);
-
-		// If we have tool calls, process them
-		if !tool_calls.is_empty() {
-			// Process the response with tool calls using the existing handler with fresh cancellation flag
-			return super::response::process_response(
-				layer_output,
-				dummy_exchange,
-				Some(tool_calls),
-				chat_session,
-				config,
-				fresh_tool_cancellation
-			).await;
-		}
-	}
-
-	// If no tool calls, add the output to session for message history
-	// but don't print it or process it again since it's already been processed
-	// Note: Don't create a dummy exchange with zero costs - this interferes with the
-	// cost tracking. Instead, create a realistic exchange that properly reflects
-	// the costs that were already tracked in the layer statistics.
-	let dummy_exchange = openrouter::OpenRouterExchange {
-		request: serde_json::json!({
-			"usage": {
-				"include": true
-			}
-		}),
-		response: serde_json::json!({"choices": [{"message": {"content": ""}}]}),
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		usage: Some(openrouter::TokenUsage {
-			prompt_tokens: 0,
-			completion_tokens: 0,
-			total_tokens: 0,
-			cost: Some(0.0),
-			prompt_tokens_details: None,
-			completion_tokens_details: None,
-			breakdown: None,
-		}),
-	};
-
-	// Add the output to the message history without further cost accounting
-	// since costs have already been tracked in the session layer_stats
-	chat_session.add_assistant_message(&layer_output, Some(dummy_exchange), config)?;
-
-	// Update the estimated cost to reflect the current total cost
-	// This ensures the prompt will display the correct cost estimate for the next interaction
-	chat_session.estimated_cost = chat_session.session.info.total_cost;
-
-	// Print assistant response with color
-	println!("\n{}", layer_output.bright_green());
-
-	// Just show a short summary with the total cost
-	// Detailed breakdowns are available via the /info command
-	println!();
-	if config.openrouter.debug {
-		println!("{} ${:.5}", "Session total cost:".bright_cyan(),
-			chat_session.session.info.total_cost);
-		println!("{}", "Use /info to see detailed token and cost breakdowns by layer".bright_blue());
-	} else {
-		println!("{} ${:.5}", "Cost:".bright_cyan(),
-			chat_session.session.info.total_cost);
-	}
-	println!();
-
-	Ok(())
+	// Return the processed output from layers for use in the main model conversation
+	// This output already includes the results of any function calls handled by each layer
+	Ok(layer_output)
 }

@@ -190,7 +190,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		let operation_cancelled = Arc::new(AtomicBool::new(false));
 
 		// Read user input with command completion and cost estimation
-		let input = read_user_input(chat_session.estimated_cost)?;
+		let mut input = read_user_input(chat_session.estimated_cost)?;
 
 		// Check if the input is an exit command from Ctrl+D
 		if input == "/exit" || input == "/quit" {
@@ -299,168 +299,185 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 
 		// Create a new cancellation flag for processing the response
-		// This is crucial - we need a fresh flag for each response processing cycle
 		let process_cancelled = Arc::new(AtomicBool::new(false));
 
-		// Check if Ctrl+C was pressed (and the operation was cancelled)
+		// Check if Ctrl+C was pressed
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
-			// Already handled at the start of the loop
 			ctrl_c_pressed.store(false, Ordering::SeqCst);
 			continue;
 		}
 
-		// Add user message
-		// (This moved to process_response or process_layered_response)
-
-		// Check if layered architecture is enabled AND this is the first message
+		// SIMPLIFIED FLOW:
+		// 1. Process through layers if needed (first message with layers enabled)
+		// 2. Use the processed input for the main model chat
+		
+		// If layers are enabled and this is the first message, process it through layers first
 		if current_config.openrouter.enable_layers && !first_message_processed {
+			// This is the first message with layered architecture enabled
+			// We will process it through layers to get improved input for the main model
+			
 			// Check for Ctrl+C before starting layered processing
 			if ctrl_c_pressed.load(Ordering::SeqCst) {
 				continue;
 			}
 
-			// Process using layered architecture for the first message only
-			let process_result = super::super::layered_response::process_layered_response(
+			// Process using layered architecture to get improved input
+			// Each layer processes function calls with its own model internally,
+			// so the final output already incorporates all function call results
+			let layered_result = super::super::layered_response::process_layered_response(
 				&input,
 				&mut chat_session,
 				&current_config,
 				process_cancelled.clone()
 			).await;
 
-			if let Err(e) = process_result {
-				// Print colorful error message
-				use colored::*;
-				println!("\n{}: {}", "Error processing response".bright_red(), e);
-			}
-
-			// Mark that we've processed the first message through layers
-			first_message_processed = true;
-		} else {
-			// Add user message for standard processing flow
-			chat_session.add_user_message(&input)?;
-
-			// Check if we need to truncate the context to stay within token limits
-			let truncate_cancelled = Arc::new(AtomicBool::new(false));
-			check_and_truncate_context(&mut chat_session, &current_config, truncate_cancelled.clone()).await?;
-
-			// Ensure system message is cached before making API calls
-			// This is important for token savings since system message typically contains
-			// all the function definitions and is unlikely to change
-			let mut system_message_cached = false;
-
-			// Check if system message is already cached
-			for msg in &chat_session.session.messages {
-				if msg.role == "system" && msg.cached {
-					system_message_cached = true;
-					break;
-				}
-			}
-
-			// If system message not already cached, add a cache checkpoint
-			if !system_message_cached {
-				if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
-					if cached && crate::session::model_supports_caching(&chat_session.model) {
-						println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
-						// Save the session to ensure the cached status is persisted
-						let _ = chat_session.save();
-					}
-				}
-			}
-
-			// Convert messages to OpenRouter format
-			let or_messages = openrouter::convert_messages(&chat_session.session.messages);
-
-			// Call OpenRouter in a separate task
-			let model = chat_session.model.clone();
-			let temperature = chat_session.temperature;
-			let config_clone = current_config.clone();
-
-			// Create a task to show loading animation with current cost
-			let animation_cancel = operation_cancelled.clone();
-			let current_cost = chat_session.session.info.total_cost;
-			let animation_task = tokio::spawn(async move {
-				let _ = show_loading_animation(animation_cancel, current_cost).await;
-			});
-
-			// Start a separate task to monitor for Ctrl+C and propagate to operation_cancelled flag
-			let op_cancelled = operation_cancelled.clone();
-			let ctrlc_flag = ctrl_c_pressed.clone();
-			let _cancel_monitor = tokio::spawn(async move {
-				while !op_cancelled.load(Ordering::SeqCst) {
-					// Check if global Ctrl+C flag is set
-					if ctrlc_flag.load(Ordering::SeqCst) {
-						// Set the operation cancellation flag immediately
-						op_cancelled.store(true, Ordering::SeqCst);
-						break; // Exit the loop once cancelled
-					}
-					// Use a shorter sleep time to respond to cancellation faster
-					tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-				}
-			});
-
-			// Check for Ctrl+C before making API call
-			if ctrl_c_pressed.load(Ordering::SeqCst) {
-				// Immediately stop and return to main loop
-				operation_cancelled.store(true, Ordering::SeqCst);
-				let _ = animation_task.await;
-				continue;
-			}
-
-			// Now directly perform the API call - ensure usage parameter is included
-			// for consistent cost tracking across all API requests
-			let api_result = openrouter::chat_completion(
-				or_messages,
-				&model,
-				temperature,
-				&config_clone
-			).await;
-
-			// Debug log the API call result if debug mode is enabled
-			if config_clone.openrouter.debug {
-				if let Err(ref e) = api_result {
-					println!("{}", format!("Debug: API call error: {}", e).bright_red());
-				} else {
-					println!("{}", "Debug: API call completed successfully".green());
-				}
-			}
-
-			// Stop the animation - but use TRUE to stop it, not false!
-			operation_cancelled.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
-
-			// Check for Ctrl+C again before processing response
-			if ctrl_c_pressed.load(Ordering::SeqCst) {
-				// Skip processing response if Ctrl+C was pressed
-				continue;
-			}
-
-			// Process the response
-			match api_result {
-				Ok((content, exchange, tool_calls)) => {
-					// Process the response, handling tool calls recursively
-					// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
-					let tool_process_cancelled = Arc::new(AtomicBool::new(false));
-					let process_result = process_response(
-						content,
-						exchange,
-						tool_calls,
-						&mut chat_session,
-						&current_config,
-						tool_process_cancelled.clone()
-					).await;
-
-					if let Err(e) = process_result {
-						// Print colorful error message
-						use colored::*;
-						println!("\n{}: {}", "Error processing response".bright_red(), e);
-					}
+			match layered_result {
+				Ok(processed_input) => {
+					// Use the processed input from layers instead of the original input
+					// This processed input already includes any function call responses
+					input = processed_input;
+					
+					// Mark that we've processed the first message through layers
+					first_message_processed = true;
+					
+					println!("{}", "Layers processing complete. Using enhanced input for main model.".bright_cyan());
 				},
 				Err(e) => {
+					// Print colorful error message and continue with original input
+					use colored::*;
+					println!("\n{}: {}", "Error processing through layers".bright_red(), e);
+					println!("{}", "Continuing with original input.".yellow());
+					// Still mark as processed to avoid infinite retry loops
+					first_message_processed = true;
+				}
+			}
+		}
+
+		// UNIFIED STANDARD PROCESSING FLOW
+		// The same code path is used whether the input is from layers or direct user input
+
+		// Add user message for standard processing flow
+		chat_session.add_user_message(&input)?;
+
+		// Check if we need to truncate the context to stay within token limits
+		let truncate_cancelled = Arc::new(AtomicBool::new(false));
+		check_and_truncate_context(&mut chat_session, &current_config, truncate_cancelled.clone()).await?;
+
+		// Ensure system message is cached before making API calls
+		let mut system_message_cached = false;
+
+		// Check if system message is already cached
+		for msg in &chat_session.session.messages {
+			if msg.role == "system" && msg.cached {
+				system_message_cached = true;
+				break;
+			}
+		}
+
+		// If system message not already cached, add a cache checkpoint
+		if !system_message_cached {
+			if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
+				if cached && crate::session::model_supports_caching(&chat_session.model) {
+					println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
+					// Save the session to ensure the cached status is persisted
+					let _ = chat_session.save();
+				}
+			}
+		}
+
+		// Convert messages to OpenRouter format
+		let or_messages = openrouter::convert_messages(&chat_session.session.messages);
+
+		// Call OpenRouter in a separate task
+		let model = chat_session.model.clone();
+		let temperature = chat_session.temperature;
+		let config_clone = current_config.clone();
+
+		// Create a task to show loading animation with current cost
+		let animation_cancel = operation_cancelled.clone();
+		let current_cost = chat_session.session.info.total_cost;
+		let animation_task = tokio::spawn(async move {
+			let _ = show_loading_animation(animation_cancel, current_cost).await;
+		});
+
+		// Start a separate task to monitor for Ctrl+C and propagate to operation_cancelled flag
+		let op_cancelled = operation_cancelled.clone();
+		let ctrlc_flag = ctrl_c_pressed.clone();
+		let _cancel_monitor = tokio::spawn(async move {
+			while !op_cancelled.load(Ordering::SeqCst) {
+				// Check if global Ctrl+C flag is set
+				if ctrlc_flag.load(Ordering::SeqCst) {
+					// Set the operation cancellation flag immediately
+					op_cancelled.store(true, Ordering::SeqCst);
+					break; // Exit the loop once cancelled
+				}
+				// Use a shorter sleep time to respond to cancellation faster
+				tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+			}
+		});
+
+		// Check for Ctrl+C before making API call
+		if ctrl_c_pressed.load(Ordering::SeqCst) {
+			// Immediately stop and return to main loop
+			operation_cancelled.store(true, Ordering::SeqCst);
+			let _ = animation_task.await;
+			continue;
+		}
+
+		// Now directly perform the API call - ensure usage parameter is included
+		// for consistent cost tracking across all API requests
+		let api_result = openrouter::chat_completion(
+			or_messages,
+			&model,
+			temperature,
+			&config_clone
+		).await;
+
+		// Debug log the API call result if debug mode is enabled
+		if config_clone.openrouter.debug {
+			if let Err(ref e) = api_result {
+				println!("{}", format!("Debug: API call error: {}", e).bright_red());
+			} else {
+				println!("{}", "Debug: API call completed successfully".green());
+			}
+		}
+
+		// Stop the animation - but use TRUE to stop it, not false!
+		operation_cancelled.store(true, Ordering::SeqCst);
+		let _ = animation_task.await;
+
+		// Check for Ctrl+C again before processing response
+		if ctrl_c_pressed.load(Ordering::SeqCst) {
+			// Skip processing response if Ctrl+C was pressed
+			continue;
+		}
+
+		// Process the response
+		match api_result {
+			Ok((content, exchange, tool_calls)) => {
+				// Process the response, handling tool calls recursively
+				// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
+				let tool_process_cancelled = Arc::new(AtomicBool::new(false));
+				let process_result = process_response(
+					content,
+					exchange,
+					tool_calls,
+					&mut chat_session,
+					&current_config,
+					tool_process_cancelled.clone()
+				).await;
+
+				if let Err(e) = process_result {
 					// Print colorful error message
 					use colored::*;
-					println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
-					println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
+					println!("\n{}: {}", "Error processing response".bright_red(), e);
 				}
+			},
+			Err(e) => {
+				// Print colorful error message
+				use colored::*;
+				println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
+				println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
 			}
 		}
 	}

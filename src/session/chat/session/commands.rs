@@ -40,6 +40,7 @@ impl ChatSession {
 				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting");
 				println!("{} [level] - {}", LOGLEVEL_COMMAND.cyan(), "Set logging level: none, info, or debug");
 				println!("{} [threshold] - {}", TRUNCATE_COMMAND.cyan(), "Toggle automatic context truncation when token limit is reached");
+				println!("{} [model] - {}", MODEL_COMMAND.cyan(), "Show current model or change to a different model");
 				println!("{} or {} - {}\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
 
 				// Additional info about caching
@@ -332,6 +333,28 @@ impl ChatSession {
 					Err(e) => {
 						println!("{}: {}", "Failed to list sessions".bright_red(), e);
 					}
+				}
+			},
+			MODEL_COMMAND => {
+				// Handle model command
+				if params.is_empty() {
+					// Show current model
+					println!("{}", format!("Current model: {}", self.model).bright_cyan());
+					return Ok(false);
+				}
+
+				// Change to a new model
+				let new_model = params.join(" ");
+				let old_model = self.model.clone();
+				self.model = new_model.clone();
+				self.session.info.model = new_model.clone();
+
+				println!("{}", format!("Model changed from {} to {}", old_model, new_model).bright_green());
+				println!("{}", "The new model will be used for future messages in this session.".bright_yellow());
+
+				// Save the session with the updated model
+				if let Err(e) = self.save() {
+					println!("{}: {}", "Failed to save session with new model".bright_red(), e);
 				}
 			},
 			SESSION_COMMAND => {

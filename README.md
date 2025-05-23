@@ -70,11 +70,14 @@ octodev search --json "database connection setup"
 
 ### Interactive Sessions
 
-OctoDev includes an AI coding assistant that can help you understand and modify your codebase:
+OctoDev includes an AI coding assistant with two distinct modes that can help you understand and modify your codebase:
 
 ```bash
-# Start a new interactive session
+# Start a new interactive session in agent mode (default)
 octodev session
+
+# Start in chat mode for simple conversation
+octodev session --mode=chat
 
 # Start with a specific name (or resume if exists)
 octodev session -n my_session
@@ -84,6 +87,56 @@ octodev session -r my_session
 
 # Use a specific model
 octodev session --model anthropic/claude-sonnet-4
+
+# Combine options
+octodev session --mode=chat --model="anthropic/claude-3.5-haiku" -n chat_session
+```
+
+#### Session Modes
+
+OctoDev supports two session modes for different use cases:
+
+**Agent Mode (Default)** - Full development environment:
+- Complete codebase indexing and analysis
+- All development tools enabled (file operations, shell commands, code search)
+- Project context collection (README, git info, file structure)
+- Layered architecture support for complex tasks
+- Complex developer-focused system prompts
+- File watching for code changes
+
+**Chat Mode** - Simple conversation:
+- No codebase indexing (faster startup)
+- Tools disabled by default (configurable)
+- Simple assistant system prompts
+- Direct model interaction (no layers)
+- Lighter resource usage
+
+#### Mode Configuration
+
+Each mode can be configured independently with its own model, tool settings, and behavior:
+
+```toml
+# Global MCP configuration (fallback for all modes)
+[mcp]
+enabled = true
+providers = ["core"]
+servers = []
+
+# Agent mode configuration (inherits global MCP by default)
+[agent]
+system = "You are an Octodev AI developer assistant with full access to development tools."
+[agent.openrouter]
+model = "anthropic/claude-3.7-sonnet"
+enable_layers = true
+
+# Chat mode configuration (tools disabled by default)
+[chat]
+system = "You are a helpful assistant."
+[chat.mcp]
+enabled = false  # Override global MCP to disable tools
+[chat.openrouter]
+model = "anthropic/claude-3.5-haiku"  # Faster/cheaper model
+enable_layers = false
 ```
 
 #### Layered Architecture
@@ -116,6 +169,7 @@ While in an interactive session, you can use the following commands:
 - `/exit` or `/quit` - Exit the session
 - `/list` - List all available sessions
 - `/session [name]` - Switch to another session or create a new one (empty creates fresh session)
+- `/model [model]` - Show current model or change to a different model
 - `/clear` - Clear the screen
 - `/save` - Save the current session
 - `/cache` - Mark a cache checkpoint for token saving
@@ -209,14 +263,60 @@ The token management settings help control costs and prevent token limits from b
 
 ### MCP Configuration
 
-OctoDev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. You can configure MCP in your `.octodev/config.toml` file:
+OctoDev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration uses a hierarchical approach where mode-specific settings override global settings.
+
+#### Configuration Hierarchy
+
+```
+[mode.mcp] → [global.mcp] → defaults
+```
+
+#### Basic Configuration
 
 ```toml
+# Global MCP configuration (fallback for all modes)
+[mcp]
+enabled = true
+providers = ["core"]
+servers = []
+
+# Agent mode inherits global MCP by default
+[agent]
+# No [agent.mcp] section = inherits global [mcp]
+
+# Chat mode explicitly disables tools
+[chat.mcp]
+enabled = false
+```
+
+#### Advanced Configuration Examples
+
+**Per-mode tool customization:**
+```toml
+# Global fallback
 [mcp]
 enabled = true
 providers = ["core"]
 
-# External MCP server configuration - URL based
+# Agent mode with additional providers
+[agent.mcp]
+enabled = true
+providers = ["core", "git", "filesystem"]
+
+# Chat mode with only web search
+[chat.mcp]
+enabled = true
+providers = ["web-search"]
+```
+
+**External MCP server configuration:**
+```toml
+# Global MCP with external servers
+[mcp]
+enabled = true
+providers = ["core"]
+
+# External MCP server - URL based
 [[mcp.servers]]
 enabled = true
 name = "RemoteWebSearch"
@@ -224,7 +324,7 @@ url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "your_token_if_needed"  # Optional
 tools = []  # Empty means all tools are enabled
 
-# Local MCP server configuration - Running as a local process
+# Local MCP server - Running as a local process
 [[mcp.servers]]
 enabled = true
 name = "LocalWebSearch"
@@ -241,6 +341,7 @@ You can run an MCP server locally by providing the command and arguments to exec
 2. Add a local MCP server configuration:
 
 ```toml
+# Global MCP configuration (fallback for all modes)
 [mcp]
 enabled = true
 providers = ["core"]

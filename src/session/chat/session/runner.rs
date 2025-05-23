@@ -38,6 +38,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		/// Model to use instead of the one configured in config
 		#[arg(long)]
 		model: Option<String>,
+
+		/// Session mode: agent (default with layers and tools) or chat (simple chat without tools)
+		#[arg(long, default_value = "agent")]
+		mode: String,
 	}
 
 	// Read args as SessionArgs
@@ -70,34 +74,49 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			None
 		};
 
+		// Get mode
+		let mode = if args_str.contains("mode: \"") {
+			let start = args_str.find("mode: \"").unwrap() + 7;
+			let end = args_str[start..].find('\"').unwrap() + start;
+			args_str[start..end].to_string()
+		} else {
+			"agent".to_string() // Default mode
+		};
+
 		SessionArgs {
 			name,
 			resume,
 			model,
+			mode,
 		}
 	};
 
-	// Check if there's an index, and if not, run indexer
+	// Check if there's an index, and if not, run indexer (only for agent mode)
 	let current_dir = std::env::current_dir()?;
-	let octodev_dir = current_dir.join(".octodev");
-	let index_path = octodev_dir.join("storage");
-	if !index_path.exists() {
-		// Run the indexer directly using our indexer integration
-		indexer::index_current_directory(store, config).await?
-	} else {
-		log_info!("Using existing index from {}", index_path.display());
+	if session_args.mode == "agent" {
+		let octodev_dir = current_dir.join(".octodev");
+		let index_path = octodev_dir.join("storage");
+		if !index_path.exists() {
+			// Run the indexer directly using our indexer integration
+			indexer::index_current_directory(store, config).await?
+		} else {
+			log_info!("Using existing index from {}", index_path.display());
+		}
+
+		// Start a watcher in the background to keep the index updated
+		log_info!("Starting watcher to keep index updated during session...");
+		indexer::start_watcher_in_background(store, config).await?;
 	}
 
-	// Start a watcher in the background to keep the index updated
-	log_info!("Starting watcher to keep index updated during session...");
-	indexer::start_watcher_in_background(store, config).await?;
+	// Get the merged configuration for the specified mode
+	let mode_config = config.get_merged_config_for_mode(&session_args.mode);
 
 	// Create or load session
 	let mut chat_session = ChatSession::initialize(
 		session_args.name,
 		session_args.resume,
 		session_args.model,
-		config
+		&mode_config
 	)?;
 
 	// Track if the first message has been processed through layers
@@ -107,8 +126,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {
-		// Create system prompt
-		let system_prompt = create_system_prompt(&current_dir, config).await;
+		// Create system prompt based on mode
+		let system_prompt = create_system_prompt(&current_dir, config, &session_args.mode).await;
 		chat_session.add_system_message(&system_prompt)?;
 
 		// Mark system message with function declarations as cached by default
@@ -130,10 +149,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Add assistant welcome message
 		let welcome_message = format!(
-			"Hello! Octodev ready to serve you. Working dir: {}",
-			current_dir.file_name().unwrap_or_default().to_string_lossy()
+			"Hello! Octodev ready to serve you. Working dir: {} (Mode: {})",
+			current_dir.file_name().unwrap_or_default().to_string_lossy(),
+			session_args.mode
 		);
-		chat_session.add_assistant_message(&welcome_message, None, config)?;
+		chat_session.add_assistant_message(&welcome_message, None, &mode_config)?;
 
 		// Print welcome message with colors if terminal supports them
 		use colored::*;
@@ -175,7 +195,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	}).expect("Error setting Ctrl+C handler");
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
-	let mut current_config = config.clone();
+	let mut current_config = mode_config.clone();
 
 	// Set the thread-local config for logging macros
 	crate::config::set_thread_config(&current_config);
@@ -283,8 +303,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// Reload the configuration
 					match crate::config::Config::load() {
 						Ok(updated_config) => {
-							// Update our current config
-							current_config = updated_config;
+							// Update our current config with the new mode-specific config
+							current_config = updated_config.get_merged_config_for_mode(&session_args.mode);
 							// Update thread config for logging macros
 							crate::config::set_thread_config(&current_config);
 							log_info!("Configuration reloaded successfully");
@@ -317,7 +337,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// 2. Use the processed input for the main model chat
 
 		// If layers are enabled and this is the first message, process it through layers first
-		if current_config.openrouter.enable_layers && !first_message_processed {
+		if current_config.openrouter.enable_layers && !first_message_processed && session_args.mode == "agent" {
 			// This is the first message with layered architecture enabled
 			// We will process it through layers to get improved input for the main model
 
@@ -479,8 +499,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 	}
 
-	// Clean up the watcher when the session ends
-	let _ = crate::session::indexer::cleanup_watcher().await;
+	// Clean up the watcher when the session ends (only for agent mode)
+	if session_args.mode == "agent" {
+		let _ = crate::session::indexer::cleanup_watcher().await;
+	}
 
 	Ok(())
 }

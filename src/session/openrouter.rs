@@ -131,12 +131,12 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 			let name = msg.name.clone().unwrap_or_default();
 
 			// Debug logging for tool message conversion
-			let config = match crate::config::Config::load() {
+			let _config = match crate::config::Config::load() {
 				Ok(cfg) => cfg,
 				Err(_) => crate::config::Config::default()
 			};
 
-			if config.openrouter.log_level.is_debug_enabled() {
+			if _config.openrouter.log_level.is_debug_enabled() {
 				use colored::*;
 				println!("{}", format!("Debug: Converting tool message - ID: {}, Name: {}, Content: {:.100}...",
 					tool_call_id, name, msg.content).bright_magenta());
@@ -235,7 +235,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 				assistant_message.tool_calls = Some(tool_calls_data.clone());
 
 				// Debug logging
-				let config = match crate::config::Config::load() {
+				let _config = match crate::config::Config::load() {
 					Ok(cfg) => cfg,
 					Err(_) => crate::config::Config::default()
 				};

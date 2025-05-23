@@ -410,6 +410,62 @@ impl Default for McpConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentModeConfig {
+	#[serde(default)]
+	pub openrouter: OpenRouterConfig,
+	#[serde(default)]
+	pub mcp: McpConfig,
+	// Layer configuration
+	#[serde(default)]
+	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
+	// Custom system prompt (optional - falls back to default if not provided)
+	pub system: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatModeConfig {
+	#[serde(default)]
+	pub openrouter: OpenRouterConfig,
+	#[serde(default)]
+	pub mcp: McpConfig,
+	// Custom system prompt (optional - falls back to simple assistant prompt)
+	pub system: Option<String>,
+}
+
+impl Default for AgentModeConfig {
+	fn default() -> Self {
+		Self {
+			openrouter: OpenRouterConfig {
+				enable_layers: true,
+				..OpenRouterConfig::default()
+			},
+			mcp: McpConfig {
+				enabled: true,
+				..McpConfig::default()
+			},
+			layers: None,
+			system: None,
+		}
+	}
+}
+
+impl Default for ChatModeConfig {
+	fn default() -> Self {
+		Self {
+			openrouter: OpenRouterConfig {
+				enable_layers: false,
+				..OpenRouterConfig::default()
+			},
+			mcp: McpConfig {
+				enabled: false,  // Chat mode has MCP/tools disabled by default
+				..McpConfig::default()
+			},
+			system: Some("You are a helpful assistant.".to_string()),
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
 	#[serde(default)]
 	pub embedding_provider: EmbeddingProvider,
@@ -420,16 +476,18 @@ pub struct Config {
 	#[serde(default)]
 	pub graphrag: GraphRagConfig,
 	pub jina_api_key: Option<String>,
+	// Mode-specific configurations
+	#[serde(default)]
+	pub agent: AgentModeConfig,
+	#[serde(default)]
+	pub chat: ChatModeConfig,
+	// Legacy fields for backward compatibility
 	#[serde(default)]
 	pub openrouter: OpenRouterConfig,
 	#[serde(default)]
 	pub mcp: McpConfig,
-	// Layer configuration
-	// Note: To configure specific models for each layer, add them to this section
-	// rather than using global model settings
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
-	// Custom system prompt (optional - falls back to default if not provided)
 	pub system: Option<String>,
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
@@ -443,16 +501,86 @@ impl Default for Config {
 			jina: JinaConfig::default(),
 			graphrag: GraphRagConfig::default(),
 			jina_api_key: None,
+			agent: AgentModeConfig::default(),
+			chat: ChatModeConfig::default(),
+			// Legacy fields - use agent mode defaults for backward compatibility
 			openrouter: OpenRouterConfig::default(),
 			mcp: McpConfig::default(),
-			layers: None, // No custom layer configs by default
-			system: None, // No custom system prompt by default
+			layers: None,
+			system: None,
 			config_path: None,
 		}
 	}
 }
 
 impl Config {
+	/// Get configuration for a specific mode with proper fallback logic
+	/// Flow: [mode.mcp] → [global.mcp] → default
+	pub fn get_mode_config(&self, mode: &str) -> (&OpenRouterConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&String>) {
+		match mode {
+			"agent" => {
+				// Start with agent mode config
+				let mut mcp_config = self.agent.mcp.clone();
+				
+				// If agent.mcp is "empty/default", fall back to global mcp
+				if self.is_mcp_config_empty(&mcp_config) {
+					mcp_config = self.mcp.clone();
+				}
+				
+				(&self.agent.openrouter, mcp_config, self.agent.layers.as_ref(), self.agent.system.as_ref())
+			},
+			"chat" => {
+				// Start with chat mode config
+				let mut mcp_config = self.chat.mcp.clone();
+				
+				// If chat.mcp is "empty/default", fall back to global mcp
+				if self.is_mcp_config_empty(&mcp_config) {
+					mcp_config = self.mcp.clone();
+				}
+				
+				(&self.chat.openrouter, mcp_config, None, self.chat.system.as_ref())
+			},
+			_ => {
+				// Default to legacy config for unknown modes
+				(&self.openrouter, self.mcp.clone(), self.layers.as_ref(), self.system.as_ref())
+			}
+		}
+	}
+
+	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
+	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
+		// If it's exactly the default McpConfig, consider it empty
+		let default_mcp = McpConfig::default();
+		
+		// More sophisticated check: if only enabled differs from default, it's not empty
+		// If enabled is different AND (providers differ OR servers differ), it's not empty
+		if mcp_config.enabled != default_mcp.enabled {
+			// If enabled is different but everything else is default, consider it meaningful
+			return false;
+		}
+		
+		// If providers or servers are customized, it's not empty
+		if mcp_config.providers != default_mcp.providers || !mcp_config.servers.is_empty() {
+			return false;
+		}
+		
+		// Otherwise, it's effectively empty/default
+		true
+	}
+
+	/// Get a merged config for a specific mode that can be used for API calls
+	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
+		let (or_config, mcp_config, layers_config, system_prompt) = self.get_mode_config(mode);
+		
+		let mut merged = self.clone();
+		merged.openrouter = or_config.clone();
+		merged.mcp = mcp_config;
+		merged.layers = layers_config.cloned();
+		merged.system = system_prompt.cloned();
+		
+		merged
+	}
+
 	pub fn ensure_octodev_dir() -> Result<std::path::PathBuf> {
 		let current_dir = std::env::current_dir()?;
 		let octodev_dir = current_dir.join(".octodev");

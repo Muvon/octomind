@@ -492,12 +492,21 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 	Ok(())
 }
 
-pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config) -> String {
-	// If a custom system prompt is defined in the config, use it
-	if let Some(custom_prompt) = &config.system {
+pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config, mode: &str) -> String {
+	// Get mode-specific configuration
+	let (_, mcp_config, _, custom_system) = config.get_mode_config(mode);
+	
+	// If a custom system prompt is defined for this mode, use it
+	if let Some(custom_prompt) = custom_system {
 		return custom_prompt.clone();
 	}
 
+	// For chat mode, use a simple system prompt
+	if mode == "chat" {
+		return "You are a helpful assistant.".to_string();
+	}
+
+	// For agent mode (default), build the complex system prompt with project context
 	// Collect project context information (README.md, CHANGES.md, git info, file tree)
 	let project_context = ProjectContext::collect(project_dir);
 
@@ -539,8 +548,9 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 	}
 
 	// Add MCP tools information if enabled
-	if config.mcp.enabled {
-		let functions = mcp::get_available_functions(config).await;
+	if mcp_config.enabled {
+		let mode_config = config.get_merged_config_for_mode(mode);
+		let functions = mcp::get_available_functions(&mode_config).await;
 		if !functions.is_empty() {
 			prompt.push_str("\n\nYou have access to the following tools:");
 

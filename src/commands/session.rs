@@ -13,6 +13,10 @@ pub struct SessionArgs {
 	/// Use a specific model instead of the one configured in config
 	#[arg(long)]
 	pub model: Option<String>,
+
+	/// Session mode: agent (default with layers and tools) or chat (simple chat without tools)
+	#[arg(long, default_value = "agent")]
+	pub mode: String,
 }
 
 // No execute function here since it's handled directly by the session::chat module

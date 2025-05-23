@@ -4,7 +4,6 @@ mod openrouter; // Legacy OpenRouter API client (for backward compatibility)
 pub mod providers; // Provider abstraction layer
 pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
-pub mod mcp;        // MCP protocol support
 pub mod layers;         // Layered architecture implementation
 mod project_context; // Project context collection and management
 mod token_counter;  // Token counting utilities
@@ -17,7 +16,6 @@ pub mod indexer;    // Indexer integration for sessions
 pub use openrouter::*;
 // New provider system exports
 pub use providers::{ProviderFactory, AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-pub use mcp::*;
 pub use layers::{Layer, LayerConfig, LayerResult, InputMode, process_with_layers};
 pub use project_context::ProjectContext;
 pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export token counting functions
@@ -556,7 +554,7 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 	// Add MCP tools information if enabled
 	if mcp_config.enabled {
 		let mode_config = config.get_merged_config_for_mode(mode);
-		let functions = mcp::get_available_functions(&mode_config).await;
+		let functions = crate::mcp::get_available_functions(&mode_config).await;
 		if !functions.is_empty() {
 			prompt.push_str("\n\nYou have access to the following tools:");
 

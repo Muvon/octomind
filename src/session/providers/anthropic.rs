@@ -109,7 +109,7 @@ impl AiProvider for AnthropicProvider {
 
 		// Add tool definitions if MCP is enabled
 		if config.mcp.enabled {
-			let functions = crate::session::mcp::get_available_functions(config).await;
+			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
 				let tools = functions.iter().map(|f| {
 					serde_json::json!({
@@ -190,7 +190,7 @@ impl AiProvider for AnthropicProvider {
 						content_block.get("input"),
 						content_block.get("id").and_then(|i| i.as_str())
 					) {
-						let mcp_call = crate::session::mcp::McpToolCall {
+						let mcp_call = crate::mcp::McpToolCall {
 							tool_name: name.to_string(),
 							parameters: input.clone(),
 							tool_id: id.to_string(),

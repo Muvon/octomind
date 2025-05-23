@@ -3,7 +3,6 @@
 use crate::config::Config;
 use crate::{log_debug, log_info};
 use crate::session::openrouter;
-use crate::session::mcp;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
 use colored::Colorize;
@@ -121,7 +120,7 @@ impl ToolErrorTracker {
 pub async fn process_response(
 	content: String,
 	exchange: openrouter::OpenRouterExchange,
-	tool_calls: Option<Vec<mcp::McpToolCall>>,
+	tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	finish_reason: Option<String>,
 	chat_session: &mut ChatSession,
 	config: &Config,
@@ -174,11 +173,11 @@ pub async fn process_response(
 				if !calls.is_empty() {
 					calls
 				} else {
-					mcp::parse_tool_calls(&current_content) // Fallback
+					crate::mcp::parse_tool_calls(&current_content) // Fallback
 				}
 			} else {
 				// For follow-up iterations, parse from content if any new tool calls exist
-				mcp::parse_tool_calls(&current_content)
+				crate::mcp::parse_tool_calls(&current_content)
 			};
 
 			// Add debug logging for tool calls when debug mode is enabled
@@ -319,7 +318,7 @@ pub async fn process_response(
 						let mut call_with_id = tool_call.clone();
 						// CRITICAL: Use the original tool_id, don't change it
 						call_with_id.tool_id = tool_id_for_task.clone();
-						mcp::execute_tool_call(&call_with_id, &config_clone).await
+						crate::mcp::execute_tool_call(&call_with_id, &config_clone).await
 					});
 
 					tool_tasks.push((tool_name, task, original_tool_id));
@@ -363,7 +362,7 @@ pub async fn process_response(
 										tool_name, error_tracker.max_consecutive_errors).bright_red());
 
 									// Add a synthetic result with error message for the AI to see
-									let error_result = mcp::McpToolResult {
+									let error_result = crate::mcp::McpToolResult {
 										tool_name: tool_name.clone(),
 										tool_id: tool_id.clone(),
 										result: serde_json::json!({
@@ -395,7 +394,7 @@ pub async fn process_response(
 				// Modify process_response to check for the operation_cancelled flag immediately after extracting tool results
 				// Display results
 				if !tool_results.is_empty() {
-					let formatted = mcp::format_tool_results(&tool_results);
+					let formatted = crate::mcp::format_tool_results(&tool_results);
 					println!("{}", formatted);
 
 					// Check for cancellation before making another request
@@ -485,7 +484,7 @@ pub async fn process_response(
 								!calls.is_empty()
 							} else {
 								// Fall back to parsing if no direct tool calls
-								!mcp::parse_tool_calls(&next_content).is_empty()
+								!crate::mcp::parse_tool_calls(&next_content).is_empty()
 							};
 
 							// Update current content for next iteration
@@ -691,7 +690,7 @@ pub async fn process_response(
 					}
 				} else {
 					// No tool results - check if there were more tools to execute directly
-					let more_tools = mcp::parse_tool_calls(&current_content);
+					let more_tools = crate::mcp::parse_tool_calls(&current_content);
 					if !more_tools.is_empty() {
 						// Log if debug mode is enabled
 						if config.openrouter.log_level.is_debug_enabled() {

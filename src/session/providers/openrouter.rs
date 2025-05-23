@@ -109,7 +109,7 @@ impl AiProvider for OpenRouterProvider {
 
 		// Add tool definitions if MCP is enabled
 		if config.mcp.enabled {
-			let functions = crate::session::mcp::get_available_functions(config).await;
+			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
 				let mut tools = functions.iter().map(|f| {
 					serde_json::json!({
@@ -250,7 +250,7 @@ impl AiProvider for OpenRouterProvider {
 							};
 
 							let tool_id = tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
-							let mcp_call = crate::session::mcp::McpToolCall {
+							let mcp_call = crate::mcp::McpToolCall {
 								tool_name: name.to_string(),
 								parameters: params,
 								tool_id: tool_id.to_string(),
@@ -273,7 +273,7 @@ impl AiProvider for OpenRouterProvider {
 						};
 
 						let tool_id = tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
-						let mcp_call = crate::session::mcp::McpToolCall {
+						let mcp_call = crate::mcp::McpToolCall {
 							tool_name: name.to_string(),
 							parameters: params,
 							tool_id: tool_id.to_string(),
@@ -283,7 +283,7 @@ impl AiProvider for OpenRouterProvider {
 					}
 				}
 
-				crate::session::mcp::ensure_tool_call_ids(&mut extracted_tool_calls);
+				crate::mcp::ensure_tool_call_ids(&mut extracted_tool_calls);
 				Some(extracted_tool_calls)
 			} else {
 				None

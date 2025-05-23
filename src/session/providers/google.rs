@@ -135,7 +135,7 @@ impl AiProvider for GoogleVertexProvider {
 
 		// Add tool definitions if MCP is enabled (simplified for Vertex AI)
 		if config.mcp.enabled {
-			let functions = crate::session::mcp::get_available_functions(config).await;
+			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
 				let tools = functions.iter().map(|f| {
 					serde_json::json!({
@@ -218,7 +218,7 @@ impl AiProvider for GoogleVertexProvider {
 								function_call.get("name").and_then(|n| n.as_str()),
 								function_call.get("args")
 							) {
-								let mcp_call = crate::session::mcp::McpToolCall {
+								let mcp_call = crate::mcp::McpToolCall {
 									tool_name: name.to_string(),
 									parameters: args.clone(),
 									tool_id: format!("vertex_{}", uuid::Uuid::new_v4()),

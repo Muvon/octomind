@@ -54,7 +54,7 @@ async fn main() -> Result<(), anyhow::Error> {
 	let result = run_with_cleanup(args, config).await;
 
 	// Make sure to clean up any started server processes
-	if let Err(e) = octodev::session::mcp::server::cleanup_servers() {
+	if let Err(e) = octodev::mcp::server::cleanup_servers() {
 		eprintln!("Warning: Error cleaning up MCP servers: {}", e);
 	}
 

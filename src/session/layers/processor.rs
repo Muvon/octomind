@@ -118,7 +118,7 @@ impl Layer for LayerProcessor {
 			let tool_calls = if let Some(ref calls) = direct_tool_calls {
 				calls
 			} else {
-				&crate::session::mcp::parse_tool_calls(&output)
+				&crate::mcp::parse_tool_calls(&output)
 			};
 
 			// If there are tool calls, process them
@@ -139,7 +139,7 @@ impl Layer for LayerProcessor {
 						continue;
 					}
 
-					let result = match crate::session::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
+					let result = match crate::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
 						Ok(res) => res,
 						Err(e) => {
 							println!("{} {}", "Tool execution error:".red(), e);

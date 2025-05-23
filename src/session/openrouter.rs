@@ -77,7 +77,7 @@ pub async fn chat_completion(
 	model: &str,
 	temperature: f32,
 	config: &Config,
-) -> Result<(String, OpenRouterExchange, Option<Vec<crate::session::mcp::McpToolCall>>, Option<String>)> {
+) -> Result<(String, OpenRouterExchange, Option<Vec<crate::mcp::McpToolCall>>, Option<String>)> {
 	// Use the new provider system
 	let response = crate::session::chat_completion_with_provider(&messages, model, temperature, config).await?;
 

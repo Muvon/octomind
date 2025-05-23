@@ -60,7 +60,7 @@ impl ProviderExchange {
 pub struct ProviderResponse {
 	pub content: String,
 	pub exchange: ProviderExchange,
-	pub tool_calls: Option<Vec<crate::session::mcp::McpToolCall>>,
+	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	pub finish_reason: Option<String>,
 }
 

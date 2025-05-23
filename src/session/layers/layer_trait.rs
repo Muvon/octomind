@@ -11,7 +11,7 @@ pub struct LayerResult {
 	pub output: String,
 	pub exchange: openrouter::OpenRouterExchange,
 	pub token_usage: Option<openrouter::TokenUsage>,
-	pub tool_calls: Option<Vec<crate::session::mcp::McpToolCall>>,
+	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 }
 
 // Input mode determines what part of the previous layer's output will be used

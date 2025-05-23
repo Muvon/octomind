@@ -188,7 +188,7 @@ pub fn ensure_tool_call_ids(calls: &mut Vec<McpToolCall>) {
 	}
 }
 
-// Gather available functions from enabled providers
+// Gather available functions from enabled servers
 pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	let mut functions = Vec::new();
 
@@ -197,18 +197,51 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 		return functions;
 	}
 
-	// Add developer tools if enabled
-	if config.mcp.providers.contains(&"core".to_string()) {
-		functions.extend(dev::get_all_functions());
-		functions.extend(fs::get_all_functions());
-	}
+	// Get enabled servers
+	let enabled_servers = config.mcp.get_enabled_servers();
 
-	// Add server functions if any servers are enabled
-	if !config.mcp.servers.is_empty() {
-		for server in &config.mcp.servers {
-			if server.enabled {
-				if let Ok(server_functions) = super::mcp::server::get_server_functions(server).await {
-					functions.extend(server_functions);
+	for server in enabled_servers {
+		match server.server_type {
+			crate::config::McpServerType::Developer => {
+				let server_functions = if server.tools.is_empty() {
+					// No tool filtering - get all developer functions
+					dev::get_all_functions()
+				} else {
+					// Filter functions based on allowed tools
+					dev::get_all_functions()
+						.into_iter()
+						.filter(|func| server.tools.contains(&func.name))
+						.collect()
+				};
+				functions.extend(server_functions);
+			}
+			crate::config::McpServerType::Filesystem => {
+				let server_functions = if server.tools.is_empty() {
+					// No tool filtering - get all filesystem functions
+					fs::get_all_functions()
+				} else {
+					// Filter functions based on allowed tools
+					fs::get_all_functions()
+						.into_iter()
+						.filter(|func| server.tools.contains(&func.name))
+						.collect()
+				};
+				functions.extend(server_functions);
+			}
+			crate::config::McpServerType::External => {
+				// Handle external servers
+				if let Ok(server_functions) = server::get_server_functions(server).await {
+					let filtered_functions = if server.tools.is_empty() {
+						// No tool filtering - get all functions from server
+						server_functions
+					} else {
+						// Filter functions based on allowed tools
+						server_functions
+							.into_iter()
+							.filter(|func| server.tools.contains(&func.name))
+							.collect()
+					};
+					functions.extend(filtered_functions);
 				}
 			}
 		}
@@ -247,109 +280,83 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 
 // Internal function to actually execute the tool call
 async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Config, store_option: Option<&crate::store::Store>) -> Result<McpToolResult> {
-	// Try to execute locally if provider is enabled
-	if config.mcp.providers.contains(&"core".to_string()) {
-		// Handle developer tools
-		if call.tool_name == "shell" {
-			let mut result = dev::execute_shell_command(call).await?;
-			// Add the tool_id to the result
-			result.tool_id = call.tool_id.clone();
-
-			// Check if result is large - warn user if it exceeds threshold
-			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
-			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
-				// Create a modified result that warns about the size
-				use colored::Colorize;
-				println!("{}", format!("! WARNING: Shell command produced a large output ({} tokens)",
-					estimated_tokens).bright_yellow());
-				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
-
-				// Ask user for confirmation before proceeding
-				print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
-				std::io::stdout().flush().unwrap();
-
-				let mut input = String::new();
-				std::io::stdin().read_line(&mut input).unwrap_or_default();
-
-				if !input.trim().to_lowercase().starts_with('y') {
-					// User declined, return a truncated result with explanation
-					let truncated_result = McpToolResult {
-						tool_name: result.tool_name,
-						tool_id: call.tool_id.clone(),
-						result: serde_json::json!({
-							"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
-						}),
-					};
-					return Ok(truncated_result);
-				}
-
-				// User confirmed, continue with original result
-				println!("{}", "Proceeding with full output...".bright_green());
-			}
-
-			return Ok(result);
-		} else if call.tool_name == "text_editor" {
-			return fs::execute_text_editor(call).await;
-		} else if call.tool_name == "html2md" {
-			return fs::execute_html2md(call).await;
-		} else if call.tool_name == "list_files" {
-			return fs::execute_list_files(call).await;
-		} else if call.tool_name == "semantic_code" {
-			if let Some(store) = store_option {
-				return dev::execute_semantic_code(call, store, config).await;
-			} else {
-				return Err(anyhow::anyhow!("Store not initialized for semantic_code tool"));
-			}
-		} else if call.tool_name == "graphrag" {
-			return dev::execute_graphrag(call, config).await;
-		}
-	} else {
-		return Err(anyhow::anyhow!("Developer tools are not enabled"));
+	// Only execute if MCP is enabled
+	if !config.mcp.enabled {
+		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
 
+	// Get enabled servers
+	let enabled_servers = config.mcp.get_enabled_servers();
+
 	// Try to find a server that can handle this tool
-	let mut last_error = anyhow::anyhow!("No servers available to process this tool");
-	for server in &config.mcp.servers {
-		if server.enabled {
-			// Check if this server supports the tool
-			if server.tools.is_empty() || server.tools.contains(&call.tool_name) {
-				// Try to execute the tool on this server
-				match super::mcp::server::execute_tool_call(call, server).await {
-					Ok(result) => {
-						// Check if result is large - warn user if it exceeds threshold
-						let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
-						if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
-							// Create a modified result that warns about the size
-							use colored::Colorize;
-							println!("{}", format!("! WARNING: External tool produced a large output ({} tokens)",
-								estimated_tokens).bright_yellow());
-							println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
+	let mut last_error = anyhow::anyhow!("No servers available to process tool '{}'", call.tool_name);
 
-							// Ask user for confirmation before proceeding
-							print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
-							std::io::stdout().flush().unwrap();
+	for server in enabled_servers {
+		// Check if this server can handle the tool (if tool filtering is enabled)
+		if !server.tools.is_empty() && !server.tools.contains(&call.tool_name) {
+			continue; // Skip this server if it doesn't handle this tool
+		}
 
-							let mut input = String::new();
-							std::io::stdin().read_line(&mut input).unwrap_or_default();
-
-							if !input.trim().to_lowercase().starts_with('y') {
-								// User declined, return a truncated result with explanation
-								let truncated_result = McpToolResult {
-									tool_name: result.tool_name,
-									tool_id: call.tool_id.clone(),
-									result: serde_json::json!({
-										"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
-									}),
-								};
-								return Ok(truncated_result);
-							}
-
-							// User confirmed, continue with original result
-							println!("{}", "Proceeding with full output...".bright_green());
+		match server.server_type {
+			crate::config::McpServerType::Developer => {
+				// Handle developer tools
+				match call.tool_name.as_str() {
+					"shell" => {
+						let mut result = dev::execute_shell_command(call).await?;
+						result.tool_id = call.tool_id.clone();
+						return handle_large_response(result, config);
+					}
+					"semantic_code" => {
+						if let Some(store) = store_option {
+							let mut result = dev::execute_semantic_code(call, store, config).await?;
+							result.tool_id = call.tool_id.clone();
+							return Ok(result);
+						} else {
+							return Err(anyhow::anyhow!("Store not initialized for semantic_code tool"));
 						}
-
+					}
+					"graphrag" => {
+						let mut result = dev::execute_graphrag(call, config).await?;
+						result.tool_id = call.tool_id.clone();
 						return Ok(result);
-					},
+					}
+					_ => {
+						// Tool not found in developer server
+						last_error = anyhow::anyhow!("Tool '{}' not found in developer server", call.tool_name);
+					}
+				}
+			}
+			crate::config::McpServerType::Filesystem => {
+				// Handle filesystem tools
+				match call.tool_name.as_str() {
+					"text_editor" => {
+						let mut result = fs::execute_text_editor(call).await?;
+						result.tool_id = call.tool_id.clone();
+						return Ok(result);
+					}
+					"html2md" => {
+						let mut result = fs::execute_html2md(call).await?;
+						result.tool_id = call.tool_id.clone();
+						return Ok(result);
+					}
+					"list_files" => {
+						let mut result = fs::execute_list_files(call).await?;
+						result.tool_id = call.tool_id.clone();
+						return Ok(result);
+					}
+					_ => {
+						// Tool not found in filesystem server
+						last_error = anyhow::anyhow!("Tool '{}' not found in filesystem server", call.tool_name);
+					}
+				}
+			}
+			crate::config::McpServerType::External => {
+				// Try to execute the tool on this external server
+				match server::execute_tool_call(call, server).await {
+					Ok(mut result) => {
+						result.tool_id = call.tool_id.clone();
+						return handle_large_response(result, config);
+					}
 					Err(err) => {
 						last_error = err;
 						// Continue trying other servers
@@ -361,6 +368,43 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 
 	// If we get here, no server could handle the tool call
 	Err(anyhow::anyhow!("Failed to execute tool '{}': {}", call.tool_name, last_error))
+}
+
+// Helper function to handle large response warnings
+fn handle_large_response(result: McpToolResult, config: &crate::config::Config) -> Result<McpToolResult> {
+	// Check if result is large - warn user if it exceeds threshold
+	let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
+	if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
+		// Create a modified result that warns about the size
+		use colored::Colorize;
+		println!("{}", format!("! WARNING: Tool produced a large output ({} tokens)",
+			estimated_tokens).bright_yellow());
+		println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
+
+		// Ask user for confirmation before proceeding
+		print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
+		std::io::stdout().flush().unwrap();
+
+		let mut input = String::new();
+		std::io::stdin().read_line(&mut input).unwrap_or_default();
+
+		if !input.trim().to_lowercase().starts_with('y') {
+			// User declined, return a truncated result with explanation
+			let truncated_result = McpToolResult {
+				tool_name: result.tool_name,
+				tool_id: result.tool_id,
+				result: serde_json::json!({
+					"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
+				}),
+			};
+			return Ok(truncated_result);
+		}
+
+		// User confirmed, continue with original result
+		println!("{}", "Proceeding with full output...".bright_green());
+	}
+
+	Ok(result)
 }
 
 // Execute a tool call with layer-specific restrictions

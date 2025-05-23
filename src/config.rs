@@ -328,7 +328,23 @@ impl Default for OpenRouterConfig {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum McpServerType {
+	#[serde(rename = "external")]
+	External,      // External server (URL or command)
+	#[serde(rename = "developer")]
+	Developer,     // Built-in developer tools
+	#[serde(rename = "filesystem")]
+	Filesystem,    // Built-in filesystem tools
+}
+
+impl Default for McpServerType {
+	fn default() -> Self {
+		Self::External
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum McpServerMode {
 	#[serde(rename = "http")]
 	Http,
@@ -342,27 +358,34 @@ impl Default for McpServerMode {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct McpServerConfig {
 	#[serde(default)]
 	pub enabled: bool,
 	pub name: String,
-	// URL mode configuration (for remote servers)
+	
+	// Server type - determines how the server is handled
+	#[serde(default)]
+	pub server_type: McpServerType,
+	
+	// External server configuration
 	pub url: Option<String>,
 	pub auth_token: Option<String>,
-	// Local mode configuration (for running servers locally)
 	pub command: Option<String>,
 	#[serde(default)]
 	pub args: Vec<String>,
-	// Communication mode - http or stdin
+	
+	// Communication mode - http or stdin (for external servers)
 	#[serde(default)]
 	pub mode: McpServerMode,
+	
 	// Timeout in seconds for tool execution
 	#[serde(default = "default_timeout")]
 	pub timeout_seconds: u64,
-	// Common config
+	
+	// Tool filtering - empty means all tools are enabled
 	#[serde(default)]
-	pub tools: Vec<String>,  // Empty means all tools are enabled
+	pub tools: Vec<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -374,6 +397,7 @@ impl Default for McpServerConfig {
 		Self {
 			enabled: true,
 			name: "".to_string(),
+			server_type: McpServerType::External,
 			url: None,
 			auth_token: None,
 			command: None,
@@ -385,26 +409,124 @@ impl Default for McpServerConfig {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+impl McpServerConfig {
+	/// Create a developer server configuration
+	pub fn developer(name: &str, tools: Vec<String>) -> Self {
+		Self {
+			enabled: true,
+			name: name.to_string(),
+			server_type: McpServerType::Developer,
+			tools,
+			..Default::default()
+		}
+	}
+	
+	/// Create a filesystem server configuration
+	pub fn filesystem(name: &str, tools: Vec<String>) -> Self {
+		Self {
+			enabled: true,
+			name: name.to_string(),
+			server_type: McpServerType::Filesystem,
+			tools,
+			..Default::default()
+		}
+	}
+	
+	/// Create an external HTTP server configuration
+	pub fn external_http(name: &str, url: &str, tools: Vec<String>) -> Self {
+		Self {
+			enabled: true,
+			name: name.to_string(),
+			server_type: McpServerType::External,
+			url: Some(url.to_string()),
+			mode: McpServerMode::Http,
+			tools,
+			..Default::default()
+		}
+	}
+	
+	/// Create an external command-based server configuration
+	pub fn external_command(name: &str, command: &str, args: Vec<String>, tools: Vec<String>) -> Self {
+		Self {
+			enabled: true,
+			name: name.to_string(),
+			server_type: McpServerType::External,
+			command: Some(command.to_string()),
+			args,
+			mode: McpServerMode::Stdin,
+			tools,
+			..Default::default()
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct McpConfig {
 	#[serde(default)]
 	pub enabled: bool,
-	#[serde(default = "default_mcp_providers")]
-	pub providers: Vec<String>,
-	#[serde(default)]
+	#[serde(default = "default_mcp_servers")]
 	pub servers: Vec<McpServerConfig>,
+	
+	// Legacy field for backward compatibility - will be migrated to servers
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub providers: Vec<String>,
 }
 
-fn default_mcp_providers() -> Vec<String> {
-	vec!["core".to_string()]
+fn default_mcp_servers() -> Vec<McpServerConfig> {
+	vec![
+		McpServerConfig::developer("developer", vec![]), // All developer tools enabled
+		McpServerConfig::filesystem("filesystem", vec![]), // All filesystem tools enabled
+	]
 }
 
 impl Default for McpConfig {
 	fn default() -> Self {
 		Self {
 			enabled: false,
-			providers: default_mcp_providers(),
-			servers: Vec::new(),
+			servers: default_mcp_servers(),
+			providers: Vec::new(), // Legacy field, empty by default
+		}
+	}
+}
+
+impl McpConfig {
+	/// Check if MCP has any enabled servers (including built-in)
+	pub fn has_enabled_servers(&self) -> bool {
+		self.enabled && self.servers.iter().any(|server| server.enabled)
+	}
+	
+	/// Get all enabled servers
+	pub fn get_enabled_servers(&self) -> Vec<&McpServerConfig> {
+		if !self.enabled {
+			return Vec::new();
+		}
+		self.servers.iter().filter(|server| server.enabled).collect()
+	}
+	
+	/// Migrate legacy providers configuration to new servers format
+	pub fn migrate_from_legacy(&mut self) {
+		if !self.providers.is_empty() {
+			// If we have legacy providers and no servers (or only defaults), create servers from providers
+			if self.servers.is_empty() || self.servers == default_mcp_servers() {
+				self.servers.clear();
+				
+				for provider in &self.providers {
+					match provider.as_str() {
+						"core" => {
+							// Add both developer and filesystem servers for legacy "core" provider
+							self.servers.push(McpServerConfig::developer("developer", vec![]));
+							self.servers.push(McpServerConfig::filesystem("filesystem", vec![]));
+						}
+						name => {
+							// Unknown provider - create a placeholder
+							eprintln!("Warning: Unknown legacy provider '{}' cannot be migrated", name);
+						}
+					}
+				}
+			}
+			
+			// Clear the legacy providers field after migration
+			self.providers.clear();
 		}
 	}
 }
@@ -590,6 +712,22 @@ impl Config {
 		Ok(octodev_dir)
 	}
 
+	/// Migrate legacy configuration to new format
+	fn migrate_legacy_config(&mut self) {
+		// Migrate global MCP configuration
+		self.mcp.migrate_from_legacy();
+		
+		// Migrate mode-specific MCP configurations
+		self.agent.mcp.migrate_from_legacy();
+		self.chat.mcp.migrate_from_legacy();
+		
+		// If the config was migrated, suggest saving it
+		if !self.mcp.providers.is_empty() || !self.agent.mcp.providers.is_empty() || !self.chat.mcp.providers.is_empty() {
+			eprintln!("Notice: Your configuration has been migrated from the legacy 'providers' format to the new 'servers' format.");
+			eprintln!("Consider saving the configuration to persist the changes.");
+		}
+	}
+
 	/// Validate the configuration for common issues  
 	pub fn validate(&self) -> Result<()> {
 		// Validate OpenRouter model name
@@ -682,34 +820,59 @@ impl Config {
 	}
 
 	fn validate_mcp_config(&self) -> Result<()> {
-		if !self.mcp.enabled {
-			return Ok(());
-		}
+		// Helper function to validate a single MCP config
+		let validate_mcp = |mcp_config: &McpConfig, context: &str| -> Result<()> {
+			if !mcp_config.enabled {
+				return Ok(());
+			}
 
-		for server in &self.mcp.servers {
-			if server.enabled {
-				// Must have either URL or command
-				if server.url.is_none() && server.command.is_none() {
-					return Err(anyhow!(
-						"MCP server '{}' must have either 'url' or 'command' specified",
-						server.name
-					));
-				}
+			for server in &mcp_config.servers {
+				if server.enabled {
+					match server.server_type {
+						McpServerType::External => {
+							// External servers must have either URL or command
+							if server.url.is_none() && server.command.is_none() {
+								return Err(anyhow!(
+									"{}: External MCP server '{}' must have either 'url' or 'command' specified",
+									context, server.name
+								));
+							}
+						}
+						McpServerType::Developer | McpServerType::Filesystem => {
+							// Built-in servers should not have URL or command
+							if server.url.is_some() || server.command.is_some() {
+								eprintln!(
+									"Warning: {}: Built-in server '{}' has URL/command specified, which will be ignored",
+									context, server.name
+								);
+							}
+						}
+					}
 
-				// Validate timeout
-				if server.timeout_seconds == 0 {
-					return Err(anyhow!(
-						"MCP server '{}' timeout must be greater than 0",
-						server.name
-					));
-				}
+					// Validate timeout
+					if server.timeout_seconds == 0 {
+						return Err(anyhow!(
+							"{}: MCP server '{}' timeout must be greater than 0",
+							context, server.name
+						));
+					}
 
-				// Validate server name
-				if server.name.trim().is_empty() {
-					return Err(anyhow!("MCP server name cannot be empty"));
+					// Validate server name
+					if server.name.trim().is_empty() {
+						return Err(anyhow!("{}: MCP server name cannot be empty", context));
+					}
 				}
 			}
-		}
+
+			Ok(())
+		};
+
+		// Validate global MCP config
+		validate_mcp(&self.mcp, "Global MCP config")?;
+		
+		// Validate mode-specific MCP configs
+		validate_mcp(&self.agent.mcp, "Agent mode MCP config")?;
+		validate_mcp(&self.chat.mcp, "Chat mode MCP config")?;
 
 		Ok(())
 	}
@@ -761,6 +924,9 @@ impl Config {
 
 			// Store the config path for potential future saving
 			config.config_path = Some(config_path);
+
+			// Migrate legacy configuration
+			config.migrate_legacy_config();
 
 			// Environment variables take precedence over config file values
 			if let Ok(jina_key) = std::env::var("JINA_API_KEY") {

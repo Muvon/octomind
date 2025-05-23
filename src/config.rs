@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use anyhow::{Result, Context, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -312,6 +312,139 @@ impl Config {
 		Ok(octodev_dir)
 	}
 
+	/// Validate the configuration for common issues
+	pub fn validate(&self) -> Result<()> {
+		// Validate OpenRouter model name
+		self.validate_openrouter_model()?;
+
+		// Validate threshold values
+		self.validate_thresholds()?;
+
+		// Validate MCP configuration
+		self.validate_mcp_config()?;
+
+		// Validate layer configuration if present
+		if let Some(layers) = &self.layers {
+			self.validate_layers(layers)?;
+		}
+
+		Ok(())
+	}
+
+	fn validate_openrouter_model(&self) -> Result<()> {
+		let model = &self.openrouter.model;
+
+		// Check if model starts with a valid provider prefix
+		let has_valid_prefix = model.contains('/') &&
+		(model.starts_with("anthropic/") ||
+		model.starts_with("openai/") ||
+		model.starts_with("meta-llama/") ||
+		model.starts_with("google/") ||
+		model.starts_with("mistralai/") ||
+		model.starts_with("perplexity/"));
+
+		if !has_valid_prefix {
+			return Err(anyhow!(
+				"Invalid OpenRouter model format: '{}'. Expected format: 'provider/model-name'",
+				model
+			));
+		}
+
+		Ok(())
+	}
+
+	fn validate_thresholds(&self) -> Result<()> {
+		let config = &self.openrouter;
+
+		if config.mcp_response_warning_threshold == 0 {
+			return Err(anyhow!("MCP response warning threshold must be greater than 0"));
+		}
+
+		if config.max_request_tokens_threshold == 0 {
+			return Err(anyhow!("Max request tokens threshold must be greater than 0"));
+		}
+
+		if config.cache_tokens_pct_threshold > 100 {
+			return Err(anyhow!("Cache tokens percentage threshold must be between 0-100"));
+		}
+
+		// Warn if thresholds seem too low
+		if config.mcp_response_warning_threshold < 1000 {
+			eprintln!("Warning: MCP response warning threshold ({}) is quite low",
+				config.mcp_response_warning_threshold);
+		}
+
+		Ok(())
+	}
+
+	fn validate_mcp_config(&self) -> Result<()> {
+		if !self.mcp.enabled {
+			return Ok(());
+		}
+
+		for server in &self.mcp.servers {
+			if server.enabled {
+				// Must have either URL or command
+				if server.url.is_none() && server.command.is_none() {
+					return Err(anyhow!(
+						"MCP server '{}' must have either 'url' or 'command' specified",
+						server.name
+					));
+				}
+
+				// Validate timeout
+				if server.timeout_seconds == 0 {
+					return Err(anyhow!(
+						"MCP server '{}' timeout must be greater than 0",
+						server.name
+					));
+				}
+
+				// Validate server name
+				if server.name.trim().is_empty() {
+					return Err(anyhow!("MCP server name cannot be empty"));
+				}
+			}
+		}
+
+		Ok(())
+	}
+
+	fn validate_layers(&self, layers: &[crate::session::layers::LayerConfig]) -> Result<()> {
+		let mut enabled_count = 0;
+		let mut names = std::collections::HashSet::new();
+
+		for layer in layers {
+			if layer.enabled {
+				enabled_count += 1;
+
+				// Check for duplicate names
+				if !names.insert(&layer.name) {
+					return Err(anyhow!("Duplicate layer name: '{}'", layer.name));
+				}
+
+				// Validate temperature
+				if layer.temperature < 0.0 || layer.temperature > 2.0 {
+					return Err(anyhow!(
+						"Layer '{}' temperature must be between 0.0 and 2.0",
+						layer.name
+					));
+				}
+
+				// Validate model format
+				if layer.model.trim().is_empty() {
+					return Err(anyhow!("Layer '{}' model cannot be empty", layer.name));
+				}
+			}
+		}
+
+		if enabled_count == 0 && self.openrouter.enable_layers {
+			eprintln!("Warning: Layers are enabled but no layer configurations are active");
+		}
+
+		Ok(())
+	}
+
 	pub fn load() -> Result<Self> {
 		let octodev_dir = Self::ensure_octodev_dir()?;
 		let config_path = octodev_dir.join("config.toml");
@@ -325,12 +458,18 @@ impl Config {
 			// Store the config path for potential future saving
 			config.config_path = Some(config_path);
 
-			// Check environment variable for API keys even if config exists
-			if config.jina_api_key.is_none() {
-				config.jina_api_key = std::env::var("JINA_API_KEY").ok();
+			// Environment variables take precedence over config file values
+			if let Ok(jina_key) = std::env::var("JINA_API_KEY") {
+				config.jina_api_key = Some(jina_key);
 			}
-			if config.openrouter.api_key.is_none() {
-				config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
+			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
+				config.openrouter.api_key = Some(openrouter_key);
+			}
+
+			// Validate the loaded configuration
+			if let Err(e) = config.validate() {
+				eprintln!("Configuration validation warning: {}", e);
+				eprintln!("The application will continue, but you may want to fix these issues.");
 			}
 
 			Ok(config)
@@ -348,6 +487,9 @@ impl Config {
 	}
 
 	pub fn save(&self) -> Result<()> {
+		// Validate before saving
+		self.validate()?;
+
 		let octodev_dir = Self::ensure_octodev_dir()?;
 		let config_path = octodev_dir.join("config.toml");
 
@@ -375,5 +517,81 @@ impl Config {
 		}
 
 		Ok(config_path)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_valid_openrouter_models() {
+		let mut config = Config::default();
+
+		// Test valid models
+		let valid_models = [
+			"anthropic/claude-3.5-haiku",
+			"anthropic/claude-3.5-sonnet",
+			"anthropic/claude-3.7-sonnet",
+			"anthropic/claude-sonnet-4",
+			"anthropic/claude-opus-4",
+			"openai/gpt-4o",
+			"openai/gpt-4o-mini",
+			"openai/gpt-4.1",
+			"openai/gpt-4.1-mini",
+			"openai/gpt-4.1-nano",
+			"openai/o4-mini",
+			"openai/o4-mini-high",
+			"google/gemini-2.5-flash-preview",
+			"google/gemini-2.5-pro-preview",
+		];
+
+		for model in valid_models {
+			config.openrouter.model = model.to_string();
+			assert!(config.validate_openrouter_model().is_ok(), "Model {} should be valid", model);
+		}
+	}
+
+	#[test]
+	fn test_invalid_openrouter_models() {
+		let mut config = Config::default();
+
+		// Test invalid models
+		let invalid_models = [
+			"gpt-4",  // Missing provider prefix
+			"openai-gpt-4",  // Wrong separator
+			"unknown/model",  // Unknown provider
+			"",  // Empty string
+		];
+
+		for model in invalid_models {
+			config.openrouter.model = model.to_string();
+			assert!(config.validate_openrouter_model().is_err(), "Model {} should be invalid", model);
+		}
+	}
+
+	#[test]
+	fn test_threshold_validation() {
+		let mut config = Config::default();
+
+		// Test invalid thresholds
+		config.openrouter.mcp_response_warning_threshold = 0;
+		assert!(config.validate_thresholds().is_err());
+
+		config.openrouter.mcp_response_warning_threshold = 1000;
+		config.openrouter.cache_tokens_pct_threshold = 101;
+		assert!(config.validate_thresholds().is_err());
+
+		// Test valid thresholds
+		config.openrouter.cache_tokens_pct_threshold = 50;
+		assert!(config.validate_thresholds().is_ok());
+	}
+
+	#[test]
+	fn test_environment_variable_precedence() {
+		// This test would need to be run with specific environment variables set
+		// For now, just test that the load function doesn't panic
+		let result = Config::load();
+		assert!(result.is_ok());
 	}
 }

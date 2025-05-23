@@ -47,10 +47,28 @@ pub struct ConfigArgs {
 	/// Set custom system prompt (or 'default' to reset to default)
 	#[arg(long)]
 	pub system: Option<String>,
+
+	/// Validate configuration without making changes
+	#[arg(long)]
+	pub validate: bool,
 }
 
 // Handle the configuration command
 pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Error> {
+	// If validation flag is set, just validate and exit
+	if args.validate {
+		match config.validate() {
+			Ok(()) => {
+				println!("✅ Configuration is valid!");
+				return Ok(());
+			}
+			Err(e) => {
+				eprintln!("❌ Configuration validation failed: {}", e);
+				return Err(e);
+			}
+		}
+	}
+
 	let mut modified = false;
 
 	// Update provider if specified
@@ -250,7 +268,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 	} else {
 		// Save the updated configuration
-		config.save()?;
+		if let Err(e) = config.save() {
+			eprintln!("Error saving configuration: {}", e);
+			return Err(e);
+		}
 		println!("Configuration saved successfully");
 	}
 

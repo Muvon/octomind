@@ -17,30 +17,30 @@ impl Default for EmbeddingProvider {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GraphRagConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_description_model")]
-    pub description_model: String,
-    #[serde(default = "default_relationship_model")]
-    pub relationship_model: String,
+	#[serde(default)]
+	pub enabled: bool,
+	#[serde(default = "default_description_model")]
+	pub description_model: String,
+	#[serde(default = "default_relationship_model")]
+	pub relationship_model: String,
 }
 
 fn default_description_model() -> String {
-    "openai/gpt-4.1-nano".to_string()
+	"openai/gpt-4.1-nano".to_string()
 }
 
 fn default_relationship_model() -> String {
-    "openai/gpt-4.1-nano".to_string()
+	"openai/gpt-4.1-nano".to_string()
 }
 
 impl Default for GraphRagConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            description_model: default_description_model(),
-            relationship_model: default_relationship_model(),
-        }
-    }
+	fn default() -> Self {
+		Self {
+			enabled: false,
+			description_model: default_description_model(),
+			relationship_model: default_relationship_model(),
+		}
+	}
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

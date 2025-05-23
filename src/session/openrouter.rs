@@ -117,7 +117,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 			// Get the tool call id and name from the message
 			let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
 			let name = msg.name.clone().unwrap_or_default();
-			
+
 			// Create a properly formatted tool message for OpenRouter/OpenAI format
 			result.push(Message {
 				role: "tool".to_string(),

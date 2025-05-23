@@ -1404,13 +1404,13 @@ pub fn get_all_functions() -> Vec<McpFunction> {
 		get_list_files_function(),
 		get_semantic_code_function(),
 	];
-	
+
 	// Only add GraphRAG function if the feature is enabled in the config
 	let config = crate::config::Config::load().unwrap_or_default();
 	if config.graphrag.enabled {
 		functions.push(get_graphrag_function());
 	}
-	
+
 	functions
 }
 
@@ -1426,7 +1426,7 @@ finding connections between different parts of the code.
 
 Operations:
 - `search`: Find code nodes that match a semantic query
-  - Use with `task_focused: true` for an optimized, token-efficient view focused on your specific task
+- Use with `task_focused: true` for an optimized, token-efficient view focused on your specific task
 - `get_node`: Get detailed information about a specific node by ID
 - `get_relationships`: Find relationships involving a specific node
 - `find_path`: Find paths between two nodes in the graph
@@ -1514,80 +1514,80 @@ pub async fn execute_graphrag(call: &McpToolCall, config: &crate::config::Config
 
 // Search for nodes in the graph
 async fn execute_graphrag_search(call: &McpToolCall, graph_builder: &crate::indexer::GraphBuilder) -> Result<McpToolResult> {
-    // Extract query parameter
-    let query = match call.parameters.get("query") {
-        Some(Value::String(q)) => q.clone(),
-        _ => return Err(anyhow!("Missing or invalid 'query' parameter for search operation")),
-    };
+	// Extract query parameter
+	let query = match call.parameters.get("query") {
+		Some(Value::String(q)) => q.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'query' parameter for search operation")),
+	};
 
-    // Check for task-focused flag
-    let task_focused = call.parameters.get("task_focused")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-        
-    if task_focused {
-        // Use the graph optimizer for task-focused search
-        let store = crate::store::Store::new().await?;
-        let config = crate::config::Config::load().unwrap_or_default();
-        
-        // Get the full graph
-        let full_graph = graph_builder.get_graph().await?;
-        
-        // Generate embeddings for the query
-        let query_embedding = crate::indexer::generate_embeddings(&query, false, &config).await?;
-        
-        // Create optimizer with token budget
-        let optimizer = crate::indexer::graph_optimization::GraphOptimizer::new(2000);
-        
-        // Get all code blocks
-        let code_blocks = store.get_code_blocks(query_embedding.clone()).await?;
-        
-        // Generate a task-focused view
-        let task_view = optimizer.generate_task_focused_view(
-            &query,
-            &query_embedding,
-            &full_graph,
-            &code_blocks
-        ).await?;
-        
-        // Return the optimized view
-        return Ok(McpToolResult {
-            tool_name: "graphrag".to_string(),
-            tool_id: call.tool_id.clone(),
-            result: json!({
-                "success": true,
-                "output": task_view,
-                "task_focused": true,
-                "parameters": {
-                    "operation": "search",
-                    "query": query,
-                    "task_focused": true
-                }
-            }),
-        });
-    }
+	// Check for task-focused flag
+	let task_focused = call.parameters.get("task_focused")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false);
 
-    // Traditional node search (without task focusing)
-    let nodes = graph_builder.search_nodes(&query).await?;
+	if task_focused {
+		// Use the graph optimizer for task-focused search
+		let store = crate::store::Store::new().await?;
+		let config = crate::config::Config::load().unwrap_or_default();
 
-    // Format the results as markdown using the official formatter
-    let markdown = crate::indexer::graphrag::graphrag_nodes_to_markdown(&nodes);
+		// Get the full graph
+		let full_graph = graph_builder.get_graph().await?;
 
-    // Return the results
-    Ok(McpToolResult {
-        tool_name: "graphrag".to_string(),
-        tool_id: call.tool_id.clone(),
-        result: json!({
-            "success": true,
-            "output": markdown,
-            "count": nodes.len(),
-            "nodes": nodes,
-            "parameters": {
-                "operation": "search",
-                "query": query
-            }
-        }),
-    })
+		// Generate embeddings for the query
+		let query_embedding = crate::indexer::generate_embeddings(&query, false, &config).await?;
+
+		// Create optimizer with token budget
+		let optimizer = crate::indexer::graph_optimization::GraphOptimizer::new(2000);
+
+		// Get all code blocks
+		let code_blocks = store.get_code_blocks(query_embedding.clone()).await?;
+
+		// Generate a task-focused view
+		let task_view = optimizer.generate_task_focused_view(
+			&query,
+			&query_embedding,
+			&full_graph,
+			&code_blocks
+		).await?;
+
+		// Return the optimized view
+		return Ok(McpToolResult {
+			tool_name: "graphrag".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"success": true,
+				"output": task_view,
+				"task_focused": true,
+				"parameters": {
+					"operation": "search",
+					"query": query,
+					"task_focused": true
+				}
+			}),
+		});
+	}
+
+	// Traditional node search (without task focusing)
+	let nodes = graph_builder.search_nodes(&query).await?;
+
+	// Format the results as markdown using the official formatter
+	let markdown = crate::indexer::graphrag::graphrag_nodes_to_markdown(&nodes);
+
+	// Return the results
+	Ok(McpToolResult {
+		tool_name: "graphrag".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": true,
+			"output": markdown,
+			"count": nodes.len(),
+			"nodes": nodes,
+			"parameters": {
+				"operation": "search",
+				"query": query
+			}
+		}),
+	})
 }
 
 // Get details about a specific node
@@ -1663,7 +1663,7 @@ async fn execute_graphrag_get_relationships(call: &McpToolCall, graph_builder: &
 
 	// Format the result as markdown
 	let mut markdown = format!("# Relationships for Node: {}\n\n", node_id);
-	
+
 	if relationships.is_empty() {
 		markdown.push_str("No relationships found for this node.\n");
 	} else {
@@ -1673,15 +1673,15 @@ async fn execute_graphrag_get_relationships(call: &McpToolCall, graph_builder: &
 		let outgoing: Vec<_> = relationships.iter()
 			.filter(|rel| rel.source == node_id)
 			.collect();
-		
+
 		if !outgoing.is_empty() {
 			markdown.push_str("## Outgoing Relationships\n\n");
 			for rel in outgoing {
 				let target_name = graph.nodes.get(&rel.target)
 					.map(|n| n.name.clone())
 					.unwrap_or_else(|| rel.target.clone());
-				
-				markdown.push_str(&format!("- **{}** → {} ({}): {}\n", 
+
+				markdown.push_str(&format!("- **{}** → {} ({}): {}\n",
 					rel.relation_type,
 					target_name,
 					rel.target,
@@ -1694,15 +1694,15 @@ async fn execute_graphrag_get_relationships(call: &McpToolCall, graph_builder: &
 		let incoming: Vec<_> = relationships.iter()
 			.filter(|rel| rel.target == node_id)
 			.collect();
-		
+
 		if !incoming.is_empty() {
 			markdown.push_str("## Incoming Relationships\n\n");
 			for rel in incoming {
 				let source_name = graph.nodes.get(&rel.source)
 					.map(|n| n.name.clone())
 					.unwrap_or_else(|| rel.source.clone());
-				
-				markdown.push_str(&format!("- **{}** ← {} ({}): {}\n", 
+
+				markdown.push_str(&format!("- **{}** ← {} ({}): {}\n",
 					rel.relation_type,
 					source_name,
 					rel.source,
@@ -1736,12 +1736,12 @@ async fn execute_graphrag_find_path(call: &McpToolCall, graph_builder: &crate::i
 		Some(Value::String(id)) => id.clone(),
 		_ => return Err(anyhow!("Missing or invalid 'source_id' parameter for find_path operation")),
 	};
-	
+
 	let target_id = match call.parameters.get("target_id") {
 		Some(Value::String(id)) => id.clone(),
 		_ => return Err(anyhow!("Missing or invalid 'target_id' parameter for find_path operation")),
 	};
-	
+
 	let max_depth = match call.parameters.get("max_depth") {
 		Some(Value::Number(n)) => n.as_u64().unwrap_or(3) as usize,
 		_ => 3, // Default to depth 3
@@ -1755,7 +1755,7 @@ async fn execute_graphrag_find_path(call: &McpToolCall, graph_builder: &crate::i
 
 	// Format the result as markdown
 	let mut markdown = format!("# Paths from '{}' to '{}'\n\n", source_id, target_id);
-	
+
 	if paths.is_empty() {
 		markdown.push_str("No paths found between these nodes within the specified depth.\n");
 	} else {
@@ -1763,26 +1763,26 @@ async fn execute_graphrag_find_path(call: &McpToolCall, graph_builder: &crate::i
 
 		for (i, path) in paths.iter().enumerate() {
 			markdown.push_str(&format!("## Path {}\n\n", i + 1));
-			
+
 			// Display each node in the path
 			for (j, node_id) in path.iter().enumerate() {
 				let node_name = graph.nodes.get(node_id)
 					.map(|n| n.name.clone())
 					.unwrap_or_else(|| node_id.clone());
-				
+
 				if j > 0 {
 					// Look up the relationship
 					let prev_id = &path[j-1];
 					let rel = graph.relationships.iter()
 						.find(|r| r.source == *prev_id && r.target == *node_id);
-					
+
 					if let Some(rel) = rel {
 						markdown.push_str(&format!("→ **{}** → ", rel.relation_type));
 					} else {
 						markdown.push_str("→ ");
 					}
 				}
-				
+
 				markdown.push_str(&format!("`{}` ({})", node_name, node_id));
 			}
 			markdown.push_str("\n\n");

@@ -869,7 +869,7 @@ impl Store {
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()
-			.await?;
+		.await?;
 
 		if results.is_empty() || results[0].num_rows() == 0 {
 			// Create an empty record batch with the right schema
@@ -921,7 +921,7 @@ impl Store {
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()
-			.await?;
+		.await?;
 
 		if results.is_empty() || results[0].num_rows() == 0 {
 			// Return empty batch with schema

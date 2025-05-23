@@ -76,7 +76,7 @@ pub async fn display_indexing_progress(state: Arc<RwLock<state::IndexState>>) {
 
 		// Only redraw if something changed or on spinner change
 		if current_indexed != last_indexed ||
-		   graphrag_blocks != last_graphrag_blocks {
+		graphrag_blocks != last_graphrag_blocks {
 			// Clear the line and move cursor to beginning with \r
 			print!("\r");
 

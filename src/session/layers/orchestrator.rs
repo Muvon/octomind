@@ -23,19 +23,19 @@ impl LayeredOrchestrator {
 			// Load each layer if it exists and is enabled in config
 			for layer_config in layer_configs {
 				if layer_config.enabled {
-						if layer_config.name.as_str() == "query_processor" {
-							layers.push(Box::new(QueryProcessorLayer::new(layer_config.clone())));
-						} else if layer_config.name.as_str() == "context_generator" {
-							layers.push(Box::new(ContextGeneratorLayer::new(layer_config.clone())));
-						} else if layer_config.name.as_str() == "reducer" {
-							layers.push(Box::new(ReducerLayer::new(layer_config.clone())));
-						} else if layer_config.name.as_str() == "developer" {
-							// Skip developer layer - it's been removed from the system
-							println!("{}", "The developer layer has been removed. The main session will handle development tasks directly.".yellow());
-						} else {
-							// Unknown layer type
-							println!("{} {}", "Unknown layer type:".yellow(), layer_config.name);
-						}
+					if layer_config.name.as_str() == "query_processor" {
+						layers.push(Box::new(QueryProcessorLayer::new(layer_config.clone())));
+					} else if layer_config.name.as_str() == "context_generator" {
+						layers.push(Box::new(ContextGeneratorLayer::new(layer_config.clone())));
+					} else if layer_config.name.as_str() == "reducer" {
+						layers.push(Box::new(ReducerLayer::new(layer_config.clone())));
+					} else if layer_config.name.as_str() == "developer" {
+						// Skip developer layer - it's been removed from the system
+						println!("{}", "The developer layer has been removed. The main session will handle development tasks directly.".yellow());
+					} else {
+						// Unknown layer type
+						println!("{} {}", "Unknown layer type:".yellow(), layer_config.name);
+					}
 				}
 			}
 

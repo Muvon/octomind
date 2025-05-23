@@ -310,12 +310,12 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// SIMPLIFIED FLOW:
 		// 1. Process through layers if needed (first message with layers enabled)
 		// 2. Use the processed input for the main model chat
-		
+
 		// If layers are enabled and this is the first message, process it through layers first
 		if current_config.openrouter.enable_layers && !first_message_processed {
 			// This is the first message with layered architecture enabled
 			// We will process it through layers to get improved input for the main model
-			
+
 			// Check for Ctrl+C before starting layered processing
 			if ctrl_c_pressed.load(Ordering::SeqCst) {
 				continue;
@@ -336,10 +336,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// Use the processed input from layers instead of the original input
 					// This processed input already includes any function call responses
 					input = processed_input;
-					
+
 					// Mark that we've processed the first message through layers
 					first_message_processed = true;
-					
+
 					println!("{}", "Layers processing complete. Using enhanced input for main model.".bright_cyan());
 				},
 				Err(e) => {

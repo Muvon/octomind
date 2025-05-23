@@ -1168,11 +1168,11 @@ impl GraphBuilder {
 		let mut request_body = json!({
 		"model": model_name,
 		"messages": [{
-			"role": "user",
-			"content": prompt
-		}],
-			// "max_tokens": 200
-		});
+		"role": "user",
+		"content": prompt
+	}],
+		// "max_tokens": 200
+	});
 
 		// Only add response_format if schema is provided
 		if let Some(schema_value) = json_schema {
@@ -1389,12 +1389,12 @@ impl GraphBuilder {
 		// Sort nodes by relevance (exact matches first, then by similarity)
 		nodes.sort_by(|a, b| {
 			let a_contains = a.name.to_lowercase().contains(&query_lower) ||
-			               a.kind.to_lowercase().contains(&query_lower) ||
-			               a.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
+			a.kind.to_lowercase().contains(&query_lower) ||
+			a.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
 
 			let b_contains = b.name.to_lowercase().contains(&query_lower) ||
-			               b.kind.to_lowercase().contains(&query_lower) ||
-			               b.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
+			b.kind.to_lowercase().contains(&query_lower) ||
+			b.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
 
 			if a_contains && !b_contains {
 				return std::cmp::Ordering::Less;

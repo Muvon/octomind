@@ -62,7 +62,7 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 		eprintln!("Then run 'octodev index' to build the knowledge graph.");
 		return Ok(());
 	}
-	
+
 	// Initialize the GraphBuilder
 	let graph_builder = match indexer::GraphBuilder::new(config.clone()).await {
 		Ok(builder) => builder,
@@ -71,7 +71,7 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 			return Ok(());
 		}
 	};
-	
+
 	// Get the current graph from the builder (this will load from database in the future)
 	let graph = match graph_builder.get_graph().await {
 		Ok(g) => g,
@@ -80,7 +80,7 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 			return Ok(());
 		}
 	};
-	
+
 	// If the graph is empty, advise to run indexing
 	if graph.nodes.is_empty() {
 		eprintln!("GraphRAG knowledge graph is empty.");
@@ -197,15 +197,15 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 				let outgoing: Vec<_> = relationships.iter()
 					.filter(|rel| rel.source == *node_id)
 					.collect();
-				
+
 				if !outgoing.is_empty() {
 					println!("Outgoing Relationships:");
 					for rel in outgoing {
 						let target_name = graph.nodes.get(&rel.target)
 							.map(|n| n.name.clone())
 							.unwrap_or_else(|| rel.target.clone());
-						
-						println!("  - {} \u{2192} {} ({}): {}", 
+
+						println!("  - {} \u{2192} {} ({}): {}",
 							rel.relation_type,
 							target_name,
 							rel.target,
@@ -218,15 +218,15 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 				let incoming: Vec<_> = relationships.iter()
 					.filter(|rel| rel.target == *node_id)
 					.collect();
-				
+
 				if !incoming.is_empty() {
 					println!("Incoming Relationships:");
 					for rel in incoming {
 						let source_name = graph.nodes.get(&rel.source)
 							.map(|n| n.name.clone())
 							.unwrap_or_else(|| rel.source.clone());
-						
-						println!("  - {} \u{2190} {} ({}): {}", 
+
+						println!("  - {} \u{2190} {} ({}): {}",
 							rel.relation_type,
 							source_name,
 							rel.source,
@@ -270,26 +270,26 @@ pub async fn execute(_store: &Store, args: &GraphRAGArgs, config: &Config) -> Re
 
 				for (i, path) in paths.iter().enumerate() {
 					println!("Path {}:", i + 1);
-					
+
 					// Display each node in the path
 					for (j, node_id) in path.iter().enumerate() {
 						let node_name = graph.nodes.get(node_id)
 							.map(|n| n.name.clone())
 							.unwrap_or_else(|| node_id.clone());
-						
+
 						if j > 0 {
 							// Look up the relationship
 							let prev_id = &path[j-1];
 							let rel = graph.relationships.iter()
 								.find(|r| r.source == *prev_id && r.target == *node_id);
-							
+
 							if let Some(rel) = rel {
 								print!(" --{}-> ", rel.relation_type);
 							} else {
 								print!(" -> ");
 							}
 						}
-						
+
 						print!("{} ({})", node_name, node_id);
 					}
 					println!("\n");

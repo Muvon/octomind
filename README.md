@@ -54,7 +54,17 @@ OctoDev supports multiple AI providers through an extensible architecture. You c
 #### OpenAI
 - **Models**: GPT-4, GPT-3.5, O1, and other OpenAI models
 - **API Key**: Set `OPENAI_API_KEY` environment variable
-- **Features**: Full tool support, streaming responses
+- **Features**: Full tool support, built-in cost calculation
+
+#### Anthropic
+- **Models**: Claude 3.5, Claude 3, Claude 2, and Claude Instant models
+- **API Key**: Set `ANTHROPIC_API_KEY` environment variable
+- **Features**: Full tool support, built-in cost calculation, caching support
+
+#### Google Vertex AI
+- **Models**: Gemini 1.5, Gemini 1.0, and Bison models
+- **Authentication**: Service account authentication (see setup below)
+- **Features**: Full tool support, built-in cost calculation
 
 ### Model Format
 
@@ -68,6 +78,14 @@ octodev session --model "openrouter:openai/gpt-4o"
 # OpenAI models (direct)
 octodev session --model "openai:gpt-4o"
 octodev session --model "openai:o1-preview"
+
+# Anthropic models (direct)
+octodev session --model "anthropic:claude-3-5-sonnet"
+octodev session --model "anthropic:claude-3-opus"
+
+# Google Vertex AI models
+octodev session --model "google:gemini-1.5-pro"
+octodev session --model "google:gemini-1.5-flash"
 ```
 
 ### Configuration
@@ -98,7 +116,30 @@ export OPENROUTER_API_KEY="your_openrouter_key"
 
 # For OpenAI  
 export OPENAI_API_KEY="your_openai_key"
+
+# For Anthropic
+export ANTHROPIC_API_KEY="your_anthropic_key"
+
+# For Google Vertex AI (requires service account setup)
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+export GOOGLE_PROJECT_ID="your-gcp-project-id"
+export GOOGLE_REGION="us-central1"  # Optional, defaults to us-central1
 ```
+
+#### Google Vertex AI Setup
+
+Google Vertex AI requires service account authentication:
+
+1. **Create a Service Account** in Google Cloud Console
+2. **Download the JSON key file**
+3. **Set environment variables**:
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account.json"
+   export GOOGLE_PROJECT_ID="your-project-id"
+   ```
+4. **Enable the Vertex AI API** in your Google Cloud project
+
+Note: The Google provider currently requires additional OAuth2 implementation for full functionality.
 
 ## Usage
 
@@ -149,6 +190,8 @@ octodev session -r my_session
 # Use a specific model with provider
 octodev session --model "openai:gpt-4o"
 octodev session --model "openrouter:anthropic/claude-sonnet-4"
+octodev session --model "anthropic:claude-3-5-sonnet"
+octodev session --model "google:gemini-1.5-pro"
 
 # Combine options
 octodev session --mode=chat --model="openai:gpt-4o-mini" -n chat_session

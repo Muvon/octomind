@@ -8,10 +8,14 @@ use crate::session::Message;
 
 pub mod openrouter;
 pub mod openai;
+pub mod anthropic;
+pub mod google;
 
 // Re-export provider implementations
 pub use openrouter::OpenRouterProvider;
 pub use openai::OpenAiProvider;
+pub use anthropic::AnthropicProvider;
+pub use google::GoogleVertexProvider;
 
 /// Common token usage structure across all providers
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -120,9 +124,9 @@ impl ProviderFactory {
 		match provider_name.to_lowercase().as_str() {
 			"openrouter" => Ok(Box::new(OpenRouterProvider::new())),
 			"openai" => Ok(Box::new(OpenAiProvider::new())),
-			// Future providers will be added here:
-			// "anthropic" => Ok(Box::new(AnthropicProvider::new())),
-			_ => Err(anyhow::anyhow!("Unsupported provider: {}", provider_name)),
+			"anthropic" => Ok(Box::new(AnthropicProvider::new())),
+			"google" => Ok(Box::new(GoogleVertexProvider::new())),
+			_ => Err(anyhow::anyhow!("Unsupported provider: {}. Supported providers: openrouter, openai, anthropic, google", provider_name)),
 		}
 	}
 
@@ -184,6 +188,12 @@ mod tests {
 		assert!(provider.is_ok());
 
 		let provider = ProviderFactory::create_provider("openai");
+		assert!(provider.is_ok());
+
+		let provider = ProviderFactory::create_provider("anthropic");
+		assert!(provider.is_ok());
+
+		let provider = ProviderFactory::create_provider("google");
 		assert!(provider.is_ok());
 
 		// Test invalid provider

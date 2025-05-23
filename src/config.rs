@@ -643,7 +643,7 @@ impl Config {
 					},
 					Err(_) => {
 						return Err(anyhow!(
-							"Unsupported provider: '{}'. Supported providers: openrouter, openai",
+							"Unsupported provider: '{}'. Supported providers: openrouter, openai, anthropic, google",
 							provider_name
 						));
 					}
@@ -853,6 +853,11 @@ mod tests {
 			"openai:gpt-3.5-turbo",
 			"openai:o1-preview",
 			"openai:o1-mini",
+			"anthropic:claude-3-5-sonnet",
+			"anthropic:claude-3-5-haiku",
+			"anthropic:claude-3-opus",
+			"google:gemini-1.5-pro",
+			"google:gemini-1.5-flash",
 		];
 
 		for model in valid_models {

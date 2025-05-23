@@ -4,29 +4,35 @@
 
 ### 1. Test OpenAI Provider
 ```bash
-# Set up your OpenAI API key
 export OPENAI_API_KEY="your_openai_api_key_here"
-
-# Test with OpenAI GPT-4o
 octodev session --model "openai:gpt-4o" -n test_openai
-
-# Test with OpenAI O1 Preview
 octodev session --model "openai:o1-preview" -n test_o1
 ```
 
-### 2. Test OpenRouter 
+### 2. Test Anthropic Provider
 ```bash
-# Set up your OpenRouter API key (if not already set)
+export ANTHROPIC_API_KEY="your_anthropic_api_key_here"
+octodev session --model "anthropic:claude-3-5-sonnet" -n test_anthropic
+octodev session --model "anthropic:claude-3-opus" -n test_claude_opus
+```
+
+### 3. Test Google Vertex AI Provider
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+export GOOGLE_PROJECT_ID="your-gcp-project-id"
+export GOOGLE_REGION="us-central1"
+octodev session --model "google:gemini-1.5-pro" -n test_gemini
+octodev session --model "google:gemini-1.5-flash" -n test_gemini_flash
+```
+
+### 4. Test OpenRouter (existing functionality)
+```bash
 export OPENROUTER_API_KEY="your_openrouter_api_key_here"
-
-# Test with OpenRouter provider
 octodev session --model "openrouter:anthropic/claude-3.5-sonnet" -n test_openrouter
-
-# Test different OpenRouter models
 octodev session --model "openrouter:anthropic/claude-sonnet-4" -n test_legacy
 ```
 
-### 3. Model Format Requirements
+### 5. Model Format Requirements
 The system now REQUIRES the `provider:model` format:
 
 **Supported Formats:**
@@ -34,28 +40,35 @@ The system now REQUIRES the `provider:model` format:
 - `openrouter:openai/gpt-4o` 
 - `openai:gpt-4o`
 - `openai:o1-preview`
+- `anthropic:claude-3-5-sonnet`
+- `anthropic:claude-3-opus`
+- `google:gemini-1.5-pro`
+- `google:gemini-1.5-flash`
 
 **No Longer Supported (will show error):**
 - `anthropic/claude-3.5-sonnet` ❌
 - `openai/gpt-4o` ❌
 - `gpt-4o` ❌
 
-### 4. Test in Different Modes
+### 6. Test in Different Modes
 ```bash
 # Use OpenAI for chat mode (lighter, faster)
 octodev session --mode=chat --model="openai:gpt-4o-mini" -n chat_test
 
-# Use OpenRouter for agent mode (full features)
-octodev session --mode=agent --model="openrouter:anthropic/claude-sonnet-4" -n agent_test
+# Use Anthropic for agent mode (full features)
+octodev session --mode=agent --model="anthropic:claude-3-5-sonnet" -n agent_test
+
+# Use Google for development tasks
+octodev session --mode=agent --model="google:gemini-1.5-pro" -n dev_test
 ```
 
-### 5. Test Configuration
+### 7. Test Configuration
 Create or edit `.octodev/config.toml`:
 
 ```toml
 # Default model (must use provider:model format)
 [openrouter]
-model = "openai:gpt-4o"
+model = "anthropic:claude-3-5-sonnet"
 
 # Mode-specific models
 [agent.openrouter]
@@ -74,6 +87,8 @@ model = "openai:gpt-4o-mini"
 5. **Cost Tracking**: 
    - **OpenRouter**: Uses API-provided cost data
    - **OpenAI**: Calculates cost using built-in pricing constants
+   - **Anthropic**: Calculates cost using built-in pricing constants
+   - **Google**: Calculates cost using built-in pricing constants (Note: requires OAuth2 setup)
 6. **Format Enforcement**: Old format without provider prefix will show clear error messages
 
 ## Troubleshooting

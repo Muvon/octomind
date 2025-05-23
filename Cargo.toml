@@ -56,6 +56,8 @@ colored = "3.0.0"
 futures = "0.3.31"
 async-trait = "0.1.77"
 globset = "0.4.14"
+termimad = "0.32.0"
+syntect = "5.2.0"
 
 [build-dependencies]
 cc="*"

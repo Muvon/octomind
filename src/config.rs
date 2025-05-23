@@ -119,6 +119,9 @@ pub struct OpenRouterConfig {
 	// 0 or 100 disables auto-cache, any value between 1-99 enables it
 	#[serde(default = "default_cache_tokens_pct_threshold")]
 	pub cache_tokens_pct_threshold: u8,
+	// Enable markdown rendering for AI responses
+	#[serde(default)]
+	pub enable_markdown_rendering: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -174,6 +177,7 @@ impl Default for OpenRouterConfig {
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false, // Disabled by default
 			cache_tokens_pct_threshold: default_cache_tokens_pct_threshold(),
+			enable_markdown_rendering: false, // Disabled by default
 		}
 	}
 }

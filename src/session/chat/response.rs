@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::session::openrouter;
 use crate::session::mcp;
 use crate::session::chat::session::ChatSession;
+use crate::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
 use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -37,6 +38,29 @@ fn remove_function_calls(content: &str) -> String {
 	}
 
 	result.trim().to_string()
+}
+
+// Helper function to print content with optional markdown rendering
+fn print_assistant_response(content: &str, config: &Config) {
+	if config.openrouter.enable_markdown_rendering && is_markdown_content(content) {
+		// Use markdown rendering
+		let renderer = MarkdownRenderer::new();
+		match renderer.render_and_print(content) {
+			Ok(_) => {
+				// Successfully rendered as markdown
+			}
+			Err(e) => {
+				// Fallback to plain text if markdown rendering fails
+				if config.openrouter.debug {
+					println!("{}: {}", "Warning: Markdown rendering failed".yellow(), e);
+				}
+				println!("{}", content.bright_green());
+			}
+		}
+	} else {
+		// Use plain text with color
+		println!("{}", content.bright_green());
+	}
 }
 
 // Structure to track tool call errors to detect loops
@@ -156,7 +180,7 @@ pub async fn process_response(
 				chat_session.add_assistant_message(&clean_content, Some(current_exchange.clone()), config)?;
 
 				// Display assistant response with tool calls removed from display
-				println!("\n{}", clean_content.bright_green());
+				print_assistant_response(&clean_content, config);
 
 				// Early exit if cancellation was requested
 				if operation_cancelled.load(Ordering::SeqCst) {
@@ -547,7 +571,7 @@ pub async fn process_response(
 	chat_session.add_assistant_message(&clean_content, exchange_for_final, config)?;
 
 	// Print assistant response with color
-	println!("\n{}", clean_content.bright_green());
+	print_assistant_response(&clean_content, config);
 
 	// Display cumulative token usage - minimal output when debug is disabled
 	println!();

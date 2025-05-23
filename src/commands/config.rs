@@ -48,6 +48,10 @@ pub struct ConfigArgs {
 	#[arg(long)]
 	pub system: Option<String>,
 
+	/// Enable markdown rendering for AI responses
+	#[arg(long)]
+	pub markdown_enable: Option<bool>,
+
 	/// Validate configuration without making changes
 	#[arg(long)]
 	pub validate: bool,
@@ -137,6 +141,13 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	if let Some(enable_graphrag) = args.graphrag_enable {
 		config.graphrag.enabled = enable_graphrag;
 		println!("GraphRAG {}", if enable_graphrag { "enabled" } else { "disabled" });
+		modified = true;
+	}
+
+	// Enable/disable markdown rendering
+	if let Some(enable_markdown) = args.markdown_enable {
+		config.openrouter.enable_markdown_rendering = enable_markdown;
+		println!("Markdown rendering {}", if enable_markdown { "enabled" } else { "disabled" });
 		modified = true;
 	}
 
@@ -297,6 +308,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
 	println!("MCP providers: {}", config.mcp.providers.join(", "));
 	println!("GraphRAG: {}", if config.graphrag.enabled { "enabled" } else { "disabled" });
+	println!("Markdown rendering: {}", if config.openrouter.enable_markdown_rendering { "enabled" } else { "disabled" });
 
 	// Show system prompt status
 	if let Some(_) = &config.system {

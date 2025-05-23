@@ -6,8 +6,10 @@ mod context_truncation;
 mod editorconfig_formatter;
 mod input;
 mod layered_response;
+pub mod markdown;
 mod response;
 mod session;
+mod syntax;
 
 // Re-export main structures and functions
 pub use session::{ChatSession, run_interactive_session};
@@ -19,6 +21,7 @@ pub use animation::show_loading_animation;
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
 pub use editorconfig_formatter::apply_editorconfig_formatting;
+pub use markdown::{MarkdownRenderer, is_markdown_content};
 
 // Model constants
 pub const CLAUDE_MODEL: &str = "anthropic/claude-sonnet-4";

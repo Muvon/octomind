@@ -452,7 +452,7 @@ pub async fn process_response(
 					}
 
 					// Call the AI again with the tool results
-					let or_messages = openrouter::convert_messages(&chat_session.session.messages);
+					// Use session messages directly instead of converting
 
 					// Create a task to show loading animation
 					let animation_cancel_flag = fresh_cancel.clone();
@@ -468,7 +468,7 @@ pub async fn process_response(
 					// Make sure to include the usage parameter for every API call
 					// This ensures cost information is always returned
 					let follow_up_result = openrouter::chat_completion(
-						or_messages,
+						chat_session.session.messages.clone(),
 						&model,
 						temperature,
 						config

@@ -104,12 +104,9 @@ impl Layer for LayerProcessor {
 		let messages = self.create_messages(&processed_input, session);
 		layer_session.extend(messages.clone());
 
-		// Convert to OpenRouter format
-		let or_messages = openrouter::convert_messages(&messages);
-
-		// Call the model
+		// Call the model directly with session messages
 		let (output, exchange, direct_tool_calls, _finish_reason) = openrouter::chat_completion(
-			or_messages,
+			messages.clone(),
 			&self.config.model,
 			self.config.temperature,
 			config
@@ -193,13 +190,10 @@ impl Layer for LayerProcessor {
 						});
 					}
 
-					// Convert to OpenRouter format
-					let tool_or_messages = openrouter::convert_messages(&layer_session);
-
 					// Call the model again with tool results
 					// Important: We use THIS LAYER'S model to process the function call results
 					match openrouter::chat_completion(
-						tool_or_messages,
+						layer_session.clone(),
 						&self.config.model,
 						self.config.temperature,
 						config

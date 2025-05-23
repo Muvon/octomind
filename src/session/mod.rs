@@ -1,6 +1,7 @@
 // Session module for handling interactive coding sessions
 
-mod openrouter; // OpenRouter API client
+mod openrouter; // Legacy OpenRouter API client (for backward compatibility)
+pub mod providers; // Provider abstraction layer
 pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
 pub mod mcp;        // MCP protocol support
@@ -12,7 +13,10 @@ mod model_utils;    // Model-specific utility functions
 mod helper_functions; // Helper functions for layers and other components
 pub mod indexer;    // Indexer integration for sessions
 
+// Legacy exports for backward compatibility
 pub use openrouter::*;
+// New provider system exports
+pub use providers::{ProviderFactory, AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
 pub use mcp::*;
 pub use layers::{Layer, LayerConfig, LayerResult, InputMode, process_with_layers};
 pub use project_context::ProjectContext;
@@ -36,6 +40,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::io::{BufRead, BufReader};
 use serde::{Serialize, Deserialize};
 use std::io::Write;
+use anyhow::Result;
+use crate::config::Config;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -561,4 +567,19 @@ pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config:
 	}
 
 	prompt
+}
+
+/// High-level function to send a chat completion using the provider abstraction
+/// This function handles model parsing and provider selection automatically
+pub async fn chat_completion_with_provider(
+	messages: &[Message],
+	model: &str,
+	temperature: f32,
+	config: &Config,
+) -> Result<ProviderResponse> {
+	// Parse the model string and get the appropriate provider
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	
+	// Call the provider's chat completion method
+	provider.chat_completion(messages, &actual_model, temperature, config).await
 }

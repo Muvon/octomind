@@ -111,9 +111,6 @@ pub async fn perform_context_reduction(
 		tool_calls: None,
 	});
 
-	// Convert to OpenRouter format
-	let or_messages = openrouter::convert_messages(&messages);
-
 	// Choose the model to use for reduction from the reducer layer's default config
 	let reducer_config = crate::session::layers::types::ReducerLayer::default_config("reducer");
 	let reducer_model = reducer_config.model;
@@ -122,7 +119,7 @@ pub async fn perform_context_reduction(
 	// Always include the usage parameter to ensure we get cost data
 	println!("{} {}", "Using model for context reduction:".bright_blue(), reducer_model.bright_yellow());
 	let reduction_result = openrouter::chat_completion(
-		or_messages,
+		messages,
 		&reducer_model,
 		0.7, // Moderate temperature
 		config

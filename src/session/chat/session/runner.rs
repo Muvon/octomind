@@ -410,9 +410,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 		}
 
-		// Convert messages to OpenRouter format
-		let or_messages = openrouter::convert_messages(&chat_session.session.messages);
-
 		// Call OpenRouter in a separate task
 		let model = chat_session.model.clone();
 		let temperature = chat_session.temperature;
@@ -452,7 +449,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Now directly perform the API call - ensure usage parameter is included
 		// for consistent cost tracking across all API requests
 		let api_result = openrouter::chat_completion(
-			or_messages,
+			chat_session.session.messages.clone(),
 			&model,
 			temperature,
 			&config_clone

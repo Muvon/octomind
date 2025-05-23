@@ -10,6 +10,7 @@ OctoDev is a command-line tool that helps developers navigate and understand the
 - **Symbol Awareness**: Understands code structure and can expand symbol references
 - **Live File Watching**: Automatically updates the index when your code changes
 - **Configurable Embedding Providers**: Works with either FastEmbed (offline) or Jina (cloud) for embeddings
+- **Multi-Provider AI Support**: Works with OpenRouter, OpenAI, and more (extensible architecture)
 - **AI-Powered Code Assistance**: Helps you understand and modify your codebase
 - **Optimized Multi-layered Architecture**: Uses specialized AI models for different aspects of code assistance
 - **Detailed Cost and Token Tracking**: Tracks usage by layer and optimizes token consumption
@@ -37,6 +38,71 @@ cargo build --release
 
 # Optional: Add to your PATH
 cp target/release/octodev /usr/local/bin/
+```
+
+## AI Providers
+
+OctoDev supports multiple AI providers through an extensible architecture. You can use different providers and models by specifying them in the `provider:model` format.
+
+### Supported Providers
+
+#### OpenRouter (Default)
+- **Models**: All OpenRouter models (Anthropic, OpenAI, Google, etc.)
+- **API Key**: Set `OPENROUTER_API_KEY` environment variable or configure in `.octodev/config.toml`
+- **Features**: Full tool support, caching (for Claude models), cost tracking
+
+#### OpenAI
+- **Models**: GPT-4, GPT-3.5, O1, and other OpenAI models
+- **API Key**: Set `OPENAI_API_KEY` environment variable
+- **Features**: Full tool support, streaming responses
+
+### Model Format
+
+You can specify models in two ways:
+
+#### Legacy Format (defaults to OpenRouter)
+```bash
+# These use OpenRouter by default
+octodev session --model "anthropic/claude-3.5-sonnet"
+octodev session --model "openai/gpt-4o"
+```
+
+#### Provider-Specific Format
+```bash
+# Explicitly specify the provider
+octodev session --model "openrouter:anthropic/claude-3.5-sonnet"
+octodev session --model "openai:gpt-4o"
+octodev session --model "openai:o1-preview"
+```
+
+### Configuration
+
+Configure providers in your `.octodev/config.toml`:
+
+```toml
+# Default OpenRouter configuration
+[openrouter]
+model = "anthropic/claude-sonnet-4"
+api_key = "your_openrouter_key"  # Optional, can use env var
+
+# You can also set provider-specific models for different modes
+[agent.openrouter]
+model = "openrouter:anthropic/claude-sonnet-4"
+
+[chat.openrouter] 
+model = "openai:gpt-4o-mini"  # Use OpenAI for chat mode
+```
+
+### Environment Variables
+
+Set the appropriate API keys:
+
+```bash
+# For OpenRouter
+export OPENROUTER_API_KEY="your_openrouter_key"
+
+# For OpenAI  
+export OPENAI_API_KEY="your_openai_key"
 ```
 
 ## Usage
@@ -85,11 +151,15 @@ octodev session -n my_session
 # Resume an existing session
 octodev session -r my_session
 
-# Use a specific model
-octodev session --model anthropic/claude-sonnet-4
+# Use a specific model with provider
+octodev session --model "openai:gpt-4o"
+octodev session --model "openrouter:anthropic/claude-sonnet-4"
+
+# Use legacy format (defaults to OpenRouter)
+octodev session --model "anthropic/claude-3.5-haiku"
 
 # Combine options
-octodev session --mode=chat --model="anthropic/claude-3.5-haiku" -n chat_session
+octodev session --mode=chat --model="openai:gpt-4o-mini" -n chat_session
 ```
 
 #### Session Modes
@@ -407,6 +477,39 @@ This architecture ensures optimal token usage and focused expertise at each stag
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Adding New AI Providers
+
+OctoDev uses an extensible provider architecture that makes it easy to add support for new AI providers. Here's how to add a new provider:
+
+1. **Create the provider file**: Create `src/session/providers/your_provider.rs`
+2. **Implement the AiProvider trait**:
+   ```rust
+   use super::{AiProvider, ProviderResponse};
+   
+   pub struct YourProvider;
+   
+   #[async_trait::async_trait]
+   impl AiProvider for YourProvider {
+       fn name(&self) -> &str { "your_provider" }
+       fn supports_model(&self, model: &str) -> bool { /* your logic */ }
+       async fn chat_completion(&self, ...) -> Result<ProviderResponse> { /* implementation */ }
+       // ... other required methods
+   }
+   ```
+3. **Register the provider**: Add it to `ProviderFactory::create_provider()` in `src/session/providers/mod.rs`
+4. **Add to exports**: Include your provider in the module exports
+
+The provider system handles:
+- Model string parsing (`provider:model` format)
+- Message format conversion
+- Tool call integration
+- Token usage tracking
+- Error handling
+
+Example providers to reference:
+- `openrouter.rs` - Full-featured provider with caching and cost tracking
+- `openai.rs` - Standard provider implementation
 
 ## License
 

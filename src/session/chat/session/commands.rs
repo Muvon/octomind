@@ -95,8 +95,24 @@ impl ChatSession {
 					}
 				};
 
-				// Toggle the setting
-				loaded_config.openrouter.enable_layers = !loaded_config.openrouter.enable_layers;
+				// We need to determine which mode we're in to update the correct config section
+				// For now, we'll assume agent mode since that's where layers are typically used
+				// In the future, this could be passed as a parameter to the command processing
+				let current_mode = "agent"; // TODO: Get this from session context
+				
+				// Toggle the setting for the appropriate mode
+				match current_mode {
+					"agent" => {
+						loaded_config.agent.openrouter.enable_layers = !loaded_config.agent.openrouter.enable_layers;
+					},
+					"chat" => {
+						loaded_config.chat.openrouter.enable_layers = !loaded_config.chat.openrouter.enable_layers;
+					},
+					_ => {
+						// Fall back to global config for unknown modes
+						loaded_config.openrouter.enable_layers = !loaded_config.openrouter.enable_layers;
+					}
+				}
 
 				// Save the updated config
 				if let Err(e) = loaded_config.save() {
@@ -104,8 +120,15 @@ impl ChatSession {
 					return Ok(false);
 				}
 
+				// Get the current state from the appropriate config section
+				let is_enabled = match current_mode {
+					"agent" => loaded_config.agent.openrouter.enable_layers,
+					"chat" => loaded_config.chat.openrouter.enable_layers,
+					_ => loaded_config.openrouter.enable_layers,
+				};
+
 				// Show the new state
-				if loaded_config.openrouter.enable_layers {
+				if is_enabled {
 					println!("{}", "Layered processing architecture is now ENABLED.".bright_green());
 					println!("{}", "Your queries will now be processed through multiple AI models.".bright_yellow());
 				} else {

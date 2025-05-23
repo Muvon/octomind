@@ -15,6 +15,12 @@ pub struct LayeredOrchestrator {
 impl LayeredOrchestrator {
 	// Create orchestrator from config
 	pub fn from_config(config: &Config) -> Self {
+		// First check if layers are enabled at all
+		if !config.openrouter.enable_layers {
+			// Return empty orchestrator when layers are disabled
+			return Self { layers: Vec::new() };
+		}
+
 		// Check if specific layer configs are in config.toml
 		if let Some(layer_configs) = &config.layers {
 			// Create layers from config
@@ -75,6 +81,11 @@ impl LayeredOrchestrator {
 		config: &Config,
 		operation_cancelled: Arc<AtomicBool>
 	) -> Result<String> {
+		// If no layers are configured (layers disabled), return input unchanged
+		if self.layers.is_empty() {
+			return Ok(input.to_string());
+		}
+
 		let mut current_input = input.to_string();
 
 		// For total token/cost tracking across all layers

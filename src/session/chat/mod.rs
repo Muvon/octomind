@@ -1,16 +1,16 @@
 // Chat session module
-mod session;
-pub mod commands;
-mod input;
-mod response;
 mod animation;
-mod layered_response;
+mod commands;
 mod context_reduction;
 mod context_truncation;
 mod editorconfig_formatter;
+mod input;
+mod layered_response;
+mod response;
+mod session;
 
 // Re-export main structures and functions
-pub use session::ChatSession;
+pub use session::{ChatSession, run_interactive_session};
 pub use commands::{COMMANDS, HELP_COMMAND, EXIT_COMMAND, QUIT_COMMAND, COPY_COMMAND, CLEAR_COMMAND, SAVE_COMMAND, CACHE_COMMAND, DONE_COMMAND};
 pub use input::read_user_input;
 pub use response::process_response;
@@ -19,9 +19,6 @@ pub use animation::show_loading_animation;
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
 pub use editorconfig_formatter::apply_editorconfig_formatting;
-
-// Re-export the main run_interactive_session function
-pub use session::run_interactive_session;
 
 // Model constants
 pub const CLAUDE_MODEL: &str = "anthropic/claude-3.7-sonnet";

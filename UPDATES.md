@@ -10,7 +10,7 @@
 ### Model Control Protocol (MCP) Support
 - Added support for MCP tools, similar to Claude Sonnet's function calling
 - Shell commands available as a tool when MCP is enabled
-- Configure MCP with: `octodev config --mcp-enable true --mcp-providers "shell"`
+- Configure MCP with: `octodev config --mcp-enable true --mcp-providers "core"`
 - Tools are used automatically during sessions with results visible to the user
 - External MCP servers can now be integrated for additional capabilities
 - Web search and browsing functionality available through external MCP servers
@@ -34,7 +34,7 @@ octodev config --openrouter-key "your-api-key-here"
 octodev config --openrouter-model "anthropic/claude-3-opus-20240229"
 
 # Enable MCP
-octodev config --mcp-enable true --mcp-providers "shell"
+octodev config --mcp-enable true --mcp-providers "core"
 ```
 
 ### Starting a Session
@@ -75,7 +75,7 @@ Add to your `.octodev/config.toml`:
 ```toml
 [mcp]
 enabled = true
-providers = ["shell"]
+providers = ["core"]
 
 # Remote server
 [[mcp.servers]]

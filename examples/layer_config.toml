@@ -28,7 +28,7 @@ output_price = 0.000002
 
 [mcp]
 enabled = true
-providers = ["shell"]
+providers = ["core"]
 servers = []
 
 # Layer configurations 
@@ -49,7 +49,7 @@ model = "google/gemini-2.5-flash-preview"
 system_prompt = "Custom system prompt for context generator. You gather context for the task. %{GIT_STATUS} %{README}"
 temperature = 0.2
 enable_tools = true
-allowed_tools = ["shell", "text_editor", "list_files"]
+allowed_tools = ["core", "text_editor", "list_files"]
 input_mode = "Last"
 
 [[layers]]

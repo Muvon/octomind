@@ -8,6 +8,7 @@ use std::io::Write;
 use uuid;
 
 pub mod dev;
+pub mod fs;
 pub mod server;
 pub mod process;
 
@@ -79,7 +80,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 					};
 					param_parts.push(format!("{}: {}", key.bright_black(), displayed_value.bright_black()));
 				}
-				
+
 				if !param_parts.is_empty() && param_parts.join(", ").len() < 60 {
 					output.push_str(&format!("{}\n", param_parts.join(", ")));
 				}
@@ -110,7 +111,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 		} else {
 			output.push_str(&result_output);
 		}
-		
+
 		output.push('\n');
 	}
 
@@ -120,7 +121,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 // Guess the category of a tool based on its name
 fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
-		"shell" => "system",
+		"core" => "system",
 		"text_editor" => "developer",
 		"list_files" => "filesystem",
 		name if name.contains("file") || name.contains("editor") => "developer",
@@ -197,8 +198,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	}
 
 	// Add developer tools if enabled
-	if config.mcp.providers.contains(&"shell".to_string()) {
+	if config.mcp.providers.contains(&"core".to_string()) {
 		functions.extend(dev::get_all_functions());
+		functions.extend(fs::get_all_functions());
 	}
 
 	// Add server functions if any servers are enabled
@@ -249,9 +251,9 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 // Internal function to actually execute the tool call
 async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Config, store_option: Option<&crate::store::Store>) -> Result<McpToolResult> {
 	// Try to execute locally if provider is enabled
-	if config.mcp.providers.contains(&"shell".to_string()) {
+	if config.mcp.providers.contains(&"core".to_string()) {
 		// Handle developer tools
-		if call.tool_name == "shell" {
+		if call.tool_name == "core" {
 			let mut result = dev::execute_shell_command(call).await?;
 			// Add the tool_id to the result
 			result.tool_id = call.tool_id.clone();
@@ -290,43 +292,11 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 
 			return Ok(result);
 		} else if call.tool_name == "text_editor" {
-			let result = dev::execute_text_editor(call).await?;
-
-			// Check if result is large - warn user if it exceeds threshold
-			let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
-			if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
-				// Create a modified result that warns about the size
-				use colored::Colorize;
-				println!("{}", format!("! WARNING: Text editor produced a large output ({} tokens)",
-					estimated_tokens).bright_yellow());
-				println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
-
-				// Ask user for confirmation before proceeding
-				print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
-				std::io::stdout().flush().unwrap();
-
-				let mut input = String::new();
-				std::io::stdin().read_line(&mut input).unwrap_or_default();
-
-				if !input.trim().to_lowercase().starts_with('y') {
-					// User declined, return a truncated result with explanation
-					let truncated_result = McpToolResult {
-						tool_name: result.tool_name,
-						tool_id: call.tool_id.clone(),
-						result: serde_json::json!({
-							"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
-						}),
-					};
-					return Ok(truncated_result);
-				}
-
-				// User confirmed, continue with original result
-				println!("{}", "Proceeding with full output...".bright_green());
-			}
-
-			return Ok(result);
+			return fs::execute_text_editor(call).await;
+		} else if call.tool_name == "html2md" {
+			return fs::execute_html2md(call).await;
 		} else if call.tool_name == "list_files" {
-			return dev::execute_list_files(call).await;
+			return fs::execute_list_files(call).await;
 		} else if call.tool_name == "semantic_code" {
 			if let Some(store) = store_option {
 				return dev::execute_semantic_code(call, store, config).await;

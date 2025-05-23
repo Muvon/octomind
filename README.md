@@ -214,7 +214,7 @@ OctoDev supports the Model-Centric Programming (MCP) protocol, which allows inte
 ```toml
 [mcp]
 enabled = true
-providers = ["shell"]
+providers = ["core"]
 
 # External MCP server configuration - URL based
 [[mcp.servers]]
@@ -243,7 +243,7 @@ You can run an MCP server locally by providing the command and arguments to exec
 ```toml
 [mcp]
 enabled = true
-providers = ["shell"]
+providers = ["core"]
 
 [[mcp.servers]]
 enabled = true
@@ -256,7 +256,7 @@ args = ["-m", "websearch_server", "--port", "8008"]
 
 #### Current MCP Providers
 
-- **shell**: Allows the AI to run shell commands in your terminal (enabled by adding "shell" to providers list)
+- **core**: Allows the AI to run shell commands, search code, and perform file operations in your terminal (enabled by adding "core" to providers list)
 - **External MCP Servers**: Any MCP-compatible server can be added in the `[[mcp.servers]]` section
 
 ## How It Works

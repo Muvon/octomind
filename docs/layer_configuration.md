@@ -28,7 +28,7 @@ Each layer supports the following configuration options:
 | `system_prompt` | Custom system instructions | `"You analyze queries..."` |
 | `temperature` | Creativity setting (0.0-1.0) | `0.2` |
 | `enable_tools` | Whether tools can be used | `true` |
-| `allowed_tools` | Specific tools that can be used | `["shell", "text_editor"]` |
+| `allowed_tools` | Specific tools that can be used | `["core", "text_editor"]` |
 | `input_mode` | How input is prepared from previous layer | `"Last"`, `"All"`, or `"Summary"` |
 
 ### Input Modes
@@ -60,7 +60,7 @@ model = "google/gemini-2.5-flash-preview"
 system_prompt = "Custom system prompt for context generator."
 temperature = 0.2
 enable_tools = true
-allowed_tools = ["shell", "text_editor", "list_files"]
+allowed_tools = ["core", "text_editor", "list_files"]
 input_mode = "Last"
 
 [[layers]]

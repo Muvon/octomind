@@ -23,7 +23,7 @@ impl ContextGeneratorLayer {
 			system_prompt: crate::session::helper_functions::get_raw_system_prompt("context_generator"),
 			temperature: 0.2,
 			enable_tools: true, // Enable tools for context gathering
-			allowed_tools: vec!["shell".to_string(), "text_editor".to_string(), "semantic_code".to_string(), "graphrag".to_string()],
+			allowed_tools: vec!["core".to_string(), "text_editor".to_string(), "semantic_code".to_string(), "graphrag".to_string()],
 			input_mode: crate::session::layers::layer_trait::InputMode::Last,
 		}
 	}

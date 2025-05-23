@@ -250,7 +250,7 @@ pub struct McpConfig {
 }
 
 fn default_mcp_providers() -> Vec<String> {
-	vec!["shell".to_string()]
+	vec!["core".to_string()]
 }
 
 impl Default for McpConfig {

@@ -58,6 +58,9 @@ async-trait = "0.1.77"
 globset = "0.4.14"
 termimad = "0.32.0"
 syntect = "5.2.0"
+html5ever = "0.27.0"
+markup5ever_rcdom = "0.3.0"
+url = "2.4.1"
 
 [build-dependencies]
 cc="*"

@@ -30,7 +30,7 @@ pub fn get_layer_system_prompt(layer_type_str: &str) -> String {
 	helper_functions::get_layer_system_prompt_for_type(layer_type_str)
 }
 
-use std::fs::{self, OpenOptions, File};
+use std::fs::{self as std_fs, OpenOptions, File};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::io::{BufRead, BufReader};
@@ -321,7 +321,7 @@ impl Session {
 							}
 
 							// Replace the original file with the temporary file
-							fs::rename(temp_path, session_file)?;
+							std_fs::rename(temp_path, session_file)?;
 						}
 					}
 				}
@@ -356,7 +356,7 @@ pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
 	let sessions_dir = octodev_dir.join("sessions");
 
 	if !sessions_dir.exists() {
-		fs::create_dir_all(&sessions_dir)?;
+		std_fs::create_dir_all(&sessions_dir)?;
 	}
 
 	Ok(sessions_dir)
@@ -371,7 +371,7 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 		return Ok(sessions);
 	}
 
-	for entry in fs::read_dir(sessions_dir)? {
+	for entry in std_fs::read_dir(sessions_dir)? {
 		let entry = entry?;
 		let path = entry.path();
 

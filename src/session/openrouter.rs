@@ -52,6 +52,10 @@ pub fn get_api_key(config: &Config) -> Result<String, anyhow::Error> {
 pub struct Message {
 	pub role: String,
 	pub content: serde_json::Value,  // Can be string or object with cache_control
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>, // For tool messages: the name of the tool
 }
 
 // Convert our session messages to OpenRouter format
@@ -87,13 +91,12 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 							.unwrap_or("");
 
 						// Create a properly formatted tool message
+						// FIXED: tool_call_id and name are now top-level fields
 						result.push(Message {
 							role: "tool".to_string(),
-							content: serde_json::json!({
-								"tool_call_id": tool_call_id,
-								"name": name,
-								"content": content
-							}),
+							content: serde_json::json!(content), // Just the content string
+							tool_call_id: Some(tool_call_id.to_string()),
+							name: Some(name.to_string()),
 						});
 					}
 
@@ -101,13 +104,12 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 					continue;
 				} else {
 					// Legacy format - add a single tool message
+					// FIXED: tool_call_id and name are now top-level fields
 					result.push(Message {
 						role: "tool".to_string(),
-						content: serde_json::json!({
-							"tool_call_id": "legacy_tool_call",
-							"name": "legacy_tool",
-							"content": content
-						}),
+						content: serde_json::json!(content), // Just the content string
+						tool_call_id: Some("legacy_tool_call".to_string()),
+						name: Some("legacy_tool".to_string()),
 					});
 					continue;
 				}
@@ -118,14 +120,25 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 			let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
 			let name = msg.name.clone().unwrap_or_default();
 
+			// Debug logging for tool message conversion
+			let config = match crate::config::Config::load() {
+				Ok(cfg) => cfg,
+				Err(_) => crate::config::Config::default()
+			};
+			
+			if config.openrouter.debug {
+				use colored::*;
+				println!("{}", format!("Debug: Converting tool message - ID: {}, Name: {}, Content: {:.100}...", 
+					tool_call_id, name, msg.content).bright_magenta());
+			}
+
 			// Create a properly formatted tool message for OpenRouter/OpenAI format
+			// FIXED: tool_call_id and name are now top-level fields, not nested in content
 			result.push(Message {
 				role: "tool".to_string(),
-				content: serde_json::json!({
-					"tool_call_id": tool_call_id,
-					"name": name,
-					"content": msg.content
-				}),
+				content: serde_json::json!(msg.content), // Content is just the actual content string
+				tool_call_id: Some(tool_call_id),
+				name: Some(name),
 			});
 			continue;
 		}
@@ -155,6 +168,8 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 								}
 							}
 						]),
+						tool_call_id: None,
+						name: None,
 					});
 				} else {
 					// Fallback if splitting failed
@@ -169,6 +184,8 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 							}
 						}
 						]),
+						tool_call_id: None,
+						name: None,
 					});
 				}
 			} else {
@@ -184,6 +201,8 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 						}
 					}
 					]),
+					tool_call_id: None,
+					name: None,
 				});
 			}
 		} else {
@@ -191,6 +210,8 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 			result.push(Message {
 				role: msg.role.clone(),
 				content: serde_json::json!(msg.content),
+				tool_call_id: None,
+				name: None,
 			});
 		}
 	}
@@ -314,17 +335,36 @@ pub async fn chat_completion(
 		}
 	};
 
-	// Handle error responses
+	// Handle error responses with improved error reporting
 	if !status.is_success() {
-		let error_msg = if let Some(msg) = response_json.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
-			msg
+		// Try to extract detailed error information
+		let mut error_details = Vec::new();
+		
+		// Add HTTP status
+		error_details.push(format!("HTTP {}", status));
+		
+		// Try to extract OpenRouter error message
+		if let Some(error_obj) = response_json.get("error") {
+			if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
+				error_details.push(format!("Message: {}", msg));
+			}
+			if let Some(code) = error_obj.get("code").and_then(|c| c.as_str()) {
+				error_details.push(format!("Code: {}", code));
+			}
+			if let Some(type_) = error_obj.get("type").and_then(|t| t.as_str()) {
+				error_details.push(format!("Type: {}", type_));
+			}
 		} else if let Some(msg) = response_json.get("error").and_then(|e| e.as_str()) {
-			msg
-		} else {
-			"Unknown API error"
-		};
-
-		return Err(anyhow::anyhow!("OpenRouter API error: {}", error_msg));
+			error_details.push(format!("Error: {}", msg));
+		}
+		
+		// If no specific error details found, include the raw response for debugging
+		if error_details.len() == 1 { // Only HTTP status was added
+			error_details.push(format!("Raw response: {}", response_text));
+		}
+		
+		let full_error = error_details.join(" | ");
+		return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
 	}
 
 	// Extract content from response

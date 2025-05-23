@@ -305,27 +305,31 @@ pub async fn process_response(
 					// Create a fresh cancellation flag for the next phase
 					let fresh_cancel = Arc::new(AtomicBool::new(false));
 
-					// Format tool results in OpenAI format with proper tool_call_id
-					let mut formatted_tool_results = Vec::new();
-
+					// IMPROVED APPROACH: Add tool results as proper "tool" role messages
+					// This follows the standard OpenAI/Anthropic format and avoids double-serialization
 					for tool_result in &tool_results {
-						formatted_tool_results.push(serde_json::json!({
-							"role": "tool",
-							"tool_call_id": tool_result.tool_id,
-							"name": tool_result.tool_name,
-							"content": serde_json::to_string(&tool_result.result).unwrap_or_default(),
-						}));
+						// Create a proper tool message with tool_call_id and name
+						let tool_message = crate::session::Message {
+							role: "tool".to_string(),
+							content: if tool_result.result.is_string() {
+								// If result is already a string, use it directly
+								tool_result.result.as_str().unwrap_or("").to_string()
+							} else {
+								// If result is a complex object, serialize it to a JSON string
+								serde_json::to_string(&tool_result.result).unwrap_or_default()
+							},
+							timestamp: std::time::SystemTime::now()
+								.duration_since(std::time::UNIX_EPOCH)
+								.unwrap_or_default()
+								.as_secs(),
+							cached: false,
+							tool_call_id: Some(tool_result.tool_id.clone()),
+							name: Some(tool_result.tool_name.clone()),
+						};
+
+						// Add the tool message directly to the session
+						chat_session.session.messages.push(tool_message);
 					}
-
-					// Convert to string
-					let tool_results_message = serde_json::to_string(&formatted_tool_results)
-						.unwrap_or_else(|_| "[]".to_string());
-
-					// We're transitioning away from <fnr> format but keeping backward compatibility for now
-					let tool_message = format!("<fnr>\n{}\n</fnr>",
-						tool_results_message);
-
-					chat_session.add_user_message(&tool_message)?;
 
 					// Call the AI again with the tool results
 					let or_messages = openrouter::convert_messages(&chat_session.session.messages);

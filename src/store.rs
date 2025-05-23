@@ -34,6 +34,23 @@ pub struct TextBlock {
 	pub start_line: usize,
 	pub end_line: usize,
 	pub hash: String,
+	// Optional distance field for relevance sorting (higher is more relevant)
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub distance: Option<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentBlock {
+	pub path: String,
+	pub title: String,
+	pub content: String,
+	pub level: usize,
+	pub start_line: usize,
+	pub end_line: usize,
+	pub hash: String,
+	// Optional distance field for relevance sorting (higher is more relevant)
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub distance: Option<f32>,
 }
 
 pub struct Store {
@@ -237,6 +254,101 @@ impl BatchConverter {
 		Ok(batch)
 	}
 
+	// Convert a DocumentBlock to a RecordBatch
+	fn document_block_to_batch(&self, blocks: &[DocumentBlock], embeddings: &[Vec<f32>]) -> Result<RecordBatch> {
+		// Ensure we have the same number of blocks and embeddings
+		if blocks.len() != embeddings.len() {
+			return Err(anyhow::anyhow!("Number of blocks and embeddings must match"));
+		}
+
+		if blocks.is_empty() {
+			return Err(anyhow::anyhow!("Empty blocks array"));
+		}
+
+		// Check if all embedding vectors have the expected dimension
+		for (i, embedding) in embeddings.iter().enumerate() {
+			if embedding.len() != self.vector_dim {
+				return Err(anyhow::anyhow!("Embedding at index {} has dimension {} but expected {}",
+					i, embedding.len(), self.vector_dim));
+			}
+		}
+
+		// Create schema
+		let schema = Arc::new(Schema::new(vec![
+			Field::new("id", DataType::Utf8, false),
+			Field::new("path", DataType::Utf8, false),
+			Field::new("title", DataType::Utf8, false),
+			Field::new("content", DataType::Utf8, false),
+			Field::new("level", DataType::UInt32, false),
+			Field::new("start_line", DataType::UInt32, false),
+			Field::new("end_line", DataType::UInt32, false),
+			Field::new("hash", DataType::Utf8, false),
+			Field::new(
+				"embedding",
+				DataType::FixedSizeList(
+					Arc::new(Field::new("item", DataType::Float32, true)),
+					self.vector_dim as i32,
+				),
+				true,
+			),
+		]));
+
+		// Create arrays
+		let ids: Vec<String> = blocks.iter().map(|_| Uuid::new_v4().to_string()).collect();
+		let paths: Vec<&str> = blocks.iter().map(|b| b.path.as_str()).collect();
+		let titles: Vec<&str> = blocks.iter().map(|b| b.title.as_str()).collect();
+		let contents: Vec<&str> = blocks.iter().map(|b| b.content.as_str()).collect();
+		let levels: Vec<u32> = blocks.iter().map(|b| b.level as u32).collect();
+		let start_lines: Vec<u32> = blocks.iter().map(|b| b.start_line as u32).collect();
+		let end_lines: Vec<u32> = blocks.iter().map(|b| b.end_line as u32).collect();
+		let hashes: Vec<&str> = blocks.iter().map(|b| b.hash.as_str()).collect();
+
+		// Create the embedding fixed size list array
+		let mut flattened_embeddings = Vec::with_capacity(blocks.len() * self.vector_dim);
+		for embedding in embeddings {
+			flattened_embeddings.extend_from_slice(embedding);
+		}
+		let values = Float32Array::from(flattened_embeddings);
+
+		// Create the fixed size list array
+		let embedding_array = FixedSizeListArray::new(
+			Arc::new(Field::new("item", DataType::Float32, true)),
+			self.vector_dim as i32,
+			Arc::new(values),
+			None, // No validity buffer - all values are valid
+		);
+
+		// Verify all arrays have the same length
+		let expected_len = blocks.len();
+		assert_eq!(ids.len(), expected_len, "ids array length mismatch");
+		assert_eq!(paths.len(), expected_len, "paths array length mismatch");
+		assert_eq!(titles.len(), expected_len, "titles array length mismatch");
+		assert_eq!(contents.len(), expected_len, "contents array length mismatch");
+		assert_eq!(levels.len(), expected_len, "levels array length mismatch");
+		assert_eq!(start_lines.len(), expected_len, "start_lines array length mismatch");
+		assert_eq!(end_lines.len(), expected_len, "end_lines array length mismatch");
+		assert_eq!(hashes.len(), expected_len, "hashes array length mismatch");
+		assert_eq!(embedding_array.len(), expected_len, "embedding_array length mismatch");
+
+		// Create record batch
+		let batch = RecordBatch::try_new(
+			schema,
+			vec![
+				Arc::new(StringArray::from(ids)),
+				Arc::new(StringArray::from(paths)),
+				Arc::new(StringArray::from(titles)),
+				Arc::new(StringArray::from(contents)),
+				Arc::new(UInt32Array::from(levels)),
+				Arc::new(UInt32Array::from(start_lines)),
+				Arc::new(UInt32Array::from(end_lines)),
+				Arc::new(StringArray::from(hashes)),
+				Arc::new(embedding_array),
+			],
+		)?;
+
+		Ok(batch)
+	}
+
 	// Convert a RecordBatch to a Vec of CodeBlocks
 	fn batch_to_code_blocks(&self, batch: &RecordBatch, distances: Option<Vec<f32>>) -> Result<Vec<CodeBlock>> {
 		let num_rows = batch.num_rows();
@@ -309,6 +421,129 @@ impl BatchConverter {
 		}
 
 		Ok(code_blocks)
+	}
+
+	// Convert a RecordBatch to a Vec of TextBlocks  
+	fn batch_to_text_blocks(&self, batch: &RecordBatch, distances: Option<Vec<f32>>) -> Result<Vec<TextBlock>> {
+		let num_rows = batch.num_rows();
+		let mut text_blocks = Vec::with_capacity(num_rows);
+
+		let path_array = batch.column_by_name("path")
+			.ok_or_else(|| anyhow::anyhow!("'path' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'path' column is not a StringArray"))?;
+
+		let language_array = batch.column_by_name("language")
+			.ok_or_else(|| anyhow::anyhow!("'language' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'language' column is not a StringArray"))?;
+
+		let content_array = batch.column_by_name("content")
+			.ok_or_else(|| anyhow::anyhow!("'content' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'content' column is not a StringArray"))?;
+
+		let start_line_array = batch.column_by_name("start_line")
+			.ok_or_else(|| anyhow::anyhow!("'start_line' column not found"))?
+			.as_any()
+			.downcast_ref::<UInt32Array>()
+			.ok_or_else(|| anyhow::anyhow!("'start_line' column is not a UInt32Array"))?;
+
+		let end_line_array = batch.column_by_name("end_line")
+			.ok_or_else(|| anyhow::anyhow!("'end_line' column not found"))?
+			.as_any()
+			.downcast_ref::<UInt32Array>()
+			.ok_or_else(|| anyhow::anyhow!("'end_line' column is not a UInt32Array"))?;
+
+		let hash_array = batch.column_by_name("hash")
+			.ok_or_else(|| anyhow::anyhow!("'hash' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'hash' column is not a StringArray"))?;
+
+		for i in 0..num_rows {
+			let distance = distances.as_ref().map(|d| d[i]);
+
+			text_blocks.push(TextBlock {
+				path: path_array.value(i).to_string(),
+				language: language_array.value(i).to_string(),
+				content: content_array.value(i).to_string(),
+				start_line: start_line_array.value(i) as usize,
+				end_line: end_line_array.value(i) as usize,
+				hash: hash_array.value(i).to_string(),
+				distance,
+			});
+		}
+
+		Ok(text_blocks)
+	}
+
+	// Convert a RecordBatch to a Vec of DocumentBlocks
+	fn batch_to_document_blocks(&self, batch: &RecordBatch, distances: Option<Vec<f32>>) -> Result<Vec<DocumentBlock>> {
+		let num_rows = batch.num_rows();
+		let mut document_blocks = Vec::with_capacity(num_rows);
+
+		let path_array = batch.column_by_name("path")
+			.ok_or_else(|| anyhow::anyhow!("'path' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'path' column is not a StringArray"))?;
+
+		let title_array = batch.column_by_name("title")
+			.ok_or_else(|| anyhow::anyhow!("'title' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'title' column is not a StringArray"))?;
+
+		let content_array = batch.column_by_name("content")
+			.ok_or_else(|| anyhow::anyhow!("'content' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'content' column is not a StringArray"))?;
+
+		let level_array = batch.column_by_name("level")
+			.ok_or_else(|| anyhow::anyhow!("'level' column not found"))?
+			.as_any()
+			.downcast_ref::<UInt32Array>()
+			.ok_or_else(|| anyhow::anyhow!("'level' column is not a UInt32Array"))?;
+
+		let start_line_array = batch.column_by_name("start_line")
+			.ok_or_else(|| anyhow::anyhow!("'start_line' column not found"))?
+			.as_any()
+			.downcast_ref::<UInt32Array>()
+			.ok_or_else(|| anyhow::anyhow!("'start_line' column is not a UInt32Array"))?;
+
+		let end_line_array = batch.column_by_name("end_line")
+			.ok_or_else(|| anyhow::anyhow!("'end_line' column not found"))?
+			.as_any()
+			.downcast_ref::<UInt32Array>()
+			.ok_or_else(|| anyhow::anyhow!("'end_line' column is not a UInt32Array"))?;
+
+		let hash_array = batch.column_by_name("hash")
+			.ok_or_else(|| anyhow::anyhow!("'hash' column not found"))?
+			.as_any()
+			.downcast_ref::<StringArray>()
+			.ok_or_else(|| anyhow::anyhow!("'hash' column is not a StringArray"))?;
+
+		for i in 0..num_rows {
+			let distance = distances.as_ref().map(|d| d[i]);
+
+			document_blocks.push(DocumentBlock {
+				path: path_array.value(i).to_string(),
+				title: title_array.value(i).to_string(),
+				content: content_array.value(i).to_string(),
+				level: level_array.value(i) as usize,
+				start_line: start_line_array.value(i) as usize,
+				end_line: end_line_array.value(i) as usize,
+				hash: hash_array.value(i).to_string(),
+				distance,
+			});
+		}
+
+		Ok(document_blocks)
 	}
 }
 
@@ -420,6 +655,33 @@ impl Store {
 			]));
 
 			let _table = self.db.create_empty_table("text_blocks", schema).execute().await?;
+
+			// Note: We'll create the index later when we have data
+		}
+
+		// Create document_blocks table if it doesn't exist
+		if !table_names.contains(&"document_blocks".to_string()) {
+			// Create empty table with schema
+			let schema = Arc::new(Schema::new(vec![
+				Field::new("id", DataType::Utf8, false),
+				Field::new("path", DataType::Utf8, false),
+				Field::new("title", DataType::Utf8, false),
+				Field::new("content", DataType::Utf8, false),
+				Field::new("level", DataType::UInt32, false),
+				Field::new("start_line", DataType::UInt32, false),
+				Field::new("end_line", DataType::UInt32, false),
+				Field::new("hash", DataType::Utf8, false),
+				Field::new(
+					"embedding",
+					DataType::FixedSizeList(
+						Arc::new(Field::new("item", DataType::Float32, true)),
+						self.vector_dim as i32,
+					),
+					true,
+				),
+			]));
+
+			let _table = self.db.create_empty_table("document_blocks", schema).execute().await?;
 
 			// Note: We'll create the index later when we have data
 		}
@@ -562,6 +824,46 @@ impl Store {
 		Ok(())
 	}
 
+	pub async fn store_document_blocks(&self, blocks: &[DocumentBlock], embeddings: Vec<Vec<f32>>) -> Result<()> {
+		if blocks.is_empty() {
+			return Ok(());
+		}
+
+		// Check for dimension mismatches and handle them
+		for (i, embedding) in embeddings.iter().enumerate() {
+			if embedding.len() != self.vector_dim {
+				return Err(anyhow::anyhow!("Embedding at index {} has dimension {} but expected {}",
+					i, embedding.len(), self.vector_dim));
+			}
+		}
+
+		// Convert blocks to RecordBatch
+		let converter = BatchConverter::new(self.vector_dim);
+		let batch = converter.document_block_to_batch(blocks, &embeddings)?;
+
+		// Open or create the table
+		let table = self.db.open_table("document_blocks").execute().await?;
+
+		// Create an iterator that yields this single batch
+		use std::iter::once;
+		let batch_clone = batch.clone();
+		let schema = batch_clone.schema();
+		let batches = once(Ok(batch));
+		let batch_reader = arrow::record_batch::RecordBatchIterator::new(batches, schema);
+
+		// Add the batch to the table
+		table.add(batch_reader).execute().await?;
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
+
+		Ok(())
+	}
+
 	pub async fn get_code_blocks(&self, embedding: Vec<f32>) -> Result<Vec<CodeBlock>> {
 		// Check embedding dimension
 		if embedding.len() != self.vector_dim {
@@ -620,6 +922,122 @@ impl Store {
 		Ok(code_blocks)
 	}
 
+	pub async fn get_document_blocks(&self, embedding: Vec<f32>) -> Result<Vec<DocumentBlock>> {
+		// Check embedding dimension
+		if embedding.len() != self.vector_dim {
+			return Err(anyhow::anyhow!("Search embedding has dimension {} but expected {}",
+				embedding.len(), self.vector_dim));
+		}
+
+		// Open the table
+		let table = self.db.open_table("document_blocks").execute().await?;
+
+		// Check if the table has any data
+		let row_count = table.count_rows(None).await?;
+		if row_count == 0 {
+			// No data, return empty vector
+			return Ok(Vec::new());
+		}
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
+
+		// Perform vector search
+		let results = table
+			.query()
+			.nearest_to(embedding.as_slice())?  // Pass as slice instead of reference to Vec
+			.limit(50)  // Limit to 50 results
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+		.await?;
+
+		if results.is_empty() || results[0].num_rows() == 0 {
+			return Ok(Vec::new());
+		}
+
+		// Extract _distance column which contains similarity scores
+		let distance_column = results[0].column_by_name("_distance")
+			.ok_or_else(|| anyhow::anyhow!("Distance column not found"))?;
+
+		let distance_array = distance_column.as_any()
+			.downcast_ref::<Float32Array>()
+			.ok_or_else(|| anyhow::anyhow!("Could not downcast distance column to Float32Array"))?;
+
+		// Convert distances to Vec<f32>
+		let distances: Vec<f32> = (0..distance_array.len())
+			.map(|i| distance_array.value(i))
+			.collect();
+
+		// Convert results to DocumentBlock structs
+		let converter = BatchConverter::new(self.vector_dim);
+		let document_blocks = converter.batch_to_document_blocks(&results[0], Some(distances))?;
+
+		Ok(document_blocks)
+	}
+
+	pub async fn get_text_blocks(&self, embedding: Vec<f32>) -> Result<Vec<TextBlock>> {
+		// Check embedding dimension
+		if embedding.len() != self.vector_dim {
+			return Err(anyhow::anyhow!("Search embedding has dimension {} but expected {}",
+				embedding.len(), self.vector_dim));
+		}
+
+		// Open the table
+		let table = self.db.open_table("text_blocks").execute().await?;
+
+		// Check if the table has any data
+		let row_count = table.count_rows(None).await?;
+		if row_count == 0 {
+			// No data, return empty vector
+			return Ok(Vec::new());
+		}
+
+		// Check if index exists and create it if needed
+		let has_index = table.list_indices().await?.iter().any(|idx| idx.columns == vec!["embedding"]);
+		let row_count = table.count_rows(None).await?;
+		if !has_index && row_count > 256 {
+			table.create_index(&["embedding"], Index::Auto).execute().await?
+		}
+
+		// Perform vector search
+		let results = table
+			.query()
+			.nearest_to(embedding.as_slice())?  // Pass as slice instead of reference to Vec
+			.limit(50)  // Limit to 50 results
+			.execute()
+			.await?
+			.try_collect::<Vec<_>>()
+		.await?;
+
+		if results.is_empty() || results[0].num_rows() == 0 {
+			return Ok(Vec::new());
+		}
+
+		// Extract _distance column which contains similarity scores
+		let distance_column = results[0].column_by_name("_distance")
+			.ok_or_else(|| anyhow::anyhow!("Distance column not found"))?;
+
+		let distance_array = distance_column.as_any()
+			.downcast_ref::<Float32Array>()
+			.ok_or_else(|| anyhow::anyhow!("Could not downcast distance column to Float32Array"))?;
+
+		// Convert distances to Vec<f32>
+		let distances: Vec<f32> = (0..distance_array.len())
+			.map(|i| distance_array.value(i))
+			.collect();
+
+		// Convert results to TextBlock structs
+		let converter = BatchConverter::new(self.vector_dim);
+		let text_blocks = converter.batch_to_text_blocks(&results[0], Some(distances))?;
+
+		Ok(text_blocks)
+	}
+
 	pub async fn get_code_block_by_symbol(&self, symbol: &str) -> Result<Option<CodeBlock>> {
 		// Open the table
 		let table = self.db.open_table("code_blocks").execute().await?;
@@ -667,7 +1085,15 @@ impl Store {
 		// Delete from text_blocks table if it exists
 		if table_names.contains(&"text_blocks".to_string()) {
 			let text_blocks_table = self.db.open_table("text_blocks").execute().await?;
+			// For text blocks, also delete chunked versions (path contains '#')
 			text_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
+			text_blocks_table.delete(&format!("path LIKE '{}#%'", file_path)).await?;
+		}
+
+		// Delete from document_blocks table if it exists
+		if table_names.contains(&"document_blocks".to_string()) {
+			let document_blocks_table = self.db.open_table("document_blocks").execute().await?;
+			document_blocks_table.delete(&format!("path = '{}'", file_path)).await?;
 		}
 
 		Ok(())

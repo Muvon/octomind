@@ -14,7 +14,7 @@ pub use graph_optimization::*;
 
 use crate::state::SharedState;
 use crate::state;
-use crate::store::{Store, CodeBlock, TextBlock};
+use crate::store::{Store, CodeBlock, TextBlock, DocumentBlock};
 use crate::config::Config;
 use std::fs;
 // We're using ignore::WalkBuilder instead of walkdir::WalkDir
@@ -56,6 +56,7 @@ pub fn detect_language(path: &std::path::Path) -> Option<&str> {
 		"cpp" | "cc" | "cxx" | "c++" | "hpp" | "h" => Some("cpp"),
 		"sh" | "bash" => Some("bash"),
 		"rb" => Some("ruby"),
+		"md" => Some("markdown"),
 		_ => None,
 	}
 }
@@ -267,6 +268,89 @@ fn node_text(node: Node, contents: &str) -> String {
 	}
 }
 
+/// Parse markdown content and split it into meaningful chunks by headers
+pub fn parse_markdown_content(contents: &str, file_path: &str) -> Vec<DocumentBlock> {
+	let mut document_blocks = Vec::new();
+	let lines: Vec<&str> = contents.lines().collect();
+
+	let mut current_title = "Introduction".to_string();
+	let mut current_level = 1;
+	let mut current_content = String::new();
+	let mut start_line = 0;
+
+	for (line_num, line) in lines.iter().enumerate() {
+		let trimmed = line.trim_start();
+
+		// Check if this line is a header
+		if trimmed.starts_with('#') {
+			// Save the previous section if it has content
+			if !current_content.trim().is_empty() {
+				let content_hash = calculate_unique_content_hash(&current_content, file_path);
+				document_blocks.push(DocumentBlock {
+					path: file_path.to_string(),
+					title: current_title.clone(),
+					content: current_content.trim().to_string(),
+					level: current_level,
+					start_line,
+					end_line: line_num.saturating_sub(1),
+					hash: content_hash,
+					distance: None,
+				});
+			}
+
+			// Start a new section
+			let header_level = trimmed.chars().take_while(|&c| c == '#').count();
+			current_title = trimmed.trim_start_matches('#').trim().to_string();
+			if current_title.is_empty() {
+				current_title = format!("Section at line {}", line_num + 1);
+			}
+			current_level = header_level;
+			current_content.clear();
+			start_line = line_num;
+		} else {
+			// Add non-header line to current content
+			current_content.push_str(line);
+			current_content.push('\n');
+		}
+	}
+
+	// Don't forget the last section
+	if !current_content.trim().is_empty() {
+		let content_hash = calculate_unique_content_hash(&current_content, file_path);
+		document_blocks.push(DocumentBlock {
+			path: file_path.to_string(),
+			title: current_title,
+			content: current_content.trim().to_string(),
+			level: current_level,
+			start_line,
+			end_line: lines.len().saturating_sub(1),
+			hash: content_hash,
+			distance: None,
+		});
+	}
+
+	// If no headers were found, treat the entire content as one document
+	if document_blocks.is_empty() && !contents.trim().is_empty() {
+		let content_hash = calculate_unique_content_hash(contents, file_path);
+		document_blocks.push(DocumentBlock {
+			path: file_path.to_string(),
+			title: std::path::Path::new(file_path)
+				.file_stem()
+				.and_then(|s| s.to_str())
+				.unwrap_or("Document")
+				.to_string(),
+			content: contents.trim().to_string(),
+			level: 1,
+			start_line: 0,
+			end_line: lines.len().saturating_sub(1),
+			hash: content_hash,
+			distance: None,
+		});
+	}
+
+	document_blocks
+}
+
 /// Map tree-sitter node kinds to simpler, unified kinds for display
 fn map_node_kind_to_simple(kind: &str) -> String {
 	match kind {
@@ -453,6 +537,134 @@ pub fn code_blocks_to_markdown(blocks: &[CodeBlock]) -> String {
 	markdown
 }
 
+/// Render text blocks (text search results) as markdown string
+pub fn text_blocks_to_markdown(blocks: &[TextBlock]) -> String {
+	let mut markdown = String::new();
+
+	if blocks.is_empty() {
+		markdown.push_str("No text blocks found for the query.");
+		return markdown;
+	}
+
+	markdown.push_str(&format!("# Found {} text blocks\n\n", blocks.len()));
+
+	// Group blocks by file path for better organization
+	let mut blocks_by_file: std::collections::HashMap<String, Vec<&TextBlock>> = std::collections::HashMap::new();
+
+	for block in blocks {
+		blocks_by_file
+			.entry(block.path.clone())
+			.or_insert_with(|| Vec::new())
+			.push(block);
+	}
+
+	// Print results organized by file
+	for (file_path, file_blocks) in blocks_by_file.iter() {
+		markdown.push_str(&format!("## File: {}\n\n", file_path));
+
+		for (idx, block) in file_blocks.iter().enumerate() {
+			markdown.push_str(&format!("### Block {} of {}\n", idx + 1, file_blocks.len()));
+			markdown.push_str(&format!("**Language:** {}  ", block.language));
+			markdown.push_str(&format!("**Lines:** {}-{}  ", block.start_line, block.end_line));
+
+			// Show relevance score if available
+			if let Some(distance) = block.distance {
+				markdown.push_str(&format!("**Relevance:** {:.4}  ", distance));
+			}
+			markdown.push_str("\n\n");
+
+			// Get the lines and determine if we need to truncate
+			let lines: Vec<&str> = block.content.lines().collect();
+			if lines.len() > 20 {
+				// Show first 15 lines
+				for line in lines.iter().take(15) {
+					markdown.push_str(&format!("{}\n", line));
+				}
+				// Note how many lines are omitted
+				markdown.push_str(&format!("...\n*({} more lines omitted)*\n\n", lines.len() - 20));
+				// Show last 5 lines
+				for line in lines.iter().skip(lines.len() - 5) {
+					markdown.push_str(&format!("{}\n", line));
+				}
+			} else {
+				// If not too long, show all lines
+				for line in lines {
+					markdown.push_str(&format!("{}\n", line));
+				}
+			}
+			markdown.push_str("\n");
+		}
+
+		markdown.push_str("---\n\n");
+	}
+
+	markdown
+}
+
+/// Render document blocks (documentation search results) as markdown string
+pub fn document_blocks_to_markdown(blocks: &[DocumentBlock]) -> String {
+	let mut markdown = String::new();
+
+	if blocks.is_empty() {
+		markdown.push_str("No documentation found for the query.");
+		return markdown;
+	}
+
+	markdown.push_str(&format!("# Found {} documentation sections\n\n", blocks.len()));
+
+	// Group blocks by file path for better organization
+	let mut blocks_by_file: std::collections::HashMap<String, Vec<&DocumentBlock>> = std::collections::HashMap::new();
+
+	for block in blocks {
+		blocks_by_file
+			.entry(block.path.clone())
+			.or_insert_with(|| Vec::new())
+			.push(block);
+	}
+
+	// Print results organized by file
+	for (file_path, file_blocks) in blocks_by_file.iter() {
+		markdown.push_str(&format!("## File: {}\n\n", file_path));
+
+		for (idx, block) in file_blocks.iter().enumerate() {
+			markdown.push_str(&format!("### {} (Section {} of {})\n", block.title, idx + 1, file_blocks.len()));
+			markdown.push_str(&format!("**Level:** {}  ", block.level));
+			markdown.push_str(&format!("**Lines:** {}-{}  ", block.start_line, block.end_line));
+
+			// Show relevance score if available
+			if let Some(distance) = block.distance {
+				markdown.push_str(&format!("**Relevance:** {:.4}  ", distance));
+			}
+			markdown.push_str("\n\n");
+
+			// Get the lines and determine if we need to truncate
+			let lines: Vec<&str> = block.content.lines().collect();
+			if lines.len() > 20 {
+				// Show first 15 lines
+				for line in lines.iter().take(15) {
+					markdown.push_str(&format!("{}\n", line));
+				}
+				// Note how many lines are omitted
+				markdown.push_str(&format!("...\n*({} more lines omitted)*\n\n", lines.len() - 20));
+				// Show last 5 lines
+				for line in lines.iter().skip(lines.len() - 5) {
+					markdown.push_str(&format!("{}\n", line));
+				}
+			} else {
+				// If not too long, show all lines
+				for line in lines {
+					markdown.push_str(&format!("{}\n", line));
+				}
+			}
+			markdown.push_str("\n");
+		}
+
+		markdown.push_str("---\n\n");
+	}
+
+	markdown
+}
+
 /// Render signatures as text output
 pub fn render_signatures_text(signatures: &[FileSignature]) {
 	if signatures.is_empty() {
@@ -534,6 +746,7 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 	let current_dir = state.read().current_directory.clone();
 	let mut code_blocks_batch = Vec::new();
 	let mut text_blocks_batch = Vec::new();
+	let mut document_blocks_batch = Vec::new();
 	let mut all_code_blocks = Vec::new(); // Store all code blocks for GraphRAG
 
 	const BATCH_SIZE: usize = 10;
@@ -564,43 +777,110 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		if !entry.file_type().map_or(false, |ft| ft.is_file()) {
 			continue;
 		}
+
+		let file_path = entry.path().to_string_lossy().to_string();
+
 		if let Some(language) = detect_language(entry.path()) {
 			if let Ok(contents) = fs::read_to_string(entry.path()) {
-				let file_path = entry.path().to_string_lossy().to_string();
-				process_file(
-					&store,
-					&contents,
-					&file_path,
-					language,
-					&mut code_blocks_batch,
-					&mut text_blocks_batch,
-					&mut all_code_blocks,
-					config,
-					state.clone()
-				).await?;
+				if language == "markdown" {
+					// Handle markdown files specially - index as document blocks
+					if cfg!(debug_assertions) {
+						println!("Indexing markdown file as documents: {}", file_path);
+					}
+					process_markdown_file(
+						&store,
+						&contents,
+						&file_path,
+						&mut document_blocks_batch,
+						config,
+						state.clone()
+					).await?;
+				} else {
+					// Handle code files - index as semantic code blocks only
+					if cfg!(debug_assertions) {
+						println!("Indexing code file as code blocks: {} ({})", file_path, language);
+					}
+					process_file(
+						&store,
+						&contents,
+						&file_path,
+						language,
+						&mut code_blocks_batch,
+						&mut text_blocks_batch, // Will remain empty for code files
+						&mut all_code_blocks,
+						config,
+						state.clone()
+					).await?;
+				}
 
 				state.write().indexed_files += 1;
+
+				// Process batches when they reach the batch size
 				if code_blocks_batch.len() >= BATCH_SIZE {
 					embedding_calls += code_blocks_batch.len();
 					process_code_blocks_batch(&store, &code_blocks_batch, config).await?;
 					code_blocks_batch.clear();
 				}
+				// Only process text_blocks_batch if we have any (from unsupported files)
 				if text_blocks_batch.len() >= BATCH_SIZE {
 					embedding_calls += text_blocks_batch.len();
 					process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
 					text_blocks_batch.clear();
 				}
+				if document_blocks_batch.len() >= BATCH_SIZE {
+					embedding_calls += document_blocks_batch.len();
+					process_document_blocks_batch(&store, &document_blocks_batch, config).await?;
+					document_blocks_batch.clear();
+				}
+			}
+		} else {
+			// Handle unsupported file types as chunked text
+			// First check if the file extension is in our whitelist
+			if is_allowed_text_extension(entry.path()) {
+				if let Ok(contents) = fs::read_to_string(entry.path()) {
+					// Only process files that are likely to contain readable text
+					if is_text_file(&contents) {
+						if cfg!(debug_assertions) {
+							println!("Indexing allowed text file as chunks: {}", file_path);
+						}
+						process_text_file(
+							&store,
+							&contents,
+							&file_path,
+							&mut text_blocks_batch,
+							config,
+							state.clone()
+						).await?;
+
+						state.write().indexed_files += 1;
+
+						// Process batch when it reaches the batch size
+						if text_blocks_batch.len() >= BATCH_SIZE {
+							embedding_calls += text_blocks_batch.len();
+							process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
+							text_blocks_batch.clear();
+						}
+					}
+				}
+			} else if cfg!(debug_assertions) {
+				println!("Skipping file with unsupported extension: {}", file_path);
 			}
 		}
 	}
 
+	// Process remaining batches
 	if !code_blocks_batch.is_empty() {
 		process_code_blocks_batch(&store, &code_blocks_batch, config).await?;
 		embedding_calls += code_blocks_batch.len();
 	}
+	// Only process text_blocks_batch if we have any (from unsupported files)
 	if !text_blocks_batch.is_empty() {
 		process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
 		embedding_calls += text_blocks_batch.len();
+	}
+	if !document_blocks_batch.is_empty() {
+		process_document_blocks_batch(&store, &document_blocks_batch, config).await?;
+		embedding_calls += document_blocks_batch.len();
 	}
 
 	// Build GraphRAG from all collected code blocks if enabled and if we found any blocks
@@ -668,37 +948,78 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 		// File is not ignored, so proceed with indexing
 		if let Some(language) = detect_language(path) {
 			if let Ok(contents) = fs::read_to_string(path) {
-				let mut code_blocks_batch = Vec::new();
-				let mut text_blocks_batch = Vec::new();
-				let mut all_code_blocks = Vec::new(); // For GraphRAG
+				if language == "markdown" {
+					// Handle markdown files specially
+					let mut document_blocks_batch = Vec::new();
+					process_markdown_file(
+						store,
+						&contents,
+						file_path,
+						&mut document_blocks_batch,
+						config,
+						state.clone()
+					).await?;
 
-				process_file(
-					store,
-					&contents,
-					file_path,
-					language,
-					&mut code_blocks_batch,
-					&mut text_blocks_batch,
-					&mut all_code_blocks,
-					config,
-					state.clone()
-				).await?;
+					if !document_blocks_batch.is_empty() {
+						process_document_blocks_batch(store, &document_blocks_batch, config).await?;
+					}
+				} else {
+					// Handle code files
+					let mut code_blocks_batch = Vec::new();
+					let mut text_blocks_batch = Vec::new(); // Will remain empty for code files
+					let mut all_code_blocks = Vec::new(); // For GraphRAG
 
-				if !code_blocks_batch.is_empty() {
-					process_code_blocks_batch(store, &code_blocks_batch, config).await?;
-				}
-				if !text_blocks_batch.is_empty() {
-					process_text_blocks_batch(store, &text_blocks_batch, config).await?;
-				}
+					process_file(
+						store,
+						&contents,
+						file_path,
+						language,
+						&mut code_blocks_batch,
+						&mut text_blocks_batch,
+						&mut all_code_blocks,
+						config,
+						state.clone()
+					).await?;
 
-				// Update GraphRAG if enabled and we have new blocks
-				if config.graphrag.enabled && !all_code_blocks.is_empty() {
-					let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
-					graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
+					if !code_blocks_batch.is_empty() {
+						process_code_blocks_batch(store, &code_blocks_batch, config).await?;
+					}
+					// No need to process text_blocks_batch since it will be empty for code files
+
+					// Update GraphRAG if enabled and we have new blocks
+					if config.graphrag.enabled && !all_code_blocks.is_empty() {
+						let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
+						graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
+					}
 				}
 
 				// Explicitly flush to ensure all data is persisted
 				store.flush().await?;
+			}
+		} else {
+			// Handle unsupported file types as chunked text
+			// First check if the file extension is in our whitelist
+			if is_allowed_text_extension(path) {
+				if let Ok(contents) = fs::read_to_string(path) {
+					if is_text_file(&contents) {
+						let mut text_blocks_batch = Vec::new();
+						process_text_file(
+							store,
+							&contents,
+							file_path,
+							&mut text_blocks_batch,
+							config,
+							state.clone()
+						).await?;
+
+						if !text_blocks_batch.is_empty() {
+							process_text_blocks_batch(store, &text_blocks_batch, config).await?;
+						}
+
+						// Explicitly flush to ensure all data is persisted
+						store.flush().await?;
+					}
+				}
 			}
 		}
 	}
@@ -713,7 +1034,7 @@ async fn process_file(
 	file_path: &str,
 	language: &str,
 	code_blocks_batch: &mut Vec<CodeBlock>,
-	text_blocks_batch: &mut Vec<TextBlock>,
+	_text_blocks_batch: &mut Vec<TextBlock>, // Unused for code files - only used for unsupported files
 	all_code_blocks: &mut Vec<CodeBlock>,
 	config: &Config,
 	state: SharedState,
@@ -776,24 +1097,14 @@ async fn process_file(
 		}
 	}
 
-	let content_hash = calculate_unique_content_hash(contents, file_path);
-	let text_exists = !force_reindex && store.content_exists(&content_hash, "text_blocks").await?;
-	if !text_exists {
-		text_blocks_batch.push(TextBlock {
-			path: file_path.to_string(),
-			language: lang_impl.name().to_string(),
-			hash: content_hash,
-			content: contents.to_string(),
-			start_line: 0,
-			end_line: contents.lines().count(),
-		});
-	}
-
 	// Update GraphRAG state if enabled and blocks were added
 	if config.graphrag.enabled && graphrag_blocks_added > 0 {
 		let mut state_guard = state.write();
 		state_guard.graphrag_blocks += graphrag_blocks_added;
 	}
+
+	// Note: We DON'T create text blocks for code files - only for unsupported file types
+	// Code files are already indexed as semantic code blocks above
 
 	Ok(())
 }
@@ -883,5 +1194,181 @@ async fn process_text_blocks_batch(store: &Store, blocks: &[TextBlock], config: 
 	let contents: Vec<String> = blocks.iter().map(|b| b.content.clone()).collect();
 	let embeddings = generate_embeddings_batch(contents, false, config).await?;
 	store.store_text_blocks(blocks, embeddings).await?;
+	Ok(())
+}
+
+async fn process_document_blocks_batch(store: &Store, blocks: &[DocumentBlock], config: &Config) -> Result<()> {
+	let contents: Vec<String> = blocks.iter().map(|b| b.content.clone()).collect();
+	let embeddings = generate_embeddings_batch(contents, false, config).await?;
+	store.store_document_blocks(blocks, embeddings).await?;
+	Ok(())
+}
+
+// Constants for text chunking
+const DEFAULT_CHUNK_SIZE: usize = 2000;  // characters (increased from 1000)
+const DEFAULT_OVERLAP: usize = 200;      // characters
+
+// Whitelist of file extensions that we allow for text indexing
+const ALLOWED_TEXT_EXTENSIONS: &[&str] = &[
+	"txt",
+	"log",
+	"xml",
+	"html",
+	"htm", 
+	"css",
+	"sql",
+	"csv",
+	"tsv",
+	"yaml",
+	"yml",
+	"toml",
+	"ini",
+	"conf",
+	"config",
+	"properties",
+	"env",
+	"gitignore",
+	"dockerfile",
+	"makefile",
+	"readme",
+	"license",
+	"changelog",
+	"authors",
+	"contributors",
+];
+
+/// Check if a file extension is allowed for text indexing
+fn is_allowed_text_extension(path: &std::path::Path) -> bool {
+	if let Some(extension) = path.extension() {
+		if let Some(ext_str) = extension.to_str() {
+			return ALLOWED_TEXT_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());
+		}
+	}
+	
+	// Also check for files without extensions that have common text names
+	if let Some(file_name) = path.file_name() {
+		if let Some(name_str) = file_name.to_str() {
+			let name_lower = name_str.to_lowercase();
+			return matches!(name_lower.as_str(), 
+				"readme" | "license" | "changelog" | "authors" | "contributors" |
+				"makefile" | "dockerfile" | "gitignore" | ".gitignore"
+			);
+		}
+	}
+	
+	false
+}
+
+/// Check if a file contains readable text
+fn is_text_file(contents: &str) -> bool {
+	// Simple heuristic: check if most characters are printable
+	let total_chars = contents.len();
+	if total_chars == 0 {
+		return false;
+	}
+
+	let printable_chars = contents.chars()
+		.filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+		.count();
+
+	// If more than 80% of characters are printable, consider it a text file
+	let printable_ratio = printable_chars as f64 / total_chars as f64;
+	printable_ratio > 0.8
+}
+
+/// Split text into chunks with overlap
+fn chunk_text(content: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+	let mut chunks = Vec::new();
+	let chars: Vec<char> = content.chars().collect();
+
+	if chars.len() <= chunk_size {
+		chunks.push(content.to_string());
+		return chunks;
+	}
+
+	let mut start = 0;
+	while start < chars.len() {
+		let end = std::cmp::min(start + chunk_size, chars.len());
+		let chunk: String = chars[start..end].iter().collect();
+		chunks.push(chunk);
+
+		if end >= chars.len() {
+			break;
+		}
+
+		start = end - overlap.min(chunk_size / 2);
+	}
+
+	chunks
+}
+
+/// Process an unsupported file as chunked text blocks
+/// Only processes files with whitelisted extensions to avoid indexing 
+/// binary files, lock files, and other non-useful content.
+/// Supported extensions: txt, log, xml, html, css, sql, csv, yaml, toml, ini, conf, etc.
+/// Chunk size: 2000 characters with 200 character overlap.
+async fn process_text_file(
+	store: &Store,
+	contents: &str,
+	file_path: &str,
+	text_blocks_batch: &mut Vec<TextBlock>,
+	_config: &Config,
+	state: SharedState,
+) -> Result<()> {
+	let force_reindex = state.read().force_reindex;
+
+	// Split content into chunks
+	let chunks = chunk_text(contents, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP);
+
+	for (chunk_idx, chunk) in chunks.iter().enumerate() {
+		let chunk_hash = calculate_unique_content_hash(chunk, &format!("{}#{}", file_path, chunk_idx));
+
+		// Skip the check if force_reindex is true
+		let exists = !force_reindex && store.content_exists(&chunk_hash, "text_blocks").await?;
+		if !exists {
+			// Calculate approximate line numbers for the chunk
+			let lines_before_chunk: usize = contents[..contents.find(chunk).unwrap_or(0)]
+				.lines()
+				.count();
+			let chunk_line_count = chunk.lines().count();
+
+			text_blocks_batch.push(TextBlock {
+				path: format!("{}#{}", file_path, chunk_idx), // Add chunk index to path for uniqueness
+				language: "text".to_string(),
+				content: chunk.clone(),
+				start_line: lines_before_chunk,
+				end_line: lines_before_chunk + chunk_line_count,
+				hash: chunk_hash,
+				distance: None,
+			});
+		}
+	}
+
+	Ok(())
+}
+
+// Process a markdown file, extracting document blocks
+async fn process_markdown_file(
+	store: &Store,
+	contents: &str,
+	file_path: &str,
+	document_blocks_batch: &mut Vec<DocumentBlock>,
+	_config: &Config,
+	state: SharedState,
+) -> Result<()> {
+	// Get force_reindex flag from state
+	let force_reindex = state.read().force_reindex;
+
+	// Parse markdown content into document blocks
+	let document_blocks = parse_markdown_content(contents, file_path);
+
+	for doc_block in document_blocks {
+		// Check if this document block already exists (unless force reindex)
+		let exists = !force_reindex && store.content_exists(&doc_block.hash, "document_blocks").await?;
+		if !exists {
+			document_blocks_batch.push(doc_block);
+		}
+	}
+
 	Ok(())
 }

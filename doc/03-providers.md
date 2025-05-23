@@ -2,7 +2,7 @@
 
 ## Overview
 
-OctoDev supports multiple AI providers through a unified interface. All providers use the `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
+Octodev supports multiple AI providers through a unified interface. All providers use the `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
 
 ## Supported Providers
 

@@ -1,4 +1,4 @@
-// GraphRAG module for OctoDev
+// GraphRAG module for Octodev
 // Handles code relationship extraction and graph generation
 
 use crate::config::Config;

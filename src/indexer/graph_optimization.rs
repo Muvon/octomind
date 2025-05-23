@@ -1,4 +1,4 @@
-// Graph Optimization module for OctoDev GraphRAG
+// Graph Optimization module for Octodev GraphRAG
 // Provides optimized graph extraction and retrieval for AI sessions
 
 use crate::indexer::graphrag::{CodeGraph, CodeNode, CodeRelationship};

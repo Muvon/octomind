@@ -1,18 +1,18 @@
-# OctoDev Overview
+# Octodev Overview
 
-## What is OctoDev?
+## What is Octodev?
 
-OctoDev is a smart codebase assistant written in Rust that helps developers navigate and understand their codebase using semantic search capabilities and AI-powered assistance. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
+Octodev is a smart codebase assistant written in Rust that helps developers navigate and understand their codebase using semantic search capabilities and AI-powered assistance. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
 
 ## Core Architecture
 
-OctoDev is built around several key components that work together to provide intelligent code assistance:
+Octodev is built around several key components that work together to provide intelligent code assistance:
 
 ### Main Components
 
 ```mermaid
 graph TB
-    A[OctoDev Core] --> B[Configuration System]
+    A[Octodev Core] --> B[Configuration System]
     A --> C[Store System] 
     A --> D[Indexer System]
     A --> E[Session Management]
@@ -92,7 +92,7 @@ octodev session
 
 ## Configuration
 
-OctoDev uses a hierarchical configuration system stored in `.octodev/config.toml`:
+Octodev uses a hierarchical configuration system stored in `.octodev/config.toml`:
 
 - **Global configuration**: Base settings for all operations
 - **Mode-specific overrides**: Different settings for agent vs chat modes

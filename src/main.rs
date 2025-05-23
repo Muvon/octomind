@@ -9,7 +9,7 @@ mod commands;
 #[derive(Parser)]
 #[command(name = "octodev")]
 #[command(version = "0.1.0")]
-#[command(about = "OctoDev is smart developer assistant based on your codebase")]
+#[command(about = "Octodev is smart developer assistant based on your codebase")]
 struct OctodevArgs {
 	#[command(subcommand)]
 	command: Commands,

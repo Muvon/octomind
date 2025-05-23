@@ -1,4 +1,4 @@
-// Indexer module for OctoDev
+// Indexer module for Octodev
 // Handles code indexing, embedding, and search functionality
 
 mod embed; // Embedding generation - moving from content.rs

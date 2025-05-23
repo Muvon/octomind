@@ -2,7 +2,7 @@
 
 ## Overview
 
-OctoDev's indexing system processes your codebase to create a searchable knowledge base using semantic embeddings and tree-sitter parsing. This enables natural language code search and provides context for AI assistance.
+Octodev's indexing system processes your codebase to create a searchable knowledge base using semantic embeddings and tree-sitter parsing. This enables natural language code search and provides context for AI assistance.
 
 ## How Indexing Works
 
@@ -234,7 +234,7 @@ Default search across all content types.
 
 ### Database Structure
 
-OctoDev uses SurrealDB with RocksDB backend:
+Octodev uses SurrealDB with RocksDB backend:
 
 ```
 .octodev/storage/

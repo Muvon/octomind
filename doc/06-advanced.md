@@ -2,7 +2,7 @@
 
 ## Overview
 
-OctoDev includes several advanced features that provide deep insights into your codebase and enable sophisticated AI assistance. These features include GraphRAG for code relationship analysis, MCP protocol for tool integration, and advanced layered architecture for complex reasoning.
+Octodev includes several advanced features that provide deep insights into your codebase and enable sophisticated AI assistance. These features include GraphRAG for code relationship analysis, MCP protocol for tool integration, and advanced layered architecture for complex reasoning.
 
 ## GraphRAG (Graph-based Retrieval Augmented Generation)
 
@@ -104,7 +104,7 @@ GraphRAG automatically detects various relationship types:
 
 ### What is MCP?
 
-MCP enables AI models to use external tools and services through a standardized protocol. OctoDev supports both local tools and external MCP servers.
+MCP enables AI models to use external tools and services through a standardized protocol. Octodev supports both local tools and external MCP servers.
 
 ### Core MCP Tools
 

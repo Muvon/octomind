@@ -1,4 +1,4 @@
-// Logger module for OctoDev
+// Logger module for Octodev
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};

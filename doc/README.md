@@ -1,6 +1,6 @@
-# OctoDev Manual
+# Octodev Manual
 
-Welcome to the comprehensive OctoDev documentation. This manual provides detailed guidance on all aspects of OctoDev, from basic setup to advanced features.
+Welcome to the comprehensive Octodev documentation. This manual provides detailed guidance on all aspects of Octodev, from basic setup to advanced features.
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@ octodev search "authentication logic"
 # Start interactive session
 octodev session
 
-# Configure OctoDev
+# Configure Octodev
 octodev config
 ```
 
@@ -177,7 +177,7 @@ All configurations are now validated on load. Use `octodev config --validate` to
 
 ## Contributing
 
-OctoDev is an open-source project. Contributions are welcome!
+Octodev is an open-source project. Contributions are welcome!
 
 ### Adding New Providers
 The provider system is extensible. See `src/session/providers/` for examples.
@@ -192,4 +192,4 @@ This manual is generated from the codebase analysis. Updates should be made to b
 
 **Version**: Latest  
 **Last Updated**: January 2025  
-**Project**: [OctoDev](https://github.com/muvon/octodev)
+**Project**: [Octodev](https://github.com/muvon/octodev)

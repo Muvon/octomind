@@ -2,7 +2,7 @@
 
 ## Overview
 
-OctoDev provides two distinct session modes designed for different use cases: **Agent Mode** for full development assistance and **Chat Mode** for simple conversations. Each mode has different capabilities, tool access, and optimization strategies.
+Octodev provides two distinct session modes designed for different use cases: **Agent Mode** for full development assistance and **Chat Mode** for simple conversations. Each mode has different capabilities, tool access, and optimization strategies.
 
 ## Session Modes Comparison
 

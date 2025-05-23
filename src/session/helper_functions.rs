@@ -33,7 +33,7 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			Return only the refined task description that clearly explains what needs to be done.\
 			\
 			%{{CONTEXT}}"),
-		"context_generator" => format!("You are the context gathering specialist for the OctoDev system. \
+		"context_generator" => format!("You are the context gathering specialist for the Octodev system. \
 			\
 			I'll help analyze a user's task to determine what additional context is needed for implementation. \
 			\
@@ -113,7 +113,7 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			Your output will be used as context for the next user interaction, so it must contain all essential information \
 			while being as concise as possible.%{{CONTEXT}}"),
 
-		_ => format!("You are the {} layer in the OctoDev system.%{{CONTEXT}}", layer_type),
+		_ => format!("You are the {} layer in the Octodev system.%{{CONTEXT}}", layer_type),
 	}
 }
 

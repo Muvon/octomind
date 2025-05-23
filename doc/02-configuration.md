@@ -2,7 +2,7 @@
 
 ## Overview
 
-OctoDev uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octodev/config.toml` files and supports mode-specific overrides.
+Octodev uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octodev/config.toml` files and supports mode-specific overrides.
 
 ## Configuration Hierarchy
 

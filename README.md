@@ -1,6 +1,6 @@
-# OctoDev - Smart Codebase Assistant
+# Octodev - Smart Codebase Assistant
 
-OctoDev is a command-line tool that helps developers navigate and understand their codebase using semantic search capabilities and AI-powered assistance. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
+Octodev is a command-line tool that helps developers navigate and understand their codebase using semantic search capabilities and AI-powered assistance. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
 
 ## Features
 
@@ -42,7 +42,7 @@ cp target/release/octodev /usr/local/bin/
 
 ## AI Providers
 
-OctoDev supports multiple AI providers through an extensible architecture. You can use different providers and models by specifying them in the `provider:model` format.
+Octodev supports multiple AI providers through an extensible architecture. You can use different providers and models by specifying them in the `provider:model` format.
 
 ### Supported Providers
 
@@ -172,7 +172,7 @@ octodev search --json "database connection setup"
 
 ### Interactive Sessions
 
-OctoDev includes an AI coding assistant with two distinct modes that can help you understand and modify your codebase:
+Octodev includes an AI coding assistant with two distinct modes that can help you understand and modify your codebase:
 
 ```bash
 # Start a new interactive session in agent mode (default)
@@ -199,7 +199,7 @@ octodev session --mode=chat --model="openai:gpt-4o-mini" -n chat_session
 
 #### Session Modes
 
-OctoDev supports two session modes for different use cases:
+Octodev supports two session modes for different use cases:
 
 **Agent Mode (Default)** - Full development environment:
 - Complete codebase indexing and analysis
@@ -246,7 +246,7 @@ enable_layers = false
 
 #### Layered Architecture
 
-OctoDev's first message in each session uses a specialized 3-layer AI architecture for enhanced code understanding and modification:
+Octodev's first message in each session uses a specialized 3-layer AI architecture for enhanced code understanding and modification:
 
 1. **Query Processor**: Analyzes and improves your initial query for clearer instructions (no tools)
 2. **Context Generator**: Gathers all necessary code context using tools to explore the codebase
@@ -286,7 +286,7 @@ While in an interactive session, you can use the following commands:
 
 #### Session Caching
 
-OctoDev supports token caching with providers like OpenRouter to save costs when reusing large prompts or context. The system prompt is automatically cached, and you can mark user messages for caching with the `/cache` command.
+Octodev supports token caching with providers like OpenRouter to save costs when reusing large prompts or context. The system prompt is automatically cached, and you can mark user messages for caching with the `/cache` command.
 
 ### Watch Mode
 
@@ -298,7 +298,7 @@ octodev watch
 
 ### Configuration
 
-OctoDev uses a configuration file stored in `.octodev/config.toml` in your project directory. You can create or modify this using the `config` command:
+Octodev uses a configuration file stored in `.octodev/config.toml` in your project directory. You can create or modify this using the `config` command:
 
 ```bash
 # Create default configuration
@@ -318,7 +318,7 @@ octodev config --fastembed-code-model all-MiniLM-L6-v2 --fastembed-text-model al
 
 ### Embedding Providers
 
-OctoDev supports two embedding providers:
+Octodev supports two embedding providers:
 
 1. **FastEmbed** (default): Works offline, doesn't require API keys, but may have smaller context windows
 2. **Jina**: Cloud-based, requires an API key, provides high-quality embeddings
@@ -340,7 +340,7 @@ Default models:
 
 ### Layered Architecture Configuration
 
-OctoDev's layered architecture can be configured in your `.octodev/config.toml` file:
+Octodev's layered architecture can be configured in your `.octodev/config.toml` file:
 
 ```toml
 [openrouter]
@@ -368,7 +368,7 @@ The token management settings help control costs and prevent token limits from b
 
 ### MCP Configuration
 
-OctoDev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration uses a hierarchical approach where mode-specific settings override global settings.
+Octodev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration uses a hierarchical approach where mode-specific settings override global settings.
 
 #### Configuration Hierarchy
 
@@ -458,7 +458,7 @@ command = "python"  # Or any other command to start your server
 args = ["-m", "websearch_server", "--port", "8008"]
 ```
 
-3. OctoDev will start the server process when needed and clean it up when the program exits.
+3. Octodev will start the server process when needed and clean it up when the program exits.
 
 #### Current MCP Providers
 
@@ -467,14 +467,14 @@ args = ["-m", "websearch_server", "--port", "8008"]
 
 ## How It Works
 
-OctoDev uses a combination of techniques to build a searchable index of your codebase:
+Octodev uses a combination of techniques to build a searchable index of your codebase:
 
 1. **Tree-sitter Parsing**: Analyzes code syntax to extract meaningful blocks and symbols
 2. **Vector Embeddings**: Converts code blocks to numerical vectors capturing semantic meaning
 3. **SurrealDB Database**: Stores and retrieves embeddings for efficient similarity search
 4. **Symbol Tracking**: Maintains relationships between code symbols for reference expansion
 
-For AI assistance, OctoDev uses a specialized 4-layer architecture:
+For AI assistance, Octodev uses a specialized 4-layer architecture:
 
 ```
 User Input
@@ -515,7 +515,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Adding New AI Providers
 
-OctoDev uses an extensible provider architecture that makes it easy to add support for new AI providers. Here's how to add a new provider:
+Octodev uses an extensible provider architecture that makes it easy to add support for new AI providers. Here's how to add a new provider:
 
 1. **Create the provider file**: Create `src/session/providers/your_provider.rs`
 2. **Implement the AiProvider trait**:

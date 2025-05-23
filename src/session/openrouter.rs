@@ -56,6 +56,8 @@ pub struct Message {
 	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>, // For tool messages: the name of the tool
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub tool_calls: Option<serde_json::Value>, // For assistant messages: array of tool calls
 }
 
 // Convert our session messages to OpenRouter format
@@ -64,7 +66,10 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 	let mut cached_count = 0;
 	let mut result = Vec::new();
 
-	for msg in messages {
+	let mut i = 0;
+	while i < messages.len() {
+		let msg = &messages[i];
+
 		// Check if this is a tool response message (has <fnr> tags)
 		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
 			// Extract content between the <fnr> tags
@@ -97,10 +102,12 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 							content: serde_json::json!(content), // Just the content string
 							tool_call_id: Some(tool_call_id.to_string()),
 							name: Some(name.to_string()),
+							tool_calls: None,
 						});
 					}
 
 					// Skip the standard message creation since we've already added the tool messages
+					i += 1;
 					continue;
 				} else {
 					// Legacy format - add a single tool message
@@ -110,7 +117,9 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 						content: serde_json::json!(content), // Just the content string
 						tool_call_id: Some("legacy_tool_call".to_string()),
 						name: Some("legacy_tool".to_string()),
+						tool_calls: None,
 					});
+					i += 1;
 					continue;
 				}
 			}
@@ -125,10 +134,10 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 				Ok(cfg) => cfg,
 				Err(_) => crate::config::Config::default()
 			};
-			
+
 			if config.openrouter.debug {
 				use colored::*;
-				println!("{}", format!("Debug: Converting tool message - ID: {}, Name: {}, Content: {:.100}...", 
+				println!("{}", format!("Debug: Converting tool message - ID: {}, Name: {}, Content: {:.100}...",
 					tool_call_id, name, msg.content).bright_magenta());
 			}
 
@@ -139,11 +148,109 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 				content: serde_json::json!(msg.content), // Content is just the actual content string
 				tool_call_id: Some(tool_call_id),
 				name: Some(name),
+				tool_calls: None,
 			});
+			i += 1;
+			continue;
+		} else if msg.role == "assistant" {
+			// Handle assistant messages - check if we have stored tool_calls to include
+			let mut assistant_message = if msg.cached {
+				// Increment cached count for debugging
+				cached_count += 1;
+
+				// For a cached message, create a multipart message with cache control
+				if msg.content.contains("\n") {
+					// For multiline content, create a message with multiple parts
+					let parts: Vec<&str> = msg.content.splitn(2, "\n").collect();
+					if parts.len() > 1 {
+						Message {
+							role: msg.role.clone(),
+							content: serde_json::json!([
+								{
+									"type": "text",
+									"text": parts[0],
+								},
+								{
+									"type": "text",
+									"text": parts[1],
+									"cache_control": {
+										"type": "ephemeral"
+									}
+								}
+							]),
+							tool_call_id: None,
+							name: None,
+							tool_calls: None,
+						}
+					} else {
+						// Fallback if splitting failed
+						Message {
+							role: msg.role.clone(),
+							content: serde_json::json!([
+								{
+									"type": "text",
+									"text": msg.content,
+									"cache_control": {
+									"type": "ephemeral"
+								}
+							}
+							]),
+							tool_call_id: None,
+							name: None,
+							tool_calls: None,
+						}
+					}
+				} else {
+					// For single-line content, just wrap it in cache_control
+					Message {
+						role: msg.role.clone(),
+						content: serde_json::json!([
+							{
+								"type": "text",
+								"text": msg.content,
+								"cache_control": {
+								"type": "ephemeral"
+							}
+						}
+						]),
+						tool_call_id: None,
+						name: None,
+						tool_calls: None,
+					}
+				}
+			} else {
+				// Regular message, no caching
+				Message {
+					role: msg.role.clone(),
+					content: serde_json::json!(msg.content),
+					tool_call_id: None,
+					name: None,
+					tool_calls: None,
+				}
+			};
+
+			// If this assistant message has stored tool_calls, include them directly
+			if let Some(ref tool_calls_data) = msg.tool_calls {
+				assistant_message.tool_calls = Some(tool_calls_data.clone());
+
+				// Debug logging
+				let config = match crate::config::Config::load() {
+					Ok(cfg) => cfg,
+					Err(_) => crate::config::Config::default()
+				};
+
+				if config.openrouter.debug {
+					use colored::*;
+					println!("{}", format!("Debug: Restored tool_calls for assistant message from stored data").bright_green());
+				}
+			}
+
+			result.push(assistant_message);
+			i += 1;
 			continue;
 		}
 
-		// Handle cache breakpoints - but only if cached flag is explicitly true
+		// Handle cache breakpoints for non-assistant messages
 		if msg.cached {
 			// Increment cached count for debugging
 			cached_count += 1;
@@ -170,6 +277,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 						]),
 						tool_call_id: None,
 						name: None,
+						tool_calls: None,
 					});
 				} else {
 					// Fallback if splitting failed
@@ -186,6 +294,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 						]),
 						tool_call_id: None,
 						name: None,
+						tool_calls: None,
 					});
 				}
 			} else {
@@ -203,6 +312,7 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 					]),
 					tool_call_id: None,
 					name: None,
+					tool_calls: None,
 				});
 			}
 		} else {
@@ -212,8 +322,11 @@ pub fn convert_messages(messages: &[super::Message]) -> Vec<Message> {
 				content: serde_json::json!(msg.content),
 				tool_call_id: None,
 				name: None,
+				tool_calls: None,
 			});
 		}
+
+		i += 1;
 	}
 
 	// Log debug info for cached messages only if debug mode is enabled
@@ -242,7 +355,7 @@ pub async fn chat_completion(
 	model: &str,
 	temperature: f32,
 	config: &Config,
-) -> Result<(String, OpenRouterExchange, Option<Vec<crate::session::mcp::McpToolCall>>)> {
+) -> Result<(String, OpenRouterExchange, Option<Vec<crate::session::mcp::McpToolCall>>, Option<String>)> {
 	// Get API key
 	let api_key = get_api_key(config)?;
 
@@ -339,10 +452,10 @@ pub async fn chat_completion(
 	if !status.is_success() {
 		// Try to extract detailed error information
 		let mut error_details = Vec::new();
-		
+
 		// Add HTTP status
 		error_details.push(format!("HTTP {}", status));
-		
+
 		// Try to extract OpenRouter error message
 		if let Some(error_obj) = response_json.get("error") {
 			if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
@@ -357,12 +470,35 @@ pub async fn chat_completion(
 		} else if let Some(msg) = response_json.get("error").and_then(|e| e.as_str()) {
 			error_details.push(format!("Error: {}", msg));
 		}
-		
+
 		// If no specific error details found, include the raw response for debugging
 		if error_details.len() == 1 { // Only HTTP status was added
 			error_details.push(format!("Raw response: {}", response_text));
 		}
-		
+
+		let full_error = error_details.join(" | ");
+		return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
+	}
+
+	// CRITICAL FIX: Check for errors in response body even with HTTP 200
+	if let Some(error_obj) = response_json.get("error") {
+		let mut error_details = Vec::new();
+		error_details.push("HTTP 200 but error in response".to_string());
+
+		if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
+			error_details.push(format!("Message: {}", msg));
+		}
+		if let Some(code) = error_obj.get("code").and_then(|c| c.as_str()) {
+			error_details.push(format!("Code: {}", code));
+		}
+		if let Some(type_) = error_obj.get("type").and_then(|t| t.as_str()) {
+			error_details.push(format!("Type: {}", type_));
+		}
+
+		if config.openrouter.debug {
+			error_details.push(format!("Raw response: {}", response_text));
+		}
+
 		let full_error = error_details.join(" | ");
 		return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
 	}
@@ -374,12 +510,41 @@ pub async fn chat_completion(
 		.and_then(|choice| choice.get("message"))
 		.ok_or_else(|| anyhow::anyhow!("Invalid response format from OpenRouter: {}", response_text))?;
 
+	// Extract finish_reason from the first choice
+	let finish_reason = response_json
+		.get("choices")
+		.and_then(|choices| choices.get(0))
+		.and_then(|choice| choice.get("finish_reason"))
+		.and_then(|fr| fr.as_str())
+		.map(|s| s.to_string());
+
+	// Debug logging for finish_reason
+	if config.openrouter.debug {
+		use colored::*;
+		if let Some(ref reason) = finish_reason {
+			println!("{}", format!("Debug: Finish reason: {}", reason).bright_yellow());
+		} else {
+			println!("{}", "Debug: No finish_reason in response".bright_yellow());
+		}
+	}
+
 	// Check if the response contains tool calls
 	let mut content = String::new();
 
 	// First check for content
 	if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
 		content = text.to_string();
+	}
+
+	// Debug logging for message content and tool calls
+	if config.openrouter.debug {
+		use colored::*;
+		println!("{}", format!("Debug: Response content: '{}'", content).bright_yellow());
+		if let Some(tool_calls) = message.get("tool_calls") {
+			println!("{}", format!("Debug: Tool calls present: {}", !tool_calls.as_array().unwrap_or(&vec![]).is_empty()).bright_yellow());
+		} else {
+			println!("{}", "Debug: No tool calls in response".bright_yellow());
+		}
 	}
 
 	// Check if the response contains tool calls
@@ -507,13 +672,28 @@ pub async fn chat_completion(
 			};
 
 			// Directly return the extracted tool calls
-			return Ok((content, exchange, Some(extracted_tool_calls)));
+			return Ok((content, exchange, Some(extracted_tool_calls), finish_reason));
 
 		} else if content.is_empty() {
-			return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
+			// If content is empty but we have a valid response structure, treat it as a valid empty response
+			// This can happen when the model responds to tool results with no additional text
+			if config.openrouter.debug {
+				use colored::*;
+				println!("{}", "Debug: Received valid response with empty content and no tool calls".bright_yellow());
+			}
+			// Don't return an error - treat empty content as valid when it's a proper response structure
 		}
-	} else if content.is_empty() {
-		return Err(anyhow::anyhow!("Invalid response: no content or tool calls"));
+	} else {
+		// No tool_calls field at all
+		if content.is_empty() {
+			// If content is empty and no tool_calls field, this could be a valid empty response
+			// This happens when the model responds to tool results with no additional text
+			if config.openrouter.debug {
+				use colored::*;
+				println!("{}", "Debug: Received valid response with empty content and no tool_calls field".bright_yellow());
+			}
+			// Don't return an error - treat as valid empty response
+		}
 	}
 
 	// Extract token usage from the response
@@ -574,5 +754,5 @@ pub async fn chat_completion(
 		usage,
 	};
 
-	Ok((content, exchange, None))
+	Ok((content, exchange, None, finish_reason))
 }

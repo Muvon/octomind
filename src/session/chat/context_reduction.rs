@@ -94,6 +94,7 @@ pub async fn perform_context_reduction(
 		cached: false,
 		tool_call_id: None,
 		name: None,
+		tool_calls: None,
 	});
 
 	// Add user message with the context to reduce
@@ -107,6 +108,7 @@ pub async fn perform_context_reduction(
 		cached: false,
 		tool_call_id: None,
 		name: None,
+		tool_calls: None,
 	});
 
 	// Convert to OpenRouter format
@@ -131,7 +133,7 @@ pub async fn perform_context_reduction(
 	let _ = animation_task.await;
 
 	match reduction_result {
-		Ok((reduced_content, exchange, _)) => {
+		Ok((reduced_content, exchange, _, _)) => {
 			println!("{}", "Context reduction complete".bright_green());
 			println!("{}", reduced_content.bright_blue());
 

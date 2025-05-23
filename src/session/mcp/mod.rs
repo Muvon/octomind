@@ -44,7 +44,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 		// Determine the category of the tool
 		let category = guess_tool_category(&result.tool_name);
 
-		// Create a horizontal separator with tool name
+		// Create a horizontal separator with tool name and category
 		let title = format!(" {} | {} ",
 			result.tool_name.bright_cyan(),
 			category.bright_blue())
@@ -53,34 +53,40 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 		let separator_length = 70.max(title.len() + 4);
 		let dashes = "─".repeat(separator_length - title.len());
 
-		// Format the separator with colors if terminal supports them
-		let separator = format!("\n──{}{}────\n", title, dashes.dimmed());
+		// Format the separator with colors
+		let separator = format!("──{}{}────", title, dashes.dimmed());
 
 		output.push_str(&separator);
+		output.push('\n');
 
-		// Format the parameters if available
+		// Format the parameters if available and in debug mode
 		if let Some(params) = result.result.get("parameters") {
-			for (key, value) in params.as_object().unwrap_or(&serde_json::Map::new()) {
-				let value_str = if value.is_string() {
-					value.as_str().unwrap_or("").to_string()
-				} else {
-					value.to_string()
-				};
+			// Only show parameters in a very condensed format
+			if let Some(params_obj) = params.as_object() {
+				let mut param_parts = Vec::new();
+				for (key, value) in params_obj {
+					let value_str = if value.is_string() {
+						value.as_str().unwrap_or("").to_string()
+					} else {
+						value.to_string()
+					};
 
-				// Truncate long values
-				let displayed_value = if value_str.len() > 50 {
-					format!("{:.47}...", value_str)
-				} else {
-					value_str
-				};
-
-				output.push_str(&format!("{}: {}\n",
-					key.yellow(),
-					displayed_value))
+					// Show very short parameter summary
+					let displayed_value = if value_str.len() > 30 {
+						format!("{:.27}...", value_str)
+					} else {
+						value_str
+					};
+					param_parts.push(format!("{}: {}", key.bright_black(), displayed_value.bright_black()));
+				}
+				
+				if !param_parts.is_empty() && param_parts.join(", ").len() < 60 {
+					output.push_str(&format!("{}\n", param_parts.join(", ")));
+				}
 			}
 		}
 
-		// Format the output
+		// Format the main output content
 		let result_output = if let Some(output_value) = result.result.get("output") {
 			if output_value.is_string() {
 				output_value.as_str().unwrap_or("").to_string()
@@ -98,12 +104,14 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 			false
 		};
 
-		// Print the output content regardless of error state
+		// Print the output content
 		if is_error {
 			output.push_str(&result_output.bright_red());
 		} else {
 			output.push_str(&result_output);
 		}
+		
+		output.push('\n');
 	}
 
 	output

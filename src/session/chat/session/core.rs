@@ -36,6 +36,7 @@ impl ChatSession {
 			total_cost: 0.0,
 			duration_seconds: 0,
 			layer_stats: Vec::new(), // Initialize empty layer stats
+			tool_calls: 0, // Initialize tool call counter
 		};
 
 		Self {

@@ -48,6 +48,8 @@ pub struct Message {
 	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>, // For tool messages: the name of the tool
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub tool_calls: Option<serde_json::Value>, // For assistant messages: original tool calls from API response
 }
 
 fn default_cache_marker() -> bool {
@@ -66,6 +68,8 @@ pub struct SessionInfo {
 	pub total_cost: f64,
 	pub duration_seconds: u64,
 	pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
+	#[serde(default)]
+	pub tool_calls: u64, // Track total number of tool calls made
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -106,6 +110,7 @@ impl Session {
 				total_cost: 0.0,
 				duration_seconds: 0,
 				layer_stats: Vec::new(), // Initialize empty layer stats
+				tool_calls: 0, // Initialize tool call counter
 			},
 			messages: Vec::new(),
 			session_file: None,
@@ -126,6 +131,7 @@ impl Session {
 			cached: false,  // Default to not cached
 			tool_call_id: None, // Default to no tool_call_id
 			name: None, // Default to no name
+			tool_calls: None, // Default to no tool_calls
 		};
 
 		self.messages.push(message.clone());
@@ -430,6 +436,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 				old_info.total_cost = 0.0;
 				old_info.duration_seconds = 0;
 				old_info.layer_stats = Vec::new(); // Initialize empty layer stats
+				old_info.tool_calls = 0; // Initialize tool call counter
 				session_info = Some(old_info);
 			}
 		} else if !line.starts_with("EXCHANGE: ") && !line.is_empty() {

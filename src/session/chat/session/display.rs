@@ -25,8 +25,13 @@ impl ChatSession {
 		// Cost information
 		println!("{} ${:.5}", "Total cost:".yellow(), self.session.info.total_cost);
 
-		// Messages count
+		// Messages count and tool calls
 		println!("{} {}", "Messages:".yellow(), self.session.messages.len());
+		
+		// Tool calls information
+		if self.session.info.tool_calls > 0 {
+			println!("{} {}", "Tool calls:".yellow(), self.session.info.tool_calls.to_string().bright_cyan());
+		}
 
 		// Display layered stats if available
 		if !self.session.info.layer_stats.is_empty() {

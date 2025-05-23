@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use serde_json;
 use super::animation::show_loading_animation;
 use regex::Regex;
-use uuid::Uuid;
 
 // Function to remove function_calls blocks from content
 fn remove_function_calls(content: &str) -> String {
@@ -122,6 +121,7 @@ pub async fn process_response(
 	content: String,
 	exchange: openrouter::OpenRouterExchange,
 	tool_calls: Option<Vec<mcp::McpToolCall>>,
+	finish_reason: Option<String>,
 	chat_session: &mut ChatSession,
 	config: &Config,
 	operation_cancelled: Arc<AtomicBool>
@@ -130,6 +130,17 @@ pub async fn process_response(
 	if operation_cancelled.load(Ordering::SeqCst) {
 		println!("{}", "\nOperation cancelled by user.".bright_yellow());
 		return Ok(());
+	}
+
+	// Debug logging for finish_reason and tool calls
+	if config.openrouter.debug {
+		use colored::*;
+		if let Some(ref reason) = finish_reason {
+			println!("{}", format!("Debug: Processing response with finish_reason: {}", reason).bright_cyan());
+		}
+		if let Some(ref calls) = tool_calls {
+			println!("{}", format!("Debug: Processing {} tool calls", calls.len()).bright_cyan());
+		}
 	}
 
 	// First, add the user message before processing response
@@ -175,11 +186,97 @@ pub async fn process_response(
 			}
 
 			if !current_tool_calls.is_empty() {
-				// Add assistant message with the response but strip the function_calls block
-				let clean_content = remove_function_calls(&current_content);
-				chat_session.add_assistant_message(&clean_content, Some(current_exchange.clone()), config)?;
+				// CRITICAL FIX: We need to add the assistant message with tool_calls PRESERVED
+				// The standard add_assistant_message only stores text content, but we need
+				// to preserve the tool_calls from the original API response for proper conversation flow
+				
+				// Extract the original tool_calls from the exchange response if they exist
+				let original_tool_calls = current_exchange.response
+					.get("choices")
+					.and_then(|choices| choices.get(0))
+					.and_then(|choice| choice.get("message"))
+					.and_then(|message| message.get("tool_calls"))
+					.cloned();
 
-				// Display assistant response with tool calls removed from display
+				// Create the assistant message directly with tool_calls preserved from the exchange
+				let assistant_message = crate::session::Message {
+					role: "assistant".to_string(),
+					content: current_content.clone(),
+					timestamp: std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
+					cached: false,
+					tool_call_id: None,
+					name: None,
+					tool_calls: original_tool_calls, // Store the original tool_calls for proper reconstruction
+				};
+
+				// Add the assistant message to the session
+				chat_session.session.messages.push(assistant_message);
+
+				// Update last response and handle exchange/cost tracking if provided
+				chat_session.last_response = current_content.clone();
+				
+				// Handle cost tracking from the exchange (same logic as add_assistant_message)
+				if let Some(exchange) = &Some(current_exchange.clone()) {
+					if let Some(usage) = &exchange.usage {
+						// Calculate regular and cached tokens
+						let mut regular_prompt_tokens = usage.prompt_tokens;
+						let mut cached_tokens = 0;
+
+						// Check prompt_tokens_details for cached_tokens first
+						if let Some(details) = &usage.prompt_tokens_details {
+							if let Some(cached) = details.get("cached_tokens") {
+								if let serde_json::Value::Number(num) = cached {
+									if let Some(num_u64) = num.as_u64() {
+										cached_tokens = num_u64;
+										regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+									}
+								}
+							}
+						}
+
+						// Fall back to breakdown field
+						if cached_tokens == 0 && usage.prompt_tokens > 0 {
+							if let Some(breakdown) = &usage.breakdown {
+								if let Some(cached) = breakdown.get("cached") {
+									if let serde_json::Value::Number(num) = cached {
+										if let Some(num_u64) = num.as_u64() {
+											cached_tokens = num_u64;
+											regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+										}
+									}
+								}
+							}
+						}
+
+						// Update session token counts
+						chat_session.session.info.input_tokens += regular_prompt_tokens;
+						chat_session.session.info.output_tokens += usage.completion_tokens;
+						chat_session.session.info.cached_tokens += cached_tokens;
+
+						// Update cost
+						if let Some(cost) = usage.cost {
+							chat_session.session.info.total_cost += cost;
+							chat_session.estimated_cost = chat_session.session.info.total_cost;
+
+							if config.openrouter.debug {
+								println!("Debug: Adding ${:.5} from initial API (total now: ${:.5})",
+									cost, chat_session.session.info.total_cost);
+							}
+						}
+					}
+				}
+
+				// Log the assistant response and exchange
+				let _ = crate::session::logger::log_assistant_response(&current_content);
+				if let Some(ex) = &Some(current_exchange.clone()) {
+					let _ = crate::session::logger::log_raw_exchange(ex);
+				}
+
+				// Display the clean content (without function calls) to the user
+				let clean_content = remove_function_calls(&current_content);
 				print_assistant_response(&clean_content, config);
 
 				// Early exit if cancellation was requested
@@ -200,26 +297,32 @@ pub async fn process_response(
 						println!("  - Executing tool: {}", tool_call.tool_name.yellow());
 					}
 
+					// Increment tool call counter
+					chat_session.session.info.tool_calls += 1;
+
+					// CRITICAL FIX: Use the EXACT tool_id from the original API response
+					// Don't generate a new UUID - use the one from the original tool_calls
+					let original_tool_id = tool_call.tool_id.clone();
+
 					// Clone tool_name separately for tool task tracking
 					let tool_name = tool_call.tool_name.clone();
 
 					// Execute in a tokio task
 					let config_clone = config.clone();
-					let tool_id = format!("tool_{}", Uuid::new_v4().simple());
 					let params_clone = tool_call.parameters.clone();
 
-					// Log the tool request
-					let _ = crate::session::logger::log_tool_request(&tool_name, &params_clone, &tool_id);
+					// Log the tool request with the ORIGINAL tool_id
+					let _ = crate::session::logger::log_tool_request(&tool_name, &params_clone, &original_tool_id);
 
-					let tool_id_for_task = tool_id.clone();
+					let tool_id_for_task = original_tool_id.clone();
 					let task = tokio::spawn(async move {
 						let mut call_with_id = tool_call.clone();
-						// Ensure the tool_id is set in the call
+						// CRITICAL: Use the original tool_id, don't change it
 						call_with_id.tool_id = tool_id_for_task.clone();
 						mcp::execute_tool_call(&call_with_id, &config_clone).await
 					});
 
-					tool_tasks.push((tool_name, task, tool_id));
+					tool_tasks.push((tool_name, task, original_tool_id));
 				}
 
 				// Collect all results
@@ -308,16 +411,32 @@ pub async fn process_response(
 					// IMPROVED APPROACH: Add tool results as proper "tool" role messages
 					// This follows the standard OpenAI/Anthropic format and avoids double-serialization
 					for tool_result in &tool_results {
+						// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
+						let tool_content = if let Some(output) = tool_result.result.get("output") {
+							// Extract the "output" field which contains the actual tool result
+							if let Some(output_str) = output.as_str() {
+								output_str.to_string()
+							} else {
+								// If output is not a string, serialize it
+								serde_json::to_string(output).unwrap_or_default()
+							}
+						} else if tool_result.result.is_string() {
+							// If result is already a string, use it directly
+							tool_result.result.as_str().unwrap_or("").to_string()
+						} else {
+							// Fallback: look for common fields or use the whole result
+							if let Some(error) = tool_result.result.get("error") {
+								format!("Error: {}", error)
+							} else {
+								// Last resort: serialize the whole result
+								serde_json::to_string(&tool_result.result).unwrap_or_default()
+							}
+						};
+
 						// Create a proper tool message with tool_call_id and name
 						let tool_message = crate::session::Message {
 							role: "tool".to_string(),
-							content: if tool_result.result.is_string() {
-								// If result is already a string, use it directly
-								tool_result.result.as_str().unwrap_or("").to_string()
-							} else {
-								// If result is a complex object, serialize it to a JSON string
-								serde_json::to_string(&tool_result.result).unwrap_or_default()
-							},
+							content: tool_content,
 							timestamp: std::time::SystemTime::now()
 								.duration_since(std::time::UNIX_EPOCH)
 								.unwrap_or_default()
@@ -325,6 +444,7 @@ pub async fn process_response(
 							cached: false,
 							tool_call_id: Some(tool_result.tool_id.clone()),
 							name: Some(tool_result.tool_name.clone()),
+							tool_calls: None,
 						};
 
 						// Add the tool message directly to the session
@@ -359,7 +479,7 @@ pub async fn process_response(
 					let _ = animation_task.await;
 
 					match follow_up_result {
-						Ok((next_content, next_exchange, next_tool_calls)) => {
+						Ok((next_content, next_exchange, next_tool_calls, next_finish_reason)) => {
 							// Store direct tool calls for efficient processing if they exist
 							let has_more_tools = if let Some(calls) = next_tool_calls {
 								!calls.is_empty()
@@ -371,6 +491,46 @@ pub async fn process_response(
 							// Update current content for next iteration
 							current_content = next_content;
 							current_exchange = next_exchange;
+
+							// Debug logging for follow-up finish_reason
+							if config.openrouter.debug {
+								use colored::*;
+								if let Some(ref reason) = next_finish_reason {
+									println!("{}", format!("Debug: Follow-up finish_reason: {}", reason).bright_cyan());
+								}
+							}
+
+							// Check finish_reason to determine if we should continue the conversation
+							let should_continue_conversation = match next_finish_reason.as_deref() {
+								Some("tool_calls") => {
+									// Model wants to make more tool calls
+									if config.openrouter.debug {
+										println!("{}", "Debug: finish_reason is 'tool_calls', continuing conversation".bright_cyan());
+									}
+									true
+								}
+								Some("stop") | Some("length") => {
+									// Model finished normally or hit length limit
+									if config.openrouter.debug {
+										println!("{}", format!("Debug: finish_reason is '{}', ending conversation", next_finish_reason.as_deref().unwrap()).bright_cyan());
+									}
+									false
+								}
+								Some(other) => {
+									// Unknown finish_reason, be conservative and continue
+									if config.openrouter.debug {
+										println!("{}", format!("Debug: Unknown finish_reason '{}', continuing conversation", other).bright_yellow());
+									}
+									true
+								}
+								None => {
+									// No finish_reason, check for tool calls
+									if config.openrouter.debug {
+										println!("{}", "Debug: No finish_reason, checking for tool calls".bright_cyan());
+									}
+									has_more_tools
+								}
+							};
 
 							// Make sure the cost from this follow-up API call is properly tracked
 							if let Some(usage) = &current_exchange.usage {
@@ -514,10 +674,10 @@ pub async fn process_response(
 							}
 
 							// Check if there are more tools to process in the new content
-							if has_more_tools {
+							if should_continue_conversation {
 								// Log if debug mode is enabled
 								if config.openrouter.debug {
-									println!("{}", format!("Debug: Found more tool calls to process recursively").yellow());
+									println!("{}", format!("Debug: Continuing conversation due to finish_reason or tool calls").yellow());
 								}
 								// Continue processing the new content with tool calls
 								continue;

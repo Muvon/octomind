@@ -49,6 +49,7 @@ impl LayerProcessor {
 			cached: should_cache, // Only cache if model supports it
 			tool_call_id: None, // No tool_call_id for system messages
 			name: None, // No name for system messages
+			tool_calls: None, // No tool_calls for system messages
 		});
 
 		// Add user message with the input
@@ -62,6 +63,7 @@ impl LayerProcessor {
 			cached: false,
 			tool_call_id: None, // No tool_call_id for user messages
 			name: None, // No name for user messages
+			tool_calls: None, // No tool_calls for user messages
 		});
 
 		messages
@@ -106,7 +108,7 @@ impl Layer for LayerProcessor {
 		let or_messages = openrouter::convert_messages(&messages);
 
 		// Call the model
-		let (output, exchange, direct_tool_calls) = openrouter::chat_completion(
+		let (output, exchange, direct_tool_calls, _finish_reason) = openrouter::chat_completion(
 			or_messages,
 			&self.config.model,
 			self.config.temperature,
@@ -171,6 +173,7 @@ impl Layer for LayerProcessor {
 						cached: false,
 						tool_call_id: None, // No tool_call_id for assistant messages
 						name: None, // No name for assistant messages
+						tool_calls: None, // No tool_calls for assistant messages
 					});
 
 					// Add each tool result as a tool message in standard OpenRouter format
@@ -186,6 +189,7 @@ impl Layer for LayerProcessor {
 							cached: false,
 							tool_call_id: Some(tool_result.tool_id.clone()), // Include the tool_call_id
 							name: Some(tool_result.tool_name.clone()), // Include the tool name
+							tool_calls: None, // No tool_calls for tool messages
 						});
 					}
 
@@ -200,7 +204,7 @@ impl Layer for LayerProcessor {
 						self.config.temperature,
 						config
 					).await {
-						Ok((new_output, new_exchange, next_tool_calls)) => {
+						Ok((new_output, new_exchange, next_tool_calls, _finish_reason)) => {
 							// Extract token usage if available
 							let token_usage = new_exchange.usage.clone();
 

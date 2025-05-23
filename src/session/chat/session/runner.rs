@@ -454,7 +454,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Process the response
 		match api_result {
-			Ok((content, exchange, tool_calls)) => {
+			Ok((content, exchange, tool_calls, finish_reason)) => {
 				// Process the response, handling tool calls recursively
 				// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
 				let tool_process_cancelled = Arc::new(AtomicBool::new(false));
@@ -462,6 +462,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					content,
 					exchange,
 					tool_calls,
+					finish_reason,
 					&mut chat_session,
 					&current_config,
 					tool_process_cancelled.clone()

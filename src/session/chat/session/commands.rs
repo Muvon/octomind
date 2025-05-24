@@ -103,10 +103,10 @@ impl ChatSession {
 				// Toggle the setting for the appropriate mode
 				match current_mode {
 					"agent" => {
-						loaded_config.agent.openrouter.enable_layers = !loaded_config.agent.openrouter.enable_layers;
+						loaded_config.agent.config.enable_layers = !loaded_config.agent.config.enable_layers;
 					},
 					"chat" => {
-						loaded_config.chat.openrouter.enable_layers = !loaded_config.chat.openrouter.enable_layers;
+						loaded_config.chat.config.enable_layers = !loaded_config.chat.config.enable_layers;
 					},
 					_ => {
 						// Fall back to global config for unknown modes
@@ -122,8 +122,8 @@ impl ChatSession {
 
 				// Get the current state from the appropriate config section
 				let is_enabled = match current_mode {
-					"agent" => loaded_config.agent.openrouter.enable_layers,
-					"chat" => loaded_config.chat.openrouter.enable_layers,
+					"agent" => loaded_config.agent.config.enable_layers,
+					"chat" => loaded_config.chat.config.enable_layers,
 					_ => loaded_config.openrouter.enable_layers,
 				};
 

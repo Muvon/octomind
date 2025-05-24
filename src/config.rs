@@ -239,6 +239,152 @@ impl Default for JinaConfig {
 	}
 }
 
+// Provider configurations - ONLY contain API keys and provider-specific settings
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProviderConfig {
+	pub api_key: Option<String>,
+	#[serde(default)]
+	pub pricing: PricingConfig,
+}
+
+impl Default for ProviderConfig {
+	fn default() -> Self {
+		Self {
+			api_key: None,
+			pricing: PricingConfig::default(),
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProvidersConfig {
+	#[serde(default)]
+	pub openrouter: ProviderConfig,
+	#[serde(default)]
+	pub openai: ProviderConfig,
+	#[serde(default)]
+	pub anthropic: ProviderConfig,
+	#[serde(default)]
+	pub google: ProviderConfig,
+}
+
+impl Default for ProvidersConfig {
+	fn default() -> Self {
+		Self {
+			openrouter: ProviderConfig::default(),
+			openai: ProviderConfig::default(),
+			anthropic: ProviderConfig::default(),
+			google: ProviderConfig::default(),
+		}
+	}
+}
+
+// Mode configuration - contains all behavior settings but NOT API keys
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ModeConfig {
+	// Model in provider:model format (e.g., "openrouter:anthropic/claude-3.5-sonnet")
+	#[serde(default = "default_full_model")]
+	pub model: String,
+	// Layer configurations
+	#[serde(default)]
+	pub enable_layers: bool,
+	// Log level setting
+	#[serde(default)]
+	pub log_level: LogLevel,
+	// Maximum response tokens warning threshold
+	#[serde(default = "default_mcp_response_warning_threshold")]
+	pub mcp_response_warning_threshold: usize,
+	// Maximum request tokens threshold (for automatic context truncation)
+	#[serde(default = "default_max_request_tokens_threshold")]
+	pub max_request_tokens_threshold: usize,
+	// Enable automatic context truncation when max threshold is reached
+	#[serde(default)]
+	pub enable_auto_truncation: bool,
+	// Threshold percentage for automatic cache marker movement
+	#[serde(default = "default_cache_tokens_pct_threshold")]
+	pub cache_tokens_pct_threshold: u8,
+	// Alternative: Auto-cache when non-cached tokens reach this absolute number
+	#[serde(default)]
+	pub cache_tokens_absolute_threshold: u64,
+	// Auto-cache timeout in seconds (3 minutes = 180 seconds by default)
+	#[serde(default = "default_cache_timeout_seconds")]
+	pub cache_timeout_seconds: u64,
+	// Enable markdown rendering for AI responses
+	#[serde(default)]
+	pub enable_markdown_rendering: bool,
+	// Custom system prompt
+	pub system: Option<String>,
+}
+
+fn default_full_model() -> String {
+	"openrouter:anthropic/claude-3.5-sonnet".to_string()
+}
+
+impl Default for ModeConfig {
+	fn default() -> Self {
+		Self {
+			model: default_full_model(),
+			enable_layers: false,
+			log_level: LogLevel::default(),
+			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
+			max_request_tokens_threshold: default_max_request_tokens_threshold(),
+			enable_auto_truncation: false,
+			cache_tokens_pct_threshold: default_cache_tokens_pct_threshold(),
+			cache_tokens_absolute_threshold: 0,
+			cache_timeout_seconds: default_cache_timeout_seconds(),
+			enable_markdown_rendering: false,
+			system: None,
+		}
+	}
+}
+
+impl ModeConfig {
+	/// Get the full model string in provider:model format for API calls
+	pub fn get_full_model(&self) -> String {
+		self.model.clone()
+	}
+	
+	/// Get the provider name from the model string
+	pub fn get_provider(&self) -> Result<String> {
+		if let Ok((provider, _)) = crate::session::ProviderFactory::parse_model(&self.model) {
+			Ok(provider)
+		} else {
+			Err(anyhow!("Invalid model format: {}", self.model))
+		}
+	}
+	
+	/// Get the API key for this mode's provider
+	pub fn get_api_key(&self, providers: &ProvidersConfig) -> Option<String> {
+		if let Ok(provider) = self.get_provider() {
+			match provider.as_str() {
+				"openrouter" => providers.openrouter.api_key.clone(),
+				"openai" => providers.openai.api_key.clone(),
+				"anthropic" => providers.anthropic.api_key.clone(),
+				"google" => providers.google.api_key.clone(),
+				_ => None,
+			}
+		} else {
+			None
+		}
+	}
+	
+	/// Get pricing config for this mode's provider
+	pub fn get_pricing(&self, providers: &ProvidersConfig) -> PricingConfig {
+		if let Ok(provider) = self.get_provider() {
+			match provider.as_str() {
+				"openrouter" => providers.openrouter.pricing.clone(),
+				"openai" => providers.openai.pricing.clone(),
+				"anthropic" => providers.anthropic.pricing.clone(),
+				"google" => providers.google.pricing.clone(),
+				_ => PricingConfig::default(),
+			}
+		} else {
+			PricingConfig::default()
+		}
+	}
+}
+
+// Legacy OpenRouterConfig for backward compatibility
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OpenRouterConfig {
 	#[serde(default = "default_openrouter_model")]
@@ -545,42 +691,47 @@ impl McpConfig {
 	}
 }
 
+// Updated mode configurations using the new ModeConfig structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentModeConfig {
-	#[serde(default)]
-	pub openrouter: OpenRouterConfig,
+	#[serde(flatten)]
+	pub config: ModeConfig,
 	#[serde(default)]
 	pub mcp: McpConfig,
 	// Layer configuration
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
-	// Custom system prompt (optional - falls back to default if not provided)
-	pub system: Option<String>,
+	// Legacy openrouter field for backward compatibility
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub openrouter: Option<OpenRouterConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatModeConfig {
-	#[serde(default)]
-	pub openrouter: OpenRouterConfig,
+	#[serde(flatten)]
+	pub config: ModeConfig,
 	#[serde(default)]
 	pub mcp: McpConfig,
-	// Custom system prompt (optional - falls back to simple assistant prompt)
-	pub system: Option<String>,
+	// Legacy openrouter field for backward compatibility
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub openrouter: Option<OpenRouterConfig>,
 }
 
 impl Default for AgentModeConfig {
 	fn default() -> Self {
 		Self {
-			openrouter: OpenRouterConfig {
+			config: ModeConfig {
+				model: "openrouter:anthropic/claude-sonnet-4".to_string(),
 				enable_layers: true,
-				..OpenRouterConfig::default()
+				system: Some("You are an Octodev AI developer assistant with full access to development tools.".to_string()),
+				..ModeConfig::default()
 			},
 			mcp: McpConfig {
 				enabled: true,
 				..McpConfig::default()
 			},
 			layers: None,
-			system: None,
+			openrouter: None,
 		}
 	}
 }
@@ -588,15 +739,17 @@ impl Default for AgentModeConfig {
 impl Default for ChatModeConfig {
 	fn default() -> Self {
 		Self {
-			openrouter: OpenRouterConfig {
+			config: ModeConfig {
+				model: "openrouter:anthropic/claude-3.5-haiku".to_string(),
 				enable_layers: false,
-				..OpenRouterConfig::default()
+				system: Some("You are a helpful assistant.".to_string()),
+				..ModeConfig::default()
 			},
 			mcp: McpConfig {
 				enabled: false,  // Chat mode has MCP/tools disabled by default
 				..McpConfig::default()
 			},
-			system: Some("You are a helpful assistant.".to_string()),
+			openrouter: None,
 		}
 	}
 }
@@ -612,19 +765,28 @@ pub struct Config {
 	#[serde(default)]
 	pub graphrag: GraphRagConfig,
 	pub jina_api_key: Option<String>,
+	
+	// NEW: Providers configuration - centralized API keys
+	#[serde(default)]
+	pub providers: ProvidersConfig,
+	
 	// Mode-specific configurations
 	#[serde(default)]
 	pub agent: AgentModeConfig,
 	#[serde(default)]
 	pub chat: ChatModeConfig,
+	
+	// Global MCP configuration (fallback for modes)
+	#[serde(default)]
+	pub mcp: McpConfig,
+	
 	// Legacy fields for backward compatibility
 	#[serde(default)]
 	pub openrouter: OpenRouterConfig,
 	#[serde(default)]
-	pub mcp: McpConfig,
-	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 	pub system: Option<String>,
+	
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
 }
@@ -637,11 +799,12 @@ impl Default for Config {
 			jina: JinaConfig::default(),
 			graphrag: GraphRagConfig::default(),
 			jina_api_key: None,
+			providers: ProvidersConfig::default(),
 			agent: AgentModeConfig::default(),
 			chat: ChatModeConfig::default(),
-			// Legacy fields - use agent mode defaults for backward compatibility
-			openrouter: OpenRouterConfig::default(),
 			mcp: McpConfig::default(),
+			// Legacy fields - use defaults for backward compatibility
+			openrouter: OpenRouterConfig::default(),
 			layers: None,
 			system: None,
 			config_path: None,
@@ -650,39 +813,6 @@ impl Default for Config {
 }
 
 impl Config {
-	/// Get configuration for a specific mode with proper fallback logic
-	/// Flow: [mode.mcp] → [global.mcp] → default
-	pub fn get_mode_config(&self, mode: &str) -> (&OpenRouterConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&String>) {
-		match mode {
-			"agent" => {
-				// Start with agent mode config
-				let mut mcp_config = self.agent.mcp.clone();
-				
-				// If agent.mcp is "empty/default", fall back to global mcp
-				if self.is_mcp_config_empty(&mcp_config) {
-					mcp_config = self.mcp.clone();
-				}
-				
-				(&self.agent.openrouter, mcp_config, self.agent.layers.as_ref(), self.agent.system.as_ref())
-			},
-			"chat" => {
-				// Start with chat mode config
-				let mut mcp_config = self.chat.mcp.clone();
-				
-				// If chat.mcp is "empty/default", fall back to global mcp
-				if self.is_mcp_config_empty(&mcp_config) {
-					mcp_config = self.mcp.clone();
-				}
-				
-				(&self.chat.openrouter, mcp_config, None, self.chat.system.as_ref())
-			},
-			_ => {
-				// Default to legacy config for unknown modes
-				(&self.openrouter, self.mcp.clone(), self.layers.as_ref(), self.system.as_ref())
-			}
-		}
-	}
-
 	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
 	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
 		// If it's exactly the default McpConfig, consider it empty
@@ -704,17 +834,153 @@ impl Config {
 		true
 	}
 
+	/// Get configuration for a specific mode with proper fallback logic
+	/// Returns: (mode_config, mcp_config, layers, system_prompt)
+	pub fn get_mode_config(&self, mode: &str) -> (&ModeConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&String>) {
+		match mode {
+			"agent" => {
+				// Start with agent mode config
+				let mut mcp_config = self.agent.mcp.clone();
+				
+				// If agent.mcp is "empty/default", fall back to global mcp
+				if self.is_mcp_config_empty(&mcp_config) {
+					mcp_config = self.mcp.clone();
+				}
+				
+				(&self.agent.config, mcp_config, self.agent.layers.as_ref(), self.agent.config.system.as_ref())
+			},
+			"chat" => {
+				// Start with chat mode config
+				let mut mcp_config = self.chat.mcp.clone();
+				
+				// If chat.mcp is "empty/default", fall back to global mcp
+				if self.is_mcp_config_empty(&mcp_config) {
+					mcp_config = self.mcp.clone();
+				}
+				
+				(&self.chat.config, mcp_config, None, self.chat.config.system.as_ref())
+			},
+			_ => {
+				// Default to legacy config for unknown modes - convert to ModeConfig format
+				// This is tricky since openrouter has the old format, we need to create a temporary ModeConfig
+				// For now, let's just use agent mode as fallback
+				let mcp_config = self.mcp.clone();
+				
+				(&self.agent.config, mcp_config, self.layers.as_ref(), self.system.as_ref())
+			}
+		}
+	}
+
 	/// Get a merged config for a specific mode that can be used for API calls
+	/// This returns a Config with the mode-specific settings applied
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
-		let (or_config, mcp_config, layers_config, system_prompt) = self.get_mode_config(mode);
+		let (mode_config, mcp_config, layers_config, system_prompt) = self.get_mode_config(mode);
 		
 		let mut merged = self.clone();
-		merged.openrouter = or_config.clone();
+		
+		// Create an OpenRouterConfig from the ModeConfig for backward compatibility
+		merged.openrouter = OpenRouterConfig {
+			model: mode_config.get_full_model(),
+			api_key: mode_config.get_api_key(&self.providers),
+			pricing: mode_config.get_pricing(&self.providers),
+			enable_layers: mode_config.enable_layers,
+			log_level: mode_config.log_level.clone(),
+			mcp_response_warning_threshold: mode_config.mcp_response_warning_threshold,
+			max_request_tokens_threshold: mode_config.max_request_tokens_threshold,
+			enable_auto_truncation: mode_config.enable_auto_truncation,
+			cache_tokens_pct_threshold: mode_config.cache_tokens_pct_threshold,
+			cache_tokens_absolute_threshold: mode_config.cache_tokens_absolute_threshold,
+			cache_timeout_seconds: mode_config.cache_timeout_seconds,
+			enable_markdown_rendering: mode_config.enable_markdown_rendering,
+		};
+		
 		merged.mcp = mcp_config;
 		merged.layers = layers_config.cloned();
 		merged.system = system_prompt.cloned();
 		
 		merged
+	}
+
+	/// Helper method to get the mode config struct directly
+	pub fn get_mode_config_struct(&self, mode: &str) -> &ModeConfig {
+		match mode {
+			"agent" => &self.agent.config,
+			"chat" => &self.chat.config,
+			_ => &self.agent.config, // Default fallback
+		}
+	}
+
+	/// Migrate legacy configuration to new format
+	fn migrate_legacy_config(&mut self) {
+		// Migrate API keys from legacy openrouter config to providers
+		if let Some(api_key) = &self.openrouter.api_key {
+			if self.providers.openrouter.api_key.is_none() {
+				self.providers.openrouter.api_key = Some(api_key.clone());
+			}
+		}
+		
+		// Migrate global MCP configuration
+		self.mcp.migrate_from_legacy();
+		
+		// Migrate mode-specific MCP configurations
+		self.agent.mcp.migrate_from_legacy();
+		self.chat.mcp.migrate_from_legacy();
+		
+		// Migrate legacy mode configs that might have openrouter fields
+		if let Some(legacy_or) = &self.agent.openrouter {
+			// Migrate agent mode settings if they're not already set
+			if self.agent.config.model == default_full_model() {
+				// Use the legacy model format directly
+				self.agent.config.model = legacy_or.model.clone();
+			}
+			
+			// Migrate other settings
+			self.agent.config.enable_layers = legacy_or.enable_layers;
+			self.agent.config.log_level = legacy_or.log_level.clone();
+			self.agent.config.mcp_response_warning_threshold = legacy_or.mcp_response_warning_threshold;
+			self.agent.config.max_request_tokens_threshold = legacy_or.max_request_tokens_threshold;
+			self.agent.config.enable_auto_truncation = legacy_or.enable_auto_truncation;
+			self.agent.config.cache_tokens_pct_threshold = legacy_or.cache_tokens_pct_threshold;
+			self.agent.config.cache_tokens_absolute_threshold = legacy_or.cache_tokens_absolute_threshold;
+			self.agent.config.cache_timeout_seconds = legacy_or.cache_timeout_seconds;
+			self.agent.config.enable_markdown_rendering = legacy_or.enable_markdown_rendering;
+			
+			// Migrate API key
+			if let Some(api_key) = &legacy_or.api_key {
+				if self.providers.openrouter.api_key.is_none() {
+					self.providers.openrouter.api_key = Some(api_key.clone());
+				}
+			}
+		}
+		
+		if let Some(legacy_or) = &self.chat.openrouter {
+			// Similar migration for chat mode
+			if self.chat.config.model == "openrouter:anthropic/claude-3.5-haiku" {
+				// Use the legacy model format directly
+				self.chat.config.model = legacy_or.model.clone();
+			}
+			
+			// Migrate other settings
+			self.chat.config.enable_layers = legacy_or.enable_layers;
+			self.chat.config.log_level = legacy_or.log_level.clone();
+			self.chat.config.mcp_response_warning_threshold = legacy_or.mcp_response_warning_threshold;
+			self.chat.config.max_request_tokens_threshold = legacy_or.max_request_tokens_threshold;
+			self.chat.config.enable_auto_truncation = legacy_or.enable_auto_truncation;
+			self.chat.config.cache_tokens_pct_threshold = legacy_or.cache_tokens_pct_threshold;
+			self.chat.config.cache_tokens_absolute_threshold = legacy_or.cache_tokens_absolute_threshold;
+			self.chat.config.cache_timeout_seconds = legacy_or.cache_timeout_seconds;
+			self.chat.config.enable_markdown_rendering = legacy_or.enable_markdown_rendering;
+		}
+		
+		// Clear legacy fields after migration
+		self.agent.openrouter = None;
+		self.chat.openrouter = None;
+		
+		// If the config was migrated, suggest saving it
+		if self.openrouter.api_key.is_some() || !self.mcp.providers.is_empty() || !self.agent.mcp.providers.is_empty() || !self.chat.mcp.providers.is_empty() {
+			eprintln!("Notice: Your configuration has been migrated to the new format with separated providers and mode configs.");
+			eprintln!("Consider saving the configuration to persist the changes: octodev config save");
+		}
 	}
 
 	pub fn ensure_octodev_dir() -> Result<std::path::PathBuf> {
@@ -724,22 +990,6 @@ impl Config {
 			fs::create_dir_all(&octodev_dir)?;
 		}
 		Ok(octodev_dir)
-	}
-
-	/// Migrate legacy configuration to new format
-	fn migrate_legacy_config(&mut self) {
-		// Migrate global MCP configuration
-		self.mcp.migrate_from_legacy();
-		
-		// Migrate mode-specific MCP configurations
-		self.agent.mcp.migrate_from_legacy();
-		self.chat.mcp.migrate_from_legacy();
-		
-		// If the config was migrated, suggest saving it
-		if !self.mcp.providers.is_empty() || !self.agent.mcp.providers.is_empty() || !self.chat.mcp.providers.is_empty() {
-			eprintln!("Notice: Your configuration has been migrated from the legacy 'providers' format to the new 'servers' format.");
-			eprintln!("Consider saving the configuration to persist the changes.");
-		}
 	}
 
 	/// Validate the configuration for common issues  
@@ -946,6 +1196,22 @@ impl Config {
 			if let Ok(jina_key) = std::env::var("JINA_API_KEY") {
 				config.jina_api_key = Some(jina_key);
 			}
+			
+			// Handle provider API keys from environment variables
+			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
+				config.providers.openrouter.api_key = Some(openrouter_key);
+			}
+			if let Ok(openai_key) = std::env::var("OPENAI_API_KEY") {
+				config.providers.openai.api_key = Some(openai_key);
+			}
+			if let Ok(anthropic_key) = std::env::var("ANTHROPIC_API_KEY") {
+				config.providers.anthropic.api_key = Some(anthropic_key);
+			}
+			if let Ok(google_credentials) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+				config.providers.google.api_key = Some(google_credentials);
+			}
+			
+			// Legacy environment variable support for backward compatibility
 			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
 				config.openrouter.api_key = Some(openrouter_key);
 			}
@@ -964,6 +1230,14 @@ impl Config {
 
 			// Check environment variables for API keys
 			config.jina_api_key = std::env::var("JINA_API_KEY").ok();
+			
+			// Set provider API keys from environment variables
+			config.providers.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
+			config.providers.openai.api_key = std::env::var("OPENAI_API_KEY").ok();
+			config.providers.anthropic.api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+			config.providers.google.api_key = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
+			
+			// Legacy support
 			config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
 
 			Ok(config)

@@ -572,6 +572,7 @@ mod tests {
             session_file: None,
             current_non_cached_tokens: 0,
             current_total_tokens: 0,
+            last_cache_checkpoint_time: 0,
         }
     }
 

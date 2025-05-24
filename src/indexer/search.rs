@@ -19,7 +19,7 @@ pub fn render_code_blocks(blocks: &[CodeBlock]) {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_insert_with(Vec::new)
 			.push(block);
 	}
 
@@ -90,7 +90,7 @@ pub async fn expand_symbols(store: &Store, code_blocks: Vec<CodeBlock>) -> Resul
 	for block in &code_blocks {
 		for symbol in &block.symbols {
 			// Skip the type symbols (like "function_definition") and only include actual named symbols
-			if !symbol.contains("_") && symbol.chars().next().map_or(false, |c| c.is_alphabetic()) {
+			if !symbol.contains("_") && symbol.chars().next().is_some_and(|c| c.is_alphabetic()) {
 				symbol_refs.push(symbol.clone());
 			}
 		}

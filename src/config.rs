@@ -41,7 +41,7 @@ impl LogLevel {
 use std::cell::RefCell;
 
 thread_local! {
-	static CURRENT_CONFIG: RefCell<Option<Config>> = RefCell::new(None);
+	static CURRENT_CONFIG: RefCell<Option<Config>> = const { RefCell::new(None) };
 }
 
 /// Set the current config for the thread (to be used by logging macros)
@@ -57,11 +57,7 @@ where
 	F: FnOnce(&Config) -> R,
 {
 	CURRENT_CONFIG.with(|c| {
-		if let Some(ref config) = *c.borrow() {
-			Some(f(config))
-		} else {
-			None
-		}
+		(*c.borrow()).as_ref().map(f)
 	})
 }
 
@@ -240,23 +236,15 @@ impl Default for JinaConfig {
 }
 
 // Provider configurations - ONLY contain API keys and provider-specific settings
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProviderConfig {
 	pub api_key: Option<String>,
 	#[serde(default)]
 	pub pricing: PricingConfig,
 }
 
-impl Default for ProviderConfig {
-	fn default() -> Self {
-		Self {
-			api_key: None,
-			pricing: PricingConfig::default(),
-		}
-	}
-}
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProvidersConfig {
 	#[serde(default)]
 	pub openrouter: ProviderConfig,
@@ -272,18 +260,7 @@ pub struct ProvidersConfig {
 	pub cloudflare: ProviderConfig,
 }
 
-impl Default for ProvidersConfig {
-	fn default() -> Self {
-		Self {
-			openrouter: ProviderConfig::default(),
-			openai: ProviderConfig::default(),
-			anthropic: ProviderConfig::default(),
-			google: ProviderConfig::default(),
-			amazon: ProviderConfig::default(),
-			cloudflare: ProviderConfig::default(),
-		}
-	}
-}
+
 
 // Mode configuration - contains all behavior settings but NOT API keys
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -764,7 +741,7 @@ impl Default for ChatModeConfig {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
 	#[serde(default)]
 	pub embedding_provider: EmbeddingProvider,
@@ -801,26 +778,7 @@ pub struct Config {
 	config_path: Option<PathBuf>,
 }
 
-impl Default for Config {
-	fn default() -> Self {
-		Self {
-			embedding_provider: EmbeddingProvider::default(),
-			fastembed: FastEmbedConfig::default(),
-			jina: JinaConfig::default(),
-			graphrag: GraphRagConfig::default(),
-			jina_api_key: None,
-			providers: ProvidersConfig::default(),
-			agent: AgentModeConfig::default(),
-			chat: ChatModeConfig::default(),
-			mcp: McpConfig::default(),
-			// Legacy fields - use defaults for backward compatibility
-			openrouter: OpenRouterConfig::default(),
-			layers: None,
-			system: None,
-			config_path: None,
-		}
-	}
-}
+
 
 impl Config {
 	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
@@ -1241,22 +1199,41 @@ impl Config {
 			Ok(config)
 		} else {
 			// Create default config
-			let mut config = Config::default();
-			config.config_path = Some(config_path);
-
-			// Check environment variables for API keys
-			config.jina_api_key = std::env::var("JINA_API_KEY").ok();
-			
-			// Set provider API keys from environment variables
-			config.providers.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
-			config.providers.openai.api_key = std::env::var("OPENAI_API_KEY").ok();
-			config.providers.anthropic.api_key = std::env::var("ANTHROPIC_API_KEY").ok();
-			config.providers.google.api_key = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
-			config.providers.amazon.api_key = std::env::var("AWS_ACCESS_KEY_ID").ok();
-			config.providers.cloudflare.api_key = std::env::var("CLOUDFLARE_API_TOKEN").ok();
-			
-			// Legacy support
-			config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
+			let config = Config {
+				config_path: Some(config_path),
+				jina_api_key: std::env::var("JINA_API_KEY").ok(),
+				providers: ProvidersConfig {
+					openrouter: ProviderConfig {
+						api_key: std::env::var("OPENROUTER_API_KEY").ok(),
+						..Default::default()
+					},
+					openai: ProviderConfig {
+						api_key: std::env::var("OPENAI_API_KEY").ok(),
+						..Default::default()
+					},
+					anthropic: ProviderConfig {
+						api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
+						..Default::default()
+					},
+					google: ProviderConfig {
+						api_key: std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok(),
+						..Default::default()
+					},
+					amazon: ProviderConfig {
+						api_key: std::env::var("AWS_ACCESS_KEY_ID").ok(),
+						..Default::default()
+					},
+					cloudflare: ProviderConfig {
+						api_key: std::env::var("CLOUDFLARE_API_TOKEN").ok(),
+						..Default::default()
+					},
+				},
+				openrouter: OpenRouterConfig {
+					api_key: std::env::var("OPENROUTER_API_KEY").ok(),
+					..Default::default()
+				},
+				..Default::default()
+			};
 
 			Ok(config)
 		}

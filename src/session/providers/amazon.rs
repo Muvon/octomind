@@ -120,11 +120,6 @@ impl AmazonBedrockProvider {
 	}
 }
 
-// Constants
-const AWS_ACCESS_KEY_ENV: &str = "AWS_ACCESS_KEY_ID";
-const AWS_SECRET_KEY_ENV: &str = "AWS_SECRET_ACCESS_KEY";
-const AWS_REGION_ENV: &str = "AWS_REGION";
-
 /// Message format for Amazon Bedrock API (varies by model family)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BedrockMessage {

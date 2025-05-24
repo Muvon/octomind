@@ -117,10 +117,6 @@ impl CloudflareWorkersAiProvider {
 	}
 }
 
-// Constants
-const CLOUDFLARE_API_TOKEN_ENV: &str = "CLOUDFLARE_API_TOKEN";
-const CLOUDFLARE_ACCOUNT_ID_ENV: &str = "CLOUDFLARE_ACCOUNT_ID";
-
 /// Message format for Cloudflare Workers AI API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudflareMessage {

@@ -264,11 +264,8 @@ impl GraphOptimizer {
 
 					// Add relationships that include this node
 					for relationship in &full_graph.relationships {
-						if relationship.source == node_id || relationship.target == node_id {
-							if subgraph.nodes.iter().any(|n| n.id == relationship.source) &&
-							subgraph.nodes.iter().any(|n| n.id == relationship.target) {
-								subgraph.add_relationship(relationship.clone());
-							}
+						if (relationship.source == node_id || relationship.target == node_id) && subgraph.nodes.iter().any(|n| n.id == relationship.source) && subgraph.nodes.iter().any(|n| n.id == relationship.target) {
+							subgraph.add_relationship(relationship.clone());
 						}
 					}
 				} else {

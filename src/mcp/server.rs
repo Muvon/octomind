@@ -121,7 +121,7 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 	let tool_name = &call.tool_name;
 	let parameters = &call.parameters;
 
-	println!("Executing tool '{}' on server '{}' (mode: {:?})", tool_name, server.name, server.mode);
+	// Tool execution display is now handled in response.rs to avoid duplication
 
 	// Handle different server modes
 	match server.mode {

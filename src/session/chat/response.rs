@@ -329,102 +329,6 @@ pub async fn process_response(
 				let mut tool_tasks = Vec::new();
 
 				for tool_call in current_tool_calls.clone() {
-					// IMPROVED: Use the same format as tool results for consistency
-					let category = guess_tool_category(&tool_call.tool_name);
-					let title = format!(" {} | {} ",
-						tool_call.tool_name.bright_cyan(),
-						category.bright_blue()
-					);
-					let separator_length = 70.max(title.len() + 4);
-					let dashes = "─".repeat(separator_length - title.len());
-					let separator = format!("──{}{}──", title, dashes.dimmed());
-					println!("{}", separator);
-
-					// Show parameters only in info mode
-					if config.get_log_level().is_info_enabled() {
-						log_info!("Parameters:");
-						if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
-							if !params_obj.is_empty() {
-								// Find the longest key for column alignment (max 20 chars to prevent excessive spacing)
-								let max_key_length = params_obj.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
-
-								for (key, value) in params_obj.iter() {
-									let formatted_value = match value {
-										serde_json::Value::String(s) => {
-											if s.is_empty() {
-												"\"\"".bright_black().to_string()
-											} else if s.len() > 100 {
-												format!("\"{}...\"", &s[..97])
-											} else if s.contains('\n') {
-												// For multiline strings, show first line + indicator
-												let lines: Vec<&str> = s.lines().collect();
-												let first_line = lines.first().unwrap_or(&"");
-												if first_line.len() > 80 {
-													format!("\"{}...\" [+{} lines]", &first_line[..77], lines.len().saturating_sub(1))
-												} else if lines.len() > 1 {
-													format!("\"{}\" [+{} lines]", first_line, lines.len().saturating_sub(1))
-												} else {
-													format!("\"{}\"", first_line)
-												}
-											} else {
-												format!("\"{}\"", s)
-											}
-										},
-										serde_json::Value::Bool(b) => b.to_string(),
-										serde_json::Value::Number(n) => n.to_string(),
-										serde_json::Value::Array(arr) => {
-											if arr.is_empty() {
-												"[]".to_string()
-											} else if arr.len() > 3 {
-												format!("[{} items]", arr.len())
-											} else {
-												// Show small arrays inline
-												let items: Vec<String> = arr.iter().take(3).map(|item| {
-													match item {
-														serde_json::Value::String(s) => format!("\"{}\"", if s.len() > 20 { format!("{}...", &s[..17]) } else { s.clone() }),
-														_ => item.to_string()
-													}
-												}).collect();
-												format!("[{}]", items.join(", "))
-											}
-										},
-										serde_json::Value::Object(obj) => {
-											if obj.is_empty() {
-												"{}".to_string()
-											} else {
-												let obj_str = serde_json::to_string(value).unwrap_or_default();
-												if obj_str.len() > 100 {
-													format!("{{...}} ({} keys)", obj.len())
-												} else {
-													obj_str
-												}
-											}
-										},
-										serde_json::Value::Null => "null".bright_black().to_string(),
-									};
-
-									// Format with proper column alignment and indentation
-									log_info!("  {}: {}",
-										format!("{:width$}", key, width = max_key_length).bright_blue(),
-										formatted_value.white()
-									);
-								}
-							} else {
-								log_info!("  no parameters");
-							}
-						} else {
-							// Fallback for non-object parameters (arrays, primitives, etc.)
-							let params_str = serde_json::to_string(&tool_call.parameters).unwrap_or_default();
-							if params_str == "null" {
-								log_info!("  no parameters");
-							} else if params_str.len() > 100 {
-								log_info!("  params: {}...", &params_str[..97]);
-							} else {
-								log_info!("  params: {}", params_str);
-							}
-						}
-					}
-
 					// Increment tool call counter
 					chat_session.session.info.tool_calls += 1;
 
@@ -443,8 +347,9 @@ pub async fn process_response(
 					let _ = crate::session::logger::log_tool_call(&chat_session.session.info.name, &tool_name, &original_tool_id, &params_clone);
 
 					let tool_id_for_task = original_tool_id.clone();
+					let tool_call_clone = tool_call.clone(); // Clone for async move
 					let task = tokio::spawn(async move {
-						let mut call_with_id = tool_call.clone();
+						let mut call_with_id = tool_call_clone.clone();
 						// CRITICAL: Use the original tool_id, don't change it
 						call_with_id.tool_id = tool_id_for_task.clone();
 						crate::mcp::execute_tool_call(&call_with_id, &config_clone).await
@@ -453,7 +358,7 @@ pub async fn process_response(
 					tool_tasks.push((tool_name, task, original_tool_id));
 				}
 
-				// Collect all results
+				// Collect all results and display them cleanly
 				let mut tool_results = Vec::new();
 				let mut _has_error = false;
 				let mut total_tool_time_ms = 0;  // Track cumulative tool execution time
@@ -466,19 +371,154 @@ pub async fn process_response(
 						return Ok(());
 					}
 
+					// Store tool call info for consolidated display after execution
+					let tool_call_info = current_tool_calls.iter()
+						.find(|tc| tc.tool_id == tool_id)
+						.or_else(|| current_tool_calls.iter().find(|tc| tc.tool_name == tool_name));
+
+					// Store for display after execution
+					let stored_tool_call = tool_call_info.cloned();
+
 					match task.await {
 						Ok(result) => match result {
 							Ok((res, tool_time_ms)) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
 
-								// IMPROVED: Show completion info based on log level
-								if config.get_log_level().is_info_enabled() {
-									log_info!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
+								// Display the complete tool execution with consolidated info
+								if let Some(tool_call) = &stored_tool_call {
+									let category = guess_tool_category(&tool_call.tool_name);
+									let title = format!(" {} | {} ",
+										tool_call.tool_name.bright_cyan(),
+										category.bright_blue()
+									);
+									let separator_length = 70.max(title.len() + 4);
+									let dashes = "─".repeat(separator_length - title.len());
+									let separator = format!("──{}{}──", title, dashes.dimmed());
+									println!("{}", separator);
+
+									// Show parameters based on log level
+									if config.get_log_level().is_info_enabled() {
+										if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+											if !params_obj.is_empty() {
+												// Find the longest key for column alignment (max 20 chars to prevent excessive spacing)
+												let max_key_length = params_obj.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
+
+												for (key, value) in params_obj.iter() {
+													let formatted_value = match value {
+														serde_json::Value::String(s) => {
+															if s.is_empty() {
+																"\"\"".bright_black().to_string()
+															} else if s.len() > 100 {
+																format!("\"{}...\"", &s[..97])
+															} else if s.contains('\n') {
+																// For multiline strings, show first line + indicator
+																let lines: Vec<&str> = s.lines().collect();
+																let first_line = lines.first().unwrap_or(&"");
+																if first_line.len() > 80 {
+																	format!("\"{}...\" [+{} lines]", &first_line[..77], lines.len().saturating_sub(1))
+																} else if lines.len() > 1 {
+																	format!("\"{}\" [+{} lines]", first_line, lines.len().saturating_sub(1))
+																} else {
+																	format!("\"{}\"", first_line)
+																}
+															} else {
+																format!("\"{}\"", s)
+															}
+														},
+														serde_json::Value::Bool(b) => b.to_string(),
+														serde_json::Value::Number(n) => n.to_string(),
+														serde_json::Value::Array(arr) => {
+															if arr.is_empty() {
+																"[]".to_string()
+															} else if arr.len() > 3 {
+																format!("[{} items]", arr.len())
+															} else {
+																// Show small arrays inline
+																let items: Vec<String> = arr.iter().take(3).map(|item| {
+																	match item {
+																		serde_json::Value::String(s) => format!("\"{}\"", if s.len() > 20 { format!("{}...", &s[..17]) } else { s.clone() }),
+																		_ => item.to_string()
+																	}
+																}).collect();
+																format!("[{}]", items.join(", "))
+															}
+														},
+														serde_json::Value::Object(obj) => {
+															if obj.is_empty() {
+																"{}".to_string()
+															} else {
+																let obj_str = serde_json::to_string(value).unwrap_or_default();
+																if obj_str.len() > 100 {
+																	format!("{{...}} ({} keys)", obj.len())
+																} else {
+																	obj_str
+																}
+															}
+														},
+														serde_json::Value::Null => "null".bright_black().to_string(),
+													};
+
+													// Format with proper column alignment and indentation
+													println!("{}: {}",
+														format!("{:width$}", key, width = max_key_length).bright_blue(),
+														formatted_value.white()
+													);
+												}
+											}
+										} else {
+											// Fallback for non-object parameters (arrays, primitives, etc.)
+											let params_str = serde_json::to_string(&tool_call.parameters).unwrap_or_default();
+											if params_str != "null" {
+												if params_str.len() > 100 {
+													println!("params: {}...", &params_str[..97]);
+												} else {
+													println!("params: {}", params_str);
+												}
+											}
+										}
+									} else {
+										// In non-info mode, show just the main parameter compactly
+										if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+											// Try to find the main parameter (command, path, query, etc.)
+											let main_param = params_obj.get("command")
+												.or_else(|| params_obj.get("path"))
+												.or_else(|| params_obj.get("query"))
+												.or_else(|| params_obj.get("text"))
+												.or_else(|| params_obj.get("content"))
+												.or_else(|| params_obj.get("file"))
+												.or_else(|| params_obj.get("filename"))
+												.or_else(|| params_obj.iter().next().map(|(_, v)| v));
+
+											if let Some(value) = main_param {
+												if let Some(str_val) = value.as_str() {
+													if !str_val.is_empty() {
+														println!("{}: {}",
+															params_obj.iter().find(|(_, v)| *v == value).map(|(k, _)| k).unwrap_or(&"param".to_string()).bright_blue(),
+															if str_val.len() > 80 { format!("{}...", &str_val[..77]) } else { str_val.to_string() }
+														);
+													}
+												}
+											}
+										}
+									}
+
+									// Show the actual tool output
+									if let Some(output) = res.result.get("output") {
+										if let Some(output_str) = output.as_str() {
+											if !output_str.trim().is_empty() {
+												println!("{}", output_str);
+											}
+										}
+									}
+
+									// Show completion status with timing at the end
+									println!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
 								} else {
-									// Show minimal success indicator for non-info mode
-									println!("✓ {}ms", tool_time_ms);
+									// Fallback if tool_call info not found
+									println!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
 								}
+								println!("──────────────────");
 
 								// Log the tool response with session name
 								let _ = crate::session::logger::log_tool_result(&chat_session.session.info.name, &tool_id, &res.result);
@@ -488,13 +528,46 @@ pub async fn process_response(
 							},
 							Err(e) => {
 								_has_error = true;
-								// IMPROVED: Show error info based on log level
-								if config.get_log_level().is_info_enabled() {
-									log_info!("✗ Tool '{}' failed: {}", tool_name, e);
-								} else {
-									// Show minimal error indicator for non-info mode
-									println!("✗ {}", "failed".bright_red());
+
+								// Display error in consolidated format
+								if let Some(tool_call) = &stored_tool_call {
+									let category = guess_tool_category(&tool_call.tool_name);
+									let title = format!(" {} | {} ",
+										tool_call.tool_name.bright_cyan(),
+										category.bright_blue()
+									);
+									let separator_length = 70.max(title.len() + 4);
+									let dashes = "─".repeat(separator_length - title.len());
+									let separator = format!("──{}{}──", title, dashes.dimmed());
+									println!("{}", separator);
+
+									// Show parameters in non-info mode (compact)
+									if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+										// Try to find the main parameter (command, path, query, etc.)
+										let main_param = params_obj.get("command")
+											.or_else(|| params_obj.get("path"))
+											.or_else(|| params_obj.get("query"))
+											.or_else(|| params_obj.get("text"))
+											.or_else(|| params_obj.get("content"))
+											.or_else(|| params_obj.get("file"))
+											.or_else(|| params_obj.get("filename"))
+											.or_else(|| params_obj.iter().next().map(|(_, v)| v));
+
+										if let Some(value) = main_param {
+											if let Some(str_val) = value.as_str() {
+												if !str_val.is_empty() {
+													println!("{}: {}",
+														params_obj.iter().find(|(_, v)| *v == value).map(|(k, _)| k).unwrap_or(&"param".to_string()).bright_blue(),
+														if str_val.len() > 80 { format!("{}...", &str_val[..77]) } else { str_val.to_string() }
+													);
+												}
+											}
+										}
+									}
 								}
+
+								// Show error status
+								println!("✗ Tool '{}' failed: {}", tool_name, e);
 
 								// Track errors for this tool
 								let loop_detected = error_tracker.record_error(&tool_name);
@@ -540,13 +613,46 @@ pub async fn process_response(
 						},
 						Err(e) => {
 							_has_error = true;
-							// IMPROVED: Show task error info based on log level
-							if config.get_log_level().is_info_enabled() {
-								log_info!("✗ Task error for '{}': {}", tool_name, e);
-							} else {
-								// Show minimal error indicator for non-info mode
-								println!("✗ {}", "task error".bright_red());
+
+							// Display task error in consolidated format
+							if let Some(tool_call) = &stored_tool_call {
+								let category = guess_tool_category(&tool_call.tool_name);
+								let title = format!(" {} | {} ",
+									tool_call.tool_name.bright_cyan(),
+									category.bright_blue()
+								);
+								let separator_length = 70.max(title.len() + 4);
+								let dashes = "─".repeat(separator_length - title.len());
+								let separator = format!("──{}{}──", title, dashes.dimmed());
+								println!("{}", separator);
+
+								// Show parameters in non-info mode (compact)
+								if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+									// Try to find the main parameter (command, path, query, etc.)
+									let main_param = params_obj.get("command")
+										.or_else(|| params_obj.get("path"))
+										.or_else(|| params_obj.get("query"))
+										.or_else(|| params_obj.get("text"))
+										.or_else(|| params_obj.get("content"))
+										.or_else(|| params_obj.get("file"))
+										.or_else(|| params_obj.get("filename"))
+										.or_else(|| params_obj.iter().next().map(|(_, v)| v));
+
+									if let Some(value) = main_param {
+										if let Some(str_val) = value.as_str() {
+											if !str_val.is_empty() {
+												println!("{}: {}",
+													params_obj.iter().find(|(_, v)| *v == value).map(|(k, _)| k).unwrap_or(&"param".to_string()).bright_blue(),
+													if str_val.len() > 80 { format!("{}...", &str_val[..77]) } else { str_val.to_string() }
+												);
+											}
+										}
+									}
+								}
 							}
+
+							// Show task error status
+							println!("✗ Task error for '{}': {}", tool_name, e);
 
 							// ALWAYS add error result for task failures too
 							let error_result = crate::mcp::McpToolResult {
@@ -563,45 +669,8 @@ pub async fn process_response(
 					}
 				}
 
-				// Modify process_response to check for the operation_cancelled flag immediately after extracting tool results
-				// Display results
+				// Display results - now handled inline during tool execution for consolidated output
 				if !tool_results.is_empty() {
-					let formatted = crate::mcp::format_tool_results(&tool_results);
-					println!("{}", formatted);
-
-					// Show detailed output in info mode
-					if config.get_log_level().is_info_enabled() {
-						log_info!("Tool Output:");
-						for tool_result in &tool_results {
-							let output_content = if let Some(output) = tool_result.result.get("output") {
-								// Extract the "output" field which contains the actual tool result
-								if let Some(output_str) = output.as_str() {
-									output_str.to_string()
-								} else {
-									// If output is not a string, serialize it
-									serde_json::to_string(output).unwrap_or_default()
-								}
-							} else if tool_result.result.is_string() {
-								// If result is already a string, use it directly
-								tool_result.result.as_str().unwrap_or("").to_string()
-							} else {
-								// Fallback: look for common fields or use the whole result
-								if let Some(error) = tool_result.result.get("error") {
-									format!("Error: {}", error)
-								} else {
-									// Last resort: serialize the whole result
-									serde_json::to_string(&tool_result.result).unwrap_or_default()
-								}
-							};
-
-							// Show condensed output for info mode (prevent overwhelming logs)
-							if output_content.len() > 500 {
-								log_info!("  {}: {}...", tool_result.tool_name, &output_content[..497]);
-							} else {
-								log_info!("  {}: {}", tool_result.tool_name, output_content);
-							}
-						}
-					}
 
 					// Add the accumulated tool execution time to the session total
 					chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
@@ -680,9 +749,9 @@ pub async fn process_response(
 						// and may push the context over the token limit
 						let tool_truncate_cancelled = Arc::new(AtomicBool::new(false));
 						if let Err(e) = super::context_truncation::check_and_truncate_context(
-							chat_session, 
-							config, 
-							role, 
+							chat_session,
+							config,
+							role,
 							tool_truncate_cancelled.clone()
 						).await {
 							log_info!("Warning: Error during tool result truncation check: {}", e);
@@ -697,9 +766,9 @@ pub async fn process_response(
 					// multiple large tool results
 					let final_truncate_cancelled = Arc::new(AtomicBool::new(false));
 					if let Err(e) = super::context_truncation::check_and_truncate_context(
-						chat_session, 
-						config, 
-						role, 
+						chat_session,
+						config,
+						role,
 						final_truncate_cancelled.clone()
 					).await {
 						log_info!("Warning: Error during final truncation check before API call: {}", e);

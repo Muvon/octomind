@@ -188,7 +188,7 @@ impl AiProvider for OpenRouterProvider {
 			}
 		};
 
-		// Handle error responses
+		// Enhanced error handling with detailed logging
 		if !status.is_success() {
 			let mut error_details = Vec::new();
 			error_details.push(format!("HTTP {}", status));
@@ -204,27 +204,51 @@ impl AiProvider for OpenRouterProvider {
 				if let Some(type_) = error_obj.get("type").and_then(|t| t.as_str()) {
 					error_details.push(format!("Type: {}", type_));
 				}
+				
+				// Extract metadata for better debugging
+				if let Some(metadata) = error_obj.get("metadata") {
+					if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str()) {
+						error_details.push(format!("Provider: {}", provider_name));
+					}
+					if let Some(provider_error) = metadata.get("provider_error").and_then(|p| p.as_str()) {
+						error_details.push(format!("Provider error: {}", provider_error));
+					}
+				}
 			}
 
-			if error_details.len() <= 2 {
-				error_details.push(format!("Raw response: {}", response_text));
-			}
+			// Always include raw response for debugging when there's an HTTP error
+			error_details.push(format!("Raw response: {}", response_text));
 
 			let full_error = error_details.join(" | ");
+			
+			// Log detailed error information using the log_error! macro
+			crate::log_error!("OpenRouter API HTTP Error Details:");
+			crate::log_error!("  Status: {}", status);
+			crate::log_error!("  Model: {}", model);
+			crate::log_error!("  Temperature: {}", temperature);
+			crate::log_error!("  Request size: {} chars", serde_json::to_string(&request_body).map_or(0, |s| s.len()));
+			crate::log_error!("  Response: {}", response_text);
+			
+			// If in debug mode, also log the full request
+			if config.get_log_level().is_debug_enabled() {
+				if let Ok(request_str) = serde_json::to_string_pretty(&request_body) {
+					crate::log_error!("  Request body: {}", request_str);
+				}
+			}
+			
 			return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
 		}
 
-		// Check for errors in response body even with HTTP 200
+		// Enhanced error handling for HTTP 200 responses with errors
 		if let Some(error_obj) = response_json.get("error") {
 			let mut error_details = Vec::new();
 			error_details.push("HTTP 200 but error in response".to_string());
 			error_details.push(format!("Model: {}", model));
 
-			if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
-				error_details.push(format!("Message: {}", msg));
-			}
+			let error_message = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+			error_details.push(format!("Message: {}", error_message));
 
-			// Check for provider error details
+			// Extract provider information for better debugging
 			if let Some(metadata) = error_obj.get("metadata") {
 				if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str()) {
 					error_details.push(format!("Provider: {}", provider_name));
@@ -235,6 +259,25 @@ impl AiProvider for OpenRouterProvider {
 			}
 
 			let full_error = error_details.join(" | ");
+			
+			// Log comprehensive error information using the log_error! macro
+			crate::log_error!("OpenRouter API Response Error Details:");
+			crate::log_error!("  Model: {}", model);
+			crate::log_error!("  Temperature: {}", temperature);
+			crate::log_error!("  Error message: {}", error_message);
+			crate::log_error!("  Request size: {} chars", serde_json::to_string(&request_body).map_or(0, |s| s.len()));
+			crate::log_error!("  Full response: {}", response_text);
+			
+			// If in debug mode, log the full request and parsed error object
+			if config.get_log_level().is_debug_enabled() {
+				if let Ok(request_str) = serde_json::to_string_pretty(&request_body) {
+					crate::log_error!("  Request body: {}", request_str);
+				}
+				if let Ok(error_str) = serde_json::to_string_pretty(&error_obj) {
+					crate::log_error!("  Error object: {}", error_str);
+				}
+			}
+			
 			return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
 		}
 

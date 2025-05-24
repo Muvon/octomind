@@ -113,6 +113,20 @@ macro_rules! log_debug {
 	};
 }
 
+/// Error logging macro with automatic bright red coloring
+/// Always visible regardless of log level (errors should always be shown)
+#[macro_export]
+macro_rules! log_error {
+	($fmt:expr) => {{
+		use colored::Colorize;
+		eprintln!("{}", $fmt.bright_red());
+	}};
+	($fmt:expr, $($arg:expr),*) => {{
+		use colored::Colorize;
+		eprintln!("{}", format!($fmt, $($arg),*).bright_red());
+	}};
+}
+
 /// Conditional logging - prints different messages based on log level
 #[macro_export]
 macro_rules! log_conditional {
@@ -1015,13 +1029,36 @@ impl Config {
 	}
 	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
 	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
-		// If servers or allowed_tools are customized, it's not empty
-		if !mcp_config.servers.is_empty() || !mcp_config.allowed_tools.is_empty() {
+		// A config is considered "empty" if:
+		// 1. It has no servers configured, AND
+		// 2. It has no allowed_tools configured, AND  
+		// 3. Either it's disabled OR it has enabled=true but no actual server configurations
+		
+		// If allowed_tools are customized, it's not empty
+		if !mcp_config.allowed_tools.is_empty() {
 			return false;
 		}
 
-		// If there are no servers and no allowed_tools, it's effectively empty
-		// regardless of the enabled flag - this should inherit from global
+		// If servers are configured with actual server definitions, it's not empty
+		// Check if any server has meaningful configuration beyond just being enabled
+		for server_config in mcp_config.servers.values() {
+			// If the server has specific tool filtering, URL, command, or other config, it's not empty
+			if !server_config.tools.is_empty() || 
+			   server_config.url.is_some() || 
+			   server_config.command.is_some() ||
+			   server_config.timeout_seconds != 30 { // non-default timeout
+				return false;
+			}
+		}
+
+		// If servers list is empty OR only contains default server stubs, consider it empty
+		// This handles the case where [role.mcp.servers] exists but is empty or contains only defaults
+		if mcp_config.servers.is_empty() {
+			return true;
+		}
+
+		// If we get here, the config has servers but they're all using default configurations
+		// This is the key fix: treat minimal server configs as "empty" for inheritance
 		true
 	}
 

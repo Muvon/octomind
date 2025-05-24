@@ -1098,9 +1098,29 @@ impl Config {
 					));
 				}
 
-				// Validate model format
-				if layer.model.trim().is_empty() {
-					return Err(anyhow!("Layer '{}' model cannot be empty", layer.name));
+				// Validate model format (only if specified - model is now optional)
+				if let Some(ref model) = layer.model {
+					if model.trim().is_empty() {
+						return Err(anyhow!("Layer '{}' model cannot be empty", layer.name));
+					}
+					
+					// Validate model format using provider factory if specified
+					if !model.contains(':') {
+						return Err(anyhow!(
+							"Layer '{}' model '{}' must use 'provider:model' format (e.g., 'openrouter:anthropic/claude-3.5-sonnet')",
+							layer.name, model
+						));
+					}
+				}
+				
+				// Validate MCP configuration if enabled
+				if layer.mcp.enabled {
+					if layer.mcp.servers.is_empty() {
+						return Err(anyhow!(
+							"Layer '{}' has MCP enabled but no servers specified",
+							layer.name
+						));
+					}
 				}
 			}
 		}

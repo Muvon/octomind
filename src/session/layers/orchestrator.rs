@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::session::Session;
-use super::layer_trait::Layer;
-use super::types::*;
+use super::layer_trait::{Layer, LayerConfig};
+use super::generic_layer::GenericLayer;
 use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,64 +13,60 @@ pub struct LayeredOrchestrator {
 }
 
 impl LayeredOrchestrator {
-	// Create orchestrator from config
-	pub fn from_config(config: &Config) -> Self {
+	// Create orchestrator from config using the new flexible system
+	pub fn from_config(config: &Config, role: &str) -> Self {
+		// Get role-specific configuration
+		let (mode_config, _, layers_config, _) = config.get_mode_config(role);
+
 		// First check if layers are enabled at all
-		if !config.openrouter.enable_layers {
+		if !mode_config.enable_layers {
 			// Return empty orchestrator when layers are disabled
 			return Self { layers: Vec::new() };
 		}
 
-		// Check if specific layer configs are in config.toml
-		if let Some(layer_configs) = &config.layers {
-			// Create layers from config
-			let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
-
-			// Load each layer if it exists and is enabled in config
-			for layer_config in layer_configs {
-				if layer_config.enabled {
-					if layer_config.name.as_str() == "query_processor" {
-						layers.push(Box::new(QueryProcessorLayer::new(layer_config.clone())));
-					} else if layer_config.name.as_str() == "context_generator" {
-						layers.push(Box::new(ContextGeneratorLayer::new(layer_config.clone())));
-					} else if layer_config.name.as_str() == "reducer" {
-						layers.push(Box::new(ReducerLayer::new(layer_config.clone())));
-					} else if layer_config.name.as_str() == "developer" {
-						// Skip developer layer - it's been removed from the system
-						println!("{}", "The developer layer has been removed. The main session will handle development tasks directly.".yellow());
-					} else {
-						// Unknown layer type
-						println!("{} {}", "Unknown layer type:".yellow(), layer_config.name);
-					}
-				}
-			}
-
-			// If no layers were configured or enabled, fall back to defaults
-			if layers.is_empty() {
-				return Self::create_default_layers(config);
-			}
-
-			Self { layers }
-		} else {
-			// No layer config section, use defaults
-			Self::create_default_layers(config)
-		}
-	}
-
-	// Create default layers when no config is provided
-	fn create_default_layers(_config: &Config) -> Self {
-		// Create 2-layer architecture (Query Processor and Context Generator)
+		// Create layers from configuration
 		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
 
-		// Query Processor - use the default model from its implementation
-		let query_config = QueryProcessorLayer::default_config("query_processor");
-		layers.push(Box::new(QueryProcessorLayer::new(query_config)));
+		// Check if specific layer configs are provided in the role configuration
+		if let Some(layer_configs) = layers_config {
+			// Create layers from role-specific config
+			for layer_config in layer_configs {
+				if layer_config.enabled {
+					layers.push(Box::new(GenericLayer::new(layer_config.clone())));
+				}
+			}
+		} else if let Some(global_layer_configs) = &config.layers {
+			// Fall back to global layer configurations if role-specific config is not available
+			for layer_config in global_layer_configs {
+				if layer_config.enabled {
+					layers.push(Box::new(GenericLayer::new(layer_config.clone())));
+				}
+			}
+		} else {
+			// No layer config section found, use default system layers
+			layers = Self::create_default_system_layers();
+		}
 
-		// Context Generator - use the default model from its implementation
-		let context_config = ContextGeneratorLayer::default_config("context_generator");
-		layers.push(Box::new(ContextGeneratorLayer::new(context_config)));
+		// If no layers were configured or enabled, fall back to defaults
+		if layers.is_empty() {
+			layers = Self::create_default_system_layers();
+		}
 
 		Self { layers }
+	}
+
+	// Create default system layers using the new generic layer approach
+	fn create_default_system_layers() -> Vec<Box<dyn Layer + Send + Sync>> {
+		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
+
+		// Create default system layers using LayerConfig::create_system_layer
+		let query_config = LayerConfig::create_system_layer("query_processor");
+		layers.push(Box::new(GenericLayer::new(query_config)));
+
+		let context_config = LayerConfig::create_system_layer("context_generator");
+		layers.push(Box::new(GenericLayer::new(context_config)));
+
+		layers
 	}
 
 	// Process user input through the layer architecture
@@ -119,14 +115,14 @@ impl LayeredOrchestrator {
 
 			// Debug info for model and settings
 			println!("{} {} (temp: {})", "Using model:".bright_magenta(),
-				layer.config().model, layer.config().temperature);
+				layer.config().get_effective_model(&session.info.model), layer.config().temperature);
 
-			if layer.config().enable_tools {
-				if layer.config().allowed_tools.is_empty() {
+			if layer.config().mcp.enabled {
+				if layer.config().mcp.allowed_tools.is_empty() {
 					println!("{}", "All tools enabled for this layer".bright_magenta());
 				} else {
 					println!("{} {}", "Tools enabled:".bright_magenta(),
-						layer.config().allowed_tools.join(", "));
+						layer.config().mcp.allowed_tools.join(", "));
 				}
 			}
 
@@ -153,7 +149,7 @@ impl LayeredOrchestrator {
 					// Add the stats to the session
 					session.add_layer_stats(
 						layer_name,
-						&layer.config().model,
+						&layer.config().get_effective_model(&session.info.model),
 						usage.prompt_tokens,
 						usage.completion_tokens,
 						cost
@@ -177,7 +173,7 @@ impl LayeredOrchestrator {
 						// Add the stats to the session
 						session.add_layer_stats(
 							layer_name,
-							&layer.config().model,
+							&layer.config().get_effective_model(&session.info.model),
 							usage.prompt_tokens,
 							usage.completion_tokens,
 							cost

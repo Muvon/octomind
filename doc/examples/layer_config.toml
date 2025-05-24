@@ -31,11 +31,11 @@ enabled = true
 providers = ["core"]
 servers = []
 
-# Layer configurations 
+# Layer configurations
 [[layers]]
 name = "query_processor"
 enabled = true
-model = "openai/gpt-4.1-nano"
+model = "openai/gpt-4.1-mini"
 system_prompt = "Custom system prompt for query processing layer. You analyze the user's request and clarify it.%{CONTEXT}"
 temperature = 0.1
 enable_tools = false

@@ -19,12 +19,16 @@ impl QueryProcessorLayer {
 		LayerConfig {
 			name: name.to_string(),
 			enabled: true,
-			model: "openrouter:openai/gpt-4.1-nano".to_string(),
-			system_prompt: crate::session::helper_functions::get_raw_system_prompt("query_processor"),
+			model: Some("openrouter:openai/gpt-4.1-mini".to_string()),
+			system_prompt: None, // Use built-in prompt
 			temperature: 0.2,
-			enable_tools: false, // No tools for QueryProcessor
-			allowed_tools: Vec::new(),
 			input_mode: crate::session::layers::layer_trait::InputMode::Last,
+			mcp: crate::session::layers::layer_trait::LayerMcpConfig {
+				enabled: false,
+				servers: vec![],
+				allowed_tools: vec![]
+			},
+			parameters: std::collections::HashMap::new(),
 		}
 	}
 }

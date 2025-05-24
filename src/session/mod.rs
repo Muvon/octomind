@@ -17,7 +17,7 @@ pub mod cache;      // Comprehensive caching system
 pub use openrouter::*;
 // New provider system exports
 pub use providers::{ProviderFactory, AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-pub use layers::{Layer, LayerConfig, LayerResult, InputMode, process_with_layers};
+pub use layers::{Layer, LayerConfig, LayerResult, InputMode, LayerMcpConfig, process_with_layers};
 pub use project_context::ProjectContext;
 pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export token counting functions
 pub use model_utils::model_supports_caching;

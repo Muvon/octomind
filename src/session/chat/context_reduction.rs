@@ -113,7 +113,7 @@ pub async fn perform_context_reduction(
 
 	// Choose the model to use for reduction from the reducer layer's default config
 	let reducer_config = crate::session::layers::types::ReducerLayer::default_config("reducer");
-	let reducer_model = reducer_config.model;
+	let reducer_model = reducer_config.get_effective_model(&chat_session.model);
 
 	// Call the model
 	// Always include the usage parameter to ensure we get cost data

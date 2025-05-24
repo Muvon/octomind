@@ -14,6 +14,7 @@ pub async fn process_layered_response(
 	input: &str,
 	chat_session: &mut ChatSession,
 	config: &Config,
+	role: &str,
 	operation_cancelled: Arc<AtomicBool>
 ) -> Result<String> {
 	// Debug output
@@ -63,6 +64,7 @@ pub async fn process_layered_response(
 		input,
 		&mut chat_session.session,
 		config,
+		role,
 		operation_cancelled.clone()
 	).await {
 		Ok(output) => output,

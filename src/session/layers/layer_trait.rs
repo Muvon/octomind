@@ -52,17 +52,156 @@ impl FromStr for InputMode {
 	}
 }
 
-// Common configuration properties for all layers
+// Configuration for layer-specific MCP settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerMcpConfig {
+	#[serde(default)]
+	pub enabled: bool,
+	#[serde(default)]
+	pub servers: Vec<String>, // Names of MCP servers to use for this layer
+	#[serde(default)]
+	pub allowed_tools: Vec<String>, // Specific tools allowed (empty = all tools from enabled servers)
+}
+
+impl Default for LayerMcpConfig {
+	fn default() -> Self {
+		Self {
+			enabled: false,
+			servers: Vec::new(),
+			allowed_tools: Vec::new(),
+		}
+	}
+}
+
+// Common configuration properties for all layers - extended for flexibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerConfig {
 	pub name: String,
+	#[serde(default = "default_enabled")]
 	pub enabled: bool,
-	pub model: String,
-	pub system_prompt: String,
+	// Model is now optional - falls back to session model if not specified
+	pub model: Option<String>,
+	// System prompt is optional - uses built-in prompts for known layer types
+	pub system_prompt: Option<String>,
+	#[serde(default = "default_temperature")]
 	pub temperature: f32,
-	pub enable_tools: bool,
-	pub allowed_tools: Vec<String>, // Empty means all tools are allowed
+	#[serde(default)]
 	pub input_mode: InputMode,
+	// MCP configuration for this layer
+	#[serde(default)]
+	pub mcp: LayerMcpConfig,
+	// Custom parameters that can be used in system prompts via placeholders
+	#[serde(default)]
+	pub parameters: std::collections::HashMap<String, serde_json::Value>,
+}
+
+fn default_enabled() -> bool {
+	true
+}
+
+fn default_temperature() -> f32 {
+	0.2
+}
+
+impl LayerConfig {
+	/// Get the effective model for this layer (fallback to session model if not specified)
+	pub fn get_effective_model(&self, session_model: &str) -> String {
+		self.model.clone().unwrap_or_else(|| session_model.to_string())
+	}
+	
+	/// Get the effective system prompt for this layer
+	/// Uses custom prompt if provided, otherwise uses built-in prompt for known layer types
+	pub fn get_effective_system_prompt(&self) -> String {
+		if let Some(ref custom_prompt) = self.system_prompt {
+			// Process placeholders in custom system prompt
+			self.process_prompt_placeholders(custom_prompt)
+		} else {
+			// Use built-in prompt for known layer types
+			match self.name.as_str() {
+				"query_processor" => crate::session::helper_functions::get_raw_system_prompt("query_processor"),
+				"context_generator" => crate::session::helper_functions::get_raw_system_prompt("context_generator"),
+				"reducer" => crate::session::helper_functions::get_raw_system_prompt("reducer"),
+				_ => {
+					// For unknown layer types, use a generic prompt
+					format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name)
+				}
+			}
+		}
+	}
+	
+	/// Process placeholders in system prompt using layer parameters
+	fn process_prompt_placeholders(&self, prompt: &str) -> String {
+		let mut processed = prompt.to_string();
+		
+		// Replace standard placeholders
+		if let Ok(project_dir) = std::env::current_dir() {
+			processed = crate::session::process_placeholders(&processed, &project_dir);
+		}
+		
+		// Replace custom parameter placeholders
+		for (key, value) in &self.parameters {
+			let placeholder = format!("%{{{}}}", key);
+			let replacement = match value {
+				serde_json::Value::String(s) => s.clone(),
+				serde_json::Value::Number(n) => n.to_string(),
+				serde_json::Value::Bool(b) => b.to_string(),
+				_ => serde_json::to_string(value).unwrap_or_default(),
+			};
+			processed = processed.replace(&placeholder, &replacement);
+		}
+		
+		processed
+	}
+	
+	/// Create a default configuration for known system layer types
+	pub fn create_system_layer(layer_type: &str) -> Self {
+		match layer_type {
+			"query_processor" => Self {
+				name: layer_type.to_string(),
+				enabled: true,
+				model: Some("openrouter:openai/gpt-4.1-nano".to_string()),
+				system_prompt: None, // Use built-in prompt
+				temperature: 0.2,
+				input_mode: InputMode::Last,
+				mcp: LayerMcpConfig { enabled: false, servers: vec![], allowed_tools: vec![] },
+				parameters: std::collections::HashMap::new(),
+			},
+			"context_generator" => Self {
+				name: layer_type.to_string(),
+				enabled: true,
+				model: Some("openrouter:google/gemini-2.5-flash-preview".to_string()),
+				system_prompt: None, // Use built-in prompt
+				temperature: 0.2,
+				input_mode: InputMode::Last,
+				mcp: LayerMcpConfig { 
+					enabled: true, 
+					servers: vec!["core".to_string()], 
+					allowed_tools: vec!["text_editor".to_string(), "semantic_code".to_string()]
+				},
+				parameters: std::collections::HashMap::new(),
+			},
+			"reducer" => Self {
+				name: layer_type.to_string(),
+				enabled: true,
+				model: Some("openrouter:openai/o4-mini".to_string()),
+				system_prompt: None, // Use built-in prompt
+				temperature: 0.2,
+				input_mode: InputMode::All,
+				mcp: LayerMcpConfig { enabled: false, servers: vec![], allowed_tools: vec![] },
+				parameters: std::collections::HashMap::new(),
+			},
+			_ => Self {
+				name: layer_type.to_string(),
+				enabled: true,
+				model: None, // Use session model
+				system_prompt: None, // Use generic prompt
+				temperature: 0.2,
+				input_mode: InputMode::Last,
+				mcp: LayerMcpConfig::default(),
+				parameters: std::collections::HashMap::new(),
+			},
+		}
+	}
 }
 
 // Trait that all layers must implement

@@ -364,6 +364,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				&input,
 				&mut chat_session,
 				&current_config,
+				&session_args.role,
 				process_cancelled.clone()
 			).await;
 

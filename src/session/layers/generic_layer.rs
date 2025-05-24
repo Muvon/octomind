@@ -7,27 +7,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use async_trait::async_trait;
 use colored::Colorize;
 
-// Base processor that handles common functionality for all layers
-pub struct LayerProcessor {
-	pub config: LayerConfig,
+/// Generic layer implementation that can work with any layer configuration
+/// This replaces the need for specific layer type implementations
+pub struct GenericLayer {
+	config: LayerConfig,
 }
 
-impl LayerProcessor {
+impl GenericLayer {
 	pub fn new(config: LayerConfig) -> Self {
 		Self { config }
 	}
 
-	// Create messages for the OpenRouter API based on the layer
-	pub fn create_messages(
+	/// Create messages for the API based on the layer configuration
+	fn create_messages(
 		&self,
 		input: &str,
 		session: &Session,
+		session_model: &str,
 	) -> Vec<Message> {
 		let mut messages = Vec::new();
 
-		// Get the effective model and system prompt for this layer
-		let effective_model = self.config.get_effective_model(&session.info.model);
+		// Get the effective system prompt for this layer
 		let system_prompt = self.config.get_effective_system_prompt();
+
+		// Get the effective model for this layer
+		let effective_model = self.config.get_effective_model(session_model);
 
 		// Only mark system messages as cached if the model supports it
 		let should_cache = crate::session::model_utils::model_supports_caching(&effective_model);
@@ -39,10 +43,10 @@ impl LayerProcessor {
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs(),
-			cached: should_cache, // Only cache if model supports it
-			tool_call_id: None, // No tool_call_id for system messages
-			name: None, // No name for system messages
-			tool_calls: None, // No tool_calls for system messages
+			cached: should_cache,
+			tool_call_id: None,
+			name: None,
+			tool_calls: None,
 		});
 
 		// Prepare input based on input_mode using the trait's prepare_input method
@@ -57,18 +61,62 @@ impl LayerProcessor {
 				.unwrap_or_default()
 				.as_secs(),
 			cached: false,
-			tool_call_id: None, // No tool_call_id for user messages
-			name: None, // No name for user messages
-			tool_calls: None, // No tool_calls for user messages
+			tool_call_id: None,
+			name: None,
+			tool_calls: None,
 		});
 
 		messages
 	}
+
+	/// Execute MCP tool calls for this layer using its own MCP configuration
+	async fn execute_layer_tool_calls(
+		&self,
+		tool_calls: &[crate::mcp::McpToolCall],
+		config: &Config,
+	) -> Result<Vec<crate::mcp::McpToolResult>> {
+		let mut results = Vec::new();
+
+		for tool_call in tool_calls {
+			println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
+
+			// Check if this tool is allowed for this layer
+			if !self.config.mcp.allowed_tools.is_empty() &&
+				!self.config.mcp.allowed_tools.contains(&tool_call.tool_name) {
+				println!("{} {} {}", "Tool".red(), tool_call.tool_name, "not allowed for this layer".red());
+				continue;
+			}
+
+			// Create a layer-specific config that only includes this layer's MCP servers
+			let mut layer_config = config.clone();
+
+			// Filter MCP servers to only include those configured for this layer
+			if !self.config.mcp.servers.is_empty() {
+				layer_config.mcp.servers.retain(|server| {
+					self.config.mcp.servers.iter().any(|layer_server| {
+						// Match by server name or type
+						server.name == *layer_server ||
+						(layer_server == "core" && (server.name == "developer" || server.name == "filesystem"))
+					})
+				});
+			}
+
+			// Execute the tool call using the layer-specific configuration
+			match crate::mcp::execute_layer_tool_call(tool_call, &layer_config, &self.config).await {
+				Ok(result) => results.push(result),
+				Err(e) => {
+					println!("{} {}", "Tool execution error:".red(), e);
+					continue;
+				}
+			}
+		}
+
+		Ok(results)
+	}
 }
 
-// Async implementation of the Layer trait for LayerProcessor
 #[async_trait]
-impl Layer for LayerProcessor {
+impl Layer for GenericLayer {
 	fn name(&self) -> &str {
 		&self.config.name
 	}
@@ -93,9 +141,9 @@ impl Layer for LayerProcessor {
 		let effective_model = self.config.get_effective_model(&session.info.model);
 
 		// Create messages for this layer
-		let messages = self.create_messages(input, session);
+		let messages = self.create_messages(input, session, &session.info.model);
 
-		// Call the model directly with session messages
+		// Call the model with the layer's effective model and temperature
 		let (output, exchange, direct_tool_calls, _finish_reason) = openrouter::chat_completion(
 			messages.clone(),
 			&effective_model,
@@ -103,8 +151,8 @@ impl Layer for LayerProcessor {
 			config
 		).await?;
 
-		// Check if the layer response contains tool calls
-		if config.mcp.enabled && self.config.mcp.enabled {
+		// Check if the layer response contains tool calls and if MCP is enabled for this layer
+		if self.config.mcp.enabled && config.mcp.enabled {
 			// First try to use directly returned tool calls, then fall back to parsing if needed
 			let tool_calls = if let Some(ref calls) = direct_tool_calls {
 				calls
@@ -112,46 +160,22 @@ impl Layer for LayerProcessor {
 				&crate::mcp::parse_tool_calls(&output)
 			};
 
-			// If there are tool calls, process them
+			// If there are tool calls, process them using this layer's MCP configuration
 			if !tool_calls.is_empty() {
-				// Process tool calls within our isolated layer session
 				let output_clone = output.clone();
 
-				// Execute all tool calls and collect results
-				let mut tool_results = Vec::new();
-
-				for tool_call in tool_calls {
-					println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
-
-					// Check if tool is allowed for this layer
-					if !self.config.mcp.allowed_tools.is_empty() &&
-					!self.config.mcp.allowed_tools.contains(&tool_call.tool_name) {
-						println!("{} {} {}", "Tool".red(), tool_call.tool_name, "not allowed for this layer".red());
-						continue;
-					}
-
-					let result = match crate::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
-						Ok(res) => res,
-						Err(e) => {
-							println!("{} {}", "Tool execution error:".red(), e);
-							continue;
-						}
-					};
-
-					// Add result to collection
-					tool_results.push(result);
-				}
+				// Execute all tool calls and collect results using layer-specific MCP config
+				let tool_results = self.execute_layer_tool_calls(tool_calls, config).await?;
 
 				// If we have results, send them back to the model to get a final response
 				if !tool_results.is_empty() {
-					// Format the results in a way the model can understand
 					println!("{}", "Processing tool results...".cyan());
 
 					// Create a new session context for tool result processing
 					let mut layer_session = messages.clone();
 
 					// Add assistant's response with tool calls
-					layer_session.push(crate::session::Message {
+					layer_session.push(Message {
 						role: "assistant".to_string(),
 						content: output_clone,
 						timestamp: std::time::SystemTime::now()
@@ -159,15 +183,14 @@ impl Layer for LayerProcessor {
 							.unwrap_or_default()
 							.as_secs(),
 						cached: false,
-						tool_call_id: None, // No tool_call_id for assistant messages
-						name: None, // No name for assistant messages
-						tool_calls: None, // No tool_calls for assistant messages
+						tool_call_id: None,
+						name: None,
+						tool_calls: None,
 					});
 
-					// Add each tool result as a tool message in standard OpenRouter format
+					// Add each tool result as a tool message
 					for tool_result in &tool_results {
-						// Use standard OpenRouter format for tool messages
-						layer_session.push(crate::session::Message {
+						layer_session.push(Message {
 							role: "tool".to_string(),
 							content: serde_json::to_string(&tool_result.result).unwrap_or_default(),
 							timestamp: std::time::SystemTime::now()
@@ -175,16 +198,15 @@ impl Layer for LayerProcessor {
 								.unwrap_or_default()
 								.as_secs(),
 							cached: false,
-							tool_call_id: Some(tool_result.tool_id.clone()), // Include the tool_call_id
-							name: Some(tool_result.tool_name.clone()), // Include the tool name
-							tool_calls: None, // No tool_calls for tool messages
+							tool_call_id: Some(tool_result.tool_id.clone()),
+							name: Some(tool_result.tool_name.clone()),
+							tool_calls: None,
 						});
 					}
 
-					// Call the model again with tool results
-					// Important: We use THIS LAYER'S model to process the function call results
+					// Call the model again with tool results using this layer's model
 					match openrouter::chat_completion(
-						layer_session.clone(),
+						layer_session,
 						&effective_model,
 						self.config.temperature,
 						config

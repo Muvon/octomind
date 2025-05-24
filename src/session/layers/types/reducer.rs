@@ -19,12 +19,16 @@ impl ReducerLayer {
 		LayerConfig {
 			name: name.to_string(),
 			enabled: true,
-			model: "openrouter:openai/o4-mini".to_string(),
-			system_prompt: crate::session::helper_functions::get_raw_system_prompt("reducer"),
+			model: Some("openrouter:openai/o4-mini".to_string()),
+			system_prompt: None, // Use built-in prompt
 			temperature: 0.2,
-			enable_tools: false, // No tools for Reducer
-			allowed_tools: Vec::new(),
 			input_mode: crate::session::layers::layer_trait::InputMode::Summary, // Use summarized data
+			mcp: crate::session::layers::layer_trait::LayerMcpConfig { 
+				enabled: false, 
+				servers: vec![], 
+				allowed_tools: vec![] 
+			},
+			parameters: std::collections::HashMap::new(),
 		}
 	}
 }

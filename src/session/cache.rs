@@ -218,24 +218,28 @@ impl CacheManager {
         let time_since_last_cache = current_time.saturating_sub(session.last_cache_checkpoint_time);
         
         if time_since_last_cache >= config.openrouter.cache_timeout_seconds {
-            // Try to add a cache marker at the last user or tool message
-            match self.manage_content_cache_markers(session, None, true) {
-                Ok(true) => {
-                    // Reset token counters and update checkpoint time after successful caching
-                    session.current_non_cached_tokens = 0;
-                    session.current_total_tokens = 0;
-                    session.last_cache_checkpoint_time = current_time;
-                    return Ok(true);
-                }
-                Ok(false) => {
-                    // Even if we couldn't add a marker, update the time to prevent constant attempts
-                    session.last_cache_checkpoint_time = current_time;
-                    return Ok(false);
-                }
-                Err(_) => {
-                    // Update time on error too to prevent constant attempts
-                    session.last_cache_checkpoint_time = current_time;
-                    return Ok(false); // Silently fail for auto-cache
+            // Find the LAST tool message, and if none, the LAST user message
+            let target_index = session.messages.iter().enumerate().rev()
+                .find(|(_, msg)| msg.role == "tool")
+                .or_else(|| session.messages.iter().enumerate().rev()
+                    .find(|(_, msg)| msg.role == "user"))
+                .map(|(i, _)| i);
+
+            if let Some(index) = target_index {
+                match self.apply_cache_to_message(session, index, supports_caching) {
+                    Ok(true) => {
+                        return Ok(true);
+                    }
+                    Ok(false) => {
+                        // Even if we couldn't add a marker, update the time to prevent constant attempts
+                        session.last_cache_checkpoint_time = current_time;
+                        return Ok(false);
+                    }
+                    Err(_) => {
+                        // Update time on error too to prevent constant attempts
+                        session.last_cache_checkpoint_time = current_time;
+                        return Ok(false); // Silently fail for auto-cache
+                    }
                 }
             }
         }
@@ -243,17 +247,19 @@ impl CacheManager {
         // Check absolute threshold next (if set)
         if config.openrouter.cache_tokens_absolute_threshold > 0 {
             if session.current_non_cached_tokens >= config.openrouter.cache_tokens_absolute_threshold {
-                // Try to add a cache marker at the last user or tool message
-                match self.manage_content_cache_markers(session, None, true) {
-                    Ok(true) => {
-                        // Reset token counters and update checkpoint time after successful caching
-                        session.current_non_cached_tokens = 0;
-                        session.current_total_tokens = 0;
-                        session.last_cache_checkpoint_time = current_time;
-                        return Ok(true);
+                // Find the LAST tool message, and if none, the LAST user message
+                let target_index = session.messages.iter().enumerate().rev()
+                    .find(|(_, msg)| msg.role == "tool")
+                    .or_else(|| session.messages.iter().enumerate().rev()
+                        .find(|(_, msg)| msg.role == "user"))
+                    .map(|(i, _)| i);
+
+                if let Some(index) = target_index {
+                    match self.apply_cache_to_message(session, index, supports_caching) {
+                        Ok(true) => return Ok(true),
+                        Ok(false) => return Ok(false),
+                        Err(_) => return Ok(false), // Silently fail for auto-cache
                     }
-                    Ok(false) => return Ok(false),
-                    Err(_) => return Ok(false), // Silently fail for auto-cache
                 }
             }
         } else {
@@ -274,17 +280,19 @@ impl CacheManager {
 
             // Check if we've reached the threshold
             if non_cached_percentage as u8 >= threshold {
-                // Try to add a cache marker at the last user or tool message
-                match self.manage_content_cache_markers(session, None, true) {
-                    Ok(true) => {
-                        // Reset token counters and update checkpoint time after successful caching
-                        session.current_non_cached_tokens = 0;
-                        session.current_total_tokens = 0;
-                        session.last_cache_checkpoint_time = current_time;
-                        return Ok(true);
+                // Find the LAST tool message, and if none, the LAST user message
+                let target_index = session.messages.iter().enumerate().rev()
+                    .find(|(_, msg)| msg.role == "tool")
+                    .or_else(|| session.messages.iter().enumerate().rev()
+                        .find(|(_, msg)| msg.role == "user"))
+                    .map(|(i, _)| i);
+
+                if let Some(index) = target_index {
+                    match self.apply_cache_to_message(session, index, supports_caching) {
+                        Ok(true) => return Ok(true),
+                        Ok(false) => return Ok(false),
+                        Err(_) => return Ok(false), // Silently fail for auto-cache
                     }
-                    Ok(false) => return Ok(false),
-                    Err(_) => return Ok(false), // Silently fail for auto-cache
                 }
             }
         }

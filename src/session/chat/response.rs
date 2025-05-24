@@ -450,6 +450,14 @@ pub async fn process_response(
 						chat_session.session.messages.push(tool_message);
 					}
 
+					// CRITICAL FIX: Check auto-cache threshold IMMEDIATELY after ALL tool results are added
+					// This ensures that cache markers are applied BEFORE sending the next API request
+					let cache_manager = crate::session::cache::CacheManager::new();
+					let supports_caching = crate::session::model_supports_caching(&chat_session.model);
+					if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut chat_session.session, config, supports_caching) {
+						log_info!("{}", "Auto-cache threshold reached after tool results - cache checkpoint applied before next API request.");
+					}
+
 					// Call the AI again with the tool results
 					// Use session messages directly instead of converting
 
@@ -582,12 +590,8 @@ pub async fn process_response(
 									cached_tokens,
 								);
 
-								// Check if we should automatically move the cache marker
-								let cache_manager = crate::session::cache::CacheManager::new();
-								let supports_caching = crate::session::model_supports_caching(&chat_session.model);
-								if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut chat_session.session, config, supports_caching) {
-									log_info!("{}", "Auto-cache threshold reached during tool calls - cache checkpoint applied.");
-								}
+								// Note: Auto-cache threshold checking is now done immediately after tool results
+								// are processed, not here, to ensure proper timing
 
 								// Update cost
 								if let Some(cost) = usage.cost {

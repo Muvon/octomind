@@ -174,13 +174,19 @@ impl ChatSession {
 				};
 
 				if params.is_empty() {
-					// Show current log level
-					let current_level = match loaded_config.openrouter.log_level {
+					// Show current log level - use root level first, fall back to openrouter
+					let current_level = if loaded_config.log_level != LogLevel::None {
+						&loaded_config.log_level
+					} else {
+						&loaded_config.openrouter.log_level
+					};
+					
+					let level_str = match current_level {
 						LogLevel::None => "none",
 						LogLevel::Info => "info",
 						LogLevel::Debug => "debug",
 					};
-					println!("{}", format!("Current log level: {}", current_level).bright_cyan());
+					println!("{}", format!("Current log level: {}", level_str).bright_cyan());
 					println!("{}", "Available levels: none, info, debug".bright_yellow());
 					return Ok(false);
 				}
@@ -196,8 +202,8 @@ impl ChatSession {
 					}
 				};
 
-				// Update the configuration
-				loaded_config.openrouter.log_level = new_level.clone();
+				// Update the root configuration (takes precedence)
+				loaded_config.log_level = new_level.clone();
 
 				// Save the updated config
 				if let Err(e) = loaded_config.save() {
@@ -236,7 +242,13 @@ impl ChatSession {
 				};
 
 				// Toggle between none and debug for backward compatibility
-				loaded_config.openrouter.log_level = match loaded_config.openrouter.log_level {
+				let current_level = if loaded_config.log_level != LogLevel::None {
+					&loaded_config.log_level
+				} else {
+					&loaded_config.openrouter.log_level
+				};
+				
+				loaded_config.log_level = match current_level {
 					LogLevel::Debug => LogLevel::None,
 					_ => LogLevel::Debug,
 				};
@@ -248,7 +260,7 @@ impl ChatSession {
 				}
 
 				// Show the new state
-				if loaded_config.openrouter.log_level.is_debug_enabled() {
+				if loaded_config.log_level.is_debug_enabled() {
 					println!("{}", "Debug mode is now ENABLED.".bright_green());
 					println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
 				} else {

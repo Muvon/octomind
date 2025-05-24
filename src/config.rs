@@ -75,7 +75,7 @@ where
 #[macro_export]
 macro_rules! log_info {
 	($fmt:expr) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_info_enabled()) {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
 			if should_log {
 				use colored::Colorize;
 				println!("{}", $fmt.cyan());
@@ -83,7 +83,7 @@ macro_rules! log_info {
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_info_enabled()) {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
 			if should_log {
 				use colored::Colorize;
 				println!("{}", format!($fmt, $($arg),*).cyan());
@@ -96,7 +96,7 @@ macro_rules! log_info {
 #[macro_export]
 macro_rules! log_debug {
 	($fmt:expr) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_debug_enabled()) {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
 			if should_log {
 				use colored::Colorize;
 				println!("{}", $fmt.bright_blue());
@@ -104,7 +104,7 @@ macro_rules! log_debug {
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_debug_enabled()) {
+		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
 			if should_log {
 				use colored::Colorize;
 				println!("{}", format!($fmt, $($arg),*).bright_blue());
@@ -117,7 +117,7 @@ macro_rules! log_debug {
 #[macro_export]
 macro_rules! log_conditional {
 	(debug: $debug_msg:expr, info: $info_msg:expr, none: $none_msg:expr) => {
-		if let Some(level) = $crate::config::with_thread_config(|config| config.openrouter.log_level.clone()) {
+		if let Some(level) = $crate::config::with_thread_config(|config| config.get_log_level()) {
 			match level {
 				$crate::config::LogLevel::Debug => println!("{}", $debug_msg),
 				$crate::config::LogLevel::Info => println!("{}", $info_msg),
@@ -129,7 +129,7 @@ macro_rules! log_conditional {
 		}
 	};
 	(debug: $debug_msg:expr, default: $default_msg:expr) => {
-		if let Some(should_debug) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_debug_enabled()) {
+		if let Some(should_debug) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
 			if should_debug {
 				println!("{}", $debug_msg);
 			} else {
@@ -141,7 +141,7 @@ macro_rules! log_conditional {
 		}
 	};
 	(info: $info_msg:expr, default: $default_msg:expr) => {
-		if let Some(should_info) = $crate::config::with_thread_config(|config| config.openrouter.log_level.is_info_enabled()) {
+		if let Some(should_info) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
 			if should_info {
 				println!("{}", $info_msg);
 			} else {
@@ -280,9 +280,6 @@ pub struct ModeConfig {
 	// Layer configurations
 	#[serde(default)]
 	pub enable_layers: bool,
-	// Log level setting
-	#[serde(default)]
-	pub log_level: LogLevel,
 	// Maximum response tokens warning threshold
 	#[serde(default = "default_mcp_response_warning_threshold")]
 	pub mcp_response_warning_threshold: usize,
@@ -317,7 +314,6 @@ impl Default for ModeConfig {
 		Self {
 			model: default_full_model(),
 			enable_layers: false,
-			log_level: LogLevel::default(),
 			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false,
@@ -783,6 +779,10 @@ pub struct ChatModeConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
+	// Root-level log level setting (takes precedence over role-specific)
+	#[serde(default)]
+	pub log_level: LogLevel,
+	
 	#[serde(default)]
 	pub embedding_provider: EmbeddingProvider,
 	#[serde(default)]
@@ -825,6 +825,116 @@ pub struct Config {
 
 
 impl Config {
+	/// Get the global log level (system-wide setting)
+	pub fn get_log_level(&self) -> LogLevel {
+		// If root log level is set, use it
+		if self.log_level != LogLevel::None {
+			return self.log_level.clone();
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.log_level.clone()
+	}
+
+	/// Helper methods to get role-based configuration settings without hardcoding openrouter
+	/// These methods should be used instead of directly accessing config.openrouter.*
+	
+	/// Get cache timeout seconds for the specified role
+	pub fn get_cache_timeout_seconds(&self, role: &str) -> u64 {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.cache_timeout_seconds
+	}
+	
+	/// Get cache tokens absolute threshold for the specified role
+	pub fn get_cache_tokens_absolute_threshold(&self, role: &str) -> u64 {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.cache_tokens_absolute_threshold
+	}
+	
+	/// Get cache tokens percentage threshold for the specified role
+	pub fn get_cache_tokens_pct_threshold(&self, role: &str) -> u8 {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.cache_tokens_pct_threshold
+	}
+	
+	/// Get MCP response warning threshold for the specified role
+	pub fn get_mcp_response_warning_threshold(&self, role: &str) -> usize {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.mcp_response_warning_threshold
+	}
+	
+	/// Get enable auto truncation setting for the specified role
+	pub fn get_enable_auto_truncation(&self, role: &str) -> bool {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.enable_auto_truncation
+	}
+	
+	/// Get max request tokens threshold for the specified role
+	pub fn get_max_request_tokens_threshold(&self, role: &str) -> usize {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.max_request_tokens_threshold
+	}
+	
+	/// Get enable markdown rendering setting for the specified role
+	pub fn get_enable_markdown_rendering(&self, role: &str) -> bool {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.enable_markdown_rendering
+	}
+	
+	/// Get enable layers setting for the specified role
+	pub fn get_enable_layers(&self, role: &str) -> bool {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.enable_layers
+	}
+	
+	/// Get the model for the specified role
+	pub fn get_model(&self, role: &str) -> String {
+		let (mode_config, _, _, _, _) = self.get_mode_config(role);
+		mode_config.get_full_model()
+	}
+
+	/// Backward compatibility methods - these delegate to openrouter config for now
+	/// but should eventually be deprecated in favor of role-based methods
+	
+	/// Get cache timeout seconds (backward compatibility)
+	pub fn get_cache_timeout_seconds_legacy(&self) -> u64 {
+		self.openrouter.cache_timeout_seconds
+	}
+	
+	/// Get cache tokens absolute threshold (backward compatibility)
+	pub fn get_cache_tokens_absolute_threshold_legacy(&self) -> u64 {
+		self.openrouter.cache_tokens_absolute_threshold
+	}
+	
+	/// Get cache tokens percentage threshold (backward compatibility)
+	pub fn get_cache_tokens_pct_threshold_legacy(&self) -> u8 {
+		self.openrouter.cache_tokens_pct_threshold
+	}
+	
+	/// Get MCP response warning threshold (backward compatibility)
+	pub fn get_mcp_response_warning_threshold_legacy(&self) -> usize {
+		self.openrouter.mcp_response_warning_threshold
+	}
+	
+	/// Get enable auto truncation setting (backward compatibility)
+	pub fn get_enable_auto_truncation_legacy(&self) -> bool {
+		self.openrouter.enable_auto_truncation
+	}
+	
+	/// Get max request tokens threshold (backward compatibility)
+	pub fn get_max_request_tokens_threshold_legacy(&self) -> usize {
+		self.openrouter.max_request_tokens_threshold
+	}
+	
+	/// Get enable markdown rendering setting (backward compatibility)
+	pub fn get_enable_markdown_rendering_legacy(&self) -> bool {
+		self.openrouter.enable_markdown_rendering
+	}
+	
+	/// Get enable layers setting (backward compatibility)
+	pub fn get_enable_layers_legacy(&self) -> bool {
+		self.openrouter.enable_layers
+	}
 	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
 	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
 		// If it's exactly the default McpConfig, consider it empty
@@ -905,7 +1015,7 @@ impl Config {
 			api_key: mode_config.get_api_key(&self.providers),
 			pricing: mode_config.get_pricing(&self.providers),
 			enable_layers: mode_config.enable_layers,
-			log_level: mode_config.log_level.clone(),
+			log_level: self.get_log_level(), // Use global log level
 			mcp_response_warning_threshold: mode_config.mcp_response_warning_threshold,
 			max_request_tokens_threshold: mode_config.max_request_tokens_threshold,
 			enable_auto_truncation: mode_config.enable_auto_truncation,

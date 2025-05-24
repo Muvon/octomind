@@ -199,6 +199,7 @@ impl CacheManager {
         session: &mut Session,
         config: &Config,
         supports_caching: bool,
+        role: &str,
     ) -> Result<bool> {
         if !supports_caching {
             return Ok(false);
@@ -217,7 +218,7 @@ impl CacheManager {
         
         let time_since_last_cache = current_time.saturating_sub(session.last_cache_checkpoint_time);
         
-        if time_since_last_cache >= config.openrouter.cache_timeout_seconds {
+        if time_since_last_cache >= config.get_cache_timeout_seconds(role) {
             // Find the LAST tool message, and if none, the LAST user message
             let target_index = session.messages.iter().enumerate().rev()
                 .find(|(_, msg)| msg.role == "tool")
@@ -245,8 +246,8 @@ impl CacheManager {
         }
 
         // Check absolute threshold next (if set)
-        if config.openrouter.cache_tokens_absolute_threshold > 0 {
-            if session.current_non_cached_tokens >= config.openrouter.cache_tokens_absolute_threshold {
+        if config.get_cache_tokens_absolute_threshold(role) > 0 {
+            if session.current_non_cached_tokens >= config.get_cache_tokens_absolute_threshold(role) {
                 // Find the LAST tool message, and if none, the LAST user message
                 let target_index = session.messages.iter().enumerate().rev()
                     .find(|(_, msg)| msg.role == "tool")
@@ -264,7 +265,7 @@ impl CacheManager {
             }
         } else {
             // Use percentage threshold
-            let threshold = config.openrouter.cache_tokens_pct_threshold;
+            let threshold = config.get_cache_tokens_pct_threshold(role);
             if threshold == 0 || threshold == 100 {
                 return Ok(false);
             }
@@ -309,6 +310,7 @@ impl CacheManager {
         config: &Config,
         supports_caching: bool,
         tool_message_index: usize,
+        role: &str,
     ) -> Result<bool> {
         if !supports_caching {
             return Ok(false);
@@ -329,8 +331,8 @@ impl CacheManager {
         }
 
         // Check absolute threshold first (if set)
-        if config.openrouter.cache_tokens_absolute_threshold > 0 {
-            if session.current_non_cached_tokens >= config.openrouter.cache_tokens_absolute_threshold {
+        if config.get_cache_tokens_absolute_threshold(role) > 0 {
+            if session.current_non_cached_tokens >= config.get_cache_tokens_absolute_threshold(role) {
                 match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
                     Ok(true) => return Ok(true),
                     Ok(false) => return Ok(false),
@@ -339,7 +341,7 @@ impl CacheManager {
             }
         } else {
             // Use percentage threshold
-            let threshold = config.openrouter.cache_tokens_pct_threshold;
+            let threshold = config.get_cache_tokens_pct_threshold(role);
             if threshold == 0 || threshold == 100 {
                 return Ok(false);
             }
@@ -371,7 +373,7 @@ impl CacheManager {
         
         let time_since_last_cache = current_time.saturating_sub(session.last_cache_checkpoint_time);
         
-        if time_since_last_cache >= config.openrouter.cache_timeout_seconds {
+        if time_since_last_cache >= config.get_cache_timeout_seconds(role) {
             match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
                 Ok(true) => return Ok(true),
                 Ok(false) => {

@@ -14,6 +14,35 @@ use serde_json;
 use super::animation::show_loading_animation;
 use regex::Regex;
 
+// Guess the category of a tool based on its name (copied from mcp/mod.rs for consistency)
+fn guess_tool_category(tool_name: &str) -> &'static str {
+	match tool_name {
+		"core" => "system",
+		"text_editor" => "developer",
+		"list_files" => "filesystem",
+		name if name.contains("file") || name.contains("editor") => "developer",
+		name if name.contains("search") || name.contains("find") => "search",
+		name if name.contains("image") || name.contains("photo") => "media",
+		name if name.contains("web") || name.contains("http") => "web",
+		name if name.contains("db") || name.contains("database") => "database",
+		name if name.contains("browser") => "browser",
+		name if name.contains("terminal") => "terminal",
+		name if name.contains("video") => "video",
+		name if name.contains("audio") => "audio",
+		name if name.contains("location") || name.contains("map") => "location",
+		name if name.contains("google") => "google",
+		name if name.contains("weather") => "weather",
+		name if name.contains("calculator") || name.contains("math") => "math",
+		name if name.contains("news") => "news",
+		name if name.contains("email") => "email",
+		name if name.contains("calendar") => "calendar",
+		name if name.contains("translate") => "translation",
+		name if name.contains("github") => "github",
+		name if name.contains("git") => "git",
+		_ => "external",
+	}
+}
+
 // Function to remove function_calls blocks from content
 fn remove_function_calls(content: &str) -> String {
 	// Use multiple regex patterns to catch different function call formats
@@ -40,8 +69,8 @@ fn remove_function_calls(content: &str) -> String {
 }
 
 // Helper function to print content with optional markdown rendering
-fn print_assistant_response(content: &str, config: &Config) {
-	if config.openrouter.enable_markdown_rendering && is_markdown_content(content) {
+fn print_assistant_response(content: &str, config: &Config, role: &str) {
+	if config.get_enable_markdown_rendering(role) && is_markdown_content(content) {
 		// Use markdown rendering
 		let renderer = MarkdownRenderer::new();
 		match renderer.render_and_print(content) {
@@ -50,7 +79,7 @@ fn print_assistant_response(content: &str, config: &Config) {
 			}
 			Err(e) => {
 				// Fallback to plain text if markdown rendering fails
-				if config.openrouter.log_level.is_debug_enabled() {
+				if config.get_log_level().is_debug_enabled() {
 					println!("{}: {}", "Warning: Markdown rendering failed".yellow(), e);
 				}
 				println!("{}", content.bright_green());
@@ -124,6 +153,7 @@ pub async fn process_response(
 	finish_reason: Option<String>,
 	chat_session: &mut ChatSession,
 	config: &Config,
+	role: &str,
 	operation_cancelled: Arc<AtomicBool>
 ) -> Result<()> {
 	// Check if operation has been cancelled at the very start
@@ -133,7 +163,7 @@ pub async fn process_response(
 	}
 
 	// Debug logging for finish_reason and tool calls
-	if config.openrouter.log_level.is_debug_enabled() {
+	if config.get_log_level().is_debug_enabled() {
 		if let Some(ref reason) = finish_reason {
 			log_debug!("Processing response with finish_reason: {}", reason);
 		}
@@ -181,7 +211,7 @@ pub async fn process_response(
 			};
 
 			// Add debug logging for tool calls when debug mode is enabled
-			if config.openrouter.log_level.is_debug_enabled() && !current_tool_calls.is_empty() {
+			if config.get_log_level().is_debug_enabled() && !current_tool_calls.is_empty() {
 				log_debug!("Found {} tool calls in response", current_tool_calls.len());
 				for (i, call) in current_tool_calls.iter().enumerate() {
 					log_debug!("  Tool call {}: {} with params: {}", i+1, call.tool_name, call.parameters);
@@ -269,7 +299,7 @@ pub async fn process_response(
 							chat_session.session.info.total_cost += cost;
 							chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-							if config.openrouter.log_level.is_debug_enabled() {
+							if config.get_log_level().is_debug_enabled() {
 								log_debug!("Adding ${:.5} from initial API (total now: ${:.5})",
 									cost, chat_session.session.info.total_cost);
 							}
@@ -285,7 +315,7 @@ pub async fn process_response(
 
 				// Display the clean content (without function calls) to the user
 				let clean_content = remove_function_calls(&current_content);
-				print_assistant_response(&clean_content, config);
+				print_assistant_response(&clean_content, config, role);
 
 				// Early exit if cancellation was requested
 				if operation_cancelled.load(Ordering::SeqCst) {
@@ -300,7 +330,7 @@ pub async fn process_response(
 				for tool_call in current_tool_calls.clone() {
 					// IMPROVED: Use the same format as tool results for consistency
 					let category = guess_tool_category(&tool_call.tool_name);
-					let title = format!(" {} | {} ", 
+					let title = format!(" {} | {} ",
 						tool_call.tool_name.bright_cyan(),
 						category.bright_blue()
 					);
@@ -310,13 +340,13 @@ pub async fn process_response(
 					println!("{}", separator);
 
 					// Show parameters only in info mode
-					if config.openrouter.log_level.is_info_enabled() {
+					if config.get_log_level().is_info_enabled() {
 						log_info!("Parameters:");
 						if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
 							if !params_obj.is_empty() {
 								// Find the longest key for column alignment (max 20 chars to prevent excessive spacing)
 								let max_key_length = params_obj.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
-								
+
 								for (key, value) in params_obj.iter() {
 									let formatted_value = match value {
 										serde_json::Value::String(s) => {
@@ -371,9 +401,9 @@ pub async fn process_response(
 										},
 										serde_json::Value::Null => "null".bright_black().to_string(),
 									};
-									
+
 									// Format with proper column alignment and indentation
-									log_info!("  {}: {}", 
+									log_info!("  {}: {}",
 										format!("{:width$}", key, width = max_key_length).bright_blue(),
 										formatted_value.white()
 									);
@@ -440,14 +470,15 @@ pub async fn process_response(
 							Ok((res, tool_time_ms)) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
-								
-								// IMPROVED: Show successful completion
-								println!("  {} Tool '{}' completed in {}ms", 
-									"✓".bright_green(),
-									tool_name.bright_green(),
-									tool_time_ms
-								);
-								
+
+								// IMPROVED: Show completion info based on log level
+								if config.get_log_level().is_info_enabled() {
+									log_info!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
+								} else {
+									// Show minimal success indicator for non-info mode
+									println!("✓ {}ms", tool_time_ms);
+								}
+
 								// Log the tool response with session name
 								let _ = crate::session::logger::log_tool_result(&chat_session.session.info.name, &tool_id, &res.result);
 								tool_results.push(res);
@@ -456,21 +487,22 @@ pub async fn process_response(
 							},
 							Err(e) => {
 								_has_error = true;
-								// IMPROVED: Always show detailed error information since errors are critical
-								println!("  {} {}: {}", 
-									"✗".bright_red(),
-									format!("Tool '{}' failed", tool_name).bright_red(),
-									format!("{}", e).bright_red()
-								);
+								// IMPROVED: Show error info based on log level
+								if config.get_log_level().is_info_enabled() {
+									log_info!("✗ Tool '{}' failed: {}", tool_name, e);
+								} else {
+									// Show minimal error indicator for non-info mode
+									println!("✗ {}", "failed".bright_red());
+								}
 
 								// Track errors for this tool
 								let loop_detected = error_tracker.record_error(&tool_name);
-								
+
 								if loop_detected {
-									// Show loop detection warning but don't stop - let the AI decide
-									println!("{}", format!("  ⚠ Warning: {} failed {} times in a row - AI should try a different approach",
+									// Always show loop detection warning since it's critical
+									println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
 										tool_name, error_tracker.max_consecutive_errors).bright_yellow());
-									
+
 									// Add a detailed error result for loop detection
 									let loop_error_result = crate::mcp::McpToolResult {
 										tool_name: tool_name.clone(),
@@ -497,21 +529,24 @@ pub async fn process_response(
 										}),
 									};
 									tool_results.push(error_result);
-									
-									println!("{}", format!("  - Tool '{}' failed {} of {} times. Adding error to context.",
-										tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors).yellow());
+
+									if config.get_log_level().is_info_enabled() {
+										log_info!("Tool '{}' failed {} of {} times. Adding error to context.",
+											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors);
+									}
 								}
 							},
 						},
 						Err(e) => {
 							_has_error = true;
-							// IMPROVED: Show detailed task error information since errors are critical
-							println!("  {} {}: {}", 
-								"✗".bright_red(),
-								format!("Task error for '{}'", tool_name).bright_red(),
-								format!("{}", e).bright_red()
-							);
-							
+							// IMPROVED: Show task error info based on log level
+							if config.get_log_level().is_info_enabled() {
+								log_info!("✗ Task error for '{}': {}", tool_name, e);
+							} else {
+								// Show minimal error indicator for non-info mode
+								println!("✗ {}", "task error".bright_red());
+							}
+
 							// ALWAYS add error result for task failures too
 							let error_result = crate::mcp::McpToolResult {
 								tool_name: tool_name.clone(),
@@ -533,6 +568,40 @@ pub async fn process_response(
 					let formatted = crate::mcp::format_tool_results(&tool_results);
 					println!("{}", formatted);
 
+					// Show detailed output in info mode
+					if config.get_log_level().is_info_enabled() {
+						log_info!("Tool Output:");
+						for tool_result in &tool_results {
+							let output_content = if let Some(output) = tool_result.result.get("output") {
+								// Extract the "output" field which contains the actual tool result
+								if let Some(output_str) = output.as_str() {
+									output_str.to_string()
+								} else {
+									// If output is not a string, serialize it
+									serde_json::to_string(output).unwrap_or_default()
+								}
+							} else if tool_result.result.is_string() {
+								// If result is already a string, use it directly
+								tool_result.result.as_str().unwrap_or("").to_string()
+							} else {
+								// Fallback: look for common fields or use the whole result
+								if let Some(error) = tool_result.result.get("error") {
+									format!("Error: {}", error)
+								} else {
+									// Last resort: serialize the whole result
+									serde_json::to_string(&tool_result.result).unwrap_or_default()
+								}
+							};
+
+							// Show condensed output for info mode (prevent overwhelming logs)
+							if output_content.len() > 500 {
+								log_info!("  {}: {}...", tool_result.tool_name, &output_content[..497]);
+							} else {
+								log_info!("  {}: {}", tool_result.tool_name, output_content);
+							}
+						}
+					}
+
 					// Add the accumulated tool execution time to the session total
 					chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
 
@@ -551,7 +620,7 @@ pub async fn process_response(
 					// CRITICAL FIX: Check cache threshold after EACH tool result, not after all
 					let cache_manager = crate::session::cache::CacheManager::new();
 					let supports_caching = crate::session::model_supports_caching(&chat_session.model);
-					
+
 					for tool_result in &tool_results {
 						// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
 						let tool_content = if let Some(output) = tool_result.result.get("output") {
@@ -591,15 +660,16 @@ pub async fn process_response(
 
 						// Add the tool message directly to the session
 						chat_session.session.messages.push(tool_message);
-						
+
 						// CRITICAL FIX: Check auto-cache threshold IMMEDIATELY after EACH tool result
 						// This ensures proper 2-marker logic and threshold checking after each tool
 						let tool_message_index = chat_session.session.messages.len() - 1;
 						if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold_on_tool_result(
-							&mut chat_session.session, 
-							config, 
-							supports_caching, 
-							tool_message_index
+							&mut chat_session.session,
+							config,
+							supports_caching,
+							tool_message_index,
+							role
 						) {
 							log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
 						}
@@ -649,7 +719,7 @@ pub async fn process_response(
 							current_tool_calls_param = next_tool_calls;
 
 							// Debug logging for follow-up finish_reason
-							if config.openrouter.log_level.is_debug_enabled() {
+							if config.get_log_level().is_debug_enabled() {
 								if let Some(ref reason) = next_finish_reason {
 									log_debug!("Debug: Follow-up finish_reason: {}", reason);
 								}
@@ -659,28 +729,28 @@ pub async fn process_response(
 							let should_continue_conversation = match next_finish_reason.as_deref() {
 								Some("tool_calls") => {
 									// Model wants to make more tool calls
-									if config.openrouter.log_level.is_debug_enabled() {
+									if config.get_log_level().is_debug_enabled() {
 										log_debug!("Debug: finish_reason is 'tool_calls', continuing conversation");
 									}
 									true
 								}
 								Some("stop") | Some("length") => {
 									// Model finished normally or hit length limit
-									if config.openrouter.log_level.is_debug_enabled() {
+									if config.get_log_level().is_debug_enabled() {
 										log_debug!("Debug: finish_reason is '{}', ending conversation", next_finish_reason.as_deref().unwrap());
 									}
 									false
 								}
 								Some(other) => {
 									// Unknown finish_reason, be conservative and continue
-									if config.openrouter.log_level.is_debug_enabled() {
+									if config.get_log_level().is_debug_enabled() {
 										log_debug!("Debug: Unknown finish_reason '{}', continuing conversation", other);
 									}
 									true
 								}
 								None => {
 									// No finish_reason, check for tool calls
-									if config.openrouter.log_level.is_debug_enabled() {
+									if config.get_log_level().is_debug_enabled() {
 										log_debug!("Debug: No finish_reason, checking for tool calls");
 									}
 									has_more_tools
@@ -751,7 +821,7 @@ pub async fn process_response(
 									chat_session.session.info.total_cost += cost;
 									chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-									if config.openrouter.log_level.is_debug_enabled() {
+									if config.get_log_level().is_debug_enabled() {
 										println!("Debug: Adding ${:.5} from tool response API (total now: ${:.5})",
 											cost, chat_session.session.info.total_cost);
 
@@ -793,7 +863,7 @@ pub async fn process_response(
 										chat_session.session.info.total_cost += cost;
 										chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-										if config.openrouter.log_level.is_debug_enabled() {
+										if config.get_log_level().is_debug_enabled() {
 											println!("Debug: Using cost ${:.5} from raw response for tool response (total now: ${:.5})",
 												cost, chat_session.session.info.total_cost);
 										}
@@ -811,7 +881,7 @@ pub async fn process_response(
 										println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
 
 										// Dump the raw response for debugging
-										if config.openrouter.log_level.is_debug_enabled() {
+										if config.get_log_level().is_debug_enabled() {
 											if let Ok(resp_str) = serde_json::to_string_pretty(&current_exchange.response) {
 												println!("Partial response JSON:\n{}", resp_str);
 											}
@@ -825,7 +895,7 @@ pub async fn process_response(
 							// Check if there are more tools to process in the new content
 							if should_continue_conversation {
 								// Log if debug mode is enabled
-								if config.openrouter.log_level.is_debug_enabled() {
+								if config.get_log_level().is_debug_enabled() {
 									println!("{}", "Debug: Continuing conversation due to finish_reason or tool calls".to_string().yellow());
 								}
 								// Continue processing the new content with tool calls
@@ -837,18 +907,18 @@ pub async fn process_response(
 						},
 						Err(e) => {
 							// IMPROVED: Show more context about the API error
-							println!("\n{} {}: {}", 
+							println!("\n{} {}: {}",
 								"✗".bright_red(),
-								"Error calling OpenRouter".bright_red(), 
+								"Error calling OpenRouter".bright_red(),
 								e
 							);
-							
+
 							// Additional context if error contains provider information
-							if config.openrouter.log_level.is_debug_enabled() {
+							if config.get_log_level().is_debug_enabled() {
 								println!("{} Model: {}", "Debug:".bright_black(), chat_session.model);
 								println!("{} Temperature: {}", "Debug:".bright_black(), chat_session.temperature);
 							}
-							
+
 							return Ok(());
 						}
 					}
@@ -857,7 +927,7 @@ pub async fn process_response(
 					let more_tools = crate::mcp::parse_tool_calls(&current_content);
 					if !more_tools.is_empty() {
 						// Log if debug mode is enabled
-						if config.openrouter.log_level.is_debug_enabled() {
+						if config.get_log_level().is_debug_enabled() {
 							println!("{}", format!("Debug: Found {} more tool calls to process (no previous tool results)", more_tools.len()).yellow());
 						}
 						// If there are more tool calls later in the response, continue processing
@@ -892,10 +962,10 @@ pub async fn process_response(
 		// in the tool response handling code, so pass None to avoid double counting
 		None
 	};
-	chat_session.add_assistant_message(&clean_content, exchange_for_final, config)?;
+	chat_session.add_assistant_message(&clean_content, exchange_for_final, config, role)?;
 
 	// Print assistant response with color
-	print_assistant_response(&clean_content, config);
+	print_assistant_response(&clean_content, config, role);
 
 	// Display cumulative token usage - minimal output when debug is disabled
 	println!();
@@ -925,9 +995,9 @@ pub async fn process_response(
 	}
 
 	// Show time information if available
-	let total_time_ms = chat_session.session.info.total_api_time_ms + 
-	                   chat_session.session.info.total_tool_time_ms + 
-	                   chat_session.session.info.total_layer_time_ms;
+	let total_time_ms = chat_session.session.info.total_api_time_ms +
+																				chat_session.session.info.total_tool_time_ms +
+																				chat_session.session.info.total_layer_time_ms;
 	if total_time_ms > 0 {
 		log_info!("time: {}ms (API: {}ms, Tools: {}ms, Processing: {}ms)",
 			total_time_ms,

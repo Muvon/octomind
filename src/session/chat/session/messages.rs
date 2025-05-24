@@ -67,7 +67,7 @@ impl ChatSession {
 	}
 
 	// Add an assistant message
-	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>, config: &Config) -> Result<()> {
+	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>, config: &Config, role: &str) -> Result<()> {
 		// Log to raw session log
 		let _ = crate::session::logger::log_assistant_response(&self.session.info.name, content);
 
@@ -146,7 +146,7 @@ impl ChatSession {
 				// Check if we should automatically move the cache marker
 				let cache_manager = crate::session::cache::CacheManager::new();
 				let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
-				if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut self.session, config, supports_caching) {
+				if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut self.session, config, supports_caching, role) {
 					log_info!("{}", "Auto-cache threshold reached - cache checkpoint applied.");
 				}
 
@@ -157,7 +157,7 @@ impl ChatSession {
 					self.estimated_cost = self.session.info.total_cost;
 
 					// Log the actual cost received from the API for debugging
-					if config.openrouter.log_level.is_debug_enabled() {
+					if config.get_log_level().is_debug_enabled() {
 						println!("Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})",
 							cost, self.session.info.total_cost);
 
@@ -181,7 +181,7 @@ impl ChatSession {
 						self.estimated_cost = self.session.info.total_cost;
 
 						// Log that we had to fetch cost from raw response
-						if config.openrouter.log_level.is_debug_enabled() {
+						if config.get_log_level().is_debug_enabled() {
 							println!("Debug: Using cost from raw response: ${:.5} (total now: ${:.5})",
 								cost, self.session.info.total_cost);
 						}
@@ -190,7 +190,7 @@ impl ChatSession {
 						println!("{}", "ERROR: OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
 
 						// Dump the raw response JSON to debug
-						if config.openrouter.log_level.is_debug_enabled() {
+						if config.get_log_level().is_debug_enabled() {
 							println!("{}", "Raw OpenRouter response:".bright_red());
 							if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
 								println!("{}", resp_str);

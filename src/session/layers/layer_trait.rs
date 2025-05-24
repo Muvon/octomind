@@ -103,6 +103,29 @@ impl LayerConfig {
 		self.model.clone().unwrap_or_else(|| session_model.to_string())
 	}
 	
+	/// Create a merged config that respects this layer's MCP settings
+	/// This ensures that API calls use the layer's MCP configuration rather than just global settings
+	pub fn get_merged_config_for_layer(&self, base_config: &crate::config::Config) -> crate::config::Config {
+		let mut merged_config = base_config.clone();
+		
+		// Override the global MCP configuration with this layer's MCP settings
+		merged_config.mcp.enabled = self.mcp.enabled;
+		
+		// If layer MCP is enabled and has specific servers configured, use only those
+		if self.mcp.enabled && !self.mcp.servers.is_empty() {
+			// Filter servers to only include those specified by this layer
+			merged_config.mcp.servers.retain(|server| {
+				self.mcp.servers.iter().any(|layer_server| {
+					// Match by server name or handle legacy "core" mapping
+					server.name == *layer_server ||
+					(layer_server == "core" && (server.name == "developer" || server.name == "filesystem"))
+				})
+			});
+		}
+		
+		merged_config
+	}
+	
 	/// Get the effective system prompt for this layer
 	/// Uses custom prompt if provided, otherwise uses built-in prompt for known layer types
 	pub fn get_effective_system_prompt(&self) -> String {

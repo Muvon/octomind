@@ -152,12 +152,15 @@ impl Layer for GenericLayer {
 		// Create messages for this layer
 		let messages = self.create_messages(input, session, &session.info.model);
 
+		// Create a merged config that uses this layer's MCP settings
+		let layer_config = self.config.get_merged_config_for_layer(config);
+
 		// Call the model with the layer's effective model and temperature
 		let (output, exchange, direct_tool_calls, _finish_reason) = openrouter::chat_completion(
 			messages.clone(),
 			&effective_model,
 			self.config.temperature,
-			config
+			&layer_config
 		).await?;
 
 		// Track API time from the exchange
@@ -221,12 +224,12 @@ impl Layer for GenericLayer {
 						});
 					}
 
-					// Call the model again with tool results using this layer's model
+					// Call the model again with tool results using this layer's model and config
 					match openrouter::chat_completion(
 						layer_session,
 						&effective_model,
 						self.config.temperature,
-						config
+						&layer_config
 					).await {
 						Ok((new_output, new_exchange, next_tool_calls, _finish_reason)) => {
 							// Track API time from the second exchange

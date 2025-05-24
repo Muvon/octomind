@@ -229,7 +229,7 @@ pub async fn perform_context_reduction(
 					println!("{}", "Make sure usage.include=true is set!".bright_red());
 
 					// Print the raw response for debugging
-					if config.openrouter.log_level.is_debug_enabled() {
+					if config.get_log_level().is_debug_enabled() {
 						println!("{}", "Raw OpenRouter response for debug:".bright_red());
 						if let Ok(resp_str) = serde_json::to_string_pretty(&exchange.response) {
 							println!("{}", resp_str);

@@ -384,7 +384,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 fn handle_large_response(result: McpToolResult, config: &crate::config::Config) -> Result<McpToolResult> {
 	// Check if result is large - warn user if it exceeds threshold
 	let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
-	if estimated_tokens > config.openrouter.mcp_response_warning_threshold {
+	if estimated_tokens > config.get_mcp_response_warning_threshold_legacy() {
 		// Create a modified result that warns about the size
 		use colored::Colorize;
 		println!("{}", format!("! WARNING: Tool produced a large output ({} tokens)",

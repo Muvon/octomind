@@ -160,7 +160,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			current_dir.file_name().unwrap_or_default().to_string_lossy(),
 			session_args.role
 		);
-		chat_session.add_assistant_message(&welcome_message, None, &mode_config)?;
+		chat_session.add_assistant_message(&welcome_message, None, &mode_config, &session_args.role)?;
 
 		// Print welcome message with colors if terminal supports them
 		use colored::*;
@@ -398,7 +398,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check if we need to truncate the context to stay within token limits
 		let truncate_cancelled = Arc::new(AtomicBool::new(false));
-		check_and_truncate_context(&mut chat_session, &current_config, truncate_cancelled.clone()).await?;
+		check_and_truncate_context(&mut chat_session, &current_config, &session_args.role, truncate_cancelled.clone()).await?;
 
 		// Ensure system message is cached before making API calls
 		let mut system_message_cached = false;
@@ -490,6 +490,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					finish_reason,
 					&mut chat_session,
 					&current_config,
+					&session_args.role,
 					tool_process_cancelled.clone()
 				).await;
 

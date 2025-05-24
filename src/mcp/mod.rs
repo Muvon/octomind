@@ -122,8 +122,9 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
 		"core" => "system",
-		"text_editor" => "developer",
+		"text_editor" | "line_replace" => "developer",
 		"list_files" => "filesystem",
+		"html2md" => "web",
 		name if name.contains("file") || name.contains("editor") => "developer",
 		name if name.contains("search") || name.contains("find") => "search",
 		name if name.contains("image") || name.contains("photo") => "media",
@@ -341,6 +342,11 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 				match call.tool_name.as_str() {
 					"text_editor" => {
 						let mut result = fs::execute_text_editor(call).await?;
+						result.tool_id = call.tool_id.clone();
+						return Ok(result);
+					}
+					"line_replace" => {
+						let mut result = fs::execute_line_replace(call).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}

@@ -31,8 +31,35 @@ pub fn get_list_files_function() -> McpFunction {
 	McpFunction {
 		name: "list_files".to_string(),
 		description: "List files in a directory, with optional pattern matching.
-This tool uses ripgrep for efficient searching that respects .gitignore files.
-You can use it to find files by name pattern or search for files containing specific content.".to_string(),
+
+			This tool uses ripgrep for efficient searching that respects .gitignore files.
+			You can use it to find files by name pattern or search for files containing specific content.
+
+			**⚠️ PERFORMANCE WARNING: Use filtering to avoid large outputs that consume excessive tokens**
+
+			**Parameters:**
+			- `directory`: Target directory to search
+			- `pattern`: Optional filename pattern (uses ripgrep syntax)
+			- `content`: Optional content search within files
+			- `max_depth`: Optional depth limit for directory traversal
+
+			**🎯 Best Practices:**
+			1. **Always use specific patterns** - avoid listing entire large directories
+			2. **Use max_depth** to limit scope and reduce token usage
+			3. **Combine with content search** when looking for specific functionality
+			4. **Filter by file type** using patterns like '\\*.rs' or '\\*.toml'
+
+			**Examples:**
+			- Find Rust files: `{\"directory\": \"src\", \"pattern\": \"\\*.rs\"}`
+			- Find config files: `{\"directory\": \".\", \"pattern\": \"\\*.toml|\\*.yaml|\\*.json\"}`
+			- Search for function: `{\"directory\": \"src\", \"content\": \"fn main\"}`
+			- Limited depth: `{\"directory\": \".\", \"max_depth\": 2, \"pattern\": \"\\*.rs\"}`
+
+			**Token-Efficient Usage:**
+			- Use patterns to target specific file types
+			- Set max_depth to avoid deep directory traversals
+			- Combine with content search for targeted results
+			- Prefer multiple specific calls over one broad search".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["directory"],
@@ -197,6 +224,130 @@ async fn save_file_history(path: &Path) -> Result<()> {
 	Ok(())
 }
 
+// Define the line_replace function for line-based editing
+pub fn get_line_replace_function() -> McpFunction {
+	McpFunction {
+		name: "line_replace".to_string(),
+		description: "Replace content at specific line ranges in files, optimized for multi-file operations.
+
+			This tool performs line-based replacements by specifying start and end line positions, making it ideal for precise code modifications without needing exact string matching.
+
+			**Key Benefits:**
+			- Line-based targeting eliminates string matching issues
+			- Supports multi-file operations for consistent changes across codebase
+			- Validates line ranges exist before making changes
+			- Preserves file structure and formatting outside the target range
+
+			**Parameters:**
+			`path`: Single file path string or array of file paths
+			`start_line`: Starting line number(s) - 1-indexed, can be single number or array
+			`end_line`: Ending line number(s) - 1-indexed, inclusive, can be single number or array  
+			`content`: New content to place at the specified line range(s)
+
+			**Single File Usage:**
+			```
+			{
+			\"path\": \"src/main.rs\",
+			\"start_line\": 5,
+			\"end_line\": 8,
+			\"content\": \"fn new_function() {\\n    // New implementation\\n}\"
+			}
+			```
+			Replaces lines 5-8 (inclusive) with the new content.
+
+			**Multiple Files Usage (Recommended):**
+			```
+			{
+			\"path\": [\"src/lib.rs\", \"src/main.rs\", \"tests/test.rs\"],
+			\"start_line\": [10, 15, 5],
+			\"end_line\": [12, 18, 7],
+			\"content\": [
+				\"pub struct NewStruct {\\n    field: String,\\n}\",
+				\"fn updated_main() {\\n    println!(\\\"Updated\\\");\\n}\",
+				\"#[test]\\nfn new_test() {\\n    assert!(true);\\n}\"
+			]
+			}
+			```
+			All arrays (paths, start_lines, end_lines, contents) must have equal length.
+
+			**Line Numbering:**
+			- Lines are 1-indexed (first line is line 1)
+			- end_line is inclusive (line range includes both start and end)
+			- If start_line == end_line, replaces single line
+			- Content can span multiple lines using \\n characters
+
+			**Validation:**
+			- Verifies all files exist and are readable
+			- Validates line ranges exist in each file
+			- Ensures start_line <= end_line for each operation
+			- Saves file history for undo operations
+
+			**Best Practices:**
+			1. **Use for precise code modifications** when you know exact line numbers
+			2. **Prefer multi-file operations** for consistent changes across files
+			3. **Combine with list_files or text_editor view** to identify target lines
+			4. **Consider line shifts** when making multiple changes to the same file
+			5. **Use \\n for multi-line content** to maintain proper formatting
+
+			This tool is particularly effective for:
+			- Updating function implementations at known locations
+			- Replacing class definitions or struct declarations
+			- Modifying configuration blocks
+			- Updating import statements or dependencies
+			- Making consistent changes across multiple similar files".to_string(),
+		parameters: json!({
+			"type": "object",
+			"required": ["path", "start_line", "end_line", "content"],
+			"properties": {
+				"path": {
+					"description": "Absolute path to file(s). Can be a single path string or an array of path strings.",
+					"oneOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						}
+					]
+				},
+				"start_line": {
+					"description": "Starting line number(s) - 1-indexed. Can be a single integer or an array of integers matching path array length.",
+					"oneOf": [
+						{"type": "integer", "minimum": 1},
+						{
+							"type": "array",
+							"items": {"type": "integer", "minimum": 1}
+						}
+					]
+				},
+				"end_line": {
+					"description": "Ending line number(s) - 1-indexed, inclusive. Can be a single integer or an array of integers matching path and start_line arrays.",
+					"oneOf": [
+						{"type": "integer", "minimum": 1},
+						{
+							"type": "array",
+							"items": {"type": "integer", "minimum": 1}
+						}
+					]
+				},
+				"content": {
+					"description": "New content to place at the specified line range(s). Can be a string for single file or an array of strings matching other arrays.",
+					"oneOf": [
+						{"type": "string"},
+						{
+							"type": "array",
+							"items": {"type": "string"}
+						}
+					]
+				}
+			}
+		}),
+	}
+}
+
 // Define the text editor function for modifying files
 pub fn get_text_editor_function() -> McpFunction {
 	McpFunction {
@@ -205,24 +356,27 @@ pub fn get_text_editor_function() -> McpFunction {
 
 			The `command` parameter specifies the operation to perform on the file system. This tool is specifically designed to handle batch operations across multiple files when possible, improving efficiency and consistency.
 
+			**⚠️ IMPORTANT: Always prefer multi-file operations over single calls to reduce token usage and improve performance**
+
 			Available Commands:
 
 			`view`: Examine content of one or multiple files simultaneously
 			- **Single file**: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
-			- **Multiple files** (recommended): `{\"command\": \"view\", \"path\": [\"src/main.rs\", \"src/lib.rs\", \"Cargo.toml\"]}`
+			- **🔥 Multiple files** (strongly recommended): `{\"command\": \"view\", \"path\": [\"src/main.rs\", \"src/lib.rs\", \"Cargo.toml\"]}`
 			- Returns content of all requested files for comprehensive analysis or reference
+			- **Best practice**: Batch related files together for context analysis
 
 			`write`: Create or overwrite one or multiple files in a single operation
 			- **Single file**: `{\"command\": \"write\", \"path\": \"src/main.rs\", \"file_text\": \"fn main() {...}\"}`
-			- **Multiple files** (recommended):
+			- **🔥 Multiple files** (strongly recommended):
 			```
 			{
 			\"command\": \"write\",
-			\"path\": [\"src/models.rs\", \"src/views.rs\"],
-			\"file_text\": [\"pub struct Model {...}\", \"pub fn render() {...}\"]
+			\"path\": [\"src/models.rs\", \"src/views.rs\", \"tests/integration.rs\"],
+			\"file_text\": [\"pub struct Model {...}\", \"pub fn render() {...}\", \"#[test] fn test() {...}\"]
 			}
 			```
-			- Paths and file_texts arrays must have matching indices and equal length
+			- **Best practice**: Create entire modules or related files together to maintain consistency
 
 			`str_replace`: Perform text replacement across one or multiple files
 			- **Single file**:
@@ -234,31 +388,36 @@ pub fn get_text_editor_function() -> McpFunction {
 			\"new_str\": \"fn new_name()\"
 			}
 			```
-			- **Multiple files** (recommended):
+			- **🔥 Multiple files** (strongly recommended):
 			```
 			{
 			\"command\": \"str_replace\",
-			\"path\": [\"src/lib.rs\", \"src/main.rs\"],
-			\"old_str\": [\"struct OldName\", \"use crate::OldName\"],
-			\"new_str\": [\"struct NewName\", \"use crate::NewName\"]
+			\"path\": [\"src/lib.rs\", \"src/main.rs\", \"tests/unit.rs\"],
+			\"old_str\": [\"struct OldName\", \"use crate::OldName\", \"OldName::new()\"],
+			\"new_str\": [\"struct NewName\", \"use crate::NewName\", \"NewName::new()\"]
 			}
 			```
-			- All three arrays (paths, old_strs, new_strs) must have equal length
+			- **Best practice**: Rename/refactor across all affected files in a single operation
 			- The `old_str` must exactly match text in the file, including whitespace
-			- Ideal for consistent renaming or updating patterns across the codebase
 
 			`undo_edit`: Revert the most recent edit made to a specified file
 			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`
 			- Useful for rolling back changes when needed
 
-			Best Practices:
-			1. **Always prefer multi-file operations** when working with related files
-			2. Each string replacement is processed independently
-			3. Ensure exact matching for string replacements including whitespace and formatting
-			4. Use the array parameters for batch operations rather than making multiple separate calls
-			5. For complex refactoring, consider combining view and write operations
+			**🎯 Performance Guidelines:**
+			1. **Always batch related files** - view, write, or modify related files together
+			2. **Avoid repeated single-file calls** - combine operations when possible
+			3. **Use arrays consistently** - paths, old_strs, new_strs, file_texts must have equal length
+			4. **Plan comprehensive changes** - think about all files affected by a change
+			5. **Prefer fewer, larger operations** over many small ones
 
-			This tool enables efficient code management across multiple files, supporting comprehensive refactoring and codebase-wide changes.".to_string(),
+			**💡 Common Multi-File Patterns:**
+			- **Module creation**: Write multiple related .rs files together
+			- **Refactoring**: Update imports, function names, types across affected files
+			- **Configuration updates**: Modify related config files simultaneously
+			- **Test updates**: Update source and corresponding test files together
+
+			This tool enables efficient code management across multiple files, supporting comprehensive refactoring and codebase-wide changes with minimal token usage.".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],
@@ -364,6 +523,100 @@ pub fn get_html2md_function() -> McpFunction {
 	}
 }
 
+
+// Execute a line replace command
+pub async fn execute_line_replace(call: &McpToolCall) -> Result<McpToolResult> {
+	// Extract path parameter
+	let path_value = match call.parameters.get("path") {
+		Some(value) => value,
+		_ => return Err(anyhow!("Missing 'path' parameter")),
+	};
+
+	// Extract start_line parameter
+	let start_line_value = match call.parameters.get("start_line") {
+		Some(value) => value,
+		_ => return Err(anyhow!("Missing 'start_line' parameter")),
+	};
+
+	// Extract end_line parameter
+	let end_line_value = match call.parameters.get("end_line") {
+		Some(value) => value,
+		_ => return Err(anyhow!("Missing 'end_line' parameter")),
+	};
+
+	// Extract content parameter
+	let content_value = match call.parameters.get("content") {
+		Some(value) => value,
+		_ => return Err(anyhow!("Missing 'content' parameter")),
+	};
+
+	// Execute the appropriate command based on parameter types
+	match path_value {
+		Value::String(p) => {
+			// Single file replacement
+			let start_line = match start_line_value.as_u64() {
+				Some(n) => n as usize,
+				_ => return Err(anyhow!("Invalid 'start_line' parameter, must be a positive integer")),
+			};
+			let end_line = match end_line_value.as_u64() {
+				Some(n) => n as usize,
+				_ => return Err(anyhow!("Invalid 'end_line' parameter, must be a positive integer")),
+			};
+			let content = match content_value.as_str() {
+				Some(s) => s,
+				_ => return Err(anyhow!("Invalid 'content' parameter, must be a string")),
+			};
+			
+			line_replace_single_file(call, Path::new(p), start_line, end_line, content).await
+		},
+		Value::Array(paths) => {
+			// Multiple files replacement
+			let start_lines_array = match start_line_value.as_array() {
+				Some(arr) => arr,
+				_ => return Err(anyhow!("'start_line' must be an array for multiple file operations")),
+			};
+
+			let end_lines_array = match end_line_value.as_array() {
+				Some(arr) => arr,
+				_ => return Err(anyhow!("'end_line' must be an array for multiple file operations")),
+			};
+
+			let contents_array = match content_value.as_array() {
+				Some(arr) => arr,
+				_ => return Err(anyhow!("'content' must be an array for multiple file operations")),
+			};
+
+			// Convert arrays to proper types
+			let path_strings: Result<Vec<String>, _> = paths.iter()
+				.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
+				.map(|r| r.map(|s| s.to_string()))
+				.collect();
+
+			let start_lines: Result<Vec<usize>, _> = start_lines_array.iter()
+				.map(|n| n.as_u64().ok_or_else(|| anyhow!("Invalid start_line in array")))
+				.map(|r| r.map(|n| n as usize))
+				.collect();
+
+			let end_lines: Result<Vec<usize>, _> = end_lines_array.iter()
+				.map(|n| n.as_u64().ok_or_else(|| anyhow!("Invalid end_line in array")))
+				.map(|r| r.map(|n| n as usize))
+				.collect();
+
+			let contents: Result<Vec<String>, _> = contents_array.iter()
+				.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid content in array")))
+				.map(|r| r.map(|s| s.to_string()))
+				.collect();
+
+			match (path_strings, start_lines, end_lines, contents) {
+				(Ok(paths), Ok(start_lines), Ok(end_lines), Ok(contents)) => {
+					line_replace_multiple_files(call, &paths, &start_lines, &end_lines, &contents).await
+				},
+				_ => Err(anyhow!("Invalid arrays in parameters")),
+			}
+		},
+		_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
+	}
+}
 
 // Execute a text editor command
 pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
@@ -627,6 +880,7 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 pub fn get_all_functions() -> Vec<McpFunction> {
 	vec![
 		get_text_editor_function(),
+		get_line_replace_function(),
 		get_list_files_function(),
 		get_html2md_function(),
 	]
@@ -792,6 +1046,214 @@ async fn write_multiple_files(call: &McpToolCall, paths: &[String], contents: &[
 	// Return success if at least one file was written
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": !results.is_empty(),
+			"files": results,
+			"count": results.len(),
+			"failed": failures
+		}),
+	})
+}
+
+// Replace lines in a single file
+async fn line_replace_single_file(call: &McpToolCall, path: &Path, start_line: usize, end_line: usize, content: &str) -> Result<McpToolResult> {
+	if !path.exists() {
+		return Err(anyhow!("File does not exist: {}", path.display()));
+	}
+
+	if !path.is_file() {
+		return Err(anyhow!("Path is not a file: {}", path.display()));
+	}
+
+	// Validate line numbers
+	if start_line == 0 || end_line == 0 {
+		return Err(anyhow!("Line numbers must be 1-indexed (start from 1)"));
+	}
+
+	if start_line > end_line {
+		return Err(anyhow!("start_line ({}) must be less than or equal to end_line ({})", start_line, end_line));
+	}
+
+	// Read the file content
+	let file_content = tokio_fs::read_to_string(path).await?;
+	let mut lines: Vec<&str> = file_content.lines().collect();
+
+	// Validate line ranges exist in file
+	if start_line > lines.len() {
+		return Err(anyhow!("start_line ({}) exceeds file length ({} lines)", start_line, lines.len()));
+	}
+
+	if end_line > lines.len() {
+		return Err(anyhow!("end_line ({}) exceeds file length ({} lines)", end_line, lines.len()));
+	}
+
+	// Save the current content for undo
+	save_file_history(path).await?;
+
+	// Split new content into lines
+	let new_lines: Vec<&str> = content.lines().collect();
+
+	// Convert to 0-indexed for array operations
+	let start_idx = start_line - 1;
+	let end_idx = end_line; // end_idx is exclusive in splice
+
+	// Replace the lines using splice
+	lines.splice(start_idx..end_idx, new_lines);
+
+	// Join lines back to string
+	let new_content = lines.join("\n");
+
+	// Add final newline if original file had one
+	let final_content = if file_content.ends_with('\n') {
+		format!("{}\n", new_content)
+	} else {
+		new_content
+	};
+
+	// Write the new content
+	tokio_fs::write(path, final_content).await?;
+
+	// Return success in the same format as multiple file replacements for consistency
+	Ok(McpToolResult {
+		tool_name: "line_replace".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": true,
+			"files": [{
+				"path": path.to_string_lossy(),
+				"success": true,
+				"lines_replaced": end_line - start_line + 1,
+				"start_line": start_line,
+				"end_line": end_line,
+				"new_lines": content.lines().count()
+			}],
+			"count": 1
+		}),
+	})
+}
+
+// Replace lines in multiple files
+async fn line_replace_multiple_files(call: &McpToolCall, paths: &[String], start_lines: &[usize], end_lines: &[usize], contents: &[String]) -> Result<McpToolResult> {
+	let mut results = Vec::with_capacity(paths.len());
+	let mut failures = Vec::new();
+
+	// Ensure all arrays have matching length
+	if paths.len() != start_lines.len() || paths.len() != end_lines.len() || paths.len() != contents.len() {
+		return Err(anyhow!(
+			"Mismatch in array lengths. Expected {} paths, {} start_lines, {} end_lines, and {} contents to all match.",
+			paths.len(), start_lines.len(), end_lines.len(), contents.len()
+		));
+	}
+
+	// Process each file replacement
+	for (idx, path_str) in paths.iter().enumerate() {
+		let path = Path::new(path_str);
+		let start_line = start_lines[idx];
+		let end_line = end_lines[idx];
+		let content = &contents[idx];
+		let path_display = path.display().to_string();
+
+		// Check if file exists
+		if !path.exists() {
+			failures.push(format!("File does not exist: {}", path_display));
+			continue;
+		}
+
+		if !path.is_file() {
+			failures.push(format!("Path is not a file: {}", path_display));
+			continue;
+		}
+
+		// Validate line numbers
+		if start_line == 0 || end_line == 0 {
+			failures.push(format!("Line numbers must be 1-indexed for {}", path_display));
+			continue;
+		}
+
+		if start_line > end_line {
+			failures.push(format!(
+				"start_line ({}) must be <= end_line ({}) for {}",
+				start_line, end_line, path_display
+			));
+			continue;
+		}
+
+		// Try to read the file content
+		let file_content = match tokio_fs::read_to_string(path).await {
+			Ok(content) => content,
+			Err(e) => {
+				failures.push(format!("Failed to read {}: {}", path_display, e));
+				continue;
+			}
+		};
+
+		let mut lines: Vec<&str> = file_content.lines().collect();
+
+		// Validate line ranges exist in file
+		if start_line > lines.len() {
+			failures.push(format!(
+				"start_line ({}) exceeds file length ({} lines) for {}",
+				start_line, lines.len(), path_display
+			));
+			continue;
+		}
+
+		if end_line > lines.len() {
+			failures.push(format!(
+				"end_line ({}) exceeds file length ({} lines) for {}",
+				end_line, lines.len(), path_display
+			));
+			continue;
+		}
+
+		// Try to save history for undo
+		if let Err(e) = save_file_history(path).await {
+			failures.push(format!("Failed to save history for {}: {}", path_display, e));
+			// But continue with the replacement operation
+		}
+
+		// Split new content into lines
+		let new_lines: Vec<&str> = content.lines().collect();
+
+		// Convert to 0-indexed for array operations
+		let start_idx = start_line - 1;
+		let end_idx = end_line; // end_idx is exclusive in splice
+
+		// Replace the lines using splice
+		lines.splice(start_idx..end_idx, new_lines);
+
+		// Join lines back to string
+		let new_content = lines.join("\n");
+
+		// Add final newline if original file had one
+		let final_content = if file_content.ends_with('\n') {
+			format!("{}\n", new_content)
+		} else {
+			new_content
+		};
+
+		// Write the new content
+		match tokio_fs::write(path, final_content).await {
+			Ok(_) => {
+				results.push(json!({
+					"path": path_display,
+					"success": true,
+					"lines_replaced": end_line - start_line + 1,
+					"start_line": start_line,
+					"end_line": end_line,
+					"new_lines": content.lines().count()
+				}));
+			},
+			Err(e) => {
+				failures.push(format!("Failed to write to {}: {}", path_display, e));
+			}
+		};
+	}
+
+	// Return success if at least one file was modified
+	Ok(McpToolResult {
+		tool_name: "line_replace".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
 			"success": !results.is_empty(),

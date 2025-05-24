@@ -361,136 +361,162 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<O
 	let supports_caching = cache_manager.validate_cache_support("openrouter", model);
 	cache_manager.add_automatic_cache_markers(&mut messages_copy, has_tools, supports_caching);
 
-	let mut i = 0;
-	while i < messages_copy.len() {
-		let msg = &messages_copy[i];
+	for msg in messages_copy {
+		// Handle all message types with simplified structure
+		match msg.role.as_str() {
+			"tool" => {
+				// Tool messages with proper OpenRouter format
+				let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
+				let name = msg.name.clone().unwrap_or_default();
 
-		// Check if this is a tool response message (has <fnr> tags)
-		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
-			let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
-
-			if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-				if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
-					for tool_response in tool_responses {
-						let tool_call_id = tool_response.get("tool_call_id")
-							.and_then(|id| id.as_str())
-							.unwrap_or("");
-
-						let name = tool_response.get("name")
-							.and_then(|n| n.as_str())
-							.unwrap_or("");
-
-						let content = tool_response.get("content")
-							.and_then(|c| c.as_str())
-							.unwrap_or("");
-
-						result.push(OpenRouterMessage {
-							role: "tool".to_string(),
-							content: serde_json::json!(content),
-							tool_call_id: Some(tool_call_id.to_string()),
-							name: Some(name.to_string()),
-							tool_calls: None,
-						});
-					}
-
-					i += 1;
-					continue;
-				} else {
-					result.push(OpenRouterMessage {
-						role: "tool".to_string(),
-						content: serde_json::json!(content),
-						tool_call_id: Some("legacy_tool_call".to_string()),
-						name: Some("legacy_tool".to_string()),
-						tool_calls: None,
+				let content = if msg.cached {
+					cached_count += 1;
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
 					});
-					i += 1;
-					continue;
-				}
-			}
-		} else if msg.role == "tool" {
-			let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
-			let name = msg.name.clone().unwrap_or_default();
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+					serde_json::json!([text_content])
+				} else {
+					serde_json::json!(msg.content)
+				};
 
-			result.push(OpenRouterMessage {
-				role: "tool".to_string(),
-				content: serde_json::json!(msg.content),
-				tool_call_id: Some(tool_call_id),
-				name: Some(name),
-				tool_calls: None,
-			});
-			i += 1;
-			continue;
-		} else if msg.role == "assistant" {
-			let mut assistant_message = if msg.cached {
-				cached_count += 1;
-				OpenRouterMessage {
+				result.push(OpenRouterMessage {
+					role: "tool".to_string(),
+					content,
+					tool_call_id: Some(tool_call_id),
+					name: Some(name),
+					tool_calls: None,
+				});
+			},
+			"assistant" => {
+				// Assistant messages with proper structure
+				let content = if msg.cached {
+					cached_count += 1;
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
+					});
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+					serde_json::json!([text_content])
+				} else {
+					serde_json::json!(msg.content)
+				};
+
+				let mut assistant_msg = OpenRouterMessage {
 					role: msg.role.clone(),
-					content: serde_json::json!([
-						{
-							"type": "text",
-							"text": msg.content,
-							"cache_control": {
-							"type": "ephemeral"
+					content,
+					tool_call_id: None,
+					name: None,
+					tool_calls: None,
+				};
+				
+				// Preserve tool calls if they exist
+				if let Some(ref tool_calls_data) = msg.tool_calls {
+					assistant_msg.tool_calls = Some(tool_calls_data.clone());
+				}
+
+				result.push(assistant_msg);
+			},
+			"user" => {
+				// Handle legacy <fnr> format for backwards compatibility
+				if msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
+					let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+
+					if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
+						if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
+							for tool_response in tool_responses {
+								let tool_call_id = tool_response.get("tool_call_id")
+									.and_then(|id| id.as_str())
+									.unwrap_or("");
+
+								let name = tool_response.get("name")
+									.and_then(|n| n.as_str())
+									.unwrap_or("");
+
+								let content = tool_response.get("content")
+									.and_then(|c| c.as_str())
+									.unwrap_or("");
+
+								result.push(OpenRouterMessage {
+									role: "tool".to_string(),
+									content: serde_json::json!(content),
+									tool_call_id: Some(tool_call_id.to_string()),
+									name: Some(name.to_string()),
+									tool_calls: None,
+								});
+							}
+							continue;
+						} else {
+							result.push(OpenRouterMessage {
+								role: "tool".to_string(),
+								content: serde_json::json!(content),
+								tool_call_id: Some("legacy_tool_call".to_string()),
+								name: Some("legacy_tool".to_string()),
+								tool_calls: None,
+							});
+							continue;
 						}
 					}
-					]),
-					tool_call_id: None,
-					name: None,
-					tool_calls: None,
 				}
-			} else {
-				OpenRouterMessage {
-					role: msg.role.clone(),
-					content: serde_json::json!(msg.content),
-					tool_call_id: None,
-					name: None,
-					tool_calls: None,
-				}
-			};
 
-			if let Some(ref tool_calls_data) = msg.tool_calls {
-				assistant_message.tool_calls = Some(tool_calls_data.clone());
-			}
-
-			result.push(assistant_message);
-			i += 1;
-			continue;
-		}
-
-		// Handle cache breakpoints for non-assistant messages
-		if msg.cached {
-			cached_count += 1;
-			result.push(OpenRouterMessage {
-				role: msg.role.clone(),
-				content: serde_json::json!([
-					{
+				// Regular user messages with proper structure
+				let content = if msg.cached {
+					cached_count += 1;
+					let mut text_content = serde_json::json!({
 						"type": "text",
-						"text": msg.content,
-						"cache_control": {
+						"text": msg.content
+					});
+					text_content["cache_control"] = serde_json::json!({
 						"type": "ephemeral"
-					}
-				}
-				]),
-				tool_call_id: None,
-				name: None,
-				tool_calls: None,
-			});
-		} else {
-			result.push(OpenRouterMessage {
-				role: msg.role.clone(),
-				content: serde_json::json!(msg.content),
-				tool_call_id: None,
-				name: None,
-				tool_calls: None,
-			});
-		}
+					});
+					serde_json::json!([text_content])
+				} else {
+					serde_json::json!(msg.content)
+				};
 
-		i += 1;
+				result.push(OpenRouterMessage {
+					role: msg.role.clone(),
+					content,
+					tool_call_id: None,
+					name: None,
+					tool_calls: None,
+				});
+			},
+			_ => {
+				// All other message types with proper structure
+				let content = if msg.cached {
+					cached_count += 1;
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
+					});
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+					serde_json::json!([text_content])
+				} else {
+					serde_json::json!(msg.content)
+				};
+
+				result.push(OpenRouterMessage {
+					role: msg.role.clone(),
+					content,
+					tool_call_id: None,
+					name: None,
+					tool_calls: None,
+				});
+			}
+		}
 	}
 
 	// Log debug info for cached messages only if debug mode is enabled
 	if cached_count > 0 {
-		log_debug!("{} system/user messages marked for caching", cached_count);
+		log_debug!("{} messages marked for caching", cached_count);
 	}
 
 	result

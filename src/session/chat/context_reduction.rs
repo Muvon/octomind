@@ -131,6 +131,28 @@ pub async fn perform_context_reduction(
 
 	match reduction_result {
 		Ok((reduced_content, exchange, _, _)) => {
+			// Log restoration point before clearing session
+			let user_message_content = chat_session.session.messages.iter()
+				.find(|m| m.role == "user")
+				.map(|m| m.content.clone())
+				.unwrap_or_else(|| "No user message found".to_string());
+
+			let _ = crate::session::logger::log_restoration_point(&chat_session.session.info.name, &user_message_content, &reduced_content);
+
+			// Log restoration point to session file as well for complete restoration capability
+			if let Some(session_file) = &chat_session.session.session_file {
+				let restoration_data = serde_json::json!({
+					"user_message": user_message_content,
+					"assistant_response": reduced_content,
+					"timestamp": std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs()
+				});
+				let restoration_json = serde_json::to_string(&restoration_data)?;
+				let _ = crate::session::append_to_session_file(session_file, &format!("RESTORATION_POINT: {}", restoration_json));
+			}
+
 			println!("{}", "Context reduction complete".bright_green());
 			println!("{}", reduced_content.bright_blue());
 
@@ -171,6 +193,17 @@ pub async fn perform_context_reduction(
 			chat_session.session.add_message("assistant", &reduced_content);
 			let last_index = chat_session.session.messages.len() - 1;
 			chat_session.session.messages[last_index].cached = true;
+
+			// CRITICAL: Reset cache markers and recalibrate token tracking
+			// Reset token counters for fresh context start
+			chat_session.session.current_non_cached_tokens = 0;
+			chat_session.session.current_total_tokens = 0;
+			
+			// Update cache checkpoint time
+			chat_session.session.last_cache_checkpoint_time = std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs();
 
 			// Save stats for the reduction
 			if let Some(usage) = &exchange.usage {

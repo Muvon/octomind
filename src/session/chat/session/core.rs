@@ -14,6 +14,7 @@ pub struct ChatSession {
 	pub model: String,
 	pub temperature: f32,
 	pub estimated_cost: f64,
+	pub cache_next_user_message: bool, // Flag to cache the next user message
 }
 
 impl ChatSession {
@@ -55,6 +56,7 @@ impl ChatSession {
 			model: model_name,
 			temperature: 0.2, // Default temperature
 			estimated_cost: 0.0, // Initialize estimated cost as zero
+			cache_next_user_message: false, // Initialize cache flag
 		}
 	}
 
@@ -115,6 +117,7 @@ impl ChatSession {
 						model: model.unwrap_or_else(|| config.openrouter.model.clone()),
 						temperature: 0.2,
 						estimated_cost: 0.0,
+						cache_next_user_message: false, // Initialize cache flag
 					};
 
 					// Update the estimated cost from the loaded session
@@ -151,8 +154,11 @@ impl ChatSession {
 						drop(file);
 					}
 
-					let mut chat_session = ChatSession::new(new_session_name, model, config);
+					let mut chat_session = ChatSession::new(new_session_name.clone(), model, config);
 					chat_session.session.session_file = Some(new_session_file);
+
+					// Initialize the raw session log
+					let _ = crate::session::logger::log_session_summary(&new_session_name, &chat_session.session.info);
 
 					// Immediately save the session info to ensure SUMMARY is written
 					let info_json = serde_json::to_string(&chat_session.session.info)?;
@@ -175,8 +181,11 @@ impl ChatSession {
 				drop(file);
 			}
 
-			let mut chat_session = ChatSession::new(session_name, model, config);
+			let mut chat_session = ChatSession::new(session_name.clone(), model, config);
 			chat_session.session.session_file = Some(session_file);
+
+			// Initialize the raw session log
+			let _ = crate::session::logger::log_session_summary(&session_name, &chat_session.session.info);
 
 			// Immediately save the session info to ensure SUMMARY is written
 			let info_json = serde_json::to_string(&chat_session.session.info)?;

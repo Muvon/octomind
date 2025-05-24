@@ -15,6 +15,9 @@ impl ChatSession {
 
 	// Add a system message
 	pub fn add_system_message(&mut self, content: &str) -> Result<()> {
+		// Log to raw session log
+		let _ = crate::session::logger::log_system_message(&self.session.info.name, content);
+
 		// Add message to session
 		self.session.add_message("system", content);
 
@@ -29,8 +32,25 @@ impl ChatSession {
 
 	// Add a user message
 	pub fn add_user_message(&mut self, content: &str) -> Result<()> {
+		// Log to raw session log
+		let _ = crate::session::logger::log_user_input(&self.session.info.name, content);
+
 		// Add message to session
 		self.session.add_message("user", content);
+
+		// Check if we should cache this user message
+		if self.cache_next_user_message {
+			let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
+			if supports_caching {
+				let cache_manager = crate::session::cache::CacheManager::new();
+				if let Ok(true) = cache_manager.apply_cache_to_current_user_message(&mut self.session, supports_caching) {
+					use colored::*;
+					println!("{}", "✓ Current user message marked for caching".bright_green());
+				}
+			}
+			// Reset the flag after applying (or attempting to apply) cache
+			self.cache_next_user_message = false;
+		}
 
 		// Log the user message if not already logged from input
 		if !content.starts_with("<fnr>") {
@@ -48,14 +68,20 @@ impl ChatSession {
 
 	// Add an assistant message
 	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>, config: &Config) -> Result<()> {
+		// Log to raw session log
+		let _ = crate::session::logger::log_assistant_response(&self.session.info.name, content);
+
+		// Log raw API exchange if available
+		if let Some(ref ex) = exchange {
+			let _ = crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
+			let _ = crate::session::logger::log_api_response(&self.session.info.name, &ex.response);
+		}
+
 		// Add message to session
 		let message = self.session.add_message("assistant", content);
 		self.last_response = content.to_string();
 
-		// Log the assistant response
-		let _ = crate::session::logger::log_assistant_response(content);
-
-		// Log the raw exchange if available
+		// Log the raw exchange if available (legacy)
 		if let Some(ex) = &exchange {
 			let _ = crate::session::logger::log_raw_exchange(ex);
 		}
@@ -117,8 +143,10 @@ impl ChatSession {
 				);
 
 				// Check if we should automatically move the cache marker
-				if let Ok(true) = self.session.check_auto_cache_threshold(config) {
-					log_info!("{}", "Auto-cache threshold reached - adding cache checkpoint at last user message.");
+				let cache_manager = crate::session::cache::CacheManager::new();
+				let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
+				if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut self.session, config, supports_caching) {
+					log_info!("{}", "Auto-cache threshold reached - cache checkpoint applied.");
 				}
 
 				// If OpenRouter provided cost data, use it directly
@@ -193,10 +221,10 @@ impl ChatSession {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 
-			// If we have a raw exchange, save it as well
+			// If we have a raw exchange, save it inline in session file for complete restoration
 			if let Some(ex) = exchange {
 				let exchange_json = serde_json::to_string(&ex)?;
-				crate::session::append_to_session_file(session_file, &exchange_json)?;
+				crate::session::append_to_session_file(session_file, &format!("EXCHANGE: {}", exchange_json))?;
 			}
 		}
 

@@ -50,8 +50,20 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 			Ok(String::new())
 		},
 		Err(ReadlineError::Eof) => {
-			// Ctrl+D
-			log_info!("\nExiting session.");
+			// Ctrl+D - Show both session and log file paths before exiting
+			println!("\nExiting session...");
+			
+			// Show session file path if available
+			if let Ok(sessions_dir) = crate::session::get_sessions_dir() {
+				println!("Session files saved in: {}", sessions_dir.display());
+			}
+			
+			// Show daily log file path
+			if let Ok(log_file) = crate::session::logger::get_log_file() {
+				println!("Daily logs saved in: {}", log_file.display());
+			}
+			
+			log_info!("Session and logs preserved for future reference.");
 			Ok("/exit".to_string())
 		},
 		Err(err) => {

@@ -157,11 +157,9 @@ impl Session {
 		message
 	}
 
-	// Add a cache checkpoint - marks a message as a cache breakpoint
-	// By default, it targets the last user message, but system=true targets the system message
+	// Add a cache checkpoint - simplified to only handle system messages automatically
+	// Content cache markers should use the CacheManager directly for better control
 	pub fn add_cache_checkpoint(&mut self, system: bool) -> Result<bool, anyhow::Error> {
-		let cache_manager = crate::session::cache::CacheManager::new();
-		
 		if system {
 			// Find the first system message and mark it
 			for msg in self.messages.iter_mut() {
@@ -180,49 +178,9 @@ impl Session {
 			// If we couldn't find a system message, return false
 			Ok(false)
 		} else {
-			// Use the new cache manager for content cache markers
-			let supports_caching = crate::session::model_supports_caching(&self.info.model);
-			if !supports_caching {
-				return Ok(false);
-			}
-			
-			let result = cache_manager.manage_content_cache_markers(self, None, false)?;
-			
-			if result {
-				// Reset token counters and update checkpoint time when adding a cache checkpoint
-				self.current_non_cached_tokens = 0;
-				self.current_total_tokens = 0;
-				self.last_cache_checkpoint_time = SystemTime::now()
-					.duration_since(UNIX_EPOCH)
-					.unwrap_or_default()
-					.as_secs();
-				
-				// Save the session with the cached message
-				if let Some(_) = &self.session_file {
-					let _ = self.save();
-				}
-			}
-			
-			Ok(result)
+			// For content cache markers, direct users to use CacheManager
+			Err(anyhow::anyhow!("Use CacheManager for content cache markers instead of add_cache_checkpoint"))
 		}
-	}
-
-	// Add a cache checkpoint if the token threshold is reached
-	// Returns true if a checkpoint was added, false otherwise
-	pub fn check_auto_cache_threshold(&mut self, config: &crate::config::Config) -> Result<bool, anyhow::Error> {
-		let cache_manager = crate::session::cache::CacheManager::new();
-		let supports_caching = crate::session::model_supports_caching(&self.info.model);
-		
-		let result = cache_manager.check_and_apply_auto_cache_threshold(self, config, supports_caching)?;
-		
-		if result {
-			// After adding a cache checkpoint, make sure state is properly saved
-			if let Some(_) = &self.session_file {
-				let _ = self.save();
-			}
-		}
-		
-		Ok(result)
 	}
 
 	// Add statistics for a specific layer
@@ -414,6 +372,8 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	let reader = BufReader::new(file);
 	let mut session_info: Option<SessionInfo> = None;
 	let mut messages = Vec::new();
+	let mut restoration_point_found = false;
+	let mut restoration_messages = Vec::new();
 
 	// Process the file line by line to avoid loading the entire file into memory
 	for line in reader.lines() {
@@ -438,12 +398,24 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 				old_info.tool_calls = 0; // Initialize tool call counter
 				session_info = Some(old_info);
 			}
+		} else if line.starts_with("RESTORATION_POINT: ") {
+			// Found a restoration point - this means the session was optimized with /done
+			// We should restore from this point instead of loading all messages
+			restoration_point_found = true;
+			// Clear messages collected so far and start fresh from restoration point
+			messages.clear();
+			restoration_messages.clear();
+			// Continue processing to find messages after this restoration point
 		} else if !line.starts_with("EXCHANGE: ") && !line.is_empty() {
 			// Try different formats, prioritizing standard JSONL
 			if line.contains("\"role\":") && line.contains("\"content\":") {
 				// This looks like a message JSON - try to parse it
 				if let Ok(message) = serde_json::from_str::<Message>(&line) {
-					messages.push(message);
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
 					continue;
 				}
 			}
@@ -451,24 +423,43 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			// Try legacy prefixed formats if JSON parsing fails
 			if let Some(content) = line.strip_prefix("SYSTEM: ") {
 				if let Ok(message) = serde_json::from_str::<Message>(content) {
-					messages.push(message);
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
 				}
 			} else if let Some(content) = line.strip_prefix("USER: ") {
 				if let Ok(message) = serde_json::from_str::<Message>(content) {
-					messages.push(message);
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
 				}
 			} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
 				if let Ok(message) = serde_json::from_str::<Message>(content) {
-					messages.push(message);
+					if restoration_point_found {
+						restoration_messages.push(message);
+					} else {
+						messages.push(message);
+					}
 				}
 			}
 		}
 	}
 
+	// Use restoration messages if we found a restoration point, otherwise use all messages
+	let final_messages = if restoration_point_found && !restoration_messages.is_empty() {
+		restoration_messages
+	} else {
+		messages
+	};
+
 	if let Some(info) = session_info {
 		let session = Session {
 			info,
-			messages,
+			messages: final_messages,
 			session_file: Some(session_file.clone()),
 			current_non_cached_tokens: 0,
 			current_total_tokens: 0,

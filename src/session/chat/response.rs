@@ -277,7 +277,7 @@ pub async fn process_response(
 				}
 
 				// Log the assistant response and exchange
-				let _ = crate::session::logger::log_assistant_response(&current_content);
+				let _ = crate::session::logger::log_assistant_response(&chat_session.session.info.name, &current_content);
 				if let Some(ex) = &Some(current_exchange.clone()) {
 					let _ = crate::session::logger::log_raw_exchange(ex);
 				}
@@ -314,8 +314,8 @@ pub async fn process_response(
 					let config_clone = config.clone();
 					let params_clone = tool_call.parameters.clone();
 
-					// Log the tool request with the ORIGINAL tool_id
-					let _ = crate::session::logger::log_tool_request(&tool_name, &params_clone, &original_tool_id);
+					// Log the tool request with the session name and ORIGINAL tool_id
+					let _ = crate::session::logger::log_tool_call(&chat_session.session.info.name, &tool_name, &original_tool_id, &params_clone);
 
 					let tool_id_for_task = original_tool_id.clone();
 					let task = tokio::spawn(async move {
@@ -345,8 +345,8 @@ pub async fn process_response(
 							Ok(res) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
-								// Log the tool response
-								let _ = crate::session::logger::log_tool_response(&res.result, &tool_id);
+								// Log the tool response with session name
+								let _ = crate::session::logger::log_tool_result(&chat_session.session.info.name, &tool_id, &res.result);
 								tool_results.push(res);
 							},
 							Err(e) => {
@@ -591,8 +591,10 @@ pub async fn process_response(
 								);
 
 								// Check if we should automatically move the cache marker
-								if let Ok(true) = chat_session.session.check_auto_cache_threshold(config) {
-									log_info!("{}", "Auto-cache threshold reached during tool calls - adding cache checkpoint at last user message.");
+								let cache_manager = crate::session::cache::CacheManager::new();
+								let supports_caching = crate::session::model_supports_caching(&chat_session.model);
+								if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut chat_session.session, config, supports_caching) {
+									log_info!("{}", "Auto-cache threshold reached during tool calls - cache checkpoint applied.");
 								}
 
 								// Update cost

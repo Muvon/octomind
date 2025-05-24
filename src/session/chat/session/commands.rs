@@ -283,38 +283,19 @@ impl ChatSession {
 			CACHE_COMMAND => {
 				// Parse cache command arguments for advanced functionality
 				if params.is_empty() {
-					// Default behavior - add cache checkpoint
-					match self.session.add_cache_checkpoint(false) {
-						Ok(true) => {
-							println!("{}", "Cache checkpoint added at the last user message.".bright_green());
-							
-							// Show cache statistics
-							let cache_manager = crate::session::cache::CacheManager::new();
-							let stats = cache_manager.get_cache_statistics(&self.session);
-							println!("{}", stats.format_for_display());
-							
-							// Save the session with the cached message
-							let _ = self.save();
-						},
-						Ok(false) => {
-							// Check if model supports caching
-							let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
-							if !supports_caching {
-								println!("{}", "This model does not support caching.".bright_yellow());
-							} else {
-								// Must be that no user messages exist or some other issue
-								let user_count = self.session.messages.iter().filter(|m| m.role == "user" || m.role == "tool").count();
-								if user_count == 0 {
-									println!("{}", "No user messages found to mark as a cache checkpoint.".bright_yellow());
-								} else {
-									println!("{}", "The last user message is already marked for caching.".bright_yellow());
-									println!("{}", "Use '/cache stats' to see current cache markers.".bright_blue());
-								}
-							}
-						},
-						Err(e) => {
-							println!("{}: {}", "Failed to add cache checkpoint".bright_red(), e);
-						}
+					// Default behavior - set flag to cache the NEXT user message
+					let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
+					if !supports_caching {
+						println!("{}", "This model does not support caching.".bright_yellow());
+					} else {
+						// Set the flag to cache the next user message
+						self.cache_next_user_message = true;
+						println!("{}", "The next user message will be marked for caching.".bright_green());
+						
+						// Show cache statistics
+						let cache_manager = crate::session::cache::CacheManager::new();
+						let stats = cache_manager.get_cache_statistics(&self.session);
+						println!("{}", stats.format_for_display());
 					}
 				} else {
 					match params[0] {

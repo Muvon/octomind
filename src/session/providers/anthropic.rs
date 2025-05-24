@@ -269,74 +269,122 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<A
 
 	let mut result = Vec::new();
 
-	for msg in &messages_copy {
+	for msg in messages_copy {
 		// Skip system messages as they're handled separately
 		if msg.role == "system" {
 			continue;
 		}
 
-		// Handle tool response messages (has <fnr> tags)
-		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
-			let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+		// Handle all message types with simplified structure
+		match msg.role.as_str() {
+			"tool" => {
+				// Tool messages in Anthropic format
+				let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
 
-			if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-				if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
-					for tool_response in tool_responses {
-						let tool_call_id = tool_response.get("tool_call_id")
-							.and_then(|id| id.as_str())
-							.unwrap_or("");
-
-						let content_text = tool_response.get("content")
-							.and_then(|c| c.as_str())
-							.unwrap_or("");
-
-						result.push(AnthropicMessage {
-							role: "user".to_string(),
-							content: serde_json::json!([{
-								"type": "tool_result",
-								"tool_use_id": tool_call_id,
-								"content": content_text
-							}]),
-						});
-					}
-					continue;
-				}
-			}
-		} else if msg.role == "tool" {
-			let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
-
-			result.push(AnthropicMessage {
-				role: "user".to_string(),
-				content: serde_json::json!([{
+				let mut tool_content = serde_json::json!({
 					"type": "tool_result",
 					"tool_use_id": tool_call_id,
 					"content": msg.content
-				}]),
-			});
-			continue;
-		}
+				});
 
-		// Handle cache breakpoints for messages
-		if msg.cached {
-			// For cached messages, use the structured format with cache_control
-			result.push(AnthropicMessage {
-				role: msg.role.clone(),
-				content: serde_json::json!([
-					{
-						"type": "text",
-						"text": msg.content,
-						"cache_control": {
-							"type": "ephemeral"
+				// Add cache_control if needed
+				if msg.cached {
+					tool_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+				}
+
+				result.push(AnthropicMessage {
+					role: "user".to_string(),
+					content: serde_json::json!([tool_content]),
+				});
+			},
+			"user" => {
+				// Handle legacy <fnr> format for backwards compatibility
+				if msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
+					let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+
+					if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
+						if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
+							for tool_response in tool_responses {
+								let tool_call_id = tool_response.get("tool_call_id")
+									.and_then(|id| id.as_str())
+									.unwrap_or("");
+
+								let content_text = tool_response.get("content")
+									.and_then(|c| c.as_str())
+									.unwrap_or("");
+
+								result.push(AnthropicMessage {
+									role: "user".to_string(),
+									content: serde_json::json!([{
+										"type": "tool_result",
+										"tool_use_id": tool_call_id,
+										"content": content_text
+									}]),
+								});
+							}
+							continue;
 						}
 					}
-				]),
-			});
-		} else {
-			// Regular messages without caching
-			result.push(AnthropicMessage {
-				role: msg.role.clone(),
-				content: serde_json::json!(msg.content),
-			});
+				}
+
+				// Regular user messages with proper structure
+				let mut text_content = serde_json::json!({
+					"type": "text",
+					"text": msg.content
+				});
+
+				// Add cache_control if needed
+				if msg.cached {
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+				}
+
+				result.push(AnthropicMessage {
+					role: msg.role.clone(),
+					content: serde_json::json!([text_content]),
+				});
+			},
+			"assistant" => {
+				// Assistant messages with proper structure
+				let mut text_content = serde_json::json!({
+					"type": "text",
+					"text": msg.content
+				});
+
+				// Add cache_control if needed
+				if msg.cached {
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+				}
+
+				result.push(AnthropicMessage {
+					role: msg.role.clone(),
+					content: serde_json::json!([text_content]),
+				});
+			},
+			_ => {
+				// All other message types with proper structure
+				let mut text_content = serde_json::json!({
+					"type": "text",
+					"text": msg.content
+				});
+
+				// Add cache_control if needed
+				if msg.cached {
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral"
+					});
+				}
+
+				result.push(AnthropicMessage {
+					role: msg.role.clone(),
+					content: serde_json::json!([text_content]),
+				});
+			}
 		}
 	}
 

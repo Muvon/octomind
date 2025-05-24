@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::session::{create_system_prompt, openrouter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::io::Write; // Added for stdout flushing
 use anyhow::Result;
 use super::super::input::read_user_input;
 use super::super::response::process_response;
@@ -182,16 +183,20 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	ctrlc::set_handler(move || {
 		// If already set, do a hard exit to break out of any operation
 		if ctrl_c_pressed_clone.load(Ordering::SeqCst) {
-			println!("\nForcing exit due to repeated Ctrl+C...");
+			println!("\n🛑 Forcing exit due to repeated Ctrl+C...");
 			std::process::exit(130); // 130 is standard exit code for SIGINT
 		}
 
 		ctrl_c_pressed_clone.store(true, Ordering::SeqCst);
-		println!("\nCtrl+C pressed. Cancelling current operation.");
-		println!("Press Ctrl+C again to force immediate exit.");
-
-		// Force all cancellation flags to be set immediately
-		// This will propagate to any active operations
+		// Immediately display user feedback with visual indicators
+		print!("\n🛑 Operation cancelled");
+		std::io::stdout().flush().unwrap(); // Force immediate display
+		print!(" | 📝 Work preserved");
+		std::io::stdout().flush().unwrap();
+		print!(" | ✨ Continue with new command");
+		std::io::stdout().flush().unwrap();
+		println!(" | 🔄 Press Ctrl+C again to force exit");
+		std::io::stdout().flush().unwrap(); // Ensure all output is shown immediately
 	}).expect("Error setting Ctrl+C handler");
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
@@ -206,7 +211,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
 			// Reset for next time
 			ctrl_c_pressed.store(false, Ordering::SeqCst);
-			println!("\nOperation cancelled. Ready for new input.");
+			println!("Ready for new input.");
 			continue;
 		}
 

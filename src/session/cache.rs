@@ -350,6 +350,127 @@ impl CacheManager {
         cleared
     }
 
+    /// Apply cache marker to a specific message immediately
+    /// This is used when /cache command is used or auto-cache threshold is reached
+    pub fn apply_cache_to_message(
+        &self,
+        session: &mut Session,
+        message_index: usize,
+        supports_caching: bool,
+    ) -> Result<bool> {
+        if !supports_caching {
+            return Ok(false);
+        }
+
+        // Check if message exists
+        if message_index >= session.messages.len() {
+            return Err(anyhow::anyhow!("Message index {} is out of bounds", message_index));
+        }
+
+        // Check if already cached
+        if let Some(msg) = session.messages.get(message_index) {
+            if msg.cached {
+                return Ok(false); // Already cached
+            }
+        }
+
+        // Count existing content cache markers and find first marker to potentially remove
+        let mut existing_markers: Vec<usize> = Vec::new();
+        let mut first_marker_to_remove: Option<usize> = None;
+
+        for (i, msg) in session.messages.iter().enumerate() {
+            if msg.cached && (msg.role == "user" || msg.role == "tool" || msg.role == "assistant") {
+                existing_markers.push(i);
+            }
+        }
+
+        existing_markers.sort();
+
+        // Check if this message is already cached
+        if existing_markers.contains(&message_index) {
+            return Ok(false); // Already cached
+        }
+
+        // Determine if we need to remove a marker due to 2-marker limit
+        if existing_markers.len() >= self.max_content_markers {
+            first_marker_to_remove = existing_markers.first().copied();
+        }
+
+        // Apply changes to the session
+        // First remove the old marker if needed
+        if let Some(first_marker_index) = first_marker_to_remove {
+            if let Some(first_msg) = session.messages.get_mut(first_marker_index) {
+                first_msg.cached = false;
+            }
+        }
+
+        // Then apply the new cache marker
+        if let Some(msg) = session.messages.get_mut(message_index) {
+            msg.cached = true;
+
+            // Reset token counters when adding a cache checkpoint
+            session.current_non_cached_tokens = 0;
+            session.current_total_tokens = 0;
+            session.last_cache_checkpoint_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Apply cache marker to the current user message when /cache command is used
+    /// This should be called AFTER the user message is added but BEFORE the API request
+    pub fn apply_cache_to_current_user_message(
+        &self,
+        session: &mut Session,
+        supports_caching: bool,
+    ) -> Result<bool> {
+        if !supports_caching {
+            return Ok(false);
+        }
+
+        // Find the last user message
+        for (i, msg) in session.messages.iter().enumerate().rev() {
+            if msg.role == "user" {
+                return self.apply_cache_to_message(session, i, supports_caching);
+            }
+        }
+
+        Err(anyhow::anyhow!("No user message found to cache"))
+    }
+
+    /// Apply cache marker to the current tool message when auto-threshold is reached
+    /// This should be called immediately when threshold is reached during tool processing
+    pub fn apply_cache_to_current_tool_message(
+        &self,
+        session: &mut Session,
+        supports_caching: bool,
+    ) -> Result<bool> {
+        if !supports_caching {
+            return Ok(false);
+        }
+
+        // Find the last tool message
+        for (i, msg) in session.messages.iter().enumerate().rev() {
+            if msg.role == "tool" {
+                return self.apply_cache_to_message(session, i, supports_caching);
+            }
+        }
+
+        // If no tool message found, fall back to last user message
+        for (i, msg) in session.messages.iter().enumerate().rev() {
+            if msg.role == "user" {
+                return self.apply_cache_to_message(session, i, supports_caching);
+            }
+        }
+
+        Err(anyhow::anyhow!("No suitable message found to cache"))
+    }
+
     /// Validate cache configuration for a provider/model
     pub fn validate_cache_support(&self, provider: &str, model: &str) -> bool {
         match provider.to_lowercase().as_str() {

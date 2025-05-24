@@ -25,6 +25,17 @@ impl ChatSession {
 		// Cost information
 		println!("{} ${:.5}", "Total cost:".yellow(), self.session.info.total_cost);
 
+		// Time information
+		let total_time_ms = self.session.info.total_api_time_ms + self.session.info.total_tool_time_ms + self.session.info.total_layer_time_ms;
+		if total_time_ms > 0 {
+			println!("{} {}ms (API: {}ms, Tools: {}ms, Processing: {}ms)", 
+				"Total time:".yellow(),
+				total_time_ms.to_string().bright_white(),
+				self.session.info.total_api_time_ms.to_string().bright_blue(),
+				self.session.info.total_tool_time_ms.to_string().bright_green(),
+				self.session.info.total_layer_time_ms.to_string().bright_magenta());
+		}
+
 		// Messages count and tool calls
 		println!("{} {}", "Messages:".yellow(), self.session.messages.len());
 
@@ -75,6 +86,9 @@ impl ChatSession {
 				let mut total_input = 0;
 				let mut total_output = 0;
 				let mut total_cost = 0.0;
+				let mut total_api_time = 0;
+				let mut total_tool_time = 0;
+				let mut total_layer_time = 0;
 
 				// Count executions
 				let executions = stats.len();
@@ -83,6 +97,9 @@ impl ChatSession {
 					total_input += stat.input_tokens;
 					total_output += stat.output_tokens;
 					total_cost += stat.cost;
+					total_api_time += stat.api_time_ms;
+					total_tool_time += stat.tool_time_ms;
+					total_layer_time += stat.total_time_ms;
 				}
 
 				// Print the stats
@@ -93,6 +110,17 @@ impl ChatSession {
 					total_input.to_string().bright_white(),
 					total_output.to_string().bright_white());
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
+				
+				// Show time information if available
+				let total_time = total_api_time + total_tool_time + total_layer_time;
+				if total_time > 0 {
+					println!("  {}: {}ms (API: {}ms, Tools: {}ms, Total: {}ms)",
+						"Time".blue(),
+						total_time.to_string().bright_white(),
+						total_api_time.to_string().bright_cyan(),
+						total_tool_time.to_string().bright_green(),
+						total_layer_time.to_string().bright_magenta());
+				}
 
 				// Add special note for context optimization
 				if layer_type.as_str() == "context_optimization" {
@@ -117,6 +145,9 @@ impl ChatSession {
 					let mut total_input = 0;
 					let mut total_output = 0;
 					let mut total_cost = 0.0;
+					let mut total_api_time = 0;
+					let mut total_tool_time = 0;
+					let mut total_layer_time = 0;
 
 					// Count executions
 					let executions = stats.len();
@@ -125,6 +156,9 @@ impl ChatSession {
 						total_input += stat.input_tokens;
 						total_output += stat.output_tokens;
 						total_cost += stat.cost;
+						total_api_time += stat.api_time_ms;
+						total_tool_time += stat.tool_time_ms;
+						total_layer_time += stat.total_time_ms;
 					}
 
 					// Print the stats
@@ -135,6 +169,18 @@ impl ChatSession {
 						total_input.to_string().bright_white(),
 						total_output.to_string().bright_white());
 					println!("  {}: ${:.5}", "Cost".blue(), total_cost);
+					
+					// Show time information if available
+					let total_time = total_api_time + total_tool_time + total_layer_time;
+					if total_time > 0 {
+						println!("  {}: {}ms (API: {}ms, Tools: {}ms, Total: {}ms)",
+							"Time".blue(),
+							total_time.to_string().bright_white(),
+							total_api_time.to_string().bright_cyan(),
+							total_tool_time.to_string().bright_green(),
+							total_layer_time.to_string().bright_magenta());
+					}
+					
 					println!("  {}", "Note: Command layers don't affect session history".bright_cyan());
 
 					println!();

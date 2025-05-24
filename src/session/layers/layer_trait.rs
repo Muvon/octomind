@@ -13,6 +13,10 @@ pub struct LayerResult {
 	pub exchange: openrouter::OpenRouterExchange,
 	pub token_usage: Option<openrouter::TokenUsage>,
 	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
+	// Time tracking
+	pub api_time_ms: u64,    // Time spent on API requests
+	pub tool_time_ms: u64,   // Time spent executing tools
+	pub total_time_ms: u64,  // Total processing time for this layer
 }
 
 // Input mode determines what part of the previous layer's output will be used

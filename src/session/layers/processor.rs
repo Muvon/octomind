@@ -131,7 +131,7 @@ impl Layer for LayerProcessor {
 					}
 
 					let result = match crate::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
-						Ok(res) => res,
+						Ok((res, _tool_time_ms)) => res,  // Extract result from tuple
 						Err(e) => {
 							println!("{} {}", "Tool execution error:".red(), e);
 							continue;
@@ -199,6 +199,9 @@ impl Layer for LayerProcessor {
 								exchange: new_exchange,
 								token_usage,
 								tool_calls: next_tool_calls,
+								api_time_ms: 0, // TODO: Add time tracking to processor
+								tool_time_ms: 0,
+								total_time_ms: 0,
 							});
 						},
 						Err(e) => {
@@ -219,6 +222,9 @@ impl Layer for LayerProcessor {
 			exchange,
 			token_usage,
 			tool_calls: direct_tool_calls,
+			api_time_ms: 0, // TODO: Add time tracking to processor
+			tool_time_ms: 0,
+			total_time_ms: 0,
 		})
 	}
 }

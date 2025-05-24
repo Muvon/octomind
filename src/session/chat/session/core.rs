@@ -38,6 +38,10 @@ impl ChatSession {
 			duration_seconds: 0,
 			layer_stats: Vec::new(), // Initialize empty layer stats
 			tool_calls: 0, // Initialize tool call counter
+			// Initialize time tracking fields
+			total_api_time_ms: 0,
+			total_tool_time_ms: 0,
+			total_layer_time_ms: 0,
 		};
 
 		Self {

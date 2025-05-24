@@ -338,7 +338,7 @@ pub async fn process_response(
 
 					match task.await {
 						Ok(result) => match result {
-							Ok(res) => {
+							Ok((res, _tool_time_ms)) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
 								// Log the tool response with session name

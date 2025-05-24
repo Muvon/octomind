@@ -298,6 +298,7 @@ impl AiProvider for OpenAiProvider {
 				completion_tokens_details,
 				prompt_tokens_details,
 				breakdown,
+				request_time_ms: None, // TODO: Add API timing for OpenAI
 			})
 		} else {
 			None

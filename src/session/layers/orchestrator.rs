@@ -142,17 +142,21 @@ impl LayeredOrchestrator {
 			if let Some(usage) = &result.token_usage {
 				// Try to get cost from the TokenUsage struct first
 				if let Some(cost) = usage.cost {
-					// Display the layer cost
-					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens)",
-						cost, usage.prompt_tokens, usage.completion_tokens).bright_magenta());
+					// Display the layer cost with time information
+					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens) | Time: API {}ms, Tools {}ms, Total {}ms",
+						cost, usage.prompt_tokens, usage.completion_tokens, 
+						result.api_time_ms, result.tool_time_ms, result.total_time_ms).bright_magenta());
 
-					// Add the stats to the session
-					session.add_layer_stats(
+					// Add the stats to the session with time tracking
+					session.add_layer_stats_with_time(
 						layer_name,
 						&layer.config().get_effective_model(&session.info.model),
 						usage.prompt_tokens,
 						usage.completion_tokens,
-						cost
+						cost,
+						result.api_time_ms,
+						result.tool_time_ms,
+						result.total_time_ms
 					);
 
 					// Update totals for summary
@@ -167,16 +171,20 @@ impl LayeredOrchestrator {
 
 					if let Some(cost) = cost_from_raw {
 						// Log that we had to get cost from raw response
-						println!("{}", format!("Layer cost (from raw): ${:.5} (Input: {} tokens, Output: {} tokens)",
-							cost, usage.prompt_tokens, usage.completion_tokens).bright_magenta());
+						println!("{}", format!("Layer cost (from raw): ${:.5} (Input: {} tokens, Output: {} tokens) | Time: API {}ms, Tools {}ms, Total {}ms",
+							cost, usage.prompt_tokens, usage.completion_tokens,
+							result.api_time_ms, result.tool_time_ms, result.total_time_ms).bright_magenta());
 
-						// Add the stats to the session
-						session.add_layer_stats(
+						// Add the stats to the session with time tracking
+						session.add_layer_stats_with_time(
 							layer_name,
 							&layer.config().get_effective_model(&session.info.model),
 							usage.prompt_tokens,
 							usage.completion_tokens,
-							cost
+							cost,
+							result.api_time_ms,
+							result.tool_time_ms,
+							result.total_time_ms
 						);
 
 						// Update totals for summary
@@ -188,13 +196,28 @@ impl LayeredOrchestrator {
 						println!("{} {}", "ERROR: Layer".bright_red(), layer_name.bright_yellow());
 						println!("{}", "OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
 
-						// Still track tokens
+						// Still track tokens and time
 						total_input_tokens += usage.prompt_tokens;
 						total_output_tokens += usage.completion_tokens;
+
+						// Add the stats to the session with time tracking but without cost
+						session.add_layer_stats_with_time(
+							layer_name,
+							&layer.config().get_effective_model(&session.info.model),
+							usage.prompt_tokens,
+							usage.completion_tokens,
+							0.0, // No cost available
+							result.api_time_ms,
+							result.tool_time_ms,
+							result.total_time_ms
+						);
 					}
 				}
 			} else {
-				println!("{} {}", "ERROR: No usage data for layer".bright_red(), layer_name.bright_yellow());
+				println!("{} {} | Time: API {}ms, Tools {}ms, Total {}ms", 
+					"ERROR: No usage data for layer".bright_red(), 
+					layer_name.bright_yellow(),
+					result.api_time_ms, result.tool_time_ms, result.total_time_ms);
 			}
 
 			// Take the output from this layer and use it as input for the next layer
@@ -205,12 +228,22 @@ impl LayeredOrchestrator {
 		println!();
 		println!("{}", "Processing completed".bright_green());
 
+		// Calculate total time across all layers
+		let total_api_time_ms = session.info.total_api_time_ms;
+		let total_tool_time_ms = session.info.total_tool_time_ms;
+		let total_layer_time_ms = session.info.total_layer_time_ms;
+
 		// Display cumulative token usage across all layers
 		println!("{}", format!("Total tokens used: {} (Input: {}, Output: {})",
 			total_input_tokens + total_output_tokens,
 			total_input_tokens,
 			total_output_tokens).bright_blue());
 		println!("{}", format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue());
+		println!("{}", format!("Total time: {}ms (API: {}ms, Tools: {}ms, Layer Processing: {}ms)", 
+			total_api_time_ms + total_tool_time_ms + total_layer_time_ms,
+			total_api_time_ms, 
+			total_tool_time_ms, 
+			total_layer_time_ms).bright_blue());
 		println!("{}", "Use /info for detailed cost breakdown by layer".bright_blue());
 
 		// Return the final layer's output to be used as starting point for the main chat session

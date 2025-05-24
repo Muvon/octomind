@@ -32,6 +32,9 @@ pub struct TokenUsage {
 	pub completion_tokens_details: Option<serde_json::Value>,
 	pub prompt_tokens_details: Option<serde_json::Value>,
 	pub breakdown: Option<std::collections::HashMap<String, serde_json::Value>>,
+	// Time tracking
+	#[serde(default)]
+	pub request_time_ms: Option<u64>, // Time spent on this API request
 }
 
 /// Common exchange record for logging across all providers

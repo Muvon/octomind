@@ -305,6 +305,7 @@ impl AiProvider for AmazonBedrockProvider {
 				completion_tokens_details: None,
 				prompt_tokens_details: None,
 				breakdown: None,
+				request_time_ms: None, // TODO: Add API timing for Amazon
 			})
 		} else {
 			None

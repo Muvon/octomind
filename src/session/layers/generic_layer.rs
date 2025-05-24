@@ -74,8 +74,9 @@ impl GenericLayer {
 		&self,
 		tool_calls: &[crate::mcp::McpToolCall],
 		config: &Config,
-	) -> Result<Vec<crate::mcp::McpToolResult>> {
+	) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 		let mut results = Vec::new();
+		let mut total_tool_time_ms = 0;
 
 		for tool_call in tool_calls {
 			println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
@@ -103,7 +104,10 @@ impl GenericLayer {
 
 			// Execute the tool call using the layer-specific configuration
 			match crate::mcp::execute_layer_tool_call(tool_call, &layer_config, &self.config).await {
-				Ok(result) => results.push(result),
+				Ok((result, tool_time_ms)) => {
+					results.push(result);
+					total_tool_time_ms += tool_time_ms;
+				},
 				Err(e) => {
 					println!("{} {}", "Tool execution error:".red(), e);
 					continue;
@@ -111,7 +115,7 @@ impl GenericLayer {
 			}
 		}
 
-		Ok(results)
+		Ok((results, total_tool_time_ms))
 	}
 }
 
@@ -132,6 +136,11 @@ impl Layer for GenericLayer {
 		config: &Config,
 		operation_cancelled: Arc<AtomicBool>
 	) -> Result<LayerResult> {
+		// Track total layer processing time
+		let layer_start = std::time::Instant::now();
+		let mut total_api_time_ms = 0;
+		let mut total_tool_time_ms = 0;
+
 		// Check if operation was cancelled
 		if operation_cancelled.load(Ordering::SeqCst) {
 			return Err(anyhow::anyhow!("Operation cancelled"));
@@ -151,6 +160,13 @@ impl Layer for GenericLayer {
 			config
 		).await?;
 
+		// Track API time from the exchange
+		if let Some(ref usage) = exchange.usage {
+			if let Some(api_time) = usage.request_time_ms {
+				total_api_time_ms += api_time;
+			}
+		}
+
 		// Check if the layer response contains tool calls and if MCP is enabled for this layer
 		if self.config.mcp.enabled && config.mcp.enabled {
 			// First try to use directly returned tool calls, then fall back to parsing if needed
@@ -165,7 +181,8 @@ impl Layer for GenericLayer {
 				let output_clone = output.clone();
 
 				// Execute all tool calls and collect results using layer-specific MCP config
-				let tool_results = self.execute_layer_tool_calls(tool_calls, config).await?;
+				let (tool_results, tool_execution_time) = self.execute_layer_tool_calls(tool_calls, config).await?;
+				total_tool_time_ms += tool_execution_time;
 
 				// If we have results, send them back to the model to get a final response
 				if !tool_results.is_empty() {
@@ -212,15 +229,29 @@ impl Layer for GenericLayer {
 						config
 					).await {
 						Ok((new_output, new_exchange, next_tool_calls, _finish_reason)) => {
+							// Track API time from the second exchange
+							if let Some(ref usage) = new_exchange.usage {
+								if let Some(api_time) = usage.request_time_ms {
+									total_api_time_ms += api_time;
+								}
+							}
+
 							// Extract token usage if available
 							let token_usage = new_exchange.usage.clone();
 
-							// Return the result with the updated output
+							// Calculate total layer processing time
+							let layer_duration = layer_start.elapsed();
+							let total_time_ms = layer_duration.as_millis() as u64;
+
+							// Return the result with the updated output and time tracking
 							return Ok(LayerResult {
 								output: new_output,
 								exchange: new_exchange,
 								token_usage,
 								tool_calls: next_tool_calls,
+								api_time_ms: total_api_time_ms,
+								tool_time_ms: total_tool_time_ms,
+								total_time_ms,
 							});
 						},
 						Err(e) => {
@@ -235,12 +266,19 @@ impl Layer for GenericLayer {
 		// Extract token usage if available
 		let token_usage = exchange.usage.clone();
 
-		// Return the result
+		// Calculate total layer processing time
+		let layer_duration = layer_start.elapsed();
+		let total_time_ms = layer_duration.as_millis() as u64;
+
+		// Return the result with time tracking
 		Ok(LayerResult {
 			output,
 			exchange,
 			token_usage,
 			tool_calls: direct_tool_calls,
+			api_time_ms: total_api_time_ms,
+			tool_time_ms: total_tool_time_ms,
+			total_time_ms,
 		})
 	}
 }

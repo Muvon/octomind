@@ -251,7 +251,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 }
 
 // Execute a tool call
-pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
+pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<(McpToolResult, u64)> {
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
 	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
@@ -262,6 +262,9 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	if !config.mcp.enabled {
 		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
+
+	// Track tool execution time
+	let tool_start = std::time::Instant::now();
 
 	// Get store for tools that need it - only if semantic_code is needed
 	let store_option = if call.tool_name == "semantic_code" {
@@ -275,7 +278,14 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	// Explicitly drop the store if it was created
 	drop(store_option);
 
-	result
+	// Calculate tool execution time
+	let tool_duration = tool_start.elapsed();
+	let tool_time_ms = tool_duration.as_millis() as u64;
+
+	match result {
+		Ok(tool_result) => Ok((tool_result, tool_time_ms)),
+		Err(e) => Err(e),
+	}
 }
 
 // Internal function to actually execute the tool call
@@ -408,7 +418,7 @@ fn handle_large_response(result: McpToolResult, config: &crate::config::Config) 
 }
 
 // Execute a tool call with layer-specific restrictions
-pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config::Config, layer_config: &crate::session::layers::LayerConfig) -> Result<McpToolResult> {
+pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config::Config, layer_config: &crate::session::layers::LayerConfig) -> Result<(McpToolResult, u64)> {
 	// Check if tools are enabled for this layer
 	if !layer_config.mcp.enabled {
 		return Err(anyhow::anyhow!("Tool execution is disabled for this layer"));
@@ -424,7 +434,7 @@ pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config:
 }
 
 // Execute multiple tool calls
-pub async fn execute_tool_calls(calls: &[McpToolCall], config: &crate::config::Config) -> Vec<Result<McpToolResult>> {
+pub async fn execute_tool_calls(calls: &[McpToolCall], config: &crate::config::Config) -> Vec<Result<(McpToolResult, u64)>> {
 	let mut results = Vec::new();
 
 	for call in calls {

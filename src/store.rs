@@ -889,7 +889,7 @@ impl Store {
 		let results = table
 			.query()
 			.nearest_to(embedding.as_slice())?  // Pass as slice instead of reference to Vec
-			.limit(50)  // Limit to 50 results
+			.limit(5)
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()
@@ -947,7 +947,7 @@ impl Store {
 		let results = table
 			.query()
 			.nearest_to(embedding.as_slice())?  // Pass as slice instead of reference to Vec
-			.limit(50)  // Limit to 50 results
+			.limit(5)
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()
@@ -1005,7 +1005,7 @@ impl Store {
 		let results = table
 			.query()
 			.nearest_to(embedding.as_slice())?  // Pass as slice instead of reference to Vec
-			.limit(50)  // Limit to 50 results
+			.limit(5)
 			.execute()
 			.await?
 			.try_collect::<Vec<_>>()

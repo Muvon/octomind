@@ -245,6 +245,7 @@ impl AiProvider for AnthropicProvider {
 				completion_tokens_details: None,
 				prompt_tokens_details: None,
 				breakdown: None,
+				request_time_ms: None, // TODO: Add API timing for Anthropic
 			})
 		} else {
 			None

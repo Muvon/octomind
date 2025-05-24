@@ -83,6 +83,13 @@ pub struct SessionInfo {
 	pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
 	#[serde(default)]
 	pub tool_calls: u64, // Track total number of tool calls made
+	// Time tracking
+	#[serde(default)]
+	pub total_api_time_ms: u64, // Total time spent on API requests
+	#[serde(default)]
+	pub total_tool_time_ms: u64, // Total time spent executing tools
+	#[serde(default)]
+	pub total_layer_time_ms: u64, // Total time spent in layer processing
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -93,6 +100,13 @@ pub struct LayerStats {
 	pub output_tokens: u64,
 	pub cost: f64,
 	pub timestamp: u64,
+	// Time tracking
+	#[serde(default)]
+	pub api_time_ms: u64, // Time spent on API requests for this layer
+	#[serde(default)]
+	pub tool_time_ms: u64, // Time spent executing tools for this layer
+	#[serde(default)]
+	pub total_time_ms: u64, // Total time for this layer processing
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -129,6 +143,10 @@ impl Session {
 				duration_seconds: 0,
 				layer_stats: Vec::new(), // Initialize empty layer stats
 				tool_calls: 0, // Initialize tool call counter
+				// Initialize time tracking fields
+				total_api_time_ms: 0,
+				total_tool_time_ms: 0,
+				total_layer_time_ms: 0,
 			},
 			messages: Vec::new(),
 			session_file: None,
@@ -191,6 +209,20 @@ impl Session {
 		output_tokens: u64,
 		cost: f64
 	) {
+		self.add_layer_stats_with_time(layer_type, model, input_tokens, output_tokens, cost, 0, 0, 0);
+	}
+
+	// Add statistics for a specific layer with time tracking
+	pub fn add_layer_stats_with_time(&mut self,
+		layer_type: &str,
+		model: &str,
+		input_tokens: u64,
+		output_tokens: u64,
+		cost: f64,
+		api_time_ms: u64,
+		tool_time_ms: u64,
+		total_time_ms: u64
+	) {
 		// Create the layer stats entry
 		let stats = LayerStats {
 			layer_type: layer_type.to_string(),
@@ -202,6 +234,9 @@ impl Session {
 				.duration_since(UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs(),
+			api_time_ms,
+			tool_time_ms,
+			total_time_ms,
 		};
 
 		// Add to the session info
@@ -211,6 +246,11 @@ impl Session {
 		self.info.input_tokens += input_tokens;
 		self.info.output_tokens += output_tokens;
 		self.info.total_cost += cost;
+		
+		// Update time tracking totals
+		self.info.total_api_time_ms += api_time_ms;
+		self.info.total_tool_time_ms += tool_time_ms;
+		self.info.total_layer_time_ms += total_time_ms;
 	}
 
 	// Save the session to a file - unified JSONL approach with proper JSON formatting
@@ -385,6 +425,10 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 					old_info.duration_seconds = 0;
 					old_info.layer_stats = Vec::new();
 					old_info.tool_calls = 0;
+					// Initialize time tracking for legacy sessions
+					old_info.total_api_time_ms = 0;
+					old_info.total_tool_time_ms = 0;
+					old_info.total_layer_time_ms = 0;
 					session_info = Some(old_info);
 				}
 			} else if line.starts_with("RESTORATION_POINT: ") {

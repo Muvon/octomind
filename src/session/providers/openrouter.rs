@@ -157,6 +157,9 @@ impl AiProvider for OpenRouterProvider {
 		// Create HTTP client
 		let client = Client::new();
 
+		// Track API request time
+		let api_start = std::time::Instant::now();
+
 		// Make the actual API request
 		let response = client.post(OPENROUTER_API_URL)
 			.header("Authorization", format!("Bearer {}", api_key))
@@ -166,6 +169,10 @@ impl AiProvider for OpenRouterProvider {
 			.json(&request_body)
 			.send()
 		.await?;
+
+		// Calculate API request time
+		let api_duration = api_start.elapsed();
+		let api_time_ms = api_duration.as_millis() as u64;
 
 		// Get response status
 		let status = response.status();
@@ -336,6 +343,7 @@ impl AiProvider for OpenRouterProvider {
 				completion_tokens_details,
 				prompt_tokens_details,
 				breakdown,
+				request_time_ms: Some(api_time_ms),
 			})
 		} else {
 			None

@@ -694,7 +694,6 @@ impl Default for DeveloperRoleConfig {
 				model: "openrouter:anthropic/claude-sonnet-4".to_string(),
 				enable_layers: true,
 				system: Some("You are an Octodev AI developer assistant with full access to development tools.".to_string()),
-				..ModeConfig::default()
 			},
 			mcp: McpConfig {
 				enabled: true,
@@ -714,7 +713,6 @@ impl Default for AssistantRoleConfig {
 				model: "openrouter:anthropic/claude-3.5-haiku".to_string(),
 				enable_layers: false,
 				system: Some("You are a helpful assistant.".to_string()),
-				..ModeConfig::default()
 			},
 			mcp: McpConfig {
 				enabled: false,  // Assistant role has MCP/tools disabled by default
@@ -825,7 +823,6 @@ impl Config {
 	}
 
 	/// System-wide configuration getters - these settings are global and not role-specific
-	
 	/// Get cache timeout seconds (system-wide setting)
 	pub fn get_cache_timeout_seconds(&self) -> u64 {
 		// If system setting is set (non-zero), use it
@@ -906,7 +903,6 @@ impl Config {
 	}
 
 	/// Role-based configuration getters - these delegate to role configs
-	
 	/// Get enable layers setting for the specified role
 	pub fn get_enable_layers(&self, role: &str) -> bool {
 		let (mode_config, _, _, _, _) = self.get_mode_config(role);
@@ -921,7 +917,6 @@ impl Config {
 
 	/// Backward compatibility methods - these delegate to openrouter config for now
 	/// but should eventually be deprecated in favor of role-based methods
-	
 	/// Get cache timeout seconds (backward compatibility)
 	pub fn get_cache_timeout_seconds_legacy(&self) -> u64 {
 		self.openrouter.cache_timeout_seconds

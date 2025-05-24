@@ -213,6 +213,7 @@ impl Session {
 	}
 
 	// Add statistics for a specific layer with time tracking
+	#[allow(clippy::too_many_arguments)]
 	pub fn add_layer_stats_with_time(&mut self,
 		layer_type: &str,
 		model: &str,

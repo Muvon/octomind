@@ -146,6 +146,7 @@ impl ToolErrorTracker {
 }
 
 // Function to process response, handling tool calls recursively
+#[allow(clippy::too_many_arguments)]
 pub async fn process_response(
 	content: String,
 	exchange: openrouter::OpenRouterExchange,

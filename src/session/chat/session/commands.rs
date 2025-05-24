@@ -121,7 +121,7 @@ impl ChatSession {
 				// For now, we'll default to developer role since that's where layers are typically used
 				// In the future, this could be passed as a parameter from the session context
 				let current_role = role; // Use the passed role parameter
-				
+
 				// Toggle the setting for the appropriate role
 				match current_role {
 					"developer" => {
@@ -313,7 +313,7 @@ impl ChatSession {
 						// Set the flag to cache the next user message
 						self.cache_next_user_message = true;
 						println!("{}", "The next user message will be marked for caching.".bright_green());
-						
+
 						// Show cache statistics
 						let cache_manager = crate::session::cache::CacheManager::new();
 						let stats = cache_manager.get_cache_statistics(&self.session);
@@ -326,10 +326,10 @@ impl ChatSession {
 							let cache_manager = crate::session::cache::CacheManager::new();
 							let stats = cache_manager.get_cache_statistics(&self.session);
 							println!("{}", stats.format_for_display());
-							
+
 							// Additional threshold information
 							println!("{}", format!(
-								"Auto-cache threshold: {}%", 
+								"Auto-cache threshold: {}%",
 								if let Ok(config) = crate::config::Config::load() {
 									config.openrouter.cache_tokens_pct_threshold
 								} else {
@@ -341,7 +341,7 @@ impl ChatSession {
 							// Clear content cache markers (but keep system markers)
 							let cache_manager = crate::session::cache::CacheManager::new();
 							let cleared = cache_manager.clear_content_cache_markers(&mut self.session);
-							
+
 							if cleared > 0 {
 								println!("{}", format!("Cleared {} content cache markers", cleared).bright_green());
 								let _ = self.save();
@@ -353,28 +353,28 @@ impl ChatSession {
 							// Show current threshold settings
 							if let Ok(config) = crate::config::Config::load() {
 								if config.openrouter.cache_tokens_absolute_threshold > 0 {
-									println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)", 
+									println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)",
 										config.openrouter.cache_tokens_absolute_threshold).bright_cyan());
-									println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens", 
+									println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
 										config.openrouter.cache_tokens_absolute_threshold).bright_blue());
 								} else {
 									let threshold = config.openrouter.cache_tokens_pct_threshold;
 									println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
-									
+
 									if threshold == 0 || threshold == 100 {
 										println!("{}", "Auto-cache is disabled".bright_yellow());
 									} else {
 										println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {}% of total", threshold).bright_blue());
 									}
 								}
-								
+
 								// Show time-based threshold
 								let timeout_seconds = config.openrouter.cache_timeout_seconds;
 								if timeout_seconds > 0 {
 									let timeout_minutes = timeout_seconds / 60;
-									println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)", 
+									println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)",
 										timeout_seconds, timeout_minutes).bright_green());
-									println!("{}", format!("Auto-cache will trigger if {} minutes pass since last checkpoint", 
+									println!("{}", format!("Auto-cache will trigger if {} minutes pass since last checkpoint",
 										timeout_minutes).bright_blue());
 								} else {
 									println!("{}", "Time-based auto-cache is disabled".bright_yellow());
@@ -543,7 +543,7 @@ input_mode = "Last""#.bright_white());
 				}
 
 				let command_name = params[0];
-				
+
 				// Check if command exists
 				if !command_executor::command_exists(config, role, command_name) {
 					let available_commands = command_executor::list_available_commands(config, role);
@@ -578,7 +578,7 @@ input_mode = "Last""#.bright_white());
 				match command_executor::execute_command_layer(
 					command_name,
 					&command_input,
-					&self.session,
+					self,
 					config,
 					role,
 					operation_cancelled

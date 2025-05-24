@@ -48,10 +48,22 @@ impl ChatSession {
 					.push(stat);
 			}
 
-			// Print stats for each layer type
+			// Separate command layers from regular layers
+			let mut command_layers = Vec::new();
+			let mut regular_layers = Vec::new();
+
 			for (layer_type, stats) in layer_stats.iter() {
+				if layer_type.starts_with("command:") {
+					command_layers.push((layer_type, stats));
+				} else {
+					regular_layers.push((layer_type, stats));
+				}
+			}
+
+			// Print regular layers first
+			for (layer_type, stats) in regular_layers.iter() {
 				// Add special highlighting for context optimization
-				let layer_display = if layer_type == "context_optimization" {
+				let layer_display = if layer_type.as_str() == "context_optimization" {
 					format!("Layer: {}", layer_type).bright_magenta()
 				} else {
 					format!("Layer: {}", layer_type).bright_yellow()
@@ -67,7 +79,7 @@ impl ChatSession {
 				// Count executions
 				let executions = stats.len();
 
-				for stat in stats {
+				for stat in stats.iter() {
 					total_input += stat.input_tokens;
 					total_output += stat.output_tokens;
 					total_cost += stat.cost;
@@ -83,11 +95,50 @@ impl ChatSession {
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
 
 				// Add special note for context optimization
-				if layer_type == "context_optimization" {
+				if layer_type.as_str() == "context_optimization" {
 					println!("  {}", "Note: These are costs for optimizing context between interactions".bright_cyan());
 				}
 
 				println!();
+			}
+
+			// Print command layers separately if any exist
+			if !command_layers.is_empty() {
+				println!("{}", "───────────── Command Layer Statistics ─────────────".bright_green());
+
+				for (layer_type, stats) in command_layers.iter() {
+					// Extract command name from "command:name" format
+					let command_name = layer_type.strip_prefix("command:").unwrap_or(layer_type);
+					let layer_display = format!("Command: {}", command_name).bright_green();
+
+					println!("{}", layer_display);
+
+					// Count total tokens and cost for this command
+					let mut total_input = 0;
+					let mut total_output = 0;
+					let mut total_cost = 0.0;
+
+					// Count executions
+					let executions = stats.len();
+
+					for stat in stats.iter() {
+						total_input += stat.input_tokens;
+						total_output += stat.output_tokens;
+						total_cost += stat.cost;
+					}
+
+					// Print the stats
+					println!("  {}: {}", "Model".blue(), stats[0].model);
+					println!("  {}: {}", "Executions".blue(), executions);
+					println!("  {}: {} input, {} output",
+						"Tokens".blue(),
+						total_input.to_string().bright_white(),
+						total_output.to_string().bright_white());
+					println!("  {}: ${:.5}", "Cost".blue(), total_cost);
+					println!("  {}", "Note: Command layers don't affect session history".bright_cyan());
+
+					println!();
+				}
 			}
 		} else {
 			println!();

@@ -25,7 +25,7 @@ impl ReducerLayer {
 			input_mode: crate::session::layers::layer_trait::InputMode::Summary, // Use summarized data
 			mcp: crate::session::layers::layer_trait::LayerMcpConfig { 
 				enabled: false, 
-				servers: vec![], 
+				servers: vec![],
 				allowed_tools: vec![] 
 			},
 			parameters: std::collections::HashMap::new(),

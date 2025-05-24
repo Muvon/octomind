@@ -61,8 +61,11 @@ impl FromStr for InputMode {
 pub struct LayerMcpConfig {
 	#[serde(default)]
 	pub enabled: bool,
+	
+	// Server names - specify servers from registry
 	#[serde(default)]
-	pub servers: Vec<String>, // Names of MCP servers to use for this layer
+	pub servers: Vec<String>,
+	
 	#[serde(default)]
 	pub allowed_tools: Vec<String>, // Specific tools allowed (empty = all tools from enabled servers)
 }
@@ -113,14 +116,22 @@ impl LayerConfig {
 		
 		// If layer MCP is enabled and has specific servers configured, use only those
 		if self.mcp.enabled && !self.mcp.servers.is_empty() {
-			// Filter servers to only include those specified by this layer
-			merged_config.mcp.servers.retain(|server| {
-				self.mcp.servers.iter().any(|layer_server| {
-					// Match by server name or handle legacy "core" mapping
-					server.name == *layer_server ||
-					(layer_server == "core" && (server.name == "developer" || server.name == "filesystem"))
-				})
-			});
+			// Clear existing servers and add only layer-specific ones
+			merged_config.mcp.servers.clear();
+			
+			for server_name in &self.mcp.servers {
+				// Get the server config from base config or create a default one
+				let server_config = base_config.mcp.servers.get(server_name)
+					.cloned()
+					.unwrap_or_else(|| crate::config::McpServerConfig::from_name(server_name));
+				
+				merged_config.mcp.servers.insert(server_name.clone(), server_config);
+			}
+			
+			// Apply layer-specific tool filtering if specified
+			if !self.mcp.allowed_tools.is_empty() {
+				merged_config.mcp.allowed_tools = self.mcp.allowed_tools.clone();
+			}
 		}
 		
 		merged_config
@@ -180,7 +191,11 @@ impl LayerConfig {
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
-				mcp: LayerMcpConfig { enabled: false, servers: vec![], allowed_tools: vec![] },
+				mcp: LayerMcpConfig { 
+					enabled: false, 
+					servers: vec![], 
+					allowed_tools: vec![] 
+				},
 				parameters: std::collections::HashMap::new(),
 			},
 			"context_generator" => Self {
@@ -192,7 +207,7 @@ impl LayerConfig {
 				input_mode: InputMode::Last,
 				mcp: LayerMcpConfig { 
 					enabled: true, 
-					servers: vec!["core".to_string()], 
+					servers: vec!["developer".to_string(), "filesystem".to_string()],
 					allowed_tools: vec!["text_editor".to_string(), "semantic_code".to_string()]
 				},
 				parameters: std::collections::HashMap::new(),
@@ -204,7 +219,11 @@ impl LayerConfig {
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::All,
-				mcp: LayerMcpConfig { enabled: false, servers: vec![], allowed_tools: vec![] },
+				mcp: LayerMcpConfig { 
+					enabled: false, 
+					servers: vec![],
+					allowed_tools: vec![] 
+				},
 				parameters: std::collections::HashMap::new(),
 			},
 			_ => Self {

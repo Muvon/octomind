@@ -151,14 +151,26 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		modified = true;
 	}
 
-	// Update MCP providers if specified
+	// Update MCP server references if specified
 	if let Some(providers) = &args.mcp_providers {
-		let provider_list: Vec<String> = providers
+		let server_names: Vec<String> = providers
 			.split(',')
 			.map(|s| s.trim().to_string())
 			.collect();
-		config.mcp.providers = provider_list;
-		println!("Set MCP providers to: {}", providers);
+		
+		// Clear existing servers and add new ones
+		config.mcp.servers.clear();
+		for server_name in &server_names {
+			// Create basic server config if not exists
+			if !config.mcp.servers.contains_key(server_name) {
+				config.mcp.servers.insert(
+					server_name.clone(),
+					McpServerConfig::from_name(server_name)
+				);
+			}
+		}
+		
+		println!("Set MCP servers to: {}", providers);
 		modified = true;
 	}
 
@@ -249,11 +261,9 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				println!("Automatically enabled MCP protocol for server integration");
 			}
 
-			// Remove any existing server with the same name
-			config.mcp.servers.retain(|s| s.name != name);
-
-			// Add the new server
-			config.mcp.servers.push(server);
+			// Add the new server to registry
+			config.mcp.servers.insert(name.clone(), server);
+			
 			println!("Added/updated MCP server: {}", name);
 			modified = true;
 		}
@@ -317,31 +327,36 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
 	
 	// Show MCP servers
-	if config.mcp.enabled && !config.mcp.servers.is_empty() {
-		println!("MCP servers:");
-		for server in &config.mcp.servers {
-			let status = if server.enabled { "enabled" } else { "disabled" };
-			match server.server_type {
-				McpServerType::Developer => println!("  - {} (built-in developer tools) - {}", server.name, status),
-				McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - {}", server.name, status),
-				McpServerType::External => {
-					if let Some(url) = &server.url {
-						println!("  - {} (HTTP: {}) - {}", server.name, url, status);
-					} else if let Some(command) = &server.command {
-						println!("  - {} (Command: {}) - {}", server.name, command, status);
-					} else {
-						println!("  - {} (external, not configured) - {}", server.name, status);
+	if config.mcp.enabled {
+		if !config.mcp.servers.is_empty() {
+			println!("MCP servers:");
+			for (name, server) in &config.mcp.servers {
+				let status = if server.enabled { "enabled" } else { "disabled" };
+				
+				// Auto-detect server type for display
+				let effective_type = match name.as_str() {
+					"developer" => McpServerType::Developer,
+					"filesystem" => McpServerType::Filesystem,
+					_ => McpServerType::External,
+				};
+				
+				match effective_type {
+					McpServerType::Developer => println!("  - {} (built-in developer tools) - {}", name, status),
+					McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - {}", name, status),
+					McpServerType::External => {
+						if let Some(url) = &server.url {
+							println!("  - {} (HTTP: {}) - {}", name, url, status);
+						} else if let Some(command) = &server.command {
+							println!("  - {} (Command: {}) - {}", name, command, status);
+						} else {
+							println!("  - {} (external, not configured) - {}", name, status);
+						}
 					}
 				}
 			}
+		} else {
+			println!("MCP servers: None configured");
 		}
-	} else if config.mcp.enabled {
-		println!("MCP servers: None configured");
-	}
-	
-	// Show legacy providers if any exist (for debugging)
-	if !config.mcp.providers.is_empty() {
-		println!("Legacy MCP providers (will be migrated): {}", config.mcp.providers.join(", "));
 	}
 	println!("GraphRAG: {}", if config.graphrag.enabled { "enabled" } else { "disabled" });
 	println!("Markdown rendering: {}", if config.openrouter.enable_markdown_rendering { "enabled" } else { "disabled" });

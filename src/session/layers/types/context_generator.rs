@@ -25,7 +25,7 @@ impl ContextGeneratorLayer {
 			input_mode: crate::session::layers::layer_trait::InputMode::Last,
 			mcp: crate::session::layers::layer_trait::LayerMcpConfig { 
 				enabled: true, 
-				servers: vec!["core".to_string()], 
+				servers: vec!["developer".to_string(), "filesystem".to_string()],
 				allowed_tools: vec!["text_editor".to_string(), "semantic_code".to_string()]
 			},
 			parameters: std::collections::HashMap::new(),

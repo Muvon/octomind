@@ -89,18 +89,7 @@ impl GenericLayer {
 			}
 
 			// Create a layer-specific config that only includes this layer's MCP servers
-			let mut layer_config = config.clone();
-
-			// Filter MCP servers to only include those configured for this layer
-			if !self.config.mcp.servers.is_empty() {
-				layer_config.mcp.servers.retain(|server| {
-					self.config.mcp.servers.iter().any(|layer_server| {
-						// Match by server name or type
-						server.name == *layer_server ||
-						(layer_server == "core" && (server.name == "developer" || server.name == "filesystem"))
-					})
-				});
-			}
+			let layer_config = self.config.get_merged_config_for_layer(config);
 
 			// Execute the tool call using the layer-specific configuration
 			match crate::mcp::execute_layer_tool_call(tool_call, &layer_config, &self.config).await {

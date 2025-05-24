@@ -148,7 +148,7 @@ macro_rules! log_conditional {
 				println!("{}", $default_msg);
 			}
 		} else {
-			// Fallback if no config is set  
+			// Fallback if no config is set
 			println!("{}", $default_msg);
 		}
 	};
@@ -303,7 +303,7 @@ impl ModeConfig {
 	pub fn get_full_model(&self) -> String {
 		self.model.clone()
 	}
-	
+
 	/// Get the provider name from the model string
 	pub fn get_provider(&self) -> Result<String> {
 		if let Ok((provider, _)) = crate::session::ProviderFactory::parse_model(&self.model) {
@@ -312,7 +312,7 @@ impl ModeConfig {
 			Err(anyhow!("Invalid model format: {}", self.model))
 		}
 	}
-	
+
 	/// Get the API key for this mode's provider
 	pub fn get_api_key(&self, providers: &ProvidersConfig) -> Option<String> {
 		if let Ok(provider) = self.get_provider() {
@@ -329,7 +329,7 @@ impl ModeConfig {
 			None
 		}
 	}
-	
+
 	/// Get pricing config for this mode's provider
 	pub fn get_pricing(&self, providers: &ProvidersConfig) -> PricingConfig {
 		if let Ok(provider) = self.get_provider() {
@@ -486,27 +486,30 @@ impl Default for McpServerMode {
 pub struct McpServerConfig {
 	#[serde(default)]
 	pub enabled: bool,
+	
+	// Name is auto-set from registry key (runtime field)
+	#[serde(skip)]
 	pub name: String,
-	
-	// Server type - determines how the server is handled
-	#[serde(default)]
+
+	// Server type is auto-detected from name (runtime field)
+	#[serde(skip)]
 	pub server_type: McpServerType,
-	
+
 	// External server configuration
 	pub url: Option<String>,
 	pub auth_token: Option<String>,
 	pub command: Option<String>,
 	#[serde(default)]
 	pub args: Vec<String>,
-	
+
 	// Communication mode - http or stdin (for external servers)
 	#[serde(default)]
 	pub mode: McpServerMode,
-	
+
 	// Timeout in seconds for tool execution
 	#[serde(default = "default_timeout")]
 	pub timeout_seconds: u64,
-	
+
 	// Tool filtering - empty means all tools are enabled
 	#[serde(default)]
 	pub tools: Vec<String>,
@@ -521,7 +524,7 @@ impl Default for McpServerConfig {
 		Self {
 			enabled: true,
 			name: "".to_string(),
-			server_type: McpServerType::External,
+			server_type: McpServerType::External, // Will be auto-detected
 			url: None,
 			auth_token: None,
 			command: None,
@@ -534,6 +537,28 @@ impl Default for McpServerConfig {
 }
 
 impl McpServerConfig {
+	/// Create a server config from just the key name, auto-detecting type
+	pub fn from_name(name: &str) -> Self {
+		let server_type = match name {
+			"developer" => McpServerType::Developer,
+			"filesystem" => McpServerType::Filesystem,
+			_ => McpServerType::External,
+		};
+
+		Self {
+			enabled: true,
+			name: name.to_string(),
+			server_type,
+			url: None,
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
+			mode: McpServerMode::Http,
+			timeout_seconds: 30,
+			tools: Vec::new(),
+		}
+	}
+
 	/// Create a developer server configuration
 	pub fn developer(name: &str, tools: Vec<String>) -> Self {
 		Self {
@@ -544,7 +569,7 @@ impl McpServerConfig {
 			..Default::default()
 		}
 	}
-	
+
 	/// Create a filesystem server configuration
 	pub fn filesystem(name: &str, tools: Vec<String>) -> Self {
 		Self {
@@ -555,7 +580,7 @@ impl McpServerConfig {
 			..Default::default()
 		}
 	}
-	
+
 	/// Create an external HTTP server configuration
 	pub fn external_http(name: &str, url: &str, tools: Vec<String>) -> Self {
 		Self {
@@ -568,7 +593,7 @@ impl McpServerConfig {
 			..Default::default()
 		}
 	}
-	
+
 	/// Create an external command-based server configuration
 	pub fn external_command(name: &str, command: &str, args: Vec<String>, tools: Vec<String>) -> Self {
 		Self {
@@ -584,73 +609,63 @@ impl McpServerConfig {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct McpConfig {
 	#[serde(default)]
 	pub enabled: bool,
-	#[serde(default = "default_mcp_servers")]
-	pub servers: Vec<McpServerConfig>,
-	
-	// Legacy field for backward compatibility - will be migrated to servers
-	#[serde(default, skip_serializing_if = "Vec::is_empty")]
-	pub providers: Vec<String>,
-}
 
-fn default_mcp_servers() -> Vec<McpServerConfig> {
-	vec![
-		McpServerConfig::developer("developer", vec![]), // All developer tools enabled
-		McpServerConfig::filesystem("filesystem", vec![]), // All filesystem tools enabled
-	]
-}
+	// Server registry - server configurations
+	#[serde(default)]
+	pub servers: std::collections::HashMap<String, McpServerConfig>,
 
-impl Default for McpConfig {
-	fn default() -> Self {
-		Self {
-			enabled: false,
-			servers: default_mcp_servers(),
-			providers: Vec::new(), // Legacy field, empty by default
-		}
-	}
+	// Tool filtering - allows limiting tools across all enabled servers
+	#[serde(default)]
+	pub allowed_tools: Vec<String>,
 }
 
 impl McpConfig {
-	/// Check if MCP has any enabled servers (including built-in)
+	/// Check if MCP has any enabled servers
 	pub fn has_enabled_servers(&self) -> bool {
-		self.enabled && self.servers.iter().any(|server| server.enabled)
+		self.enabled && self.servers.values().any(|server| server.enabled)
 	}
-	
-	/// Get all enabled servers
-	pub fn get_enabled_servers(&self) -> Vec<&McpServerConfig> {
+
+	/// Get all enabled servers with auto-detected types
+	pub fn get_enabled_servers(&self) -> Vec<McpServerConfig> {
 		if !self.enabled {
 			return Vec::new();
 		}
-		self.servers.iter().filter(|server| server.enabled).collect()
-	}
-	
-	/// Migrate legacy providers configuration to new servers format
-	pub fn migrate_from_legacy(&mut self) {
-		if !self.providers.is_empty() {
-			// If we have legacy providers and no servers (or only defaults), create servers from providers
-			if self.servers.is_empty() || self.servers == default_mcp_servers() {
-				self.servers.clear();
-				
-				for provider in &self.providers {
-					match provider.as_str() {
-						"core" => {
-							// Add both developer and filesystem servers for legacy "core" provider
-							self.servers.push(McpServerConfig::developer("developer", vec![]));
-							self.servers.push(McpServerConfig::filesystem("filesystem", vec![]));
-						}
-						name => {
-							// Unknown provider - create a placeholder
-							eprintln!("Warning: Unknown legacy provider '{}' cannot be migrated", name);
-						}
-					}
+
+		let mut result = Vec::new();
+
+		// Add servers from registry
+		for (server_name, server_config) in &self.servers {
+			if server_config.enabled {
+				let mut server = server_config.clone();
+				// Auto-set the name from the registry key
+				server.name = server_name.clone();
+				// Auto-detect server type from name
+				server.server_type = match server_name.as_str() {
+					"developer" => McpServerType::Developer,
+					"filesystem" => McpServerType::Filesystem,
+					_ => McpServerType::External,
+				};
+				// Apply global tool filtering if specified
+				if !self.allowed_tools.is_empty() {
+					server.tools = self.allowed_tools.clone();
 				}
+				result.push(server);
 			}
-			
-			// Clear the legacy providers field after migration
-			self.providers.clear();
+		}
+
+		result
+	}
+
+	/// Create a config using server configurations
+	pub fn with_servers(enabled: bool, servers: std::collections::HashMap<String, McpServerConfig>, allowed_tools: Option<Vec<String>>) -> Self {
+		Self {
+			enabled,
+			servers,
+			allowed_tools: allowed_tools.unwrap_or_default(),
 		}
 	}
 }
@@ -752,7 +767,7 @@ pub struct Config {
 	// Root-level log level setting (takes precedence over role-specific)
 	#[serde(default)]
 	pub log_level: LogLevel,
-	
+
 	// System-wide configuration settings (not role-specific)
 	#[serde(default = "default_mcp_response_warning_threshold")]
 	pub mcp_response_warning_threshold: usize,
@@ -768,7 +783,7 @@ pub struct Config {
 	pub cache_timeout_seconds: u64,
 	#[serde(default)]
 	pub enable_markdown_rendering: bool,
-	
+
 	#[serde(default)]
 	pub embedding_provider: EmbeddingProvider,
 	#[serde(default)]
@@ -778,32 +793,32 @@ pub struct Config {
 	#[serde(default)]
 	pub graphrag: GraphRagConfig,
 	pub jina_api_key: Option<String>,
-	
+
 	// NEW: Providers configuration - centralized API keys
 	#[serde(default)]
 	pub providers: ProvidersConfig,
-	
+
 	// Role-specific configurations
 	#[serde(default)]
 	pub developer: DeveloperRoleConfig,
 	#[serde(default)]
 	pub assistant: AssistantRoleConfig,
-	
+
 	// Global MCP configuration (fallback for roles)
 	#[serde(default)]
 	pub mcp: McpConfig,
-	
+
 	// Global command configurations (fallback for roles)
 	#[serde(default)]
 	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
-	
+
 	// Legacy fields for backward compatibility - REMOVED for new approach
 	#[serde(default)]
 	pub openrouter: OpenRouterConfig,
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 	pub system: Option<String>,
-	
+
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
 }
@@ -811,13 +826,55 @@ pub struct Config {
 
 
 impl Config {
+	/// Initialize the default server registry with common server configurations
+	pub fn init_default_server_registry(&mut self) {
+		if self.mcp.servers.is_empty() {
+			self.mcp.servers.insert(
+				"developer".to_string(),
+				McpServerConfig::from_name("developer")
+			);
+			self.mcp.servers.insert(
+				"filesystem".to_string(),
+				McpServerConfig::from_name("filesystem")
+			);
+		}
+
+		// Example of external server configuration (commented out as example)
+		// self.mcp.servers.insert(
+		//     "web_search".to_string(),
+		//     McpServerConfig::external_http("web_search", "https://api.example.com/mcp", vec![])
+		// );
+	}
+
+	/// Get server configuration by name from registry, with fallback to defaults
+	pub fn get_server_config(&self, server_name: &str) -> Option<McpServerConfig> {
+		// First check registry
+		if let Some(server) = self.mcp.servers.get(server_name) {
+			return Some(server.clone());
+		}
+
+		// Fallback to auto-generated built-in server types
+		match server_name {
+			"developer" | "filesystem" => Some(McpServerConfig::from_name(server_name)),
+			_ => None,
+		}
+	}
+
+	/// Get resolved MCP config for a role (merges server_refs with registry)
+	pub fn get_resolved_mcp_config(&self, mcp_config: &McpConfig) -> McpConfig {
+		// Always resolve server references from registry
+
+		// Note: In the clean implementation, we expect all configs to use server_refs
+		// No fallback to direct server configurations
+		mcp_config.clone()
+	}
 	/// Get the global log level (system-wide setting)
 	pub fn get_log_level(&self) -> LogLevel {
 		// If root log level is set, use it
 		if self.log_level != LogLevel::None {
 			return self.log_level.clone();
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.log_level.clone()
 	}
@@ -829,44 +886,44 @@ impl Config {
 		if self.cache_timeout_seconds != 0 {
 			return self.cache_timeout_seconds;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.cache_timeout_seconds
 	}
-	
+
 	/// Get cache tokens absolute threshold (system-wide setting)
 	pub fn get_cache_tokens_absolute_threshold(&self) -> u64 {
 		// If system setting is set (non-zero), use it
 		if self.cache_tokens_absolute_threshold != 0 {
 			return self.cache_tokens_absolute_threshold;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.cache_tokens_absolute_threshold
 	}
-	
+
 	/// Get cache tokens percentage threshold (system-wide setting)
 	pub fn get_cache_tokens_pct_threshold(&self) -> u8 {
 		// If system setting is set (non-zero), use it
 		if self.cache_tokens_pct_threshold != 0 {
 			return self.cache_tokens_pct_threshold;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.cache_tokens_pct_threshold
 	}
-	
+
 	/// Get MCP response warning threshold (system-wide setting)
 	pub fn get_mcp_response_warning_threshold(&self) -> usize {
 		// If system setting is set (non-zero), use it
 		if self.mcp_response_warning_threshold != 0 {
 			return self.mcp_response_warning_threshold;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.mcp_response_warning_threshold
 	}
-	
+
 	/// Get enable auto truncation setting (system-wide setting)
 	pub fn get_enable_auto_truncation(&self) -> bool {
 		// For boolean, we check if system setting differs from default (false)
@@ -874,22 +931,22 @@ impl Config {
 		if self.enable_auto_truncation {
 			return true;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.enable_auto_truncation
 	}
-	
+
 	/// Get max request tokens threshold (system-wide setting)
 	pub fn get_max_request_tokens_threshold(&self) -> usize {
 		// If system setting is set (non-zero), use it
 		if self.max_request_tokens_threshold != 0 {
 			return self.max_request_tokens_threshold;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.max_request_tokens_threshold
 	}
-	
+
 	/// Get enable markdown rendering setting (system-wide setting)
 	pub fn get_enable_markdown_rendering(&self) -> bool {
 		// For boolean, we check if system setting differs from default (false)
@@ -897,7 +954,7 @@ impl Config {
 		if self.enable_markdown_rendering {
 			return true;
 		}
-		
+
 		// Otherwise, fall back to openrouter config for backward compatibility
 		self.openrouter.enable_markdown_rendering
 	}
@@ -908,7 +965,7 @@ impl Config {
 		let (mode_config, _, _, _, _) = self.get_mode_config(role);
 		mode_config.enable_layers
 	}
-	
+
 	/// Get the model for the specified role
 	pub fn get_model(&self, role: &str) -> String {
 		let (mode_config, _, _, _, _) = self.get_mode_config(role);
@@ -921,59 +978,50 @@ impl Config {
 	pub fn get_cache_timeout_seconds_legacy(&self) -> u64 {
 		self.openrouter.cache_timeout_seconds
 	}
-	
+
 	/// Get cache tokens absolute threshold (backward compatibility)
 	pub fn get_cache_tokens_absolute_threshold_legacy(&self) -> u64 {
 		self.openrouter.cache_tokens_absolute_threshold
 	}
-	
+
 	/// Get cache tokens percentage threshold (backward compatibility)
 	pub fn get_cache_tokens_pct_threshold_legacy(&self) -> u8 {
 		self.openrouter.cache_tokens_pct_threshold
 	}
-	
+
 	/// Get MCP response warning threshold (backward compatibility)
 	pub fn get_mcp_response_warning_threshold_legacy(&self) -> usize {
 		self.openrouter.mcp_response_warning_threshold
 	}
-	
+
 	/// Get enable auto truncation setting (backward compatibility)
 	pub fn get_enable_auto_truncation_legacy(&self) -> bool {
 		self.openrouter.enable_auto_truncation
 	}
-	
+
 	/// Get max request tokens threshold (backward compatibility)
 	pub fn get_max_request_tokens_threshold_legacy(&self) -> usize {
 		self.openrouter.max_request_tokens_threshold
 	}
-	
+
 	/// Get enable markdown rendering setting (backward compatibility)
 	pub fn get_enable_markdown_rendering_legacy(&self) -> bool {
 		self.openrouter.enable_markdown_rendering
 	}
-	
+
 	/// Get enable layers setting (backward compatibility)
 	pub fn get_enable_layers_legacy(&self) -> bool {
 		self.openrouter.enable_layers
 	}
 	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
 	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
-		// If it's exactly the default McpConfig, consider it empty
-		let default_mcp = McpConfig::default();
-		
-		// More sophisticated check: if only enabled differs from default, it's not empty
-		// If enabled is different AND (providers differ OR servers differ), it's not empty
-		if mcp_config.enabled != default_mcp.enabled {
-			// If enabled is different but everything else is default, consider it meaningful
+		// If servers or allowed_tools are customized, it's not empty
+		if !mcp_config.servers.is_empty() || !mcp_config.allowed_tools.is_empty() {
 			return false;
 		}
-		
-		// If providers or servers are customized, it's not empty
-		if mcp_config.providers != default_mcp.providers || !mcp_config.servers.is_empty() {
-			return false;
-		}
-		
-		// Otherwise, it's effectively empty/default
+
+		// If there are no servers and no allowed_tools, it's effectively empty
+		// regardless of the enabled flag - this should inherit from global
 		true
 	}
 
@@ -985,38 +1033,38 @@ impl Config {
 			"developer" => {
 				// Developer role - inherits from assistant but with developer-specific config
 				let mut mcp_config = self.developer.mcp.clone();
-				
+
 				// If developer.mcp is "empty/default", fall back to global mcp
 				if self.is_mcp_config_empty(&mcp_config) {
 					mcp_config = self.mcp.clone();
 				}
-				
+
 				// Get commands config - prefer role-specific, fallback to global
 				let commands_config = self.developer.commands.as_ref()
 					.or(self.commands.as_ref());
-				
+
 				(&self.developer.config, mcp_config, self.developer.layers.as_ref(), commands_config, self.developer.config.system.as_ref())
 			},
 			"assistant" => {
 				// Base assistant role
 				let mut mcp_config = self.assistant.mcp.clone();
-				
+
 				// If assistant.mcp is "empty/default", fall back to global mcp
 				if self.is_mcp_config_empty(&mcp_config) {
 					mcp_config = self.mcp.clone();
 				}
-				
+
 				// Get commands config - prefer role-specific, fallback to global
 				let commands_config = self.assistant.commands.as_ref()
 					.or(self.commands.as_ref());
-				
+
 				(&self.assistant.config, mcp_config, None, commands_config, self.assistant.config.system.as_ref())
 			},
 			_ => {
 				// For any custom role, inherit from assistant first
 				// This implements the inheritance pattern where new roles start from assistant base
 				// TODO: In future, load custom role config and merge with assistant as base
-				
+
 				// For now, fall back to assistant role as the base inheritance
 				self.get_mode_config("assistant")
 			}
@@ -1027,9 +1075,9 @@ impl Config {
 	/// This returns a Config with the mode-specific settings applied
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
 		let (mode_config, mcp_config, layers_config, commands_config, system_prompt) = self.get_mode_config(mode);
-		
+
 		let mut merged = self.clone();
-		
+
 		// Create an OpenRouterConfig from the ModeConfig for backward compatibility
 		merged.openrouter = OpenRouterConfig {
 			model: mode_config.get_full_model(),
@@ -1046,12 +1094,13 @@ impl Config {
 			cache_timeout_seconds: self.get_cache_timeout_seconds(),
 			enable_markdown_rendering: self.get_enable_markdown_rendering(),
 		};
-		
-		merged.mcp = mcp_config;
+
+		// Resolve MCP configuration using the new registry system
+		merged.mcp = self.get_resolved_mcp_config(&mcp_config);
 		merged.layers = layers_config.cloned();
 		merged.commands = commands_config.cloned();
 		merged.system = system_prompt.cloned();
-		
+
 		merged
 	}
 
@@ -1064,21 +1113,17 @@ impl Config {
 		}
 	}
 
-	/// Simple migration for providers only
-	fn migrate_legacy_config(&mut self) {
+	/// Initialize the server registry and API keys
+	fn initialize_config(&mut self) {
+		// Initialize default server registry if empty
+		self.init_default_server_registry();
+
 		// Migrate API keys from legacy openrouter config to providers
 		if let Some(api_key) = &self.openrouter.api_key {
 			if self.providers.openrouter.api_key.is_none() {
 				self.providers.openrouter.api_key = Some(api_key.clone());
 			}
 		}
-		
-		// Migrate global MCP configuration
-		self.mcp.migrate_from_legacy();
-		
-		// Migrate role-specific MCP configurations
-		self.developer.mcp.migrate_from_legacy();
-		self.assistant.mcp.migrate_from_legacy();
 	}
 
 	pub fn ensure_octodev_dir() -> Result<std::path::PathBuf> {
@@ -1090,7 +1135,7 @@ impl Config {
 		Ok(octodev_dir)
 	}
 
-	/// Validate the configuration for common issues  
+	/// Validate the configuration for common issues
 	pub fn validate(&self) -> Result<()> {
 		// Validate OpenRouter model name
 		if let Err(e) = self.validate_openrouter_model() {
@@ -1185,58 +1230,70 @@ impl Config {
 
 	fn validate_mcp_config(&self) -> Result<()> {
 		// Helper function to validate a single MCP config
-		let validate_mcp = |mcp_config: &McpConfig, context: &str| -> Result<()> {
+		let validate_mcp = |mcp_config: &McpConfig, _context: &str| -> Result<()> {
 			if !mcp_config.enabled {
 				return Ok(());
 			}
 
-			for server in &mcp_config.servers {
-				if server.enabled {
-					match server.server_type {
-						McpServerType::External => {
-							// External servers must have either URL or command
-							if server.url.is_none() && server.command.is_none() {
-								return Err(anyhow!(
-									"{}: External MCP server '{}' must have either 'url' or 'command' specified",
-									context, server.name
-								));
-							}
-						}
-						McpServerType::Developer | McpServerType::Filesystem => {
-							// Built-in servers should not have URL or command
-							if server.url.is_some() || server.command.is_some() {
-								eprintln!(
-									"Warning: {}: Built-in server '{}' has URL/command specified, which will be ignored",
-									context, server.name
-								);
-							}
-						}
-					}
-
-					// Validate timeout
-					if server.timeout_seconds == 0 {
-						return Err(anyhow!(
-							"{}: MCP server '{}' timeout must be greater than 0",
-							context, server.name
-						));
-					}
-
-					// Validate server name
-					if server.name.trim().is_empty() {
-						return Err(anyhow!("{}: MCP server name cannot be empty", context));
-					}
-				}
+			// For role-specific configs, they can be empty and inherit from global
+			// Only validate if they have explicit server configurations
+			if !mcp_config.servers.is_empty() {
+				// If they specify servers, validate that they exist
+				// But we don't require them to specify servers since they can inherit from global
 			}
 
 			Ok(())
 		};
 
-		// Validate global MCP config
-		validate_mcp(&self.mcp, "Global MCP config")?;
-		
-		// Validate role-specific MCP configs
+		// Validate global MCP config - this one MUST have servers if enabled
+		if self.mcp.enabled && self.mcp.servers.is_empty() {
+			return Err(anyhow!("Global MCP config: MCP is enabled but no servers specified"));
+		}
+
+		// Validate role-specific MCP configs (they can inherit from global)
 		validate_mcp(&self.developer.mcp, "Developer role MCP config")?;
 		validate_mcp(&self.assistant.mcp, "Assistant role MCP config")?;
+
+		// Validate server configurations
+		for (name, server) in &self.mcp.servers {
+			if server.enabled {
+				// Auto-detect server type for validation
+				let effective_type = match name.as_str() {
+					"developer" => McpServerType::Developer,
+					"filesystem" => McpServerType::Filesystem,
+					_ => McpServerType::External,
+				};
+
+				match effective_type {
+					crate::config::McpServerType::External => {
+						// External servers must have either URL or command
+						if server.url.is_none() && server.command.is_none() {
+							return Err(anyhow!(
+								"MCP server '{}': External server must have either 'url' or 'command' specified",
+								name
+							));
+						}
+					}
+					crate::config::McpServerType::Developer | crate::config::McpServerType::Filesystem => {
+						// Built-in servers should not have URL or command
+						if server.url.is_some() || server.command.is_some() {
+							eprintln!(
+								"Warning: MCP server '{}': Built-in server has URL/command specified, which will be ignored",
+								name
+							);
+						}
+					}
+				}
+
+				// Validate timeout
+				if server.timeout_seconds == 0 {
+					return Err(anyhow!(
+						"MCP server '{}': timeout must be greater than 0",
+						name
+					));
+				}
+			}
+		}
 
 		Ok(())
 	}
@@ -1267,7 +1324,7 @@ impl Config {
 					if model.trim().is_empty() {
 						return Err(anyhow!("Layer '{}' model cannot be empty", layer.name));
 					}
-					
+
 					// Validate model format using provider factory if specified
 					if !model.contains(':') {
 						return Err(anyhow!(
@@ -1276,7 +1333,7 @@ impl Config {
 						));
 					}
 				}
-				
+
 				// Validate MCP configuration if enabled
 				if layer.mcp.enabled && layer.mcp.servers.is_empty() {
 					return Err(anyhow!(
@@ -1307,14 +1364,14 @@ impl Config {
 			// Store the config path for potential future saving
 			config.config_path = Some(config_path);
 
-			// Migrate legacy configuration
-			config.migrate_legacy_config();
+			// Initialize the configuration
+			config.initialize_config();
 
 			// Environment variables take precedence over config file values
 			if let Ok(jina_key) = std::env::var("JINA_API_KEY") {
 				config.jina_api_key = Some(jina_key);
 			}
-			
+
 			// Handle provider API keys from environment variables
 			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
 				config.providers.openrouter.api_key = Some(openrouter_key);
@@ -1334,7 +1391,7 @@ impl Config {
 			if let Ok(cloudflare_key) = std::env::var("CLOUDFLARE_API_TOKEN") {
 				config.providers.cloudflare.api_key = Some(cloudflare_key);
 			}
-			
+
 			// Legacy environment variable support for backward compatibility
 			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
 				config.openrouter.api_key = Some(openrouter_key);
@@ -1519,26 +1576,27 @@ mod tests {
 
 	#[test]
 	fn test_role_specific_cache_config() {
-		let mut config = Config::default();
-		
-		// Set system-wide cache thresholds - these should now be global, not role-specific
-		config.cache_tokens_absolute_threshold = 4096;
-		config.cache_timeout_seconds = 300;
-		
-		// Set legacy openrouter to different values to verify system-wide settings take precedence
-		config.openrouter.cache_tokens_absolute_threshold = 0;
-		config.openrouter.cache_timeout_seconds = 180;
-		
+		let config = Config {
+			cache_tokens_absolute_threshold: 4096,
+			cache_timeout_seconds: 300,
+			openrouter: OpenRouterConfig {
+				cache_tokens_absolute_threshold: 0,
+				cache_timeout_seconds: 180,
+				..Default::default()
+			},
+			..Default::default()
+		};
+
 		// Test developer role merged config - should use system-wide settings
 		let developer_merged = config.get_merged_config_for_mode("developer");
 		assert_eq!(developer_merged.openrouter.cache_tokens_absolute_threshold, 4096);
 		assert_eq!(developer_merged.openrouter.cache_timeout_seconds, 300);
-		
+
 		// Test assistant role merged config - should also use system-wide settings
 		let assistant_merged = config.get_merged_config_for_mode("assistant");
 		assert_eq!(assistant_merged.openrouter.cache_tokens_absolute_threshold, 4096);
 		assert_eq!(assistant_merged.openrouter.cache_timeout_seconds, 300);
-		
+
 		// Test unknown role falls back to assistant but still uses system-wide settings
 		let unknown_merged = config.get_merged_config_for_mode("unknown");
 		assert_eq!(unknown_merged.openrouter.cache_tokens_absolute_threshold, 4096);

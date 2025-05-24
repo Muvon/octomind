@@ -247,14 +247,15 @@ pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String,
 		return Ok(functions);
 	}
 
-	// Check each server
-	for server in &config.mcp.servers {
-		if server.enabled {
-			let server_functions = get_server_functions(server).await?;
+	// Get enabled servers from registry
+	let servers = config.mcp.get_enabled_servers();
 
-			for func in server_functions {
-				functions.insert(func.name.clone(), (func, server.clone()));
-			}
+	// Check each server
+	for server in &servers {
+		let server_functions = get_server_functions(server).await?;
+
+		for func in server_functions {
+			functions.insert(func.name.clone(), (func, server.clone()));
 		}
 	}
 

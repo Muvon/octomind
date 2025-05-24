@@ -230,7 +230,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 			}
 			crate::config::McpServerType::External => {
 				// Handle external servers
-				if let Ok(server_functions) = server::get_server_functions(server).await {
+				if let Ok(server_functions) = server::get_server_functions(&server).await {
 					let filtered_functions = if server.tools.is_empty() {
 						// No tool filtering - get all functions from server
 						server_functions
@@ -362,7 +362,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			}
 			crate::config::McpServerType::External => {
 				// Try to execute the tool on this external server
-				match server::execute_tool_call(call, server).await {
+				match server::execute_tool_call(call, &server).await {
 					Ok(mut result) => {
 						result.tool_id = call.tool_id.clone();
 						return handle_large_response(result, config);

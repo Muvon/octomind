@@ -1,0 +1,126 @@
+# Example Octodev Configuration with New MCP Server Registry Approach
+# This demonstrates the new system-wide server registry that reduces duplication
+
+log_level = "none"
+mcp_response_warning_threshold = 12000
+max_request_tokens_threshold = 50000
+enable_auto_truncation = false
+cache_tokens_pct_threshold = 0
+cache_tokens_absolute_threshold = 4096
+cache_timeout_seconds = 240
+enable_markdown_rendering = true
+
+embedding_provider = "FastEmbed"
+
+[fastembed]
+code_model = "all-MiniLM-L6-v2"
+text_model = "all-MiniLM-L6-v2"
+
+[providers.openrouter]
+api_key = "your-openrouter-api-key"
+
+[providers.openai]
+api_key = "your-openai-api-key"
+
+[providers.anthropic]
+api_key = "your-anthropic-api-key"
+
+# NEW: MCP Server Registry - Define servers once, reference everywhere
+[mcp_server_registry]
+# Built-in servers (these are defined by default but can be customized)
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+args = []
+mode = "http"
+timeout_seconds = 30
+tools = []  # Empty means all tools enabled
+
+[mcp_server_registry.filesystem]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+args = []
+mode = "http"
+timeout_seconds = 30
+tools = []  # Empty means all tools enabled
+
+# Example external server
+[mcp_server_registry.web_search]
+enabled = true
+name = "web_search"
+server_type = "external"
+url = "https://api.example.com/mcp/websearch"
+auth_token = "your-auth-token"  # Optional
+mode = "http"
+timeout_seconds = 30
+tools = []  # Empty means all tools enabled
+
+# Example local MCP server
+[mcp_server_registry.local_server]
+enabled = true
+name = "local_server"
+server_type = "external"
+command = "python"
+args = ["-m", "my_mcp_server", "--port", "8008"]
+mode = "stdin"
+timeout_seconds = 30
+tools = ["custom_tool1", "custom_tool2"]  # Only these tools enabled
+
+# Role Configurations - NOW MUCH SIMPLER!
+[developer]
+model = "openrouter:anthropic/claude-sonnet-4"
+enable_layers = false
+
+# NEW APPROACH: Just reference servers by name from registry
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Reference servers from registry
+allowed_tools = []  # Empty means all tools from referenced servers
+
+[assistant]
+model = "openrouter:anthropic/claude-3.5-haiku"
+enable_layers = false
+system = "You are a helpful assistant."
+
+[assistant.mcp]
+enabled = true
+server_refs = ["filesystem"]  # Only filesystem tools for assistant
+allowed_tools = ["text_editor", "list_files"]  # Limit to specific tools
+
+# Command Configurations - ALSO SIMPLIFIED!
+[commands.estimate]
+name = "estimate"
+enabled = true
+model = "openrouter:openai/gpt-4.1-mini"
+system_prompt = "You are professional developer work estimator..."
+temperature = 0.2
+input_mode = "Last"
+
+# NEW APPROACH: Commands can also use server references
+[commands.estimate.mcp]
+enabled = false  # No tools for estimate command
+
+[commands.commit]
+name = "commit"
+enabled = true
+model = "openrouter:openai/gpt-4.1-mini"
+system_prompt = "You are professional work-done finalizer..."
+
+[commands.commit.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Reference servers from registry
+allowed_tools = ["shell", "list_files", "text_editor"]  # Only needed tools
+
+# Global MCP fallback (also simplified)
+[mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Default servers
+
+# Legacy OpenRouter config (maintained for backward compatibility)
+[openrouter]
+model = "openrouter:anthropic/claude-sonnet-4"
+api_key = "your-openrouter-api-key"
+enable_layers = false
+# ... other settings remain the same

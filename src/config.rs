@@ -280,27 +280,6 @@ pub struct ModeConfig {
 	// Layer configurations
 	#[serde(default)]
 	pub enable_layers: bool,
-	// Maximum response tokens warning threshold
-	#[serde(default = "default_mcp_response_warning_threshold")]
-	pub mcp_response_warning_threshold: usize,
-	// Maximum request tokens threshold (for automatic context truncation)
-	#[serde(default = "default_max_request_tokens_threshold")]
-	pub max_request_tokens_threshold: usize,
-	// Enable automatic context truncation when max threshold is reached
-	#[serde(default)]
-	pub enable_auto_truncation: bool,
-	// Threshold percentage for automatic cache marker movement
-	#[serde(default = "default_cache_tokens_pct_threshold")]
-	pub cache_tokens_pct_threshold: u8,
-	// Alternative: Auto-cache when non-cached tokens reach this absolute number
-	#[serde(default)]
-	pub cache_tokens_absolute_threshold: u64,
-	// Auto-cache timeout in seconds (3 minutes = 180 seconds by default)
-	#[serde(default = "default_cache_timeout_seconds")]
-	pub cache_timeout_seconds: u64,
-	// Enable markdown rendering for AI responses
-	#[serde(default)]
-	pub enable_markdown_rendering: bool,
 	// Custom system prompt
 	pub system: Option<String>,
 }
@@ -314,13 +293,6 @@ impl Default for ModeConfig {
 		Self {
 			model: default_full_model(),
 			enable_layers: false,
-			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
-			max_request_tokens_threshold: default_max_request_tokens_threshold(),
-			enable_auto_truncation: false,
-			cache_tokens_pct_threshold: default_cache_tokens_pct_threshold(),
-			cache_tokens_absolute_threshold: 0,
-			cache_timeout_seconds: default_cache_timeout_seconds(),
-			enable_markdown_rendering: false,
 			system: None,
 		}
 	}
@@ -783,6 +755,22 @@ pub struct Config {
 	#[serde(default)]
 	pub log_level: LogLevel,
 	
+	// System-wide configuration settings (not role-specific)
+	#[serde(default = "default_mcp_response_warning_threshold")]
+	pub mcp_response_warning_threshold: usize,
+	#[serde(default = "default_max_request_tokens_threshold")]
+	pub max_request_tokens_threshold: usize,
+	#[serde(default)]
+	pub enable_auto_truncation: bool,
+	#[serde(default = "default_cache_tokens_pct_threshold")]
+	pub cache_tokens_pct_threshold: u8,
+	#[serde(default)]
+	pub cache_tokens_absolute_threshold: u64,
+	#[serde(default = "default_cache_timeout_seconds")]
+	pub cache_timeout_seconds: u64,
+	#[serde(default)]
+	pub enable_markdown_rendering: bool,
+	
 	#[serde(default)]
 	pub embedding_provider: EmbeddingProvider,
 	#[serde(default)]
@@ -836,50 +824,88 @@ impl Config {
 		self.openrouter.log_level.clone()
 	}
 
-	/// Helper methods to get role-based configuration settings without hardcoding openrouter
-	/// These methods should be used instead of directly accessing config.openrouter.*
+	/// System-wide configuration getters - these settings are global and not role-specific
 	
-	/// Get cache timeout seconds for the specified role
-	pub fn get_cache_timeout_seconds(&self, role: &str) -> u64 {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.cache_timeout_seconds
+	/// Get cache timeout seconds (system-wide setting)
+	pub fn get_cache_timeout_seconds(&self) -> u64 {
+		// If system setting is set (non-zero), use it
+		if self.cache_timeout_seconds != 0 {
+			return self.cache_timeout_seconds;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.cache_timeout_seconds
 	}
 	
-	/// Get cache tokens absolute threshold for the specified role
-	pub fn get_cache_tokens_absolute_threshold(&self, role: &str) -> u64 {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.cache_tokens_absolute_threshold
+	/// Get cache tokens absolute threshold (system-wide setting)
+	pub fn get_cache_tokens_absolute_threshold(&self) -> u64 {
+		// If system setting is set (non-zero), use it
+		if self.cache_tokens_absolute_threshold != 0 {
+			return self.cache_tokens_absolute_threshold;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.cache_tokens_absolute_threshold
 	}
 	
-	/// Get cache tokens percentage threshold for the specified role
-	pub fn get_cache_tokens_pct_threshold(&self, role: &str) -> u8 {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.cache_tokens_pct_threshold
+	/// Get cache tokens percentage threshold (system-wide setting)
+	pub fn get_cache_tokens_pct_threshold(&self) -> u8 {
+		// If system setting is set (non-zero), use it
+		if self.cache_tokens_pct_threshold != 0 {
+			return self.cache_tokens_pct_threshold;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.cache_tokens_pct_threshold
 	}
 	
-	/// Get MCP response warning threshold for the specified role
-	pub fn get_mcp_response_warning_threshold(&self, role: &str) -> usize {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.mcp_response_warning_threshold
+	/// Get MCP response warning threshold (system-wide setting)
+	pub fn get_mcp_response_warning_threshold(&self) -> usize {
+		// If system setting is set (non-zero), use it
+		if self.mcp_response_warning_threshold != 0 {
+			return self.mcp_response_warning_threshold;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.mcp_response_warning_threshold
 	}
 	
-	/// Get enable auto truncation setting for the specified role
-	pub fn get_enable_auto_truncation(&self, role: &str) -> bool {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.enable_auto_truncation
+	/// Get enable auto truncation setting (system-wide setting)
+	pub fn get_enable_auto_truncation(&self) -> bool {
+		// For boolean, we check if system setting differs from default (false)
+		// If it's explicitly set to true, use it; otherwise fall back to openrouter
+		if self.enable_auto_truncation {
+			return true;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.enable_auto_truncation
 	}
 	
-	/// Get max request tokens threshold for the specified role
-	pub fn get_max_request_tokens_threshold(&self, role: &str) -> usize {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.max_request_tokens_threshold
+	/// Get max request tokens threshold (system-wide setting)
+	pub fn get_max_request_tokens_threshold(&self) -> usize {
+		// If system setting is set (non-zero), use it
+		if self.max_request_tokens_threshold != 0 {
+			return self.max_request_tokens_threshold;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.max_request_tokens_threshold
 	}
 	
-	/// Get enable markdown rendering setting for the specified role
-	pub fn get_enable_markdown_rendering(&self, role: &str) -> bool {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.enable_markdown_rendering
+	/// Get enable markdown rendering setting (system-wide setting)
+	pub fn get_enable_markdown_rendering(&self) -> bool {
+		// For boolean, we check if system setting differs from default (false)
+		// If it's explicitly set to true, use it; otherwise fall back to openrouter
+		if self.enable_markdown_rendering {
+			return true;
+		}
+		
+		// Otherwise, fall back to openrouter config for backward compatibility
+		self.openrouter.enable_markdown_rendering
 	}
+
+	/// Role-based configuration getters - these delegate to role configs
 	
 	/// Get enable layers setting for the specified role
 	pub fn get_enable_layers(&self, role: &str) -> bool {
@@ -1016,13 +1042,14 @@ impl Config {
 			pricing: mode_config.get_pricing(&self.providers),
 			enable_layers: mode_config.enable_layers,
 			log_level: self.get_log_level(), // Use global log level
-			mcp_response_warning_threshold: mode_config.mcp_response_warning_threshold,
-			max_request_tokens_threshold: mode_config.max_request_tokens_threshold,
-			enable_auto_truncation: mode_config.enable_auto_truncation,
-			cache_tokens_pct_threshold: mode_config.cache_tokens_pct_threshold,
-			cache_tokens_absolute_threshold: mode_config.cache_tokens_absolute_threshold,
-			cache_timeout_seconds: mode_config.cache_timeout_seconds,
-			enable_markdown_rendering: mode_config.enable_markdown_rendering,
+			// Use system-wide settings for these configuration options
+			mcp_response_warning_threshold: self.get_mcp_response_warning_threshold(),
+			max_request_tokens_threshold: self.get_max_request_tokens_threshold(),
+			enable_auto_truncation: self.get_enable_auto_truncation(),
+			cache_tokens_pct_threshold: self.get_cache_tokens_pct_threshold(),
+			cache_tokens_absolute_threshold: self.get_cache_tokens_absolute_threshold(),
+			cache_timeout_seconds: self.get_cache_timeout_seconds(),
+			enable_markdown_rendering: self.get_enable_markdown_rendering(),
 		};
 		
 		merged.mcp = mcp_config;
@@ -1136,24 +1163,26 @@ impl Config {
 	}
 
 	fn validate_thresholds(&self) -> Result<()> {
-		let config = &self.openrouter;
+		// Use system-wide configuration getters
+		let mcp_warning_threshold = self.get_mcp_response_warning_threshold();
+		let max_request_threshold = self.get_max_request_tokens_threshold();
+		let cache_pct_threshold = self.get_cache_tokens_pct_threshold();
 
-		if config.mcp_response_warning_threshold == 0 {
+		if mcp_warning_threshold == 0 {
 			return Err(anyhow!("MCP response warning threshold must be greater than 0"));
 		}
 
-		if config.max_request_tokens_threshold == 0 {
+		if max_request_threshold == 0 {
 			return Err(anyhow!("Max request tokens threshold must be greater than 0"));
 		}
 
-		if config.cache_tokens_pct_threshold > 100 {
+		if cache_pct_threshold > 100 {
 			return Err(anyhow!("Cache tokens percentage threshold must be between 0-100"));
 		}
 
 		// Warn if thresholds seem too low
-		if config.mcp_response_warning_threshold < 1000 {
-			eprintln!("Warning: MCP response warning threshold ({}) is quite low",
-				config.mcp_response_warning_threshold);
+		if mcp_warning_threshold < 1000 {
+			eprintln!("Warning: MCP response warning threshold ({}) is quite low", mcp_warning_threshold);
 		}
 
 		Ok(())
@@ -1497,23 +1526,27 @@ mod tests {
 	fn test_role_specific_cache_config() {
 		let mut config = Config::default();
 		
-		// Set different cache thresholds for developer vs assistant
-		config.developer.config.cache_tokens_absolute_threshold = 4096;
-		config.assistant.config.cache_tokens_absolute_threshold = 2048;
+		// Set system-wide cache thresholds - these should now be global, not role-specific
+		config.cache_tokens_absolute_threshold = 4096;
+		config.cache_timeout_seconds = 300;
 		
-		// Set legacy openrouter to a different value to verify it gets overridden
+		// Set legacy openrouter to different values to verify system-wide settings take precedence
 		config.openrouter.cache_tokens_absolute_threshold = 0;
+		config.openrouter.cache_timeout_seconds = 180;
 		
-		// Test developer role merged config
+		// Test developer role merged config - should use system-wide settings
 		let developer_merged = config.get_merged_config_for_mode("developer");
 		assert_eq!(developer_merged.openrouter.cache_tokens_absolute_threshold, 4096);
+		assert_eq!(developer_merged.openrouter.cache_timeout_seconds, 300);
 		
-		// Test assistant role merged config  
+		// Test assistant role merged config - should also use system-wide settings
 		let assistant_merged = config.get_merged_config_for_mode("assistant");
-		assert_eq!(assistant_merged.openrouter.cache_tokens_absolute_threshold, 2048);
+		assert_eq!(assistant_merged.openrouter.cache_tokens_absolute_threshold, 4096);
+		assert_eq!(assistant_merged.openrouter.cache_timeout_seconds, 300);
 		
-		// Test unknown role falls back to assistant
+		// Test unknown role falls back to assistant but still uses system-wide settings
 		let unknown_merged = config.get_merged_config_for_mode("unknown");
-		assert_eq!(unknown_merged.openrouter.cache_tokens_absolute_threshold, 2048);
+		assert_eq!(unknown_merged.openrouter.cache_tokens_absolute_threshold, 4096);
+		assert_eq!(unknown_merged.openrouter.cache_timeout_seconds, 300);
 	}
 }

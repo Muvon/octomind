@@ -6,17 +6,17 @@ use std::path::Path;
 // Function to get a system prompt for a specific layer by string type name
 pub fn get_layer_system_prompt_for_type(layer_type: &str) -> String {
 	// Get the raw system prompt without any substitutions
-	let raw_prompt = get_raw_system_prompt(layer_type);
+	
 
 	// For now, we'll return the raw prompt. The placeholder substitution will be done
 	// by process_placeholders when the prompt is actually used
-	raw_prompt
+	get_raw_system_prompt(layer_type)
 }
 
 // Function to get the raw system prompt without any substitutions
 pub fn get_raw_system_prompt(layer_type: &str) -> String {
 	match layer_type {
-		"query_processor" => format!("You are an expert query processor and requirement analyst in the Octodev system. \
+		"query_processor" => "You are an expert query processor and requirement analyst in the Octodev system. \
 			Your task is to analyze the user's request and transform it into a clearer, more actionable form. \
 			\
 			Given a user request: \
@@ -32,8 +32,8 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			DO NOT implement solutions, write code, or explore the codebase - focus solely on requirement analysis. \
 			Return only the refined task description that clearly explains what needs to be done.\
 			\
-			%{{CONTEXT}}"),
-		"context_generator" => format!("You are the context gathering specialist for the Octodev system. \
+			%{CONTEXT}".to_string(),
+		"context_generator" => "You are the context gathering specialist for the Octodev system. \
 			\
 			I'll help analyze a user's task to determine what additional context is needed for implementation. \
 			\
@@ -74,9 +74,9 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			\
 			Your goal is to provide a complete understanding of what's needed to implement the task successfully. \
 			\
-			%{{CONTEXT}}"),
-		"developer" => format!("You are an Octodev – top notch fully autonomous AI developer.\n\
-			Current working dir: %{{CWD}}\n\
+			%{CONTEXT}".to_string(),
+		"developer" => "You are an Octodev – top notch fully autonomous AI developer.\n\
+			Current working dir: %{CWD}\n\
 			**DEVELOPMENT APPROACH:**\n\
 			1. Analyze problems thoroughly first\n\
 			2. Think through solutions step-by-step\n\
@@ -98,9 +98,9 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			1. First understand which files you need to read/write\n\
 			2. Process files efficiently, preferably in a single operation\n\
 			3. Utilize the provided tools proactively without asking if you should use them\n\n\
-			%{{CONTEXT}}\n\
-			Right now you are *NOT* in the chat only mode and have access to tool use and system."),
-		"reducer" => format!("You are the session optimizer for Octodev, responsible for consolidating information and preparing for the next interaction. \
+			%{CONTEXT}\n\
+			Right now you are *NOT* in the chat only mode and have access to tool use and system.".to_string(),
+		"reducer" => "You are the session optimizer for Octodev, responsible for consolidating information and preparing for the next interaction. \
 			\
 			Your responsibilities: \
 			1. Review the original request and the developer's solution \
@@ -111,7 +111,7 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			This condensed information will be cached to reduce token usage in the next iteration. \
 			Focus on extracting the most important technical details while removing unnecessary verbosity. \
 			Your output will be used as context for the next user interaction, so it must contain all essential information \
-			while being as concise as possible.%{{CONTEXT}}"),
+			while being as concise as possible.%{CONTEXT}".to_string(),
 
 		_ => format!("You are the {} layer in the Octodev system.%{{CONTEXT}}", layer_type),
 	}

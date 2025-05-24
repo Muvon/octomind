@@ -38,6 +38,12 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 /// OpenAI provider implementation
 pub struct OpenAiProvider;
 
+impl Default for OpenAiProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiProvider {
 	pub fn new() -> Self {
 		Self
@@ -278,8 +284,8 @@ impl AiProvider for OpenAiProvider {
 			// Calculate cost using our pricing constants
 			let cost = calculate_cost(model, prompt_tokens, completion_tokens);
 
-			let completion_tokens_details = usage_obj.get("completion_tokens_details").map(|v| v.clone());
-			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").map(|v| v.clone());
+			let completion_tokens_details = usage_obj.get("completion_tokens_details").cloned();
+			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").cloned();
 
 			// OpenAI doesn't have the same breakdown structure as OpenRouter
 			let breakdown = None;
@@ -319,7 +325,7 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenAiMessage> {
 			let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
 
 			if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-				if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
+				if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
 					for tool_response in tool_responses {
 						let tool_call_id = tool_response.get("tool_call_id")
 							.and_then(|id| id.as_str())

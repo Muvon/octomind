@@ -148,20 +148,40 @@ impl CacheManager {
         }
 
         // Implement 2-marker system logic
-        if existing_markers.len() < self.max_content_markers {
-            // We have space for another marker
-            if let Some(target_msg) = session.messages.get_mut(target_index) {
-                target_msg.cached = true;
-                return Ok(true);
-            }
-        } else if existing_markers.len() == self.max_content_markers {
-            // We're at capacity, move the first marker to the new position
-            if let Some(first_marker_index) = existing_markers.first() {
-                // Remove cache from first marker
-                if let Some(first_msg) = session.messages.get_mut(*first_marker_index) {
-                    first_msg.cached = false;
+        match existing_markers.len().cmp(&self.max_content_markers) {
+            std::cmp::Ordering::Less => {
+                // We have space for another marker
+                if let Some(target_msg) = session.messages.get_mut(target_index) {
+                    target_msg.cached = true;
+                    return Ok(true);
                 }
-                // Add cache to new position
+            }
+            std::cmp::Ordering::Equal => {
+                // We're at capacity, move the first marker to the new position
+                if let Some(first_marker_index) = existing_markers.first() {
+                    // Remove cache from first marker
+                    if let Some(first_msg) = session.messages.get_mut(*first_marker_index) {
+                        first_msg.cached = false;
+                    }
+                    // Add cache to new position
+                    if let Some(target_msg) = session.messages.get_mut(target_index) {
+                        target_msg.cached = true;
+                        return Ok(true);
+                    }
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                // This shouldn't happen in normal usage but handle gracefully
+                // Remove excess markers starting from the first
+                while existing_markers.len() > self.max_content_markers {
+                    if let Some(first_marker_index) = existing_markers.first() {
+                        if let Some(first_msg) = session.messages.get_mut(*first_marker_index) {
+                            first_msg.cached = false;
+                        }
+                        existing_markers.remove(0);
+                    }
+                }
+                // Now add the new marker
                 if let Some(target_msg) = session.messages.get_mut(target_index) {
                     target_msg.cached = true;
                     return Ok(true);

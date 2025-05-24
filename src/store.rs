@@ -400,10 +400,7 @@ impl BatchConverter {
 			let symbols: Vec<String> = if symbols_array.is_null(i) {
 				Vec::new()
 			} else {
-				match serde_json::from_str(symbols_array.value(i)) {
-					Ok(symbols) => symbols,
-					Err(_) => Vec::new(),
-				}
+				serde_json::from_str::<Vec<String>>(symbols_array.value(i)).unwrap_or_default()
 			};
 
 			let distance = distances.as_ref().map(|d| d[i]);
@@ -734,7 +731,7 @@ impl Store {
 		// Query to check if a record with the given hash exists
 		let results = table
 			.query()
-			.only_if(&format!("hash = '{}'", hash))
+			.only_if(format!("hash = '{}'", hash))
 			.limit(1)
 			.execute()
 			.await?
@@ -1052,7 +1049,7 @@ impl Store {
 		// Filter by symbols using LIKE for substring match
 		let results = table
 			.query()
-			.only_if(&format!("symbols LIKE '%{}%'", symbol))
+			.only_if(format!("symbols LIKE '%{}%'", symbol))
 			.limit(1)
 			.execute()
 			.await?
@@ -1113,7 +1110,7 @@ impl Store {
 		// Filter by hash for exact match
 		let results = table
 			.query()
-			.only_if(&format!("hash = '{}'", hash))
+			.only_if(format!("hash = '{}'", hash))
 			.limit(1)
 			.execute()
 			.await?
@@ -1171,7 +1168,7 @@ impl Store {
 
 	// Get the vector dimension of the store
 	pub fn get_vector_dim(&self) -> usize {
-		return self.vector_dim;
+		self.vector_dim
 	}
 
 	// Check if tables exist in the database
@@ -1182,7 +1179,7 @@ impl Store {
 				return Ok(false);
 			}
 		}
-		return Ok(true);
+		Ok(true)
 	}
 
 	// Store graph nodes in the database

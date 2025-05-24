@@ -38,6 +38,12 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 /// Google Vertex AI provider implementation
 pub struct GoogleVertexProvider;
 
+impl Default for GoogleVertexProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleVertexProvider {
 	pub fn new() -> Self {
 		Self
@@ -311,7 +317,7 @@ fn convert_messages(messages: &[Message]) -> Vec<VertexMessage> {
 			let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
 
 			if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-				if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
+				if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
 					for tool_response in tool_responses {
 						let content_text = tool_response.get("content")
 							.and_then(|c| c.as_str())

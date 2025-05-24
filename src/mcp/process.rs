@@ -190,7 +190,7 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 			let stdin_url = format!("stdin://{}", server.name);
 			// Debug output
 			// println!("MCP server started and initialized (stdin mode): {} at {}", server.name, stdin_url);
-			return Ok(stdin_url);
+			Ok(stdin_url)
 		}
 	}
 }
@@ -223,7 +223,7 @@ async fn initialize_stdin_server(server_name: &str) -> Result<()> {
 	}
 
 	// Check if we got a valid result
-	if !response.get("result").is_some() {
+	if response.get("result").is_none() {
 		return Err(anyhow::anyhow!("Server did not return a valid result during initialization"));
 	}
 
@@ -269,7 +269,7 @@ fn get_server_url(server: &McpServerConfig) -> Result<String> {
 	// Otherwise, assume it's running on localhost
 	// For now we use a default port, but ideally this would be configurable
 	// or the server would output its port when starting
-	Ok(format!("http://localhost:8008"))
+	Ok("http://localhost:8008".to_string())
 }
 
 // Communicate with a stdin-based MCP server using JSON-RPC format

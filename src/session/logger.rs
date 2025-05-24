@@ -207,7 +207,7 @@ fn append_to_log(log_file: &PathBuf, content: &str) -> Result<()> {
 		.open(log_file)?;
 
 	// Ensure content is on a single line - replace any newlines with spaces  
-	let single_line_content = content.replace('\n', " ").replace('\r', " ");
+	let single_line_content = content.replace(['\n', '\r'], " ");
 	writeln!(file, "{}", single_line_content)?;
 	Ok(())
 }

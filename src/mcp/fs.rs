@@ -67,12 +67,7 @@ async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult> {
 		let mut history_guard = file_history.lock().map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
 
 		if let Some(history) = history_guard.get_mut(&path_str) {
-			if let Some(content) = history.pop() {
-				// Return the previous content
-				Some(content)
-			} else {
-				None
-			}
+			history.pop()
 		} else {
 			None
 		}
@@ -444,7 +439,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 								(Err(e), _) | (_, Err(e)) => Err(e),
 							}
 						},
-						_ => return Err(anyhow!("'file_text' must be an array for multiple file writes")),
+						_ => Err(anyhow!("'file_text' must be an array for multiple file writes")),
 					}
 				},
 				_ => Err(anyhow!("'path' parameter must be a string or array of strings")),

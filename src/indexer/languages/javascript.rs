@@ -108,6 +108,7 @@ impl Language for JavaScript {
 
 impl JavaScript {
 	/// Extract JavaScript variable declarations within a block
+	#[allow(clippy::only_used_in_recursion)]
 	pub fn extract_js_variable_declarations(&self, node: Node, contents: &str, symbols: &mut Vec<String>) {
 		let mut cursor = node.walk();
 		// Look through all children

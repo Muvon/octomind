@@ -13,7 +13,7 @@ impl ChatSession {
 	// Process user commands
 	pub fn process_command(&mut self, input: &str, config: &Config) -> Result<bool> {
 		// Extract command and potential parameters
-		let input_parts: Vec<&str> = input.trim().split_whitespace().collect();
+		let input_parts: Vec<&str> = input.split_whitespace().collect();
 		let command = input_parts[0];
 		let params = if input_parts.len() > 1 {
 			&input_parts[1..]
@@ -28,43 +28,43 @@ impl ChatSession {
 			},
 			HELP_COMMAND => {
 				println!("{}", "\nAvailable commands:\n".bright_cyan());
-				println!("{} - {}", HELP_COMMAND.cyan(), "Show this help message");
-				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
-				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
-				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
-				println!("{} - {}", CACHE_COMMAND.cyan(), "Manage cache checkpoints: /cache [stats|clear|threshold]");
-				println!("{} - {}", LIST_COMMAND.cyan(), "List all available sessions");
-				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
-				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
-				println!("{} - {}", LAYERS_COMMAND.cyan(), "Toggle layered processing architecture on/off");
-				println!("{} - {}", DONE_COMMAND.cyan(), "Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting");
-				println!("{} [level] - {}", LOGLEVEL_COMMAND.cyan(), "Set logging level: none, info, or debug");
-				println!("{} [threshold] - {}", TRUNCATE_COMMAND.cyan(), "Toggle automatic context truncation when token limit is reached");
-				println!("{} [model] - {}", MODEL_COMMAND.cyan(), "Show current model or change to a different model");
-				println!("{} or {} - {}\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
+				println!("{} - Show this help message", HELP_COMMAND.cyan());
+				println!("{} - Copy last response to clipboard", COPY_COMMAND.cyan());
+				println!("{} - Clear the screen", CLEAR_COMMAND.cyan());
+				println!("{} - Save the session", SAVE_COMMAND.cyan());
+				println!("{} - Manage cache checkpoints: /cache [stats|clear|threshold]", CACHE_COMMAND.cyan());
+				println!("{} - List all available sessions", LIST_COMMAND.cyan());
+				println!("{} [name] - Switch to another session or create a new one (without name creates fresh session)", SESSION_COMMAND.cyan());
+				println!("{} - Display detailed token and cost breakdown for this session", INFO_COMMAND.cyan());
+				println!("{} - Toggle layered processing architecture on/off", LAYERS_COMMAND.cyan());
+				println!("{} - Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting", DONE_COMMAND.cyan());
+				println!("{} [level] - Set logging level: none, info, or debug", LOGLEVEL_COMMAND.cyan());
+				println!("{} [threshold] - Toggle automatic context truncation when token limit is reached", TRUNCATE_COMMAND.cyan());
+				println!("{} [model] - Show current model or change to a different model", MODEL_COMMAND.cyan());
+				println!("{} or {} - Exit the session\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan());
 
 				// Additional info about caching
 				println!("{}", "** About Cache Management **".bright_yellow());
-				println!("{}", "The system message and tool definitions are automatically cached for supported providers.");
-				println!("{}", "Use '/cache' to mark your last user message for caching.");
-				println!("{}", "Use '/cache stats' to view detailed cache statistics and efficiency.");
-				println!("{}", "Use '/cache clear' to remove content cache markers (keeps system/tool caches).");
-				println!("{}", "Use '/cache threshold' to view auto-cache settings.");
-				println!("{}", "Supports 2-marker system: when you add a 3rd marker, the first one moves to the new position.");
-				println!("{}", "Automatic caching triggers based on token threshold percentage (configurable).");
-				println!("{}", "Cached tokens reduce costs on subsequent requests with the same content.\n");
+				println!("The system message and tool definitions are automatically cached for supported providers.");
+				println!("Use '/cache' to mark your last user message for caching.");
+				println!("Use '/cache stats' to view detailed cache statistics and efficiency.");
+				println!("Use '/cache clear' to remove content cache markers (keeps system/tool caches).");
+				println!("Use '/cache threshold' to view auto-cache settings.");
+				println!("Supports 2-marker system: when you add a 3rd marker, the first one moves to the new position.");
+				println!("Automatic caching triggers based on token threshold percentage (configurable).");
+				println!("Cached tokens reduce costs on subsequent requests with the same content.\n");
 
 				// Add information about layered architecture
 				println!("{}", "** About Layered Processing **".bright_yellow());
-				println!("{}", "The layered architecture processes your initial query through multiple AI layers:");
-				println!("{}", "1. Query Processor: Improves your initial query");
-				println!("{}", "2. Context Generator: Gathers relevant context information");
-				println!("{}", "3. Developer: Executes the actual development work");
-				println!("{}", "The Reducer functionality is available through the /done command.");
-				println!("{}", "Only the first message in a session uses the full layered architecture.");
-				println!("{}", "Subsequent messages use direct communication with the developer model.");
-				println!("{}", "Use the /done command to optimize context, apply EditorConfig formatting to edited files, and restart the layered pipeline.");
-				println!("{}", "Toggle layered processing with /layers command.\n");
+				println!("The layered architecture processes your initial query through multiple AI layers:");
+				println!("1. Query Processor: Improves your initial query");
+				println!("2. Context Generator: Gathers relevant context information");
+				println!("3. Developer: Executes the actual development work");
+				println!("The Reducer functionality is available through the /done command.");
+				println!("Only the first message in a session uses the full layered architecture.");
+				println!("Subsequent messages use direct communication with the developer model.");
+				println!("Use the /done command to optimize context, apply EditorConfig formatting to edited files, and restart the layered pipeline.");
+				println!("Toggle layered processing with /layers command.\n");
 			},
 			COPY_COMMAND => {
 				println!("Clipboard functionality is disabled in this version.");
@@ -253,7 +253,7 @@ impl ChatSession {
 				loaded_config.openrouter.enable_auto_truncation = !loaded_config.openrouter.enable_auto_truncation;
 
 				// Update token thresholds if parameters were provided
-				if params.len() >= 1 {
+				if !params.is_empty() {
 					if let Ok(threshold) = params[0].parse::<usize>() {
 						loaded_config.openrouter.max_request_tokens_threshold = threshold;
 						println!("{}", format!("Max request token threshold set to {} tokens", threshold).bright_green());

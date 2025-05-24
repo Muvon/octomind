@@ -100,7 +100,7 @@ impl MarkdownRenderer {
 		let processed_markdown = self.preprocess_code_blocks(markdown)?;
 
 		// Get terminal width, fallback to 80 if unable to determine
-		let width = termimad::terminal_size().0.min(120).max(60);
+		let width = termimad::terminal_size().0.clamp(60, 120);
 
 		// Render the markdown
 		let styled_content = self.skin.area_text(&processed_markdown, &termimad::Area::new(0, 0, width, 1000));

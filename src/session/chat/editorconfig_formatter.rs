@@ -21,13 +21,7 @@ pub async fn apply_editorconfig_formatting(modified_files: Option<Vec<PathBuf>>)
 	}
 
 	// Get config to check debug flag
-	let config = match crate::config::Config::load() {
-		Ok(cfg) => cfg,
-		Err(_) => {
-			// If we can't load config, assume debug is false
-			crate::config::Config::default()
-		}
-	};
+	let config = crate::config::Config::load().unwrap_or_default();
 
 	if config.openrouter.log_level.is_debug_enabled() {
 		println!("{}", "Found .editorconfig file".green());
@@ -95,13 +89,7 @@ async fn format_file(file_path: &Path) -> Result<bool> {
 	}
 
 	// Get config to check debug flag
-	let config = match crate::config::Config::load() {
-		Ok(cfg) => cfg,
-		Err(_) => {
-			// If we can't load config, assume debug is false
-			crate::config::Config::default()
-		}
-	};
+	let config = crate::config::Config::load().unwrap_or_default();
 
 	// Get EditorConfig properties for this file
 	let properties = match editorconfig::get_config(file_path) {
@@ -311,13 +299,7 @@ fn collect_files_respecting_gitignore(dir: &Path) -> Result<Vec<PathBuf>> {
 			},
 			Err(e) => {
 				// Get config to check debug flag
-				let config = match crate::config::Config::load() {
-					Ok(cfg) => cfg,
-					Err(_) => {
-						// If we can't load config, assume debug is false
-						crate::config::Config::default()
-					}
-				};
+				let config = crate::config::Config::load().unwrap_or_default();
 
 				if config.openrouter.log_level.is_debug_enabled() {
 					println!("{}: {}", "Warning: Error walking directory".yellow(), e);
@@ -364,7 +346,7 @@ fn is_likely_binary_file(file_path: &Path) -> bool {
 
 				// Also check for non-printable characters
 				let non_printable = buffer[..bytes_read].iter()
-					.filter(|&&b| (b < 32 || b > 126) && b != 9 && b != 10 && b != 13)
+					.filter(|&&b| !(32..=126).contains(&b) && b != 9 && b != 10 && b != 13)
 					.count();
 
 				// If more than 20% are non-printable characters, assume binary

@@ -44,7 +44,7 @@ impl ChatSession {
 			// Group stats by layer type
 			for stat in &self.session.info.layer_stats {
 				layer_stats.entry(stat.layer_type.clone())
-					.or_insert_with(Vec::new)
+					.or_default()
 					.push(stat);
 			}
 

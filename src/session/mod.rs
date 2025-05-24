@@ -35,7 +35,7 @@ pub fn get_layer_system_prompt(layer_type_str: &str) -> String {
 }
 
 use std::fs::{self as std_fs, OpenOptions, File};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::io::{BufRead, BufReader};
 use serde::{Serialize, Deserialize};
@@ -272,7 +272,7 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 		let entry = entry?;
 		let path = entry.path();
 
-		if path.is_file() && path.extension().map_or(false, |ext| ext == "jsonl") {
+		if path.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
 			// Read just the first line to get session info
 			if let Ok(file) = File::open(&path) {
 				let reader = BufReader::new(file);
@@ -467,12 +467,12 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 		.open(session_file)?;
 
 	// Ensure content is on a single line - replace any newlines with spaces
-	let single_line_content = content.replace('\n', " ").replace('\r', " ");
+	let single_line_content = content.replace(['\n', '\r'], " ");
 	writeln!(file, "{}", single_line_content)?;
 	Ok(())
 }
 
-pub async fn create_system_prompt(project_dir: &PathBuf, config: &crate::config::Config, mode: &str) -> String {
+pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Config, mode: &str) -> String {
 	// Get mode-specific configuration
 	let (_, mcp_config, _, custom_system) = config.get_mode_config(mode);
 

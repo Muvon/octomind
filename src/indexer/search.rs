@@ -19,7 +19,7 @@ pub fn render_code_blocks(blocks: &[CodeBlock]) {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(Vec::new)
+			.or_default()
 			.push(block);
 	}
 

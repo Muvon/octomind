@@ -82,6 +82,7 @@ impl Language for Ruby {
 
 impl Ruby {
 	/// Extract local variable assignments in Ruby
+	#[allow(clippy::only_used_in_recursion)]
 	fn extract_ruby_variables(&self, node: Node, contents: &str, symbols: &mut Vec<String>) {
 		let mut cursor = node.walk();
 		if cursor.goto_first_child() {

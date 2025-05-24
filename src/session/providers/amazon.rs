@@ -54,6 +54,12 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 /// Amazon Bedrock provider implementation
 pub struct AmazonBedrockProvider;
 
+impl Default for AmazonBedrockProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AmazonBedrockProvider {
 	pub fn new() -> Self {
 		Self

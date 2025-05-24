@@ -95,13 +95,11 @@ impl ChatSession {
 
 				// Check prompt_tokens_details for cached_tokens first
 				if let Some(details) = &usage.prompt_tokens_details {
-					if let Some(cached) = details.get("cached_tokens") {
-						if let serde_json::Value::Number(num) = cached {
-							if let Some(num_u64) = num.as_u64() {
-								cached_tokens = num_u64;
-								// Adjust regular tokens to account for cached tokens
-								regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-							}
+					if let Some(serde_json::Value::Number(num)) = details.get("cached_tokens") {
+						if let Some(num_u64) = num.as_u64() {
+							cached_tokens = num_u64;
+							// Adjust regular tokens to account for cached tokens
+							regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 						}
 					}
 				}
@@ -109,13 +107,11 @@ impl ChatSession {
 				// Fall back to breakdown field if prompt_tokens_details didn't have cached tokens
 				if cached_tokens == 0 && usage.prompt_tokens > 0 {
 					if let Some(breakdown) = &usage.breakdown {
-						if let Some(cached) = breakdown.get("cached") {
-							if let serde_json::Value::Number(num) = cached {
-								if let Some(num_u64) = num.as_u64() {
-									cached_tokens = num_u64;
-									// Adjust regular tokens to account for cached tokens
-									regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-								}
+						if let Some(serde_json::Value::Number(num)) = breakdown.get("cached") {
+							if let Some(num_u64) = num.as_u64() {
+								cached_tokens = num_u64;
+								// Adjust regular tokens to account for cached tokens
+								regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 							}
 						}
 					}

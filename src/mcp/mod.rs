@@ -180,7 +180,7 @@ pub fn tool_results_to_messages(results: &[McpToolResult]) -> Vec<ToolResponseMe
 }
 
 // Ensure tool calls have valid IDs
-pub fn ensure_tool_call_ids(calls: &mut Vec<McpToolCall>) {
+pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
 	for call in calls.iter_mut() {
 		if call.tool_id.is_empty() {
 			call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());

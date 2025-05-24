@@ -38,6 +38,12 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 /// Anthropic provider implementation
 pub struct AnthropicProvider;
 
+impl Default for AnthropicProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicProvider {
 	pub fn new() -> Self {
 		Self
@@ -305,7 +311,7 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<A
 					let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
 
 					if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-						if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
+						if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
 							for tool_response in tool_responses {
 								let tool_call_id = tool_response.get("tool_call_id")
 									.and_then(|id| id.as_str())

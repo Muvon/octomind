@@ -16,6 +16,12 @@ pub struct ProjectContext {
 	pub git_branch: Option<String>,
 }
 
+impl Default for ProjectContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProjectContext {
 	/// Create a new empty project context
 	pub fn new() -> Self {

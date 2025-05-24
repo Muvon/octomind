@@ -347,7 +347,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	println!("Markdown rendering: {}", if config.openrouter.enable_markdown_rendering { "enabled" } else { "disabled" });
 
 	// Show system prompt status
-	if let Some(_) = &config.system {
+	if config.system.is_some() {
 		println!("System prompt: Custom");
 	} else {
 		println!("System prompt: Default");

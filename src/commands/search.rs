@@ -134,13 +134,13 @@ pub async fn execute(store: &Store, args: &SearchArgs, config: &Config) -> Resul
 				if !doc_results.is_empty() {
 					combined_markdown.push_str("# Documentation Results\n\n");
 					combined_markdown.push_str(&indexer::document_blocks_to_markdown(&doc_results));
-					combined_markdown.push_str("\n");
+					combined_markdown.push('\n');
 				}
 
 				if !final_code_results.is_empty() {
 					combined_markdown.push_str("# Code Results\n\n");
 					combined_markdown.push_str(&indexer::code_blocks_to_markdown(&final_code_results));
-					combined_markdown.push_str("\n");
+					combined_markdown.push('\n');
 				}
 
 				if !text_results.is_empty() {
@@ -197,7 +197,7 @@ fn render_text_blocks(blocks: &[octodev::store::TextBlock]) {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_default()
 			.push(block);
 	}
 
@@ -256,7 +256,7 @@ fn render_document_blocks(blocks: &[octodev::store::DocumentBlock]) {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_default()
 			.push(block);
 	}
 

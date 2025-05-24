@@ -57,7 +57,7 @@ impl Language for Php {
 			if let Ok(text) = node.utf8_text(contents.as_bytes()) {
 				let t = text.trim();
 				// For PHP variables, remove the $ prefix
-				let t = if t.starts_with('$') { &t[1..] } else { t };
+				let t = if let Some(stripped) = t.strip_prefix('$') { stripped } else { t };
 
 				if !t.is_empty() && !symbols.contains(&t.to_string()) {
 					symbols.push(t.to_string());

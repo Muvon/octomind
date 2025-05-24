@@ -15,6 +15,12 @@ pub struct TaskFocusedSubgraph {
 	pub key_concepts: HashMap<String, f32>, // Concept to relevance score mapping
 }
 
+impl Default for TaskFocusedSubgraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskFocusedSubgraph {
 	/// Creates a new empty TaskFocusedSubgraph
 	pub fn new() -> Self {
@@ -59,7 +65,7 @@ impl TaskFocusedSubgraph {
 			for (concept, relevance) in concepts.iter().take(10) {
 				markdown.push_str(&format!("- **{}** (relevance: {:.2})\n", concept, relevance));
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 
 		// Add relevant files section
@@ -77,7 +83,7 @@ impl TaskFocusedSubgraph {
 				markdown.push_str(&format!("- *(and {} more files)*\n", self.relevant_files.len() - 15));
 			}
 
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 
 		// Add important nodes section (limited selection)
@@ -90,7 +96,7 @@ impl TaskFocusedSubgraph {
 
 			for node in &self.nodes {
 				node_by_kind.entry(node.kind.clone())
-					.or_insert_with(Vec::new)
+					.or_default()
 					.push(node);
 			}
 
@@ -113,7 +119,7 @@ impl TaskFocusedSubgraph {
 					markdown.push_str(&format!("- *(and {} more {}s)*\n", nodes.len() - 5, kind));
 				}
 
-				markdown.push_str("\n");
+				markdown.push('\n');
 
 				if total_nodes_shown >= MAX_NODES_TO_SHOW {
 					break;
@@ -130,7 +136,7 @@ impl TaskFocusedSubgraph {
 
 			for rel in &self.relationships {
 				rels_by_type.entry(rel.relation_type.clone())
-					.or_insert_with(Vec::new)
+					.or_default()
 					.push(rel);
 			}
 
@@ -144,8 +150,8 @@ impl TaskFocusedSubgraph {
 				// Show just a few examples of each type
 				for rel in rels.iter().take(3) {
 					// Extract just the function/class name from the full path+id
-					let source_name = rel.source.split('/').last().unwrap_or(&rel.source);
-					let target_name = rel.target.split('/').last().unwrap_or(&rel.target);
+					let source_name = rel.source.split('/').next_back().unwrap_or(&rel.source);
+					let target_name = rel.target.split('/').next_back().unwrap_or(&rel.target);
 
 					markdown.push_str(&format!("- `{}` → `{}`\n", source_name, target_name));
 				}
@@ -155,7 +161,7 @@ impl TaskFocusedSubgraph {
 						rels.len() - 3, rel_type));
 				}
 
-				markdown.push_str("\n");
+				markdown.push('\n');
 			}
 		}
 
@@ -383,7 +389,7 @@ impl GraphOptimizer {
 				if !block.language.is_empty() && block.language != "text" {
 					result.push_str(&block.language);
 				}
-				result.push_str("\n");
+				result.push('\n');
 
 				// Truncate long code blocks to save tokens
 				let lines: Vec<&str> = block.content.lines().collect();

@@ -80,7 +80,7 @@ impl ToolErrorTracker {
 	// Record an error for a tool and return true if we've hit the error threshold
 	fn record_error(&mut self, tool_name: &str) -> bool {
 		// Get the nested hash map for this tool, creating it if it doesn't exist
-		let server_map = self.tool_errors.entry(tool_name.to_string()).or_insert_with(HashMap::new);
+		let server_map = self.tool_errors.entry(tool_name.to_string()).or_default();
 
 		// For now, we use a special key to track errors. In the future this could be server-specific
 		let curr_server = "current_server".to_string();
@@ -144,7 +144,7 @@ pub async fn process_response(
 
 	// First, add the user message before processing response
 	let last_message = chat_session.session.messages.last();
-	if last_message.map_or(true, |msg| msg.role != "user") {
+	if last_message.is_none_or(|msg| msg.role != "user") {
 		// This is an edge case - the content variable here is the AI response, not user input
 		// We should have added the user message earlier in the main run_interactive_session
 		println!("{}", "Warning: User message not found in session. This is unexpected.".yellow());
@@ -230,12 +230,10 @@ pub async fn process_response(
 
 						// Check prompt_tokens_details for cached_tokens first
 						if let Some(details) = &usage.prompt_tokens_details {
-							if let Some(cached) = details.get("cached_tokens") {
-								if let serde_json::Value::Number(num) = cached {
-									if let Some(num_u64) = num.as_u64() {
-										cached_tokens = num_u64;
-										regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-									}
+							if let Some(serde_json::Value::Number(num)) = details.get("cached_tokens") {
+								if let Some(num_u64) = num.as_u64() {
+									cached_tokens = num_u64;
+									regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 								}
 							}
 						}
@@ -243,12 +241,10 @@ pub async fn process_response(
 						// Fall back to breakdown field
 						if cached_tokens == 0 && usage.prompt_tokens > 0 {
 							if let Some(breakdown) = &usage.breakdown {
-								if let Some(cached) = breakdown.get("cached") {
-									if let serde_json::Value::Number(num) = cached {
-										if let Some(num_u64) = num.as_u64() {
-											cached_tokens = num_u64;
-											regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-										}
+								if let Some(serde_json::Value::Number(num)) = breakdown.get("cached") {
+									if let Some(num_u64) = num.as_u64() {
+										cached_tokens = num_u64;
+										regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 									}
 								}
 							}
@@ -544,13 +540,11 @@ pub async fn process_response(
 
 								// Check prompt_tokens_details for cached_tokens first
 								if let Some(details) = &usage.prompt_tokens_details {
-									if let Some(cached) = details.get("cached_tokens") {
-										if let serde_json::Value::Number(num) = cached {
-											if let Some(num_u64) = num.as_u64() {
-												cached_tokens = num_u64;
-												// Adjust regular tokens to account for cached tokens
-												regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-											}
+									if let Some(serde_json::Value::Number(num)) = details.get("cached_tokens") {
+										if let Some(num_u64) = num.as_u64() {
+											cached_tokens = num_u64;
+											// Adjust regular tokens to account for cached tokens
+											regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 										}
 									}
 								}
@@ -558,12 +552,10 @@ pub async fn process_response(
 								// Fall back to breakdown field
 								if cached_tokens == 0 && usage.prompt_tokens > 0 {
 									if let Some(breakdown) = &usage.breakdown {
-										if let Some(cached) = breakdown.get("cached") {
-											if let serde_json::Value::Number(num) = cached {
-												if let Some(num_u64) = num.as_u64() {
-													cached_tokens = num_u64;
-													regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-												}
+										if let Some(serde_json::Value::Number(num)) = breakdown.get("cached") {
+											if let Some(num_u64) = num.as_u64() {
+												cached_tokens = num_u64;
+												regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 											}
 										}
 									}
@@ -678,7 +670,7 @@ pub async fn process_response(
 							if should_continue_conversation {
 								// Log if debug mode is enabled
 								if config.openrouter.log_level.is_debug_enabled() {
-									println!("{}", format!("Debug: Continuing conversation due to finish_reason or tool calls").yellow());
+									println!("{}", "Debug: Continuing conversation due to finish_reason or tool calls".to_string().yellow());
 								}
 								// Continue processing the new content with tool calls
 								continue;

@@ -57,7 +57,7 @@ pub async fn execute(_store: &Store, args: &ViewArgs, _config: &Config) -> Resul
 			};
 
 			// Skip directories, only process files
-			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+			if !entry.file_type().is_some_and(|ft| ft.is_file()) {
 				continue;
 			}
 

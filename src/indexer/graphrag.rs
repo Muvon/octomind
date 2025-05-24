@@ -1014,8 +1014,8 @@ impl GraphBuilder {
 				).await?;
 
 				// If a relationship was found, add it
-				if relationship.is_some() {
-					new_relationships.push(relationship.unwrap());
+				if let Some(rel) = relationship {
+					new_relationships.push(rel);
 				}
 			}
 		}
@@ -1397,7 +1397,7 @@ impl GraphBuilder {
 			b.symbols.iter().any(|s| s.to_lowercase().contains(&query_lower));
 
 			if a_contains && !b_contains {
-				return std::cmp::Ordering::Less;
+				std::cmp::Ordering::Less
 			} else if !a_contains && b_contains {
 				return std::cmp::Ordering::Greater;
 			} else {
@@ -1424,7 +1424,7 @@ impl GraphBuilder {
 		let mut adjacency_list: HashMap<String, Vec<String>> = HashMap::new();
 		for rel in &graph.relationships {
 			adjacency_list.entry(rel.source.clone())
-				.or_insert_with(Vec::new)
+				.or_default()
 				.push(rel.target.clone());
 		}
 
@@ -1524,7 +1524,7 @@ pub fn graphrag_nodes_to_markdown(nodes: &[CodeNode]) -> String {
 	for node in nodes {
 		nodes_by_file
 			.entry(node.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_default()
 			.push(node);
 	}
 
@@ -1552,7 +1552,7 @@ pub fn graphrag_nodes_to_markdown(nodes: &[CodeNode]) -> String {
 				}
 			}
 
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 
 		markdown.push_str("---\n\n");

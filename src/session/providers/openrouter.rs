@@ -12,6 +12,12 @@ use crate::log_debug;
 /// OpenRouter provider implementation
 pub struct OpenRouterProvider;
 
+impl Default for OpenRouterProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenRouterProvider {
 	pub fn new() -> Self {
 		Self
@@ -307,8 +313,8 @@ impl AiProvider for OpenRouterProvider {
 			let completion_tokens = usage_obj.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
 			let total_tokens = usage_obj.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
 			let cost = usage_obj.get("cost").and_then(|v| v.as_f64());
-			let completion_tokens_details = usage_obj.get("completion_tokens_details").map(|v| v.clone());
-			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").map(|v| v.clone());
+			let completion_tokens_details = usage_obj.get("completion_tokens_details").cloned();
+			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").cloned();
 
 			let breakdown = usage_obj.get("breakdown").and_then(|b| {
 				if let Some(obj) = b.as_object() {
@@ -428,7 +434,7 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<O
 					let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
 
 					if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-						if !tool_responses.is_empty() && tool_responses[0].get("role").map_or(false, |r| r.as_str().unwrap_or("") == "tool") {
+						if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
 							for tool_response in tool_responses {
 								let tool_call_id = tool_response.get("tool_call_id")
 									.and_then(|id| id.as_str())

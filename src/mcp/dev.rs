@@ -10,7 +10,7 @@ use super::{McpToolCall, McpToolResult, McpFunction};
 pub fn get_shell_function() -> McpFunction {
 	McpFunction {
 		name: "shell".to_string(),
-		description: format!("Execute a command in the shell.
+		description: "Execute a command in the shell.
 
 This will return the output and error concatenated into a single string, as
 you would see from running on the command line. There will also be an indication
@@ -28,7 +28,7 @@ stringing together commands, e.g. `cd example && ls` or `source env/bin/activate
 may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 - List files by name: `rg --files | rg <filename>`
 - List files that contain a regex: `rg '<regex>' -l`
-"),
+".to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -289,7 +289,7 @@ pub async fn execute_view_signatures(call: &McpToolCall) -> Result<McpToolResult
 			};
 
 			// Skip directories, only process files
-			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+			if !entry.file_type().is_some_and(|ft| ft.is_file()) {
 				continue;
 			}
 
@@ -475,7 +475,7 @@ async fn execute_signatures_mode(call: &McpToolCall) -> Result<McpToolResult> {
 			};
 
 			// Skip directories, only process files
-			if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+			if !entry.file_type().is_some_and(|ft| ft.is_file()) {
 				continue;
 			}
 
@@ -596,13 +596,13 @@ async fn execute_search_mode(call: &McpToolCall, store: &crate::store::Store, co
 	if !doc_results.is_empty() {
 		combined_markdown.push_str("# Documentation Results\n\n");
 		combined_markdown.push_str(&crate::indexer::document_blocks_to_markdown(&doc_results));
-		combined_markdown.push_str("\n");
+		combined_markdown.push('\n');
 	}
 
 	if !final_code_results.is_empty() {
 		combined_markdown.push_str("# Code Results\n\n");
 		combined_markdown.push_str(&crate::indexer::code_blocks_to_markdown(&final_code_results));
-		combined_markdown.push_str("\n");
+		combined_markdown.push('\n');
 	}
 
 	if !text_results.is_empty() {
@@ -1014,7 +1014,7 @@ async fn execute_graphrag_get_node(call: &McpToolCall, graph_builder: &crate::in
 	};
 
 	// Format the result as markdown
-	let mut markdown = String::from(format!("# Node: {}\n\n", node.name));
+	let mut markdown = format!("# Node: {}\n\n", node.name);
 	markdown.push_str(&format!("**ID**: {}\n", node.id));
 	markdown.push_str(&format!("**Kind**: {}\n", node.kind));
 	markdown.push_str(&format!("**Path**: {}\n", node.path));
@@ -1026,7 +1026,7 @@ async fn execute_graphrag_get_node(call: &McpToolCall, graph_builder: &crate::in
 		for symbol in &node.symbols {
 			markdown.push_str(&format!("- `{}`\n", symbol));
 		}
-		markdown.push_str("\n");
+		markdown.push('\n');
 	}
 
 	// Return the result
@@ -1093,7 +1093,7 @@ async fn execute_graphrag_get_relationships(call: &McpToolCall, graph_builder: &
 					rel.target,
 					rel.description));
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 
 		// Incoming relationships
@@ -1114,7 +1114,7 @@ async fn execute_graphrag_get_relationships(call: &McpToolCall, graph_builder: &
 					rel.source,
 					rel.description));
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 	}
 
@@ -1244,7 +1244,7 @@ async fn execute_graphrag_overview(call: &McpToolCall, graph_builder: &crate::in
 	for (kind, count) in node_types.iter() {
 		markdown.push_str(&format!("- {}: {} nodes\n", kind, count));
 	}
-	markdown.push_str("\n");
+	markdown.push('\n');
 
 	// Relationship type statistics
 	markdown.push_str("## Relationship Types\n\n");

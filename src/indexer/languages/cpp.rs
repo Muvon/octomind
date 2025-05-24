@@ -55,12 +55,7 @@ impl Language for Cpp {
 			"class_specifier" | "struct_specifier" | "enum_specifier" => {
 				// Find class/struct/enum name
 				for child in node.children(&mut node.walk()) {
-					if child.kind() == "name" {
-						if let Ok(name) = child.utf8_text(contents.as_bytes()) {
-							symbols.push(name.to_string());
-						}
-						break;
-					} else if child.kind() == "type_identifier" {
+					if child.kind() == "name" || child.kind() == "type_identifier" {
 						if let Ok(name) = child.utf8_text(contents.as_bytes()) {
 							symbols.push(name.to_string());
 						}
@@ -117,6 +112,7 @@ impl Language for Cpp {
 
 impl Cpp {
 	/// Extract variable declarations in C++ compound statements
+	#[allow(clippy::only_used_in_recursion)]
 	fn extract_cpp_variables(&self, node: Node, contents: &str, symbols: &mut Vec<String>) {
 		let mut cursor = node.walk();
 		if cursor.goto_first_child() {

@@ -68,6 +68,12 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 /// Cloudflare Workers AI provider implementation
 pub struct CloudflareWorkersAiProvider;
 
+impl Default for CloudflareWorkersAiProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CloudflareWorkersAiProvider {
 	pub fn new() -> Self {
 		Self

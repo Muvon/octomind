@@ -99,10 +99,11 @@ pub async fn execute(store: &Store, config: &Config, args: &WatchArgs) -> Result
 				}
 
 				// Reset the indexing state
-				let mut state_guard = state.write();
-				state_guard.indexed_files = 0;
-				state_guard.indexing_complete = false;
-				drop(state_guard);
+				{
+					let mut state_guard = state.write();
+					state_guard.indexed_files = 0;
+					state_guard.indexing_complete = false;
+				}
 
 				// Reindex the codebase
 				tokio::time::sleep(tokio::time::Duration::from_secs(1)).await; // Give a bit of time for all file changes to complete

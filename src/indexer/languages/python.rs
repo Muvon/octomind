@@ -81,6 +81,7 @@ impl Language for Python {
 
 impl Python {
 	/// Extract variable assignments in Python blocks
+	#[allow(clippy::only_used_in_recursion)]
 	fn extract_python_variables(&self, node: Node, contents: &str, symbols: &mut Vec<String>) {
 		let mut cursor = node.walk();
 		if cursor.goto_first_child() {

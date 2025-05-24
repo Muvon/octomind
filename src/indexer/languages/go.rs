@@ -101,6 +101,7 @@ impl Language for Go {
 
 impl Go {
 	/// Extract variable declarations in Go blocks
+	#[allow(clippy::only_used_in_recursion)]
 	fn extract_go_variables(&self, node: Node, contents: &str, symbols: &mut Vec<String>) {
 		// Traverse the block looking for variable declarations
 		let mut cursor = node.walk();

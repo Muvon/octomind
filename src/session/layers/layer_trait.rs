@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 // Layer result that contains data returned from a layer's processing
 pub struct LayerResult {
@@ -36,13 +37,17 @@ impl InputMode {
 			InputMode::Summary => "summary",
 		}
 	}
+}
 
-	pub fn from_str(s: &str) -> Self {
+impl FromStr for InputMode {
+	type Err = ();
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s.to_lowercase().as_str() {
-			"last" => InputMode::Last,
-			"all" => InputMode::All,
-			"summary" => InputMode::Summary,
-			_ => InputMode::Last, // Default to Last if unknown
+			"last" => Ok(InputMode::Last),
+			"all" => Ok(InputMode::All),
+			"summary" => Ok(InputMode::Summary),
+			_ => Err(()), // Return error for unknown values
 		}
 	}
 }

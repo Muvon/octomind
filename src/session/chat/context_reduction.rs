@@ -37,7 +37,7 @@ pub async fn perform_context_reduction(
 	// Get the last assistant message as the context
 	let assistant_message = chat_session.session.messages.iter()
 		.filter(|m| m.role == "assistant")
-		.last()
+		.next_back()
 		.map(|m| m.content.clone())
 		.unwrap_or_else(|| "No assistant response found".to_string());
 

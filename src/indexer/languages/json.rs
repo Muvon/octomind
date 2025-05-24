@@ -68,6 +68,7 @@ impl Language for Json {
 
 impl Json {
 	/// Extract key names from JSON objects
+	#[allow(clippy::only_used_in_recursion)]
 	fn extract_json_keys(&self, node: Node, contents: &str, symbols: &mut Vec<String>) {
 		for child in node.children(&mut node.walk()) {
 			if child.kind() == "pair" {

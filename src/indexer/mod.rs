@@ -91,7 +91,7 @@ pub fn extract_file_signatures(files: &[PathBuf]) -> Result<Vec<FileSignature>> 
 					.unwrap_or_else(|| parser.parse("", None).unwrap());
 
 				// Extract signatures from the file
-				let signatures = extract_signatures(tree.root_node(), &contents, &lang_impl);
+				let signatures = extract_signatures(tree.root_node(), &contents, lang_impl.as_ref());
 
 				// Extract file-level comment if present
 				let file_comment = extract_file_comment(tree.root_node(), &contents);
@@ -111,7 +111,7 @@ pub fn extract_file_signatures(files: &[PathBuf]) -> Result<Vec<FileSignature>> 
 }
 
 /// Extract signatures from a parsed file
-fn extract_signatures(node: Node, contents: &str, lang_impl: &Box<dyn languages::Language>) -> Vec<SignatureItem> {
+fn extract_signatures(node: Node, contents: &str, lang_impl: &dyn languages::Language) -> Vec<SignatureItem> {
 	let mut signatures = Vec::new();
 	let meaningful_kinds = lang_impl.get_meaningful_kinds();
 
@@ -119,7 +119,7 @@ fn extract_signatures(node: Node, contents: &str, lang_impl: &Box<dyn languages:
 	fn visit_node(
 		node: Node,
 		contents: &str,
-		lang_impl: &Box<dyn languages::Language>,
+		lang_impl: &dyn languages::Language,
 		meaningful_kinds: &[&str],
 		signatures: &mut Vec<SignatureItem>
 	) {
@@ -175,7 +175,7 @@ fn extract_signatures(node: Node, contents: &str, lang_impl: &Box<dyn languages:
 }
 
 /// Extract the name of a declaration node (function, class, etc.)
-fn extract_name(node: Node, contents: &str, lang_impl: &Box<dyn languages::Language>) -> Option<String> {
+fn extract_name(node: Node, contents: &str, lang_impl: &dyn languages::Language) -> Option<String> {
 	// Look for identifier nodes
 	for child in node.children(&mut node.walk()) {
 		if child.kind() == "identifier" ||
@@ -420,21 +420,21 @@ pub fn signatures_to_markdown(signatures: &[FileSignature]) -> String {
 				if !file.language.is_empty() && file.language != "text" {
 					markdown.push_str(&file.language);
 				}
-				markdown.push_str("\n");
+				markdown.push('\n');
 
 				let lines = signature.signature.lines().collect::<Vec<_>>();
 				if lines.len() > 5 {
 					// Show first 5 lines only to conserve tokens
 					for line in lines.iter().take(5) {
-						markdown.push_str(&format!("{}", line));
-						markdown.push_str("\n");
+						markdown.push_str(line.as_ref());
+						markdown.push('\n');
 					}
 					// If signature is too long, note how many lines are omitted
 					markdown.push_str(&format!("// ... {} more lines\n", lines.len() - 5));
 				} else {
 					for line in &lines {
-						markdown.push_str(&format!("{}", line));
-						markdown.push_str("\n");
+						markdown.push_str(line.as_ref());
+						markdown.push('\n');
 					}
 				}
 				markdown.push_str("```\n\n");
@@ -465,7 +465,7 @@ pub fn code_blocks_to_markdown(blocks: &[CodeBlock]) -> String {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_default()
 			.push(block);
 	}
 
@@ -482,7 +482,7 @@ pub fn code_blocks_to_markdown(blocks: &[CodeBlock]) -> String {
 			if let Some(distance) = block.distance {
 				markdown.push_str(&format!("**Relevance:** {:.4}  ", distance));
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 
 			if !block.symbols.is_empty() {
 				markdown.push_str("**Symbols:**  \n");
@@ -504,28 +504,28 @@ pub fn code_blocks_to_markdown(blocks: &[CodeBlock]) -> String {
 			if !block.language.is_empty() && block.language != "text" {
 				markdown.push_str(&block.language);
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 
 			// Get the lines and determine if we need to truncate
 			let lines: Vec<&str> = block.content.lines().collect();
 			if lines.len() > 15 {
 				// Show first 10 lines
 				for line in lines.iter().take(10) {
-					markdown.push_str(&format!("{}", line));
-					markdown.push_str("\n");
+					markdown.push_str(line.as_ref());
+					markdown.push('\n');
 				}
 				// Note how many lines are omitted
 				markdown.push_str(&format!("// ... {} more lines omitted\n", lines.len() - 15));
 				// Show last 5 lines
 				for line in lines.iter().skip(lines.len() - 5) {
-					markdown.push_str(&format!("{}", line));
-					markdown.push_str("\n");
+					markdown.push_str(line.as_ref());
+					markdown.push('\n');
 				}
 			} else {
 				// If not too long, show all lines
 				for line in lines {
-					markdown.push_str(&format!("{}", line));
-					markdown.push_str("\n");
+					markdown.push_str(line);
+					markdown.push('\n');
 				}
 			}
 			markdown.push_str("```\n\n");
@@ -554,7 +554,7 @@ pub fn text_blocks_to_markdown(blocks: &[TextBlock]) -> String {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_default()
 			.push(block);
 	}
 
@@ -592,7 +592,7 @@ pub fn text_blocks_to_markdown(blocks: &[TextBlock]) -> String {
 					markdown.push_str(&format!("{}\n", line));
 				}
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 
 		markdown.push_str("---\n\n");
@@ -618,7 +618,7 @@ pub fn document_blocks_to_markdown(blocks: &[DocumentBlock]) -> String {
 	for block in blocks {
 		blocks_by_file
 			.entry(block.path.clone())
-			.or_insert_with(|| Vec::new())
+			.or_default()
 			.push(block);
 	}
 
@@ -656,7 +656,7 @@ pub fn document_blocks_to_markdown(blocks: &[DocumentBlock]) -> String {
 					markdown.push_str(&format!("{}\n", line));
 				}
 			}
-			markdown.push_str("\n");
+			markdown.push('\n');
 		}
 
 		markdown.push_str("---\n\n");
@@ -774,7 +774,7 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		};
 
 		// Skip directories, only process files
-		if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+		if !entry.file_type().is_some_and(|ft| ft.is_file()) {
 			continue;
 		}
 
@@ -788,7 +788,7 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 						println!("Indexing markdown file as documents: {}", file_path);
 					}
 					process_markdown_file(
-						&store,
+						store,
 						&contents,
 						&file_path,
 						&mut document_blocks_batch,
@@ -800,16 +800,19 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 					if cfg!(debug_assertions) {
 						println!("Indexing code file as code blocks: {} ({})", file_path, language);
 					}
+					let ctx = ProcessFileContext {
+						store,
+						config,
+						state: state.clone(),
+					};
 					process_file(
-						&store,
+						&ctx,
 						&contents,
 						&file_path,
 						language,
 						&mut code_blocks_batch,
 						&mut text_blocks_batch, // Will remain empty for code files
 						&mut all_code_blocks,
-						config,
-						state.clone()
 					).await?;
 				}
 
@@ -818,18 +821,18 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 				// Process batches when they reach the batch size
 				if code_blocks_batch.len() >= BATCH_SIZE {
 					embedding_calls += code_blocks_batch.len();
-					process_code_blocks_batch(&store, &code_blocks_batch, config).await?;
+					process_code_blocks_batch(store, &code_blocks_batch, config).await?;
 					code_blocks_batch.clear();
 				}
 				// Only process text_blocks_batch if we have any (from unsupported files)
 				if text_blocks_batch.len() >= BATCH_SIZE {
 					embedding_calls += text_blocks_batch.len();
-					process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
+					process_text_blocks_batch(store, &text_blocks_batch, config).await?;
 					text_blocks_batch.clear();
 				}
 				if document_blocks_batch.len() >= BATCH_SIZE {
 					embedding_calls += document_blocks_batch.len();
-					process_document_blocks_batch(&store, &document_blocks_batch, config).await?;
+					process_document_blocks_batch(store, &document_blocks_batch, config).await?;
 					document_blocks_batch.clear();
 				}
 			}
@@ -844,7 +847,7 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 							println!("Indexing allowed text file as chunks: {}", file_path);
 						}
 						process_text_file(
-							&store,
+							store,
 							&contents,
 							&file_path,
 							&mut text_blocks_batch,
@@ -857,7 +860,7 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 						// Process batch when it reaches the batch size
 						if text_blocks_batch.len() >= BATCH_SIZE {
 							embedding_calls += text_blocks_batch.len();
-							process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
+							process_text_blocks_batch(store, &text_blocks_batch, config).await?;
 							text_blocks_batch.clear();
 						}
 					}
@@ -870,24 +873,25 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 
 	// Process remaining batches
 	if !code_blocks_batch.is_empty() {
-		process_code_blocks_batch(&store, &code_blocks_batch, config).await?;
+		process_code_blocks_batch(store, &code_blocks_batch, config).await?;
 		embedding_calls += code_blocks_batch.len();
 	}
 	// Only process text_blocks_batch if we have any (from unsupported files)
 	if !text_blocks_batch.is_empty() {
-		process_text_blocks_batch(&store, &text_blocks_batch, config).await?;
+		process_text_blocks_batch(store, &text_blocks_batch, config).await?;
 		embedding_calls += text_blocks_batch.len();
 	}
 	if !document_blocks_batch.is_empty() {
-		process_document_blocks_batch(&store, &document_blocks_batch, config).await?;
+		process_document_blocks_batch(store, &document_blocks_batch, config).await?;
 		embedding_calls += document_blocks_batch.len();
 	}
 
 	// Build GraphRAG from all collected code blocks if enabled and if we found any blocks
 	if config.graphrag.enabled && !all_code_blocks.is_empty() {
-		let mut state_guard = state.write();
-		state_guard.status_message = "Building GraphRAG knowledge graph...".to_string();
-		drop(state_guard);
+		{
+			let mut state_guard = state.write();
+			state_guard.status_message = "Building GraphRAG knowledge graph...".to_string();
+		}
 
 		// Initialize GraphBuilder
 		let graph_builder = graphrag::GraphBuilder::new(config.clone()).await?;
@@ -896,13 +900,17 @@ pub async fn index_files(store: &Store, state: SharedState, config: &Config) -> 
 		graph_builder.process_code_blocks(&all_code_blocks, Some(state.clone())).await?;
 
 		// Update final state
-		let mut state_guard = state.write();
-		state_guard.status_message = "".to_string();
+		{
+			let mut state_guard = state.write();
+			state_guard.status_message = "".to_string();
+		}
 	}
 
-	let mut state_guard = state.write();
-	state_guard.indexing_complete = true;
-	state_guard.embedding_calls = embedding_calls;
+	{
+		let mut state_guard = state.write();
+		state_guard.indexing_complete = true;
+		state_guard.embedding_calls = embedding_calls;
+	}
 
 	// Flush the store to ensure all data is persisted
 	store.flush().await?;
@@ -969,16 +977,19 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 					let mut text_blocks_batch = Vec::new(); // Will remain empty for code files
 					let mut all_code_blocks = Vec::new(); // For GraphRAG
 
-					process_file(
+					let ctx = ProcessFileContext {
 						store,
+						config,
+						state: state.clone(),
+					};
+					process_file(
+						&ctx,
 						&contents,
 						file_path,
 						language,
 						&mut code_blocks_batch,
 						&mut text_blocks_batch,
 						&mut all_code_blocks,
-						config,
-						state.clone()
 					).await?;
 
 					if !code_blocks_batch.is_empty() {
@@ -1027,22 +1038,27 @@ pub async fn handle_file_change(store: &Store, file_path: &str, config: &Config)
 	Ok(())
 }
 
+// Context for file processing to reduce the number of function arguments
+struct ProcessFileContext<'a> {
+	store: &'a Store,
+	config: &'a Config,
+	state: SharedState,
+}
+
 // Processes a single file, extracting code blocks and adding them to the batch
 async fn process_file(
-	store: &Store,
+	ctx: &ProcessFileContext<'_>,
 	contents: &str,
 	file_path: &str,
 	language: &str,
 	code_blocks_batch: &mut Vec<CodeBlock>,
-	_text_blocks_batch: &mut Vec<TextBlock>, // Unused for code files - only used for unsupported files
+	_text_blocks_batch: &mut [TextBlock], // Unused for code files - only used for unsupported files
 	all_code_blocks: &mut Vec<CodeBlock>,
-	config: &Config,
-	state: SharedState,
 ) -> Result<()> {
 	let mut parser = Parser::new();
 
 	// Get force_reindex flag from state
-	let force_reindex = state::create_shared_state().read().force_reindex;
+	let force_reindex = ctx.state.read().force_reindex;
 
 	// Get the language implementation
 	let lang_impl = match languages::get_language(language) {
@@ -1056,7 +1072,7 @@ async fn process_file(
 	let tree = parser.parse(contents, None).unwrap_or_else(|| parser.parse("", None).unwrap());
 	let mut code_regions = Vec::new();
 
-	extract_meaningful_regions(tree.root_node(), contents, &lang_impl, &mut code_regions);
+	extract_meaningful_regions(tree.root_node(), contents, lang_impl.as_ref(), &mut code_regions);
 
 	// Track the number of blocks we added to all_code_blocks for GraphRAG
 	let mut graphrag_blocks_added = 0;
@@ -1066,7 +1082,7 @@ async fn process_file(
 		let content_hash = calculate_unique_content_hash(&region.content, file_path);
 
 		// Skip the check if force_reindex is true
-		let exists = !force_reindex && store.content_exists(&content_hash, "code_blocks").await?;
+		let exists = !force_reindex && ctx.store.content_exists(&content_hash, "code_blocks").await?;
 		if !exists {
 			let code_block = CodeBlock {
 				path: file_path.to_string(),
@@ -1083,13 +1099,13 @@ async fn process_file(
 			code_blocks_batch.push(code_block.clone());
 
 			// Add to all code blocks for GraphRAG
-			if config.graphrag.enabled {
+			if ctx.config.graphrag.enabled {
 				all_code_blocks.push(code_block);
 				graphrag_blocks_added += 1;
 			}
-		} else if config.graphrag.enabled {
+		} else if ctx.config.graphrag.enabled {
 			// If skipping because block exists, but we need for GraphRAG, fetch from store
-			if let Ok(existing_block) = store.get_code_block_by_hash(&content_hash).await {
+			if let Ok(existing_block) = ctx.store.get_code_block_by_hash(&content_hash).await {
 				// Add the existing block to the GraphRAG collection
 				all_code_blocks.push(existing_block);
 				graphrag_blocks_added += 1;
@@ -1098,8 +1114,8 @@ async fn process_file(
 	}
 
 	// Update GraphRAG state if enabled and blocks were added
-	if config.graphrag.enabled && graphrag_blocks_added > 0 {
-		let mut state_guard = state.write();
+	if ctx.config.graphrag.enabled && graphrag_blocks_added > 0 {
+		let mut state_guard = ctx.state.write();
 		state_guard.graphrag_blocks += graphrag_blocks_added;
 	}
 
@@ -1121,7 +1137,7 @@ struct CodeRegion {
 fn extract_meaningful_regions(
 	node: Node,
 	contents: &str,
-	lang_impl: &Box<dyn languages::Language>,
+	lang_impl: &dyn languages::Language,
 	regions: &mut Vec<CodeRegion>,
 ) {
 	let meaningful_kinds = lang_impl.get_meaningful_kinds();

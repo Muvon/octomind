@@ -86,45 +86,40 @@ mcp_response_warning_threshold = 20000
 max_request_tokens_threshold = 50000
 cache_tokens_pct_threshold = 40
 
-# Developer role configuration
-[developer]
-system = "You are an Octodev AI developer assistant with full access to development tools."
-
-[developer.config]
-model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
-
-[developer.mcp]
+# Global MCP configuration (fallback for all roles)
+[mcp]
 enabled = true
 
-[[developer.mcp.servers]]
+[[mcp.servers]]
 enabled = true
 name = "developer"
 server_type = "developer"
 
-[[developer.mcp.servers]]
+[[mcp.servers]]
 enabled = true
 name = "filesystem"
 server_type = "filesystem"
 
+# Developer role configuration (inherits from global MCP)
+[developer]
+model = "openrouter:anthropic/claude-sonnet-4"
+enable_layers = true
+system = "You are an Octodev AI developer assistant with full access to development tools."
+
 # Assistant role configuration (tools disabled by default)
 [assistant]
-system = "You are a helpful assistant."
-
-[assistant.config]
 model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
+system = "You are a helpful assistant."
 
 [assistant.mcp]
 enabled = false
 
-# Custom role example
+# Custom role example (inherits from assistant, then applies overrides)
 [my-custom-role]
-system = "You are a specialized assistant for my specific use case."
-
-[my-custom-role.config]
 model = "openrouter:openai/gpt-4o"
 enable_layers = true
+system = "You are a specialized assistant for my specific use case."
 
 [my-custom-role.mcp]
 enabled = true
@@ -212,57 +207,53 @@ export OCTODEV_EMBEDDING_PROVIDER="jina"
 
 ### Developer Role
 
-Developer role is designed for full development assistance:
+Developer role is designed for full development assistance and inherits from global MCP configuration:
 
 ```toml
-[developer]
-system = "You are an Octodev AI developer assistant with full access to development tools."
-
-[developer.config]
-model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
-
-[developer.mcp]
+# Global MCP configuration
+[mcp]
 enabled = true
 
-[[developer.mcp.servers]]
+[[mcp.servers]]
 enabled = true
 name = "developer"
 server_type = "developer"
 
-[[developer.mcp.servers]]
+[[mcp.servers]]
 enabled = true
 name = "filesystem"
 server_type = "filesystem"
+
+# Developer role (inherits global MCP automatically)
+[developer]
+model = "openrouter:anthropic/claude-sonnet-4"
+enable_layers = true
+system = "You are an Octodev AI developer assistant with full access to development tools."
 ```
 
 ### Assistant Role
 
-Assistant role is optimized for simple conversations:
+Assistant role is optimized for simple conversations with tools disabled:
 
 ```toml
 [assistant]
-system = "You are a helpful assistant."
-
-[assistant.config]
 model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
+system = "You are a helpful assistant."
 
 [assistant.mcp]
-enabled = false
+enabled = false  # Override global MCP to disable tools
 ```
 
 ### Custom Roles
 
-Create specialized roles for specific use cases:
+Create specialized roles for specific use cases. Custom roles inherit from assistant role first, then apply their own overrides:
 
 ```toml
 [code-reviewer]
-system = "You are a code review expert focused on security and best practices."
-
-[code-reviewer.config]
 model = "openrouter:anthropic/claude-3.5-sonnet"
 enable_layers = true
+system = "You are a code review expert focused on security and best practices."
 
 [code-reviewer.mcp]
 enabled = true
@@ -323,26 +314,27 @@ input_mode = "All"
 
 ### New Server-Based Configuration
 
-The MCP system has been refactored to use a unified server configuration approach:
+The MCP system has been refactored to use a unified server configuration approach that treats built-in and external servers consistently:
 
 ```toml
-# Role-specific MCP configuration
-[developer.mcp]
+# Global MCP configuration (fallback for all roles)
+[mcp]
 enabled = true
 
-# Built-in server types
-[[developer.mcp.servers]]
+# Built-in developer tools server
+[[mcp.servers]]
 enabled = true
 name = "developer"
-server_type = "developer"  # Built-in developer tools
+server_type = "developer"
 
-[[developer.mcp.servers]]
+# Built-in filesystem tools server
+[[mcp.servers]]
 enabled = true
 name = "filesystem"
-server_type = "filesystem"  # Built-in filesystem tools
+server_type = "filesystem"
 
 # External HTTP server
-[[developer.mcp.servers]]
+[[mcp.servers]]
 enabled = true
 name = "WebSearch"
 server_type = "external"
@@ -351,14 +343,30 @@ auth_token = "optional_token"
 tools = []  # Empty means all tools enabled
 
 # External command-based server
-[[developer.mcp.servers]]
+[[mcp.servers]]
 enabled = true
 name = "LocalTools"
 server_type = "external"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
+mode = "stdin"  # Communication mode: "http" or "stdin"
 timeout_seconds = 30
 tools = []
+
+# Role-specific MCP configuration (inherits from global)
+[developer.mcp]
+enabled = true
+# Inherits servers from global [mcp] unless overridden
+
+# Role-specific override with custom servers
+[assistant.mcp]
+enabled = true
+
+[[assistant.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+tools = ["text_editor", "list_files"]  # Limit to specific tools
 ```
 
 ### Server Types
@@ -367,17 +375,19 @@ tools = []
 - **filesystem**: Built-in filesystem tools (file reading, writing, listing)
 - **external**: External MCP servers (HTTP or command-based)
 
-### Legacy Provider Support
+### Migration from Legacy Configuration
 
-For backward compatibility, the old `providers` format is still supported but will be migrated:
+The old `providers = ["core"]` approach has been completely replaced with the new server-based configuration:
 
+**Legacy format (no longer supported):**
 ```toml
-# Legacy format (deprecated)
 [mcp]
 enabled = true
 providers = ["core"]
+```
 
-# New format (recommended)
+**New format (required):**
+```toml
 [mcp]
 enabled = true
 
@@ -385,7 +395,18 @@ enabled = true
 enabled = true
 name = "developer"
 server_type = "developer"
+
+[[mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
 ```
+
+**Migration steps:**
+1. Remove any `providers = ["core"]` lines from your configuration
+2. Add explicit server configurations using the `[[mcp.servers]]` format
+3. Use `server_type = "developer"` for the equivalent of the old "core" provider
+4. Add `server_type = "filesystem"` for file operations if needed
 
 ## Embedding Configuration
 

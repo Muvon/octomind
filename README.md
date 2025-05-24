@@ -18,6 +18,8 @@ Octodev is a command-line tool that helps developers navigate and understand the
 - **Context Management**: Automatic context truncation to stay within token limits
 - **Token Protection**: Warnings and confirmations for potentially costly operations
 - **Interruptible Processing**: Ctrl+C instantly cancels operations for better user control
+- **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs with better formatting and user control
+- **Unified MCP Server Configuration**: Consistent configuration approach for both built-in and external MCP servers
 
 ## Installation
 
@@ -230,33 +232,46 @@ Each role can be configured independently with its own model, tool settings, and
 # Global MCP configuration (fallback for all roles)
 [mcp]
 enabled = true
-providers = ["core"]
-servers = []
+
+[[mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[[mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
 
 # Developer role configuration (inherits from global MCP by default)
 [developer]
-system = "You are an Octodev AI developer assistant with full access to development tools."
-[developer.openrouter]
-model = "anthropic/claude-3.7-sonnet"
+model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
+system = "You are an Octodev AI developer assistant with full access to development tools."
 
 # Assistant role configuration (tools disabled by default)
 [assistant]
+model = "openrouter:anthropic/claude-3.5-haiku"  # Faster/cheaper model
+enable_layers = false
 system = "You are a helpful assistant."
+
 [assistant.mcp]
 enabled = false  # Override global MCP to disable tools
-[assistant.openrouter]
-model = "anthropic/claude-3.5-haiku"  # Faster/cheaper model
-enable_layers = false
 
 # Custom role configuration (inherits from assistant, then applies overrides)
 [my-custom-role]
-system = "You are a specialized assistant for my specific use case."
-[my-custom-role.mcp]
-enabled = true  # Enable tools for this custom role
-[my-custom-role.openrouter]
 model = "openrouter:openai/gpt-4o"
 enable_layers = true
+system = "You are a specialized assistant for my specific use case."
+
+[my-custom-role.mcp]
+enabled = true  # Enable tools for this custom role
+
+[[my-custom-role.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+tools = ["shell", "text_editor"]  # Limit to specific tools
 ```
 
 #### Layered Architecture
@@ -383,50 +398,90 @@ The token management settings help control costs and prevent token limits from b
 
 ### MCP Configuration
 
-Octodev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration uses a hierarchical approach where mode-specific settings override global settings.
+Octodev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration uses a unified server-based approach where all servers (built-in and external) are configured consistently.
 
 #### Configuration Hierarchy
 
 ```
-[mode.mcp] → [global.mcp] → defaults
+[role.mcp] → [global.mcp] → defaults
 ```
 
 #### Basic Configuration
 
 ```toml
-# Global MCP configuration (fallback for all modes)
+# Global MCP configuration (fallback for all roles)
 [mcp]
 enabled = true
-providers = ["core"]
-servers = []
 
-# Agent mode inherits global MCP by default
-[agent]
-# No [agent.mcp] section = inherits global [mcp]
+# Built-in developer tools server
+[[mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
 
-# Chat mode explicitly disables tools
-[chat.mcp]
+# Built-in filesystem tools server  
+[[mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+
+# Developer role inherits global MCP by default
+[developer]
+# No [developer.mcp] section = inherits global [mcp]
+
+# Assistant role explicitly disables tools
+[assistant.mcp]
 enabled = false
 ```
 
 #### Advanced Configuration Examples
 
-**Per-mode tool customization:**
+**Role-specific tool customization:**
 ```toml
-# Global fallback
+# Global fallback with all tools
 [mcp]
 enabled = true
-providers = ["core"]
 
-# Agent mode with additional providers
-[agent.mcp]
+[[mcp.servers]]
 enabled = true
-providers = ["core", "git", "filesystem"]
+name = "developer"
+server_type = "developer"
 
-# Chat mode with only web search
-[chat.mcp]
+[[mcp.servers]]
 enabled = true
-providers = ["web-search"]
+name = "filesystem"
+server_type = "filesystem"
+
+# Developer role with additional external server
+[developer.mcp]
+enabled = true
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[[developer.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+
+[[developer.mcp.servers]]
+enabled = true
+name = "web_search"
+server_type = "external"
+url = "https://api.example.com/mcp/websearch"
+auth_token = "your_token_if_needed"
+
+# Assistant role with limited tools
+[assistant.mcp]
+enabled = true
+
+[[assistant.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+tools = ["text_editor", "list_files"]  # Limit to specific tools
 ```
 
 **External MCP server configuration:**
@@ -434,12 +489,18 @@ providers = ["web-search"]
 # Global MCP with external servers
 [mcp]
 enabled = true
-providers = ["core"]
 
-# External MCP server - URL based
+# Built-in servers
 [[mcp.servers]]
 enabled = true
-name = "RemoteWebSearch"
+name = "developer"
+server_type = "developer"
+
+# External HTTP server
+[[mcp.servers]]
+enabled = true
+name = "WebSearch"
+server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "your_token_if_needed"  # Optional
 tools = []  # Empty means all tools are enabled
@@ -447,9 +508,12 @@ tools = []  # Empty means all tools are enabled
 # Local MCP server - Running as a local process
 [[mcp.servers]]
 enabled = true
-name = "LocalWebSearch"
+name = "LocalTools"
+server_type = "external"
 command = "python"  # Command to execute
 args = ["-m", "websearch_server", "--port", "8008"]  # Arguments to pass
+mode = "stdin"  # Communication mode: "http" or "stdin"
+timeout_seconds = 30
 tools = []  # Empty means all tools are enabled
 ```
 
@@ -461,24 +525,54 @@ You can run an MCP server locally by providing the command and arguments to exec
 2. Add a local MCP server configuration:
 
 ```toml
-# Global MCP configuration (fallback for all modes)
+# Global MCP configuration (fallback for all roles)
 [mcp]
 enabled = true
-providers = ["core"]
+
+[[mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
 
 [[mcp.servers]]
 enabled = true
 name = "WebSearch"
+server_type = "external"
 command = "python"  # Or any other command to start your server
 args = ["-m", "websearch_server", "--port", "8008"]
+mode = "stdin"
+timeout_seconds = 30
 ```
 
 3. Octodev will start the server process when needed and clean it up when the program exits.
 
-#### Current MCP Providers
+#### Server Types
 
-- **core**: Allows the AI to run shell commands, search code, and perform file operations in your terminal (enabled by adding "core" to providers list)
-- **External MCP Servers**: Any MCP-compatible server can be added in the `[[mcp.servers]]` section
+- **developer**: Built-in developer tools (shell commands, code search, file operations)
+- **filesystem**: Built-in filesystem tools (file reading, writing, listing)
+- **external**: External MCP servers (HTTP or command-based)
+
+#### Migration from Legacy Configuration
+
+**Old format (deprecated):**
+```toml
+[mcp]
+enabled = true
+providers = ["core"]
+```
+
+**New format (required):**
+```toml
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+```
+
+The old `providers = ["core"]` approach has been replaced with explicit server configurations that treat built-in and external servers consistently.
 
 ## How It Works
 
@@ -523,6 +617,11 @@ This architecture ensures optimal token usage and focused expertise at each stag
   - Adjust the `mcp_response_warning_threshold` setting in your config
   - Modify your tool-usage patterns to be more specific (e.g., limit file listings, be specific with file paths)
   - Try using `grep` or other filtering tools to reduce output size
+- **MCP Configuration Issues**: If you encounter MCP-related errors:
+  - Ensure you're using the new server-based configuration format
+  - Migrate from old `providers = ["core"]` to `[[mcp.servers]]` format
+  - Check that server types are correctly specified (`developer`, `filesystem`, or `external`)
+  - Verify external server URLs and commands are accessible
 
 ## Contributing
 

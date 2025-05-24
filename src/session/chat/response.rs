@@ -250,6 +250,11 @@ pub async fn process_response(
 							}
 						}
 
+						// Track API time if available
+						if let Some(api_time_ms) = usage.request_time_ms {
+							chat_session.session.info.total_api_time_ms += api_time_ms;
+						}
+
 						// Update session token counts using cache manager
 						let cache_manager = crate::session::cache::CacheManager::new();
 						cache_manager.update_token_tracking(
@@ -327,6 +332,7 @@ pub async fn process_response(
 				// Collect all results
 				let mut tool_results = Vec::new();
 				let mut _has_error = false;
+				let mut total_tool_time_ms = 0;  // Track cumulative tool execution time
 
 				for (tool_name, task, tool_id) in tool_tasks {
 					// Check for cancellation between tool result processing
@@ -338,12 +344,14 @@ pub async fn process_response(
 
 					match task.await {
 						Ok(result) => match result {
-							Ok((res, _tool_time_ms)) => {
+							Ok((res, tool_time_ms)) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
 								// Log the tool response with session name
 								let _ = crate::session::logger::log_tool_result(&chat_session.session.info.name, &tool_id, &res.result);
 								tool_results.push(res);
+								// Accumulate tool execution time
+								total_tool_time_ms += tool_time_ms;
 							},
 							Err(e) => {
 								_has_error = true;
@@ -396,6 +404,9 @@ pub async fn process_response(
 				if !tool_results.is_empty() {
 					let formatted = crate::mcp::format_tool_results(&tool_results);
 					println!("{}", formatted);
+
+					// Add the accumulated tool execution time to the session total
+					chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
 
 					// Check for cancellation before making another request
 					if operation_cancelled.load(Ordering::SeqCst) {
@@ -590,6 +601,11 @@ pub async fn process_response(
 									cached_tokens,
 								);
 
+								// Track API time from the follow-up exchange
+								if let Some(api_time_ms) = usage.request_time_ms {
+									chat_session.session.info.total_api_time_ms += api_time_ms;
+								}
+
 								// Note: Auto-cache threshold checking is now done immediately after tool results
 								// are processed, not here, to ensure proper timing
 
@@ -760,6 +776,19 @@ pub async fn process_response(
 			saving_pct,
 			cached);
 	}
+
+	// Show time information if available
+	let total_time_ms = chat_session.session.info.total_api_time_ms + 
+	                   chat_session.session.info.total_tool_time_ms + 
+	                   chat_session.session.info.total_layer_time_ms;
+	if total_time_ms > 0 {
+		log_info!("time: {}ms (API: {}ms, Tools: {}ms, Processing: {}ms)",
+			total_time_ms,
+			chat_session.session.info.total_api_time_ms,
+			chat_session.session.info.total_tool_time_ms,
+			chat_session.session.info.total_layer_time_ms);
+	}
+
 	println!();
 
 	Ok(())

@@ -129,6 +129,11 @@ impl ChatSession {
 					}
 				}
 
+				// Track API time if available
+				if let Some(api_time_ms) = usage.request_time_ms {
+					self.session.info.total_api_time_ms += api_time_ms;
+				}
+
 				// Update session token counts and use proper cache tracking
 				let cache_manager = crate::session::cache::CacheManager::new();
 				cache_manager.update_token_tracking(

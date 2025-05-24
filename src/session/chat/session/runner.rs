@@ -124,6 +124,12 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let mut first_message_processed = !chat_session.session.messages.is_empty();
 	println!("Interactive coding session started. Type your questions/requests.");
 	println!("Type /help for available commands.");
+	
+	// Show history usage info for new sessions
+	if chat_session.session.messages.is_empty() {
+		use colored::*;
+		println!("{}", "💡 Tip: Use ↑/↓ arrows or Ctrl+R for command history search".bright_yellow());
+	}
 
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {

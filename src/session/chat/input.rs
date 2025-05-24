@@ -4,10 +4,24 @@ use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
 use colored::*;
+use std::path::PathBuf;
 
 use crate::log_info;
 
-// Read user input with support for multiline input and command completion
+// Get the history file path for the current directory
+fn get_history_file_path() -> Result<PathBuf> {
+	let current_dir = std::env::current_dir()?;
+	let octodev_dir = current_dir.join(".octodev");
+	
+	// Ensure .octodev directory exists
+	if !octodev_dir.exists() {
+		std::fs::create_dir_all(&octodev_dir)?;
+	}
+	
+	Ok(octodev_dir.join("history"))
+}
+
+// Read user input with support for multiline input, command completion, and persistent history
 pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 	// Configure rustyline
 	let config = RustylineConfig::builder()
@@ -24,6 +38,15 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 	use crate::session::chat_helper::CommandHelper;
 	editor.set_helper(Some(CommandHelper::new()));
 
+	// Load persistent history from .octodev/history
+	let history_path = get_history_file_path()?;
+	if history_path.exists() {
+		if let Err(e) = editor.load_history(&history_path) {
+			// Don't fail if history can't be loaded, just log it
+			log_info!("Could not load history from {}: {}", history_path.display(), e);
+		}
+	}
+
 	// Set prompt with colors if terminal supports them and include cost estimation
 	let prompt = if estimated_cost > 0.0 {
 		format!("[~${:.2}] > ", estimated_cost).bright_blue().to_string()
@@ -31,11 +54,18 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		"> ".bright_blue().to_string()
 	};
 
-	// Read line with command completion
+	// Read line with command completion and history search (Ctrl+R)
 	match editor.readline(&prompt) {
 		Ok(line) => {
-			// Add to history
+			// Add to in-memory history (auto_add_history is true, but we also save to file)
 			let _ = editor.add_history_entry(line.clone());
+
+			// Save history to persistent file (.octodev/history)
+			// This includes ALL inputs - both regular inputs and commands starting with '/'
+			if let Err(e) = editor.save_history(&history_path) {
+				// Don't fail if history can't be saved, just log it
+				log_info!("Could not save history to {}: {}", history_path.display(), e);
+			}
 
 			// Log user input only if it's not a command (doesn't start with '/')
 			if !line.trim().starts_with('/') {

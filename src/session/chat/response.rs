@@ -685,6 +685,14 @@ pub async fn process_response(
 					// Create a fresh cancellation flag for the next phase
 					let fresh_cancel = Arc::new(AtomicBool::new(false));
 
+					// 🎯 SENIOR FIX: Show "Generating response..." IMMEDIATELY after tools complete
+					// This provides instant feedback while tool results are being processed
+					let animation_cancel_flag = fresh_cancel.clone();
+					let current_cost = chat_session.session.info.total_cost;
+					let animation_task = tokio::spawn(async move {
+						let _ = show_loading_animation(animation_cancel_flag, current_cost).await;
+					});
+
 					// IMPROVED APPROACH: Add tool results as proper "tool" role messages
 					// This follows the standard OpenAI/Anthropic format and avoids double-serialization
 					// CRITICAL FIX: Check cache threshold after EACH tool result, not after all
@@ -774,13 +782,6 @@ pub async fn process_response(
 						log_info!("Warning: Error during final truncation check before API call: {}", e);
 					}
 
-					// Create a task to show loading animation
-					let animation_cancel_flag = fresh_cancel.clone();
-					let current_cost = chat_session.session.info.total_cost;
-					let animation_task = tokio::spawn(async move {
-						let _ = show_loading_animation(animation_cancel_flag, current_cost).await;
-					});
-
 					// Call OpenRouter for the follow-up response
 					let model = chat_session.model.clone();
 					let temperature = chat_session.temperature;
@@ -794,7 +795,7 @@ pub async fn process_response(
 						config
 					).await;
 
-					// Stop the animation
+					// Stop the animation and wait for completion
 					fresh_cancel.store(true, Ordering::SeqCst);
 					let _ = animation_task.await;
 

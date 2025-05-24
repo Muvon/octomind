@@ -223,8 +223,9 @@ impl ChatSession {
 
 			// If we have a raw exchange, save it inline in session file for complete restoration
 			if let Some(ex) = exchange {
-				let exchange_json = serde_json::to_string(&ex)?;
-				crate::session::append_to_session_file(session_file, &format!("EXCHANGE: {}", exchange_json))?;
+				// Save API request and response as separate prefixed lines for debugging
+				let _ = crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
+				let _ = crate::session::logger::log_api_response(&self.session.info.name, &ex.response);
 			}
 		}
 

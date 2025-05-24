@@ -213,90 +213,30 @@ impl Session {
 		self.info.total_cost += cost;
 	}
 
-	// Save the session to a file - optimized for efficiency
+	// Save the session to a file - unified JSONL approach with proper JSON formatting
 	pub fn save(&self) -> Result<(), anyhow::Error> {
 		if let Some(session_file) = &self.session_file {
-			// Check if the file already exists - if not, create it
-			let create_new = !session_file.exists();
+			// Always rewrite the entire file for simplicity and consistency
+			// Since we're using a unified approach, we want all data in one place
+			
+			// Create the file (or truncate if exists)
+			let _ = File::create(session_file)?;
 
-			if create_new {
-				// Create the file and write all messages
-				let _ = File::create(session_file)?;
+			// Save session info as the first line in JSON format
+			let summary_entry = serde_json::json!({
+				"type": "SUMMARY",
+				"timestamp": SystemTime::now()
+					.duration_since(UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs(),
+				"session_info": &self.info
+			});
+			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
 
-				// Save session info as the first line (summary)
-				let info_json = serde_json::to_string(&self.info)?;
-				append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
-
-				// Save all messages without prefixes - simpler format
-				for message in &self.messages {
-					let message_json = serde_json::to_string(message)?;
-					append_to_session_file(session_file, &message_json)?;
-				}
-			} else {
-				// Optimized approach - only overwrite if the file structure needs to change
-				// Read the first line to check if summary needs updating
-				let mut needs_full_rewrite = true;
-
-				if let Ok(file) = File::open(session_file) {
-					let reader = BufReader::new(file);
-					if let Some(Ok(first_line)) = reader.lines().next() {
-						if first_line.starts_with("SUMMARY: ") {
-							let info_json = serde_json::to_string(&self.info)?;
-							let summary_line = format!("SUMMARY: {}", info_json);
-
-							// We can just update the first line and append messages
-							needs_full_rewrite = false;
-
-							// Create a temporary file with the updated summary
-							let temp_path = session_file.with_extension("jsonl.tmp");
-							let mut temp_file = File::create(&temp_path)?;
-							writeln!(temp_file, "{}\r", summary_line)?;
-
-							// Copy all lines except the first from the original file
-							let file = File::open(session_file)?;
-							let reader = BufReader::new(file);
-							let mut lines = reader.lines();
-							let _ = lines.next(); // Skip the first line (old summary)
-
-							// Count messages from file for efficient comparison
-							let mut message_count = 0;
-							for line in lines {
-								if let Ok(line) = line {
-									if !line.is_empty() && !line.starts_with("EXCHANGE: ") {
-										message_count += 1;
-										writeln!(temp_file, "{}\r", line)?;
-									}
-								}
-							}
-
-							// Append any new messages that weren't in the file
-							if self.messages.len() > message_count {
-								for message in &self.messages[message_count..] {
-									let message_json = serde_json::to_string(message)?;
-									writeln!(temp_file, "{}\r", message_json)?;
-								}
-							}
-
-							// Replace the original file with the temporary file
-							std_fs::rename(temp_path, session_file)?;
-						}
-					}
-				}
-
-				// If we need to rewrite the whole file, do so
-				if needs_full_rewrite {
-					let _ = File::create(session_file)?;
-
-					// Save session info as the first line (summary)
-					let info_json = serde_json::to_string(&self.info)?;
-					append_to_session_file(session_file, &format!("SUMMARY: {}", info_json))?;
-
-					// Save all messages without prefixes - simpler format
-					for message in &self.messages {
-						let message_json = serde_json::to_string(message)?;
-						append_to_session_file(session_file, &message_json)?;
-					}
-				}
+			// Save all messages in standard JSONL format
+			for message in &self.messages {
+				let message_json = serde_json::to_string(message)?;
+				append_to_session_file(session_file, &message_json)?;
 			}
 
 			Ok(())
@@ -339,13 +279,28 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 				let first_line = reader.lines().next();
 
 				if let Some(Ok(line)) = first_line {
-					if let Some(content) = line.strip_prefix("SUMMARY: ") {
+					// Try new JSON format first
+					if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
+						if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
+							if log_type == "SUMMARY" {
+								if let Some(session_info_value) = json_value.get("session_info") {
+									if let Ok(info) = serde_json::from_value::<SessionInfo>(session_info_value.clone()) {
+										let name = path.file_stem()
+											.and_then(|s| s.to_str())
+											.unwrap_or_default()
+											.to_string();
+										sessions.push((name, info));
+									}
+								}
+							}
+						}
+					} else if let Some(content) = line.strip_prefix("SUMMARY: ") {
+						// Fallback to legacy format
 						if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
 							let name = path.file_stem()
 								.and_then(|s| s.to_str())
 								.unwrap_or_default()
 								.to_string();
-
 							sessions.push((name, info));
 						}
 					}
@@ -379,70 +334,103 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	for line in reader.lines() {
 		let line = line?;
 
-		if line.starts_with("SUMMARY: ") {
-			// Parse session info (from first line)
-			if let Some(content) = line.strip_prefix("SUMMARY: ") {
-				session_info = Some(serde_json::from_str(content)?);
-			}
-		} else if line.starts_with("INFO: ") {
-			// Parse old session info format for backward compatibility
-			if let Some(content) = line.strip_prefix("INFO: ") {
-				let mut old_info: SessionInfo = serde_json::from_str(content)?;
-				// Add the new fields for token tracking
-				old_info.input_tokens = 0;
-				old_info.output_tokens = 0;
-				old_info.cached_tokens = 0;  // Initialize new cached_tokens field
-				old_info.total_cost = 0.0;
-				old_info.duration_seconds = 0;
-				old_info.layer_stats = Vec::new(); // Initialize empty layer stats
-				old_info.tool_calls = 0; // Initialize tool call counter
-				session_info = Some(old_info);
-			}
-		} else if line.starts_with("RESTORATION_POINT: ") {
-			// Found a restoration point - this means the session was optimized with /done
-			// We should restore from this point instead of loading all messages
-			restoration_point_found = true;
-			// Clear messages collected so far and start fresh from restoration point
-			messages.clear();
-			restoration_messages.clear();
-			// Continue processing to find messages after this restoration point
-		} else if !line.starts_with("EXCHANGE: ") && !line.is_empty() {
-			// Try different formats, prioritizing standard JSONL
-			if line.contains("\"role\":") && line.contains("\"content\":") {
-				// This looks like a message JSON - try to parse it
+		// Try to parse as JSON first (new format)
+		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
+			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
+				match log_type {
+					"SUMMARY" => {
+						// Extract session info from JSON log entry
+						if let Some(session_info_value) = json_value.get("session_info") {
+							session_info = Some(serde_json::from_value(session_info_value.clone())?);
+						}
+					},
+					"RESTORATION_POINT" => {
+						// Found a restoration point - this means the session was optimized with /done
+						restoration_point_found = true;
+						messages.clear();
+						restoration_messages.clear();
+					},
+					"API_REQUEST" | "API_RESPONSE" | "TOOL_CALL" | "TOOL_RESULT" | "CACHE" | "ERROR" | "SYSTEM" | "USER" | "ASSISTANT" => {
+						// Skip debug log entries during message parsing
+						continue;
+					},
+					_ => {
+						// Unknown log type, skip
+						continue;
+					}
+				}
+			} else if line.contains("\"role\":") && line.contains("\"content\":") {
+				// This is a regular message JSON line
 				if let Ok(message) = serde_json::from_str::<Message>(&line) {
 					if restoration_point_found {
 						restoration_messages.push(message);
 					} else {
 						messages.push(message);
 					}
-					continue;
 				}
 			}
-
-			// Try legacy prefixed formats if JSON parsing fails
-			if let Some(content) = line.strip_prefix("SYSTEM: ") {
-				if let Ok(message) = serde_json::from_str::<Message>(content) {
-					if restoration_point_found {
-						restoration_messages.push(message);
-					} else {
-						messages.push(message);
-					}
+		} else {
+			// Fallback to legacy prefix-based format for backward compatibility
+			if line.starts_with("SUMMARY: ") {
+				if let Some(content) = line.strip_prefix("SUMMARY: ") {
+					session_info = Some(serde_json::from_str(content)?);
 				}
-			} else if let Some(content) = line.strip_prefix("USER: ") {
-				if let Ok(message) = serde_json::from_str::<Message>(content) {
-					if restoration_point_found {
-						restoration_messages.push(message);
-					} else {
-						messages.push(message);
-					}
+			} else if line.starts_with("INFO: ") {
+				if let Some(content) = line.strip_prefix("INFO: ") {
+					let mut old_info: SessionInfo = serde_json::from_str(content)?;
+					old_info.input_tokens = 0;
+					old_info.output_tokens = 0;
+					old_info.cached_tokens = 0;
+					old_info.total_cost = 0.0;
+					old_info.duration_seconds = 0;
+					old_info.layer_stats = Vec::new();
+					old_info.tool_calls = 0;
+					session_info = Some(old_info);
 				}
-			} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
-				if let Ok(message) = serde_json::from_str::<Message>(content) {
-					if restoration_point_found {
-						restoration_messages.push(message);
-					} else {
-						messages.push(message);
+			} else if line.starts_with("RESTORATION_POINT: ") {
+				restoration_point_found = true;
+				messages.clear();
+				restoration_messages.clear();
+			} else if !line.starts_with("API_REQUEST: ") && 
+					  !line.starts_with("API_RESPONSE: ") && 
+					  !line.starts_with("TOOL_CALL: ") && 
+					  !line.starts_with("TOOL_RESULT: ") && 
+					  !line.starts_with("CACHE: ") && 
+					  !line.starts_with("ERROR: ") && 
+					  !line.starts_with("EXCHANGE: ") && 
+					  !line.is_empty() {
+				// Try to parse as message JSON or legacy prefixed formats
+				if line.contains("\"role\":") && line.contains("\"content\":") {
+					if let Ok(message) = serde_json::from_str::<Message>(&line) {
+						if restoration_point_found {
+							restoration_messages.push(message);
+						} else {
+							messages.push(message);
+						}
+					}
+				} else if let Some(content) = line.strip_prefix("SYSTEM: ") {
+					if let Ok(message) = serde_json::from_str::<Message>(content) {
+						if restoration_point_found {
+							restoration_messages.push(message);
+						} else {
+							messages.push(message);
+						}
+					}
+				} else if let Some(content) = line.strip_prefix("USER: ") {
+					if let Ok(message) = serde_json::from_str::<Message>(content) {
+						if restoration_point_found {
+							restoration_messages.push(message);
+						} else {
+							messages.push(message);
+						}
+					}
+				} else if let Some(content) = line.strip_prefix("ASSISTANT: ") {
+					if let Ok(message) = serde_json::from_str::<Message>(content) {
+						if restoration_point_found {
+							restoration_messages.push(message);
+						} else {
+							messages.push(message);
+						}
 					}
 				}
 			}
@@ -471,15 +459,16 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	}
 }
 
-// Helper function to append to session file with optimized line endings
+// Helper function to append to session file ensuring single lines
 pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(), anyhow::Error> {
 	let mut file = OpenOptions::new()
 		.create(true)
 		.append(true)
 		.open(session_file)?;
 
-	// Use a consistent line ending regardless of platform
-	writeln!(file, "{}\n", content)?;
+	// Ensure content is on a single line - replace any newlines with spaces
+	let single_line_content = content.replace('\n', " ").replace('\r', " ");
+	writeln!(file, "{}", single_line_content)?;
 	Ok(())
 }
 

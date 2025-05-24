@@ -157,14 +157,18 @@ impl ChatSession {
 					let mut chat_session = ChatSession::new(new_session_name.clone(), model, config);
 					chat_session.session.session_file = Some(new_session_file);
 
-					// Initialize the raw session log
-					let _ = crate::session::logger::log_session_summary(&new_session_name, &chat_session.session.info);
-
-					// Immediately save the session info to ensure SUMMARY is written
-					let info_json = serde_json::to_string(&chat_session.session.info)?;
+					// Immediately save the session info in new JSON format
+					let summary_entry = serde_json::json!({
+						"type": "SUMMARY",
+						"timestamp": std::time::SystemTime::now()
+							.duration_since(std::time::UNIX_EPOCH)
+							.unwrap_or_default()
+							.as_secs(),
+						"session_info": &chat_session.session.info
+					});
 					crate::session::append_to_session_file(
 						chat_session.session.session_file.as_ref().unwrap(),
-						&format!("SUMMARY: {}", info_json)
+						&serde_json::to_string(&summary_entry)?
 					)?;
 
 					Ok(chat_session)
@@ -184,14 +188,18 @@ impl ChatSession {
 			let mut chat_session = ChatSession::new(session_name.clone(), model, config);
 			chat_session.session.session_file = Some(session_file);
 
-			// Initialize the raw session log
-			let _ = crate::session::logger::log_session_summary(&session_name, &chat_session.session.info);
-
-			// Immediately save the session info to ensure SUMMARY is written
-			let info_json = serde_json::to_string(&chat_session.session.info)?;
+			// Immediately save the session info in new JSON format
+			let summary_entry = serde_json::json!({
+				"type": "SUMMARY",
+				"timestamp": std::time::SystemTime::now()
+					.duration_since(std::time::UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs(),
+				"session_info": &chat_session.session.info
+			});
 			crate::session::append_to_session_file(
 				chat_session.session.session_file.as_ref().unwrap(),
-				&format!("SUMMARY: {}", info_json)
+				&serde_json::to_string(&summary_entry)?
 			)?;
 
 			Ok(chat_session)

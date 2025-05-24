@@ -18,9 +18,10 @@ pub const DEBUG_COMMAND: &str = "/debug";
 pub const LOGLEVEL_COMMAND: &str = "/loglevel";
 pub const TRUNCATE_COMMAND: &str = "/truncate";
 pub const MODEL_COMMAND: &str = "/model";
+pub const RUN_COMMAND: &str = "/run";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 17] = [
+pub const COMMANDS: [&str; 18] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -38,4 +39,5 @@ pub const COMMANDS: [&str; 17] = [
 	LOGLEVEL_COMMAND,
 	TRUNCATE_COMMAND,
 	MODEL_COMMAND,
+	RUN_COMMAND,
 ];

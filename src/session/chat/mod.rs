@@ -1,6 +1,7 @@
 // Chat session module
 mod animation;
 mod commands;
+mod command_executor;
 mod context_reduction;
 mod context_truncation;
 mod editorconfig_formatter;
@@ -13,7 +14,8 @@ mod syntax;
 
 // Re-export main structures and functions
 pub use session::{ChatSession, run_interactive_session};
-pub use commands::{COMMANDS, HELP_COMMAND, EXIT_COMMAND, QUIT_COMMAND, COPY_COMMAND, CLEAR_COMMAND, SAVE_COMMAND, CACHE_COMMAND, DONE_COMMAND};
+pub use commands::{COMMANDS, HELP_COMMAND, EXIT_COMMAND, QUIT_COMMAND, COPY_COMMAND, CLEAR_COMMAND, SAVE_COMMAND, CACHE_COMMAND, DONE_COMMAND, RUN_COMMAND};
+pub use command_executor::{execute_command_layer, list_available_commands, command_exists, get_command_help};
 pub use input::read_user_input;
 pub use response::process_response;
 pub use layered_response::process_layered_response;

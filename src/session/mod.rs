@@ -474,7 +474,7 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 
 pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Config, mode: &str) -> String {
 	// Get mode-specific configuration
-	let (_, mcp_config, _, custom_system) = config.get_mode_config(mode);
+	let (_, mcp_config, _, _, custom_system) = config.get_mode_config(mode);
 
 	// If a custom system prompt is defined for this mode, use it
 	if let Some(custom_prompt) = custom_system {

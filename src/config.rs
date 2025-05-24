@@ -688,6 +688,9 @@ pub struct DeveloperRoleConfig {
 	// Layer configuration
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
+	// Command layer configurations
+	#[serde(default)]
+	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
 	// Legacy openrouter field for backward compatibility
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub openrouter: Option<OpenRouterConfig>,
@@ -699,6 +702,9 @@ pub struct AssistantRoleConfig {
 	pub config: ModeConfig,
 	#[serde(default)]
 	pub mcp: McpConfig,
+	// Command layer configurations
+	#[serde(default)]
+	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
 	// Legacy openrouter field for backward compatibility
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub openrouter: Option<OpenRouterConfig>,
@@ -718,6 +724,7 @@ impl Default for DeveloperRoleConfig {
 				..McpConfig::default()
 			},
 			layers: None,
+			commands: None,
 			openrouter: None,
 		}
 	}
@@ -736,6 +743,7 @@ impl Default for AssistantRoleConfig {
 				enabled: false,  // Assistant role has MCP/tools disabled by default
 				..McpConfig::default()
 			},
+			commands: None,
 			openrouter: None,
 		}
 	}
@@ -790,6 +798,10 @@ pub struct Config {
 	#[serde(default)]
 	pub mcp: McpConfig,
 	
+	// Global command configurations (fallback for roles)
+	#[serde(default)]
+	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
+	
 	// Legacy fields for backward compatibility - REMOVED for new approach
 	#[serde(default)]
 	pub openrouter: OpenRouterConfig,
@@ -826,9 +838,9 @@ impl Config {
 	}
 
 	/// Get configuration for a specific role with proper fallback logic and role inheritance
-	/// Returns: (mode_config, mcp_config, layers, system_prompt)
+	/// Returns: (mode_config, mcp_config, layers, commands, system_prompt)
 	/// Role inheritance: any role inherits from 'assistant' first, then applies its own overrides
-	pub fn get_mode_config(&self, role: &str) -> (&ModeConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&String>) {
+	pub fn get_mode_config(&self, role: &str) -> (&ModeConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&std::collections::HashMap<String, crate::session::layers::LayerConfig>>, Option<&String>) {
 		match role {
 			"developer" => {
 				// Developer role - inherits from assistant but with developer-specific config
@@ -839,7 +851,11 @@ impl Config {
 					mcp_config = self.mcp.clone();
 				}
 				
-				(&self.developer.config, mcp_config, self.developer.layers.as_ref(), self.developer.config.system.as_ref())
+				// Get commands config - prefer role-specific, fallback to global
+				let commands_config = self.developer.commands.as_ref()
+					.or(self.commands.as_ref());
+				
+				(&self.developer.config, mcp_config, self.developer.layers.as_ref(), commands_config, self.developer.config.system.as_ref())
 			},
 			"assistant" => {
 				// Base assistant role
@@ -850,7 +866,11 @@ impl Config {
 					mcp_config = self.mcp.clone();
 				}
 				
-				(&self.assistant.config, mcp_config, None, self.assistant.config.system.as_ref())
+				// Get commands config - prefer role-specific, fallback to global
+				let commands_config = self.assistant.commands.as_ref()
+					.or(self.commands.as_ref());
+				
+				(&self.assistant.config, mcp_config, None, commands_config, self.assistant.config.system.as_ref())
 			},
 			_ => {
 				// For any custom role, inherit from assistant first
@@ -866,7 +886,7 @@ impl Config {
 	/// Get a merged config for a specific mode that can be used for API calls
 	/// This returns a Config with the mode-specific settings applied
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
-		let (mode_config, mcp_config, layers_config, system_prompt) = self.get_mode_config(mode);
+		let (mode_config, mcp_config, layers_config, commands_config, system_prompt) = self.get_mode_config(mode);
 		
 		let mut merged = self.clone();
 		
@@ -888,6 +908,7 @@ impl Config {
 		
 		merged.mcp = mcp_config;
 		merged.layers = layers_config.cloned();
+		merged.commands = commands_config.cloned();
 		merged.system = system_prompt.cloned();
 		
 		merged

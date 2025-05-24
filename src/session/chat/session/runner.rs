@@ -269,7 +269,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				continue;
 			}
 
-			let exit = chat_session.process_command(&input, &current_config)?;
+			let exit = chat_session.process_command(&input, &current_config, &session_args.role).await?;
 			if exit {
 				// First check if it's a session switch command
 				if input.starts_with(SESSION_COMMAND) {

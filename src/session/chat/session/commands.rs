@@ -8,10 +8,11 @@ use colored::Colorize;
 use crate::session::list_available_sessions;
 use chrono::{DateTime, Utc};
 use super::super::commands::*;
+use super::super::command_executor;
 
 impl ChatSession {
 	// Process user commands
-	pub fn process_command(&mut self, input: &str, config: &Config) -> Result<bool> {
+	pub async fn process_command(&mut self, input: &str, config: &Config, role: &str) -> Result<bool> {
 		// Extract command and potential parameters
 		let input_parts: Vec<&str> = input.split_whitespace().collect();
 		let command = input_parts[0];
@@ -41,6 +42,7 @@ impl ChatSession {
 				println!("{} [level] - Set logging level: none, info, or debug", LOGLEVEL_COMMAND.cyan());
 				println!("{} [threshold] - Toggle automatic context truncation when token limit is reached", TRUNCATE_COMMAND.cyan());
 				println!("{} [model] - Show current model or change to a different model", MODEL_COMMAND.cyan());
+				println!("{} <command_name> - Execute a command layer (e.g., /run estimate)", RUN_COMMAND.cyan());
 				println!("{} or {} - Exit the session\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan());
 
 				// Additional info about caching
@@ -65,6 +67,27 @@ impl ChatSession {
 				println!("Subsequent messages use direct communication with the developer model.");
 				println!("Use the /done command to optimize context, apply EditorConfig formatting to edited files, and restart the layered pipeline.");
 				println!("Toggle layered processing with /layers command.\n");
+
+				// Add information about command layers
+				println!("{}", "** About Command Layers **".bright_yellow());
+				println!("Command layers are specialized AI helpers that can be invoked without affecting the session history.");
+				println!("Commands are defined in the [commands] section of your configuration file.");
+				println!("Example usage: /run estimate - runs the 'estimate' command layer");
+				println!("Command layers use the same infrastructure as normal layers but don't store context.");
+				println!("This allows you to get specialized help without cluttering your conversation.\n");
+
+				// Show available commands for current role
+				let available_commands = command_executor::list_available_commands(config, role);
+				if available_commands.is_empty() {
+					println!("{}", "No command layers configured for this role.".bright_blue());
+					println!("{}", "Use '/run' to see configuration examples.\n");
+				} else {
+					println!("{}", format!("Available command layers for role '{}':", role).bright_blue());
+					for cmd in &available_commands {
+						println!("  {} {}", "/run".cyan(), cmd.bright_yellow());
+					}
+					println!();
+				}
 			},
 			COPY_COMMAND => {
 				println!("Clipboard functionality is disabled in this version.");
@@ -97,7 +120,7 @@ impl ChatSession {
 
 				// For now, we'll default to developer role since that's where layers are typically used
 				// In the future, this could be passed as a parameter from the session context
-				let current_role = "developer"; // TODO: Get this from session context
+				let current_role = role; // Use the passed role parameter
 				
 				// Toggle the setting for the appropriate role
 				match current_role {
@@ -490,6 +513,88 @@ impl ChatSession {
 					self.session.info.name = new_session_name;
 					return Ok(true);
 				}
+			},
+			RUN_COMMAND => {
+				// Handle /run command for executing command layers
+				if params.is_empty() {
+					// Show available commands for this role
+					let available_commands = command_executor::list_available_commands(config, role);
+					if available_commands.is_empty() {
+						println!("{}", "No command layers configured for this role.".bright_yellow());
+						println!("{}", "Command layers can be defined in the [commands] section of your configuration.".bright_blue());
+						println!("{}", "Example configuration:".bright_cyan());
+						println!("{}", r#"[developer.commands.estimate]
+name = "estimate"
+enabled = true
+model = "openrouter:openai/gpt-4.1-mini"
+system_prompt = "You are a project estimation expert. Analyze the work done and provide estimates."
+temperature = 0.2
+input_mode = "Last""#.bright_white());
+					} else {
+						println!("{}", "Available command layers:".bright_cyan());
+						for cmd in &available_commands {
+							println!("  {} {}", "/run".cyan(), cmd.bright_yellow());
+						}
+						println!();
+						println!("{}", "Usage: /run <command_name>".bright_blue());
+						println!("{}", "Example: /run estimate".bright_green());
+					}
+					return Ok(false);
+				}
+
+				let command_name = params[0];
+				
+				// Check if command exists
+				if !command_executor::command_exists(config, role, command_name) {
+					let available_commands = command_executor::list_available_commands(config, role);
+					println!("{} {}", "Command not found:".bright_red(), command_name.bright_yellow());
+					if !available_commands.is_empty() {
+						println!("{}", "Available commands:".bright_cyan());
+						for cmd in &available_commands {
+							println!("  {}", cmd.bright_yellow());
+						}
+					}
+					return Ok(false);
+				}
+
+				// Get the input for the command layer
+				// For now, we'll use the last user message or the whole session depending on the input_mode
+				// We could also allow passing input as additional parameters
+				let command_input = if params.len() > 1 {
+					// Use the provided input after the command name
+					params[1..].join(" ")
+				} else {
+					// Use the last user message or a default input
+					self.session.messages.iter()
+						.filter(|m| m.role == "user")
+						.last()
+						.map(|m| m.content.clone())
+						.unwrap_or_else(|| "No recent user input found".to_string())
+				};
+
+				// Execute the command layer
+				println!();
+				let operation_cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+				match command_executor::execute_command_layer(
+					command_name,
+					&command_input,
+					&self.session,
+					config,
+					role,
+					operation_cancelled
+				).await {
+					Ok(result) => {
+						println!();
+						println!("{}", "Command result:".bright_green());
+						println!("{}", result.bright_white());
+						println!();
+					},
+					Err(e) => {
+						println!("{} {}", "Command execution failed:".bright_red(), e);
+					}
+				}
+
+				return Ok(false);
 			},
 			_ => return Ok(false), // Not a command
 		}

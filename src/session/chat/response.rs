@@ -420,6 +420,10 @@ pub async fn process_response(
 
 					// IMPROVED APPROACH: Add tool results as proper "tool" role messages
 					// This follows the standard OpenAI/Anthropic format and avoids double-serialization
+					// CRITICAL FIX: Check cache threshold after EACH tool result, not after all
+					let cache_manager = crate::session::cache::CacheManager::new();
+					let supports_caching = crate::session::model_supports_caching(&chat_session.model);
+					
 					for tool_result in &tool_results {
 						// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
 						let tool_content = if let Some(output) = tool_result.result.get("output") {
@@ -459,14 +463,18 @@ pub async fn process_response(
 
 						// Add the tool message directly to the session
 						chat_session.session.messages.push(tool_message);
-					}
-
-					// CRITICAL FIX: Check auto-cache threshold IMMEDIATELY after ALL tool results are added
-					// This ensures that cache markers are applied BEFORE sending the next API request
-					let cache_manager = crate::session::cache::CacheManager::new();
-					let supports_caching = crate::session::model_supports_caching(&chat_session.model);
-					if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut chat_session.session, config, supports_caching) {
-						log_info!("{}", "Auto-cache threshold reached after tool results - cache checkpoint applied before next API request.");
+						
+						// CRITICAL FIX: Check auto-cache threshold IMMEDIATELY after EACH tool result
+						// This ensures proper 2-marker logic and threshold checking after each tool
+						let tool_message_index = chat_session.session.messages.len() - 1;
+						if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold_on_tool_result(
+							&mut chat_session.session, 
+							config, 
+							supports_caching, 
+							tool_message_index
+						) {
+							log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
+						}
 					}
 
 					// Call the AI again with the tool results

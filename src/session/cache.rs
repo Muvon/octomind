@@ -300,6 +300,96 @@ impl CacheManager {
         Ok(false)
     }
 
+    /// Check if auto-cache threshold is reached on EACH tool result and add marker if needed
+    /// This should be called after EACH individual tool result is processed, not after all tools
+    /// Returns true if a cache marker was added
+    pub fn check_and_apply_auto_cache_threshold_on_tool_result(
+        &self,
+        session: &mut Session,
+        config: &Config,
+        supports_caching: bool,
+        tool_message_index: usize,
+    ) -> Result<bool> {
+        if !supports_caching {
+            return Ok(false);
+        }
+
+        // Only check thresholds if we have enough messages and the specified index is valid
+        if session.messages.len() <= tool_message_index {
+            return Ok(false);
+        }
+
+        // Verify the message at the index is indeed a tool message
+        if let Some(msg) = session.messages.get(tool_message_index) {
+            if msg.role != "tool" {
+                return Ok(false);
+            }
+        } else {
+            return Ok(false);
+        }
+
+        // Check absolute threshold first (if set)
+        if config.openrouter.cache_tokens_absolute_threshold > 0 {
+            if session.current_non_cached_tokens >= config.openrouter.cache_tokens_absolute_threshold {
+                match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => return Ok(false),
+                    Err(_) => return Ok(false), // Silently fail for auto-cache
+                }
+            }
+        } else {
+            // Use percentage threshold
+            let threshold = config.openrouter.cache_tokens_pct_threshold;
+            if threshold == 0 || threshold == 100 {
+                return Ok(false);
+            }
+
+            // For percentage-based threshold, we need some total tokens to calculate
+            if session.current_total_tokens == 0 {
+                return Ok(false);
+            }
+
+            // Calculate the percentage of non-cached tokens
+            let non_cached_percentage = 
+                (session.current_non_cached_tokens as f64 / session.current_total_tokens as f64) * 100.0;
+
+            // Check if we've reached the threshold
+            if non_cached_percentage as u8 >= threshold {
+                match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => return Ok(false),
+                    Err(_) => return Ok(false), // Silently fail for auto-cache
+                }
+            }
+        }
+
+        // Check time-based threshold last
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        let time_since_last_cache = current_time.saturating_sub(session.last_cache_checkpoint_time);
+        
+        if time_since_last_cache >= config.openrouter.cache_timeout_seconds {
+            match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
+                Ok(true) => return Ok(true),
+                Ok(false) => {
+                    // Even if we couldn't add a marker, update the time to prevent constant attempts
+                    session.last_cache_checkpoint_time = current_time;
+                    return Ok(false);
+                }
+                Err(_) => {
+                    // Update time on error too to prevent constant attempts
+                    session.last_cache_checkpoint_time = current_time;
+                    return Ok(false); // Silently fail for auto-cache
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     /// Update token tracking after API response
     /// This should be called after EVERY API request to accumulate token usage
     /// for proper cache threshold calculations
@@ -323,6 +413,27 @@ impl CacheManager {
         // Add to running totals (these accumulate until a cache checkpoint is set)
         session.current_total_tokens += total_new_tokens;
         session.current_non_cached_tokens += non_cached_new_tokens;
+    }
+
+    /// Estimate current session tokens for threshold checking
+    /// This provides a rough estimate of tokens in the session messages that are not cached
+    pub fn estimate_current_session_tokens(&self, session: &Session) -> (u64, u64) {
+        let mut total_tokens = 0;
+        let mut non_cached_tokens = 0;
+        
+        for msg in &session.messages {
+            // Estimate tokens for this message (roughly 4 chars per token)
+            let message_tokens = (msg.content.len() / 4) as u64 + 4; // +4 for role overhead
+            
+            total_tokens += message_tokens;
+            
+            // If the message is not cached, count towards non-cached tokens
+            if !msg.cached {
+                non_cached_tokens += message_tokens;
+            }
+        }
+        
+        (total_tokens, non_cached_tokens)
     }
 
     /// Get cache statistics for display

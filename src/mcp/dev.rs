@@ -46,18 +46,18 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 pub fn get_semantic_code_function() -> McpFunction {
 	McpFunction {
 		name: "semantic_code".to_string(),
-		description: "Analyze and search code in the repository using both structural and semantic methods.
+		description: "Analyze and search code in the repository using both structural and semantic methods by looking into code blocks and documentation available.
 
 This tool can operate in multiple modes:
 
-1. **signatures**: Extracts function/method signatures and other declarations from code files to understand APIs without looking at the entire implementation.
-2. **search**: Searches across all content types (code, docs, and text) using semantic embeddings.
-3. **codesearch**: Searches only within code blocks using semantic embeddings.
-4. **docsearch**: Searches only within documentation/markdown content.
-5. **textsearch**: Searches only within text files and other readable content.
+1. **signatures**: Extracts function/method signatures and other declarations from code files to understand APIs without looking at the entire implementation. Useful to understand file before read it full.
+2. **search**: Searches across all content types (code, docs, and text) using semantic embeddings. Find something specific when not sure where to find it.
+3. **codesearch**: Searches only within code blocks using semantic embeddings. When we are looking exactly for some code blocks that do something required.
+4. **docsearch**: Searches only within documentation/markdown content.Results across .md files in project, mostly about docs.
+5. **textsearch**: Searches only within text files and other readable content. Not very useful in development, but in case to search text content can be useful.
 
 Use signatures mode when you want to understand what functions/methods are available in specific files.
-Use the search modes when you want to find specific functionality across different content types.
+Use the search mode or specific search mode when you need to find something in code blocks, documentation or just text files first, to undersntand what is going on and where to get something specific or try to catch up flow.
 
 The tool returns results formatted in a clean, token-efficient Markdown output.".to_string(),
 		parameters: json!({
@@ -107,7 +107,7 @@ Use this when you want to find specific code functionality or implementations.".
 			"properties": {
 				"query": {
 					"type": "string",
-					"description": "Natural language query to search for in code blocks"
+					"description": "Natural language query to search for in code blocks of current project"
 				},
 				"expand": {
 					"type": "boolean",

@@ -2,15 +2,22 @@
 
 ## Overview
 
-Octodev uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octodev/config.toml` files and supports mode-specific overrides.
+Octodev uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octodev/config.toml` files and supports role-specific overrides with inheritance patterns.
 
 ## Configuration Hierarchy
 
 The configuration system follows this priority order:
-1. Mode-specific configuration (e.g., `[agent]`, `[chat]`)
-2. Global configuration
+1. Role-specific configuration (e.g., `[developer]`, `[assistant]`, `[custom-role]`)
+2. Global configuration sections
 3. Environment variables
 4. Default values
+
+### Role Inheritance
+
+Custom roles inherit from the assistant role as a base, then apply their own overrides:
+- **Developer role**: Inherits from global settings with developer-specific overrides
+- **Assistant role**: Base configuration for all custom roles
+- **Custom roles**: Inherit from assistant, then apply custom overrides
 
 ## Basic Configuration
 
@@ -41,42 +48,101 @@ text_model = "all-MiniLM-L6-v2"
 code_model = "jina-embeddings-v2-base-code"
 text_model = "jina-embeddings-v3"
 
-# Global OpenRouter configuration
-[openrouter]
-model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
-enable_markdown_rendering = true
-mcp_response_warning_threshold = 20000
-max_request_tokens_threshold = 50000
-cache_tokens_pct_threshold = 40
-
 # GraphRAG configuration
 [graphrag]
 enabled = false
 description_model = "openrouter:openai/gpt-4.1-nano"
 relationship_model = "openrouter:openai/gpt-4.1-nano"
 
-# Global MCP configuration
-[mcp]
-enabled = true
-providers = ["core"]
-servers = []
+# Provider configurations (centralized API keys)
+[providers.openrouter]
+api_key = "your_openrouter_key"  # Optional, can use env var
 
-# Agent mode configuration (inherits global settings)
-[agent]
-system = "You are an Octodev AI developer assistant."
-[agent.openrouter]
+[providers.openai]
+api_key = "your_openai_key"  # Optional, can use env var
+
+[providers.anthropic]
+api_key = "your_anthropic_key"  # Optional, can use env var
+
+[providers.google]
+project_id = "your-gcp-project-id"
+region = "us-central1"
+
+[providers.amazon]
+region = "us-east-1"
+access_key_id = "your_access_key"  # Optional, can use env var
+secret_access_key = "your_secret_key"  # Optional, can use env var
+
+[providers.cloudflare]
+account_id = "your_account_id"
+api_token = "your_api_token"  # Optional, can use env var
+
+# Legacy OpenRouter configuration (for backward compatibility)
+[openrouter]
+model = "openrouter:anthropic/claude-sonnet-4"
+enable_layers = true
+log_level = "info"
+mcp_response_warning_threshold = 20000
+max_request_tokens_threshold = 50000
+cache_tokens_pct_threshold = 40
+
+# Developer role configuration
+[developer]
+system = "You are an Octodev AI developer assistant with full access to development tools."
+
+[developer.config]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 
-# Chat mode configuration (tools disabled by default)
-[chat]
+[developer.mcp]
+enabled = true
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[[developer.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+
+# Assistant role configuration (tools disabled by default)
+[assistant]
 system = "You are a helpful assistant."
-[chat.mcp]
-enabled = false
-[chat.openrouter]
+
+[assistant.config]
 model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
+
+[assistant.mcp]
+enabled = false
+
+# Custom role example
+[my-custom-role]
+system = "You are a specialized assistant for my specific use case."
+
+[my-custom-role.config]
+model = "openrouter:openai/gpt-4o"
+enable_layers = true
+
+[my-custom-role.mcp]
+enabled = true
+
+[[my-custom-role.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+tools = ["shell", "text_editor"]  # Limit to specific tools
+
+# External MCP server example
+[[my-custom-role.mcp.servers]]
+enabled = true
+name = "WebSearch"
+server_type = "external"
+url = "https://mcp.so/server/webSearch-Tools"
+auth_token = "optional_token"
+tools = []  # Empty means all tools enabled
 ```
 
 ## AI Provider Configuration
@@ -86,13 +152,13 @@ enable_layers = false
 All models must use the `provider:model` format:
 
 ```toml
-[openrouter]
+[developer.config]
 model = "openrouter:anthropic/claude-sonnet-4"
 
-[agent.openrouter]
-model = "openai:gpt-4o"
+[assistant.config]
+model = "openai:gpt-4o-mini"
 
-[chat.openrouter]
+[my-custom-role.config]
 model = "anthropic:claude-3-5-haiku"
 ```
 
@@ -102,6 +168,8 @@ model = "anthropic:claude-3-5-haiku"
 - **OpenAI**: `openai:model-name`
 - **Anthropic**: `anthropic:model-name`
 - **Google Vertex AI**: `google:model-name`
+- **Amazon Bedrock**: `amazon:model-name`
+- **Cloudflare Workers AI**: `cloudflare:model-name`
 
 ## Environment Variables
 
@@ -118,6 +186,15 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 export GOOGLE_PROJECT_ID="your-project-id"
 export GOOGLE_REGION="us-central1"
 
+# Amazon Bedrock
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_REGION="us-east-1"
+
+# Cloudflare Workers AI
+export CLOUDFLARE_ACCOUNT_ID="your_account_id"
+export CLOUDFLARE_API_TOKEN="your_api_token"
+
 # Embedding Provider Keys
 export JINA_API_KEY="your_jina_key"
 ```
@@ -131,39 +208,70 @@ export OCTODEV_LOG_LEVEL="debug"
 export OCTODEV_EMBEDDING_PROVIDER="jina"
 ```
 
-## Mode-Specific Configuration
+## Role-Specific Configuration
 
-### Agent Mode
+### Developer Role
 
-Agent mode is designed for full development assistance:
+Developer role is designed for full development assistance:
 
 ```toml
-[agent]
+[developer]
 system = "You are an Octodev AI developer assistant with full access to development tools."
 
-[agent.openrouter]
+[developer.config]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 
-[agent.mcp]
+[developer.mcp]
 enabled = true
-providers = ["core", "filesystem"]
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[[developer.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
 ```
 
-### Chat Mode
+### Assistant Role
 
-Chat mode is optimized for simple conversations:
+Assistant role is optimized for simple conversations:
 
 ```toml
-[chat]
+[assistant]
 system = "You are a helpful assistant."
 
-[chat.openrouter]
+[assistant.config]
 model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
 
-[chat.mcp]
+[assistant.mcp]
 enabled = false
+```
+
+### Custom Roles
+
+Create specialized roles for specific use cases:
+
+```toml
+[code-reviewer]
+system = "You are a code review expert focused on security and best practices."
+
+[code-reviewer.config]
+model = "openrouter:anthropic/claude-3.5-sonnet"
+enable_layers = true
+
+[code-reviewer.mcp]
+enabled = true
+
+[[code-reviewer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+tools = ["text_editor", "semantic_code"]  # Limited tool set
 ```
 
 ## Layered Architecture Configuration
@@ -213,34 +321,70 @@ input_mode = "All"
 
 ## MCP Configuration
 
-### Basic MCP Setup
+### New Server-Based Configuration
+
+The MCP system has been refactored to use a unified server configuration approach:
 
 ```toml
-[mcp]
+# Role-specific MCP configuration
+[developer.mcp]
 enabled = true
-providers = ["core"]
-servers = []
-```
 
-### External MCP Servers
+# Built-in server types
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"  # Built-in developer tools
 
-```toml
-# Remote MCP server
-[[mcp.servers]]
+[[developer.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"  # Built-in filesystem tools
+
+# External HTTP server
+[[developer.mcp.servers]]
 enabled = true
 name = "WebSearch"
+server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "optional_token"
 tools = []  # Empty means all tools enabled
 
-# Local MCP server
-[[mcp.servers]]
+# External command-based server
+[[developer.mcp.servers]]
 enabled = true
 name = "LocalTools"
+server_type = "external"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
-mode = "http"
-timeout = 30
+timeout_seconds = 30
+tools = []
+```
+
+### Server Types
+
+- **developer**: Built-in developer tools (shell, code search, file operations)
+- **filesystem**: Built-in filesystem tools (file reading, writing, listing)
+- **external**: External MCP servers (HTTP or command-based)
+
+### Legacy Provider Support
+
+For backward compatibility, the old `providers` format is still supported but will be migrated:
+
+```toml
+# Legacy format (deprecated)
+[mcp]
+enabled = true
+providers = ["core"]
+
+# New format (recommended)
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
 ```
 
 ## Embedding Configuration
@@ -306,6 +450,37 @@ Use session commands to manage tokens:
 - `/info` - Show token usage breakdown
 - `/done` - Optimize context
 
+## Command Layers
+
+Octodev supports command layers for specialized processing:
+
+```toml
+# Developer role command layers
+[developer.commands.estimate]
+name = "estimate"
+enabled = true
+model = "openrouter:openai/gpt-4.1-mini"
+system_prompt = "You are a project estimation expert..."
+temperature = 0.2
+input_mode = "Last"
+
+[developer.commands.estimate.mcp]
+enabled = false
+
+[developer.commands.review]
+name = "review"
+enabled = true
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are a code review expert..."
+temperature = 0.1
+input_mode = "All"
+
+[developer.commands.review.mcp]
+enabled = true
+servers = ["developer"]
+allowed_tools = ["text_editor", "semantic_code"]
+```
+
 ## Validation and Security
 
 ### Configuration Validation
@@ -320,6 +495,7 @@ Common validation checks:
 - API key presence (warns if missing)
 - Threshold value validation
 - MCP server configuration validation
+- Role inheritance validation
 
 ### Security Best Practices
 
@@ -327,11 +503,44 @@ Common validation checks:
 2. **Use environment variables** for sensitive data
 3. **Validate configuration** before deploying
 4. **Use secure file permissions** for config files
+5. **Limit tool access** in custom roles
 
 ```bash
 # Secure config file permissions
 chmod 600 .octodev/config.toml
 ```
+
+## Migration Guide
+
+### From Legacy Configuration
+
+**Old format (deprecated):**
+```toml
+[mcp]
+enabled = true
+providers = ["core"]
+
+[openrouter]
+model = "anthropic/claude-3.5-sonnet"
+```
+
+**New format (required):**
+```toml
+[developer.mcp]
+enabled = true
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[developer.config]
+model = "openrouter:anthropic/claude-3.5-sonnet"
+```
+
+### Automatic Migration
+
+Octodev automatically migrates legacy configurations on load, but it's recommended to update manually for better control.
 
 ## Troubleshooting
 
@@ -354,6 +563,12 @@ chmod 600 .octodev/config.toml
    octodev config --validate
    ```
 
+4. **Role inheritance issues**
+   ```
+   Error: Custom role configuration invalid
+   Solution: Ensure custom roles inherit from assistant base
+   ```
+
 ### Debug Configuration
 
 ```toml
@@ -362,3 +577,10 @@ log_level = "debug"
 ```
 
 This enables detailed logging for troubleshooting configuration issues.
+
+### Configuration Examples
+
+See the `doc/examples/` directory for complete configuration examples:
+- `layer_config.toml` - Layered architecture configuration
+- `command_layers_config.toml` - Command layers configuration
+- `simple_commands.toml` - Basic command configuration

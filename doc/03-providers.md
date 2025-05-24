@@ -2,7 +2,20 @@
 
 ## Overview
 
-Octodev supports multiple AI providers through a unified interface. All providers use the `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
+Octodev supports multiple AI providers through a unified, extensible interface. All providers use the **required** `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
+
+## Recent Changes
+
+### Provider Format Migration
+**All models now require the `provider:model` format:**
+- ❌ Old: `"anthropic/claude-3.5-sonnet"`
+- ✅ New: `"openrouter:anthropic/claude-3.5-sonnet"` or `"anthropic:claude-3-5-sonnet"`
+
+### New Provider Support
+- **Amazon Bedrock**: Added support for AWS Bedrock models
+- **Cloudflare Workers AI**: Added support for Cloudflare's AI models
+- **Enhanced Google Vertex AI**: Improved authentication and model support
+- **Direct Provider Access**: All major providers now support direct API access
 
 ## Supported Providers
 
@@ -124,6 +137,62 @@ octodev session --model "google:gemini-1.5-flash"
 | gemini-1.5-pro | $3.50 | $10.50 |
 | gemini-1.5-flash | $0.075 | $0.30 |
 | gemini-1.0-pro | $0.50 | $1.50 |
+
+### Amazon Bedrock
+**AWS Bedrock AI models**
+
+- **Format**: `amazon:model-name`
+- **Features**: Tool support, cost calculation
+- **Models**: Claude, Titan, Jurassic, and other AWS Bedrock models
+- **Note**: Requires AWS credentials
+
+#### Setup
+```bash
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_REGION="us-east-1"
+```
+
+#### Configuration
+```toml
+[providers.amazon]
+region = "us-east-1"
+access_key_id = "your_access_key"  # Optional, can use env var
+secret_access_key = "your_secret_key"  # Optional, can use env var
+```
+
+#### Usage
+```bash
+octodev session --model "amazon:anthropic.claude-3-sonnet"
+octodev session --model "amazon:amazon.titan-text-express"
+```
+
+### Cloudflare Workers AI
+**Cloudflare's AI models**
+
+- **Format**: `cloudflare:model-name`
+- **Features**: Tool support, edge computing
+- **Models**: Various models available through Cloudflare Workers AI
+- **Note**: Requires Cloudflare account and API token
+
+#### Setup
+```bash
+export CLOUDFLARE_ACCOUNT_ID="your_account_id"
+export CLOUDFLARE_API_TOKEN="your_api_token"
+```
+
+#### Configuration
+```toml
+[providers.cloudflare]
+account_id = "your_account_id"
+api_token = "your_api_token"  # Optional, can use env var
+```
+
+#### Usage
+```bash
+octodev session --model "cloudflare:@cf/meta/llama-2-7b-chat-int8"
+octodev session --model "cloudflare:@cf/mistral/mistral-7b-instruct-v0.1"
+```
 
 ## Model Selection Strategy
 

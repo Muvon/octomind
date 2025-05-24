@@ -66,12 +66,14 @@ Tool integration system enabling AI access to external tools and services.
 ```
 Environment Variables
     ↓
-Mode-specific config [agent] / [chat]
+Role-specific config [developer] / [assistant] / [custom-role]
     ↓
-Global config [openrouter] / [mcp]
+Global config [providers] / [openrouter] / [graphrag]
     ↓
 Default values
 ```
+
+**Role Inheritance**: Custom roles inherit from assistant role, then apply overrides
 
 ### Supported Providers
 
@@ -80,7 +82,9 @@ Default values
 | OpenRouter | `openrouter:provider/model` | Multi-provider access, caching |
 | OpenAI | `openai:model-name` | Direct API, cost calculation |
 | Anthropic | `anthropic:model-name` | Claude models, caching |
-| Google | `google:model-name` | Vertex AI, requires OAuth2 |
+| Google | `google:model-name` | Vertex AI, multimodal |
+| Amazon | `amazon:model-name` | Bedrock models, AWS integration |
+| Cloudflare | `cloudflare:model-name` | Edge AI, fast inference |
 
 ### File Structure
 

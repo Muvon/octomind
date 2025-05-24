@@ -120,38 +120,70 @@ MCP enables AI models to use external tools and services through a standardized 
 - **text_search**: Search text files
 - **graphrag**: Query the code knowledge graph
 
-### MCP Configuration
+### New Server-Based MCP Configuration
 
-#### Basic Configuration
+The MCP system has been refactored to use a unified server configuration approach that treats built-in and external servers consistently:
+
 ```toml
-[mcp]
+# Role-specific MCP configuration
+[developer.mcp]
 enabled = true
-providers = ["core"]
-servers = []
-```
 
-#### Advanced Configuration
-```toml
-[mcp]
+# Built-in server types
+[[developer.mcp.servers]]
 enabled = true
-providers = ["core", "filesystem"]
+name = "developer"
+server_type = "developer"  # Built-in developer tools
 
-# External MCP server (remote)
-[[mcp.servers]]
+[[developer.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"  # Built-in filesystem tools
+
+# External HTTP server
+[[developer.mcp.servers]]
 enabled = true
 name = "WebSearch"
+server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "optional_token"
 tools = []  # Empty = all tools enabled
 
-# Local MCP server
-[[mcp.servers]]
+# External command-based server
+[[developer.mcp.servers]]
 enabled = true
 name = "LocalTools"
+server_type = "external"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
-mode = "http"
-timeout = 30
+timeout_seconds = 30
+tools = []
+```
+
+### Server Types
+
+- **developer**: Built-in developer tools (shell, code search, file operations)
+- **filesystem**: Built-in filesystem tools (file reading, writing, listing)
+- **external**: External MCP servers (HTTP or command-based)
+
+### Legacy Provider Support
+
+For backward compatibility, the old `providers` format is still supported but will be migrated:
+
+```toml
+# Legacy format (deprecated)
+[mcp]
+enabled = true
+providers = ["core"]
+
+# New format (recommended)
+[developer.mcp]
+enabled = true
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
 ```
 
 ### Creating Custom MCP Servers
@@ -239,12 +271,13 @@ if __name__ == "__main__":
 
 #### Registering Custom Server
 ```toml
-[[mcp.servers]]
+[[developer.mcp.servers]]
 enabled = true
 name = "CustomSearch"
+server_type = "external"
 command = "python"
 args = ["/path/to/custom_mcp_server.py"]
-mode = "stdin"
+timeout_seconds = 30
 ```
 
 ### Tool Error Handling
@@ -381,6 +414,85 @@ system_prompt = """You optimize code performance by:
 4. Analyzing resource usage"""
 ```
 
+## Command Layers
+
+Octodev supports command layers for specialized processing that can be invoked manually:
+
+### Developer Role Command Layers
+
+```toml
+# Estimation command layer
+[developer.commands.estimate]
+name = "estimate"
+enabled = true
+model = "openrouter:openai/gpt-4.1-mini"
+system_prompt = """You are a project estimation expert. Analyze the work done or discussed in the conversation and provide estimates for:
+
+1. Time required for completion
+2. Complexity assessment
+3. Potential challenges
+4. Suggested next steps
+
+Be specific and practical in your estimates. Consider the context of the development work."""
+temperature = 0.2
+input_mode = "Last"
+
+[developer.commands.estimate.mcp]
+enabled = false
+
+# Code review command layer
+[developer.commands.review]
+name = "review"
+enabled = true
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = """You are a code review expert. Analyze the recent work and provide:
+
+1. Code quality assessment
+2. Potential improvements
+3. Best practices recommendations
+4. Security considerations
+5. Performance optimization suggestions
+
+Focus on constructive feedback that helps improve the codebase."""
+temperature = 0.1
+input_mode = "All"
+
+[developer.commands.review.mcp]
+enabled = true
+servers = ["developer"]
+allowed_tools = ["text_editor", "semantic_code"]
+```
+
+### Assistant Role Command Layers
+
+```toml
+# Summarization command layer
+[assistant.commands.summarize]
+name = "summarize"
+enabled = true
+system_prompt = "You are a summarization expert. Provide a clear, concise summary of the conversation or content."
+temperature = 0.2
+input_mode = "All"
+
+[assistant.commands.summarize.mcp]
+enabled = false
+```
+
+### Using Command Layers
+
+Command layers can be invoked manually during sessions:
+
+```bash
+# Invoke estimation layer
+/estimate
+
+# Invoke code review layer
+/review
+
+# Invoke summarization layer
+/summarize
+```
+
 ## Advanced Configuration Patterns
 
 ### Multi-Provider Layer Setup
@@ -399,30 +511,68 @@ name = "developer"
 model = "anthropic:claude-3-5-sonnet"  # Best reasoning
 ```
 
-### Environment-Specific Configuration
+### Role-Specific MCP Configuration
 ```toml
-# Development environment
-[dev.openrouter]
-model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
+# Developer role with full tools
+[developer.mcp]
+enabled = true
 
-# Production environment  
-[prod.openrouter]
-model = "openrouter:anthropic/claude-3.5-haiku"
-enable_layers = false
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[[developer.mcp.servers]]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+
+# Assistant role with no tools
+[assistant.mcp]
+enabled = false
+
+# Custom role with limited tools
+[code-reviewer.mcp]
+enabled = true
+
+[[code-reviewer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+tools = ["text_editor", "semantic_code"]  # Limited tool set
 ```
 
 ### Dynamic Tool Access
 ```toml
 # Tools based on project type
-[web_project.mcp]
-providers = ["core", "web_tools", "testing"]
+[web-developer.mcp]
+enabled = true
 
-[ml_project.mcp]
-providers = ["core", "data_tools", "notebook"]
+[[web-developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
 
-[systems_project.mcp]
-providers = ["core", "system_tools", "monitoring"]
+[[web-developer.mcp.servers]]
+enabled = true
+name = "WebTools"
+server_type = "external"
+url = "https://mcp.so/server/web-tools"
+
+[ml-developer.mcp]
+enabled = true
+
+[[ml-developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[[ml-developer.mcp.servers]]
+enabled = true
+name = "DataTools"
+server_type = "external"
+command = "python"
+args = ["-m", "ml_tools_server"]
 ```
 
 ## Performance Optimization
@@ -467,6 +617,27 @@ node_batch_size = 5
 relationship_batch_size = 3
 ```
 
+### MCP Performance
+
+#### Server Optimization
+```toml
+[[developer.mcp.servers]]
+enabled = true
+name = "FastTools"
+server_type = "external"
+command = "python"
+args = ["-m", "fast_tools_server"]
+timeout_seconds = 10  # Short timeout for fast tools
+
+[[developer.mcp.servers]]
+enabled = true
+name = "SlowTools"
+server_type = "external"
+command = "python"
+args = ["-m", "slow_tools_server"]
+timeout_seconds = 60  # Longer timeout for complex tools
+```
+
 ## Troubleshooting Advanced Features
 
 ### GraphRAG Issues
@@ -492,8 +663,8 @@ relationship_model = "openrouter:anthropic/claude-3.5-sonnet"
 
 #### Tool Timeout
 ```toml
-[[mcp.servers]]
-timeout = 60  # Increase timeout for slow tools
+[[developer.mcp.servers]]
+timeout_seconds = 60  # Increase timeout for slow tools
 ```
 
 #### Server Connection Issues
@@ -503,6 +674,12 @@ curl -X POST http://localhost:8008/tools/list
 
 # Check server logs
 tail -f .octodev/logs/mcp_server.log
+```
+
+#### Server Type Validation
+```bash
+# Validate MCP configuration
+octodev config --validate
 ```
 
 ### Layer Issues
@@ -525,6 +702,17 @@ tail -f .octodev/logs/mcp_server.log
 /layers
 ```
 
+### Command Layer Issues
+
+#### Command Not Found
+```bash
+# List available commands
+/help
+
+# Check role configuration
+octodev config --validate
+```
+
 ## Best Practices
 
 ### GraphRAG
@@ -534,10 +722,11 @@ tail -f .octodev/logs/mcp_server.log
 4. **Monitor storage usage** as graphs can be large
 
 ### MCP Protocol
-1. **Start with core tools** then add specialized ones
+1. **Start with built-in servers** then add external ones
 2. **Test custom servers** thoroughly before deployment
 3. **Monitor tool performance** and error rates
 4. **Use appropriate timeouts** for different tool types
+5. **Limit tool access** in specialized roles
 
 ### Layered Architecture
 1. **Design layers** with clear responsibilities
@@ -545,3 +734,48 @@ tail -f .octodev/logs/mcp_server.log
 3. **Monitor token usage** across layers
 4. **Optimize input modes** for efficiency
 5. **Test layer interactions** to ensure smooth flow
+
+### Command Layers
+1. **Create specialized commands** for common tasks
+2. **Use appropriate models** for command complexity
+3. **Limit tool access** for focused functionality
+4. **Test commands** in different contexts
+5. **Document command purposes** clearly
+
+## Migration from Legacy Configuration
+
+### MCP Migration
+
+**Old format:**
+```toml
+[mcp]
+enabled = true
+providers = ["core"]
+```
+
+**New format:**
+```toml
+[developer.mcp]
+enabled = true
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+```
+
+### Provider Migration
+
+**Old format:**
+```toml
+[openrouter]
+model = "anthropic/claude-3.5-sonnet"
+```
+
+**New format:**
+```toml
+[developer.config]
+model = "openrouter:anthropic/claude-3.5-sonnet"
+```
+
+Octodev automatically migrates legacy configurations on load, but manual updates are recommended for better control and understanding of the new structure.

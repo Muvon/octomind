@@ -159,6 +159,34 @@ graph TB
 
 ## Recent Changes and Migration
 
+### MCP Server Registry (New)
+The MCP configuration has been improved with a new server registry approach:
+
+**Old format (still supported)**:
+```toml
+[developer.mcp]
+enabled = true
+
+[[developer.mcp.servers]]
+enabled = true
+name = "developer"
+server_type = "developer"
+```
+
+**New format (recommended)**:
+```toml
+# Define once in registry
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+# Reference from roles
+[developer.mcp]
+enabled = true
+server_refs = ["developer"]
+```
+
 ### Provider Format Migration
 **Old format (deprecated)**:
 ```toml
@@ -171,6 +199,10 @@ model = "openrouter:anthropic/claude-3.5-sonnet"
 # or
 model = "anthropic:claude-3-5-sonnet"
 ```
+
+### New AI Providers
+- **Amazon Bedrock**: Access to Claude, Llama, and other models via AWS
+- **Cloudflare Workers AI**: Edge AI inference with fast response times
 
 ### Configuration Validation
 All configurations are now validated on load. Use `octodev config --validate` to check your setup.
@@ -196,5 +228,5 @@ This manual is generated from the codebase analysis. Updates should be made to b
 ---
 
 **Version**: Latest  
-**Last Updated**: January 2025  
+**Last Updated**: January 2025 (Post-MCP Registry Refactoring)  
 **Project**: [Octodev](https://github.com/muvon/octodev)

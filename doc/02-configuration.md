@@ -154,17 +154,19 @@ model = "openrouter:anthropic/claude-sonnet-4"
 model = "openai:gpt-4o-mini"
 
 [my-custom-role.config]
-model = "anthropic:claude-3-5-haiku"
+model = "amazon:claude-3-5-sonnet"  # Using Amazon Bedrock
+# or
+model = "cloudflare:llama-3.1-8b-instruct"  # Using Cloudflare Workers AI
 ```
 
 ### Supported Providers
 
-- **OpenRouter**: `openrouter:provider/model`
-- **OpenAI**: `openai:model-name`
-- **Anthropic**: `anthropic:model-name`
-- **Google Vertex AI**: `google:model-name`
-- **Amazon Bedrock**: `amazon:model-name`
-- **Cloudflare Workers AI**: `cloudflare:model-name`
+- **OpenRouter**: `openrouter:provider/model` - Multi-provider access through OpenRouter
+- **OpenAI**: `openai:model-name` - Direct OpenAI API access
+- **Anthropic**: `anthropic:model-name` - Direct Anthropic API access
+- **Google Vertex AI**: `google:model-name` - Google Cloud Vertex AI
+- **Amazon Bedrock**: `amazon:model-name` - AWS Bedrock models
+- **Cloudflare Workers AI**: `cloudflare:model-name` - Edge AI inference
 
 ## Environment Variables
 
@@ -312,40 +314,42 @@ input_mode = "All"
 
 ## MCP Configuration
 
-### New Server-Based Configuration
+### New Server Registry Configuration
 
-The MCP system has been refactored to use a unified server configuration approach that treats built-in and external servers consistently:
+The MCP system has been significantly improved with a new server registry approach that eliminates configuration duplication. Servers are now defined once in a central registry and referenced by roles and commands:
 
 ```toml
-# Global MCP configuration (fallback for all roles)
-[mcp]
-enabled = true
+# MCP Server Registry - Define servers once, reference everywhere
+[mcp_server_registry]
 
-# Built-in developer tools server
-[[mcp.servers]]
+# Built-in servers (defined by default but can be customized)
+[mcp_server_registry.developer]
 enabled = true
 name = "developer"
 server_type = "developer"
+tools = []  # Empty means all tools enabled
 
-# Built-in filesystem tools server
-[[mcp.servers]]
+[mcp_server_registry.filesystem]
 enabled = true
 name = "filesystem"
 server_type = "filesystem"
+tools = []  # Empty means all tools enabled
 
 # External HTTP server
-[[mcp.servers]]
+[mcp_server_registry.web_search]
 enabled = true
-name = "WebSearch"
+name = "web_search"
 server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "optional_token"
+mode = "http"
+timeout_seconds = 30
 tools = []  # Empty means all tools enabled
 
 # External command-based server
-[[mcp.servers]]
+[mcp_server_registry.local_tools]
 enabled = true
-name = "LocalTools"
+name = "local_tools"
 server_type = "external"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
@@ -353,20 +357,22 @@ mode = "stdin"  # Communication mode: "http" or "stdin"
 timeout_seconds = 30
 tools = []
 
-# Role-specific MCP configuration (inherits from global)
+# Role configurations now reference servers from registry
 [developer.mcp]
 enabled = true
-# Inherits servers from global [mcp] unless overridden
+server_refs = ["developer", "filesystem"]  # Reference servers by name
+allowed_tools = []  # Empty means all tools from referenced servers
 
-# Role-specific override with custom servers
+# Role-specific override with limited servers
 [assistant.mcp]
 enabled = true
+server_refs = ["filesystem"]  # Only filesystem tools
+allowed_tools = ["text_editor", "list_files"]  # Limit to specific tools
 
-[[assistant.mcp.servers]]
+# Global MCP fallback
+[mcp]
 enabled = true
-name = "filesystem"
-server_type = "filesystem"
-tools = ["text_editor", "list_files"]  # Limit to specific tools
+server_refs = ["developer", "filesystem"]  # Default servers
 ```
 
 ### Server Types
@@ -377,16 +383,16 @@ tools = ["text_editor", "list_files"]  # Limit to specific tools
 
 ### Migration from Legacy Configuration
 
-The old `providers = ["core"]` approach has been completely replaced with the new server-based configuration:
+The MCP configuration has evolved through several iterations. The new server registry approach is the recommended method:
 
-**Legacy format (no longer supported):**
+**Oldest format (no longer supported):**
 ```toml
 [mcp]
 enabled = true
 providers = ["core"]
 ```
 
-**New format (required):**
+**Previous format (still supported):**
 ```toml
 [mcp]
 enabled = true
@@ -402,11 +408,30 @@ name = "filesystem"
 server_type = "filesystem"
 ```
 
-**Migration steps:**
-1. Remove any `providers = ["core"]` lines from your configuration
-2. Add explicit server configurations using the `[[mcp.servers]]` format
-3. Use `server_type = "developer"` for the equivalent of the old "core" provider
-4. Add `server_type = "filesystem"` for file operations if needed
+**New registry format (recommended):**
+```toml
+# Define servers once in registry
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[mcp_server_registry.filesystem]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+
+# Reference from roles
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]
+```
+
+**Migration benefits:**
+1. **Eliminates duplication** - Define servers once, reference everywhere
+2. **Better organization** - Clear separation between server definitions and role configurations
+3. **Easier maintenance** - Update server configuration in one place
+4. **Cleaner configs** - Roles only specify which servers they need
 
 ## Embedding Configuration
 

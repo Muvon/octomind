@@ -43,9 +43,10 @@ graph TB
 
 ### 2. AI-Powered Assistance
 - Interactive sessions with AI coding assistants
-- Multiple AI provider support (OpenRouter, OpenAI, Anthropic, Google)
+- Multiple AI provider support (OpenRouter, OpenAI, Anthropic, Google, Amazon Bedrock, Cloudflare Workers AI)
 - Layered architecture for complex reasoning
 - Context-aware responses
+- Enhanced tool output rendering
 
 ### 3. Advanced Code Analysis
 - GraphRAG (Graph-based Retrieval Augmented Generation)
@@ -54,10 +55,11 @@ graph TB
 - Project context collection
 
 ### 4. Tool Integration
-- MCP (Model-Centric Programming) protocol support
+- MCP (Model-Centric Programming) protocol support with new server registry
 - Shell command execution
 - File editing capabilities
 - External tool integration
+- Improved tool output rendering and user control
 
 ## Installation and Setup
 

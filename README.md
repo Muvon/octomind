@@ -19,7 +19,9 @@ Octodev is a command-line tool that helps developers navigate and understand the
 - **Token Protection**: Warnings and confirmations for potentially costly operations
 - **Interruptible Processing**: Ctrl+C instantly cancels operations for better user control
 - **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs with better formatting and user control
-- **Unified MCP Server Configuration**: Consistent configuration approach for both built-in and external MCP servers
+- **MCP Server Registry**: New centralized server registry approach that reduces configuration duplication
+- **Additional AI Providers**: Support for Amazon Bedrock and Cloudflare Workers AI
+- **Improved Configuration Management**: Better global configuration with centralized provider settings
 
 ## Installation
 
@@ -68,6 +70,16 @@ Octodev supports multiple AI providers through an extensible architecture. You c
 - **Authentication**: Service account authentication (see setup below)
 - **Features**: Full tool support, built-in cost calculation
 
+#### Amazon Bedrock
+- **Models**: Claude, Llama, Command, and other Bedrock models
+- **Authentication**: AWS credentials (access key/secret key)
+- **Features**: Full tool support, built-in cost calculation, AWS integration
+
+#### Cloudflare Workers AI
+- **Models**: Llama, Mistral, and other Workers AI models
+- **Authentication**: Cloudflare API token and account ID
+- **Features**: Edge AI inference, fast response times, cost-effective
+
 ### Model Format
 
 All models must now be specified with the `provider:model` format:
@@ -88,6 +100,14 @@ octodev session --model "anthropic:claude-3-opus"
 # Google Vertex AI models
 octodev session --model "google:gemini-1.5-pro"
 octodev session --model "google:gemini-1.5-flash"
+
+# Amazon Bedrock models
+octodev session --model "amazon:claude-3-5-sonnet"
+octodev session --model "amazon:llama-3.1-70b-instruct"
+
+# Cloudflare Workers AI models
+octodev session --model "cloudflare:llama-3.1-8b-instruct"
+octodev session --model "cloudflare:mistral-7b-instruct"
 ```
 
 ### Configuration
@@ -95,17 +115,36 @@ octodev session --model "google:gemini-1.5-flash"
 Configure providers in your `.octodev/config.toml`:
 
 ```toml
-# Default model must use provider:model format
+# Centralized provider configuration (recommended)
+[providers.openrouter]
+api_key = "your_openrouter_key"  # Optional, can use env var
+
+[providers.openai]
+api_key = "your_openai_key"
+
+[providers.anthropic]
+api_key = "your_anthropic_key"
+
+[providers.amazon]
+region = "us-east-1"
+access_key_id = "your_access_key"
+secret_access_key = "your_secret_key"
+
+[providers.cloudflare]
+account_id = "your_account_id"
+api_token = "your_api_token"
+
+# Role-specific model configuration
+[developer]
+model = "openrouter:anthropic/claude-sonnet-4"
+
+[assistant]
+model = "openai:gpt-4o-mini"  # Use OpenAI for assistant mode
+
+# Legacy configuration (still supported)
 [openrouter]
 model = "openrouter:anthropic/claude-sonnet-4"
 api_key = "your_openrouter_key"  # Optional, can use env var
-
-# You can also set provider-specific models for different modes
-[agent.openrouter]
-model = "openrouter:anthropic/claude-sonnet-4"
-
-[chat.openrouter] 
-model = "openai:gpt-4o-mini"  # Use OpenAI for chat mode
 ```
 
 ### Environment Variables
@@ -126,6 +165,15 @@ export ANTHROPIC_API_KEY="your_anthropic_key"
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 export GOOGLE_PROJECT_ID="your-gcp-project-id"
 export GOOGLE_REGION="us-central1"  # Optional, defaults to us-central1
+
+# For Amazon Bedrock
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_REGION="us-east-1"  # Optional, defaults to us-east-1
+
+# For Cloudflare Workers AI
+export CLOUDFLARE_API_TOKEN="your_api_token"
+export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 ```
 
 #### Google Vertex AI Setup
@@ -142,6 +190,32 @@ Google Vertex AI requires service account authentication:
 4. **Enable the Vertex AI API** in your Google Cloud project
 
 Note: The Google provider currently requires additional OAuth2 implementation for full functionality.
+
+#### Amazon Bedrock Setup
+
+Amazon Bedrock requires AWS credentials:
+
+1. **Create AWS IAM user** with Bedrock access permissions
+2. **Generate access keys** for the IAM user
+3. **Set environment variables**:
+   ```bash
+   export AWS_ACCESS_KEY_ID="your_access_key"
+   export AWS_SECRET_ACCESS_KEY="your_secret_key"
+   export AWS_REGION="us-east-1"
+   ```
+4. **Enable model access** in the Bedrock console for the models you want to use
+
+#### Cloudflare Workers AI Setup
+
+Cloudflare Workers AI requires API credentials:
+
+1. **Get your Account ID** from the Cloudflare dashboard
+2. **Create an API token** with Workers AI permissions
+3. **Set environment variables**:
+   ```bash
+   export CLOUDFLARE_ACCOUNT_ID="your_account_id"
+   export CLOUDFLARE_API_TOKEN="your_api_token"
+   ```
 
 ## Usage
 
@@ -398,61 +472,69 @@ The token management settings help control costs and prevent token limits from b
 
 ### MCP Configuration
 
-Octodev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration uses a unified server-based approach where all servers (built-in and external) are configured consistently.
+Octodev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration has been significantly improved with a new server registry approach that reduces duplication and provides better organization.
+
+#### New Server Registry Approach
+
+The MCP system now uses a centralized server registry where servers are defined once and referenced by roles and commands. This eliminates configuration duplication and provides better maintainability.
 
 #### Configuration Hierarchy
 
 ```
-[role.mcp] → [global.mcp] → defaults
+[role.mcp] → [global.mcp] → [mcp_server_registry] → defaults
 ```
 
-#### Basic Configuration
+#### New Server Registry Configuration
 
 ```toml
-# Global MCP configuration (fallback for all roles)
-[mcp]
-enabled = true
+# MCP Server Registry - Define servers once, reference everywhere
+[mcp_server_registry]
 
-# Built-in developer tools server
-[[mcp.servers]]
+# Built-in servers (defined by default but can be customized)
+[mcp_server_registry.developer]
 enabled = true
 name = "developer"
 server_type = "developer"
+tools = []  # Empty means all tools enabled
 
-# Built-in filesystem tools server  
-[[mcp.servers]]
+[mcp_server_registry.filesystem]
 enabled = true
 name = "filesystem"
 server_type = "filesystem"
+tools = []  # Empty means all tools enabled
 
-# Developer role inherits global MCP by default
-[developer]
-# No [developer.mcp] section = inherits global [mcp]
+# External server example
+[mcp_server_registry.web_search]
+enabled = true
+name = "web_search"
+server_type = "external"
+url = "https://api.example.com/mcp/websearch"
+auth_token = "your-auth-token"  # Optional
+tools = []  # Empty means all tools enabled
 
-# Assistant role explicitly disables tools
+# Role configurations now reference servers from registry
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Reference servers by name
+allowed_tools = []  # Empty means all tools from referenced servers
+
 [assistant.mcp]
-enabled = false
-```
+enabled = true
+server_refs = ["filesystem"]  # Only filesystem tools
+allowed_tools = ["text_editor", "list_files"]  # Limit to specific tools
 
-#### Advanced Configuration Examples
-
-**Role-specific tool customization:**
-```toml
-# Global fallback with all tools
+# Global MCP fallback
 [mcp]
 enabled = true
+server_refs = ["developer", "filesystem"]  # Default servers
+```
 
-[[mcp.servers]]
-enabled = true
-name = "developer"
-server_type = "developer"
+#### Legacy Configuration Support
 
-[[mcp.servers]]
-enabled = true
-name = "filesystem"
-server_type = "filesystem"
+The old server-based configuration is still supported for backward compatibility, but the new server registry approach is recommended:
 
-# Developer role with additional external server
+**Legacy format (still supported):**
+```toml
 [developer.mcp]
 enabled = true
 
@@ -465,56 +547,48 @@ server_type = "developer"
 enabled = true
 name = "filesystem"
 server_type = "filesystem"
-
-[[developer.mcp.servers]]
-enabled = true
-name = "web_search"
-server_type = "external"
-url = "https://api.example.com/mcp/websearch"
-auth_token = "your_token_if_needed"
-
-# Assistant role with limited tools
-[assistant.mcp]
-enabled = true
-
-[[assistant.mcp.servers]]
-enabled = true
-name = "filesystem"
-server_type = "filesystem"
-tools = ["text_editor", "list_files"]  # Limit to specific tools
 ```
 
-**External MCP server configuration:**
+**New registry format (recommended):**
 ```toml
-# Global MCP with external servers
-[mcp]
-enabled = true
-
-# Built-in servers
-[[mcp.servers]]
+# Define once in registry
+[mcp_server_registry.developer]
 enabled = true
 name = "developer"
 server_type = "developer"
 
-# External HTTP server
-[[mcp.servers]]
+# Reference from roles
+[developer.mcp]
 enabled = true
-name = "WebSearch"
+server_refs = ["developer", "filesystem"]
+```
+
+#### External Server Configuration
+
+External servers are now configured in the server registry:
+
+```toml
+# External HTTP server
+[mcp_server_registry.web_search]
+enabled = true
+name = "web_search"
 server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "your_token_if_needed"  # Optional
-tools = []  # Empty means all tools are enabled
+mode = "http"
+timeout_seconds = 30
+tools = []  # Empty means all tools enabled
 
 # Local MCP server - Running as a local process
-[[mcp.servers]]
+[mcp_server_registry.local_tools]
 enabled = true
-name = "LocalTools"
+name = "local_tools"
 server_type = "external"
 command = "python"  # Command to execute
-args = ["-m", "websearch_server", "--port", "8008"]  # Arguments to pass
+args = ["-m", "websearch_server", "--port", "8008"]
 mode = "stdin"  # Communication mode: "http" or "stdin"
 timeout_seconds = 30
-tools = []  # Empty means all tools are enabled
+tools = ["custom_tool1", "custom_tool2"]  # Only these tools enabled
 ```
 
 #### Setting up a Local MCP Server
@@ -522,26 +596,28 @@ tools = []  # Empty means all tools are enabled
 You can run an MCP server locally by providing the command and arguments to execute:
 
 1. Create a `.octodev/config.toml` file if you don't have one (or run `octodev config`)
-2. Add a local MCP server configuration:
+2. Add a local MCP server configuration to the server registry:
 
 ```toml
-# Global MCP configuration (fallback for all roles)
-[mcp]
-enabled = true
-
-[[mcp.servers]]
+# MCP Server Registry
+[mcp_server_registry.developer]
 enabled = true
 name = "developer"
 server_type = "developer"
 
-[[mcp.servers]]
+[mcp_server_registry.web_search]
 enabled = true
-name = "WebSearch"
+name = "web_search"
 server_type = "external"
 command = "python"  # Or any other command to start your server
 args = ["-m", "websearch_server", "--port", "8008"]
 mode = "stdin"
 timeout_seconds = 30
+
+# Reference the server in your role configuration
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "web_search"]
 ```
 
 3. Octodev will start the server process when needed and clean it up when the program exits.
@@ -554,14 +630,16 @@ timeout_seconds = 30
 
 #### Migration from Legacy Configuration
 
-**Old format (deprecated):**
+The MCP configuration has evolved through several iterations:
+
+**Oldest format (no longer supported):**
 ```toml
 [mcp]
 enabled = true
 providers = ["core"]
 ```
 
-**New format (required):**
+**Previous format (still supported):**
 ```toml
 [mcp]
 enabled = true
@@ -572,7 +650,21 @@ name = "developer"
 server_type = "developer"
 ```
 
-The old `providers = ["core"]` approach has been replaced with explicit server configurations that treat built-in and external servers consistently.
+**New registry format (recommended):**
+```toml
+# Define servers once in registry
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+# Reference from roles
+[developer.mcp]
+enabled = true
+server_refs = ["developer"]
+```
+
+The new server registry approach eliminates duplication when multiple roles or commands need the same servers.
 
 ## How It Works
 
@@ -605,7 +697,7 @@ This architecture ensures optimal token usage and focused expertise at each stag
 
 ### Common Issues
 
-- **Slow Indexing**: For large codebases, initial indexing may take some time, especially when downloading models for the first time.
+- **Slow Indexing**: For large codebases, initial indexing may take some time, especially when downloading models for the first time. Recent optimizations have reduced the number of indexed file types for better performance.
 - **Missing Dependencies**: Make sure you have the required Rust version (use rustup to update if needed).
 - **Storage Path**: Data is stored in the `.octodev/storage` directory using SurrealDB's RocksDB backend.
 - **Token Limits**: If you encounter token limit issues, try:
@@ -613,10 +705,12 @@ This architecture ensures optimal token usage and focused expertise at each stag
   - Setting a higher `max_request_tokens_threshold` in the config
   - Using `/cache` to mark system messages or large user inputs for caching
   - Using `/done` to optimize context between interactions
-- **Large Tool Outputs**: When tools generate very large outputs, you'll be prompted to confirm. If you frequently encounter this:
-  - Adjust the `mcp_response_warning_threshold` setting in your config
-  - Modify your tool-usage patterns to be more specific (e.g., limit file listings, be specific with file paths)
-  - Try using `grep` or other filtering tools to reduce output size
+- **Large Tool Outputs**: When tools generate very large outputs, you'll be prompted to confirm. The system now provides better handling with:
+  - **Enhanced rendering**: Improved display formatting for tool outputs
+  - **User control**: Better prompts and options for handling large outputs
+  - **Configurable thresholds**: Adjust the `mcp_response_warning_threshold` setting in your config
+  - **Smart filtering**: Modify your tool-usage patterns to be more specific (e.g., limit file listings, be specific with file paths)
+  - **Tool optimization**: Try using `grep` or other filtering tools to reduce output size
 - **MCP Configuration Issues**: If you encounter MCP-related errors:
   - Ensure you're using the new server-based configuration format
   - Migrate from old `providers = ["core"]` to `[[mcp.servers]]` format
@@ -659,6 +753,27 @@ The provider system handles:
 Example providers to reference:
 - `openrouter.rs` - Full-featured provider with caching and cost tracking
 - `openai.rs` - Standard provider implementation
+
+## Changelog
+
+### Recent Updates (January 2025)
+
+#### Major Features
+- **MCP Server Registry**: New centralized server registry approach that eliminates configuration duplication
+- **New AI Providers**: Added support for Amazon Bedrock and Cloudflare Workers AI
+- **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs with better formatting and user control
+- **Centralized Provider Configuration**: New `[providers.*]` sections for better API key management
+
+#### Improvements
+- **Configuration Validation**: Better validation and error messages for configuration issues
+- **File Indexing Optimization**: Reduced allowed text extensions for more focused indexing
+- **Global Configuration Management**: Better system-wide configuration with proper inheritance
+- **Backward Compatibility**: All legacy configuration formats remain supported
+
+#### Migration Notes
+- **MCP Configuration**: New server registry format is recommended but old formats still work
+- **Provider Configuration**: New centralized `[providers.*]` sections are recommended
+- **Model Format**: All models must use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
 
 ## License
 

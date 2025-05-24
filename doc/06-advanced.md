@@ -120,44 +120,59 @@ MCP enables AI models to use external tools and services through a standardized 
 - **text_search**: Search text files
 - **graphrag**: Query the code knowledge graph
 
-### New Server-Based MCP Configuration
+### New Server Registry MCP Configuration
 
-The MCP system has been refactored to use a unified server configuration approach that treats built-in and external servers consistently:
+The MCP system has been significantly improved with a new server registry approach that eliminates configuration duplication and provides better organization:
 
 ```toml
-# Role-specific MCP configuration
-[developer.mcp]
-enabled = true
+# MCP Server Registry - Define servers once, reference everywhere
+[mcp_server_registry]
 
 # Built-in server types
-[[developer.mcp.servers]]
+[mcp_server_registry.developer]
 enabled = true
 name = "developer"
 server_type = "developer"  # Built-in developer tools
+tools = []  # Empty means all tools enabled
 
-[[developer.mcp.servers]]
+[mcp_server_registry.filesystem]
 enabled = true
 name = "filesystem"
 server_type = "filesystem"  # Built-in filesystem tools
+tools = []  # Empty means all tools enabled
 
 # External HTTP server
-[[developer.mcp.servers]]
+[mcp_server_registry.web_search]
 enabled = true
-name = "WebSearch"
+name = "web_search"
 server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "optional_token"
+mode = "http"
+timeout_seconds = 30
 tools = []  # Empty = all tools enabled
 
 # External command-based server
-[[developer.mcp.servers]]
+[mcp_server_registry.local_tools]
 enabled = true
-name = "LocalTools"
+name = "local_tools"
 server_type = "external"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
+mode = "stdin"
 timeout_seconds = 30
 tools = []
+
+# Role-specific MCP configuration now references servers
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem", "web_search"]  # Reference by name
+allowed_tools = []  # Empty means all tools from referenced servers
+
+[assistant.mcp]
+enabled = true
+server_refs = ["filesystem"]  # Only filesystem tools
+allowed_tools = ["text_editor", "list_files"]  # Limit to specific tools
 ```
 
 ### Server Types
@@ -166,17 +181,17 @@ tools = []
 - **filesystem**: Built-in filesystem tools (file reading, writing, listing)
 - **external**: External MCP servers (HTTP or command-based)
 
-### Legacy Provider Support
+### Legacy Configuration Support
 
-For backward compatibility, the old `providers` format is still supported but will be migrated:
+The MCP configuration has evolved through several iterations. All formats are supported for backward compatibility:
 
 ```toml
-# Legacy format (deprecated)
+# Oldest format (no longer recommended)
 [mcp]
 enabled = true
 providers = ["core"]
 
-# New format (recommended)
+# Previous format (still supported)
 [developer.mcp]
 enabled = true
 
@@ -184,6 +199,16 @@ enabled = true
 enabled = true
 name = "developer"
 server_type = "developer"
+
+# New registry format (recommended)
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[developer.mcp]
+enabled = true
+server_refs = ["developer"]
 ```
 
 ### Creating Custom MCP Servers
@@ -271,13 +296,20 @@ if __name__ == "__main__":
 
 #### Registering Custom Server
 ```toml
-[[developer.mcp.servers]]
+# Add to server registry
+[mcp_server_registry.custom_search]
 enabled = true
-name = "CustomSearch"
+name = "custom_search"
 server_type = "external"
 command = "python"
 args = ["/path/to/custom_mcp_server.py"]
+mode = "stdin"
 timeout_seconds = 30
+
+# Reference from role
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem", "custom_search"]
 ```
 
 ### Tool Error Handling

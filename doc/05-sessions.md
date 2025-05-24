@@ -4,20 +4,21 @@
 
 Octodev supports flexible session roles for different use cases, with two defaults provided and an extensible system for custom roles.
 
-## Session Modes Comparison
+## Session Roles Comparison
 
-| Feature | Agent Mode | Chat Mode |
-|---------|------------|-----------|
-| **Purpose** | Full development assistance | Simple conversation |
-| **Indexing** | Full codebase indexing | No indexing (faster startup) |
-| **Tools** | All development tools enabled | Tools disabled by default |
-| **Layers** | Supports layered architecture | Direct model interaction |
-| **Context** | Full project context | Minimal context |
-| **Resource Usage** | Higher (more features) | Lower (lightweight) |
+| Feature | Developer Role | Assistant Role | Custom Roles |
+|---------|----------------|----------------|---------------|
+| **Purpose** | Full development assistance | Simple conversation | Specialized use cases |
+| **Indexing** | Full codebase indexing | No indexing (faster startup) | Configurable |
+| **Tools** | All development tools enabled | Tools disabled by default | Configurable |
+| **Layers** | Supports layered architecture | Direct model interaction | Configurable |
+| **Context** | Full project context | Minimal context | Configurable |
+| **Resource Usage** | Higher (more features) | Lower (lightweight) | Depends on configuration |
+| **Inheritance** | Inherits from global config | Base for custom roles | Inherits from assistant |
 
-## Agent Mode
+## Developer Role
 
-Agent mode is the default and provides comprehensive development assistance.
+Developer role is the default and provides comprehensive development assistance.
 
 ### Starting Developer Role
 
@@ -35,7 +36,7 @@ octodev session --role=developer --model="openrouter:anthropic/claude-sonnet-4"
 octodev session --role=developer -n development_session
 ```
 
-### Agent Mode Features
+### Developer Role Features
 
 #### Full Tool Access
 - **Shell commands**: Execute terminal commands
@@ -56,45 +57,50 @@ Three-layer processing for complex tasks:
 2. **Context Generator**: Gathers relevant information
 3. **Developer**: Executes development tasks
 
-### Agent Mode Configuration
+### Developer Role Configuration
 
 ```toml
-[agent]
-system = "You are an Octodev AI developer assistant with full access to development tools."
-
-[agent.openrouter]
+[developer]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
+system = "You are an Octodev AI developer assistant with full access to development tools."
 
-[agent.mcp]
+# MCP configuration using new server registry approach
+[developer.mcp]
 enabled = true
-providers = ["core", "filesystem"]
+server_refs = ["developer", "filesystem"]  # Reference servers from registry
+allowed_tools = []  # Empty means all tools from referenced servers
 
-[[agent.servers]]
+# Server registry (define once, reference everywhere)
+[mcp_server_registry.developer]
 enabled = true
-name = "DevTools"
-command = "python"
-args = ["-m", "dev_server"]
+name = "developer"
+server_type = "developer"
+
+[mcp_server_registry.filesystem]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
 ```
 
-## Chat Mode
+## Assistant Role
 
-Chat mode is optimized for lightweight conversations without the overhead of full development tools.
+Assistant role is optimized for lightweight conversations without the overhead of full development tools.
 
-### Starting Chat Mode
+### Starting Assistant Role
 
 ```bash
-# Chat mode
-octodev session --mode=chat
+# Assistant role
+octodev session --role=assistant
 
-# Chat mode with specific model
-octodev session --mode=chat --model="openai:gpt-4o-mini"
+# Assistant role with specific model
+octodev session --role=assistant --model="openai:gpt-4o-mini"
 
-# Named chat session
-octodev session --mode=chat -n quick_chat
+# Named assistant session
+octodev session --role=assistant -n quick_chat
 ```
 
-### Chat Mode Features
+### Assistant Role Features
 
 #### Lightweight Operation
 - No codebase indexing
@@ -104,23 +110,100 @@ octodev session --mode=chat -n quick_chat
 
 #### Optional Tool Access
 ```toml
-[chat.mcp]
+[assistant.mcp]
 enabled = true  # Can enable tools if needed
-providers = ["web-search"]  # Specific tools only
+server_refs = ["filesystem"]  # Specific servers only
+allowed_tools = ["text_editor", "list_files"]  # Limited tools
 ```
 
-### Chat Mode Configuration
+### Assistant Role Configuration
 
 ```toml
-[chat]
-system = "You are a helpful assistant."
-
-[chat.openrouter]
+[assistant]
 model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
+system = "You are a helpful assistant."
 
-[chat.mcp]
+[assistant.mcp]
 enabled = false  # Tools disabled by default
+```
+
+## Custom Roles
+
+Custom roles inherit from the assistant role as a base, then apply their own overrides. This provides a flexible system for creating specialized configurations.
+
+### Creating Custom Roles
+
+```bash
+# Use a custom role
+octodev session --role=code-reviewer
+octodev session --role=security-analyst
+octodev session --role=documentation-writer
+```
+
+### Custom Role Configuration
+
+```toml
+# Code reviewer role
+[code-reviewer]
+model = "openrouter:anthropic/claude-3.5-sonnet"
+enable_layers = true
+system = "You are a code review expert focused on security and best practices."
+
+[code-reviewer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "semantic_code", "list_files"]
+
+# Security analyst role
+[security-analyst]
+model = "openrouter:anthropic/claude-3.5-sonnet"
+enable_layers = true
+system = "You are a security expert focused on finding vulnerabilities and security issues."
+
+[security-analyst.mcp]
+enabled = true
+server_refs = ["developer"]
+allowed_tools = ["semantic_code", "shell"]  # Limited to analysis tools
+
+# Documentation writer role
+[documentation-writer]
+model = "openrouter:openai/gpt-4o"
+enable_layers = false
+system = "You are a technical writer focused on creating clear, comprehensive documentation."
+
+[documentation-writer.mcp]
+enabled = true
+server_refs = ["filesystem"]
+allowed_tools = ["text_editor", "list_files"]  # Only file operations
+```
+
+### Role Inheritance
+
+Custom roles follow this inheritance pattern:
+1. **Start with assistant role** as the base configuration
+2. **Apply custom overrides** from the role-specific configuration
+3. **Merge MCP settings** with server registry references
+
+```toml
+# Assistant base (inherited by all custom roles)
+[assistant]
+model = "openrouter:anthropic/claude-3.5-haiku"
+enable_layers = false
+system = "You are a helpful assistant."
+
+[assistant.mcp]
+enabled = false
+
+# Custom role inherits from assistant, then applies overrides
+[my-custom-role]
+model = "openrouter:openai/gpt-4o"  # Override model
+enable_layers = true                # Override layers
+system = "Custom system prompt"     # Override system prompt
+
+[my-custom-role.mcp]
+enabled = true                      # Override MCP enabled
+server_refs = ["filesystem"]        # Add specific servers
 ```
 
 ## Session Management
@@ -321,15 +404,15 @@ enabled = false  # No tools in chat mode
 
 ### Model Selection by Use Case
 
-#### For Quick Questions (Chat Mode)
+#### For Quick Questions (Assistant Role)
 ```toml
-[chat.openrouter]
+[assistant]
 model = "google:gemini-1.5-flash"  # Fast and cheap
 ```
 
-#### For Development Work (Agent Mode)
+#### For Development Work (Developer Role)
 ```toml
-[agent.openrouter]
+[developer]
 model = "openrouter:anthropic/claude-sonnet-4"  # Best reasoning
 ```
 
@@ -366,25 +449,34 @@ enable_auto_truncation = true
 
 ### Choose the Right Mode
 
-#### Use Agent Mode When:
+#### Use Developer Role When:
 - Working on code development
 - Need access to project files
 - Require code analysis
 - Want AI to execute commands
+- Need full project context
 
-#### Use Chat Mode When:
+#### Use Assistant Role When:
 - Quick questions
 - General conversations
 - No need for project context
 - Want faster responses
+- Simple text processing
+
+#### Use Custom Roles When:
+- Need specialized behavior
+- Want limited tool access
+- Have specific use cases
+- Need role-specific prompts
 
 ### Session Organization
 
 ```bash
 # Organize sessions by purpose
-octodev session -n bug_fixing --mode=agent
-octodev session -n code_review --mode=agent  
-octodev session -n quick_help --mode=chat
+octodev session -n bug_fixing --role=developer
+octodev session -n code_review --role=code-reviewer  
+octodev session -n quick_help --role=assistant
+octodev session -n security_audit --role=security-analyst
 ```
 
 ### Cost Control

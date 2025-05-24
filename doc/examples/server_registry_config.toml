@@ -1,0 +1,167 @@
+# Example Octodev Configuration with New MCP Server Registry
+# This demonstrates the new centralized server registry approach
+
+# Global configuration
+log_level = "info"
+mcp_response_warning_threshold = 20000
+max_request_tokens_threshold = 50000
+enable_auto_truncation = false
+cache_tokens_pct_threshold = 40
+cache_tokens_absolute_threshold = 4096
+cache_timeout_seconds = 240
+enable_markdown_rendering = true
+
+# Embedding configuration
+embedding_provider = "fastembed"
+
+[fastembed]
+code_model = "all-MiniLM-L6-v2"
+text_model = "all-MiniLM-L6-v2"
+
+# Centralized provider configuration
+[providers.openrouter]
+api_key = "your-openrouter-api-key"
+
+[providers.openai]
+api_key = "your-openai-api-key"
+
+[providers.anthropic]
+api_key = "your-anthropic-api-key"
+
+[providers.google]
+project_id = "your-gcp-project-id"
+region = "us-central1"
+
+[providers.amazon]
+region = "us-east-1"
+access_key_id = "your-aws-access-key"
+secret_access_key = "your-aws-secret-key"
+
+[providers.cloudflare]
+account_id = "your-cloudflare-account-id"
+api_token = "your-cloudflare-api-token"
+
+# MCP Server Registry - Define servers once, reference everywhere
+[mcp_server_registry]
+
+# Built-in developer tools server
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+tools = []  # Empty means all tools enabled
+
+# Built-in filesystem tools server
+[mcp_server_registry.filesystem]
+enabled = true
+name = "filesystem"
+server_type = "filesystem"
+tools = []  # Empty means all tools enabled
+
+# External web search server
+[mcp_server_registry.web_search]
+enabled = true
+name = "web_search"
+server_type = "external"
+url = "https://mcp.so/server/webSearch-Tools"
+auth_token = "your-auth-token"  # Optional
+mode = "http"
+timeout_seconds = 30
+tools = []  # Empty means all tools enabled
+
+# Local MCP server example
+[mcp_server_registry.local_tools]
+enabled = true
+name = "local_tools"
+server_type = "external"
+command = "python"
+args = ["-m", "my_mcp_server", "--port", "8008"]
+mode = "stdin"
+timeout_seconds = 30
+tools = ["custom_tool1", "custom_tool2"]  # Only these tools enabled
+
+# Role Configurations - Much simpler with server references!
+
+# Developer role - Full development environment
+[developer]
+model = "openrouter:anthropic/claude-sonnet-4"
+enable_layers = true
+system = "You are an Octodev AI developer assistant with full access to development tools."
+
+[developer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem", "web_search"]  # Reference servers by name
+allowed_tools = []  # Empty means all tools from referenced servers
+
+# Assistant role - Simple conversation
+[assistant]
+model = "openrouter:anthropic/claude-3.5-haiku"
+enable_layers = false
+system = "You are a helpful assistant."
+
+[assistant.mcp]
+enabled = true
+server_refs = ["filesystem"]  # Only filesystem tools
+allowed_tools = ["text_editor", "list_files"]  # Limit to specific tools
+
+# Custom role example - Code reviewer
+[code-reviewer]
+model = "openrouter:anthropic/claude-3.5-sonnet"
+enable_layers = true
+system = "You are a code review expert focused on security and best practices."
+
+[code-reviewer.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Developer and filesystem tools
+allowed_tools = ["text_editor", "semantic_code", "list_files"]  # Limited tool set
+
+# Command Configurations - Also use server references
+
+[commands.estimate]
+name = "estimate"
+enabled = true
+model = "openrouter:openai/gpt-4.1-mini"
+system_prompt = "You are a professional developer work estimator..."
+temperature = 0.2
+input_mode = "Last"
+
+[commands.estimate.mcp]
+enabled = false  # No tools for estimate command
+
+[commands.review]
+name = "review"
+enabled = true
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are a code review expert..."
+temperature = 0.1
+input_mode = "All"
+
+[commands.review.mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Reference servers from registry
+allowed_tools = ["text_editor", "semantic_code", "list_files"]  # Only needed tools
+
+# Global MCP fallback configuration
+[mcp]
+enabled = true
+server_refs = ["developer", "filesystem"]  # Default servers for roles without specific config
+
+# GraphRAG configuration
+[graphrag]
+enabled = false
+description_model = "openrouter:openai/gpt-4.1-nano"
+relationship_model = "openrouter:openai/gpt-4.1-nano"
+
+# Legacy OpenRouter config (maintained for backward compatibility)
+[openrouter]
+model = "openrouter:anthropic/claude-sonnet-4"
+api_key = "your-openrouter-api-key"
+enable_layers = true
+log_level = "info"
+mcp_response_warning_threshold = 20000
+max_request_tokens_threshold = 50000
+cache_tokens_pct_threshold = 40
+cache_tokens_absolute_threshold = 4096
+cache_timeout_seconds = 240
+enable_auto_truncation = false
+enable_markdown_rendering = true

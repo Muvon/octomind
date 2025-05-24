@@ -327,14 +327,10 @@ impl ChatSession {
 							let stats = cache_manager.get_cache_statistics(&self.session);
 							println!("{}", stats.format_for_display());
 
-							// Additional threshold information
+							// Additional threshold information using the passed config (role-specific merged config)
 							println!("{}", format!(
 								"Auto-cache threshold: {}%",
-								if let Ok(config) = crate::config::Config::load() {
-									config.openrouter.cache_tokens_pct_threshold
-								} else {
-									40
-								}
+								config.openrouter.cache_tokens_pct_threshold
 							).bright_blue());
 						},
 						"clear" => {
@@ -350,37 +346,33 @@ impl ChatSession {
 							}
 						},
 						"threshold" => {
-							// Show current threshold settings
-							if let Ok(config) = crate::config::Config::load() {
-								if config.openrouter.cache_tokens_absolute_threshold > 0 {
-									println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)",
-										config.openrouter.cache_tokens_absolute_threshold).bright_cyan());
-									println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
-										config.openrouter.cache_tokens_absolute_threshold).bright_blue());
-								} else {
-									let threshold = config.openrouter.cache_tokens_pct_threshold;
-									println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
-
-									if threshold == 0 || threshold == 100 {
-										println!("{}", "Auto-cache is disabled".bright_yellow());
-									} else {
-										println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {}% of total", threshold).bright_blue());
-									}
-								}
-
-								// Show time-based threshold
-								let timeout_seconds = config.openrouter.cache_timeout_seconds;
-								if timeout_seconds > 0 {
-									let timeout_minutes = timeout_seconds / 60;
-									println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)",
-										timeout_seconds, timeout_minutes).bright_green());
-									println!("{}", format!("Auto-cache will trigger if {} minutes pass since last checkpoint",
-										timeout_minutes).bright_blue());
-								} else {
-									println!("{}", "Time-based auto-cache is disabled".bright_yellow());
-								}
+							// Show current threshold settings using the passed config (which is role-specific merged config)
+							if config.openrouter.cache_tokens_absolute_threshold > 0 {
+								println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)",
+									config.openrouter.cache_tokens_absolute_threshold).bright_cyan());
+								println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
+									config.openrouter.cache_tokens_absolute_threshold).bright_blue());
 							} else {
-								println!("{}", "Could not load configuration".bright_red());
+								let threshold = config.openrouter.cache_tokens_pct_threshold;
+								println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
+
+								if threshold == 0 || threshold == 100 {
+									println!("{}", "Auto-cache is disabled".bright_yellow());
+								} else {
+									println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {}% of total", threshold).bright_blue());
+								}
+							}
+
+							// Show time-based threshold
+							let timeout_seconds = config.openrouter.cache_timeout_seconds;
+							if timeout_seconds > 0 {
+								let timeout_minutes = timeout_seconds / 60;
+								println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)",
+									timeout_seconds, timeout_minutes).bright_green());
+								println!("{}", format!("Auto-cache will trigger if {} minutes pass since last checkpoint",
+									timeout_minutes).bright_blue());
+							} else {
+								println!("{}", "Time-based auto-cache is disabled".bright_yellow());
 							}
 						},
 						_ => {

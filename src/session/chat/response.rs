@@ -298,8 +298,101 @@ pub async fn process_response(
 				let mut tool_tasks = Vec::new();
 
 				for tool_call in current_tool_calls.clone() {
-					// Always print tool call execution, but with different level of detail based on debug mode
-					log_info!("Executing: {} with params: {}", tool_call.tool_name, serde_json::to_string_pretty(&tool_call.parameters).unwrap_or_default());
+					// IMPROVED: Use the same format as tool results for consistency
+					let category = guess_tool_category(&tool_call.tool_name);
+					let title = format!(" {} | {} ", 
+						tool_call.tool_name.bright_cyan(),
+						category.bright_blue()
+					);
+					let separator_length = 70.max(title.len() + 4);
+					let dashes = "─".repeat(separator_length - title.len());
+					let separator = format!("──{}{}──", title, dashes.dimmed());
+					println!("{}", separator);
+
+					// Show parameters only in info mode
+					if config.openrouter.log_level.is_info_enabled() {
+						log_info!("Parameters:");
+						if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+							if !params_obj.is_empty() {
+								// Find the longest key for column alignment (max 20 chars to prevent excessive spacing)
+								let max_key_length = params_obj.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
+								
+								for (key, value) in params_obj.iter() {
+									let formatted_value = match value {
+										serde_json::Value::String(s) => {
+											if s.is_empty() {
+												"\"\"".bright_black().to_string()
+											} else if s.len() > 100 {
+												format!("\"{}...\"", &s[..97])
+											} else if s.contains('\n') {
+												// For multiline strings, show first line + indicator
+												let lines: Vec<&str> = s.lines().collect();
+												let first_line = lines.first().unwrap_or(&"");
+												if first_line.len() > 80 {
+													format!("\"{}...\" [+{} lines]", &first_line[..77], lines.len().saturating_sub(1))
+												} else if lines.len() > 1 {
+													format!("\"{}\" [+{} lines]", first_line, lines.len().saturating_sub(1))
+												} else {
+													format!("\"{}\"", first_line)
+												}
+											} else {
+												format!("\"{}\"", s)
+											}
+										},
+										serde_json::Value::Bool(b) => b.to_string(),
+										serde_json::Value::Number(n) => n.to_string(),
+										serde_json::Value::Array(arr) => {
+											if arr.is_empty() {
+												"[]".to_string()
+											} else if arr.len() > 3 {
+												format!("[{} items]", arr.len())
+											} else {
+												// Show small arrays inline
+												let items: Vec<String> = arr.iter().take(3).map(|item| {
+													match item {
+														serde_json::Value::String(s) => format!("\"{}\"", if s.len() > 20 { format!("{}...", &s[..17]) } else { s.clone() }),
+														_ => item.to_string()
+													}
+												}).collect();
+												format!("[{}]", items.join(", "))
+											}
+										},
+										serde_json::Value::Object(obj) => {
+											if obj.is_empty() {
+												"{}".to_string()
+											} else {
+												let obj_str = serde_json::to_string(value).unwrap_or_default();
+												if obj_str.len() > 100 {
+													format!("{{...}} ({} keys)", obj.len())
+												} else {
+													obj_str
+												}
+											}
+										},
+										serde_json::Value::Null => "null".bright_black().to_string(),
+									};
+									
+									// Format with proper column alignment and indentation
+									log_info!("  {}: {}", 
+										format!("{:width$}", key, width = max_key_length).bright_blue(),
+										formatted_value.white()
+									);
+								}
+							} else {
+								log_info!("  no parameters");
+							}
+						} else {
+							// Fallback for non-object parameters (arrays, primitives, etc.)
+							let params_str = serde_json::to_string(&tool_call.parameters).unwrap_or_default();
+							if params_str == "null" {
+								log_info!("  no parameters");
+							} else if params_str.len() > 100 {
+								log_info!("  params: {}...", &params_str[..97]);
+							} else {
+								log_info!("  params: {}", params_str);
+							}
+						}
+					}
 
 					// Increment tool call counter
 					chat_session.session.info.tool_calls += 1;
@@ -347,6 +440,14 @@ pub async fn process_response(
 							Ok((res, tool_time_ms)) => {
 								// Tool succeeded, reset the error counter
 								error_tracker.record_success(&tool_name);
+								
+								// IMPROVED: Show successful completion
+								println!("  {} Tool '{}' completed in {}ms", 
+									"✓".bright_green(),
+									tool_name.bright_green(),
+									tool_time_ms
+								);
+								
 								// Log the tool response with session name
 								let _ = crate::session::logger::log_tool_result(&chat_session.session.info.name, &tool_id, &res.result);
 								tool_results.push(res);
@@ -355,46 +456,73 @@ pub async fn process_response(
 							},
 							Err(e) => {
 								_has_error = true;
-								if config.openrouter.log_level.is_debug_enabled() {
-									println!("  - {}: {}", "Error executing tool".bright_red(), e);
-								} else {
-									// Show minimal error info without debug mode
-									println!("  - {}", "Tool execution failed".bright_red());
-								}
+								// IMPROVED: Always show detailed error information since errors are critical
+								println!("  {} {}: {}", 
+									"✗".bright_red(),
+									format!("Tool '{}' failed", tool_name).bright_red(),
+									format!("{}", e).bright_red()
+								);
 
 								// Track errors for this tool
 								let loop_detected = error_tracker.record_error(&tool_name);
+								
 								if loop_detected {
-									// Always show loop detection errors as they're critical
-									println!("{}", format!("  - Loop detected: {} failed {} times in a row",
-										tool_name, error_tracker.max_consecutive_errors).bright_red());
-
-									// Add a synthetic result with error message for the AI to see
+									// Show loop detection warning but don't stop - let the AI decide
+									println!("{}", format!("  ⚠ Warning: {} failed {} times in a row - AI should try a different approach",
+										tool_name, error_tracker.max_consecutive_errors).bright_yellow());
+									
+									// Add a detailed error result for loop detection
+									let loop_error_result = crate::mcp::McpToolResult {
+										tool_name: tool_name.clone(),
+										tool_id: tool_id.clone(),
+										result: serde_json::json!({
+											"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, error_tracker.max_consecutive_errors, e),
+											"tool_name": tool_name,
+											"consecutive_failures": error_tracker.max_consecutive_errors,
+											"loop_detected": true,
+											"suggestion": "Try a different tool or approach, or ask user for clarification"
+										}),
+									};
+									tool_results.push(loop_error_result);
+								} else {
+									// Regular error - add normal error result
 									let error_result = crate::mcp::McpToolResult {
 										tool_name: tool_name.clone(),
 										tool_id: tool_id.clone(),
 										result: serde_json::json!({
-											"error": "Tool execution failed multiple times. Please check parameters and try a different approach."
+											"error": format!("Tool execution failed: {}", e),
+											"tool_name": tool_name,
+											"attempt": error_tracker.get_error_count(&tool_name),
+											"max_attempts": error_tracker.max_consecutive_errors
 										}),
 									};
 									tool_results.push(error_result);
-								} else {
-									// Don't break the loop yet - we need 3 consecutive errors for the same tool
-									if config.openrouter.log_level.is_debug_enabled() {
-										println!("{}", format!("  - Tool '{}' failed {} of {} times. Continuing execution.",
-											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors).yellow());
-									}
+									
+									println!("{}", format!("  - Tool '{}' failed {} of {} times. Adding error to context.",
+										tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors).yellow());
 								}
 							},
 						},
 						Err(e) => {
 							_has_error = true;
-							if config.openrouter.log_level.is_debug_enabled() {
-								println!("  - {}: {}", "Task error".bright_red(), e);
-							} else {
-								// Show minimal error info without debug mode
-								println!("  - {}", "Internal task error".bright_red());
-							}
+							// IMPROVED: Show detailed task error information since errors are critical
+							println!("  {} {}: {}", 
+								"✗".bright_red(),
+								format!("Task error for '{}'", tool_name).bright_red(),
+								format!("{}", e).bright_red()
+							);
+							
+							// ALWAYS add error result for task failures too
+							let error_result = crate::mcp::McpToolResult {
+								tool_name: tool_name.clone(),
+								tool_id: tool_id.clone(),
+								result: serde_json::json!({
+									"error": format!("Internal task error: {}", e),
+									"tool_name": tool_name,
+									"error_type": "task_failure"
+								}),
+							};
+							tool_results.push(error_result);
 						},
 					}
 				}
@@ -708,8 +836,19 @@ pub async fn process_response(
 							break;
 						},
 						Err(e) => {
-							// Critical errors should always be shown
-							println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
+							// IMPROVED: Show more context about the API error
+							println!("\n{} {}: {}", 
+								"✗".bright_red(),
+								"Error calling OpenRouter".bright_red(), 
+								e
+							);
+							
+							// Additional context if error contains provider information
+							if config.openrouter.log_level.is_debug_enabled() {
+								println!("{} Model: {}", "Debug:".bright_black(), chat_session.model);
+								println!("{} Temperature: {}", "Debug:".bright_black(), chat_session.temperature);
+							}
+							
 							return Ok(());
 						}
 					}

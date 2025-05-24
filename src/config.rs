@@ -1382,4 +1382,28 @@ mod tests {
 		let result = Config::load();
 		assert!(result.is_ok());
 	}
+
+	#[test]
+	fn test_role_specific_cache_config() {
+		let mut config = Config::default();
+		
+		// Set different cache thresholds for developer vs assistant
+		config.developer.config.cache_tokens_absolute_threshold = 4096;
+		config.assistant.config.cache_tokens_absolute_threshold = 2048;
+		
+		// Set legacy openrouter to a different value to verify it gets overridden
+		config.openrouter.cache_tokens_absolute_threshold = 0;
+		
+		// Test developer role merged config
+		let developer_merged = config.get_merged_config_for_mode("developer");
+		assert_eq!(developer_merged.openrouter.cache_tokens_absolute_threshold, 4096);
+		
+		// Test assistant role merged config  
+		let assistant_merged = config.get_merged_config_for_mode("assistant");
+		assert_eq!(assistant_merged.openrouter.cache_tokens_absolute_threshold, 2048);
+		
+		// Test unknown role falls back to assistant
+		let unknown_merged = config.get_merged_config_for_mode("unknown");
+		assert_eq!(unknown_merged.openrouter.cache_tokens_absolute_threshold, 2048);
+	}
 }

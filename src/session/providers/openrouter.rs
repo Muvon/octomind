@@ -192,6 +192,7 @@ impl AiProvider for OpenRouterProvider {
 		if !status.is_success() {
 			let mut error_details = Vec::new();
 			error_details.push(format!("HTTP {}", status));
+			error_details.push(format!("Model: {}", model));
 
 			if let Some(error_obj) = response_json.get("error") {
 				if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
@@ -205,7 +206,7 @@ impl AiProvider for OpenRouterProvider {
 				}
 			}
 
-			if error_details.len() == 1 {
+			if error_details.len() <= 2 {
 				error_details.push(format!("Raw response: {}", response_text));
 			}
 
@@ -217,9 +218,20 @@ impl AiProvider for OpenRouterProvider {
 		if let Some(error_obj) = response_json.get("error") {
 			let mut error_details = Vec::new();
 			error_details.push("HTTP 200 but error in response".to_string());
+			error_details.push(format!("Model: {}", model));
 
 			if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
 				error_details.push(format!("Message: {}", msg));
+			}
+
+			// Check for provider error details
+			if let Some(metadata) = error_obj.get("metadata") {
+				if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str()) {
+					error_details.push(format!("Provider: {}", provider_name));
+				}
+				if let Some(provider_error) = metadata.get("provider_error").and_then(|p| p.as_str()) {
+					error_details.push(format!("Provider error: {}", provider_error));
+				}
 			}
 
 			let full_error = error_details.join(" | ");

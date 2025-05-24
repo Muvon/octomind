@@ -3,6 +3,7 @@
 use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
+use rustyline::{KeyEvent, Modifiers, Cmd, Event, EventHandler};
 use colored::*;
 use std::path::PathBuf;
 
@@ -37,6 +38,20 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 	// Add command completion
 	use crate::session::chat_helper::CommandHelper;
 	editor.set_helper(Some(CommandHelper::new()));
+
+	// Set up custom key bindings for accepting hints
+	// Ctrl+E to accept hint (complete-hint command)
+	editor.bind_sequence(
+		Event::KeySeq(vec![KeyEvent::new('e', Modifiers::CTRL)]),
+		EventHandler::Simple(Cmd::CompleteHint)
+	);
+	
+	// Right arrow to accept hint when at end of line
+	// Using escape sequence for right arrow key: \x1b[C
+	editor.bind_sequence(
+		Event::KeySeq(vec![KeyEvent::new('\x1b', Modifiers::empty()), KeyEvent::new('[', Modifiers::empty()), KeyEvent::new('C', Modifiers::empty())]),
+		EventHandler::Simple(Cmd::CompleteHint)
+	);
 
 	// Load persistent history from .octodev/history
 	let history_path = get_history_file_path()?;

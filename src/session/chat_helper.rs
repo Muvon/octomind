@@ -5,7 +5,8 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::Validator;
 use rustyline::Helper;
-use std::borrow::Cow::{self, Borrowed};
+use std::borrow::Cow::{self, Borrowed, Owned};
+use colored::*;
 
 #[derive(Default)]
 struct CommandCompleter {
@@ -65,11 +66,30 @@ impl Hinter for CommandCompleter {
 
 impl Highlighter for CommandCompleter {
 	fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-		Borrowed(line)
+		// Only apply highlighting to commands (lines starting with '/')
+		if line.starts_with('/') {
+			// Check if this is a valid command
+			let is_valid_command = self.commands.iter().any(|cmd| line == cmd || cmd.starts_with(line));
+			
+			if is_valid_command {
+				// Highlight valid commands in green
+				Owned(line.green().to_string())
+			} else {
+				// Keep invalid commands normal colored
+				Borrowed(line)
+			}
+		} else {
+			Borrowed(line)
+		}
 	}
 
 	fn highlight_char(&self, _line: &str, _pos: usize) -> bool {
 		false
+	}
+
+	fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+		// Make hints appear in dim gray color - like bash autocomplete
+		Owned(hint.bright_black().to_string())
 	}
 }
 
@@ -128,6 +148,10 @@ impl Highlighter for CommandHelper {
 
 	fn highlight_char(&self, line: &str, pos: usize) -> bool {
 		self.completer.highlight_char(line, pos)
+	}
+
+	fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+		self.completer.highlight_hint(hint)
 	}
 }
 

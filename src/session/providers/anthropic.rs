@@ -89,8 +89,8 @@ impl AiProvider for AnthropicProvider {
 		// Get API key
 		let api_key = self.get_api_key(config)?;
 
-		// Convert messages to Anthropic format
-		let anthropic_messages = convert_messages(messages);
+		// Convert messages to Anthropic format with automatic cache markers
+		let anthropic_messages = convert_messages(messages, config, model);
 
 		// Extract system message if present
 		let system_message = messages.iter()
@@ -111,13 +111,22 @@ impl AiProvider for AnthropicProvider {
 		if config.mcp.enabled {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
-				let tools = functions.iter().map(|f| {
+				let mut tools = functions.iter().map(|f| {
 					serde_json::json!({
 						"name": f.name,
 						"description": f.description,
 						"input_schema": f.parameters
 					})
 				}).collect::<Vec<_>>();
+
+				// Add cache control to the LAST tool definition if provider supports caching
+				if self.supports_caching(model) && !tools.is_empty() {
+					if let Some(last_tool) = tools.last_mut() {
+						last_tool["cache_control"] = serde_json::json!({
+							"type": "ephemeral"
+						});
+					}
+				}
 
 				request_body["tools"] = serde_json::json!(tools);
 			}
@@ -248,10 +257,19 @@ impl AiProvider for AnthropicProvider {
 }
 
 // Convert our session messages to Anthropic format
-fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
+fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<AnthropicMessage> {
+	// Create a mutable copy for cache processing
+	let mut messages_copy: Vec<Message> = messages.to_vec();
+	
+	// Apply automatic cache markers for system messages and tools
+	let cache_manager = crate::session::cache::CacheManager::new();
+	let has_tools = config.mcp.enabled; // Check if MCP is actually enabled
+	let supports_caching = cache_manager.validate_cache_support("anthropic", model);
+	cache_manager.add_automatic_cache_markers(&mut messages_copy, has_tools, supports_caching);
+
 	let mut result = Vec::new();
 
-	for msg in messages {
+	for msg in &messages_copy {
 		// Skip system messages as they're handled separately
 		if msg.role == "system" {
 			continue;
@@ -298,11 +316,28 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 			continue;
 		}
 
-		// Regular messages
-		result.push(AnthropicMessage {
-			role: msg.role.clone(),
-			content: serde_json::json!(msg.content),
-		});
+		// Handle cache breakpoints for messages
+		if msg.cached {
+			// For cached messages, use the structured format with cache_control
+			result.push(AnthropicMessage {
+				role: msg.role.clone(),
+				content: serde_json::json!([
+					{
+						"type": "text",
+						"text": msg.content,
+						"cache_control": {
+							"type": "ephemeral"
+						}
+					}
+				]),
+			});
+		} else {
+			// Regular messages without caching
+			result.push(AnthropicMessage {
+				role: msg.role.clone(),
+				content: serde_json::json!(msg.content),
+			});
+		}
 	}
 
 	result

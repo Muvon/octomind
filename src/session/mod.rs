@@ -11,6 +11,7 @@ pub mod logger;     // Request/response logging utilities
 mod model_utils;    // Model-specific utility functions
 mod helper_functions; // Helper functions for layers and other components
 pub mod indexer;    // Indexer integration for sessions
+pub mod cache;      // Comprehensive caching system
 
 // Legacy exports for backward compatibility
 pub use openrouter::*;
@@ -21,6 +22,7 @@ pub use project_context::ProjectContext;
 pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export token counting functions
 pub use model_utils::model_supports_caching;
 pub use helper_functions::{get_layer_system_prompt_for_type, process_placeholders, summarize_context};
+pub use cache::{CacheManager, CacheStatistics}; // Export cache management
 
 // Re-export constants
 // Constants moved to config
@@ -60,6 +62,13 @@ fn default_cache_marker() -> bool {
 	false
 }
 
+fn current_timestamp() -> u64 {
+	SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.unwrap_or_default()
+		.as_secs()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionInfo {
 	pub name: String,
@@ -94,18 +103,23 @@ pub struct Session {
 	// Track token counts for non-cached messages in current interaction
 	pub current_non_cached_tokens: u64,
 	pub current_total_tokens: u64,
+	// Track last cache checkpoint time for time-based auto-caching
+	#[serde(default = "current_timestamp")]
+	pub last_cache_checkpoint_time: u64,
 }
 
 impl Session {
 	// Create a new session
 	pub fn new(name: String, model: String, provider: String) -> Self {
+		let timestamp = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs();
+		
 		Self {
 			info: SessionInfo {
 				name,
-				created_at: SystemTime::now()
-					.duration_since(UNIX_EPOCH)
-					.unwrap_or_default()
-					.as_secs(),
+				created_at: timestamp,
 				model,
 				provider,
 				input_tokens: 0,
@@ -120,6 +134,7 @@ impl Session {
 			session_file: None,
 			current_non_cached_tokens: 0,
 			current_total_tokens: 0,
+			last_cache_checkpoint_time: timestamp,
 		}
 	}
 
@@ -145,89 +160,69 @@ impl Session {
 	// Add a cache checkpoint - marks a message as a cache breakpoint
 	// By default, it targets the last user message, but system=true targets the system message
 	pub fn add_cache_checkpoint(&mut self, system: bool) -> Result<bool, anyhow::Error> {
-		// Only user or system messages can be marked as cache breakpoints
-		let mut marked = false;
-
+		let cache_manager = crate::session::cache::CacheManager::new();
+		
 		if system {
 			// Find the first system message and mark it
 			for msg in self.messages.iter_mut() {
 				if msg.role == "system" {
 					// Only mark as cached if the model supports it
 					msg.cached = crate::session::model_supports_caching(&self.info.model);
-					marked = true;
-					break;
+					if msg.cached {
+						// Reset token counters when adding a cache checkpoint
+						self.current_non_cached_tokens = 0;
+						self.current_total_tokens = 0;
+						return Ok(true);
+					}
+					return Ok(false);
 				}
 			}
-
-			// If we couldn't find a system message, return a specific error
-			if !marked {
-				return Ok(false); // No system message found
-			}
+			// If we couldn't find a system message, return false
+			Ok(false)
 		} else {
-			// Find the last user message and mark it as a cache breakpoint
-			for i in (0..self.messages.len()).rev() {
-				let msg = &mut self.messages[i];
-				if msg.role == "user" {
-					// Only mark as cached if the model supports it
-					msg.cached = crate::session::model_supports_caching(&self.info.model);
-					marked = true;
-					break;
+			// Use the new cache manager for content cache markers
+			let supports_caching = crate::session::model_supports_caching(&self.info.model);
+			if !supports_caching {
+				return Ok(false);
+			}
+			
+			let result = cache_manager.manage_content_cache_markers(self, None, false)?;
+			
+			if result {
+				// Reset token counters and update checkpoint time when adding a cache checkpoint
+				self.current_non_cached_tokens = 0;
+				self.current_total_tokens = 0;
+				self.last_cache_checkpoint_time = SystemTime::now()
+					.duration_since(UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs();
+				
+				// Save the session with the cached message
+				if let Some(_) = &self.session_file {
+					let _ = self.save();
 				}
 			}
+			
+			Ok(result)
 		}
-
-		// Reset token counters when adding a cache checkpoint
-		if marked {
-			self.current_non_cached_tokens = 0;
-			self.current_total_tokens = 0;
-
-			// After adding a cache checkpoint, make sure we explicitly save the state
-			// to ensure proper synchronization between cache flags and token tracking
-			if let Some(_) = &self.session_file {
-				let _ = self.save();
-			}
-		}
-
-		Ok(marked)
 	}
 
 	// Add a cache checkpoint if the token threshold is reached
 	// Returns true if a checkpoint was added, false otherwise
 	pub fn check_auto_cache_threshold(&mut self, config: &crate::config::Config) -> Result<bool, anyhow::Error> {
-		// Check if the threshold is 0 or 100, which disables auto-cache
-		let threshold = config.openrouter.cache_tokens_pct_threshold;
-		if threshold == 0 || threshold == 100 {
-			return Ok(false);
-		}
-
-		// If there are no messages or if we haven't tracked any tokens yet, nothing to do
-		if self.messages.is_empty() || self.current_total_tokens == 0 {
-			return Ok(false);
-		}
-
-		// Calculate the percentage of non-cached tokens
-		let non_cached_percentage = (self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
-
-		// Check if we've reached the threshold
-		if non_cached_percentage as u8 >= threshold {
-			// Add a cache checkpoint at the last user message
-			let result = self.add_cache_checkpoint(false);
-
-			// If successful, reset the token counters
-			if let Ok(true) = result {
-				self.current_non_cached_tokens = 0;
-				self.current_total_tokens = 0;
-
-				// After adding a cache checkpoint, make sure state is properly saved
-				// This is critical for preventing state inconsistencies
-				if let Some(_) = &self.session_file {
-					let _ = self.save();
-				}
-				return Ok(true);
+		let cache_manager = crate::session::cache::CacheManager::new();
+		let supports_caching = crate::session::model_supports_caching(&self.info.model);
+		
+		let result = cache_manager.check_and_apply_auto_cache_threshold(self, config, supports_caching)?;
+		
+		if result {
+			// After adding a cache checkpoint, make sure state is properly saved
+			if let Some(_) = &self.session_file {
+				let _ = self.save();
 			}
 		}
-
-		Ok(false)
+		
+		Ok(result)
 	}
 
 	// Add statistics for a specific layer
@@ -477,6 +472,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			session_file: Some(session_file.clone()),
 			current_non_cached_tokens: 0,
 			current_total_tokens: 0,
+			last_cache_checkpoint_time: current_timestamp(), // Initialize to current time for existing sessions
 		};
 		Ok(session)
 	} else {

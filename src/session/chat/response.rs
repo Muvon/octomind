@@ -254,10 +254,14 @@ pub async fn process_response(
 							}
 						}
 
-						// Update session token counts
-						chat_session.session.info.input_tokens += regular_prompt_tokens;
-						chat_session.session.info.output_tokens += usage.completion_tokens;
-						chat_session.session.info.cached_tokens += cached_tokens;
+						// Update session token counts using cache manager
+						let cache_manager = crate::session::cache::CacheManager::new();
+						cache_manager.update_token_tracking(
+							&mut chat_session.session,
+							regular_prompt_tokens,
+							usage.completion_tokens,
+							cached_tokens,
+						);
 
 						// Update cost
 						if let Some(cost) = usage.cost {
@@ -577,15 +581,14 @@ pub async fn process_response(
 									}
 								}
 
-								// Update session token counts
-								chat_session.session.info.input_tokens += regular_prompt_tokens;
-								chat_session.session.info.output_tokens += usage.completion_tokens;
-								chat_session.session.info.cached_tokens += cached_tokens;
-
-								// Update current token tracking for auto-cache threshold logic
-								// Only count input tokens, not completion tokens
-								chat_session.session.current_non_cached_tokens += regular_prompt_tokens;
-								chat_session.session.current_total_tokens += regular_prompt_tokens + cached_tokens;
+								// Update session token counts using the cache manager
+								let cache_manager = crate::session::cache::CacheManager::new();
+								cache_manager.update_token_tracking(
+									&mut chat_session.session,
+									regular_prompt_tokens,
+									usage.completion_tokens,
+									cached_tokens,
+								);
 
 								// Check if we should automatically move the cache marker
 								if let Ok(true) = chat_session.session.check_auto_cache_threshold(config) {

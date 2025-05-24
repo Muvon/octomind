@@ -81,7 +81,7 @@ impl AiProvider for OpenRouterProvider {
 		let api_key = self.get_api_key(config)?;
 
 		// Convert messages to OpenRouter format
-		let openrouter_messages = convert_messages(messages);
+		let openrouter_messages = convert_messages(messages, config, model);
 
 		// Create the request body
 		let mut request_body = serde_json::json!({
@@ -132,6 +132,15 @@ impl AiProvider for OpenRouterProvider {
 						"type": "text_editor_20250124",
 						"name": "text_editor"
 					}));
+				}
+
+				// Add cache control to the LAST tool definition if provider supports caching
+				if self.supports_caching(model) && !tools.is_empty() {
+					if let Some(last_tool) = tools.last_mut() {
+						last_tool["cache_control"] = serde_json::json!({
+							"type": "ephemeral"
+						});
+					}
 				}
 
 				request_body["tools"] = serde_json::json!(tools);
@@ -339,13 +348,22 @@ impl AiProvider for OpenRouterProvider {
 }
 
 // Convert our session messages to OpenRouter format
-fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
+fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<OpenRouterMessage> {
 	let mut cached_count = 0;
 	let mut result = Vec::new();
 
+	// Create a mutable copy for cache processing
+	let mut messages_copy: Vec<Message> = messages.to_vec();
+
+	// Apply automatic cache markers for system messages and tools
+	let cache_manager = crate::session::cache::CacheManager::new();
+	let has_tools = config.mcp.enabled; // Check if MCP is actually enabled
+	let supports_caching = cache_manager.validate_cache_support("openrouter", model);
+	cache_manager.add_automatic_cache_markers(&mut messages_copy, has_tools, supports_caching);
+
 	let mut i = 0;
-	while i < messages.len() {
-		let msg = &messages[i];
+	while i < messages_copy.len() {
+		let msg = &messages_copy[i];
 
 		// Check if this is a tool response message (has <fnr> tags)
 		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
@@ -405,62 +423,20 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 		} else if msg.role == "assistant" {
 			let mut assistant_message = if msg.cached {
 				cached_count += 1;
-
-				if msg.content.contains("\n") {
-					let parts: Vec<&str> = msg.content.splitn(2, "\n").collect();
-					if parts.len() > 1 {
-						OpenRouterMessage {
-							role: msg.role.clone(),
-							content: serde_json::json!([
-								{
-									"type": "text",
-									"text": parts[0],
-								},
-								{
-									"type": "text",
-									"text": parts[1],
-									"cache_control": {
-										"type": "ephemeral"
-									}
-								}
-							]),
-							tool_call_id: None,
-							name: None,
-							tool_calls: None,
-						}
-					} else {
-						OpenRouterMessage {
-							role: msg.role.clone(),
-							content: serde_json::json!([
-								{
-									"type": "text",
-									"text": msg.content,
-									"cache_control": {
-									"type": "ephemeral"
-								}
-							}
-							]),
-							tool_call_id: None,
-							name: None,
-							tool_calls: None,
+				OpenRouterMessage {
+					role: msg.role.clone(),
+					content: serde_json::json!([
+						{
+							"type": "text",
+							"text": msg.content,
+							"cache_control": {
+							"type": "ephemeral"
 						}
 					}
-				} else {
-					OpenRouterMessage {
-						role: msg.role.clone(),
-						content: serde_json::json!([
-							{
-								"type": "text",
-								"text": msg.content,
-								"cache_control": {
-								"type": "ephemeral"
-							}
-						}
-						]),
-						tool_call_id: None,
-						name: None,
-						tool_calls: None,
-					}
+					]),
+					tool_call_id: None,
+					name: None,
+					tool_calls: None,
 				}
 			} else {
 				OpenRouterMessage {
@@ -484,63 +460,21 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 		// Handle cache breakpoints for non-assistant messages
 		if msg.cached {
 			cached_count += 1;
-
-			if msg.content.contains("\n") {
-				let parts: Vec<&str> = msg.content.splitn(2, "\n").collect();
-				if parts.len() > 1 {
-					result.push(OpenRouterMessage {
-						role: msg.role.clone(),
-						content: serde_json::json!([
-							{
-								"type": "text",
-								"text": parts[0],
-							},
-							{
-								"type": "text",
-								"text": parts[1],
-								"cache_control": {
-									"type": "ephemeral"
-								}
-							}
-						]),
-						tool_call_id: None,
-						name: None,
-						tool_calls: None,
-					});
-				} else {
-					result.push(OpenRouterMessage {
-						role: msg.role.clone(),
-						content: serde_json::json!([
-							{
-								"type": "text",
-								"text": msg.content,
-								"cache_control": {
-								"type": "ephemeral"
-							}
-						}
-						]),
-						tool_call_id: None,
-						name: None,
-						tool_calls: None,
-					});
-				}
-			} else {
-				result.push(OpenRouterMessage {
-					role: msg.role.clone(),
-					content: serde_json::json!([
-						{
-							"type": "text",
-							"text": msg.content,
-							"cache_control": {
-							"type": "ephemeral"
-						}
+			result.push(OpenRouterMessage {
+				role: msg.role.clone(),
+				content: serde_json::json!([
+					{
+						"type": "text",
+						"text": msg.content,
+						"cache_control": {
+						"type": "ephemeral"
 					}
-					]),
-					tool_call_id: None,
-					name: None,
-					tool_calls: None,
-				});
-			}
+				}
+				]),
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+			});
 		} else {
 			result.push(OpenRouterMessage {
 				role: msg.role.clone(),

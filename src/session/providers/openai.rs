@@ -126,6 +126,15 @@ impl AiProvider for OpenAiProvider {
 					})
 				}).collect::<Vec<_>>();
 
+				// Note: OpenAI doesn't support caching yet, but we prepare for future support
+				// if self.supports_caching(model) && !tools.is_empty() {
+				//     if let Some(last_tool) = tools.last_mut() {
+				//         last_tool["cache_control"] = serde_json::json!({
+				//             "type": "ephemeral"
+				//         });
+				//     }
+				// }
+
 				request_body["tools"] = serde_json::json!(tools);
 				request_body["tool_choice"] = serde_json::json!("auto");
 			}

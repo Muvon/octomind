@@ -265,6 +265,14 @@ pub struct OpenRouterConfig {
 	// 0 or 100 disables auto-cache, any value between 1-99 enables it
 	#[serde(default = "default_cache_tokens_pct_threshold")]
 	pub cache_tokens_pct_threshold: u8,
+	// Alternative: Auto-cache when non-cached tokens reach this absolute number
+	// If set to 0, uses percentage threshold instead
+	#[serde(default)]
+	pub cache_tokens_absolute_threshold: u64,
+	// Auto-cache timeout in seconds (3 minutes = 180 seconds by default)
+	// If time since last cache checkpoint exceeds this, auto-cache triggers
+	#[serde(default = "default_cache_timeout_seconds")]
+	pub cache_timeout_seconds: u64,
 	// Enable markdown rendering for AI responses
 	#[serde(default)]
 	pub enable_markdown_rendering: bool,
@@ -298,6 +306,10 @@ fn default_cache_tokens_pct_threshold() -> u8 {
 	40 // Default 40% threshold for automatic cache marker movement
 }
 
+fn default_cache_timeout_seconds() -> u64 {
+	180 // Default 3 minutes timeout for time-based auto-caching
+}
+
 impl Default for PricingConfig {
 	fn default() -> Self {
 		Self {
@@ -323,6 +335,8 @@ impl Default for OpenRouterConfig {
 			max_request_tokens_threshold: default_max_request_tokens_threshold(),
 			enable_auto_truncation: false, // Disabled by default
 			cache_tokens_pct_threshold: default_cache_tokens_pct_threshold(),
+			cache_tokens_absolute_threshold: 0, // Disabled by default, use percentage
+			cache_timeout_seconds: default_cache_timeout_seconds(),
 			enable_markdown_rendering: false, // Disabled by default
 		}
 	}

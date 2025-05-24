@@ -32,7 +32,7 @@ impl ChatSession {
 				println!("{} - {}", COPY_COMMAND.cyan(), "Copy last response to clipboard");
 				println!("{} - {}", CLEAR_COMMAND.cyan(), "Clear the screen");
 				println!("{} - {}", SAVE_COMMAND.cyan(), "Save the session");
-				println!("{} - {}", CACHE_COMMAND.cyan(), "Mark a cache checkpoint at the last user message");
+				println!("{} - {}", CACHE_COMMAND.cyan(), "Manage cache checkpoints: /cache [stats|clear|threshold]");
 				println!("{} - {}", LIST_COMMAND.cyan(), "List all available sessions");
 				println!("{} [name] - {}", SESSION_COMMAND.cyan(), "Switch to another session or create a new one (without name creates fresh session)");
 				println!("{} - {}", INFO_COMMAND.cyan(), "Display detailed token and cost breakdown for this session");
@@ -44,15 +44,15 @@ impl ChatSession {
 				println!("{} or {} - {}\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan(), "Exit the session");
 
 				// Additional info about caching
-				println!("{}", "** About Cache Checkpoints **".bright_yellow());
-				println!("{}", "The system message with function definitions is automatically cached for all sessions.");
+				println!("{}", "** About Cache Management **".bright_yellow());
+				println!("{}", "The system message and tool definitions are automatically cached for supported providers.");
 				println!("{}", "Use '/cache' to mark your last user message for caching.");
-				println!("{}", "This is useful for large text blocks like code snippets that don't change between requests.");
-				println!("{}", "The model provider will charge less for cached content in subsequent requests.");
-				println!("{}", "Cached tokens will be displayed in the usage statistics after your next message.");
-				println!("{}", "Best practice: Use separate messages with the most data-heavy part marked for caching.");
-				println!("{}", "Automatic caching: When non-cached tokens reach a configured threshold,");
-				println!("{}", "    a cache checkpoint will be automatically placed (configurable via config.toml).\n");
+				println!("{}", "Use '/cache stats' to view detailed cache statistics and efficiency.");
+				println!("{}", "Use '/cache clear' to remove content cache markers (keeps system/tool caches).");
+				println!("{}", "Use '/cache threshold' to view auto-cache settings.");
+				println!("{}", "Supports 2-marker system: when you add a 3rd marker, the first one moves to the new position.");
+				println!("{}", "Automatic caching triggers based on token threshold percentage (configurable).");
+				println!("{}", "Cached tokens reduce costs on subsequent requests with the same content.\n");
 
 				// Add information about layered architecture
 				println!("{}", "** About Layered Processing **".bright_yellow());
@@ -281,19 +281,112 @@ impl ChatSession {
 				return Ok(true);
 			},
 			CACHE_COMMAND => {
-				match self.session.add_cache_checkpoint(false) {
-					Ok(true) => {
-						println!("{}", "Cache checkpoint added at the last user message. This will be used for future requests.".bright_green());
-						println!("{}", "Note: For large text blocks, it's best to split them into separate messages with the cached part containing most of the data.".bright_yellow());
-						println!("{}", "You'll see the cached token count in the usage summary for your next message.".bright_blue());
-						// Save the session with the cached message
-						let _ = self.save();
-					},
-					Ok(false) => {
-						println!("{}", "No user messages found to mark as a cache checkpoint.".bright_yellow());
-					},
-					Err(e) => {
-						println!("{}: {}", "Failed to add cache checkpoint".bright_red(), e);
+				// Parse cache command arguments for advanced functionality
+				if params.is_empty() {
+					// Default behavior - add cache checkpoint
+					match self.session.add_cache_checkpoint(false) {
+						Ok(true) => {
+							println!("{}", "Cache checkpoint added at the last user message.".bright_green());
+							
+							// Show cache statistics
+							let cache_manager = crate::session::cache::CacheManager::new();
+							let stats = cache_manager.get_cache_statistics(&self.session);
+							println!("{}", stats.format_for_display());
+							
+							// Save the session with the cached message
+							let _ = self.save();
+						},
+						Ok(false) => {
+							// Check if model supports caching
+							let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
+							if !supports_caching {
+								println!("{}", "This model does not support caching.".bright_yellow());
+							} else {
+								// Must be that no user messages exist or some other issue
+								let user_count = self.session.messages.iter().filter(|m| m.role == "user" || m.role == "tool").count();
+								if user_count == 0 {
+									println!("{}", "No user messages found to mark as a cache checkpoint.".bright_yellow());
+								} else {
+									println!("{}", "The last user message is already marked for caching.".bright_yellow());
+									println!("{}", "Use '/cache stats' to see current cache markers.".bright_blue());
+								}
+							}
+						},
+						Err(e) => {
+							println!("{}: {}", "Failed to add cache checkpoint".bright_red(), e);
+						}
+					}
+				} else {
+					match params[0] {
+						"stats" => {
+							// Show detailed cache statistics
+							let cache_manager = crate::session::cache::CacheManager::new();
+							let stats = cache_manager.get_cache_statistics(&self.session);
+							println!("{}", stats.format_for_display());
+							
+							// Additional threshold information
+							println!("{}", format!(
+								"Auto-cache threshold: {}%", 
+								if let Ok(config) = crate::config::Config::load() {
+									config.openrouter.cache_tokens_pct_threshold
+								} else {
+									40
+								}
+							).bright_blue());
+						},
+						"clear" => {
+							// Clear content cache markers (but keep system markers)
+							let cache_manager = crate::session::cache::CacheManager::new();
+							let cleared = cache_manager.clear_content_cache_markers(&mut self.session);
+							
+							if cleared > 0 {
+								println!("{}", format!("Cleared {} content cache markers", cleared).bright_green());
+								let _ = self.save();
+							} else {
+								println!("{}", "No content cache markers to clear".bright_yellow());
+							}
+						},
+						"threshold" => {
+							// Show current threshold settings
+							if let Ok(config) = crate::config::Config::load() {
+								if config.openrouter.cache_tokens_absolute_threshold > 0 {
+									println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)", 
+										config.openrouter.cache_tokens_absolute_threshold).bright_cyan());
+									println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens", 
+										config.openrouter.cache_tokens_absolute_threshold).bright_blue());
+								} else {
+									let threshold = config.openrouter.cache_tokens_pct_threshold;
+									println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
+									
+									if threshold == 0 || threshold == 100 {
+										println!("{}", "Auto-cache is disabled".bright_yellow());
+									} else {
+										println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {}% of total", threshold).bright_blue());
+									}
+								}
+								
+								// Show time-based threshold
+								let timeout_seconds = config.openrouter.cache_timeout_seconds;
+								if timeout_seconds > 0 {
+									let timeout_minutes = timeout_seconds / 60;
+									println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)", 
+										timeout_seconds, timeout_minutes).bright_green());
+									println!("{}", format!("Auto-cache will trigger if {} minutes pass since last checkpoint", 
+										timeout_minutes).bright_blue());
+								} else {
+									println!("{}", "Time-based auto-cache is disabled".bright_yellow());
+								}
+							} else {
+								println!("{}", "Could not load configuration".bright_red());
+							}
+						},
+						_ => {
+							println!("{}", "Invalid cache command. Usage:".bright_red());
+							println!("{}", "  /cache - Add cache checkpoint at last user message".cyan());
+							println!("{}", "  /cache stats - Show detailed cache statistics".cyan());
+							println!("{}", "  /cache clear - Clear content cache markers".cyan());
+							println!("{}", "  /cache threshold - Show auto-cache threshold settings".cyan());
+						}
 					}
 				}
 			},

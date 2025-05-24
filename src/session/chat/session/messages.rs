@@ -107,15 +107,14 @@ impl ChatSession {
 					}
 				}
 
-				// Update session token counts
-				self.session.info.input_tokens += regular_prompt_tokens;
-				self.session.info.output_tokens += usage.completion_tokens;
-				self.session.info.cached_tokens += cached_tokens;
-
-				// Update current token tracking for auto-cache threshold logic
-				// Only count input tokens, not completion tokens
-				self.session.current_non_cached_tokens += regular_prompt_tokens;
-				self.session.current_total_tokens += regular_prompt_tokens + cached_tokens;
+				// Update session token counts and use proper cache tracking
+				let cache_manager = crate::session::cache::CacheManager::new();
+				cache_manager.update_token_tracking(
+					&mut self.session,
+					regular_prompt_tokens,
+					usage.completion_tokens,
+					cached_tokens,
+				);
 
 				// Check if we should automatically move the cache marker
 				if let Ok(true) = self.session.check_auto_cache_threshold(config) {

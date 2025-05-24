@@ -46,6 +46,10 @@ impl ChatSession {
 				session_file: None,
 				current_non_cached_tokens: 0,
 				current_total_tokens: 0,
+				last_cache_checkpoint_time: SystemTime::now()
+					.duration_since(UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs(),
 			},
 			last_response: String::new(),
 			model: model_name,

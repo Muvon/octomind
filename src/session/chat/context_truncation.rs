@@ -35,7 +35,7 @@ pub async fn check_and_truncate_context(
 		default: "Truncating message history to reduce token usage".bright_blue()
 	);
 
-	// Strategy: Keep system message, last 2-3 exchanges, and remove older user/assistant exchanges
+	// ENHANCED STRATEGY: Keep system message, find safe truncation point that preserves tool call sequences
 	let mut system_message = None;
 	let mut recent_messages = Vec::new();
 
@@ -47,15 +47,102 @@ pub async fn check_and_truncate_context(
 		}
 	}
 
-	// Then, collect the most recent messages (last 2-3 exchanges = 4-6 messages)
-	if chat_session.session.messages.len() > 2 {
-		let keep_count = std::cmp::min(6, chat_session.session.messages.len() - 1); // Keep at most 6 recent messages excluding system
-		recent_messages = chat_session.session.messages.iter()
-			.rev()
-			.take(keep_count)
-			.cloned()
-			.collect::<Vec<_>>();
-		recent_messages.reverse(); // Back to chronological order
+	// Find safe truncation point working backwards from the end
+	// We need to preserve complete tool call sequences: assistant(tool_calls) → tool(tool_call_id) → ... → tool(tool_call_id)
+	let non_system_messages: Vec<_> = chat_session.session.messages.iter()
+		.filter(|msg| msg.role != "system")
+		.collect();
+
+	if !non_system_messages.is_empty() {
+		// Start from the end and work backwards to find a safe truncation point
+		let mut safe_start_index = non_system_messages.len().saturating_sub(1);
+		let min_keep = std::cmp::min(4, non_system_messages.len()); // Try to keep at least 4 messages (2 exchanges)
+		
+		// Work backwards from the end to find the earliest safe truncation point
+		for i in (0..non_system_messages.len()).rev() {
+			let msg = non_system_messages[i];
+			
+			// Check if this is a safe truncation point
+			let is_safe_point = match msg.role.as_str() {
+				"user" => {
+					// User messages are always safe truncation points
+					true
+				},
+				"assistant" => {
+					// Assistant messages are safe ONLY if they don't have tool_calls
+					// If they have tool_calls, we must keep all following tool messages
+					msg.tool_calls.as_ref().is_none_or(|tc| {
+						// Check if it's an empty array or null
+						tc.is_null() || (tc.is_array() && tc.as_array().is_none_or(|arr| arr.is_empty()))
+					})
+				},
+				"tool" => {
+					// Tool messages are never safe truncation points by themselves
+					// We need to check if there are more tool messages following this one
+					false
+				},
+				_ => true, // Other roles (like "system") are generally safe
+			};
+			
+			if is_safe_point {
+				// Found a safe point - now check if we should use it
+				let messages_to_keep = non_system_messages.len() - i;
+				
+				if messages_to_keep >= min_keep {
+					// We have enough messages and found a safe point
+					safe_start_index = i;
+					break;
+				} else if messages_to_keep < min_keep && i > 0 {
+					// Not enough messages yet, continue looking backwards
+					continue;
+				} else {
+					// We're at the beginning, use this point regardless
+					safe_start_index = i;
+					break;
+				}
+			}
+		}
+		
+		// Additional validation: make sure we don't start with orphaned tool messages
+		while safe_start_index < non_system_messages.len() {
+			let start_msg = non_system_messages[safe_start_index];
+			if start_msg.role == "tool" {
+				// We're starting with a tool message - this could be orphaned
+				// Look backwards to see if we can find its assistant message with tool_calls
+				let mut found_parent = false;
+				for j in (0..safe_start_index).rev() {
+					let prev_msg = non_system_messages[j];
+					if prev_msg.role == "assistant" && prev_msg.tool_calls.is_some() {
+						// Found the parent assistant message, include it
+						safe_start_index = j;
+						found_parent = true;
+						break;
+					} else if prev_msg.role == "user" {
+						// Hit a user message without finding parent - tool is orphaned
+						break;
+					}
+				}
+				
+				if !found_parent {
+					// Couldn't find parent, skip this tool message
+					safe_start_index += 1;
+				} else {
+					break;
+				}
+			} else {
+				// Starting with non-tool message is fine
+				break;
+			}
+		}
+		
+		// Collect messages from the safe truncation point
+		recent_messages = non_system_messages[safe_start_index..].iter().cloned().cloned().collect();
+		
+		log_conditional!(
+			debug: format!("Smart truncation: keeping {} of {} non-system messages from safe point", 
+				recent_messages.len(), non_system_messages.len()).bright_blue(),
+			default: format!("Preserving {} recent messages", recent_messages.len()).bright_blue()
+		);
 	}
 
 	// Create a new truncated messages vector
@@ -69,7 +156,7 @@ pub async fn check_and_truncate_context(
 	// Add summary message to provide context
 	let summary_msg = crate::session::Message {
 		role: "assistant".to_string(),
-		content: "[Context truncation: Older conversation history has been summarized to reduce token usage. The conversation continues below with the most recent messages.]".to_string(),
+		content: "[Context truncated: Older conversation history removed to reduce token usage. Tool call sequences preserved to maintain conversation integrity. Recent messages continue below.]".to_string(),
 		timestamp: std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()

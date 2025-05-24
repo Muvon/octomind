@@ -14,6 +14,40 @@ use serde_json;
 use super::animation::show_loading_animation;
 use regex::Regex;
 
+// Utility function to format time in a human-readable format
+fn format_duration(milliseconds: u64) -> String {
+	if milliseconds == 0 {
+		return "0ms".to_string();
+	}
+	
+	let ms = milliseconds % 1000;
+	let seconds = (milliseconds / 1000) % 60;
+	let minutes = (milliseconds / 60000) % 60;
+	let hours = milliseconds / 3600000;
+	
+	let mut parts = Vec::new();
+	
+	if hours > 0 {
+		parts.push(format!("{}h", hours));
+	}
+	if minutes > 0 {
+		parts.push(format!("{}m", minutes));
+	}
+	if seconds > 0 {
+		parts.push(format!("{}s", seconds));
+	}
+	if ms > 0 || parts.is_empty() {
+		if parts.is_empty() {
+			parts.push(format!("{}ms", ms));
+		} else if ms >= 100 {
+			// Only show milliseconds if >= 100ms when other units are present
+			parts.push(format!("{}ms", ms));
+		}
+	}
+	
+	parts.join(" ")
+}
+
 // Guess the category of a tool based on its name (copied from mcp/mod.rs for consistency)
 fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
@@ -69,7 +103,7 @@ fn remove_function_calls(content: &str) -> String {
 }
 
 // Helper function to print content with optional markdown rendering
-fn print_assistant_response(content: &str, config: &Config, _role: &str) {
+pub fn print_assistant_response(content: &str, config: &Config, _role: &str) {
 	if config.get_enable_markdown_rendering() && is_markdown_content(content) {
 		// Use markdown rendering
 		let renderer = MarkdownRenderer::new();
@@ -829,8 +863,12 @@ pub async fn process_response(
 					}
 					truncation_time += final_truncation_start.elapsed().as_millis();
 
-					// 🔍 PERFORMANCE DEBUG: Report processing breakdown
-					let total_processing_time = processing_start.elapsed().as_millis();
+					// 🔍 PERFORMANCE DEBUG: Report processing breakdown and track processing time
+					let total_processing_time = processing_start.elapsed().as_millis() as u64;
+					
+					// Add the processing time to the session total
+					chat_session.session.info.total_layer_time_ms += total_processing_time;
+					
 					if config.get_log_level().is_debug_enabled() && total_processing_time > 100 {
 						log_debug!("🔍 Tool result processing took {}ms (cache: {}ms, truncation: {}ms)", 
 							total_processing_time, cache_check_time, truncation_time);
@@ -1150,11 +1188,11 @@ pub async fn process_response(
 																				chat_session.session.info.total_tool_time_ms +
 																				chat_session.session.info.total_layer_time_ms;
 	if total_time_ms > 0 {
-		log_info!("time: {}ms (API: {}ms, Tools: {}ms, Processing: {}ms)",
-			total_time_ms,
-			chat_session.session.info.total_api_time_ms,
-			chat_session.session.info.total_tool_time_ms,
-			chat_session.session.info.total_layer_time_ms);
+		log_info!("time: {} (API: {}, Tools: {}, Processing: {})",
+			format_duration(total_time_ms),
+			format_duration(chat_session.session.info.total_api_time_ms),
+			format_duration(chat_session.session.info.total_tool_time_ms),
+			format_duration(chat_session.session.info.total_layer_time_ms));
 	}
 
 	println!();

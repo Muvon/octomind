@@ -3,6 +3,40 @@
 use super::core::ChatSession;
 use colored::*;
 
+// Utility function to format time in a human-readable format
+fn format_duration(milliseconds: u64) -> String {
+	if milliseconds == 0 {
+		return "0ms".to_string();
+	}
+	
+	let ms = milliseconds % 1000;
+	let seconds = (milliseconds / 1000) % 60;
+	let minutes = (milliseconds / 60000) % 60;
+	let hours = milliseconds / 3600000;
+	
+	let mut parts = Vec::new();
+	
+	if hours > 0 {
+		parts.push(format!("{}h", hours));
+	}
+	if minutes > 0 {
+		parts.push(format!("{}m", minutes));
+	}
+	if seconds > 0 {
+		parts.push(format!("{}s", seconds));
+	}
+	if ms > 0 || parts.is_empty() {
+		if parts.is_empty() {
+			parts.push(format!("{}ms", ms));
+		} else if ms >= 100 {
+			// Only show milliseconds if >= 100ms when other units are present
+			parts.push(format!("{}ms", ms));
+		}
+	}
+	
+	parts.join(" ")
+}
+
 impl ChatSession {
 	// Display detailed information about the session, including layer-specific stats
 	pub fn display_session_info(&self) {
@@ -28,12 +62,12 @@ impl ChatSession {
 		// Time information
 		let total_time_ms = self.session.info.total_api_time_ms + self.session.info.total_tool_time_ms + self.session.info.total_layer_time_ms;
 		if total_time_ms > 0 {
-			println!("{} {}ms (API: {}ms, Tools: {}ms, Processing: {}ms)", 
+			println!("{} {} (API: {}, Tools: {}, Processing: {})", 
 				"Total time:".yellow(),
-				total_time_ms.to_string().bright_white(),
-				self.session.info.total_api_time_ms.to_string().bright_blue(),
-				self.session.info.total_tool_time_ms.to_string().bright_green(),
-				self.session.info.total_layer_time_ms.to_string().bright_magenta());
+				format_duration(total_time_ms).bright_white(),
+				format_duration(self.session.info.total_api_time_ms).bright_blue(),
+				format_duration(self.session.info.total_tool_time_ms).bright_green(),
+				format_duration(self.session.info.total_layer_time_ms).bright_magenta());
 		}
 
 		// Messages count and tool calls
@@ -114,12 +148,12 @@ impl ChatSession {
 				// Show time information if available
 				let total_time = total_api_time + total_tool_time + total_layer_time;
 				if total_time > 0 {
-					println!("  {}: {}ms (API: {}ms, Tools: {}ms, Total: {}ms)",
+					println!("  {}: {} (API: {}, Tools: {}, Total: {})",
 						"Time".blue(),
-						total_time.to_string().bright_white(),
-						total_api_time.to_string().bright_cyan(),
-						total_tool_time.to_string().bright_green(),
-						total_layer_time.to_string().bright_magenta());
+						format_duration(total_time).bright_white(),
+						format_duration(total_api_time).bright_cyan(),
+						format_duration(total_tool_time).bright_green(),
+						format_duration(total_layer_time).bright_magenta());
 				}
 
 				// Add special note for context optimization
@@ -173,12 +207,12 @@ impl ChatSession {
 					// Show time information if available
 					let total_time = total_api_time + total_tool_time + total_layer_time;
 					if total_time > 0 {
-						println!("  {}: {}ms (API: {}ms, Tools: {}ms, Total: {}ms)",
+						println!("  {}: {} (API: {}, Tools: {}, Total: {})",
 							"Time".blue(),
-							total_time.to_string().bright_white(),
-							total_api_time.to_string().bright_cyan(),
-							total_tool_time.to_string().bright_green(),
-							total_layer_time.to_string().bright_magenta());
+							format_duration(total_time).bright_white(),
+							format_duration(total_api_time).bright_cyan(),
+							format_duration(total_tool_time).bright_green(),
+							format_duration(total_layer_time).bright_magenta());
 					}
 					
 					println!("  {}", "Note: Command layers don't affect session history".bright_cyan());

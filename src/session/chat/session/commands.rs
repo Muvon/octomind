@@ -9,6 +9,7 @@ use crate::session::list_available_sessions;
 use chrono::{DateTime, Utc};
 use super::super::commands::*;
 use super::super::command_executor;
+use super::super::print_assistant_response;
 
 impl ChatSession {
 	// Process user commands
@@ -590,7 +591,8 @@ input_mode = "Last""#.bright_white());
 					Ok(result) => {
 						println!();
 						println!("{}", "Command result:".bright_green());
-						println!("{}", result.bright_white());
+						// Use markdown-aware printing for command results
+						print_assistant_response(&result, config, role);
 						println!();
 					},
 					Err(e) => {

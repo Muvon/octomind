@@ -693,11 +693,17 @@ pub async fn process_response(
 						let _ = show_loading_animation(animation_cancel_flag, current_cost).await;
 					});
 
+					// 🔍 PERFORMANCE DEBUG: Track where time is spent during tool result processing
+					let processing_start = std::time::Instant::now();
+
 					// IMPROVED APPROACH: Add tool results as proper "tool" role messages
 					// This follows the standard OpenAI/Anthropic format and avoids double-serialization
 					// CRITICAL FIX: Check cache threshold after EACH tool result, not after all
 					let cache_manager = crate::session::cache::CacheManager::new();
 					let supports_caching = crate::session::model_supports_caching(&chat_session.model);
+
+					let mut cache_check_time = 0u128;
+					let mut truncation_time = 0u128;
 
 					for tool_result in &tool_results {
 						// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
@@ -742,6 +748,7 @@ pub async fn process_response(
 						// CRITICAL FIX: Check auto-cache threshold IMMEDIATELY after EACH tool result
 						// This ensures proper 2-marker logic and threshold checking after each tool
 						let tool_message_index = chat_session.session.messages.len() - 1;
+						let cache_start = std::time::Instant::now();
 						if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold_on_tool_result(
 							&mut chat_session.session,
 							config,
@@ -751,11 +758,13 @@ pub async fn process_response(
 						) {
 							log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
 						}
+						cache_check_time += cache_start.elapsed().as_millis();
 
 						// CRITICAL FIX: Check for auto truncation after each tool result is added
 						// Tool responses can be very large (file contents, search results, etc.)
 						// and may push the context over the token limit
 						let tool_truncate_cancelled = Arc::new(AtomicBool::new(false));
+						let truncation_start = std::time::Instant::now();
 						if let Err(e) = super::context_truncation::check_and_truncate_context(
 							chat_session,
 							config,
@@ -764,6 +773,7 @@ pub async fn process_response(
 						).await {
 							log_info!("Warning: Error during tool result truncation check: {}", e);
 						}
+						truncation_time += truncation_start.elapsed().as_millis();
 					}
 
 					// Call the AI again with the tool results
@@ -773,6 +783,7 @@ pub async fn process_response(
 					// This ensures we don't send an oversized context to the API after processing
 					// multiple large tool results
 					let final_truncate_cancelled = Arc::new(AtomicBool::new(false));
+					let final_truncation_start = std::time::Instant::now();
 					if let Err(e) = super::context_truncation::check_and_truncate_context(
 						chat_session,
 						config,
@@ -780,6 +791,14 @@ pub async fn process_response(
 						final_truncate_cancelled.clone()
 					).await {
 						log_info!("Warning: Error during final truncation check before API call: {}", e);
+					}
+					truncation_time += final_truncation_start.elapsed().as_millis();
+
+					// 🔍 PERFORMANCE DEBUG: Report processing breakdown
+					let total_processing_time = processing_start.elapsed().as_millis();
+					if config.get_log_level().is_debug_enabled() && total_processing_time > 100 {
+						log_debug!("🔍 Tool result processing took {}ms (cache: {}ms, truncation: {}ms)", 
+							total_processing_time, cache_check_time, truncation_time);
 					}
 
 					// Call OpenRouter for the follow-up response

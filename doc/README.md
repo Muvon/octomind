@@ -47,8 +47,9 @@ Natural language code search using vector embeddings and tree-sitter parsing.
 
 #### **AI Sessions**
 Interactive sessions with AI assistance in two modes:
-- **Agent Mode**: Full development tools and project context
-- **Chat Mode**: Lightweight conversations
+- **Developer Role**: Full development tools and project context
+- **Assistant Role**: Lightweight conversations
+- **Custom Roles**: User-defined specialized configurations
 
 #### **Layered Architecture**
 Multi-stage AI processing:

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Octodev provides two distinct session modes designed for different use cases: **Agent Mode** for full development assistance and **Chat Mode** for simple conversations. Each mode has different capabilities, tool access, and optimization strategies.
+Octodev supports flexible session roles for different use cases, with two defaults provided and an extensible system for custom roles.
 
 ## Session Modes Comparison
 
@@ -19,20 +19,20 @@ Octodev provides two distinct session modes designed for different use cases: **
 
 Agent mode is the default and provides comprehensive development assistance.
 
-### Starting Agent Mode
+### Starting Developer Role
 
 ```bash
-# Default mode (agent)
+# Default role (developer)
 octodev session
 
-# Explicitly specify agent mode
-octodev session --mode=agent
+# Explicitly specify developer role
+octodev session --role=developer
 
-# Agent mode with specific model
-octodev session --mode=agent --model="openrouter:anthropic/claude-sonnet-4"
+# Developer role with specific model
+octodev session --role=developer --model="openrouter:anthropic/claude-sonnet-4"
 
-# Named agent session
-octodev session --mode=agent -n development_session
+# Named developer session
+octodev session --role=developer -n development_session
 ```
 
 ### Agent Mode Features

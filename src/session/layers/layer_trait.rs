@@ -53,7 +53,7 @@ impl FromStr for InputMode {
 }
 
 // Configuration for layer-specific MCP settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LayerMcpConfig {
 	#[serde(default)]
 	pub enabled: bool,
@@ -61,16 +61,6 @@ pub struct LayerMcpConfig {
 	pub servers: Vec<String>, // Names of MCP servers to use for this layer
 	#[serde(default)]
 	pub allowed_tools: Vec<String>, // Specific tools allowed (empty = all tools from enabled servers)
-}
-
-impl Default for LayerMcpConfig {
-	fn default() -> Self {
-		Self {
-			enabled: false,
-			servers: Vec::new(),
-			allowed_tools: Vec::new(),
-		}
-	}
 }
 
 // Common configuration properties for all layers - extended for flexibility

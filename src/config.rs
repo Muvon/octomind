@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+// Type alias to simplify the complex return type for get_mode_config
+type ModeConfigResult<'a> = (
+	&'a ModeConfig,
+	McpConfig,
+	Option<&'a Vec<crate::session::layers::LayerConfig>>,
+	Option<&'a std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
+	Option<&'a String>
+);
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum LogLevel {
 	#[serde(rename = "none")]
@@ -840,7 +849,7 @@ impl Config {
 	/// Get configuration for a specific role with proper fallback logic and role inheritance
 	/// Returns: (mode_config, mcp_config, layers, commands, system_prompt)
 	/// Role inheritance: any role inherits from 'assistant' first, then applies its own overrides
-	pub fn get_mode_config(&self, role: &str) -> (&ModeConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&std::collections::HashMap<String, crate::session::layers::LayerConfig>>, Option<&String>) {
+	pub fn get_mode_config(&self, role: &str) -> ModeConfigResult<'_> {
 		match role {
 			"developer" => {
 				// Developer role - inherits from assistant but with developer-specific config
@@ -1135,13 +1144,11 @@ impl Config {
 				}
 				
 				// Validate MCP configuration if enabled
-				if layer.mcp.enabled {
-					if layer.mcp.servers.is_empty() {
-						return Err(anyhow!(
-							"Layer '{}' has MCP enabled but no servers specified",
-							layer.name
-						));
-					}
+				if layer.mcp.enabled && layer.mcp.servers.is_empty() {
+					return Err(anyhow!(
+						"Layer '{}' has MCP enabled but no servers specified",
+						layer.name
+					));
 				}
 			}
 		}

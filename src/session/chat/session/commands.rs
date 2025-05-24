@@ -80,7 +80,7 @@ impl ChatSession {
 				let available_commands = command_executor::list_available_commands(config, role);
 				if available_commands.is_empty() {
 					println!("{}", "No command layers configured for this role.".bright_blue());
-					println!("{}", "Use '/run' to see configuration examples.\n");
+					println!("Use '/run' to see configuration examples.\n");
 				} else {
 					println!("{}", format!("Available command layers for role '{}':", role).bright_blue());
 					for cmd in &available_commands {
@@ -567,7 +567,7 @@ input_mode = "Last""#.bright_white());
 					// Use the last user message or a default input
 					self.session.messages.iter()
 						.filter(|m| m.role == "user")
-						.last()
+						.next_back()
 						.map(|m| m.content.clone())
 						.unwrap_or_else(|| "No recent user input found".to_string())
 				};

@@ -10,12 +10,16 @@ pub mod openrouter;
 pub mod openai;
 pub mod anthropic;
 pub mod google;
+pub mod amazon;
+pub mod cloudflare;
 
 // Re-export provider implementations
 pub use openrouter::OpenRouterProvider;
 pub use openai::OpenAiProvider;
 pub use anthropic::AnthropicProvider;
 pub use google::GoogleVertexProvider;
+pub use amazon::AmazonBedrockProvider;
+pub use cloudflare::CloudflareWorkersAiProvider;
 
 /// Common token usage structure across all providers
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -126,7 +130,9 @@ impl ProviderFactory {
 			"openai" => Ok(Box::new(OpenAiProvider::new())),
 			"anthropic" => Ok(Box::new(AnthropicProvider::new())),
 			"google" => Ok(Box::new(GoogleVertexProvider::new())),
-			_ => Err(anyhow::anyhow!("Unsupported provider: {}. Supported providers: openrouter, openai, anthropic, google", provider_name)),
+			"amazon" => Ok(Box::new(AmazonBedrockProvider::new())),
+			"cloudflare" => Ok(Box::new(CloudflareWorkersAiProvider::new())),
+			_ => Err(anyhow::anyhow!("Unsupported provider: {}. Supported providers: openrouter, openai, anthropic, google, amazon, cloudflare", provider_name)),
 		}
 	}
 
@@ -194,6 +200,12 @@ mod tests {
 		assert!(provider.is_ok());
 
 		let provider = ProviderFactory::create_provider("google");
+		assert!(provider.is_ok());
+
+		let provider = ProviderFactory::create_provider("amazon");
+		assert!(provider.is_ok());
+
+		let provider = ProviderFactory::create_provider("cloudflare");
 		assert!(provider.is_ok());
 
 		// Test invalid provider

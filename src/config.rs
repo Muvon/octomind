@@ -266,6 +266,10 @@ pub struct ProvidersConfig {
 	pub anthropic: ProviderConfig,
 	#[serde(default)]
 	pub google: ProviderConfig,
+	#[serde(default)]
+	pub amazon: ProviderConfig,
+	#[serde(default)]
+	pub cloudflare: ProviderConfig,
 }
 
 impl Default for ProvidersConfig {
@@ -275,6 +279,8 @@ impl Default for ProvidersConfig {
 			openai: ProviderConfig::default(),
 			anthropic: ProviderConfig::default(),
 			google: ProviderConfig::default(),
+			amazon: ProviderConfig::default(),
+			cloudflare: ProviderConfig::default(),
 		}
 	}
 }
@@ -361,6 +367,8 @@ impl ModeConfig {
 				"openai" => providers.openai.api_key.clone(),
 				"anthropic" => providers.anthropic.api_key.clone(),
 				"google" => providers.google.api_key.clone(),
+				"amazon" => providers.amazon.api_key.clone(),
+				"cloudflare" => providers.cloudflare.api_key.clone(),
 				_ => None,
 			}
 		} else {
@@ -376,6 +384,8 @@ impl ModeConfig {
 				"openai" => providers.openai.pricing.clone(),
 				"anthropic" => providers.anthropic.pricing.clone(),
 				"google" => providers.google.pricing.clone(),
+				"amazon" => providers.amazon.pricing.clone(),
+				"cloudflare" => providers.cloudflare.pricing.clone(),
 				_ => PricingConfig::default(),
 			}
 		} else {
@@ -1045,7 +1055,7 @@ impl Config {
 					},
 					Err(_) => {
 						return Err(anyhow!(
-							"Unsupported provider: '{}'. Supported providers: openrouter, openai, anthropic, google",
+							"Unsupported provider: '{}'. Supported providers: openrouter, openai, anthropic, google, amazon, cloudflare",
 							provider_name
 						));
 					}
@@ -1210,6 +1220,12 @@ impl Config {
 			if let Ok(google_credentials) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
 				config.providers.google.api_key = Some(google_credentials);
 			}
+			if let Ok(amazon_key) = std::env::var("AWS_ACCESS_KEY_ID") {
+				config.providers.amazon.api_key = Some(amazon_key);
+			}
+			if let Ok(cloudflare_key) = std::env::var("CLOUDFLARE_API_TOKEN") {
+				config.providers.cloudflare.api_key = Some(cloudflare_key);
+			}
 			
 			// Legacy environment variable support for backward compatibility
 			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
@@ -1236,6 +1252,8 @@ impl Config {
 			config.providers.openai.api_key = std::env::var("OPENAI_API_KEY").ok();
 			config.providers.anthropic.api_key = std::env::var("ANTHROPIC_API_KEY").ok();
 			config.providers.google.api_key = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
+			config.providers.amazon.api_key = std::env::var("AWS_ACCESS_KEY_ID").ok();
+			config.providers.cloudflare.api_key = std::env::var("CLOUDFLARE_API_TOKEN").ok();
 			
 			// Legacy support
 			config.openrouter.api_key = std::env::var("OPENROUTER_API_KEY").ok();
@@ -1312,6 +1330,12 @@ mod tests {
 			"anthropic:claude-3-opus",
 			"google:gemini-1.5-pro",
 			"google:gemini-1.5-flash",
+			"amazon:anthropic.claude-3-5-sonnet-20241022-v2:0",
+			"amazon:anthropic.claude-3-5-haiku-20241022-v1:0",
+			"amazon:anthropic.claude-3-opus-20240229-v1:0",
+			"amazon:meta.llama3-2-90b-instruct-v1:0",
+			"cloudflare:@cf/meta/llama-3.1-8b-instruct",
+			"cloudflare:@hf/thebloke/llama-2-13b-chat-awq",
 		];
 
 		for model in valid_models {

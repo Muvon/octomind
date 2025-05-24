@@ -64,3 +64,10 @@ url = "2.4.1"
 
 [build-dependencies]
 cc="*"
+
+[profile.dev]
+# Faster compilation with slightly reduced runtime performance
+opt-level = 1          # Basic optimizations for dependencies
+debug = "line-tables-only"  # Reduced debug info
+incremental = true     # Enable incremental compilation (should be default)
+codegen-units = 256   # More parallel compilation units for faster builds

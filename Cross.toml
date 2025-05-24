@@ -1,0 +1,38 @@
+# Cross-compilation configuration for octodev
+# This file configures the cross tool for building on different platforms
+
+[build]
+# Use newer images with better toolchains and dependencies
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
+
+[target.x86_64-unknown-linux-musl] 
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:main"
+
+# Environment variables passed to all builds
+[build.env]
+passthrough = [
+    "RUSTFLAGS",
+    "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+    "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
+    "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
+    "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER",
+    "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER",
+]
+
+# Build configuration for static binaries
+[build.default-target]
+sources = []
+
+# Docker build settings
+[build.dockerfile]
+context = "."

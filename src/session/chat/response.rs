@@ -705,6 +705,12 @@ pub async fn process_response(
 					let mut cache_check_time = 0u128;
 					let mut truncation_time = 0u128;
 
+					// PERFORMANCE OPTIMIZATION: Batch process tool results with smart truncation
+					// Instead of checking truncation after EVERY tool result (expensive), 
+					// we batch process and only truncate when necessary or at the end
+					let mut accumulated_content_size = 0;
+					let mut needs_truncation_check = false;
+					
 					for tool_result in &tool_results {
 						// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
 						let tool_content = if let Some(output) = tool_result.result.get("output") {
@@ -728,6 +734,16 @@ pub async fn process_response(
 							}
 						};
 
+						// PERFORMANCE OPTIMIZATION: Check size before moving content
+						let content_size = tool_content.len();
+						accumulated_content_size += content_size;
+						let is_large_output = content_size > 10000; // 10KB+ outputs
+						let accumulated_is_large = accumulated_content_size > 50000; // 50KB+ total
+						
+						if is_large_output || accumulated_is_large {
+							needs_truncation_check = true;
+						}
+						
 						// Create a proper tool message with tool_call_id and name
 						let tool_message = crate::session::Message {
 							role: "tool".to_string(),
@@ -759,19 +775,38 @@ pub async fn process_response(
 							log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
 						}
 						cache_check_time += cache_start.elapsed().as_millis();
-
-						// CRITICAL FIX: Check for auto truncation after each tool result is added
-						// Tool responses can be very large (file contents, search results, etc.)
-						// and may push the context over the token limit
-						let tool_truncate_cancelled = Arc::new(AtomicBool::new(false));
+						
+						// Check truncation only for large individual tool outputs (file contents, search results, etc.)
+						if is_large_output {
+							let tool_truncate_cancelled = Arc::new(AtomicBool::new(false));
+							let truncation_start = std::time::Instant::now();
+							if let Err(e) = super::context_truncation::check_and_truncate_context(
+								chat_session,
+								config,
+								role,
+								tool_truncate_cancelled.clone()
+							).await {
+								log_info!("Warning: Error during tool result truncation check: {}", e);
+							}
+							truncation_time += truncation_start.elapsed().as_millis();
+							
+							// Reset flags after truncation
+							needs_truncation_check = false;
+							accumulated_content_size = 0;
+						}
+					}
+					
+					// BATCH TRUNCATION: Check once after all small tool results are processed
+					if needs_truncation_check {
+						let batch_truncate_cancelled = Arc::new(AtomicBool::new(false));
 						let truncation_start = std::time::Instant::now();
 						if let Err(e) = super::context_truncation::check_and_truncate_context(
 							chat_session,
 							config,
 							role,
-							tool_truncate_cancelled.clone()
+							batch_truncate_cancelled.clone()
 						).await {
-							log_info!("Warning: Error during tool result truncation check: {}", e);
+							log_info!("Warning: Error during batch truncation check: {}", e);
 						}
 						truncation_time += truncation_start.elapsed().as_millis();
 					}

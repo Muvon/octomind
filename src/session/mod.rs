@@ -481,12 +481,12 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 		return custom_prompt.clone();
 	}
 
-	// For chat mode, use a simple system prompt
-	if mode == "chat" {
+	// For assistant role, use a simple system prompt
+	if mode == "assistant" {
 		return "You are a helpful assistant.".to_string();
 	}
 
-	// For agent mode (default), build the complex system prompt with project context
+	// For developer role (default), build the complex system prompt with project context
 	// Collect project context information (README.md, CHANGES.md, git info, file tree)
 	let project_context = ProjectContext::collect(project_dir);
 

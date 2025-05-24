@@ -14,9 +14,9 @@ pub struct SessionArgs {
 	#[arg(long)]
 	pub model: Option<String>,
 
-	/// Session mode: agent (default with layers and tools) or chat (simple chat without tools)
-	#[arg(long, default_value = "agent")]
-	pub mode: String,
+	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
+	#[arg(long, default_value = "developer")]
+	pub role: String,
 }
 
 // No execute function here since it's handled directly by the session::chat module

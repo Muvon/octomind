@@ -40,9 +40,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		#[arg(long)]
 		model: Option<String>,
 
-		/// Session mode: agent (default with layers and tools) or chat (simple chat without tools)
-		#[arg(long, default_value = "agent")]
-		mode: String,
+		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
+		#[arg(long, default_value = "developer")]
+		role: String,
 	}
 
 	// Read args as SessionArgs
@@ -75,26 +75,26 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			None
 		};
 
-		// Get mode
-		let mode = if args_str.contains("mode: \"") {
-			let start = args_str.find("mode: \"").unwrap() + 7;
+		// Get role
+		let role = if args_str.contains("role: \"") {
+			let start = args_str.find("role: \"").unwrap() + 7;
 			let end = args_str[start..].find('\"').unwrap() + start;
 			args_str[start..end].to_string()
 		} else {
-			"agent".to_string() // Default mode
+			"developer".to_string() // Default role
 		};
 
 		SessionArgs {
 			name,
 			resume,
 			model,
-			mode,
+			role,
 		}
 	};
 
-	// Check if there's an index, and if not, run indexer (only for agent mode)
+	// Check if there's an index, and if not, run indexer (only for developer role)
 	let current_dir = std::env::current_dir()?;
-	if session_args.mode == "agent" {
+	if session_args.role == "developer" {
 		let octodev_dir = current_dir.join(".octodev");
 		let index_path = octodev_dir.join("storage");
 		if !index_path.exists() {
@@ -109,8 +109,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		indexer::start_watcher_in_background(store, config).await?;
 	}
 
-	// Get the merged configuration for the specified mode
-	let mode_config = config.get_merged_config_for_mode(&session_args.mode);
+	// Get the merged configuration for the specified role
+	let mode_config = config.get_merged_config_for_mode(&session_args.role);
 
 	// Create or load session
 	let mut chat_session = ChatSession::initialize(
@@ -133,8 +133,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {
-		// Create system prompt based on mode
-		let system_prompt = create_system_prompt(&current_dir, config, &session_args.mode).await;
+		// Create system prompt based on role
+		let system_prompt = create_system_prompt(&current_dir, config, &session_args.role).await;
 		chat_session.add_system_message(&system_prompt)?;
 
 		// Mark system message with function declarations as cached by default
@@ -156,9 +156,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Add assistant welcome message
 		let welcome_message = format!(
-			"Hello! Octodev ready to serve you. Working dir: {} (Mode: {})",
+			"Hello! Octodev ready to serve you. Working dir: {} (Role: {})",
 			current_dir.file_name().unwrap_or_default().to_string_lossy(),
-			session_args.mode
+			session_args.role
 		);
 		chat_session.add_assistant_message(&welcome_message, None, &mode_config)?;
 
@@ -314,8 +314,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// Reload the configuration
 					match crate::config::Config::load() {
 						Ok(updated_config) => {
-							// Update our current config with the new mode-specific config
-							current_config = updated_config.get_merged_config_for_mode(&session_args.mode);
+							// Update our current config with the new role-specific config
+							current_config = updated_config.get_merged_config_for_mode(&session_args.role);
 							// Update thread config for logging macros
 							crate::config::set_thread_config(&current_config);
 							log_info!("Configuration reloaded successfully");
@@ -348,7 +348,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// 2. Use the processed input for the main model chat
 
 		// If layers are enabled and this is the first message, process it through layers first
-		if current_config.openrouter.enable_layers && !first_message_processed && session_args.mode == "agent" {
+		if current_config.openrouter.enable_layers && !first_message_processed && session_args.role == "developer" {
 			// This is the first message with layered architecture enabled
 			// We will process it through layers to get improved input for the main model
 
@@ -507,8 +507,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 	}
 
-	// Clean up the watcher when the session ends (only for agent mode)
-	if session_args.mode == "agent" {
+	// Clean up the watcher when the session ends (only for developer role)
+	if session_args.role == "developer" {
 		let _ = crate::session::indexer::cleanup_watcher().await;
 	}
 

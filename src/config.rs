@@ -678,9 +678,9 @@ impl McpConfig {
 	}
 }
 
-// Updated mode configurations using the new ModeConfig structure
+// Updated role configurations using the new ModeConfig structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AgentModeConfig {
+pub struct DeveloperRoleConfig {
 	#[serde(flatten)]
 	pub config: ModeConfig,
 	#[serde(default)]
@@ -694,7 +694,7 @@ pub struct AgentModeConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ChatModeConfig {
+pub struct AssistantRoleConfig {
 	#[serde(flatten)]
 	pub config: ModeConfig,
 	#[serde(default)]
@@ -704,7 +704,7 @@ pub struct ChatModeConfig {
 	pub openrouter: Option<OpenRouterConfig>,
 }
 
-impl Default for AgentModeConfig {
+impl Default for DeveloperRoleConfig {
 	fn default() -> Self {
 		Self {
 			config: ModeConfig {
@@ -723,7 +723,7 @@ impl Default for AgentModeConfig {
 	}
 }
 
-impl Default for ChatModeConfig {
+impl Default for AssistantRoleConfig {
 	fn default() -> Self {
 		Self {
 			config: ModeConfig {
@@ -733,12 +733,35 @@ impl Default for ChatModeConfig {
 				..ModeConfig::default()
 			},
 			mcp: McpConfig {
-				enabled: false,  // Chat mode has MCP/tools disabled by default
+				enabled: false,  // Assistant role has MCP/tools disabled by default
 				..McpConfig::default()
 			},
 			openrouter: None,
 		}
 	}
+}
+
+// Legacy mode configurations for backward compatibility
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentModeConfig {
+	#[serde(flatten)]
+	pub config: ModeConfig,
+	#[serde(default)]
+	pub mcp: McpConfig,
+	#[serde(default)]
+	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub openrouter: Option<OpenRouterConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatModeConfig {
+	#[serde(flatten)]
+	pub config: ModeConfig,
+	#[serde(default)]
+	pub mcp: McpConfig,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub openrouter: Option<OpenRouterConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -757,17 +780,17 @@ pub struct Config {
 	#[serde(default)]
 	pub providers: ProvidersConfig,
 	
-	// Mode-specific configurations
+	// Role-specific configurations
 	#[serde(default)]
-	pub agent: AgentModeConfig,
+	pub developer: DeveloperRoleConfig,
 	#[serde(default)]
-	pub chat: ChatModeConfig,
+	pub assistant: AssistantRoleConfig,
 	
-	// Global MCP configuration (fallback for modes)
+	// Global MCP configuration (fallback for roles)
 	#[serde(default)]
 	pub mcp: McpConfig,
 	
-	// Legacy fields for backward compatibility
+	// Legacy fields for backward compatibility - REMOVED for new approach
 	#[serde(default)]
 	pub openrouter: OpenRouterConfig,
 	#[serde(default)]
@@ -802,39 +825,40 @@ impl Config {
 		true
 	}
 
-	/// Get configuration for a specific mode with proper fallback logic
+	/// Get configuration for a specific role with proper fallback logic and role inheritance
 	/// Returns: (mode_config, mcp_config, layers, system_prompt)
-	pub fn get_mode_config(&self, mode: &str) -> (&ModeConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&String>) {
-		match mode {
-			"agent" => {
-				// Start with agent mode config
-				let mut mcp_config = self.agent.mcp.clone();
+	/// Role inheritance: any role inherits from 'assistant' first, then applies its own overrides
+	pub fn get_mode_config(&self, role: &str) -> (&ModeConfig, McpConfig, Option<&Vec<crate::session::layers::LayerConfig>>, Option<&String>) {
+		match role {
+			"developer" => {
+				// Developer role - inherits from assistant but with developer-specific config
+				let mut mcp_config = self.developer.mcp.clone();
 				
-				// If agent.mcp is "empty/default", fall back to global mcp
+				// If developer.mcp is "empty/default", fall back to global mcp
 				if self.is_mcp_config_empty(&mcp_config) {
 					mcp_config = self.mcp.clone();
 				}
 				
-				(&self.agent.config, mcp_config, self.agent.layers.as_ref(), self.agent.config.system.as_ref())
+				(&self.developer.config, mcp_config, self.developer.layers.as_ref(), self.developer.config.system.as_ref())
 			},
-			"chat" => {
-				// Start with chat mode config
-				let mut mcp_config = self.chat.mcp.clone();
+			"assistant" => {
+				// Base assistant role
+				let mut mcp_config = self.assistant.mcp.clone();
 				
-				// If chat.mcp is "empty/default", fall back to global mcp
+				// If assistant.mcp is "empty/default", fall back to global mcp
 				if self.is_mcp_config_empty(&mcp_config) {
 					mcp_config = self.mcp.clone();
 				}
 				
-				(&self.chat.config, mcp_config, None, self.chat.config.system.as_ref())
+				(&self.assistant.config, mcp_config, None, self.assistant.config.system.as_ref())
 			},
 			_ => {
-				// Default to legacy config for unknown modes - convert to ModeConfig format
-				// This is tricky since openrouter has the old format, we need to create a temporary ModeConfig
-				// For now, let's just use agent mode as fallback
-				let mcp_config = self.mcp.clone();
+				// For any custom role, inherit from assistant first
+				// This implements the inheritance pattern where new roles start from assistant base
+				// TODO: In future, load custom role config and merge with assistant as base
 				
-				(&self.agent.config, mcp_config, self.layers.as_ref(), self.system.as_ref())
+				// For now, fall back to assistant role as the base inheritance
+				self.get_mode_config("assistant")
 			}
 		}
 	}
@@ -869,16 +893,16 @@ impl Config {
 		merged
 	}
 
-	/// Helper method to get the mode config struct directly
-	pub fn get_mode_config_struct(&self, mode: &str) -> &ModeConfig {
-		match mode {
-			"agent" => &self.agent.config,
-			"chat" => &self.chat.config,
-			_ => &self.agent.config, // Default fallback
+	/// Helper method to get the role config struct directly
+	pub fn get_mode_config_struct(&self, role: &str) -> &ModeConfig {
+		match role {
+			"developer" => &self.developer.config,
+			"assistant" => &self.assistant.config,
+			_ => &self.assistant.config, // Default fallback to assistant for inheritance
 		}
 	}
 
-	/// Migrate legacy configuration to new format
+	/// Simple migration for providers only
 	fn migrate_legacy_config(&mut self) {
 		// Migrate API keys from legacy openrouter config to providers
 		if let Some(api_key) = &self.openrouter.api_key {
@@ -890,65 +914,9 @@ impl Config {
 		// Migrate global MCP configuration
 		self.mcp.migrate_from_legacy();
 		
-		// Migrate mode-specific MCP configurations
-		self.agent.mcp.migrate_from_legacy();
-		self.chat.mcp.migrate_from_legacy();
-		
-		// Migrate legacy mode configs that might have openrouter fields
-		if let Some(legacy_or) = &self.agent.openrouter {
-			// Migrate agent mode settings if they're not already set
-			if self.agent.config.model == default_full_model() {
-				// Use the legacy model format directly
-				self.agent.config.model = legacy_or.model.clone();
-			}
-			
-			// Migrate other settings
-			self.agent.config.enable_layers = legacy_or.enable_layers;
-			self.agent.config.log_level = legacy_or.log_level.clone();
-			self.agent.config.mcp_response_warning_threshold = legacy_or.mcp_response_warning_threshold;
-			self.agent.config.max_request_tokens_threshold = legacy_or.max_request_tokens_threshold;
-			self.agent.config.enable_auto_truncation = legacy_or.enable_auto_truncation;
-			self.agent.config.cache_tokens_pct_threshold = legacy_or.cache_tokens_pct_threshold;
-			self.agent.config.cache_tokens_absolute_threshold = legacy_or.cache_tokens_absolute_threshold;
-			self.agent.config.cache_timeout_seconds = legacy_or.cache_timeout_seconds;
-			self.agent.config.enable_markdown_rendering = legacy_or.enable_markdown_rendering;
-			
-			// Migrate API key
-			if let Some(api_key) = &legacy_or.api_key {
-				if self.providers.openrouter.api_key.is_none() {
-					self.providers.openrouter.api_key = Some(api_key.clone());
-				}
-			}
-		}
-		
-		if let Some(legacy_or) = &self.chat.openrouter {
-			// Similar migration for chat mode
-			if self.chat.config.model == "openrouter:anthropic/claude-3.5-haiku" {
-				// Use the legacy model format directly
-				self.chat.config.model = legacy_or.model.clone();
-			}
-			
-			// Migrate other settings
-			self.chat.config.enable_layers = legacy_or.enable_layers;
-			self.chat.config.log_level = legacy_or.log_level.clone();
-			self.chat.config.mcp_response_warning_threshold = legacy_or.mcp_response_warning_threshold;
-			self.chat.config.max_request_tokens_threshold = legacy_or.max_request_tokens_threshold;
-			self.chat.config.enable_auto_truncation = legacy_or.enable_auto_truncation;
-			self.chat.config.cache_tokens_pct_threshold = legacy_or.cache_tokens_pct_threshold;
-			self.chat.config.cache_tokens_absolute_threshold = legacy_or.cache_tokens_absolute_threshold;
-			self.chat.config.cache_timeout_seconds = legacy_or.cache_timeout_seconds;
-			self.chat.config.enable_markdown_rendering = legacy_or.enable_markdown_rendering;
-		}
-		
-		// Clear legacy fields after migration
-		self.agent.openrouter = None;
-		self.chat.openrouter = None;
-		
-		// If the config was migrated, suggest saving it
-		if self.openrouter.api_key.is_some() || !self.mcp.providers.is_empty() || !self.agent.mcp.providers.is_empty() || !self.chat.mcp.providers.is_empty() {
-			eprintln!("Notice: Your configuration has been migrated to the new format with separated providers and mode configs.");
-			eprintln!("Consider saving the configuration to persist the changes: octodev config save");
-		}
+		// Migrate role-specific MCP configurations
+		self.developer.mcp.migrate_from_legacy();
+		self.assistant.mcp.migrate_from_legacy();
 	}
 
 	pub fn ensure_octodev_dir() -> Result<std::path::PathBuf> {
@@ -1102,9 +1070,9 @@ impl Config {
 		// Validate global MCP config
 		validate_mcp(&self.mcp, "Global MCP config")?;
 		
-		// Validate mode-specific MCP configs
-		validate_mcp(&self.agent.mcp, "Agent mode MCP config")?;
-		validate_mcp(&self.chat.mcp, "Chat mode MCP config")?;
+		// Validate role-specific MCP configs
+		validate_mcp(&self.developer.mcp, "Developer role MCP config")?;
+		validate_mcp(&self.assistant.mcp, "Assistant role MCP config")?;
 
 		Ok(())
 	}

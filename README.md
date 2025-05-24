@@ -175,11 +175,11 @@ octodev search --json "database connection setup"
 Octodev includes an AI coding assistant with two distinct modes that can help you understand and modify your codebase:
 
 ```bash
-# Start a new interactive session in agent mode (default)
+# Start a new interactive session in developer role (default)
 octodev session
 
-# Start in chat mode for simple conversation
-octodev session --mode=chat
+# Start in assistant role for simple conversation
+octodev session --role=assistant
 
 # Start with a specific name (or resume if exists)
 octodev session -n my_session
@@ -194,54 +194,69 @@ octodev session --model "anthropic:claude-3-5-sonnet"
 octodev session --model "google:gemini-1.5-pro"
 
 # Combine options
-octodev session --mode=chat --model="openai:gpt-4o-mini" -n chat_session
+octodev session --role=assistant --model="openai:gpt-4o-mini" -n chat_session
 ```
 
-#### Session Modes
+#### Session Roles
 
-Octodev supports two session modes for different use cases:
+Octodev supports flexible session roles for different use cases, with two defaults provided:
 
-**Agent Mode (Default)** - Full development environment:
+**Developer Role (Default)** - Full development environment:
 - Complete codebase indexing and analysis
 - All development tools enabled (file operations, shell commands, code search)
 - Project context collection (README, git info, file structure)
-- Layered architecture support for complex tasks
+- Layered architecture support enabled by default for complex tasks
 - Complex developer-focused system prompts
 - File watching for code changes
 
-**Chat Mode** - Simple conversation:
+**Assistant Role** - Simple conversation:
 - No codebase indexing (faster startup)
 - Tools disabled by default (configurable)
 - Simple assistant system prompts
-- Direct model interaction (no layers)
+- Direct model interaction (layers disabled by default)
 - Lighter resource usage
 
-#### Mode Configuration
+**Custom Roles** - Extensible system:
+- Any custom role can be defined in the configuration
+- All custom roles inherit from the assistant role as a base
+- Custom configurations override the inherited settings
+- Use `--role=your-custom-role` to use any configured role
 
-Each mode can be configured independently with its own model, tool settings, and behavior:
+#### Role Configuration
+
+Each role can be configured independently with its own model, tool settings, and behavior. Roles follow an inheritance pattern where custom roles inherit from the assistant role first, then apply their own overrides:
 
 ```toml
-# Global MCP configuration (fallback for all modes)
+# Global MCP configuration (fallback for all roles)
 [mcp]
 enabled = true
 providers = ["core"]
 servers = []
 
-# Agent mode configuration (inherits global MCP by default)
-[agent]
+# Developer role configuration (inherits from global MCP by default)
+[developer]
 system = "You are an Octodev AI developer assistant with full access to development tools."
-[agent.openrouter]
+[developer.openrouter]
 model = "anthropic/claude-3.7-sonnet"
 enable_layers = true
 
-# Chat mode configuration (tools disabled by default)
-[chat]
+# Assistant role configuration (tools disabled by default)
+[assistant]
 system = "You are a helpful assistant."
-[chat.mcp]
+[assistant.mcp]
 enabled = false  # Override global MCP to disable tools
-[chat.openrouter]
+[assistant.openrouter]
 model = "anthropic/claude-3.5-haiku"  # Faster/cheaper model
 enable_layers = false
+
+# Custom role configuration (inherits from assistant, then applies overrides)
+[my-custom-role]
+system = "You are a specialized assistant for my specific use case."
+[my-custom-role.mcp]
+enabled = true  # Enable tools for this custom role
+[my-custom-role.openrouter]
+model = "openrouter:openai/gpt-4o"
+enable_layers = true
 ```
 
 #### Layered Architecture

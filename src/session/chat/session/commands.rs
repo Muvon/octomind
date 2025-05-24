@@ -95,21 +95,20 @@ impl ChatSession {
 					}
 				};
 
-				// We need to determine which mode we're in to update the correct config section
-				// For now, we'll assume agent mode since that's where layers are typically used
-				// In the future, this could be passed as a parameter to the command processing
-				let current_mode = "agent"; // TODO: Get this from session context
+				// For now, we'll default to developer role since that's where layers are typically used
+				// In the future, this could be passed as a parameter from the session context
+				let current_role = "developer"; // TODO: Get this from session context
 				
-				// Toggle the setting for the appropriate mode
-				match current_mode {
-					"agent" => {
-						loaded_config.agent.config.enable_layers = !loaded_config.agent.config.enable_layers;
+				// Toggle the setting for the appropriate role
+				match current_role {
+					"developer" => {
+						loaded_config.developer.config.enable_layers = !loaded_config.developer.config.enable_layers;
 					},
-					"chat" => {
-						loaded_config.chat.config.enable_layers = !loaded_config.chat.config.enable_layers;
+					"assistant" => {
+						loaded_config.assistant.config.enable_layers = !loaded_config.assistant.config.enable_layers;
 					},
 					_ => {
-						// Fall back to global config for unknown modes
+						// Fall back to global config for unknown roles
 						loaded_config.openrouter.enable_layers = !loaded_config.openrouter.enable_layers;
 					}
 				}
@@ -121,9 +120,9 @@ impl ChatSession {
 				}
 
 				// Get the current state from the appropriate config section
-				let is_enabled = match current_mode {
-					"agent" => loaded_config.agent.config.enable_layers,
-					"chat" => loaded_config.chat.config.enable_layers,
+				let is_enabled = match current_role {
+					"developer" => loaded_config.developer.config.enable_layers,
+					"assistant" => loaded_config.assistant.config.enable_layers,
 					_ => loaded_config.openrouter.enable_layers,
 				};
 

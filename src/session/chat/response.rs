@@ -674,10 +674,36 @@ pub async fn process_response(
 						) {
 							log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
 						}
+
+						// CRITICAL FIX: Check for auto truncation after each tool result is added
+						// Tool responses can be very large (file contents, search results, etc.)
+						// and may push the context over the token limit
+						let tool_truncate_cancelled = Arc::new(AtomicBool::new(false));
+						if let Err(e) = super::context_truncation::check_and_truncate_context(
+							chat_session, 
+							config, 
+							role, 
+							tool_truncate_cancelled.clone()
+						).await {
+							log_info!("Warning: Error during tool result truncation check: {}", e);
+						}
 					}
 
 					// Call the AI again with the tool results
 					// Use session messages directly instead of converting
+
+					// FINAL SAFETY CHECK: Truncate context before making follow-up API call
+					// This ensures we don't send an oversized context to the API after processing
+					// multiple large tool results
+					let final_truncate_cancelled = Arc::new(AtomicBool::new(false));
+					if let Err(e) = super::context_truncation::check_and_truncate_context(
+						chat_session, 
+						config, 
+						role, 
+						final_truncate_cancelled.clone()
+					).await {
+						log_info!("Warning: Error during final truncation check before API call: {}", e);
+					}
 
 					// Create a task to show loading animation
 					let animation_cancel_flag = fresh_cancel.clone();

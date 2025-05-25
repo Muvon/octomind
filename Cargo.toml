@@ -18,7 +18,9 @@ ignore = "0.4.23"
 editorconfig = "1.0.0"
 parking_lot = "0.12.1"
 chrono = "0.4.39"
-lancedb = "0.19.0"
+lance-table = { version = "0.27.2", default-features = false, features = ["lazy_static"] }
+lance = { version = "0.27.2", default-features = false, features = [] }
+lancedb = { version = "0.19.0", default-features = false }
 arrow = { version = "54.2.1", features = ["prettyprint"] }
 serde = { version = "1.0.217", features = ["derive"] }
 tree-sitter = "0.24.7"
@@ -61,15 +63,16 @@ syntect = "5.2.0"
 html5ever = "0.27.0"
 markup5ever_rcdom = "0.3.0"
 url = "2.4.1"
-lance-table = { version = "0.27.2", default-features = false, features = ["lazy_static"] }
-lance = { version = "0.27.2", default-features = false }
 
 [build-dependencies]
 cc="*"
 
 [profile.dev]
-# Faster compilation with slightly reduced runtime performance
-opt-level = 1          # Basic optimizations for dependencies
-debug = "line-tables-only"  # Reduced debug info
-incremental = true     # Enable incremental compilation (should be default)
-codegen-units = 256   # More parallel compilation units for faster builds
+opt-level = 1          # Basic optimizations without slowing compilation too much
+debug = true           # Keep debug symbols for backtraces
+debug-assertions = true # Keep runtime checks
+overflow-checks = true  # Keep overflow checks
+lto = false            # Disable Link Time Optimization to speed up builds
+codegen-units = 256    # Use more codegen units for faster parallel compilation
+incremental = true     # Enable incremental compilation
+rpath = false          # Disable runtime search path

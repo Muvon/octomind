@@ -122,7 +122,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
 		"core" => "system",
-		"text_editor" | "line_replace" => "developer",
+		"text_editor" => "developer",
 		"list_files" => "filesystem",
 		"html2md" => "web",
 		name if name.contains("file") || name.contains("editor") => "developer",

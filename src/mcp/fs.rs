@@ -132,72 +132,7 @@ async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult> {
 	}
 }
 
-// View multiple files at once with optimized token usage
-async fn view_multiple_files(call: &McpToolCall, paths: &[String]) -> Result<McpToolResult> {
-	let mut files = Vec::with_capacity(paths.len());
-	let mut failures = Vec::new();
 
-	// Process each file in the list with efficient memory usage
-	for path_str in paths {
-		let path = Path::new(&path_str);
-		let path_display = path.display().to_string();
-
-		// Check if file exists and is a regular file
-		if !path.exists() || !path.is_file() {
-			failures.push(format!("Not a valid file: {}", path_display));
-			continue;
-		}
-
-		// Check file size - avoid loading very large files
-		let metadata = match tokio_fs::metadata(path).await {
-			Ok(meta) => {
-				if meta.len() > 1024 * 1024 * 5 { // 5MB limit
-					failures.push(format!("File too large: {}", path_display));
-					continue;
-				}
-				meta
-			},
-			Err(_) => {
-				failures.push(format!("Cannot read: {}", path_display));
-				continue;
-			}
-		};
-
-		// Read file content with error handling
-		let content = match tokio_fs::read_to_string(path).await {
-			Ok(content) => content,
-			Err(_) => {
-				failures.push(format!("Cannot read content: {}", path_display));
-				continue;
-			}
-		};
-
-		// Get language from extension for syntax highlighting
-		let ext = path.extension()
-			.and_then(|e| e.to_str())
-			.unwrap_or("");
-
-		// Add file info to collection - only store what we need
-		files.push(json!({
-			"path": path_display,
-			"content": content,
-			"lang": detect_language(ext),
-			"size": metadata.len(),
-		}));
-	}
-
-	// Create optimized result
-	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"success": !files.is_empty(),
-			"files": files,
-			"count": files.len(),
-			"failed": failures,
-		}),
-	})
-}
 
 // Save the current content of a file for undo
 async fn save_file_history(path: &Path) -> Result<()> {
@@ -241,7 +176,7 @@ pub fn get_line_replace_function() -> McpFunction {
 			**Parameters:**
 			`path`: Single file path string or array of file paths
 			`start_line`: Starting line number(s) - 1-indexed, can be single number or array
-			`end_line`: Ending line number(s) - 1-indexed, inclusive, can be single number or array  
+			`end_line`: Ending line number(s) - 1-indexed, inclusive, can be single number or array
 			`content`: New content to place at the specified line range(s)
 
 			**Single File Usage:**
@@ -348,135 +283,200 @@ pub fn get_line_replace_function() -> McpFunction {
 	}
 }
 
-// Define the text editor function for modifying files
+// Define the text editor function for modifying files - comprehensive file editing capabilities
 pub fn get_text_editor_function() -> McpFunction {
 	McpFunction {
 		name: "text_editor".to_string(),
-		description: "Perform text editing operations on files, optimized for multi-file operations.
+		description: "Perform text editing operations on files with comprehensive file manipulation capabilities.
 
-			The `command` parameter specifies the operation to perform on the file system. This tool is specifically designed to handle batch operations across multiple files when possible, improving efficiency and consistency.
+			The `command` parameter specifies the operation to perform. Available commands:
 
-			**⚠️ IMPORTANT: Always prefer multi-file operations over single calls to reduce token usage and improve performance**
+			**view**: Examine content of a file or list directory contents
+			- View entire file: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
+			- View specific lines: `{\"command\": \"view\", \"path\": \"src/main.rs\", \"view_range\": [10, 20]}`
+			- List directory: `{\"command\": \"view\", \"path\": \"src/\"}`
+			- The view_range parameter is optional and specifies start and end line numbers (1-indexed)
+			- Returns content with line numbers for precise editing reference
 
-			Available Commands:
+			**create**: Create a new file with specified content
+			- `{\"command\": \"create\", \"path\": \"src/new_module.rs\", \"file_text\": \"pub fn hello() {\\n    println!(\\\"Hello!\\\");\\n}\"}`
+			- Creates parent directories if they don't exist
+			- Returns error if file already exists to prevent accidental overwrites
 
-			`view`: Examine content of one or multiple files simultaneously
-			- **Single file**: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
-			- **🔥 Multiple files** (strongly recommended): `{\"command\": \"view\", \"path\": [\"src/main.rs\", \"src/lib.rs\", \"Cargo.toml\"]}`
-			- Returns content of all requested files for comprehensive analysis or reference
-			- **Best practice**: Batch related files together for context analysis
+			**str_replace**: Replace a specific string in a file with new content
+			- `{\"command\": \"str_replace\", \"path\": \"src/main.rs\", \"old_str\": \"fn old_name()\", \"new_str\": \"fn new_name()\"}`
+			- The old_str must match exactly, including whitespace and indentation
+			- Returns error if string appears 0 times or more than once for safety
+			- Automatically saves file history for undo operations
 
-			`write`: Create or overwrite one or multiple files in a single operation
-			- **Single file**: `{\"command\": \"write\", \"path\": \"src/main.rs\", \"file_text\": \"fn main() {...}\"}`
-			- **🔥 Multiple files** (strongly recommended):
-			```
-			{
-			\"command\": \"write\",
-			\"path\": [\"src/models.rs\", \"src/views.rs\", \"tests/integration.rs\"],
-			\"file_text\": [\"pub struct Model {...}\", \"pub fn render() {...}\", \"#[test] fn test() {...}\"]
-			}
-			```
-			- **Best practice**: Create entire modules or related files together to maintain consistency
+			**insert**: Insert text at a specific location in a file
+			- `{\"command\": \"insert\", \"path\": \"src/main.rs\", \"insert_line\": 5, \"new_str\": \"    // New comment\\n    let x = 10;\"}`
+			- insert_line specifies the line number after which to insert (0 for beginning of file)
+			- new_str can contain multiple lines using \\n
+			- Line numbers are 1-indexed for intuitive operation
 
-			`str_replace`: Perform text replacement across one or multiple files
-			- **Single file**:
-			```
-			{
-			\"command\": \"str_replace\",
-			\"path\": \"src/lib.rs\",
-			\"old_str\": \"fn old_name()\",
-			\"new_str\": \"fn new_name()\"
-			}
-			```
-			- **🔥 Multiple files** (strongly recommended):
-			```
-			{
-			\"command\": \"str_replace\",
-			\"path\": [\"src/lib.rs\", \"src/main.rs\", \"tests/unit.rs\"],
-			\"old_str\": [\"struct OldName\", \"use crate::OldName\", \"OldName::new()\"],
-			\"new_str\": [\"struct NewName\", \"use crate::NewName\", \"NewName::new()\"]
-			}
-			```
-			- **Best practice**: Rename/refactor across all affected files in a single operation
-			- The `old_str` must exactly match text in the file, including whitespace
+			**line_replace**: Replace content within a specific line range
+			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"start_line\": 5, \"end_line\": 8, \"new_text\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
+			- Replaces lines from start_line to end_line (inclusive, 1-indexed)
+			- More precise than str_replace when you know exact line numbers
+			- Ideal for replacing function implementations, code blocks, or configuration sections
 
-			`undo_edit`: Revert the most recent edit made to a specified file
+			**view_many**: View multiple files simultaneously for comprehensive analysis
+			- `{\"command\": \"view_many\", \"paths\": [\"src/main.rs\", \"src/lib.rs\", \"tests/test.rs\"]}`
+			- Returns content with line numbers for all files in a single operation
+			- Efficient for understanding relationships between files, code analysis, and refactoring
+			- Includes binary file detection, size limits, and error resilience
+			- Maximum 50 files per request to maintain performance
+
+			**undo_edit**: Revert the most recent edit made to a specified file
 			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`
-			- Useful for rolling back changes when needed
+			- Available for str_replace, insert, and line_replace operations
+			- Restores the file to its state before the last edit
 
-			**🎯 Performance Guidelines:**
-			1. **Always batch related files** - view, write, or modify related files together
-			2. **Avoid repeated single-file calls** - combine operations when possible
-			3. **Use arrays consistently** - paths, old_strs, new_strs, file_texts must have equal length
-			4. **Plan comprehensive changes** - think about all files affected by a change
-			5. **Prefer fewer, larger operations** over many small ones
+			**Error Handling:**
+			- File not found: Returns descriptive error message
+			- Multiple matches: Returns error asking for more specific context
+			- No matches: Returns error with suggestion to check the text
+			- Permission errors: Returns permission denied message
+			- Line range errors: Validates line numbers exist in file
 
-			**💡 Common Multi-File Patterns:**
-			- **Module creation**: Write multiple related .rs files together
-			- **Refactoring**: Update imports, function names, types across affected files
-			- **Configuration updates**: Modify related config files simultaneously
-			- **Test updates**: Update source and corresponding test files together
-
-			This tool enables efficient code management across multiple files, supporting comprehensive refactoring and codebase-wide changes with minimal token usage.".to_string(),
+			**Best Practices:**
+			- Use view with line ranges to examine specific sections before editing
+			- Always verify file content before making changes
+			- Use str_replace for content-based replacements
+			- Use line_replace when you know exact line positions
+			- Use insert for adding new code at specific locations
+			- Use create for new files and modules".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],
 			"properties": {
-				"path": {
-					"description": "Absolute path to file(s). Can be a single path string or an array of path strings.",
-					"oneOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "array",
-							"items": {
-								"type": "string"
-							}
-						}
-					]
-				},
 				"command": {
 					"type": "string",
-					"enum": ["view", "write", "str_replace", "undo_edit"],
-					"description": "Allowed options are: `view`, `write`, `str_replace`, undo_edit`.",
+					"enum": ["view", "view_many", "create", "str_replace", "insert", "line_replace", "undo_edit"],
+					"description": "The operation to perform: view, view_many, create, str_replace, insert, line_replace, or undo_edit"
 				},
-				"old_str": {
-					"description": "String(s) to replace. Can be a single string or an array of strings matching the path array length.",
-					"oneOf": [
-						{"type": "string"},
-						{
-							"type": "array",
-							"items": {"type": "string"}
-						}
-					]
+				"path": {
+					"type": "string",
+					"description": "Absolute path to the file or directory (not used for view_many command)"
 				},
-				"new_str": {
-					"description": "Replacement string(s). Can be a single string or an array of strings matching paths and old_strs.",
-					"oneOf": [
-						{"type": "string"},
-						{
-							"type": "array",
-							"items": {"type": "string"}
-						}
-					]
+				"paths": {
+					"type": "array",
+					"items": {"type": "string"},
+					"maxItems": 50,
+					"description": "Array of absolute file paths for view_many command"
+				},
+				"view_range": {
+					"type": "array",
+					"items": {"type": "integer"},
+					"minItems": 2,
+					"maxItems": 2,
+					"description": "Optional array of two integers [start_line, end_line] for viewing specific lines (1-indexed, -1 for end means read to end of file)"
 				},
 				"file_text": {
-					"description": "Content to write to file(s). Can be a string for a single file or an array of strings matching the path array length.",
-					"oneOf": [
-						{"type": "string"},
-						{
-							"type": "array",
-							"items": {"type": "string"}
-						}
-					]
+					"type": "string",
+					"description": "Content to write when creating a new file"
+				},
+				"old_str": {
+					"type": "string",
+					"description": "Text to replace (must match exactly including whitespace)"
+				},
+				"new_str": {
+					"type": "string",
+					"description": "Replacement text for str_replace or text to insert for insert command"
+				},
+				"insert_line": {
+					"type": "integer",
+					"minimum": 0,
+					"description": "Line number after which to insert text (0 for beginning of file, 1-indexed)"
+				},
+				"start_line": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Starting line number for line_replace command (1-indexed)"
+				},
+				"end_line": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Ending line number for line_replace command (1-indexed, inclusive)"
+				},
+				"new_text": {
+					"type": "string",
+					"description": "New content to replace the specified line range in line_replace command"
 				}
 			}
 		}),
 	}
 }
 
-// Define the HTML to Markdown conversion function
+// Define the view_many function for viewing multiple files simultaneously
+pub fn get_view_many_function() -> McpFunction {
+	McpFunction {
+		name: "view_many".to_string(),
+		description: "View multiple files simultaneously with optimized token usage and comprehensive analysis capabilities.
+
+			- **Code Analysis**: Understanding relationships between modules, classes, and functions
+			- **Refactoring**: Seeing how changes in one file might affect others
+			- **Documentation**: Analyzing multiple source files to write comprehensive documentation
+			- **Debugging**: Examining related files to understand complex bugs
+			- **Architecture Review**: Getting an overview of project structure and organization
+
+			**Key Benefits:**
+			- **Efficient Context Loading**: Read multiple related files in a single operation
+			- **Token Optimization**: Batched file reading reduces API call overhead
+			- **Consistent Formatting**: All files returned with line numbers for precise reference
+			- **Smart Filtering**: Automatic handling of binary files and size limits
+			- **Error Resilience**: Continues processing other files even if some fail
+
+			**Usage Examples:**
+			- Analyze module structure: `{\"paths\": [\"src/lib.rs\", \"src/main.rs\", \"src/utils.rs\"]}`
+			- Review test coverage: `{\"paths\": [\"src/parser.rs\", \"tests/parser_tests.rs\", \"tests/integration_tests.rs\"]}`
+			- Configuration analysis: `{\"paths\": [\"Cargo.toml\", \"src/config.rs\", \".env.example\"]}`
+			- Documentation review: `{\"paths\": [\"README.md\", \"CONTRIBUTING.md\", \"src/lib.rs\"]}`
+
+			**Response Format:**
+			Returns a structured response with:
+			- **files**: Array of successfully processed files with content and metadata
+			- **failed**: Array of files that couldn't be processed with error descriptions
+			- **count**: Number of successfully processed files
+			- **total_size**: Combined size of all processed files
+
+			Each file entry includes:
+			- **path**: Full file path
+			- **content**: File content with line numbers (format: \"1: content\")
+			- **lines**: Number of lines in the file
+			- **size**: File size in bytes
+			- **lang**: Detected programming language for syntax highlighting
+
+			**Limitations and Safeguards:**
+			- Files larger than 5MB are skipped to prevent token overflow
+			- Binary files are automatically detected and skipped
+			- Maximum of 50 files per request to maintain performance
+			- Individual file errors don't stop processing of other files
+
+			**Best Practices:**
+			- Group related files together for better context
+			- Use when you need to understand relationships between files
+			- Prefer this over multiple single-file view operations
+			- Consider file sizes to avoid token limits
+			- Review failed files list to ensure all intended files were processed".to_string(),
+		parameters: json!({
+			"type": "object",
+			"required": ["paths"],
+			"properties": {
+				"paths": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"description": "Array of absolute file paths to view simultaneously",
+					"maxItems": 50
+				}
+			}
+		}),
+	}
+}
+
 pub fn get_html2md_function() -> McpFunction {
 	McpFunction {
 		name: "html2md".to_string(),
@@ -566,7 +566,7 @@ pub async fn execute_line_replace(call: &McpToolCall) -> Result<McpToolResult> {
 				Some(s) => s,
 				_ => return Err(anyhow!("Invalid 'content' parameter, must be a string")),
 			};
-			
+
 			line_replace_single_file(call, Path::new(p), start_line, end_line, content).await
 		},
 		Value::Array(paths) => {
@@ -618,7 +618,7 @@ pub async fn execute_line_replace(call: &McpToolCall) -> Result<McpToolResult> {
 	}
 }
 
-// Execute a text editor command
+// Execute a text editor command following modern text editor specifications
 pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
@@ -626,145 +626,122 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => return Err(anyhow!("Missing or invalid 'command' parameter")),
 	};
 
-	// Extract path parameter
-	let path_value = match call.parameters.get("path") {
-		Some(value) => value,
-		_ => return Err(anyhow!("Missing 'path' parameter")),
-	};
-
 	// Execute the appropriate command
 	match command.as_str() {
 		"view" => {
-			// Support either a single path string or an array of paths
-			match path_value {
-				Value::String(p) => {
-					// Single file view
-					view_file(call, Path::new(p)).await
-				},
-				Value::Array(paths) => {
-					// Multiple files view
-					let path_strings: Result<Vec<String>, _> = paths.iter()
+			// Extract path parameter for view command
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'path' parameter for view command")),
+			};
+
+			// Check if view_range is specified
+			let view_range = call.parameters.get("view_range")
+				.and_then(|v| v.as_array())
+				.and_then(|arr| {
+					if arr.len() == 2 {
+						let start = arr[0].as_i64()?;
+						let end = arr[1].as_i64()?;
+						Some((start as usize, end))
+					} else {
+						None
+					}
+				});
+
+			view_file_spec(call, Path::new(&path), view_range).await
+		},
+		"view_many" => {
+			// Extract paths parameter for view_many command
+			let paths = match call.parameters.get("paths") {
+				Some(Value::Array(arr)) => {
+					let path_strings: Result<Vec<String>, _> = arr.iter()
 						.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
 						.map(|r| r.map(|s| s.to_string()))
 						.collect();
 
 					match path_strings {
-						Ok(path_strs) => view_multiple_files(call, &path_strs).await,
-						Err(e) => Err(e),
-					}
-				},
-				_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
-			}
-		},
-		"write" => {
-			// Support either a single path/content or arrays for multiple files
-			match path_value {
-				Value::String(p) => {
-					// Single file write
-					let file_text = match call.parameters.get("file_text") {
-						Some(Value::String(txt)) => txt.clone(),
-						_ => return Err(anyhow!("Missing or invalid 'file_text' parameter for single file write")),
-					};
-					write_file(call, Path::new(p), &file_text).await
-				},
-				Value::Array(paths) => {
-					// Multiple files write
-					let file_text_value = match call.parameters.get("file_text") {
-						Some(value) => value,
-						_ => return Err(anyhow!("Missing 'file_text' parameter for write operations")),
-					};
-
-					match file_text_value {
-						Value::Array(contents) => {
-							// Convert path and content arrays to strings
-							let path_strings: Result<Vec<String>, _> = paths.iter()
-								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
-								.map(|r| r.map(|s| s.to_string()))
-								.collect();
-
-							let content_strings: Result<Vec<String>, _> = contents.iter()
-								.map(|c| c.as_str().ok_or_else(|| anyhow!("Invalid content in array")))
-								.map(|r| r.map(|s| s.to_string()))
-								.collect();
-
-							match (path_strings, content_strings) {
-								(Ok(paths), Ok(contents)) => write_multiple_files(call, &paths, &contents).await,
-								(Err(e), _) | (_, Err(e)) => Err(e),
+						Ok(paths) => {
+							if paths.len() > 50 {
+								return Err(anyhow!("Too many files requested. Maximum 50 files per request."));
 							}
+							paths
 						},
-						_ => Err(anyhow!("'file_text' must be an array for multiple file writes")),
+						Err(e) => return Err(e),
 					}
 				},
-				_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
-			}
-		},
-		"str_replace" => {
-			// Support either a single path or arrays for multiple files
-			match path_value {
-				Value::String(p) => {
-					// Single file replacement
-					let old_str = match call.parameters.get("old_str") {
-						Some(Value::String(s)) => s.clone(),
-						_ => return Err(anyhow!("Missing or invalid 'old_str' parameter")),
-					};
-					let new_str = match call.parameters.get("new_str") {
-						Some(Value::String(s)) => s.clone(),
-						_ => return Err(anyhow!("Missing or invalid 'new_str' parameter")),
-					};
-					replace_string_in_file(call, Path::new(p), &old_str, &new_str).await
-				},
-				Value::Array(paths) => {
-					// Multiple files replacement - preferred method
-					let old_str_value = match call.parameters.get("old_str") {
-						Some(value) => value,
-						_ => return Err(anyhow!("Missing 'old_str' parameter for str_replace operations")),
-					};
-
-					let new_str_value = match call.parameters.get("new_str") {
-						Some(value) => value,
-						_ => return Err(anyhow!("Missing 'new_str' parameter for str_replace operations")),
-					};
-
-					match (old_str_value, new_str_value) {
-						(Value::Array(old_strs), Value::Array(new_strs)) => {
-							// Convert arrays to strings
-							let path_strings: Result<Vec<String>, _> = paths.iter()
-								.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
-								.map(|r| r.map(|s| s.to_string()))
-								.collect();
-
-							let old_str_strings: Result<Vec<String>, _> = old_strs.iter()
-								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in old_str array")))
-								.map(|r| r.map(|s| s.to_string()))
-								.collect();
-
-							let new_str_strings: Result<Vec<String>, _> = new_strs.iter()
-								.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid string in new_str array")))
-								.map(|r| r.map(|s| s.to_string()))
-								.collect();
-
-							match (path_strings, old_str_strings, new_str_strings) {
-								(Ok(paths), Ok(old_strs), Ok(new_strs)) => {
-									str_replace_multiple(call, &paths, &old_strs, &new_strs).await
-								},
-								_ => Err(anyhow!("Invalid strings in arrays")),
-							}
-						},
-						_ => Err(anyhow!("Both 'old_str' and 'new_str' must be arrays for multiple file replacements")),
-					}
-				},
-				_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
-			}
-		},
-		"undo_edit" => {
-			let path = match path_value.as_str() {
-				Some(p) => p,
-				_ => return Err(anyhow!("'path' parameter must be a string for undo_edit operations")),
+				_ => return Err(anyhow!("Missing or invalid 'paths' parameter for view_many command - must be an array of strings")),
 			};
 
-			undo_edit(call, Path::new(path)).await
+			view_many_files_spec(call, &paths).await
 		},
-		_ => Err(anyhow!("Invalid command: {}", command)),
+		"create" => {
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'path' parameter for create command")),
+			};
+			let file_text = match call.parameters.get("file_text") {
+				Some(Value::String(txt)) => txt.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'file_text' parameter for create command")),
+			};
+			create_file_spec(call, Path::new(&path), &file_text).await
+		},
+		"str_replace" => {
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'path' parameter for str_replace command")),
+			};
+			let old_str = match call.parameters.get("old_str") {
+				Some(Value::String(s)) => s.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'old_str' parameter")),
+			};
+			let new_str = match call.parameters.get("new_str") {
+				Some(Value::String(s)) => s.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'new_str' parameter")),
+			};
+			str_replace_spec(call, Path::new(&path), &old_str, &new_str).await
+		},
+		"insert" => {
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'path' parameter for insert command")),
+			};
+			let insert_line = match call.parameters.get("insert_line") {
+				Some(Value::Number(n)) => n.as_u64().ok_or_else(|| anyhow!("Invalid 'insert_line' parameter"))? as usize,
+				_ => return Err(anyhow!("Missing or invalid 'insert_line' parameter")),
+			};
+			let new_str = match call.parameters.get("new_str") {
+				Some(Value::String(s)) => s.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'new_str' parameter for insert command")),
+			};
+			insert_text_spec(call, Path::new(&path), insert_line, &new_str).await
+		},
+		"line_replace" => {
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'path' parameter for line_replace command")),
+			};
+			let start_line = match call.parameters.get("start_line") {
+				Some(Value::Number(n)) => n.as_u64().ok_or_else(|| anyhow!("Invalid 'start_line' parameter"))? as usize,
+				_ => return Err(anyhow!("Missing or invalid 'start_line' parameter")),
+			};
+			let end_line = match call.parameters.get("end_line") {
+				Some(Value::Number(n)) => n.as_u64().ok_or_else(|| anyhow!("Invalid 'end_line' parameter"))? as usize,
+				_ => return Err(anyhow!("Missing or invalid 'end_line' parameter")),
+			};
+			let new_text = match call.parameters.get("new_text") {
+				Some(Value::String(s)) => s.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'new_text' parameter for line_replace command")),
+			};
+			line_replace_spec(call, Path::new(&path), start_line, end_line, &new_text).await
+		},
+		"undo_edit" => {
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => return Err(anyhow!("Missing or invalid 'path' parameter for undo_edit command")),
+			};
+			undo_edit(call, Path::new(&path)).await
+		},
+		_ => Err(anyhow!("Invalid command: {}. Allowed commands are: view, view_many, create, str_replace, insert, line_replace, undo_edit", command)),
 	}
 }
 
@@ -880,13 +857,13 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 pub fn get_all_functions() -> Vec<McpFunction> {
 	vec![
 		get_text_editor_function(),
-		get_line_replace_function(),
 		get_list_files_function(),
 		get_html2md_function(),
 	]
 }
 
 // Helper function to detect language based on file extension
+#[allow(dead_code)]
 fn detect_language(ext: &str) -> &str {
 	match ext {
 		"rs" => "rust",
@@ -911,150 +888,478 @@ fn detect_language(ext: &str) -> &str {
 	}
 }
 
-// View the content of a file - optimized for token usage
-async fn view_file(call: &McpToolCall, path: &Path) -> Result<McpToolResult> {
+// View the content of a file following Anthropic specification - with line numbers and view_range support
+async fn view_file_spec(call: &McpToolCall, path: &Path, view_range: Option<(usize, i64)>) -> Result<McpToolResult> {
 	if !path.exists() {
-		return Err(anyhow!("File does not exist: {}", path.display()));
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "File not found",
+				"is_error": true
+			}),
+		});
+	}
+
+	if path.is_dir() {
+		// List directory contents
+		let mut entries = Vec::new();
+		let read_dir = tokio_fs::read_dir(path).await.map_err(|e| anyhow!("Permission denied. Cannot read directory: {}", e))?;
+		let mut dir_entries = read_dir;
+
+		while let Some(entry) = dir_entries.next_entry().await.map_err(|e| anyhow!("Error reading directory: {}", e))? {
+			let name = entry.file_name().to_string_lossy().to_string();
+			let is_dir = entry.file_type().await.map_err(|e| anyhow!("Error reading file type: {}", e))?.is_dir();
+			entries.push(if is_dir { format!("{}/", name) } else { name });
+		}
+
+		entries.sort();
+		let content = entries.join("\n");
+
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"content": content,
+				"type": "directory"
+			}),
+		});
 	}
 
 	if !path.is_file() {
-		return Err(anyhow!("Path is not a file: {}", path.display()));
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "Path is not a file",
+				"is_error": true
+			}),
+		});
 	}
 
 	// Check file size to avoid loading very large files
-	let metadata = tokio_fs::metadata(path).await?;
+	let metadata = tokio_fs::metadata(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	if metadata.len() > 1024 * 1024 * 5 {  // 5MB limit
-		return Err(anyhow!("File is too large (>5MB): {}", path.display()));
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "File is too large (>5MB)",
+				"is_error": true
+			}),
+		});
 	}
 
 	// Read the file content
-	let content = tokio_fs::read_to_string(path).await?;
+	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let lines: Vec<&str> = content.lines().collect();
 
-	// Detect file type/language for syntax highlighting
-	let file_ext = path.extension()
-		.and_then(|e| e.to_str())
-		.unwrap_or("");
+	let (content_with_numbers, displayed_lines) = if let Some((start, end)) = view_range {
+		// Handle view_range parameter
+		let start_idx = if start == 0 { 0 } else { start.saturating_sub(1) }; // Convert to 0-indexed
+		let end_idx = if end == -1 {
+			lines.len()
+		} else {
+			(end as usize).min(lines.len())
+		};
 
-	// Create result
-	let result = McpToolResult {
+		if start_idx >= lines.len() {
+			return Ok(McpToolResult {
+				tool_name: "text_editor".to_string(),
+				tool_id: call.tool_id.clone(),
+				result: json!({
+					"error": format!("Start line {} exceeds file length ({} lines)", start, lines.len()),
+					"is_error": true
+				}),
+			});
+		}
+
+		let selected_lines = &lines[start_idx..end_idx];
+		let content_with_nums = selected_lines
+			.iter()
+			.enumerate()
+			.map(|(i, line)| format!("{}: {}", start_idx + i + 1, line))
+			.collect::<Vec<_>>()
+			.join("\n");
+
+		(content_with_nums, end_idx - start_idx)
+	} else {
+		// Show entire file with line numbers
+		let content_with_nums = lines
+			.iter()
+			.enumerate()
+			.map(|(i, line)| format!("{}: {}", i + 1, line))
+			.collect::<Vec<_>>()
+			.join("\n");
+
+		(content_with_nums, lines.len())
+	};
+
+	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"success": true,
-			"files": [{
-				"path": path.to_string_lossy(),
-				"content": content,
-				"lang": detect_language(file_ext),
-				"size": metadata.len(),
-			}],
-			"count": 1
+			"content": content_with_numbers,
+			"lines": displayed_lines,
+			"total_lines": lines.len()
 		}),
-	};
-
-	// Return a single file in the same format as multiple files for consistency
-	Ok(result)
+	})
 }
 
-// Write content to a single file
-async fn write_file(call: &McpToolCall, path: &Path, content: &str) -> Result<McpToolResult> {
-	// Save the current content for undo if the file exists
+// Create a new file following Anthropic specification
+async fn create_file_spec(call: &McpToolCall, path: &Path, content: &str) -> Result<McpToolResult> {
+	// Check if file already exists
 	if path.exists() {
-		save_file_history(path).await?;
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "File already exists",
+				"is_error": true
+			}),
+		});
 	}
 
 	// Create parent directories if they don't exist
 	if let Some(parent) = path.parent() {
 		if !parent.exists() {
-			tokio_fs::create_dir_all(parent).await?;
+			tokio_fs::create_dir_all(parent).await.map_err(|e| anyhow!("Permission denied. Cannot create directories: {}", e))?;
 		}
 	}
 
 	// Write the content to the file
-	tokio_fs::write(path, content).await?;
+	tokio_fs::write(path, content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
-	// Create result
-	let result = McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"success": true,
-			"files": [{
-				"path": path.to_string_lossy(),
-				"success": true,
-				"size": content.len()
-			}],
-			"count": 1
-		}),
-	};
-
-	// Return success in the same format as multiple file write for consistency
-	Ok(result)
-}
-
-// Write content to multiple files
-async fn write_multiple_files(call: &McpToolCall, paths: &[String], contents: &[String]) -> Result<McpToolResult> {
-	let mut results = Vec::with_capacity(paths.len());
-	let mut failures = Vec::new();
-
-	// Ensure paths and contents match in length
-	if paths.len() != contents.len() {
-		return Err(anyhow!(
-			"Mismatch in path and content arrays. Expected {} paths and {} contents to match.",
-			paths.len(), contents.len()
-		));
-	}
-
-	// Process each file in the list
-	for (idx, path_str) in paths.iter().enumerate() {
-		let path = Path::new(path_str);
-		let content = &contents[idx];
-		let path_display = path.display().to_string();
-
-		// Try to save history for undo if the file exists
-		if path.exists() {
-			if let Err(e) = save_file_history(path).await {
-				failures.push(format!("Failed to save history for {}: {}", path_display, e));
-				// But continue with the write operation
-			}
-		}
-
-		// Create parent directories if needed
-		if let Some(parent) = path.parent() {
-			if !parent.exists() {
-				if let Err(e) = tokio_fs::create_dir_all(parent).await {
-					failures.push(format!("Failed to create directories for {}: {}", path_display, e));
-					continue; // Skip this file if we can't create the directory
-				}
-			}
-		}
-
-		// Write the content to the file
-		match tokio_fs::write(path, content).await {
-			Ok(_) => {
-				results.push(json!({
-					"path": path_display,
-					"success": true,
-					"size": content.len()
-				}));
-			},
-			Err(e) => {
-				failures.push(format!("Failed to write to {}: {}", path_display, e));
-			}
-		};
-	}
-
-	// Return success if at least one file was written
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"success": !results.is_empty(),
-			"files": results,
-			"count": results.len(),
-			"failed": failures
+			"content": format!("File created successfully with {} bytes", content.len()),
+			"path": path.to_string_lossy(),
+			"size": content.len()
 		}),
 	})
 }
+
+// Replace a string in a file following Anthropic specification
+async fn str_replace_spec(call: &McpToolCall, path: &Path, old_str: &str, new_str: &str) -> Result<McpToolResult> {
+	if !path.exists() {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "File not found",
+				"is_error": true
+			}),
+		});
+	}
+
+	// Read the file content
+	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+
+	// Check if old_str appears in the file
+	let occurrences = content.matches(old_str).count();
+	if occurrences == 0 {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "No match found for replacement. Please check your text and try again.",
+				"is_error": true
+			}),
+		});
+	}
+	if occurrences > 1 {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": format!("Found {} matches for replacement text. Please provide more context to make a unique match.", occurrences),
+				"is_error": true
+			}),
+		});
+	}
+
+	// Save the current content for undo
+	save_file_history(path).await?;
+
+	// Replace the string
+	let new_content = content.replace(old_str, new_str);
+
+	// Write the new content
+	tokio_fs::write(path, new_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"content": "Successfully replaced text at exactly one location.",
+			"path": path.to_string_lossy()
+		}),
+	})
+}
+
+// Insert text at a specific location in a file following Anthropic specification
+async fn insert_text_spec(call: &McpToolCall, path: &Path, insert_line: usize, new_str: &str) -> Result<McpToolResult> {
+	if !path.exists() {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "File not found",
+				"is_error": true
+			}),
+		});
+	}
+
+	// Read the file content
+	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let mut lines: Vec<&str> = content.lines().collect();
+
+	// Validate insert_line
+	if insert_line > lines.len() {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": format!("Insert line {} exceeds file length ({} lines)", insert_line, lines.len()),
+				"is_error": true
+			}),
+		});
+	}
+
+	// Save the current content for undo
+	save_file_history(path).await?;
+
+	// Split new content into lines
+	let new_lines: Vec<&str> = new_str.lines().collect();
+
+	// Insert the new lines
+	let insert_index = insert_line; // 0 means beginning, 1 means after line 1, etc.
+	lines.splice(insert_index..insert_index, new_lines);
+
+	// Join lines back to string
+	let new_content = lines.join("\n");
+
+	// Add final newline if original file had one
+	let final_content = if content.ends_with('\n') {
+		format!("{}\n", new_content)
+	} else {
+		new_content
+	};
+
+	// Write the new content
+	tokio_fs::write(path, final_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"content": format!("Successfully inserted {} lines at line {}", new_str.lines().count(), insert_line),
+			"path": path.to_string_lossy(),
+			"lines_inserted": new_str.lines().count()
+		}),
+	})
+}
+
+// Replace content within a specific line range following modern text editor specifications
+async fn line_replace_spec(call: &McpToolCall, path: &Path, start_line: usize, end_line: usize, new_text: &str) -> Result<McpToolResult> {
+	if !path.exists() {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "File not found",
+				"is_error": true
+			}),
+		});
+	}
+
+	// Validate line numbers
+	if start_line == 0 || end_line == 0 {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": "Line numbers must be 1-indexed (start from 1)",
+				"is_error": true
+			}),
+		});
+	}
+
+	if start_line > end_line {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": format!("start_line ({}) must be less than or equal to end_line ({})", start_line, end_line),
+				"is_error": true
+			}),
+		});
+	}
+
+	// Read the file content
+	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let mut lines: Vec<&str> = content.lines().collect();
+
+	// Validate line ranges exist in file
+	if start_line > lines.len() {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": format!("start_line ({}) exceeds file length ({} lines)", start_line, lines.len()),
+				"is_error": true
+			}),
+		});
+	}
+
+	if end_line > lines.len() {
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"error": format!("end_line ({}) exceeds file length ({} lines)", end_line, lines.len()),
+				"is_error": true
+			}),
+		});
+	}
+
+	// Save the current content for undo
+	save_file_history(path).await?;
+
+	// Split new content into lines
+	let new_lines: Vec<&str> = new_text.lines().collect();
+
+	// Convert to 0-indexed for array operations
+	let start_idx = start_line - 1;
+	let end_idx = end_line; // end_idx is exclusive in splice
+
+	// Replace the lines using splice
+	lines.splice(start_idx..end_idx, new_lines);
+
+	// Join lines back to string
+	let new_content = lines.join("\n");
+
+	// Add final newline if original file had one
+	let final_content = if content.ends_with('\n') {
+		format!("{}\n", new_content)
+	} else {
+		new_content
+	};
+
+	// Write the new content
+	tokio_fs::write(path, final_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"content": format!("Successfully replaced {} lines with {} lines", end_line - start_line + 1, new_text.lines().count()),
+			"path": path.to_string_lossy(),
+			"lines_replaced": end_line - start_line + 1,
+			"new_lines": new_text.lines().count()
+		}),
+	})
+}
+
+// View multiple files simultaneously as part of text_editor tool
+async fn view_many_files_spec(call: &McpToolCall, paths: &[String]) -> Result<McpToolResult> {
+	let mut files = Vec::with_capacity(paths.len());
+	let mut failures = Vec::new();
+	let mut total_size = 0u64;
+
+	// Process each file in the list with efficient memory usage
+	for path_str in paths {
+		let path = Path::new(&path_str);
+		let path_display = path.display().to_string();
+
+		// Check if file exists and is a regular file
+		if !path.exists() {
+			failures.push(format!("File does not exist: {}", path_display));
+			continue;
+		}
+
+		if !path.is_file() {
+			failures.push(format!("Not a regular file: {}", path_display));
+			continue;
+		}
+
+		// Check file size - avoid loading very large files
+		let metadata = match tokio_fs::metadata(path).await {
+			Ok(meta) => {
+				if meta.len() > 1024 * 1024 * 5 { // 5MB limit
+					failures.push(format!("File too large (>5MB): {}", path_display));
+					continue;
+				}
+				meta
+			},
+			Err(e) => {
+				failures.push(format!("Cannot read metadata for {}: {}", path_display, e));
+				continue;
+			}
+		};
+
+		// Check if file is binary
+		if let Ok(sample) = tokio_fs::read(&path).await {
+			let sample_size = sample.len().min(512);
+			let null_count = sample[..sample_size].iter().filter(|&&b| b == 0).count();
+			if null_count > sample_size / 10 {
+				failures.push(format!("Binary file skipped: {}", path_display));
+				continue;
+			}
+		}
+
+		// Read file content with error handling
+		let content = match tokio_fs::read_to_string(path).await {
+			Ok(content) => content,
+			Err(e) => {
+				failures.push(format!("Cannot read content of {}: {}", path_display, e));
+				continue;
+			}
+		};
+
+		// Get language from extension for syntax highlighting
+		let ext = path.extension()
+			.and_then(|e| e.to_str())
+			.unwrap_or("");
+
+		// Add line numbers to content
+		let lines: Vec<&str> = content.lines().collect();
+		let content_with_numbers = lines
+			.iter()
+			.enumerate()
+			.map(|(i, line)| format!("{}: {}", i + 1, line))
+			.collect::<Vec<_>>()
+			.join("\n");
+
+		// Add file info to collection - only store what we need
+		files.push(json!({
+			"path": path_display,
+			"content": content_with_numbers,
+			"lines": lines.len(),
+			"size": metadata.len(),
+			"lang": detect_language(ext),
+		}));
+
+		total_size += metadata.len();
+	}
+
+	// Create optimized result
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"success": !files.is_empty(),
+			"files": files,
+			"count": files.len(),
+			"total_size": total_size,
+			"failed": failures,
+		}),
+	})
+}
+
+
 
 // Replace lines in a single file
 async fn line_replace_single_file(call: &McpToolCall, path: &Path, start_line: usize, end_line: usize, content: &str) -> Result<McpToolResult> {
@@ -1264,143 +1569,132 @@ async fn line_replace_multiple_files(call: &McpToolCall, paths: &[String], start
 	})
 }
 
-// Replace a string in a single file - optimized format for consistency
-async fn replace_string_in_file(call: &McpToolCall, path: &Path, old_str: &str, new_str: &str) -> Result<McpToolResult> {
-	if !path.exists() {
-		return Err(anyhow!("File does not exist: {}", path.display()));
-	}
 
-	// Read the file content
-	let content = tokio_fs::read_to_string(path).await?;
 
-	// Check if old_str appears exactly once
-	let occurrences = content.matches(old_str).count();
-	if occurrences == 0 {
-		return Err(anyhow!("The string to replace does not exist in the file"));
-	}
-	if occurrences > 1 {
-		return Err(anyhow!("The string to replace appears {} times in the file. It should appear exactly once.", occurrences));
-	}
+// Execute view_many command for viewing multiple files simultaneously
+pub async fn execute_view_many(call: &McpToolCall) -> Result<McpToolResult> {
+	// Extract paths parameter
+	let paths_value = match call.parameters.get("paths") {
+		Some(value) => value,
+		_ => return Err(anyhow!("Missing 'paths' parameter")),
+	};
 
-	// Save the current content for undo
-	save_file_history(path).await?;
+	// Extract paths array
+	let paths = match paths_value.as_array() {
+		Some(arr) => {
+			let path_strings: Result<Vec<String>, _> = arr.iter()
+				.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
+				.map(|r| r.map(|s| s.to_string()))
+				.collect();
 
-	// Replace the string
-	let new_content = content.replace(old_str, new_str);
+			match path_strings {
+				Ok(paths) => {
+					if paths.len() > 50 {
+						return Err(anyhow!("Too many files requested. Maximum 50 files per request."));
+					}
+					paths
+				},
+				Err(e) => return Err(e),
+			}
+		},
+		_ => return Err(anyhow!("'paths' parameter must be an array of strings")),
+	};
 
-	// Write the new content
-	tokio_fs::write(path, new_content).await?;
-
-	// Return success with context
-	let position = content.find(old_str).unwrap();
-	let start_line = content[..position].matches('\n').count() + 1;
-
-	// Return in the same format as multiple replacements for consistency
-	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"success": true,
-			"files": [{
-				"path": path.to_string_lossy(),
-				"success": true,
-				"line": start_line,
-				"old_size": old_str.len(),
-				"new_size": new_str.len()
-			}],
-			"count": 1
-		}),
-	})
+	view_many_files(call, &paths).await
 }
 
-// Replace strings in multiple files
-async fn str_replace_multiple(call: &McpToolCall, paths: &[String], old_strs: &[String], new_strs: &[String]) -> Result<McpToolResult> {
-	let mut results = Vec::with_capacity(paths.len());
+// View multiple files simultaneously with optimized token usage
+async fn view_many_files(call: &McpToolCall, paths: &[String]) -> Result<McpToolResult> {
+	let mut files = Vec::with_capacity(paths.len());
 	let mut failures = Vec::new();
+	let mut total_size = 0u64;
 
-	// Ensure all arrays have matching length
-	if paths.len() != old_strs.len() || paths.len() != new_strs.len() {
-		return Err(anyhow!(
-			"Mismatch in array lengths. Expected {} paths, {} old strings, and {} new strings to all match.",
-			paths.len(), old_strs.len(), new_strs.len()
-		));
-	}
-
-	// Process each file replacement
-	for (idx, path_str) in paths.iter().enumerate() {
-		let path = Path::new(path_str);
-		let old_str = &old_strs[idx];
-		let new_str = &new_strs[idx];
+	// Process each file in the list with efficient memory usage
+	for path_str in paths {
+		let path = Path::new(&path_str);
 		let path_display = path.display().to_string();
 
-		// Check if file exists
+		// Check if file exists and is a regular file
 		if !path.exists() {
 			failures.push(format!("File does not exist: {}", path_display));
 			continue;
 		}
 
-		// Try to read the file content
-		let content = match tokio_fs::read_to_string(path).await {
-			Ok(content) => content,
+		if !path.is_file() {
+			failures.push(format!("Not a regular file: {}", path_display));
+			continue;
+		}
+
+		// Check file size - avoid loading very large files
+		let metadata = match tokio_fs::metadata(path).await {
+			Ok(meta) => {
+				if meta.len() > 1024 * 1024 * 5 { // 5MB limit
+					failures.push(format!("File too large (>5MB): {}", path_display));
+					continue;
+				}
+				meta
+			},
 			Err(e) => {
-				failures.push(format!("Failed to read {}: {}", path_display, e));
+				failures.push(format!("Cannot read metadata for {}: {}", path_display, e));
 				continue;
 			}
 		};
 
-		// Check if old_str appears exactly once
-		let occurrences = content.matches(old_str).count();
-		if occurrences == 0 {
-			failures.push(format!("String to replace does not exist in {}", path_display));
-			continue;
-		}
-		if occurrences > 1 {
-			failures.push(format!(
-				"String appears {} times in {}. It should appear exactly once.",
-				occurrences, path_display
-			));
-			continue;
+		// Check if file is binary
+		if let Ok(sample) = tokio_fs::read(&path).await {
+			let sample_size = sample.len().min(512);
+			let null_count = sample[..sample_size].iter().filter(|&&b| b == 0).count();
+			if null_count > sample_size / 10 {
+				failures.push(format!("Binary file skipped: {}", path_display));
+				continue;
+			}
 		}
 
-		// Try to save history for undo
-		if let Err(e) = save_file_history(path).await {
-			failures.push(format!("Failed to save history for {}: {}", path_display, e));
-			// But continue with the replacement operation
-		}
-
-		// Replace the string
-		let new_content = content.replace(old_str, new_str);
-
-		// Write the new content
-		match tokio_fs::write(path, new_content).await {
-			Ok(_) => {
-				// Find line number for reporting
-				let position = content.find(old_str).unwrap(); // Safe because we checked occurrences
-				let start_line = content[..position].matches('\n').count() + 1;
-
-				results.push(json!({
-					"path": path_display,
-					"success": true,
-					"line": start_line,
-					"old_size": old_str.len(),
-					"new_size": new_str.len()
-				}));
-			},
+		// Read file content with error handling
+		let content = match tokio_fs::read_to_string(path).await {
+			Ok(content) => content,
 			Err(e) => {
-				failures.push(format!("Failed to write to {}: {}", path_display, e));
+				failures.push(format!("Cannot read content of {}: {}", path_display, e));
+				continue;
 			}
 		};
+
+		// Get language from extension for syntax highlighting
+		let ext = path.extension()
+			.and_then(|e| e.to_str())
+			.unwrap_or("");
+
+		// Add line numbers to content
+		let lines: Vec<&str> = content.lines().collect();
+		let content_with_numbers = lines
+			.iter()
+			.enumerate()
+			.map(|(i, line)| format!("{}: {}", i + 1, line))
+			.collect::<Vec<_>>()
+			.join("\n");
+
+		// Add file info to collection - only store what we need
+		files.push(json!({
+			"path": path_display,
+			"content": content_with_numbers,
+			"lines": lines.len(),
+			"size": metadata.len(),
+			"lang": detect_language(ext),
+		}));
+
+		total_size += metadata.len();
 	}
 
-	// Return success if at least one file was modified
+	// Create optimized result
 	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
+		tool_name: "view_many".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"success": !results.is_empty(),
-			"files": results,
-			"count": results.len(),
-			"failed": failures
+			"success": !files.is_empty(),
+			"files": files,
+			"count": files.len(),
+			"total_size": total_size,
+			"failed": failures,
 		}),
 	})
 }
@@ -1747,4 +2041,188 @@ fn clean_markdown(markdown: &str) -> String {
 	}
 
 	result.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use serde_json::json;
+
+	async fn create_test_call(command: &str, path: &str, additional_params: serde_json::Value) -> McpToolCall {
+		let mut params = json!({
+			"command": command,
+			"path": path
+		});
+
+		if let serde_json::Value::Object(additional) = additional_params {
+			if let serde_json::Value::Object(ref mut params_obj) = params {
+				for (key, value) in additional {
+					params_obj.insert(key, value);
+				}
+			}
+		}
+
+		McpToolCall {
+			tool_name: "text_editor".to_string(),
+			tool_id: "test_123".to_string(),
+			parameters: params,
+		}
+	}
+
+	#[tokio::test]
+	async fn test_view_command_with_line_numbers() {
+		let test_file = "/tmp/test_view_ln.rs";
+		std::fs::write(test_file, "fn main() {\n    println!(\"Hello!\");\n}").unwrap();
+
+		let call = create_test_call("view", test_file, json!({})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+
+		// Check that result contains line numbers
+		let content = result.result.get("content").unwrap().as_str().unwrap();
+		assert!(content.contains("1: fn main() {"));
+		assert!(content.contains("2:     println!(\"Hello!\");"));
+
+		std::fs::remove_file(test_file).ok();
+	}
+
+	#[tokio::test]
+	async fn test_view_with_range_spec() {
+		let test_file = "/tmp/test_view_range_spec.rs";
+		std::fs::write(test_file, "line1\nline2\nline3\nline4\nline5").unwrap();
+
+		let call = create_test_call("view", test_file, json!({
+			"view_range": [2, 4]
+		})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+
+		let content = result.result.get("content").unwrap().as_str().unwrap();
+		assert!(content.contains("2: line2"));
+		assert!(content.contains("3: line3"));
+		assert!(content.contains("4: line4"));
+		assert!(!content.contains("1: line1"));
+		assert!(!content.contains("5: line5"));
+
+		std::fs::remove_file(test_file).ok();
+	}
+
+	#[tokio::test]
+	async fn test_create_command_spec() {
+		let test_file = "/tmp/test_create_spec.rs";
+		std::fs::remove_file(test_file).ok(); // Ensure it doesn't exist
+
+		let call = create_test_call("create", test_file, json!({
+			"file_text": "pub fn hello() {\n    println!(\"Hello from new file!\");\n}"
+		})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+
+		assert!(result.result.get("content").unwrap().as_str().unwrap().contains("File created successfully"));
+		assert!(Path::new(test_file).exists());
+
+		let content = std::fs::read_to_string(test_file).unwrap();
+		assert!(content.contains("pub fn hello()"));
+
+		std::fs::remove_file(test_file).ok();
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_command_spec() {
+		let test_file = "/tmp/test_str_replace_spec.rs";
+		std::fs::write(test_file, "fn old_function() {\n    println!(\"old\");\n}").unwrap();
+
+		let call = create_test_call("str_replace", test_file, json!({
+			"old_str": "old_function",
+			"new_str": "new_function"
+		})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+
+		assert!(result.result.get("content").unwrap().as_str().unwrap().contains("Successfully replaced"));
+
+		let content = std::fs::read_to_string(test_file).unwrap();
+		assert!(content.contains("fn new_function()"));
+		assert!(!content.contains("fn old_function()"));
+
+		std::fs::remove_file(test_file).ok();
+	}
+
+	#[tokio::test]
+	async fn test_insert_command_spec() {
+		let test_file = "/tmp/test_insert_spec.rs";
+		std::fs::write(test_file, "fn main() {\n    println!(\"Hello!\");\n}").unwrap();
+
+		let call = create_test_call("insert", test_file, json!({
+			"insert_line": 1,
+			"new_str": "    // This is a comment"
+		})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+
+		assert!(result.result.get("content").unwrap().as_str().unwrap().contains("Successfully inserted"));
+
+		let content = std::fs::read_to_string(test_file).unwrap();
+		let lines: Vec<&str> = content.lines().collect();
+		assert_eq!(lines[1], "    // This is a comment");
+
+		std::fs::remove_file(test_file).ok();
+	}
+
+	#[tokio::test]
+	async fn test_line_replace_command_spec() {
+		let test_file = "/tmp/test_line_replace_spec.rs";
+		std::fs::write(test_file, "fn main() {\n    println!(\"old\");\n    let x = 1;\n}").unwrap();
+
+		let call = create_test_call("line_replace", test_file, json!({
+			"start_line": 2,
+			"end_line": 3,
+			"new_text": "    println!(\"new!\");\n    let y = 2;"
+		})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+
+		assert!(result.result.get("content").unwrap().as_str().unwrap().contains("Successfully replaced"));
+
+		let content = std::fs::read_to_string(test_file).unwrap();
+		let lines: Vec<&str> = content.lines().collect();
+		assert_eq!(lines[1], "    println!(\"new!\");");
+		assert_eq!(lines[2], "    let y = 2;");
+
+		std::fs::remove_file(test_file).ok();
+	}
+
+	#[tokio::test]
+	async fn test_view_many_command_in_text_editor() {
+		// Create test files
+		let test_file1 = "/tmp/test_view_many_te_1.rs";
+		let test_file2 = "/tmp/test_view_many_te_2.rs";
+		std::fs::write(test_file1, "fn hello() {\n    println!(\"Hello!\");\n}").unwrap();
+		std::fs::write(test_file2, "fn world() {\n    println!(\"World!\");\n}").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "text_editor".to_string(),
+			tool_id: "test_view_many_te".to_string(),
+			parameters: json!({
+				"command": "view_many",
+				"paths": [test_file1, test_file2]
+			}),
+		};
+
+		let result = execute_text_editor(&call).await.unwrap();
+
+		assert!(result.result.get("success").unwrap().as_bool().unwrap());
+		let files = result.result.get("files").unwrap().as_array().unwrap();
+		assert_eq!(files.len(), 2);
+
+		// Check that both files have line numbers
+		let file1_content = files[0].get("content").unwrap().as_str().unwrap();
+		assert!(file1_content.contains("1: fn hello() {"));
+
+		std::fs::remove_file(test_file1).ok();
+		std::fs::remove_file(test_file2).ok();
+	}
+
+	#[tokio::test]
+	async fn test_error_handling_spec() {
+		// Test file not found
+		let call = create_test_call("view", "/tmp/nonexistent_file_spec.rs", json!({})).await;
+		let result = execute_text_editor(&call).await.unwrap();
+		assert!(result.result.get("error").is_some());
+		assert_eq!(result.result.get("is_error").unwrap().as_bool().unwrap(), true);
+	}
 }

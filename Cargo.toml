@@ -61,6 +61,8 @@ syntect = "5.2.0"
 html5ever = "0.27.0"
 markup5ever_rcdom = "0.3.0"
 url = "2.4.1"
+lance-table = { version = "0.27.2", default-features = false, features = ["lazy_static"] }
+lance = { version = "0.27.2", default-features = false }
 
 [build-dependencies]
 cc="*"

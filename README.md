@@ -44,7 +44,7 @@ chmod +x install.sh
 Download pre-compiled binaries from the [releases page](https://github.com/muvon/octodev/releases) for your platform:
 
 - **Linux**: `octodev-{version}-x86_64-unknown-linux-{gnu,musl}.tar.gz`
-- **macOS**: `octodev-{version}-{x86_64,aarch64}-apple-darwin.tar.gz`  
+- **macOS**: `octodev-{version}-{x86_64,aarch64}-apple-darwin.tar.gz`
 - **Windows**: `octodev-{version}-x86_64-pc-windows-gnu.zip`
 
 Extract and place the binary in your `PATH`.
@@ -123,7 +123,7 @@ make dist
 ```bash
 # Linux targets (using cross)
 make x86_64-unknown-linux-gnu
-make x86_64-unknown-linux-musl  
+make x86_64-unknown-linux-musl
 make aarch64-unknown-linux-gnu
 make aarch64-unknown-linux-musl
 
@@ -167,7 +167,7 @@ All builds use static linking by default for maximum compatibility:
 
 The build configuration in `Cargo.toml` enables:
 - Link Time Optimization (LTO)
-- Single codegen unit for better optimization  
+- Single codegen unit for better optimization
 - Panic abort for smaller binaries
 - Symbol stripping
 
@@ -311,7 +311,7 @@ Set the appropriate API keys:
 # For OpenRouter
 export OPENROUTER_API_KEY="your_openrouter_key"
 
-# For OpenAI  
+# For OpenAI
 export OPENAI_API_KEY="your_openai_key"
 
 # For Anthropic
@@ -885,9 +885,9 @@ Octodev uses an extensible provider architecture that makes it easy to add suppo
 2. **Implement the AiProvider trait**:
    ```rust
    use super::{AiProvider, ProviderResponse};
-   
+
    pub struct YourProvider;
-   
+
    #[async_trait::async_trait]
    impl AiProvider for YourProvider {
        fn name(&self) -> &str { "your_provider" }
@@ -909,27 +909,6 @@ The provider system handles:
 Example providers to reference:
 - `openrouter.rs` - Full-featured provider with caching and cost tracking
 - `openai.rs` - Standard provider implementation
-
-## Changelog
-
-### Recent Updates (January 2025)
-
-#### Major Features
-- **MCP Server Registry**: New centralized server registry approach that eliminates configuration duplication
-- **New AI Providers**: Added support for Amazon Bedrock and Cloudflare Workers AI
-- **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs with better formatting and user control
-- **Centralized Provider Configuration**: New `[providers.*]` sections for better API key management
-
-#### Improvements
-- **Configuration Validation**: Better validation and error messages for configuration issues
-- **File Indexing Optimization**: Reduced allowed text extensions for more focused indexing
-- **Global Configuration Management**: Better system-wide configuration with proper inheritance
-- **Backward Compatibility**: All legacy configuration formats remain supported
-
-#### Migration Notes
-- **MCP Configuration**: New server registry format is recommended but old formats still work
-- **Provider Configuration**: New centralized `[providers.*]` sections are recommended
-- **Model Format**: All models must use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
 
 ## License
 

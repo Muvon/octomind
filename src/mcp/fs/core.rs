@@ -222,19 +222,22 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'path' parameter for line_replace command")),
 			};
-			let start_line = match call.parameters.get("start_line") {
-				Some(Value::Number(n)) => n.as_u64().ok_or_else(|| anyhow!("Invalid 'start_line' parameter"))? as usize,
-				_ => return Err(anyhow!("Missing or invalid 'start_line' parameter")),
+			let view_range = match call.parameters.get("view_range") {
+				Some(Value::Array(arr)) => {
+					if arr.len() != 2 {
+						return Err(anyhow!("'view_range' must be an array of exactly 2 integers for line_replace command"));
+					}
+					let start = arr[0].as_u64().ok_or_else(|| anyhow!("Invalid start_line in view_range"))? as usize;
+					let end = arr[1].as_u64().ok_or_else(|| anyhow!("Invalid end_line in view_range"))? as usize;
+					(start, end)
+				},
+				_ => return Err(anyhow!("Missing or invalid 'view_range' parameter for line_replace command")),
 			};
-			let end_line = match call.parameters.get("end_line") {
-				Some(Value::Number(n)) => n.as_u64().ok_or_else(|| anyhow!("Invalid 'end_line' parameter"))? as usize,
-				_ => return Err(anyhow!("Missing or invalid 'end_line' parameter")),
-			};
-			let new_text = match call.parameters.get("new_text") {
+			let new_str = match call.parameters.get("new_str") {
 				Some(Value::String(s)) => s.clone(),
-				_ => return Err(anyhow!("Missing or invalid 'new_text' parameter for line_replace command")),
+				_ => return Err(anyhow!("Missing or invalid 'new_str' parameter for line_replace command")),
 			};
-			text_editing::line_replace_spec(call, Path::new(&path), start_line, end_line, &new_text).await
+			text_editing::line_replace(call, Path::new(&path), view_range, &new_str).await
 		},
 		"undo_edit" => {
 			let path = match call.parameters.get("path") {
@@ -249,96 +252,32 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 
 // Execute a line replace command
 pub async fn execute_line_replace(call: &McpToolCall) -> Result<McpToolResult> {
-	// Extract path parameter
-	let path_value = match call.parameters.get("path") {
-		Some(value) => value,
-		_ => return Err(anyhow!("Missing 'path' parameter")),
+	// Extract path parameter (single path only)
+	let path = match call.parameters.get("path") {
+		Some(Value::String(p)) => p.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'path' parameter - must be a string")),
 	};
 
-	// Extract start_line parameter
-	let start_line_value = match call.parameters.get("start_line") {
-		Some(value) => value,
-		_ => return Err(anyhow!("Missing 'start_line' parameter")),
-	};
-
-	// Extract end_line parameter
-	let end_line_value = match call.parameters.get("end_line") {
-		Some(value) => value,
-		_ => return Err(anyhow!("Missing 'end_line' parameter")),
-	};
-
-	// Extract content parameter
-	let content_value = match call.parameters.get("content") {
-		Some(value) => value,
-		_ => return Err(anyhow!("Missing 'content' parameter")),
-	};
-
-	// Execute the appropriate command based on parameter types
-	match path_value {
-		Value::String(p) => {
-			// Single file replacement
-			let start_line = match start_line_value.as_u64() {
-				Some(n) => n as usize,
-				_ => return Err(anyhow!("Invalid 'start_line' parameter, must be a positive integer")),
-			};
-			let end_line = match end_line_value.as_u64() {
-				Some(n) => n as usize,
-				_ => return Err(anyhow!("Invalid 'end_line' parameter, must be a positive integer")),
-			};
-			let content = match content_value.as_str() {
-				Some(s) => s,
-				_ => return Err(anyhow!("Invalid 'content' parameter, must be a string")),
-			};
-
-			text_editing::line_replace_single_file(call, Path::new(p), start_line, end_line, content).await
-		},
-		Value::Array(paths) => {
-			// Multiple files replacement
-			let start_lines_array = match start_line_value.as_array() {
-				Some(arr) => arr,
-				_ => return Err(anyhow!("'start_line' must be an array for multiple file operations")),
-			};
-
-			let end_lines_array = match end_line_value.as_array() {
-				Some(arr) => arr,
-				_ => return Err(anyhow!("'end_line' must be an array for multiple file operations")),
-			};
-
-			let contents_array = match content_value.as_array() {
-				Some(arr) => arr,
-				_ => return Err(anyhow!("'content' must be an array for multiple file operations")),
-			};
-
-			// Convert arrays to proper types
-			let path_strings: Result<Vec<String>, _> = paths.iter()
-				.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
-				.map(|r| r.map(|s| s.to_string()))
-				.collect();
-
-			let start_lines: Result<Vec<usize>, _> = start_lines_array.iter()
-				.map(|n| n.as_u64().ok_or_else(|| anyhow!("Invalid start_line in array")))
-				.map(|r| r.map(|n| n as usize))
-				.collect();
-
-			let end_lines: Result<Vec<usize>, _> = end_lines_array.iter()
-				.map(|n| n.as_u64().ok_or_else(|| anyhow!("Invalid end_line in array")))
-				.map(|r| r.map(|n| n as usize))
-				.collect();
-
-			let contents: Result<Vec<String>, _> = contents_array.iter()
-				.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid content in array")))
-				.map(|r| r.map(|s| s.to_string()))
-				.collect();
-
-			match (path_strings, start_lines, end_lines, contents) {
-				(Ok(paths), Ok(start_lines), Ok(end_lines), Ok(contents)) => {
-					text_editing::line_replace_multiple_files(call, &paths, &start_lines, &end_lines, &contents).await
-				},
-				_ => Err(anyhow!("Invalid arrays in parameters")),
+	// Extract view_range parameter
+	let view_range = match call.parameters.get("view_range") {
+		Some(Value::Array(arr)) => {
+			if arr.len() != 2 {
+				return Err(anyhow!("'view_range' must be an array of exactly 2 integers"));
 			}
+			let start = arr[0].as_u64().ok_or_else(|| anyhow!("Invalid start_line in view_range"))? as usize;
+			let end = arr[1].as_u64().ok_or_else(|| anyhow!("Invalid end_line in view_range"))? as usize;
+			(start, end)
 		},
-		_ => Err(anyhow!("'path' parameter must be a string or array of strings")),
-	}
+		_ => return Err(anyhow!("Missing or invalid 'view_range' parameter - must be an array of 2 integers")),
+	};
+
+	// Extract new_str parameter
+	let new_str = match call.parameters.get("new_str") {
+		Some(Value::String(s)) => s.clone(),
+		_ => return Err(anyhow!("Missing or invalid 'new_str' parameter - must be a string")),
+	};
+
+	text_editing::line_replace(call, Path::new(&path), view_range, &new_str).await
 }
 
 // Execute list_files command

@@ -66,47 +66,41 @@ pub fn get_list_files_function() -> McpFunction {
 pub fn get_line_replace_function() -> McpFunction {
 	McpFunction {
 		name: "line_replace".to_string(),
-		description: "Replace content at specific line ranges in files, optimized for multi-file operations.
+		description: "Replace content at specific line ranges in a single file.
 
-			This tool performs line-based replacements by specifying start and end line positions, making it ideal for precise code modifications without needing exact string matching.
+			This tool performs line-based replacements by specifying a line range, making it ideal for precise code modifications without needing exact string matching.
 
 			**Key Benefits:**
 			- Line-based targeting eliminates string matching issues
-			- Supports multi-file operations for consistent changes across codebase
 			- Validates line ranges exist before making changes
 			- Preserves file structure and formatting outside the target range
+			- Returns snippet of replaced content for verification
 
 			**Parameters:**
-			`path`: Single file path string or array of file paths
-			`start_line`: Starting line number(s) - 1-indexed, can be single number or array
-			`end_line`: Ending line number(s) - 1-indexed, inclusive, can be single number or array
-			`content`: New content to place at the specified line range(s)
+			`path`: Single file path string
+			`view_range`: Array of two integers [start_line, end_line] - 1-indexed, inclusive
+			`new_str`: New content to place at the specified line range
 
-			**Single File Usage:**
+			**Usage:**
 			```
 			{
 			\"path\": \"src/main.rs\",
-			\"start_line\": 5,
-			\"end_line\": 8,
-			\"content\": \"fn new_function() {\\n    // New implementation\\n}\"
+			\"view_range\": [5, 8],
+			\"new_str\": \"fn new_function() {\\n    // New implementation\\n}\"
 			}
 			```
 			Replaces lines 5-8 (inclusive) with the new content.
 
-			**Multiple Files Usage (Recommended):**
-			```
-			{
-			\"path\": [\"src/lib.rs\", \"src/main.rs\", \"tests/test.rs\"],
-			\"start_line\": [10, 15, 5],
-			\"end_line\": [12, 18, 7],
-			\"content\": [
-				\"pub struct NewStruct {\\n    field: String,\\n}\",
-				\"fn updated_main() {\\n    println!(\\\"Updated\\\");\\n}\",
-				\"#[test]\\nfn new_test() {\\n    assert!(true);\\n}\"
-			]
-			}
-			```
-			All arrays (paths, start_lines, end_lines, contents) must have equal length.
+			**Response Format:**
+			Returns structured response with:
+			- `success`: Operation success status
+			- `content`: Human-readable success message
+			- `replaced`: Snippet showing what content was replaced
+
+			**Replaced Content Snippet:**
+			- Single line: Shows the exact line content
+			- 2-3 lines: Shows all lines
+			- 4+ lines: Shows first line + \"... [N more lines]\" + last line
 
 			**Line Numbering:**
 			- Lines are 1-indexed (first line is line 1)
@@ -115,71 +109,39 @@ pub fn get_line_replace_function() -> McpFunction {
 			- Content can span multiple lines using \\n characters
 
 			**Validation:**
-			- Verifies all files exist and are readable
-			- Validates line ranges exist in each file
-			- Ensures start_line <= end_line for each operation
+			- Verifies file exists and is readable
+			- Validates line range exists in file
+			- Ensures start_line <= end_line
 			- Saves file history for undo operations
 
 			**Best Practices:**
 			1. **Use for precise code modifications** when you know exact line numbers
-			2. **Prefer multi-file operations** for consistent changes across files
-			3. **Combine with list_files or text_editor view** to identify target lines
-			4. **Consider line shifts** when making multiple changes to the same file
-			5. **Use \\n for multi-line content** to maintain proper formatting
+			2. **Combine with text_editor view** to identify target lines
+			3. **Use \\n for multi-line content** to maintain proper formatting
 
 			This tool is particularly effective for:
 			- Updating function implementations at known locations
 			- Replacing class definitions or struct declarations
 			- Modifying configuration blocks
-			- Updating import statements or dependencies
-			- Making consistent changes across multiple similar files".to_string(),
+			- Updating import statements or dependencies".to_string(),
 		parameters: json!({
 			"type": "object",
-			"required": ["path", "start_line", "end_line", "content"],
+			"required": ["path", "view_range", "new_str"],
 			"properties": {
 				"path": {
-					"description": "Absolute path to file(s). Can be a single path string or an array of path strings.",
-					"oneOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "array",
-							"items": {
-								"type": "string"
-							}
-						}
-					]
+					"type": "string",
+					"description": "Absolute path to file"
 				},
-				"start_line": {
-					"description": "Starting line number(s) - 1-indexed. Can be a single integer or an array of integers matching path array length.",
-					"oneOf": [
-						{"type": "integer", "minimum": 1},
-						{
-							"type": "array",
-							"items": {"type": "integer", "minimum": 1}
-						}
-					]
+				"view_range": {
+					"type": "array",
+					"items": {"type": "integer"},
+					"minItems": 2,
+					"maxItems": 2,
+					"description": "Array of two integers [start_line, end_line] - 1-indexed, inclusive"
 				},
-				"end_line": {
-					"description": "Ending line number(s) - 1-indexed, inclusive. Can be a single integer or an array of integers matching path and start_line arrays.",
-					"oneOf": [
-						{"type": "integer", "minimum": 1},
-						{
-							"type": "array",
-							"items": {"type": "integer", "minimum": 1}
-						}
-					]
-				},
-				"content": {
-					"description": "New content to place at the specified line range(s). Can be a string for single file or an array of strings matching other arrays.",
-					"oneOf": [
-						{"type": "string"},
-						{
-							"type": "array",
-							"items": {"type": "string"}
-						}
-					]
+				"new_str": {
+					"type": "string",
+					"description": "New content to place at the specified line range"
 				}
 			}
 		}),
@@ -219,9 +181,10 @@ pub fn get_text_editor_function() -> McpFunction {
 			- Line numbers are 1-indexed for intuitive operation
 
 			**line_replace**: Replace content within a specific line range
-			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"start_line\": 5, \"end_line\": 8, \"new_text\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
-			- Replaces lines from start_line to end_line (inclusive, 1-indexed)
+			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"view_range\": [5, 8], \"new_str\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
+			- Replaces lines from view_range[0] to view_range[1] (inclusive, 1-indexed)
 			- More precise than str_replace when you know exact line numbers
+			- Returns snippet of replaced content for verification
 			- Ideal for replacing function implementations, code blocks, or configuration sections
 
 			**view_many**: View multiple files simultaneously for comprehensive analysis
@@ -286,26 +249,12 @@ pub fn get_text_editor_function() -> McpFunction {
 				},
 				"new_str": {
 					"type": "string",
-					"description": "Replacement text for str_replace or text to insert for insert command"
+					"description": "Replacement text for str_replace, text to insert for insert command, or new content for line_replace command"
 				},
 				"insert_line": {
 					"type": "integer",
 					"minimum": 0,
 					"description": "Line number after which to insert text (0 for beginning of file, 1-indexed)"
-				},
-				"start_line": {
-					"type": "integer",
-					"minimum": 1,
-					"description": "Starting line number for line_replace command (1-indexed)"
-				},
-				"end_line": {
-					"type": "integer",
-					"minimum": 1,
-					"description": "Ending line number for line_replace command (1-indexed, inclusive)"
-				},
-				"new_text": {
-					"type": "string",
-					"description": "New content to replace the specified line range in line_replace command"
 				}
 			}
 		}),
@@ -430,6 +379,7 @@ pub fn get_html2md_function() -> McpFunction {
 pub fn get_all_functions() -> Vec<McpFunction> {
 	vec![
 		get_text_editor_function(),
+		get_line_replace_function(),
 		get_list_files_function(),
 		get_html2md_function(),
 	]

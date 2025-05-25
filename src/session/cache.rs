@@ -466,10 +466,10 @@ impl CacheManager {
             total_cached_tokens: session.info.cached_tokens,
             current_non_cached_tokens: session.current_non_cached_tokens,
             current_total_tokens: session.current_total_tokens,
-            cache_efficiency: if session.info.input_tokens + session.info.output_tokens > 0 {
-                (session.info.cached_tokens as f64 
-                    / (session.info.input_tokens + session.info.output_tokens + session.info.cached_tokens) as f64) 
-                    * 100.0
+            cache_efficiency: if session.info.input_tokens + session.info.cached_tokens > 0 {
+                // Cache efficiency = percentage of total input tokens that came from cache
+                // Total input = regular input tokens + cached input tokens
+                (session.info.cached_tokens as f64 / (session.info.input_tokens + session.info.cached_tokens) as f64) * 100.0
             } else {
                 0.0
             },
@@ -670,15 +670,17 @@ impl CacheStatistics {
                 self.total_cached_tokens.to_string().bright_magenta()
             ));
             output.push_str(&format!(
-                "Cache efficiency: {:.1}%\n",
+                "Cache efficiency: {:.1}% (of all input tokens)\n",
                 self.cache_efficiency.to_string().bright_green()
             ));
         }
         
         if self.current_total_tokens > 0 {
             let non_cached_pct = (self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
+            let cached_pct = 100.0 - non_cached_pct;
             output.push_str(&format!(
-                "Current session: {:.1}% non-cached tokens ({}/{})\n",
+                "Current session: {:.1}% cached, {:.1}% non-cached ({}/{} tokens)\n",
+                cached_pct.to_string().bright_green(),
                 non_cached_pct.to_string().bright_yellow(),
                 self.current_non_cached_tokens.to_string().bright_red(),
                 self.current_total_tokens.to_string().bright_blue()

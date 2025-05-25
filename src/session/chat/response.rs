@@ -2,7 +2,7 @@
 
 use crate::config::Config;
 use crate::{log_debug, log_info};
-use crate::session::openrouter;
+use crate::session::ProviderExchange;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
 use colored::Colorize;
@@ -183,7 +183,7 @@ impl ToolErrorTracker {
 #[allow(clippy::too_many_arguments)]
 pub async fn process_response(
 	content: String,
-	exchange: openrouter::OpenRouterExchange,
+	exchange: ProviderExchange,
 	tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	finish_reason: Option<String>,
 	chat_session: &mut ChatSession,
@@ -866,8 +866,8 @@ pub async fn process_response(
 
 					// Make sure to include the usage parameter for every API call
 					// This ensures cost information is always returned
-					let follow_up_result = openrouter::chat_completion(
-						chat_session.session.messages.clone(),
+					let follow_up_result = crate::session::chat_completion_with_provider(
+						&chat_session.session.messages,
 						&model,
 						temperature,
 						config
@@ -878,30 +878,31 @@ pub async fn process_response(
 					let _ = animation_task.await;
 
 					match follow_up_result {
-						Ok((next_content, next_exchange, next_tool_calls, next_finish_reason)) => {
+						Ok(response) => {
 							// Store direct tool calls for efficient processing if they exist
-							let has_more_tools = if let Some(ref calls) = next_tool_calls {
+							let has_more_tools = if let Some(ref calls) = response.tool_calls {
 								!calls.is_empty()
 							} else {
 								// Fall back to parsing if no direct tool calls
-								!crate::mcp::parse_tool_calls(&next_content).is_empty()
+								!crate::mcp::parse_tool_calls(&response.content).is_empty()
 							};
 
 							// Update current content for next iteration
-							current_content = next_content;
-							current_exchange = next_exchange;
+							current_content = response.content;
+							current_exchange = response.exchange;
 							// CRITICAL FIX: Set the tool calls parameter for the next iteration
-							current_tool_calls_param = next_tool_calls;
+							current_tool_calls_param = response.tool_calls;
+							let _current_finish_reason = response.finish_reason.clone();
 
 							// Debug logging for follow-up finish_reason
 							if config.get_log_level().is_debug_enabled() {
-								if let Some(ref reason) = next_finish_reason {
+								if let Some(ref reason) = response.finish_reason {
 									log_debug!("Debug: Follow-up finish_reason: {}", reason);
 								}
 							}
 
 							// Check finish_reason to determine if we should continue the conversation
-							let should_continue_conversation = match next_finish_reason.as_deref() {
+							let should_continue_conversation = match response.finish_reason.as_deref() {
 								Some("tool_calls") => {
 									// Model wants to make more tool calls
 									if config.get_log_level().is_debug_enabled() {
@@ -912,7 +913,7 @@ pub async fn process_response(
 								Some("stop") | Some("length") => {
 									// Model finished normally or hit length limit
 									if config.get_log_level().is_debug_enabled() {
-										log_debug!("Debug: finish_reason is '{}', ending conversation", next_finish_reason.as_deref().unwrap());
+										log_debug!("Debug: finish_reason is '{}', ending conversation", response.finish_reason.as_deref().unwrap());
 									}
 									false
 								}

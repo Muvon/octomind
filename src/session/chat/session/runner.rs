@@ -3,7 +3,7 @@
 use super::core::ChatSession;
 use crate::{log_debug, log_info};
 use crate::config::Config;
-use crate::session::{create_system_prompt, openrouter};
+use crate::session::create_system_prompt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::io::Write; // Added for stdout flushing
@@ -473,8 +473,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Now directly perform the API call - ensure usage parameter is included
 		// for consistent cost tracking across all API requests
-		let api_result = openrouter::chat_completion(
-			chat_session.session.messages.clone(),
+		let api_result = crate::session::chat_completion_with_provider(
+			&chat_session.session.messages,
 			&model,
 			temperature,
 			&config_clone
@@ -492,15 +492,19 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Process the response
 		match api_result {
-			Ok((content, exchange, tool_calls, finish_reason)) => {
+			Ok(response) => {
 				// Process the response, handling tool calls recursively
 				// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
 				let tool_process_cancelled = Arc::new(AtomicBool::new(false));
+
+				// Convert to legacy format for compatibility
+				let legacy_exchange = response.exchange;
+
 				let process_result = process_response(
-					content,
-					exchange,
-					tool_calls,
-					finish_reason,
+					response.content,
+					legacy_exchange,
+					response.tool_calls,
+					response.finish_reason,
 					&mut chat_session,
 					&current_config,
 					&session_args.role,

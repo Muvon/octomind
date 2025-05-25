@@ -218,7 +218,7 @@ pub fn log_user_request(content: &str) -> Result<()> {
 	log_user_input("default", content)
 }
 
-pub fn log_raw_exchange(exchange: &crate::session::openrouter::OpenRouterExchange) -> Result<()> {
+pub fn log_raw_exchange(exchange: &crate::session::ProviderExchange) -> Result<()> {
 	// Extract session name if available, otherwise use "default"
 	let session_name = "default"; // TODO: Extract from context
 	

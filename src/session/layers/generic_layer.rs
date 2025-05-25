@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::session::{Message, Session, openrouter};
+use crate::session::{Message, Session};
 use super::layer_trait::{Layer, LayerConfig, LayerResult};
 use anyhow::Result;
 use std::sync::Arc;
@@ -145,12 +145,19 @@ impl Layer for GenericLayer {
 		let layer_config = self.config.get_merged_config_for_layer(config);
 
 		// Call the model with the layer's effective model and temperature
-		let (output, exchange, direct_tool_calls, _finish_reason) = openrouter::chat_completion(
-			messages.clone(),
+		let response = crate::session::chat_completion_with_provider(
+			&messages,
 			&effective_model,
 			self.config.temperature,
 			&layer_config
 		).await?;
+		
+		let (output, exchange, direct_tool_calls, _finish_reason) = (
+			response.content,
+			response.exchange,
+			response.tool_calls,
+			response.finish_reason
+		);
 
 		// Track API time from the exchange
 		if let Some(ref usage) = exchange.usage {
@@ -214,22 +221,22 @@ impl Layer for GenericLayer {
 					}
 
 					// Call the model again with tool results using this layer's model and config
-					match openrouter::chat_completion(
-						layer_session,
+					match crate::session::chat_completion_with_provider(
+						&layer_session,
 						&effective_model,
 						self.config.temperature,
 						&layer_config
 					).await {
-						Ok((new_output, new_exchange, next_tool_calls, _finish_reason)) => {
+						Ok(response) => {
 							// Track API time from the second exchange
-							if let Some(ref usage) = new_exchange.usage {
+							if let Some(ref usage) = response.exchange.usage {
 								if let Some(api_time) = usage.request_time_ms {
 									total_api_time_ms += api_time;
 								}
 							}
 
 							// Extract token usage if available
-							let token_usage = new_exchange.usage.clone();
+							let token_usage = response.exchange.usage.clone();
 
 							// Calculate total layer processing time
 							let layer_duration = layer_start.elapsed();
@@ -237,10 +244,10 @@ impl Layer for GenericLayer {
 
 							// Return the result with the updated output and time tracking
 							return Ok(LayerResult {
-								output: new_output,
-								exchange: new_exchange,
+								output: response.content,
+								exchange: response.exchange,
 								token_usage,
-								tool_calls: next_tool_calls,
+								tool_calls: response.tool_calls,
 								api_time_ms: total_api_time_ms,
 								tool_time_ms: total_tool_time_ms,
 								total_time_ms,

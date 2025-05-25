@@ -1,6 +1,5 @@
 // Session module for handling interactive coding sessions
 
-mod openrouter; // Legacy OpenRouter API client (for backward compatibility)
 pub mod providers; // Provider abstraction layer
 pub mod chat;       // Chat session logic
 mod chat_helper;    // Chat command completion
@@ -12,9 +11,7 @@ mod model_utils;    // Model-specific utility functions
 mod helper_functions; // Helper functions for layers and other components
 pub mod cache;      // Comprehensive caching system
 
-// Legacy exports for backward compatibility
-pub use openrouter::*;
-// New provider system exports
+// Provider system exports
 pub use providers::{ProviderFactory, AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
 pub use layers::{Layer, LayerConfig, LayerResult, InputMode, LayerMcpConfig, process_with_layers};
 pub use project_context::ProjectContext;

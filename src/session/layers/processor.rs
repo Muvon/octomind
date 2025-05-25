@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::session::{Message, Session, openrouter};
+use crate::session::{Message, Session};
 use super::layer_trait::{Layer, LayerConfig, LayerResult};
 use anyhow::Result;
 use std::sync::Arc;
@@ -96,12 +96,19 @@ impl Layer for LayerProcessor {
 		let messages = self.create_messages(input, session);
 
 		// Call the model directly with session messages
-		let (output, exchange, direct_tool_calls, _finish_reason) = openrouter::chat_completion(
-			messages.clone(),
+		let response = crate::session::chat_completion_with_provider(
+			&messages,
 			&effective_model,
 			self.config.temperature,
 			config
 		).await?;
+		
+		let (output, exchange, direct_tool_calls, _finish_reason) = (
+			response.content,
+			response.exchange,
+			response.tool_calls,
+			response.finish_reason
+		);
 
 		// Check if the layer response contains tool calls
 		if config.mcp.enabled && self.config.mcp.enabled {
@@ -183,22 +190,22 @@ impl Layer for LayerProcessor {
 
 					// Call the model again with tool results
 					// Important: We use THIS LAYER'S model to process the function call results
-					match openrouter::chat_completion(
-						layer_session.clone(),
+					match crate::session::chat_completion_with_provider(
+						&layer_session,
 						&effective_model,
 						self.config.temperature,
 						config
 					).await {
-						Ok((new_output, new_exchange, next_tool_calls, _finish_reason)) => {
+						Ok(response) => {
 							// Extract token usage if available
-							let token_usage = new_exchange.usage.clone();
+							let token_usage = response.exchange.usage.clone();
 
 							// Return the result with the updated output
 							return Ok(LayerResult {
-								output: new_output,
-								exchange: new_exchange,
+								output: response.content,
+								exchange: response.exchange,
 								token_usage,
-								tool_calls: next_tool_calls,
+								tool_calls: response.tool_calls,
 								api_time_ms: 0, // TODO: Add time tracking to processor
 								tool_time_ms: 0,
 								total_time_ms: 0,

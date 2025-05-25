@@ -3,7 +3,7 @@
 use super::core::ChatSession;
 use crate::config::Config;
 use crate::{log_info, log_debug};
-use crate::session::openrouter;
+use crate::session::ProviderExchange;
 use anyhow::Result;
 use colored::Colorize;
 
@@ -110,7 +110,7 @@ impl ChatSession {
 	}
 
 	// Add an assistant message
-	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>, config: &Config, role: &str) -> Result<()> {
+	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<ProviderExchange>, config: &Config, role: &str) -> Result<()> {
 		// Log to raw session log
 		let _ = crate::session::logger::log_assistant_response(&self.session.info.name, content);
 

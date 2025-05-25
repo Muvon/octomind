@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::session::{Session, openrouter};
+use crate::session::{Session, ProviderExchange, TokenUsage};
 use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -10,8 +10,8 @@ use std::str::FromStr;
 // Layer result that contains data returned from a layer's processing
 pub struct LayerResult {
 	pub output: String,
-	pub exchange: openrouter::OpenRouterExchange,
-	pub token_usage: Option<openrouter::TokenUsage>,
+	pub exchange: ProviderExchange,
+	pub token_usage: Option<TokenUsage>,
 	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	// Time tracking
 	pub api_time_ms: u64,    // Time spent on API requests

@@ -1381,7 +1381,10 @@ impl Config {
 			}
 		}
 
-		if enabled_count == 0 && self.openrouter.enable_layers {
+		// Check if layers are enabled globally by checking if any role has layers enabled
+		let layers_enabled_somewhere = self.developer.config.enable_layers || self.assistant.config.enable_layers;
+		
+		if enabled_count == 0 && layers_enabled_somewhere {
 			eprintln!("Warning: Layers are enabled but no layer configurations are active");
 		}
 
@@ -1590,16 +1593,16 @@ mod tests {
 	fn test_threshold_validation() {
 		let mut config = Config::default();
 
-		// Test invalid thresholds
-		config.openrouter.mcp_response_warning_threshold = 0;
+		// Test invalid thresholds using system-wide settings
+		config.mcp_response_warning_threshold = 0;
 		assert!(config.validate_thresholds().is_err());
 
-		config.openrouter.mcp_response_warning_threshold = 1000;
-		config.openrouter.cache_tokens_pct_threshold = 101;
+		config.mcp_response_warning_threshold = 1000;
+		config.cache_tokens_pct_threshold = 101;
 		assert!(config.validate_thresholds().is_err());
 
 		// Test valid thresholds
-		config.openrouter.cache_tokens_pct_threshold = 50;
+		config.cache_tokens_pct_threshold = 50;
 		assert!(config.validate_thresholds().is_ok());
 	}
 

@@ -140,8 +140,10 @@ impl ChatSession {
 						loaded_config.assistant.config.enable_layers = !loaded_config.assistant.config.enable_layers;
 					},
 					_ => {
-						// Fall back to global config for unknown roles
-						loaded_config.openrouter.enable_layers = !loaded_config.openrouter.enable_layers;
+						// Fall back to role-based getter for unknown roles (uses assistant as fallback)
+						let current_enabled = loaded_config.get_enable_layers(current_role);
+						// For unknown roles, we'll modify the assistant config as the fallback
+						loaded_config.assistant.config.enable_layers = !current_enabled;
 					}
 				}
 
@@ -155,7 +157,7 @@ impl ChatSession {
 				let is_enabled = match current_role {
 					"developer" => loaded_config.developer.config.enable_layers,
 					"assistant" => loaded_config.assistant.config.enable_layers,
-					_ => loaded_config.openrouter.enable_layers,
+					_ => loaded_config.get_enable_layers(current_role), // Use getter for unknown roles
 				};
 
 				// Show the new state
@@ -183,12 +185,8 @@ impl ChatSession {
 				};
 
 				if params.is_empty() {
-					// Show current log level - use root level first, fall back to openrouter
-					let current_level = if loaded_config.log_level != LogLevel::None {
-						&loaded_config.log_level
-					} else {
-						&loaded_config.openrouter.log_level
-					};
+					// Show current log level - use system-wide getter
+					let current_level = loaded_config.get_log_level();
 					
 					let level_str = match current_level {
 						LogLevel::None => "none",
@@ -251,11 +249,7 @@ impl ChatSession {
 				};
 
 				// Toggle between none and debug for backward compatibility
-				let current_level = if loaded_config.log_level != LogLevel::None {
-					&loaded_config.log_level
-				} else {
-					&loaded_config.openrouter.log_level
-				};
+				let current_level = loaded_config.get_log_level();
 				
 				loaded_config.log_level = match current_level {
 					LogLevel::Debug => LogLevel::None,
@@ -292,13 +286,13 @@ impl ChatSession {
 					}
 				};
 
-				// Toggle the setting
-				loaded_config.openrouter.enable_auto_truncation = !loaded_config.openrouter.enable_auto_truncation;
+				// Toggle the global setting (not openrouter-specific)
+				loaded_config.enable_auto_truncation = !loaded_config.get_enable_auto_truncation();
 
 				// Update token thresholds if parameters were provided
 				if !params.is_empty() {
 					if let Ok(threshold) = params[0].parse::<usize>() {
-						loaded_config.openrouter.max_request_tokens_threshold = threshold;
+						loaded_config.max_request_tokens_threshold = threshold;
 						println!("{}", format!("Max request token threshold set to {} tokens", threshold).bright_green());
 					}
 				}
@@ -310,10 +304,10 @@ impl ChatSession {
 				}
 
 				// Show the new state
-				if loaded_config.openrouter.enable_auto_truncation {
+				if loaded_config.get_enable_auto_truncation() {
 					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
 					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.",
-						loaded_config.openrouter.max_request_tokens_threshold).bright_yellow());
+						loaded_config.get_max_request_tokens_threshold()).bright_yellow());
 				} else {
 					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
 					println!("{}", "You'll need to manually reduce context when it gets too large.".bright_blue());

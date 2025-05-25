@@ -20,7 +20,7 @@ pub struct ChatSession {
 impl ChatSession {
 	// Create a new chat session
 	pub fn new(name: String, model: Option<String>, config: &Config) -> Self {
-		let model_name = model.unwrap_or_else(|| config.openrouter.model.clone());
+		let model_name = model.unwrap_or_else(|| config.get_model("developer")); // Use role-based getter
 
 		// Create a new session with initial info
 		let session_info = crate::session::SessionInfo {
@@ -118,7 +118,7 @@ impl ChatSession {
 					let mut chat_session = ChatSession {
 						session,
 						last_response: String::new(),
-						model: model.unwrap_or_else(|| config.openrouter.model.clone()),
+						model: model.unwrap_or_else(|| config.get_model("developer")), // Use role-based getter
 						temperature: 0.2,
 						estimated_cost: 0.0,
 						cache_next_user_message: false, // Initialize cache flag

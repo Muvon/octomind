@@ -348,7 +348,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// 2. Use the processed input for the main model chat
 
 		// If layers are enabled and this is the first message, process it through layers first
-		if current_config.openrouter.enable_layers && !first_message_processed && session_args.role == "developer" {
+		if current_config.get_enable_layers(&session_args.role) && !first_message_processed && session_args.role == "developer" {
 			// This is the first message with layered architecture enabled
 			// We will process it through layers to get improved input for the main model
 

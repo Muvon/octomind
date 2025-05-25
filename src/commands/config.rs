@@ -109,10 +109,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		modified = true;
 	}
 
-	// Update OpenRouter model if specified
+	// Update OpenRouter model if specified - now sets model for developer role (primary role)
 	if let Some(openrouter_model) = &args.openrouter_model {
-		config.openrouter.model = openrouter_model.clone();
-		println!("Set OpenRouter model to {}", openrouter_model);
+		config.developer.config.model = openrouter_model.clone();
+		println!("Set model for developer role to {}", openrouter_model);
 		modified = true;
 	}
 
@@ -146,7 +146,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// Enable/disable markdown rendering
 	if let Some(enable_markdown) = args.markdown_enable {
-		config.openrouter.enable_markdown_rendering = enable_markdown;
+		config.enable_markdown_rendering = enable_markdown;
 		println!("Markdown rendering {}", if enable_markdown { "enabled" } else { "disabled" });
 		modified = true;
 	}
@@ -321,7 +321,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		println!("OpenRouter API key: Not set (will use OPENROUTER_API_KEY environment variable if available)");
 	}
 
-	println!("OpenRouter model: {}", config.openrouter.model);
+	println!("Developer model: {}", config.developer.config.model);
+	println!("Assistant model: {}", config.assistant.config.model);
 	println!("FastEmbed code model: {}", config.fastembed.code_model);
 	println!("FastEmbed text model: {}", config.fastembed.text_model);
 	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
@@ -359,7 +360,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 	}
 	println!("GraphRAG: {}", if config.graphrag.enabled { "enabled" } else { "disabled" });
-	println!("Markdown rendering: {}", if config.openrouter.enable_markdown_rendering { "enabled" } else { "disabled" });
+	println!("Markdown rendering: {}", if config.get_enable_markdown_rendering() { "enabled" } else { "disabled" });
 
 	// Show system prompt status
 	if config.system.is_some() {

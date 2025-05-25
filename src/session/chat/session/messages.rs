@@ -66,6 +66,47 @@ impl ChatSession {
 		Ok(())
 	}
 
+	// Add a tool message
+	pub fn add_tool_message(&mut self, content: &str, tool_call_id: &str, tool_name: &str, _config: &Config) -> Result<()> {
+		// Log to raw session log
+		let _ = crate::session::logger::log_tool_result(&self.session.info.name, tool_call_id, &serde_json::json!({"output": content}));
+
+		// Create the tool message
+		let tool_message = crate::session::Message {
+			role: "tool".to_string(),
+			content: content.to_string(),
+			timestamp: std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			cached: false,
+			tool_call_id: Some(tool_call_id.to_string()),
+			name: Some(tool_name.to_string()),
+			tool_calls: None,
+		};
+
+		// Add message to session
+		self.session.messages.push(tool_message);
+
+		// Update token tracking for auto-cache threshold logic
+		// Tool messages count as "input" for the next API call, so we track them as non-cached tokens
+		let tool_content_tokens = crate::session::estimate_tokens(content) as u64;
+		let tool_overhead_tokens = 8; // Rough estimate for role + tool_call_id + name overhead
+
+		// Update the session's current token tracking
+		// This ensures tool message tokens are counted toward auto-cache thresholds
+		self.session.current_total_tokens += tool_content_tokens + tool_overhead_tokens;
+		self.session.current_non_cached_tokens += tool_content_tokens + tool_overhead_tokens;
+
+		// Save to session file
+		if let Some(session_file) = &self.session.session_file {
+			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
+
+		Ok(())
+	}
+
 	// Add an assistant message
 	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<openrouter::OpenRouterExchange>, config: &Config, role: &str) -> Result<()> {
 		// Log to raw session log

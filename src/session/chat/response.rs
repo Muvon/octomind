@@ -778,22 +778,8 @@ pub async fn process_response(
 							needs_truncation_check = true;
 						}
 						
-						// Create a proper tool message with tool_call_id and name
-						let tool_message = crate::session::Message {
-							role: "tool".to_string(),
-							content: tool_content,
-							timestamp: std::time::SystemTime::now()
-								.duration_since(std::time::UNIX_EPOCH)
-								.unwrap_or_default()
-								.as_secs(),
-							cached: false,
-							tool_call_id: Some(tool_result.tool_id.clone()),
-							name: Some(tool_result.tool_name.clone()),
-							tool_calls: None,
-						};
-
-						// Add the tool message directly to the session
-						chat_session.session.messages.push(tool_message);
+						// Use the new add_tool_message method which handles token tracking properly
+						chat_session.add_tool_message(&tool_content, &tool_result.tool_id, &tool_result.tool_name, config)?;
 
 						// CRITICAL FIX: Check auto-cache threshold IMMEDIATELY after EACH tool result
 						// This ensures proper 2-marker logic and threshold checking after each tool

@@ -458,24 +458,72 @@ impl ChatSession {
 			MODEL_COMMAND => {
 				// Handle model command
 				if params.is_empty() {
-					// Show current model
-					println!("{}", format!("Current model: {}", self.model).bright_cyan());
+					// Show current model and role-specific config
+					println!("{}", format!("Current session model: {}", self.model).bright_cyan());
+					
+					// Also show what's in the config for this role
+					let config_model = match role {
+						"developer" => &config.developer.config.model,
+						"assistant" => &config.assistant.config.model,
+						_ => &config.developer.config.model, // fallback
+					};
+					println!("{}", format!("Config model for role '{}': {}", role, config_model).bright_blue());
 					return Ok(false);
 				}
 
 				// Change to a new model
 				let new_model = params.join(" ");
 				let old_model = self.model.clone();
+				
+				// Update session model
 				self.model = new_model.clone();
 				self.session.info.model = new_model.clone();
 
-				println!("{}", format!("Model changed from {} to {}", old_model, new_model).bright_green());
-				println!("{}", "The new model will be used for future messages in this session.".bright_yellow());
+				// Load config from disk and update the appropriate role
+				let mut loaded_config = match crate::config::Config::load() {
+					Ok(cfg) => cfg,
+					Err(_) => {
+						println!("{}", "Error loading configuration file. Model change will only apply to this session.".bright_red());
+						println!("{}", format!("Model changed from {} to {} (session only)", old_model, new_model).bright_green());
+						// Save the session with the updated model
+						if let Err(e) = self.save() {
+							println!("{}: {}", "Failed to save session with new model".bright_red(), e);
+						}
+						return Ok(false);
+					}
+				};
+
+				// Update the appropriate role configuration
+				match role {
+					"developer" => {
+						loaded_config.developer.config.model = new_model.clone();
+					},
+					"assistant" => {
+						loaded_config.assistant.config.model = new_model.clone();
+					},
+					_ => {
+						// For unknown roles, default to updating developer config
+						loaded_config.developer.config.model = new_model.clone();
+					}
+				}
+
+				// Save the updated configuration
+				if let Err(e) = loaded_config.save() {
+					println!("{}: {}", "Failed to save configuration".bright_red(), e);
+					println!("{}", format!("Model changed from {} to {} (session only)", old_model, new_model).bright_green());
+				} else {
+					println!("{}", format!("Model changed from {} to {} for role '{}'", old_model, new_model, role).bright_green());
+					println!("{}", "Configuration has been saved to disk.".bright_blue());
+					log_info!("Model configuration persisted for role '{}'", role);
+				}
 
 				// Save the session with the updated model
 				if let Err(e) = self.save() {
 					println!("{}: {}", "Failed to save session with new model".bright_red(), e);
 				}
+
+				// Return special code to indicate config reload needed
+				return Ok(true);
 			},
 			SESSION_COMMAND => {
 				// Handle session switching

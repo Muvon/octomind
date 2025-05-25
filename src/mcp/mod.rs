@@ -195,13 +195,17 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 
 	// Only gather functions if MCP is enabled
 	if !config.mcp.enabled {
+		crate::log_debug!("MCP is disabled, no functions available");
 		return functions;
 	}
 
 	// Get enabled servers
 	let enabled_servers = config.mcp.get_enabled_servers();
+	crate::log_debug!("Found {} enabled MCP servers", enabled_servers.len());
 
 	for server in enabled_servers {
+		crate::log_debug!("Processing MCP server: {} (type: {:?}, enabled: {})", server.name, server.server_type, server.enabled);
+		
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
 				let server_functions = if server.tools.is_empty() {
@@ -214,6 +218,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.filter(|func| server.tools.contains(&func.name))
 						.collect()
 				};
+				crate::log_debug!("Developer server '{}' provided {} functions", server.name, server_functions.len());
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::Filesystem => {
@@ -227,27 +232,37 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.filter(|func| server.tools.contains(&func.name))
 						.collect()
 				};
+				crate::log_debug!("Filesystem server '{}' provided {} functions", server.name, server_functions.len());
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::External => {
 				// Handle external servers
-				if let Ok(server_functions) = server::get_server_functions(&server).await {
-					let filtered_functions = if server.tools.is_empty() {
-						// No tool filtering - get all functions from server
-						server_functions
-					} else {
-						// Filter functions based on allowed tools
-						server_functions
-							.into_iter()
-							.filter(|func| server.tools.contains(&func.name))
-							.collect()
-					};
-					functions.extend(filtered_functions);
+				crate::log_debug!("Attempting to get functions from external server: {}", server.name);
+				match server::get_server_functions(&server).await {
+					Ok(server_functions) => {
+						let filtered_functions = if server.tools.is_empty() {
+							// No tool filtering - get all functions from server
+							server_functions
+						} else {
+							// Filter functions based on allowed tools
+							server_functions
+								.into_iter()
+								.filter(|func| server.tools.contains(&func.name))
+								.collect()
+						};
+						crate::log_debug!("External server '{}' provided {} functions", server.name, filtered_functions.len());
+						functions.extend(filtered_functions);
+					}
+					Err(e) => {
+						crate::log_debug!("Failed to get functions from external server '{}': {}", server.name, e);
+						// Continue with other servers instead of failing completely
+					}
 				}
 			}
 		}
 	}
 
+	crate::log_debug!("Total functions available: {}", functions.len());
 	functions
 }
 
@@ -267,17 +282,7 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	// Track tool execution time
 	let tool_start = std::time::Instant::now();
 
-	// Get store for tools that need it - only if semantic_code is needed
-	let store_option = if call.tool_name == "semantic_code" {
-		Some(crate::store::Store::new().await?)
-	} else {
-		None
-	};
-
-	let result = try_execute_tool_call(call, config, store_option.as_ref()).await;
-
-	// Explicitly drop the store if it was created
-	drop(store_option);
+	let result = try_execute_tool_call(call, config).await;
 
 	// Calculate tool execution time
 	let tool_duration = tool_start.elapsed();
@@ -290,7 +295,7 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 }
 
 // Internal function to actually execute the tool call
-async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Config, store_option: Option<&crate::store::Store>) -> Result<McpToolResult> {
+async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
 	// Only execute if MCP is enabled
 	if !config.mcp.enabled {
 		return Err(anyhow::anyhow!("MCP is not enabled"));
@@ -316,20 +321,6 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 						let mut result = dev::execute_shell_command(call).await?;
 						result.tool_id = call.tool_id.clone();
 						return handle_large_response(result, config);
-					}
-					"semantic_code" => {
-						if let Some(store) = store_option {
-							let mut result = dev::execute_semantic_code(call, store, config).await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
-						} else {
-							return Err(anyhow::anyhow!("Store not initialized for semantic_code tool"));
-						}
-					}
-					"graphrag" => {
-						let mut result = dev::execute_graphrag(call, config).await?;
-						result.tool_id = call.tool_id.clone();
-						return Ok(result);
 					}
 					_ => {
 						// Tool not found in developer server

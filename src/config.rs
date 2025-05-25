@@ -168,96 +168,6 @@ macro_rules! log_conditional {
 	};
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum EmbeddingProvider {
-	Jina,
-	FastEmbed,
-}
-
-impl Default for EmbeddingProvider {
-	fn default() -> Self {
-		Self::FastEmbed // Default to FastEmbed
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GraphRagConfig {
-	#[serde(default)]
-	pub enabled: bool,
-	#[serde(default = "default_description_model")]
-	pub description_model: String,
-	#[serde(default = "default_relationship_model")]
-	pub relationship_model: String,
-}
-
-fn default_description_model() -> String {
-	"openrouter:openai/gpt-4.1-nano".to_string()
-}
-
-fn default_relationship_model() -> String {
-	"openrouter:openai/gpt-4.1-nano".to_string()
-}
-
-impl Default for GraphRagConfig {
-	fn default() -> Self {
-		Self {
-			enabled: false,
-			description_model: default_description_model(),
-			relationship_model: default_relationship_model(),
-		}
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FastEmbedConfig {
-	#[serde(default = "default_code_model")]
-	pub code_model: String,
-	#[serde(default = "default_text_model")]
-	pub text_model: String,
-}
-
-fn default_code_model() -> String {
-	"all-MiniLM-L6-v2".to_string()
-}
-
-fn default_text_model() -> String {
-	"all-MiniLM-L6-v2".to_string()
-}
-
-impl Default for FastEmbedConfig {
-	fn default() -> Self {
-		Self {
-			code_model: default_code_model(),
-			text_model: default_text_model(),
-		}
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JinaConfig {
-	#[serde(default = "default_jina_code_model")]
-	pub code_model: String,
-	#[serde(default = "default_jina_text_model")]
-	pub text_model: String,
-}
-
-fn default_jina_code_model() -> String {
-	"jina-embeddings-v2-base-code".to_string()
-}
-
-fn default_jina_text_model() -> String {
-	"jina-embeddings-v3".to_string()
-}
-
-impl Default for JinaConfig {
-	fn default() -> Self {
-		Self {
-			code_model: default_jina_code_model(),
-			text_model: default_jina_text_model(),
-		}
-	}
-}
-
 // Provider configurations - ONLY contain API keys and provider-specific settings
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProviderConfig {
@@ -718,6 +628,44 @@ pub struct AssistantRoleConfig {
 
 impl Default for DeveloperRoleConfig {
 	fn default() -> Self {
+		// Create default MCP config with built-in servers
+		let mut mcp_servers = std::collections::HashMap::new();
+		
+		// Add built-in servers
+		mcp_servers.insert(
+			"developer".to_string(),
+			McpServerConfig::developer("developer", vec![])
+		);
+		mcp_servers.insert(
+			"filesystem".to_string(),
+			McpServerConfig::filesystem("filesystem", vec![])
+		);
+		
+		// Add octocode server with auto-detection
+		let octocode_available = {
+			use std::process::Command;
+			match Command::new("octocode").arg("--version").output() {
+				Ok(output) => output.status.success(),
+				Err(_) => false,
+			}
+		};
+		
+		mcp_servers.insert(
+			"octocode".to_string(),
+			McpServerConfig {
+				enabled: octocode_available,
+				name: "octocode".to_string(),
+				server_type: McpServerType::External,
+				command: Some("octocode".to_string()),
+				args: vec!["mcp".to_string(), "--path=.".to_string()],
+				mode: McpServerMode::Stdin,
+				timeout_seconds: 30,
+				tools: vec![], // Empty means all tools are enabled
+				url: None,
+				auth_token: None,
+			}
+		);
+		
 		Self {
 			config: ModeConfig {
 				model: "openrouter:anthropic/claude-sonnet-4".to_string(),
@@ -726,7 +674,8 @@ impl Default for DeveloperRoleConfig {
 			},
 			mcp: McpConfig {
 				enabled: true,
-				..McpConfig::default()
+				servers: mcp_servers,
+				allowed_tools: vec![],
 			},
 			layers: None,
 			commands: None,
@@ -798,16 +747,6 @@ pub struct Config {
 	#[serde(default)]
 	pub enable_markdown_rendering: bool,
 
-	#[serde(default)]
-	pub embedding_provider: EmbeddingProvider,
-	#[serde(default)]
-	pub fastembed: FastEmbedConfig,
-	#[serde(default)]
-	pub jina: JinaConfig,
-	#[serde(default)]
-	pub graphrag: GraphRagConfig,
-	pub jina_api_key: Option<String>,
-
 	// NEW: Providers configuration - centralized API keys
 	#[serde(default)]
 	pub providers: ProvidersConfig,
@@ -840,8 +779,88 @@ pub struct Config {
 
 
 impl Config {
-	/// Initialize the default server registry with common server configurations
+	/// Check if the octocode binary is available in PATH
+	fn is_octocode_available() -> bool {
+		use std::process::Command;
+		
+		// Try to run `octocode --version` to check if it's available
+		match Command::new("octocode")
+			.arg("--version")
+			.output()
+		{
+			Ok(output) => output.status.success(),
+			Err(_) => false,
+		}
+	}
+
+	/// Auto-configure octocode server based on binary availability
+	fn auto_configure_octocode(&mut self) {
+		// Check if developer role MCP config has octocode server
+		if let Some(octocode_server) = self.developer.mcp.servers.get_mut("octocode") {
+			// If the config doesn't explicitly set the enabled status, auto-detect
+			if !octocode_server.enabled {
+				let available = Self::is_octocode_available();
+				octocode_server.enabled = available;
+				
+				if available {
+					crate::log_info!("Auto-enabled octocode MCP server (binary detected in PATH)");
+				} else {
+					crate::log_debug!("octocode binary not found in PATH, server remains disabled");
+				}
+			}
+		}
+		
+		// Also check global MCP config as fallback
+		if let Some(octocode_server) = self.mcp.servers.get_mut("octocode") {
+			if !octocode_server.enabled {
+				let available = Self::is_octocode_available();
+				octocode_server.enabled = available;
+			}
+		}
+	}
+
+	/// Initialize the default server registry with auto-detection
 	pub fn init_default_server_registry(&mut self) {
+		// Initialize default servers for developer role if empty
+		if self.developer.mcp.servers.is_empty() {
+			let mut mcp_servers = std::collections::HashMap::new();
+			
+			// Add built-in servers
+			mcp_servers.insert(
+				"developer".to_string(),
+				McpServerConfig::from_name("developer")
+			);
+			mcp_servers.insert(
+				"filesystem".to_string(),
+				McpServerConfig::from_name("filesystem")
+			);
+			
+			// Add octocode server with auto-detection
+			let octocode_available = Self::is_octocode_available();
+			mcp_servers.insert(
+				"octocode".to_string(),
+				McpServerConfig {
+					enabled: octocode_available,
+					name: "octocode".to_string(),
+					server_type: McpServerType::External,
+					command: Some("octocode".to_string()),
+					args: vec!["mcp".to_string(), "--path=.".to_string()],
+					mode: McpServerMode::Stdin,
+					timeout_seconds: 30,
+					tools: vec![],
+					url: None,
+					auth_token: None,
+				}
+			);
+			
+			self.developer.mcp.servers = mcp_servers;
+			
+			if octocode_available {
+				crate::log_info!("Auto-configured octocode MCP server (binary detected)");
+			}
+		}
+
+		// Initialize global MCP servers if empty
 		if self.mcp.servers.is_empty() {
 			self.mcp.servers.insert(
 				"developer".to_string(),
@@ -851,13 +870,25 @@ impl Config {
 				"filesystem".to_string(),
 				McpServerConfig::from_name("filesystem")
 			);
+			
+			// Add octocode to global config too
+			let octocode_available = Self::is_octocode_available();
+			self.mcp.servers.insert(
+				"octocode".to_string(),
+				McpServerConfig {
+					enabled: octocode_available,
+					name: "octocode".to_string(),
+					server_type: McpServerType::External,
+					command: Some("octocode".to_string()),
+					args: vec!["mcp".to_string(), "--path=.".to_string()],
+					mode: McpServerMode::Stdin,
+					timeout_seconds: 30,
+					tools: vec![],
+					url: None,
+					auth_token: None,
+				}
+			);
 		}
-
-		// Example of external server configuration (commented out as example)
-		// self.mcp.servers.insert(
-		//     "web_search".to_string(),
-		//     McpServerConfig::external_http("web_search", "https://api.example.com/mcp", vec![])
-		// );
 	}
 
 	/// Get server configuration by name from registry, with fallback to defaults
@@ -1155,6 +1186,9 @@ impl Config {
 		// Initialize default server registry if empty
 		self.init_default_server_registry();
 
+		// Auto-configure octocode server based on binary availability
+		self.auto_configure_octocode();
+
 		// Migrate API keys from legacy openrouter config to providers
 		if let Some(api_key) = &self.openrouter.api_key {
 			if self.providers.openrouter.api_key.is_none() {
@@ -1408,10 +1442,6 @@ impl Config {
 			config.initialize_config();
 
 			// Environment variables take precedence over config file values
-			if let Ok(jina_key) = std::env::var("JINA_API_KEY") {
-				config.jina_api_key = Some(jina_key);
-			}
-
 			// Handle provider API keys from environment variables
 			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
 				config.providers.openrouter.api_key = Some(openrouter_key);
@@ -1448,7 +1478,6 @@ impl Config {
 			// Create default config
 			let config = Config {
 				config_path: Some(config_path),
-				jina_api_key: std::env::var("JINA_API_KEY").ok(),
 				providers: ProvidersConfig {
 					openrouter: ProviderConfig {
 						api_key: std::env::var("OPENROUTER_API_KEY").ok(),

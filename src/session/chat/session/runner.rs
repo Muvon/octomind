@@ -2,7 +2,6 @@
 
 use super::core::ChatSession;
 use crate::{log_debug, log_info};
-use crate::store::Store;
 use crate::config::Config;
 use crate::session::{create_system_prompt, openrouter};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,12 +13,10 @@ use super::super::response::process_response;
 use super::super::animation::show_loading_animation;
 use super::super::context_truncation::check_and_truncate_context;
 use super::super::commands::*;
-use crate::session::indexer;
 
 // Run an interactive session
 pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	args: &T,
-	store: &Store,
 	config: &Config,
 ) -> Result<()> {
 	use clap::Args;
@@ -92,21 +89,37 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 	};
 
-	// Check if there's an index, and if not, run indexer (only for developer role)
+	// For developer role, show MCP server status
 	let current_dir = std::env::current_dir()?;
 	if session_args.role == "developer" {
-		let octodev_dir = current_dir.join(".octodev");
-		let index_path = octodev_dir.join("storage");
-		if !index_path.exists() {
-			// Run the indexer directly using our indexer integration
-			indexer::index_current_directory(store, config).await?
+		// Check if external MCP server is configured
+		let mode_config = config.get_mode_config(&session_args.role);
+		let mcp_config = &mode_config.1;
+		
+		if !mcp_config.enabled || mcp_config.servers.is_empty() {
+			use colored::*;
+			println!("{}", "💡 Tip: For code development, consider starting an external MCP server:".bright_yellow());
+			println!("{}", "   octocode mcp --path=.".bright_cyan());
+			println!("{}", "   Then configure it in your .octodev/config.toml".bright_cyan());
+			println!();
 		} else {
-			log_info!("Using existing index from {}", index_path.display());
+			// Check if octocode is enabled
+			let octocode_enabled = mcp_config.servers.get("octocode")
+				.map(|server| server.enabled)
+				.unwrap_or(false);
+			
+			if octocode_enabled {
+				use colored::*;
+				println!("{}", "🔗 octocode MCP server is enabled for enhanced codebase analysis".bright_green());
+				println!();
+			} else {
+				use colored::*;
+				println!("{}", "💡 Tip: Install octocode for enhanced codebase analysis:".bright_yellow());
+				println!("{}", "   cargo install octocode  # or download from releases".bright_cyan());
+				println!("{}", "   It will be auto-enabled when available in PATH".bright_cyan());
+				println!();
+			}
 		}
-
-		// Start a watcher in the background to keep the index updated
-		log_info!("Starting watcher to keep index updated during session...");
-		indexer::start_watcher_in_background(store, config).await?;
 	}
 
 	// Get the merged configuration for the specified role
@@ -507,11 +520,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
 			}
 		}
-	}
-
-	// Clean up the watcher when the session ends (only for developer role)
-	if session_args.role == "developer" {
-		let _ = crate::session::indexer::cleanup_watcher().await;
 	}
 
 	Ok(())

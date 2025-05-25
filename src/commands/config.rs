@@ -1,17 +1,9 @@
 use clap::Args;
 
-use octodev::config::{Config, EmbeddingProvider, McpServerConfig, McpServerMode, McpServerType};
+use octodev::config::{Config, McpServerConfig, McpServerMode, McpServerType};
 
 #[derive(Args)]
 pub struct ConfigArgs {
-	/// Set the embedding provider (jina or fastembed)
-	#[arg(long, short)]
-	pub provider: Option<String>,
-
-	/// Set the Jina API key
-	#[arg(long)]
-	pub jina_key: Option<String>,
-
 	/// Set the OpenRouter API key
 	#[arg(long)]
 	pub openrouter_key: Option<String>,
@@ -19,14 +11,6 @@ pub struct ConfigArgs {
 	/// Set the OpenRouter model
 	#[arg(long)]
 	pub openrouter_model: Option<String>,
-
-	/// Set the code embedding model for FastEmbed
-	#[arg(long)]
-	pub fastembed_code_model: Option<String>,
-
-	/// Set the text embedding model for FastEmbed
-	#[arg(long)]
-	pub fastembed_text_model: Option<String>,
 
 	/// Enable MCP protocol
 	#[arg(long)]
@@ -39,10 +23,6 @@ pub struct ConfigArgs {
 	/// Add/configure MCP server (format: name,url=X|command=Y,args=Z)
 	#[arg(long)]
 	pub mcp_server: Option<String>,
-
-	/// Enable GraphRAG for code relationship analysis
-	#[arg(long)]
-	pub graphrag_enable: Option<bool>,
 
 	/// Set custom system prompt (or 'default' to reset to default)
 	#[arg(long)]
@@ -75,33 +55,6 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	let mut modified = false;
 
-	// Update provider if specified
-	if let Some(provider) = &args.provider {
-		match provider.to_lowercase().as_str() {
-			"jina" => {
-				config.embedding_provider = EmbeddingProvider::Jina;
-				println!("Set embedding provider to Jina");
-				modified = true;
-			},
-			"fastembed" => {
-				config.embedding_provider = EmbeddingProvider::FastEmbed;
-				println!("Set embedding provider to FastEmbed");
-				modified = true;
-			},
-			_ => {
-				println!("Unknown provider: {}", provider);
-				println!("Valid providers are 'jina' or 'fastembed'.");
-			},
-		}
-	}
-
-	// Update Jina API key if specified
-	if let Some(jina_key) = &args.jina_key {
-		config.jina_api_key = Some(jina_key.clone());
-		println!("Set Jina API key in configuration");
-		modified = true;
-	}
-
 	// Update OpenRouter API key if specified
 	if let Some(openrouter_key) = &args.openrouter_key {
 		config.openrouter.api_key = Some(openrouter_key.clone());
@@ -116,31 +69,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		modified = true;
 	}
 
-	// Update FastEmbed code model if specified
-	if let Some(code_model) = &args.fastembed_code_model {
-		config.fastembed.code_model = code_model.clone();
-		println!("Set FastEmbed code model to {}", code_model);
-		modified = true;
-	}
-
-	// Update FastEmbed text model if specified
-	if let Some(text_model) = &args.fastembed_text_model {
-		config.fastembed.text_model = text_model.clone();
-		println!("Set FastEmbed text model to {}", text_model);
-		modified = true;
-	}
-
 	// Enable/disable MCP protocol
 	if let Some(enable_mcp) = args.mcp_enable {
 		config.mcp.enabled = enable_mcp;
 		println!("MCP protocol {}", if enable_mcp { "enabled" } else { "disabled" });
-		modified = true;
-	}
-
-	// Enable/disable GraphRAG
-	if let Some(enable_graphrag) = args.graphrag_enable {
-		config.graphrag.enabled = enable_graphrag;
-		println!("GraphRAG {}", if enable_graphrag { "enabled" } else { "disabled" });
 		modified = true;
 	}
 
@@ -307,13 +239,6 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// Show current configuration
 	println!("\nCurrent configuration:");
-	println!("Embedding provider: {:?}", config.embedding_provider);
-
-	if let Some(key) = &config.jina_api_key {
-		println!("Jina API key: {}", "*".repeat(key.len()));
-	} else {
-		println!("Jina API key: Not set (will use JINA_API_KEY environment variable if available)");
-	}
 
 	if let Some(key) = &config.openrouter.api_key {
 		println!("OpenRouter API key: {}", "*".repeat(key.len()));
@@ -323,15 +248,16 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	println!("Developer model: {}", config.developer.config.model);
 	println!("Assistant model: {}", config.assistant.config.model);
-	println!("FastEmbed code model: {}", config.fastembed.code_model);
-	println!("FastEmbed text model: {}", config.fastembed.text_model);
-	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
+	
+	// Show MCP protocol status using developer role (primary role)
+	let developer_mcp_enabled = config.developer.mcp.enabled && config.developer.mcp.has_enabled_servers();
+	println!("MCP protocol: {}", if developer_mcp_enabled { "enabled" } else { "disabled" });
 
-	// Show MCP servers
-	if config.mcp.enabled {
-		if !config.mcp.servers.is_empty() {
+	// Show MCP servers from developer role (primary role for development)
+	if config.developer.mcp.enabled {
+		if !config.developer.mcp.servers.is_empty() {
 			println!("MCP servers:");
-			for (name, server) in &config.mcp.servers {
+			for (name, server) in &config.developer.mcp.servers {
 				let status = if server.enabled { "enabled" } else { "disabled" };
 
 				// Auto-detect server type for display
@@ -345,7 +271,13 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					McpServerType::Developer => println!("  - {} (built-in developer tools) - {}", name, status),
 					McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - {}", name, status),
 					McpServerType::External => {
-						if let Some(url) = &server.url {
+						if name == "octocode" {
+							if server.enabled {
+								println!("  - {} (codebase analysis) - {} ✓", name, status);
+							} else {
+								println!("  - {} (codebase analysis) - {} (binary not found in PATH)", name, status);
+							}
+						} else if let Some(url) = &server.url {
 							println!("  - {} (HTTP: {}) - {}", name, url, status);
 						} else if let Some(command) = &server.command {
 							println!("  - {} (Command: {}) - {}", name, command, status);
@@ -359,7 +291,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			println!("MCP servers: None configured");
 		}
 	}
-	println!("GraphRAG: {}", if config.graphrag.enabled { "enabled" } else { "disabled" });
+
 	println!("Markdown rendering: {}", if config.get_enable_markdown_rendering() { "enabled" } else { "disabled" });
 
 	// Show system prompt status

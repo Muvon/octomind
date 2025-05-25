@@ -408,13 +408,17 @@ impl CacheManager {
         session.info.cached_tokens += cached_tokens;
 
         // Update current interaction tracking for cache threshold logic
-        // NEW APPROACH: Accumulate ALL tokens processed in the session until threshold is reached
-        let total_new_tokens = input_tokens + output_tokens;
-        let non_cached_new_tokens = input_tokens.saturating_sub(cached_tokens) + output_tokens;
+        // input_tokens here are already non-cached tokens (caller subtracted cached_tokens)
+        // For threshold checking:
+        // - total_input_tokens should include ALL INPUT tokens (non-cached + cached) - excludes output
+        // - non_cached_input_tokens should only include non-cached input tokens
+        // Output tokens are separate as they cannot be cached
+        let total_input_tokens = input_tokens + cached_tokens; // Only INPUT tokens (cacheable)
+        let non_cached_input_tokens = input_tokens; // Only non-cached input tokens
 
         // Add to running totals (these accumulate until a cache checkpoint is set)
-        session.current_total_tokens += total_new_tokens;
-        session.current_non_cached_tokens += non_cached_new_tokens;
+        session.current_total_tokens += total_input_tokens;
+        session.current_non_cached_tokens += non_cached_input_tokens;
     }
 
     /// Estimate current session tokens for threshold checking
@@ -442,13 +446,14 @@ impl CacheManager {
     pub fn get_cache_statistics(&self, session: &Session) -> CacheStatistics {
         let mut content_markers = 0;
         let mut system_markers = 0;
-        let tool_markers = 0;
+        let mut tool_markers = 0;
 
         for msg in &session.messages {
             if msg.cached {
                 match msg.role.as_str() {
                     "system" => system_markers += 1,
-                    "user" | "tool" => content_markers += 1,
+                    "user" => content_markers += 1,
+                    "tool" => tool_markers += 1,  // FIXED: Actually count tool markers
                     "assistant" => {
                         // Assistant messages could be either tool-related or content
                         // For now, count as content markers
@@ -464,11 +469,13 @@ impl CacheManager {
             system_markers,
             tool_markers,
             total_cached_tokens: session.info.cached_tokens,
+            total_input_tokens: session.info.input_tokens + session.info.cached_tokens,
+            total_output_tokens: session.info.output_tokens,
             current_non_cached_tokens: session.current_non_cached_tokens,
             current_total_tokens: session.current_total_tokens,
             cache_efficiency: if session.info.input_tokens + session.info.cached_tokens > 0 {
-                // Cache efficiency = percentage of total input tokens that came from cache
-                // Total input = regular input tokens + cached input tokens
+                // Cache efficiency = percentage of INPUT tokens that came from cache
+                // Only input tokens can be cached, so exclude output tokens from this calculation
                 (session.info.cached_tokens as f64 / (session.info.input_tokens + session.info.cached_tokens) as f64) * 100.0
             } else {
                 0.0
@@ -639,9 +646,11 @@ pub struct CacheStatistics {
     pub system_markers: usize,
     pub tool_markers: usize,
     pub total_cached_tokens: u64,
+    pub total_input_tokens: u64,   // Total input tokens (cacheable)
+    pub total_output_tokens: u64,  // Total output tokens (not cacheable)
     pub current_non_cached_tokens: u64,
     pub current_total_tokens: u64,
-    pub cache_efficiency: f64, // Percentage of tokens that were cached
+    pub cache_efficiency: f64, // Percentage of INPUT tokens that were cached
 }
 
 impl CacheStatistics {
@@ -666,20 +675,28 @@ impl CacheStatistics {
         
         if self.total_cached_tokens > 0 {
             output.push_str(&format!(
-                "Total cached tokens: {}\n",
-                self.total_cached_tokens.to_string().bright_magenta()
+                "Total input tokens: {} ({} cached, {} processed)\n",
+                self.total_input_tokens.to_string().bright_blue(),
+                self.total_cached_tokens.to_string().bright_magenta(),
+                (self.total_input_tokens - self.total_cached_tokens).to_string().bright_yellow()
             ));
             output.push_str(&format!(
-                "Cache efficiency: {:.1}% (of all input tokens)\n",
+                "Total output tokens: {} (not cacheable)\n",
+                self.total_output_tokens.to_string().bright_cyan()
+            ));
+            output.push_str(&format!(
+                "Cache efficiency: {:.1}% (of input tokens only)\n",
                 self.cache_efficiency.to_string().bright_green()
             ));
+        } else {
+            output.push_str(&format!("{}\n", "No cached tokens recorded yet".bright_black()));
         }
         
         if self.current_total_tokens > 0 {
             let non_cached_pct = (self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
             let cached_pct = 100.0 - non_cached_pct;
             output.push_str(&format!(
-                "Current session: {:.1}% cached, {:.1}% non-cached ({}/{} tokens)\n",
+                "Current session input: {:.1}% cached, {:.1}% processed ({}/{} input tokens)\n",
                 cached_pct.to_string().bright_green(),
                 non_cached_pct.to_string().bright_yellow(),
                 self.current_non_cached_tokens.to_string().bright_red(),

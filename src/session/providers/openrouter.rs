@@ -129,7 +129,7 @@ impl AiProvider for OpenRouterProvider {
 				}).collect::<Vec<_>>();
 
 				// Add web search tool if using Claude 3.7 Sonnet
-				if model.contains("claude-sonnet-4") {
+				if model.contains("sonnet") || model.contains("haiku") {
 					tools.push(serde_json::json!({
 						"type": "web_search_20250305",
 						"name": "web_search"
@@ -204,7 +204,7 @@ impl AiProvider for OpenRouterProvider {
 				if let Some(type_) = error_obj.get("type").and_then(|t| t.as_str()) {
 					error_details.push(format!("Type: {}", type_));
 				}
-				
+
 				// Extract metadata for better debugging
 				if let Some(metadata) = error_obj.get("metadata") {
 					if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str()) {
@@ -220,7 +220,7 @@ impl AiProvider for OpenRouterProvider {
 			error_details.push(format!("Raw response: {}", response_text));
 
 			let full_error = error_details.join(" | ");
-			
+
 			// Log detailed error information using the log_error! macro
 			crate::log_error!("OpenRouter API HTTP Error Details:");
 			crate::log_error!("  Status: {}", status);
@@ -228,14 +228,14 @@ impl AiProvider for OpenRouterProvider {
 			crate::log_error!("  Temperature: {}", temperature);
 			crate::log_error!("  Request size: {} chars", serde_json::to_string(&request_body).map_or(0, |s| s.len()));
 			crate::log_error!("  Response: {}", response_text);
-			
+
 			// If in debug mode, also log the full request
 			if config.get_log_level().is_debug_enabled() {
 				if let Ok(request_str) = serde_json::to_string_pretty(&request_body) {
 					crate::log_error!("  Request body: {}", request_str);
 				}
 			}
-			
+
 			return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
 		}
 
@@ -259,7 +259,7 @@ impl AiProvider for OpenRouterProvider {
 			}
 
 			let full_error = error_details.join(" | ");
-			
+
 			// Log comprehensive error information using the log_error! macro
 			crate::log_error!("OpenRouter API Response Error Details:");
 			crate::log_error!("  Model: {}", model);
@@ -267,7 +267,7 @@ impl AiProvider for OpenRouterProvider {
 			crate::log_error!("  Error message: {}", error_message);
 			crate::log_error!("  Request size: {} chars", serde_json::to_string(&request_body).map_or(0, |s| s.len()));
 			crate::log_error!("  Full response: {}", response_text);
-			
+
 			// If in debug mode, log the full request and parsed error object
 			if config.get_log_level().is_debug_enabled() {
 				if let Ok(request_str) = serde_json::to_string_pretty(&request_body) {
@@ -277,7 +277,7 @@ impl AiProvider for OpenRouterProvider {
 					crate::log_error!("  Error object: {}", error_str);
 				}
 			}
-			
+
 			return Err(anyhow::anyhow!("OpenRouter API error: {}", full_error));
 		}
 
@@ -483,7 +483,7 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<O
 					name: None,
 					tool_calls: None,
 				};
-				
+
 				// Preserve tool calls if they exist
 				if let Some(ref tool_calls_data) = msg.tool_calls {
 					assistant_msg.tool_calls = Some(tool_calls_data.clone());

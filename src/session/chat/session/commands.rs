@@ -187,7 +187,7 @@ impl ChatSession {
 				if params.is_empty() {
 					// Show current log level - use system-wide getter
 					let current_level = loaded_config.get_log_level();
-					
+
 					let level_str = match current_level {
 						LogLevel::None => "none",
 						LogLevel::Info => "info",
@@ -250,7 +250,7 @@ impl ChatSession {
 
 				// Toggle between none and debug for backward compatibility
 				let current_level = loaded_config.get_log_level();
-				
+
 				loaded_config.log_level = match current_level {
 					LogLevel::Debug => LogLevel::None,
 					_ => LogLevel::Debug,
@@ -341,12 +341,6 @@ impl ChatSession {
 							let cache_manager = crate::session::cache::CacheManager::new();
 							let stats = cache_manager.get_cache_statistics(&self.session);
 							println!("{}", stats.format_for_display());
-
-							// Additional threshold information using the system-wide configuration getters
-							println!("{}", format!(
-								"Auto-cache threshold: {}%",
-								config.get_cache_tokens_pct_threshold()
-							).bright_blue());
 						},
 						"clear" => {
 							// Clear content cache markers (but keep system markers)

@@ -89,14 +89,16 @@ impl ChatSession {
 		self.session.messages.push(tool_message);
 
 		// Update token tracking for auto-cache threshold logic
-		// Tool messages count as "input" for the next API call, so we track them as non-cached tokens
+		// Tool messages count as "input" for the next API call, so we track them as non-cached input tokens
 		let tool_content_tokens = crate::session::estimate_tokens(content) as u64;
 		let tool_overhead_tokens = 8; // Rough estimate for role + tool_call_id + name overhead
 
 		// Update the session's current token tracking
 		// This ensures tool message tokens are counted toward auto-cache thresholds
-		self.session.current_total_tokens += tool_content_tokens + tool_overhead_tokens;
-		self.session.current_non_cached_tokens += tool_content_tokens + tool_overhead_tokens;
+		// Tool messages are input tokens (they go to the API as input), not output tokens
+		let tool_input_tokens = tool_content_tokens + tool_overhead_tokens;
+		self.session.current_total_tokens += tool_input_tokens;
+		self.session.current_non_cached_tokens += tool_input_tokens;
 
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {

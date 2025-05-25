@@ -46,16 +46,16 @@ impl ServerProcess {
 
 // Start a local MCP server process if not already running
 pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
-	let server_id = server.name.clone();
+	let server_id = &server.name; // Use reference instead of clone
 
 	// Check if the server is already running
 	{
 		let processes = SERVER_PROCESSES.read().unwrap();
-		if processes.contains_key(&server_id) {
+		if processes.contains_key(server_id) {
 			// Server is already running
 			match server.mode {
 				McpServerMode::Http => return get_server_url(server),
-				McpServerMode::Stdin => return Ok("stdin://".to_string() + &server_id),
+				McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
 			}
 		}
 	}
@@ -258,7 +258,7 @@ async fn can_connect(url: &str) -> bool {
 fn get_server_url(server: &McpServerConfig) -> Result<String> {
 	// If URL is explicitly specified, use that
 	if let Some(url) = &server.url {
-		return Ok(url.clone());
+		return Ok(url.to_string()); // Convert &str to String without unnecessary clone
 	}
 
 	// For stdin-based servers, return a pseudo-URL

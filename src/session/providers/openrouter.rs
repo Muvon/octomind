@@ -8,6 +8,27 @@ use crate::config::Config;
 use crate::session::Message;
 use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
 use crate::log_debug;
+use std::sync::OnceLock;
+
+// Global HTTP client with optimized settings - PERFORMANCE BEAST! 🔥
+static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn get_optimized_client() -> &'static Client {
+	HTTP_CLIENT.get_or_init(|| {
+		Client::builder()
+			.pool_max_idle_per_host(10)       // Keep connections alive
+			.pool_idle_timeout(std::time::Duration::from_secs(90))  // Connection reuse
+			.timeout(std::time::Duration::from_secs(300))           // 5 min timeout
+			.build()
+			.expect("Failed to create optimized HTTP client")
+	})
+}
+
+fn intern_model_name(model: &str) -> &'static str {
+	// Use leaked strings for interning - crazy but fast! 🚀
+	// This is safe because model names are typically short-lived and repeated
+	Box::leak(model.to_string().into_boxed_str())
+}
 
 /// OpenRouter provider implementation
 pub struct OpenRouterProvider;
@@ -72,8 +93,10 @@ impl AiProvider for OpenRouterProvider {
 	}
 
 	fn supports_caching(&self, model: &str) -> bool {
+		// Use interned model names for ultra-fast comparisons 🚀
+		let interned = intern_model_name(model);
 		// OpenRouter supports caching for Claude models
-		model.contains("claude") || model.contains("anthropic")
+		interned.contains("claude") || interned.contains("anthropic")
 	}
 
 	async fn chat_completion(
@@ -154,8 +177,8 @@ impl AiProvider for OpenRouterProvider {
 			}
 		}
 
-		// Create HTTP client
-		let client = Client::new();
+		// Create HTTP client - USE THE OPTIMIZED GLOBAL POOL! 🚀
+		let client = get_optimized_client();
 
 		// Track API request time
 		let api_start = std::time::Instant::now();

@@ -46,6 +46,14 @@ impl ChatSession {
 				println!("{} <command_name> - Execute a command layer (e.g., /run estimate)", RUN_COMMAND.cyan());
 				println!("{} or {} - Exit the session\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan());
 
+				// Add keyboard shortcuts section
+				println!("{}", "Keyboard shortcuts:\n".bright_cyan());
+				println!("{} - Insert newline for multi-line input", "Ctrl+J".bright_green());
+				println!("{} - Accept hint/completion", "Ctrl+E".bright_green());
+				println!("{} - Cancel input", "Ctrl+C".bright_green());
+				println!("{} - Exit session", "Ctrl+D".bright_green());
+				println!();
+
 				// Additional info about caching
 				println!("{}", "** About Cache Management **".bright_yellow());
 				println!("The system message and tool definitions are automatically cached for supported providers.");
@@ -340,10 +348,10 @@ impl ChatSession {
 							let stats = cache_manager.get_cache_statistics(&self.session);
 							println!("{}", stats.format_for_display());
 
-							// Additional threshold information using the passed config (role-specific merged config)
+							// Additional threshold information using the system-wide configuration getters
 							println!("{}", format!(
 								"Auto-cache threshold: {}%",
-								config.openrouter.cache_tokens_pct_threshold
+								config.get_cache_tokens_pct_threshold()
 							).bright_blue());
 						},
 						"clear" => {
@@ -359,14 +367,14 @@ impl ChatSession {
 							}
 						},
 						"threshold" => {
-							// Show current threshold settings using the passed config (which is role-specific merged config)
-							if config.openrouter.cache_tokens_absolute_threshold > 0 {
+							// Show current threshold settings using the system-wide configuration getters
+							if config.get_cache_tokens_absolute_threshold() > 0 {
 								println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)",
-									config.openrouter.cache_tokens_absolute_threshold).bright_cyan());
+									config.get_cache_tokens_absolute_threshold()).bright_cyan());
 								println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
-									config.openrouter.cache_tokens_absolute_threshold).bright_blue());
+									config.get_cache_tokens_absolute_threshold()).bright_blue());
 							} else {
-								let threshold = config.openrouter.cache_tokens_pct_threshold;
+								let threshold = config.get_cache_tokens_pct_threshold();
 								println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
 
 								if threshold == 0 || threshold == 100 {
@@ -377,7 +385,7 @@ impl ChatSession {
 							}
 
 							// Show time-based threshold
-							let timeout_seconds = config.openrouter.cache_timeout_seconds;
+							let timeout_seconds = config.get_cache_timeout_seconds();
 							if timeout_seconds > 0 {
 								let timeout_minutes = timeout_seconds / 60;
 								println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)",

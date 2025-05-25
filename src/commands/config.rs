@@ -157,7 +157,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			.split(',')
 			.map(|s| s.trim().to_string())
 			.collect();
-		
+
 		// Clear existing servers and add new ones
 		config.mcp.servers.clear();
 		for server_name in &server_names {
@@ -169,7 +169,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				);
 			}
 		}
-		
+
 		println!("Set MCP servers to: {}", providers);
 		modified = true;
 	}
@@ -254,7 +254,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					// Built-in servers are always valid
 				}
 			}
-			
+
 			// Enable MCP if not already enabled
 			if !config.mcp.enabled {
 				config.mcp.enabled = true;
@@ -263,7 +263,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 			// Add the new server to registry
 			config.mcp.servers.insert(name.clone(), server);
-			
+
 			println!("Added/updated MCP server: {}", name);
 			modified = true;
 		}
@@ -325,21 +325,21 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	println!("FastEmbed code model: {}", config.fastembed.code_model);
 	println!("FastEmbed text model: {}", config.fastembed.text_model);
 	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
-	
+
 	// Show MCP servers
 	if config.mcp.enabled {
 		if !config.mcp.servers.is_empty() {
 			println!("MCP servers:");
 			for (name, server) in &config.mcp.servers {
 				let status = if server.enabled { "enabled" } else { "disabled" };
-				
+
 				// Auto-detect server type for display
 				let effective_type = match name.as_str() {
 					"developer" => McpServerType::Developer,
 					"filesystem" => McpServerType::Filesystem,
 					_ => McpServerType::External,
 				};
-				
+
 				match effective_type {
 					McpServerType::Developer => println!("  - {} (built-in developer tools) - {}", name, status),
 					McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - {}", name, status),

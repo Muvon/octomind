@@ -53,6 +53,12 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		EventHandler::Simple(Cmd::CompleteHint)
 	);
 
+	// Ctrl+J to insert newline for multi-line input
+	editor.bind_sequence(
+		Event::KeySeq(vec![KeyEvent::new('j', Modifiers::CTRL)]),
+		EventHandler::Simple(Cmd::Newline)
+	);
+
 	// Load persistent history from .octodev/history
 	let history_path = get_history_file_path()?;
 	if history_path.exists() {

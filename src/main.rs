@@ -9,7 +9,7 @@ mod commands;
 #[command(name = "octodev")]
 #[command(version = "0.1.0")]
 #[command(about = "Octodev is a smart AI developer assistant with configurable MCP support")]
-struct OctodevArgs {
+struct CliArgs {
 	#[command(subcommand)]
 	command: Commands,
 }
@@ -25,7 +25,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-	let args = OctodevArgs::parse();
+	let args = CliArgs::parse();
 
 	// Load configuration - ensure .octodev directory exists
 	let config = Config::load()?;
@@ -41,7 +41,7 @@ async fn main() -> Result<(), anyhow::Error> {
 	result
 }
 
-async fn run_with_cleanup(args: OctodevArgs, config: Config) -> Result<(), anyhow::Error> {
+async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
 	// Execute the appropriate command
 	match &args.command {
 		Commands::Config(config_args) => {

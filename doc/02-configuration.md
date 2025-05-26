@@ -264,7 +264,7 @@ enabled = true
 enabled = true
 name = "developer"
 server_type = "developer"
-tools = ["text_editor", "semantic_code"]  # Limited tool set
+tools = ["text_editor", "shell"]  # Limited tool set
 ```
 
 ## Layered Architecture Configuration
@@ -524,7 +524,7 @@ input_mode = "All"
 [developer.commands.review.mcp]
 enabled = true
 servers = ["developer"]
-allowed_tools = ["text_editor", "semantic_code"]
+allowed_tools = ["text_editor", "shell"]
 ```
 
 ## Validation and Security

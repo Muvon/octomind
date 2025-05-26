@@ -250,71 +250,9 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 	}
 }
 
-// Execute a line replace command
-pub async fn execute_line_replace(call: &McpToolCall) -> Result<McpToolResult> {
-	// Extract path parameter (single path only)
-	let path = match call.parameters.get("path") {
-		Some(Value::String(p)) => p.clone(),
-		_ => return Err(anyhow!("Missing or invalid 'path' parameter - must be a string")),
-	};
-
-	// Extract view_range parameter
-	let view_range = match call.parameters.get("view_range") {
-		Some(Value::Array(arr)) => {
-			if arr.len() != 2 {
-				return Err(anyhow!("'view_range' must be an array of exactly 2 integers"));
-			}
-			let start = arr[0].as_u64().ok_or_else(|| anyhow!("Invalid start_line in view_range"))? as usize;
-			let end = arr[1].as_u64().ok_or_else(|| anyhow!("Invalid end_line in view_range"))? as usize;
-			(start, end)
-		},
-		_ => return Err(anyhow!("Missing or invalid 'view_range' parameter - must be an array of 2 integers")),
-	};
-
-	// Extract new_str parameter
-	let new_str = match call.parameters.get("new_str") {
-		Some(Value::String(s)) => s.clone(),
-		_ => return Err(anyhow!("Missing or invalid 'new_str' parameter - must be a string")),
-	};
-
-	text_editing::line_replace(call, Path::new(&path), view_range, &new_str).await
-}
-
 // Execute list_files command
 pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 	directory::execute_list_files(call).await
-}
-
-// Execute view_many command for viewing multiple files simultaneously
-pub async fn execute_view_many(call: &McpToolCall) -> Result<McpToolResult> {
-	// Extract paths parameter
-	let paths_value = match call.parameters.get("paths") {
-		Some(value) => value,
-		_ => return Err(anyhow!("Missing 'paths' parameter")),
-	};
-
-	// Extract paths array
-	let paths = match paths_value.as_array() {
-		Some(arr) => {
-			let path_strings: Result<Vec<String>, _> = arr.iter()
-				.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
-				.map(|r| r.map(|s| s.to_string()))
-				.collect();
-
-			match path_strings {
-				Ok(paths) => {
-					if paths.len() > 50 {
-						return Err(anyhow!("Too many files requested. Maximum 50 files per request."));
-					}
-					paths
-				},
-				Err(e) => return Err(e),
-			}
-		},
-		_ => return Err(anyhow!("'paths' parameter must be an array of strings")),
-	};
-
-	file_ops::view_many_files(call, &paths).await
 }
 
 // Execute HTML to Markdown conversion

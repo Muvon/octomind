@@ -549,8 +549,8 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 			• Don't over-fragment code across multiple files\n\n\
 			**MISSING CONTEXT COLLECTION CHECKLIST:**\n\
 			1. Examine key project files to understand the codebase structure \
-			2. Use semantic_code view to understand interfaces and code signatures \
-			2. If needed, use semantic_code search for relevant implementation patterns \
+			2. Use text_editor view to examine files and understand interfaces and code signatures \
+			2. If needed, use list_files to find relevant implementation patterns \
 			3. As a last resort, use text_editor to view specific file contents \
 			**WHEN WORKING WITH FILES:**\n\
 			1. First understand which files you need to read/write\n\

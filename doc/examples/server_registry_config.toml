@@ -113,7 +113,7 @@ system = "You are a code review expert focused on security and best practices."
 [code-reviewer.mcp]
 enabled = true
 server_refs = ["developer", "filesystem"]  # Developer and filesystem tools
-allowed_tools = ["text_editor", "semantic_code", "list_files"]  # Limited tool set
+allowed_tools = ["text_editor", "list_files"]  # Limited tool set
 
 # Command Configurations - Also use server references
 
@@ -139,7 +139,7 @@ input_mode = "All"
 [commands.review.mcp]
 enabled = true
 server_refs = ["developer", "filesystem"]  # Reference servers from registry
-allowed_tools = ["text_editor", "semantic_code", "list_files"]  # Only needed tools
+allowed_tools = ["text_editor", "list_files"]  # Only needed tools
 
 # Global MCP fallback configuration
 [mcp]

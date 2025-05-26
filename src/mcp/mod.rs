@@ -336,11 +336,6 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
-					"line_replace" => {
-						let mut result = fs::execute_line_replace(call).await?;
-						result.tool_id = call.tool_id.clone();
-						return Ok(result);
-					}
 					"html2md" => {
 						let mut result = fs::execute_html2md(call).await?;
 						result.tool_id = call.tool_id.clone();

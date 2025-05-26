@@ -41,8 +41,8 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			1. First, carefully analyze the user's requirement to identify the core task and implementation needs \
 			2. Systematically identify files that need review using the following approach: \
 			a. Examine key project files to understand the codebase structure \
-			b. Use semantic_code view to understand interfaces and code signatures \
-			c. If needed, use semantic_code search for relevant implementation patterns \
+			b. Use text_editor view to examine files and understand interfaces and code signatures \
+			c. If needed, use list_files to find relevant implementation patterns \
 			d. As a last resort, use text_editor to view specific file contents \
 			\
 			FILE IDENTIFICATION STRATEGY: \
@@ -61,8 +61,8 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			- Documentation that provides insight into design decisions \
 			\
 			WHEN USING TOOLS: \
-			- semantic_code view: Use for understanding interfaces, classes, and function signatures \
-			- semantic_code search: Use targeted queries to find relevant code patterns or similar implementations \
+			- text_editor view: Use for understanding file contents, interfaces, classes, and function signatures \
+			- list_files: Use targeted queries to find relevant code patterns or similar implementations \
 			- text_editor: Use when specific file content or detailed implementation is necessary \
 			\
 			RESULT ORGANIZATION: \
@@ -91,8 +91,8 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			• Don't over-fragment code across multiple files\n\n\
 			**MISSING CONTEXT COLLECTION CHECKLIST:**\n\
 			1. Examine key project files to understand the codebase structure \
-			2. Use semantic_code view to understand interfaces and code signatures \
-			2. If needed, use semantic_code search for relevant implementation patterns \
+			2. Use text_editor view to examine files and understand interfaces and code signatures \
+			2. If needed, use list_files to find relevant implementation patterns \
 			3. As a last resort, use text_editor to view specific file contents \
 			**WHEN WORKING WITH FILES:**\n\
 			1. First understand which files you need to read/write\n\

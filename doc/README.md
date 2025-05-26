@@ -1,6 +1,6 @@
 # Octodev Manual
 
-Welcome to the comprehensive Octodev documentation. This manual provides detailed guidance on all aspects of Octodev, from basic setup to advanced features.
+Welcome to the comprehensive Octodev documentation. This manual provides detailed guidance on all aspects of Octodev's simplified, session-first architecture.
 
 ## Table of Contents
 
@@ -10,16 +10,19 @@ Welcome to the comprehensive Octodev documentation. This manual provides detaile
 - **[03-providers.md](./03-providers.md)** - AI provider setup and management
 
 ### 🔧 Core Features  
-- **[04-indexing.md](./04-indexing.md)** - Indexing and search capabilities
 - **[05-sessions.md](./05-sessions.md)** - Interactive sessions and modes
 
 ### 🚀 Advanced Features
-- **[06-advanced.md](./06-advanced.md)** - GraphRAG, MCP, and layered architecture
+- **[06-advanced.md](./06-advanced.md)** - MCP tools, layered architecture, and extensibility
 
 ## Quick Reference
 
 ### Installation
 ```bash
+# Quick install with script
+curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh | bash
+
+# Or build from source
 git clone https://github.com/muvon/octodev.git
 cd octodev
 cargo build --release
@@ -27,39 +30,38 @@ cargo build --release
 
 ### Basic Commands
 ```bash
-# Index your codebase
-octodev index
-
-# Search your code
-octodev search "authentication logic"
-
-# Start interactive session
-octodev session
-
 # Configure Octodev
 octodev config
+
+# Start development session (includes all tools)
+octodev session
+
+# Start simple chat session (no tools)
+octodev session --role=assistant
+
+# Resume a session
+octodev session --resume my_session
 ```
 
 ### Key Concepts
 
-#### **Semantic Search**
-Natural language code search using vector embeddings and tree-sitter parsing.
+#### **Session-First Architecture**
+Everything happens within interactive AI sessions. No separate indexing or search commands.
 
-#### **AI Sessions**
-Interactive sessions with AI assistance in two modes:
+#### **Role-Based Configuration**
 - **Developer Role**: Full development tools and project context
-- **Assistant Role**: Lightweight conversations
+- **Assistant Role**: Simple conversations without tools
 - **Custom Roles**: User-defined specialized configurations
 
+#### **MCP Tool Integration**
+Built-in development tools accessible through natural conversation:
+- File operations and code editing
+- Shell command execution
+- Code analysis and understanding
+
 #### **Layered Architecture**
-Multi-stage AI processing:
+Multi-stage AI processing for complex tasks:
 - Query Processor → Context Generator → Developer → (Optional Reducer)
-
-#### **GraphRAG**
-Graph-based code relationship analysis for deep codebase understanding.
-
-#### **MCP Protocol**
-Tool integration system enabling AI access to external tools and services.
 
 ### Configuration Hierarchy
 
@@ -68,7 +70,7 @@ Environment Variables
     ↓
 Role-specific config [developer] / [assistant] / [custom-role]
     ↓
-Global config [providers] / [openrouter] / [graphrag]
+Global config [providers] / [mcp_server_registry]
     ↓
 Default values
 ```
@@ -91,7 +93,6 @@ Default values
 ```
 .octodev/
 ├── config.toml          # Configuration file
-├── storage/             # Vector database
 ├── sessions/            # Session history
 └── logs/               # Debug logs
 ```
@@ -102,80 +103,65 @@ Default values
 - Start with **[Overview](./01-overview.md)** for basic concepts
 - Follow **[Configuration](./02-configuration.md)** for setup
 - Check **[Providers](./03-providers.md)** for AI model setup
-- Read **[Indexing](./04-indexing.md)** to understand search
 - Explore **[Sessions](./05-sessions.md)** for interactive use
 - Dive into **[Advanced](./06-advanced.md)** for complex features
 
-### Command Line Help
+### Session Commands
 ```bash
-# General help
-octodev --help
-
-# Command-specific help
-octodev session --help
-octodev config --help
-
-# In-session help
-> /help
-```
-
-### Debug Mode
-```toml
-[openrouter]
-log_level = "debug"
+# In any session
+> /help              # Show available commands
+> /info              # Token and cost breakdown
+> /debug             # Toggle debug mode
+> /layers            # Toggle layered processing
+> /cache             # Mark cache checkpoint
+> /done              # Optimize context
 ```
 
 ### Common Issues
 1. **API Key Missing**: Set environment variables for your AI provider
 2. **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
 3. **Configuration Errors**: Run `octodev config --validate`
-4. **Slow Performance**: Choose faster embedding models or enable caching
+4. **Tool Access Issues**: Check role configuration and MCP server settings
 
-## Architecture Overview
+## Simplified Architecture
+
+Octodev now uses a streamlined, session-first architecture:
 
 ```mermaid
 graph TB
-    A[User] --> B[CLI Interface]
-    B --> C[Configuration System]
-    B --> D[Session Management]
-    B --> E[Indexer System]
+    A[User] --> B[Session Interface]
+    B --> C[Role Configuration]
+    B --> D[MCP Tools]
+    B --> E[AI Providers]
     
-    D --> F[Provider System]
-    D --> G[Layered Architecture]
-    D --> H[MCP Protocol]
+    C --> F[Developer Role]
+    C --> G[Assistant Role]
+    C --> H[Custom Roles]
     
-    E --> I[Embedding System]
-    E --> J[Store System]
-    E --> K[GraphRAG]
+    D --> I[File Operations]
+    D --> J[Code Analysis]
+    D --> K[Shell Commands]
+    D --> L[External Tools]
     
-    F --> L[OpenRouter]
-    F --> M[OpenAI]
-    F --> N[Anthropic]
-    F --> O[Google]
-    
-    H --> P[Core Tools]
-    H --> Q[External Servers]
+    E --> M[OpenRouter]
+    E --> N[OpenAI]
+    E --> O[Anthropic]
+    E --> P[Google/Amazon/Cloudflare]
 ```
 
-## Recent Changes and Migration
+**Key Changes:**
+- **Removed separate commands**: No more `index`, `search`, or `watch` commands
+- **Session-first approach**: All functionality accessible through interactive sessions
+- **Integrated tools**: Code analysis and search happen automatically within sessions
+- **Simplified structure**: Focus on core session management and tool integration
 
-### MCP Server Registry (New)
-The MCP configuration has been improved with a new server registry approach:
+## Recent Updates
 
-**Old format (still supported)**:
+### MCP Server Registry
+New centralized server configuration approach:
+
 ```toml
-[developer.mcp]
-enabled = true
-
-[[developer.mcp.servers]]
-enabled = true
-name = "developer"
-server_type = "developer"
-```
-
-**New format (recommended)**:
-```toml
-# Define once in registry
+# Define servers once in registry
 [mcp_server_registry.developer]
 enabled = true
 name = "developer"
@@ -187,30 +173,13 @@ enabled = true
 server_refs = ["developer"]
 ```
 
-### Provider Format Migration
-**Old format (deprecated)**:
-```toml
-model = "anthropic/claude-3.5-sonnet"
-```
-
-**New format (required)**:
+### Provider Format
+All models use `provider:model` format:
 ```toml
 model = "openrouter:anthropic/claude-3.5-sonnet"
-# or
+model = "openai:gpt-4o"
 model = "anthropic:claude-3-5-sonnet"
 ```
-
-### New AI Providers
-- **Amazon Bedrock**: Access to Claude, Llama, and other models via AWS
-- **Cloudflare Workers AI**: Edge AI inference with fast response times
-
-### Configuration Validation
-All configurations are now validated on load. Use `octodev config --validate` to check your setup.
-
-### Security Improvements
-- API keys should be in environment variables
-- Configuration files should not contain sensitive data
-- File permissions should be restrictive (600)
 
 ## Contributing
 
@@ -228,5 +197,7 @@ This manual is generated from the codebase analysis. Updates should be made to b
 ---
 
 **Version**: Latest  
-**Last Updated**: January 2025 (Post-MCP Registry Refactoring)  
-**Project**: [Octodev](https://github.com/muvon/octodev)
+**Last Updated**: January 2025  
+**Project**: [Octodev](https://github.com/muvon/octodev)  
+
+**Current Architecture**: Session-first approach with integrated MCP tools for streamlined development workflow.

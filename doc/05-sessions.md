@@ -153,7 +153,7 @@ system = "You are a code review expert focused on security and best practices."
 [code-reviewer.mcp]
 enabled = true
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["text_editor", "semantic_code", "list_files"]
+allowed_tools = ["text_editor", "list_files"]
 
 # Security analyst role
 [security-analyst]
@@ -164,7 +164,7 @@ system = "You are a security expert focused on finding vulnerabilities and secur
 [security-analyst.mcp]
 enabled = true
 server_refs = ["developer"]
-allowed_tools = ["semantic_code", "shell"]  # Limited to analysis tools
+allowed_tools = ["shell"]  # Limited to analysis tools
 
 # Documentation writer role
 [documentation-writer]
@@ -355,13 +355,10 @@ Layers can process input in different modes:
 - **shell**: Execute shell commands
 - **text_editor**: Edit files
 - **list_files**: Browse directories
-- **semantic_code**: Search and analyze code
+- **html2md**: Convert HTML to Markdown
 
 #### Development Tools
-- **code_search**: Semantic code search
-- **docs_search**: Documentation search
-- **text_search**: Text content search
-- **graphrag**: Code relationship analysis
+- **Project analysis**: Built-in code understanding
 
 ### Tool Usage Examples
 
@@ -374,8 +371,7 @@ Parameters: {"directory": "src", "pattern": "*.py"}
 
 > "Show me the authentication function"
 
-AI uses: semantic_code
-Parameters: {"mode": "search", "query": "authentication function"}
+AI analyzes files and finds relevant code automatically
 
 > "Edit the config file to add a new setting"
 

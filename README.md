@@ -1,27 +1,19 @@
-# Octodev - Smart Codebase Assistant
+# Octodev - AI-Powered Development Assistant
 
-Octodev is a command-line tool that helps developers navigate and understand their codebase using semantic search capabilities and AI-powered assistance. It analyzes your code files, indexes their content, and allows you to search using natural language queries to find relevant code snippets across your project.
+Octodev is a session-based AI development assistant that helps you understand and work with your codebase through interactive conversations. Built with a simplified, session-first approach, it provides intelligent code assistance with built-in tools for file operations, code analysis, and development tasks.
 
 ## Features
 
-- **Semantic Code Search**: Find code by meaning rather than just keywords
-- **Natural Language Queries**: Search your codebase with plain English questions
-- **Multiple Language Support**: Works with Rust, PHP, Python, JavaScript, TypeScript, JSON, Go, C++, Bash, and Ruby
-- **Symbol Awareness**: Understands code structure and can expand symbol references
-- **Live File Watching**: Automatically updates the index when your code changes
-- **Configurable Embedding Providers**: Works with either FastEmbed (offline) or Jina (cloud) for embeddings
-- **Multi-Provider AI Support**: Works with OpenRouter, OpenAI, and more (extensible architecture)
-- **AI-Powered Code Assistance**: Helps you understand and modify your codebase
-- **Optimized Multi-layered Architecture**: Uses specialized AI models for different aspects of code assistance
-- **Detailed Cost and Token Tracking**: Tracks usage by layer and optimizes token consumption
-- **MCP Protocol Support**: Integrates with external MCP servers for additional tools and capabilities
-- **Context Management**: Automatic context truncation to stay within token limits
-- **Token Protection**: Warnings and confirmations for potentially costly operations
-- **Interruptible Processing**: Ctrl+C instantly cancels operations for better user control
-- **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs with better formatting and user control
-- **MCP Server Registry**: New centralized server registry approach that reduces configuration duplication
-- **Additional AI Providers**: Support for Amazon Bedrock and Cloudflare Workers AI
-- **Improved Configuration Management**: Better global configuration with centralized provider settings
+- **Interactive AI Sessions**: Work with your codebase through natural conversation
+- **Role-Based Configuration**: Developer, Assistant, and Custom roles with different tool access
+- **Built-in Development Tools**: File operations, code analysis, and shell command execution via MCP
+- **Multiple AI Provider Support**: OpenRouter, OpenAI, Anthropic, Google Vertex AI, Amazon Bedrock, Cloudflare Workers AI
+- **Layered Architecture**: Multi-stage AI processing for complex development tasks
+- **Project Context Awareness**: Automatic project analysis and context collection
+- **Token Management**: Cost tracking, caching, and automatic context optimization
+- **Extensible Tool System**: MCP protocol support for integrating external tools and services
+- **Session Management**: Save, resume, and organize development conversations
+- **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs
 
 ## Installation
 
@@ -375,59 +367,83 @@ Cloudflare Workers AI requires API credentials:
 
 ## Usage
 
-### Indexing Your Codebase
+Octodev has been simplified to focus on interactive sessions. All codebase analysis, searching, and development tasks are now performed within AI-powered sessions.
 
-Before searching, you need to index your codebase:
+### Basic Usage
 
-```bash
-# Index the current directory
-octodev index
-
-# Index a specific directory
-octodev index /path/to/your/project
-```
-
-### Searching Your Codebase
-
-Once indexed, you can search your codebase using natural language:
+#### 1. Start a Development Session
 
 ```bash
-# Basic search
-octodev search "how does authentication work"
-
-# Search with expanded symbols (follows references)
-octodev search --expand "user registration process"
-
-# Get results in JSON format
-octodev search --json "database connection setup"
-```
-
-### Interactive Sessions
-
-Octodev includes an AI coding assistant with two distinct modes that can help you understand and modify your codebase:
-
-```bash
-# Start a new interactive session in developer role (default)
+# Start a new development session (includes full development tools)
 octodev session
 
-# Start in assistant role for simple conversation
-octodev session --role=assistant
-
-# Start with a specific name (or resume if exists)
-octodev session -n my_session
+# Start with a specific name
+octodev session --name my_project
 
 # Resume an existing session
-octodev session -r my_session
-
-# Use a specific model with provider
-octodev session --model "openai:gpt-4o"
-octodev session --model "openrouter:anthropic/claude-sonnet-4"
-octodev session --model "anthropic:claude-3-5-sonnet"
-octodev session --model "google:gemini-1.5-pro"
-
-# Combine options
-octodev session --role=assistant --model="openai:gpt-4o-mini" -n chat_session
+octodev session --resume my_project
 ```
+
+#### 2. Configure Your Setup
+
+```bash
+# Create default configuration
+octodev config
+
+# Set embedding provider
+octodev config --provider fastembed
+```
+
+### Session Modes
+
+Octodev supports different session roles for various use cases:
+
+```bash
+# Developer role (default) - Full development environment
+octodev session
+octodev session --role=developer
+
+# Assistant role - Simple conversation without development tools
+octodev session --role=assistant
+
+# Custom role - Use any role defined in your configuration
+octodev session --role=my-custom-role
+
+# With specific model and name
+octodev session --model "openai:gpt-4o" --name chat_session
+
+# Resume an existing session
+octodev session --resume my_session
+```
+
+### Available Session Commands
+
+Within any session, you can use these commands:
+
+- `/help` - Show help for all available commands
+- `/exit` or `/quit` - Exit the session
+- `/list` - List all available sessions
+- `/session [name]` - Switch to another session or create a new one
+- `/model [model]` - Show current model or change to a different model
+- `/clear` - Clear the screen
+- `/save` - Save the current session
+- `/cache` - Mark a cache checkpoint for token saving
+- `/done` - Optimize the session context and restart layered processing
+- `/layers` - Toggle layered processing architecture on/off
+- `/truncate [threshold]` - Toggle automatic context truncation
+- `/info` - Display detailed token and cost breakdowns by layer
+- `/debug` - Toggle debug mode for detailed logs
+
+### Working with Your Codebase
+
+Octodev automatically handles project analysis through natural conversation:
+
+1. **Ask about your code**: "How does authentication work in this project?"
+2. **Request modifications**: "Add error handling to the login function"
+3. **Debug issues**: "Why is the build failing?"
+4. **Explore structure**: "Show me the main configuration files"
+
+All codebase operations happen automatically through the session's built-in tools.
 
 #### Session Roles
 
@@ -548,83 +564,124 @@ While in an interactive session, you can use the following commands:
 
 Octodev supports token caching with providers like OpenRouter to save costs when reusing large prompts or context. The system prompt is automatically cached, and you can mark user messages for caching with the `/cache` command.
 
-### Watch Mode
+## Architecture
 
-Start a watcher that automatically reindexes when files change:
+Octodev uses a simplified, session-first architecture built around these core components:
 
-```bash
-octodev watch
+### Core Architecture
+
+```mermaid
+graph TB
+    A[User] --> B[Session Interface]
+    B --> C[Role Configuration]
+    B --> D[MCP Tools]
+    B --> E[AI Providers]
+    
+    C --> F[Developer Role]
+    C --> G[Assistant Role]  
+    C --> H[Custom Roles]
+    
+    D --> I[File Operations]
+    D --> J[Code Analysis]
+    D --> K[Shell Commands]
+    D --> L[External Tools]
+    
+    E --> M[OpenRouter]
+    E --> N[OpenAI]
+    E --> O[Anthropic]
+    E --> P[Google/Amazon/Cloudflare]
+    
+    B --> Q[Layered Architecture]
+    Q --> R[Query Processor]
+    Q --> S[Context Generator]
+    Q --> T[Developer]
+    Q --> U[Reducer]
 ```
 
-### Configuration
+### Session-First Approach
 
-Octodev uses a configuration file stored in `.octodev/config.toml` in your project directory. You can create or modify this using the `config` command:
+Instead of separate command-line tools, everything happens within interactive AI sessions:
+
+1. **Project Analysis**: Sessions automatically analyze your project structure
+2. **Code Understanding**: Built-in tools provide code analysis and search capabilities  
+3. **Development Tasks**: File operations, debugging, and code modifications
+4. **Context Management**: Automatic context optimization and token management
+
+### MCP Tool Integration
+
+Development tools are provided through the MCP (Model-Centric Programming) protocol:
+
+- **File Operations**: Read, write, and edit files with intelligent assistance
+- **Code Analysis**: Understand code structure and relationships
+- **Shell Commands**: Execute development commands when needed
+- **External Tools**: Integrate with external MCP servers for specialized functionality
+
+### Layered AI Architecture
+
+For complex tasks, Octodev uses a multi-stage AI processing pipeline:
+
+1. **Query Processor**: Analyzes and improves user requests
+2. **Context Generator**: Gathers necessary code context using tools
+3. **Developer**: Implements solutions and produces responses
+4. **Reducer**: Optimizes context for the next interaction (manual via `/done`)
+
+This architecture ensures optimal token usage and specialized expertise at each stage.
+
+## Configuration
+
+Octodev uses a configuration file stored in `.octodev/config.toml` in your project directory. Configuration supports:
+
+- **Role-based settings**: Different configurations for developer, assistant, and custom roles
+- **Provider configuration**: API keys and settings for AI providers  
+- **MCP server registry**: Centralized tool server definitions
+- **Token management**: Cost tracking and optimization settings
+
+### Basic Configuration
 
 ```bash
 # Create default configuration
 octodev config
 
-# Set the embedding provider
+# Set embedding provider  
 octodev config --provider fastembed
 
-# Configure Jina provider
-octodev config --provider jina --jina-key YOUR_API_KEY
-
-# Configure FastEmbed models
-octodev config --fastembed-code-model all-MiniLM-L6-v2 --fastembed-text-model all-MiniLM-L6-v2
+# Validate current configuration
+octodev config --validate
 ```
 
-## Configuration Options
-
-### Embedding Providers
-
-Octodev supports two embedding providers:
-
-1. **FastEmbed** (default): Works offline, doesn't require API keys, but may have smaller context windows
-2. **Jina**: Cloud-based, requires an API key, provides high-quality embeddings
-
-### FastEmbed Models
-
-Available models:
-- `all-MiniLM-L6-v2` (default)
-- `all-MiniLM-L12-v2`
-- `multilingual-e5-small`
-- `multilingual-e5-base`
-- `multilingual-e5-large`
-
-### Jina Models
-
-Default models:
-- Code: `jina-embeddings-v2-base-code`
-- Text: `jina-embeddings-v3`
-
-### Layered Architecture Configuration
-
-Octodev's layered architecture can be configured in your `.octodev/config.toml` file:
+### Key Configuration Sections
 
 ```toml
-[openrouter]
-model = "anthropic/claude-sonnet-4"  # Main model for Developer layer
-enable_layers = true                   # Enable layered architecture
+# Provider API keys (use environment variables for security)
+[providers.openrouter]
+api_key = "your_key"  # Or set OPENROUTER_API_KEY
 
-# Configure models for each layer (optional)
-query_processor_model = "openai/gpt-4.1-nano"       # Model for query processing
-context_generator_model = "openai/gpt-4.1-nano"     # Model for context gathering
-developer_model = "anthropic/claude-sonnet-4" # Model for development tasks
-reducer_model = "openai/gpt-4.1-nano"               # Model for context reduction
+# Developer role configuration
+[developer]
+model = "openrouter:anthropic/claude-sonnet-4"
+enable_layers = true
 
-# Token management settings
-mcp_response_warning_threshold = 20000        # Warn for large tool outputs (tokens)
-max_request_tokens_threshold = 50000          # Max tokens before auto-truncation
-enable_auto_truncation = false               # Auto context truncation setting
+# Assistant role configuration  
+[assistant]
+model = "openrouter:anthropic/claude-3.5-haiku"
+enable_layers = false
+
+[assistant.mcp]
+enabled = false  # Disable tools for simple chat
+
+# MCP server registry
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+[mcp_server_registry.filesystem]
+enabled = true  
+name = "filesystem"
+server_type = "filesystem"
 ```
 
-You can customize which model is used for each layer. If a specific layer model is not defined, it will use the main model specified in the `model` parameter. This allows you to optimize costs by using less expensive models for simpler tasks while reserving more powerful models for complex development work.
-
-The token management settings help control costs and prevent token limits from being exceeded:
-- `mcp_response_warning_threshold`: When an MCP tool (like shell commands or file operations) generates output larger than this threshold, the user will be prompted to confirm or reject the result.
-- `max_request_tokens_threshold`: When context size exceeds this threshold and auto-truncation is enabled, older messages will be automatically trimmed.
-- `enable_auto_truncation`: Toggle automatic context management (can also be toggled via the `/truncate` command).
+For detailed configuration options, see the [Configuration Guide](./doc/02-configuration.md).
 
 ### MCP Configuration
 
@@ -822,93 +879,84 @@ server_refs = ["developer"]
 
 The new server registry approach eliminates duplication when multiple roles or commands need the same servers.
 
-## How It Works
-
-Octodev uses a combination of techniques to build a searchable index of your codebase:
-
-1. **Tree-sitter Parsing**: Analyzes code syntax to extract meaningful blocks and symbols
-2. **Vector Embeddings**: Converts code blocks to numerical vectors capturing semantic meaning
-3. **SurrealDB Database**: Stores and retrieves embeddings for efficient similarity search
-4. **Symbol Tracking**: Maintains relationships between code symbols for reference expansion
-
-For AI assistance, Octodev uses a specialized 4-layer architecture:
-
-```
-User Input
-    ↓
-Query Processor (Improves the query, no tools)
-    ↓
-Context Generator (Gathers necessary information using tools)
-    ↓
-Developer (Implements solution and produces response using tools)
-    ↓
-Reducer (Updates documentation and optimizes context for next interaction)
-    ↓
-User Response
-```
-
-This architecture ensures optimal token usage and focused expertise at each stage of processing.
-
 ## Troubleshooting
 
 ### Common Issues
 
-- **Slow Indexing**: For large codebases, initial indexing may take some time, especially when downloading models for the first time. Recent optimizations have reduced the number of indexed file types for better performance.
-- **Missing Dependencies**: Make sure you have the required Rust version (use rustup to update if needed).
-- **Storage Path**: Data is stored in the `.octodev/storage` directory using SurrealDB's RocksDB backend.
-- **Token Limits**: If you encounter token limit issues, try:
-  - Using the `/truncate` command to enable automatic context management
-  - Setting a higher `max_request_tokens_threshold` in the config
-  - Using `/cache` to mark system messages or large user inputs for caching
-  - Using `/done` to optimize context between interactions
-- **Large Tool Outputs**: When tools generate very large outputs, you'll be prompted to confirm. The system now provides better handling with:
-  - **Enhanced rendering**: Improved display formatting for tool outputs
-  - **User control**: Better prompts and options for handling large outputs
-  - **Configurable thresholds**: Adjust the `mcp_response_warning_threshold` setting in your config
-  - **Smart filtering**: Modify your tool-usage patterns to be more specific (e.g., limit file listings, be specific with file paths)
-  - **Tool optimization**: Try using `grep` or other filtering tools to reduce output size
-- **MCP Configuration Issues**: If you encounter MCP-related errors:
-  - Ensure you're using the new server-based configuration format
-  - Migrate from old `providers = ["core"]` to `[[mcp.servers]]` format
-  - Check that server types are correctly specified (`developer`, `filesystem`, or `external`)
-  - Verify external server URLs and commands are accessible
+- **Configuration Errors**: Run `octodev config --validate` to check your setup
+- **Missing API Keys**: Set environment variables for your AI provider
+- **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
+- **Token Limits**: Use `/truncate` command to enable automatic context management or `/cache` for caching
+- **Session Issues**: Use `/debug` to enable detailed logging
+- **MCP Configuration**: Ensure you're using the new server registry format
+
+### Debug Mode
+
+Enable debug logging for troubleshooting:
+
+```bash
+# In session
+> /debug
+
+# Or in configuration
+[developer]
+log_level = "debug"
+```
+
+### File Structure
+
+```
+.octodev/
+├── config.toml          # Configuration file
+├── sessions/            # Session history  
+└── logs/               # Debug logs
+```
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+### Architecture Overview
+
+Octodev's simplified architecture makes it easy to contribute:
+
+- **Session Management**: Core session handling in `src/session/`
+- **MCP Tools**: Development tools in `src/mcp/` 
+- **AI Providers**: Provider implementations in `src/session/providers/`
+- **Configuration**: Configuration system in `src/config.rs`
+
 ### Adding New AI Providers
 
-Octodev uses an extensible provider architecture that makes it easy to add support for new AI providers. Here's how to add a new provider:
+The provider system is extensible. To add a new provider:
 
-1. **Create the provider file**: Create `src/session/providers/your_provider.rs`
-2. **Implement the AiProvider trait**:
-   ```rust
-   use super::{AiProvider, ProviderResponse};
-
-   pub struct YourProvider;
-
-   #[async_trait::async_trait]
-   impl AiProvider for YourProvider {
-       fn name(&self) -> &str { "your_provider" }
-       fn supports_model(&self, model: &str) -> bool { /* your logic */ }
-       async fn chat_completion(&self, ...) -> Result<ProviderResponse> { /* implementation */ }
-       // ... other required methods
-   }
-   ```
-3. **Register the provider**: Add it to `ProviderFactory::create_provider()` in `src/session/providers/mod.rs`
-4. **Add to exports**: Include your provider in the module exports
-
-The provider system handles:
-- Model string parsing (`provider:model` format)
-- Message format conversion
-- Tool call integration
-- Token usage tracking
-- Error handling
+1. Create `src/session/providers/your_provider.rs`
+2. Implement the `AiProvider` trait
+3. Register in `ProviderFactory::create_provider()`
+4. Add to exports in `mod.rs`
 
 Example providers to reference:
-- `openrouter.rs` - Full-featured provider with caching and cost tracking
+- `openrouter.rs` - Full-featured provider with caching
 - `openai.rs` - Standard provider implementation
+
+### Adding New MCP Tools
+
+Tools can be added to existing MCP servers or as new external servers:
+
+- **Built-in tools**: Add to `src/mcp/dev/` or `src/mcp/fs/`
+- **External servers**: Configure via MCP server registry
+
+### Testing
+
+```bash
+# Run tests
+cargo test
+
+# Build for development
+cargo build
+
+# Install locally
+make install
+```
 
 ## License
 

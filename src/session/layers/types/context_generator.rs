@@ -26,7 +26,7 @@ impl ContextGeneratorLayer {
 			mcp: crate::session::layers::layer_trait::LayerMcpConfig { 
 				enabled: true, 
 				servers: vec!["developer".to_string(), "filesystem".to_string()],
-				allowed_tools: vec!["text_editor".to_string(), "semantic_code".to_string()]
+				allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()]
 			},
 			parameters: std::collections::HashMap::new(),
 		}

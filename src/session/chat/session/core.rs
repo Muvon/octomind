@@ -6,6 +6,28 @@ use std::fs::File;
 use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
+// Generate a session name in format: YYMMDD-HHMMSS-basename-uuid
+fn generate_session_name() -> String {
+	let now = chrono::Local::now();
+	let date_str = now.format("%y%m%d").to_string();
+	let time_str = now.format("%H%M%S").to_string();
+	
+	// Get current directory basename
+	let current_dir = std::env::current_dir().unwrap_or_default();
+	let basename = current_dir
+		.file_name()
+		.unwrap_or_default()
+		.to_string_lossy()
+		.to_string();
+	
+	// Generate a short UUID (first 8 characters)
+	let uuid = Uuid::new_v4().to_string();
+	let short_uuid = &uuid[..8];
+	
+	format!("{}-{}-{}-{}", date_str, time_str, basename, short_uuid)
+}
 
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
@@ -74,12 +96,8 @@ impl ChatSession {
 		} else if let Some(resume_name) = &resume {
 			resume_name.clone()
 		} else {
-			// Generate a name based on timestamp
-			let timestamp = std::time::SystemTime::now()
-				.duration_since(std::time::UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_secs();
-			format!("session_{}", timestamp)
+			// Generate a name using the new format
+			generate_session_name()
 		};
 
 		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
@@ -142,12 +160,8 @@ impl ChatSession {
 					println!("{}: {}", format!("Failed to load session {}", session_name).bright_red(), e);
 					println!("{}", "Creating a new session instead...".yellow());
 
-					// Generate a new unique session name
-					let timestamp = std::time::SystemTime::now()
-						.duration_since(std::time::UNIX_EPOCH)
-						.unwrap_or_default()
-						.as_secs();
-					let new_session_name = format!("session_{}", timestamp);
+					// Generate a new unique session name using the new format
+					let new_session_name = generate_session_name();
 					let new_session_file = sessions_dir.join(format!("{}.jsonl", new_session_name));
 
 					println!("{}", format!("Starting new session: {}", new_session_name).bright_green());

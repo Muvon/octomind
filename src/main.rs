@@ -21,6 +21,12 @@ enum Commands {
 
 	/// Start an interactive coding session
 	Session(commands::SessionArgs),
+
+	/// Ask a question and get an AI response without session management
+	Ask(commands::AskArgs),
+
+	/// Execute shell commands through AI with confirmation
+	Shell(commands::ShellArgs),
 }
 
 #[tokio::main]
@@ -49,6 +55,12 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		},
 		Commands::Session(session_args) => {
 			session::chat::run_interactive_session(session_args, &config).await?
+		},
+		Commands::Ask(ask_args) => {
+			commands::ask::execute(ask_args, &config).await?
+		},
+		Commands::Shell(shell_args) => {
+			commands::shell::execute(shell_args, &config).await?
 		},
 	}
 

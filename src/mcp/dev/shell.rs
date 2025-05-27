@@ -43,21 +43,56 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 
 // Execute a shell command
 pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> {
+	execute_shell_command_with_cancellation(call, None).await
+}
+
+// Execute a shell command with cancellation support
+pub async fn execute_shell_command_with_cancellation(
+	call: &McpToolCall,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+	
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
 		_ => return Err(anyhow!("Missing or invalid 'command' parameter")),
 	};
 
-	// Execute the command
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow!("Shell command execution cancelled"));
+		}
+	}
+
+	// Execute the command with cancellation monitoring
+	let cancel_token = cancellation_token.clone();
+	let command_clone = command.clone();
+	
 	let output = tokio::task::spawn_blocking(move || {
+		// Check for cancellation at the start of the blocking task
+		if let Some(ref token) = cancel_token {
+			if token.load(Ordering::SeqCst) {
+				return json!({
+					"success": false,
+					"output": "Command execution cancelled",
+					"code": -1,
+					"parameters": {
+						"command": command_clone
+					},
+					"message": "Command execution cancelled by user"
+				});
+			}
+		}
+
 		let output = if cfg!(target_os = "windows") {
 			Command::new("cmd")
-				.args(["/C", &command])
+				.args(["/C", &command_clone])
 				.output()
 		} else {
 			Command::new("sh")
-				.args(["-c", &command])
+				.args(["-c", &command_clone])
 				.output()
 		};
 
@@ -86,7 +121,7 @@ Error: {}", stdout, stderr)
 					"output": combined,
 					"code": status_code,
 					"parameters": {
-						"command": command
+						"command": command_clone
 					},
 					"message": if success {
 						format!("Command executed successfully with exit code {}", status_code)
@@ -100,7 +135,7 @@ Error: {}", stdout, stderr)
 				"output": format!("Failed to execute command: {}", e),
 				"code": -1,
 				"parameters": {
-					"command": command
+					"command": command_clone
 				},
 				"message": format!("Failed to execute command: {}", e)
 			}),

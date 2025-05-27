@@ -6,4 +6,4 @@ pub mod functions;
 
 // Re-export main functionality
 pub use functions::get_all_functions;
-pub use shell::execute_shell_command;
+pub use shell::{execute_shell_command, execute_shell_command_with_cancellation};

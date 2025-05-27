@@ -221,28 +221,75 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 	}
 
-	// Set up a shared cancellation flag that can be set by Ctrl+C
+	// Set up advanced cancellation system for proper CTRL+C handling
 	let ctrl_c_pressed = Arc::new(AtomicBool::new(false));
 	let ctrl_c_pressed_clone = ctrl_c_pressed.clone();
 
-	// Set up Ctrl+C handler for immediate cancellation
+	// Track the processing state to determine what to do on cancellation
+	#[derive(Debug, Clone, PartialEq)]
+	enum ProcessingState {
+		Idle,                    // No operation in progress
+		ReadingInput,           // Reading user input
+		ProcessingLayers,       // Processing through layers
+		CallingAPI,             // Making API call
+		ExecutingTools,         // Executing tools
+		ProcessingResponse,     // Processing response
+		CompletedWithResults,   // Completed successfully with results to keep
+	}
+
+	let processing_state = Arc::new(std::sync::Mutex::new(ProcessingState::Idle));
+	let processing_state_clone = processing_state.clone();
+
+	// Track the last user message index to know what to remove on cancellation
+	let last_user_message_index = Arc::new(std::sync::Mutex::new(None::<usize>));
+
+	// Set up sophisticated Ctrl+C handler
 	ctrlc::set_handler(move || {
-		// If already set, do a hard exit to break out of any operation
+		// Double Ctrl+C forces immediate exit
 		if ctrl_c_pressed_clone.load(Ordering::SeqCst) {
 			println!("\n🛑 Forcing exit due to repeated Ctrl+C...");
 			std::process::exit(130); // 130 is standard exit code for SIGINT
 		}
 
 		ctrl_c_pressed_clone.store(true, Ordering::SeqCst);
-		// Immediately display user feedback with visual indicators
-		print!("\n🛑 Operation cancelled");
-		std::io::stdout().flush().unwrap(); // Force immediate display
-		print!(" | 📝 Work preserved");
+
+		// Get current processing state to provide appropriate feedback
+		let state = processing_state_clone.lock().unwrap().clone();
+		
+		// Provide immediate feedback based on current state
+		match state {
+			ProcessingState::Idle | ProcessingState::ReadingInput => {
+				println!("\n🛑 Ready for new input");
+			},
+			ProcessingState::ProcessingLayers => {
+				print!("\n🛑 Cancelling layer processing");
+				std::io::stdout().flush().unwrap();
+				println!(" | ✨ Ready for new input");
+			},
+			ProcessingState::CallingAPI => {
+				print!("\n🛑 Cancelling API request");
+				std::io::stdout().flush().unwrap();
+				println!(" | 🗑️ Removing incomplete request | ✨ Ready for new input");
+			},
+			ProcessingState::ExecutingTools => {
+				print!("\n🛑 Stopping tool execution");
+				std::io::stdout().flush().unwrap();
+				println!(" | 🗑️ Removing incomplete request | ✨ Ready for new input");
+			},
+			ProcessingState::ProcessingResponse => {
+				print!("\n🛑 Stopping response processing");
+				std::io::stdout().flush().unwrap();
+				println!(" | 📝 Preserving completed work | ✨ Ready for new input");
+			},
+			ProcessingState::CompletedWithResults => {
+				print!("\n🛑 Operation completed");
+				std::io::stdout().flush().unwrap();
+				println!(" | 📝 All work preserved | ✨ Ready for new input");
+			},
+		}
+		
+		println!("🔄 Press Ctrl+C again to force exit");
 		std::io::stdout().flush().unwrap();
-		print!(" | ✨ Continue with new command");
-		std::io::stdout().flush().unwrap();
-		println!(" | 🔄 Press Ctrl+C again to force exit");
-		std::io::stdout().flush().unwrap(); // Ensure all output is shown immediately
 	}).expect("Error setting Ctrl+C handler");
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
@@ -253,16 +300,39 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 	// Main interaction loop
 	loop {
-		// Check if Ctrl+C was pressed
+		// Set processing state to idle
+		*processing_state.lock().unwrap() = ProcessingState::Idle;
+		
+		// Handle cancellation at the start of each loop iteration
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
-			// Reset for next time
+			// Clean up incomplete work based on state
+			let should_remove_last_message = {
+				let state = processing_state.lock().unwrap().clone();
+				matches!(state, ProcessingState::CallingAPI | ProcessingState::ExecutingTools)
+			};
+
+			if should_remove_last_message {
+				if let Some(last_index) = *last_user_message_index.lock().unwrap() {
+					// Remove incomplete user message and any partial assistant responses
+					let messages_len = chat_session.session.messages.len();
+					if last_index < messages_len {
+						// Remove everything from the last user message onwards
+						chat_session.session.messages.truncate(last_index);
+						log_debug!("Removed incomplete request due to cancellation");
+					}
+				}
+			}
+
+			// Reset for next iteration
 			ctrl_c_pressed.store(false, Ordering::SeqCst);
-			println!("Ready for new input.");
+			*last_user_message_index.lock().unwrap() = None;
 			continue;
 		}
 
+		// Set state to reading input
+		*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
+
 		// Create a fresh cancellation flag for this iteration
-		// Each request gets its own cancellation flag derived from the global one
 		let operation_cancelled = Arc::new(AtomicBool::new(false));
 
 		// Read user input with command completion and cost estimation
@@ -375,12 +445,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			continue;
 		}
 
-		// Create a new cancellation flag for processing the response
-		let process_cancelled = Arc::new(AtomicBool::new(false));
-
-		// Check if Ctrl+C was pressed
+		// Check for cancellation before starting layered processing
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
-			ctrl_c_pressed.store(false, Ordering::SeqCst);
 			continue;
 		}
 
@@ -390,6 +456,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// If layers are enabled and this is the first message, process it through layers first
 		if current_config.get_enable_layers(&session_args.role) && !first_message_processed && session_args.role == "developer" {
+			// Set processing state to layers
+			*processing_state.lock().unwrap() = ProcessingState::ProcessingLayers;
+			
 			// This is the first message with layered architecture enabled
 			// We will process it through layers to get improved input for the main model
 
@@ -406,11 +475,16 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				&mut chat_session,
 				&current_config,
 				&session_args.role,
-				process_cancelled.clone()
+				operation_cancelled.clone()
 			).await;
 
 			match layered_result {
 				Ok(processed_input) => {
+					// Check for cancellation after layer processing
+					if ctrl_c_pressed.load(Ordering::SeqCst) {
+						continue;
+					}
+					
 					// Use the processed input from layers instead of the original input
 					// This processed input already includes any function call responses
 					input = processed_input;
@@ -421,6 +495,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					log_info!("{}", "Layers processing complete. Using enhanced input for main model.");
 				},
 				Err(e) => {
+					// Check for cancellation in error case
+					if ctrl_c_pressed.load(Ordering::SeqCst) {
+						continue;
+					}
+					
 					// Print colorful error message and continue with original input
 					use colored::*;
 					println!("\n{}: {}", "Error processing through layers".bright_red(), e);
@@ -430,6 +509,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				}
 			}
 		}
+
+		// Store the user message index before adding it
+		*last_user_message_index.lock().unwrap() = Some(chat_session.session.messages.len());
 
 		// UNIFIED STANDARD PROCESSING FLOW
 		// The same code path is used whether the input is from layers or direct user input
@@ -462,6 +544,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				}
 			}
 		}
+
+		// Set processing state to calling API
+		*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
 
 		// Call OpenRouter in a separate task
 		let model = chat_session.model.clone();
@@ -514,16 +599,36 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check for Ctrl+C again before processing response
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
-			// Skip processing response if Ctrl+C was pressed
+			// Skip processing response if Ctrl+C was pressed during API call
 			continue;
 		}
 
 		// Process the response
 		match api_result {
 			Ok(response) => {
+				// Set processing state based on whether we have tool calls
+				if response.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty()) {
+					*processing_state.lock().unwrap() = ProcessingState::ExecutingTools;
+				} else {
+					*processing_state.lock().unwrap() = ProcessingState::ProcessingResponse;
+				}
+				
 				// Process the response, handling tool calls recursively
 				// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
 				let tool_process_cancelled = Arc::new(AtomicBool::new(false));
+
+				// Connect global cancellation to tool processing cancellation
+				let tool_cancelled_clone = tool_process_cancelled.clone();
+				let ctrl_c_clone = ctrl_c_pressed.clone();
+				let _tool_cancel_monitor = tokio::spawn(async move {
+					while !tool_cancelled_clone.load(Ordering::SeqCst) {
+						if ctrl_c_clone.load(Ordering::SeqCst) {
+							tool_cancelled_clone.store(true, Ordering::SeqCst);
+							break;
+						}
+						tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+					}
+				});
 
 				// Convert to legacy format for compatibility
 				let legacy_exchange = response.exchange;
@@ -538,6 +643,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					&session_args.role,
 					tool_process_cancelled.clone()
 				).await;
+
+				// Update processing state to completed when done
+				*processing_state.lock().unwrap() = ProcessingState::CompletedWithResults;
 
 				if let Err(e) = process_result {
 					// Print colorful error message

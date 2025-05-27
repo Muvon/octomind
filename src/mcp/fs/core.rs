@@ -122,15 +122,39 @@ pub fn detect_language(ext: &str) -> &str {
 
 // Execute a text editor command following modern text editor specifications
 pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
+	execute_text_editor_with_cancellation(call, None).await
+}
+
+// Execute a text editor command with cancellation support
+pub async fn execute_text_editor_with_cancellation(
+	call: &McpToolCall,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+	
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow!("Text editor operation cancelled"));
+		}
+	}
+
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
 		_ => return Err(anyhow!("Missing or invalid 'command' parameter")),
 	};
 
-	// Execute the appropriate command
+	// Execute the appropriate command with cancellation checks
 	match command.as_str() {
 		"view" => {
+			// Check for cancellation before view operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			// Extract path parameter for view command
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
@@ -153,6 +177,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			file_ops::view_file_spec(call, Path::new(&path), view_range).await
 		},
 		"view_many" => {
+			// Check for cancellation before view_many operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			// Extract paths parameter for view_many command
 			let paths = match call.parameters.get("paths") {
 				Some(Value::Array(arr)) => {
@@ -177,6 +208,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			file_ops::view_many_files_spec(call, &paths).await
 		},
 		"create" => {
+			// Check for cancellation before create operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'path' parameter for create command")),
@@ -188,6 +226,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			file_ops::create_file_spec(call, Path::new(&path), &file_text).await
 		},
 		"str_replace" => {
+			// Check for cancellation before str_replace operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'path' parameter for str_replace command")),
@@ -203,6 +248,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			text_editing::str_replace_spec(call, Path::new(&path), &old_str, &new_str).await
 		},
 		"insert" => {
+			// Check for cancellation before insert operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'path' parameter for insert command")),
@@ -218,6 +270,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			text_editing::insert_text_spec(call, Path::new(&path), insert_line, &new_str).await
 		},
 		"line_replace" => {
+			// Check for cancellation before line_replace operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'path' parameter for line_replace command")),
@@ -240,6 +299,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			text_editing::line_replace(call, Path::new(&path), view_range, &new_str).await
 		},
 		"undo_edit" => {
+			// Check for cancellation before undo_edit operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'path' parameter for undo_edit command")),
@@ -252,10 +318,44 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 
 // Execute list_files command
 pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
+	execute_list_files_with_cancellation(call, None).await
+}
+
+// Execute list_files command with cancellation support
+pub async fn execute_list_files_with_cancellation(
+	call: &McpToolCall,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+	
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow!("List files operation cancelled"));
+		}
+	}
+
 	directory::execute_list_files(call).await
 }
 
 // Execute HTML to Markdown conversion
 pub async fn execute_html2md(call: &McpToolCall) -> Result<McpToolResult> {
+	execute_html2md_with_cancellation(call, None).await
+}
+
+// Execute HTML to Markdown conversion with cancellation support
+pub async fn execute_html2md_with_cancellation(
+	call: &McpToolCall,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+	
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow!("HTML to Markdown conversion cancelled"));
+		}
+	}
+
 	html_converter::execute_html2md(call).await
 }

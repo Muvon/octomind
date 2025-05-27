@@ -10,4 +10,7 @@ pub mod functions;
 
 // Re-export main functionality
 pub use functions::get_all_functions;
-pub use core::{execute_text_editor, execute_list_files, execute_html2md};
+pub use core::{
+	execute_text_editor, execute_list_files, execute_html2md,
+	execute_text_editor_with_cancellation, execute_list_files_with_cancellation, execute_html2md_with_cancellation
+};

@@ -382,27 +382,68 @@ pub async fn process_response(
 
 					let tool_id_for_task = original_tool_id.clone();
 					let tool_call_clone = tool_call.clone(); // Clone for async move
+					let cancel_token_for_task = operation_cancelled.clone(); // Pass cancellation token
 					let task = tokio::spawn(async move {
 						let mut call_with_id = tool_call_clone.clone();
 						// CRITICAL: Use the original tool_id, don't change it
 						call_with_id.tool_id = tool_id_for_task.clone();
-						crate::mcp::execute_tool_call(&call_with_id, &config_clone).await
+						crate::mcp::execute_tool_call_with_cancellation(&call_with_id, &config_clone, Some(cancel_token_for_task)).await
 					});
 
 					tool_tasks.push((tool_name, task, original_tool_id));
 				}
 
-				// Collect all results and display them cleanly
+				// Collect all results and display them cleanly with real-time cancellation feedback
 				let mut tool_results = Vec::new();
 				let mut _has_error = false;
 				let mut total_tool_time_ms = 0;  // Track cumulative tool execution time
 
 				for (tool_name, task, tool_id) in tool_tasks {
-					// Check for cancellation between tool result processing
+					// Enhanced cancellation check with real-time feedback and delay
 					if operation_cancelled.load(Ordering::SeqCst) {
-						println!("{}", "\nOperation cancelled by user.".bright_yellow());
-						// Do NOT add any confusing message to the session
-						return Ok(());
+						use colored::*;
+						println!("{}", format!("🛑 Cancelling tool execution: {}", tool_name).bright_yellow());
+						
+						// Give the tool a brief moment to finish gracefully (500ms)
+						let grace_start = std::time::Instant::now();
+						let grace_period = std::time::Duration::from_millis(500);
+						
+						loop {
+							// Check if tool finished during grace period
+							if task.is_finished() {
+								println!("{}", format!("✓ Tool '{}' completed during grace period", tool_name).bright_green());
+								
+								// Process the completed result
+								match task.await {
+									Ok(result) => match result {
+										Ok((res, tool_time_ms)) => {
+											tool_results.push(res);
+											total_tool_time_ms += tool_time_ms;
+										},
+										Err(e) => {
+											println!("{}", format!("⚠ Tool '{}' completed with error: {}", tool_name, e).bright_yellow());
+										}
+									},
+									Err(_) => {
+										println!("{}", format!("⚠ Tool '{}' task error during grace period", tool_name).bright_yellow());
+									}
+								}
+								break;
+							}
+							
+							// Check if grace period expired
+							if grace_start.elapsed() >= grace_period {
+								println!("{}", format!("🗑️ Force cancelling tool '{}' - grace period expired", tool_name).bright_red());
+								task.abort(); // Force abort the task
+								break;
+							}
+							
+							// Short sleep to avoid busy waiting
+							tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+						}
+						
+						// Skip to next tool or finish cancellation
+						continue;
 					}
 
 					// Store tool call info for consolidated display after execution
@@ -701,6 +742,12 @@ pub async fn process_response(
 							tool_results.push(error_result);
 						},
 					}
+				}
+
+				// Final cancellation check after all tools processed
+				if operation_cancelled.load(Ordering::SeqCst) {
+					println!("{}", "\nTool execution cancelled - preserving any completed results.".bright_yellow());
+					// Still continue with processing any completed tool results
 				}
 
 				// Display results - now handled inline during tool execution for consolidated output

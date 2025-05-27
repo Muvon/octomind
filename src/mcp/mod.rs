@@ -268,6 +268,17 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 
 // Execute a tool call
 pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<(McpToolResult, u64)> {
+	execute_tool_call_with_cancellation(call, config, None).await
+}
+
+// Execute a tool call with cancellation support
+pub async fn execute_tool_call_with_cancellation(
+	call: &McpToolCall, 
+	config: &crate::config::Config,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<(McpToolResult, u64)> {
+	use std::sync::atomic::Ordering;
+	
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
 	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
@@ -279,10 +290,17 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 		return Err(anyhow::anyhow!("MCP is not enabled"));
 	}
 
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("Tool execution cancelled"));
+		}
+	}
+
 	// Track tool execution time
 	let tool_start = std::time::Instant::now();
 
-	let result = try_execute_tool_call(call, config).await;
+	let result = try_execute_tool_call_with_cancellation(call, config, cancellation_token.clone()).await;
 
 	// Calculate tool execution time
 	let tool_duration = tool_start.elapsed();
@@ -294,11 +312,24 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	}
 }
 
-// Internal function to actually execute the tool call
-async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
+// Internal function to actually execute the tool call with cancellation support
+async fn try_execute_tool_call_with_cancellation(
+	call: &McpToolCall, 
+	config: &crate::config::Config,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+	
 	// Only execute if MCP is enabled
 	if !config.mcp.enabled {
 		return Err(anyhow::anyhow!("MCP is not enabled"));
+	}
+
+	// Check for cancellation before proceeding
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("Tool execution cancelled"));
+		}
 	}
 
 	// Get enabled servers
@@ -308,6 +339,13 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 	let mut last_error = anyhow::anyhow!("No servers available to process tool '{}'", call.tool_name);
 
 	for server in enabled_servers {
+		// Check for cancellation between server attempts
+		if let Some(ref token) = cancellation_token {
+			if token.load(Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Tool execution cancelled"));
+			}
+		}
+
 		// Check if this server can handle the tool (if tool filtering is enabled)
 		if !server.tools.is_empty() && !server.tools.contains(&call.tool_name) {
 			continue; // Skip this server if it doesn't handle this tool
@@ -318,7 +356,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 				// Handle developer tools
 				match call.tool_name.as_str() {
 					"shell" => {
-						let mut result = dev::execute_shell_command(call).await?;
+						let mut result = dev::execute_shell_command_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return handle_large_response(result, config);
 					}
@@ -332,17 +370,17 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 				// Handle filesystem tools
 				match call.tool_name.as_str() {
 					"text_editor" => {
-						let mut result = fs::execute_text_editor(call).await?;
+						let mut result = fs::execute_text_editor_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
 					"html2md" => {
-						let mut result = fs::execute_html2md(call).await?;
+						let mut result = fs::execute_html2md_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
 					"list_files" => {
-						let mut result = fs::execute_list_files(call).await?;
+						let mut result = fs::execute_list_files_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
@@ -354,7 +392,7 @@ async fn try_execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 			}
 			crate::config::McpServerType::External => {
 				// Try to execute the tool on this external server
-				match server::execute_tool_call(call, &server).await {
+				match server::execute_tool_call_with_cancellation(call, &server, cancellation_token.clone()).await {
 					Ok(mut result) => {
 						result.tool_id = call.tool_id.clone();
 						return handle_large_response(result, config);

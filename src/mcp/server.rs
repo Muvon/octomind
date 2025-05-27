@@ -113,6 +113,24 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 
 // Execute tool call on MCP server (either local or remote)
 pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> Result<McpToolResult> {
+	execute_tool_call_with_cancellation(call, server, None).await
+}
+
+// Execute tool call on MCP server with cancellation support
+pub async fn execute_tool_call_with_cancellation(
+	call: &McpToolCall, 
+	server: &McpServerConfig,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+	
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("External tool execution cancelled"));
+		}
+	}
+
 	if !server.enabled {
 		return Err(anyhow::anyhow!("Server is not enabled"));
 	}
@@ -126,6 +144,13 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 	// Handle different server modes
 	match server.mode {
 		McpServerMode::Http => {
+			// Check for cancellation before HTTP request
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow::anyhow!("External tool execution cancelled"));
+				}
+			}
+
 			// Handle local vs remote servers for HTTP mode
 			let server_url = get_server_base_url(server).await?;
 
@@ -145,7 +170,7 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 			}
 
 			// Get execution URL
-			let execute_url = format!("{}/tools/call", server_url); // Correct endpoint
+			let execute_url = format!("{}/tools/call", server_url);
 
 			// Prepare request body
 			let request_body = json!({
@@ -153,18 +178,19 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 				"arguments": parameters
 			});
 
+			// Check for cancellation one more time before sending request
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow::anyhow!("External tool execution cancelled"));
+				}
+			}
 
-			// Debug output
-			// println!("Sending HTTP request to {} with {}s timeout", execute_url, server.timeout_seconds);
 			// Make request to execute tool
 			let response = client.post(&execute_url)
 				.headers(headers)
 				.json(&request_body)
 				.send()
 			.await?;
-
-			// Debug output
-			// println!("HTTP Tool call response status: {}", response.status());
 
 			// Check if request was successful
 			if !response.status().is_success() {
@@ -176,9 +202,6 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 
 			// Parse response
 			let result: Value = response.json().await?;
-
-			// Debug output
-			// println!("HTTP Tool call response body: {}", result);
 
 			// Extract result or error from the response
 			let output = if let Some(_error) = result.get("error") {
@@ -205,6 +228,7 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 		},
 		McpServerMode::Stdin => {
 			// For stdin-based servers, use the stdin communication channel
+			// Note: stdin servers don't currently support cancellation mid-execution
 			process::execute_stdin_tool_call(call, server).await
 		}
 	}

@@ -3,6 +3,8 @@ use anyhow::Result;
 use std::io::{self, Read};
 use octodev::config::Config;
 use octodev::session::{Message, create_system_prompt, chat_completion_with_provider};
+use octodev::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
+use colored::Colorize;
 
 #[derive(Args, Debug)]
 pub struct AskArgs {
@@ -21,6 +23,33 @@ pub struct AskArgs {
 	/// Temperature for the AI response (0.0 to 1.0)
 	#[arg(long, default_value = "0.7")]
 	pub temperature: f32,
+
+	/// Output raw text without markdown rendering
+	#[arg(long)]
+	pub raw: bool,
+}
+
+// Helper function to print content with optional markdown rendering for ask command
+fn print_response(content: &str, use_raw: bool) {
+	if use_raw {
+		// Use plain text output
+		println!("{}", content);
+	} else if is_markdown_content(content) {
+		// Use markdown rendering
+		let renderer = MarkdownRenderer::new();
+		match renderer.render_and_print(content) {
+			Ok(_) => {
+				// Successfully rendered as markdown
+			}
+			Err(_) => {
+				// Fallback to plain text if markdown rendering fails
+				println!("{}", content);
+			}
+		}
+	} else {
+		// Use plain text with color for non-markdown content
+		println!("{}", content.bright_green());
+	}
 }
 
 pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
@@ -87,8 +116,8 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		config,
 	).await?;
 
-	// Print the response directly
-	println!("{}", response.content);
+	// Print the response with optional markdown rendering
+	print_response(&response.content, args.raw);
 
 	Ok(())
 }

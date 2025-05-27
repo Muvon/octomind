@@ -912,12 +912,9 @@ impl Config {
 
 	/// System-wide configuration getters - these settings are global and not role-specific
 	/// Get cache timeout seconds (system-wide setting)
+	/// Note: If explicitly set to 0 in config, returns 0 (disabling cache timeout)
 	pub fn get_cache_timeout_seconds(&self) -> u64 {
-		if self.cache_timeout_seconds != 0 {
-			self.cache_timeout_seconds
-		} else {
-			default_cache_timeout_seconds()
-		}
+		self.cache_timeout_seconds
 	}
 
 	/// Get cache tokens absolute threshold (system-wide setting)
@@ -926,21 +923,15 @@ impl Config {
 	}
 
 	/// Get cache tokens percentage threshold (system-wide setting)
+	/// Note: If explicitly set to 0 in config, returns 0 (disabling percentage-based caching)
 	pub fn get_cache_tokens_pct_threshold(&self) -> u8 {
-		if self.cache_tokens_pct_threshold != 0 {
-			self.cache_tokens_pct_threshold
-		} else {
-			default_cache_tokens_pct_threshold()
-		}
+		self.cache_tokens_pct_threshold
 	}
 
 	/// Get MCP response warning threshold (system-wide setting)
+	/// Note: If explicitly set to 0 in config, returns 0 (disabling MCP warnings)
 	pub fn get_mcp_response_warning_threshold(&self) -> usize {
-		if self.mcp_response_warning_threshold != 0 {
-			self.mcp_response_warning_threshold
-		} else {
-			default_mcp_response_warning_threshold()
-		}
+		self.mcp_response_warning_threshold
 	}
 
 	/// Get enable auto truncation setting (system-wide setting)
@@ -949,12 +940,9 @@ impl Config {
 	}
 
 	/// Get max request tokens threshold (system-wide setting)
+	/// Note: If explicitly set to 0 in config, returns 0 (disabling request size limits)
 	pub fn get_max_request_tokens_threshold(&self) -> usize {
-		if self.max_request_tokens_threshold != 0 {
-			self.max_request_tokens_threshold
-		} else {
-			default_max_request_tokens_threshold()
-		}
+		self.max_request_tokens_threshold
 	}
 
 	/// Get enable markdown rendering setting (system-wide setting)
@@ -1186,26 +1174,17 @@ impl Config {
 	}
 
 	fn validate_thresholds(&self) -> Result<()> {
-		// Use system-wide configuration getters
-		let mcp_warning_threshold = self.get_mcp_response_warning_threshold();
-		let max_request_threshold = self.get_max_request_tokens_threshold();
-		let cache_pct_threshold = self.get_cache_tokens_pct_threshold();
+		// Check raw configured values - 0 is a valid explicit choice for disabling features
+		let cache_pct_threshold = self.cache_tokens_pct_threshold;
 
-		if mcp_warning_threshold == 0 {
-			return Err(anyhow!("MCP response warning threshold must be greater than 0"));
-		}
-
-		if max_request_threshold == 0 {
-			return Err(anyhow!("Max request tokens threshold must be greater than 0"));
-		}
-
+		// Only percentage threshold has a logical upper bound
 		if cache_pct_threshold > 100 {
 			return Err(anyhow!("Cache tokens percentage threshold must be between 0-100"));
 		}
 
-		// Warn if thresholds seem too low
-		if mcp_warning_threshold < 1000 {
-			eprintln!("Warning: MCP response warning threshold ({}) is quite low", mcp_warning_threshold);
+		// Warn if thresholds seem unusual (but don't error - user's choice)
+		if self.mcp_response_warning_threshold != 0 && self.mcp_response_warning_threshold < 1000 {
+			eprintln!("Warning: MCP response warning threshold ({}) is quite low", self.mcp_response_warning_threshold);
 		}
 
 		Ok(())

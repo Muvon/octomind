@@ -41,8 +41,9 @@ pub struct ChatSession {
 
 impl ChatSession {
 	// Create a new chat session
-	pub fn new(name: String, model: Option<String>, config: &Config) -> Self {
-		let model_name = model.unwrap_or_else(|| config.get_model("developer")); // Use role-based getter
+	pub fn new(name: String, model: Option<String>, temperature: Option<f32>, config: &Config) -> Self {
+		let model_name = model.unwrap_or_else(|| config.get_effective_model());
+		let temperature_value = temperature.unwrap_or(0.7); // Default to 0.7 instead of 0.2
 
 		// Create a new session with initial info
 		let session_info = crate::session::SessionInfo {
@@ -80,14 +81,14 @@ impl ChatSession {
 			},
 			last_response: String::new(),
 			model: model_name,
-			temperature: 0.2, // Default temperature
+			temperature: temperature_value, // Use the provided temperature
 			estimated_cost: 0.0, // Initialize estimated cost as zero
 			cache_next_user_message: false, // Initialize cache flag
 		}
 	}
 
 	// Initialize a new chat session or load existing one
-	pub fn initialize(name: Option<String>, resume: Option<String>, model: Option<String>, config: &Config) -> Result<Self> {
+	pub fn initialize(name: Option<String>, resume: Option<String>, model: Option<String>, temperature: Option<f32>, config: &Config) -> Result<Self> {
 		let sessions_dir = get_sessions_dir()?;
 
 		// Determine session name
@@ -172,7 +173,7 @@ impl ChatSession {
 						drop(file);
 					}
 
-					let mut chat_session = ChatSession::new(new_session_name.clone(), model, config);
+					let mut chat_session = ChatSession::new(new_session_name.clone(), model.clone(), temperature, config);
 					chat_session.session.session_file = Some(new_session_file);
 
 					// Immediately save the session info in new JSON format
@@ -203,7 +204,7 @@ impl ChatSession {
 				drop(file);
 			}
 
-			let mut chat_session = ChatSession::new(session_name.clone(), model, config);
+			let mut chat_session = ChatSession::new(session_name.clone(), model, temperature, config);
 			chat_session.session.session_file = Some(session_file);
 
 			// Immediately save the session info in new JSON format

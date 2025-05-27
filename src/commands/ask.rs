@@ -64,10 +64,10 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		std::process::exit(1);
 	}
 
-	// Determine model to use: either from --model flag or default assistant model
+	// Determine model to use: either from --model flag or effective config model
 	let model = args.model.as_ref()
 		.map(|m| m.clone())
-		.unwrap_or_else(|| "openrouter:anthropic/claude-3.5-haiku".to_string());
+		.unwrap_or_else(|| config.get_effective_model());
 
 	// Simple system prompt for ask command - no mode complexity needed
 	let system_prompt = "You are a helpful assistant.".to_string();

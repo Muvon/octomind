@@ -42,7 +42,7 @@ impl ChatSession {
 				println!("{} - Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting", DONE_COMMAND.cyan());
 				println!("{} [level] - Set logging level: none, info, or debug", LOGLEVEL_COMMAND.cyan());
 				println!("{} [threshold] - Toggle automatic context truncation when token limit is reached", TRUNCATE_COMMAND.cyan());
-				println!("{} [model] - Show current model or change to a different model", MODEL_COMMAND.cyan());
+				println!("{} [model] - Show current model or change to a different model (runtime only)", MODEL_COMMAND.cyan());
 				println!("{} <command_name> - Execute a command layer (e.g., /run estimate)", RUN_COMMAND.cyan());
 				println!("{} or {} - Exit the session\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan());
 
@@ -458,72 +458,36 @@ impl ChatSession {
 			MODEL_COMMAND => {
 				// Handle model command
 				if params.is_empty() {
-					// Show current model and role-specific config
+					// Show current model and system default
 					println!("{}", format!("Current session model: {}", self.model).bright_cyan());
 					
-					// Also show what's in the config for this role
-					let config_model = match role {
-						"developer" => &config.developer.config.model,
-						"assistant" => &config.assistant.config.model,
-						_ => &config.developer.config.model, // fallback
-					};
-					println!("{}", format!("Config model for role '{}': {}", role, config_model).bright_blue());
+					// Show the system default model
+					let system_model = config.get_effective_model();
+					println!("{}", format!("System default model: {}", system_model).bright_blue());
+					
+					println!();
+					println!("{}", "Note: Use '/model <model-name>' to change the model for this session only.".bright_yellow());
+					println!("{}", "Model changes are runtime-only and won't be saved to config.".bright_yellow());
 					return Ok(false);
 				}
 
-				// Change to a new model
+				// Change to a new model (runtime only)
 				let new_model = params.join(" ");
 				let old_model = self.model.clone();
 				
-				// Update session model
+				// Update session model (runtime only - don't update config)
 				self.model = new_model.clone();
 				self.session.info.model = new_model.clone();
 
-				// Load config from disk and update the appropriate role
-				let mut loaded_config = match crate::config::Config::load() {
-					Ok(cfg) => cfg,
-					Err(_) => {
-						println!("{}", "Error loading configuration file. Model change will only apply to this session.".bright_red());
-						println!("{}", format!("Model changed from {} to {} (session only)", old_model, new_model).bright_green());
-						// Save the session with the updated model
-						if let Err(e) = self.save() {
-							println!("{}: {}", "Failed to save session with new model".bright_red(), e);
-						}
-						return Ok(false);
-					}
-				};
+				println!("{}", format!("Model changed from {} to {} (runtime only)", old_model, new_model).bright_green());
+				println!("{}", "Note: This change only affects the current session and won't be saved to config.".bright_yellow());
 
-				// Update the appropriate role configuration
-				match role {
-					"developer" => {
-						loaded_config.developer.config.model = new_model.clone();
-					},
-					"assistant" => {
-						loaded_config.assistant.config.model = new_model.clone();
-					},
-					_ => {
-						// For unknown roles, default to updating developer config
-						loaded_config.developer.config.model = new_model.clone();
-					}
-				}
-
-				// Save the updated configuration
-				if let Err(e) = loaded_config.save() {
-					println!("{}: {}", "Failed to save configuration".bright_red(), e);
-					println!("{}", format!("Model changed from {} to {} (session only)", old_model, new_model).bright_green());
-				} else {
-					println!("{}", format!("Model changed from {} to {} for role '{}'", old_model, new_model, role).bright_green());
-					println!("{}", "Configuration has been saved to disk.".bright_blue());
-					log_info!("Model configuration persisted for role '{}'", role);
-				}
-
-				// Save the session with the updated model
+				// Save the session with the updated model info (but not config)
 				if let Err(e) = self.save() {
-					println!("{}: {}", "Failed to save session with new model".bright_red(), e);
+					println!("{} {}", "Warning: Could not save session:".bright_red(), e);
 				}
 
-				// Return special code to indicate config reload needed
-				return Ok(true);
+				return Ok(false);
 			},
 			SESSION_COMMAND => {
 				// Handle session switching

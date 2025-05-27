@@ -11,7 +11,7 @@ pub struct ShellArgs {
 	#[arg(value_name = "DESCRIPTION")]
 	pub description: Option<String>,
 
-	/// Use a specific model instead of the one configured in config
+	/// Use a specific model instead of the one configured in config (runtime only, not saved)
 	#[arg(long)]
 	pub model: Option<String>,
 
@@ -19,7 +19,7 @@ pub struct ShellArgs {
 	#[arg(long, short)]
 	pub yes: bool,
 
-	/// Temperature for the AI response (0.0 to 1.0)
+	/// Temperature for the AI response (0.0 to 1.0, runtime only, not saved)
 	#[arg(long, default_value = "0.3")]
 	pub temperature: f32,
 }
@@ -47,13 +47,10 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 		std::process::exit(1);
 	}
 
-	// Get mode configuration (use developer mode for shell commands)
-	let mode_config = config.get_merged_config_for_mode("developer");
-	
-	// Determine model to use
+	// Determine model to use: either from --model flag or effective config model
 	let model = args.model.as_ref()
-		.unwrap_or(&mode_config.openrouter.model)
-		.clone();
+		.map(|m| m.clone())
+		.unwrap_or_else(|| config.get_effective_model());
 
 	// Create specialized system prompt for shell commands
 	let system_prompt = create_shell_system_prompt();

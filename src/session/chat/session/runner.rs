@@ -37,6 +37,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		#[arg(long)]
 		model: Option<String>,
 
+		/// Temperature for the AI response
+		#[arg(long, default_value = "0.7")]
+		temperature: f32,
+
 		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 		#[arg(long, default_value = "developer")]
 		role: String,
@@ -81,10 +85,20 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			"developer".to_string() // Default role
 		};
 
+		// Get temperature
+		let temperature = if args_str.contains("temperature: ") {
+			let start = args_str.find("temperature: ").unwrap() + 13;
+			let end = args_str[start..].find(',').unwrap_or(args_str[start..].find('}').unwrap_or(args_str.len() - start)) + start;
+			args_str[start..end].trim().parse::<f32>().unwrap_or(0.7)
+		} else {
+			0.7 // Default temperature
+		};
+
 		SessionArgs {
 			name,
 			resume,
 			model,
+			temperature,
 			role,
 		}
 	};
@@ -132,9 +146,19 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let mut chat_session = ChatSession::initialize(
 		session_args.name,
 		session_args.resume,
-		session_args.model,
+		session_args.model.clone(),
+		Some(session_args.temperature),
 		&mode_config
 	)?;
+
+	// If runtime model override is provided, update the session's model (runtime only)
+	if let Some(ref runtime_model) = session_args.model {
+		chat_session.model = runtime_model.clone();
+		log_info!("Using runtime model override: {}", runtime_model);
+	}
+
+	// Always set the temperature from the command line (runtime only)
+	chat_session.temperature = session_args.temperature;
 
 	// Track if the first message has been processed through layers
 	let mut first_message_processed = !chat_session.session.messages.is_empty();
@@ -300,6 +324,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						Some(new_session_name), // Use the name from the command
 						None,
 						None, // Keep using the default model
+						None, // Use default temperature
 						&current_config
 					)?;
 

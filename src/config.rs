@@ -38,11 +38,6 @@ impl LogLevel {
 	pub fn is_debug_enabled(&self) -> bool {
 		matches!(self, LogLevel::Debug)
 	}
-
-	/// Convert the old debug boolean to LogLevel for backward compatibility
-	pub fn from_debug_flag(debug: bool) -> Self {
-		if debug { LogLevel::Debug } else { LogLevel::None }
-	}
 }
 
 /// Logging macros for different log levels
@@ -210,6 +205,10 @@ pub struct ModeConfig {
 
 fn default_full_model() -> String {
 	"openrouter:anthropic/claude-3.5-sonnet".to_string()
+}
+
+fn default_system_model() -> String {
+	"openrouter:anthropic/claude-3.5-haiku".to_string()
 }
 
 impl Default for ModeConfig {
@@ -702,34 +701,16 @@ impl Default for AssistantRoleConfig {
 	}
 }
 
-// Legacy mode configurations for backward compatibility
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AgentModeConfig {
-	#[serde(flatten)]
-	pub config: ModeConfig,
-	#[serde(default)]
-	pub mcp: McpConfig,
-	#[serde(default)]
-	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub openrouter: Option<OpenRouterConfig>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ChatModeConfig {
-	#[serde(flatten)]
-	pub config: ModeConfig,
-	#[serde(default)]
-	pub mcp: McpConfig,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub openrouter: Option<OpenRouterConfig>,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
 	// Root-level log level setting (takes precedence over role-specific)
 	#[serde(default)]
 	pub log_level: LogLevel,
+
+	// Root-level model setting (used by all commands if specified)
+	#[serde(default = "default_system_model")]
+	pub model: String,
 
 	// System-wide configuration settings (not role-specific)
 	#[serde(default = "default_mcp_response_warning_threshold")]
@@ -817,6 +798,17 @@ impl Config {
 				octocode_server.enabled = available;
 			}
 		}
+	}
+
+	/// Get the effective model to use - checks root config, then falls back to system default
+	pub fn get_effective_model(&self) -> String {
+		// If root-level model is set (not the default), use it
+		if !self.model.is_empty() && self.model != default_system_model() {
+			return self.model.clone();
+		}
+		
+		// Otherwise, use the system default
+		default_system_model()
 	}
 
 	/// Initialize the default server registry with auto-detection
@@ -915,93 +907,59 @@ impl Config {
 	}
 	/// Get the global log level (system-wide setting)
 	pub fn get_log_level(&self) -> LogLevel {
-		// If root log level is set, use it
-		if self.log_level != LogLevel::None {
-			return self.log_level.clone();
-		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.log_level.clone()
+		self.log_level.clone()
 	}
 
 	/// System-wide configuration getters - these settings are global and not role-specific
 	/// Get cache timeout seconds (system-wide setting)
 	pub fn get_cache_timeout_seconds(&self) -> u64 {
-		// If system setting is set (non-zero), use it
 		if self.cache_timeout_seconds != 0 {
-			return self.cache_timeout_seconds;
+			self.cache_timeout_seconds
+		} else {
+			default_cache_timeout_seconds()
 		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.cache_timeout_seconds
 	}
 
 	/// Get cache tokens absolute threshold (system-wide setting)
 	pub fn get_cache_tokens_absolute_threshold(&self) -> u64 {
-		// If system setting is set (non-zero), use it
-		if self.cache_tokens_absolute_threshold != 0 {
-			return self.cache_tokens_absolute_threshold;
-		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.cache_tokens_absolute_threshold
+		self.cache_tokens_absolute_threshold
 	}
 
 	/// Get cache tokens percentage threshold (system-wide setting)
 	pub fn get_cache_tokens_pct_threshold(&self) -> u8 {
-		// If system setting is set (non-zero), use it
 		if self.cache_tokens_pct_threshold != 0 {
-			return self.cache_tokens_pct_threshold;
+			self.cache_tokens_pct_threshold
+		} else {
+			default_cache_tokens_pct_threshold()
 		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.cache_tokens_pct_threshold
 	}
 
 	/// Get MCP response warning threshold (system-wide setting)
 	pub fn get_mcp_response_warning_threshold(&self) -> usize {
-		// If system setting is set (non-zero), use it
 		if self.mcp_response_warning_threshold != 0 {
-			return self.mcp_response_warning_threshold;
+			self.mcp_response_warning_threshold
+		} else {
+			default_mcp_response_warning_threshold()
 		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.mcp_response_warning_threshold
 	}
 
 	/// Get enable auto truncation setting (system-wide setting)
 	pub fn get_enable_auto_truncation(&self) -> bool {
-		// For boolean, we check if system setting differs from default (false)
-		// If it's explicitly set to true, use it; otherwise fall back to openrouter
-		if self.enable_auto_truncation {
-			return true;
-		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.enable_auto_truncation
+		self.enable_auto_truncation
 	}
 
 	/// Get max request tokens threshold (system-wide setting)
 	pub fn get_max_request_tokens_threshold(&self) -> usize {
-		// If system setting is set (non-zero), use it
 		if self.max_request_tokens_threshold != 0 {
-			return self.max_request_tokens_threshold;
+			self.max_request_tokens_threshold
+		} else {
+			default_max_request_tokens_threshold()
 		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.max_request_tokens_threshold
 	}
 
 	/// Get enable markdown rendering setting (system-wide setting)
 	pub fn get_enable_markdown_rendering(&self) -> bool {
-		// For boolean, we check if system setting differs from default (false)
-		// If it's explicitly set to true, use it; otherwise fall back to openrouter
-		if self.enable_markdown_rendering {
-			return true;
-		}
-
-		// Otherwise, fall back to openrouter config for backward compatibility
-		self.openrouter.enable_markdown_rendering
+		self.enable_markdown_rendering
 	}
 
 	/// Role-based configuration getters - these delegate to role configs
@@ -1015,48 +973,6 @@ impl Config {
 	pub fn get_model(&self, role: &str) -> String {
 		let (mode_config, _, _, _, _) = self.get_mode_config(role);
 		mode_config.get_full_model()
-	}
-
-	/// Backward compatibility methods - these delegate to openrouter config for now
-	/// but should eventually be deprecated in favor of role-based methods
-	/// Get cache timeout seconds (backward compatibility)
-	pub fn get_cache_timeout_seconds_legacy(&self) -> u64 {
-		self.openrouter.cache_timeout_seconds
-	}
-
-	/// Get cache tokens absolute threshold (backward compatibility)
-	pub fn get_cache_tokens_absolute_threshold_legacy(&self) -> u64 {
-		self.openrouter.cache_tokens_absolute_threshold
-	}
-
-	/// Get cache tokens percentage threshold (backward compatibility)
-	pub fn get_cache_tokens_pct_threshold_legacy(&self) -> u8 {
-		self.openrouter.cache_tokens_pct_threshold
-	}
-
-	/// Get MCP response warning threshold (backward compatibility)
-	pub fn get_mcp_response_warning_threshold_legacy(&self) -> usize {
-		self.openrouter.mcp_response_warning_threshold
-	}
-
-	/// Get enable auto truncation setting (backward compatibility)
-	pub fn get_enable_auto_truncation_legacy(&self) -> bool {
-		self.openrouter.enable_auto_truncation
-	}
-
-	/// Get max request tokens threshold (backward compatibility)
-	pub fn get_max_request_tokens_threshold_legacy(&self) -> usize {
-		self.openrouter.max_request_tokens_threshold
-	}
-
-	/// Get enable markdown rendering setting (backward compatibility)
-	pub fn get_enable_markdown_rendering_legacy(&self) -> bool {
-		self.openrouter.enable_markdown_rendering
-	}
-
-	/// Get enable layers setting (backward compatibility)
-	pub fn get_enable_layers_legacy(&self) -> bool {
-		self.openrouter.enable_layers
 	}
 	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
 	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {

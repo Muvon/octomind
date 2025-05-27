@@ -1,6 +1,7 @@
 use clap::Args;
 
 use octodev::config::{Config, McpServerConfig, McpServerMode, McpServerType};
+use octodev::directories;
 
 #[derive(Args)]
 pub struct ConfigArgs {
@@ -218,8 +219,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	// If no modifications were made, create a default config
 	if !modified {
 		// Check if config file already exists
-		let octodev_dir = Config::ensure_octodev_dir()?;
-		let config_path = octodev_dir.join("config.toml");
+		let config_path = directories::get_config_file_path()?;
 
 		if config_path.exists() {
 			println!("Configuration file already exists at: {}", config_path.display());

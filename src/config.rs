@@ -1198,12 +1198,8 @@ impl Config {
 	}
 
 	pub fn ensure_octodev_dir() -> Result<std::path::PathBuf> {
-		let current_dir = std::env::current_dir()?;
-		let octodev_dir = current_dir.join(".octodev");
-		if !octodev_dir.exists() {
-			fs::create_dir_all(&octodev_dir)?;
-		}
-		Ok(octodev_dir)
+		// Use the system-wide directory
+		crate::directories::get_octodev_data_dir()
 	}
 
 	/// Validate the configuration for common issues
@@ -1212,7 +1208,7 @@ impl Config {
 		if let Err(e) = self.validate_openrouter_model() {
 			eprintln!("Configuration validation warning: {}", e);
 			eprintln!("The application will continue, but you may want to fix these issues.");
-			eprintln!("Update your .octodev/config.toml to use the new format:");
+			eprintln!("Update your system config to use the new format:");
 			eprintln!("  Before: model = \"anthropic/claude-3.5-sonnet\"");
 			eprintln!("  After:  model = \"openrouter:anthropic/claude-3.5-sonnet\"");
 			// Don't return error, just warn
@@ -1426,8 +1422,8 @@ impl Config {
 	}
 
 	pub fn load() -> Result<Self> {
-		let octodev_dir = Self::ensure_octodev_dir()?;
-		let config_path = octodev_dir.join("config.toml");
+		// Use the new system-wide config file path
+		let config_path = crate::directories::get_config_file_path()?;
 
 		if config_path.exists() {
 			let config_str = fs::read_to_string(&config_path)
@@ -1475,7 +1471,7 @@ impl Config {
 
 			Ok(config)
 		} else {
-			// Create default config
+			// Create default config with system-wide path
 			let config = Config {
 				config_path: Some(config_path),
 				providers: ProvidersConfig {
@@ -1519,8 +1515,12 @@ impl Config {
 		// Validate before saving
 		self.validate()?;
 
-		let octodev_dir = Self::ensure_octodev_dir()?;
-		let config_path = octodev_dir.join("config.toml");
+		// Use the stored config path, or fallback to system-wide default
+		let config_path = if let Some(path) = &self.config_path {
+			path.clone()
+		} else {
+			crate::directories::get_config_file_path()?
+		};
 
 		let config_str = toml::to_string(self)
 			.context("Failed to serialize configuration to TOML")?;
@@ -1531,8 +1531,7 @@ impl Config {
 	}
 
 	pub fn create_default_config() -> Result<PathBuf> {
-		let octodev_dir = Self::ensure_octodev_dir()?;
-		let config_path = octodev_dir.join("config.toml");
+		let config_path = crate::directories::get_config_file_path()?;
 
 		if !config_path.exists() {
 			let config = Config::default();

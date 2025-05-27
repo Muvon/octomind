@@ -33,7 +33,7 @@ enum Commands {
 async fn main() -> Result<(), anyhow::Error> {
 	let args = CliArgs::parse();
 
-	// Load configuration - ensure .octodev directory exists
+	// Load configuration
 	let config = Config::load()?;
 
 	// Setup cleanup for MCP server processes when the program exits

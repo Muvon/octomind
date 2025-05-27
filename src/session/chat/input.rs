@@ -9,17 +9,11 @@ use std::path::PathBuf;
 
 use crate::log_info;
 
-// Get the history file path for the current directory
+// Get the history file path
 fn get_history_file_path() -> Result<PathBuf> {
-	let current_dir = std::env::current_dir()?;
-	let octodev_dir = current_dir.join(".octodev");
-	
-	// Ensure .octodev directory exists
-	if !octodev_dir.exists() {
-		std::fs::create_dir_all(&octodev_dir)?;
-	}
-	
-	Ok(octodev_dir.join("history"))
+	// Use system-wide data directory
+	let data_dir = crate::directories::get_octodev_data_dir()?;
+	Ok(data_dir.join("history"))
 }
 
 // Read user input with support for multiline input, command completion, and persistent history
@@ -59,7 +53,7 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		EventHandler::Simple(Cmd::Newline)
 	);
 
-	// Load persistent history from .octodev/history
+	// Load persistent history
 	let history_path = get_history_file_path()?;
 	if history_path.exists() {
 		if let Err(e) = editor.load_history(&history_path) {
@@ -81,7 +75,7 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 			// Add to in-memory history (auto_add_history is true, but we also save to file)
 			let _ = editor.add_history_entry(line.clone());
 
-			// Save history to persistent file (.octodev/history)
+			// Save history to persistent file
 			// This includes ALL inputs - both regular inputs and commands starting with '/'
 			if let Err(e) = editor.save_history(&history_path) {
 				// Don't fail if history can't be saved, just log it

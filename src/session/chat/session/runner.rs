@@ -100,7 +100,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			use colored::*;
 			println!("{}", "💡 Tip: For code development, consider starting an external MCP server:".bright_yellow());
 			println!("{}", "   octocode mcp --path=.".bright_cyan());
-			println!("{}", "   Then configure it in your .octodev/config.toml".bright_cyan());
+			println!("{}", "   Then configure it in your system config:".bright_cyan());
+			if let Ok(config_path) = crate::directories::get_config_file_path() {
+				println!("{}", format!("   {}", config_path.display()).bright_cyan());
+			}
 			println!();
 		} else {
 			// Check if octocode is enabled

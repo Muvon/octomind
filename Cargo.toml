@@ -34,6 +34,7 @@ syntect = "5.2.0"
 html5ever = "0.27.0"
 markup5ever_rcdom = "0.3.0"
 url = "2.4.1"
+dirs = "5.0.1"
 
 [profile.dev]
 opt-level = 1          # Basic optimizations without slowing compilation too much

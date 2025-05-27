@@ -285,15 +285,7 @@ impl Session {
 
 // Get sessions directory path
 pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
-	let current_dir = std::env::current_dir()?;
-	let octodev_dir = current_dir.join(".octodev");
-	let sessions_dir = octodev_dir.join("sessions");
-
-	if !sessions_dir.exists() {
-		std_fs::create_dir_all(&sessions_dir)?;
-	}
-
-	Ok(sessions_dir)
+	crate::directories::get_sessions_dir()
 }
 
 // Get a list of available sessions

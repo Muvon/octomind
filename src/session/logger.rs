@@ -1,20 +1,14 @@
 // Simplified logging module for Octodev - single JSONL session file with prefixes
 
 use anyhow::Result;
-use std::fs::{self, OpenOptions};
+use std::fs::{OpenOptions};
 use std::path::PathBuf;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Get the session file path for a specific session (unified JSONL approach)
 pub fn get_session_log_file(session_name: &str) -> Result<PathBuf> {
-	let current_dir = std::env::current_dir()?;
-	let octodev_dir = current_dir.join(".octodev");
-	let sessions_dir = octodev_dir.join("sessions");
-
-	if !sessions_dir.exists() {
-		fs::create_dir_all(&sessions_dir)?;
-	}
+	let sessions_dir = crate::directories::get_sessions_dir()?;
 
 	// Use single JSONL file for everything - session messages + raw debug logs
 	let log_file = sessions_dir.join(format!("{}.jsonl", session_name));
@@ -235,13 +229,7 @@ pub fn get_session_log_path(session_name: &str) -> Result<PathBuf> {
 
 /// Legacy function for compatibility
 pub fn get_log_file() -> Result<PathBuf> {
-	let current_dir = std::env::current_dir()?;
-	let octodev_dir = current_dir.join(".octodev");
-	let logs_dir = octodev_dir.join("logs");
-
-	if !logs_dir.exists() {
-		fs::create_dir_all(&logs_dir)?;
-	}
+	let logs_dir = crate::directories::get_logs_dir()?;
 
 	let now = chrono::Local::now();
 	let log_file = logs_dir.join(format!("session_{}.jsonl", now.format("%Y-%m-%d")));

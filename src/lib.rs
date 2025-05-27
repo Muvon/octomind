@@ -3,6 +3,7 @@ pub mod config;
 pub mod mcp;
 pub mod session;
 pub mod state;
+pub mod directories;
 
 // Re-export commonly used items for convenience
 pub use config::Config;

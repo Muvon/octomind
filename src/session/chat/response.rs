@@ -104,7 +104,7 @@ fn remove_function_calls(content: &str) -> String {
 
 // Helper function to print content with optional markdown rendering
 pub fn print_assistant_response(content: &str, config: &Config, _role: &str) {
-	if config.get_enable_markdown_rendering() && is_markdown_content(content) {
+	if config.enable_markdown_rendering && is_markdown_content(content) {
 		// Use markdown rendering
 		let renderer = MarkdownRenderer::new();
 		match renderer.render_and_print(content) {

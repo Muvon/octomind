@@ -287,7 +287,7 @@ impl ChatSession {
 				};
 
 				// Toggle the global setting (not openrouter-specific)
-				loaded_config.enable_auto_truncation = !loaded_config.get_enable_auto_truncation();
+				loaded_config.enable_auto_truncation = !loaded_config.enable_auto_truncation;
 
 				// Update token thresholds if parameters were provided
 				if !params.is_empty() {
@@ -304,10 +304,10 @@ impl ChatSession {
 				}
 
 				// Show the new state
-				if loaded_config.get_enable_auto_truncation() {
+				if loaded_config.enable_auto_truncation {
 					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
 					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.",
-						loaded_config.get_max_request_tokens_threshold()).bright_yellow());
+						loaded_config.max_request_tokens_threshold).bright_yellow());
 				} else {
 					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
 					println!("{}", "You'll need to manually reduce context when it gets too large.".bright_blue());
@@ -356,13 +356,13 @@ impl ChatSession {
 						},
 						"threshold" => {
 							// Show current threshold settings using the system-wide configuration getters
-							if config.get_cache_tokens_absolute_threshold() > 0 {
+							if config.cache_tokens_absolute_threshold > 0 {
 								println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)",
-									config.get_cache_tokens_absolute_threshold()).bright_cyan());
+									config.cache_tokens_absolute_threshold).bright_cyan());
 								println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
-									config.get_cache_tokens_absolute_threshold()).bright_blue());
+									config.cache_tokens_absolute_threshold).bright_blue());
 							} else {
-								let threshold = config.get_cache_tokens_pct_threshold();
+								let threshold = config.cache_tokens_pct_threshold;
 								println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
 
 								if threshold == 0 || threshold == 100 {
@@ -373,7 +373,7 @@ impl ChatSession {
 							}
 
 							// Show time-based threshold
-							let timeout_seconds = config.get_cache_timeout_seconds();
+							let timeout_seconds = config.cache_timeout_seconds;
 							if timeout_seconds > 0 {
 								let timeout_minutes = timeout_seconds / 60;
 								println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)",

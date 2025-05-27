@@ -380,8 +380,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 	}
 
-	println!("Log level: {:?}", config.get_log_level());
-	println!("Markdown rendering: {}", if config.get_enable_markdown_rendering() { "enabled" } else { "disabled" });
+	println!("Log level: {:?}", config.log_level);
+	println!("Markdown rendering: {}", if config.enable_markdown_rendering { "enabled" } else { "disabled" });
 
 	// Show system prompt status
 	if config.system.is_some() {

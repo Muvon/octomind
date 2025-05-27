@@ -16,7 +16,7 @@ pub async fn check_and_truncate_context(
 	_operation_cancelled: Arc<AtomicBool>
 ) -> Result<()> {
 	// Check if auto truncation is enabled in config
-	if !config.get_enable_auto_truncation() {
+	if !config.enable_auto_truncation {
 		return Ok(());
 	}
 
@@ -24,14 +24,14 @@ pub async fn check_and_truncate_context(
 	let current_tokens = crate::session::estimate_message_tokens(&chat_session.session.messages);
 
 	// If we're under the threshold, nothing to do
-	if current_tokens < config.get_max_request_tokens_threshold() {
+	if current_tokens < config.max_request_tokens_threshold {
 		return Ok(());
 	}
 
 	// We need to truncate - inform the user with minimal info
 	log_conditional!(
 		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nAutomatically truncating older messages to reduce context size.",
-			current_tokens, config.get_max_request_tokens_threshold()).bright_blue(),
+			current_tokens, config.max_request_tokens_threshold).bright_blue(),
 		default: "Truncating message history to reduce token usage".bright_blue()
 	);
 

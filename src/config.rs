@@ -910,46 +910,6 @@ impl Config {
 		self.log_level.clone()
 	}
 
-	/// System-wide configuration getters - these settings are global and not role-specific
-	/// Get cache timeout seconds (system-wide setting)
-	/// Note: If explicitly set to 0 in config, returns 0 (disabling cache timeout)
-	pub fn get_cache_timeout_seconds(&self) -> u64 {
-		self.cache_timeout_seconds
-	}
-
-	/// Get cache tokens absolute threshold (system-wide setting)
-	pub fn get_cache_tokens_absolute_threshold(&self) -> u64 {
-		self.cache_tokens_absolute_threshold
-	}
-
-	/// Get cache tokens percentage threshold (system-wide setting)
-	/// Note: If explicitly set to 0 in config, returns 0 (disabling percentage-based caching)
-	pub fn get_cache_tokens_pct_threshold(&self) -> u8 {
-		self.cache_tokens_pct_threshold
-	}
-
-	/// Get MCP response warning threshold (system-wide setting)
-	/// Note: If explicitly set to 0 in config, returns 0 (disabling MCP warnings)
-	pub fn get_mcp_response_warning_threshold(&self) -> usize {
-		self.mcp_response_warning_threshold
-	}
-
-	/// Get enable auto truncation setting (system-wide setting)
-	pub fn get_enable_auto_truncation(&self) -> bool {
-		self.enable_auto_truncation
-	}
-
-	/// Get max request tokens threshold (system-wide setting)
-	/// Note: If explicitly set to 0 in config, returns 0 (disabling request size limits)
-	pub fn get_max_request_tokens_threshold(&self) -> usize {
-		self.max_request_tokens_threshold
-	}
-
-	/// Get enable markdown rendering setting (system-wide setting)
-	pub fn get_enable_markdown_rendering(&self) -> bool {
-		self.enable_markdown_rendering
-	}
-
 	/// Role-based configuration getters - these delegate to role configs
 	/// Get enable layers setting for the specified role
 	pub fn get_enable_layers(&self, role: &str) -> bool {
@@ -1058,13 +1018,13 @@ impl Config {
 			enable_layers: mode_config.enable_layers,
 			log_level: self.get_log_level(), // Use global log level
 			// Use system-wide settings for these configuration options
-			mcp_response_warning_threshold: self.get_mcp_response_warning_threshold(),
-			max_request_tokens_threshold: self.get_max_request_tokens_threshold(),
-			enable_auto_truncation: self.get_enable_auto_truncation(),
-			cache_tokens_pct_threshold: self.get_cache_tokens_pct_threshold(),
-			cache_tokens_absolute_threshold: self.get_cache_tokens_absolute_threshold(),
-			cache_timeout_seconds: self.get_cache_timeout_seconds(),
-			enable_markdown_rendering: self.get_enable_markdown_rendering(),
+			mcp_response_warning_threshold: self.mcp_response_warning_threshold,
+			max_request_tokens_threshold: self.max_request_tokens_threshold,
+			enable_auto_truncation: self.enable_auto_truncation,
+			cache_tokens_pct_threshold: self.cache_tokens_pct_threshold,
+			cache_tokens_absolute_threshold: self.cache_tokens_absolute_threshold,
+			cache_timeout_seconds: self.cache_timeout_seconds,
+			enable_markdown_rendering: self.enable_markdown_rendering,
 		};
 
 		// Resolve MCP configuration using the new registry system

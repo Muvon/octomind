@@ -11,29 +11,29 @@ panic = "abort"  # Abort on panic for smaller binary size
 strip = true      # Strip symbols from binary
 
 [dependencies]
-tokio = { version = "1.28.0", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"] }
 crossterm = "0.26.1"
-parking_lot = "0.12.1"
-chrono = "0.4.39"
-serde = { version = "1.0.217", features = ["derive"] }
-uuid = { version = "1.12.0", features = ["v4"] }
+parking_lot = "0.12.3"
+chrono = "0.4.41"
+serde = { version = "1.0.219", features = ["derive"] }
+uuid = { version = "1.17.0", features = ["v4"] }
 tiktoken-rs = "0.6.0" # Token counter
-reqwest = { version = "0.12.12", features = ["json", "rustls-tls"], default-features = false }
-anyhow = "1.0.95"
-serde_json = "1.0.136"
-clap = { version = "4.5.26", features = ["derive"] }
-toml = "0.8.14"
-lazy_static = "1.4.0"
-ctrlc = "3.4.1"
+reqwest = { version = "0.12.15", features = ["json", "rustls-tls"], default-features = false }
+anyhow = "1.0.98"
+serde_json = "1.0.140"
+clap = { version = "4.5.38", features = ["derive"] }
+toml = "0.8.22"
+lazy_static = "1.5.0"
+ctrlc = "3.4.7"
 rustyline = { version = "12.0.0", features = ["custom-bindings"] }
-regex = "1.10.5"
+regex = "1.11.1"
 colored = "3.0.0"
-async-trait = "0.1.77"
+async-trait = "0.1.88"
 termimad = "0.32.0"
 syntect = "5.2.0"
 html5ever = "0.27.0"
 markup5ever_rcdom = "0.3.0"
-url = "2.4.1"
+url = "2.5.4"
 dirs = "5.0.1"
 
 [profile.dev]

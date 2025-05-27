@@ -2,7 +2,7 @@ use clap::Args;
 use anyhow::Result;
 use std::io::{self, Read};
 use octodev::config::Config;
-use octodev::session::{Message, create_system_prompt, chat_completion_with_provider};
+use octodev::session::{Message, chat_completion_with_provider};
 use octodev::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
 use colored::Colorize;
 
@@ -12,15 +12,11 @@ pub struct AskArgs {
 	#[arg(value_name = "INPUT")]
 	pub input: Option<String>,
 
-	/// Use a specific model instead of the one configured in config
+	/// Use a specific model instead of the default (runtime only, not saved)
 	#[arg(long)]
 	pub model: Option<String>,
 
-	/// Mode to use for the AI response (developer or assistant)
-	#[arg(long, default_value = "assistant")]
-	pub mode: String,
-
-	/// Temperature for the AI response (0.0 to 1.0)
+	/// Temperature for the AI response (0.0 to 1.0, runtime only, not saved)
 	#[arg(long, default_value = "0.7")]
 	pub temperature: f32,
 
@@ -68,17 +64,13 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		std::process::exit(1);
 	}
 
-	// Get mode configuration
-	let mode_config = config.get_merged_config_for_mode(&args.mode);
-	
-	// Determine model to use
+	// Determine model to use: either from --model flag or default assistant model
 	let model = args.model.as_ref()
-		.unwrap_or(&mode_config.openrouter.model)
-		.clone();
+		.map(|m| m.clone())
+		.unwrap_or_else(|| "openrouter:anthropic/claude-3.5-haiku".to_string());
 
-	// Create system prompt for the mode
-	let current_dir = std::env::current_dir()?;
-	let system_prompt = create_system_prompt(&current_dir, config, &args.mode).await;
+	// Simple system prompt for ask command - no mode complexity needed
+	let system_prompt = "You are a helpful assistant.".to_string();
 
 	// Create messages
 	let messages = vec![

@@ -65,8 +65,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 	}
 
 	// Determine model to use: either from --model flag or effective config model
-	let model = args.model.as_ref()
-		.map(|m| m.clone())
+	let model = args.model.clone()
 		.unwrap_or_else(|| config.get_effective_model());
 
 	// Simple system prompt for ask command - no mode complexity needed

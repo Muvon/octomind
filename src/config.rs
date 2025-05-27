@@ -1535,18 +1535,26 @@ mod tests {
 
 	#[test]
 	fn test_threshold_validation() {
-		let mut config = Config::default();
-
 		// Test invalid thresholds using system-wide settings
-		config.mcp_response_warning_threshold = 0;
+		let config = Config {
+			mcp_response_warning_threshold: 0,
+			..Default::default()
+		};
 		assert!(config.validate_thresholds().is_err());
 
-		config.mcp_response_warning_threshold = 1000;
-		config.cache_tokens_pct_threshold = 101;
+		let config = Config {
+			mcp_response_warning_threshold: 1000,
+			cache_tokens_pct_threshold: 101,
+			..Default::default()
+		};
 		assert!(config.validate_thresholds().is_err());
 
 		// Test valid thresholds
-		config.cache_tokens_pct_threshold = 50;
+		let config = Config {
+			mcp_response_warning_threshold: 1000,
+			cache_tokens_pct_threshold: 50,
+			..Default::default()
+		};
 		assert!(config.validate_thresholds().is_ok());
 	}
 

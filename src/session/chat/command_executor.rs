@@ -51,12 +51,25 @@ pub async fn execute_command_layer(
 				let command_layer = GenericLayer::new(command_config.clone());
 
 				// Prepare the input according to the command's input_mode
-				let processed_input = if provided_input.trim().is_empty() {
-								// If no input provided, use the layer's prepare_input method with empty string
-								command_layer.prepare_input("", &chat_session.session)
-				} else {
-								// If input was provided, use it directly (user specified input)
-								provided_input.to_string()
+				// CRITICAL FIX: Always use prepare_input to respect the input_mode setting
+				// The input_mode determines what context the command should receive:
+				// - "last": Get the last assistant response from session
+				// - "all": Get all conversation context
+				// - "summary": Get a summarized version
+				let processed_input = match command_config.input_mode {
+					crate::session::layers::layer_trait::InputMode::Last => {
+						// For "Last" mode, always use prepare_input to get the last assistant response
+						// If explicit input is provided, it will be combined with the last assistant context
+						command_layer.prepare_input(provided_input, &chat_session.session)
+					},
+					crate::session::layers::layer_trait::InputMode::All => {
+						// For "All" mode, use prepare_input to format the full conversation context
+						command_layer.prepare_input(provided_input, &chat_session.session)
+					},
+					crate::session::layers::layer_trait::InputMode::Summary => {
+						// For "Summary" mode, use prepare_input to generate a summary
+						command_layer.prepare_input(provided_input, &chat_session.session)
+					}
 				};
 
 				// Log the processed input

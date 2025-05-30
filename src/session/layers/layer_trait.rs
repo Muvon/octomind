@@ -22,7 +22,7 @@ pub struct LayerResult {
 // Input mode determines what part of the previous layer's output will be used
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputMode {
-	Last,    // Only the last message from the previous layer
+	Last,    // Only the last assistant message from the session
 	All,     // All messages/data from the previous layer
 	Summary, // A summarized version of all data from the previous layer
 }
@@ -37,23 +37,33 @@ impl InputMode {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			InputMode::Last => "last",
-			InputMode::All => "all",
+			InputMode::All => "all", 
 			InputMode::Summary => "summary",
 		}
 	}
 }
 
 impl FromStr for InputMode {
-	type Err = ();
+	type Err = String;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s.to_lowercase().as_str() {
 			"last" => Ok(InputMode::Last),
 			"all" => Ok(InputMode::All),
 			"summary" => Ok(InputMode::Summary),
-			_ => Err(()), // Return error for unknown values
+			_ => Err(format!("Unknown input mode: '{}'. Valid options: last, all, summary", s)),
 		}
 	}
+}
+
+// Custom deserializer for InputMode to handle string values from config
+fn deserialize_input_mode<'de, D>(deserializer: D) -> Result<InputMode, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	use serde::de::Error;
+	let s = String::deserialize(deserializer)?;
+	InputMode::from_str(&s).map_err(D::Error::custom)
 }
 
 // Configuration for layer-specific MCP settings
@@ -78,7 +88,7 @@ pub struct LayerConfig {
 	pub system_prompt: Option<String>,
 	#[serde(default = "default_temperature")]
 	pub temperature: f32,
-	#[serde(default)]
+	#[serde(default, deserialize_with = "deserialize_input_mode")]
 	pub input_mode: InputMode,
 	// MCP configuration for this layer
 	#[serde(default)]
@@ -266,9 +276,31 @@ pub trait Layer {
 		// The input mode determines what part of the previous context is used
 		match self.config().input_mode {
 			InputMode::Last => {
-				// In Last mode, we just use the last message content as provided
-				// This is the default and most common mode for layer-to-layer communication
-				input.to_string()
+				// In Last mode, we get the last assistant response from the session
+				// This is useful for commands that want to analyze or work with the last AI response
+				if input.trim().is_empty() {
+					// If no explicit input provided, get the last assistant message
+					session.messages.iter()
+						.filter(|m| m.role == "assistant")
+						.last()
+						.map(|m| m.content.clone())
+						.unwrap_or_else(|| {
+							// Fallback: if no assistant messages, get last user message
+							session.messages.iter()
+								.filter(|m| m.role == "user")
+								.last()
+								.map(|m| m.content.clone())
+								.unwrap_or_else(|| "No previous messages found".to_string())
+						})
+				} else {
+					// If explicit input provided, use it but also include last assistant context
+					let last_assistant = session.messages.iter()
+						.filter(|m| m.role == "assistant")
+						.last()
+						.map(|m| format!("Previous response:\n{}\n\nCurrent input:\n{}", m.content, input))
+						.unwrap_or_else(|| input.to_string());
+					last_assistant
+				}
 			},
 			InputMode::All => {
 				// For "all" mode, we format the entire conversation context to include

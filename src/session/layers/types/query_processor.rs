@@ -18,14 +18,12 @@ impl QueryProcessorLayer {
 	pub fn default_config(name: &str) -> LayerConfig {
 		LayerConfig {
 			name: name.to_string(),
-			enabled: true,
 			model: Some("openrouter:openai/gpt-4.1-mini".to_string()),
 			system_prompt: None, // Use built-in prompt
 			temperature: 0.2,
 			input_mode: crate::session::layers::layer_trait::InputMode::Last,
 			mcp: crate::session::layers::layer_trait::LayerMcpConfig {
-				enabled: false,
-				servers: vec![],
+				server_refs: vec![],
 				allowed_tools: vec![]
 			},
 			parameters: std::collections::HashMap::new(),

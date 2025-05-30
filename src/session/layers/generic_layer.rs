@@ -151,7 +151,7 @@ impl Layer for GenericLayer {
 			self.config.temperature,
 			&layer_config
 		).await?;
-		
+
 		let (output, exchange, direct_tool_calls, _finish_reason) = (
 			response.content,
 			response.exchange,
@@ -167,7 +167,7 @@ impl Layer for GenericLayer {
 		}
 
 		// Check if the layer response contains tool calls and if MCP is enabled for this layer
-		if self.config.mcp.enabled && config.mcp.enabled {
+		if !self.config.mcp.server_refs.is_empty() {
 			// First try to use directly returned tool calls, then fall back to parsing if needed
 			let tool_calls = if let Some(ref calls) = direct_tool_calls {
 				calls

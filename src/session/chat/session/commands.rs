@@ -88,10 +88,10 @@ impl ChatSession {
 				// Show available commands for current role
 				let available_commands = command_executor::list_available_commands(config, role);
 				if available_commands.is_empty() {
-					println!("{}", "No command layers configured for this role.".bright_blue());
+					println!("{}", "No command layers configured.".bright_blue());
 					println!("Use '/run' to see configuration examples.\n");
 				} else {
-					println!("{}", format!("Available command layers for role '{}':", role).bright_blue());
+					println!("{}", "Available command layers:".bright_blue());
 					for cmd in &available_commands {
 						println!("  {} {}", "/run".cyan(), cmd.bright_yellow());
 					}
@@ -533,16 +533,19 @@ impl ChatSession {
 					// Show available commands for this role
 					let available_commands = command_executor::list_available_commands(config, role);
 					if available_commands.is_empty() {
-						println!("{}", "No command layers configured for this role.".bright_yellow());
-						println!("{}", "Command layers can be defined in the [commands] section of your configuration.".bright_blue());
+						println!("{}", "No command layers configured.".bright_yellow());
+						println!("{}", "Command layers can be defined in the global [commands] section of your configuration.".bright_blue());
 						println!("{}", "Example configuration:".bright_cyan());
-						println!("{}", r#"[developer.commands.estimate]
+						println!("{}", r#"[commands.estimate]
 name = "estimate"
-enabled = true
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = "You are a project estimation expert. Analyze the work done and provide estimates."
 temperature = 0.2
-input_mode = "Last""#.bright_white());
+input_mode = "Last"
+
+[commands.estimate.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = []"#.bright_white());
 					} else {
 						println!("{}", "Available command layers:".bright_cyan());
 						for cmd in &available_commands {

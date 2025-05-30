@@ -59,13 +59,11 @@ impl FromStr for InputMode {
 // Configuration for layer-specific MCP settings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LayerMcpConfig {
+	// Server references - list of server names from the global registry to use for this layer
+	// Empty list means MCP is disabled for this layer
 	#[serde(default)]
-	pub enabled: bool,
-	
-	// Server names - specify servers from registry
-	#[serde(default)]
-	pub servers: Vec<String>,
-	
+	pub server_refs: Vec<String>,
+
 	#[serde(default)]
 	pub allowed_tools: Vec<String>, // Specific tools allowed (empty = all tools from enabled servers)
 }
@@ -74,8 +72,6 @@ pub struct LayerMcpConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerConfig {
 	pub name: String,
-	#[serde(default = "default_enabled")]
-	pub enabled: bool,
 	// Model is now optional - falls back to session model if not specified
 	pub model: Option<String>,
 	// System prompt is optional - uses built-in prompts for known layer types
@@ -92,10 +88,6 @@ pub struct LayerConfig {
 	pub parameters: std::collections::HashMap<String, serde_json::Value>,
 }
 
-fn default_enabled() -> bool {
-	true
-}
-
 fn default_temperature() -> f32 {
 	0.2
 }
@@ -105,38 +97,50 @@ impl LayerConfig {
 	pub fn get_effective_model(&self, session_model: &str) -> String {
 		self.model.clone().unwrap_or_else(|| session_model.to_string())
 	}
-	
+
 	/// Create a merged config that respects this layer's MCP settings
 	/// This ensures that API calls use the layer's MCP configuration rather than just global settings
 	pub fn get_merged_config_for_layer(&self, base_config: &crate::config::Config) -> crate::config::Config {
 		let mut merged_config = base_config.clone();
-		
-		// Override the global MCP configuration with this layer's MCP settings
-		merged_config.mcp.enabled = self.mcp.enabled;
-		
-		// If layer MCP is enabled and has specific servers configured, use only those
-		if self.mcp.enabled && !self.mcp.servers.is_empty() {
-			// Clear existing servers and add only layer-specific ones
-			merged_config.mcp.servers.clear();
-			
-			for server_name in &self.mcp.servers {
-				// Get the server config from base config or create a default one
-				let server_config = base_config.mcp.servers.get(server_name)
-					.cloned()
-					.unwrap_or_else(|| crate::config::McpServerConfig::from_name(server_name));
-				
-				merged_config.mcp.servers.insert(server_name.clone(), server_config);
+
+		// Create role-like MCP config from layer's server_refs
+		if !self.mcp.server_refs.is_empty() {
+			// Get servers from the global registry based on server_refs
+			let mut legacy_servers = std::collections::HashMap::new();
+
+			for server_name in &self.mcp.server_refs {
+				if let Some(server_config) = base_config.mcp.servers.get(server_name) {
+					let mut server = server_config.clone();
+					// Auto-set the name from the registry key
+					server.name = server_name.clone();
+					// Auto-detect server type from name
+					server.server_type = match server_name.as_str() {
+						"developer" => crate::config::McpServerType::Developer,
+						"filesystem" => crate::config::McpServerType::Filesystem,
+						_ => crate::config::McpServerType::External,
+					};
+					// Apply layer-specific tool filtering if specified
+					if !self.mcp.allowed_tools.is_empty() {
+						server.tools = self.mcp.allowed_tools.clone();
+					}
+					legacy_servers.insert(server_name.clone(), server);
+				}
 			}
-			
-			// Apply layer-specific tool filtering if specified
-			if !self.mcp.allowed_tools.is_empty() {
-				merged_config.mcp.allowed_tools = self.mcp.allowed_tools.clone();
-			}
+
+			// Override the global MCP configuration with layer-specific servers
+			merged_config.mcp = crate::config::McpConfig {
+				enabled: !self.mcp.server_refs.is_empty(),
+				servers: legacy_servers,
+				allowed_tools: self.mcp.allowed_tools.clone(),
+			};
+		} else {
+			// No server_refs means MCP is disabled for this layer
+			merged_config.mcp.enabled = false;
 		}
-		
+
 		merged_config
 	}
-	
+
 	/// Get the effective system prompt for this layer
 	/// Uses custom prompt if provided, otherwise uses built-in prompt for known layer types
 	pub fn get_effective_system_prompt(&self) -> String {
@@ -156,16 +160,16 @@ impl LayerConfig {
 			}
 		}
 	}
-	
+
 	/// Process placeholders in system prompt using layer parameters
 	fn process_prompt_placeholders(&self, prompt: &str) -> String {
 		let mut processed = prompt.to_string();
-		
+
 		// Replace standard placeholders
 		if let Ok(project_dir) = std::env::current_dir() {
 			processed = crate::session::process_placeholders(&processed, &project_dir);
 		}
-		
+
 		// Replace custom parameter placeholders
 		for (key, value) in &self.parameters {
 			let placeholder = format!("%{{{}}}", key);
@@ -177,58 +181,51 @@ impl LayerConfig {
 			};
 			processed = processed.replace(&placeholder, &replacement);
 		}
-		
+
 		processed
 	}
-	
+
 	/// Create a default configuration for known system layer types
 	pub fn create_system_layer(layer_type: &str) -> Self {
 		match layer_type {
 			"query_processor" => Self {
 				name: layer_type.to_string(),
-				enabled: true,
 				model: Some("openrouter:openai/gpt-4.1-nano".to_string()),
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
-				mcp: LayerMcpConfig { 
-					enabled: false, 
-					servers: vec![], 
-					allowed_tools: vec![] 
+				mcp: LayerMcpConfig {
+					server_refs: vec![],
+					allowed_tools: vec![]
 				},
 				parameters: std::collections::HashMap::new(),
 			},
 			"context_generator" => Self {
 				name: layer_type.to_string(),
-				enabled: true,
 				model: Some("openrouter:google/gemini-2.5-flash-preview".to_string()),
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
-				mcp: LayerMcpConfig { 
-					enabled: true, 
-					servers: vec!["developer".to_string(), "filesystem".to_string()],
+				mcp: LayerMcpConfig {
+					server_refs: vec!["developer".to_string(), "filesystem".to_string()],
 					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()]
 				},
 				parameters: std::collections::HashMap::new(),
 			},
 			"reducer" => Self {
 				name: layer_type.to_string(),
-				enabled: true,
 				model: Some("openrouter:openai/o4-mini".to_string()),
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::All,
-				mcp: LayerMcpConfig { 
-					enabled: false, 
-					servers: vec![],
-					allowed_tools: vec![] 
+				mcp: LayerMcpConfig {
+					server_refs: vec![],
+					allowed_tools: vec![]
 				},
 				parameters: std::collections::HashMap::new(),
 			},
 			_ => Self {
 				name: layer_type.to_string(),
-				enabled: true,
 				model: None, // Use session model
 				system_prompt: None, // Use generic prompt
 				temperature: 0.2,

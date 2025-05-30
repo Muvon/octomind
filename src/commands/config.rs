@@ -502,22 +502,16 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		if let Some(layers) = dev_layers {
 			println!("  Developer Role Layers: {} configured", layers.len());
 			for layer in layers {
-				if layer.enabled {
-					println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
-				} else {
-					println!("    ❌ {} (disabled)", layer.name);
-				}
+				// All configured layers are considered enabled (no more 'enabled' field)
+				println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
 			}
 		}
 
 		if let Some(layers) = &config.layers {
 			println!("  Global Layers: {} configured", layers.len());
 			for layer in layers {
-				if layer.enabled {
-					println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
-				} else {
-					println!("    ❌ {} (disabled)", layer.name);
-				}
+				// All configured layers are considered enabled (no more 'enabled' field)
+				println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
 			}
 		}
 		println!();

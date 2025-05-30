@@ -651,9 +651,6 @@ pub struct DeveloperRoleConfig {
 	// Layer configuration
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
-	// Command layer configurations
-	#[serde(default)]
-	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
 	// Legacy openrouter field for backward compatibility
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub openrouter: Option<OpenRouterConfig>,
@@ -665,9 +662,6 @@ pub struct AssistantRoleConfig {
 	pub config: ModeConfig,
 	#[serde(default)]
 	pub mcp: RoleMcpConfig,
-	// Command layer configurations
-	#[serde(default)]
-	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
 	// Legacy openrouter field for backward compatibility
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub openrouter: Option<OpenRouterConfig>,
@@ -687,7 +681,6 @@ impl Default for DeveloperRoleConfig {
 				"developer".to_string(),
 			]),
 			layers: None,
-			commands: None,
 			openrouter: None,
 		}
 	}
@@ -702,7 +695,6 @@ impl Default for AssistantRoleConfig {
 				system: Some("You are a helpful assistant.".to_string()),
 			},
 			mcp: RoleMcpConfig::default(), // Empty server_refs = MCP disabled
-			commands: None,
 			openrouter: None,
 		}
 	}
@@ -915,21 +907,11 @@ impl Config {
 		match role {
 			"developer" => {
 				// Developer role - uses its own MCP config with server_refs
-
-				// Get commands config - prefer role-specific, fallback to global
-				let commands_config = self.developer.commands.as_ref()
-					.or(self.commands.as_ref());
-
-				(&self.developer.config, &self.developer.mcp, self.developer.layers.as_ref(), commands_config, self.developer.config.system.as_ref())
+				(&self.developer.config, &self.developer.mcp, self.developer.layers.as_ref(), self.commands.as_ref(), self.developer.config.system.as_ref())
 			},
 			"assistant" => {
 				// Base assistant role
-
-				// Get commands config - prefer role-specific, fallback to global
-				let commands_config = self.assistant.commands.as_ref()
-					.or(self.commands.as_ref());
-
-				(&self.assistant.config, &self.assistant.mcp, None, commands_config, self.assistant.config.system.as_ref())
+				(&self.assistant.config, &self.assistant.mcp, None, self.commands.as_ref(), self.assistant.config.system.as_ref())
 			},
 			_ => {
 				// For any custom role, inherit from assistant first
@@ -1188,55 +1170,54 @@ impl Config {
 	}
 
 	fn validate_layers(&self, layers: &[crate::session::layers::LayerConfig]) -> Result<()> {
-		let mut enabled_count = 0;
+		let mut layer_count = 0;
 		let mut names = std::collections::HashSet::new();
 
 		for layer in layers {
-			if layer.enabled {
-				enabled_count += 1;
+			// We assume all configured layers are enabled (no more 'enabled' field)
+			layer_count += 1;
 
-				// Check for duplicate names
-				if !names.insert(&layer.name) {
-					return Err(anyhow!("Duplicate layer name: '{}'", layer.name));
+			// Check for duplicate names
+			if !names.insert(&layer.name) {
+				return Err(anyhow!("Duplicate layer name: '{}'", layer.name));
+			}
+
+			// Validate temperature
+			if layer.temperature < 0.0 || layer.temperature > 2.0 {
+				return Err(anyhow!(
+					"Layer '{}' temperature must be between 0.0 and 2.0",
+					layer.name
+				));
+			}
+
+			// Validate model format (only if specified - model is now optional)
+			if let Some(ref model) = layer.model {
+				if model.trim().is_empty() {
+					return Err(anyhow!("Layer '{}' model cannot be empty", layer.name));
 				}
 
-				// Validate temperature
-				if layer.temperature < 0.0 || layer.temperature > 2.0 {
+				// Validate model format using provider factory if specified
+				if !model.contains(':') {
 					return Err(anyhow!(
-						"Layer '{}' temperature must be between 0.0 and 2.0",
-						layer.name
+						"Layer '{}' model '{}' must use 'provider:model' format (e.g., 'openrouter:anthropic/claude-3.5-sonnet')",
+						layer.name, model
 					));
 				}
+			}
 
-				// Validate model format (only if specified - model is now optional)
-				if let Some(ref model) = layer.model {
-					if model.trim().is_empty() {
-						return Err(anyhow!("Layer '{}' model cannot be empty", layer.name));
-					}
-
-					// Validate model format using provider factory if specified
-					if !model.contains(':') {
-						return Err(anyhow!(
-							"Layer '{}' model '{}' must use 'provider:model' format (e.g., 'openrouter:anthropic/claude-3.5-sonnet')",
-							layer.name, model
-						));
-					}
-				}
-
-				// Validate MCP configuration if enabled
-				if layer.mcp.enabled && layer.mcp.servers.is_empty() {
-					return Err(anyhow!(
-						"Layer '{}' has MCP enabled but no servers specified",
-						layer.name
-					));
-				}
+			// Validate MCP configuration if enabled
+			if !layer.mcp.server_refs.is_empty() && layer.mcp.server_refs.iter().all(|s| s.trim().is_empty()) {
+				return Err(anyhow!(
+					"Layer '{}' has server_refs configured but all entries are empty",
+					layer.name
+				));
 			}
 		}
 
 		// Check if layers are enabled globally by checking if any role has layers enabled
 		let layers_enabled_somewhere = self.developer.config.enable_layers || self.assistant.config.enable_layers;
 		
-		if enabled_count == 0 && layers_enabled_somewhere {
+		if layer_count == 0 && layers_enabled_somewhere {
 			eprintln!("Warning: Layers are enabled but no layer configurations are active");
 		}
 

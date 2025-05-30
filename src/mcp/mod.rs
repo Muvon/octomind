@@ -483,8 +483,8 @@ fn handle_large_response(result: McpToolResult, config: &crate::config::Config) 
 
 // Execute a tool call with layer-specific restrictions
 pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config::Config, layer_config: &crate::session::layers::LayerConfig) -> Result<(McpToolResult, u64)> {
-	// Check if tools are enabled for this layer
-	if !layer_config.mcp.enabled {
+	// Check if tools are enabled for this layer (has server_refs)
+	if layer_config.mcp.server_refs.is_empty() {
 		return Err(anyhow::anyhow!("Tool execution is disabled for this layer"));
 	}
 

@@ -31,16 +31,14 @@ impl LayeredOrchestrator {
 		if let Some(layer_configs) = layers_config {
 			// Create layers from role-specific config
 			for layer_config in layer_configs {
-				if layer_config.enabled {
-					layers.push(Box::new(GenericLayer::new(layer_config.clone())));
-				}
+				// If a layer is configured, we assume it's enabled (no more 'enabled' field)
+				layers.push(Box::new(GenericLayer::new(layer_config.clone())));
 			}
 		} else if let Some(global_layer_configs) = &config.layers {
 			// Fall back to global layer configurations if role-specific config is not available
 			for layer_config in global_layer_configs {
-				if layer_config.enabled {
-					layers.push(Box::new(GenericLayer::new(layer_config.clone())));
-				}
+				// If a layer is configured, we assume it's enabled (no more 'enabled' field)
+				layers.push(Box::new(GenericLayer::new(layer_config.clone())));
 			}
 		} else {
 			// No layer config section found, use default system layers
@@ -117,7 +115,7 @@ impl LayeredOrchestrator {
 			println!("{} {} (temp: {})", "Using model:".bright_magenta(),
 				layer.config().get_effective_model(&session.info.model), layer.config().temperature);
 
-			if layer.config().mcp.enabled {
+			if !layer.config().mcp.server_refs.is_empty() {
 				if layer.config().mcp.allowed_tools.is_empty() {
 					println!("{}", "All tools enabled for this layer".bright_magenta());
 				} else {
@@ -144,7 +142,7 @@ impl LayeredOrchestrator {
 				if let Some(cost) = usage.cost {
 					// Display the layer cost with time information
 					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens) | Time: API {}ms, Tools {}ms, Total {}ms",
-						cost, usage.prompt_tokens, usage.completion_tokens, 
+						cost, usage.prompt_tokens, usage.completion_tokens,
 						result.api_time_ms, result.tool_time_ms, result.total_time_ms).bright_magenta());
 
 					// Add the stats to the session with time tracking
@@ -214,8 +212,8 @@ impl LayeredOrchestrator {
 					}
 				}
 			} else {
-				println!("{} {} | Time: API {}ms, Tools {}ms, Total {}ms", 
-					"ERROR: No usage data for layer".bright_red(), 
+				println!("{} {} | Time: API {}ms, Tools {}ms, Total {}ms",
+					"ERROR: No usage data for layer".bright_red(),
 					layer_name.bright_yellow(),
 					result.api_time_ms, result.tool_time_ms, result.total_time_ms);
 			}
@@ -239,10 +237,10 @@ impl LayeredOrchestrator {
 			total_input_tokens,
 			total_output_tokens).bright_blue());
 		println!("{}", format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue());
-		println!("{}", format!("Total time: {}ms (API: {}ms, Tools: {}ms, Layer Processing: {}ms)", 
+		println!("{}", format!("Total time: {}ms (API: {}ms, Tools: {}ms, Layer Processing: {}ms)",
 			total_api_time_ms + total_tool_time_ms + total_layer_time_ms,
-			total_api_time_ms, 
-			total_tool_time_ms, 
+			total_api_time_ms,
+			total_tool_time_ms,
 			total_layer_time_ms).bright_blue());
 		println!("{}", "Use /info for detailed cost breakdown by layer".bright_blue());
 

@@ -41,7 +41,7 @@ pub async fn execute_command_layer(
 																"model": command_config.get_effective_model(&chat_session.session.info.model),
 																"temperature": command_config.temperature,
 																"input_mode": format!("{:?}", command_config.input_mode),
-																"mcp_enabled": command_config.mcp.enabled
+																"mcp_enabled": !command_config.mcp.server_refs.is_empty()
 												}
 								});
 								let _ = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?);
@@ -146,7 +146,7 @@ pub fn get_command_help(config: &Config, role: &str) -> String {
 				let available_commands = list_available_commands(config, role);
 
 				if available_commands.is_empty() {
-								"No command layers configured for this role.".to_string()
+								"No command layers configured.".to_string()
 				} else {
 								format!(
 												"Available command layers: {}\nUsage: /run <command_name>\nExample: /run estimate",

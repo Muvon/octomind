@@ -18,14 +18,12 @@ impl ContextGeneratorLayer {
 	pub fn default_config(name: &str) -> LayerConfig {
 		LayerConfig {
 			name: name.to_string(),
-			enabled: true,
 			model: Some("openrouter:google/gemini-2.5-flash-preview".to_string()),
 			system_prompt: None, // Use built-in prompt
 			temperature: 0.2,
 			input_mode: crate::session::layers::layer_trait::InputMode::Last,
-			mcp: crate::session::layers::layer_trait::LayerMcpConfig { 
-				enabled: true, 
-				servers: vec!["developer".to_string(), "filesystem".to_string()],
+			mcp: crate::session::layers::layer_trait::LayerMcpConfig {
+				server_refs: vec!["developer".to_string(), "filesystem".to_string()],
 				allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()]
 			},
 			parameters: std::collections::HashMap::new(),

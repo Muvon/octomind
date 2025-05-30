@@ -193,9 +193,9 @@ pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
 pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	let mut functions = Vec::new();
 
-	// Only gather functions if MCP global registry is enabled
-	if !config.mcp.enabled {
-		crate::log_debug!("MCP global registry is disabled, no functions available");
+	// Only gather functions if MCP has servers available
+	if !config.mcp.is_enabled() {
+		crate::log_debug!("MCP has no servers available, no functions available");
 		return functions;
 	}
 
@@ -299,15 +299,14 @@ pub async fn execute_tool_call_with_cancellation(
 	
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
-	log_debug!("Debug: MCP enabled: {}", config.mcp.enabled);
-	log_debug!("Debug: MCP servers count: {}", config.mcp.servers.len());
+	log_debug!("Debug: MCP has {} servers available", config.mcp.servers.len());
 	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
 		log_debug!("Debug: Tool parameters: {}", params);
 	}
 
-	// Only execute if MCP is enabled
-	if !config.mcp.enabled {
-		return Err(anyhow::anyhow!("MCP is not enabled"));
+	// Only execute if MCP has servers available
+	if !config.mcp.is_enabled() {
+		return Err(anyhow::anyhow!("MCP has no servers available"));
 	}
 
 	// Check for cancellation before starting
@@ -340,9 +339,9 @@ async fn try_execute_tool_call_with_cancellation(
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 	
-	// Only execute if MCP is enabled
-	if !config.mcp.enabled {
-		return Err(anyhow::anyhow!("MCP is not enabled"));
+	// Only execute if MCP has servers available
+	if !config.mcp.is_enabled() {
+		return Err(anyhow::anyhow!("MCP has no servers available"));
 	}
 
 	// Check for cancellation before proceeding

@@ -525,9 +525,6 @@ impl McpServerConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct McpConfig {
-	#[serde(default)]
-	pub enabled: bool,
-
 	// Server registry - server configurations
 	#[serde(default)]
 	pub servers: std::collections::HashMap<String, McpServerConfig>,
@@ -610,15 +607,15 @@ impl RoleMcpConfig {
 }
 
 impl McpConfig {
-	/// Check if the global MCP registry is enabled
+	/// Check if MCP is enabled (has any servers available)
 	pub fn is_enabled(&self) -> bool {
-		self.enabled
+		!self.servers.is_empty()
 	}
 
 	/// Check if this config should be skipped during serialization
 	/// This helps avoid writing empty [mcp] sections when only internal servers exist
 	pub fn is_default_for_serialization(&self) -> bool {
-		!self.enabled && self.servers.is_empty() && self.allowed_tools.is_empty()
+		self.servers.is_empty() && self.allowed_tools.is_empty()
 	}
 
 	/// Get all servers from the registry (for populating role configs)
@@ -656,9 +653,8 @@ impl McpConfig {
 	}
 
 	/// Create a config using server configurations
-	pub fn with_servers(enabled: bool, servers: std::collections::HashMap<String, McpServerConfig>, allowed_tools: Option<Vec<String>>) -> Self {
+	pub fn with_servers(servers: std::collections::HashMap<String, McpServerConfig>, allowed_tools: Option<Vec<String>>) -> Self {
 		Self {
-			enabled,
 			servers,
 			allowed_tools: allowed_tools.unwrap_or_default(),
 		}
@@ -762,7 +758,7 @@ pub struct Config {
 	pub assistant: AssistantRoleConfig,
 
 	// Global MCP configuration (fallback for roles)
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "McpConfig::is_default_for_serialization")]
 	pub mcp: McpConfig,
 
 	// Global command configurations (fallback for roles)
@@ -947,7 +943,6 @@ impl Config {
 		}
 		
 		merged.mcp = McpConfig {
-			enabled: !role_mcp_config.server_refs.is_empty(), // MCP enabled if role has server_refs
 			servers: legacy_servers, // Only role-enabled servers (with runtime injection)
 			allowed_tools: role_mcp_config.allowed_tools.clone(),
 		};
@@ -973,11 +968,6 @@ impl Config {
 		// SIMPLIFIED: No longer populate internal servers in loaded config
 		// Internal servers are now provided at runtime via get_core_server_config()
 		
-		// Enable the global MCP registry by default
-		if !self.mcp.enabled {
-			self.mcp.enabled = true;
-		}
-
 		// Migrate API keys from legacy openrouter config to providers
 		if let Some(api_key) = &self.openrouter.api_key {
 			if self.providers.openrouter.api_key.is_none() {
@@ -1076,11 +1066,6 @@ impl Config {
 	}
 
 	fn validate_mcp_config(&self) -> Result<()> {
-		// Validate global MCP config - this one MUST have servers if enabled
-		if self.mcp.enabled && self.mcp.servers.is_empty() {
-			return Err(anyhow!("Global MCP config: MCP is enabled but no servers specified"));
-		}
-
 		// Validate that role server_refs point to existing servers in the global registry
 		for server_ref in &self.developer.mcp.server_refs {
 			if !self.mcp.servers.contains_key(server_ref) {
@@ -1344,8 +1329,7 @@ impl Config {
 		// The MCP functionality should be controlled by role server_refs, not by a global enabled flag
 		// If there are no user-defined servers, ensure the config will be skipped during serialization
 		if clean_config.mcp.servers.is_empty() && clean_config.mcp.allowed_tools.is_empty() {
-			// Set state that will trigger skip_serializing_if condition
-			clean_config.mcp.enabled = false;
+			// Clear the config so it gets skipped during serialization
 			clean_config.mcp.servers.clear();
 			clean_config.mcp.allowed_tools.clear();
 		}
@@ -1446,28 +1430,6 @@ mod tests {
 	}
 
 	#[test]
-	fn test_mcp_config_serialization_not_skipped_when_enabled() {
-		// Test that enabled MCP config is NOT skipped
-		let config = Config {
-			log_level: LogLevel::Info,
-			mcp: McpConfig {
-				enabled: true,
-				..Default::default()
-			},
-			..Default::default()
-		};
-
-		let clean_config = config.create_clean_copy_for_saving();
-		let toml_str = toml::to_string(&clean_config).unwrap();
-		
-		// The [mcp] section SHOULD appear in the serialized TOML
-		assert!(toml_str.contains("[mcp]"), 
-			"Enabled MCP config should NOT be skipped, but TOML: {}", toml_str);
-		assert!(toml_str.contains("enabled = true"), 
-			"MCP enabled flag should be serialized");
-	}
-
-	#[test]
 	fn test_mcp_config_serialization_not_skipped_with_servers() {
 		// Test that MCP config with servers is NOT skipped
 		let mut servers = std::collections::HashMap::new();
@@ -1476,7 +1438,6 @@ mod tests {
 		let config = Config {
 			log_level: LogLevel::Info,
 			mcp: McpConfig {
-				enabled: false, // Even with enabled=false, should not skip if has servers
 				servers,
 				..Default::default()
 			},
@@ -1514,16 +1475,17 @@ mod tests {
 
 	#[test]
 	fn test_threshold_validation() {
-		// Test invalid thresholds using system-wide settings
+		// Test valid thresholds (0 is now valid for disabling features)
 		let config = Config {
-			mcp_response_warning_threshold: 0,
+			mcp_response_warning_threshold: 0, // Now valid for disabling
+			cache_tokens_pct_threshold: 50,
 			..Default::default()
 		};
-		assert!(config.validate_thresholds().is_err());
+		assert!(config.validate_thresholds().is_ok());
 
 		let config = Config {
 			mcp_response_warning_threshold: 1000,
-			cache_tokens_pct_threshold: 101,
+			cache_tokens_pct_threshold: 101, // Invalid - over 100%
 			..Default::default()
 		};
 		assert!(config.validate_thresholds().is_err());

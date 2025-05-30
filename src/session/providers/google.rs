@@ -140,7 +140,7 @@ impl AiProvider for GoogleVertexProvider {
 	});
 
 		// Add tool definitions if MCP is enabled (simplified for Vertex AI)
-		if config.mcp.enabled {
+		if config.mcp.is_enabled() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
 				let tools = functions.iter().map(|f| {

@@ -229,8 +229,8 @@ pub async fn process_response(
 			return Ok(());
 		}
 
-		// Check for tool calls if MCP is enabled
-		if config.mcp.enabled {
+		// Check for tool calls if MCP has servers available
+		if config.mcp.is_enabled() {
 			// CRITICAL FIX: Use current_tool_calls_param for the first iteration only
 			// For subsequent iterations, we should NOT reuse the same tool calls
 			let current_tool_calls = if let Some(calls) = current_tool_calls_param.take() {

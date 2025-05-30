@@ -17,10 +17,6 @@ pub struct ConfigArgs {
 	#[arg(long)]
 	pub log_level: Option<String>,
 
-	/// Enable MCP protocol
-	#[arg(long)]
-	pub mcp_enable: Option<bool>,
-
 	/// Set MCP providers
 	#[arg(long)]
 	pub mcp_providers: Option<String>,
@@ -151,12 +147,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		modified = true;
 	}
 
-	// Enable/disable MCP protocol
-	if let Some(enable_mcp) = args.mcp_enable {
-		config.mcp.enabled = enable_mcp;
-		println!("MCP protocol {}", if enable_mcp { "enabled" } else { "disabled" });
-		modified = true;
-	}
+	// Enable/disable MCP protocol - REMOVED: MCP is now controlled by role server_refs
+	// MCP is enabled when roles have server_refs configured
 
 	// Enable/disable markdown rendering
 	if let Some(enable_markdown) = args.markdown_enable {
@@ -268,11 +260,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				}
 			}
 
-			// Enable MCP if not already enabled
-			if !config.mcp.enabled {
-				config.mcp.enabled = true;
-				println!("Automatically enabled MCP protocol for server integration");
-			}
+			// Enable MCP if not already enabled - REMOVED: MCP now controlled by server_refs
+			// The presence of servers in the registry doesn't automatically enable MCP
 
 			// Add the new server to registry
 			config.mcp.servers.insert(name.clone(), server);
@@ -338,10 +327,16 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	println!("  Assistant model: {}", config.assistant.config.model);
 	
 	// Show MCP status using the new structure
-	println!("MCP protocol: {}", if config.mcp.enabled { "enabled" } else { "disabled" });
+	// MCP is enabled per-role based on server_refs, not a global flag
+	let dev_mcp_enabled = !config.developer.mcp.server_refs.is_empty();
+	let ass_mcp_enabled = !config.assistant.mcp.server_refs.is_empty();
+	
+	println!("MCP status:");
+	println!("  Developer role: {}", if dev_mcp_enabled { "enabled" } else { "disabled" });
+	println!("  Assistant role: {}", if ass_mcp_enabled { "enabled" } else { "disabled" });
 
 	// Show MCP servers from global config
-	if config.mcp.enabled {
+	if !config.mcp.servers.is_empty() || dev_mcp_enabled || ass_mcp_enabled {
 		if !config.mcp.servers.is_empty() {
 			println!("MCP servers:");
 			for (name, server) in &config.mcp.servers {
@@ -473,8 +468,8 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	
 	// Global MCP
 	println!("  Global MCP:");
-	println!("    Enabled:         {}", config.mcp.enabled);
-	if config.mcp.enabled {
+	println!("    Registry:        {} servers configured", config.mcp.servers.len());
+	if !config.mcp.servers.is_empty() {
 		show_mcp_servers(&config.mcp.servers);
 	}
 

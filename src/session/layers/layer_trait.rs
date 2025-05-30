@@ -129,13 +129,14 @@ impl LayerConfig {
 
 			// Override the global MCP configuration with layer-specific servers
 			merged_config.mcp = crate::config::McpConfig {
-				enabled: !self.mcp.server_refs.is_empty(),
 				servers: legacy_servers,
 				allowed_tools: self.mcp.allowed_tools.clone(),
 			};
 		} else {
 			// No server_refs means MCP is disabled for this layer
-			merged_config.mcp.enabled = false;
+			// Clear servers to ensure no MCP functionality
+			merged_config.mcp.servers.clear();
+			merged_config.mcp.allowed_tools.clear();
 		}
 
 		merged_config

@@ -264,8 +264,8 @@ async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
 pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String, (McpFunction, McpServerConfig)>> {
 	let mut functions = HashMap::new();
 
-	// Only proceed if MCP is enabled
-	if !config.mcp.enabled {
+	// Only proceed if MCP has servers available
+	if !config.mcp.is_enabled() {
 		return Ok(functions);
 	}
 

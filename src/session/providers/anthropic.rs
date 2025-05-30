@@ -114,7 +114,7 @@ impl AiProvider for AnthropicProvider {
 		});
 
 		// Add tool definitions if MCP is enabled
-		if config.mcp.enabled {
+		if config.mcp.is_enabled() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
 				let mut tools = functions.iter().map(|f| {
@@ -270,7 +270,7 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<A
 	
 	// Apply automatic cache markers for system messages and tools
 	let cache_manager = crate::session::cache::CacheManager::new();
-	let has_tools = config.mcp.enabled; // Check if MCP is actually enabled
+	let has_tools = config.mcp.is_enabled(); // Check if MCP has servers available
 	let supports_caching = cache_manager.validate_cache_support("anthropic", model);
 	cache_manager.add_automatic_cache_markers(&mut messages_copy, has_tools, supports_caching);
 

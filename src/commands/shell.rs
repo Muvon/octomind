@@ -1,9 +1,67 @@
 use clap::Args;
 use anyhow::Result;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::fs::OpenOptions;
 use serde::{Deserialize, Serialize};
 use octodev::config::Config;
 use octodev::session::{Message, chat_completion_with_provider};
+
+// Function to add command to shell history
+fn add_to_shell_history(command: &str) -> Result<()> {
+	// Get the shell and history file path
+	let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+	let home = std::env::var("HOME")?;
+	
+	// Try to get HISTFILE environment variable first, fallback to default locations
+	let history_file = if let Ok(histfile) = std::env::var("HISTFILE") {
+		histfile
+	} else if shell.contains("zsh") {
+		format!("{}/.zsh_history", home)
+	} else if shell.contains("bash") {
+		format!("{}/.bash_history", home)
+	} else if shell.contains("fish") {
+		format!("{}/.local/share/fish/fish_history", home)
+	} else {
+		// Default to bash history
+		format!("{}/.bash_history", home)
+	};
+
+	// For zsh, we need to add timestamp and format correctly
+	let history_entry = if shell.contains("zsh") {
+		let timestamp = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs();
+		format!(": {}:0;{}\n", timestamp, command)
+	} else if shell.contains("fish") {
+		let timestamp = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs();
+		format!("- cmd: {}\n  when: {}\n", command, timestamp)
+	} else {
+		// Bash format
+		format!("{}\n", command)
+	};
+
+	// Append to history file
+	match OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(&history_file)
+	{
+		Ok(mut file) => {
+			let _ = file.write_all(history_entry.as_bytes());
+			let _ = file.flush();
+		}
+		Err(_) => {
+			// If we can't write to history file, just continue silently
+			// This prevents the tool from failing if history file is not writable
+		}
+	}
+
+	Ok(())
+}
 
 #[derive(Args, Debug)]
 pub struct ShellArgs {
@@ -157,6 +215,9 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 
 	// Execute the command by passing control to the shell
 	println!("\n🚀 Executing: {}", shell_response.command);
+	
+	// Add command to shell history before execution
+	let _ = add_to_shell_history(&shell_response.command);
 	
 	let status = std::process::Command::new("sh")
 		.arg("-c")

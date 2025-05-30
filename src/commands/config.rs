@@ -200,7 +200,6 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 			// Create a new server config
 			let mut server = McpServerConfig {
-				enabled: true,
 				name: name.clone(),
 				server_type: McpServerType::External, // Default to external type
 				url: None,
@@ -346,7 +345,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		if !config.mcp.servers.is_empty() {
 			println!("MCP servers:");
 			for (name, server) in &config.mcp.servers {
-				let status = if server.enabled { "enabled" } else { "disabled" };
+				// Note: enabled status is now determined by role server_refs, not individual server config
+				// Here we just show what's available in the registry
 
 				// Auto-detect server type for display
 				let effective_type = match name.as_str() {
@@ -356,21 +356,28 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				};
 
 				match effective_type {
-					McpServerType::Developer => println!("  - {} (built-in developer tools) - {}", name, status),
-					McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - {}", name, status),
+					McpServerType::Developer => println!("  - {} (built-in developer tools) - available", name),
+					McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - available", name),
 					McpServerType::External => {
 						if name == "octocode" {
-							if server.enabled {
-								println!("  - {} (codebase analysis) - {} ✓", name, status);
+							// Check if octocode binary is available
+							use std::process::Command;
+							let available = match Command::new("octocode").arg("--version").output() {
+								Ok(output) => output.status.success(),
+								Err(_) => false,
+							};
+							
+							if available {
+								println!("  - {} (codebase analysis) - available ✓", name);
 							} else {
-								println!("  - {} (codebase analysis) - {} (binary not found in PATH)", name, status);
+								println!("  - {} (codebase analysis) - binary not found in PATH", name);
 							}
 						} else if let Some(url) = &server.url {
-							println!("  - {} (HTTP: {}) - {}", name, url, status);
+							println!("  - {} (HTTP: {}) - available", name, url);
 						} else if let Some(command) = &server.command {
-							println!("  - {} (Command: {}) - {}", name, command, status);
+							println!("  - {} (Command: {}) - available", name, command);
 						} else {
-							println!("  - {} (external, not configured) - {}", name, status);
+							println!("  - {} (external, not configured) - needs configuration", name);
 						}
 					}
 				}
@@ -473,17 +480,19 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Developer role MCP
 	println!("  Developer Role MCP:");
-	println!("    Enabled:         {}", dev_mcp.enabled);
-	if dev_mcp.enabled {
-		show_mcp_servers(&dev_mcp.servers);
-	}
+	println!("    Server refs:     {}", if dev_mcp.server_refs.is_empty() { 
+		"None (MCP disabled)".to_string() 
+	} else { 
+		dev_mcp.server_refs.join(", ") 
+	});
 
 	// Assistant role MCP
 	println!("  Assistant Role MCP:");
-	println!("    Enabled:         {}", ass_mcp.enabled);
-	if ass_mcp.enabled {
-		show_mcp_servers(&ass_mcp.servers);
-	}
+	println!("    Server refs:     {}", if ass_mcp.server_refs.is_empty() { 
+		"None (MCP disabled)".to_string() 
+	} else { 
+		ass_mcp.server_refs.join(", ") 
+	});
 	println!();
 
 	// Layer configurations
@@ -540,7 +549,7 @@ fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>
 
 	println!("    Servers:");
 	for (name, server) in servers {
-		let status = if server.enabled { "✅" } else { "❌" };
+		// Note: Individual servers no longer have enabled flag - determined by role server_refs
 		
 		// Auto-detect server type for display
 		let effective_type = match name.as_str() {
@@ -551,24 +560,31 @@ fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>
 
 		match effective_type {
 			McpServerType::Developer => {
-				println!("      {} {} (built-in developer tools)", status, name);
+				println!("      📦 {} (built-in developer tools)", name);
 			},
 			McpServerType::Filesystem => {
-				println!("      {} {} (built-in filesystem tools)", status, name);
+				println!("      📂 {} (built-in filesystem tools)", name);
 			},
 			McpServerType::External => {
 				if name == "octocode" {
-					if server.enabled {
-						println!("      {} {} (codebase analysis)", status, name);
+					// Check if octocode binary is available
+					use std::process::Command;
+					let available = match Command::new("octocode").arg("--version").output() {
+						Ok(output) => output.status.success(),
+						Err(_) => false,
+					};
+					
+					if available {
+						println!("      🔍 {} (codebase analysis) ✓", name);
 					} else {
-						println!("      {} {} (binary not found in PATH)", status, name);
+						println!("      🔍 {} (binary not found in PATH)", name);
 					}
 				} else if let Some(url) = &server.url {
-					println!("      {} {} (HTTP: {})", status, name, url);
+					println!("      🌐 {} (HTTP: {})", name, url);
 				} else if let Some(command) = &server.command {
-					println!("      {} {} (Command: {})", status, name, command);
+					println!("      ⚙️  {} (Command: {})", name, command);
 				} else {
-					println!("      {} {} (external, not configured)", status, name);
+					println!("      ❓ {} (external, not configured)", name);
 				}
 			}
 		}

@@ -11,9 +11,8 @@ use super::process;
 
 // Define MCP server function definitions
 pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
-	if !server.enabled {
-		return Ok(Vec::new());
-	}
+	// Note: enabled check is now handled at the role level via server_refs
+	// All servers in the registry are considered available
 
 	// Handle different server modes
 	match server.mode {
@@ -131,9 +130,8 @@ pub async fn execute_tool_call_with_cancellation(
 		}
 	}
 
-	if !server.enabled {
-		return Err(anyhow::anyhow!("Server is not enabled"));
-	}
+	// Note: enabled check is now handled at the role level via server_refs
+	// All servers in the registry are considered available for execution
 
 	// Extract tool name and parameters
 	let tool_name = &call.tool_name;
@@ -271,8 +269,8 @@ pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String,
 		return Ok(functions);
 	}
 
-	// Get enabled servers from registry
-	let servers = config.mcp.get_enabled_servers();
+	// Get available servers from registry
+	let servers = config.mcp.get_all_servers();
 
 	// Check each server
 	for server in &servers {

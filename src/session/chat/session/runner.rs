@@ -110,7 +110,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		let mode_config = config.get_mode_config(&session_args.role);
 		let mcp_config = &mode_config.1;
 		
-		if !mcp_config.enabled || mcp_config.servers.is_empty() {
+		if mcp_config.server_refs.is_empty() {
 			use colored::*;
 			println!("{}", "💡 Tip: For code development, consider starting an external MCP server:".bright_yellow());
 			println!("{}", "   octocode mcp --path=.".bright_cyan());
@@ -120,10 +120,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 			println!();
 		} else {
-			// Check if octocode is enabled
-			let octocode_enabled = mcp_config.servers.get("octocode")
-				.map(|server| server.enabled)
-				.unwrap_or(false);
+			// Check if octocode is enabled in the server_refs
+			let octocode_enabled = mcp_config.server_refs.contains(&"octocode".to_string());
 			
 			if octocode_enabled {
 				use colored::*;

@@ -193,24 +193,24 @@ pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
 pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	let mut functions = Vec::new();
 
-	// Only gather functions if MCP is enabled
+	// Only gather functions if MCP global registry is enabled
 	if !config.mcp.enabled {
-		crate::log_debug!("MCP is disabled, no functions available");
+		crate::log_debug!("MCP global registry is disabled, no functions available");
 		return functions;
 	}
 
-	// Get enabled servers
-	let enabled_servers = config.mcp.get_enabled_servers();
-	crate::log_debug!("Found {} enabled MCP servers", enabled_servers.len());
+	// Get enabled servers from the legacy mcp config (which should be populated by get_merged_config_for_mode)
+	let enabled_servers = config.mcp.get_all_servers();
+	crate::log_debug!("Found {} servers in MCP registry", enabled_servers.len());
 	
 	// DEBUG: Print all server details
 	for server in &enabled_servers {
-		crate::log_debug!("MCP Server: {} - Type: {:?}, Enabled: {}, Tools: {:?}", 
-			server.name, server.server_type, server.enabled, server.tools);
+		crate::log_debug!("MCP Server: {} - Type: {:?}, Tools: {:?}", 
+			server.name, server.server_type, server.tools);
 	}
 
 	for server in enabled_servers {
-		crate::log_debug!("Processing MCP server: {} (type: {:?}, enabled: {})", server.name, server.server_type, server.enabled);
+		crate::log_debug!("Processing MCP server: {} (type: {:?})", server.name, server.server_type);
 		
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
@@ -352,14 +352,14 @@ async fn try_execute_tool_call_with_cancellation(
 		}
 	}
 
-	// Get enabled servers
-	let enabled_servers = config.mcp.get_enabled_servers();
+	// Get available servers from the legacy mcp config
+	let available_servers = config.mcp.get_all_servers();
 
 	// Try to find a server that can handle this tool
 	let mut last_error = anyhow::anyhow!("No servers available to process tool '{}'", call.tool_name);
 	let mut servers_checked = Vec::new();
 
-	for server in enabled_servers {
+	for server in available_servers {
 		servers_checked.push(format!("{}({:?})", server.name, server.server_type));
 		
 		// Check for cancellation between server attempts

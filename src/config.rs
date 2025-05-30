@@ -6,7 +6,7 @@ use std::path::PathBuf;
 // Type alias to simplify the complex return type for get_mode_config
 type ModeConfigResult<'a> = (
 	&'a ModeConfig,
-	McpConfig,
+	&'a RoleMcpConfig,
 	Option<&'a Vec<crate::session::layers::LayerConfig>>,
 	Option<&'a std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
 	Option<&'a String>
@@ -407,9 +407,6 @@ impl Default for McpServerMode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct McpServerConfig {
-	#[serde(default)]
-	pub enabled: bool,
-	
 	// Name is auto-set from registry key (runtime field)
 	#[serde(skip)]
 	pub name: String,
@@ -445,7 +442,6 @@ fn default_timeout() -> u64 {
 impl Default for McpServerConfig {
 	fn default() -> Self {
 		Self {
-			enabled: true,
 			name: "".to_string(),
 			server_type: McpServerType::External, // Will be auto-detected
 			url: None,
@@ -469,7 +465,6 @@ impl McpServerConfig {
 		};
 
 		Self {
-			enabled: true,
 			name: name.to_string(),
 			server_type,
 			url: None,
@@ -485,7 +480,6 @@ impl McpServerConfig {
 	/// Create a developer server configuration
 	pub fn developer(name: &str, tools: Vec<String>) -> Self {
 		Self {
-			enabled: true,
 			name: name.to_string(),
 			server_type: McpServerType::Developer,
 			tools,
@@ -496,7 +490,6 @@ impl McpServerConfig {
 	/// Create a filesystem server configuration
 	pub fn filesystem(name: &str, tools: Vec<String>) -> Self {
 		Self {
-			enabled: true,
 			name: name.to_string(),
 			server_type: McpServerType::Filesystem,
 			tools,
@@ -507,7 +500,6 @@ impl McpServerConfig {
 	/// Create an external HTTP server configuration
 	pub fn external_http(name: &str, url: &str, tools: Vec<String>) -> Self {
 		Self {
-			enabled: true,
 			name: name.to_string(),
 			server_type: McpServerType::External,
 			url: Some(url.to_string()),
@@ -520,7 +512,6 @@ impl McpServerConfig {
 	/// Create an external command-based server configuration
 	pub fn external_command(name: &str, command: &str, args: Vec<String>, tools: Vec<String>) -> Self {
 		Self {
-			enabled: true,
 			name: name.to_string(),
 			server_type: McpServerType::External,
 			command: Some(command.to_string()),
@@ -546,23 +537,34 @@ pub struct McpConfig {
 	pub allowed_tools: Vec<String>,
 }
 
-impl McpConfig {
-	/// Check if MCP has any enabled servers
-	pub fn has_enabled_servers(&self) -> bool {
-		self.enabled && self.servers.values().any(|server| server.enabled)
+// Role-specific MCP configuration with server_refs
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct RoleMcpConfig {
+	// Server references - list of server names from the global registry to use for this role
+	// Empty list means MCP is disabled for this role
+	#[serde(default)]
+	pub server_refs: Vec<String>,
+
+	// Tool filtering - allows limiting tools across all enabled servers for this role
+	#[serde(default)]
+	pub allowed_tools: Vec<String>,
+}
+
+impl RoleMcpConfig {
+	/// Check if MCP is enabled for this role (has any server references)
+	pub fn is_enabled(&self) -> bool {
+		!self.server_refs.is_empty()
 	}
 
-	/// Get all enabled servers with auto-detected types
-	pub fn get_enabled_servers(&self) -> Vec<McpServerConfig> {
-		if !self.enabled {
+	/// Get enabled servers from the global registry for this role
+	pub fn get_enabled_servers(&self, global_servers: &std::collections::HashMap<String, McpServerConfig>) -> Vec<McpServerConfig> {
+		if self.server_refs.is_empty() {
 			return Vec::new();
 		}
 
 		let mut result = Vec::new();
-
-		// Add servers from registry
-		for (server_name, server_config) in &self.servers {
-			if server_config.enabled {
+		for server_name in &self.server_refs {
+			if let Some(server_config) = global_servers.get(server_name) {
 				let mut server = server_config.clone();
 				// Auto-set the name from the registry key
 				server.name = server_name.clone();
@@ -572,12 +574,58 @@ impl McpConfig {
 					"filesystem" => McpServerType::Filesystem,
 					_ => McpServerType::External,
 				};
-				// Apply global tool filtering if specified
+				// Apply role-specific tool filtering if specified
 				if !self.allowed_tools.is_empty() {
 					server.tools = self.allowed_tools.clone();
 				}
 				result.push(server);
+			} else {
+				crate::log_debug!("Server '{}' referenced by role but not found in global registry", server_name);
 			}
+		}
+
+		result
+	}
+
+	/// Create a config with specific server references
+	pub fn with_server_refs(server_refs: Vec<String>) -> Self {
+		Self {
+			server_refs,
+			allowed_tools: Vec::new(),
+		}
+	}
+
+	/// Create a config with specific server references and allowed tools
+	pub fn with_server_refs_and_tools(server_refs: Vec<String>, allowed_tools: Vec<String>) -> Self {
+		Self {
+			server_refs,
+			allowed_tools,
+		}
+	}
+}
+
+impl McpConfig {
+	/// Check if the global MCP registry is enabled
+	pub fn is_enabled(&self) -> bool {
+		self.enabled
+	}
+
+	/// Get all servers from the registry (for populating role configs)
+	pub fn get_all_servers(&self) -> Vec<McpServerConfig> {
+		let mut result = Vec::new();
+
+		// Add servers from registry
+		for (server_name, server_config) in &self.servers {
+			let mut server = server_config.clone();
+			// Auto-set the name from the registry key
+			server.name = server_name.clone();
+			// Auto-detect server type from name
+			server.server_type = match server_name.as_str() {
+				"developer" => McpServerType::Developer,
+				"filesystem" => McpServerType::Filesystem,
+				_ => McpServerType::External,
+			};
+			result.push(server);
 		}
 
 		result
@@ -599,7 +647,7 @@ pub struct DeveloperRoleConfig {
 	#[serde(flatten)]
 	pub config: ModeConfig,
 	#[serde(default)]
-	pub mcp: McpConfig,
+	pub mcp: RoleMcpConfig,
 	// Layer configuration
 	#[serde(default)]
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
@@ -616,7 +664,7 @@ pub struct AssistantRoleConfig {
 	#[serde(flatten)]
 	pub config: ModeConfig,
 	#[serde(default)]
-	pub mcp: McpConfig,
+	pub mcp: RoleMcpConfig,
 	// Command layer configurations
 	#[serde(default)]
 	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
@@ -626,56 +674,18 @@ pub struct AssistantRoleConfig {
 }
 
 impl Default for DeveloperRoleConfig {
-	fn default() -> Self {
-		// Create default MCP config with built-in servers
-		let mut mcp_servers = std::collections::HashMap::new();
-		
-		// Add built-in servers
-		mcp_servers.insert(
-			"developer".to_string(),
-			McpServerConfig::developer("developer", vec![])
-		);
-		mcp_servers.insert(
-			"filesystem".to_string(),
-			McpServerConfig::filesystem("filesystem", vec![])
-		);
-		
-		// Add octocode server with auto-detection
-		let octocode_available = {
-			use std::process::Command;
-			match Command::new("octocode").arg("--version").output() {
-				Ok(output) => output.status.success(),
-				Err(_) => false,
-			}
-		};
-		
-		mcp_servers.insert(
-			"octocode".to_string(),
-			McpServerConfig {
-				enabled: octocode_available,
-				name: "octocode".to_string(),
-				server_type: McpServerType::External,
-				command: Some("octocode".to_string()),
-				args: vec!["mcp".to_string(), "--path=.".to_string()],
-				mode: McpServerMode::Stdin,
-				timeout_seconds: 30,
-				tools: vec![], // Empty means all tools are enabled
-				url: None,
-				auth_token: None,
-			}
-		);
-		
+	fn default() -> Self {		
 		Self {
 			config: ModeConfig {
 				model: "openrouter:anthropic/claude-sonnet-4".to_string(),
 				enable_layers: true,
 				system: Some("You are an Octodev AI developer assistant with full access to development tools.".to_string()),
 			},
-			mcp: McpConfig {
-				enabled: true,
-				servers: mcp_servers,
-				allowed_tools: vec![],
-			},
+			mcp: RoleMcpConfig::with_server_refs(vec![
+				"octocode".to_string(),
+				"filesystem".to_string(),
+				"developer".to_string(),
+			]),
 			layers: None,
 			commands: None,
 			openrouter: None,
@@ -691,10 +701,7 @@ impl Default for AssistantRoleConfig {
 				enable_layers: false,
 				system: Some("You are a helpful assistant.".to_string()),
 			},
-			mcp: McpConfig {
-				enabled: false,  // Assistant role has MCP/tools disabled by default
-				..McpConfig::default()
-			},
+			mcp: RoleMcpConfig::default(), // Empty server_refs = MCP disabled
 			commands: None,
 			openrouter: None,
 		}
@@ -776,26 +783,29 @@ impl Config {
 
 	/// Auto-configure octocode server based on binary availability
 	fn auto_configure_octocode(&mut self) {
-		// Check if developer role MCP config has octocode server
-		if let Some(octocode_server) = self.developer.mcp.servers.get_mut("octocode") {
-			// If the config doesn't explicitly set the enabled status, auto-detect
-			if !octocode_server.enabled {
-				let available = Self::is_octocode_available();
-				octocode_server.enabled = available;
-				
-				if available {
-					crate::log_info!("Auto-enabled octocode MCP server (binary detected in PATH)");
-				} else {
-					crate::log_debug!("octocode binary not found in PATH, server remains disabled");
+		// Check if developer role has octocode in server_refs but global registry doesn't have octocode server yet
+		if self.developer.mcp.server_refs.contains(&"octocode".to_string()) && !self.mcp.servers.contains_key("octocode") {
+			let available = Self::is_octocode_available();
+			
+			self.mcp.servers.insert(
+				"octocode".to_string(),
+				McpServerConfig {
+					name: "octocode".to_string(),
+					server_type: McpServerType::External,
+					command: Some("octocode".to_string()),
+					args: vec!["mcp".to_string(), "--path=.".to_string()],
+					mode: McpServerMode::Stdin,
+					timeout_seconds: 30,
+					tools: vec![],
+					url: None,
+					auth_token: None,
 				}
-			}
-		}
-		
-		// Also check global MCP config as fallback
-		if let Some(octocode_server) = self.mcp.servers.get_mut("octocode") {
-			if !octocode_server.enabled {
-				let available = Self::is_octocode_available();
-				octocode_server.enabled = available;
+			);
+			
+			if available {
+				crate::log_info!("Auto-configured octocode MCP server (binary detected in PATH)");
+			} else {
+				crate::log_debug!("octocode binary not found in PATH, server configured but may not work");
 			}
 		}
 	}
@@ -813,26 +823,30 @@ impl Config {
 
 	/// Initialize the default server registry with auto-detection
 	pub fn init_default_server_registry(&mut self) {
-		// Initialize default servers for developer role if empty
-		if self.developer.mcp.servers.is_empty() {
-			let mut mcp_servers = std::collections::HashMap::new();
-			
-			// Add built-in servers
-			mcp_servers.insert(
+		// ALWAYS ensure core servers are in the global registry
+		// This is the server registry that all roles reference via server_refs
+		
+		// Add built-in servers if not present
+		if !self.mcp.servers.contains_key("developer") {
+			self.mcp.servers.insert(
 				"developer".to_string(),
 				McpServerConfig::from_name("developer")
 			);
-			mcp_servers.insert(
+		}
+		
+		if !self.mcp.servers.contains_key("filesystem") {
+			self.mcp.servers.insert(
 				"filesystem".to_string(),
 				McpServerConfig::from_name("filesystem")
 			);
-			
-			// Add octocode server with auto-detection
+		}
+		
+		// Add octocode server with auto-detection if not present
+		if !self.mcp.servers.contains_key("octocode") {
 			let octocode_available = Self::is_octocode_available();
-			mcp_servers.insert(
+			self.mcp.servers.insert(
 				"octocode".to_string(),
 				McpServerConfig {
-					enabled: octocode_available,
 					name: "octocode".to_string(),
 					server_type: McpServerType::External,
 					command: Some("octocode".to_string()),
@@ -844,42 +858,17 @@ impl Config {
 					auth_token: None,
 				}
 			);
-			
-			self.developer.mcp.servers = mcp_servers;
 			
 			if octocode_available {
 				crate::log_info!("Auto-configured octocode MCP server (binary detected)");
+			} else {
+				crate::log_debug!("octocode binary not found in PATH, server configured but may not work");
 			}
 		}
-
-		// Initialize global MCP servers if empty
-		if self.mcp.servers.is_empty() {
-			self.mcp.servers.insert(
-				"developer".to_string(),
-				McpServerConfig::from_name("developer")
-			);
-			self.mcp.servers.insert(
-				"filesystem".to_string(),
-				McpServerConfig::from_name("filesystem")
-			);
-			
-			// Add octocode to global config too
-			let octocode_available = Self::is_octocode_available();
-			self.mcp.servers.insert(
-				"octocode".to_string(),
-				McpServerConfig {
-					enabled: octocode_available,
-					name: "octocode".to_string(),
-					server_type: McpServerType::External,
-					command: Some("octocode".to_string()),
-					args: vec!["mcp".to_string(), "--path=.".to_string()],
-					mode: McpServerMode::Stdin,
-					timeout_seconds: 30,
-					tools: vec![],
-					url: None,
-					auth_token: None,
-				}
-			);
+		
+		// Enable the global MCP registry by default
+		if !self.mcp.enabled {
+			self.mcp.enabled = true;
 		}
 	}
 
@@ -897,39 +886,9 @@ impl Config {
 		}
 	}
 
-	/// Get resolved MCP config for a role (merges role config with global registry)
-	pub fn get_resolved_mcp_config(&self, mcp_config: &McpConfig) -> McpConfig {
-		// If the role-specific MCP config is empty or has no servers, use global registry
-		if mcp_config.servers.is_empty() {
-			// Use global MCP config as fallback
-			self.mcp.clone()
-		} else {
-			// Role has its own server configuration - resolve any missing servers from global registry
-			let mut resolved_config = mcp_config.clone();
-			
-			// For any servers in role config that are missing configuration,
-			// try to fill from global registry
-			for (server_name, server_config) in &mut resolved_config.servers {
-				// If this server config is minimal (just enabled flag), enhance from global
-				if server_config.url.is_none() && server_config.command.is_none() {
-					if let Some(global_server) = self.mcp.servers.get(server_name) {
-						// Copy configuration from global registry
-						server_config.url = global_server.url.clone();
-						server_config.command = global_server.command.clone();
-						server_config.args = global_server.args.clone();
-						server_config.auth_token = global_server.auth_token.clone();
-						server_config.mode = global_server.mode.clone();
-						server_config.timeout_seconds = global_server.timeout_seconds;
-						// Don't override tools filtering - role-specific takes precedence
-						if server_config.tools.is_empty() && !global_server.tools.is_empty() {
-							server_config.tools = global_server.tools.clone();
-						}
-					}
-				}
-			}
-			
-			resolved_config
-		}
+	/// Get enabled servers for a role from the global registry
+	pub fn get_enabled_servers_for_role(&self, role_mcp_config: &RoleMcpConfig) -> Vec<McpServerConfig> {
+		role_mcp_config.get_enabled_servers(&self.mcp.servers)
 	}
 	/// Get the global log level (system-wide setting)
 	pub fn get_log_level(&self) -> LogLevel {
@@ -948,62 +907,29 @@ impl Config {
 		let (mode_config, _, _, _, _) = self.get_mode_config(role);
 		mode_config.get_full_model()
 	}
-	/// Check if MCP config is "empty" (using only defaults) - then we should fallback to global
-	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
-		// A config is considered "empty" if:
-		// 1. It has no servers configured, AND
-		// 2. It has no allowed_tools configured
-		
-		// If allowed_tools are customized, it's not empty
-		if !mcp_config.allowed_tools.is_empty() {
-			return false;
-		}
-
-		// If servers list is empty, consider it empty
-		if mcp_config.servers.is_empty() {
-			return true;
-		}
-
-		// FIXED: If servers are present, the config is NOT empty
-		// The servers may have default values, but they were explicitly configured
-		// Don't treat role configs with populated servers as "empty"
-		false
-	}
 
 	/// Get configuration for a specific role with proper fallback logic and role inheritance
-	/// Returns: (mode_config, mcp_config, layers, commands, system_prompt)
+	/// Returns: (mode_config, role_mcp_config, layers, commands, system_prompt)
 	/// Role inheritance: any role inherits from 'assistant' first, then applies its own overrides
 	pub fn get_mode_config(&self, role: &str) -> ModeConfigResult<'_> {
 		match role {
 			"developer" => {
-				// Developer role - inherits from assistant but with developer-specific config
-				let mut mcp_config = self.developer.mcp.clone();
-
-				// If developer.mcp is "empty/default", fall back to global mcp
-				if self.is_mcp_config_empty(&mcp_config) {
-					mcp_config = self.mcp.clone();
-				}
+				// Developer role - uses its own MCP config with server_refs
 
 				// Get commands config - prefer role-specific, fallback to global
 				let commands_config = self.developer.commands.as_ref()
 					.or(self.commands.as_ref());
 
-				(&self.developer.config, mcp_config, self.developer.layers.as_ref(), commands_config, self.developer.config.system.as_ref())
+				(&self.developer.config, &self.developer.mcp, self.developer.layers.as_ref(), commands_config, self.developer.config.system.as_ref())
 			},
 			"assistant" => {
 				// Base assistant role
-				let mut mcp_config = self.assistant.mcp.clone();
-
-				// If assistant.mcp is "empty/default", fall back to global mcp
-				if self.is_mcp_config_empty(&mcp_config) {
-					mcp_config = self.mcp.clone();
-				}
 
 				// Get commands config - prefer role-specific, fallback to global
 				let commands_config = self.assistant.commands.as_ref()
 					.or(self.commands.as_ref());
 
-				(&self.assistant.config, mcp_config, None, commands_config, self.assistant.config.system.as_ref())
+				(&self.assistant.config, &self.assistant.mcp, None, commands_config, self.assistant.config.system.as_ref())
 			},
 			_ => {
 				// For any custom role, inherit from assistant first
@@ -1019,7 +945,7 @@ impl Config {
 	/// Get a merged config for a specific mode that can be used for API calls
 	/// This returns a Config with the mode-specific settings applied
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
-		let (mode_config, mcp_config, layers_config, commands_config, system_prompt) = self.get_mode_config(mode);
+		let (mode_config, role_mcp_config, layers_config, commands_config, system_prompt) = self.get_mode_config(mode);
 
 		let mut merged = self.clone();
 
@@ -1040,14 +966,20 @@ impl Config {
 			enable_markdown_rendering: self.enable_markdown_rendering,
 		};
 
-		// Resolve MCP configuration using the new registry system
-		merged.mcp = self.get_resolved_mcp_config(&mcp_config);
+		// Create a legacy McpConfig for backward compatibility with existing code
+		// This gets servers from the role's server_refs
+		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config);
+		let mut legacy_servers = std::collections::HashMap::new();
 		
-		// CRITICAL FIX: Ensure server registry is initialized in merged config
-		// If merged config has empty global servers but needs them, initialize
-		if merged.mcp.enabled && merged.mcp.servers.is_empty() {
-			merged.init_default_server_registry();
+		for server in enabled_servers {
+			legacy_servers.insert(server.name.clone(), server);
 		}
+		
+		merged.mcp = McpConfig {
+			enabled: !role_mcp_config.server_refs.is_empty(), // MCP enabled if role has server_refs
+			servers: legacy_servers,
+			allowed_tools: role_mcp_config.allowed_tools.clone(),
+		};
 		
 		merged.layers = layers_config.cloned();
 		merged.commands = commands_config.cloned();
@@ -1171,69 +1103,84 @@ impl Config {
 	}
 
 	fn validate_mcp_config(&self) -> Result<()> {
-		// Helper function to validate a single MCP config
-		let validate_mcp = |mcp_config: &McpConfig, _context: &str| -> Result<()> {
-			if !mcp_config.enabled {
-				return Ok(());
-			}
-
-			// For role-specific configs, they can be empty and inherit from global
-			// Only validate if they have explicit server configurations
-			if !mcp_config.servers.is_empty() {
-				// If they specify servers, validate that they exist
-				// But we don't require them to specify servers since they can inherit from global
-			}
-
-			Ok(())
-		};
-
 		// Validate global MCP config - this one MUST have servers if enabled
 		if self.mcp.enabled && self.mcp.servers.is_empty() {
 			return Err(anyhow!("Global MCP config: MCP is enabled but no servers specified"));
 		}
 
-		// Validate role-specific MCP configs (they can inherit from global)
-		validate_mcp(&self.developer.mcp, "Developer role MCP config")?;
-		validate_mcp(&self.assistant.mcp, "Assistant role MCP config")?;
+		// Validate that role server_refs point to existing servers in the global registry
+		for server_ref in &self.developer.mcp.server_refs {
+			if !self.mcp.servers.contains_key(server_ref) {
+				// Check if it's a core server that we can auto-add
+				match server_ref.as_str() {
+					"developer" | "filesystem" | "octocode" => {
+						// These are core servers that will be auto-added, so don't error
+						crate::log_debug!("Core server '{}' referenced but not in registry - will be auto-added", server_ref);
+					}
+					_ => {
+						return Err(anyhow!(
+							"Developer role references server '{}' but it's not defined in global MCP registry",
+							server_ref
+						));
+					}
+				}
+			}
+		}
+
+		for server_ref in &self.assistant.mcp.server_refs {
+			if !self.mcp.servers.contains_key(server_ref) {
+				// Check if it's a core server that we can auto-add
+				match server_ref.as_str() {
+					"developer" | "filesystem" | "octocode" => {
+						// These are core servers that will be auto-added, so don't error
+						crate::log_debug!("Core server '{}' referenced but not in registry - will be auto-added", server_ref);
+					}
+					_ => {
+						return Err(anyhow!(
+							"Assistant role references server '{}' but it's not defined in global MCP registry",
+							server_ref
+						));
+					}
+				}
+			}
+		}
 
 		// Validate server configurations
 		for (name, server) in &self.mcp.servers {
-			if server.enabled {
-				// Auto-detect server type for validation
-				let effective_type = match name.as_str() {
-					"developer" => McpServerType::Developer,
-					"filesystem" => McpServerType::Filesystem,
-					_ => McpServerType::External,
-				};
+			// Auto-detect server type for validation
+			let effective_type = match name.as_str() {
+				"developer" => McpServerType::Developer,
+				"filesystem" => McpServerType::Filesystem,
+				_ => McpServerType::External,
+			};
 
-				match effective_type {
-					crate::config::McpServerType::External => {
-						// External servers must have either URL or command
-						if server.url.is_none() && server.command.is_none() {
-							return Err(anyhow!(
-								"MCP server '{}': External server must have either 'url' or 'command' specified",
-								name
-							));
-						}
-					}
-					crate::config::McpServerType::Developer | crate::config::McpServerType::Filesystem => {
-						// Built-in servers should not have URL or command
-						if server.url.is_some() || server.command.is_some() {
-							eprintln!(
-								"Warning: MCP server '{}': Built-in server has URL/command specified, which will be ignored",
-								name
-							);
-						}
+			match effective_type {
+				crate::config::McpServerType::External => {
+					// External servers must have either URL or command
+					if server.url.is_none() && server.command.is_none() {
+						return Err(anyhow!(
+							"MCP server '{}': External server must have either 'url' or 'command' specified",
+							name
+						));
 					}
 				}
-
-				// Validate timeout
-				if server.timeout_seconds == 0 {
-					return Err(anyhow!(
-						"MCP server '{}': timeout must be greater than 0",
-						name
-					));
+				crate::config::McpServerType::Developer | crate::config::McpServerType::Filesystem => {
+					// Built-in servers should not have URL or command
+					if server.url.is_some() || server.command.is_some() {
+						eprintln!(
+							"Warning: MCP server '{}': Built-in server has URL/command specified, which will be ignored",
+							name
+						);
+					}
 				}
+			}
+
+			// Validate timeout
+			if server.timeout_seconds == 0 {
+				return Err(anyhow!(
+					"MCP server '{}': timeout must be greater than 0",
+					name
+				));
 			}
 		}
 

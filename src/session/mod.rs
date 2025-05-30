@@ -561,7 +561,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 	}
 
 	// Add MCP tools information if enabled
-	if mcp_config.enabled {
+	if !mcp_config.server_refs.is_empty() {
 		let mode_config = config.get_merged_config_for_mode(mode);
 		let functions = crate::mcp::get_available_functions(&mode_config).await;
 		if !functions.is_empty() {

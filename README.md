@@ -14,6 +14,8 @@ Octodev is a session-based AI development assistant that helps you understand an
 - **Extensible Tool System**: MCP protocol support for integrating external tools and services
 - **Session Management**: Save, resume, and organize development conversations
 - **Enhanced Tool Output Rendering**: Improved display and handling of tool outputs
+- **Command Layers**: Specialized AI helpers for specific tasks without affecting session history
+- **Robust Tool Execution**: Smart tool routing with proper server mapping and error handling
 
 ## Installation
 

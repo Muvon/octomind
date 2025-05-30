@@ -11,9 +11,40 @@ Welcome to the comprehensive Octodev documentation. This manual provides detaile
 
 ### 🔧 Core Features  
 - **[05-sessions.md](./05-sessions.md)** - Interactive sessions and modes
+- **[command_layers.md](./command_layers.md)** - Specialized AI helpers and command processing
 
 ### 🚀 Advanced Features
 - **[06-advanced.md](./06-advanced.md)** - MCP tools, layered architecture, and extensibility
+
+## Recent Updates
+
+### Enhanced Tool Execution (Latest)
+- **Smart Tool Routing**: Tools are now automatically routed to the correct server type
+- **Error Prevention**: No more "Unknown tool" errors from server mismatches
+- **Robust Error Handling**: Clear diagnostic messages when tool execution fails
+- **Server Registry Integration**: Centralized server configuration eliminates duplication
+
+### Improved Command Layers
+- **Case-Insensitive Input Modes**: `"Last"`, `"last"`, `"LAST"` all work identically
+- **Smart Context Processing**: `input_mode = "last"` now correctly extracts last assistant response
+- **Proper Session Context**: Commands receive appropriate session history based on input mode
+- **Enhanced Configuration**: Simplified MCP configuration using server references
+
+### MCP Server Registry
+New centralized server configuration approach:
+
+```toml
+# Define servers once in registry
+[mcp_server_registry.developer]
+enabled = true
+name = "developer"
+server_type = "developer"
+
+# Reference from roles
+[developer.mcp]
+enabled = true
+server_refs = ["developer"]
+```
 
 ## Quick Reference
 
@@ -122,6 +153,9 @@ Default values
 2. **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
 3. **Configuration Errors**: Run `octodev config --validate`
 4. **Tool Access Issues**: Check role configuration and MCP server settings
+5. **Tool Execution Failures**: Verify tools are routed to correct server types
+6. **Input Mode Errors**: Use lowercase input modes: `"last"`, `"all"`, `"summary"`
+7. **Command Layer Issues**: Check server references and registry configuration
 
 ## Simplified Architecture
 

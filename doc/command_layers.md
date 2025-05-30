@@ -8,6 +8,7 @@ Command layers are a powerful feature that allows you to define specialized AI h
 - **Specialized**: Each command can have its own model, system prompt, and configuration
 - **Flexible**: Use the same layer configuration system as regular layers
 - **Cost-effective**: Only run when needed, with isolated token usage
+- **Context-aware**: Proper input_mode handling for accessing session context
 
 ## Usage
 
@@ -31,31 +32,40 @@ Command layers are defined in the `[commands]` section of your configuration fil
 ```toml
 [developer.commands.estimate]
 name = "estimate"
-enabled = true
 model = "openrouter:openai/gpt-4.1-mini"  # Optional - uses session model if not specified
 system_prompt = "You are a project estimation expert..."
 temperature = 0.2
-input_mode = "Last"  # "Last", "All", or "Summary"
+input_mode = "last"  # "last", "all", or "summary" (case-insensitive)
 
 [developer.commands.estimate.mcp]
-enabled = false  # Can enable tools for specific commands
+server_refs = ["developer", "filesystem"]  # Reference servers from registry
+allowed_tools = []  # Empty means all tools from referenced servers
 ```
 
 ### Available Input Modes
 
-- **`Last`**: Uses the last user message as input
-- **`All`**: Uses the entire conversation history
-- **`Summary`**: Uses a summarized version of the conversation
+- **`last`** (case-insensitive): Gets the last assistant response from session context - perfect for analyzing previous AI responses
+- **`all`**: Uses the entire conversation history with proper formatting
+- **`summary`**: Uses a summarized version of the conversation to save tokens
+
+**Note**: Input modes are now case-insensitive, so `"Last"`, `"last"`, `"LAST"` all work the same way.
+
+### Smart Context Processing
+
+The input_mode system now properly handles session context:
+
+- **With `input_mode = "last"`**: If no explicit input is provided, the command gets the last assistant response. If explicit input is provided, it's combined with the previous assistant context.
+- **With `input_mode = "all"`**: The command receives the full conversation context formatted for analysis.
+- **With `input_mode = "summary"`**: The command gets a concise summary of the conversation.
 
 ### MCP (Tool) Integration
 
-Commands can have their own tool configurations:
+Commands can have their own tool configurations using the new server registry system:
 
 ```toml
 [developer.commands.review.mcp]
-enabled = true
-servers = ["core"]
-allowed_tools = ["text_editor", "semantic_code"]
+server_refs = ["developer", "filesystem"]  # Reference servers by name
+allowed_tools = ["text_editor", "shell"]   # Limit to specific tools
 ```
 
 ## Example Commands
@@ -65,7 +75,6 @@ allowed_tools = ["text_editor", "semantic_code"]
 ```toml
 [developer.commands.estimate]
 name = "estimate"
-enabled = true
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = """You are a project estimation expert. Analyze the work done or discussed and provide:
 
@@ -76,7 +85,10 @@ system_prompt = """You are a project estimation expert. Analyze the work done or
 
 Be specific and practical."""
 temperature = 0.2
-input_mode = "Last"
+input_mode = "last"  # Gets the last assistant response for analysis
+
+[developer.commands.estimate.mcp]
+server_refs = []  # No tools needed for estimation
 ```
 
 Usage: `/run estimate`
@@ -86,7 +98,6 @@ Usage: `/run estimate`
 ```toml
 [developer.commands.review]
 name = "review"
-enabled = true
 model = "openrouter:anthropic/claude-3.5-sonnet"
 system_prompt = """You are a code review expert. Analyze recent work and provide:
 
@@ -97,29 +108,30 @@ system_prompt = """You are a code review expert. Analyze recent work and provide
 
 Focus on constructive feedback."""
 temperature = 0.1
-input_mode = "All"
+input_mode = "all"  # Gets full conversation context
 
 [developer.commands.review.mcp]
-enabled = true
-servers = ["core"]
-allowed_tools = ["text_editor", "semantic_code"]
+server_refs = ["developer", "filesystem"]  # Access to code files and shell
+allowed_tools = ["text_editor", "list_files", "shell"]
 ```
 
 Usage: `/run review`
 
-### 3. Query Processor (System Layer Alternative)
+### 3. Quick Summary
 
 ```toml
-[developer.commands.query_processor]
-name = "query_processor"
-enabled = true
-# No model specified - uses session model
-system_prompt = "You are a query processor that improves and clarifies user requests."
+[developer.commands.summarize]
+name = "summarize"
+model = "openrouter:openai/gpt-4.1-nano"  # Fast, cheap model
+system_prompt = "Provide a concise summary of the conversation and key points."
 temperature = 0.2
-input_mode = "Last"
+input_mode = "summary"  # Uses pre-summarized content to save tokens
+
+[developer.commands.summarize.mcp]
+server_refs = []  # No tools needed
 ```
 
-Usage: `/run query_processor`
+Usage: `/run summarize`
 
 ## Advanced Features
 
@@ -180,8 +192,24 @@ model = "openrouter:anthropic/claude-sonnet-4"  # Powerful model
 Command 'estimate' not found in configuration
 ```
 - Check that the command is defined in your role's commands section
-- Verify the command is `enabled = true`
-- Ensure proper TOML syntax
+- Verify proper TOML syntax in your configuration
+- Use `/run` without parameters to see available commands
+
+### Tool Execution Errors
+```
+Tool execution failed: Unknown tool 'list_files'. Available tools: search_code, memorize, remember, forget
+```
+- **Tool routing issue**: The tool is being sent to the wrong server
+- **Solution**: Check your MCP server configuration and ensure proper server references
+- **Verify**: Tools are being routed to the correct server type (filesystem tools → filesystem server)
+
+### Input Mode Issues
+```
+Unknown input mode: 'Last'. Valid options: last, all, summary
+```
+- **Case sensitivity**: Input modes are now case-insensitive but should use lowercase
+- **Solution**: Use `input_mode = "last"` instead of `input_mode = "Last"`
+- **Valid values**: `"last"`, `"all"`, `"summary"` (any case)
 
 ### No Commands Available
 ```
@@ -189,13 +217,23 @@ No command layers configured for this role.
 ```
 - Add command definitions to your configuration file
 - Use `/run` without parameters to see configuration examples
+- Check role-specific command sections (e.g., `[developer.commands.estimate]`)
 
-### Permission Errors
+### MCP Server Configuration Issues
 ```
-Tool 'text_editor' is not allowed for this layer
+Failed to execute tool 'shell': No servers available to process tool
 ```
-- Check the `allowed_tools` list in the command's MCP configuration
-- Ensure the required MCP servers are enabled
+- **Missing server references**: Check `server_refs` in your command's MCP configuration
+- **Server registry**: Ensure servers are defined in `[mcp_server_registry]`
+- **Tool mapping**: Verify tools are available on the referenced servers
+
+### Context Processing Problems
+```
+No previous messages found
+```
+- **Input mode mismatch**: Using `input_mode = "last"` but no assistant messages in session
+- **Solution**: Either provide explicit input or use `input_mode = "all"`
+- **Check**: Session history has the expected message types
 
 ## Migration from /done
 

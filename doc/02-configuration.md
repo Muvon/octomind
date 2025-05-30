@@ -498,34 +498,49 @@ Use session commands to manage tokens:
 
 ## Command Layers
 
-Octodev supports command layers for specialized processing:
+Octodev supports command layers for specialized processing with improved input handling:
 
 ```toml
 # Developer role command layers
 [developer.commands.estimate]
 name = "estimate"
-enabled = true
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = "You are a project estimation expert..."
 temperature = 0.2
-input_mode = "Last"
+input_mode = "last"  # Case-insensitive: "last", "all", "summary"
 
 [developer.commands.estimate.mcp]
-enabled = false
+server_refs = []  # Reference servers from registry
 
 [developer.commands.review]
 name = "review"
-enabled = true
 model = "openrouter:anthropic/claude-3.5-sonnet"
 system_prompt = "You are a code review expert..."
 temperature = 0.1
-input_mode = "All"
+input_mode = "all"  # Gets full conversation context
 
 [developer.commands.review.mcp]
-enabled = true
-servers = ["developer"]
-allowed_tools = ["text_editor", "shell"]
+server_refs = ["developer", "filesystem"]  # Access to development tools
+allowed_tools = ["text_editor", "shell"]  # Limit to specific tools
 ```
+
+### Input Mode Enhancements
+
+Command layers now feature robust input processing:
+
+- **Case-insensitive**: `"Last"`, `"last"`, `"LAST"` all work
+- **Smart context extraction**: `"last"` mode gets the last assistant response
+- **Proper session context**: Commands receive the appropriate session history
+- **Error handling**: Clear error messages for invalid input modes
+
+### Tool Execution Improvements
+
+Command tools now use smart routing:
+
+- **Server mapping**: Tools are automatically routed to the correct server type
+- **Error prevention**: Tools no longer sent to incompatible servers  
+- **Clear diagnostics**: Better error messages when tool execution fails
+- **Registry integration**: Uses the centralized MCP server registry
 
 ## Validation and Security
 
@@ -604,15 +619,33 @@ Octodev automatically migrates legacy configurations on load, but it's recommend
    Solution: Set environment variable or update config
    ```
 
-3. **Configuration validation failed**
+3. **Tool execution failures**
+   ```
+   Tool execution failed: Unknown tool 'list_files'
+   Solution: Check MCP server configuration and tool routing
+   ```
+
+4. **Input mode configuration errors**
+   ```
+   Unknown input mode: 'Last'. Valid options: last, all, summary
+   Solution: Use lowercase input modes: 'last', 'all', 'summary'
+   ```
+
+5. **Configuration validation failed**
    ```bash
    octodev config --validate
    ```
 
-4. **Role inheritance issues**
+6. **Role inheritance issues**
    ```
    Error: Custom role configuration invalid
    Solution: Ensure custom roles inherit from assistant base
+   ```
+
+7. **MCP server registry issues**
+   ```
+   Failed to execute tool: No servers available to process tool
+   Solution: Check server_refs and ensure servers are defined in registry
    ```
 
 ### Debug Configuration

@@ -264,13 +264,13 @@ async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
 pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String, (McpFunction, McpServerConfig)>> {
 	let mut functions = HashMap::new();
 
-	// Only proceed if MCP has servers available
-	if !config.mcp.is_enabled() {
+	// Only proceed if MCP has any servers configured
+	if config.mcp.servers.is_empty() {
 		return Ok(functions);
 	}
 
-	// Get available servers from registry
-	let servers = config.mcp.get_all_servers();
+	// Get available servers from merged config (which should already be filtered by server_refs)
+	let servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.values().cloned().collect();
 
 	// Check each server
 	for server in &servers {

@@ -607,11 +607,6 @@ impl RoleMcpConfig {
 }
 
 impl McpConfig {
-	/// Check if MCP is enabled (has any servers available)
-	pub fn is_enabled(&self) -> bool {
-		!self.servers.is_empty()
-	}
-
 	/// Check if this config should be skipped during serialization
 	/// This helps avoid writing empty [mcp] sections when only internal servers exist
 	pub fn is_default_for_serialization(&self) -> bool {
@@ -938,7 +933,11 @@ impl Config {
 		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config);
 		let mut legacy_servers = std::collections::HashMap::new();
 		
+		crate::log_debug!("TRACE: Role '{}' server_refs: {:?}", mode, role_mcp_config.server_refs);
+		crate::log_debug!("TRACE: Found {} enabled servers for role", enabled_servers.len());
+		
 		for server in enabled_servers {
+			crate::log_debug!("TRACE: Adding server '{}' to merged config", server.name);
 			legacy_servers.insert(server.name.clone(), server);
 		}
 		

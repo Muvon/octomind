@@ -109,8 +109,12 @@ impl LayerConfig {
 			let mut legacy_servers = std::collections::HashMap::new();
 
 			for server_name in &self.mcp.server_refs {
-				if let Some(server_config) = base_config.mcp.servers.get(server_name) {
-					let mut server = server_config.clone();
+				// Try to get from loaded registry first, then fallback to core servers
+				let server_config = base_config.mcp.servers.get(server_name)
+					.cloned()
+					.or_else(|| crate::config::Config::get_core_server_config(server_name));
+
+				if let Some(mut server) = server_config {
 					// Auto-set the name from the registry key
 					server.name = server_name.clone();
 					// Auto-detect server type from name

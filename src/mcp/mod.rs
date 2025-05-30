@@ -202,6 +202,12 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	// Get enabled servers
 	let enabled_servers = config.mcp.get_enabled_servers();
 	crate::log_debug!("Found {} enabled MCP servers", enabled_servers.len());
+	
+	// DEBUG: Print all server details
+	for server in &enabled_servers {
+		crate::log_debug!("MCP Server: {} - Type: {:?}, Enabled: {}, Tools: {:?}", 
+			server.name, server.server_type, server.enabled, server.tools);
+	}
 
 	for server in enabled_servers {
 		crate::log_debug!("Processing MCP server: {} (type: {:?}, enabled: {})", server.name, server.server_type, server.enabled);
@@ -219,6 +225,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.collect()
 				};
 				crate::log_debug!("Developer server '{}' provided {} functions", server.name, server_functions.len());
+				for func in &server_functions {
+					crate::log_debug!("  - Developer tool: {}", func.name);
+				}
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::Filesystem => {
@@ -233,6 +242,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.collect()
 				};
 				crate::log_debug!("Filesystem server '{}' provided {} functions", server.name, server_functions.len());
+				for func in &server_functions {
+					crate::log_debug!("  - Filesystem tool: {}", func.name);
+				}
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::External => {
@@ -251,6 +263,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 								.collect()
 						};
 						crate::log_debug!("External server '{}' provided {} functions", server.name, filtered_functions.len());
+						for func in &filtered_functions {
+							crate::log_debug!("  - External tool: {}", func.name);
+						}
 						functions.extend(filtered_functions);
 					}
 					Err(e) => {
@@ -263,6 +278,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	}
 
 	crate::log_debug!("Total functions available: {}", functions.len());
+	for func in &functions {
+		crate::log_debug!("Available function: {}", func.name);
+	}
 	functions
 }
 
@@ -281,6 +299,8 @@ pub async fn execute_tool_call_with_cancellation(
 	
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
+	log_debug!("Debug: MCP enabled: {}", config.mcp.enabled);
+	log_debug!("Debug: MCP servers count: {}", config.mcp.servers.len());
 	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
 		log_debug!("Debug: Tool parameters: {}", params);
 	}
@@ -337,8 +357,11 @@ async fn try_execute_tool_call_with_cancellation(
 
 	// Try to find a server that can handle this tool
 	let mut last_error = anyhow::anyhow!("No servers available to process tool '{}'", call.tool_name);
+	let mut servers_checked = Vec::new();
 
 	for server in enabled_servers {
+		servers_checked.push(format!("{}({:?})", server.name, server.server_type));
+		
 		// Check for cancellation between server attempts
 		if let Some(ref token) = cancellation_token {
 			if token.load(Ordering::SeqCst) {
@@ -348,44 +371,54 @@ async fn try_execute_tool_call_with_cancellation(
 
 		// Check if this server can handle the tool (if tool filtering is enabled)
 		if !server.tools.is_empty() && !server.tools.contains(&call.tool_name) {
+			crate::log_debug!("Server '{}' skipped - tool '{}' not in allowed tools: {:?}", 
+				server.name, call.tool_name, server.tools);
 			continue; // Skip this server if it doesn't handle this tool
 		}
 
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
 				// Handle developer tools
+				crate::log_debug!("Trying developer server for tool: {}", call.tool_name);
 				match call.tool_name.as_str() {
 					"shell" => {
+						crate::log_debug!("Executing shell command via developer server");
 						let mut result = dev::execute_shell_command_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return handle_large_response(result, config);
 					}
 					_ => {
 						// Tool not found in developer server
+						crate::log_debug!("Tool '{}' not found in developer server", call.tool_name);
 						last_error = anyhow::anyhow!("Tool '{}' not found in developer server", call.tool_name);
 					}
 				}
 			}
 			crate::config::McpServerType::Filesystem => {
 				// Handle filesystem tools
+				crate::log_debug!("Trying filesystem server for tool: {}", call.tool_name);
 				match call.tool_name.as_str() {
 					"text_editor" => {
+						crate::log_debug!("Executing text_editor via filesystem server");
 						let mut result = fs::execute_text_editor_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
 					"html2md" => {
+						crate::log_debug!("Executing html2md via filesystem server");
 						let mut result = fs::execute_html2md_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
 					"list_files" => {
+						crate::log_debug!("Executing list_files via filesystem server");
 						let mut result = fs::execute_list_files_with_cancellation(call, cancellation_token.clone()).await?;
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);
 					}
 					_ => {
 						// Tool not found in filesystem server
+						crate::log_debug!("Tool '{}' not found in filesystem server", call.tool_name);
 						last_error = anyhow::anyhow!("Tool '{}' not found in filesystem server", call.tool_name);
 					}
 				}
@@ -407,7 +440,8 @@ async fn try_execute_tool_call_with_cancellation(
 	}
 
 	// If we get here, no server could handle the tool call
-	Err(anyhow::anyhow!("Failed to execute tool '{}': {}", call.tool_name, last_error))
+	Err(anyhow::anyhow!("Failed to execute tool '{}': {} (checked servers: {})", 
+		call.tool_name, last_error, servers_checked.join(", ")))
 }
 
 // Helper function to handle large response warnings

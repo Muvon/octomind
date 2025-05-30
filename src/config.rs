@@ -897,13 +897,39 @@ impl Config {
 		}
 	}
 
-	/// Get resolved MCP config for a role (merges server_refs with registry)
+	/// Get resolved MCP config for a role (merges role config with global registry)
 	pub fn get_resolved_mcp_config(&self, mcp_config: &McpConfig) -> McpConfig {
-		// Always resolve server references from registry
-
-		// Note: In the clean implementation, we expect all configs to use server_refs
-		// No fallback to direct server configurations
-		mcp_config.clone()
+		// If the role-specific MCP config is empty or has no servers, use global registry
+		if mcp_config.servers.is_empty() {
+			// Use global MCP config as fallback
+			self.mcp.clone()
+		} else {
+			// Role has its own server configuration - resolve any missing servers from global registry
+			let mut resolved_config = mcp_config.clone();
+			
+			// For any servers in role config that are missing configuration,
+			// try to fill from global registry
+			for (server_name, server_config) in &mut resolved_config.servers {
+				// If this server config is minimal (just enabled flag), enhance from global
+				if server_config.url.is_none() && server_config.command.is_none() {
+					if let Some(global_server) = self.mcp.servers.get(server_name) {
+						// Copy configuration from global registry
+						server_config.url = global_server.url.clone();
+						server_config.command = global_server.command.clone();
+						server_config.args = global_server.args.clone();
+						server_config.auth_token = global_server.auth_token.clone();
+						server_config.mode = global_server.mode.clone();
+						server_config.timeout_seconds = global_server.timeout_seconds;
+						// Don't override tools filtering - role-specific takes precedence
+						if server_config.tools.is_empty() && !global_server.tools.is_empty() {
+							server_config.tools = global_server.tools.clone();
+						}
+					}
+				}
+			}
+			
+			resolved_config
+		}
 	}
 	/// Get the global log level (system-wide setting)
 	pub fn get_log_level(&self) -> LogLevel {
@@ -926,35 +952,22 @@ impl Config {
 	fn is_mcp_config_empty(&self, mcp_config: &McpConfig) -> bool {
 		// A config is considered "empty" if:
 		// 1. It has no servers configured, AND
-		// 2. It has no allowed_tools configured, AND  
-		// 3. Either it's disabled OR it has enabled=true but no actual server configurations
+		// 2. It has no allowed_tools configured
 		
 		// If allowed_tools are customized, it's not empty
 		if !mcp_config.allowed_tools.is_empty() {
 			return false;
 		}
 
-		// If servers are configured with actual server definitions, it's not empty
-		// Check if any server has meaningful configuration beyond just being enabled
-		for server_config in mcp_config.servers.values() {
-			// If the server has specific tool filtering, URL, command, or other config, it's not empty
-			if !server_config.tools.is_empty() || 
-			   server_config.url.is_some() || 
-			   server_config.command.is_some() ||
-			   server_config.timeout_seconds != 30 { // non-default timeout
-				return false;
-			}
-		}
-
-		// If servers list is empty OR only contains default server stubs, consider it empty
-		// This handles the case where [role.mcp.servers] exists but is empty or contains only defaults
+		// If servers list is empty, consider it empty
 		if mcp_config.servers.is_empty() {
 			return true;
 		}
 
-		// If we get here, the config has servers but they're all using default configurations
-		// This is the key fix: treat minimal server configs as "empty" for inheritance
-		true
+		// FIXED: If servers are present, the config is NOT empty
+		// The servers may have default values, but they were explicitly configured
+		// Don't treat role configs with populated servers as "empty"
+		false
 	}
 
 	/// Get configuration for a specific role with proper fallback logic and role inheritance
@@ -1029,6 +1042,13 @@ impl Config {
 
 		// Resolve MCP configuration using the new registry system
 		merged.mcp = self.get_resolved_mcp_config(&mcp_config);
+		
+		// CRITICAL FIX: Ensure server registry is initialized in merged config
+		// If merged config has empty global servers but needs them, initialize
+		if merged.mcp.enabled && merged.mcp.servers.is_empty() {
+			merged.init_default_server_registry();
+		}
+		
 		merged.layers = layers_config.cloned();
 		merged.commands = commands_config.cloned();
 		merged.system = system_prompt.cloned();
@@ -1327,7 +1347,7 @@ impl Config {
 			Ok(config)
 		} else {
 			// Create default config with system-wide path
-			let config = Config {
+			let mut config = Config {
 				config_path: Some(config_path),
 				providers: ProvidersConfig {
 					openrouter: ProviderConfig {
@@ -1362,6 +1382,9 @@ impl Config {
 				..Default::default()
 			};
 
+			// CRITICAL FIX: Initialize the configuration when no file exists
+			config.initialize_config();
+
 			Ok(config)
 		}
 	}
@@ -1389,7 +1412,11 @@ impl Config {
 		let config_path = crate::directories::get_config_file_path()?;
 
 		if !config_path.exists() {
-			let config = Config::default();
+			let mut config = Config::default();
+			
+			// CRITICAL FIX: Initialize the configuration before saving defaults
+			config.initialize_config();
+			
 			let config_str = toml::to_string(&config)
 				.context("Failed to serialize default configuration to TOML")?;
 

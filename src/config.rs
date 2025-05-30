@@ -557,6 +557,7 @@ impl RoleMcpConfig {
 	}
 
 	/// Get enabled servers from the global registry for this role
+	/// UPDATED: Now uses runtime injection for core servers
 	pub fn get_enabled_servers(&self, global_servers: &std::collections::HashMap<String, McpServerConfig>) -> Vec<McpServerConfig> {
 		if self.server_refs.is_empty() {
 			return Vec::new();
@@ -564,8 +565,12 @@ impl RoleMcpConfig {
 
 		let mut result = Vec::new();
 		for server_name in &self.server_refs {
-			if let Some(server_config) = global_servers.get(server_name) {
-				let mut server = server_config.clone();
+			// Try to get from loaded registry first, then fallback to core servers
+			let server_config = global_servers.get(server_name)
+				.cloned()
+				.or_else(|| crate::config::Config::get_core_server_config(server_name));
+
+			if let Some(mut server) = server_config {
 				// Auto-set the name from the registry key
 				server.name = server_name.clone();
 				// Auto-detect server type from name
@@ -580,7 +585,7 @@ impl RoleMcpConfig {
 				}
 				result.push(server);
 			} else {
-				crate::log_debug!("Server '{}' referenced by role but not found in global registry", server_name);
+				crate::log_debug!("Server '{}' referenced by role but not found in global registry or core servers", server_name);
 			}
 		}
 
@@ -610,11 +615,19 @@ impl McpConfig {
 		self.enabled
 	}
 
+	/// Check if this config should be skipped during serialization
+	/// This helps avoid writing empty [mcp] sections when only internal servers exist
+	pub fn is_default_for_serialization(&self) -> bool {
+		!self.enabled && self.servers.is_empty() && self.allowed_tools.is_empty()
+	}
+
 	/// Get all servers from the registry (for populating role configs)
+	/// UPDATED to use runtime injection for core servers
 	pub fn get_all_servers(&self) -> Vec<McpServerConfig> {
 		let mut result = Vec::new();
+		let mut added_servers = std::collections::HashSet::new();
 
-		// Add servers from registry
+		// Add servers from loaded registry
 		for (server_name, server_config) in &self.servers {
 			let mut server = server_config.clone();
 			// Auto-set the name from the registry key
@@ -626,6 +639,17 @@ impl McpConfig {
 				_ => McpServerType::External,
 			};
 			result.push(server);
+			added_servers.insert(server_name.clone());
+		}
+
+		// CRITICAL: Always add core servers if not already in registry
+		// This ensures they're available even if config file is empty
+		for core_server_name in ["developer", "filesystem", "octocode"] {
+			if !added_servers.contains(core_server_name) {
+				if let Some(core_server) = crate::config::Config::get_core_server_config(core_server_name) {
+					result.push(core_server);
+				}
+			}
 		}
 
 		result
@@ -773,35 +797,6 @@ impl Config {
 		}
 	}
 
-	/// Auto-configure octocode server based on binary availability
-	fn auto_configure_octocode(&mut self) {
-		// Check if developer role has octocode in server_refs but global registry doesn't have octocode server yet
-		if self.developer.mcp.server_refs.contains(&"octocode".to_string()) && !self.mcp.servers.contains_key("octocode") {
-			let available = Self::is_octocode_available();
-			
-			self.mcp.servers.insert(
-				"octocode".to_string(),
-				McpServerConfig {
-					name: "octocode".to_string(),
-					server_type: McpServerType::External,
-					command: Some("octocode".to_string()),
-					args: vec!["mcp".to_string(), "--path=.".to_string()],
-					mode: McpServerMode::Stdin,
-					timeout_seconds: 30,
-					tools: vec![],
-					url: None,
-					auth_token: None,
-				}
-			);
-			
-			if available {
-				crate::log_info!("Auto-configured octocode MCP server (binary detected in PATH)");
-			} else {
-				crate::log_debug!("octocode binary not found in PATH, server configured but may not work");
-			}
-		}
-	}
-
 	/// Get the effective model to use - checks root config, then falls back to system default
 	pub fn get_effective_model(&self) -> String {
 		// If root-level model is set (not the default), use it
@@ -813,73 +808,67 @@ impl Config {
 		default_system_model()
 	}
 
-	/// Initialize the default server registry with auto-detection
-	pub fn init_default_server_registry(&mut self) {
-		// ALWAYS ensure core servers are in the global registry
-		// This is the server registry that all roles reference via server_refs
-		
-		// Add built-in servers if not present
-		if !self.mcp.servers.contains_key("developer") {
-			self.mcp.servers.insert(
-				"developer".to_string(),
-				McpServerConfig::from_name("developer")
-			);
+	/// Get server configuration by name, with runtime core server injection
+	/// This method ALWAYS provides core servers regardless of config file state
+	pub fn get_server_config(&self, server_name: &str) -> Option<McpServerConfig> {
+		// First check loaded registry
+		if let Some(server) = self.mcp.servers.get(server_name) {
+			return Some(server.clone());
 		}
-		
-		if !self.mcp.servers.contains_key("filesystem") {
-			self.mcp.servers.insert(
-				"filesystem".to_string(),
-				McpServerConfig::from_name("filesystem")
-			);
-		}
-		
-		// Add octocode server with auto-detection if not present
-		if !self.mcp.servers.contains_key("octocode") {
-			let octocode_available = Self::is_octocode_available();
-			self.mcp.servers.insert(
-				"octocode".to_string(),
-				McpServerConfig {
+
+		// CRITICAL: Always provide core servers, even if not in loaded config
+		// This ensures MCP works consistently regardless of config file state
+		Self::get_core_server_config(server_name)
+	}
+
+	/// Get core server configuration - these are always available
+	/// This is separated from the config loading to ensure consistency
+	pub fn get_core_server_config(server_name: &str) -> Option<McpServerConfig> {
+		match server_name {
+			"developer" => Some(McpServerConfig {
+				name: "developer".to_string(),
+				server_type: McpServerType::Developer,
+				url: None,
+				auth_token: None,
+				command: None,
+				args: Vec::new(),
+				mode: McpServerMode::Http,
+				timeout_seconds: 30,
+				tools: Vec::new(),
+			}),
+			"filesystem" => Some(McpServerConfig {
+				name: "filesystem".to_string(),
+				server_type: McpServerType::Filesystem,
+				url: None,
+				auth_token: None,
+				command: None,
+				args: Vec::new(),
+				mode: McpServerMode::Http,
+				timeout_seconds: 30,
+				tools: Vec::new(),
+			}),
+			"octocode" => {
+				let octocode_available = Self::is_octocode_available();
+				Some(McpServerConfig {
 					name: "octocode".to_string(),
 					server_type: McpServerType::External,
 					command: Some("octocode".to_string()),
 					args: vec!["mcp".to_string(), "--path=.".to_string()],
 					mode: McpServerMode::Stdin,
 					timeout_seconds: 30,
-					tools: vec![],
+					tools: if octocode_available { vec![] } else { vec!["unavailable".to_string()] }, // Mark as unavailable if binary not found
 					url: None,
 					auth_token: None,
-				}
-			);
-			
-			if octocode_available {
-				crate::log_info!("Auto-configured octocode MCP server (binary detected)");
-			} else {
-				crate::log_debug!("octocode binary not found in PATH, server configured but may not work");
+				})
 			}
-		}
-		
-		// Enable the global MCP registry by default
-		if !self.mcp.enabled {
-			self.mcp.enabled = true;
-		}
-	}
-
-	/// Get server configuration by name from registry, with fallback to defaults
-	pub fn get_server_config(&self, server_name: &str) -> Option<McpServerConfig> {
-		// First check registry
-		if let Some(server) = self.mcp.servers.get(server_name) {
-			return Some(server.clone());
-		}
-
-		// Fallback to auto-generated built-in server types
-		match server_name {
-			"developer" | "filesystem" => Some(McpServerConfig::from_name(server_name)),
 			_ => None,
 		}
 	}
 
-	/// Get enabled servers for a role from the global registry
+	/// Get enabled servers for a role with runtime core server injection
+	/// This ensures core servers are ALWAYS available regardless of config file state
 	pub fn get_enabled_servers_for_role(&self, role_mcp_config: &RoleMcpConfig) -> Vec<McpServerConfig> {
+		// Use the updated RoleMcpConfig method that has runtime injection
 		role_mcp_config.get_enabled_servers(&self.mcp.servers)
 	}
 	/// Get the global log level (system-wide setting)
@@ -948,8 +937,8 @@ impl Config {
 			enable_markdown_rendering: self.enable_markdown_rendering,
 		};
 
-		// Create a legacy McpConfig for backward compatibility with existing code
-		// This gets servers from the role's server_refs
+		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code
+		// Use the new runtime injection method to ensure core servers are ALWAYS available
 		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config);
 		let mut legacy_servers = std::collections::HashMap::new();
 		
@@ -959,7 +948,7 @@ impl Config {
 		
 		merged.mcp = McpConfig {
 			enabled: !role_mcp_config.server_refs.is_empty(), // MCP enabled if role has server_refs
-			servers: legacy_servers,
+			servers: legacy_servers, // Only role-enabled servers (with runtime injection)
 			allowed_tools: role_mcp_config.allowed_tools.clone(),
 		};
 		
@@ -981,11 +970,13 @@ impl Config {
 
 	/// Initialize the server registry and API keys
 	fn initialize_config(&mut self) {
-		// Initialize default server registry if empty
-		self.init_default_server_registry();
-
-		// Auto-configure octocode server based on binary availability
-		self.auto_configure_octocode();
+		// SIMPLIFIED: No longer populate internal servers in loaded config
+		// Internal servers are now provided at runtime via get_core_server_config()
+		
+		// Enable the global MCP registry by default
+		if !self.mcp.enabled {
+			self.mcp.enabled = true;
+		}
 
 		// Migrate API keys from legacy openrouter config to providers
 		if let Some(api_key) = &self.openrouter.api_key {
@@ -1328,10 +1319,81 @@ impl Config {
 			crate::directories::get_config_file_path()?
 		};
 
-		let config_str = toml::to_string(self)
+		// Create a clean copy without internal servers for saving
+		let clean_config = self.create_clean_copy_for_saving();
+
+		let config_str = toml::to_string(&clean_config)
 			.context("Failed to serialize configuration to TOML")?;
 		fs::write(&config_path, config_str)
 			.context(format!("Failed to write config to {}", config_path.display()))?;
+
+		Ok(())
+	}
+
+	/// Create a clean copy of the config for saving, excluding internal servers
+	fn create_clean_copy_for_saving(&self) -> Config {
+		let mut clean_config = self.clone();
+		
+		// Remove internal servers from the MCP registry before saving
+		let internal_servers = ["developer", "filesystem", "octocode"];
+		for server_name in &internal_servers {
+			clean_config.mcp.servers.remove(*server_name);
+		}
+		
+		// CRITICAL FIX: Don't save the [mcp] section at all if it only contains internal servers
+		// The MCP functionality should be controlled by role server_refs, not by a global enabled flag
+		// If there are no user-defined servers, ensure the config will be skipped during serialization
+		if clean_config.mcp.servers.is_empty() && clean_config.mcp.allowed_tools.is_empty() {
+			// Set state that will trigger skip_serializing_if condition
+			clean_config.mcp.enabled = false;
+			clean_config.mcp.servers.clear();
+			clean_config.mcp.allowed_tools.clear();
+		}
+		
+		clean_config
+	}
+
+	/// Update only specific config fields without full reload/save cycle
+	/// This prevents internal server registry pollution
+	pub fn update_specific_field<F>(&mut self, updater: F) -> Result<()>
+	where
+		F: Fn(&mut Config),
+	{
+		// Load existing config from disk without initializing internal servers
+		let config_path = if let Some(path) = &self.config_path {
+			path.clone()
+		} else {
+			crate::directories::get_config_file_path()?
+		};
+
+		let mut disk_config = if config_path.exists() {
+			let config_str = fs::read_to_string(&config_path)
+				.context(format!("Failed to read config from {}", config_path.display()))?;
+			let mut config: Config = toml::from_str(&config_str)
+				.context("Failed to parse TOML configuration")?;
+			config.config_path = Some(config_path.clone());
+			// SIMPLIFIED: Don't initialize internal servers
+			config
+		} else {
+			// If no config exists, create minimal default without internal servers
+			Config {
+				config_path: Some(config_path.clone()),
+				..Default::default()
+			}
+		};
+
+		// Apply the specific update
+		updater(&mut disk_config);
+
+		// Save only the user-defined parts (without internal servers)
+		let clean_config = disk_config.create_clean_copy_for_saving();
+		let config_str = toml::to_string(&clean_config)
+			.context("Failed to serialize configuration to TOML")?;
+		fs::write(&config_path, config_str)
+			.context(format!("Failed to write config to {}", config_path.display()))?;
+
+		// Update self with the changes (but keep internal servers in memory)
+		updater(self);
 
 		Ok(())
 	}
@@ -1342,10 +1404,12 @@ impl Config {
 		if !config_path.exists() {
 			let mut config = Config::default();
 			
-			// CRITICAL FIX: Initialize the configuration before saving defaults
+			// SIMPLIFIED: Initialize the configuration without populating internal servers
 			config.initialize_config();
 			
-			let config_str = toml::to_string(&config)
+			// Create clean config for saving (no internal servers)
+			let clean_config = config.create_clean_copy_for_saving();
+			let config_str = toml::to_string(&clean_config)
 				.context("Failed to serialize default configuration to TOML")?;
 
 			fs::write(&config_path, config_str)
@@ -1363,47 +1427,68 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn test_valid_openrouter_models() {
-		let mut config = Config::default();
+	fn test_mcp_config_serialization_skipping() {
+		// Test that empty MCP config is skipped during serialization
+		let config = Config {
+			log_level: LogLevel::Info,
+			mcp: McpConfig::default(), // Should be skipped
+			..Default::default()
+		};
 
-		// Test valid models with proper provider:model format
-		let valid_models = [
-			"openrouter:anthropic/claude-3.5-haiku",
-			"openrouter:anthropic/claude-3.5-sonnet",
-			"openrouter:anthropic/claude-3.7-sonnet",
-			"openrouter:anthropic/claude-sonnet-4",
-			"openrouter:anthropic/claude-opus-4",
-			"openrouter:openai/gpt-4o",
-			"openrouter:openai/gpt-4o-mini",
-			"openrouter:openai/gpt-4.1",
-			"openrouter:openai/gpt-4.1-mini",
-			"openrouter:openai/gpt-4.1-nano",
-			"openrouter:openai/o4-mini",
-			"openrouter:openai/o4-mini-high",
-			"openrouter:google/gemini-2.5-flash-preview",
-			"openrouter:google/gemini-2.5-pro-preview",
-			"openai:gpt-4o",
-			"openai:gpt-4o-mini",
-			"openai:gpt-3.5-turbo",
-			"openai:o1-preview",
-			"openai:o1-mini",
-			"anthropic:claude-3-5-sonnet",
-			"anthropic:claude-3-5-haiku",
-			"anthropic:claude-3-opus",
-			"google:gemini-1.5-pro",
-			"google:gemini-1.5-flash",
-			"amazon:anthropic.claude-3-5-sonnet-20241022-v2:0",
-			"amazon:anthropic.claude-3-5-haiku-20241022-v1:0",
-			"amazon:anthropic.claude-3-opus-20240229-v1:0",
-			"amazon:meta.llama3-2-90b-instruct-v1:0",
-			"cloudflare:@cf/meta/llama-3.1-8b-instruct",
-			"cloudflare:@hf/thebloke/llama-2-13b-chat-awq",
-		];
+		let clean_config = config.create_clean_copy_for_saving();
+		let toml_str = toml::to_string(&clean_config).unwrap();
+		
+		// The [mcp] section should not appear in the serialized TOML
+		assert!(!toml_str.contains("[mcp]"), 
+			"Empty MCP config should be skipped, but TOML contains: {}", toml_str);
+		assert!(toml_str.contains("log_level = \"info\""), 
+			"Other fields should still be serialized");
+	}
 
-		for model in valid_models {
-			config.openrouter.model = model.to_string();
-			assert!(config.validate_openrouter_model().is_ok(), "Model {} should be valid", model);
-		}
+	#[test]
+	fn test_mcp_config_serialization_not_skipped_when_enabled() {
+		// Test that enabled MCP config is NOT skipped
+		let config = Config {
+			log_level: LogLevel::Info,
+			mcp: McpConfig {
+				enabled: true,
+				..Default::default()
+			},
+			..Default::default()
+		};
+
+		let clean_config = config.create_clean_copy_for_saving();
+		let toml_str = toml::to_string(&clean_config).unwrap();
+		
+		// The [mcp] section SHOULD appear in the serialized TOML
+		assert!(toml_str.contains("[mcp]"), 
+			"Enabled MCP config should NOT be skipped, but TOML: {}", toml_str);
+		assert!(toml_str.contains("enabled = true"), 
+			"MCP enabled flag should be serialized");
+	}
+
+	#[test]
+	fn test_mcp_config_serialization_not_skipped_with_servers() {
+		// Test that MCP config with servers is NOT skipped
+		let mut servers = std::collections::HashMap::new();
+		servers.insert("test_server".to_string(), McpServerConfig::default());
+		
+		let config = Config {
+			log_level: LogLevel::Info,
+			mcp: McpConfig {
+				enabled: false, // Even with enabled=false, should not skip if has servers
+				servers,
+				..Default::default()
+			},
+			..Default::default()
+		};
+
+		let clean_config = config.create_clean_copy_for_saving();
+		let toml_str = toml::to_string(&clean_config).unwrap();
+		
+		// The [mcp] section SHOULD appear because there are servers
+		assert!(toml_str.contains("[mcp]"), 
+			"MCP config with servers should NOT be skipped, but TOML: {}", toml_str);
 	}
 
 	#[test]

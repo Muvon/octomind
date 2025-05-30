@@ -118,46 +118,37 @@ impl ChatSession {
 			},
 			LAYERS_COMMAND => {
 				// Toggle layered processing
-				// First, load the config from disk to ensure we have the latest values
-				let mut loaded_config = match crate::config::Config::load() {
-					Ok(cfg) => cfg,
-					Err(_) => {
-						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
-						config.clone()
-					}
-				};
-
-				// For now, we'll default to developer role since that's where layers are typically used
-				// In the future, this could be passed as a parameter from the session context
+				// Use selective update to only modify the enable_layers setting without polluting config with internal servers
 				let current_role = role; // Use the passed role parameter
 
-				// Toggle the setting for the appropriate role
-				match current_role {
-					"developer" => {
-						loaded_config.developer.config.enable_layers = !loaded_config.developer.config.enable_layers;
-					},
-					"assistant" => {
-						loaded_config.assistant.config.enable_layers = !loaded_config.assistant.config.enable_layers;
-					},
-					_ => {
-						// Fall back to role-based getter for unknown roles (uses assistant as fallback)
-						let current_enabled = loaded_config.get_enable_layers(current_role);
-						// For unknown roles, we'll modify the assistant config as the fallback
-						loaded_config.assistant.config.enable_layers = !current_enabled;
-					}
-				}
+				// Create a mutable config reference for the update
+				let mut temp_config = config.clone();
 
-				// Save the updated config
-				if let Err(e) = loaded_config.save() {
+				// Update the specific field using selective update mechanism
+				if let Err(e) = temp_config.update_specific_field(|cfg| {
+					// Toggle the setting for the appropriate role
+					match current_role {
+						"developer" => {
+							cfg.developer.config.enable_layers = !cfg.developer.config.enable_layers;
+						},
+						"assistant" => {
+							cfg.assistant.config.enable_layers = !cfg.assistant.config.enable_layers;
+						},
+						_ => {
+							// For unknown roles, modify the assistant config as the fallback
+							cfg.assistant.config.enable_layers = !cfg.assistant.config.enable_layers;
+						}
+					}
+				}) {
 					println!("{}: {}", "Failed to save configuration".bright_red(), e);
 					return Ok(false);
 				}
 
-				// Get the current state from the appropriate config section
+				// Get the current state from the updated config
 				let is_enabled = match current_role {
-					"developer" => loaded_config.developer.config.enable_layers,
-					"assistant" => loaded_config.assistant.config.enable_layers,
-					_ => loaded_config.get_enable_layers(current_role), // Use getter for unknown roles
+					"developer" => temp_config.developer.config.enable_layers,
+					"assistant" => temp_config.assistant.config.enable_layers,
+					_ => temp_config.get_enable_layers(current_role), // Use getter for unknown roles
 				};
 
 				// Show the new state
@@ -176,17 +167,9 @@ impl ChatSession {
 			},
 			LOGLEVEL_COMMAND => {
 				// Handle log level command
-				let mut loaded_config = match crate::config::Config::load() {
-					Ok(cfg) => cfg,
-					Err(_) => {
-						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
-						config.clone()
-					}
-				};
-
 				if params.is_empty() {
 					// Show current log level - use system-wide getter
-					let current_level = loaded_config.get_log_level();
+					let current_level = config.get_log_level();
 
 					let level_str = match current_level {
 						LogLevel::None => "none",
@@ -209,11 +192,14 @@ impl ChatSession {
 					}
 				};
 
-				// Update the root configuration (takes precedence)
-				loaded_config.log_level = new_level.clone();
+				// Create a mutable config reference for the update
+				let mut temp_config = config.clone();
 
-				// Save the updated config
-				if let Err(e) = loaded_config.save() {
+				// Update the specific field using selective update mechanism
+				if let Err(e) = temp_config.update_specific_field(|cfg| {
+					// Update the root configuration (takes precedence)
+					cfg.log_level = new_level.clone();
+				}) {
 					println!("{}: {}", "Failed to save configuration".bright_red(), e);
 					return Ok(false);
 				}
@@ -240,30 +226,24 @@ impl ChatSession {
 			},
 			DEBUG_COMMAND => {
 				// Backward compatibility - toggle between none and debug
-				let mut loaded_config = match crate::config::Config::load() {
-					Ok(cfg) => cfg,
-					Err(_) => {
-						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
-						config.clone()
-					}
-				};
+				// Create a mutable config reference for the update
+				let mut temp_config = config.clone();
 
-				// Toggle between none and debug for backward compatibility
-				let current_level = loaded_config.get_log_level();
-
-				loaded_config.log_level = match current_level {
-					LogLevel::Debug => LogLevel::None,
-					_ => LogLevel::Debug,
-				};
-
-				// Save the updated config
-				if let Err(e) = loaded_config.save() {
+				// Update the specific field using selective update mechanism
+				if let Err(e) = temp_config.update_specific_field(|cfg| {
+					// Toggle between none and debug for backward compatibility
+					let current_level = cfg.get_log_level();
+					cfg.log_level = match current_level {
+						LogLevel::Debug => LogLevel::None,
+						_ => LogLevel::Debug,
+					};
+				}) {
 					println!("{}: {}", "Failed to save configuration".bright_red(), e);
 					return Ok(false);
 				}
 
 				// Show the new state
-				if loaded_config.log_level.is_debug_enabled() {
+				if temp_config.log_level.is_debug_enabled() {
 					println!("{}", "Debug mode is now ENABLED.".bright_green());
 					println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
 				} else {
@@ -277,37 +257,37 @@ impl ChatSession {
 			},
 			TRUNCATE_COMMAND => {
 				// Toggle auto-truncation mode
-				// First, load the config from disk to ensure we have the latest values
-				let mut loaded_config = match crate::config::Config::load() {
-					Ok(cfg) => cfg,
-					Err(_) => {
-						println!("{}", "Error loading configuration file. Using current settings instead.".bright_red());
-						config.clone()
+				// Create a mutable config reference for the update
+				let mut temp_config = config.clone();
+
+				// Update the specific field using selective update mechanism
+				if let Err(e) = temp_config.update_specific_field(|cfg| {
+					// Toggle the global setting (not openrouter-specific)
+					cfg.enable_auto_truncation = !cfg.enable_auto_truncation;
+
+					// Update token thresholds if parameters were provided
+					if !params.is_empty() {
+						if let Ok(threshold) = params[0].parse::<usize>() {
+							cfg.max_request_tokens_threshold = threshold;
+						}
 					}
-				};
-
-				// Toggle the global setting (not openrouter-specific)
-				loaded_config.enable_auto_truncation = !loaded_config.enable_auto_truncation;
-
-				// Update token thresholds if parameters were provided
-				if !params.is_empty() {
-					if let Ok(threshold) = params[0].parse::<usize>() {
-						loaded_config.max_request_tokens_threshold = threshold;
-						println!("{}", format!("Max request token threshold set to {} tokens", threshold).bright_green());
-					}
-				}
-
-				// Save the updated config
-				if let Err(e) = loaded_config.save() {
+				}) {
 					println!("{}: {}", "Failed to save configuration".bright_red(), e);
 					return Ok(false);
 				}
 
+				// Display threshold update if provided
+				if !params.is_empty() {
+					if let Ok(threshold) = params[0].parse::<usize>() {
+						println!("{}", format!("Max request token threshold set to {} tokens", threshold).bright_green());
+					}
+				}
+
 				// Show the new state
-				if loaded_config.enable_auto_truncation {
+				if temp_config.enable_auto_truncation {
 					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
 					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.",
-						loaded_config.max_request_tokens_threshold).bright_yellow());
+						temp_config.max_request_tokens_threshold).bright_yellow());
 				} else {
 					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
 					println!("{}", "You'll need to manually reduce context when it gets too large.".bright_blue());

@@ -8,14 +8,14 @@ fn format_duration(milliseconds: u64) -> String {
 	if milliseconds == 0 {
 		return "0ms".to_string();
 	}
-	
+
 	let ms = milliseconds % 1000;
 	let seconds = (milliseconds / 1000) % 60;
 	let minutes = (milliseconds / 60000) % 60;
 	let hours = milliseconds / 3600000;
-	
+
 	let mut parts = Vec::new();
-	
+
 	if hours > 0 {
 		parts.push(format!("{}h", hours));
 	}
@@ -33,7 +33,7 @@ fn format_duration(milliseconds: u64) -> String {
 			parts.push(format!("{}ms", ms));
 		}
 	}
-	
+
 	parts.join(" ")
 }
 
@@ -62,7 +62,7 @@ impl ChatSession {
 		// Time information
 		let total_time_ms = self.session.info.total_api_time_ms + self.session.info.total_tool_time_ms + self.session.info.total_layer_time_ms;
 		if total_time_ms > 0 {
-			println!("{} {} (API: {}, Tools: {}, Processing: {})", 
+			println!("{} {} (API: {}, Tools: {}, Processing: {})",
 				"Total time:".yellow(),
 				format_duration(total_time_ms).bright_white(),
 				format_duration(self.session.info.total_api_time_ms).bright_blue(),
@@ -144,7 +144,7 @@ impl ChatSession {
 					total_input.to_string().bright_white(),
 					total_output.to_string().bright_white());
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
-				
+
 				// Show time information if available
 				let total_time = total_api_time + total_tool_time + total_layer_time;
 				if total_time > 0 {
@@ -203,7 +203,7 @@ impl ChatSession {
 						total_input.to_string().bright_white(),
 						total_output.to_string().bright_white());
 					println!("  {}: ${:.5}", "Cost".blue(), total_cost);
-					
+
 					// Show time information if available
 					let total_time = total_api_time + total_tool_time + total_layer_time;
 					if total_time > 0 {
@@ -214,7 +214,7 @@ impl ChatSession {
 							format_duration(total_tool_time).bright_green(),
 							format_duration(total_layer_time).bright_magenta());
 					}
-					
+
 					println!("  {}", "Note: Command layers don't affect session history".bright_cyan());
 
 					println!();

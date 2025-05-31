@@ -16,16 +16,16 @@ graph TB
     B --> C[Role Configuration]
     B --> D[MCP Tools]
     B --> E[AI Provider]
-    
+
     C --> F[Developer Role<br/>Full Tools]
     C --> G[Assistant Role<br/>No Tools]
     C --> H[Custom Role<br/>Configurable]
-    
+
     D --> I[File Operations]
     D --> J[Code Analysis]
     D --> K[Shell Commands]
     D --> L[External Tools]
-    
+
     E --> M[Multiple AI Providers<br/>OpenRouter, OpenAI, Anthropic, etc.]
 ```
 
@@ -128,33 +128,33 @@ Organize your development conversations:
 ### Quick Setup
 
 1. **Install Octodev**
-   ```bash
-   # Quick install script
-   curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh | bash
-   
-   # Or build from source
-   git clone https://github.com/muvon/octodev.git
-   cd octodev
-   cargo build --release
-   ```
+  ```bash
+  # Quick install script
+  curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh | bash
+
+  # Or build from source
+  git clone https://github.com/muvon/octodev.git
+  cd octodev
+  cargo build --release
+  ```
 
 2. **Configure AI Provider**
-   ```bash
-   # Set your API key (choose one)
-   export OPENROUTER_API_KEY="your_key"
-   export OPENAI_API_KEY="your_key"
-   export ANTHROPIC_API_KEY="your_key"
-   
-   # Create configuration
-   octodev config
-   ```
+  ```bash
+  # Set your API key (choose one)
+  export OPENROUTER_API_KEY="your_key"
+  export OPENAI_API_KEY="your_key"
+  export ANTHROPIC_API_KEY="your_key"
+
+  # Create configuration
+  octodev config
+  ```
 
 3. **Start Your First Session**
-   ```bash
-   # Start in your project directory
-   cd your_project
-   octodev session
-   ```
+  ```bash
+  # Start in your project directory
+  cd your_project
+  octodev session
+  ```
 
 ### What's Different
 

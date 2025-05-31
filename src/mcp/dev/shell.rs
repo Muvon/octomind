@@ -12,7 +12,7 @@ fn add_to_shell_history(command: &str) -> Result<()> {
 	// Get the shell and history file path
 	let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 	let home = std::env::var("HOME")?;
-	
+
 	// Try to get HISTFILE environment variable first, fallback to default locations
 	let history_file = if let Ok(histfile) = std::env::var("HISTFILE") {
 		histfile
@@ -111,7 +111,7 @@ pub async fn execute_shell_command_with_cancellation(
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
-	
+
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
@@ -128,7 +128,7 @@ pub async fn execute_shell_command_with_cancellation(
 	// Execute the command with cancellation monitoring
 	let cancel_token = cancellation_token.clone();
 	let command_clone = command.clone();
-	
+
 	let output = tokio::task::spawn_blocking(move || {
 		// Check for cancellation at the start of the blocking task
 		if let Some(ref token) = cancel_token {

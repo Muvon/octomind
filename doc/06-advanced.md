@@ -16,7 +16,7 @@ MCP enables AI models to use external tools and services through a standardized 
 - **shell**: Execute terminal commands and development scripts
 - **Code analysis**: Built-in code understanding and project analysis
 
-#### Filesystem Tools (server_type: "filesystem")  
+#### Filesystem Tools (server_type: "filesystem")
 - **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many)
 - **list_files**: Browse directory structures with pattern matching and content search
 - **html2md**: Convert HTML content to Markdown format
@@ -130,10 +130,10 @@ For complex development tasks, Octodev uses a multi-stage AI processing system t
 ```mermaid
 graph TB
     A[User Input] --> B[Query Processor]
-    B --> C[Context Generator] 
+    B --> C[Context Generator]
     C --> D[Developer]
     D --> E[Final Response]
-    
+
     F[Manual /done] --> G[Reducer]
     G --> H[Optimized Context]
 ```
@@ -285,7 +285,7 @@ url = "https://mcp.so/server/web-dev-tools"
 ```bash
 # Start named sessions for different purposes
 octodev session --name "feature-auth"
-octodev session --name "bugfix-login" 
+octodev session --name "bugfix-login"
 octodev session --name "refactor-api"
 
 # Resume specific sessions

@@ -39,7 +39,7 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		Event::KeySeq(vec![KeyEvent::new('e', Modifiers::CTRL)]),
 		EventHandler::Simple(Cmd::CompleteHint)
 	);
-	
+
 	// Right arrow to accept hint when at end of line
 	// Using escape sequence for right arrow key: \x1b[C
 	editor.bind_sequence(
@@ -97,12 +97,12 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		Err(ReadlineError::Eof) => {
 			// Ctrl+D - Show session file path before exiting
 			println!("\nExiting session...");
-			
+
 			// Show session file path if available
 			if let Ok(sessions_dir) = crate::session::get_sessions_dir() {
 				println!("Session files saved in: {}", sessions_dir.display());
 			}
-			
+
 			log_info!("Session preserved for future reference.");
 			Ok("/exit".to_string())
 		},

@@ -6,7 +6,7 @@ use std::path::Path;
 // Function to get a system prompt for a specific layer by string type name
 pub fn get_layer_system_prompt_for_type(layer_type: &str) -> String {
 	// Get the raw system prompt without any substitutions
-	
+
 
 	// For now, we'll return the raw prompt. The placeholder substitution will be done
 	// by process_placeholders when the prompt is actually used

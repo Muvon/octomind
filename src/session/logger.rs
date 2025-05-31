@@ -23,12 +23,12 @@ pub fn log_session_summary(session_name: &str, session_info: &crate::session::Se
 		"timestamp": get_timestamp(),
 		"session_info": session_info
 	});
-	
+
 	// Only write summary if file doesn't exist or is empty
 	if !log_file.exists() || std::fs::metadata(&log_file)?.len() == 0 {
 		append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
 	}
-	
+
 	Ok(())
 }
 
@@ -160,7 +160,7 @@ pub fn log_error(session_name: &str, error: &str) -> Result<()> {
 /// Update session summary (overwrite first line)
 pub fn update_session_summary(session_name: &str, session_info: &crate::session::SessionInfo) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
-	
+
 	if !log_file.exists() {
 		return log_session_summary(session_name, session_info);
 	}
@@ -168,11 +168,11 @@ pub fn update_session_summary(session_name: &str, session_info: &crate::session:
 	// Read all lines except the first one
 	let content = std::fs::read_to_string(&log_file)?;
 	let lines: Vec<&str> = content.lines().collect();
-	
+
 	// Write new summary + all existing lines except first
 	let summary_json = serde_json::to_string(session_info)?;
 	let mut new_content = format!("SUMMARY: {}\n", summary_json);
-	
+
 	// Add all lines except the first (old summary)
 	for (i, line) in lines.iter().enumerate() {
 		if i > 0 { // Skip first line (old summary)
@@ -180,7 +180,7 @@ pub fn update_session_summary(session_name: &str, session_info: &crate::session:
 			new_content.push('\n');
 		}
 	}
-	
+
 	std::fs::write(&log_file, new_content)?;
 	Ok(())
 }
@@ -200,7 +200,7 @@ fn append_to_log(log_file: &PathBuf, content: &str) -> Result<()> {
 		.append(true)
 		.open(log_file)?;
 
-	// Ensure content is on a single line - replace any newlines with spaces  
+	// Ensure content is on a single line - replace any newlines with spaces
 	let single_line_content = content.replace(['\n', '\r'], " ");
 	writeln!(file, "{}", single_line_content)?;
 	Ok(())
@@ -215,7 +215,7 @@ pub fn log_user_request(content: &str) -> Result<()> {
 pub fn log_raw_exchange(exchange: &crate::session::ProviderExchange) -> Result<()> {
 	// Extract session name if available, otherwise use "default"
 	let session_name = "default"; // TODO: Extract from context
-	
+
 	// Log both request and response separately for easier debugging
 	log_api_request(session_name, &exchange.request)?;
 	log_api_response(session_name, &exchange.response)?;

@@ -1,6 +1,6 @@
 pub mod layer_trait;
 pub mod generic_layer;  // New generic layer implementation
-pub mod processor;      // Keep for backward compatibility 
+pub mod processor;      // Keep for backward compatibility
 pub mod types;          // Keep existing types for backward compatibility
 pub mod orchestrator;
 

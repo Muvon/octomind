@@ -333,10 +333,10 @@ Google Vertex AI requires service account authentication:
 1. **Create a Service Account** in Google Cloud Console
 2. **Download the JSON key file**
 3. **Set environment variables**:
-   ```bash
-   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account.json"
-   export GOOGLE_PROJECT_ID="your-project-id"
-   ```
+  ```bash
+  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account.json"
+  export GOOGLE_PROJECT_ID="your-project-id"
+  ```
 4. **Enable the Vertex AI API** in your Google Cloud project
 
 Note: The Google provider currently requires additional OAuth2 implementation for full functionality.
@@ -348,11 +348,11 @@ Amazon Bedrock requires AWS credentials:
 1. **Create AWS IAM user** with Bedrock access permissions
 2. **Generate access keys** for the IAM user
 3. **Set environment variables**:
-   ```bash
-   export AWS_ACCESS_KEY_ID="your_access_key"
-   export AWS_SECRET_ACCESS_KEY="your_secret_key"
-   export AWS_REGION="us-east-1"
-   ```
+  ```bash
+  export AWS_ACCESS_KEY_ID="your_access_key"
+  export AWS_SECRET_ACCESS_KEY="your_secret_key"
+  export AWS_REGION="us-east-1"
+  ```
 4. **Enable model access** in the Bedrock console for the models you want to use
 
 #### Cloudflare Workers AI Setup
@@ -362,10 +362,10 @@ Cloudflare Workers AI requires API credentials:
 1. **Get your Account ID** from the Cloudflare dashboard
 2. **Create an API token** with Workers AI permissions
 3. **Set environment variables**:
-   ```bash
-   export CLOUDFLARE_ACCOUNT_ID="your_account_id"
-   export CLOUDFLARE_API_TOKEN="your_api_token"
-   ```
+  ```bash
+  export CLOUDFLARE_ACCOUNT_ID="your_account_id"
+  export CLOUDFLARE_API_TOKEN="your_api_token"
+  ```
 
 ## Usage
 
@@ -578,21 +578,21 @@ graph TB
     B --> C[Role Configuration]
     B --> D[MCP Tools]
     B --> E[AI Providers]
-    
+
     C --> F[Developer Role]
-    C --> G[Assistant Role]  
+    C --> G[Assistant Role]
     C --> H[Custom Roles]
-    
+
     D --> I[File Operations]
     D --> J[Code Analysis]
     D --> K[Shell Commands]
     D --> L[External Tools]
-    
+
     E --> M[OpenRouter]
     E --> N[OpenAI]
     E --> O[Anthropic]
     E --> P[Google/Amazon/Cloudflare]
-    
+
     B --> Q[Layered Architecture]
     Q --> R[Query Processor]
     Q --> S[Context Generator]
@@ -605,7 +605,7 @@ graph TB
 Instead of separate command-line tools, everything happens within interactive AI sessions:
 
 1. **Project Analysis**: Sessions automatically analyze your project structure
-2. **Code Understanding**: Built-in tools provide code analysis and search capabilities  
+2. **Code Understanding**: Built-in tools provide code analysis and search capabilities
 3. **Development Tasks**: File operations, debugging, and code modifications
 4. **Context Management**: Automatic context optimization and token management
 
@@ -634,7 +634,7 @@ This architecture ensures optimal token usage and specialized expertise at each 
 Octodev uses a configuration file stored in `.octodev/config.toml` in your project directory. Configuration supports:
 
 - **Role-based settings**: Different configurations for developer, assistant, and custom roles
-- **Provider configuration**: API keys and settings for AI providers  
+- **Provider configuration**: API keys and settings for AI providers
 - **MCP server registry**: Centralized tool server definitions
 - **Token management**: Cost tracking and optimization settings
 
@@ -644,7 +644,7 @@ Octodev uses a configuration file stored in `.octodev/config.toml` in your proje
 # Create default configuration
 octodev config
 
-# Set embedding provider  
+# Set embedding provider
 octodev config --provider fastembed
 
 # Validate current configuration
@@ -663,7 +663,7 @@ api_key = "your_key"  # Or set OPENROUTER_API_KEY
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 
-# Assistant role configuration  
+# Assistant role configuration
 [assistant]
 model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
@@ -678,7 +678,7 @@ name = "developer"
 server_type = "developer"
 
 [mcp_server_registry.filesystem]
-enabled = true  
+enabled = true
 name = "filesystem"
 server_type = "filesystem"
 ```
@@ -910,7 +910,7 @@ log_level = "debug"
 ```
 .octodev/
 ├── config.toml          # Configuration file
-├── sessions/            # Session history  
+├── sessions/            # Session history
 └── logs/               # Debug logs
 ```
 
@@ -923,7 +923,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 Octodev's simplified architecture makes it easy to contribute:
 
 - **Session Management**: Core session handling in `src/session/`
-- **MCP Tools**: Development tools in `src/mcp/` 
+- **MCP Tools**: Development tools in `src/mcp/`
 - **AI Providers**: Provider implementations in `src/session/providers/`
 - **Configuration**: Configuration system in `src/config.rs`
 

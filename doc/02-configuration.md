@@ -538,7 +538,7 @@ Command layers now feature robust input processing:
 Command tools now use smart routing:
 
 - **Server mapping**: Tools are automatically routed to the correct server type
-- **Error prevention**: Tools no longer sent to incompatible servers  
+- **Error prevention**: Tools no longer sent to incompatible servers
 - **Clear diagnostics**: Better error messages when tool execution fails
 - **Registry integration**: Uses the centralized MCP server registry
 
@@ -608,45 +608,45 @@ Octodev automatically migrates legacy configurations on load, but it's recommend
 ### Common Issues
 
 1. **Invalid model format**
-   ```
-   Error: Invalid model format 'anthropic/claude-3.5-sonnet'
-   Solution: Use 'openrouter:anthropic/claude-3.5-sonnet'
-   ```
+  ```
+  Error: Invalid model format 'anthropic/claude-3.5-sonnet'
+  Solution: Use 'openrouter:anthropic/claude-3.5-sonnet'
+  ```
 
 2. **Missing API keys**
-   ```
-   Warning: API key not found
-   Solution: Set environment variable or update config
-   ```
+  ```
+  Warning: API key not found
+  Solution: Set environment variable or update config
+  ```
 
 3. **Tool execution failures**
-   ```
-   Tool execution failed: Unknown tool 'list_files'
-   Solution: Check MCP server configuration and tool routing
-   ```
+  ```
+  Tool execution failed: Unknown tool 'list_files'
+  Solution: Check MCP server configuration and tool routing
+  ```
 
 4. **Input mode configuration errors**
-   ```
-   Unknown input mode: 'Last'. Valid options: last, all, summary
-   Solution: Use lowercase input modes: 'last', 'all', 'summary'
-   ```
+  ```
+  Unknown input mode: 'Last'. Valid options: last, all, summary
+  Solution: Use lowercase input modes: 'last', 'all', 'summary'
+  ```
 
 5. **Configuration validation failed**
-   ```bash
-   octodev config --validate
-   ```
+  ```bash
+  octodev config --validate
+  ```
 
 6. **Role inheritance issues**
-   ```
-   Error: Custom role configuration invalid
-   Solution: Ensure custom roles inherit from assistant base
-   ```
+  ```
+  Error: Custom role configuration invalid
+  Solution: Ensure custom roles inherit from assistant base
+  ```
 
 7. **MCP server registry issues**
-   ```
-   Failed to execute tool: No servers available to process tool
-   Solution: Check server_refs and ensure servers are defined in registry
-   ```
+  ```
+  Failed to execute tool: No servers available to process tool
+  Solution: Check server_refs and ensure servers are defined in registry
+  ```
 
 ### Debug Configuration
 

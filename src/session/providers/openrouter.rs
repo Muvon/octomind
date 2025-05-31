@@ -34,9 +34,9 @@ fn intern_model_name(model: &str) -> &'static str {
 pub struct OpenRouterProvider;
 
 impl Default for OpenRouterProvider {
-    fn default() -> Self {
-        Self::new()
-    }
+		fn default() -> Self {
+				Self::new()
+		}
 }
 
 impl OpenRouterProvider {

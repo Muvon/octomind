@@ -19,14 +19,14 @@ fn format_duration(milliseconds: u64) -> String {
 	if milliseconds == 0 {
 		return "0ms".to_string();
 	}
-	
+
 	let ms = milliseconds % 1000;
 	let seconds = (milliseconds / 1000) % 60;
 	let minutes = (milliseconds / 60000) % 60;
 	let hours = milliseconds / 3600000;
-	
+
 	let mut parts = Vec::new();
-	
+
 	if hours > 0 {
 		parts.push(format!("{}h", hours));
 	}
@@ -44,7 +44,7 @@ fn format_duration(milliseconds: u64) -> String {
 			parts.push(format!("{}ms", ms));
 		}
 	}
-	
+
 	parts.join(" ")
 }
 
@@ -403,16 +403,16 @@ pub async fn process_response(
 					if operation_cancelled.load(Ordering::SeqCst) {
 						use colored::*;
 						println!("{}", format!("🛑 Cancelling tool execution: {}", tool_name).bright_yellow());
-						
+
 						// Give the tool a brief moment to finish gracefully (500ms)
 						let grace_start = std::time::Instant::now();
 						let grace_period = std::time::Duration::from_millis(500);
-						
+
 						loop {
 							// Check if tool finished during grace period
 							if task.is_finished() {
 								println!("{}", format!("✓ Tool '{}' completed during grace period", tool_name).bright_green());
-								
+
 								// Process the completed result
 								match task.await {
 									Ok(result) => match result {
@@ -430,18 +430,18 @@ pub async fn process_response(
 								}
 								break;
 							}
-							
+
 							// Check if grace period expired
 							if grace_start.elapsed() >= grace_period {
 								println!("{}", format!("🗑️ Force cancelling tool '{}' - grace period expired", tool_name).bright_red());
 								task.abort(); // Force abort the task
 								break;
 							}
-							
+
 							// Short sleep to avoid busy waiting
 							tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 						}
-						
+
 						// Skip to next tool or finish cancellation
 						continue;
 					}
@@ -787,11 +787,11 @@ pub async fn process_response(
 					let mut truncation_time = 0u128;
 
 					// PERFORMANCE OPTIMIZATION: Batch process tool results with smart truncation
-					// Instead of checking truncation after EVERY tool result (expensive), 
+					// Instead of checking truncation after EVERY tool result (expensive),
 					// we batch process and only truncate when necessary or at the end
 					let mut accumulated_content_size = 0;
 					let mut needs_truncation_check = false;
-					
+
 					for tool_result in &tool_results {
 						// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
 						let tool_content = if let Some(output) = tool_result.result.get("output") {
@@ -820,11 +820,11 @@ pub async fn process_response(
 						accumulated_content_size += content_size;
 						let is_large_output = content_size > 10000; // 10KB+ outputs
 						let accumulated_is_large = accumulated_content_size > 50000; // 50KB+ total
-						
+
 						if is_large_output || accumulated_is_large {
 							needs_truncation_check = true;
 						}
-						
+
 						// Use the new add_tool_message method which handles token tracking properly
 						chat_session.add_tool_message(&tool_content, &tool_result.tool_id, &tool_result.tool_name, config)?;
 
@@ -842,7 +842,7 @@ pub async fn process_response(
 							log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
 						}
 						cache_check_time += cache_start.elapsed().as_millis();
-						
+
 						// Check truncation only for large individual tool outputs (file contents, search results, etc.)
 						if is_large_output {
 							let tool_truncate_cancelled = Arc::new(AtomicBool::new(false));
@@ -856,13 +856,13 @@ pub async fn process_response(
 								log_info!("Warning: Error during tool result truncation check: {}", e);
 							}
 							truncation_time += truncation_start.elapsed().as_millis();
-							
+
 							// Reset flags after truncation
 							needs_truncation_check = false;
 							accumulated_content_size = 0;
 						}
 					}
-					
+
 					// BATCH TRUNCATION: Check once after all small tool results are processed
 					if needs_truncation_check {
 						let batch_truncate_cancelled = Arc::new(AtomicBool::new(false));
@@ -898,12 +898,12 @@ pub async fn process_response(
 
 					// 🔍 PERFORMANCE DEBUG: Report processing breakdown and track processing time
 					let total_processing_time = processing_start.elapsed().as_millis() as u64;
-					
+
 					// Add the processing time to the session total
 					chat_session.session.info.total_layer_time_ms += total_processing_time;
-					
+
 					if config.get_log_level().is_debug_enabled() && total_processing_time > 100 {
-						log_debug!("🔍 Tool result processing took {}ms (cache: {}ms, truncation: {}ms)", 
+						log_debug!("🔍 Tool result processing took {}ms (cache: {}ms, truncation: {}ms)",
 							total_processing_time, cache_check_time, truncation_time);
 					}
 

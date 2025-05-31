@@ -43,7 +43,7 @@ api_key = "your_key"  # Optional, can use env var
 octodev session --model "openrouter:anthropic/claude-3.5-sonnet"
 octodev session --model "openrouter:anthropic/claude-sonnet-4"
 
-# OpenAI models via OpenRouter  
+# OpenAI models via OpenRouter
 octodev session --model "openrouter:openai/gpt-4o"
 octodev session --model "openrouter:openai/o1-preview"
 

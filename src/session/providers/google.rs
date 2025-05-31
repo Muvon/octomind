@@ -39,9 +39,9 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct GoogleVertexProvider;
 
 impl Default for GoogleVertexProvider {
-    fn default() -> Self {
-        Self::new()
-    }
+		fn default() -> Self {
+				Self::new()
+		}
 }
 
 impl GoogleVertexProvider {

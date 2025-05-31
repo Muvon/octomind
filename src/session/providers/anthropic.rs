@@ -39,9 +39,9 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct AnthropicProvider;
 
 impl Default for AnthropicProvider {
-    fn default() -> Self {
-        Self::new()
-    }
+		fn default() -> Self {
+				Self::new()
+		}
 }
 
 impl AnthropicProvider {
@@ -267,7 +267,7 @@ impl AiProvider for AnthropicProvider {
 fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<AnthropicMessage> {
 	// Create a mutable copy for cache processing
 	let mut messages_copy: Vec<Message> = messages.to_vec();
-	
+
 	// Apply automatic cache markers for system messages and tools
 	let cache_manager = crate::session::cache::CacheManager::new();
 	let has_tools = !config.mcp.servers.is_empty(); // Check if MCP has any servers configured

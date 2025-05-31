@@ -363,4 +363,3 @@ pub async fn line_replace(call: &McpToolCall, path: &Path, view_range: (usize, u
 		}),
 	})
 }
-

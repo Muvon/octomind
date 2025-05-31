@@ -73,7 +73,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			eprintln!("Error: Model must be in provider:model format (e.g., openrouter:anthropic/claude-3.5-sonnet)");
 			return Ok(());
 		}
-		
+
 		config.model = model.clone();
 		println!("Set root-level model to {}", model);
 		modified = true;
@@ -325,12 +325,12 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	println!("Role configurations:");
 	println!("  Developer model: {}", config.developer.config.model);
 	println!("  Assistant model: {}", config.assistant.config.model);
-	
+
 	// Show MCP status using the new structure
 	// MCP is enabled per-role based on server_refs, not a global flag
 	let dev_mcp_enabled = !config.developer.mcp.server_refs.is_empty();
 	let ass_mcp_enabled = !config.assistant.mcp.server_refs.is_empty();
-	
+
 	println!("MCP status:");
 	println!("  Developer role: {}", if dev_mcp_enabled { "enabled" } else { "disabled" });
 	println!("  Assistant role: {}", if ass_mcp_enabled { "enabled" } else { "disabled" });
@@ -361,7 +361,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 								Ok(output) => output.status.success(),
 								Err(_) => false,
 							};
-							
+
 							if available {
 								println!("  - {} (codebase analysis) - available ✓", name);
 							} else {
@@ -410,7 +410,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Root-level configuration
 	println!("🌍 System-wide Settings");
-	println!("  Model (root):              {}", 
+	println!("  Model (root):              {}",
 		if config.model.is_empty() || config.model == "openrouter:anthropic/claude-3.5-haiku" {
 			format!("{} (default)", config.get_effective_model())
 		} else {
@@ -439,7 +439,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Role configurations
 	println!("👤 Role Configurations");
-	
+
 	// Developer role
 	println!("  Developer Role:");
 	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) = config.get_mode_config("developer");
@@ -465,7 +465,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// MCP Configuration
 	println!("🔧 MCP (Model Context Protocol) Configuration");
-	
+
 	// Global MCP
 	println!("  Global MCP:");
 	println!("    Registry:        {} servers configured", config.mcp.servers.len());
@@ -475,25 +475,25 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Developer role MCP
 	println!("  Developer Role MCP:");
-	println!("    Server refs:     {}", if dev_mcp.server_refs.is_empty() { 
-		"None (MCP disabled)".to_string() 
-	} else { 
-		dev_mcp.server_refs.join(", ") 
+	println!("    Server refs:     {}", if dev_mcp.server_refs.is_empty() {
+		"None (MCP disabled)".to_string()
+	} else {
+		dev_mcp.server_refs.join(", ")
 	});
 
 	// Assistant role MCP
 	println!("  Assistant Role MCP:");
-	println!("    Server refs:     {}", if ass_mcp.server_refs.is_empty() { 
-		"None (MCP disabled)".to_string() 
-	} else { 
-		ass_mcp.server_refs.join(", ") 
+	println!("    Server refs:     {}", if ass_mcp.server_refs.is_empty() {
+		"None (MCP disabled)".to_string()
+	} else {
+		ass_mcp.server_refs.join(", ")
 	});
 	println!();
 
 	// Layer configurations
 	if dev_config.enable_layers || ass_config.enable_layers {
 		println!("📚 Layer Configurations");
-		
+
 		if let Some(layers) = dev_layers {
 			println!("  Developer Role Layers: {} configured", layers.len());
 			for layer in layers {
@@ -539,7 +539,7 @@ fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>
 	println!("    Servers:");
 	for (name, server) in servers {
 		// Note: Individual servers no longer have enabled flag - determined by role server_refs
-		
+
 		// Auto-detect server type for display
 		let effective_type = match name.as_str() {
 			"developer" => McpServerType::Developer,
@@ -562,7 +562,7 @@ fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>
 						Ok(output) => output.status.success(),
 						Err(_) => false,
 					};
-					
+
 					if available {
 						println!("      🔍 {} (codebase analysis) ✓", name);
 					} else {

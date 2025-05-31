@@ -9,7 +9,7 @@ Welcome to the comprehensive Octodev documentation. This manual provides detaile
 - **[02-configuration.md](./02-configuration.md)** - Configuration system and settings
 - **[03-providers.md](./03-providers.md)** - AI provider setup and management
 
-### 🔧 Core Features  
+### 🔧 Core Features
 - **[05-sessions.md](./05-sessions.md)** - Interactive sessions and modes
 - **[command_layers.md](./command_layers.md)** - Specialized AI helpers and command processing
 
@@ -167,16 +167,16 @@ graph TB
     B --> C[Role Configuration]
     B --> D[MCP Tools]
     B --> E[AI Providers]
-    
+
     C --> F[Developer Role]
     C --> G[Assistant Role]
     C --> H[Custom Roles]
-    
+
     D --> I[File Operations]
     D --> J[Code Analysis]
     D --> K[Shell Commands]
     D --> L[External Tools]
-    
+
     E --> M[OpenRouter]
     E --> N[OpenAI]
     E --> O[Anthropic]
@@ -230,8 +230,8 @@ This manual is generated from the codebase analysis. Updates should be made to b
 
 ---
 
-**Version**: Latest  
-**Last Updated**: January 2025  
-**Project**: [Octodev](https://github.com/muvon/octodev)  
+**Version**: Latest
+**Last Updated**: January 2025
+**Project**: [Octodev](https://github.com/muvon/octodev)
 
 **Current Architecture**: Session-first approach with integrated MCP tools for streamlined development workflow.

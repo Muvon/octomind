@@ -11,7 +11,7 @@ fn add_to_shell_history(command: &str) -> Result<()> {
 	// Get the shell and history file path
 	let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 	let home = std::env::var("HOME")?;
-	
+
 	// Try to get HISTFILE environment variable first, fallback to default locations
 	let history_file = if let Ok(histfile) = std::env::var("HISTFILE") {
 		histfile
@@ -192,7 +192,7 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	// Display the command and explanation
 	println!("📝 Command: {}", shell_response.command);
 	println!("💡 Explanation: {}", shell_response.explanation);
-	
+
 	if let Some(safety_notes) = &shell_response.safety_notes {
 		use colored::*;
 		println!("⚠️  Safety notes: {}", safety_notes.yellow());
@@ -202,11 +202,11 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	if !args.yes {
 		print!("\n❓ Execute this command? [y/N]: ");
 		io::Write::flush(&mut io::stdout())?;
-		
+
 		let mut input = String::new();
 		io::stdin().read_line(&mut input)?;
 		let input = input.trim().to_lowercase();
-		
+
 		if input != "y" && input != "yes" {
 			println!("❌ Command execution cancelled.");
 			return Ok(());
@@ -215,10 +215,10 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 
 	// Execute the command by passing control to the shell
 	println!("\n🚀 Executing: {}", shell_response.command);
-	
+
 	// Add command to shell history before execution
 	let _ = add_to_shell_history(&shell_response.command);
-	
+
 	let status = std::process::Command::new("sh")
 		.arg("-c")
 		.arg(&shell_response.command)
@@ -227,7 +227,7 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	// Show exit status only if command failed
 	if !status.success() {
 		use colored::Colorize;
-		println!("❌ Command failed with exit code: {}", 
+		println!("❌ Command failed with exit code: {}",
 			status.code().unwrap_or(-1).to_string().red());
 		std::process::exit(status.code().unwrap_or(1));
 	}

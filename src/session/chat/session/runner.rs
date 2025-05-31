@@ -109,7 +109,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Check if external MCP server is configured
 		let mode_config = config.get_mode_config(&session_args.role);
 		let mcp_config = &mode_config.1;
-		
+
 		if mcp_config.server_refs.is_empty() {
 			use colored::*;
 			println!("{}", "💡 Tip: For code development, consider starting an external MCP server:".bright_yellow());
@@ -122,7 +122,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		} else {
 			// Check if octocode is enabled in the server_refs
 			let octocode_enabled = mcp_config.server_refs.contains(&"octocode".to_string());
-			
+
 			if octocode_enabled {
 				use colored::*;
 				println!("{}", "🔗 octocode MCP server is enabled for enhanced codebase analysis".bright_green());
@@ -162,7 +162,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let mut first_message_processed = !chat_session.session.messages.is_empty();
 	println!("Interactive coding session started. Type your questions/requests.");
 	println!("Type /help for available commands.");
-	
+
 	// Show history usage info for new sessions
 	if chat_session.session.messages.is_empty() {
 		use colored::*;
@@ -253,7 +253,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Get current processing state to provide appropriate feedback
 		let state = processing_state_clone.lock().unwrap().clone();
-		
+
 		// Provide immediate feedback based on current state
 		match state {
 			ProcessingState::Idle | ProcessingState::ReadingInput => {
@@ -285,7 +285,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				println!(" | 📝 All work preserved | ✨ Ready for new input");
 			},
 		}
-		
+
 		println!("🔄 Press Ctrl+C again to force exit");
 		std::io::stdout().flush().unwrap();
 	}).expect("Error setting Ctrl+C handler");
@@ -300,7 +300,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	loop {
 		// Set processing state to idle
 		*processing_state.lock().unwrap() = ProcessingState::Idle;
-		
+
 		// Handle cancellation at the start of each loop iteration
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
 			// Clean up incomplete work based on state
@@ -456,7 +456,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if current_config.get_enable_layers(&session_args.role) && !first_message_processed && session_args.role == "developer" {
 			// Set processing state to layers
 			*processing_state.lock().unwrap() = ProcessingState::ProcessingLayers;
-			
+
 			// This is the first message with layered architecture enabled
 			// We will process it through layers to get improved input for the main model
 
@@ -482,7 +482,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					if ctrl_c_pressed.load(Ordering::SeqCst) {
 						continue;
 					}
-					
+
 					// Use the processed input from layers instead of the original input
 					// This processed input already includes any function call responses
 					input = processed_input;
@@ -497,7 +497,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					if ctrl_c_pressed.load(Ordering::SeqCst) {
 						continue;
 					}
-					
+
 					// Print colorful error message and continue with original input
 					use colored::*;
 					println!("\n{}: {}", "Error processing through layers".bright_red(), e);
@@ -610,7 +610,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				} else {
 					*processing_state.lock().unwrap() = ProcessingState::ProcessingResponse;
 				}
-				
+
 				// Process the response, handling tool calls recursively
 				// Create a fresh cancellation flag to avoid any "Operation cancelled" messages when not requested
 				let tool_process_cancelled = Arc::new(AtomicBool::new(false));

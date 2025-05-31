@@ -189,12 +189,12 @@ fn get_interactive_input() -> Result<String> {
 				if trimmed == "/exit" || trimmed == "/quit" {
 					return Err(anyhow::anyhow!("User cancelled input"));
 				}
-				
+
 				// If line is empty and we have content, finish
 				if trimmed.is_empty() && !lines.is_empty() {
 					break;
 				}
-				
+
 				// If first line is empty, continue waiting
 				if trimmed.is_empty() && lines.is_empty() {
 					continue;
@@ -255,7 +255,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 
 	// Read file context if any file patterns are provided (validation already done)
 	let file_context = read_files_as_context(&args.files)?;
-	
+
 	// Combine input with file context
 	let full_input = if file_context.is_empty() {
 		input

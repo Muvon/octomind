@@ -70,7 +70,7 @@ impl Highlighter for CommandCompleter {
 		if line.starts_with('/') {
 			// Check if this is a valid command
 			let is_valid_command = self.commands.iter().any(|cmd| line == cmd || cmd.starts_with(line));
-			
+
 			if is_valid_command {
 				// Highlight valid commands in green
 				Owned(line.green().to_string())

@@ -125,7 +125,7 @@ impl Session {
 			.duration_since(UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs();
-		
+
 		Self {
 			info: SessionInfo {
 				name,
@@ -243,7 +243,7 @@ impl Session {
 		self.info.input_tokens += input_tokens;
 		self.info.output_tokens += output_tokens;
 		self.info.total_cost += cost;
-		
+
 		// Update time tracking totals
 		self.info.total_api_time_ms += api_time_ms;
 		self.info.total_tool_time_ms += tool_time_ms;
@@ -255,7 +255,7 @@ impl Session {
 		if let Some(session_file) = &self.session_file {
 			// Always rewrite the entire file for simplicity and consistency
 			// Since we're using a unified approach, we want all data in one place
-			
+
 			// Create the file (or truncate if exists)
 			let _ = File::create(session_file)?;
 
@@ -424,14 +424,14 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 				restoration_point_found = true;
 				messages.clear();
 				restoration_messages.clear();
-			} else if !line.starts_with("API_REQUEST: ") && 
-					  !line.starts_with("API_RESPONSE: ") && 
-					  !line.starts_with("TOOL_CALL: ") && 
-					  !line.starts_with("TOOL_RESULT: ") && 
-					  !line.starts_with("CACHE: ") && 
-					  !line.starts_with("ERROR: ") && 
-					  !line.starts_with("EXCHANGE: ") && 
-					  !line.is_empty() {
+			} else if !line.starts_with("API_REQUEST: ") &&
+						!line.starts_with("API_RESPONSE: ") &&
+						!line.starts_with("TOOL_CALL: ") &&
+						!line.starts_with("TOOL_RESULT: ") &&
+						!line.starts_with("CACHE: ") &&
+						!line.starts_with("ERROR: ") &&
+						!line.starts_with("EXCHANGE: ") &&
+						!line.is_empty() {
 				// Try to parse as message JSON or legacy prefixed formats
 				if line.contains("\"role\":") && line.contains("\"content\":") {
 					if let Ok(message) = serde_json::from_str::<Message>(&line) {

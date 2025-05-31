@@ -202,16 +202,16 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	// Get enabled servers from the merged config (which should already be filtered by server_refs)
 	let enabled_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.values().cloned().collect();
 	crate::log_debug!("Found {} enabled servers in merged config", enabled_servers.len());
-	
+
 	// DEBUG: Print all server details
 	for server in &enabled_servers {
-		crate::log_debug!("MCP Server: {} - Type: {:?}, Tools: {:?}", 
+		crate::log_debug!("MCP Server: {} - Type: {:?}, Tools: {:?}",
 			server.name, server.server_type, server.tools);
 	}
 
 	for server in enabled_servers {
 		crate::log_debug!("Processing MCP server: {} (type: {:?})", server.name, server.server_type);
-		
+
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
 				let server_functions = if server.tools.is_empty() {
@@ -291,12 +291,12 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 
 // Execute a tool call with cancellation support
 pub async fn execute_tool_call_with_cancellation(
-	call: &McpToolCall, 
+	call: &McpToolCall,
 	config: &crate::config::Config,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
 ) -> Result<(McpToolResult, u64)> {
 	use std::sync::atomic::Ordering;
-	
+
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
 	log_debug!("Debug: MCP has {} servers configured", config.mcp.servers.len());
@@ -333,12 +333,12 @@ pub async fn execute_tool_call_with_cancellation(
 
 // Internal function to actually execute the tool call with cancellation support
 async fn try_execute_tool_call_with_cancellation(
-	call: &McpToolCall, 
+	call: &McpToolCall,
 	config: &crate::config::Config,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
-	
+
 	// Only execute if MCP has any servers configured
 	if config.mcp.servers.is_empty() {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
@@ -387,7 +387,7 @@ async fn try_execute_tool_call_with_cancellation(
 
 	// STEP 1: Try to find the exact server that handles this tool
 	if let Some(target_server) = tool_to_server_map.get(&call.tool_name) {
-		crate::log_debug!("Found direct server mapping for tool '{}' -> server '{}' ({:?})", 
+		crate::log_debug!("Found direct server mapping for tool '{}' -> server '{}' ({:?})",
 			call.tool_name, target_server.name, target_server.server_type);
 
 		// Check for cancellation before execution
@@ -465,7 +465,7 @@ async fn try_execute_tool_call_with_cancellation(
 		// Only try external servers in this fallback phase
 		if let crate::config::McpServerType::External = server.server_type {
 			servers_checked.push(format!("{}({:?})", server.name, server.server_type));
-			
+
 			// Check for cancellation between server attempts
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
@@ -475,7 +475,7 @@ async fn try_execute_tool_call_with_cancellation(
 
 			// Check if this server can handle the tool (if tool filtering is enabled)
 			if !server.tools.is_empty() && !server.tools.contains(&call.tool_name) {
-				crate::log_debug!("External server '{}' skipped - tool '{}' not in allowed tools: {:?}", 
+				crate::log_debug!("External server '{}' skipped - tool '{}' not in allowed tools: {:?}",
 					server.name, call.tool_name, server.tools);
 				continue; // Skip this server if it doesn't handle this tool
 			}
@@ -498,8 +498,8 @@ async fn try_execute_tool_call_with_cancellation(
 	}
 
 	// If we get here, no server could handle the tool call
-	Err(anyhow::anyhow!("Unknown tool '{}'. Available tools: {}. Checked servers: {}", 
-		call.tool_name, 
+	Err(anyhow::anyhow!("Unknown tool '{}'. Available tools: {}. Checked servers: {}",
+		call.tool_name,
 		get_available_tool_names(config).await.join(", "),
 		if servers_checked.is_empty() { "none (no external servers to try)".to_string() } else { servers_checked.join(", ") }))
 }

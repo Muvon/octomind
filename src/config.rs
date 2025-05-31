@@ -683,7 +683,7 @@ pub struct AssistantRoleConfig {
 }
 
 impl Default for DeveloperRoleConfig {
-	fn default() -> Self {		
+	fn default() -> Self {
 		Self {
 			config: ModeConfig {
 				model: "openrouter:anthropic/claude-sonnet-4".to_string(),
@@ -777,7 +777,7 @@ impl Config {
 	/// Check if the octocode binary is available in PATH
 	fn is_octocode_available() -> bool {
 		use std::process::Command;
-		
+
 		// Try to run `octocode --version` to check if it's available
 		match Command::new("octocode")
 			.arg("--version")
@@ -794,7 +794,7 @@ impl Config {
 		if !self.model.is_empty() && self.model != default_system_model() {
 			return self.model.clone();
 		}
-		
+
 		// Otherwise, use the system default
 		default_system_model()
 	}
@@ -932,20 +932,20 @@ impl Config {
 		// Use the new runtime injection method to ensure core servers are ALWAYS available
 		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config);
 		let mut legacy_servers = std::collections::HashMap::new();
-		
+
 		crate::log_debug!("TRACE: Role '{}' server_refs: {:?}", mode, role_mcp_config.server_refs);
 		crate::log_debug!("TRACE: Found {} enabled servers for role", enabled_servers.len());
-		
+
 		for server in enabled_servers {
 			crate::log_debug!("TRACE: Adding server '{}' to merged config", server.name);
 			legacy_servers.insert(server.name.clone(), server);
 		}
-		
+
 		merged.mcp = McpConfig {
 			servers: legacy_servers, // Only role-enabled servers (with runtime injection)
 			allowed_tools: role_mcp_config.allowed_tools.clone(),
 		};
-		
+
 		merged.layers = layers_config.cloned();
 		merged.commands = commands_config.cloned();
 		merged.system = system_prompt.cloned();
@@ -966,7 +966,7 @@ impl Config {
 	fn initialize_config(&mut self) {
 		// SIMPLIFIED: No longer populate internal servers in loaded config
 		// Internal servers are now provided at runtime via get_core_server_config()
-		
+
 		// Migrate API keys from legacy openrouter config to providers
 		if let Some(api_key) = &self.openrouter.api_key {
 			if self.providers.openrouter.api_key.is_none() {
@@ -1191,7 +1191,7 @@ impl Config {
 
 		// Check if layers are enabled globally by checking if any role has layers enabled
 		let layers_enabled_somewhere = self.developer.config.enable_layers || self.assistant.config.enable_layers;
-		
+
 		if layer_count == 0 && layers_enabled_somewhere {
 			eprintln!("Warning: Layers are enabled but no layer configurations are active");
 		}
@@ -1317,13 +1317,13 @@ impl Config {
 	/// Create a clean copy of the config for saving, excluding internal servers
 	fn create_clean_copy_for_saving(&self) -> Config {
 		let mut clean_config = self.clone();
-		
+
 		// Remove internal servers from the MCP registry before saving
 		let internal_servers = ["developer", "filesystem", "octocode"];
 		for server_name in &internal_servers {
 			clean_config.mcp.servers.remove(*server_name);
 		}
-		
+
 		// CRITICAL FIX: Don't save the [mcp] section at all if it only contains internal servers
 		// The MCP functionality should be controlled by role server_refs, not by a global enabled flag
 		// If there are no user-defined servers, ensure the config will be skipped during serialization
@@ -1332,7 +1332,7 @@ impl Config {
 			clean_config.mcp.servers.clear();
 			clean_config.mcp.allowed_tools.clear();
 		}
-		
+
 		clean_config
 	}
 
@@ -1386,10 +1386,10 @@ impl Config {
 
 		if !config_path.exists() {
 			let mut config = Config::default();
-			
+
 			// SIMPLIFIED: Initialize the configuration without populating internal servers
 			config.initialize_config();
-			
+
 			// Create clean config for saving (no internal servers)
 			let clean_config = config.create_clean_copy_for_saving();
 			let config_str = toml::to_string(&clean_config)
@@ -1420,11 +1420,11 @@ mod tests {
 
 		let clean_config = config.create_clean_copy_for_saving();
 		let toml_str = toml::to_string(&clean_config).unwrap();
-		
+
 		// The [mcp] section should not appear in the serialized TOML
-		assert!(!toml_str.contains("[mcp]"), 
+		assert!(!toml_str.contains("[mcp]"),
 			"Empty MCP config should be skipped, but TOML contains: {}", toml_str);
-		assert!(toml_str.contains("log_level = \"info\""), 
+		assert!(toml_str.contains("log_level = \"info\""),
 			"Other fields should still be serialized");
 	}
 
@@ -1433,7 +1433,7 @@ mod tests {
 		// Test that MCP config with servers is NOT skipped
 		let mut servers = std::collections::HashMap::new();
 		servers.insert("test_server".to_string(), McpServerConfig::default());
-		
+
 		let config = Config {
 			log_level: LogLevel::Info,
 			mcp: McpConfig {
@@ -1445,9 +1445,9 @@ mod tests {
 
 		let clean_config = config.create_clean_copy_for_saving();
 		let toml_str = toml::to_string(&clean_config).unwrap();
-		
+
 		// The [mcp] section SHOULD appear because there are servers
-		assert!(toml_str.contains("[mcp]"), 
+		assert!(toml_str.contains("[mcp]"),
 			"MCP config with servers should NOT be skipped, but TOML: {}", toml_str);
 	}
 

@@ -19,7 +19,7 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("claude-3-opus", 15.00, 75.00),
 	("claude-3-sonnet", 3.00, 15.00),
 	("claude-3-haiku", 0.25, 1.25),
-	
+
 	// Meta Llama models on Bedrock
 	("llama3-2-90b", 2.00, 2.00),
 	("llama3-2-11b", 0.35, 0.35),
@@ -28,12 +28,12 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("llama3-1-405b", 5.32, 16.00),
 	("llama3-1-70b", 0.99, 0.99),
 	("llama3-1-8b", 0.22, 0.22),
-	
+
 	// Cohere Command models on Bedrock
 	("command-r-plus", 3.00, 15.00),
 	("command-r", 0.50, 1.50),
 	("command-light", 0.30, 0.60),
-	
+
 	// AI21 Jamba models on Bedrock
 	("jamba-1-5-large", 2.00, 8.00),
 	("jamba-1-5-mini", 0.20, 0.40),
@@ -55,35 +55,35 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct AmazonBedrockProvider;
 
 impl Default for AmazonBedrockProvider {
-    fn default() -> Self {
-        Self::new()
-    }
+		fn default() -> Self {
+				Self::new()
+		}
 }
 
 impl AmazonBedrockProvider {
 	pub fn new() -> Self {
 		Self
 	}
-	
+
 	/// Get AWS region from environment or default
 	fn get_aws_region(&self) -> String {
 		env::var("AWS_REGION")
 			.or_else(|_| env::var("AWS_DEFAULT_REGION"))
 			.unwrap_or_else(|_| "us-east-1".to_string())
 	}
-	
+
 	/// Get AWS access key ID
 	fn get_aws_access_key_id(&self) -> Result<String> {
 		env::var("AWS_ACCESS_KEY_ID")
 			.map_err(|_| anyhow::anyhow!("AWS_ACCESS_KEY_ID not found in environment"))
 	}
-	
+
 	/// Get AWS secret access key
 	fn get_aws_secret_access_key(&self) -> Result<String> {
 		env::var("AWS_SECRET_ACCESS_KEY")
 			.map_err(|_| anyhow::anyhow!("AWS_SECRET_ACCESS_KEY not found in environment"))
 	}
-	
+
 	/// Convert Bedrock model ID to full model name for API calls
 	fn get_full_model_id(&self, model: &str) -> String {
 		// If the model already contains dots (like anthropic.claude-3-5-sonnet-20241022-v2:0)
@@ -106,7 +106,7 @@ impl AmazonBedrockProvider {
 			}
 		}
 	}
-	
+
 	/// Sign AWS request (simplified version for Bedrock)
 	async fn sign_request(&self, _method: &str, _uri: &str, headers: &mut std::collections::HashMap<String, String>, _body: &str) -> Result<()> {
 		// This is a simplified AWS signature implementation
@@ -114,12 +114,12 @@ impl AmazonBedrockProvider {
 		let access_key = self.get_aws_access_key_id()?;
 		let _secret_key = self.get_aws_secret_access_key()?;
 		let _region = self.get_aws_region();
-		
+
 		// Add required headers
 		headers.insert("Authorization".to_string(), format!("AWS4-HMAC-SHA256 Credential={}/...", access_key));
 		headers.insert("X-Amz-Date".to_string(), chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string());
 		headers.insert("X-Amz-Target".to_string(), "BedrockRuntime.InvokeModel".to_string());
-		
+
 		// Note: This is a placeholder - actual AWS signing is complex
 		// In a real implementation, you should use the aws-sigv4 crate
 		Ok(())
@@ -177,14 +177,14 @@ impl AiProvider for AmazonBedrockProvider {
 		let _access_key = self.get_aws_access_key_id()?;
 		let _secret_key = self.get_aws_secret_access_key()?;
 		let region = self.get_aws_region();
-		
+
 		// Get full model ID
 		let full_model_id = self.get_full_model_id(model);
 		log_debug!("Using Bedrock model: {}", full_model_id);
-		
+
 		// Convert messages to Bedrock format
 		let bedrock_messages = convert_messages(messages);
-		
+
 		// Create request body (format varies by model family)
 		let request_body = if full_model_id.contains("anthropic.claude") {
 			// Anthropic Claude format on Bedrock
@@ -209,41 +209,41 @@ impl AiProvider for AmazonBedrockProvider {
 				"max_tokens": 4096,
 			})
 		};
-		
+
 		// Build Bedrock API URL
 		let api_url = format!(
 			"https://bedrock-runtime.{}.amazonaws.com/model/{}/invoke",
 			region, full_model_id
 		);
-		
+
 		// Create HTTP client
 		let client = Client::new();
-		
+
 		// Prepare headers
 		let mut headers = std::collections::HashMap::new();
 		headers.insert("Content-Type".to_string(), "application/json".to_string());
-		
+
 		// Sign the request (simplified - in production use AWS SDK)
 		self.sign_request("POST", &api_url, &mut headers, &request_body.to_string()).await?;
-		
+
 		// Make the API request
 		let mut request_builder = client.post(&api_url)
 			.header("Content-Type", "application/json")
 			.json(&request_body);
-			
+
 		// Add signed headers
 		for (key, value) in headers {
 			request_builder = request_builder.header(&key, &value);
 		}
-		
+
 		let response = request_builder.send().await?;
-		
+
 		// Get response status
 		let status = response.status();
-		
+
 		// Get response body as text first for debugging
 		let response_text = response.text().await?;
-		
+
 		// Parse the text to JSON
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
@@ -251,7 +251,7 @@ impl AiProvider for AmazonBedrockProvider {
 				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
 			}
 		};
-		
+
 		// Handle error responses
 		if !status.is_success() {
 			let error_message = response_json
@@ -260,7 +260,7 @@ impl AiProvider for AmazonBedrockProvider {
 				.unwrap_or(&response_text);
 			return Err(anyhow::anyhow!("Amazon Bedrock API error ({}): {}", status, error_message));
 		}
-		
+
 		// Extract content based on model family
 		let content = if full_model_id.contains("anthropic.claude") {
 			// Anthropic Claude response format
@@ -287,16 +287,16 @@ impl AiProvider for AmazonBedrockProvider {
 				.unwrap_or("")
 				.to_string()
 		};
-		
+
 		// Extract token usage (format varies by model)
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
 			let prompt_tokens = usage_obj.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
 			let completion_tokens = usage_obj.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
 			let total_tokens = prompt_tokens + completion_tokens;
-			
+
 			// Calculate cost using our pricing constants
 			let cost = calculate_cost(&full_model_id, prompt_tokens, completion_tokens);
-			
+
 			Some(TokenUsage {
 				prompt_tokens,
 				completion_tokens,
@@ -310,19 +310,19 @@ impl AiProvider for AmazonBedrockProvider {
 		} else {
 			None
 		};
-		
+
 		// For now, Bedrock tool calls are not implemented in this basic version
 		let tool_calls = None;
-		
+
 		// Extract finish reason
 		let finish_reason = response_json
 			.get("stop_reason")
 			.and_then(|fr| fr.as_str())
 			.map(|s| s.to_string());
-		
+
 		// Create exchange record
 		let exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
-		
+
 		Ok(ProviderResponse {
 			content,
 			exchange,
@@ -335,13 +335,13 @@ impl AiProvider for AmazonBedrockProvider {
 // Convert our session messages to Bedrock format
 fn convert_messages(messages: &[Message]) -> Vec<BedrockMessage> {
 	let mut result = Vec::new();
-	
+
 	for msg in messages {
 		// Skip system messages - they're handled differently in Bedrock
 		if msg.role == "system" {
 			continue;
 		}
-		
+
 		// Convert regular messages
 		result.push(BedrockMessage {
 			role: match msg.role.as_str() {
@@ -352,14 +352,14 @@ fn convert_messages(messages: &[Message]) -> Vec<BedrockMessage> {
 			content: serde_json::json!(msg.content),
 		});
 	}
-	
+
 	result
 }
 
 // Convert messages to a single prompt string (for models that expect prompt format)
 fn convert_messages_to_prompt(messages: &[Message]) -> String {
 	let mut prompt = String::new();
-	
+
 	for msg in messages {
 		match msg.role.as_str() {
 			"system" => {
@@ -376,9 +376,9 @@ fn convert_messages_to_prompt(messages: &[Message]) -> String {
 			}
 		}
 	}
-	
+
 	// Add final prompt for assistant response
 	prompt.push_str("Assistant: ");
-	
+
 	prompt
 }

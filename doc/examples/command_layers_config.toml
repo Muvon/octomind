@@ -60,7 +60,7 @@ enabled = false
 name = "query_processor"
 enabled = true
 # No model specified - will use session model
-system_prompt = """You are a query processor that improves and clarifies user requests. 
+system_prompt = """You are a query processor that improves and clarifies user requests.
 Analyze the input and make it more specific and actionable for development work."""
 temperature = 0.2
 input_mode = "Last"

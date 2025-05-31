@@ -129,7 +129,7 @@ build-all: build-linux build-windows build-macos
 build-linux: $(LINUX_TARGETS)
 	@echo "Linux builds complete!"
 
-# Build for Windows platforms  
+# Build for Windows platforms
 .PHONY: build-windows
 build-windows: $(WINDOWS_TARGETS)
 	@echo "Windows builds complete!"

@@ -13,7 +13,7 @@ fn generate_session_name() -> String {
 	let now = chrono::Local::now();
 	let date_str = now.format("%y%m%d").to_string();
 	let time_str = now.format("%H%M%S").to_string();
-	
+
 	// Get current directory basename
 	let current_dir = std::env::current_dir().unwrap_or_default();
 	let basename = current_dir
@@ -21,11 +21,11 @@ fn generate_session_name() -> String {
 		.unwrap_or_default()
 		.to_string_lossy()
 		.to_string();
-	
+
 	// Generate a short UUID (first 8 characters)
 	let uuid = Uuid::new_v4().to_string();
 	let short_uuid = &uuid[..8];
-	
+
 	format!("{}-{}-{}-{}", date_str, time_str, basename, short_uuid)
 }
 

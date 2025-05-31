@@ -440,11 +440,11 @@ impl ChatSession {
 				if params.is_empty() {
 					// Show current model and system default
 					println!("{}", format!("Current session model: {}", self.model).bright_cyan());
-					
+
 					// Show the system default model
 					let system_model = config.get_effective_model();
 					println!("{}", format!("System default model: {}", system_model).bright_blue());
-					
+
 					println!();
 					println!("{}", "Note: Use '/model <model-name>' to change the model for this session only.".bright_yellow());
 					println!("{}", "Model changes are runtime-only and won't be saved to config.".bright_yellow());
@@ -454,7 +454,7 @@ impl ChatSession {
 				// Change to a new model (runtime only)
 				let new_model = params.join(" ");
 				let old_model = self.model.clone();
-				
+
 				// Update session model (runtime only - don't update config)
 				self.model = new_model.clone();
 				self.session.info.model = new_model.clone();

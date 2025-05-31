@@ -37,7 +37,7 @@ impl InputMode {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			InputMode::Last => "last",
-			InputMode::All => "all", 
+			InputMode::All => "all",
 			InputMode::Summary => "summary",
 		}
 	}

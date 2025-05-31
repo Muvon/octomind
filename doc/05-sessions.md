@@ -279,7 +279,7 @@ graph TB
     B --> C[Context Generator]
     C --> D[Developer]
     D --> E[Response]
-    
+
     F[Manual /done] --> G[Reducer]
     G --> H[Optimized Context]
 ```
@@ -293,7 +293,7 @@ enable_layers = true
 
 # Uses default models for each layer:
 # - Query Processor: openrouter:openai/gpt-4.1-nano
-# - Context Generator: openrouter:google/gemini-2.5-flash-preview  
+# - Context Generator: openrouter:google/gemini-2.5-flash-preview
 # - Developer: main model from config
 ```
 
@@ -470,7 +470,7 @@ enable_auto_truncation = true
 ```bash
 # Organize sessions by purpose
 octodev session -n bug_fixing --role=developer
-octodev session -n code_review --role=code-reviewer  
+octodev session -n code_review --role=code-reviewer
 octodev session -n quick_help --role=assistant
 octodev session -n security_audit --role=security-analyst
 ```

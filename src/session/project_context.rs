@@ -17,9 +17,9 @@ pub struct ProjectContext {
 }
 
 impl Default for ProjectContext {
-    fn default() -> Self {
-        Self::new()
-    }
+		fn default() -> Self {
+				Self::new()
+		}
 }
 
 impl ProjectContext {

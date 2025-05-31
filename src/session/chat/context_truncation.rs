@@ -57,11 +57,11 @@ pub async fn check_and_truncate_context(
 		// Start from the end and work backwards to find a safe truncation point
 		let mut safe_start_index = non_system_messages.len().saturating_sub(1);
 		let min_keep = std::cmp::min(4, non_system_messages.len()); // Try to keep at least 4 messages (2 exchanges)
-		
+
 		// Work backwards from the end to find the earliest safe truncation point
 		for i in (0..non_system_messages.len()).rev() {
 			let msg = non_system_messages[i];
-			
+
 			// Check if this is a safe truncation point
 			let is_safe_point = match msg.role.as_str() {
 				"user" => {
@@ -83,11 +83,11 @@ pub async fn check_and_truncate_context(
 				},
 				_ => true, // Other roles (like "system") are generally safe
 			};
-			
+
 			if is_safe_point {
 				// Found a safe point - now check if we should use it
 				let messages_to_keep = non_system_messages.len() - i;
-				
+
 				if messages_to_keep >= min_keep {
 					// We have enough messages and found a safe point
 					safe_start_index = i;
@@ -102,7 +102,7 @@ pub async fn check_and_truncate_context(
 				}
 			}
 		}
-		
+
 		// Additional validation: make sure we don't start with orphaned tool messages
 		while safe_start_index < non_system_messages.len() {
 			let start_msg = non_system_messages[safe_start_index];
@@ -122,7 +122,7 @@ pub async fn check_and_truncate_context(
 						break;
 					}
 				}
-				
+
 				if !found_parent {
 					// Couldn't find parent, skip this tool message
 					safe_start_index += 1;
@@ -134,12 +134,12 @@ pub async fn check_and_truncate_context(
 				break;
 			}
 		}
-		
+
 		// Collect messages from the safe truncation point
 		recent_messages = non_system_messages[safe_start_index..].iter().cloned().cloned().collect();
-		
+
 		log_conditional!(
-			debug: format!("Smart truncation: keeping {} of {} non-system messages from safe point", 
+			debug: format!("Smart truncation: keeping {} of {} non-system messages from safe point",
 				recent_messages.len(), non_system_messages.len()).bright_blue(),
 			default: format!("Preserving {} recent messages", recent_messages.len()).bright_blue()
 		);

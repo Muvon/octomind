@@ -47,7 +47,7 @@ enabled = false
 [developer.commands.query_processor]
 name = "query_processor"
 enabled = true
-system_prompt = """You are a query processor that improves and clarifies user requests. 
+system_prompt = """You are a query processor that improves and clarifies user requests.
 Analyze the input and make it more specific and actionable for development work.
 Provide a clearer, more detailed version of the request."""
 temperature = 0.2

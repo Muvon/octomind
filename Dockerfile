@@ -8,8 +8,8 @@ WORKDIR /usr/src/app
 
 # Install cross-compilation dependencies
 RUN apt-get update && apt-get install -y \
-    musl-tools \
-    && rm -rf /var/lib/apt/lists/*
+		musl-tools \
+		&& rm -rf /var/lib/apt/lists/*
 
 # Add musl target for static linking
 RUN rustup target add x86_64-unknown-linux-musl

@@ -117,12 +117,12 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 
 // Execute tool call on MCP server with cancellation support
 pub async fn execute_tool_call_with_cancellation(
-	call: &McpToolCall, 
+	call: &McpToolCall,
 	server: &McpServerConfig,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
-	
+
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
 		if token.load(Ordering::SeqCst) {

@@ -19,15 +19,21 @@ impl SyntaxHighlighter {
 		}
 	}
 
-	pub fn highlight_code(&self, code: &str, language: &str) -> Result<String> {
+	pub fn highlight_code_with_theme(&self, code: &str, language: &str, theme_name: &str) -> Result<String> {
 		// Try to find syntax definition for the language
 		let syntax = self.syntax_set
 			.find_syntax_by_token(language)
 			.or_else(|| self.syntax_set.find_syntax_by_extension(language))
 			.unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
-		// Use a dark theme that works well in terminals
-		let theme = &self.theme_set.themes["base16-ocean.dark"];
+		// Try to use the specified theme, fallback to a default if not found
+		let theme = self.theme_set.themes.get(theme_name)
+			.unwrap_or_else(|| {
+				// Fallback order: try base16-ocean.dark, then any available theme
+				self.theme_set.themes.get("base16-ocean.dark")
+					.or_else(|| self.theme_set.themes.values().next())
+					.expect("No syntax themes available")
+			});
 
 		let mut highlighter = HighlightLines::new(syntax, theme);
 		let mut highlighted = String::new();
@@ -39,6 +45,12 @@ impl SyntaxHighlighter {
 		}
 
 		Ok(highlighted)
+	}
+
+	/// Get a list of available syntax themes
+	#[allow(dead_code)]
+	pub fn available_themes(&self) -> Vec<String> {
+		self.theme_set.themes.keys().cloned().collect()
 	}
 
 	/// Get a list of supported languages for debugging
@@ -71,10 +83,22 @@ mod tests {
 	}
 
 	#[test]
+	fn test_available_themes() {
+		let highlighter = SyntaxHighlighter::new();
+		let themes = highlighter.available_themes();
+		println!("Available syntax themes: {:?}", themes);
+		// Print them one by one for easier reading
+		for theme in &themes {
+			println!("Theme: {}", theme);
+		}
+		assert!(!themes.is_empty());
+	}
+
+	#[test]
 	fn test_rust_highlighting() {
 		let highlighter = SyntaxHighlighter::new();
 		let code = "fn main() {\n    println!(\"Hello, world!\");\n}";
-		let result = highlighter.highlight_code(code, "rust");
+		let result = highlighter.highlight_code_with_theme(code, "rust", "base16-ocean.dark");
 		assert!(result.is_ok());
 		// The result should contain ANSI escape codes for coloring
 		assert!(result.unwrap().contains("\x1b["));

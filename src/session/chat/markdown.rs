@@ -1,12 +1,14 @@
 // Markdown rendering module
 
+use std::str::FromStr;
 use termimad::MadSkin;
 use anyhow::Result;
 use regex::Regex;
 use super::syntax::SyntaxHighlighter;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum MarkdownTheme {
+	#[default]
 	Default,
 	Dark,
 	Light,
@@ -15,17 +17,25 @@ pub enum MarkdownTheme {
 	Monokai,
 }
 
+impl FromStr for MarkdownTheme {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s.to_lowercase().as_str() {
+			"default" => Ok(MarkdownTheme::Default),
+			"dark" => Ok(MarkdownTheme::Dark),
+			"light" => Ok(MarkdownTheme::Light),
+			"ocean" => Ok(MarkdownTheme::Ocean),
+			"solarized" => Ok(MarkdownTheme::Solarized),
+			"monokai" => Ok(MarkdownTheme::Monokai),
+			_ => Err(format!("Invalid theme: {}", s)),
+		}
+	}
+}
+
 impl MarkdownTheme {
 	pub fn from_str(s: &str) -> Option<Self> {
-		match s.to_lowercase().as_str() {
-			"default" => Some(MarkdownTheme::Default),
-			"dark" => Some(MarkdownTheme::Dark),
-			"light" => Some(MarkdownTheme::Light),
-			"ocean" => Some(MarkdownTheme::Ocean),
-			"solarized" => Some(MarkdownTheme::Solarized),
-			"monokai" => Some(MarkdownTheme::Monokai),
-			_ => None,
-		}
+		s.parse().ok()
 	}
 
 	pub fn as_str(&self) -> &'static str {
@@ -42,11 +52,17 @@ impl MarkdownTheme {
 	pub fn all_themes() -> Vec<&'static str> {
 		vec!["default", "dark", "light", "ocean", "solarized", "monokai"]
 	}
-}
 
-impl Default for MarkdownTheme {
-	fn default() -> Self {
-		MarkdownTheme::Default
+	/// Get the corresponding syntax highlighting theme name for this markdown theme
+	pub fn get_syntax_theme_name(&self) -> &'static str {
+		match self {
+			MarkdownTheme::Default => "base16-ocean.dark",
+			MarkdownTheme::Dark => "base16-eighties.dark",
+			MarkdownTheme::Light => "InspiredGitHub",
+			MarkdownTheme::Ocean => "base16-ocean.dark",
+			MarkdownTheme::Solarized => "Solarized (dark)",
+			MarkdownTheme::Monokai => "base16-mocha.dark", // Closest match since Monokai Extended isn't available
+		}
 	}
 }
 
@@ -271,7 +287,7 @@ impl MarkdownRenderer {
 			let code = cap.get(2).unwrap().as_str();
 
 			// Try to highlight the code
-			match self.syntax_highlighter.highlight_code(code, language) {
+			match self.syntax_highlighter.highlight_code_with_theme(code, language, self.theme.get_syntax_theme_name()) {
 				Ok(highlighted) => {
 					// Replace the code block with highlighted version
 					// We'll use a simple format that termimad can handle
@@ -332,7 +348,7 @@ impl MarkdownRenderer {
 
 			// Print syntax-highlighted code block
 			println!(); // Add some spacing
-			match self.syntax_highlighter.highlight_code(code, language) {
+			match self.syntax_highlighter.highlight_code_with_theme(code, language, self.theme.get_syntax_theme_name()) {
 				Ok(highlighted) => {
 					// Print with a subtle border
 					println!("┌─ {} ─", language);

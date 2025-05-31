@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::io::{self, Read};
 use std::fs;
 use octodev::config::Config;
-use octodev::session::{Message, chat_completion_with_provider};
+use octodev::session::{Message, chat_completion_with_provider, ProviderResponse};
 use octodev::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
 use colored::Colorize;
 use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
@@ -229,40 +229,6 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		std::process::exit(1);
 	}
 
-	// Get input from argument, stdin, or interactive mode
-	let input = if let Some(input) = &args.input {
-		input.clone()
-	} else if !atty::is(atty::Stream::Stdin) {
-		// Read from stdin if it's being piped
-		let mut buffer = String::new();
-		io::stdin().read_to_string(&mut buffer)?;
-		buffer.trim().to_string()
-	} else {
-		// Interactive mode - no argument provided and stdin is a terminal
-		match get_interactive_input() {
-			Ok(input) => input,
-			Err(e) => {
-				eprintln!("Cancelled: {}", e);
-				std::process::exit(1);
-			}
-		}
-	};
-
-	if input.is_empty() {
-		eprintln!("Error: No input provided.");
-		std::process::exit(1);
-	}
-
-	// Read file context if any file patterns are provided (validation already done)
-	let file_context = read_files_as_context(&args.files)?;
-
-	// Combine input with file context
-	let full_input = if file_context.is_empty() {
-		input
-	} else {
-		format!("{}\n\n{}", file_context, input)
-	};
-
 	// Determine model to use: either from --model flag or effective config model
 	let model = args.model.clone()
 		.unwrap_or_else(|| config.get_effective_model());
@@ -270,11 +236,103 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 	// Simple system prompt for ask command - no mode complexity needed
 	let system_prompt = "You are a helpful assistant.".to_string();
 
+	// Read file context once (validation already done)
+	let file_context = read_files_as_context(&args.files)?;
+
+	// Get input from argument, stdin, or interactive mode
+	if let Some(input) = &args.input {
+		// Single execution mode - input provided via argument
+		let full_input = if file_context.is_empty() {
+			input.clone()
+		} else {
+			format!("{}\n\n{}", file_context, input)
+		};
+
+		// Execute once and return
+		let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
+		print_response(&response.content, args.raw);
+		return Ok(());
+	} else if !atty::is(atty::Stream::Stdin) {
+		// Read from stdin if it's being piped
+		let mut buffer = String::new();
+		io::stdin().read_to_string(&mut buffer)?;
+		let input = buffer.trim().to_string();
+
+		if input.is_empty() {
+			eprintln!("Error: No input provided.");
+			std::process::exit(1);
+		}
+
+		let full_input = if file_context.is_empty() {
+			input
+		} else {
+			format!("{}\n\n{}", file_context, input)
+		};
+
+		// Execute once and return
+		let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
+		print_response(&response.content, args.raw);
+		return Ok(());
+	} else {
+		// Interactive multimode - no argument provided and stdin is a terminal
+		println!("{}", "Entering multimode - ask questions continuously (no context preserved)".bright_green());
+		println!();
+
+		loop {
+			match get_interactive_input() {
+				Ok(input) => {
+					if input.is_empty() {
+						eprintln!("Error: No input provided.");
+						continue;
+					}
+
+					// Combine input with file context for this query
+					let full_input = if file_context.is_empty() {
+						input
+					} else {
+						format!("{}\n\n{}", file_context, input)
+					};
+
+					// Execute the query
+					match execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await {
+						Ok(response) => {
+							print_response(&response.content, args.raw);
+							println!(); // Add spacing between responses
+						}
+						Err(e) => {
+							eprintln!("Error: {}", e);
+						}
+					}
+				}
+				Err(e) => {
+					if e.to_string().contains("User cancelled") {
+						println!("Exiting multimode.");
+						break;
+					} else {
+						eprintln!("Error: {}", e);
+						continue;
+					}
+				}
+			}
+		}
+
+		return Ok(());
+	};
+}
+
+// Helper function to execute a single query
+async fn execute_single_query(
+	input: &str,
+	model: &str,
+	temperature: f32,
+	system_prompt: &str,
+	config: &Config,
+) -> Result<ProviderResponse> {
 	// Create messages
 	let messages = vec![
 		Message {
 			role: "system".to_string(),
-			content: system_prompt,
+			content: system_prompt.to_string(),
 			timestamp: std::time::SystemTime::now()
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
@@ -286,7 +344,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		},
 		Message {
 			role: "user".to_string(),
-			content: full_input,
+			content: input.to_string(),
 			timestamp: std::time::SystemTime::now()
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
@@ -299,15 +357,10 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 	];
 
 	// Call the AI provider
-	let response = chat_completion_with_provider(
+	chat_completion_with_provider(
 		&messages,
-		&model,
-		args.temperature,
+		model,
+		temperature,
 		config,
-	).await?;
-
-	// Print the response with optional markdown rendering
-	print_response(&response.content, args.raw);
-
-	Ok(())
+	).await
 }

@@ -35,6 +35,8 @@ html5ever = "0.27.0"
 markup5ever_rcdom = "0.3.0"
 url = "2.5.4"
 dirs = "5.0.1"
+glob = "0.3.1"
+atty = "0.2.14"
 
 [profile.dev]
 opt-level = 1          # Basic optimizations without slowing compilation too much

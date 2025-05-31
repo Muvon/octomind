@@ -282,13 +282,13 @@ pub trait Layer {
 					// If no explicit input provided, get the last assistant message
 					session.messages.iter()
 						.filter(|m| m.role == "assistant")
-						.last()
+						.next_back()
 						.map(|m| m.content.clone())
 						.unwrap_or_else(|| {
 							// Fallback: if no assistant messages, get last user message
 							session.messages.iter()
 								.filter(|m| m.role == "user")
-								.last()
+								.next_back()
 								.map(|m| m.content.clone())
 								.unwrap_or_else(|| "No previous messages found".to_string())
 						})
@@ -296,7 +296,7 @@ pub trait Layer {
 					// If explicit input provided, use it but also include last assistant context
 					let last_assistant = session.messages.iter()
 						.filter(|m| m.role == "assistant")
-						.last()
+						.next_back()
 						.map(|m| format!("Previous response:\n{}\n\nCurrent input:\n{}", m.content, input))
 						.unwrap_or_else(|| input.to_string());
 					last_assistant

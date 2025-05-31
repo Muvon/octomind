@@ -57,6 +57,64 @@ fn print_response(content: &str, use_raw: bool) {
 	}
 }
 
+// Helper function to validate file patterns and check if they exist
+fn validate_file_patterns(file_patterns: &[String]) -> Result<()> {
+	if file_patterns.is_empty() {
+		return Ok(());
+	}
+
+	let mut has_errors = false;
+	let mut total_files = 0;
+
+	for pattern in file_patterns {
+		match glob(pattern) {
+			Ok(paths) => {
+				let mut found_any = false;
+				for path_result in paths {
+					match path_result {
+						Ok(path) => {
+							found_any = true;
+							total_files += 1;
+							if !path.exists() {
+								eprintln!("Error: File does not exist: {}", path.display());
+								has_errors = true;
+							} else if !path.is_file() {
+								eprintln!("Error: Path is not a file: {}", path.display());
+								has_errors = true;
+							} else if let Err(e) = fs::metadata(&path) {
+								eprintln!("Error: Cannot access file {}: {}", path.display(), e);
+								has_errors = true;
+							}
+						}
+						Err(e) => {
+							eprintln!("Error: Invalid path in pattern '{}': {}", pattern, e);
+							has_errors = true;
+						}
+					}
+				}
+				if !found_any {
+					eprintln!("Error: No files found matching pattern '{}'", pattern);
+					has_errors = true;
+				}
+			}
+			Err(e) => {
+				eprintln!("Error: Invalid glob pattern '{}': {}", pattern, e);
+				has_errors = true;
+			}
+		}
+	}
+
+	if has_errors {
+		return Err(anyhow::anyhow!("File validation failed. Please check the file patterns and try again."));
+	}
+
+	if total_files > 50 {
+		eprintln!("Warning: Including {} files as context. This may result in a very large prompt.", total_files);
+	}
+
+	Ok(())
+}
+
 // Helper function to read files from glob patterns and format them as context
 fn read_files_as_context(file_patterns: &[String]) -> Result<String> {
 	if file_patterns.is_empty() {
@@ -69,11 +127,9 @@ fn read_files_as_context(file_patterns: &[String]) -> Result<String> {
 	for pattern in file_patterns {
 		match glob(pattern) {
 			Ok(paths) => {
-				let mut found_any = false;
 				for path_result in paths {
 					match path_result {
 						Ok(path) => {
-							found_any = true;
 							if let Ok(content) = fs::read_to_string(&path) {
 								context.push_str(&format!("### File: {}\n\n", path.display()));
 								context.push_str("```\n");
@@ -83,20 +139,18 @@ fn read_files_as_context(file_patterns: &[String]) -> Result<String> {
 								}
 								context.push_str("```\n\n");
 							} else {
+								// This shouldn't happen as we validated earlier, but handle gracefully
 								context.push_str(&format!("### File: {} (could not read)\n\n", path.display()));
 							}
 						}
-						Err(e) => {
-							eprintln!("Warning: Error reading path in pattern '{}': {}", pattern, e);
+						Err(_) => {
+							// Skip errors as we already validated
 						}
 					}
 				}
-				if !found_any {
-					eprintln!("Warning: No files found matching pattern '{}'", pattern);
-				}
 			}
-			Err(e) => {
-				eprintln!("Warning: Invalid glob pattern '{}': {}", pattern, e);
+			Err(_) => {
+				// Skip errors as we already validated
 			}
 		}
 	}
@@ -107,10 +161,8 @@ fn read_files_as_context(file_patterns: &[String]) -> Result<String> {
 // Helper function to get multi-line input interactively using rustyline
 fn get_interactive_input() -> Result<String> {
 	println!("{}", "Enter your question (multi-line input supported):".bright_blue());
-	println!("{}","- Use Ctrl+J to add new lines".dimmed());
 	println!("{}","- Press Enter on empty line to finish and send".dimmed());
-	println!("{}","- Type '/exit' or '/quit' to cancel".dimmed());
-	println!("{}","- Press Ctrl+D to cancel".dimmed());
+	println!("{}","- Type '/exit' or '/quit' to cancel, or press Ctrl+D".dimmed());
 	println!();
 
 	let config = RustylineConfig::builder()
@@ -171,6 +223,12 @@ fn get_interactive_input() -> Result<String> {
 }
 
 pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
+	// Validate file patterns first, before any other processing
+	if let Err(e) = validate_file_patterns(&args.files) {
+		eprintln!("{}", e);
+		std::process::exit(1);
+	}
+
 	// Get input from argument, stdin, or interactive mode
 	let input = if let Some(input) = &args.input {
 		input.clone()
@@ -195,7 +253,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		std::process::exit(1);
 	}
 
-	// Read file context if any file patterns are provided
+	// Read file context if any file patterns are provided (validation already done)
 	let file_context = read_files_as_context(&args.files)?;
 	
 	// Combine input with file context

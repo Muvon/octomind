@@ -23,7 +23,7 @@ pub use animation::show_loading_animation;
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
 pub use editorconfig_formatter::apply_editorconfig_formatting;
-pub use markdown::{MarkdownRenderer, is_markdown_content};
+pub use markdown::{MarkdownRenderer, is_markdown_content, MarkdownTheme};
 
 // Model constants
 pub const CLAUDE_MODEL: &str = "openrouter:anthropic/claude-sonnet-4";

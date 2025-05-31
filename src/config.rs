@@ -309,6 +309,9 @@ pub struct OpenRouterConfig {
 	// Enable markdown rendering for AI responses
 	#[serde(default)]
 	pub enable_markdown_rendering: bool,
+	// Markdown theme for styling
+	#[serde(default = "default_markdown_theme")]
+	pub markdown_theme: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -343,6 +346,10 @@ fn default_cache_timeout_seconds() -> u64 {
 	180 // Default 3 minutes timeout for time-based auto-caching
 }
 
+fn default_markdown_theme() -> String {
+	"default".to_string()
+}
+
 impl Default for PricingConfig {
 	fn default() -> Self {
 		Self {
@@ -371,6 +378,7 @@ impl Default for OpenRouterConfig {
 			cache_tokens_absolute_threshold: 0, // Disabled by default, use percentage
 			cache_timeout_seconds: default_cache_timeout_seconds(),
 			enable_markdown_rendering: false, // Disabled by default
+			markdown_theme: default_markdown_theme(),
 		}
 	}
 }
@@ -741,6 +749,9 @@ pub struct Config {
 	pub cache_timeout_seconds: u64,
 	#[serde(default)]
 	pub enable_markdown_rendering: bool,
+	// Markdown theme for styling
+	#[serde(default = "default_markdown_theme")]
+	pub markdown_theme: String,
 
 	// NEW: Providers configuration - centralized API keys
 	#[serde(default)]
@@ -926,6 +937,7 @@ impl Config {
 			cache_tokens_absolute_threshold: self.cache_tokens_absolute_threshold,
 			cache_timeout_seconds: self.cache_timeout_seconds,
 			enable_markdown_rendering: self.enable_markdown_rendering,
+			markdown_theme: self.markdown_theme.clone(),
 		};
 
 		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code

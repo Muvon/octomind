@@ -35,13 +35,15 @@ pub struct AskArgs {
 }
 
 // Helper function to print content with optional markdown rendering for ask command
-fn print_response(content: &str, use_raw: bool) {
+fn print_response(content: &str, use_raw: bool, config: &Config) {
 	if use_raw {
 		// Use plain text output
 		println!("{}", content);
 	} else if is_markdown_content(content) {
-		// Use markdown rendering
-		let renderer = MarkdownRenderer::new();
+		// Use markdown rendering with theme from config
+		let theme = crate::session::chat::markdown::MarkdownTheme::from_str(&config.markdown_theme)
+			.unwrap_or_default();
+		let renderer = MarkdownRenderer::with_theme(theme);
 		match renderer.render_and_print(content) {
 			Ok(_) => {
 				// Successfully rendered as markdown
@@ -250,7 +252,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 
 		// Execute once and return
 		let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
-		print_response(&response.content, args.raw);
+		print_response(&response.content, args.raw, config);
 		return Ok(());
 	} else if !atty::is(atty::Stream::Stdin) {
 		// Read from stdin if it's being piped
@@ -271,7 +273,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 
 		// Execute once and return
 		let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
-		print_response(&response.content, args.raw);
+		print_response(&response.content, args.raw, config);
 		return Ok(());
 	} else {
 		// Interactive multimode - no argument provided and stdin is a terminal
@@ -296,7 +298,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 					// Execute the query
 					match execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await {
 						Ok(response) => {
-							print_response(&response.content, args.raw);
+							print_response(&response.content, args.raw, config);
 							println!(); // Add spacing between responses
 						}
 						Err(e) => {

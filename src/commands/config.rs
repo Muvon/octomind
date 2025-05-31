@@ -33,6 +33,14 @@ pub struct ConfigArgs {
 	#[arg(long)]
 	pub markdown_enable: Option<bool>,
 
+	/// Set markdown theme (default, dark, light, ocean, solarized, monokai)
+	#[arg(long)]
+	pub markdown_theme: Option<String>,
+
+	/// List all available markdown themes
+	#[arg(long)]
+	pub list_themes: bool,
+
 	/// Show current configuration values with defaults
 	#[arg(long)]
 	pub show: bool,
@@ -44,6 +52,12 @@ pub struct ConfigArgs {
 
 // Handle the configuration command
 pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Error> {
+	// If list themes flag is set, display available themes and exit
+	if args.list_themes {
+		list_markdown_themes();
+		return Ok(());
+	}
+
 	// If show flag is set, display current configuration with defaults and exit
 	if args.show {
 		show_configuration(&config)?;
@@ -155,6 +169,19 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		config.enable_markdown_rendering = enable_markdown;
 		println!("Markdown rendering {}", if enable_markdown { "enabled" } else { "disabled" });
 		modified = true;
+	}
+
+	// Set markdown theme
+	if let Some(theme) = &args.markdown_theme {
+		let valid_themes = octodev::session::chat::markdown::MarkdownTheme::all_themes();
+		if valid_themes.contains(&theme.as_str()) {
+			config.markdown_theme = theme.clone();
+			println!("Markdown theme set to '{}'", theme);
+			modified = true;
+		} else {
+			eprintln!("Error: Invalid markdown theme '{}'. Valid themes: {}", theme, valid_themes.join(", "));
+			return Ok(());
+		}
 	}
 
 	// Update MCP server references if specified
@@ -384,6 +411,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	println!("Log level: {:?}", config.log_level);
 	println!("Markdown rendering: {}", if config.enable_markdown_rendering { "enabled" } else { "disabled" });
+	println!("Markdown theme: {}", config.markdown_theme);
 
 	// Show system prompt status
 	if config.system.is_some() {
@@ -393,6 +421,33 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	}
 
 	Ok(())
+}
+
+/// Display available markdown themes with descriptions
+fn list_markdown_themes() {
+	println!("🎨 Available Markdown Themes\n");
+
+	let themes = vec![
+		("default", "Improved default theme with gold headers and enhanced contrast", "Most terminal setups"),
+		("dark", "Optimized for dark terminals with bright, vibrant colors", "Dark terminal backgrounds"),
+		("light", "Perfect for light terminal backgrounds with darker colors", "Light terminal backgrounds"),
+		("ocean", "Beautiful blue-green palette inspired by ocean themes", "Users who prefer calm, aquatic colors"),
+		("solarized", "Based on the popular Solarized color scheme", "Fans of the classic Solarized palette"),
+		("monokai", "Inspired by the popular Monokai syntax highlighting theme", "Users familiar with Monokai from code editors"),
+	];
+
+	for (name, description, best_for) in themes {
+		println!("📝 {}", name.to_uppercase());
+		println!("   Description: {}", description);
+		println!("   Best for:    {}", best_for);
+		println!("   Usage:       octodev config --markdown-theme {}", name);
+		println!();
+	}
+
+	println!("💡 Tips:");
+	println!("   • Themes work in sessions, ask command, and multimode");
+	println!("   • Enable markdown rendering: octodev config --markdown-enable true");
+	println!("   • View current theme: octodev config --show");
 }
 
 /// Display comprehensive configuration information with defaults
@@ -419,6 +474,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	);
 	println!("  Log level:                 {:?}", config.log_level);
 	println!("  Markdown rendering:        {}", if config.enable_markdown_rendering { "enabled" } else { "disabled" });
+	println!("  Markdown theme:            {}", config.markdown_theme);
 	println!("  MCP response warning:      {} tokens", config.mcp_response_warning_threshold);
 	println!("  Max request tokens:        {} tokens", config.max_request_tokens_threshold);
 	println!("  Auto-truncation:           {}", if config.enable_auto_truncation { "enabled" } else { "disabled" });

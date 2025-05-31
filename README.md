@@ -371,6 +371,53 @@ Cloudflare Workers AI requires API credentials:
 
 Octodev has been simplified to focus on interactive sessions. All codebase analysis, searching, and development tasks are now performed within AI-powered sessions.
 
+### Markdown Themes
+
+Octodev includes a beautiful markdown rendering system with multiple themes to enhance your experience. You can choose from various color schemes that work well in different terminal environments.
+
+#### Available Themes
+
+| Theme | Description | Best For |
+|-------|-------------|----------|
+| `default` | Improved default theme with gold headers and enhanced contrast | Most terminal setups |
+| `dark` | Optimized for dark terminals with bright, vibrant colors | Dark terminal backgrounds |
+| `light` | Perfect for light terminal backgrounds with darker colors | Light terminal backgrounds |
+| `ocean` | Beautiful blue-green palette inspired by ocean themes | Users who prefer calm, aquatic colors |
+| `solarized` | Based on the popular Solarized color scheme | Fans of the classic Solarized palette |
+| `monokai` | Inspired by the popular Monokai syntax highlighting theme | Users familiar with Monokai from code editors |
+
+#### Configuring Themes
+
+```bash
+# Set a theme
+octodev config --markdown-theme ocean
+
+# Enable markdown rendering (if not already enabled)
+octodev config --markdown-enable true
+
+# View current theme
+octodev config --show
+
+# See all available themes (error message shows valid options)
+octodev config --markdown-theme invalid
+```
+
+#### Theme Examples
+
+All themes include:
+- **Headers**: Different colors for H1-H6 headings with proper hierarchy
+- **Code blocks**: Syntax highlighting with appropriate background colors
+- **Inline code**: Distinct styling for `inline code`
+- **Lists**: Colored bullets and proper indentation
+- **Emphasis**: Bold, italic, and strikethrough text styling
+- **Quotes**: Blockquote styling with appropriate markers
+- **Links**: Underlined and colored link text
+
+The themes automatically work in:
+- Interactive sessions (`octodev session`)
+- Ask command (`octodev ask "Show me markdown"`)
+- Multimode (`octodev ask` without arguments)
+
 ### Basic Usage
 
 #### 1. Start a Development Session

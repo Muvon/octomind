@@ -1,7 +1,7 @@
 // Implementation of a command completer for rustyline
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::highlight::Highlighter;
+use rustyline::highlight::{Highlighter, CmdKind};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::Validator;
 use rustyline::Helper;
@@ -83,7 +83,7 @@ impl Highlighter for CommandCompleter {
 		}
 	}
 
-	fn highlight_char(&self, _line: &str, _pos: usize) -> bool {
+	fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
 		false
 	}
 
@@ -146,8 +146,8 @@ impl Highlighter for CommandHelper {
 		self.completer.highlight(line, pos)
 	}
 
-	fn highlight_char(&self, line: &str, pos: usize) -> bool {
-		self.completer.highlight_char(line, pos)
+	fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
+		self.completer.highlight_char(line, pos, kind)
 	}
 
 	fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {

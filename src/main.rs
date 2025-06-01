@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, CommandFactory};
+use clap_complete::{generate, Shell};
 
 use octomind::config::Config;
 use octomind::session;
@@ -44,6 +45,13 @@ enum Commands {
 
 	/// Show all available placeholder variables and their values
 	Vars(commands::VarsArgs),
+
+	/// Generate shell completion scripts
+	Completion {
+		/// The shell to generate completion for
+		#[arg(value_enum)]
+		shell: Shell,
+	},
 }
 
 #[tokio::main]
@@ -81,6 +89,11 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		},
 		Commands::Vars(vars_args) => {
 			commands::vars::execute(vars_args, &config).await?
+		},
+		Commands::Completion { shell } => {
+			let mut app = CliArgs::command();
+			let name = app.get_name().to_string();
+			generate(*shell, &mut app, name, &mut std::io::stdout());
 		},
 	}
 

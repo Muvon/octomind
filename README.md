@@ -80,6 +80,63 @@ cargo build --release
 make install
 ```
 
+### Shell Completions
+
+Octomind includes built-in shell completion support for bash and zsh to improve your command-line experience.
+
+#### Generating Completions
+
+```bash
+# Generate bash completion
+octomind completion bash > octomind_completion.bash
+
+# Generate zsh completion  
+octomind completion zsh > _octomind
+
+# See all available shells
+octomind completion --help
+```
+
+#### Installing Completions
+
+**Automatic Installation:**
+```bash
+# After building the release binary, run the install script
+./scripts/install-completions.sh
+```
+
+**Manual Installation:**
+
+For **Bash**:
+```bash
+# Install to user completion directory
+octomind completion bash > ~/.local/share/bash-completion/completions/octomind
+
+# Or source directly in your ~/.bashrc
+echo 'source <(octomind completion bash)' >> ~/.bashrc
+```
+
+For **Zsh**:
+```bash
+# Install to user completion directory
+mkdir -p ~/.config/zsh/completions
+octomind completion zsh > ~/.config/zsh/completions/_octomind
+
+# Add to your ~/.zshrc if not already present
+echo 'fpath=(~/.config/zsh/completions $fpath)' >> ~/.zshrc
+echo 'autoload -U compinit && compinit' >> ~/.zshrc
+```
+
+#### Features
+
+Shell completions provide:
+- **Command completion**: Tab-complete `octomind` subcommands (`session`, `ask`, `config`, etc.)
+- **Option completion**: Complete flags and arguments for each command
+- **File completion**: Automatic file path completion where appropriate
+- **Shell selection**: Complete available shells for the `completion` command
+
+The completions are automatically generated from your CLI structure, so they stay up-to-date with any command changes.
+
 ### Cross-Compilation
 
 Octomind includes a comprehensive cross-compilation setup for building static binaries across multiple platforms.

@@ -64,7 +64,9 @@ help:
 	@echo "  clean             - Clean build artifacts"
 	@echo "  dist              - Create distribution archives"
 	@echo "  install           - Install binary to /usr/local/bin"
+	@echo "  install-completions - Install shell completions"
 	@echo "  test              - Run tests"
+	@echo "  test-completions  - Test shell completion generation"
 	@echo "  fmt               - Format code"
 	@echo "  clippy            - Run clippy lints"
 	@echo ""
@@ -198,6 +200,19 @@ install: build
 	sudo chmod +x /usr/local/bin/$(BINARY_NAME)
 	@echo "Installation complete!"
 	@echo "Run '$(BINARY_NAME) --help' to verify installation"
+
+# Install shell completions
+.PHONY: install-completions
+install-completions: build
+	@echo "Installing shell completions..."
+	@./scripts/install-completions.sh
+	@echo "Shell completions installed!"
+
+# Test shell completion generation
+.PHONY: test-completions
+test-completions: build
+	@echo "Testing shell completion generation..."
+	@./scripts/test-completions.sh
 
 # Clean build artifacts
 .PHONY: clean

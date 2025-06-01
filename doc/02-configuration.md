@@ -2,7 +2,7 @@
 
 ## Overview
 
-Octodev uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octodev/config.toml` files and supports role-specific overrides with inheritance patterns.
+Octomind uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octomind/config.toml` files and supports role-specific overrides with inheritance patterns.
 
 ## Configuration Hierarchy
 
@@ -25,13 +25,13 @@ Custom roles inherit from the assistant role as a base, then apply their own ove
 
 ```bash
 # Create default configuration
-octodev config
+octomind config
 
 # Set embedding provider
-octodev config --provider fastembed
+octomind config --provider fastembed
 
 # Configure with validation
-octodev config --validate
+octomind config --validate
 ```
 
 ### Example Configuration File
@@ -104,7 +104,7 @@ server_type = "filesystem"
 [developer]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
-system = "You are an Octodev AI developer assistant with full access to development tools."
+system = "You are an Octomind AI developer assistant with full access to development tools."
 
 # Assistant role configuration (tools disabled by default)
 [assistant]
@@ -201,8 +201,8 @@ export JINA_API_KEY="your_jina_key"
 Environment variables take precedence over configuration files:
 
 ```bash
-export OCTODEV_LOG_LEVEL="debug"
-export OCTODEV_EMBEDDING_PROVIDER="jina"
+export OCTOMIND_LOG_LEVEL="debug"
+export OCTOMIND_EMBEDDING_PROVIDER="jina"
 ```
 
 ## Role-Specific Configuration
@@ -230,7 +230,7 @@ server_type = "filesystem"
 [developer]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
-system = "You are an Octodev AI developer assistant with full access to development tools."
+system = "You are an Octomind AI developer assistant with full access to development tools."
 ```
 
 ### Assistant Role
@@ -498,7 +498,7 @@ Use session commands to manage tokens:
 
 ## Command Layers
 
-Octodev supports command layers for specialized processing with improved input handling:
+Octomind supports command layers for specialized processing with improved input handling:
 
 ```toml
 # Developer role command layers
@@ -548,7 +548,7 @@ Command tools now use smart routing:
 
 ```bash
 # Validate configuration
-octodev config --validate
+octomind config --validate
 ```
 
 Common validation checks:
@@ -568,7 +568,7 @@ Common validation checks:
 
 ```bash
 # Secure config file permissions
-chmod 600 .octodev/config.toml
+chmod 600 .octomind/config.toml
 ```
 
 ## Migration Guide
@@ -601,7 +601,7 @@ model = "openrouter:anthropic/claude-3.5-sonnet"
 
 ### Automatic Migration
 
-Octodev automatically migrates legacy configurations on load, but it's recommended to update manually for better control.
+Octomind automatically migrates legacy configurations on load, but it's recommended to update manually for better control.
 
 ## Troubleshooting
 
@@ -633,7 +633,7 @@ Octodev automatically migrates legacy configurations on load, but it's recommend
 
 5. **Configuration validation failed**
   ```bash
-  octodev config --validate
+  octomind config --validate
   ```
 
 6. **Role inheritance issues**

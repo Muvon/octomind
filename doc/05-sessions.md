@@ -2,7 +2,7 @@
 
 ## Overview
 
-Octodev supports flexible session roles for different use cases, with two defaults provided and an extensible system for custom roles.
+Octomind supports flexible session roles for different use cases, with two defaults provided and an extensible system for custom roles.
 
 ## Session Roles Comparison
 
@@ -24,16 +24,16 @@ Developer role is the default and provides comprehensive development assistance.
 
 ```bash
 # Default role (developer)
-octodev session
+octomind session
 
 # Explicitly specify developer role
-octodev session --role=developer
+octomind session --role=developer
 
 # Developer role with specific model
-octodev session --role=developer --model="openrouter:anthropic/claude-sonnet-4"
+octomind session --role=developer --model="openrouter:anthropic/claude-sonnet-4"
 
 # Named developer session
-octodev session --role=developer -n development_session
+octomind session --role=developer -n development_session
 ```
 
 ### Developer Role Features
@@ -63,7 +63,7 @@ Three-layer processing for complex tasks:
 [developer]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
-system = "You are an Octodev AI developer assistant with full access to development tools."
+system = "You are an Octomind AI developer assistant with full access to development tools."
 
 # MCP configuration using new server registry approach
 [developer.mcp]
@@ -91,13 +91,13 @@ Assistant role is optimized for lightweight conversations without the overhead o
 
 ```bash
 # Assistant role
-octodev session --role=assistant
+octomind session --role=assistant
 
 # Assistant role with specific model
-octodev session --role=assistant --model="openai:gpt-4o-mini"
+octomind session --role=assistant --model="openai:gpt-4o-mini"
 
 # Named assistant session
-octodev session --role=assistant -n quick_chat
+octomind session --role=assistant -n quick_chat
 ```
 
 ### Assistant Role Features
@@ -136,9 +136,9 @@ Custom roles inherit from the assistant role as a base, then apply their own ove
 
 ```bash
 # Use a custom role
-octodev session --role=code-reviewer
-octodev session --role=security-analyst
-octodev session --role=documentation-writer
+octomind session --role=code-reviewer
+octomind session --role=security-analyst
+octomind session --role=documentation-writer
 ```
 
 ### Custom Role Configuration
@@ -212,16 +212,16 @@ server_refs = ["filesystem"]        # Add specific servers
 
 ```bash
 # Create new named session
-octodev session -n project_review
+octomind session -n project_review
 
 # Resume existing session
-octodev session -r project_review
+octomind session -r project_review
 
 # List all sessions
-octodev session --list
+octomind session --list
 
 # Session with custom model
-octodev session --model="anthropic:claude-3-5-sonnet" -n analysis
+octomind session --model="anthropic:claude-3-5-sonnet" -n analysis
 ```
 
 ### Session Commands
@@ -251,10 +251,10 @@ During a session, use these commands:
 
 ### Session Storage
 
-Sessions are stored in `.octodev/sessions/`:
+Sessions are stored in `.octomind/sessions/`:
 
 ```
-.octodev/sessions/
+.octomind/sessions/
 ├── default.jsonl           # Default session
 ├── project_review.jsonl    # Named session
 └── quick_chat.jsonl        # Chat mode session
@@ -469,10 +469,10 @@ enable_auto_truncation = true
 
 ```bash
 # Organize sessions by purpose
-octodev session -n bug_fixing --role=developer
-octodev session -n code_review --role=code-reviewer
-octodev session -n quick_help --role=assistant
-octodev session -n security_audit --role=security-analyst
+octomind session -n bug_fixing --role=developer
+octomind session -n code_review --role=code-reviewer
+octomind session -n quick_help --role=assistant
+octomind session -n security_audit --role=security-analyst
 ```
 
 ### Cost Control

@@ -201,8 +201,8 @@ impl AiProvider for OpenRouterProvider {
 		let response = client.post(OPENROUTER_API_URL)
 			.header("Authorization", format!("Bearer {}", api_key))
 			.header("Content-Type", "application/json")
-			.header("HTTP-Referer", "https://github.com/muvon/octodev")
-			.header("X-Title", "Octodev")
+			.header("HTTP-Referer", "https://github.com/muvon/octomind")
+			.header("X-Title", "Octomind")
 			.json(&request_body)
 			.send()
 		.await?;

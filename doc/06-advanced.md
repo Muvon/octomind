@@ -2,13 +2,13 @@
 
 ## Overview
 
-Octodev's advanced features enable sophisticated development workflows through MCP tool integration, layered AI architecture, and extensible configuration. This guide covers capabilities beyond basic session usage.
+Octomind's advanced features enable sophisticated development workflows through MCP tool integration, layered AI architecture, and extensible configuration. This guide covers capabilities beyond basic session usage.
 
 ## MCP (Model-Centric Programming) Protocol
 
 ### What is MCP?
 
-MCP enables AI models to use external tools and services through a standardized protocol. Octodev provides development capabilities through natural conversation by integrating tools seamlessly into AI interactions.
+MCP enables AI models to use external tools and services through a standardized protocol. Octomind provides development capabilities through natural conversation by integrating tools seamlessly into AI interactions.
 
 ### Built-in MCP Tools
 
@@ -125,7 +125,7 @@ timeout_seconds = 30
 
 ### Overview
 
-For complex development tasks, Octodev uses a multi-stage AI processing system that breaks down work into specialized layers:
+For complex development tasks, Octomind uses a multi-stage AI processing system that breaks down work into specialized layers:
 
 ```mermaid
 graph TB
@@ -284,12 +284,12 @@ url = "https://mcp.so/server/web-dev-tools"
 ### Session Organization
 ```bash
 # Start named sessions for different purposes
-octodev session --name "feature-auth"
-octodev session --name "bugfix-login"
-octodev session --name "refactor-api"
+octomind session --name "feature-auth"
+octomind session --name "bugfix-login"
+octomind session --name "refactor-api"
 
 # Resume specific sessions
-octodev session --resume "feature-auth"
+octomind session --resume "feature-auth"
 ```
 
 ## Development Workflow Integration
@@ -339,7 +339,7 @@ Through natural conversation:
 #### MCP Configuration Problems
 ```bash
 # Validate configuration
-octodev config --validate
+octomind config --validate
 
 # Check MCP server connectivity
 # (Server status is checked automatically when tools are used)
@@ -443,4 +443,4 @@ model = "anthropic/claude-3.5-sonnet"
 model = "openrouter:anthropic/claude-3.5-sonnet"
 ```
 
-Octodev automatically migrates legacy configurations, but manual updates provide better control and understanding of the new simplified structure.
+Octomind automatically migrates legacy configurations, but manual updates provide better control and understanding of the new simplified structure.

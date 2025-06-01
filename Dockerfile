@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for building static Octodev binary
+# Multi-stage Dockerfile for building static Octomind binary
 # Copyright 2025 Muvon Un Limited
 # Licensed under the Apache License, Version 2.0
 # This creates a minimal runtime image with just the static binary
@@ -30,10 +30,10 @@ RUN cargo build --release --target x86_64-unknown-linux-musl
 FROM scratch
 
 # Copy the static binary from builder stage
-COPY --from=builder /usr/src/app/target/x86_64-unknown-linux-musl/release/octodev /octodev
+COPY --from=builder /usr/src/app/target/x86_64-unknown-linux-musl/release/octomind /octomind
 
 # Expose any ports if needed (uncomment if your app serves HTTP)
 # EXPOSE 8080
 
 # Set the binary as entrypoint
-ENTRYPOINT ["/octodev"]
+ENTRYPOINT ["/octomind"]

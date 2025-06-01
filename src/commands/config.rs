@@ -14,8 +14,8 @@
 
 use clap::Args;
 
-use octodev::config::{Config, McpServerConfig, McpServerMode, McpServerType};
-use octodev::directories;
+use octomind::config::{Config, McpServerConfig, McpServerMode, McpServerType};
+use octomind::directories;
 
 #[derive(Args)]
 pub struct ConfigArgs {
@@ -156,15 +156,15 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	if let Some(log_level_str) = &args.log_level {
 		match log_level_str.to_lowercase().as_str() {
 			"none" => {
-				config.log_level = octodev::config::LogLevel::None;
+				config.log_level = octomind::config::LogLevel::None;
 				println!("Set log level to None");
 			}
 			"info" => {
-				config.log_level = octodev::config::LogLevel::Info;
+				config.log_level = octomind::config::LogLevel::Info;
 				println!("Set log level to Info");
 			}
 			"debug" => {
-				config.log_level = octodev::config::LogLevel::Debug;
+				config.log_level = octomind::config::LogLevel::Debug;
 				println!("Set log level to Debug");
 			}
 			_ => {
@@ -187,7 +187,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// Set markdown theme
 	if let Some(theme) = &args.markdown_theme {
-		let valid_themes = octodev::session::chat::markdown::MarkdownTheme::all_themes();
+		let valid_themes = octomind::session::chat::markdown::MarkdownTheme::all_themes();
 		if valid_themes.contains(&theme.as_str()) {
 			config.markdown_theme = theme.clone();
 			println!("Markdown theme set to '{}'", theme);
@@ -454,19 +454,19 @@ fn list_markdown_themes() {
 		println!("📝 {}", name.to_uppercase());
 		println!("   Description: {}", description);
 		println!("   Best for:    {}", best_for);
-		println!("   Usage:       octodev config --markdown-theme {}", name);
+		println!("   Usage:       octomind config --markdown-theme {}", name);
 		println!();
 	}
 
 	println!("💡 Tips:");
 	println!("   • Themes work in sessions, ask command, and multimode");
-	println!("   • Enable markdown rendering: octodev config --markdown-enable true");
-	println!("   • View current theme: octodev config --show");
+	println!("   • Enable markdown rendering: octomind config --markdown-enable true");
+	println!("   • View current theme: octomind config --show");
 }
 
 /// Display comprehensive configuration information with defaults
 fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
-	println!("🔧 Octodev Configuration\n");
+	println!("🔧 Octomind Configuration\n");
 
 	// Configuration file location
 	let config_path = directories::get_config_file_path()?;

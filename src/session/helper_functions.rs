@@ -34,7 +34,7 @@ pub fn get_layer_system_prompt_for_type(layer_type: &str) -> String {
 // Function to get the raw system prompt without any substitutions
 pub fn get_raw_system_prompt(layer_type: &str) -> String {
 	match layer_type {
-		"query_processor" => "You are an expert query processor and requirement analyst in the Octodev system. \
+		"query_processor" => "You are an expert query processor and requirement analyst in the Octomind system. \
 			Your task is to analyze user requests and transform them into clearer, more actionable forms.\
 			\
 			Given a user request:\
@@ -79,7 +79,7 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			%{SYSTEM}\
 			\
 			%{CONTEXT}".to_string(),
-		"developer" => "You are an Octodev – top notch fully autonomous AI developer.\n\
+		"developer" => "You are an Octomind – top notch fully autonomous AI developer.\n\
 			Current working dir: %{CWD}\n\
 			**DEVELOPMENT APPROACH:**\n\
 			1. Analyze problems thoroughly first\n\
@@ -111,7 +111,7 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			- Please follow the task provided and make sure you do only changes required by the task, if you found something outside of task scope, you can mention it and ask.\
 			- Make sure when you refactor code or do changes, you do not remove critical parts of the codebase.\
 			".to_string(),
-		"reducer" => "You are the session optimizer for Octodev, responsible for consolidating information and preparing for the next interaction. \
+		"reducer" => "You are the session optimizer for Octomind, responsible for consolidating information and preparing for the next interaction. \
 			\
 			Your responsibilities: \
 			1. Review the original request and the developer's solution \
@@ -124,7 +124,7 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			Your output will be used as context for the next user interaction, so it must contain all essential information \
 			while being as concise as possible.%{CONTEXT}".to_string(),
 
-		_ => format!("You are the {} layer in the Octodev system.%{{CONTEXT}}", layer_type),
+		_ => format!("You are the {} layer in the Octomind system.%{{CONTEXT}}", layer_type),
 	}
 }
 

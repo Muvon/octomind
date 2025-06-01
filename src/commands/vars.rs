@@ -16,7 +16,7 @@ use anyhow::Result;
 use clap::Args;
 use colored::*;
 use std::env;
-use octodev::config::Config;
+use octomind::config::Config;
 use crate::session::helper_functions::get_all_placeholders;
 
 #[derive(Args)]

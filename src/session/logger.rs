@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Simplified logging module for Octodev - single JSONL session file with prefixes
+// Simplified logging module for Octomind - single JSONL session file with prefixes
 
 use anyhow::Result;
 use std::fs::{OpenOptions};

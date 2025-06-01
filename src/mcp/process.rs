@@ -218,7 +218,7 @@ async fn initialize_stdin_server(server_name: &str) -> Result<()> {
 		"method": "initialize",
 		"params": {
 			"clientInfo": {
-				"name": "octodev",
+				"name": "octomind",
 				"version": env!("CARGO_PKG_VERSION")
 			},
 			"protocolVersion": "2025-03-26",  // Use latest protocol version

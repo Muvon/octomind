@@ -1,4 +1,4 @@
-# Command Layers in Octodev
+# Command Layers in Octomind
 
 Command layers are a powerful feature that allows you to define specialized AI helpers that can be invoked without affecting your session history. They use the same flexible layer infrastructure as the main processing pipeline but operate as standalone utilities.
 

@@ -14,15 +14,15 @@
 
 use clap::{Parser, Subcommand};
 
-use octodev::config::Config;
-use octodev::session;
+use octomind::config::Config;
+use octomind::session;
 
 mod commands;
 
 #[derive(Parser)]
-#[command(name = "octodev")]
+#[command(name = "octomind")]
 #[command(version = "0.1.0")]
-#[command(about = "Octodev is a smart AI developer assistant with configurable MCP support")]
+#[command(about = "Octomind is a smart AI developer assistant with configurable MCP support")]
 struct CliArgs {
 	#[command(subcommand)]
 	command: Commands,
@@ -57,7 +57,7 @@ async fn main() -> Result<(), anyhow::Error> {
 	let result = run_with_cleanup(args, config).await;
 
 	// Make sure to clean up any started server processes
-	if let Err(e) = octodev::mcp::server::cleanup_servers() {
+	if let Err(e) = octomind::mcp::server::cleanup_servers() {
 		eprintln!("Warning: Error cleaning up MCP servers: {}", e);
 	}
 

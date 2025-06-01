@@ -208,7 +208,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Add assistant welcome message
 		let welcome_message = format!(
-			"Hello! Octodev ready to serve you. Working dir: {} (Role: {})",
+			"Hello! Octomind ready to serve you. Working dir: {} (Role: {})",
 			current_dir.file_name().unwrap_or_default().to_string_lossy(),
 			session_args.role
 		);

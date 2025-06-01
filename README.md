@@ -1,8 +1,8 @@
-# Octodev - AI-Powered Development Assistant
+# Octomind - AI-Powered Development Assistant
 
-**© 2025 Muvon Un Limited (Hong Kong)** | Contact: [opensource@muvon.io](mailto:opensource@muvon.io) | Website: [muvon.io](https://muvon.io) | Product: [octodev.muvon.io](https://octodev.muvon.io)
+**© 2025 Muvon Un Limited (Hong Kong)** | Contact: [opensource@muvon.io](mailto:opensource@muvon.io) | Website: [muvon.io](https://muvon.io) | Product: [octomind.muvon.io](https://octomind.muvon.io)
 
-Octodev is a session-based AI development assistant that helps you understand and work with your codebase through interactive conversations. Built with a simplified, session-first approach, it provides intelligent code assistance with built-in tools for file operations, code analysis, and development tasks.
+Octomind is a session-based AI development assistant that helps you understand and work with your codebase through interactive conversations. Built with a simplified, session-first approach, it provides intelligent code assistance with built-in tools for file operations, code analysis, and development tasks.
 
 ## Features
 
@@ -27,21 +27,21 @@ Use our installation script to automatically download the appropriate binary for
 
 ```bash
 # Install latest version
-curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
 
 # Or download and inspect first
-curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh -o install.sh
 chmod +x install.sh
 ./install.sh
 ```
 
 ### Manual Installation
 
-Download pre-compiled binaries from the [releases page](https://github.com/muvon/octodev/releases) for your platform:
+Download pre-compiled binaries from the [releases page](https://github.com/muvon/octomind/releases) for your platform:
 
-- **Linux**: `octodev-{version}-x86_64-unknown-linux-{gnu,musl}.tar.gz`
-- **macOS**: `octodev-{version}-{x86_64,aarch64}-apple-darwin.tar.gz`
-- **Windows**: `octodev-{version}-x86_64-pc-windows-gnu.zip`
+- **Linux**: `octomind-{version}-x86_64-unknown-linux-{gnu,musl}.tar.gz`
+- **macOS**: `octomind-{version}-{x86_64,aarch64}-apple-darwin.tar.gz`
+- **Windows**: `octomind-{version}-x86_64-pc-windows-gnu.zip`
 
 Extract and place the binary in your `PATH`.
 
@@ -50,12 +50,12 @@ Extract and place the binary in your `PATH`.
 **Homebrew** (macOS/Linux):
 ```bash
 # Coming soon
-brew install muvon/tap/octodev
+brew install muvon/tap/octomind
 ```
 
 **Cargo** (Build from source):
 ```bash
-cargo install --git https://github.com/muvon/octodev.git
+cargo install --git https://github.com/muvon/octomind.git
 ```
 
 ### Prerequisites for Building
@@ -67,8 +67,8 @@ cargo install --git https://github.com/muvon/octodev.git
 
 ```bash
 # Clone the repository
-git clone https://github.com/muvon/octodev.git
-cd octodev
+git clone https://github.com/muvon/octomind.git
+cd octomind
 
 # Quick build for development
 make build
@@ -82,7 +82,7 @@ make install
 
 ### Cross-Compilation
 
-Octodev includes a comprehensive cross-compilation setup for building static binaries across multiple platforms.
+Octomind includes a comprehensive cross-compilation setup for building static binaries across multiple platforms.
 
 #### Supported Platforms
 
@@ -183,10 +183,10 @@ Build and run in containers:
 
 ```bash
 # Build Docker image
-docker build -t octodev .
+docker build -t octomind .
 
 # Run in container
-docker run --rm -v $(pwd):/workspace octodev index /workspace
+docker run --rm -v $(pwd):/workspace octomind index /workspace
 ```
 
 #### Build Configuration Files
@@ -198,13 +198,13 @@ docker run --rm -v $(pwd):/workspace octodev index /workspace
 
 ## AI Providers
 
-Octodev supports multiple AI providers through an extensible architecture. You can use different providers and models by specifying them in the `provider:model` format.
+Octomind supports multiple AI providers through an extensible architecture. You can use different providers and models by specifying them in the `provider:model` format.
 
 ### Supported Providers
 
 #### OpenRouter (Default)
 - **Models**: All OpenRouter models (Anthropic, OpenAI, Google, etc.)
-- **API Key**: Set `OPENROUTER_API_KEY` environment variable or configure in `.octodev/config.toml`
+- **API Key**: Set `OPENROUTER_API_KEY` environment variable or configure in `.octomind/config.toml`
 - **Features**: Full tool support, caching (for Claude models), cost tracking
 
 #### OpenAI
@@ -238,33 +238,33 @@ All models must now be specified with the `provider:model` format:
 
 ```bash
 # OpenRouter models
-octodev session --model "openrouter:anthropic/claude-3.5-sonnet"
-octodev session --model "openrouter:openai/gpt-4o"
+octomind session --model "openrouter:anthropic/claude-3.5-sonnet"
+octomind session --model "openrouter:openai/gpt-4o"
 
 # OpenAI models (direct)
-octodev session --model "openai:gpt-4o"
-octodev session --model "openai:o1-preview"
+octomind session --model "openai:gpt-4o"
+octomind session --model "openai:o1-preview"
 
 # Anthropic models (direct)
-octodev session --model "anthropic:claude-3-5-sonnet"
-octodev session --model "anthropic:claude-3-opus"
+octomind session --model "anthropic:claude-3-5-sonnet"
+octomind session --model "anthropic:claude-3-opus"
 
 # Google Vertex AI models
-octodev session --model "google:gemini-1.5-pro"
-octodev session --model "google:gemini-1.5-flash"
+octomind session --model "google:gemini-1.5-pro"
+octomind session --model "google:gemini-1.5-flash"
 
 # Amazon Bedrock models
-octodev session --model "amazon:claude-3-5-sonnet"
-octodev session --model "amazon:llama-3.1-70b-instruct"
+octomind session --model "amazon:claude-3-5-sonnet"
+octomind session --model "amazon:llama-3.1-70b-instruct"
 
 # Cloudflare Workers AI models
-octodev session --model "cloudflare:llama-3.1-8b-instruct"
-octodev session --model "cloudflare:mistral-7b-instruct"
+octomind session --model "cloudflare:llama-3.1-8b-instruct"
+octomind session --model "cloudflare:mistral-7b-instruct"
 ```
 
 ### Configuration
 
-Configure providers in your `.octodev/config.toml`:
+Configure providers in your `.octomind/config.toml`:
 
 ```toml
 # Centralized provider configuration (recommended)
@@ -371,11 +371,11 @@ Cloudflare Workers AI requires API credentials:
 
 ## Usage
 
-Octodev has been simplified to focus on interactive sessions. All codebase analysis, searching, and development tasks are now performed within AI-powered sessions.
+Octomind has been simplified to focus on interactive sessions. All codebase analysis, searching, and development tasks are now performed within AI-powered sessions.
 
 ### System Variables and Placeholders
 
-Octodev supports dynamic system variables that can be used in prompts and system messages. These variables provide real-time information about your development environment.
+Octomind supports dynamic system variables that can be used in prompts and system messages. These variables provide real-time information about your development environment.
 
 #### Available Variables
 
@@ -435,7 +435,7 @@ The variables provide comprehensive system information:
 
 ### Markdown Themes
 
-Octodev includes a beautiful markdown rendering system with multiple themes to enhance your experience. You can choose from various color schemes that work well in different terminal environments.
+Octomind includes a beautiful markdown rendering system with multiple themes to enhance your experience. You can choose from various color schemes that work well in different terminal environments.
 
 #### Available Themes
 
@@ -452,16 +452,16 @@ Octodev includes a beautiful markdown rendering system with multiple themes to e
 
 ```bash
 # Set a theme
-octodev config --markdown-theme ocean
+octomind config --markdown-theme ocean
 
 # Enable markdown rendering (if not already enabled)
-octodev config --markdown-enable true
+octomind config --markdown-enable true
 
 # View current theme
-octodev config --show
+octomind config --show
 
 # See all available themes (error message shows valid options)
-octodev config --markdown-theme invalid
+octomind config --markdown-theme invalid
 ```
 
 #### Theme Examples
@@ -476,9 +476,9 @@ All themes include:
 - **Links**: Underlined and colored link text
 
 The themes automatically work in:
-- Interactive sessions (`octodev session`)
-- Ask command (`octodev ask "Show me markdown"`)
-- Multimode (`octodev ask` without arguments)
+- Interactive sessions (`octomind session`)
+- Ask command (`octomind ask "Show me markdown"`)
+- Multimode (`octomind ask` without arguments)
 
 ### Basic Usage
 
@@ -486,45 +486,45 @@ The themes automatically work in:
 
 ```bash
 # Start a new development session (includes full development tools)
-octodev session
+octomind session
 
 # Start with a specific name
-octodev session --name my_project
+octomind session --name my_project
 
 # Resume an existing session
-octodev session --resume my_project
+octomind session --resume my_project
 ```
 
 #### 2. Configure Your Setup
 
 ```bash
 # Create default configuration
-octodev config
+octomind config
 
 # Set embedding provider
-octodev config --provider fastembed
+octomind config --provider fastembed
 ```
 
 ### Session Modes
 
-Octodev supports different session roles for various use cases:
+Octomind supports different session roles for various use cases:
 
 ```bash
 # Developer role (default) - Full development environment
-octodev session
-octodev session --role=developer
+octomind session
+octomind session --role=developer
 
 # Assistant role - Simple conversation without development tools
-octodev session --role=assistant
+octomind session --role=assistant
 
 # Custom role - Use any role defined in your configuration
-octodev session --role=my-custom-role
+octomind session --role=my-custom-role
 
 # With specific model and name
-octodev session --model "openai:gpt-4o" --name chat_session
+octomind session --model "openai:gpt-4o" --name chat_session
 
 # Resume an existing session
-octodev session --resume my_session
+octomind session --resume my_session
 ```
 
 ### Available Session Commands
@@ -547,7 +547,7 @@ Within any session, you can use these commands:
 
 ### Working with Your Codebase
 
-Octodev automatically handles project analysis through natural conversation:
+Octomind automatically handles project analysis through natural conversation:
 
 1. **Ask about your code**: "How does authentication work in this project?"
 2. **Request modifications**: "Add error handling to the login function"
@@ -558,7 +558,7 @@ All codebase operations happen automatically through the session's built-in tool
 
 #### Session Roles
 
-Octodev supports flexible session roles for different use cases, with two defaults provided:
+Octomind supports flexible session roles for different use cases, with two defaults provided:
 
 **Developer Role (Default)** - Full development environment:
 - Complete codebase indexing and analysis
@@ -604,7 +604,7 @@ server_type = "filesystem"
 [developer]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
-system = "You are an Octodev AI developer assistant with full access to development tools."
+system = "You are an Octomind AI developer assistant with full access to development tools."
 
 # Assistant role configuration (tools disabled by default)
 [assistant]
@@ -633,7 +633,7 @@ tools = ["shell", "text_editor"]  # Limit to specific tools
 
 #### Layered Architecture
 
-Octodev's first message in each session uses a specialized 3-layer AI architecture for enhanced code understanding and modification:
+Octomind's first message in each session uses a specialized 3-layer AI architecture for enhanced code understanding and modification:
 
 1. **Query Processor**: Analyzes and improves your initial query for clearer instructions (no tools)
 2. **Context Generator**: Gathers all necessary code context using tools to explore the codebase
@@ -673,11 +673,11 @@ While in an interactive session, you can use the following commands:
 
 #### Session Caching
 
-Octodev supports token caching with providers like OpenRouter to save costs when reusing large prompts or context. The system prompt is automatically cached, and you can mark user messages for caching with the `/cache` command.
+Octomind supports token caching with providers like OpenRouter to save costs when reusing large prompts or context. The system prompt is automatically cached, and you can mark user messages for caching with the `/cache` command.
 
 ## Architecture
 
-Octodev uses a simplified, session-first architecture built around these core components:
+Octomind uses a simplified, session-first architecture built around these core components:
 
 ### Core Architecture
 
@@ -729,7 +729,7 @@ Development tools are provided through the MCP (Model-Centric Programming) proto
 
 ### Layered AI Architecture
 
-For complex tasks, Octodev uses a multi-stage AI processing pipeline:
+For complex tasks, Octomind uses a multi-stage AI processing pipeline:
 
 1. **Query Processor**: Analyzes and improves user requests
 2. **Context Generator**: Gathers necessary code context using tools
@@ -740,7 +740,7 @@ This architecture ensures optimal token usage and specialized expertise at each 
 
 ## Configuration
 
-Octodev uses a configuration file stored in `.octodev/config.toml` in your project directory. Configuration supports:
+Octomind uses a configuration file stored in `.octomind/config.toml` in your project directory. Configuration supports:
 
 - **Role-based settings**: Different configurations for developer, assistant, and custom roles
 - **Provider configuration**: API keys and settings for AI providers
@@ -751,13 +751,13 @@ Octodev uses a configuration file stored in `.octodev/config.toml` in your proje
 
 ```bash
 # Create default configuration
-octodev config
+octomind config
 
 # Set embedding provider
-octodev config --provider fastembed
+octomind config --provider fastembed
 
 # Validate current configuration
-octodev config --validate
+octomind config --validate
 ```
 
 ### Key Configuration Sections
@@ -796,7 +796,7 @@ For detailed configuration options, see the [Configuration Guide](./doc/02-confi
 
 ### MCP Configuration
 
-Octodev supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration has been significantly improved with a new server registry approach that reduces duplication and provides better organization.
+Octomind supports the Model-Centric Programming (MCP) protocol, which allows integration with both local tools and external MCP servers. The configuration has been significantly improved with a new server registry approach that reduces duplication and provides better organization.
 
 #### New Server Registry Approach
 
@@ -919,7 +919,7 @@ tools = ["custom_tool1", "custom_tool2"]  # Only these tools enabled
 
 You can run an MCP server locally by providing the command and arguments to execute:
 
-1. Create a `.octodev/config.toml` file if you don't have one (or run `octodev config`)
+1. Create a `.octomind/config.toml` file if you don't have one (or run `octomind config`)
 2. Add a local MCP server configuration to the server registry:
 
 ```toml
@@ -944,7 +944,7 @@ enabled = true
 server_refs = ["developer", "web_search"]
 ```
 
-3. Octodev will start the server process when needed and clean it up when the program exits.
+3. Octomind will start the server process when needed and clean it up when the program exits.
 
 #### Server Types
 
@@ -994,7 +994,7 @@ The new server registry approach eliminates duplication when multiple roles or c
 
 ### Common Issues
 
-- **Configuration Errors**: Run `octodev config --validate` to check your setup
+- **Configuration Errors**: Run `octomind config --validate` to check your setup
 - **Missing API Keys**: Set environment variables for your AI provider
 - **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
 - **Token Limits**: Use `/truncate` command to enable automatic context management or `/cache` for caching
@@ -1017,7 +1017,7 @@ log_level = "debug"
 ### File Structure
 
 ```
-.octodev/
+.octomind/
 ├── config.toml          # Configuration file
 ├── sessions/            # Session history
 └── logs/               # Debug logs
@@ -1029,7 +1029,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Architecture Overview
 
-Octodev's simplified architecture makes it easy to contribute:
+Octomind's simplified architecture makes it easy to contribute:
 
 - **Session Management**: Core session handling in `src/session/`
 - **MCP Tools**: Development tools in `src/mcp/`
@@ -1089,4 +1089,4 @@ Copyright 2025 [Muvon Un Limited](https://muvon.io)
 
 This project is developed and maintained by Muvon Un Limited, a Hong Kong registered company.
 - Company Website: https://muvon.io
-- Project Website: https://octodev.muvon.io
+- Project Website: https://octomind.muvon.io

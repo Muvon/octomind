@@ -1,5 +1,5 @@
 #!/bin/bash
-# Octodev Installation Script
+# Octomind Installation Script
 # Copyright 2025 Muvon Un Limited
 # Licensed under the Apache License, Version 2.0
 # This script downloads and installs the appropriate binary for your platform
@@ -7,8 +7,8 @@
 set -e
 
 # Configuration
-REPO="muvon/octodev"
-BINARY_NAME="octodev"
+REPO="muvon/octomind"
+BINARY_NAME="octomind"
 INSTALL_DIR="/usr/local/bin"
 
 # Colors for output
@@ -149,8 +149,8 @@ verify_installation() {
 		if command -v "$BINARY_NAME" >/dev/null 2>&1; then
 				local installed_version
 				installed_version=$("$BINARY_NAME" --version 2>/dev/null | head -n1 || echo "unknown")
-				log_success "Octodev is installed: $installed_version"
-				log_info "Run 'octodev --help' to get started"
+				log_success "Octomind is installed: $installed_version"
+				log_info "Run 'octomind --help' to get started"
 				return 0
 		else
 				log_error "Installation failed - binary not found in PATH"
@@ -160,14 +160,14 @@ verify_installation() {
 
 # Main installation flow
 main() {
-		echo "🐙 Octodev Installation Script"
+		echo "🐙 Octomind Installation Script"
 		echo "=============================="
 
 		# Check if already installed
 		if command -v "$BINARY_NAME" >/dev/null 2>&1; then
 				local current_version
 				current_version=$("$BINARY_NAME" --version 2>/dev/null | head -n1 || echo "unknown")
-				log_warning "Octodev is already installed: $current_version"
+				log_warning "Octomind is already installed: $current_version"
 				read -p "Do you want to update it? (y/N): " -r
 				if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 						log_info "Installation cancelled"
@@ -192,21 +192,21 @@ main() {
 		verify_installation
 
 		echo ""
-		log_success "🎉 Octodev has been successfully installed!"
+		log_success "🎉 Octomind has been successfully installed!"
 		echo ""
 		echo "Next steps:"
-		echo "  1. Configure Octodev: octodev config"
-		echo "  2. Start an AI session: octodev session"
+		echo "  1. Configure Octomind: octomind config"
+		echo "  2. Start an AI session: octomind session"
 		echo "  3. Ask questions about your code naturally in the session"
 		echo ""
-		echo "For more information, visit: https://octodev.muvon.io"
+		echo "For more information, visit: https://octomind.muvon.io"
 		echo "Documentation: https://github.com/${REPO}"
 }
 
 # Parse command line arguments
 case "${1:-}" in
 		--help|-h)
-				echo "Octodev Installation Script"
+				echo "Octomind Installation Script"
 				echo ""
 				echo "Usage: $0 [options]"
 				echo ""

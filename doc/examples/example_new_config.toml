@@ -1,4 +1,4 @@
-# Example Octodev Configuration with New MCP Server Registry Approach
+# Example Octomind Configuration with New MCP Server Registry Approach
 # This demonstrates the new system-wide server registry that reduces duplication
 
 log_level = "none"

@@ -1,12 +1,12 @@
-# Octodev Overview
+# Octomind Overview
 
-## What is Octodev?
+## What is Octomind?
 
-Octodev is a session-based AI development assistant written in Rust that helps developers understand and work with their codebase through natural conversation. Built with a simplified, session-first approach, it provides intelligent code assistance through built-in tools for file operations, code analysis, and development tasks.
+Octomind is a session-based AI development assistant written in Rust that helps developers understand and work with their codebase through natural conversation. Built with a simplified, session-first approach, it provides intelligent code assistance through built-in tools for file operations, code analysis, and development tasks.
 
 ## Simplified Architecture
 
-Octodev has been redesigned around a core principle: **everything happens within interactive AI sessions**. Gone are the separate command-line tools for indexing and searching. Instead, all functionality is accessible through natural conversation with AI assistants that have built-in development tools.
+Octomind has been redesigned around a core principle: **everything happens within interactive AI sessions**. Gone are the separate command-line tools for indexing and searching. Instead, all functionality is accessible through natural conversation with AI assistants that have built-in development tools.
 
 ### Session-First Design
 
@@ -65,7 +65,7 @@ For complex development tasks, an optional multi-stage processing system:
 ## Key Features
 
 ### 1. Natural Conversation Interface
-Instead of complex command-line options, simply talk to Octodev:
+Instead of complex command-line options, simply talk to Octomind:
 - **"How does authentication work in this project?"**
 - **"Show me the main configuration files"**
 - **"Help me fix this compilation error"**
@@ -98,11 +98,11 @@ Organize your development conversations:
 - **Token management** and cost tracking
 - **Session switching** for different projects
 
-## How to Use Octodev
+## How to Use Octomind
 
 ### Basic Workflow
 
-1. **Start a session**: `octodev session`
+1. **Start a session**: `octomind session`
 2. **Ask questions**: Natural language about your code
 3. **Get assistance**: AI helps with analysis and modifications
 4. **Continue working**: Session maintains context and history
@@ -127,14 +127,14 @@ Organize your development conversations:
 
 ### Quick Setup
 
-1. **Install Octodev**
+1. **Install Octomind**
   ```bash
   # Quick install script
-  curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
 
   # Or build from source
-  git clone https://github.com/muvon/octodev.git
-  cd octodev
+  git clone https://github.com/muvon/octomind.git
+  cd octomind
   cargo build --release
   ```
 
@@ -146,23 +146,23 @@ Organize your development conversations:
   export ANTHROPIC_API_KEY="your_key"
 
   # Create configuration
-  octodev config
+  octomind config
   ```
 
 3. **Start Your First Session**
   ```bash
   # Start in your project directory
   cd your_project
-  octodev session
+  octomind session
   ```
 
 ### What's Different
 
-Octodev now uses a simplified, session-first approach:
+Octomind now uses a simplified, session-first approach:
 
 ```bash
 # Everything in one place
-octodev session
+octomind session
 
 # Then just ask naturally:
 > "How does auth work in this project?"

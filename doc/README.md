@@ -1,6 +1,6 @@
-# Octodev Manual
+# Octomind Manual
 
-Welcome to the comprehensive Octodev documentation. This manual provides detailed guidance on all aspects of Octodev's simplified, session-first architecture.
+Welcome to the comprehensive Octomind documentation. This manual provides detailed guidance on all aspects of Octomind's simplified, session-first architecture.
 
 ## Table of Contents
 
@@ -51,27 +51,27 @@ server_refs = ["developer"]
 ### Installation
 ```bash
 # Quick install with script
-curl -fsSL https://raw.githubusercontent.com/muvon/octodev/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
 
 # Or build from source
-git clone https://github.com/muvon/octodev.git
-cd octodev
+git clone https://github.com/muvon/octomind.git
+cd octomind
 cargo build --release
 ```
 
 ### Basic Commands
 ```bash
-# Configure Octodev
-octodev config
+# Configure Octomind
+octomind config
 
 # Start development session (includes all tools)
-octodev session
+octomind session
 
 # Start simple chat session (no tools)
-octodev session --role=assistant
+octomind session --role=assistant
 
 # Resume a session
-octodev session --resume my_session
+octomind session --resume my_session
 ```
 
 ### Key Concepts
@@ -122,7 +122,7 @@ Default values
 ### File Structure
 
 ```
-.octodev/
+.octomind/
 ├── config.toml          # Configuration file
 ├── sessions/            # Session history
 └── logs/               # Debug logs
@@ -151,7 +151,7 @@ Default values
 ### Common Issues
 1. **API Key Missing**: Set environment variables for your AI provider
 2. **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-sonnet-4`)
-3. **Configuration Errors**: Run `octodev config --validate`
+3. **Configuration Errors**: Run `octomind config --validate`
 4. **Tool Access Issues**: Check role configuration and MCP server settings
 5. **Tool Execution Failures**: Verify tools are routed to correct server types
 6. **Input Mode Errors**: Use lowercase input modes: `"last"`, `"all"`, `"summary"`
@@ -159,7 +159,7 @@ Default values
 
 ## Simplified Architecture
 
-Octodev now uses a streamlined, session-first architecture:
+Octomind now uses a streamlined, session-first architecture:
 
 ```mermaid
 graph TB
@@ -217,7 +217,7 @@ model = "anthropic:claude-3-5-sonnet"
 
 ## Contributing
 
-Octodev is an open-source project. Contributions are welcome!
+Octomind is an open-source project. Contributions are welcome!
 
 ### Adding New Providers
 The provider system is extensible. See `src/session/providers/` for examples.
@@ -232,6 +232,6 @@ This manual is generated from the codebase analysis. Updates should be made to b
 
 **Version**: Latest
 **Last Updated**: January 2025
-**Project**: [Octodev](https://github.com/muvon/octodev)
+**Project**: [Octomind](https://github.com/muvon/octomind)
 
 **Current Architecture**: Session-first approach with integrated MCP tools for streamlined development workflow.

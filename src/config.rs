@@ -667,7 +667,7 @@ impl Default for DeveloperRoleConfig {
 			config: ModeConfig {
 				model: "openrouter:anthropic/claude-sonnet-4".to_string(),
 				enable_layers: true,
-				system: Some("You are an Octodev AI developer assistant with full access to development tools.".to_string()),
+				system: Some("You are an Octomind AI developer assistant with full access to development tools.".to_string()),
 			},
 			mcp: RoleMcpConfig::with_server_refs(vec![
 				"octocode".to_string(),
@@ -945,9 +945,9 @@ impl Config {
 		}
 	}
 
-	pub fn ensure_octodev_dir() -> Result<std::path::PathBuf> {
+	pub fn ensure_octomind_dir() -> Result<std::path::PathBuf> {
 		// Use the system-wide directory
-		crate::directories::get_octodev_data_dir()
+		crate::directories::get_octomind_data_dir()
 	}
 
 	/// Validate the configuration for common issues

@@ -539,7 +539,7 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 
 	// Build the base system prompt
 	let mut prompt = format!(
-		"You are an Octodev – top notch fully autonomous AI developer.\n\
+		"You are an Octomind – top notch fully autonomous AI developer.\n\
 			Current working dir: {}\n\
 			**DEVELOPMENT APPROACH:**\n\
 			1. Analyze problems thoroughly first\n\

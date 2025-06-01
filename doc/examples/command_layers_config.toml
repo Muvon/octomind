@@ -1,5 +1,5 @@
 # Example configuration with command layers
-# This shows how to configure command layers for the octodev tool
+# This shows how to configure command layers for the octomind tool
 
 [embedding_provider]
 provider = "FastEmbed"
@@ -22,7 +22,7 @@ relationship_model = "openrouter:openai/gpt-4.1-nano"
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 log_level = "info"
-system = "You are an Octodev AI developer assistant with full access to development tools."
+system = "You are an Octomind AI developer assistant with full access to development tools."
 
 [developer.mcp]
 enabled = true

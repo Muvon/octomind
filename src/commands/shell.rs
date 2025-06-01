@@ -17,8 +17,8 @@ use anyhow::Result;
 use std::io::{self, Read, Write};
 use std::fs::OpenOptions;
 use serde::{Deserialize, Serialize};
-use octodev::config::Config;
-use octodev::session::{Message, chat_completion_with_provider};
+use octomind::config::Config;
+use octomind::session::{Message, chat_completion_with_provider};
 
 // Function to add command to shell history
 fn add_to_shell_history(command: &str) -> Result<()> {

@@ -1,10 +1,10 @@
-# Octodev Cross-Platform Build System
+# Octomind Cross-Platform Build System
 # Copyright 2025 Muvon Un Limited
 # Licensed under the Apache License, Version 2.0
 # This Makefile builds static binaries for multiple platforms
 
 # Configuration
-BINARY_NAME := octodev
+BINARY_NAME := octomind
 VERSION := $(shell grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)
 BUILD_DIR := target/cross
 DIST_DIR := dist
@@ -49,7 +49,7 @@ all: help
 # Help target
 .PHONY: help
 help:
-	@echo "Octodev Cross-Platform Build System"
+	@echo "Octomind Cross-Platform Build System"
 	@echo "Version: $(VERSION)"
 	@echo ""
 	@echo "Available targets:"
@@ -270,7 +270,7 @@ info:
 .PHONY: cross-config
 cross-config:
 	@echo "Creating Cross.toml configuration..."
-	@echo "# Cross-compilation configuration for octodev" > Cross.toml
+	@echo "# Cross-compilation configuration for octomind" > Cross.toml
 	@echo "" >> Cross.toml
 	@echo "[build]" >> Cross.toml
 	@echo "# Use newer images with better toolchains" >> Cross.toml

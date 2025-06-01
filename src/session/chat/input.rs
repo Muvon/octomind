@@ -26,7 +26,7 @@ use crate::log_info;
 // Get the history file path
 fn get_history_file_path() -> Result<PathBuf> {
 	// Use system-wide data directory
-	let data_dir = crate::directories::get_octodev_data_dir()?;
+	let data_dir = crate::directories::get_octomind_data_dir()?;
 	Ok(data_dir.join("history"))
 }
 

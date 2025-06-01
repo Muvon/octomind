@@ -1,4 +1,4 @@
-# Cross-compilation configuration for octodev
+# Cross-compilation configuration for octomind
 # This file configures the cross tool for building on different platforms
 
 [build]

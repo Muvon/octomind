@@ -18,26 +18,26 @@ use anyhow::{Result, Context};
 use std::path::PathBuf;
 use std::fs;
 
-/// Get the system-wide data directory for octodev
+/// Get the system-wide data directory for octomind
 ///
 /// This function returns the appropriate data directory based on the OS:
-/// - macOS: ~/.local/share/octodev
-/// - Linux: ~/.local/share/octodev (following XDG Base Directory specification)
-/// - Windows: %LOCALAPPDATA%/octodev
-pub fn get_octodev_data_dir() -> Result<PathBuf> {
+/// - macOS: ~/.local/share/octomind
+/// - Linux: ~/.local/share/octomind (following XDG Base Directory specification)
+/// - Windows: %LOCALAPPDATA%/octomind
+pub fn get_octomind_data_dir() -> Result<PathBuf> {
 		let data_dir = match dirs::home_dir() {
 				Some(home) => {
 						#[cfg(target_os = "windows")]
 						let path = {
-								// On Windows, use %LOCALAPPDATA%/octodev
+								// On Windows, use %LOCALAPPDATA%/octomind
 								match dirs::data_local_dir() {
-										Some(dir) => dir.join("octodev"),
-										None => home.join("AppData").join("Local").join("octodev"),
+										Some(dir) => dir.join("octomind"),
+										None => home.join("AppData").join("Local").join("octomind"),
 								}
 						};
 
 						#[cfg(not(target_os = "windows"))]
-						let path = home.join(".local").join("share").join("octodev");
+						let path = home.join(".local").join("share").join("octomind");
 
 						path
 				},
@@ -49,7 +49,7 @@ pub fn get_octodev_data_dir() -> Result<PathBuf> {
 		// Ensure the directory exists
 		if !data_dir.exists() {
 				fs::create_dir_all(&data_dir)
-						.context(format!("Failed to create octodev data directory: {}", data_dir.display()))?;
+						.context(format!("Failed to create octomind data directory: {}", data_dir.display()))?;
 		}
 
 		Ok(data_dir)
@@ -57,7 +57,7 @@ pub fn get_octodev_data_dir() -> Result<PathBuf> {
 
 /// Get the configuration directory path
 pub fn get_config_dir() -> Result<PathBuf> {
-		let data_dir = get_octodev_data_dir()?;
+		let data_dir = get_octomind_data_dir()?;
 		let config_dir = data_dir.join("config");
 
 		if !config_dir.exists() {
@@ -69,7 +69,7 @@ pub fn get_config_dir() -> Result<PathBuf> {
 
 /// Get the sessions directory path
 pub fn get_sessions_dir() -> Result<PathBuf> {
-		let data_dir = get_octodev_data_dir()?;
+		let data_dir = get_octomind_data_dir()?;
 		let sessions_dir = data_dir.join("sessions");
 
 		if !sessions_dir.exists() {
@@ -81,7 +81,7 @@ pub fn get_sessions_dir() -> Result<PathBuf> {
 
 /// Get the logs directory path
 pub fn get_logs_dir() -> Result<PathBuf> {
-		let data_dir = get_octodev_data_dir()?;
+		let data_dir = get_octomind_data_dir()?;
 		let logs_dir = data_dir.join("logs");
 
 		if !logs_dir.exists() {
@@ -93,7 +93,7 @@ pub fn get_logs_dir() -> Result<PathBuf> {
 
 /// Get the cache directory path
 pub fn get_cache_dir() -> Result<PathBuf> {
-		let data_dir = get_octodev_data_dir()?;
+		let data_dir = get_octomind_data_dir()?;
 		let cache_dir = data_dir.join("cache");
 
 		if !cache_dir.exists() {
@@ -111,8 +111,8 @@ pub fn get_config_file_path() -> Result<PathBuf> {
 
 /// Display information about the data directory locations
 pub fn print_directory_info() -> Result<()> {
-		println!("Octodev Data Directories:");
-		println!("  Data Dir:     {}", get_octodev_data_dir()?.display());
+		println!("Octomind Data Directories:");
+		println!("  Data Dir:     {}", get_octomind_data_dir()?.display());
 		println!("  Config Dir:   {}", get_config_dir()?.display());
 		println!("  Sessions Dir: {}", get_sessions_dir()?.display());
 		println!("  Logs Dir:     {}", get_logs_dir()?.display());
@@ -126,12 +126,12 @@ mod tests {
 		use super::*;
 
 		#[test]
-		fn test_get_octodev_data_dir() {
-				let result = get_octodev_data_dir();
+		fn test_get_octomind_data_dir() {
+				let result = get_octomind_data_dir();
 				assert!(result.is_ok());
 
 				let path = result.unwrap();
-				assert!(path.to_string_lossy().contains("octodev"));
+				assert!(path.to_string_lossy().contains("octomind"));
 
 				// The directory should exist after calling the function
 				assert!(path.exists());

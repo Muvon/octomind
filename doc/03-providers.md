@@ -2,7 +2,7 @@
 
 ## Overview
 
-Octodev supports multiple AI providers through a unified, extensible interface. All providers use the **required** `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
+Octomind supports multiple AI providers through a unified, extensible interface. All providers use the **required** `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
 
 ## Recent Changes
 
@@ -40,15 +40,15 @@ api_key = "your_key"  # Optional, can use env var
 #### Popular Models
 ```bash
 # Anthropic models via OpenRouter
-octodev session --model "openrouter:anthropic/claude-3.5-sonnet"
-octodev session --model "openrouter:anthropic/claude-sonnet-4"
+octomind session --model "openrouter:anthropic/claude-3.5-sonnet"
+octomind session --model "openrouter:anthropic/claude-sonnet-4"
 
 # OpenAI models via OpenRouter
-octodev session --model "openrouter:openai/gpt-4o"
-octodev session --model "openrouter:openai/o1-preview"
+octomind session --model "openrouter:openai/gpt-4o"
+octomind session --model "openrouter:openai/o1-preview"
 
 # Google models via OpenRouter
-octodev session --model "openrouter:google/gemini-1.5-pro"
+octomind session --model "openrouter:google/gemini-1.5-pro"
 ```
 
 ### OpenAI (Direct)
@@ -65,9 +65,9 @@ export OPENAI_API_KEY="your_openai_key"
 
 #### Usage
 ```bash
-octodev session --model "openai:gpt-4o"
-octodev session --model "openai:gpt-4o-mini"
-octodev session --model "openai:o1-preview"
+octomind session --model "openai:gpt-4o"
+octomind session --model "openai:gpt-4o-mini"
+octomind session --model "openai:o1-preview"
 ```
 
 #### Pricing (per 1M tokens)
@@ -91,9 +91,9 @@ export ANTHROPIC_API_KEY="your_anthropic_key"
 
 #### Usage
 ```bash
-octodev session --model "anthropic:claude-3-5-sonnet"
-octodev session --model "anthropic:claude-3-5-haiku"
-octodev session --model "anthropic:claude-3-opus"
+octomind session --model "anthropic:claude-3-5-sonnet"
+octomind session --model "anthropic:claude-3-5-haiku"
+octomind session --model "anthropic:claude-3-opus"
 ```
 
 #### Pricing (per 1M tokens)
@@ -127,8 +127,8 @@ export GOOGLE_REGION="us-central1"  # Optional
 
 #### Usage
 ```bash
-octodev session --model "google:gemini-1.5-pro"
-octodev session --model "google:gemini-1.5-flash"
+octomind session --model "google:gemini-1.5-pro"
+octomind session --model "google:gemini-1.5-flash"
 ```
 
 #### Pricing (per 1M tokens)
@@ -163,8 +163,8 @@ secret_access_key = "your_secret_key"  # Optional, can use env var
 
 #### Usage
 ```bash
-octodev session --model "amazon:anthropic.claude-3-sonnet"
-octodev session --model "amazon:amazon.titan-text-express"
+octomind session --model "amazon:anthropic.claude-3-sonnet"
+octomind session --model "amazon:amazon.titan-text-express"
 ```
 
 ### Cloudflare Workers AI
@@ -190,8 +190,8 @@ api_token = "your_api_token"  # Optional, can use env var
 
 #### Usage
 ```bash
-octodev session --model "cloudflare:@cf/meta/llama-2-7b-chat-int8"
-octodev session --model "cloudflare:@cf/mistral/mistral-7b-instruct-v0.1"
+octomind session --model "cloudflare:@cf/meta/llama-2-7b-chat-int8"
+octomind session --model "cloudflare:@cf/mistral/mistral-7b-instruct-v0.1"
 ```
 
 ## Model Selection Strategy
@@ -344,9 +344,9 @@ gcloud auth application-default login
 Check provider status:
 ```bash
 # Test different providers
-octodev session --model "openrouter:anthropic/claude-3.5-sonnet"
-octodev session --model "openai:gpt-4o-mini"
-octodev session --model "anthropic:claude-3-5-haiku"
+octomind session --model "openrouter:anthropic/claude-3.5-sonnet"
+octomind session --model "openai:gpt-4o-mini"
+octomind session --model "anthropic:claude-3-5-haiku"
 ```
 
 ### Debug Mode
@@ -377,10 +377,10 @@ model = "anthropic:claude-3-5-sonnet"
 
 ```bash
 # Validate current config
-octodev config --validate
+octomind config --validate
 
 # Update to new format
-octodev config --openrouter-model "openrouter:anthropic/claude-sonnet-4"
+octomind config --openrouter-model "openrouter:anthropic/claude-sonnet-4"
 ```
 
 ## Best Practices

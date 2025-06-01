@@ -1,11 +1,11 @@
 #!/bin/bash
-# Build script for Octodev development
+# Build script for Octomind development
 # This script provides common build operations for development workflow
 
 set -e
 
 # Configuration
-BINARY_NAME="octodev"
+BINARY_NAME="octomind"
 BUILD_MODE="release"
 VERBOSE=""
 
@@ -35,7 +35,7 @@ log_error() {
 
 # Show help
 show_help() {
-		echo "Octodev Build Script"
+		echo "Octomind Build Script"
 		echo ""
 		echo "Usage: $0 [command] [options]"
 		echo ""

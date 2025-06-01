@@ -1,13 +1,13 @@
 [package]
-name = "octodev"
+name = "octomind"
 version = "0.1.0"
 edition = "2021"
 authors = ["Muvon Un Limited <contact@muvon.io>"]
 license = "Apache-2.0"
 description = "AI-Powered Development Assistant - Session-based AI development assistant with built-in tools"
-homepage = "https://octodev.muvon.io"
-repository = "https://github.com/muvon/octodev"
-documentation = "https://octodev.muvon.io"
+homepage = "https://octomind.muvon.io"
+repository = "https://github.com/muvon/octomind"
+documentation = "https://octomind.muvon.io"
 keywords = ["ai", "development", "assistant", "automation", "productivity"]
 categories = ["development-tools", "command-line-utilities"]
 readme = "README.md"

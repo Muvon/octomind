@@ -279,39 +279,6 @@ pub struct OpenRouterConfig {
 	pub api_key: Option<String>,
 	#[serde(default)]
 	pub pricing: PricingConfig,
-	// Layer configurations for the new layered architecture
-	#[serde(default)]
-	pub enable_layers: bool,
-	// Log level setting (replaces debug mode)
-	#[serde(default)]
-	pub log_level: LogLevel,
-	// Maximum response tokens warning threshold
-	#[serde(default = "default_mcp_response_warning_threshold")]
-	pub mcp_response_warning_threshold: usize,
-	// Maximum request tokens threshold (for automatic context truncation)
-	#[serde(default = "default_max_request_tokens_threshold")]
-	pub max_request_tokens_threshold: usize,
-	// Enable automatic context truncation when max threshold is reached
-	#[serde(default)]
-	pub enable_auto_truncation: bool,
-	// Threshold percentage for automatic cache marker movement
-	// 0 or 100 disables auto-cache, any value between 1-99 enables it
-	#[serde(default = "default_cache_tokens_pct_threshold")]
-	pub cache_tokens_pct_threshold: u8,
-	// Alternative: Auto-cache when non-cached tokens reach this absolute number
-	// If set to 0, uses percentage threshold instead
-	#[serde(default)]
-	pub cache_tokens_absolute_threshold: u64,
-	// Auto-cache timeout in seconds (3 minutes = 180 seconds by default)
-	// If time since last cache checkpoint exceeds this, auto-cache triggers
-	#[serde(default = "default_cache_timeout_seconds")]
-	pub cache_timeout_seconds: u64,
-	// Enable markdown rendering for AI responses
-	#[serde(default)]
-	pub enable_markdown_rendering: bool,
-	// Markdown theme for styling
-	#[serde(default = "default_markdown_theme")]
-	pub markdown_theme: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -369,16 +336,6 @@ impl Default for OpenRouterConfig {
 			model: default_openrouter_model(),
 			api_key: None,
 			pricing: PricingConfig::default(),
-			enable_layers: false, // Disabled by default
-			log_level: LogLevel::default(),
-			mcp_response_warning_threshold: default_mcp_response_warning_threshold(),
-			max_request_tokens_threshold: default_max_request_tokens_threshold(),
-			enable_auto_truncation: false, // Disabled by default
-			cache_tokens_pct_threshold: default_cache_tokens_pct_threshold(),
-			cache_tokens_absolute_threshold: 0, // Disabled by default, use percentage
-			cache_timeout_seconds: default_cache_timeout_seconds(),
-			enable_markdown_rendering: false, // Disabled by default
-			markdown_theme: default_markdown_theme(),
 		}
 	}
 }
@@ -927,17 +884,6 @@ impl Config {
 			model: mode_config.get_full_model(),
 			api_key: mode_config.get_api_key(&self.providers),
 			pricing: mode_config.get_pricing(&self.providers),
-			enable_layers: mode_config.enable_layers,
-			log_level: self.get_log_level(), // Use global log level
-			// Use system-wide settings for these configuration options
-			mcp_response_warning_threshold: self.mcp_response_warning_threshold,
-			max_request_tokens_threshold: self.max_request_tokens_threshold,
-			enable_auto_truncation: self.enable_auto_truncation,
-			cache_tokens_pct_threshold: self.cache_tokens_pct_threshold,
-			cache_tokens_absolute_threshold: self.cache_tokens_absolute_threshold,
-			cache_timeout_seconds: self.cache_timeout_seconds,
-			enable_markdown_rendering: self.enable_markdown_rendering,
-			markdown_theme: self.markdown_theme.clone(),
 		};
 
 		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code

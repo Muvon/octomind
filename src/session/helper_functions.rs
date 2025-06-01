@@ -54,13 +54,15 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			- Refactoring: Impacted modules and relationships\
 			\
 			Provide a clear summary with:\
-			- Core task requirements decomposited in the way you are project manager who made it\
+			- Core task requirements decomposed the way you are project manager who made it\
 			- Recommendations to look into list of given fields needing examination (with reasons)\
 			- Key code structures and patterns found\
 			- Potential implementation challenges\
 			- Areas where more information might help\
 			\
 			Your goal is helping me fully understand what's needed to implement the task successfully.\
+			\
+			%{SYSTEM}\
 			\
 			%{CONTEXT}".to_string(),
 		"developer" => "You are an Octodev – top notch fully autonomous AI developer.\n\
@@ -86,6 +88,8 @@ pub fn get_raw_system_prompt(layer_type: &str) -> String {
 			1. First understand which files you need to read/write\n\
 			2. Process files efficiently, preferably in a single operation\n\
 			3. Utilize the provided tools proactively without asking if you should use them\n\n\
+			%{SYSTEM}\n\
+			\
 			%{CONTEXT}\n\
 			\
 			IMPORTANT:\n\
@@ -509,7 +513,7 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 			system_context.push_str(&format!("**Current Directory**: {}\n", project_dir.to_string_lossy()));
 			system_context.push_str("\n## Available Development Tools\n\n");
 			system_context.push_str(&info.binaries);
-			
+
 			let system_section = format!("\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n", system_context);
 			placeholders.insert("%{SYSTEM}", system_section);
 		}
@@ -524,7 +528,7 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 	if let Some(ref context) = project_context {
 		if needs_context {
 			let context_info = context.format_for_prompt();
-			
+
 			// Build project context (README, git status, git tree)
 			let context_section = if !context_info.is_empty() {
 				format!("\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n", context_info)
@@ -589,9 +593,9 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	system_context.push_str(&format!("**Current Directory**: {}\n", project_dir.to_string_lossy()));
 	system_context.push_str("\n## Available Development Tools\n\n");
 	system_context.push_str(&system_info.binaries);
-	
+
 	let system_section = format!("\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n", system_context);
-	
+
 	// Build project context section (README, git status, git tree)
 	let context_info = project_context.format_for_prompt();
 	let context_section = if !context_info.is_empty() {

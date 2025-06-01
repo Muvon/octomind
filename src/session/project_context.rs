@@ -75,8 +75,16 @@ impl ProjectContext {
 
 	/// Get file tree respecting .gitignore exclusions
 	fn get_file_tree(project_dir: &Path) -> Option<String> {
-		// We use "git ls-files" to respect .gitignore exclusions
-		// First check if git is available and we're in a git repo
+		// Get list of files first
+		let files_list = Self::get_files_list(project_dir)?;
+
+		// Build tree structure from file list
+		Some(Self::build_tree_structure(&files_list))
+	}
+
+	/// Get list of files using git, ripgrep, or manual fallback
+	fn get_files_list(project_dir: &Path) -> Option<String> {
+		// Try git ls-files first (respects .gitignore)
 		let git_check = Command::new("git")
 			.args(["rev-parse", "--is-inside-work-tree"])
 			.current_dir(project_dir)
@@ -84,51 +92,118 @@ impl ProjectContext {
 
 		if let Ok(output) = git_check {
 			if output.status.success() {
-				// Use git ls-files to list files respecting .gitignore
-				let output = Command::new("git")
+				if let Ok(output) = Command::new("git")
 					.args(["ls-files"])
 					.current_dir(project_dir)
-					.output();
-
-				if let Ok(output) = output {
+					.output()
+				{
 					if output.status.success() {
-						let files_list = String::from_utf8_lossy(&output.stdout).to_string();
-						// Debug output
-						// println!("{}", "Collected file tree from git".green());
-						return Some(files_list);
+						return Some(String::from_utf8_lossy(&output.stdout).to_string());
 					}
 				}
 			}
 		}
 
-		// Fallback if git isn't available or we're not in a git repo
-		// Use ripgrep to list files, as it respects .gitignore
-		let rg_output = Command::new("rg")
+		// Fallback to ripgrep
+		if let Ok(output) = Command::new("rg")
 			.args(["--files"])
 			.current_dir(project_dir)
-			.output();
-
-		if let Ok(output) = rg_output {
+			.output()
+		{
 			if output.status.success() {
-				let files_list = String::from_utf8_lossy(&output.stdout).to_string();
-				// Debug output
-				// println!("{}", "Collected file tree using ripgrep".green());
-				return Some(files_list);
+				return Some(String::from_utf8_lossy(&output.stdout).to_string());
 			}
 		}
 
-		// Last fallback: just use a basic file list
-		match Self::list_files_manually(project_dir) {
-			Ok(files) => {
-				// Debug output
-				// println!("{}", "Collected file tree manually".yellow());
-				Some(files)
-			},
-			Err(_) => {
-				println!("{}", "Failed to collect file tree".red());
-				None
+		// Last fallback: manual listing
+		Self::list_files_manually(project_dir).ok()
+	}
+
+	/// Build a tree structure from a list of file paths
+	fn build_tree_structure(files_list: &str) -> String {
+		use std::collections::BTreeMap;
+
+		#[derive(Debug)]
+		enum TreeNode {
+			File,
+			Directory(BTreeMap<String, TreeNode>),
+		}
+
+		// Build the tree structure
+		let mut root: BTreeMap<String, TreeNode> = BTreeMap::new();
+
+		for line in files_list.lines() {
+			let path = line.trim();
+			if path.is_empty() {
+				continue;
+			}
+
+			let parts: Vec<&str> = path.split('/').collect();
+			if parts.is_empty() {
+				continue;
+			}
+
+			// Build path step by step
+			let mut current_map = &mut root;
+			
+			for (i, part) in parts.iter().enumerate() {
+				let part_owned = part.to_string();
+				let is_last = i == parts.len() - 1;
+				
+				if is_last {
+					// This is the final file
+					current_map.insert(part_owned, TreeNode::File);
+					break; // Exit the loop after inserting the file
+				} else {
+					// This is an intermediate directory
+					// Use entry API to ensure the directory exists
+					current_map.entry(part_owned.clone()).or_insert_with(|| {
+						TreeNode::Directory(BTreeMap::new())
+					});
+					
+					// Now get the mutable reference to continue navigation
+					if let Some(TreeNode::Directory(ref mut dir_map)) = current_map.get_mut(&part_owned) {
+						current_map = dir_map;
+					} else {
+						break; // Should not happen, but break to be safe
+					}
+				}
 			}
 		}
+
+		// Convert tree to string representation
+		fn render_tree(
+			node_map: &BTreeMap<String, TreeNode>, 
+			prefix: &str
+		) -> String {
+			let mut result = String::new();
+			let entries: Vec<_> = node_map.iter().collect();
+			
+			for (i, (name, node)) in entries.iter().enumerate() {
+				let is_last = i == entries.len() - 1;
+				let current_prefix = if is_last { "└─ " } else { "├─ " };
+				let next_prefix = if is_last { "   " } else { "│  " };
+				
+				match node {
+					TreeNode::File => {
+						result.push_str(&format!("{}{}{}\n", prefix, current_prefix, name));
+					}
+					TreeNode::Directory(children) => {
+						result.push_str(&format!("{}{}{}/\n", prefix, current_prefix, name));
+						if !children.is_empty() {
+							result.push_str(&render_tree(
+								children, 
+								&format!("{}{}", prefix, next_prefix)
+							));
+						}
+					}
+				}
+			}
+			
+			result
+		}
+
+		render_tree(&root, "")
 	}
 
 	/// Manual file listing as a fallback

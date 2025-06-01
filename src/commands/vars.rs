@@ -7,7 +7,11 @@ use crate::session::helper_functions::get_all_placeholders;
 
 #[derive(Args)]
 pub struct VarsArgs {
-	/// Show expanded values for placeholders
+	/// Show preview of placeholder values (3 lines)
+	#[arg(short, long)]
+	pub preview: bool,
+	
+	/// Show full expanded values for placeholders
 	#[arg(short, long)]
 	pub expand: bool,
 }
@@ -26,12 +30,15 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 	for (placeholder, value) in sorted_placeholders {
 		print!("{}", placeholder.bright_green().bold());
 		
-		if args.expand {
+		if args.expand || args.preview {
 			println!(":");
 			if value.trim().is_empty() {
 				println!("  {}", "(empty)".dimmed());
+			} else if args.expand {
+				// Show full content
+				println!("  {}", value.trim());
 			} else {
-				// Handle multi-line values nicely
+				// Show preview (current behavior)
 				let lines: Vec<&str> = value.lines().collect();
 				let tokens = crate::session::estimate_tokens(value);
 				if lines.len() <= 5 && tokens <= 200 {
@@ -89,9 +96,9 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 		}
 	}
 
-	if !args.expand {
+	if !args.expand && !args.preview {
 		println!();
-		println!("{}", "Use --expand (-e) to see the actual values.".yellow());
+		println!("{}", "Use --preview (-p) to see preview values or --expand (-e) to see full values.".yellow());
 	}
 
 	Ok(())

@@ -90,7 +90,7 @@ Octomind includes built-in shell completion support for bash and zsh to improve 
 # Generate bash completion
 octomind completion bash > octomind_completion.bash
 
-# Generate zsh completion  
+# Generate zsh completion
 octomind completion zsh > _octomind
 
 # See all available shells
@@ -1126,24 +1126,17 @@ cargo build
 make install
 ```
 
-## License
+## 📞 Support & Contact
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+- **Issues**: [GitHub Issues](https://github.com/muvon/octomind/issues)
+- **Email**: [opensource@muvon.io](mailto:opensource@muvon.io)
+- **Company**: Muvon Un Limited (Hong Kong)
+- **Website**: [muvon.io](https://muvon.io)
+- **Product Page**: [octomind.muvon.io](https://octomind.muvon.io)
 
-http://www.apache.org/licenses/LICENSE-2.0
+## ⚖️ License
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Copyright © 2025 Muvon Un Limited. All rights reserved.
 
-## Copyright
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-Copyright 2025 [Muvon Un Limited](https://muvon.io)
-
-This project is developed and maintained by Muvon Un Limited, a Hong Kong registered company.
-- Company Website: https://muvon.io
-- Project Website: https://octomind.muvon.io

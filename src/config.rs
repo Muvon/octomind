@@ -305,8 +305,8 @@ fn default_max_request_tokens_threshold() -> usize {
 	50000 // Default threshold for auto-truncation (50k tokens)
 }
 
-fn default_cache_tokens_pct_threshold() -> u8 {
-	40 // Default 40% threshold for automatic cache marker movement
+fn default_cache_tokens_threshold() -> u64 {
+	3072 // Default 3072 tokens threshold for automatic cache marker movement
 }
 
 fn default_cache_timeout_seconds() -> u64 {
@@ -698,10 +698,8 @@ pub struct Config {
 	pub max_request_tokens_threshold: usize,
 	#[serde(default)]
 	pub enable_auto_truncation: bool,
-	#[serde(default = "default_cache_tokens_pct_threshold")]
-	pub cache_tokens_pct_threshold: u8,
-	#[serde(default)]
-	pub cache_tokens_absolute_threshold: u64,
+	#[serde(default = "default_cache_tokens_threshold")]
+	pub cache_tokens_threshold: u64,
 	#[serde(default = "default_cache_timeout_seconds")]
 	pub cache_timeout_seconds: u64,
 	#[serde(default)]
@@ -1007,13 +1005,8 @@ impl Config {
 
 	fn validate_thresholds(&self) -> Result<()> {
 		// Check raw configured values - 0 is a valid explicit choice for disabling features
-		let cache_pct_threshold = self.cache_tokens_pct_threshold;
-
-		// Only percentage threshold has a logical upper bound
-		if cache_pct_threshold > 100 {
-			return Err(anyhow!("Cache tokens percentage threshold must be between 0-100"));
-		}
-
+		// All threshold values are now valid as u64/usize have natural ranges
+		
 		// Warn if thresholds seem unusual (but don't error - user's choice)
 		if self.mcp_response_warning_threshold != 0 && self.mcp_response_warning_threshold < 1000 {
 			eprintln!("Warning: MCP response warning threshold ({}) is quite low", self.mcp_response_warning_threshold);
@@ -1435,22 +1428,15 @@ mod tests {
 		// Test valid thresholds (0 is now valid for disabling features)
 		let config = Config {
 			mcp_response_warning_threshold: 0, // Now valid for disabling
-			cache_tokens_pct_threshold: 50,
+			cache_tokens_threshold: 3072,
 			..Default::default()
 		};
 		assert!(config.validate_thresholds().is_ok());
 
-		let config = Config {
-			mcp_response_warning_threshold: 1000,
-			cache_tokens_pct_threshold: 101, // Invalid - over 100%
-			..Default::default()
-		};
-		assert!(config.validate_thresholds().is_err());
-
 		// Test valid thresholds
 		let config = Config {
 			mcp_response_warning_threshold: 1000,
-			cache_tokens_pct_threshold: 50,
+			cache_tokens_threshold: 5000,
 			..Default::default()
 		};
 		assert!(config.validate_thresholds().is_ok());
@@ -1467,11 +1453,9 @@ mod tests {
 	#[test]
 	fn test_role_specific_cache_config() {
 		let config = Config {
-			cache_tokens_absolute_threshold: 4096,
+			cache_tokens_threshold: 4096,
 			cache_timeout_seconds: 300,
 			openrouter: OpenRouterConfig {
-				cache_tokens_absolute_threshold: 0,
-				cache_timeout_seconds: 180,
 				..Default::default()
 			},
 			..Default::default()
@@ -1479,17 +1463,17 @@ mod tests {
 
 		// Test developer role merged config - should use system-wide settings
 		let developer_merged = config.get_merged_config_for_mode("developer");
-		assert_eq!(developer_merged.openrouter.cache_tokens_absolute_threshold, 4096);
-		assert_eq!(developer_merged.openrouter.cache_timeout_seconds, 300);
+		assert_eq!(developer_merged.cache_tokens_threshold, 4096);
+		assert_eq!(developer_merged.cache_timeout_seconds, 300);
 
 		// Test assistant role merged config - should also use system-wide settings
 		let assistant_merged = config.get_merged_config_for_mode("assistant");
-		assert_eq!(assistant_merged.openrouter.cache_tokens_absolute_threshold, 4096);
-		assert_eq!(assistant_merged.openrouter.cache_timeout_seconds, 300);
+		assert_eq!(assistant_merged.cache_tokens_threshold, 4096);
+		assert_eq!(assistant_merged.cache_timeout_seconds, 300);
 
 		// Test unknown role falls back to assistant but still uses system-wide settings
 		let unknown_merged = config.get_merged_config_for_mode("unknown");
-		assert_eq!(unknown_merged.openrouter.cache_tokens_absolute_threshold, 4096);
-		assert_eq!(unknown_merged.openrouter.cache_timeout_seconds, 300);
+		assert_eq!(unknown_merged.cache_tokens_threshold, 4096);
+		assert_eq!(unknown_merged.cache_timeout_seconds, 300);
 	}
 }

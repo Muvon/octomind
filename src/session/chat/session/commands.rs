@@ -62,7 +62,7 @@ impl ChatSession {
 				println!("Use '/cache clear' to remove content cache markers (keeps system/tool caches).");
 				println!("Use '/cache threshold' to view auto-cache settings.");
 				println!("Supports 2-marker system: when you add a 3rd marker, the first one moves to the new position.");
-				println!("Automatic caching triggers based on token threshold percentage (configurable).");
+				println!("Automatic caching triggers based on token threshold (configurable).");
 				println!("Cached tokens reduce costs on subsequent requests with the same content.\n");
 
 				// Add information about layered architecture
@@ -336,20 +336,13 @@ impl ChatSession {
 						},
 						"threshold" => {
 							// Show current threshold settings using the system-wide configuration getters
-							if config.cache_tokens_absolute_threshold > 0 {
-								println!("{}", format!("Current auto-cache threshold: {} tokens (absolute)",
-									config.cache_tokens_absolute_threshold).bright_cyan());
+							if config.cache_tokens_threshold > 0 {
+								println!("{}", format!("Current auto-cache threshold: {} tokens",
+									config.cache_tokens_threshold).bright_cyan());
 								println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
-									config.cache_tokens_absolute_threshold).bright_blue());
+									config.cache_tokens_threshold).bright_blue());
 							} else {
-								let threshold = config.cache_tokens_pct_threshold;
-								println!("{}", format!("Current auto-cache threshold: {}% (percentage)", threshold).bright_cyan());
-
-								if threshold == 0 || threshold == 100 {
-									println!("{}", "Auto-cache is disabled".bright_yellow());
-								} else {
-									println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {}% of total", threshold).bright_blue());
-								}
+								println!("{}", "Auto-cache is disabled (threshold set to 0)".bright_yellow());
 							}
 
 							// Show time-based threshold

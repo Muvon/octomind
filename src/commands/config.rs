@@ -478,8 +478,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!("  MCP response warning:      {} tokens", config.mcp_response_warning_threshold);
 	println!("  Max request tokens:        {} tokens", config.max_request_tokens_threshold);
 	println!("  Auto-truncation:           {}", if config.enable_auto_truncation { "enabled" } else { "disabled" });
-	println!("  Cache percentage threshold: {}%", config.cache_tokens_pct_threshold);
-	println!("  Cache absolute threshold:  {} tokens", config.cache_tokens_absolute_threshold);
+	println!("  Cache threshold:           {} tokens", config.cache_tokens_threshold);
 	println!("  Cache timeout:             {} seconds", config.cache_timeout_seconds);
 	println!();
 

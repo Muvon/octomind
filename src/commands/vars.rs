@@ -10,7 +10,7 @@ pub struct VarsArgs {
 	/// Show preview of placeholder values (3 lines)
 	#[arg(short, long)]
 	pub preview: bool,
-	
+
 	/// Show full expanded values for placeholders
 	#[arg(short, long)]
 	pub expand: bool,
@@ -29,7 +29,7 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 
 	for (placeholder, value) in sorted_placeholders {
 		print!("{}", placeholder.bright_green().bold());
-		
+
 		if args.expand || args.preview {
 			println!(":");
 			if value.trim().is_empty() {
@@ -47,7 +47,7 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 				} else {
 					// Long value, show truncated with meaningful preview
 					println!("  {}", format!("({} lines, {} tokens)", lines.len(), tokens).dimmed());
-					
+
 					// Show first 3 non-empty lines as preview
 					let mut preview_lines = Vec::new();
 					for line in lines.iter().take(10) { // Look at first 10 lines to find 3 non-empty ones
@@ -59,16 +59,16 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 							break;
 						}
 					}
-					
+
 					if !preview_lines.is_empty() {
 						println!("  {} ", "Preview:".dimmed());
-						for (i, line) in preview_lines.iter().enumerate() {
+						for line in preview_lines.iter() {
 							let display_line = if line.len() > 100 {
 								format!("{}...", &line[..97])
 							} else {
 								line.to_string()
 							};
-							println!("    {}{}", display_line, if i < preview_lines.len() - 1 { "" } else { "" });
+							println!("    {}", display_line);
 						}
 						if lines.len() > preview_lines.len() {
 							println!("    {}", "...".dimmed());

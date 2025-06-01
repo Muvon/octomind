@@ -245,58 +245,23 @@ impl CacheManager {
 						}
 				}
 
-				// Check absolute threshold next (if set)
-				if config.cache_tokens_absolute_threshold > 0 {
-						if session.current_non_cached_tokens >= config.cache_tokens_absolute_threshold {
-								// Find the LAST tool message, and if none, the LAST user message
-								let target_index = session.messages.iter().enumerate().rev()
-										.find(|(_, msg)| msg.role == "tool")
-										.or_else(|| session.messages.iter().enumerate().rev()
-												.find(|(_, msg)| msg.role == "user"))
-										.map(|(i, _)| i);
+				// Check absolute threshold (only check if > 0, meaning enabled)
+				if config.cache_tokens_threshold > 0 && session.current_non_cached_tokens >= config.cache_tokens_threshold {
+    								// Find the LAST tool message, and if none, the LAST user message
+    								let target_index = session.messages.iter().enumerate().rev()
+    										.find(|(_, msg)| msg.role == "tool")
+    										.or_else(|| session.messages.iter().enumerate().rev()
+    												.find(|(_, msg)| msg.role == "user"))
+    										.map(|(i, _)| i);
 
-								if let Some(index) = target_index {
-										match self.apply_cache_to_message(session, index, supports_caching) {
-												Ok(true) => return Ok(true),
-												Ok(false) => return Ok(false),
-												Err(_) => return Ok(false), // Silently fail for auto-cache
-										}
-								}
-						}
-				} else {
-						// Use percentage threshold
-						let threshold = config.cache_tokens_pct_threshold;
-						if threshold == 0 || threshold == 100 {
-								return Ok(false);
-						}
-
-						// For percentage-based threshold, we need some total tokens to calculate
-						if session.current_total_tokens == 0 {
-								return Ok(false);
-						}
-
-						// Calculate the percentage of non-cached tokens
-						let non_cached_percentage =
-								(session.current_non_cached_tokens as f64 / session.current_total_tokens as f64) * 100.0;
-
-						// Check if we've reached the threshold
-						if non_cached_percentage as u8 >= threshold {
-								// Find the LAST tool message, and if none, the LAST user message
-								let target_index = session.messages.iter().enumerate().rev()
-										.find(|(_, msg)| msg.role == "tool")
-										.or_else(|| session.messages.iter().enumerate().rev()
-												.find(|(_, msg)| msg.role == "user"))
-										.map(|(i, _)| i);
-
-								if let Some(index) = target_index {
-										match self.apply_cache_to_message(session, index, supports_caching) {
-												Ok(true) => return Ok(true),
-												Ok(false) => return Ok(false),
-												Err(_) => return Ok(false), // Silently fail for auto-cache
-										}
-								}
-						}
-				}
+    								if let Some(index) = target_index {
+    										match self.apply_cache_to_message(session, index, supports_caching) {
+    												Ok(true) => return Ok(true),
+    												Ok(false) => return Ok(false),
+    												Err(_) => return Ok(false), // Silently fail for auto-cache
+    										}
+    								}
+    						}
 
 				Ok(false)
 		}
@@ -330,40 +295,14 @@ impl CacheManager {
 						return Ok(false);
 				}
 
-				// Check absolute threshold first (if set)
-				if config.cache_tokens_absolute_threshold > 0 {
-						if session.current_non_cached_tokens >= config.cache_tokens_absolute_threshold {
-								match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
-										Ok(true) => return Ok(true),
-										Ok(false) => return Ok(false),
-										Err(_) => return Ok(false), // Silently fail for auto-cache
-								}
-						}
-				} else {
-						// Use percentage threshold
-						let threshold = config.cache_tokens_pct_threshold;
-						if threshold == 0 || threshold == 100 {
-								return Ok(false);
-						}
-
-						// For percentage-based threshold, we need some total tokens to calculate
-						if session.current_total_tokens == 0 {
-								return Ok(false);
-						}
-
-						// Calculate the percentage of non-cached tokens
-						let non_cached_percentage =
-								(session.current_non_cached_tokens as f64 / session.current_total_tokens as f64) * 100.0;
-
-						// Check if we've reached the threshold
-						if non_cached_percentage as u8 >= threshold {
-								match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
-										Ok(true) => return Ok(true),
-										Ok(false) => return Ok(false),
-										Err(_) => return Ok(false), // Silently fail for auto-cache
-								}
-						}
-				}
+				// Check absolute threshold (only check if > 0, meaning enabled)
+				if config.cache_tokens_threshold > 0 && session.current_non_cached_tokens >= config.cache_tokens_threshold {
+    								match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
+    										Ok(true) => return Ok(true),
+    										Ok(false) => return Ok(false),
+    										Err(_) => return Ok(false), // Silently fail for auto-cache
+    								}
+    						}
 
 				// Check time-based threshold last
 				let current_time = std::time::SystemTime::now()

@@ -311,7 +311,7 @@ pub async fn gather_system_info() -> SystemInfo {
 
 	// Get shell information
 	let shell_path = env::var("SHELL").unwrap_or_else(|_| "unknown".to_string());
-	let shell_name = shell_path.split('/').last().unwrap_or("unknown");
+	let shell_name = shell_path.split('/').next_back().unwrap_or("unknown");
 
 	// Try to get shell version
 	let shell_version = get_command_version(shell_name).await;
@@ -386,7 +386,7 @@ async fn get_os_info() -> String {
 	} else if cfg!(target_os = "linux") {
 		// Try to get Linux distribution info
 		if let Ok(output) = Command::new("lsb_release")
-			.args(&["-a"])
+			.args(["-a"])
 			.output()
 			.await
 		{
@@ -421,7 +421,7 @@ async fn get_os_info() -> String {
 		}
 	} else if cfg!(target_os = "windows") {
 		if let Ok(output) = Command::new("wmic")
-			.args(&["os", "get", "Caption,Version", "/format:list"])
+			.args(["os", "get", "Caption,Version", "/format:list"])
 			.output()
 			.await
 		{
@@ -440,7 +440,7 @@ async fn get_os_info() -> String {
 	}
 
 	// Get kernel version if available
-	if let Ok(output) = Command::new("uname").args(&["-r"]).output().await {
+	if let Ok(output) = Command::new("uname").args(["-r"]).output().await {
 		if output.status.success() {
 			let kernel = String::from_utf8_lossy(&output.stdout).trim().to_string();
 			os_parts.push(format!("kernel: {}", kernel));

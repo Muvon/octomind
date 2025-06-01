@@ -41,7 +41,7 @@ fn print_response(content: &str, use_raw: bool, config: &Config) {
 				println!("{}", content);
 		} else if is_markdown_content(content) {
 				// Use markdown rendering with theme from config
-				let theme = crate::session::chat::markdown::MarkdownTheme::from_str(&config.markdown_theme)
+				let theme = config.markdown_theme.parse()
 						.unwrap_or_default();
 				let renderer = MarkdownRenderer::with_theme(theme);
 				match renderer.render_and_print(content) {
@@ -253,7 +253,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 				// Execute once and return
 				let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
 				print_response(&response.content, args.raw, config);
-			return Ok(());
+			Ok(())
 		} else if !atty::is(atty::Stream::Stdin) {
 				// Read from stdin if it's being piped
 				let mut buffer = String::new();
@@ -319,7 +319,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 				}
 
 				return Ok(());
-		};
+		}
 }
 
 // Helper function to execute a single query

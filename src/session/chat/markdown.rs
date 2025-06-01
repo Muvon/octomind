@@ -34,9 +34,6 @@ impl FromStr for MarkdownTheme {
 }
 
 impl MarkdownTheme {
-	pub fn from_str(s: &str) -> Option<Self> {
-		s.parse().ok()
-	}
 
 	pub fn as_str(&self) -> &'static str {
 		match self {

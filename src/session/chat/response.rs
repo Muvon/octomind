@@ -106,7 +106,7 @@ fn remove_function_calls(content: &str) -> String {
 pub fn print_assistant_response(content: &str, config: &Config, _role: &str) {
 	if config.enable_markdown_rendering && is_markdown_content(content) {
 		// Use markdown rendering with theme from config
-		let theme = crate::session::chat::markdown::MarkdownTheme::from_str(&config.markdown_theme)
+		let theme = config.markdown_theme.parse()
 			.unwrap_or_default();
 		let renderer = MarkdownRenderer::with_theme(theme);
 		match renderer.render_and_print(content) {

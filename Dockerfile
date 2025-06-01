@@ -1,4 +1,6 @@
 # Multi-stage Dockerfile for building static Octodev binary
+# Copyright 2025 Muvon Un Limited
+# Licensed under the Apache License, Version 2.0
 # This creates a minimal runtime image with just the static binary
 
 # Build stage

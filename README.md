@@ -1,5 +1,7 @@
 # Octodev - AI-Powered Development Assistant
 
+**© 2025 Muvon Un Limited (Hong Kong)** | Contact: [opensource@muvon.io](mailto:opensource@muvon.io) | Website: [muvon.io](https://muvon.io) | Product: [octodev.muvon.io](https://octodev.muvon.io)
+
 Octodev is a session-based AI development assistant that helps you understand and work with your codebase through interactive conversations. Built with a simplified, session-first approach, it provides intelligent code assistance with built-in tools for file operations, code analysis, and development tasks.
 
 ## Features
@@ -401,7 +403,7 @@ Use the `vars` command to inspect all available variables:
 # List all variables with descriptions
 cargo run -- vars
 
-# Show actual values (expanded view)  
+# Show actual values (expanded view)
 cargo run -- vars --expand
 cargo run -- vars -e
 ```
@@ -1069,4 +1071,22 @@ make install
 
 ## License
 
-MIT
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+## Copyright
+
+Copyright 2025 [Muvon Un Limited](https://muvon.io)
+
+This project is developed and maintained by Muvon Un Limited, a Hong Kong registered company.
+- Company Website: https://muvon.io
+- Project Website: https://octodev.muvon.io

@@ -1,4 +1,6 @@
 # Octodev Cross-Platform Build System
+# Copyright 2025 Muvon Un Limited
+# Licensed under the Apache License, Version 2.0
 # This Makefile builds static binaries for multiple platforms
 
 # Configuration

@@ -1,5 +1,7 @@
 #!/bin/bash
 # Octodev Installation Script
+# Copyright 2025 Muvon Un Limited
+# Licensed under the Apache License, Version 2.0
 # This script downloads and installs the appropriate binary for your platform
 
 set -e
@@ -193,11 +195,12 @@ main() {
 		log_success "🎉 Octodev has been successfully installed!"
 		echo ""
 		echo "Next steps:"
-		echo "  1. Index your codebase: octodev index"
-		echo "  2. Search your code: octodev search 'your query'"
-		echo "  3. Start an AI session: octodev session"
+		echo "  1. Configure Octodev: octodev config"
+		echo "  2. Start an AI session: octodev session"
+		echo "  3. Ask questions about your code naturally in the session"
 		echo ""
-		echo "For more information, visit: https://github.com/${REPO}"
+		echo "For more information, visit: https://octodev.muvon.io"
+		echo "Documentation: https://github.com/${REPO}"
 }
 
 # Parse command line arguments

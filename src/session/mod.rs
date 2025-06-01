@@ -8,7 +8,7 @@ mod project_context; // Project context collection and management
 mod token_counter;  // Token counting utilities
 pub mod logger;     // Request/response logging utilities
 mod model_utils;    // Model-specific utility functions
-mod helper_functions; // Helper functions for layers and other components
+pub mod helper_functions; // Helper functions for layers and other components
 pub mod cache;      // Comprehensive caching system
 
 // Provider system exports

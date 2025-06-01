@@ -27,6 +27,9 @@ enum Commands {
 
 	/// Execute shell commands through AI with confirmation
 	Shell(commands::ShellArgs),
+
+	/// Show all available placeholder variables and their values
+	Vars(commands::VarsArgs),
 }
 
 #[tokio::main]
@@ -61,6 +64,9 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		},
 		Commands::Shell(shell_args) => {
 			commands::shell::execute(shell_args, &config).await?
+		},
+		Commands::Vars(vars_args) => {
+			commands::vars::execute(vars_args, &config).await?
 		},
 	}
 

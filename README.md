@@ -371,6 +371,66 @@ Cloudflare Workers AI requires API credentials:
 
 Octodev has been simplified to focus on interactive sessions. All codebase analysis, searching, and development tasks are now performed within AI-powered sessions.
 
+### System Variables and Placeholders
+
+Octodev supports dynamic system variables that can be used in prompts and system messages. These variables provide real-time information about your development environment.
+
+#### Available Variables
+
+**Individual Variables:**
+- **`%{DATE}`** - Current date and time with timezone
+- **`%{SHELL}`** - Current shell name and version
+- **`%{OS}`** - Operating system information with architecture and platform details
+- **`%{BINARIES}`** - List of available development tools and their versions (one per line)
+- **`%{CWD}`** - Current working directory
+- **`%{GIT_STATUS}`** - Git repository status
+- **`%{GIT_TREE}`** - Git file tree
+- **`%{README}`** - Project README content
+
+**Comprehensive Variables:**
+- **`%{SYSTEM}`** - Complete system information (date, shell, OS, binaries, CWD)
+- **`%{CONTEXT}`** - Project context information (README, git status, git tree)
+
+*Note: The comprehensive variables (`%{SYSTEM}` and `%{CONTEXT}`) provide organized collections of the individual variables above.*
+
+#### Viewing Variables
+
+Use the `vars` command to inspect all available variables:
+
+```bash
+# List all variables with descriptions
+cargo run -- vars
+
+# Show actual values (expanded view)  
+cargo run -- vars --expand
+cargo run -- vars -e
+```
+
+#### Development Tool Detection
+
+The `%{BINARIES}` variable automatically detects and reports versions of common development tools:
+
+- **Build tools**: `rustc`, `gcc`, `clang`, `make`
+- **Languages**: `node`, `npm`, `python`, `python3`, `go`, `java`, `php`
+- **Utilities**: `awk`, `sed`, `rg`, `git`, `docker`, `curl`, `wget`, `tar`, `zip`, `unzip`
+
+Tools are detected asynchronously for optimal performance, showing either their version or "missing" if not available. Each tool is listed on a separate line for better readability.
+
+#### Performance Optimization
+
+The placeholder system is optimized for performance:
+- **Smart Detection**: Only gathers data for placeholders that actually exist in the system prompt
+- **Async Execution**: System information gathering runs asynchronously for maximum performance
+- **Lazy Loading**: Expensive operations like project context collection only run when needed
+- **Token Counting**: Uses tiktoken-rs for accurate token counting instead of character counting
+
+#### System Information
+
+The variables provide comprehensive system information:
+- **OS details**: Platform, architecture, distribution (Linux), version (macOS/Windows), kernel version
+- **Shell info**: Shell name with version detection
+- **Development environment**: Complete toolchain visibility
+
 ### Markdown Themes
 
 Octodev includes a beautiful markdown rendering system with multiple themes to enhance your experience. You can choose from various color schemes that work well in different terminal environments.

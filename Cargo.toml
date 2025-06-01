@@ -37,6 +37,7 @@ url = "2.5.4"
 dirs = "6.0.0"
 glob = "0.3.2"
 atty = "0.2.14"
+futures = "0.3.31"
 
 [profile.dev]
 opt-level = 1          # Basic optimizations without slowing compilation too much

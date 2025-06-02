@@ -129,11 +129,11 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	// Create user prompt that asks for structured response
 	let user_prompt = format!(
 		"Generate a shell command for: {}\n\n\
-		Please respond with a JSON object containing:\n\
-		- \"command\": the exact shell command to execute\n\
-		- \"explanation\": brief explanation of what the command does\n\
-		- \"safety_notes\": optional warnings if the command is potentially dangerous\n\n\
-		Only respond with the JSON object, no other text.",
+			Please respond with a JSON object containing:\n\
+			- \"command\": the exact shell command to execute\n\
+			- \"explanation\": brief explanation of what the command does\n\
+			- \"safety_notes\": optional warnings if the command is potentially dangerous\n\n\
+			Only respond with the JSON object, no other text.",
 		description
 	);
 
@@ -252,23 +252,23 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 fn create_shell_system_prompt() -> String {
 	format!(
 		"You are a shell command generator. Your task is to convert natural language descriptions into appropriate shell commands.\n\n\
-		INSTRUCTIONS:\n\
-		1. Generate safe, correct shell commands for the given description\n\
-		2. Prefer commonly available tools and standard Unix commands\n\
-		3. Always respond with properly formatted JSON\n\
-		4. Include safety warnings for potentially dangerous commands\n\
-		5. Make commands as specific as possible while being safe\n\
-		6. Consider the current working directory: {}\n\n\
-		SAFETY GUIDELINES:\n\
-		- Avoid destructive operations without explicit user request\n\
-		- Warn about commands that modify system files\n\
-		- Prefer read-only operations when possible\n\
-		- Include safety flags where appropriate (e.g., -i for interactive)\n\n\
-		RESPONSE FORMAT:\n\
-		Always respond with a JSON object containing exactly these fields:\n\
-		- \"command\": string with the exact shell command\n\
-		- \"explanation\": string explaining what the command does\n\
-		- \"safety_notes\": optional string with warnings (null if no warnings needed)",
+			INSTRUCTIONS:\n\
+			1. Generate safe, correct shell commands for the given description\n\
+			2. Prefer commonly available tools and standard Unix commands\n\
+			3. Always respond with properly formatted JSON\n\
+			4. Include safety warnings for potentially dangerous commands\n\
+			5. Make commands as specific as possible while being safe\n\
+			6. Consider the current working directory: {}\n\n\
+			SAFETY GUIDELINES:\n\
+			- Avoid destructive operations without explicit user request\n\
+			- Warn about commands that modify system files\n\
+			- Prefer read-only operations when possible\n\
+			- Include safety flags where appropriate (e.g., -i for interactive)\n\n\
+			RESPONSE FORMAT:\n\
+			Always respond with a JSON object containing exactly these fields:\n\
+			- \"command\": string with the exact shell command\n\
+			- \"explanation\": string explaining what the command does\n\
+			- \"safety_notes\": optional string with warnings (null if no warnings needed)",
 		std::env::current_dir()
 			.map(|p| p.display().to_string())
 			.unwrap_or_else(|_| "unknown".to_string())

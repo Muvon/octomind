@@ -48,9 +48,9 @@ fn intern_model_name(model: &str) -> &'static str {
 pub struct OpenRouterProvider;
 
 impl Default for OpenRouterProvider {
-		fn default() -> Self {
-				Self::new()
-		}
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl OpenRouterProvider {
@@ -158,11 +158,11 @@ impl AiProvider for OpenRouterProvider {
 					serde_json::json!({
 						"type": "function",
 						"function": {
-							"name": f.name,
-							"description": f.description,
-							"parameters": f.parameters
-						}
-					})
+						"name": f.name,
+						"description": f.description,
+						"parameters": f.parameters
+					}
+				})
 				}).collect::<Vec<_>>();
 
 				// Add web search tool if using Claude 3.7 Sonnet

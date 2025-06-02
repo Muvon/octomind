@@ -66,13 +66,13 @@ async fn convert_single_html_to_md(call: &McpToolCall, source: &str) -> Result<M
 		result: json!({
 			"success": true,
 			"conversions": [{
-				"source": source,
-				"type": source_type,
-				"markdown": markdown,
-				"size": markdown.len()
-			}],
-			"count": 1
-		}),
+			"source": source,
+			"type": source_type,
+			"markdown": markdown,
+			"size": markdown.len()
+		}],
+		"count": 1
+	}),
 	})
 }
 

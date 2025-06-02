@@ -53,9 +53,9 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct GoogleVertexProvider;
 
 impl Default for GoogleVertexProvider {
-		fn default() -> Self {
-				Self::new()
-		}
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl GoogleVertexProvider {
@@ -160,11 +160,11 @@ impl AiProvider for GoogleVertexProvider {
 				let tools = functions.iter().map(|f| {
 					serde_json::json!({
 						"functionDeclarations": [{
-							"name": f.name,
-							"description": f.description,
-							"parameters": f.parameters
-						}]
-					})
+						"name": f.name,
+						"description": f.description,
+						"parameters": f.parameters
+					}]
+				})
 				}).collect::<Vec<_>>();
 
 				request_body["tools"] = serde_json::json!(tools);

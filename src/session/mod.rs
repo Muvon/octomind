@@ -277,9 +277,9 @@ impl Session {
 			let summary_entry = serde_json::json!({
 				"type": "SUMMARY",
 				"timestamp": SystemTime::now()
-					.duration_since(UNIX_EPOCH)
-					.unwrap_or_default()
-					.as_secs(),
+				.duration_since(UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
 				"session_info": &self.info
 			});
 			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
@@ -439,13 +439,13 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 				messages.clear();
 				restoration_messages.clear();
 			} else if !line.starts_with("API_REQUEST: ") &&
-						!line.starts_with("API_RESPONSE: ") &&
-						!line.starts_with("TOOL_CALL: ") &&
-						!line.starts_with("TOOL_RESULT: ") &&
-						!line.starts_with("CACHE: ") &&
-						!line.starts_with("ERROR: ") &&
-						!line.starts_with("EXCHANGE: ") &&
-						!line.is_empty() {
+			!line.starts_with("API_RESPONSE: ") &&
+			!line.starts_with("TOOL_CALL: ") &&
+			!line.starts_with("TOOL_RESULT: ") &&
+			!line.starts_with("CACHE: ") &&
+			!line.starts_with("ERROR: ") &&
+			!line.starts_with("EXCHANGE: ") &&
+			!line.is_empty() {
 				// Try to parse as message JSON or legacy prefixed formats
 				if line.contains("\"role\":") && line.contains("\"content\":") {
 					if let Ok(message) = serde_json::from_str::<Message>(&line) {

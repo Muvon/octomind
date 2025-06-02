@@ -267,7 +267,7 @@ async fn get_command_version(command: &str) -> String {
 		match Command::new(command)
 			.arg(flag)
 			.output()
-			.await
+		.await
 		{
 			Ok(output) => {
 				if output.status.success() {
@@ -302,7 +302,7 @@ async fn get_command_version(command: &str) -> String {
 		match Command::new(command)
 			.args(&args)
 			.output()
-			.await
+		.await
 		{
 			Ok(_) => {
 				// If command runs (regardless of exit code), it exists
@@ -332,8 +332,8 @@ pub async fn gather_system_info() -> SystemInfo {
 	info.shell_info = if shell_version != "missing" {
 		format!("{} ({})", shell_name, shell_version)
 	} else {
-		shell_name.to_string()
-	};
+			shell_name.to_string()
+		};
 
 	// Get OS information
 	info.os_info = get_os_info().await;
@@ -402,7 +402,7 @@ async fn get_os_info() -> String {
 		if let Ok(output) = Command::new("lsb_release")
 			.args(["-a"])
 			.output()
-			.await
+		.await
 		{
 			if output.status.success() {
 				let lsb_info = String::from_utf8_lossy(&output.stdout);
@@ -420,7 +420,7 @@ async fn get_os_info() -> String {
 		if let Ok(output) = Command::new("cat")
 			.arg("/etc/os-release")
 			.output()
-			.await
+		.await
 		{
 			if output.status.success() {
 				let os_release = String::from_utf8_lossy(&output.stdout);
@@ -437,7 +437,7 @@ async fn get_os_info() -> String {
 		if let Ok(output) = Command::new("wmic")
 			.args(["os", "get", "Caption,Version", "/format:list"])
 			.output()
-			.await
+		.await
 		{
 			if output.status.success() {
 				let wmic_info = String::from_utf8_lossy(&output.stdout);
@@ -482,7 +482,7 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 
 	// Early return if no placeholders are found
 	if !needs_date && !needs_shell && !needs_os && !needs_binaries &&
-	   !needs_cwd && !needs_system && !needs_context && !needs_git_status && !needs_git_tree && !needs_readme {
+	!needs_cwd && !needs_system && !needs_context && !needs_git_status && !needs_git_tree && !needs_readme {
 		return processed_prompt;
 	}
 
@@ -631,20 +631,20 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	placeholders.insert("%{GIT_STATUS}".to_string(), if let Some(git_status) = &project_context.git_status {
 		format!("\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n", git_status)
 	} else {
-		String::new()
-	});
+			String::new()
+		});
 
 	placeholders.insert("%{GIT_TREE}".to_string(), if let Some(file_tree) = &project_context.file_tree {
 		format!("\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n", file_tree)
 	} else {
-		String::new()
-	});
+			String::new()
+		});
 
 	placeholders.insert("%{README}".to_string(), if let Some(readme) = &project_context.readme_content {
 		format!("\n\n==== README ====\n\n{}\n\n==== END README ====\n", readme)
 	} else {
-		String::new()
-	});
+			String::new()
+		});
 
 	placeholders
 }

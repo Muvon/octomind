@@ -85,19 +85,19 @@ where
 macro_rules! log_info {
 	($fmt:expr) => {
 		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
-			if should_log {
-				use colored::Colorize;
-				println!("{}", $fmt.cyan());
-			}
+		if should_log {
+		use colored::Colorize;
+		println!("{}", $fmt.cyan());
+		}
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
 		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
-			if should_log {
-				use colored::Colorize;
-				println!("{}", format!($fmt, $($arg),*).cyan());
-			}
-		}
+		if should_log {
+		use colored::Colorize;
+	println!("{}", format!($fmt, $($arg),*).cyan());
+	}
+	}
 	};
 }
 
@@ -106,19 +106,19 @@ macro_rules! log_info {
 macro_rules! log_debug {
 	($fmt:expr) => {
 		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
-			if should_log {
-				use colored::Colorize;
-				println!("{}", $fmt.bright_blue());
-			}
+		if should_log {
+		use colored::Colorize;
+		println!("{}", $fmt.bright_blue());
+		}
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
 		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
-			if should_log {
-				use colored::Colorize;
-				println!("{}", format!($fmt, $($arg),*).bright_blue());
-			}
-		}
+		if should_log {
+		use colored::Colorize;
+	println!("{}", format!($fmt, $($arg),*).bright_blue());
+	}
+	}
 	};
 }
 
@@ -129,11 +129,11 @@ macro_rules! log_error {
 	($fmt:expr) => {{
 		use colored::Colorize;
 		eprintln!("{}", $fmt.bright_red());
-	}};
+		}};
 	($fmt:expr, $($arg:expr),*) => {{
 		use colored::Colorize;
 		eprintln!("{}", format!($fmt, $($arg),*).bright_red());
-	}};
+		}};
 }
 
 /// Conditional logging - prints different messages based on log level
@@ -141,38 +141,38 @@ macro_rules! log_error {
 macro_rules! log_conditional {
 	(debug: $debug_msg:expr, info: $info_msg:expr, none: $none_msg:expr) => {
 		if let Some(level) = $crate::config::with_thread_config(|config| config.get_log_level()) {
-			match level {
-				$crate::config::LogLevel::Debug => println!("{}", $debug_msg),
-				$crate::config::LogLevel::Info => println!("{}", $info_msg),
-				$crate::config::LogLevel::None => println!("{}", $none_msg),
-			}
+		match level {
+		$crate::config::LogLevel::Debug => println!("{}", $debug_msg),
+		$crate::config::LogLevel::Info => println!("{}", $info_msg),
+		$crate::config::LogLevel::None => println!("{}", $none_msg),
+		}
 		} else {
-			// Fallback if no config is set
-			println!("{}", $none_msg);
+		// Fallback if no config is set
+		println!("{}", $none_msg);
 		}
 	};
 	(debug: $debug_msg:expr, default: $default_msg:expr) => {
 		if let Some(should_debug) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
-			if should_debug {
-				println!("{}", $debug_msg);
-			} else {
-				println!("{}", $default_msg);
-			}
+		if should_debug {
+		println!("{}", $debug_msg);
 		} else {
-			// Fallback if no config is set
-			println!("{}", $default_msg);
+		println!("{}", $default_msg);
+		}
+		} else {
+		// Fallback if no config is set
+		println!("{}", $default_msg);
 		}
 	};
 	(info: $info_msg:expr, default: $default_msg:expr) => {
 		if let Some(should_info) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
-			if should_info {
-				println!("{}", $info_msg);
-			} else {
-				println!("{}", $default_msg);
-			}
+		if should_info {
+		println!("{}", $info_msg);
 		} else {
-			// Fallback if no config is set
-			println!("{}", $default_msg);
+		println!("{}", $default_msg);
+		}
+		} else {
+		// Fallback if no config is set
+		println!("{}", $default_msg);
 		}
 	};
 }
@@ -1020,7 +1020,7 @@ impl Config {
 	fn validate_thresholds(&self) -> Result<()> {
 		// Check raw configured values - 0 is a valid explicit choice for disabling features
 		// All threshold values are now valid as u64/usize have natural ranges
-		
+
 		// Warn if thresholds seem unusual (but don't error - user's choice)
 		if self.mcp_response_warning_threshold != 0 && self.mcp_response_warning_threshold < 1000 {
 			eprintln!("Warning: MCP response warning threshold ({}) is quite low", self.mcp_response_warning_threshold);
@@ -1304,7 +1304,7 @@ impl Config {
 	/// Update only specific config fields without full reload/save cycle
 	/// This prevents internal server registry pollution
 	pub fn update_specific_field<F>(&mut self, updater: F) -> Result<()>
-	where
+where
 		F: Fn(&mut Config),
 	{
 		// Load existing config from disk without initializing internal servers

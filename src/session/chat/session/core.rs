@@ -194,9 +194,9 @@ impl ChatSession {
 					let summary_entry = serde_json::json!({
 						"type": "SUMMARY",
 						"timestamp": std::time::SystemTime::now()
-							.duration_since(std::time::UNIX_EPOCH)
-							.unwrap_or_default()
-							.as_secs(),
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
 						"session_info": &chat_session.session.info
 					});
 					crate::session::append_to_session_file(
@@ -225,9 +225,9 @@ impl ChatSession {
 			let summary_entry = serde_json::json!({
 				"type": "SUMMARY",
 				"timestamp": std::time::SystemTime::now()
-					.duration_since(std::time::UNIX_EPOCH)
-					.unwrap_or_default()
-					.as_secs(),
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
 				"session_info": &chat_session.session.info
 			});
 			crate::session::append_to_session_file(

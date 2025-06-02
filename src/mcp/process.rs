@@ -454,9 +454,9 @@ pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfi
 		"id": 1,
 		"method": "tools/call", // Correct MCP method name
 		"params": {
-			"name": call.tool_name,
-			"arguments": call.parameters
-		}
+		"name": call.tool_name,
+		"arguments": call.parameters
+	}
 	});
 
 	// Increase the request timeout for tool calls using configured timeout

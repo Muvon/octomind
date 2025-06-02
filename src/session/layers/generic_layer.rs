@@ -97,7 +97,7 @@ impl GenericLayer {
 
 			// Check if this tool is allowed for this layer
 			if !self.config.mcp.allowed_tools.is_empty() &&
-				!self.config.mcp.allowed_tools.contains(&tool_call.tool_name) {
+			!self.config.mcp.allowed_tools.contains(&tool_call.tool_name) {
 				println!("{} {} {}", "Tool".red(), tool_call.tool_name, "not allowed for this layer".red());
 				continue;
 			}

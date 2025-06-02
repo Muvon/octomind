@@ -1235,8 +1235,8 @@ pub async fn process_response(
 
 	// Show time information if available
 	let total_time_ms = chat_session.session.info.total_api_time_ms +
-																				chat_session.session.info.total_tool_time_ms +
-																				chat_session.session.info.total_layer_time_ms;
+	chat_session.session.info.total_tool_time_ms +
+	chat_session.session.info.total_layer_time_ms;
 	if total_time_ms > 0 {
 		log_info!("time: {} (API: {}, Tools: {}, Processing: {})",
 			format_duration(total_time_ms),

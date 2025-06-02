@@ -111,12 +111,12 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 				"files": [],
 				"count": 0,
 				"parameters": {
-					"directory": directory,
-					"pattern": pattern,
-					"content": content,
-					"max_depth": max_depth
-				}
-			}),
+				"directory": directory,
+				"pattern": pattern,
+				"content": content,
+				"max_depth": max_depth
+			}
+		}),
 		}
 	}).await?;
 

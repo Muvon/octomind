@@ -31,9 +31,9 @@ pub struct ProjectContext {
 }
 
 impl Default for ProjectContext {
-		fn default() -> Self {
-				Self::new()
-		}
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl ProjectContext {
@@ -159,11 +159,11 @@ impl ProjectContext {
 
 			// Build path step by step
 			let mut current_map = &mut root;
-			
+
 			for (i, part) in parts.iter().enumerate() {
 				let part_owned = part.to_string();
 				let is_last = i == parts.len() - 1;
-				
+
 				if is_last {
 					// This is the final file
 					current_map.insert(part_owned, TreeNode::File);
@@ -174,7 +174,7 @@ impl ProjectContext {
 					current_map.entry(part_owned.clone()).or_insert_with(|| {
 						TreeNode::Directory(BTreeMap::new())
 					});
-					
+
 					// Now get the mutable reference to continue navigation
 					if let Some(TreeNode::Directory(ref mut dir_map)) = current_map.get_mut(&part_owned) {
 						current_map = dir_map;
@@ -187,17 +187,17 @@ impl ProjectContext {
 
 		// Convert tree to string representation
 		fn render_tree(
-			node_map: &BTreeMap<String, TreeNode>, 
+			node_map: &BTreeMap<String, TreeNode>,
 			prefix: &str
 		) -> String {
 			let mut result = String::new();
 			let entries: Vec<_> = node_map.iter().collect();
-			
+
 			for (i, (name, node)) in entries.iter().enumerate() {
 				let is_last = i == entries.len() - 1;
 				let current_prefix = if is_last { "└─ " } else { "├─ " };
 				let next_prefix = if is_last { "   " } else { "│  " };
-				
+
 				match node {
 					TreeNode::File => {
 						result.push_str(&format!("{}{}{}\n", prefix, current_prefix, name));
@@ -206,14 +206,14 @@ impl ProjectContext {
 						result.push_str(&format!("{}{}{}/\n", prefix, current_prefix, name));
 						if !children.is_empty() {
 							result.push_str(&render_tree(
-								children, 
+								children,
 								&format!("{}{}", prefix, next_prefix)
 							));
 						}
 					}
 				}
 			}
-			
+
 			result
 		}
 

@@ -83,9 +83,9 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct CloudflareWorkersAiProvider;
 
 impl Default for CloudflareWorkersAiProvider {
-		fn default() -> Self {
-				Self::new()
-		}
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl CloudflareWorkersAiProvider {
@@ -219,7 +219,7 @@ impl AiProvider for CloudflareWorkersAiProvider {
 			.header("Content-Type", "application/json")
 			.json(&request_body)
 			.send()
-			.await?;
+		.await?;
 
 		// Get response status
 		let status = response.status();

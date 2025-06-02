@@ -53,9 +53,9 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct AnthropicProvider;
 
 impl Default for AnthropicProvider {
-		fn default() -> Self {
-				Self::new()
-		}
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl AnthropicProvider {

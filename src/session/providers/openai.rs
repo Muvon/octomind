@@ -53,9 +53,9 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 pub struct OpenAiProvider;
 
 impl Default for OpenAiProvider {
-		fn default() -> Self {
-				Self::new()
-		}
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl OpenAiProvider {
@@ -139,11 +139,11 @@ impl AiProvider for OpenAiProvider {
 					serde_json::json!({
 						"type": "function",
 						"function": {
-							"name": f.name,
-							"description": f.description,
-							"parameters": f.parameters
-						}
-					})
+						"name": f.name,
+						"description": f.description,
+						"parameters": f.parameters
+					}
+				})
 				}).collect::<Vec<_>>();
 
 				// Note: OpenAI doesn't support caching yet, but we prepare for future support

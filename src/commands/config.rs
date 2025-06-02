@@ -547,16 +547,16 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!("    Server refs:     {}", if dev_mcp.server_refs.is_empty() {
 		"None (MCP disabled)".to_string()
 	} else {
-		dev_mcp.server_refs.join(", ")
-	});
+			dev_mcp.server_refs.join(", ")
+		});
 
 	// Assistant role MCP
 	println!("  Assistant Role MCP:");
 	println!("    Server refs:     {}", if ass_mcp.server_refs.is_empty() {
 		"None (MCP disabled)".to_string()
 	} else {
-		ass_mcp.server_refs.join(", ")
-	});
+			ass_mcp.server_refs.join(", ")
+		});
 	println!();
 
 	// Layer configurations

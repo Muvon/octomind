@@ -200,10 +200,10 @@ Error: {}", stdout, stderr)
 						"command": command_clone
 					},
 					"message": if success {
-						format!("Command executed successfully with exit code {}", status_code)
-					} else {
+					format!("Command executed successfully with exit code {}", status_code)
+				} else {
 					format!("Command failed with exit code {}", status_code)
-			}
+				}
 			})
 			},
 			Err(e) => json!({

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -38,7 +39,8 @@ pub enum ServerProcess {
 		child: Child,
 		reader: BufReader<std::process::ChildStdout>,
 		writer: BufWriter<std::process::ChildStdin>,
-		next_id: u64, // Used to track request/response pairs
+		next_id: Arc<AtomicU64>, // Thread-safe ID counter
+		is_shutdown: Arc<AtomicBool>, // Track shutdown state
 	},
 }
 
@@ -46,7 +48,11 @@ impl ServerProcess {
 	pub fn kill(&mut self) -> Result<()> {
 		match self {
 			ServerProcess::Http(child) => child.kill().map_err(|e| anyhow::anyhow!("Failed to kill HTTP process: {}", e)),
-			ServerProcess::Stdin { child, .. } => child.kill().map_err(|e| anyhow::anyhow!("Failed to kill stdin process: {}", e)),
+			ServerProcess::Stdin { child, is_shutdown, .. } => {
+				// Mark as shutdown
+				is_shutdown.store(true, Ordering::SeqCst);
+				child.kill().map_err(|e| anyhow::anyhow!("Failed to kill stdin process: {}", e))
+			}
 		}
 	}
 
@@ -62,16 +68,39 @@ impl ServerProcess {
 pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
 	let server_id = &server.name; // Use reference instead of clone
 
-	// Check if the server is already running
+	// Check if the server is already running and not shut down
 	{
 		let processes = SERVER_PROCESSES.read().unwrap();
-		if processes.contains_key(server_id) {
-			// Server is already running
-			match server.mode {
-				McpServerMode::Http => return get_server_url(server),
-				McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
+		if let Some(process_arc) = processes.get(server_id) {
+			let mut process = process_arc.lock().unwrap();
+			
+			// Check if the process is still alive and not marked as shutdown
+			let is_alive = match &mut *process {
+				ServerProcess::Http(child) => {
+					child.try_wait().map(|status| status.is_none()).unwrap_or(false)
+				},
+				ServerProcess::Stdin { child, is_shutdown, .. } => {
+					let process_alive = child.try_wait().map(|status| status.is_none()).unwrap_or(false);
+					let not_marked_shutdown = !is_shutdown.load(Ordering::SeqCst);
+					process_alive && not_marked_shutdown
+				}
+			};
+			
+			if is_alive {
+				// Server is running and healthy
+				match server.mode {
+					McpServerMode::Http => return get_server_url(server),
+					McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
+				}
 			}
+			// If we get here, the server is dead or shut down, so we need to restart it
 		}
+	}
+
+	// Remove dead server from registry before starting new one
+	{
+		let mut processes = SERVER_PROCESSES.write().unwrap();
+		processes.remove(server_id);
 	}
 
 	// If we get here, we need to start the server
@@ -160,12 +189,13 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 			let writer = BufWriter::new(child_stdin);
 			let reader = BufReader::new(child_stdout);
 
-			// Create the server process structure with initial next_id of 1
+			// Create the server process structure with atomic counters and state
 			let server_process = ServerProcess::Stdin {
 				child,
 				reader,
 				writer,
-				next_id: 1,
+				next_id: Arc::new(AtomicU64::new(1)),
+				is_shutdown: Arc::new(AtomicBool::new(false)),
 			};
 
 			// Add to the registry
@@ -228,8 +258,8 @@ async fn initialize_stdin_server(server_name: &str) -> Result<()> {
 		}
 	});
 
-	// Send the initialize message and get the response with explicit ID 1
-	let response = communicate_with_stdin_server(server_name, &init_message, 1).await?;
+	// Send the initialize message and get the response with explicit ID 1 and no cancellation token for init
+	let response = communicate_with_stdin_server(server_name, &init_message, 1, None).await?;
 
 	// Check for JSON-RPC errors
 	if let Some(error) = response.get("error") {
@@ -286,44 +316,70 @@ fn get_server_url(server: &McpServerConfig) -> Result<String> {
 	Ok("http://localhost:8008".to_string())
 }
 
-// Communicate with a stdin-based MCP server using JSON-RPC format
-pub async fn communicate_with_stdin_server(server_name: &str, message: &Value, override_id: u64) -> Result<Value> {
-	// Get the server process
+// Communicate with a stdin-based MCP server using JSON-RPC format with atomic ID generation
+pub async fn communicate_with_stdin_server(
+	server_name: &str, 
+	message: &Value, 
+	override_id: u64,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<Value> {
+	communicate_with_stdin_server_extended_timeout(server_name, message, override_id, 15, cancellation_token).await
+}
+
+// Core communication function with atomic ID generation and cancellation handling
+pub async fn communicate_with_stdin_server_extended_timeout(
+	server_name: &str, 
+	message: &Value, 
+	override_id: u64, 
+	timeout_seconds: u64,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<Value> {
+	// Early cancellation check
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("Operation cancelled before communication"));
+		}
+	}
+
+	// Get the server process safely
 	let server_process = {
-		let processes = SERVER_PROCESSES.read().unwrap();
+		let processes = SERVER_PROCESSES.read().map_err(|_| anyhow::anyhow!("Failed to acquire read lock on server processes"))?;
 		processes.get(server_name).cloned()
 			.ok_or_else(|| anyhow::anyhow!("Server not found: {}", server_name))?
 	};
 
-	// Get the request ID (for tracking responses)
-	let request_id = if override_id > 0 {
-		override_id
-	} else {
-		let mut process = server_process.lock().unwrap();
-		match &mut *process {
-			ServerProcess::Stdin { next_id, .. } => {
-				let id = *next_id;
-				*next_id += 1;
-				id
+	// Get the request ID atomically and prepare the message
+	let (final_message, request_id) = {
+		let mut process_guard = server_process.lock().map_err(|_| anyhow::anyhow!("Failed to acquire lock on server process"))?;
+		
+		match &mut *process_guard {
+			ServerProcess::Stdin { next_id, is_shutdown, .. } => {
+				// Check if server is shutdown
+				if is_shutdown.load(Ordering::SeqCst) {
+					return Err(anyhow::anyhow!("Server {} is shut down", server_name));
+				}
+
+				// Get request ID atomically
+				let actual_id = if override_id > 0 {
+					override_id
+				} else {
+					next_id.fetch_add(1, Ordering::SeqCst)
+				};
+
+				// Prepare message with correct ID
+				let mut final_msg = message.clone();
+				if let Some(obj) = final_msg.as_object_mut() {
+					obj.insert("id".to_string(), json!(actual_id));
+					if !obj.contains_key("jsonrpc") {
+						obj.insert("jsonrpc".to_string(), json!("2.0"));
+					}
+				}
+
+				(final_msg, actual_id)
 			},
 			_ => return Err(anyhow::anyhow!("Server {} is not a stdin-based server", server_name)),
 		}
-	};
-
-	// Clone and update message with the request ID if needed
-	let mut final_message = message.clone();
-
-	// Check if we need to add or update the id field
-	if let Some(obj) = final_message.as_object_mut() {
-		if !obj.contains_key("id") || override_id > 0 {
-			obj.insert("id".to_string(), json!(request_id));
-		}
-
-		// Ensure jsonrpc version is set
-		if !obj.contains_key("jsonrpc") {
-			obj.insert("jsonrpc".to_string(), json!("2.0"));
-		}
-	}
+	}; // Lock is released here
 
 	// Clone data for the blocking task
 	let server_name_for_error = server_name.to_string();
@@ -331,14 +387,19 @@ pub async fn communicate_with_stdin_server(server_name: &str, message: &Value, o
 	let final_message_clone = final_message.clone();
 	let request_id_clone = request_id;
 
-	// Execute with timeout to prevent hanging forever
-	let timeout_future = tokio::time::timeout(std::time::Duration::from_secs(15), tokio::task::spawn_blocking(move || {
+	// Execute with timeout and cancellation
+	let timeout_future = tokio::time::timeout(std::time::Duration::from_secs(timeout_seconds), tokio::task::spawn_blocking(move || {
 		// Get a lock on the process
-		let mut process = server_process.lock().unwrap();
+		let mut process = server_process.lock().map_err(|_| anyhow::anyhow!("Failed to acquire lock on server process"))?;
 
-		// Ensure this is a stdin-based server
+		// Ensure this is a stdin-based server and not shutdown
 		match &mut *process {
-			ServerProcess::Stdin { writer, reader, .. } => {
+			ServerProcess::Stdin { writer, reader, is_shutdown, .. } => {
+				// Double-check shutdown state
+				if is_shutdown.load(Ordering::SeqCst) {
+					return Err(anyhow::anyhow!("Server {} is shut down", server_name_for_closure));
+				}
+
 				// Serialize message to a string and add newline
 				let mut message_str = serde_json::to_string(&final_message_clone)?
 					.trim_end()
@@ -378,10 +439,31 @@ pub async fn communicate_with_stdin_server(server_name: &str, message: &Value, o
 		}
 	}));
 
-	// Handle timeout
-	match timeout_future.await {
-		Ok(result) => result?,
-		Err(_) => Err(anyhow::anyhow!("Timeout communicating with stdin server: {}", server_name_for_error))
+	// Check for cancellation during the operation
+	let cancellation_future = async {
+		if let Some(ref token) = cancellation_token {
+			loop {
+				tokio::time::sleep(Duration::from_millis(100)).await;
+				if token.load(Ordering::SeqCst) {
+					break;
+				}
+			}
+		} else {
+			std::future::pending::<()>().await;
+		}
+	};
+
+	// Race between operation, timeout, and cancellation
+	tokio::select! {
+		result = timeout_future => {
+			match result {
+				Ok(task_result) => task_result?,
+				Err(_) => Err(anyhow::anyhow!("Timeout ({} seconds) communicating with stdin server: {}", timeout_seconds, server_name_for_error))
+			}
+		},
+		_ = cancellation_future => {
+			Err(anyhow::anyhow!("Operation cancelled while communicating with server: {}", server_name_for_error))
+		}
 	}
 }
 
@@ -396,8 +478,8 @@ pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<
 	});
 
 	// Try to get tool information from the server with a timeout
-	// Pass the same ID that's in the message (1)
-	let response = communicate_with_stdin_server(&server.name, &message, 1).await?;
+	// Pass the same ID that's in the message (1) and no cancellation token for initialization
+	let response = communicate_with_stdin_server(&server.name, &message, 1, None).await?;
 
 	// Extract functions from the response
 	let mut functions = Vec::new();
@@ -445,6 +527,15 @@ pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<
 
 // Execute a tool on a stdin-based server
 pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfig) -> Result<McpToolResult> {
+	execute_stdin_tool_call_with_cancellation(call, server, None).await
+}
+
+// Execute a tool on a stdin-based server with cancellation support
+pub async fn execute_stdin_tool_call_with_cancellation(
+	call: &McpToolCall, 
+	server: &McpServerConfig,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+) -> Result<McpToolResult> {
 	// Debug output
 	// println!("Executing tool '{}' on server '{}'", call.tool_name, server.name);
 
@@ -459,9 +550,8 @@ pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfi
 	}
 	});
 
-	// Increase the request timeout for tool calls using configured timeout
-	// Execute the tool call with request ID 1
-	let response = match communicate_with_stdin_server_extended_timeout(&server.name, &message, 1, server.timeout_seconds).await {
+	// Execute the tool call with request ID 1 and cancellation support
+	let response = match communicate_with_stdin_server_extended_timeout(&server.name, &message, 1, server.timeout_seconds, cancellation_token).await {
 		Ok(resp) => resp,
 		Err(e) => {
 			eprintln!("Error executing tool call '{}': {}", call.tool_name, e);
@@ -525,113 +615,6 @@ pub async fn execute_stdin_tool_call(call: &McpToolCall, server: &McpServerConfi
 	Ok(tool_result)
 }
 
-// Communicate with a stdin-based MCP server with an extended timeout for long-running operations
-pub async fn communicate_with_stdin_server_extended_timeout(server_name: &str, message: &Value, override_id: u64, timeout_seconds: u64) -> Result<Value> {
-	// Get the server process
-	let server_process = {
-		let processes = SERVER_PROCESSES.read().unwrap();
-		processes.get(server_name).cloned()
-			.ok_or_else(|| anyhow::anyhow!("Server not found: {}", server_name))?
-	};
-
-	// Get the request ID (for tracking responses)
-	let request_id = if override_id > 0 {
-		override_id
-	} else {
-		let mut process = server_process.lock().unwrap();
-		match &mut *process {
-			ServerProcess::Stdin { next_id, .. } => {
-				let id = *next_id;
-				*next_id += 1;
-				id
-			},
-			_ => return Err(anyhow::anyhow!("Server {} is not a stdin-based server", server_name)),
-		}
-	};
-
-	// Clone and update message with the request ID if needed
-	let mut final_message = message.clone();
-
-	// Check if we need to add or update the id field
-	if let Some(obj) = final_message.as_object_mut() {
-		if !obj.contains_key("id") || override_id > 0 {
-			obj.insert("id".to_string(), json!(request_id));
-		}
-
-		// Ensure jsonrpc version is set
-		if !obj.contains_key("jsonrpc") {
-			obj.insert("jsonrpc".to_string(), json!("2.0"));
-		}
-	}
-
-	// Clone data for the blocking task
-	let server_name_for_error = server_name.to_string();
-	let server_name_for_closure = server_name.to_string();
-	let final_message_clone = final_message.clone();
-	let request_id_clone = request_id;
-
-	// Execute with extended timeout to prevent hanging forever but allow long-running operations
-	// Debug output
-	// println!("Sending message to server '{}' with {}s timeout", server_name, timeout_seconds);
-	let timeout_future = tokio::time::timeout(std::time::Duration::from_secs(timeout_seconds), tokio::task::spawn_blocking(move || {
-		// Get a lock on the process
-		let mut process = server_process.lock().unwrap();
-
-		// Ensure this is a stdin-based server
-		match &mut *process {
-			ServerProcess::Stdin { writer, reader, .. } => {
-				// Serialize message to a string and add newline
-				let mut message_str = serde_json::to_string(&final_message_clone)?
-					.trim_end()
-					.to_string();
-				message_str.push('\n');
-
-				// Debug output
-				// println!("Sending message to stdin: {}", message_str);
-
-				// Write the message to the process's stdin
-				writer.write_all(message_str.as_bytes())
-					.map_err(|e| anyhow::anyhow!("Failed to write to stdin: {}", e))?;
-				writer.flush()
-					.map_err(|e| anyhow::anyhow!("Failed to flush stdin: {}", e))?;
-
-				println!("Reading response from server...");
-				// Read the response from stdout
-				let mut response_str = String::new();
-				let read_result = reader.read_line(&mut response_str)
-					.map_err(|e| anyhow::anyhow!("Failed to read from stdout: {}", e))?;
-
-				if read_result == 0 {
-					return Err(anyhow::anyhow!("Server closed connection while reading response"));
-				}
-
-				println!("Received response: {}", response_str);
-
-				// Parse the response JSON
-				let response: Value = serde_json::from_str(&response_str)
-					.map_err(|e| anyhow::anyhow!("Failed to parse JSON response: {} (raw: {})", e, response_str))?;
-
-				// Verify the response ID matches the request ID
-				let response_id = response.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-				if response_id != request_id_clone && override_id > 0 {  // Only check ID matching if override_id is provided
-					return Err(anyhow::anyhow!("Response ID {} does not match request ID {}", response_id, request_id_clone));
-				}
-
-				Ok(response)
-			},
-			ServerProcess::Http(_) => {
-				Err(anyhow::anyhow!("Server {} is not a stdin-based server", server_name_for_closure))
-			}
-		}
-	}));
-
-	// Handle timeout
-	match timeout_future.await {
-		Ok(result) => result?,
-		Err(_) => Err(anyhow::anyhow!("Timeout ({} seconds) communicating with stdin server: {}", timeout_seconds, server_name_for_error))
-	}
-}
-
 // Stop all running server processes
 pub fn stop_all_servers() -> Result<()> {
 	let mut processes = SERVER_PROCESSES.write().unwrap();
@@ -662,7 +645,7 @@ pub fn is_server_running(server_name: &str) -> bool {
 
 // Try to communicate with a stdin-based server, ignoring errors
 async fn try_communicate_with_stdin_server(server_name: &str, message: &Value, override_id: u64) -> Result<()> {
-	if let Err(e) = communicate_with_stdin_server(server_name, message, override_id).await {
+	if let Err(e) = communicate_with_stdin_server(server_name, message, override_id, None).await {
 		eprintln!("Warning: Error sending notification to MCP server: {}", e);
 	}
 	Ok(())

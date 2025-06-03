@@ -239,9 +239,8 @@ pub async fn execute_tool_call_with_cancellation(
 			Ok(tool_result)
 		},
 		McpServerMode::Stdin => {
-			// For stdin-based servers, use the stdin communication channel
-			// Note: stdin servers don't currently support cancellation mid-execution
-			process::execute_stdin_tool_call(call, server).await
+			// For stdin-based servers, use the stdin communication channel with cancellation support
+			process::execute_stdin_tool_call_with_cancellation(call, server, cancellation_token).await
 		}
 	}
 }

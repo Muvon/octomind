@@ -296,7 +296,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	// Track the last user message index to know what to remove on cancellation
 	let last_user_message_index = Arc::new(std::sync::Mutex::new(None::<usize>));
 
-	// Set up sophisticated Ctrl+C handler
+	// Set up sophisticated Ctrl+C handler with immediate feedback
 	ctrlc::set_handler(move || {
 		// Double Ctrl+C forces immediate exit
 		if ctrl_c_pressed_clone.load(Ordering::SeqCst) {
@@ -304,6 +304,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			std::process::exit(130); // 130 is standard exit code for SIGINT
 		}
 
+		// Set the flag immediately
 		ctrl_c_pressed_clone.store(true, Ordering::SeqCst);
 
 		// Get current processing state to provide appropriate feedback
@@ -312,36 +313,26 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Provide immediate feedback based on current state
 		match state {
 			ProcessingState::Idle | ProcessingState::ReadingInput => {
-				println!("\n🛑 Ready for new input");
+				println!("\n🛑 Interrupting... Ready for new input");
 			}
 			ProcessingState::ProcessingLayers => {
-				print!("\n🛑 Cancelling layer processing");
-				std::io::stdout().flush().unwrap();
-				println!(" | ✨ Ready for new input");
+				println!("\n🛑 Interrupting layer processing... Ready for new input");
 			}
 			ProcessingState::CallingAPI => {
-				print!("\n🛑 Cancelling API request");
-				std::io::stdout().flush().unwrap();
-				println!(" | 🗑️ Removing incomplete request | ✨ Ready for new input");
+				println!("\n🛑 Interrupting API request... Cleaning up... Ready for new input");
 			}
 			ProcessingState::ExecutingTools => {
-				print!("\n🛑 Stopping tool execution");
-				std::io::stdout().flush().unwrap();
-				println!(" | 🗑️ Removing incomplete request | ✨ Ready for new input");
+				println!("\n🛑 Interrupting tool execution... Killing processes... Ready for new input");
 			}
 			ProcessingState::ProcessingResponse => {
-				print!("\n🛑 Stopping response processing");
-				std::io::stdout().flush().unwrap();
-				println!(" | 📝 Preserving completed work | ✨ Ready for new input");
+				println!("\n🛑 Interrupting response processing... Preserving work... Ready for new input");
 			}
 			ProcessingState::CompletedWithResults => {
-				print!("\n🛑 Operation completed");
-				std::io::stdout().flush().unwrap();
-				println!(" | 📝 All work preserved | ✨ Ready for new input");
+				println!("\n🛑 Operation completed... All work preserved... Ready for new input");
 			}
 		}
 
-		println!("🔄 Press Ctrl+C again to force exit");
+		println!("💡 Press Ctrl+C again to force exit");
 		std::io::stdout().flush().unwrap();
 	})
 	.expect("Error setting Ctrl+C handler");
@@ -359,77 +350,99 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Handle cancellation at the start of each loop iteration
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
-			// Clean up incomplete work based on state
-			let should_remove_last_message = {
-				let state = processing_state.lock().unwrap().clone();
-				matches!(
-					state,
-					ProcessingState::CallingAPI | ProcessingState::ExecutingTools
-				)
-			};
+			log_debug!("Ctrl+C detected - checking for incomplete tool calls to clean up");
+			
+			// CRITICAL FIX: Always check for and clean up incomplete tool calls when Ctrl+C is pressed
+			// This ensures MCP protocol compliance regardless of processing state
+			
+			// Check if we have any incomplete tool calls in the conversation
+			let mut cleanup_needed = false;
+			let mut cleanup_from_index = None;
+			
+			// Look for assistant messages with tool_calls that don't have corresponding tool_result messages
+			for i in 0..chat_session.session.messages.len() {
+				if let Some(msg) = chat_session.session.messages.get(i) {
+					if msg.role == "assistant" && msg.tool_calls.is_some() {
+						// This assistant message has tool_calls - check if all have matching tool results
+						if let Some(tool_calls_value) = &msg.tool_calls {
+							if let Ok(tool_calls_array) =
+								serde_json::from_value::<Vec<serde_json::Value>>(
+									tool_calls_value.clone(),
+								) {
+								for tool_call in tool_calls_array {
+									if let Some(tool_id) =
+										tool_call.get("id").and_then(|id| id.as_str())
+									{
+										// Check if there's a matching tool result message after this assistant message
+										let has_matching_result = chat_session
+											.session
+											.messages[i + 1..]
+											.iter()
+											.any(|result_msg| {
+												result_msg.role == "tool"
+													&& result_msg.tool_call_id.as_ref()
+														== Some(&tool_id.to_string())
+											});
 
-			if should_remove_last_message {
-				if let Some(last_index) = *last_user_message_index.lock().unwrap() {
-					// CRITICAL FIX: When Ctrl+C is pressed during tool execution, we should cleanly
-					// remove incomplete tool_use blocks rather than trying to fake tool results.
-					// This maintains MCP compliance and conversation integrity.
-
-					let messages_len = chat_session.session.messages.len();
-					if last_index < messages_len {
-						// Find any assistant messages with tool_calls after the last user message
-						let mut has_incomplete_tool_calls = false;
-						for i in last_index..messages_len {
-							if let Some(msg) = chat_session.session.messages.get(i) {
-								if msg.role == "assistant" && msg.tool_calls.is_some() {
-									// This assistant message has tool_calls - check if all have matching tool results
-									if let Some(tool_calls_value) = &msg.tool_calls {
-										if let Ok(tool_calls_array) =
-											serde_json::from_value::<Vec<serde_json::Value>>(
-												tool_calls_value.clone(),
-											) {
-											for tool_call in tool_calls_array {
-												if let Some(tool_id) =
-													tool_call.get("id").and_then(|id| id.as_str())
-												{
-													// Check if there's a matching tool result message
-													let has_matching_result = chat_session
-														.session
-														.messages[i + 1..]
-														.iter()
-														.any(|result_msg| {
-															result_msg.role == "tool"
-																&& result_msg.tool_call_id.as_ref()
-																	== Some(&tool_id.to_string())
-														});
-
-													if !has_matching_result {
-														has_incomplete_tool_calls = true;
-														break;
-													}
-												}
-											}
+										if !has_matching_result {
+											// Found incomplete tool call - need to clean up from here
+											cleanup_needed = true;
+											cleanup_from_index = Some(i);
+											break;
 										}
 									}
 								}
 							}
-							if has_incomplete_tool_calls {
-								break;
-							}
-						}
-
-						if has_incomplete_tool_calls {
-							// Remove everything from the last user message onwards (including incomplete tool_use)
-							chat_session.session.messages.truncate(last_index);
-							log_debug!(
-								"Removed incomplete request with tool calls due to cancellation"
-							);
-						} else {
-							// No incomplete tool calls, safe to truncate normally
-							chat_session.session.messages.truncate(last_index);
-							log_debug!("Removed incomplete request due to cancellation");
 						}
 					}
 				}
+				if cleanup_needed {
+					break;
+				}
+			}
+
+			// If we found incomplete tool calls, clean them up
+			if cleanup_needed {
+				if let Some(cleanup_index) = cleanup_from_index {
+					// Find the user message that preceded this assistant message with incomplete tool calls
+					let mut user_message_index = cleanup_index;
+					for i in (0..cleanup_index).rev() {
+						if let Some(msg) = chat_session.session.messages.get(i) {
+							if msg.role == "user" {
+								user_message_index = i;
+								break;
+							}
+						}
+					}
+					
+					// Remove everything from the user message that led to incomplete tool calls
+					chat_session.session.messages.truncate(user_message_index);
+					log_debug!(
+						"Removed incomplete tool calls and related messages due to cancellation (from index {})",
+						user_message_index
+					);
+				}
+			} else {
+				// No incomplete tool calls, but still clean up based on processing state
+				let should_remove_last_message = {
+					let state = processing_state.lock().unwrap().clone();
+					matches!(
+						state,
+						ProcessingState::CallingAPI | ProcessingState::ExecutingTools | ProcessingState::ProcessingResponse
+					)
+				};
+
+				if should_remove_last_message {
+					if let Some(last_index) = *last_user_message_index.lock().unwrap() {
+						chat_session.session.messages.truncate(last_index);
+						log_debug!("Removed incomplete request due to cancellation");
+					}
+				}
+			}
+
+			// Save the session after cleanup to persist changes
+			if let Err(e) = chat_session.save() {
+				log_debug!("Warning: Failed to save session after cancellation cleanup: {}", e);
 			}
 
 			// Reset for next iteration
@@ -729,8 +742,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					op_cancelled.store(true, Ordering::SeqCst);
 					break; // Exit the loop once cancelled
 				}
-				// Use a shorter sleep time to respond to cancellation faster
-				tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+				// Use very fast polling for immediate response
+				tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
 			}
 		});
 
@@ -789,7 +802,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							tool_cancelled_clone.store(true, Ordering::SeqCst);
 							break;
 						}
-						tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+						// Very fast polling for immediate tool cancellation
+						tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
 					}
 				});
 

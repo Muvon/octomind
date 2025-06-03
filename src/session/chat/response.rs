@@ -62,34 +62,7 @@ fn format_duration(milliseconds: u64) -> String {
 	parts.join(" ")
 }
 
-// Guess the category of a tool based on its name (copied from mcp/mod.rs for consistency)
-fn guess_tool_category(tool_name: &str) -> &'static str {
-	match tool_name {
-		"core" => "system",
-		"text_editor" => "developer",
-		"list_files" => "filesystem",
-		name if name.contains("file") || name.contains("editor") => "developer",
-		name if name.contains("search") || name.contains("find") => "search",
-		name if name.contains("image") || name.contains("photo") => "media",
-		name if name.contains("web") || name.contains("http") => "web",
-		name if name.contains("db") || name.contains("database") => "database",
-		name if name.contains("browser") => "browser",
-		name if name.contains("terminal") => "terminal",
-		name if name.contains("video") => "video",
-		name if name.contains("audio") => "audio",
-		name if name.contains("location") || name.contains("map") => "location",
-		name if name.contains("google") => "google",
-		name if name.contains("weather") => "weather",
-		name if name.contains("calculator") || name.contains("math") => "math",
-		name if name.contains("news") => "news",
-		name if name.contains("email") => "email",
-		name if name.contains("calendar") => "calendar",
-		name if name.contains("translate") => "translation",
-		name if name.contains("github") => "github",
-		name if name.contains("git") => "git",
-		_ => "external",
-	}
-}
+
 
 // Function to remove function_calls blocks from content
 fn remove_function_calls(content: &str) -> String {
@@ -541,7 +514,7 @@ pub async fn process_response(
 
 								// Display the complete tool execution with consolidated info
 								if let Some(tool_call) = &stored_tool_call {
-									let category = guess_tool_category(&tool_call.tool_name);
+							let category = crate::mcp::guess_tool_category(&tool_call.tool_name);
 									let title = format!(
 										" {} | {} ",
 										tool_call.tool_name.bright_cyan(),
@@ -796,7 +769,7 @@ pub async fn process_response(
 
 								// Display error in consolidated format for other errors
 								if let Some(tool_call) = &stored_tool_call {
-									let category = guess_tool_category(&tool_call.tool_name);
+									let category = crate::mcp::guess_tool_category(&tool_call.tool_name);
 									let title = format!(
 										" {} | {} ",
 										tool_call.tool_name.bright_cyan(),
@@ -938,7 +911,7 @@ pub async fn process_response(
 
 							// Display task error in consolidated format for other errors
 							if let Some(tool_call) = &stored_tool_call {
-								let category = guess_tool_category(&tool_call.tool_name);
+								let category = crate::mcp::guess_tool_category(&tool_call.tool_name);
 								let title = format!(
 									" {} | {} ",
 									tool_call.tool_name.bright_cyan(),

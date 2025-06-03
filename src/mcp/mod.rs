@@ -138,7 +138,7 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 }
 
 // Guess the category of a tool based on its name
-fn guess_tool_category(tool_name: &str) -> &'static str {
+pub fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
 		"core" => "system",
 		"text_editor" => "developer",

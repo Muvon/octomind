@@ -27,6 +27,96 @@ use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+// Helper function to log debug information about the response
+fn log_response_debug(config: &Config, finish_reason: &Option<String>, tool_calls: &Option<Vec<crate::mcp::McpToolCall>>) {
+	if config.get_log_level().is_debug_enabled() {
+		if let Some(ref reason) = finish_reason {
+			log_debug!("Processing response with finish_reason: {}", reason);
+		}
+		if let Some(ref calls) = tool_calls {
+			log_debug!("Processing {} tool calls", calls.len());
+		}
+	}
+}
+
+// Helper function to handle final response when no tool calls are present
+fn handle_final_response(
+	content: &str,
+	current_content: &str,
+	current_exchange: ProviderExchange,
+	chat_session: &mut ChatSession,
+	config: &Config,
+	role: &str,
+) -> Result<()> {
+	// Remove any function_calls blocks if they exist but weren't processed earlier
+	let clean_content = remove_function_calls(current_content);
+	
+	// When adding the final assistant message for a response that involved tool calls,
+	// we've already tracked the cost and tokens in the loop above, so we pass None for exchange
+	// to avoid double-counting. If this is a direct response with no tool calls, we pass the
+	// original exchange to ensure costs are tracked.
+	let exchange_for_final = if content == current_content {
+		// This is the original content, so use the original exchange for cost tracking
+		Some(current_exchange)
+	} else {
+		// This is a modified content after tool calls, so costs were already tracked
+		// in the tool response handling code, so pass None to avoid double counting
+		None
+	};
+	
+	chat_session.add_assistant_message(&clean_content, exchange_for_final, config, role)?;
+
+	// Print assistant response with color
+	print_assistant_response(&clean_content, config, role);
+
+	// Display cumulative token usage using CostTracker
+	CostTracker::display_session_usage(chat_session);
+
+	Ok(())
+}
+
+// Helper function to log tool calls in debug mode
+fn log_tool_calls_debug(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
+	if config.get_log_level().is_debug_enabled() && !tool_calls.is_empty() {
+		log_debug!("Found {} tool calls in response", tool_calls.len());
+		for (i, call) in tool_calls.iter().enumerate() {
+			log_debug!(
+				"  Tool call {}: {} with params: {}",
+				i + 1,
+				call.tool_name,
+				call.parameters
+			);
+		}
+	}
+}
+
+// Helper function to resolve current tool calls
+fn resolve_tool_calls(
+	current_tool_calls_param: &mut Option<Vec<crate::mcp::McpToolCall>>,
+	current_content: &str,
+) -> Vec<crate::mcp::McpToolCall> {
+	if let Some(calls) = current_tool_calls_param.take() {
+		// Use the tool calls from the API response only once
+		if !calls.is_empty() {
+			calls
+		} else {
+			crate::mcp::parse_tool_calls(current_content) // Fallback
+		}
+	} else {
+		// For follow-up iterations, parse from content if any new tool calls exist
+		crate::mcp::parse_tool_calls(current_content)
+	}
+}
+
+// Helper function to check for cancellation
+fn check_cancellation(operation_cancelled: &Arc<AtomicBool>) -> Result<()> {
+	if operation_cancelled.load(Ordering::SeqCst) {
+		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		return Err(anyhow::anyhow!("Operation cancelled"));
+	}
+	Ok(())
+}
+
 // Function to process response, handling tool calls recursively
 #[allow(clippy::too_many_arguments)]
 pub async fn process_response(
@@ -40,20 +130,10 @@ pub async fn process_response(
 	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<()> {
 	// Check if operation has been cancelled at the very start
-	if operation_cancelled.load(Ordering::SeqCst) {
-		println!("{}", "\nOperation cancelled by user.".bright_yellow());
-		return Ok(());
-	}
+	check_cancellation(&operation_cancelled)?;
 
 	// Debug logging for finish_reason and tool calls
-	if config.get_log_level().is_debug_enabled() {
-		if let Some(ref reason) = finish_reason {
-			log_debug!("Processing response with finish_reason: {}", reason);
-		}
-		if let Some(ref calls) = tool_calls {
-			log_debug!("Processing {} tool calls", calls.len());
-		}
-	}
+	log_response_debug(config, &finish_reason, &tool_calls);
 
 	// First, add the user message before processing response
 	let last_message = chat_session.session.messages.last();
@@ -75,39 +155,15 @@ pub async fn process_response(
 
 	loop {
 		// Check for cancellation at the start of each loop iteration
-		if operation_cancelled.load(Ordering::SeqCst) {
-			println!("{}", "\nOperation cancelled by user.".bright_yellow());
-			return Ok(());
-		}
+		check_cancellation(&operation_cancelled)?;
 
 		// Check for tool calls if MCP has any servers configured
 		if !config.mcp.servers.is_empty() {
-			// CRITICAL FIX: Use current_tool_calls_param for the first iteration only
-			// For subsequent iterations, we should NOT reuse the same tool calls
-			let current_tool_calls = if let Some(calls) = current_tool_calls_param.take() {
-				// Use the tool calls from the API response only once
-				if !calls.is_empty() {
-					calls
-				} else {
-					crate::mcp::parse_tool_calls(&current_content) // Fallback
-				}
-			} else {
-				// For follow-up iterations, parse from content if any new tool calls exist
-				crate::mcp::parse_tool_calls(&current_content)
-			};
+			// Resolve current tool calls for this iteration
+			let current_tool_calls = resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
-			// Add debug logging for tool calls when debug mode is enabled
-			if config.get_log_level().is_debug_enabled() && !current_tool_calls.is_empty() {
-				log_debug!("Found {} tool calls in response", current_tool_calls.len());
-				for (i, call) in current_tool_calls.iter().enumerate() {
-					log_debug!(
-						"  Tool call {}: {} with params: {}",
-						i + 1,
-						call.tool_name,
-						call.parameters
-					);
-				}
-			}
+			// Log tool calls in debug mode
+			log_tool_calls_debug(config, &current_tool_calls);
 
 			if !current_tool_calls.is_empty() {
 				// CRITICAL FIX: We need to add the assistant message with tool_calls PRESERVED
@@ -1395,28 +1451,13 @@ pub async fn process_response(
 		}
 	}
 
-	// No tool calls (or MCP not enabled), just add the response
-	// Remove any function_calls blocks if they exist but weren't processed earlier
-	let clean_content = remove_function_calls(&current_content);
-	// When adding the final assistant message for a response that involved tool calls,
-	// we've already tracked the cost and tokens in the loop above, so we pass None for exchange
-	// to avoid double-counting. If this is a direct response with no tool calls, we pass the
-	// original exchange to ensure costs are tracked.
-	let exchange_for_final = if content == current_content {
-		// This is the original content, so use the original exchange for cost tracking
-		Some(current_exchange.clone())
-	} else {
-		// This is a modified content after tool calls, so costs were already tracked
-		// in the tool response handling code, so pass None to avoid double counting
-		None
-	};
-	chat_session.add_assistant_message(&clean_content, exchange_for_final, config, role)?;
-
-	// Print assistant response with color
-	print_assistant_response(&clean_content, config, role);
-
-	// Display cumulative token usage using CostTracker
-	CostTracker::display_session_usage(chat_session);
-
-	Ok(())
+	// Handle final response using helper function
+	handle_final_response(
+		&content,
+		&current_content,
+		current_exchange,
+		chat_session,
+		config,
+		role,
+	)
 }

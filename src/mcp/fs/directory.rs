@@ -19,6 +19,60 @@ use serde_json::{json, Value};
 use anyhow::{Result, anyhow};
 use super::super::{McpToolCall, McpToolResult};
 
+// Convert glob pattern to regex pattern for use with ripgrep
+fn convert_glob_to_regex(glob_pattern: &str) -> String {
+	// Handle multiple patterns separated by |
+	let patterns: Vec<&str> = glob_pattern.split('|').collect();
+
+	if patterns.len() > 1 {
+		// Multiple patterns - convert each and join with |
+		let regex_patterns: Vec<String> = patterns.iter()
+			.map(|p| convert_single_glob_to_regex(p.trim()))
+			.collect();
+		format!("({})", regex_patterns.join("|"))
+	} else {
+		// Single pattern
+		convert_single_glob_to_regex(glob_pattern)
+	}
+}
+
+// Convert a single glob pattern to regex
+fn convert_single_glob_to_regex(pattern: &str) -> String {
+	let mut regex = String::new();
+	let chars: Vec<char> = pattern.chars().collect();
+	let mut i = 0;
+
+	while i < chars.len() {
+		match chars[i] {
+			'*' => {
+				// Convert * to .*? (non-greedy match any characters)
+				regex.push_str(".*?");
+			},
+			'?' => {
+				// Convert ? to . (match any single character)
+				regex.push('.');
+			},
+			'.' => {
+				// Escape dots for literal match
+				regex.push_str("\\.");
+			},
+			'^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '+' | '\\' => {
+				// Escape regex special characters
+				regex.push('\\');
+				regex.push(chars[i]);
+			},
+			_ => {
+				// Regular character
+				regex.push(chars[i]);
+			}
+		}
+		i += 1;
+	}
+
+	// Add end-of-line anchor to ensure complete filename match
+	format!("{}$", regex)
+}
+
 // Execute list_files command
 pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract directory parameter
@@ -54,8 +108,10 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 			"content search"
 		)
 	} else if let Some(ref name_pattern) = pattern {
+		// Convert glob pattern to regex pattern
+		let regex_pattern = convert_glob_to_regex(name_pattern);
 		(
-			format!("cd '{}' && rg --files {} | rg '{}'", directory, cmd_args.join(" "), name_pattern),
+			format!("cd '{}' && rg --files {} | rg '{}'", directory, cmd_args.join(" "), regex_pattern),
 			"filename pattern"
 		)
 	} else {
@@ -125,4 +181,33 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 		tool_id: call.tool_id.clone(),
 		result: output,
 	})
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_glob_to_regex_conversion() {
+		// Test single pattern
+		assert_eq!(convert_glob_to_regex("*.rs"), ".*?\\.rs$");
+		assert_eq!(convert_glob_to_regex("*.py"), ".*?\\.py$");
+
+		// Test multiple patterns (the problematic case)
+		assert_eq!(convert_glob_to_regex("*.rs|*.py|*.js|*.ts"), "(.*?\\.rs$|.*?\\.py$|.*?\\.js$|.*?\\.ts$)");
+
+		// Test pattern with directory
+		assert_eq!(convert_glob_to_regex("src/*.rs"), "src/.*?\\.rs$");
+
+		// Test pattern with question mark
+		assert_eq!(convert_glob_to_regex("test?.py"), "test.\\.py$");
+	}
+
+	#[test]
+	fn test_single_glob_to_regex() {
+		assert_eq!(convert_single_glob_to_regex("*.rs"), ".*?\\.rs$");
+		assert_eq!(convert_single_glob_to_regex("test?.py"), "test.\\.py$");
+		assert_eq!(convert_single_glob_to_regex("file.txt"), "file\\.txt$");
+		assert_eq!(convert_single_glob_to_regex("*.c"), ".*?\\.c$");
+	}
 }

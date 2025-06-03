@@ -110,7 +110,7 @@ impl AiProvider for AnthropicProvider {
 		let api_key = self.get_api_key(config)?;
 
 		// Convert messages to Anthropic format with automatic cache markers
-		let anthropic_messages = convert_messages(messages, config, model);
+		let anthropic_messages = convert_messages(messages);
 
 		// Extract system message if present
 		let system_message = messages.iter()
@@ -290,13 +290,9 @@ impl AiProvider for AnthropicProvider {
 }
 
 // Convert our session messages to Anthropic format
-fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<AnthropicMessage> {
-	// CRITICAL FIX: Don't modify messages locally - cache markers should already be set
-	// by the session management logic, consistent with OpenRouter implementation
-	let cache_manager = crate::session::cache::CacheManager::new();
-	let supports_caching = cache_manager.validate_cache_support("anthropic", model);
-	
-	// Use messages directly - cache markers should already be properly set by session logic
+fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
+	// Cache markers should already be properly set by session logic
+	// We just need to respect them when converting to API format
 	let mut result = Vec::new();
 
 	for msg in messages {

@@ -38,12 +38,6 @@ fn get_optimized_client() -> &'static Client {
 	})
 }
 
-fn intern_model_name(model: &str) -> &'static str {
-	// Use leaked strings for interning - crazy but fast! 🚀
-	// This is safe because model names are typically short-lived and repeated
-	Box::leak(model.to_string().into_boxed_str())
-}
-
 /// OpenRouter provider implementation
 pub struct OpenRouterProvider;
 
@@ -107,10 +101,9 @@ impl AiProvider for OpenRouterProvider {
 	}
 
 	fn supports_caching(&self, model: &str) -> bool {
-		// Use interned model names for ultra-fast comparisons 🚀
-		let interned = intern_model_name(model);
-		// OpenRouter supports caching for Claude models
-		interned.contains("claude") || interned.contains("anthropic")
+		// OpenRouter supports caching for Claude models and Gemini models
+		// This should match the logic in CacheManager::validate_cache_support
+		model.contains("claude") || model.contains("gemini")
 	}
 
 	async fn chat_completion(
@@ -124,7 +117,7 @@ impl AiProvider for OpenRouterProvider {
 		let api_key = self.get_api_key(config)?;
 
 		// Convert messages to OpenRouter format
-		let openrouter_messages = convert_messages(messages, config, model);
+		let openrouter_messages = convert_messages(messages);
 
 		// Create the request body
 		let mut request_body = serde_json::json!({
@@ -468,16 +461,12 @@ impl AiProvider for OpenRouterProvider {
 }
 
 // Convert our session messages to OpenRouter format
-fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<OpenRouterMessage> {
+fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 	let mut cached_count = 0;
 	let mut result = Vec::new();
 
-	// CRITICAL FIX: Don't modify messages locally - the cache markers should already be set
-	// by the session management logic. Only apply emergency system message caching if needed.
-	let cache_manager = crate::session::cache::CacheManager::new();
-	let supports_caching = cache_manager.validate_cache_support("openrouter", model);
-	
-	// Use messages directly - cache markers should already be properly set by session logic
+	// Cache markers should already be properly set by session logic
+	// We just need to respect them when converting to API format
 
 	for msg in messages {
 		// Handle all message types with simplified structure

@@ -21,7 +21,7 @@ pub fn format_number(number: u64) -> String {
 	}
 
 	if number < 1_000 {
-		return number.to_string();
+		number.to_string()
 	} else if number < 10_000 {
 		// For numbers 1K-9.99K, show one decimal place
 		let k = number as f64 / 1_000.0;

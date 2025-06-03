@@ -592,12 +592,18 @@ impl CacheManager {
 	pub fn validate_cache_support(&self, provider: &str, model: &str) -> bool {
 		match provider.to_lowercase().as_str() {
 			"openrouter" => {
-				(model.contains("anthropic") && model.contains("claude"))
-				||
-				(model.contains("google") && model.contains("gemini"))
+				// OpenRouter supports caching for Claude models (with or without "anthropic" prefix)
+				model.contains("claude") ||
+				// And also for Gemini models through OpenRouter
+				model.contains("gemini")
 			}
-			"anthropic" | "google" => {
-				true
+			"anthropic" => {
+				// Anthropic supports caching for Claude 3.5 models
+				model.contains("claude-3-5") || model.contains("claude-3.5")
+			}
+			"google" => {
+				// Google Vertex AI supports caching for Gemini 1.5 models
+				model.contains("gemini-1.5")
 			}
 			// Do not use our markers, OpenAI uses implicit caching, for example
 			_ => false,
@@ -748,19 +754,28 @@ mod tests {
 	fn test_cache_support_validation() {
 		let manager = CacheManager::new();
 
-		// Test OpenRouter with Claude
+		// Test OpenRouter with Claude models (should work with or without "anthropic" prefix)
 		assert!(manager.validate_cache_support("openrouter", "anthropic/claude-3.5-sonnet"));
 		assert!(manager.validate_cache_support("openrouter", "claude-3-opus"));
 
-		// Test OpenRouter with non-Claude
+		// Test OpenRouter with Gemini models
+		assert!(manager.validate_cache_support("openrouter", "google/gemini-1.5-pro"));
+		assert!(manager.validate_cache_support("openrouter", "gemini-1.5-flash"));
+
+		// Test OpenRouter with non-cacheable models
 		assert!(!manager.validate_cache_support("openrouter", "openai/gpt-4"));
 
-		// Test direct Anthropic
+		// Test direct Anthropic (only Claude 3.5 models)
 		assert!(manager.validate_cache_support("anthropic", "claude-3.5-sonnet"));
+		assert!(manager.validate_cache_support("anthropic", "claude-3-5-haiku"));
+		assert!(!manager.validate_cache_support("anthropic", "claude-3-opus")); // Only 3.5 models
+
+		// Test direct Google (only Gemini 1.5 models)  
+		assert!(manager.validate_cache_support("google", "gemini-1.5-pro"));
+		assert!(!manager.validate_cache_support("google", "gemini-pro")); // Only 1.5 models
 
 		// Test unsupported providers
 		assert!(!manager.validate_cache_support("openai", "gpt-4"));
-		assert!(!manager.validate_cache_support("google", "gemini-pro"));
 	}
 
 	#[test]

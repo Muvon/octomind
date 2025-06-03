@@ -206,6 +206,82 @@ enabled = true                      # Override MCP enabled
 server_refs = ["filesystem"]        # Add specific servers
 ```
 
+## System Variables and Placeholders
+
+Octomind supports dynamic system variables that can be used in prompts and system messages. These variables provide real-time information about your development environment.
+
+### Available Variables
+
+**Individual Variables:**
+- **`%{DATE}`** - Current date and time with timezone
+- **`%{SHELL}`** - Current shell name and version
+- **`%{OS}`** - Operating system information with architecture and platform details
+- **`%{BINARIES}`** - List of available development tools and their versions (one per line)
+- **`%{CWD}`** - Current working directory
+- **`%{GIT_STATUS}`** - Git repository status
+- **`%{GIT_TREE}`** - Git file tree
+- **`%{README}`** - Project README content
+
+**Comprehensive Variables:**
+- **`%{SYSTEM}`** - Complete system information (date, shell, OS, binaries, CWD)
+- **`%{CONTEXT}`** - Project context information (README, git status, git tree)
+
+### Viewing Variables
+
+Use the `vars` command to inspect all available variables:
+
+```bash
+# List all variables with descriptions
+octomind vars
+
+# Show actual values (expanded view)
+octomind vars --expand
+octomind vars -e
+```
+
+### Development Tool Detection
+
+The `%{BINARIES}` variable automatically detects and reports versions of common development tools:
+
+- **Build tools**: `rustc`, `gcc`, `clang`, `make`
+- **Languages**: `node`, `npm`, `python`, `python3`, `go`, `java`, `php`
+- **Utilities**: `awk`, `sed`, `rg`, `git`, `docker`, `curl`, `wget`, `tar`, `zip`, `unzip`
+
+Tools are detected asynchronously for optimal performance, showing either their version or "missing" if not available.
+
+## Markdown Themes
+
+Octomind includes a beautiful markdown rendering system with multiple themes to enhance your experience.
+
+### Available Themes
+
+| Theme | Description | Best For |
+|-------|-------------|----------|
+| `default` | Improved default theme with gold headers and enhanced contrast | Most terminal setups |
+| `dark` | Optimized for dark terminals with bright, vibrant colors | Dark terminal backgrounds |
+| `light` | Perfect for light terminal backgrounds with darker colors | Light terminal backgrounds |
+| `ocean` | Beautiful blue-green palette inspired by ocean themes | Users who prefer calm, aquatic colors |
+| `solarized` | Based on the popular Solarized color scheme | Fans of the classic Solarized palette |
+| `monokai` | Inspired by the popular Monokai syntax highlighting theme | Users familiar with Monokai from code editors |
+
+### Configuring Themes
+
+```bash
+# Set a theme
+octomind config --markdown-theme ocean
+
+# Enable markdown rendering (if not already enabled)
+octomind config --markdown-enable true
+
+# View current theme
+octomind config --show
+
+# See all available themes (error message shows valid options)
+octomind config --markdown-theme invalid
+```
+
+All themes include headers, code blocks, inline code, lists, emphasis, quotes, and links with appropriate styling.
+
 ## Session Management
 
 ### Creating and Managing Sessions

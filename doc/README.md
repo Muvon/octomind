@@ -2,9 +2,12 @@
 
 Welcome to the comprehensive Octomind documentation. This manual provides detailed guidance on all aspects of Octomind's simplified, session-first architecture.
 
+> **📝 Note**: The main README has been streamlined to focus on core principles and quick start. All detailed installation methods, configuration examples, and advanced features have been moved to this documentation for better organization.
+
 ## Table of Contents
 
 ### 📖 Getting Started
+- **[01-installation.md](./01-installation.md)** - Installation methods, cross-compilation, shell completions
 - **[01-overview.md](./01-overview.md)** - Introduction and core concepts
 - **[02-configuration.md](./02-configuration.md)** - Configuration system and settings
 - **[03-providers.md](./03-providers.md)** - AI provider setup and management
@@ -52,12 +55,8 @@ server_refs = ["developer"]
 ```bash
 # Quick install with script
 curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
-
-# Or build from source
-git clone https://github.com/muvon/octomind.git
-cd octomind
-cargo build --release
 ```
+See [Installation Guide](./01-installation.md) for detailed methods including cross-compilation and shell completions.
 
 ### Basic Commands
 ```bash
@@ -131,8 +130,9 @@ Default values
 ## Getting Help
 
 ### Documentation Navigation
-- Start with **[Overview](./01-overview.md)** for basic concepts
-- Follow **[Configuration](./02-configuration.md)** for setup
+- Start with **[Installation](./01-installation.md)** for setup methods
+- Read **[Overview](./01-overview.md)** for basic concepts
+- Follow **[Configuration](./02-configuration.md)** for detailed setup
 - Check **[Providers](./03-providers.md)** for AI model setup
 - Explore **[Sessions](./05-sessions.md)** for interactive use
 - Dive into **[Advanced](./06-advanced.md)** for complex features

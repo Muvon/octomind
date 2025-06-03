@@ -127,28 +127,8 @@ Organize your development conversations:
 
 ### Quick Setup
 
-1. **Install Octomind**
-  ```bash
-  # Quick install script
-  curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
-
-  # Or build from source
-  git clone https://github.com/muvon/octomind.git
-  cd octomind
-  cargo build --release
-  ```
-
-2. **Configure AI Provider**
-  ```bash
-  # Set your API key (choose one)
-  export OPENROUTER_API_KEY="your_key"
-  export OPENAI_API_KEY="your_key"
-  export ANTHROPIC_API_KEY="your_key"
-
-  # Create configuration
-  octomind config
-  ```
-
+1. **Install Octomind** - See [Installation Guide](./01-installation.md) for detailed instructions
+2. **Configure AI Provider** - See [Provider Setup](./03-providers.md) for comprehensive setup
 3. **Start Your First Session**
   ```bash
   # Start in your project directory
@@ -174,6 +154,7 @@ No separate indexing or search commands needed.
 
 ## Next Steps
 
+- [Installation Guide](./01-installation.md) - Detailed installation methods and setup
 - [Configuration Guide](./02-configuration.md) - Set up providers and roles
 - [Provider Setup](./03-providers.md) - Configure AI models
 - [Session Guide](./05-sessions.md) - Master interactive sessions

@@ -159,7 +159,7 @@ impl AiProvider for CloudflareWorkersAiProvider {
 
 	fn get_api_key(&self, config: &Config) -> Result<String> {
 		// Check config first, then environment
-		if let Some(ref token) = config.providers.cloudflare.api_key {
+		if let Some(token) = &config.providers.cloudflare.api_key {
 			Ok(token.clone())
 		} else {
 			self.get_api_token()

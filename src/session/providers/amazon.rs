@@ -180,7 +180,7 @@ impl AiProvider for AmazonBedrockProvider {
 	fn get_api_key(&self, config: &Config) -> Result<String> {
 		// For Bedrock, we need AWS credentials
 		// Check config first, then environment
-		if let Some(ref key) = config.providers.amazon.api_key {
+		if let Some(key) = &config.providers.amazon.api_key {
 			Ok(key.clone())
 		} else {
 			self.get_aws_access_key_id()

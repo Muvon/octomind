@@ -416,22 +416,25 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 				}
 
 				// Regular user messages with proper structure
-				let mut text_content = serde_json::json!({
-					"type": "text",
-					"text": msg.content
-				});
+				// CRITICAL FIX: Only create message if content is not empty
+				if !msg.content.trim().is_empty() {
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
+					});
 
-				// Add cache_control if needed
-				if msg.cached {
-					text_content["cache_control"] = serde_json::json!({
-						"type": "ephemeral"
+					// Add cache_control if needed
+					if msg.cached {
+						text_content["cache_control"] = serde_json::json!({
+							"type": "ephemeral"
+						});
+					}
+
+					result.push(AnthropicMessage {
+						role: msg.role.clone(),
+						content: serde_json::json!([text_content]),
 					});
 				}
-
-				result.push(AnthropicMessage {
-					role: msg.role.clone(),
-					content: serde_json::json!([text_content]),
-				});
 			}
 			"assistant" => {
 				// Assistant messages with proper structure
@@ -516,29 +519,36 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 					}
 				}
 
-				result.push(AnthropicMessage {
-					role: msg.role.clone(),
-					content: serde_json::json!(content_blocks),
-				});
+				// CRITICAL FIX: Only push the message if it has content
+				// This prevents empty assistant messages from being sent to the API
+				if !content_blocks.is_empty() {
+					result.push(AnthropicMessage {
+						role: msg.role.clone(),
+						content: serde_json::json!(content_blocks),
+					});
+				}
 			}
 			_ => {
 				// All other message types with proper structure
-				let mut text_content = serde_json::json!({
-					"type": "text",
-					"text": msg.content
-				});
+				// CRITICAL FIX: Only create message if content is not empty
+				if !msg.content.trim().is_empty() {
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
+					});
 
-				// Add cache_control if needed
-				if msg.cached {
-					text_content["cache_control"] = serde_json::json!({
-						"type": "ephemeral"
+					// Add cache_control if needed
+					if msg.cached {
+						text_content["cache_control"] = serde_json::json!({
+							"type": "ephemeral"
+						});
+					}
+
+					result.push(AnthropicMessage {
+						role: msg.role.clone(),
+						content: serde_json::json!([text_content]),
 					});
 				}
-
-				result.push(AnthropicMessage {
-					role: msg.role.clone(),
-					content: serde_json::json!([text_content]),
-				});
 			}
 		}
 	}

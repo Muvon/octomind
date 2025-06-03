@@ -106,27 +106,21 @@ impl Config {
 			providers: ProvidersConfig {
 				openrouter: ProviderConfig {
 					api_key: std::env::var("OPENROUTER_API_KEY").ok(),
-					..Default::default()
 				},
 				openai: ProviderConfig {
 					api_key: std::env::var("OPENAI_API_KEY").ok(),
-					..Default::default()
 				},
 				anthropic: ProviderConfig {
 					api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
-					..Default::default()
 				},
 				google: ProviderConfig {
 					api_key: std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok(),
-					..Default::default()
 				},
 				amazon: ProviderConfig {
 					api_key: std::env::var("AWS_ACCESS_KEY_ID").ok(),
-					..Default::default()
 				},
 				cloudflare: ProviderConfig {
 					api_key: std::env::var("CLOUDFLARE_API_TOKEN").ok(),
-					..Default::default()
 				},
 			},
 			openrouter: super::OpenRouterConfig {
@@ -326,9 +320,10 @@ impl Config {
 			config
 		} else {
 			// Create default config if file doesn't exist
-			let mut config = Config::default();
-			config.config_path = Some(config_path.clone());
-			config
+			Config {
+				config_path: Some(config_path.clone()),
+				..Default::default()
+			}
 		};
 
 		// Apply the update to the disk config

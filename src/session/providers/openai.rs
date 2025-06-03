@@ -24,21 +24,44 @@ use serde::{Deserialize, Serialize};
 use std::env;
 
 /// OpenAI pricing constants (per 1M tokens in USD)
-/// Source: https://openai.com/pricing (as of January 2025)
+/// Source: https://platform.openai.com/docs/pricing (as of January 2025)
 const PRICING: &[(&str, f64, f64)] = &[
 	// Model, Input price per 1M tokens, Output price per 1M tokens
+	// GPT-4o models
 	("gpt-4o", 2.50, 10.00),
 	("gpt-4o-mini", 0.15, 0.60),
-	("gpt-4-turbo", 10.00, 30.00),
-	("gpt-4", 30.00, 60.00),
-	("gpt-3.5-turbo", 0.50, 1.50),
-	("o1-preview", 15.00, 60.00),
-	("o1-mini", 3.00, 12.00),
-	("chatgpt-4o-latest", 2.50, 10.00), // Same as gpt-4o
-	// Add support for versioned and additional models
 	("gpt-4o-2024-11-20", 2.50, 10.00),
 	("gpt-4o-2024-08-06", 2.50, 10.00),
-	("gpt-4o-2024-05-13", 5.00, 15.00), // Earlier version had different pricing
+	("gpt-4o-2024-05-13", 5.00, 15.00),
+	("chatgpt-4o-latest", 2.50, 10.00),
+	// O-series reasoning models
+	("o4", 25.00, 100.00),  // Latest O4 model
+	("o3", 20.00, 80.00),   // O3 model
+	("o3-mini", 5.00, 20.00), // O3 mini variant
+	("o1", 15.00, 60.00),
+	("o1-preview", 15.00, 60.00),
+	("o1-mini", 3.00, 12.00),
+	// GPT-4.5 models (newest series)
+	("gpt-4.5-turbo", 6.00, 20.00),
+	("gpt-4.5", 20.00, 40.00),
+	("gpt-4.5-preview", 6.00, 20.00),
+	// GPT-4.1 models (newer series)
+	("gpt-4.1-turbo", 8.00, 25.00),
+	("gpt-4.1", 25.00, 50.00),
+	("gpt-4.1-preview", 8.00, 25.00),
+	// GPT-4 Turbo models
+	("gpt-4-turbo", 10.00, 30.00),
+	("gpt-4-turbo-2024-04-09", 10.00, 30.00),
+	("gpt-4-0125-preview", 10.00, 30.00),
+	("gpt-4-1106-preview", 10.00, 30.00),
+	// GPT-4 models
+	("gpt-4", 30.00, 60.00),
+	("gpt-4-0613", 30.00, 60.00),
+	("gpt-4-0314", 30.00, 60.00),
+	// GPT-3.5 Turbo models
+	("gpt-3.5-turbo", 0.50, 1.50),
+	("gpt-3.5-turbo-0125", 0.50, 1.50),
+	("gpt-3.5-turbo-1106", 1.00, 2.00),
 ];
 
 /// Calculate cost for OpenAI models
@@ -92,12 +115,16 @@ impl AiProvider for OpenAiProvider {
 	}
 
 	fn supports_model(&self, model: &str) -> bool {
-		// OpenAI models - common ones
-		model.starts_with("gpt-")
-			|| model.starts_with("o1-")
+		// OpenAI models - current lineup
+		model.starts_with("gpt-4o")
+			|| model.starts_with("gpt-4.5")
+			|| model.starts_with("gpt-4.1")
+			|| model.starts_with("gpt-4")
+			|| model.starts_with("gpt-3.5")
+			|| model.starts_with("o1")
+			|| model.starts_with("o3")
+			|| model.starts_with("o4")
 			|| model == "chatgpt-4o-latest"
-			|| model.contains("gpt-4")
-			|| model.contains("gpt-3.5")
 	}
 
 	fn get_api_key(&self, config: &Config) -> Result<String> {

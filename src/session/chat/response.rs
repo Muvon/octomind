@@ -546,18 +546,19 @@ pub async fn process_response(
 														serde_json::Value::String(s) => {
 															if s.is_empty() {
 																"\"\"".bright_black().to_string()
-															} else if s.len() > 100 {
-																format!("\"{}...\"", &s[..97])
+															} else if s.chars().count() > 100 {
+																format!("\"{}...\"", s.chars().take(97).collect::<String>())
 															} else if s.contains('\n') {
 																// For multiline strings, show first line + indicator
 																let lines: Vec<&str> =
 																	s.lines().collect();
 																let first_line =
 																	lines.first().unwrap_or(&"");
-																if first_line.len() > 80 {
+																let first_line_chars: Vec<char> = first_line.chars().collect();
+								if first_line_chars.len() > 80 {
 																	format!(
 																		"\"{}...\" [+{} lines]",
-																		&first_line[..77],
+																		first_line_chars.into_iter().take(77).collect::<String>(),
 																		lines
 																			.len()
 																			.saturating_sub(1)
@@ -590,7 +591,7 @@ pub async fn process_response(
 																// Show small arrays inline
 																let items: Vec<String> = arr.iter().take(3).map(|item| {
 																	match item {
-																		serde_json::Value::String(s) => format!("\"{}\"", if s.len() > 20 { format!("{}...", &s[..17]) } else { s.clone() }),
+																		serde_json::Value::String(s) => format!("\"{}\"", if s.chars().count() > 20 { format!("{}...", s.chars().take(17).collect::<String>()) } else { s.clone() }),
 																		_ => item.to_string()
 																	}
 																}).collect();
@@ -604,7 +605,7 @@ pub async fn process_response(
 																let obj_str =
 																	serde_json::to_string(value)
 																		.unwrap_or_default();
-																if obj_str.len() > 100 {
+																if obj_str.chars().count() > 100 {
 																	format!(
 																		"{{...}} ({} keys)",
 																		obj.len()
@@ -638,8 +639,9 @@ pub async fn process_response(
 												serde_json::to_string(&tool_call.parameters)
 													.unwrap_or_default();
 											if params_str != "null" {
-												if params_str.len() > 100 {
-													println!("params: {}...", &params_str[..97]);
+												if params_str.chars().count() > 100 {
+													let truncated: String = params_str.chars().take(97).collect();
+								println!("params: {}...", truncated);
 												} else {
 													println!("params: {}", params_str);
 												}
@@ -676,8 +678,8 @@ pub async fn process_response(
 																.map(|(k, _)| k)
 																.unwrap_or(&"param".to_string())
 																.bright_blue(),
-															if str_val.len() > 80 {
-																format!("{}...", &str_val[..77])
+															if str_val.chars().count() > 80 {
+																format!("{}...", str_val.chars().take(77).collect::<String>())
 															} else {
 																str_val.to_string()
 															}
@@ -807,8 +809,8 @@ pub async fn process_response(
 															.map(|(k, _)| k)
 															.unwrap_or(&"param".to_string())
 															.bright_blue(),
-														if str_val.len() > 80 {
-															format!("{}...", &str_val[..77])
+														if str_val.chars().count() > 80 {
+															format!("{}...", str_val.chars().take(77).collect::<String>())
 														} else {
 															str_val.to_string()
 														}
@@ -949,8 +951,8 @@ pub async fn process_response(
 														.map(|(k, _)| k)
 														.unwrap_or(&"param".to_string())
 														.bright_blue(),
-													if str_val.len() > 80 {
-														format!("{}...", &str_val[..77])
+													if str_val.chars().count() > 80 {
+														format!("{}...", str_val.chars().take(77).collect::<String>())
 													} else {
 														str_val.to_string()
 													}

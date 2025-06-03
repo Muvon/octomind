@@ -15,41 +15,10 @@
 // Session display functionality
 
 use super::core::ChatSession;
+use super::utils::{format_number, format_duration};
 use colored::*;
 
-// Utility function to format time in a human-readable format
-fn format_duration(milliseconds: u64) -> String {
-	if milliseconds == 0 {
-		return "0ms".to_string();
-	}
 
-	let ms = milliseconds % 1000;
-	let seconds = (milliseconds / 1000) % 60;
-	let minutes = (milliseconds / 60000) % 60;
-	let hours = milliseconds / 3600000;
-
-	let mut parts = Vec::new();
-
-	if hours > 0 {
-		parts.push(format!("{}h", hours));
-	}
-	if minutes > 0 {
-		parts.push(format!("{}m", minutes));
-	}
-	if seconds > 0 {
-		parts.push(format!("{}s", seconds));
-	}
-	if ms > 0 || parts.is_empty() {
-		if parts.is_empty() {
-			parts.push(format!("{}ms", ms));
-		} else if ms >= 100 {
-			// Only show milliseconds if >= 100ms when other units are present
-			parts.push(format!("{}ms", ms));
-		}
-	}
-
-	parts.join(" ")
-}
 
 impl ChatSession {
 	// Display detailed information about the session, including layer-specific stats
@@ -63,12 +32,12 @@ impl ChatSession {
 
 		// Total token usage
 		let total_tokens = self.session.info.input_tokens + self.session.info.output_tokens + self.session.info.cached_tokens;
-		println!("{} {}", "Total tokens:".yellow(), total_tokens.to_string().bright_white());
+		println!("{} {}", "Total tokens:".yellow(), format_number(total_tokens).bright_white());
 		println!("{} {} input, {} output, {} cached",
 			"Breakdown:".yellow(),
-			self.session.info.input_tokens.to_string().bright_blue(),
-			self.session.info.output_tokens.to_string().bright_green(),
-			self.session.info.cached_tokens.to_string().bright_magenta());
+			format_number(self.session.info.input_tokens).bright_blue(),
+			format_number(self.session.info.output_tokens).bright_green(),
+			format_number(self.session.info.cached_tokens).bright_magenta());
 
 		// Cost information
 		println!("{} ${:.5}", "Total cost:".yellow(), self.session.info.total_cost);
@@ -155,8 +124,8 @@ impl ChatSession {
 				println!("  {}: {}", "Executions".blue(), executions);
 				println!("  {}: {} input, {} output",
 					"Tokens".blue(),
-					total_input.to_string().bright_white(),
-					total_output.to_string().bright_white());
+					format_number(total_input).bright_white(),
+					format_number(total_output).bright_white());
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
 
 				// Show time information if available
@@ -214,8 +183,8 @@ impl ChatSession {
 					println!("  {}: {}", "Executions".blue(), executions);
 					println!("  {}: {} input, {} output",
 						"Tokens".blue(),
-						total_input.to_string().bright_white(),
-						total_output.to_string().bright_white());
+						format_number(total_input).bright_white(),
+						format_number(total_output).bright_white());
 					println!("  {}: ${:.5}", "Cost".blue(), total_cost);
 
 					// Show time information if available

@@ -16,6 +16,7 @@
 
 use serde::{Serialize, Deserialize};
 use crate::session::{Message, Session};
+use crate::session::chat::format_number;
 use crate::config::Config;
 use anyhow::Result;
 
@@ -626,13 +627,13 @@ impl CacheStatistics {
 		if self.total_cached_tokens > 0 {
 			output.push_str(&format!(
 				"Total input tokens: {} ({} cached, {} processed)\n",
-				self.total_input_tokens.to_string().bright_blue(),
-				self.total_cached_tokens.to_string().bright_magenta(),
-				(self.total_input_tokens - self.total_cached_tokens).to_string().bright_yellow()
+				format_number(self.total_input_tokens).bright_blue(),
+				format_number(self.total_cached_tokens).bright_magenta(),
+				format_number(self.total_input_tokens - self.total_cached_tokens).bright_yellow()
 			));
 			output.push_str(&format!(
 				"Total output tokens: {} (not cacheable)\n",
-				self.total_output_tokens.to_string().bright_cyan()
+				format_number(self.total_output_tokens).bright_cyan()
 			));
 			output.push_str(&format!(
 				"Cache efficiency: {:.1}% (of input tokens only)\n",
@@ -649,8 +650,8 @@ impl CacheStatistics {
 				"Current session input: {:.1}% cached, {:.1}% processed ({}/{} input tokens)\n",
 				cached_pct.to_string().bright_green(),
 				non_cached_pct.to_string().bright_yellow(),
-				self.current_non_cached_tokens.to_string().bright_red(),
-				self.current_total_tokens.to_string().bright_blue()
+				format_number(self.current_non_cached_tokens).bright_red(),
+				format_number(self.current_total_tokens).bright_blue()
 			));
 		}
 

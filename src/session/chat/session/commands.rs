@@ -15,6 +15,7 @@
 // Session command processing
 
 use super::core::ChatSession;
+use super::utils::format_number;
 use crate::{config::{Config, LogLevel}, log_info};
 use std::io::{self, Write};
 use anyhow::Result;
@@ -426,7 +427,7 @@ impl ChatSession {
 									name_display,
 									created_time.blue(),
 									model_name.yellow(),
-									total_tokens.to_string().bright_blue(),
+									format_number(total_tokens).bright_blue(),
 									info.total_cost.to_string().bright_magenta());
 							}
 

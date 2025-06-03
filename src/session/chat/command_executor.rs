@@ -17,6 +17,7 @@
 use crate::config::Config;
 use crate::session::{layers::generic_layer::GenericLayer, layers::layer_trait::Layer};
 use crate::session::chat::session::ChatSession;
+use crate::session::chat::format_number;
 use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -139,8 +140,8 @@ pub async fn execute_command_layer(
 		// Display information about the command execution
 		println!("{} {} prompt, {} completion tokens",
 			"Command usage:".bright_blue(),
-			usage.prompt_tokens.to_string().bright_green(),
-			usage.completion_tokens.to_string().bright_green());
+			format_number(usage.prompt_tokens).bright_green(),
+			format_number(usage.completion_tokens).bright_green());
 
 		if cost > 0.0 {
 			println!("{} ${:.5}", "Command cost:".bright_blue(), cost.to_string().bright_magenta());

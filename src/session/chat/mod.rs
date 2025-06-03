@@ -23,11 +23,11 @@ mod input;
 mod layered_response;
 pub mod markdown;
 mod response;
-mod session;
+pub mod session;
 mod syntax;
 
 // Re-export main structures and functions
-pub use session::{ChatSession, run_interactive_session};
+pub use session::{ChatSession, run_interactive_session, format_number, format_duration};
 pub use commands::{COMMANDS, HELP_COMMAND, EXIT_COMMAND, QUIT_COMMAND, COPY_COMMAND, CLEAR_COMMAND, SAVE_COMMAND, CACHE_COMMAND, DONE_COMMAND, RUN_COMMAND};
 pub use command_executor::{execute_command_layer, list_available_commands, command_exists, get_command_help};
 pub use input::read_user_input;

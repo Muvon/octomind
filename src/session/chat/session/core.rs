@@ -16,6 +16,7 @@
 
 use crate::config::Config;
 use crate::session::{Session, get_sessions_dir, load_session};
+use super::utils::format_number;
 use std::fs::File;
 use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
@@ -144,7 +145,7 @@ impl ChatSession {
 					println!("{} {}", "Created:".blue(), created_time.white());
 					println!("{} {}", "Model:".blue(), model_name.yellow());
 					println!("{} {}", "Messages:".blue(), session.messages.len().to_string().white());
-					println!("{} {}", "Tokens:".blue(), total_tokens.to_string().bright_blue());
+					println!("{} {}", "Tokens:".blue(), format_number(total_tokens).bright_blue());
 					println!("{} ${:.5}", "Cost:".blue(), session.info.total_cost.to_string().bright_magenta());
 
 					// Create chat session from loaded session

@@ -160,9 +160,7 @@ pub async fn execute_shell_command_with_cancellation(
 		.kill_on_drop(true); // CRITICAL: Kill process when dropped
 
 	// Spawn the process
-	let child = cmd
-		.spawn()
-		.map_err(|e| anyhow!("Failed to spawn command: {}", e))?;
+	let child = cmd.spawn().map_err(|e| anyhow!("Failed to spawn command: {}", e))?;
 
 	// Get the process ID for potential killing
 	let child_id = child.id();
@@ -183,103 +181,103 @@ pub async fn execute_shell_command_with_cancellation(
 
 	// Race between command completion and cancellation
 	let output = tokio::select! {
-			result = child.wait_with_output() => {
-				match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
-					Ok(output) => {
-						let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-						let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+		result = child.wait_with_output() => {
+			match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
+				Ok(output) => {
+					let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+					let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-						// Format the output more clearly with error handling
-						let combined = if stderr.is_empty() {
-							stdout
-						} else if stdout.is_empty() {
-							stderr
-						} else {
-							format!(
-								"{}
+					// Format the output more clearly with error handling
+					let combined = if stderr.is_empty() {
+						stdout
+					} else if stdout.is_empty() {
+						stderr
+					} else {
+						format!(
+							"{}
 
 Error: {}",
-								stdout, stderr
-							)
-						};
+							stdout, stderr
+						)
+					};
 
-						// Add detailed execution results including status code
-						let status_code = output.status.code().unwrap_or(-1);
-						let success = output.status.success();
+					// Add detailed execution results including status code
+					let status_code = output.status.code().unwrap_or(-1);
+					let success = output.status.success();
 
-						json!({
-							"success": success,
-							"output": combined,
-							"code": status_code,
-							"parameters": {
-								"command": command
-							},
-							"message": if success {
-							format!("Command executed successfully with exit code {}", status_code)
-						} else {
-							format!("Command failed with exit code {}", status_code)
-						}
-					})
-				}
-				Err(e) => json!({
-					"success": false,
-					"output": format!("Failed to execute command: {}", e),
-					"code": -1,
-					"parameters": {
-						"command": command
-					},
-					"message": format!("Failed to execute command: {}", e)
-				}),
-			}
-		}
-		cancelled = cancellation_future => {
-			if cancelled {
-				// Try to kill the process using system commands if we have the PID
-				if let Some(pid) = child_id {
-					#[cfg(unix)]
-					{
-						// On Unix systems, try to kill the process using system commands
-						let _ = std::process::Command::new("kill")
-							.args(["-TERM", &pid.to_string()])
-							.output();
-						// Give it a moment to terminate gracefully
-						std::thread::sleep(std::time::Duration::from_millis(100));
-						let _ = std::process::Command::new("kill")
-							.args(["-KILL", &pid.to_string()])
-							.output();
+					json!({
+						"success": success,
+						"output": combined,
+						"code": status_code,
+						"parameters": {
+							"command": command
+						},
+						"message": if success {
+						format!("Command executed successfully with exit code {}", status_code)
+					} else {
+						format!("Command failed with exit code {}", status_code)
 					}
-					#[cfg(windows)]
-					{
-						// On Windows, use taskkill
-						let _ = std::process::Command::new("taskkill")
-							.args(["/F", "/PID", &pid.to_string()])
-							.output();
-					}
-				}
-
-				json!({
-					"success": false,
-					"output": "Command execution cancelled by user (Ctrl+C)",
-					"code": -1,
-					"parameters": {
-						"command": command
-					},
-					"message": "Command execution cancelled by user"
-				})
-			} else {
-				// This shouldn't happen, but handle it gracefully
-				json!({
-					"success": false,
-					"output": "Unexpected cancellation state",
-					"code": -1,
-					"parameters": {
-						"command": command
-					},
-					"message": "Unexpected cancellation state"
 				})
 			}
+			Err(e) => json!({
+				"success": false,
+				"output": format!("Failed to execute command: {}", e),
+				"code": -1,
+				"parameters": {
+					"command": command
+				},
+				"message": format!("Failed to execute command: {}", e)
+			}),
 		}
-	};
+	}
+	cancelled = cancellation_future => {
+		if cancelled {
+			// Try to kill the process using system commands if we have the PID
+			if let Some(pid) = child_id {
+				#[cfg(unix)]
+				{
+					// On Unix systems, try to kill the process using system commands
+					let _ = std::process::Command::new("kill")
+						.args(["-TERM", &pid.to_string()])
+						.output();
+					// Give it a moment to terminate gracefully
+					std::thread::sleep(std::time::Duration::from_millis(100));
+					let _ = std::process::Command::new("kill")
+						.args(["-KILL", &pid.to_string()])
+						.output();
+				}
+				#[cfg(windows)]
+				{
+					// On Windows, use taskkill
+					let _ = std::process::Command::new("taskkill")
+						.args(["/F", "/PID", &pid.to_string()])
+						.output();
+				}
+			}
+			
+			json!({
+				"success": false,
+				"output": "Command execution cancelled by user (Ctrl+C)",
+				"code": -1,
+				"parameters": {
+					"command": command
+				},
+				"message": "Command execution cancelled by user"
+			})
+		} else {
+			// This shouldn't happen, but handle it gracefully
+			json!({
+				"success": false,
+				"output": "Unexpected cancellation state",
+				"code": -1,
+				"parameters": {
+					"command": command
+				},
+				"message": "Unexpected cancellation state"
+			})
+		}
+	}
+};
 
 	Ok(McpToolResult {
 		tool_name: "shell".to_string(),

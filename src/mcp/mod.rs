@@ -543,15 +543,10 @@ fn handle_large_response(result: McpToolResult, config: &crate::config::Config) 
 		std::io::stdin().read_line(&mut input).unwrap_or_default();
 
 		if !input.trim().to_lowercase().starts_with('y') {
-			// User declined, return a truncated result with explanation
-			let truncated_result = McpToolResult {
-				tool_name: result.tool_name,
-				tool_id: result.tool_id,
-				result: serde_json::json!({
-					"output": format!("[Output truncated to save tokens: {} tokens of output were not processed as requested]", estimated_tokens)
-				}),
-			};
-			return Ok(truncated_result);
+			// CRITICAL FIX: User declined large output. Instead of creating a fake response
+			// that might violate MCP schemas, we return an error that will cause the tool_use
+			// block to be removed from the conversation entirely. This is MCP-compliant.
+			return Err(anyhow::anyhow!("LARGE_OUTPUT_DECLINED_BY_USER: User declined to process large output with {} tokens", estimated_tokens));
 		}
 
 		// User confirmed, continue with original result

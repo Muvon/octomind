@@ -657,6 +657,13 @@ pub async fn process_response(
 									}
 								}
 
+								// Check if this is a user-declined large output error
+								if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
+									println!("⚠ Tool '{}' output declined by user - removing from conversation", tool_name);
+									// Don't add any tool result - this will cause the tool_use to be removed
+									continue;
+								}
+
 								// Show error status
 								println!("✗ Tool '{}' failed: {}", tool_name, e);
 

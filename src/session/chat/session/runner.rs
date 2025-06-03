@@ -325,12 +325,51 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 			if should_remove_last_message {
 				if let Some(last_index) = *last_user_message_index.lock().unwrap() {
-					// Remove incomplete user message and any partial assistant responses
+					// CRITICAL FIX: When Ctrl+C is pressed during tool execution, we should cleanly
+					// remove incomplete tool_use blocks rather than trying to fake tool results.
+					// This maintains MCP compliance and conversation integrity.
+					
 					let messages_len = chat_session.session.messages.len();
 					if last_index < messages_len {
-						// Remove everything from the last user message onwards
-						chat_session.session.messages.truncate(last_index);
-						log_debug!("Removed incomplete request due to cancellation");
+						// Find any assistant messages with tool_calls after the last user message
+						let mut has_incomplete_tool_calls = false;
+						for i in last_index..messages_len {
+							if let Some(msg) = chat_session.session.messages.get(i) {
+								if msg.role == "assistant" && msg.tool_calls.is_some() {
+									// This assistant message has tool_calls - check if all have matching tool results
+									if let Some(tool_calls_value) = &msg.tool_calls {
+										if let Ok(tool_calls_array) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
+											for tool_call in tool_calls_array {
+												if let Some(tool_id) = tool_call.get("id").and_then(|id| id.as_str()) {
+													// Check if there's a matching tool result message
+													let has_matching_result = chat_session.session.messages[i+1..].iter()
+														.any(|result_msg| result_msg.role == "tool" && 
+															result_msg.tool_call_id.as_ref() == Some(&tool_id.to_string()));
+													
+													if !has_matching_result {
+														has_incomplete_tool_calls = true;
+														break;
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+							if has_incomplete_tool_calls {
+								break;
+							}
+						}
+						
+						if has_incomplete_tool_calls {
+							// Remove everything from the last user message onwards (including incomplete tool_use)
+							chat_session.session.messages.truncate(last_index);
+							log_debug!("Removed incomplete request with tool calls due to cancellation");
+						} else {
+							// No incomplete tool calls, safe to truncate normally
+							chat_session.session.messages.truncate(last_index);
+							log_debug!("Removed incomplete request due to cancellation");
+						}
 					}
 				}
 			}

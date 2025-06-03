@@ -467,8 +467,8 @@ impl CacheManager {
 			current_non_cached_tokens: session.current_non_cached_tokens,
 			current_total_tokens: session.current_total_tokens,
 			cache_efficiency: if session.info.input_tokens + session.info.cached_tokens > 0 {
-				// Cache efficiency = percentage of INPUT tokens that came from cache
-				// Only input tokens can be cached, so exclude output tokens from this calculation
+				// Cache efficiency = percentage of total input tokens that came from cache
+				// This shows the overall session cache efficiency (lifetime)
 				(session.info.cached_tokens as f64
 					/ (session.info.input_tokens + session.info.cached_tokens) as f64)
 					* 100.0
@@ -686,7 +686,7 @@ impl CacheStatistics {
 				format_number(self.total_output_tokens).bright_cyan()
 			));
 			output.push_str(&format!(
-				"Cache efficiency: {:.1}% (of input tokens only)\n",
+				"Overall cache efficiency: {:.1}% (lifetime session average)\n",
 				self.cache_efficiency.to_string().bright_green()
 			));
 		} else {
@@ -696,16 +696,16 @@ impl CacheStatistics {
 			));
 		}
 
-		if self.current_total_tokens > 0 {
-			let non_cached_pct =
-				(self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
-			let cached_pct = 100.0 - non_cached_pct;
+		// Show session-wide cache efficiency in a clearer way
+		if self.total_input_tokens > 0 {
+			let session_cached_pct = (self.total_cached_tokens as f64 / self.total_input_tokens as f64) * 100.0;
+			let session_processed_pct = 100.0 - session_cached_pct;
 			output.push_str(&format!(
-				"Current session input: {:.1}% cached, {:.1}% processed ({}/{} input tokens)\n",
-				cached_pct.to_string().bright_green(),
-				non_cached_pct.to_string().bright_yellow(),
-				format_number(self.current_non_cached_tokens).bright_red(),
-				format_number(self.current_total_tokens).bright_blue()
+				"Session totals: {:.1}% cached, {:.1}% processed ({}/{} total input tokens)\n",
+				session_cached_pct.to_string().bright_green(),
+				session_processed_pct.to_string().bright_yellow(),
+				format_number(self.total_cached_tokens).bright_magenta(),
+				format_number(self.total_input_tokens).bright_blue()
 			));
 		}
 

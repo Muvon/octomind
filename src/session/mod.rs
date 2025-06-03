@@ -126,7 +126,7 @@ pub struct Session {
 	pub info: SessionInfo,
 	pub messages: Vec<Message>,
 	pub session_file: Option<PathBuf>,
-	// Track token counts for non-cached messages in current interaction
+	// Track cumulative token counts since last cache checkpoint (for auto-caching thresholds)
 	pub current_non_cached_tokens: u64,
 	pub current_total_tokens: u64,
 	// Track last cache checkpoint time for time-based auto-caching

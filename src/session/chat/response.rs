@@ -1345,11 +1345,18 @@ pub async fn process_response(
 							break;
 						}
 						Err(e) => {
-							// IMPROVED: Show more context about the API error
+							// Extract provider name from the model for better error messaging
+							let provider_name = if let Ok((provider, _)) = crate::session::providers::ProviderFactory::parse_model(&chat_session.model) {
+								provider
+							} else {
+								"unknown provider".to_string()
+							};
+							
+							// IMPROVED: Show provider-aware context about the API error
 							println!(
 								"\n{} {}: {}",
 								"✗".bright_red(),
-								"Error calling OpenRouter".bright_red(),
+								format!("Error calling {}", provider_name).bright_red(),
 								e
 							);
 

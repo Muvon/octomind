@@ -844,10 +844,42 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				}
 			}
 			Err(e) => {
-				// Print colorful error message
+				// Print colorful error message with provider-aware context
 				use colored::*;
-				println!("\n{}: {}", "Error calling OpenRouter".bright_red(), e);
-				println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
+				
+				// Extract provider name from the model string
+				let provider_name = if let Ok((provider, _)) = crate::session::providers::ProviderFactory::parse_model(&model) {
+					provider
+				} else {
+					"unknown provider".to_string()
+				};
+				
+				println!("\n{}: {}", format!("Error calling {}", provider_name).bright_red(), e);
+				
+				// Provider-specific help message
+				match provider_name.to_lowercase().as_str() {
+					"openrouter" => {
+						println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
+					}
+					"anthropic" => {
+						println!("{}", "Make sure Anthropic API key is set in the config or as ANTHROPIC_API_KEY environment variable.".yellow());
+					}
+					"openai" => {
+						println!("{}", "Make sure OpenAI API key is set in the config or as OPENAI_API_KEY environment variable.".yellow());
+					}
+					"google" => {
+						println!("{}", "Make sure Google credentials are set in the config or as GOOGLE_APPLICATION_CREDENTIALS environment variable.".yellow());
+					}
+					"amazon" => {
+						println!("{}", "Make sure AWS credentials are configured properly for Amazon Bedrock access.".yellow());
+					}
+					"cloudflare" => {
+						println!("{}", "Make sure Cloudflare API key is set in the config or as CLOUDFLARE_API_KEY environment variable.".yellow());
+					}
+					_ => {
+						println!("{}", "Make sure the API key for this provider is properly configured.".yellow());
+					}
+				}
 			}
 		}
 	}

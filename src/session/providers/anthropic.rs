@@ -184,7 +184,7 @@ impl AiProvider for AnthropicProvider {
 		// Make the actual API request
 		let response = client
 			.post(ANTHROPIC_API_URL)
-			.header("Authorization", format!("Bearer {}", api_key))
+			.header("x-api-key", api_key)
 			.header("Content-Type", "application/json")
 			.header("anthropic-version", "2023-06-01")
 			.json(&request_body)

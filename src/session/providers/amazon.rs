@@ -216,7 +216,7 @@ impl AiProvider for AmazonBedrockProvider {
 			// Anthropic Claude format on Bedrock
 			serde_json::json!({
 				"anthropic_version": "bedrock-2023-05-31",
-				"max_tokens": 4096,
+				// "max_tokens": 4096,
 				"temperature": temperature,
 				"messages": bedrock_messages,
 			})
@@ -232,7 +232,7 @@ impl AiProvider for AmazonBedrockProvider {
 			serde_json::json!({
 				"messages": bedrock_messages,
 				"temperature": temperature,
-				"max_tokens": 4096,
+				// "max_tokens": 4096,
 			})
 		};
 

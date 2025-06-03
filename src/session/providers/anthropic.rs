@@ -137,7 +137,7 @@ impl AiProvider for AnthropicProvider {
 		// Create the request body
 		let mut request_body = serde_json::json!({
 			"model": model,
-			"max_tokens": 4096,
+			// "max_tokens": 4096,
 			"messages": anthropic_messages,
 			"system": system_message,
 			"temperature": temperature,

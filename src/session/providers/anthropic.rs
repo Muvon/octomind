@@ -24,14 +24,22 @@ use serde::{Deserialize, Serialize};
 use std::env;
 
 /// Anthropic pricing constants (per 1M tokens in USD)
-/// Source: https://www.anthropic.com/pricing (as of January 2025)
+/// Source: https://docs.anthropic.com/en/docs/about-claude/models/overview (as of January 2025)
 const PRICING: &[(&str, f64, f64)] = &[
 	// Model, Input price per 1M tokens, Output price per 1M tokens
+	// Claude 4 models
+	("claude-opus-4", 15.00, 75.00),
+	("claude-sonnet-4", 3.00, 15.00),
+	// Claude 3.7 models
+	("claude-3-7-sonnet", 3.00, 15.00),
+	// Claude 3.5 models
 	("claude-3-5-sonnet", 3.00, 15.00),
-	("claude-3-5-haiku", 0.25, 1.25),
+	("claude-3-5-haiku", 0.80, 4.00),
+	// Claude 3 models
 	("claude-3-opus", 15.00, 75.00),
 	("claude-3-sonnet", 3.00, 15.00),
 	("claude-3-haiku", 0.25, 1.25),
+	// Legacy models
 	("claude-2.1", 8.00, 24.00),
 	("claude-2.0", 8.00, 24.00),
 	("claude-instant-1.2", 0.80, 2.40),

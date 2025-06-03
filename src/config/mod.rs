@@ -473,7 +473,6 @@ impl Config {
 		merged.openrouter = OpenRouterConfig {
 			model: mode_config.get_full_model(),
 			api_key: mode_config.get_api_key(&self.providers),
-			pricing: mode_config.get_pricing(&self.providers),
 		};
 
 		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code

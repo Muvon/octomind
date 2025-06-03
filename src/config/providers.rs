@@ -18,8 +18,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProviderConfig {
 	pub api_key: Option<String>,
-	#[serde(default)]
-	pub pricing: PricingConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -38,30 +36,6 @@ pub struct ProvidersConfig {
 	pub cloudflare: ProviderConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PricingConfig {
-	#[serde(default = "default_input_price")]
-	pub input_price: f64,
-	#[serde(default = "default_output_price")]
-	pub output_price: f64,
-}
-
-fn default_input_price() -> f64 {
-	0.000001 // Default price per input token in USD, adjust based on model
-}
-
-fn default_output_price() -> f64 {
-	0.000002 // Default price per output token in USD, adjust based on model
-}
-
-impl Default for PricingConfig {
-	fn default() -> Self {
-		Self {
-			input_price: default_input_price(),
-			output_price: default_output_price(),
-		}
-	}
-}
 
 // Legacy OpenRouterConfig for backward compatibility
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -69,8 +43,6 @@ pub struct OpenRouterConfig {
 	#[serde(default = "default_openrouter_model")]
 	pub model: String,
 	pub api_key: Option<String>,
-	#[serde(default)]
-	pub pricing: PricingConfig,
 }
 
 fn default_openrouter_model() -> String {
@@ -82,7 +54,6 @@ impl Default for OpenRouterConfig {
 		Self {
 			model: default_openrouter_model(),
 			api_key: None,
-			pricing: PricingConfig::default(),
 		}
 	}
 }

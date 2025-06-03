@@ -16,7 +16,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 use super::mcp::RoleMcpConfig;
-use super::providers::{OpenRouterConfig, PricingConfig, ProvidersConfig};
+use super::providers::{OpenRouterConfig, ProvidersConfig};
 
 // Mode configuration - contains all behavior settings but NOT API keys
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -79,22 +79,7 @@ impl ModeConfig {
 		}
 	}
 
-	/// Get pricing config for this mode's provider
-	pub fn get_pricing(&self, providers: &ProvidersConfig) -> PricingConfig {
-		if let Ok(provider) = self.get_provider() {
-			match provider.as_str() {
-				"openrouter" => providers.openrouter.pricing.clone(),
-				"openai" => providers.openai.pricing.clone(),
-				"anthropic" => providers.anthropic.pricing.clone(),
-				"google" => providers.google.pricing.clone(),
-				"amazon" => providers.amazon.pricing.clone(),
-				"cloudflare" => providers.cloudflare.pricing.clone(),
-				_ => PricingConfig::default(),
-			}
-		} else {
-			PricingConfig::default()
-		}
-	}
+
 }
 
 // Updated role configurations using the new ModeConfig structure

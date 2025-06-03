@@ -35,6 +35,10 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("o1-preview", 15.00, 60.00),
 	("o1-mini", 3.00, 12.00),
 	("chatgpt-4o-latest", 2.50, 10.00), // Same as gpt-4o
+	// Add support for versioned and additional models
+	("gpt-4o-2024-11-20", 2.50, 10.00),
+	("gpt-4o-2024-08-06", 2.50, 10.00),
+	("gpt-4o-2024-05-13", 5.00, 15.00), // Earlier version had different pricing
 ];
 
 /// Calculate cost for OpenAI models

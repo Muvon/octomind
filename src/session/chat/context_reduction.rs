@@ -50,7 +50,7 @@ pub async fn perform_context_reduction(
 
 	// Simply add the summarization prompt as a user message
 	let summarization_prompt = "Please create a concise summary of our conversation that preserves all important technical details, decisions made, files modified, and context needed for future development. Focus on actionable information and key outcomes.";
-	
+
 	chat_session.add_user_message(summarization_prompt)?;
 
 	// Create a task to show loading animation with current cost
@@ -86,7 +86,8 @@ pub async fn perform_context_reduction(
 				config,
 				role, // Use the current role instead of hardcoding "developer"
 				operation_cancelled.clone(),
-			).await;
+			)
+			.await;
 
 			match process_result {
 				Ok(()) => Ok(response.content),

@@ -698,7 +698,8 @@ impl CacheStatistics {
 
 		// Show session-wide cache efficiency in a clearer way
 		if self.total_input_tokens > 0 {
-			let session_cached_pct = (self.total_cached_tokens as f64 / self.total_input_tokens as f64) * 100.0;
+			let session_cached_pct =
+				(self.total_cached_tokens as f64 / self.total_input_tokens as f64) * 100.0;
 			let session_processed_pct = 100.0 - session_cached_pct;
 			output.push_str(&format!(
 				"Session totals: {:.1}% cached, {:.1}% processed ({}/{} total input tokens)\n",

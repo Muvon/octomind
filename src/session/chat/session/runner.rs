@@ -322,7 +322,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				println!("\n🛑 Interrupting API request... Cleaning up... Ready for new input");
 			}
 			ProcessingState::ExecutingTools => {
-				println!("\n🛑 Interrupting tool execution... Killing processes... Ready for new input");
+				println!(
+					"\n🛑 Interrupting tool execution... Killing processes... Ready for new input"
+				);
 			}
 			ProcessingState::ProcessingResponse => {
 				println!("\n🛑 Interrupting response processing... Preserving work... Ready for new input");
@@ -351,32 +353,31 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Handle cancellation at the start of each loop iteration
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
 			log_debug!("Ctrl+C detected - checking for incomplete tool calls to clean up");
-			
+
 			// CRITICAL FIX: Always check for and clean up incomplete tool calls when Ctrl+C is pressed
 			// This ensures MCP protocol compliance regardless of processing state
-			
+
 			// Check if we have any incomplete tool calls in the conversation
 			let mut cleanup_needed = false;
 			let mut cleanup_from_index = None;
-			
+
 			// Look for assistant messages with tool_calls that don't have corresponding tool_result messages
 			for i in 0..chat_session.session.messages.len() {
 				if let Some(msg) = chat_session.session.messages.get(i) {
 					if msg.role == "assistant" && msg.tool_calls.is_some() {
 						// This assistant message has tool_calls - check if all have matching tool results
 						if let Some(tool_calls_value) = &msg.tool_calls {
-							if let Ok(tool_calls_array) =
-								serde_json::from_value::<Vec<serde_json::Value>>(
-									tool_calls_value.clone(),
-								) {
+							if let Ok(tool_calls_array) = serde_json::from_value::<
+								Vec<serde_json::Value>,
+							>(tool_calls_value.clone())
+							{
 								for tool_call in tool_calls_array {
 									if let Some(tool_id) =
 										tool_call.get("id").and_then(|id| id.as_str())
 									{
 										// Check if there's a matching tool result message after this assistant message
-										let has_matching_result = chat_session
-											.session
-											.messages[i + 1..]
+										let has_matching_result = chat_session.session.messages
+											[i + 1..]
 											.iter()
 											.any(|result_msg| {
 												result_msg.role == "tool"
@@ -414,7 +415,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							}
 						}
 					}
-					
+
 					// Remove everything from the user message that led to incomplete tool calls
 					chat_session.session.messages.truncate(user_message_index);
 					log_debug!(
@@ -428,7 +429,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					let state = processing_state.lock().unwrap().clone();
 					matches!(
 						state,
-						ProcessingState::CallingAPI | ProcessingState::ExecutingTools | ProcessingState::ProcessingResponse
+						ProcessingState::CallingAPI
+							| ProcessingState::ExecutingTools
+							| ProcessingState::ProcessingResponse
 					)
 				};
 
@@ -442,7 +445,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 			// Save the session after cleanup to persist changes
 			if let Err(e) = chat_session.save() {
-				log_debug!("Warning: Failed to save session after cancellation cleanup: {}", e);
+				log_debug!(
+					"Warning: Failed to save session after cancellation cleanup: {}",
+					e
+				);
 			}
 
 			// Reset for next iteration

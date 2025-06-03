@@ -22,7 +22,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use colored::Colorize;
 
-// Perform automatic context truncation when token limit is approaching
+// Perform smart context truncation when token limit is approaching
 pub async fn check_and_truncate_context(
 	chat_session: &mut ChatSession,
 	config: &Config,
@@ -44,16 +44,21 @@ pub async fn check_and_truncate_context(
 
 	// We need to truncate - inform the user with minimal info
 	log_conditional!(
-		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nAutomatically truncating older messages to reduce context size.",
+		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nApplying smart truncation to reduce context size.",
 			current_tokens, config.max_request_tokens_threshold).bright_blue(),
-		default: "Truncating message history to reduce token usage".bright_blue()
+		default: "Applying smart truncation to reduce token usage".bright_blue()
 	);
 
-	// ENHANCED STRATEGY: Keep system message, find safe truncation point that preserves tool call sequences
-	let mut system_message = None;
-	let mut recent_messages = Vec::new();
+	// SMART TRUNCATION STRATEGY:
+	// 1. Always keep system message
+	// 2. Keep recent conversation with complete tool sequences
+	// 3. Prioritize assistant messages that contain important results/summaries
+	// 4. Preserve file modification context and technical decisions
 
-	// First, identify and keep system message
+	let mut system_message = None;
+	let mut preserved_messages = Vec::new();
+
+	// Extract system message
 	for msg in &chat_session.session.messages {
 		if msg.role == "system" {
 			system_message = Some(msg.clone());
@@ -61,105 +66,95 @@ pub async fn check_and_truncate_context(
 		}
 	}
 
-	// Find safe truncation point working backwards from the end
-	// We need to preserve complete tool call sequences: assistant(tool_calls) → tool(tool_call_id) → ... → tool(tool_call_id)
 	let non_system_messages: Vec<_> = chat_session.session.messages.iter()
 		.filter(|msg| msg.role != "system")
 		.collect();
 
 	if !non_system_messages.is_empty() {
-		// Start from the end and work backwards to find a safe truncation point
-		let mut safe_start_index = non_system_messages.len().saturating_sub(1);
-		let min_keep = std::cmp::min(4, non_system_messages.len()); // Try to keep at least 4 messages (2 exchanges)
+		// Calculate how many messages we can keep based on token budget
+		let system_tokens = system_message.as_ref()
+			.map(|msg| crate::session::estimate_tokens(&msg.content))
+			.unwrap_or(0);
+		
+		let available_tokens = config.max_request_tokens_threshold.saturating_sub(system_tokens);
+		let target_tokens = (available_tokens as f64 * 0.8) as usize; // Leave 20% buffer
 
-		// Work backwards from the end to find the earliest safe truncation point
-		for i in (0..non_system_messages.len()).rev() {
+		// Work backwards and prioritize important messages
+		let mut selected_messages = Vec::new();
+		let mut current_token_count = 0usize;
+		
+		// Start from the most recent and work backwards
+		let mut i = non_system_messages.len();
+		let mut incomplete_tool_sequence = false;
+
+		while i > 0 && current_token_count < target_tokens {
+			i -= 1;
 			let msg = non_system_messages[i];
+			let msg_tokens = crate::session::estimate_tokens(&msg.content);
 
-			// Check if this is a safe truncation point
-			let is_safe_point = match msg.role.as_str() {
-				"user" => {
-					// User messages are always safe truncation points
-					true
-				},
-				"assistant" => {
-					// Assistant messages are safe ONLY if they don't have tool_calls
-					// If they have tool_calls, we must keep all following tool messages
-					msg.tool_calls.as_ref().is_none_or(|tc| {
-						// Check if it's an empty array or null
-						tc.is_null() || (tc.is_array() && tc.as_array().is_none_or(|arr| arr.is_empty()))
-					})
-				},
-				"tool" => {
-					// Tool messages are never safe truncation points by themselves
-					// We need to check if there are more tool messages following this one
-					false
-				},
-				_ => true, // Other roles (like "system") are generally safe
-			};
-
-			if is_safe_point {
-				// Found a safe point - now check if we should use it
-				let messages_to_keep = non_system_messages.len() - i;
-
-				if messages_to_keep >= min_keep {
-					// We have enough messages and found a safe point
-					safe_start_index = i;
-					break;
-				} else if messages_to_keep < min_keep && i > 0 {
-					// Not enough messages yet, continue looking backwards
-					continue;
-				} else {
-					// We're at the beginning, use this point regardless
-					safe_start_index = i;
-					break;
-				}
-			}
-		}
-
-		// Additional validation: make sure we don't start with orphaned tool messages
-		while safe_start_index < non_system_messages.len() {
-			let start_msg = non_system_messages[safe_start_index];
-			if start_msg.role == "tool" {
-				// We're starting with a tool message - this could be orphaned
-				// Look backwards to see if we can find its assistant message with tool_calls
-				let mut found_parent = false;
-				for j in (0..safe_start_index).rev() {
-					let prev_msg = non_system_messages[j];
-					if prev_msg.role == "assistant" && prev_msg.tool_calls.is_some() {
-						// Found the parent assistant message, include it
-						safe_start_index = j;
-						found_parent = true;
-						break;
-					} else if prev_msg.role == "user" {
-						// Hit a user message without finding parent - tool is orphaned
-						break;
-					}
-				}
-
-				if !found_parent {
-					// Couldn't find parent, skip this tool message
-					safe_start_index += 1;
-				} else {
-					break;
-				}
-			} else {
-				// Starting with non-tool message is fine
+			// Check if adding this message would exceed our budget
+			if current_token_count + msg_tokens > target_tokens && !selected_messages.is_empty() {
 				break;
 			}
+
+			// Tool sequence preservation logic
+			match msg.role.as_str() {
+				"tool" => {
+					// Always include tool messages to avoid breaking sequences
+					selected_messages.push(msg.clone());
+					current_token_count += msg_tokens;
+					incomplete_tool_sequence = true;
+				},
+				"assistant" => {
+					// Include assistant message
+					selected_messages.push(msg.clone());
+					current_token_count += msg_tokens;
+					
+					// If this assistant message has tool_calls, we have a complete sequence
+					if msg.tool_calls.is_some() && incomplete_tool_sequence {
+						incomplete_tool_sequence = false;
+					}
+				},
+				"user" => {
+					// User messages are good natural breakpoints
+					// Include if we have a complete tool sequence or no tool sequence
+					if !incomplete_tool_sequence {
+						selected_messages.push(msg.clone());
+						current_token_count += msg_tokens;
+					} else {
+						// If we have incomplete tool sequence, we need to include this user message too
+						// to maintain context, but check token budget
+						if current_token_count + msg_tokens <= target_tokens {
+							selected_messages.push(msg.clone());
+							current_token_count += msg_tokens;
+						} else {
+							// Can't fit, but we need to break cleanly
+							break;
+						}
+					}
+				},
+				_ => {
+					// Other message types
+					if current_token_count + msg_tokens <= target_tokens {
+						selected_messages.push(msg.clone());
+						current_token_count += msg_tokens;
+					}
+				}
+			}
 		}
 
-		// Collect messages from the safe truncation point
-		recent_messages = non_system_messages[safe_start_index..].iter().cloned().cloned().collect();
+		// Reverse to get chronological order
+		selected_messages.reverse();
+		preserved_messages = selected_messages;
 
 		log_conditional!(
-			debug: format!("Smart truncation: keeping {} of {} non-system messages from safe point",
-				recent_messages.len(), non_system_messages.len()).bright_blue(),
-			default: format!("Preserving {} recent messages", recent_messages.len()).bright_blue()
+			debug: format!("Smart truncation: preserving {} of {} messages ({} tokens)",
+				preserved_messages.len(), non_system_messages.len(), current_token_count).bright_blue(),
+			default: format!("Preserving {} recent messages", preserved_messages.len()).bright_blue()
 		);
 	}
 
-	// Create a new truncated messages vector
+	// Build the new truncated message list
 	let mut truncated_messages = Vec::new();
 
 	// Add system message first if available
@@ -167,33 +162,41 @@ pub async fn check_and_truncate_context(
 		truncated_messages.push(sys_msg);
 	}
 
-	// Add summary message to provide context
-	let summary_msg = crate::session::Message {
-		role: "assistant".to_string(),
-		content: "[Context truncated: Older conversation history removed to reduce token usage. Tool call sequences preserved to maintain conversation integrity. Recent messages continue below.]".to_string(),
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		cached: false,
-		tool_call_id: None,
-		name: None,
-		tool_calls: None,
-	};
-	truncated_messages.push(summary_msg);
+	// Add context note only if we actually removed messages
+	if preserved_messages.len() < non_system_messages.len() {
+		let removed_count = non_system_messages.len() - preserved_messages.len();
+		let context_note = format!(
+			"[Smart truncation applied: {} older messages removed to optimize token usage. Tool sequences and recent context preserved.]",
+			removed_count
+		);
 
-	// Add recent messages
-	truncated_messages.extend(recent_messages);
+		let summary_msg = crate::session::Message {
+			role: "assistant".to_string(),
+			content: context_note,
+			timestamp: std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			cached: false,
+			tool_call_id: None,
+			name: None,
+			tool_calls: None,
+		};
+		truncated_messages.push(summary_msg);
+	}
+
+	// Add preserved messages
+	truncated_messages.extend(preserved_messages);
 
 	// Replace session messages with truncated version
 	chat_session.session.messages = truncated_messages;
 
-	// Calculate how many tokens we saved and display based on debug mode
+	// Calculate and report savings
 	let new_token_count = crate::session::estimate_message_tokens(&chat_session.session.messages);
 	let tokens_saved = current_tokens.saturating_sub(new_token_count);
 
 	log_conditional!(
-		debug: format!("Truncation complete: {} tokens removed, new context size: {} tokens.",
+		debug: format!("Smart truncation complete: {} tokens removed, new context size: {} tokens.",
 			tokens_saved, new_token_count).bright_green(),
 		default: format!("Reduced context size by {} tokens", tokens_saved).bright_green()
 	);

@@ -15,8 +15,8 @@
 // Developer MCP provider - modular structure
 // Handles shell execution and other development tools
 
-pub mod shell;
 pub mod functions;
+pub mod shell;
 
 // Re-export main functionality
 pub use functions::get_all_functions;

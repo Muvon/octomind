@@ -12,19 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::session::Session;
 use crate::session::project_context::ProjectContext;
+use crate::session::Session;
+use chrono::{DateTime, Local};
+use futures::future::join_all;
 use std::collections::HashMap;
+use std::env;
 use std::path::Path;
 use tokio::process::Command;
-use chrono::{DateTime, Local};
-use std::env;
-use futures::future::join_all;
 
 // Function to get a system prompt for a specific layer by string type name
 pub fn get_layer_system_prompt_for_type(layer_type: &str) -> String {
 	// Get the raw system prompt without any substitutions
-
 
 	// For now, we'll return the raw prompt. The placeholder substitution will be done
 	// by process_placeholders when the prompt is actually used
@@ -164,7 +163,10 @@ pub fn process_placeholders(prompt: &str, project_dir: &Path) -> String {
 		if needs_context {
 			let context_info = context.format_for_prompt();
 			let context_section = if !context_info.is_empty() {
-				format!("\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n", context_info)
+				format!(
+					"\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n",
+					context_info
+				)
 			} else {
 				String::new()
 			};
@@ -173,7 +175,10 @@ pub fn process_placeholders(prompt: &str, project_dir: &Path) -> String {
 
 		if needs_git_status {
 			let git_status = if let Some(ref git_status) = context.git_status {
-				format!("\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n", git_status)
+				format!(
+					"\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n",
+					git_status
+				)
 			} else {
 				String::new()
 			};
@@ -182,7 +187,10 @@ pub fn process_placeholders(prompt: &str, project_dir: &Path) -> String {
 
 		if needs_git_tree {
 			let git_tree = if let Some(ref file_tree) = context.file_tree {
-				format!("\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n", file_tree)
+				format!(
+					"\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n",
+					file_tree
+				)
 			} else {
 				String::new()
 			};
@@ -191,7 +199,10 @@ pub fn process_placeholders(prompt: &str, project_dir: &Path) -> String {
 
 		if needs_readme {
 			let readme = if let Some(ref readme) = context.readme_content {
-				format!("\n\n==== README ====\n\n{}\n\n==== END README ====\n", readme)
+				format!(
+					"\n\n==== README ====\n\n{}\n\n==== END README ====\n",
+					readme
+				)
 			} else {
 				String::new()
 			};
@@ -211,7 +222,9 @@ pub fn process_placeholders(prompt: &str, project_dir: &Path) -> String {
 pub fn summarize_context(session: &Session, input: &str) -> String {
 	// This is a placeholder. In practice, you'd want to analyze the session history
 	// and create a summary of the important points rather than just concatenating everything.
-	let history = session.messages.iter()
+	let history = session
+		.messages
+		.iter()
 		.filter(|m| m.role == "assistant")
 		.map(|m| m.content.clone())
 		.collect::<Vec<_>>()
@@ -264,11 +277,7 @@ async fn get_command_version(command: &str) -> String {
 
 	// First, try to get version information
 	for flag in version_flags {
-		match Command::new(command)
-			.arg(flag)
-			.output()
-		.await
-		{
+		match Command::new(command).arg(flag).output().await {
 			Ok(output) => {
 				if output.status.success() {
 					let stdout = String::from_utf8_lossy(&output.stdout);
@@ -299,11 +308,7 @@ async fn get_command_version(command: &str) -> String {
 	];
 
 	for args in existence_checks {
-		match Command::new(command)
-			.args(&args)
-			.output()
-		.await
-		{
+		match Command::new(command).args(&args).output().await {
 			Ok(_) => {
 				// If command runs (regardless of exit code), it exists
 				return "version unknown".to_string();
@@ -332,20 +337,20 @@ pub async fn gather_system_info() -> SystemInfo {
 	info.shell_info = if shell_version != "missing" {
 		format!("{} ({})", shell_name, shell_version)
 	} else {
-			shell_name.to_string()
-		};
+		shell_name.to_string()
+	};
 
 	// Get OS information
 	info.os_info = get_os_info().await;
 
 	// Get shell binaries versions in parallel
 	let commands = vec![
-		"awk", "sed", "rg", "rustc", "php", "node", "npm",
-		"python3", "python", "go", "java", "gcc", "clang",
-		"git", "docker", "make", "curl", "wget", "tar", "zip", "unzip"
+		"awk", "sed", "rg", "rustc", "php", "node", "npm", "python3", "python", "go", "java",
+		"gcc", "clang", "git", "docker", "make", "curl", "wget", "tar", "zip", "unzip",
 	];
 
-	let version_futures: Vec<_> = commands.iter()
+	let version_futures: Vec<_> = commands
+		.iter()
 		.map(|&cmd| async move {
 			let version = get_command_version(cmd).await;
 			(cmd, version)
@@ -386,7 +391,9 @@ async fn get_os_info() -> String {
 				let mut version_info = Vec::new();
 				for line in sw_vers.lines() {
 					if let Some((key, value)) = line.split_once(':') {
-						let key = key.trim().replace("ProductName", "name")
+						let key = key
+							.trim()
+							.replace("ProductName", "name")
 							.replace("ProductVersion", "version")
 							.replace("BuildVersion", "build");
 						version_info.push(format!("{}: {}", key, value.trim()));
@@ -399,11 +406,7 @@ async fn get_os_info() -> String {
 		}
 	} else if cfg!(target_os = "linux") {
 		// Try to get Linux distribution info
-		if let Ok(output) = Command::new("lsb_release")
-			.args(["-a"])
-			.output()
-		.await
-		{
+		if let Ok(output) = Command::new("lsb_release").args(["-a"]).output().await {
 			if output.status.success() {
 				let lsb_info = String::from_utf8_lossy(&output.stdout);
 				for line in lsb_info.lines() {
@@ -417,16 +420,15 @@ async fn get_os_info() -> String {
 		}
 
 		// Try /etc/os-release as fallback
-		if let Ok(output) = Command::new("cat")
-			.arg("/etc/os-release")
-			.output()
-		.await
-		{
+		if let Ok(output) = Command::new("cat").arg("/etc/os-release").output().await {
 			if output.status.success() {
 				let os_release = String::from_utf8_lossy(&output.stdout);
 				for line in os_release.lines() {
 					if line.starts_with("PRETTY_NAME=") {
-						let name = line.replace("PRETTY_NAME=", "").trim_matches('"').to_string();
+						let name = line
+							.replace("PRETTY_NAME=", "")
+							.trim_matches('"')
+							.to_string();
 						os_parts.push(format!("distribution: {}", name));
 						break;
 					}
@@ -437,7 +439,7 @@ async fn get_os_info() -> String {
 		if let Ok(output) = Command::new("wmic")
 			.args(["os", "get", "Caption,Version", "/format:list"])
 			.output()
-		.await
+			.await
 		{
 			if output.status.success() {
 				let wmic_info = String::from_utf8_lossy(&output.stdout);
@@ -481,8 +483,17 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 	let needs_readme = prompt.contains("%{README}");
 
 	// Early return if no placeholders are found
-	if !needs_date && !needs_shell && !needs_os && !needs_binaries &&
-	!needs_cwd && !needs_system && !needs_context && !needs_git_status && !needs_git_tree && !needs_readme {
+	if !needs_date
+		&& !needs_shell
+		&& !needs_os
+		&& !needs_binaries
+		&& !needs_cwd
+		&& !needs_system
+		&& !needs_context
+		&& !needs_git_status
+		&& !needs_git_tree
+		&& !needs_readme
+	{
 		return processed_prompt;
 	}
 
@@ -524,11 +535,17 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 			system_context.push_str(&format!("**Date**: {}\n", info.date_with_timezone));
 			system_context.push_str(&format!("**Shell**: {}\n", info.shell_info));
 			system_context.push_str(&format!("**Operating System**: {}\n", info.os_info));
-			system_context.push_str(&format!("**Current Directory**: {}\n", project_dir.to_string_lossy()));
+			system_context.push_str(&format!(
+				"**Current Directory**: {}\n",
+				project_dir.to_string_lossy()
+			));
 			system_context.push_str("\n## Available Development Tools\n\n");
 			system_context.push_str(&info.binaries);
 
-			let system_section = format!("\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n", system_context);
+			let system_section = format!(
+				"\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n",
+				system_context
+			);
 			placeholders.insert("%{SYSTEM}", system_section);
 		}
 	}
@@ -545,7 +562,10 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 
 			// Build project context (README, git status, git tree)
 			let context_section = if !context_info.is_empty() {
-				format!("\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n", context_info)
+				format!(
+					"\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n",
+					context_info
+				)
 			} else {
 				String::new()
 			};
@@ -554,7 +574,10 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 
 		if needs_git_status {
 			let git_status = if let Some(ref git_status) = context.git_status {
-				format!("\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n", git_status)
+				format!(
+					"\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n",
+					git_status
+				)
 			} else {
 				String::new()
 			};
@@ -563,7 +586,10 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 
 		if needs_git_tree {
 			let git_tree = if let Some(ref file_tree) = context.file_tree {
-				format!("\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n", file_tree)
+				format!(
+					"\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n",
+					file_tree
+				)
 			} else {
 				String::new()
 			};
@@ -572,7 +598,10 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 
 		if needs_readme {
 			let readme = if let Some(ref readme) = context.readme_content {
-				format!("\n\n==== README ====\n\n{}\n\n==== END README ====\n", readme)
+				format!(
+					"\n\n==== README ====\n\n{}\n\n==== END README ====\n",
+					readme
+				)
 			} else {
 				String::new()
 			};
@@ -604,16 +633,25 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	system_context.push_str(&format!("**Date**: {}\n", system_info.date_with_timezone));
 	system_context.push_str(&format!("**Shell**: {}\n", system_info.shell_info));
 	system_context.push_str(&format!("**Operating System**: {}\n", system_info.os_info));
-	system_context.push_str(&format!("**Current Directory**: {}\n", project_dir.to_string_lossy()));
+	system_context.push_str(&format!(
+		"**Current Directory**: {}\n",
+		project_dir.to_string_lossy()
+	));
 	system_context.push_str("\n## Available Development Tools\n\n");
 	system_context.push_str(&system_info.binaries);
 
-	let system_section = format!("\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n", system_context);
+	let system_section = format!(
+		"\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n",
+		system_context
+	);
 
 	// Build project context section (README, git status, git tree)
 	let context_info = project_context.format_for_prompt();
 	let context_section = if !context_info.is_empty() {
-		format!("\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n", context_info)
+		format!(
+			"\n\n==== PROJECT CONTEXT ====\n\n{}\n\n==== END PROJECT CONTEXT ====\n",
+			context_info
+		)
 	} else {
 		String::new()
 	};
@@ -621,30 +659,51 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	// Add all placeholders
 	placeholders.insert("%{SYSTEM}".to_string(), system_section); // System info: date, shell, OS, binaries, CWD
 	placeholders.insert("%{CONTEXT}".to_string(), context_section); // Project info: README, git status, git tree
-	placeholders.insert("%{CWD}".to_string(), project_dir.to_string_lossy().to_string());
+	placeholders.insert(
+		"%{CWD}".to_string(),
+		project_dir.to_string_lossy().to_string(),
+	);
 	placeholders.insert("%{DATE}".to_string(), system_info.date_with_timezone);
 	placeholders.insert("%{SHELL}".to_string(), system_info.shell_info);
 	placeholders.insert("%{OS}".to_string(), system_info.os_info);
 	placeholders.insert("%{BINARIES}".to_string(), system_info.binaries);
 
 	// Add specific parts of the context as individual placeholders
-	placeholders.insert("%{GIT_STATUS}".to_string(), if let Some(git_status) = &project_context.git_status {
-		format!("\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n", git_status)
-	} else {
+	placeholders.insert(
+		"%{GIT_STATUS}".to_string(),
+		if let Some(git_status) = &project_context.git_status {
+			format!(
+				"\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n",
+				git_status
+			)
+		} else {
 			String::new()
-		});
+		},
+	);
 
-	placeholders.insert("%{GIT_TREE}".to_string(), if let Some(file_tree) = &project_context.file_tree {
-		format!("\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n", file_tree)
-	} else {
+	placeholders.insert(
+		"%{GIT_TREE}".to_string(),
+		if let Some(file_tree) = &project_context.file_tree {
+			format!(
+				"\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n",
+				file_tree
+			)
+		} else {
 			String::new()
-		});
+		},
+	);
 
-	placeholders.insert("%{README}".to_string(), if let Some(readme) = &project_context.readme_content {
-		format!("\n\n==== README ====\n\n{}\n\n==== END README ====\n", readme)
-	} else {
+	placeholders.insert(
+		"%{README}".to_string(),
+		if let Some(readme) = &project_context.readme_content {
+			format!(
+				"\n\n==== README ====\n\n{}\n\n==== END README ====\n",
+				readme
+			)
+		} else {
 			String::new()
-		});
+		},
+	);
 
 	placeholders
 }

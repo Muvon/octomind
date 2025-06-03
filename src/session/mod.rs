@@ -14,25 +14,27 @@
 
 // Session module for handling interactive coding sessions
 
-pub mod providers; // Provider abstraction layer
-pub mod chat;       // Chat session logic
-mod chat_helper;    // Chat command completion
-pub mod layers;         // Layered architecture implementation
-mod project_context; // Project context collection and management
-mod token_counter;  // Token counting utilities
-pub mod logger;     // Request/response logging utilities
-mod model_utils;    // Model-specific utility functions
+pub mod cache;
+pub mod chat; // Chat session logic
+mod chat_helper; // Chat command completion
 pub mod helper_functions; // Helper functions for layers and other components
-pub mod cache;      // Comprehensive caching system
+pub mod layers; // Layered architecture implementation
+pub mod logger; // Request/response logging utilities
+mod model_utils; // Model-specific utility functions
+mod project_context; // Project context collection and management
+pub mod providers; // Provider abstraction layer
+mod token_counter; // Token counting utilities // Comprehensive caching system
 
 // Provider system exports
-pub use providers::{ProviderFactory, AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-pub use layers::{Layer, LayerConfig, LayerResult, InputMode, LayerMcpConfig, process_with_layers};
-pub use project_context::ProjectContext;
-pub use token_counter::{estimate_tokens, estimate_message_tokens}; // Export token counting functions
+pub use cache::{CacheManager, CacheStatistics};
+pub use helper_functions::{
+	get_layer_system_prompt_for_type, process_placeholders, summarize_context,
+};
+pub use layers::{process_with_layers, InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
 pub use model_utils::model_supports_caching;
-pub use helper_functions::{get_layer_system_prompt_for_type, process_placeholders, summarize_context};
-pub use cache::{CacheManager, CacheStatistics}; // Export cache management
+pub use project_context::ProjectContext;
+pub use providers::{AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage};
+pub use token_counter::{estimate_message_tokens, estimate_tokens}; // Export token counting functions // Export cache management
 
 // Re-export constants
 // Constants moved to config
@@ -44,14 +46,14 @@ pub fn get_layer_system_prompt(layer_type_str: &str) -> String {
 	helper_functions::get_layer_system_prompt_for_type(layer_type_str)
 }
 
-use std::fs::{self as std_fs, OpenOptions, File};
-use std::path::{PathBuf, Path};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::io::{BufRead, BufReader};
-use serde::{Serialize, Deserialize};
-use std::io::Write;
-use anyhow::Result;
 use crate::config::Config;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::fs::{self as std_fs, File, OpenOptions};
+use std::io::Write;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -59,7 +61,7 @@ pub struct Message {
 	pub content: String,
 	pub timestamp: u64,
 	#[serde(default = "default_cache_marker")]
-	pub cached: bool,  // Marks if this message is a cache breakpoint
+	pub cached: bool, // Marks if this message is a cache breakpoint
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -87,7 +89,7 @@ pub struct SessionInfo {
 	pub provider: String,
 	pub input_tokens: u64,
 	pub output_tokens: u64,
-	pub cached_tokens: u64,  // Added to track cached tokens separately
+	pub cached_tokens: u64, // Added to track cached tokens separately
 	pub total_cost: f64,
 	pub duration_seconds: u64,
 	pub layer_stats: Vec<LayerStats>, // Added to track per-layer statistics
@@ -152,7 +154,7 @@ impl Session {
 				total_cost: 0.0,
 				duration_seconds: 0,
 				layer_stats: Vec::new(), // Initialize empty layer stats
-				tool_calls: 0, // Initialize tool call counter
+				tool_calls: 0,           // Initialize tool call counter
 				// Initialize time tracking fields
 				total_api_time_ms: 0,
 				total_tool_time_ms: 0,
@@ -175,10 +177,10 @@ impl Session {
 				.duration_since(UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs(),
-			cached: false,  // Default to not cached
+			cached: false,      // Default to not cached
 			tool_call_id: None, // Default to no tool_call_id
-			name: None, // Default to no name
-			tool_calls: None, // Default to no tool_calls
+			name: None,         // Default to no name
+			tool_calls: None,   // Default to no tool_calls
 		};
 
 		self.messages.push(message.clone());
@@ -207,24 +209,37 @@ impl Session {
 			Ok(false)
 		} else {
 			// For content cache markers, direct users to use CacheManager
-			Err(anyhow::anyhow!("Use CacheManager for content cache markers instead of add_cache_checkpoint"))
+			Err(anyhow::anyhow!(
+				"Use CacheManager for content cache markers instead of add_cache_checkpoint"
+			))
 		}
 	}
 
 	// Add statistics for a specific layer
-	pub fn add_layer_stats(&mut self,
+	pub fn add_layer_stats(
+		&mut self,
 		layer_type: &str,
 		model: &str,
 		input_tokens: u64,
 		output_tokens: u64,
-		cost: f64
+		cost: f64,
 	) {
-		self.add_layer_stats_with_time(layer_type, model, input_tokens, output_tokens, cost, 0, 0, 0);
+		self.add_layer_stats_with_time(
+			layer_type,
+			model,
+			input_tokens,
+			output_tokens,
+			cost,
+			0,
+			0,
+			0,
+		);
 	}
 
 	// Add statistics for a specific layer with time tracking
 	#[allow(clippy::too_many_arguments)]
-	pub fn add_layer_stats_with_time(&mut self,
+	pub fn add_layer_stats_with_time(
+		&mut self,
 		layer_type: &str,
 		model: &str,
 		input_tokens: u64,
@@ -232,7 +247,7 @@ impl Session {
 		cost: f64,
 		api_time_ms: u64,
 		tool_time_ms: u64,
-		total_time_ms: u64
+		total_time_ms: u64,
 	) {
 		// Create the layer stats entry
 		let stats = LayerStats {
@@ -327,8 +342,11 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 						if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
 							if log_type == "SUMMARY" {
 								if let Some(session_info_value) = json_value.get("session_info") {
-									if let Ok(info) = serde_json::from_value::<SessionInfo>(session_info_value.clone()) {
-										let name = path.file_stem()
+									if let Ok(info) = serde_json::from_value::<SessionInfo>(
+										session_info_value.clone(),
+									) {
+										let name = path
+											.file_stem()
 											.and_then(|s| s.to_str())
 											.unwrap_or_default()
 											.to_string();
@@ -340,7 +358,8 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 					} else if let Some(content) = line.strip_prefix("SUMMARY: ") {
 						// Fallback to legacy format
 						if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
-							let name = path.file_stem()
+							let name = path
+								.file_stem()
 								.and_then(|s| s.to_str())
 								.unwrap_or_default()
 								.to_string();
@@ -384,19 +403,21 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 					"SUMMARY" => {
 						// Extract session info from JSON log entry
 						if let Some(session_info_value) = json_value.get("session_info") {
-							session_info = Some(serde_json::from_value(session_info_value.clone())?);
+							session_info =
+								Some(serde_json::from_value(session_info_value.clone())?);
 						}
-					},
+					}
 					"RESTORATION_POINT" => {
 						// Found a restoration point - this means the session was optimized with /done
 						restoration_point_found = true;
 						messages.clear();
 						restoration_messages.clear();
-					},
-					"API_REQUEST" | "API_RESPONSE" | "TOOL_CALL" | "TOOL_RESULT" | "CACHE" | "ERROR" | "SYSTEM" | "USER" | "ASSISTANT" => {
+					}
+					"API_REQUEST" | "API_RESPONSE" | "TOOL_CALL" | "TOOL_RESULT" | "CACHE"
+					| "ERROR" | "SYSTEM" | "USER" | "ASSISTANT" => {
 						// Skip debug log entries during message parsing
 						continue;
-					},
+					}
 					_ => {
 						// Unknown log type, skip
 						continue;
@@ -438,14 +459,15 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 				restoration_point_found = true;
 				messages.clear();
 				restoration_messages.clear();
-			} else if !line.starts_with("API_REQUEST: ") &&
-			!line.starts_with("API_RESPONSE: ") &&
-			!line.starts_with("TOOL_CALL: ") &&
-			!line.starts_with("TOOL_RESULT: ") &&
-			!line.starts_with("CACHE: ") &&
-			!line.starts_with("ERROR: ") &&
-			!line.starts_with("EXCHANGE: ") &&
-			!line.is_empty() {
+			} else if !line.starts_with("API_REQUEST: ")
+				&& !line.starts_with("API_RESPONSE: ")
+				&& !line.starts_with("TOOL_CALL: ")
+				&& !line.starts_with("TOOL_RESULT: ")
+				&& !line.starts_with("CACHE: ")
+				&& !line.starts_with("ERROR: ")
+				&& !line.starts_with("EXCHANGE: ")
+				&& !line.is_empty()
+			{
 				// Try to parse as message JSON or legacy prefixed formats
 				if line.contains("\"role\":") && line.contains("\"content\":") {
 					if let Ok(message) = serde_json::from_str::<Message>(&line) {
@@ -502,7 +524,9 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 		};
 		Ok(session)
 	} else {
-		Err(anyhow::anyhow!("Invalid session file: missing session info"))
+		Err(anyhow::anyhow!(
+			"Invalid session file: missing session info"
+		))
 	}
 }
 
@@ -519,7 +543,11 @@ pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(
 	Ok(())
 }
 
-pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Config, mode: &str) -> String {
+pub async fn create_system_prompt(
+	project_dir: &Path,
+	config: &crate::config::Config,
+	mode: &str,
+) -> String {
 	// Get mode-specific configuration
 	let (_, mcp_config, _, _, custom_system) = config.get_mode_config(mode);
 
@@ -582,7 +610,10 @@ pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Co
 			prompt.push_str("\n\nYou have access to the following tools:");
 
 			for function in &functions {
-				prompt.push_str(&format!("\n\n- {} - {}", function.name, function.description));
+				prompt.push_str(&format!(
+					"\n\n- {} - {}",
+					function.name, function.description
+				));
 			}
 		}
 	}
@@ -602,5 +633,7 @@ pub async fn chat_completion_with_provider(
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
 
 	// Call the provider's chat completion method
-	provider.chat_completion(messages, &actual_model, temperature, config).await
+	provider
+		.chat_completion(messages, &actual_model, temperature, config)
+		.await
 }

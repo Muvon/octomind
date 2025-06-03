@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use crate::config::Config;
-use crate::session::{Session, ProviderExchange, TokenUsage};
+use crate::session::{ProviderExchange, Session, TokenUsage};
 use anyhow::Result;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 // Layer result that contains data returned from a layer's processing
 pub struct LayerResult {
@@ -28,9 +28,9 @@ pub struct LayerResult {
 	pub token_usage: Option<TokenUsage>,
 	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	// Time tracking
-	pub api_time_ms: u64,    // Time spent on API requests
-	pub tool_time_ms: u64,   // Time spent executing tools
-	pub total_time_ms: u64,  // Total processing time for this layer
+	pub api_time_ms: u64,   // Time spent on API requests
+	pub tool_time_ms: u64,  // Time spent executing tools
+	pub total_time_ms: u64, // Total processing time for this layer
 }
 
 // Input mode determines what part of the previous layer's output will be used
@@ -65,7 +65,10 @@ impl FromStr for InputMode {
 			"last" => Ok(InputMode::Last),
 			"all" => Ok(InputMode::All),
 			"summary" => Ok(InputMode::Summary),
-			_ => Err(format!("Unknown input mode: '{}'. Valid options: last, all, summary", s)),
+			_ => Err(format!(
+				"Unknown input mode: '{}'. Valid options: last, all, summary",
+				s
+			)),
 		}
 	}
 }
@@ -119,12 +122,17 @@ fn default_temperature() -> f32 {
 impl LayerConfig {
 	/// Get the effective model for this layer (fallback to session model if not specified)
 	pub fn get_effective_model(&self, session_model: &str) -> String {
-		self.model.clone().unwrap_or_else(|| session_model.to_string())
+		self.model
+			.clone()
+			.unwrap_or_else(|| session_model.to_string())
 	}
 
 	/// Create a merged config that respects this layer's MCP settings
 	/// This ensures that API calls use the layer's MCP configuration rather than just global settings
-	pub fn get_merged_config_for_layer(&self, base_config: &crate::config::Config) -> crate::config::Config {
+	pub fn get_merged_config_for_layer(
+		&self,
+		base_config: &crate::config::Config,
+	) -> crate::config::Config {
 		let mut merged_config = base_config.clone();
 
 		// Create role-like MCP config from layer's server_refs
@@ -134,7 +142,10 @@ impl LayerConfig {
 
 			for server_name in &self.mcp.server_refs {
 				// Try to get from loaded registry first, then fallback to core servers
-				let server_config = base_config.mcp.servers.get(server_name)
+				let server_config = base_config
+					.mcp
+					.servers
+					.get(server_name)
 					.cloned()
 					.or_else(|| crate::config::Config::get_core_server_config(server_name));
 
@@ -179,8 +190,12 @@ impl LayerConfig {
 		} else {
 			// Use built-in prompt for known layer types
 			match self.name.as_str() {
-				"query_processor" => crate::session::helper_functions::get_raw_system_prompt("query_processor"),
-				"context_generator" => crate::session::helper_functions::get_raw_system_prompt("context_generator"),
+				"query_processor" => {
+					crate::session::helper_functions::get_raw_system_prompt("query_processor")
+				}
+				"context_generator" => {
+					crate::session::helper_functions::get_raw_system_prompt("context_generator")
+				}
 				"reducer" => crate::session::helper_functions::get_raw_system_prompt("reducer"),
 				_ => {
 					// For unknown layer types, use a generic prompt
@@ -225,7 +240,7 @@ impl LayerConfig {
 				input_mode: InputMode::Last,
 				mcp: LayerMcpConfig {
 					server_refs: vec![],
-					allowed_tools: vec![]
+					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
 			},
@@ -237,7 +252,7 @@ impl LayerConfig {
 				input_mode: InputMode::Last,
 				mcp: LayerMcpConfig {
 					server_refs: vec!["developer".to_string(), "filesystem".to_string()],
-					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()]
+					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
 				},
 				parameters: std::collections::HashMap::new(),
 			},
@@ -249,13 +264,13 @@ impl LayerConfig {
 				input_mode: InputMode::All,
 				mcp: LayerMcpConfig {
 					server_refs: vec![],
-					allowed_tools: vec![]
+					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
 			},
 			_ => Self {
 				name: layer_type.to_string(),
-				model: None, // Use session model
+				model: None,         // Use session model
 				system_prompt: None, // Use generic prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
@@ -281,7 +296,7 @@ pub trait Layer {
 		input: &str,
 		session: &Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>
+		operation_cancelled: Arc<AtomicBool>,
 	) -> Result<LayerResult>;
 
 	// Helper function to prepare input based on input_mode
@@ -294,13 +309,17 @@ pub trait Layer {
 				// This is useful for commands that want to analyze or work with the last AI response
 				if input.trim().is_empty() {
 					// If no explicit input provided, get the last assistant message
-					session.messages.iter()
+					session
+						.messages
+						.iter()
 						.filter(|m| m.role == "assistant")
 						.next_back()
 						.map(|m| m.content.clone())
 						.unwrap_or_else(|| {
 							// Fallback: if no assistant messages, get last user message
-							session.messages.iter()
+							session
+								.messages
+								.iter()
 								.filter(|m| m.role == "user")
 								.next_back()
 								.map(|m| m.content.clone())
@@ -308,33 +327,44 @@ pub trait Layer {
 						})
 				} else {
 					// If explicit input provided, use it but also include last assistant context
-					let last_assistant = session.messages.iter()
+					let last_assistant = session
+						.messages
+						.iter()
 						.filter(|m| m.role == "assistant")
 						.next_back()
-						.map(|m| format!("Previous response:\n{}\n\nCurrent input:\n{}", m.content, input))
+						.map(|m| {
+							format!(
+								"Previous response:\n{}\n\nCurrent input:\n{}",
+								m.content, input
+							)
+						})
 						.unwrap_or_else(|| input.to_string());
 					last_assistant
 				}
-			},
+			}
 			InputMode::All => {
 				// For "all" mode, we format the entire conversation context to include
 				// the original user request and any relevant message history
 				let mut context = String::new();
 
 				// Add previous assistant messages if available for context
-				let history = session.messages.iter()
+				let history = session
+					.messages
+					.iter()
 					.filter(|m| m.role == "assistant")
 					.map(|m| m.content.clone())
 					.collect::<Vec<_>>();
 
 				// Format as a structured prompt with original input and context
 				if !history.is_empty() {
-					context = format!("Previous conversation context:\n{}\n\n",
-						history.join("\n\n"));
+					context = format!(
+						"Previous conversation context:\n{}\n\n",
+						history.join("\n\n")
+					);
 				}
 
 				format!("User request:\n{}\n\n{}", input, context)
-			},
+			}
 			InputMode::Summary => {
 				// For summary mode, we generate a concise summary of the conversation
 				// This helps maintain context while reducing token usage

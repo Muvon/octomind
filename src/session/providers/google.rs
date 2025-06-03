@@ -14,14 +14,14 @@
 
 // Google Vertex AI provider implementation
 
+use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use crate::config::Config;
+use crate::log_debug;
+use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::env;
-use crate::config::Config;
-use crate::session::Message;
-use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-use crate::log_debug;
 
 /// Google Vertex AI pricing constants (per 1M tokens in USD)
 /// Source: https://cloud.google.com/vertex-ai/generative-ai/pricing (as of January 2025)
@@ -84,11 +84,11 @@ impl AiProvider for GoogleVertexProvider {
 
 	fn supports_model(&self, model: &str) -> bool {
 		// Google Vertex AI models
-		model.starts_with("gemini") ||
-		model.contains("bison") ||
-		model.starts_with("text-") ||
-		model.starts_with("chat-") ||
-		model.starts_with("code")
+		model.starts_with("gemini")
+			|| model.contains("bison")
+			|| model.starts_with("text-")
+			|| model.starts_with("chat-")
+			|| model.starts_with("code")
 	}
 
 	fn get_api_key(&self, _config: &Config) -> Result<String> {
@@ -129,8 +129,7 @@ impl AiProvider for GoogleVertexProvider {
 		let project_id = env::var(GOOGLE_PROJECT_ID_ENV)
 			.map_err(|_| anyhow::anyhow!("GOOGLE_PROJECT_ID environment variable is required"))?;
 
-		let region = env::var(GOOGLE_REGION_ENV)
-			.unwrap_or_else(|_| "us-central1".to_string());
+		let region = env::var(GOOGLE_REGION_ENV).unwrap_or_else(|_| "us-central1".to_string());
 
 		// Get OAuth2 token (simplified - real implementation would use proper OAuth2)
 		let access_token = self.get_access_token().await?;
@@ -146,13 +145,13 @@ impl AiProvider for GoogleVertexProvider {
 
 		// Create the request body
 		let mut request_body = serde_json::json!({
-			"contents": vertex_messages,
-			"generationConfig": {
-			"temperature": temperature,
-			"maxOutputTokens": 8192,
-			"candidateCount": 1
-		}
-	});
+				"contents": vertex_messages,
+				"generationConfig": {
+				"temperature": temperature,
+				"maxOutputTokens": 8192,
+				"candidateCount": 1
+			}
+		});
 
 		// Add tool definitions if MCP has any servers configured (simplified for Vertex AI)
 		if !config.mcp.servers.is_empty() {
@@ -162,16 +161,19 @@ impl AiProvider for GoogleVertexProvider {
 				// Sort functions by name to guarantee consistent ordering across API calls
 				let mut sorted_functions = functions;
 				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
-				
-				let tools = sorted_functions.iter().map(|f| {
-					serde_json::json!({
-						"functionDeclarations": [{
-						"name": f.name,
-						"description": f.description,
-						"parameters": f.parameters
-					}]
-				})
-				}).collect::<Vec<_>>();
+
+				let tools = sorted_functions
+					.iter()
+					.map(|f| {
+						serde_json::json!({
+								"functionDeclarations": [{
+								"name": f.name,
+								"description": f.description,
+								"parameters": f.parameters
+							}]
+						})
+					})
+					.collect::<Vec<_>>();
 
 				request_body["tools"] = serde_json::json!(tools);
 			}
@@ -181,12 +183,13 @@ impl AiProvider for GoogleVertexProvider {
 		let client = Client::new();
 
 		// Make the actual API request
-		let response = client.post(&api_url)
+		let response = client
+			.post(&api_url)
 			.header("Authorization", format!("Bearer {}", access_token))
 			.header("Content-Type", "application/json")
 			.json(&request_body)
 			.send()
-		.await?;
+			.await?;
 
 		// Get response status
 		let status = response.status();
@@ -198,7 +201,11 @@ impl AiProvider for GoogleVertexProvider {
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
 			Err(e) => {
-				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
+				return Err(anyhow::anyhow!(
+					"Failed to parse response JSON: {}. Response: {}",
+					e,
+					response_text
+				));
 			}
 		};
 
@@ -221,7 +228,10 @@ impl AiProvider for GoogleVertexProvider {
 			}
 
 			let full_error = error_details.join(" | ");
-			return Err(anyhow::anyhow!("Google Vertex AI API error: {}", full_error));
+			return Err(anyhow::anyhow!(
+				"Google Vertex AI API error: {}",
+				full_error
+			));
 		}
 
 		// Extract content from response
@@ -230,7 +240,11 @@ impl AiProvider for GoogleVertexProvider {
 
 		if let Some(candidates) = response_json.get("candidates").and_then(|c| c.as_array()) {
 			if let Some(candidate) = candidates.first() {
-				if let Some(content_parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+				if let Some(content_parts) = candidate
+					.get("content")
+					.and_then(|c| c.get("parts"))
+					.and_then(|p| p.as_array())
+				{
 					for part in content_parts {
 						if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
 							content.push_str(text);
@@ -242,7 +256,7 @@ impl AiProvider for GoogleVertexProvider {
 
 							if let (Some(name), Some(args)) = (
 								function_call.get("name").and_then(|n| n.as_str()),
-								function_call.get("args")
+								function_call.get("args"),
 							) {
 								let mcp_call = crate::mcp::McpToolCall {
 									tool_name: name.to_string(),
@@ -259,7 +273,8 @@ impl AiProvider for GoogleVertexProvider {
 				}
 
 				// Extract finish_reason
-				let finish_reason = candidate.get("finishReason")
+				let finish_reason = candidate
+					.get("finishReason")
 					.and_then(|fr| fr.as_str())
 					.map(|s| s.to_string());
 
@@ -270,10 +285,20 @@ impl AiProvider for GoogleVertexProvider {
 		}
 
 		// Extract token usage
-		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usageMetadata") {
-			let prompt_tokens = usage_obj.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-			let completion_tokens = usage_obj.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-			let total_tokens = usage_obj.get("totalTokenCount").and_then(|v| v.as_u64()).unwrap_or_else(|| prompt_tokens + completion_tokens);
+		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usageMetadata")
+		{
+			let prompt_tokens = usage_obj
+				.get("promptTokenCount")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let completion_tokens = usage_obj
+				.get("candidatesTokenCount")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let total_tokens = usage_obj
+				.get("totalTokenCount")
+				.and_then(|v| v.as_u64())
+				.unwrap_or_else(|| prompt_tokens + completion_tokens);
 
 			// Calculate cost using our pricing constants
 			let cost = calculate_cost(model, prompt_tokens, completion_tokens);
@@ -316,10 +341,10 @@ impl GoogleVertexProvider {
 
 		// For now, return an error with instructions
 		Err(anyhow::anyhow!(
-		"Google Vertex AI provider requires proper OAuth2 implementation. \
+			"Google Vertex AI provider requires proper OAuth2 implementation. \
 			This is a placeholder implementation. You would need to implement proper \
 			service account authentication using the google-cloud-auth crate or similar."
-	))
+		))
 	}
 }
 
@@ -336,13 +361,23 @@ fn convert_messages(messages: &[Message]) -> Vec<VertexMessage> {
 		}
 
 		// Handle tool response messages (has <fnr> tags)
-		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
-			let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>")
+		{
+			let content = msg
+				.content
+				.trim_start_matches("<fnr>")
+				.trim_end_matches("</fnr>")
+				.trim();
 
 			if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-				if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
+				if !tool_responses.is_empty()
+					&& tool_responses[0]
+						.get("role")
+						.is_some_and(|r| r.as_str().unwrap_or("") == "tool")
+				{
 					for tool_response in tool_responses {
-						let content_text = tool_response.get("content")
+						let content_text = tool_response
+							.get("content")
 							.and_then(|c| c.as_str())
 							.unwrap_or("");
 

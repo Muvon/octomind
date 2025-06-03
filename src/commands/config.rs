@@ -168,7 +168,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				println!("Set log level to Debug");
 			}
 			_ => {
-				eprintln!("Error: Invalid log level '{}'. Valid options: none, info, debug", log_level_str);
+				eprintln!(
+					"Error: Invalid log level '{}'. Valid options: none, info, debug",
+					log_level_str
+				);
 				return Ok(());
 			}
 		}
@@ -181,7 +184,14 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	// Enable/disable markdown rendering
 	if let Some(enable_markdown) = args.markdown_enable {
 		config.enable_markdown_rendering = enable_markdown;
-		println!("Markdown rendering {}", if enable_markdown { "enabled" } else { "disabled" });
+		println!(
+			"Markdown rendering {}",
+			if enable_markdown {
+				"enabled"
+			} else {
+				"disabled"
+			}
+		);
 		modified = true;
 	}
 
@@ -193,27 +203,29 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			println!("Markdown theme set to '{}'", theme);
 			modified = true;
 		} else {
-			eprintln!("Error: Invalid markdown theme '{}'. Valid themes: {}", theme, valid_themes.join(", "));
+			eprintln!(
+				"Error: Invalid markdown theme '{}'. Valid themes: {}",
+				theme,
+				valid_themes.join(", ")
+			);
 			return Ok(());
 		}
 	}
 
 	// Update MCP server references if specified
 	if let Some(providers) = &args.mcp_providers {
-		let server_names: Vec<String> = providers
-			.split(',')
-			.map(|s| s.trim().to_string())
-			.collect();
+		let server_names: Vec<String> =
+			providers.split(',').map(|s| s.trim().to_string()).collect();
 
 		// Clear existing servers and add new ones
 		config.mcp.servers.clear();
 		for server_name in &server_names {
 			// Create basic server config if not exists
 			if !config.mcp.servers.contains_key(server_name) {
-				config.mcp.servers.insert(
-					server_name.clone(),
-					McpServerConfig::from_name(server_name)
-				);
+				config
+					.mcp
+					.servers
+					.insert(server_name.clone(), McpServerConfig::from_name(server_name));
 			}
 		}
 
@@ -254,25 +266,24 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					match key {
 						"url" => {
 							server.url = Some(value.to_string());
-						},
+						}
 						"command" => {
 							server.command = Some(value.to_string());
-						},
+						}
 						"args" => {
-							server.args = value.split(' ')
+							server.args = value
+								.split(' ')
 								.map(|s| s.trim().to_string())
 								.filter(|s| !s.is_empty())
 								.collect();
-						},
+						}
 						"token" | "auth_token" => {
 							server.auth_token = Some(value.to_string());
-						},
-						"mode" => {
-							match value.to_lowercase().as_str() {
-								"http" => server.mode = McpServerMode::Http,
-								"stdin" => server.mode = McpServerMode::Stdin,
-								_ => println!("Unknown server mode: {}, defaulting to HTTP", value),
-							}
+						}
+						"mode" => match value.to_lowercase().as_str() {
+							"http" => server.mode = McpServerMode::Http,
+							"stdin" => server.mode = McpServerMode::Stdin,
+							_ => println!("Unknown server mode: {}, defaulting to HTTP", value),
 						},
 						"timeout" | "timeout_seconds" => {
 							if let Ok(timeout) = value.parse::<u64>() {
@@ -280,7 +291,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 							} else {
 								println!("Invalid timeout value: {}, using default", value);
 							}
-						},
+						}
 						_ => {
 							println!("Unknown server config key: {}", key);
 						}
@@ -332,11 +343,17 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		let config_path = directories::get_config_file_path()?;
 
 		if config_path.exists() {
-			println!("Configuration file already exists at: {}", config_path.display());
+			println!(
+				"Configuration file already exists at: {}",
+				config_path.display()
+			);
 			println!("No changes were made to the configuration.");
 		} else {
 			let config_path = Config::create_default_config()?;
-			println!("Created default configuration file at: {}", config_path.display());
+			println!(
+				"Created default configuration file at: {}",
+				config_path.display()
+			);
 		}
 	} else {
 		// Save the updated configuration
@@ -355,12 +372,36 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// Show provider API keys
 	println!("Provider API keys:");
-	show_api_key_status("  OpenRouter", &config.providers.openrouter.api_key, "OPENROUTER_API_KEY");
-	show_api_key_status("  OpenAI", &config.providers.openai.api_key, "OPENAI_API_KEY");
-	show_api_key_status("  Anthropic", &config.providers.anthropic.api_key, "ANTHROPIC_API_KEY");
-	show_api_key_status("  Google", &config.providers.google.api_key, "GOOGLE_APPLICATION_CREDENTIALS");
-	show_api_key_status("  Amazon", &config.providers.amazon.api_key, "AWS_ACCESS_KEY_ID");
-	show_api_key_status("  Cloudflare", &config.providers.cloudflare.api_key, "CLOUDFLARE_API_TOKEN");
+	show_api_key_status(
+		"  OpenRouter",
+		&config.providers.openrouter.api_key,
+		"OPENROUTER_API_KEY",
+	);
+	show_api_key_status(
+		"  OpenAI",
+		&config.providers.openai.api_key,
+		"OPENAI_API_KEY",
+	);
+	show_api_key_status(
+		"  Anthropic",
+		&config.providers.anthropic.api_key,
+		"ANTHROPIC_API_KEY",
+	);
+	show_api_key_status(
+		"  Google",
+		&config.providers.google.api_key,
+		"GOOGLE_APPLICATION_CREDENTIALS",
+	);
+	show_api_key_status(
+		"  Amazon",
+		&config.providers.amazon.api_key,
+		"AWS_ACCESS_KEY_ID",
+	);
+	show_api_key_status(
+		"  Cloudflare",
+		&config.providers.cloudflare.api_key,
+		"CLOUDFLARE_API_TOKEN",
+	);
 
 	// Show role configurations
 	println!("Role configurations:");
@@ -373,8 +414,22 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	let ass_mcp_enabled = !config.assistant.mcp.server_refs.is_empty();
 
 	println!("MCP status:");
-	println!("  Developer role: {}", if dev_mcp_enabled { "enabled" } else { "disabled" });
-	println!("  Assistant role: {}", if ass_mcp_enabled { "enabled" } else { "disabled" });
+	println!(
+		"  Developer role: {}",
+		if dev_mcp_enabled {
+			"enabled"
+		} else {
+			"disabled"
+		}
+	);
+	println!(
+		"  Assistant role: {}",
+		if ass_mcp_enabled {
+			"enabled"
+		} else {
+			"disabled"
+		}
+	);
 
 	// Show MCP servers from global config
 	if !config.mcp.servers.is_empty() || dev_mcp_enabled || ass_mcp_enabled {
@@ -392,13 +447,18 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				};
 
 				match effective_type {
-					McpServerType::Developer => println!("  - {} (built-in developer tools) - available", name),
-					McpServerType::Filesystem => println!("  - {} (built-in filesystem tools) - available", name),
+					McpServerType::Developer => {
+						println!("  - {} (built-in developer tools) - available", name)
+					}
+					McpServerType::Filesystem => {
+						println!("  - {} (built-in filesystem tools) - available", name)
+					}
 					McpServerType::External => {
 						if name == "octocode" {
 							// Check if octocode binary is available
 							use std::process::Command;
-							let available = match Command::new("octocode").arg("--version").output() {
+							let available = match Command::new("octocode").arg("--version").output()
+							{
 								Ok(output) => output.status.success(),
 								Err(_) => false,
 							};
@@ -406,14 +466,20 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 							if available {
 								println!("  - {} (codebase analysis) - available ✓", name);
 							} else {
-								println!("  - {} (codebase analysis) - binary not found in PATH", name);
+								println!(
+									"  - {} (codebase analysis) - binary not found in PATH",
+									name
+								);
 							}
 						} else if let Some(url) = &server.url {
 							println!("  - {} (HTTP: {}) - available", name, url);
 						} else if let Some(command) = &server.command {
 							println!("  - {} (Command: {}) - available", name, command);
 						} else {
-							println!("  - {} (external, not configured) - needs configuration", name);
+							println!(
+								"  - {} (external, not configured) - needs configuration",
+								name
+							);
 						}
 					}
 				}
@@ -424,7 +490,14 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	}
 
 	println!("Log level: {:?}", config.log_level);
-	println!("Markdown rendering: {}", if config.enable_markdown_rendering { "enabled" } else { "disabled" });
+	println!(
+		"Markdown rendering: {}",
+		if config.enable_markdown_rendering {
+			"enabled"
+		} else {
+			"disabled"
+		}
+	);
 	println!("Markdown theme: {}", config.markdown_theme);
 
 	// Show system prompt status
@@ -442,12 +515,36 @@ fn list_markdown_themes() {
 	println!("🎨 Available Markdown Themes\n");
 
 	let themes = vec![
-		("default", "Improved default theme with gold headers and enhanced contrast", "Most terminal setups"),
-		("dark", "Optimized for dark terminals with bright, vibrant colors", "Dark terminal backgrounds"),
-		("light", "Perfect for light terminal backgrounds with darker colors", "Light terminal backgrounds"),
-		("ocean", "Beautiful blue-green palette inspired by ocean themes", "Users who prefer calm, aquatic colors"),
-		("solarized", "Based on the popular Solarized color scheme", "Fans of the classic Solarized palette"),
-		("monokai", "Inspired by the popular Monokai syntax highlighting theme", "Users familiar with Monokai from code editors"),
+		(
+			"default",
+			"Improved default theme with gold headers and enhanced contrast",
+			"Most terminal setups",
+		),
+		(
+			"dark",
+			"Optimized for dark terminals with bright, vibrant colors",
+			"Dark terminal backgrounds",
+		),
+		(
+			"light",
+			"Perfect for light terminal backgrounds with darker colors",
+			"Light terminal backgrounds",
+		),
+		(
+			"ocean",
+			"Beautiful blue-green palette inspired by ocean themes",
+			"Users who prefer calm, aquatic colors",
+		),
+		(
+			"solarized",
+			"Based on the popular Solarized color scheme",
+			"Fans of the classic Solarized palette",
+		),
+		(
+			"monokai",
+			"Inspired by the popular Monokai syntax highlighting theme",
+			"Users familiar with Monokai from code editors",
+		),
 	];
 
 	for (name, description, best_for) in themes {
@@ -473,13 +570,17 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	if config_path.exists() {
 		println!("📁 Config file: {}", config_path.display());
 	} else {
-		println!("📁 Config file: {} (not created yet)", config_path.display());
+		println!(
+			"📁 Config file: {} (not created yet)",
+			config_path.display()
+		);
 	}
 	println!();
 
 	// Root-level configuration
 	println!("🌍 System-wide Settings");
-	println!("  Model (root):              {}",
+	println!(
+		"  Model (root):              {}",
 		if config.model.is_empty() || config.model == "openrouter:anthropic/claude-3.5-haiku" {
 			format!("{} (default)", config.get_effective_model())
 		} else {
@@ -487,23 +588,69 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		}
 	);
 	println!("  Log level:                 {:?}", config.log_level);
-	println!("  Markdown rendering:        {}", if config.enable_markdown_rendering { "enabled" } else { "disabled" });
+	println!(
+		"  Markdown rendering:        {}",
+		if config.enable_markdown_rendering {
+			"enabled"
+		} else {
+			"disabled"
+		}
+	);
 	println!("  Markdown theme:            {}", config.markdown_theme);
-	println!("  MCP response warning:      {} tokens", config.mcp_response_warning_threshold);
-	println!("  Max request tokens:        {} tokens", config.max_request_tokens_threshold);
-	println!("  Auto-truncation:           {}", if config.enable_auto_truncation { "enabled" } else { "disabled" });
-	println!("  Cache threshold:           {} tokens", config.cache_tokens_threshold);
-	println!("  Cache timeout:             {} seconds", config.cache_timeout_seconds);
+	println!(
+		"  MCP response warning:      {} tokens",
+		config.mcp_response_warning_threshold
+	);
+	println!(
+		"  Max request tokens:        {} tokens",
+		config.max_request_tokens_threshold
+	);
+	println!(
+		"  Auto-truncation:           {}",
+		if config.enable_auto_truncation {
+			"enabled"
+		} else {
+			"disabled"
+		}
+	);
+	println!(
+		"  Cache threshold:           {} tokens",
+		config.cache_tokens_threshold
+	);
+	println!(
+		"  Cache timeout:             {} seconds",
+		config.cache_timeout_seconds
+	);
 	println!();
 
 	// Provider API keys
 	println!("🔑 Provider API Keys");
-	show_api_key_status("OpenRouter", &config.providers.openrouter.api_key, "OPENROUTER_API_KEY");
+	show_api_key_status(
+		"OpenRouter",
+		&config.providers.openrouter.api_key,
+		"OPENROUTER_API_KEY",
+	);
 	show_api_key_status("OpenAI", &config.providers.openai.api_key, "OPENAI_API_KEY");
-	show_api_key_status("Anthropic", &config.providers.anthropic.api_key, "ANTHROPIC_API_KEY");
-	show_api_key_status("Google", &config.providers.google.api_key, "GOOGLE_APPLICATION_CREDENTIALS");
-	show_api_key_status("Amazon", &config.providers.amazon.api_key, "AWS_ACCESS_KEY_ID");
-	show_api_key_status("Cloudflare", &config.providers.cloudflare.api_key, "CLOUDFLARE_API_TOKEN");
+	show_api_key_status(
+		"Anthropic",
+		&config.providers.anthropic.api_key,
+		"ANTHROPIC_API_KEY",
+	);
+	show_api_key_status(
+		"Google",
+		&config.providers.google.api_key,
+		"GOOGLE_APPLICATION_CREDENTIALS",
+	);
+	show_api_key_status(
+		"Amazon",
+		&config.providers.amazon.api_key,
+		"AWS_ACCESS_KEY_ID",
+	);
+	show_api_key_status(
+		"Cloudflare",
+		&config.providers.cloudflare.api_key,
+		"CLOUDFLARE_API_TOKEN",
+	);
 	println!();
 
 	// Role configurations
@@ -511,7 +658,8 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Developer role
 	println!("  Developer Role:");
-	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) = config.get_mode_config("developer");
+	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
+		config.get_mode_config("developer");
 	println!("    Model:           {}", dev_config.model);
 	println!("    Layers enabled:  {}", dev_config.enable_layers);
 	if let Some(_system) = dev_system {
@@ -522,7 +670,8 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Assistant role
 	println!("  Assistant Role:");
-	let (ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) = config.get_mode_config("assistant");
+	let (ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
+		config.get_mode_config("assistant");
 	println!("    Model:           {}", ass_config.model);
 	println!("    Layers enabled:  {}", ass_config.enable_layers);
 	if let Some(_system) = ass_system {
@@ -537,26 +686,35 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Global MCP
 	println!("  Global MCP:");
-	println!("    Registry:        {} servers configured", config.mcp.servers.len());
+	println!(
+		"    Registry:        {} servers configured",
+		config.mcp.servers.len()
+	);
 	if !config.mcp.servers.is_empty() {
 		show_mcp_servers(&config.mcp.servers);
 	}
 
 	// Developer role MCP
 	println!("  Developer Role MCP:");
-	println!("    Server refs:     {}", if dev_mcp.server_refs.is_empty() {
-		"None (MCP disabled)".to_string()
-	} else {
+	println!(
+		"    Server refs:     {}",
+		if dev_mcp.server_refs.is_empty() {
+			"None (MCP disabled)".to_string()
+		} else {
 			dev_mcp.server_refs.join(", ")
-		});
+		}
+	);
 
 	// Assistant role MCP
 	println!("  Assistant Role MCP:");
-	println!("    Server refs:     {}", if ass_mcp.server_refs.is_empty() {
-		"None (MCP disabled)".to_string()
-	} else {
+	println!(
+		"    Server refs:     {}",
+		if ass_mcp.server_refs.is_empty() {
+			"None (MCP disabled)".to_string()
+		} else {
 			ass_mcp.server_refs.join(", ")
-		});
+		}
+	);
 	println!();
 
 	// Layer configurations
@@ -619,10 +777,10 @@ fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>
 		match effective_type {
 			McpServerType::Developer => {
 				println!("      📦 {} (built-in developer tools)", name);
-			},
+			}
 			McpServerType::Filesystem => {
 				println!("      📂 {} (built-in filesystem tools)", name);
-			},
+			}
 			McpServerType::External => {
 				if name == "octocode" {
 					// Check if octocode binary is available
@@ -662,6 +820,6 @@ fn mask_key(key: &str) -> String {
 	if key.len() <= 8 {
 		"*".repeat(key.len())
 	} else {
-		format!("{}...{}", &key[..4], &key[key.len()-4..])
+		format!("{}...{}", &key[..4], &key[key.len() - 4..])
 	}
 }

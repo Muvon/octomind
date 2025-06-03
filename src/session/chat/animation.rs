@@ -14,17 +14,15 @@
 
 // Animation module for loading indicators
 
-use std::io::{Write, stdout};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use crossterm::{cursor, execute};
 use anyhow::Result;
 use colored::*;
+use crossterm::{cursor, execute};
+use std::io::{stdout, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // Animation frames for loading indicator
-const LOADING_FRAMES: [&str; 8] = [
-	"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
-];
+const LOADING_FRAMES: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
 // Show loading animation while waiting for response
 pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> Result<()> {
@@ -38,10 +36,12 @@ pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> 
 		// Display frame with color if supported
 		execute!(stdout, cursor::RestorePosition)?;
 
-		print!(" {} {} ${:.5}",
+		print!(
+			" {} {} ${:.5}",
 			LOADING_FRAMES[frame_idx].cyan(),
 			"Generating response...".bright_blue(),
-			cost);
+			cost
+		);
 
 		stdout.flush()?;
 

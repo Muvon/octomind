@@ -14,15 +14,20 @@
 
 // Text editing module - handling string replacement, line operations, and insertions
 
-use std::path::Path;
-use serde_json::json;
-use anyhow::{Result, anyhow};
-use tokio::fs as tokio_fs;
 use super::super::{McpToolCall, McpToolResult};
 use super::core::save_file_history;
+use anyhow::{anyhow, Result};
+use serde_json::json;
+use std::path::Path;
+use tokio::fs as tokio_fs;
 
 // Replace a string in a file following Anthropic specification
-pub async fn str_replace_spec(call: &McpToolCall, path: &Path, old_str: &str, new_str: &str) -> Result<McpToolResult> {
+pub async fn str_replace_spec(
+	call: &McpToolCall,
+	path: &Path,
+	old_str: &str,
+	new_str: &str,
+) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
 			tool_name: "text_editor".to_string(),
@@ -35,7 +40,9 @@ pub async fn str_replace_spec(call: &McpToolCall, path: &Path, old_str: &str, ne
 	}
 
 	// Read the file content
-	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let content = tokio_fs::read_to_string(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 
 	// Check if old_str appears in the file
 	let occurrences = content.matches(old_str).count();
@@ -67,7 +74,9 @@ pub async fn str_replace_spec(call: &McpToolCall, path: &Path, old_str: &str, ne
 	let new_content = content.replace(old_str, new_str);
 
 	// Write the new content
-	tokio_fs::write(path, new_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	tokio_fs::write(path, new_content)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
@@ -80,7 +89,12 @@ pub async fn str_replace_spec(call: &McpToolCall, path: &Path, old_str: &str, ne
 }
 
 // Insert text at a specific location in a file following Anthropic specification
-pub async fn insert_text_spec(call: &McpToolCall, path: &Path, insert_line: usize, new_str: &str) -> Result<McpToolResult> {
+pub async fn insert_text_spec(
+	call: &McpToolCall,
+	path: &Path,
+	insert_line: usize,
+	new_str: &str,
+) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
 			tool_name: "text_editor".to_string(),
@@ -93,7 +107,9 @@ pub async fn insert_text_spec(call: &McpToolCall, path: &Path, insert_line: usiz
 	}
 
 	// Read the file content
-	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let content = tokio_fs::read_to_string(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	let mut lines: Vec<&str> = content.lines().collect();
 
 	// Validate insert_line
@@ -129,7 +145,9 @@ pub async fn insert_text_spec(call: &McpToolCall, path: &Path, insert_line: usiz
 	};
 
 	// Write the new content
-	tokio_fs::write(path, final_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	tokio_fs::write(path, final_content)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
@@ -143,7 +161,13 @@ pub async fn insert_text_spec(call: &McpToolCall, path: &Path, insert_line: usiz
 }
 
 // Replace content within a specific line range following modern text editor specifications
-pub async fn line_replace_spec(call: &McpToolCall, path: &Path, start_line: usize, end_line: usize, new_text: &str) -> Result<McpToolResult> {
+pub async fn line_replace_spec(
+	call: &McpToolCall,
+	path: &Path,
+	start_line: usize,
+	end_line: usize,
+	new_text: &str,
+) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
 			tool_name: "text_editor".to_string(),
@@ -179,7 +203,9 @@ pub async fn line_replace_spec(call: &McpToolCall, path: &Path, start_line: usiz
 	}
 
 	// Read the file content
-	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let content = tokio_fs::read_to_string(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	let mut lines: Vec<&str> = content.lines().collect();
 
 	// Validate line ranges exist in file
@@ -229,7 +255,9 @@ pub async fn line_replace_spec(call: &McpToolCall, path: &Path, start_line: usiz
 	};
 
 	// Write the new content
-	tokio_fs::write(path, final_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	tokio_fs::write(path, final_content)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
@@ -244,7 +272,12 @@ pub async fn line_replace_spec(call: &McpToolCall, path: &Path, start_line: usiz
 }
 
 // Replace lines in a single file using view_range and new_str parameters
-pub async fn line_replace(call: &McpToolCall, path: &Path, view_range: (usize, usize), new_str: &str) -> Result<McpToolResult> {
+pub async fn line_replace(
+	call: &McpToolCall,
+	path: &Path,
+	view_range: (usize, usize),
+	new_str: &str,
+) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
 			tool_name: "line_replace".to_string(),
@@ -293,7 +326,9 @@ pub async fn line_replace(call: &McpToolCall, path: &Path, view_range: (usize, u
 	}
 
 	// Read the file content
-	let file_content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let file_content = tokio_fs::read_to_string(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	let mut lines: Vec<&str> = file_content.lines().collect();
 
 	// Capture the original lines that will be replaced for the snippet
@@ -349,7 +384,9 @@ pub async fn line_replace(call: &McpToolCall, path: &Path, view_range: (usize, u
 	};
 
 	// Write the new content
-	tokio_fs::write(path, final_content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	tokio_fs::write(path, final_content)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
 	// Create a snippet showing the replaced lines
 	let replaced_snippet = if original_lines.is_empty() {

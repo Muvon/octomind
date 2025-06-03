@@ -14,14 +14,14 @@
 
 // Cloudflare Workers AI provider implementation
 
+use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use crate::config::Config;
+use crate::log_debug;
+use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::env;
-use crate::config::Config;
-use crate::session::Message;
-use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-use crate::log_debug;
 
 /// Cloudflare Workers AI pricing constants (per 1M tokens in USD)
 /// Source: https://developers.cloudflare.com/workers-ai/platform/pricing/ (as of January 2025)
@@ -34,32 +34,24 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("llama-3.2-3b-instruct", 0.06, 0.06),
 	("llama-2-7b-chat", 0.125, 0.125),
 	("llama-2-13b-chat", 0.25, 0.25),
-
 	// Mistral models
 	("mistral-7b-instruct", 0.125, 0.125),
-
 	// Microsoft models
 	("phi-2", 0.125, 0.125),
-
 	// Qwen models
 	("qwen1.5-0.5b-chat", 0.04, 0.04),
 	("qwen1.5-1.8b-chat", 0.04, 0.04),
 	("qwen1.5-7b-chat", 0.125, 0.125),
 	("qwen1.5-14b-chat", 0.25, 0.25),
-
 	// TinyLlama models
 	("tinyllama-1.1b-chat", 0.04, 0.04),
-
 	// Neural Chat models
 	("neural-chat-7b", 0.125, 0.125),
-
 	// Gemma models
 	("gemma-2b-it", 0.04, 0.04),
 	("gemma-7b-it", 0.125, 0.125),
-
 	// Code Llama models
 	("codellama-7b-instruct", 0.125, 0.125),
-
 	// Hermes models
 	("hermes-2-pro-mistral-7b", 0.125, 0.125),
 ];
@@ -152,17 +144,17 @@ impl AiProvider for CloudflareWorkersAiProvider {
 
 	fn supports_model(&self, model: &str) -> bool {
 		// Cloudflare Workers AI supported models
-		model.starts_with("@cf/") ||
-		model.starts_with("@hf/") ||
-		model.contains("llama") ||
-		model.contains("mistral") ||
-		model.contains("phi-") ||
-		model.contains("qwen") ||
-		model.contains("tinyllama") ||
-		model.contains("neural-chat") ||
-		model.contains("gemma") ||
-		model.contains("codellama") ||
-		model.contains("hermes")
+		model.starts_with("@cf/")
+			|| model.starts_with("@hf/")
+			|| model.contains("llama")
+			|| model.contains("mistral")
+			|| model.contains("phi-")
+			|| model.contains("qwen")
+			|| model.contains("tinyllama")
+			|| model.contains("neural-chat")
+			|| model.contains("gemma")
+			|| model.contains("codellama")
+			|| model.contains("hermes")
 	}
 
 	fn get_api_key(&self, config: &Config) -> Result<String> {
@@ -214,12 +206,13 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		let client = Client::new();
 
 		// Make the API request
-		let response = client.post(&api_url)
+		let response = client
+			.post(&api_url)
 			.header("Authorization", format!("Bearer {}", api_token))
 			.header("Content-Type", "application/json")
 			.json(&request_body)
 			.send()
-		.await?;
+			.await?;
 
 		// Get response status
 		let status = response.status();
@@ -231,7 +224,11 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
 			Err(e) => {
-				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
+				return Err(anyhow::anyhow!(
+					"Failed to parse response JSON: {}. Response: {}",
+					e,
+					response_text
+				));
 			}
 		};
 
@@ -253,11 +250,17 @@ impl AiProvider for CloudflareWorkersAiProvider {
 			}
 
 			let full_error = error_details.join(" | ");
-			return Err(anyhow::anyhow!("Cloudflare Workers AI API error: {}", full_error));
+			return Err(anyhow::anyhow!(
+				"Cloudflare Workers AI API error: {}",
+				full_error
+			));
 		}
 
 		// Check for success in response
-		let success = response_json.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+		let success = response_json
+			.get("success")
+			.and_then(|s| s.as_bool())
+			.unwrap_or(false);
 		if !success {
 			let error_message = response_json
 				.get("errors")
@@ -266,7 +269,10 @@ impl AiProvider for CloudflareWorkersAiProvider {
 				.and_then(|err| err.get("message"))
 				.and_then(|msg| msg.as_str())
 				.unwrap_or("Unknown error");
-			return Err(anyhow::anyhow!("Cloudflare Workers AI API error: {}", error_message));
+			return Err(anyhow::anyhow!(
+				"Cloudflare Workers AI API error: {}",
+				error_message
+			));
 		}
 
 		// Extract content from response
@@ -278,7 +284,8 @@ impl AiProvider for CloudflareWorkersAiProvider {
 			.to_string();
 
 		// Cloudflare Workers AI doesn't provide detailed token usage, so we estimate
-		let prompt_text = cloudflare_messages.iter()
+		let prompt_text = cloudflare_messages
+			.iter()
 			.map(|m| m.content.as_str())
 			.collect::<Vec<_>>()
 			.join(" ");
@@ -287,7 +294,11 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		let total_tokens = estimated_prompt_tokens + estimated_completion_tokens;
 
 		// Calculate estimated cost
-		let cost = calculate_cost(&full_model_id, estimated_prompt_tokens, estimated_completion_tokens);
+		let cost = calculate_cost(
+			&full_model_id,
+			estimated_prompt_tokens,
+			estimated_completion_tokens,
+		);
 
 		let usage = Some(TokenUsage {
 			prompt_tokens: estimated_prompt_tokens,

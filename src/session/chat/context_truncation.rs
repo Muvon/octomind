@@ -14,20 +14,20 @@
 
 // Context truncation functionality to manage token usage
 
-use crate::session::chat::session::ChatSession;
 use crate::config::Config;
 use crate::log_conditional;
+use crate::session::chat::session::ChatSession;
 use anyhow::Result;
+use colored::Colorize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use colored::Colorize;
 
 // Perform smart context truncation when token limit is approaching
 pub async fn check_and_truncate_context(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	_role: &str,
-	_operation_cancelled: Arc<AtomicBool>
+	_operation_cancelled: Arc<AtomicBool>,
 ) -> Result<()> {
 	// Check if auto truncation is enabled in config
 	if !config.enable_auto_truncation {
@@ -66,23 +66,29 @@ pub async fn check_and_truncate_context(
 		}
 	}
 
-	let non_system_messages: Vec<_> = chat_session.session.messages.iter()
+	let non_system_messages: Vec<_> = chat_session
+		.session
+		.messages
+		.iter()
 		.filter(|msg| msg.role != "system")
 		.collect();
 
 	if !non_system_messages.is_empty() {
 		// Calculate how many messages we can keep based on token budget
-		let system_tokens = system_message.as_ref()
+		let system_tokens = system_message
+			.as_ref()
 			.map(|msg| crate::session::estimate_tokens(&msg.content))
 			.unwrap_or(0);
-		
-		let available_tokens = config.max_request_tokens_threshold.saturating_sub(system_tokens);
+
+		let available_tokens = config
+			.max_request_tokens_threshold
+			.saturating_sub(system_tokens);
 		let target_tokens = (available_tokens as f64 * 0.8) as usize; // Leave 20% buffer
 
 		// Work backwards and prioritize important messages
 		let mut selected_messages = Vec::new();
 		let mut current_token_count = 0usize;
-		
+
 		// Start from the most recent and work backwards
 		let mut i = non_system_messages.len();
 		let mut incomplete_tool_sequence = false;
@@ -104,17 +110,17 @@ pub async fn check_and_truncate_context(
 					selected_messages.push(msg.clone());
 					current_token_count += msg_tokens;
 					incomplete_tool_sequence = true;
-				},
+				}
 				"assistant" => {
 					// Include assistant message
 					selected_messages.push(msg.clone());
 					current_token_count += msg_tokens;
-					
+
 					// If this assistant message has tool_calls, we have a complete sequence
 					if msg.tool_calls.is_some() && incomplete_tool_sequence {
 						incomplete_tool_sequence = false;
 					}
-				},
+				}
 				"user" => {
 					// User messages are good natural breakpoints
 					// Include if we have a complete tool sequence or no tool sequence
@@ -132,7 +138,7 @@ pub async fn check_and_truncate_context(
 							break;
 						}
 					}
-				},
+				}
 				_ => {
 					// Other message types
 					if current_token_count + msg_tokens <= target_tokens {

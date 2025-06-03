@@ -16,8 +16,8 @@
 
 use super::core::ChatSession;
 use crate::config::Config;
-use crate::{log_info, log_debug};
 use crate::session::ProviderExchange;
+use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 
@@ -57,9 +57,14 @@ impl ChatSession {
 			let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
 			if supports_caching {
 				let cache_manager = crate::session::cache::CacheManager::new();
-				if let Ok(true) = cache_manager.apply_cache_to_current_user_message(&mut self.session, supports_caching) {
+				if let Ok(true) = cache_manager
+					.apply_cache_to_current_user_message(&mut self.session, supports_caching)
+				{
 					use colored::*;
-					println!("{}", "✓ Current user message marked for caching".bright_green());
+					println!(
+						"{}",
+						"✓ Current user message marked for caching".bright_green()
+					);
 				}
 			}
 			// Reset the flag after applying (or attempting to apply) cache
@@ -81,9 +86,19 @@ impl ChatSession {
 	}
 
 	// Add a tool message
-	pub fn add_tool_message(&mut self, content: &str, tool_call_id: &str, tool_name: &str, _config: &Config) -> Result<()> {
+	pub fn add_tool_message(
+		&mut self,
+		content: &str,
+		tool_call_id: &str,
+		tool_name: &str,
+		_config: &Config,
+	) -> Result<()> {
 		// Log to raw session log
-		let _ = crate::session::logger::log_tool_result(&self.session.info.name, tool_call_id, &serde_json::json!({"output": content}));
+		let _ = crate::session::logger::log_tool_result(
+			&self.session.info.name,
+			tool_call_id,
+			&serde_json::json!({"output": content}),
+		);
 
 		// Create the tool message
 		let tool_message = crate::session::Message {
@@ -124,7 +139,13 @@ impl ChatSession {
 	}
 
 	// Add an assistant message
-	pub fn add_assistant_message(&mut self, content: &str, exchange: Option<ProviderExchange>, config: &Config, role: &str) -> Result<()> {
+	pub fn add_assistant_message(
+		&mut self,
+		content: &str,
+		exchange: Option<ProviderExchange>,
+		config: &Config,
+		role: &str,
+	) -> Result<()> {
 		// Log to raw session log
 		let _ = crate::session::logger::log_assistant_response(&self.session.info.name, content);
 
@@ -156,7 +177,8 @@ impl ChatSession {
 						if let Some(num_u64) = num.as_u64() {
 							cached_tokens = num_u64;
 							// Adjust regular tokens to account for cached tokens
-							regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+							regular_prompt_tokens =
+								usage.prompt_tokens.saturating_sub(cached_tokens);
 						}
 					}
 				}
@@ -168,7 +190,8 @@ impl ChatSession {
 							if let Some(num_u64) = num.as_u64() {
 								cached_tokens = num_u64;
 								// Adjust regular tokens to account for cached tokens
-								regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+								regular_prompt_tokens =
+									usage.prompt_tokens.saturating_sub(cached_tokens);
 							}
 						}
 					}
@@ -180,7 +203,8 @@ impl ChatSession {
 						if let Some(cached) = response.get("cached_tokens") {
 							if let Some(num) = cached.as_u64() {
 								cached_tokens = num;
-								regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+								regular_prompt_tokens =
+									usage.prompt_tokens.saturating_sub(cached_tokens);
 							}
 						}
 					}
@@ -202,9 +226,18 @@ impl ChatSession {
 
 				// Check if we should automatically move the cache marker
 				let cache_manager = crate::session::cache::CacheManager::new();
-				let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
-				if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(&mut self.session, config, supports_caching, role) {
-					log_info!("{}", "Auto-cache threshold reached - cache checkpoint applied.");
+				let supports_caching =
+					crate::session::model_supports_caching(&self.session.info.model);
+				if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(
+					&mut self.session,
+					config,
+					supports_caching,
+					role,
+				) {
+					log_info!(
+						"{}",
+						"Auto-cache threshold reached - cache checkpoint applied."
+					);
 				}
 
 				// If OpenRouter provided cost data, use it directly
@@ -215,8 +248,10 @@ impl ChatSession {
 
 					// Log the actual cost received from the API for debugging
 					if config.get_log_level().is_debug_enabled() {
-						println!("Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})",
-							cost, self.session.info.total_cost);
+						println!(
+							"Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})",
+							cost, self.session.info.total_cost
+						);
 
 						// Check if there's a raw usage object with additional fields
 						if let Some(raw_usage) = ex.response.get("usage") {
@@ -228,7 +263,9 @@ impl ChatSession {
 					}
 				} else {
 					// No explicit cost data, look at the raw response to check if it contains cost data
-					let cost_from_raw = ex.response.get("usage")
+					let cost_from_raw = ex
+						.response
+						.get("usage")
 						.and_then(|u| u.get("cost"))
 						.and_then(|c| c.as_f64());
 
@@ -239,8 +276,10 @@ impl ChatSession {
 
 						// Log that we had to fetch cost from raw response
 						if config.get_log_level().is_debug_enabled() {
-							println!("Debug: Using cost from raw response: ${:.5} (total now: ${:.5})",
-								cost, self.session.info.total_cost);
+							println!(
+								"Debug: Using cost from raw response: ${:.5} (total now: ${:.5})",
+								cost, self.session.info.total_cost
+							);
 						}
 					} else {
 						// ERROR - OpenRouter did not provide cost data
@@ -254,12 +293,18 @@ impl ChatSession {
 							}
 
 							// Check if usage tracking was explicitly requested
-							let has_usage_flag = ex.request.get("usage")
+							let has_usage_flag = ex
+								.request
+								.get("usage")
 								.and_then(|u| u.get("include"))
 								.and_then(|i| i.as_bool())
 								.unwrap_or(false);
 
-							println!("{} {}", "Request had usage.include flag:".bright_yellow(), has_usage_flag);
+							println!(
+								"{} {}",
+								"Request had usage.include flag:".bright_yellow(),
+								has_usage_flag
+							);
 						}
 					}
 				}
@@ -282,8 +327,10 @@ impl ChatSession {
 			// If we have a raw exchange, save it inline in session file for complete restoration
 			if let Some(ex) = exchange {
 				// Save API request and response as separate prefixed lines for debugging
-				let _ = crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
-				let _ = crate::session::logger::log_api_response(&self.session.info.name, &ex.response);
+				let _ =
+					crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
+				let _ =
+					crate::session::logger::log_api_response(&self.session.info.name, &ex.response);
 			}
 		}
 

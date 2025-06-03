@@ -15,42 +15,67 @@
 // Session display functionality
 
 use super::core::ChatSession;
-use super::utils::{format_number, format_duration};
+use super::utils::{format_duration, format_number};
 use colored::*;
-
-
 
 impl ChatSession {
 	// Display detailed information about the session, including layer-specific stats
 	pub fn display_session_info(&self) {
 		// Display overall session metrics
-		println!("{}", "───────────── Session Information ─────────────".bright_cyan());
+		println!(
+			"{}",
+			"───────────── Session Information ─────────────".bright_cyan()
+		);
 
 		// Session basics
-		println!("{} {}", "Session name:".yellow(), self.session.info.name.bright_white());
-		println!("{} {}", "Main model:".yellow(), self.session.info.model.bright_white());
+		println!(
+			"{} {}",
+			"Session name:".yellow(),
+			self.session.info.name.bright_white()
+		);
+		println!(
+			"{} {}",
+			"Main model:".yellow(),
+			self.session.info.model.bright_white()
+		);
 
 		// Total token usage
-		let total_tokens = self.session.info.input_tokens + self.session.info.output_tokens + self.session.info.cached_tokens;
-		println!("{} {}", "Total tokens:".yellow(), format_number(total_tokens).bright_white());
-		println!("{} {} input, {} output, {} cached",
+		let total_tokens = self.session.info.input_tokens
+			+ self.session.info.output_tokens
+			+ self.session.info.cached_tokens;
+		println!(
+			"{} {}",
+			"Total tokens:".yellow(),
+			format_number(total_tokens).bright_white()
+		);
+		println!(
+			"{} {} input, {} output, {} cached",
 			"Breakdown:".yellow(),
 			format_number(self.session.info.input_tokens).bright_blue(),
 			format_number(self.session.info.output_tokens).bright_green(),
-			format_number(self.session.info.cached_tokens).bright_magenta());
+			format_number(self.session.info.cached_tokens).bright_magenta()
+		);
 
 		// Cost information
-		println!("{} ${:.5}", "Total cost:".yellow(), self.session.info.total_cost);
+		println!(
+			"{} ${:.5}",
+			"Total cost:".yellow(),
+			self.session.info.total_cost
+		);
 
 		// Time information
-		let total_time_ms = self.session.info.total_api_time_ms + self.session.info.total_tool_time_ms + self.session.info.total_layer_time_ms;
+		let total_time_ms = self.session.info.total_api_time_ms
+			+ self.session.info.total_tool_time_ms
+			+ self.session.info.total_layer_time_ms;
 		if total_time_ms > 0 {
-			println!("{} {} (API: {}, Tools: {}, Processing: {})",
+			println!(
+				"{} {} (API: {}, Tools: {}, Processing: {})",
 				"Total time:".yellow(),
 				format_duration(total_time_ms).bright_white(),
 				format_duration(self.session.info.total_api_time_ms).bright_blue(),
 				format_duration(self.session.info.total_tool_time_ms).bright_green(),
-				format_duration(self.session.info.total_layer_time_ms).bright_magenta());
+				format_duration(self.session.info.total_layer_time_ms).bright_magenta()
+			);
 		}
 
 		// Messages count and tool calls
@@ -58,20 +83,31 @@ impl ChatSession {
 
 		// Tool calls information
 		if self.session.info.tool_calls > 0 {
-			println!("{} {}", "Tool calls:".yellow(), self.session.info.tool_calls.to_string().bright_cyan());
+			println!(
+				"{} {}",
+				"Tool calls:".yellow(),
+				self.session.info.tool_calls.to_string().bright_cyan()
+			);
 		}
 
 		// Display layered stats if available
 		if !self.session.info.layer_stats.is_empty() {
 			println!();
-			println!("{}", "───────────── Layer-by-Layer Statistics ─────────────".bright_cyan());
+			println!(
+				"{}",
+				"───────────── Layer-by-Layer Statistics ─────────────".bright_cyan()
+			);
 
 			// Group by layer type
-			let mut layer_stats: std::collections::HashMap<String, Vec<&crate::session::LayerStats>> = std::collections::HashMap::new();
+			let mut layer_stats: std::collections::HashMap<
+				String,
+				Vec<&crate::session::LayerStats>,
+			> = std::collections::HashMap::new();
 
 			// Group stats by layer type
 			for stat in &self.session.info.layer_stats {
-				layer_stats.entry(stat.layer_type.clone())
+				layer_stats
+					.entry(stat.layer_type.clone())
 					.or_default()
 					.push(stat);
 			}
@@ -122,26 +158,34 @@ impl ChatSession {
 				// Print the stats
 				println!("  {}: {}", "Model".blue(), stats[0].model);
 				println!("  {}: {}", "Executions".blue(), executions);
-				println!("  {}: {} input, {} output",
+				println!(
+					"  {}: {} input, {} output",
 					"Tokens".blue(),
 					format_number(total_input).bright_white(),
-					format_number(total_output).bright_white());
+					format_number(total_output).bright_white()
+				);
 				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
 
 				// Show time information if available
 				let total_time = total_api_time + total_tool_time + total_layer_time;
 				if total_time > 0 {
-					println!("  {}: {} (API: {}, Tools: {}, Total: {})",
+					println!(
+						"  {}: {} (API: {}, Tools: {}, Total: {})",
 						"Time".blue(),
 						format_duration(total_time).bright_white(),
 						format_duration(total_api_time).bright_cyan(),
 						format_duration(total_tool_time).bright_green(),
-						format_duration(total_layer_time).bright_magenta());
+						format_duration(total_layer_time).bright_magenta()
+					);
 				}
 
 				// Add special note for context optimization
 				if layer_type.as_str() == "context_optimization" {
-					println!("  {}", "Note: These are costs for optimizing context between interactions".bright_cyan());
+					println!(
+						"  {}",
+						"Note: These are costs for optimizing context between interactions"
+							.bright_cyan()
+					);
 				}
 
 				println!();
@@ -149,7 +193,10 @@ impl ChatSession {
 
 			// Print command layers separately if any exist
 			if !command_layers.is_empty() {
-				println!("{}", "───────────── Command Layer Statistics ─────────────".bright_green());
+				println!(
+					"{}",
+					"───────────── Command Layer Statistics ─────────────".bright_green()
+				);
 
 				for (layer_type, stats) in command_layers.iter() {
 					// Extract command name from "command:name" format
@@ -181,31 +228,41 @@ impl ChatSession {
 					// Print the stats
 					println!("  {}: {}", "Model".blue(), stats[0].model);
 					println!("  {}: {}", "Executions".blue(), executions);
-					println!("  {}: {} input, {} output",
+					println!(
+						"  {}: {} input, {} output",
 						"Tokens".blue(),
 						format_number(total_input).bright_white(),
-						format_number(total_output).bright_white());
+						format_number(total_output).bright_white()
+					);
 					println!("  {}: ${:.5}", "Cost".blue(), total_cost);
 
 					// Show time information if available
 					let total_time = total_api_time + total_tool_time + total_layer_time;
 					if total_time > 0 {
-						println!("  {}: {} (API: {}, Tools: {}, Total: {})",
+						println!(
+							"  {}: {} (API: {}, Tools: {}, Total: {})",
 							"Time".blue(),
 							format_duration(total_time).bright_white(),
 							format_duration(total_api_time).bright_cyan(),
 							format_duration(total_tool_time).bright_green(),
-							format_duration(total_layer_time).bright_magenta());
+							format_duration(total_layer_time).bright_magenta()
+						);
 					}
 
-					println!("  {}", "Note: Command layers don't affect session history".bright_cyan());
+					println!(
+						"  {}",
+						"Note: Command layers don't affect session history".bright_cyan()
+					);
 
 					println!();
 				}
 			}
 		} else {
 			println!();
-			println!("{}", "No layer-specific statistics available.".bright_yellow());
+			println!(
+				"{}",
+				"No layer-specific statistics available.".bright_yellow()
+			);
 			println!("{}", "This may be because the session was created before layered architecture was enabled.".bright_yellow());
 		}
 

@@ -38,7 +38,7 @@ impl ContextGeneratorLayer {
 			input_mode: crate::session::layers::layer_trait::InputMode::Last,
 			mcp: crate::session::layers::layer_trait::LayerMcpConfig {
 				server_refs: vec!["developer".to_string(), "filesystem".to_string()],
-				allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()]
+				allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
 			},
 			parameters: std::collections::HashMap::new(),
 		}
@@ -60,9 +60,11 @@ impl Layer for ContextGeneratorLayer {
 		input: &str,
 		session: &crate::session::Session,
 		config: &crate::config::Config,
-		operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>
+		operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 	) -> anyhow::Result<LayerResult> {
 		// Process using the base processor
-		self.processor.process(input, session, config, operation_cancelled).await
+		self.processor
+			.process(input, session, config, operation_cancelled)
+			.await
 	}
 }

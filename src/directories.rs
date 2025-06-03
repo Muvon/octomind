@@ -14,9 +14,9 @@
 
 // Directory utilities for cross-platform data directory management
 
-use anyhow::{Result, Context};
-use std::path::PathBuf;
+use anyhow::{Context, Result};
 use std::fs;
+use std::path::PathBuf;
 
 /// Get the system-wide data directory for octomind
 ///
@@ -40,7 +40,7 @@ pub fn get_octomind_data_dir() -> Result<PathBuf> {
 			let path = home.join(".local").join("share").join("octomind");
 
 			path
-		},
+		}
 		None => {
 			return Err(anyhow::anyhow!("Unable to determine home directory"));
 		}
@@ -48,8 +48,10 @@ pub fn get_octomind_data_dir() -> Result<PathBuf> {
 
 	// Ensure the directory exists
 	if !data_dir.exists() {
-		fs::create_dir_all(&data_dir)
-			.context(format!("Failed to create octomind data directory: {}", data_dir.display()))?;
+		fs::create_dir_all(&data_dir).context(format!(
+			"Failed to create octomind data directory: {}",
+			data_dir.display()
+		))?;
 	}
 
 	Ok(data_dir)

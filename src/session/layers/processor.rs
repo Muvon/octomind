@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::layer_trait::{Layer, LayerConfig, LayerResult};
 use crate::config::Config;
 use crate::session::{Message, Session};
-use super::layer_trait::{Layer, LayerConfig, LayerResult};
 use anyhow::Result;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use async_trait::async_trait;
 use colored::Colorize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // Base processor that handles common functionality for all layers
 pub struct LayerProcessor {
@@ -32,11 +32,7 @@ impl LayerProcessor {
 	}
 
 	// Create messages for the OpenRouter API based on the layer
-	pub fn create_messages(
-		&self,
-		input: &str,
-		session: &Session,
-	) -> Vec<Message> {
+	pub fn create_messages(&self, input: &str, session: &Session) -> Vec<Message> {
 		let mut messages = Vec::new();
 
 		// Get the effective model and system prompt for this layer
@@ -54,9 +50,9 @@ impl LayerProcessor {
 				.unwrap_or_default()
 				.as_secs(),
 			cached: should_cache, // Only cache if model supports it
-			tool_call_id: None, // No tool_call_id for system messages
-			name: None, // No name for system messages
-			tool_calls: None, // No tool_calls for system messages
+			tool_call_id: None,   // No tool_call_id for system messages
+			name: None,           // No name for system messages
+			tool_calls: None,     // No tool_calls for system messages
 		});
 
 		// Prepare input based on input_mode using the trait's prepare_input method
@@ -72,8 +68,8 @@ impl LayerProcessor {
 				.as_secs(),
 			cached: false,
 			tool_call_id: None, // No tool_call_id for user messages
-			name: None, // No name for user messages
-			tool_calls: None, // No tool_calls for user messages
+			name: None,         // No name for user messages
+			tool_calls: None,   // No tool_calls for user messages
 		});
 
 		messages
@@ -96,7 +92,7 @@ impl Layer for LayerProcessor {
 		input: &str,
 		session: &Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>
+		operation_cancelled: Arc<AtomicBool>,
 	) -> Result<LayerResult> {
 		// Check if operation was cancelled
 		if operation_cancelled.load(Ordering::SeqCst) {
@@ -114,14 +110,15 @@ impl Layer for LayerProcessor {
 			&messages,
 			&effective_model,
 			self.config.temperature,
-			config
-		).await?;
+			config,
+		)
+		.await?;
 
 		let (output, exchange, direct_tool_calls, _finish_reason) = (
 			response.content,
 			response.exchange,
 			response.tool_calls,
-			response.finish_reason
+			response.finish_reason,
 		);
 
 		// Check if the layer response contains tool calls
@@ -145,19 +142,28 @@ impl Layer for LayerProcessor {
 					println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
 
 					// Check if tool is allowed for this layer
-					if !self.config.mcp.allowed_tools.is_empty() &&
-					!self.config.mcp.allowed_tools.contains(&tool_call.tool_name) {
-						println!("{} {} {}", "Tool".red(), tool_call.tool_name, "not allowed for this layer".red());
+					if !self.config.mcp.allowed_tools.is_empty()
+						&& !self.config.mcp.allowed_tools.contains(&tool_call.tool_name)
+					{
+						println!(
+							"{} {} {}",
+							"Tool".red(),
+							tool_call.tool_name,
+							"not allowed for this layer".red()
+						);
 						continue;
 					}
 
-					let result = match crate::mcp::execute_layer_tool_call(tool_call, config, &self.config).await {
-						Ok((res, _tool_time_ms)) => res,  // Extract result from tuple
-						Err(e) => {
-							println!("{} {}", "Tool execution error:".red(), e);
-							continue;
-						}
-					};
+					let result =
+						match crate::mcp::execute_layer_tool_call(tool_call, config, &self.config)
+							.await
+						{
+							Ok((res, _tool_time_ms)) => res, // Extract result from tuple
+							Err(e) => {
+								println!("{} {}", "Tool execution error:".red(), e);
+								continue;
+							}
+						};
 
 					// Add result to collection
 					tool_results.push(result);
@@ -181,8 +187,8 @@ impl Layer for LayerProcessor {
 							.as_secs(),
 						cached: false,
 						tool_call_id: None, // No tool_call_id for assistant messages
-						name: None, // No name for assistant messages
-						tool_calls: None, // No tool_calls for assistant messages
+						name: None,         // No name for assistant messages
+						tool_calls: None,   // No tool_calls for assistant messages
 					});
 
 					// Add each tool result as a tool message in standard OpenRouter format
@@ -197,8 +203,8 @@ impl Layer for LayerProcessor {
 								.as_secs(),
 							cached: false,
 							tool_call_id: Some(tool_result.tool_id.clone()), // Include the tool_call_id
-							name: Some(tool_result.tool_name.clone()), // Include the tool name
-							tool_calls: None, // No tool_calls for tool messages
+							name: Some(tool_result.tool_name.clone()),       // Include the tool name
+							tool_calls: None,                                // No tool_calls for tool messages
 						});
 					}
 
@@ -208,8 +214,10 @@ impl Layer for LayerProcessor {
 						&layer_session,
 						&effective_model,
 						self.config.temperature,
-						config
-					).await {
+						config,
+					)
+					.await
+					{
 						Ok(response) => {
 							// Extract token usage if available
 							let token_usage = response.exchange.usage.clone();
@@ -224,7 +232,7 @@ impl Layer for LayerProcessor {
 								tool_time_ms: 0,
 								total_time_ms: 0,
 							});
-						},
+						}
 						Err(e) => {
 							println!("{} {}", "Error processing tool results:".red(), e);
 							// Continue with the original output

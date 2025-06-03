@@ -14,14 +14,14 @@
 
 // OpenRouter provider implementation
 
+use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use crate::config::Config;
+use crate::log_debug;
+use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::env;
-use crate::config::Config;
-use crate::session::Message;
-use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-use crate::log_debug;
 use std::sync::OnceLock;
 
 // Global HTTP client with optimized settings - PERFORMANCE BEAST! 🔥
@@ -30,9 +30,9 @@ static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 fn get_optimized_client() -> &'static Client {
 	HTTP_CLIENT.get_or_init(|| {
 		Client::builder()
-			.pool_max_idle_per_host(10)       // Keep connections alive
-			.pool_idle_timeout(std::time::Duration::from_secs(90))  // Connection reuse
-			.timeout(std::time::Duration::from_secs(300))           // 5 min timeout
+			.pool_max_idle_per_host(10) // Keep connections alive
+			.pool_idle_timeout(std::time::Duration::from_secs(90)) // Connection reuse
+			.timeout(std::time::Duration::from_secs(300)) // 5 min timeout
 			.build()
 			.expect("Failed to create optimized HTTP client")
 	})
@@ -61,7 +61,7 @@ const OPENROUTER_API_URL: &str = "https://openrouter.ai/api/v1/chat/completions"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenRouterMessage {
 	pub role: String,
-	pub content: serde_json::Value,  // Can be string or object with cache_control
+	pub content: serde_json::Value, // Can be string or object with cache_control
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -79,12 +79,12 @@ impl AiProvider for OpenRouterProvider {
 	fn supports_model(&self, model: &str) -> bool {
 		// OpenRouter supports models in format "provider/model"
 		// This is a broad check - in practice OpenRouter supports many models
-		model.contains('/') ||
-		model.starts_with("anthropic") ||
-		model.starts_with("openai") ||
-		model.starts_with("google") ||
-		model.starts_with("meta-llama") ||
-		model.starts_with("mistralai")
+		model.contains('/')
+			|| model.starts_with("anthropic")
+			|| model.starts_with("openai")
+			|| model.starts_with("google")
+			|| model.starts_with("meta-llama")
+			|| model.starts_with("mistralai")
 	}
 
 	fn get_api_key(&self, config: &Config) -> Result<String> {
@@ -96,7 +96,9 @@ impl AiProvider for OpenRouterProvider {
 		// Then fall back to environment variable
 		match env::var(OPENROUTER_API_KEY_ENV) {
 			Ok(key) => Ok(key),
-			Err(_) => Err(anyhow::anyhow!("OpenRouter API key not found in config or environment"))
+			Err(_) => Err(anyhow::anyhow!(
+				"OpenRouter API key not found in config or environment"
+			)),
 		}
 	}
 
@@ -151,17 +153,20 @@ impl AiProvider for OpenRouterProvider {
 				// Sort functions by name to guarantee consistent ordering across API calls
 				let mut sorted_functions = functions;
 				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
-				
-				let mut tools = sorted_functions.iter().map(|f| {
-					serde_json::json!({
-						"type": "function",
-						"function": {
-						"name": f.name,
-						"description": f.description,
-						"parameters": f.parameters
-					}
-				})
-				}).collect::<Vec<_>>();
+
+				let mut tools = sorted_functions
+					.iter()
+					.map(|f| {
+						serde_json::json!({
+								"type": "function",
+								"function": {
+								"name": f.name,
+								"description": f.description,
+								"parameters": f.parameters
+							}
+						})
+					})
+					.collect::<Vec<_>>();
 
 				// Add web search tool if using Claude 3.7 Sonnet
 				// CRITICAL FIX: Add these in CONSISTENT order
@@ -182,8 +187,10 @@ impl AiProvider for OpenRouterProvider {
 				// and we actually want to cache tool definitions (check session state)
 				if self.supports_caching(model) && !tools.is_empty() {
 					// Check if any system message is cached - if so, we should cache tool definitions too
-					let system_cached = messages.iter().any(|msg| msg.role == "system" && msg.cached);
-					
+					let system_cached = messages
+						.iter()
+						.any(|msg| msg.role == "system" && msg.cached);
+
 					if system_cached {
 						if let Some(last_tool) = tools.last_mut() {
 							last_tool["cache_control"] = serde_json::json!({
@@ -205,14 +212,15 @@ impl AiProvider for OpenRouterProvider {
 		let api_start = std::time::Instant::now();
 
 		// Make the actual API request
-		let response = client.post(OPENROUTER_API_URL)
+		let response = client
+			.post(OPENROUTER_API_URL)
 			.header("Authorization", format!("Bearer {}", api_key))
 			.header("Content-Type", "application/json")
 			.header("HTTP-Referer", "https://github.com/muvon/octomind")
 			.header("X-Title", "Octomind")
 			.json(&request_body)
 			.send()
-		.await?;
+			.await?;
 
 		// Calculate API request time
 		let api_duration = api_start.elapsed();
@@ -228,7 +236,11 @@ impl AiProvider for OpenRouterProvider {
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
 			Err(e) => {
-				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
+				return Err(anyhow::anyhow!(
+					"Failed to parse response JSON: {}. Response: {}",
+					e,
+					response_text
+				));
 			}
 		};
 
@@ -251,10 +263,14 @@ impl AiProvider for OpenRouterProvider {
 
 				// Extract metadata for better debugging
 				if let Some(metadata) = error_obj.get("metadata") {
-					if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str()) {
+					if let Some(provider_name) =
+						metadata.get("provider_name").and_then(|p| p.as_str())
+					{
 						error_details.push(format!("Provider: {}", provider_name));
 					}
-					if let Some(provider_error) = metadata.get("provider_error").and_then(|p| p.as_str()) {
+					if let Some(provider_error) =
+						metadata.get("provider_error").and_then(|p| p.as_str())
+					{
 						error_details.push(format!("Provider error: {}", provider_error));
 					}
 				}
@@ -270,7 +286,10 @@ impl AiProvider for OpenRouterProvider {
 			crate::log_error!("  Status: {}", status);
 			crate::log_error!("  Model: {}", model);
 			crate::log_error!("  Temperature: {}", temperature);
-			crate::log_error!("  Request size: {} chars", serde_json::to_string(&request_body).map_or(0, |s| s.len()));
+			crate::log_error!(
+				"  Request size: {} chars",
+				serde_json::to_string(&request_body).map_or(0, |s| s.len())
+			);
 			crate::log_error!("  Response: {}", response_text);
 
 			// If in debug mode, also log the full request
@@ -289,15 +308,21 @@ impl AiProvider for OpenRouterProvider {
 			error_details.push("HTTP 200 but error in response".to_string());
 			error_details.push(format!("Model: {}", model));
 
-			let error_message = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+			let error_message = error_obj
+				.get("message")
+				.and_then(|m| m.as_str())
+				.unwrap_or("Unknown error");
 			error_details.push(format!("Message: {}", error_message));
 
 			// Extract provider information for better debugging
 			if let Some(metadata) = error_obj.get("metadata") {
-				if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str()) {
+				if let Some(provider_name) = metadata.get("provider_name").and_then(|p| p.as_str())
+				{
 					error_details.push(format!("Provider: {}", provider_name));
 				}
-				if let Some(provider_error) = metadata.get("provider_error").and_then(|p| p.as_str()) {
+				if let Some(provider_error) =
+					metadata.get("provider_error").and_then(|p| p.as_str())
+				{
 					error_details.push(format!("Provider error: {}", provider_error));
 				}
 			}
@@ -309,7 +334,10 @@ impl AiProvider for OpenRouterProvider {
 			crate::log_error!("  Model: {}", model);
 			crate::log_error!("  Temperature: {}", temperature);
 			crate::log_error!("  Error message: {}", error_message);
-			crate::log_error!("  Request size: {} chars", serde_json::to_string(&request_body).map_or(0, |s| s.len()));
+			crate::log_error!(
+				"  Request size: {} chars",
+				serde_json::to_string(&request_body).map_or(0, |s| s.len())
+			);
 			crate::log_error!("  Full response: {}", response_text);
 
 			// If in debug mode, log the full request and parsed error object
@@ -330,7 +358,9 @@ impl AiProvider for OpenRouterProvider {
 			.get("choices")
 			.and_then(|choices| choices.get(0))
 			.and_then(|choice| choice.get("message"))
-			.ok_or_else(|| anyhow::anyhow!("Invalid response format from OpenRouter: {}", response_text))?;
+			.ok_or_else(|| {
+				anyhow::anyhow!("Invalid response format from OpenRouter: {}", response_text)
+			})?;
 
 		// Extract finish_reason
 		let finish_reason = response_json
@@ -359,18 +389,19 @@ impl AiProvider for OpenRouterProvider {
 					if let Some(function) = tool_call.get("function") {
 						if let (Some(name), Some(args)) = (
 							function.get("name").and_then(|n| n.as_str()),
-							function.get("arguments").and_then(|a| a.as_str())
+							function.get("arguments").and_then(|a| a.as_str()),
 						) {
 							let params = if args.trim().is_empty() {
 								serde_json::json!({})
 							} else {
 								match serde_json::from_str::<serde_json::Value>(args) {
 									Ok(json_params) => json_params,
-									Err(_) => serde_json::Value::String(args.to_string())
+									Err(_) => serde_json::Value::String(args.to_string()),
 								}
 							};
 
-							let tool_id = tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
+							let tool_id =
+								tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
 							let mcp_call = crate::mcp::McpToolCall {
 								tool_name: name.to_string(),
 								parameters: params,
@@ -381,10 +412,12 @@ impl AiProvider for OpenRouterProvider {
 						}
 					} else if let (Some(_id), Some(name)) = (
 						tool_call.get("id").and_then(|i| i.as_str()),
-						tool_call.get("name").and_then(|n| n.as_str())
+						tool_call.get("name").and_then(|n| n.as_str()),
 					) {
 						let params = if let Some(params_obj) = tool_call.get("parameters") {
-							if params_obj.is_string() && params_obj.as_str().unwrap_or("").is_empty() {
+							if params_obj.is_string()
+								&& params_obj.as_str().unwrap_or("").is_empty()
+							{
 								serde_json::json!({})
 							} else {
 								params_obj.clone()
@@ -415,9 +448,18 @@ impl AiProvider for OpenRouterProvider {
 
 		// Extract token usage
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
-			let prompt_tokens = usage_obj.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-			let completion_tokens = usage_obj.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-			let total_tokens = usage_obj.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+			let prompt_tokens = usage_obj
+				.get("prompt_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let completion_tokens = usage_obj
+				.get("completion_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let total_tokens = usage_obj
+				.get("total_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
 			let cost = usage_obj.get("cost").and_then(|v| v.as_f64());
 			let completion_tokens_details = usage_obj.get("completion_tokens_details").cloned();
 			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").cloned();
@@ -497,7 +539,7 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 					name: Some(name),
 					tool_calls: None,
 				});
-			},
+			}
 			"assistant" => {
 				// Assistant messages with proper structure
 				let content = if msg.cached {
@@ -528,24 +570,37 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 				}
 
 				result.push(assistant_msg);
-			},
+			}
 			"user" => {
 				// Handle legacy <fnr> format for backwards compatibility
 				if msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
-					let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+					let content = msg
+						.content
+						.trim_start_matches("<fnr>")
+						.trim_end_matches("</fnr>")
+						.trim();
 
-					if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-						if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
+					if let Ok(tool_responses) =
+						serde_json::from_str::<Vec<serde_json::Value>>(content)
+					{
+						if !tool_responses.is_empty()
+							&& tool_responses[0]
+								.get("role")
+								.is_some_and(|r| r.as_str().unwrap_or("") == "tool")
+						{
 							for tool_response in tool_responses {
-								let tool_call_id = tool_response.get("tool_call_id")
+								let tool_call_id = tool_response
+									.get("tool_call_id")
 									.and_then(|id| id.as_str())
 									.unwrap_or("");
 
-								let name = tool_response.get("name")
+								let name = tool_response
+									.get("name")
 									.and_then(|n| n.as_str())
 									.unwrap_or("");
 
-								let content = tool_response.get("content")
+								let content = tool_response
+									.get("content")
 									.and_then(|c| c.as_str())
 									.unwrap_or("");
 
@@ -593,7 +648,7 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 					name: None,
 					tool_calls: None,
 				});
-			},
+			}
 			_ => {
 				// All other message types with proper structure
 				let content = if msg.cached {

@@ -14,8 +14,8 @@
 
 // Token counting utilities
 
-use tiktoken_rs::{cl100k_base, CoreBPE};
 use std::sync::OnceLock;
+use tiktoken_rs::{cl100k_base, CoreBPE};
 
 // Global tokenizer instance - created once and reused
 static TOKENIZER: OnceLock<CoreBPE> = OnceLock::new();

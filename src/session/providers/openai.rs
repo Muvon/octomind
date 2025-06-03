@@ -14,14 +14,14 @@
 
 // OpenAI provider implementation
 
+use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use crate::config::Config;
+use crate::log_debug;
+use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::env;
-use crate::config::Config;
-use crate::session::Message;
-use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-use crate::log_debug;
 
 /// OpenAI pricing constants (per 1M tokens in USD)
 /// Source: https://openai.com/pricing (as of January 2025)
@@ -72,7 +72,7 @@ const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAiMessage {
 	pub role: String,
-	pub content: serde_json::Value,  // Can be string or array with content parts
+	pub content: serde_json::Value, // Can be string or array with content parts
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub tool_call_id: Option<String>, // For tool messages: the ID of the tool call
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -89,11 +89,11 @@ impl AiProvider for OpenAiProvider {
 
 	fn supports_model(&self, model: &str) -> bool {
 		// OpenAI models - common ones
-		model.starts_with("gpt-") ||
-		model.starts_with("o1-") ||
-		model == "chatgpt-4o-latest" ||
-		model.contains("gpt-4") ||
-		model.contains("gpt-3.5")
+		model.starts_with("gpt-")
+			|| model.starts_with("o1-")
+			|| model == "chatgpt-4o-latest"
+			|| model.contains("gpt-4")
+			|| model.contains("gpt-3.5")
 	}
 
 	fn get_api_key(&self, _config: &Config) -> Result<String> {
@@ -101,7 +101,10 @@ impl AiProvider for OpenAiProvider {
 		// In the future, we could add openai-specific config section
 		match env::var(OPENAI_API_KEY_ENV) {
 			Ok(key) => Ok(key),
-			Err(_) => Err(anyhow::anyhow!("OpenAI API key not found in environment variable {}", OPENAI_API_KEY_ENV))
+			Err(_) => Err(anyhow::anyhow!(
+				"OpenAI API key not found in environment variable {}",
+				OPENAI_API_KEY_ENV
+			)),
 		}
 	}
 
@@ -135,16 +138,19 @@ impl AiProvider for OpenAiProvider {
 		if !config.mcp.servers.is_empty() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
-				let tools = functions.iter().map(|f| {
-					serde_json::json!({
-						"type": "function",
-						"function": {
-						"name": f.name,
-						"description": f.description,
-						"parameters": f.parameters
-					}
-				})
-				}).collect::<Vec<_>>();
+				let tools = functions
+					.iter()
+					.map(|f| {
+						serde_json::json!({
+								"type": "function",
+								"function": {
+								"name": f.name,
+								"description": f.description,
+								"parameters": f.parameters
+							}
+						})
+					})
+					.collect::<Vec<_>>();
 
 				// Note: OpenAI doesn't support caching yet, but we prepare for future support
 				// if self.supports_caching(model) && !tools.is_empty() {
@@ -164,12 +170,13 @@ impl AiProvider for OpenAiProvider {
 		let client = Client::new();
 
 		// Make the actual API request
-		let response = client.post(OPENAI_API_URL)
+		let response = client
+			.post(OPENAI_API_URL)
 			.header("Authorization", format!("Bearer {}", api_key))
 			.header("Content-Type", "application/json")
 			.json(&request_body)
 			.send()
-		.await?;
+			.await?;
 
 		// Get response status
 		let status = response.status();
@@ -181,7 +188,11 @@ impl AiProvider for OpenAiProvider {
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
 			Err(e) => {
-				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
+				return Err(anyhow::anyhow!(
+					"Failed to parse response JSON: {}. Response: {}",
+					e,
+					response_text
+				));
 			}
 		};
 
@@ -228,7 +239,9 @@ impl AiProvider for OpenAiProvider {
 			.get("choices")
 			.and_then(|choices| choices.get(0))
 			.and_then(|choice| choice.get("message"))
-			.ok_or_else(|| anyhow::anyhow!("Invalid response format from OpenAI: {}", response_text))?;
+			.ok_or_else(|| {
+				anyhow::anyhow!("Invalid response format from OpenAI: {}", response_text)
+			})?;
 
 		// Extract finish_reason
 		let finish_reason = response_json
@@ -257,18 +270,19 @@ impl AiProvider for OpenAiProvider {
 					if let Some(function) = tool_call.get("function") {
 						if let (Some(name), Some(args)) = (
 							function.get("name").and_then(|n| n.as_str()),
-							function.get("arguments").and_then(|a| a.as_str())
+							function.get("arguments").and_then(|a| a.as_str()),
 						) {
 							let params = if args.trim().is_empty() {
 								serde_json::json!({})
 							} else {
 								match serde_json::from_str::<serde_json::Value>(args) {
 									Ok(json_params) => json_params,
-									Err(_) => serde_json::Value::String(args.to_string())
+									Err(_) => serde_json::Value::String(args.to_string()),
 								}
 							};
 
-							let tool_id = tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
+							let tool_id =
+								tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
 							let mcp_call = crate::mcp::McpToolCall {
 								tool_name: name.to_string(),
 								parameters: params,
@@ -291,9 +305,18 @@ impl AiProvider for OpenAiProvider {
 
 		// Extract token usage
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
-			let prompt_tokens = usage_obj.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-			let completion_tokens = usage_obj.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-			let total_tokens = usage_obj.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+			let prompt_tokens = usage_obj
+				.get("prompt_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let completion_tokens = usage_obj
+				.get("completion_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let total_tokens = usage_obj
+				.get("total_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
 
 			// Calculate cost using our pricing constants
 			let cost = calculate_cost(model, prompt_tokens, completion_tokens);
@@ -336,21 +359,33 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenAiMessage> {
 
 	for msg in messages {
 		// Handle tool response messages (has <fnr> tags)
-		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
-			let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+		if msg.role == "user" && msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>")
+		{
+			let content = msg
+				.content
+				.trim_start_matches("<fnr>")
+				.trim_end_matches("</fnr>")
+				.trim();
 
 			if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-				if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
+				if !tool_responses.is_empty()
+					&& tool_responses[0]
+						.get("role")
+						.is_some_and(|r| r.as_str().unwrap_or("") == "tool")
+				{
 					for tool_response in tool_responses {
-						let tool_call_id = tool_response.get("tool_call_id")
+						let tool_call_id = tool_response
+							.get("tool_call_id")
 							.and_then(|id| id.as_str())
 							.unwrap_or("");
 
-						let name = tool_response.get("name")
+						let name = tool_response
+							.get("name")
 							.and_then(|n| n.as_str())
 							.unwrap_or("");
 
-						let content = tool_response.get("content")
+						let content = tool_response
+							.get("content")
 							.and_then(|c| c.as_str())
 							.unwrap_or("");
 

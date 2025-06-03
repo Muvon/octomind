@@ -14,10 +14,10 @@
 
 // Directory operations module - handling file listing with ripgrep
 
-use std::process::Command;
-use serde_json::{json, Value};
-use anyhow::{Result, anyhow};
 use super::super::{McpToolCall, McpToolResult};
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
+use std::process::Command;
 
 // Convert glob pattern to regex pattern for use with ripgrep
 fn convert_glob_to_regex(glob_pattern: &str) -> String {
@@ -26,7 +26,8 @@ fn convert_glob_to_regex(glob_pattern: &str) -> String {
 
 	if patterns.len() > 1 {
 		// Multiple patterns - convert each and join with |
-		let regex_patterns: Vec<String> = patterns.iter()
+		let regex_patterns: Vec<String> = patterns
+			.iter()
 			.map(|p| convert_single_glob_to_regex(p.trim()))
 			.collect();
 		format!("({})", regex_patterns.join("|"))
@@ -47,20 +48,20 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 			'*' => {
 				// Convert * to .*? (non-greedy match any characters)
 				regex.push_str(".*?");
-			},
+			}
 			'?' => {
 				// Convert ? to . (match any single character)
 				regex.push('.');
-			},
+			}
 			'.' => {
 				// Escape dots for literal match
 				regex.push_str("\\.");
-			},
+			}
 			'^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '+' | '\\' => {
 				// Escape regex special characters
 				regex.push('\\');
 				regex.push(chars[i]);
-			},
+			}
 			_ => {
 				// Regular character
 				regex.push(chars[i]);
@@ -82,15 +83,21 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 	};
 
 	// Extract optional parameters
-	let pattern = call.parameters.get("pattern")
+	let pattern = call
+		.parameters
+		.get("pattern")
 		.and_then(|v| v.as_str())
 		.map(|s| s.to_string());
 
-	let content = call.parameters.get("content")
+	let content = call
+		.parameters
+		.get("content")
 		.and_then(|v| v.as_str())
 		.map(|s| s.to_string());
 
-	let max_depth = call.parameters.get("max_depth")
+	let max_depth = call
+		.parameters
+		.get("max_depth")
 		.and_then(|v| v.as_u64())
 		.map(|n| n as usize);
 
@@ -104,34 +111,40 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 	// Search for content in files or list files matching pattern
 	let (cmd, output_type) = if let Some(ref content_pattern) = content {
 		(
-			format!("cd '{}' && rg '{}' {}", directory, content_pattern, cmd_args.join(" ")),
-			"content search"
+			format!(
+				"cd '{}' && rg '{}' {}",
+				directory,
+				content_pattern,
+				cmd_args.join(" ")
+			),
+			"content search",
 		)
 	} else if let Some(ref name_pattern) = pattern {
 		// Convert glob pattern to regex pattern
 		let regex_pattern = convert_glob_to_regex(name_pattern);
 		(
-			format!("cd '{}' && rg --files {} | rg '{}'", directory, cmd_args.join(" "), regex_pattern),
-			"filename pattern"
+			format!(
+				"cd '{}' && rg --files {} | rg '{}'",
+				directory,
+				cmd_args.join(" "),
+				regex_pattern
+			),
+			"filename pattern",
 		)
 	} else {
 		// Default: list all files using ripgrep
 		(
 			format!("cd '{}' && rg --files {}", directory, cmd_args.join(" ")),
-			"file listing"
+			"file listing",
 		)
 	};
 
 	// Execute the command
 	let output = tokio::task::spawn_blocking(move || {
 		let output = if cfg!(target_os = "windows") {
-			Command::new("cmd")
-				.args(["/C", &cmd])
-				.output()
+			Command::new("cmd").args(["/C", &cmd]).output()
 		} else {
-			Command::new("sh")
-				.args(["-c", &cmd])
-				.output()
+			Command::new("sh").args(["-c", &cmd]).output()
 		};
 
 		match output {
@@ -148,33 +161,34 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 				};
 
 				json!({
-					"success": output.status.success(),
-					"output": output_str,
-					"files": files,
-					"count": files.len(),
-					"type": output_type,
+						"success": output.status.success(),
+						"output": output_str,
+						"files": files,
+						"count": files.len(),
+						"type": output_type,
+						"parameters": {
+						"directory": directory,
+						"pattern": pattern,
+						"content": content,
+						"max_depth": max_depth
+					}
+				})
+			}
+			Err(e) => json!({
+					"success": false,
+					"output": format!("Failed to list files: {}", e),
+					"files": [],
+					"count": 0,
 					"parameters": {
 					"directory": directory,
 					"pattern": pattern,
 					"content": content,
 					"max_depth": max_depth
 				}
-			})
-			},
-			Err(e) => json!({
-				"success": false,
-				"output": format!("Failed to list files: {}", e),
-				"files": [],
-				"count": 0,
-				"parameters": {
-				"directory": directory,
-				"pattern": pattern,
-				"content": content,
-				"max_depth": max_depth
-			}
-		}),
+			}),
 		}
-	}).await?;
+	})
+	.await?;
 
 	Ok(McpToolResult {
 		tool_name: "list_files".to_string(),
@@ -194,7 +208,10 @@ mod tests {
 		assert_eq!(convert_glob_to_regex("*.py"), ".*?\\.py$");
 
 		// Test multiple patterns (the problematic case)
-		assert_eq!(convert_glob_to_regex("*.rs|*.py|*.js|*.ts"), "(.*?\\.rs$|.*?\\.py$|.*?\\.js$|.*?\\.ts$)");
+		assert_eq!(
+			convert_glob_to_regex("*.rs|*.py|*.js|*.ts"),
+			"(.*?\\.rs$|.*?\\.py$|.*?\\.js$|.*?\\.ts$)"
+		);
 
 		// Test pattern with directory
 		assert_eq!(convert_glob_to_regex("src/*.rs"), "src/.*?\\.rs$");

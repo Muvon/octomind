@@ -14,14 +14,14 @@
 
 // Anthropic provider implementation
 
+use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use crate::config::Config;
+use crate::log_debug;
+use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::env;
-use crate::config::Config;
-use crate::session::Message;
-use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-use crate::log_debug;
 
 /// Anthropic pricing constants (per 1M tokens in USD)
 /// Source: https://www.anthropic.com/pricing (as of January 2025)
@@ -83,14 +83,16 @@ impl AiProvider for AnthropicProvider {
 
 	fn supports_model(&self, model: &str) -> bool {
 		// Anthropic Claude models
-		model.starts_with("claude-") ||
-		model.contains("claude")
+		model.starts_with("claude-") || model.contains("claude")
 	}
 
 	fn get_api_key(&self, _config: &Config) -> Result<String> {
 		match env::var(ANTHROPIC_API_KEY_ENV) {
 			Ok(key) => Ok(key),
-			Err(_) => Err(anyhow::anyhow!("Anthropic API key not found in environment variable {}", ANTHROPIC_API_KEY_ENV))
+			Err(_) => Err(anyhow::anyhow!(
+				"Anthropic API key not found in environment variable {}",
+				ANTHROPIC_API_KEY_ENV
+			)),
 		}
 	}
 
@@ -113,7 +115,8 @@ impl AiProvider for AnthropicProvider {
 		let anthropic_messages = convert_messages(messages);
 
 		// Extract system message if present
-		let system_message = messages.iter()
+		let system_message = messages
+			.iter()
 			.find(|m| m.role == "system")
 			.map(|m| m.content.clone())
 			.unwrap_or_else(|| "You are a helpful assistant.".to_string());
@@ -135,22 +138,27 @@ impl AiProvider for AnthropicProvider {
 				// Sort functions by name to guarantee consistent ordering across API calls
 				let mut sorted_functions = functions;
 				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
-				
-				let mut tools = sorted_functions.iter().map(|f| {
-					serde_json::json!({
-						"name": f.name,
-						"description": f.description,
-						"input_schema": f.parameters
+
+				let mut tools = sorted_functions
+					.iter()
+					.map(|f| {
+						serde_json::json!({
+							"name": f.name,
+							"description": f.description,
+							"input_schema": f.parameters
+						})
 					})
-				}).collect::<Vec<_>>();
+					.collect::<Vec<_>>();
 
 				// CRITICAL FIX: Cache control should be handled consistently
 				// Add cache control to the LAST tool definition ONLY if the model supports caching
 				// and we actually want to cache tool definitions (check session state)
 				if self.supports_caching(model) && !tools.is_empty() {
 					// Check if any system message is cached - if so, we should cache tool definitions too
-					let system_cached = messages.iter().any(|msg| msg.role == "system" && msg.cached);
-					
+					let system_cached = messages
+						.iter()
+						.any(|msg| msg.role == "system" && msg.cached);
+
 					if system_cached {
 						if let Some(last_tool) = tools.last_mut() {
 							last_tool["cache_control"] = serde_json::json!({
@@ -168,13 +176,14 @@ impl AiProvider for AnthropicProvider {
 		let client = Client::new();
 
 		// Make the actual API request
-		let response = client.post(ANTHROPIC_API_URL)
+		let response = client
+			.post(ANTHROPIC_API_URL)
 			.header("Authorization", format!("Bearer {}", api_key))
 			.header("Content-Type", "application/json")
 			.header("anthropic-version", "2023-06-01")
 			.json(&request_body)
 			.send()
-		.await?;
+			.await?;
 
 		// Get response status
 		let status = response.status();
@@ -186,7 +195,11 @@ impl AiProvider for AnthropicProvider {
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
 			Err(e) => {
-				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
+				return Err(anyhow::anyhow!(
+					"Failed to parse response JSON: {}. Response: {}",
+					e,
+					response_text
+				));
 			}
 		};
 
@@ -229,7 +242,7 @@ impl AiProvider for AnthropicProvider {
 					if let (Some(name), Some(input), Some(id)) = (
 						content_block.get("name").and_then(|n| n.as_str()),
 						content_block.get("input"),
-						content_block.get("id").and_then(|i| i.as_str())
+						content_block.get("id").and_then(|i| i.as_str()),
 					) {
 						let mcp_call = crate::mcp::McpToolCall {
 							tool_name: name.to_string(),
@@ -246,7 +259,8 @@ impl AiProvider for AnthropicProvider {
 		}
 
 		// Extract finish_reason
-		let finish_reason = response_json.get("stop_reason")
+		let finish_reason = response_json
+			.get("stop_reason")
 			.and_then(|fr| fr.as_str())
 			.map(|s| s.to_string());
 
@@ -256,8 +270,14 @@ impl AiProvider for AnthropicProvider {
 
 		// Extract token usage
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
-			let input_tokens = usage_obj.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-			let output_tokens = usage_obj.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+			let input_tokens = usage_obj
+				.get("input_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let output_tokens = usage_obj
+				.get("output_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
 			let total_tokens = input_tokens + output_tokens;
 
 			// Calculate cost using our pricing constants
@@ -324,20 +344,32 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 					role: "user".to_string(),
 					content: serde_json::json!([tool_content]),
 				});
-			},
+			}
 			"user" => {
 				// Handle legacy <fnr> format for backwards compatibility
 				if msg.content.starts_with("<fnr>") && msg.content.ends_with("</fnr>") {
-					let content = msg.content.trim_start_matches("<fnr>").trim_end_matches("</fnr>").trim();
+					let content = msg
+						.content
+						.trim_start_matches("<fnr>")
+						.trim_end_matches("</fnr>")
+						.trim();
 
-					if let Ok(tool_responses) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
-						if !tool_responses.is_empty() && tool_responses[0].get("role").is_some_and(|r| r.as_str().unwrap_or("") == "tool") {
+					if let Ok(tool_responses) =
+						serde_json::from_str::<Vec<serde_json::Value>>(content)
+					{
+						if !tool_responses.is_empty()
+							&& tool_responses[0]
+								.get("role")
+								.is_some_and(|r| r.as_str().unwrap_or("") == "tool")
+						{
 							for tool_response in tool_responses {
-								let tool_call_id = tool_response.get("tool_call_id")
+								let tool_call_id = tool_response
+									.get("tool_call_id")
 									.and_then(|id| id.as_str())
 									.unwrap_or("");
 
-								let content_text = tool_response.get("content")
+								let content_text = tool_response
+									.get("content")
 									.and_then(|c| c.as_str())
 									.unwrap_or("");
 
@@ -372,7 +404,7 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 					role: msg.role.clone(),
 					content: serde_json::json!([text_content]),
 				});
-			},
+			}
 			"assistant" => {
 				// Assistant messages with proper structure
 				let mut text_content = serde_json::json!({
@@ -391,7 +423,7 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 					role: msg.role.clone(),
 					content: serde_json::json!([text_content]),
 				});
-			},
+			}
 			_ => {
 				// All other message types with proper structure
 				let mut text_content = serde_json::json!({

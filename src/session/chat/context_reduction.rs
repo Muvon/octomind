@@ -14,25 +14,28 @@
 
 // Context reduction for session optimization
 
+use super::animation::show_loading_animation;
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
+use anyhow::Result;
 use colored::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use anyhow::Result;
-use super::animation::show_loading_animation;
 
 /// Process context reduction - smart truncation with summarization
 /// Uses same model and session flow, then keeps only the summarized context
 pub async fn perform_context_reduction(
 	chat_session: &mut ChatSession,
 	config: &Config,
-	operation_cancelled: Arc<AtomicBool>
+	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<()> {
 	println!("{}", "Summarizing conversation context...".cyan());
 
 	// Build conversation history for summarization (exclude system message)
-	let conversation_history = chat_session.session.messages.iter()
+	let conversation_history = chat_session
+		.session
+		.messages
+		.iter()
 		.filter(|m| m.role != "system")
 		.map(|m| format!("{}: {}", m.role.to_uppercase(), m.content))
 		.collect::<Vec<_>>()
@@ -64,8 +67,9 @@ pub async fn perform_context_reduction(
 		&chat_session.session.messages,
 		&chat_session.model,
 		chat_session.temperature,
-		config
-	).await;
+		config,
+	)
+	.await;
 
 	// Stop the animation
 	operation_cancelled.store(true, Ordering::SeqCst);
@@ -77,9 +81,9 @@ pub async fn perform_context_reduction(
 
 			// Log restoration point for recovery
 			let _ = crate::session::logger::log_restoration_point(
-				&chat_session.session.info.name, 
-				"Context summarization", 
-				&summary_content
+				&chat_session.session.info.name,
+				"Context summarization",
+				&summary_content,
 			);
 
 			// Log to session file as well
@@ -94,14 +98,20 @@ pub async fn perform_context_reduction(
 						.as_secs()
 				});
 				let restoration_json = serde_json::to_string(&restoration_data)?;
-				let _ = crate::session::append_to_session_file(session_file, &format!("RESTORATION_POINT: {}", restoration_json));
+				let _ = crate::session::append_to_session_file(
+					session_file,
+					&format!("RESTORATION_POINT: {}", restoration_json),
+				);
 			}
 
 			println!("{}", "Context summarization complete".bright_green());
 			println!("{}", summary_content.bright_blue());
 
 			// SMART TRUNCATION: Keep only system message + summary as assistant message
-			let system_message = chat_session.session.messages.iter()
+			let system_message = chat_session
+				.session
+				.messages
+				.iter()
 				.find(|m| m.role == "system")
 				.cloned();
 
@@ -114,14 +124,16 @@ pub async fn perform_context_reduction(
 			}
 
 			// Add the summary as an assistant message (this is our new context)
-			chat_session.session.add_message("assistant", &summary_content);
+			chat_session
+				.session
+				.add_message("assistant", &summary_content);
 			let last_index = chat_session.session.messages.len() - 1;
 			chat_session.session.messages[last_index].cached = true; // Mark for caching
 
 			// Reset token tracking for fresh start
 			chat_session.session.current_non_cached_tokens = 0;
 			chat_session.session.current_total_tokens = 0;
-			
+
 			// Update cache checkpoint time
 			chat_session.session.last_cache_checkpoint_time = std::time::SystemTime::now()
 				.duration_since(std::time::UNIX_EPOCH)
@@ -132,7 +144,10 @@ pub async fn perform_context_reduction(
 			if let Some(usage) = &response.exchange.usage {
 				let cost = usage.cost.unwrap_or(0.0);
 				if cost > 0.0 {
-					println!("{}", format!("Summarization cost: ${:.5}", cost).bright_magenta());
+					println!(
+						"{}",
+						format!("Summarization cost: ${:.5}", cost).bright_magenta()
+					);
 
 					// Add the stats to the session
 					chat_session.session.add_layer_stats(
@@ -140,7 +155,7 @@ pub async fn perform_context_reduction(
 						&chat_session.model,
 						usage.prompt_tokens,
 						usage.completion_tokens,
-						cost
+						cost,
 					);
 
 					// Update the overall cost in the session
@@ -149,8 +164,14 @@ pub async fn perform_context_reduction(
 				}
 			}
 
-			println!("{}", "Session context reduced to essential summary".bright_green());
-			println!("{}", "You can now continue the conversation with optimized context".bright_cyan());
+			println!(
+				"{}",
+				"Session context reduced to essential summary".bright_green()
+			);
+			println!(
+				"{}",
+				"You can now continue the conversation with optimized context".bright_cyan()
+			);
 
 			// Auto-commit with octocode if available
 			if let Err(e) = auto_commit_with_octocode().await {
@@ -162,16 +183,22 @@ pub async fn perform_context_reduction(
 			chat_session.save()?;
 
 			Ok(())
-		},
+		}
 		Err(e) => {
 			// Remove the summarization prompt since it failed
 			if let Some(last_msg) = chat_session.session.messages.last() {
-				if last_msg.role == "user" && last_msg.content.contains("Please create a concise summary") {
+				if last_msg.role == "user"
+					&& last_msg.content.contains("Please create a concise summary")
+				{
 					chat_session.session.messages.pop();
 				}
 			}
-			
-			println!("{}: {}", "Error during context summarization".bright_red(), e);
+
+			println!(
+				"{}: {}",
+				"Error during context summarization".bright_red(),
+				e
+			);
 			Err(anyhow::anyhow!("Context summarization failed: {}", e))
 		}
 	}
@@ -188,8 +215,11 @@ async fn auto_commit_with_octocode() -> Result<()> {
 	match octocode_check {
 		Ok(output) if output.status.success() => {
 			// octocode is available, proceed with commit
-			println!("{}", "🔄 Auto-committing changes with octocode...".bright_blue());
-			
+			println!(
+				"{}",
+				"🔄 Auto-committing changes with octocode...".bright_blue()
+			);
+
 			let commit_result = tokio::process::Command::new("octocode")
 				.args(["commit", "-a", "-y"])
 				.output()
@@ -202,7 +232,10 @@ async fn auto_commit_with_octocode() -> Result<()> {
 						if !stdout.trim().is_empty() {
 							println!("{}", stdout.trim().bright_green());
 						}
-						println!("{}", "✅ Changes auto-committed successfully".bright_green());
+						println!(
+							"{}",
+							"✅ Changes auto-committed successfully".bright_green()
+						);
 					} else {
 						let stderr = String::from_utf8_lossy(&output.stderr);
 						if stderr.contains("no changes") || stderr.contains("nothing to commit") {
@@ -211,16 +244,19 @@ async fn auto_commit_with_octocode() -> Result<()> {
 							return Err(anyhow::anyhow!("octocode commit failed: {}", stderr));
 						}
 					}
-				},
+				}
 				Err(e) => {
 					return Err(anyhow::anyhow!("Failed to execute octocode commit: {}", e));
 				}
 			}
-		},
+		}
 		Ok(_) => {
 			// which command succeeded but octocode not found (empty output)
-			println!("{}", "ℹ️  octocode not found in PATH, skipping auto-commit".bright_blue());
-		},
+			println!(
+				"{}",
+				"ℹ️  octocode not found in PATH, skipping auto-commit".bright_blue()
+			);
+		}
 		Err(_) => {
 			// which command failed (probably on Windows or which is not available)
 			// Try direct execution as fallback
@@ -232,8 +268,11 @@ async fn auto_commit_with_octocode() -> Result<()> {
 			match direct_check {
 				Ok(output) if output.status.success() => {
 					// octocode is available, proceed with commit
-					println!("{}", "🔄 Auto-committing changes with octocode...".bright_blue());
-					
+					println!(
+						"{}",
+						"🔄 Auto-committing changes with octocode...".bright_blue()
+					);
+
 					let commit_result = tokio::process::Command::new("octocode")
 						.args(["commit", "-a", "-y"])
 						.output()
@@ -246,24 +285,38 @@ async fn auto_commit_with_octocode() -> Result<()> {
 								if !stdout.trim().is_empty() {
 									println!("{}", stdout.trim().bright_green());
 								}
-								println!("{}", "✅ Changes auto-committed successfully".bright_green());
+								println!(
+									"{}",
+									"✅ Changes auto-committed successfully".bright_green()
+								);
 							} else {
 								let stderr = String::from_utf8_lossy(&output.stderr);
-								if stderr.contains("no changes") || stderr.contains("nothing to commit") {
+								if stderr.contains("no changes")
+									|| stderr.contains("nothing to commit")
+								{
 									println!("{}", "ℹ️  No changes to commit".bright_blue());
 								} else {
-									return Err(anyhow::anyhow!("octocode commit failed: {}", stderr));
+									return Err(anyhow::anyhow!(
+										"octocode commit failed: {}",
+										stderr
+									));
 								}
 							}
-						},
+						}
 						Err(e) => {
-							return Err(anyhow::anyhow!("Failed to execute octocode commit: {}", e));
+							return Err(anyhow::anyhow!(
+								"Failed to execute octocode commit: {}",
+								e
+							));
 						}
 					}
-				},
+				}
 				_ => {
 					// octocode not available
-					println!("{}", "ℹ️  octocode not available, skipping auto-commit".bright_blue());
+					println!(
+						"{}",
+						"ℹ️  octocode not available, skipping auto-commit".bright_blue()
+					);
 				}
 			}
 		}

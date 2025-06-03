@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap::Args;
 use anyhow::Result;
-use std::io::{self, Read, Write};
-use std::fs::OpenOptions;
-use serde::{Deserialize, Serialize};
+use clap::Args;
 use octomind::config::Config;
-use octomind::session::{Message, chat_completion_with_provider};
+use octomind::session::{chat_completion_with_provider, Message};
+use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::{self, Read, Write};
 
 // Function to add command to shell history
 fn add_to_shell_history(command: &str) -> Result<()> {
@@ -120,7 +120,9 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	}
 
 	// Determine model to use: either from --model flag or effective config model
-	let model = args.model.clone()
+	let model = args
+		.model
+		.clone()
 		.unwrap_or_else(|| config.get_effective_model());
 
 	// Create specialized system prompt for shell commands
@@ -166,12 +168,8 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	];
 
 	// Call the AI provider
-	let response = chat_completion_with_provider(
-		&messages,
-		&model,
-		args.temperature,
-		config,
-	).await?;
+	let response =
+		chat_completion_with_provider(&messages, &model, args.temperature, config).await?;
 
 	// Parse the JSON response
 	let shell_response: ShellResponse = match serde_json::from_str(&response.content) {
@@ -241,8 +239,10 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	// Show exit status only if command failed
 	if !status.success() {
 		use colored::Colorize;
-		println!("❌ Command failed with exit code: {}",
-			status.code().unwrap_or(-1).to_string().red());
+		println!(
+			"❌ Command failed with exit code: {}",
+			status.code().unwrap_or(-1).to_string().red()
+		);
 		std::process::exit(status.code().unwrap_or(1));
 	}
 

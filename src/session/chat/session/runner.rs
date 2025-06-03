@@ -14,19 +14,19 @@
 
 // Interactive session runner
 
-use super::core::ChatSession;
-use crate::{log_debug, log_info};
-use crate::config::Config;
-use crate::session::create_system_prompt;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::io::Write; // Added for stdout flushing
-use anyhow::Result;
+use super::super::animation::show_loading_animation;
+use super::super::commands::*;
+use super::super::context_truncation::check_and_truncate_context;
 use super::super::input::read_user_input;
 use super::super::response::process_response;
-use super::super::animation::show_loading_animation;
-use super::super::context_truncation::check_and_truncate_context;
-use super::super::commands::*;
+use super::core::ChatSession;
+use crate::config::Config;
+use crate::session::create_system_prompt;
+use crate::{log_debug, log_info};
+use anyhow::Result;
+use std::io::Write; // Added for stdout flushing
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // Run an interactive session
 pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
@@ -102,7 +102,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Get temperature
 		let temperature = if args_str.contains("temperature: ") {
 			let start = args_str.find("temperature: ").unwrap() + 13;
-			let end = args_str[start..].find(',').unwrap_or(args_str[start..].find('}').unwrap_or(args_str.len() - start)) + start;
+			let end = args_str[start..].find(',').unwrap_or(
+				args_str[start..]
+					.find('}')
+					.unwrap_or(args_str.len() - start),
+			) + start;
 			args_str[start..end].trim().parse::<f32>().unwrap_or(0.7)
 		} else {
 			0.7 // Default temperature
@@ -126,9 +130,16 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		if mcp_config.server_refs.is_empty() {
 			use colored::*;
-			println!("{}", "💡 Tip: For code development, consider starting an external MCP server:".bright_yellow());
+			println!(
+				"{}",
+				"💡 Tip: For code development, consider starting an external MCP server:"
+					.bright_yellow()
+			);
 			println!("{}", "   octocode mcp --path=.".bright_cyan());
-			println!("{}", "   Then configure it in your system config:".bright_cyan());
+			println!(
+				"{}",
+				"   Then configure it in your system config:".bright_cyan()
+			);
 			if let Ok(config_path) = crate::directories::get_config_file_path() {
 				println!("{}", format!("   {}", config_path.display()).bright_cyan());
 			}
@@ -139,13 +150,26 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 			if octocode_enabled {
 				use colored::*;
-				println!("{}", "🔗 octocode MCP server is enabled for enhanced codebase analysis".bright_green());
+				println!(
+					"{}",
+					"🔗 octocode MCP server is enabled for enhanced codebase analysis"
+						.bright_green()
+				);
 				println!();
 			} else {
 				use colored::*;
-				println!("{}", "💡 Tip: Install octocode for enhanced codebase analysis:".bright_yellow());
-				println!("{}", "   cargo install octocode  # or download from releases".bright_cyan());
-				println!("{}", "   It will be auto-enabled when available in PATH".bright_cyan());
+				println!(
+					"{}",
+					"💡 Tip: Install octocode for enhanced codebase analysis:".bright_yellow()
+				);
+				println!(
+					"{}",
+					"   cargo install octocode  # or download from releases".bright_cyan()
+				);
+				println!(
+					"{}",
+					"   It will be auto-enabled when available in PATH".bright_cyan()
+				);
 				println!();
 			}
 		}
@@ -160,7 +184,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		session_args.resume,
 		session_args.model.clone(),
 		Some(session_args.temperature),
-		&mode_config
+		&mode_config,
 	)?;
 
 	// If runtime model override is provided, update the session's model (runtime only)
@@ -180,7 +204,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	// Show history usage info for new sessions
 	if chat_session.session.messages.is_empty() {
 		use colored::*;
-		println!("{}", "💡 Tip: Use ↑/↓ arrows or Ctrl+R for command history search".bright_yellow());
+		println!(
+			"{}",
+			"💡 Tip: Use ↑/↓ arrows or Ctrl+R for command history search".bright_yellow()
+		);
 	}
 
 	// Initialize with system prompt if new session
@@ -209,17 +236,31 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Add assistant welcome message
 		let welcome_message = format!(
 			"Hello! Octomind ready to serve you. Working dir: {} (Role: {})",
-			current_dir.file_name().unwrap_or_default().to_string_lossy(),
+			current_dir
+				.file_name()
+				.unwrap_or_default()
+				.to_string_lossy(),
 			session_args.role
 		);
-		chat_session.add_assistant_message(&welcome_message, None, &mode_config, &session_args.role)?;
+		chat_session.add_assistant_message(
+			&welcome_message,
+			None,
+			&mode_config,
+			&session_args.role,
+		)?;
 
 		// Print welcome message with colors if terminal supports them
 		use colored::*;
 		println!("{}", welcome_message.bright_green());
 	} else {
 		// Print the last few messages for context with colors if terminal supports them
-		let last_messages = chat_session.session.messages.iter().rev().take(3).collect::<Vec<_>>();
+		let last_messages = chat_session
+			.session
+			.messages
+			.iter()
+			.rev()
+			.take(3)
+			.collect::<Vec<_>>();
 		use colored::*;
 
 		for msg in last_messages.iter().rev() {
@@ -240,13 +281,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	// Track the processing state to determine what to do on cancellation
 	#[derive(Debug, Clone, PartialEq)]
 	enum ProcessingState {
-		Idle,                    // No operation in progress
-		ReadingInput,           // Reading user input
-		ProcessingLayers,       // Processing through layers
-		CallingAPI,             // Making API call
-		ExecutingTools,         // Executing tools
-		ProcessingResponse,     // Processing response
-		CompletedWithResults,   // Completed successfully with results to keep
+		Idle,                 // No operation in progress
+		ReadingInput,         // Reading user input
+		ProcessingLayers,     // Processing through layers
+		CallingAPI,           // Making API call
+		ExecutingTools,       // Executing tools
+		ProcessingResponse,   // Processing response
+		CompletedWithResults, // Completed successfully with results to keep
 	}
 
 	let processing_state = Arc::new(std::sync::Mutex::new(ProcessingState::Idle));
@@ -272,37 +313,38 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		match state {
 			ProcessingState::Idle | ProcessingState::ReadingInput => {
 				println!("\n🛑 Ready for new input");
-			},
+			}
 			ProcessingState::ProcessingLayers => {
 				print!("\n🛑 Cancelling layer processing");
 				std::io::stdout().flush().unwrap();
 				println!(" | ✨ Ready for new input");
-			},
+			}
 			ProcessingState::CallingAPI => {
 				print!("\n🛑 Cancelling API request");
 				std::io::stdout().flush().unwrap();
 				println!(" | 🗑️ Removing incomplete request | ✨ Ready for new input");
-			},
+			}
 			ProcessingState::ExecutingTools => {
 				print!("\n🛑 Stopping tool execution");
 				std::io::stdout().flush().unwrap();
 				println!(" | 🗑️ Removing incomplete request | ✨ Ready for new input");
-			},
+			}
 			ProcessingState::ProcessingResponse => {
 				print!("\n🛑 Stopping response processing");
 				std::io::stdout().flush().unwrap();
 				println!(" | 📝 Preserving completed work | ✨ Ready for new input");
-			},
+			}
 			ProcessingState::CompletedWithResults => {
 				print!("\n🛑 Operation completed");
 				std::io::stdout().flush().unwrap();
 				println!(" | 📝 All work preserved | ✨ Ready for new input");
-			},
+			}
 		}
 
 		println!("🔄 Press Ctrl+C again to force exit");
 		std::io::stdout().flush().unwrap();
-	}).expect("Error setting Ctrl+C handler");
+	})
+	.expect("Error setting Ctrl+C handler");
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
 	let mut current_config = mode_config.clone();
@@ -320,7 +362,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			// Clean up incomplete work based on state
 			let should_remove_last_message = {
 				let state = processing_state.lock().unwrap().clone();
-				matches!(state, ProcessingState::CallingAPI | ProcessingState::ExecutingTools)
+				matches!(
+					state,
+					ProcessingState::CallingAPI | ProcessingState::ExecutingTools
+				)
 			};
 
 			if should_remove_last_message {
@@ -328,7 +373,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// CRITICAL FIX: When Ctrl+C is pressed during tool execution, we should cleanly
 					// remove incomplete tool_use blocks rather than trying to fake tool results.
 					// This maintains MCP compliance and conversation integrity.
-					
+
 					let messages_len = chat_session.session.messages.len();
 					if last_index < messages_len {
 						// Find any assistant messages with tool_calls after the last user message
@@ -338,14 +383,25 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 								if msg.role == "assistant" && msg.tool_calls.is_some() {
 									// This assistant message has tool_calls - check if all have matching tool results
 									if let Some(tool_calls_value) = &msg.tool_calls {
-										if let Ok(tool_calls_array) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
+										if let Ok(tool_calls_array) =
+											serde_json::from_value::<Vec<serde_json::Value>>(
+												tool_calls_value.clone(),
+											) {
 											for tool_call in tool_calls_array {
-												if let Some(tool_id) = tool_call.get("id").and_then(|id| id.as_str()) {
+												if let Some(tool_id) =
+													tool_call.get("id").and_then(|id| id.as_str())
+												{
 													// Check if there's a matching tool result message
-													let has_matching_result = chat_session.session.messages[i+1..].iter()
-														.any(|result_msg| result_msg.role == "tool" && 
-															result_msg.tool_call_id.as_ref() == Some(&tool_id.to_string()));
-													
+													let has_matching_result = chat_session
+														.session
+														.messages[i + 1..]
+														.iter()
+														.any(|result_msg| {
+															result_msg.role == "tool"
+																&& result_msg.tool_call_id.as_ref()
+																	== Some(&tool_id.to_string())
+														});
+
 													if !has_matching_result {
 														has_incomplete_tool_calls = true;
 														break;
@@ -360,11 +416,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 								break;
 							}
 						}
-						
+
 						if has_incomplete_tool_calls {
 							// Remove everything from the last user message onwards (including incomplete tool_use)
 							chat_session.session.messages.truncate(last_index);
-							log_debug!("Removed incomplete request with tool calls due to cancellation");
+							log_debug!(
+								"Removed incomplete request with tool calls due to cancellation"
+							);
 						} else {
 							// No incomplete tool calls, safe to truncate normally
 							chat_session.session.messages.truncate(last_index);
@@ -411,26 +469,43 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				let result = super::super::context_reduction::perform_context_reduction(
 					&mut chat_session,
 					&current_config,
-					operation_cancelled.clone()
-				).await;
+					operation_cancelled.clone(),
+				)
+				.await;
 
 				if let Err(e) = result {
 					use colored::*;
-					println!("{}: {}", "Error performing context reduction".bright_red(), e);
+					println!(
+						"{}: {}",
+						"Error performing context reduction".bright_red(),
+						e
+					);
 				} else {
 					use colored::*;
-					println!("{}", "\nNext message will be processed through the full layered architecture.".bright_green());
+					println!(
+						"{}",
+						"\nNext message will be processed through the full layered architecture."
+							.bright_green()
+					);
 
 					// Apply EditorConfig formatting to all modified files
-					let formatter_result = super::super::editorconfig_formatter::apply_editorconfig_formatting(None).await;
+					let formatter_result =
+						super::super::editorconfig_formatter::apply_editorconfig_formatting(None)
+							.await;
 					if let Err(e) = formatter_result {
-						println!("{}: {}", "Error applying EditorConfig formatting".bright_red(), e);
+						println!(
+							"{}: {}",
+							"Error applying EditorConfig formatting".bright_red(),
+							e
+						);
 					}
 				}
 				continue;
 			}
 
-			let exit = chat_session.process_command(&input, &current_config, &session_args.role).await?;
+			let exit = chat_session
+				.process_command(&input, &current_config, &session_args.role)
+				.await?;
 			if exit {
 				// First check if it's a session switch command
 				if input.starts_with(SESSION_COMMAND) {
@@ -446,7 +521,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						None,
 						None, // Keep using the default model
 						None, // Use default temperature
-						&current_config
+						&current_config,
 					)?;
 
 					// Replace the current chat session
@@ -457,7 +532,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 					// Print the last few messages for context with colors
 					if !chat_session.session.messages.is_empty() {
-						let last_messages = chat_session.session.messages.iter().rev().take(3).collect::<Vec<_>>();
+						let last_messages = chat_session
+							.session
+							.messages
+							.iter()
+							.rev()
+							.take(3)
+							.collect::<Vec<_>>();
 						use colored::*;
 
 						for msg in last_messages.iter().rev() {
@@ -471,17 +552,22 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 					// Continue with the session
 					continue;
-				} else if input.starts_with(LAYERS_COMMAND) || input.starts_with(DEBUG_COMMAND) || input.starts_with(LOGLEVEL_COMMAND) || input.starts_with(TRUNCATE_COMMAND) {
+				} else if input.starts_with(LAYERS_COMMAND)
+					|| input.starts_with(DEBUG_COMMAND)
+					|| input.starts_with(LOGLEVEL_COMMAND)
+					|| input.starts_with(TRUNCATE_COMMAND)
+				{
 					// This is a command that requires config reload
 					// Reload the configuration
 					match crate::config::Config::load() {
 						Ok(updated_config) => {
 							// Update our current config with the new role-specific config
-							current_config = updated_config.get_merged_config_for_mode(&session_args.role);
+							current_config =
+								updated_config.get_merged_config_for_mode(&session_args.role);
 							// Update thread config for logging macros
 							crate::config::set_thread_config(&current_config);
 							log_info!("Configuration reloaded successfully");
-						},
+						}
 						Err(e) => {
 							log_info!("Error reloading configuration: {}", e);
 						}
@@ -506,7 +592,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// 2. Use the processed input for the main model chat
 
 		// If layers are enabled and this is the first message, process it through layers first
-		if current_config.get_enable_layers(&session_args.role) && !first_message_processed && session_args.role == "developer" {
+		if current_config.get_enable_layers(&session_args.role)
+			&& !first_message_processed
+			&& session_args.role == "developer"
+		{
 			// Set processing state to layers
 			*processing_state.lock().unwrap() = ProcessingState::ProcessingLayers;
 
@@ -526,8 +615,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				&mut chat_session,
 				&current_config,
 				&session_args.role,
-				operation_cancelled.clone()
-			).await;
+				operation_cancelled.clone(),
+			)
+			.await;
 
 			match layered_result {
 				Ok(processed_input) => {
@@ -543,8 +633,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					// Mark that we've processed the first message through layers
 					first_message_processed = true;
 
-					log_info!("{}", "Layers processing complete. Using enhanced input for main model.");
-				},
+					log_info!(
+						"{}",
+						"Layers processing complete. Using enhanced input for main model."
+					);
+				}
 				Err(e) => {
 					// Check for cancellation in error case
 					if ctrl_c_pressed.load(Ordering::SeqCst) {
@@ -553,7 +646,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 					// Print colorful error message and continue with original input
 					use colored::*;
-					println!("\n{}: {}", "Error processing through layers".bright_red(), e);
+					println!(
+						"\n{}: {}",
+						"Error processing through layers".bright_red(),
+						e
+					);
 					println!("{}", "Continuing with original input.".yellow());
 					// Still mark as processed to avoid infinite retry loops
 					first_message_processed = true;
@@ -572,7 +669,13 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Check if we need to truncate the context to stay within token limits
 		let truncate_cancelled = Arc::new(AtomicBool::new(false));
-		check_and_truncate_context(&mut chat_session, &current_config, &session_args.role, truncate_cancelled.clone()).await?;
+		check_and_truncate_context(
+			&mut chat_session,
+			&current_config,
+			&session_args.role,
+			truncate_cancelled.clone(),
+		)
+		.await?;
 
 		// Ensure system message is cached before making API calls
 		let mut system_message_cached = false;
@@ -589,7 +692,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		if !system_message_cached {
 			if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
 				if cached && crate::session::model_supports_caching(&chat_session.model) {
-					log_info!("{}", "System message has been automatically marked for caching to save tokens.");
+					log_info!(
+						"{}",
+						"System message has been automatically marked for caching to save tokens."
+					);
 					// Save the session to ensure the cached status is persisted
 					let _ = chat_session.save();
 				}
@@ -641,8 +747,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			&chat_session.session.messages,
 			&model,
 			temperature,
-			&config_clone
-		).await;
+			&config_clone,
+		)
+		.await;
 
 		// Stop the animation - but use TRUE to stop it, not false!
 		operation_cancelled.store(true, Ordering::SeqCst);
@@ -658,7 +765,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		match api_result {
 			Ok(response) => {
 				// Set processing state based on whether we have tool calls
-				if response.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty()) {
+				if response
+					.tool_calls
+					.as_ref()
+					.is_some_and(|calls| !calls.is_empty())
+				{
 					*processing_state.lock().unwrap() = ProcessingState::ExecutingTools;
 				} else {
 					*processing_state.lock().unwrap() = ProcessingState::ProcessingResponse;
@@ -692,8 +803,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					&mut chat_session,
 					&current_config,
 					&session_args.role,
-					tool_process_cancelled.clone()
-				).await;
+					tool_process_cancelled.clone(),
+				)
+				.await;
 
 				// Update processing state to completed when done
 				*processing_state.lock().unwrap() = ProcessingState::CompletedWithResults;
@@ -703,7 +815,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					use colored::*;
 					println!("\n{}: {}", "Error processing response".bright_red(), e);
 				}
-			},
+			}
 			Err(e) => {
 				// Print colorful error message
 				use colored::*;

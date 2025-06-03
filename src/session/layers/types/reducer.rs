@@ -38,7 +38,7 @@ impl ReducerLayer {
 			input_mode: crate::session::layers::layer_trait::InputMode::Summary, // Use summarized data
 			mcp: crate::session::layers::layer_trait::LayerMcpConfig {
 				server_refs: vec![],
-				allowed_tools: vec![]
+				allowed_tools: vec![],
 			},
 			parameters: std::collections::HashMap::new(),
 		}
@@ -60,9 +60,11 @@ impl Layer for ReducerLayer {
 		input: &str,
 		session: &crate::session::Session,
 		config: &crate::config::Config,
-		operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>
+		operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 	) -> anyhow::Result<LayerResult> {
 		// Process using the base processor
-		self.processor.process(input, session, config, operation_cancelled).await
+		self.processor
+			.process(input, session, config, operation_cancelled)
+			.await
 	}
 }

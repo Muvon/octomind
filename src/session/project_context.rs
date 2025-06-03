@@ -14,11 +14,11 @@
 
 // Project context module for gathering and managing contextual information
 
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::process::Command;
 use anyhow::Result;
 use colored::*;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Represents the contextual information about the project
 #[derive(Debug, Clone)]
@@ -76,7 +76,7 @@ impl ProjectContext {
 					// Debug output
 					// println!("{} {}", "Loaded context from:".green(), path.display());
 					Some(content)
-				},
+				}
 				Err(e) => {
 					println!("{} {}: {}", "Error reading".red(), path.display(), e);
 					None
@@ -171,12 +171,14 @@ impl ProjectContext {
 				} else {
 					// This is an intermediate directory
 					// Use entry API to ensure the directory exists
-					current_map.entry(part_owned.clone()).or_insert_with(|| {
-						TreeNode::Directory(BTreeMap::new())
-					});
+					current_map
+						.entry(part_owned.clone())
+						.or_insert_with(|| TreeNode::Directory(BTreeMap::new()));
 
 					// Now get the mutable reference to continue navigation
-					if let Some(TreeNode::Directory(ref mut dir_map)) = current_map.get_mut(&part_owned) {
+					if let Some(TreeNode::Directory(ref mut dir_map)) =
+						current_map.get_mut(&part_owned)
+					{
 						current_map = dir_map;
 					} else {
 						break; // Should not happen, but break to be safe
@@ -186,10 +188,7 @@ impl ProjectContext {
 		}
 
 		// Convert tree to string representation
-		fn render_tree(
-			node_map: &BTreeMap<String, TreeNode>,
-			prefix: &str
-		) -> String {
+		fn render_tree(node_map: &BTreeMap<String, TreeNode>, prefix: &str) -> String {
 			let mut result = String::new();
 			let entries: Vec<_> = node_map.iter().collect();
 
@@ -207,7 +206,7 @@ impl ProjectContext {
 						if !children.is_empty() {
 							result.push_str(&render_tree(
 								children,
-								&format!("{}{}", prefix, next_prefix)
+								&format!("{}{}", prefix, next_prefix),
 							));
 						}
 					}
@@ -232,9 +231,7 @@ impl ProjectContext {
 			for entry in fs::read_dir(dir)? {
 				let entry = entry?;
 				let path = entry.path();
-				let relative = path.strip_prefix(base)?
-					.to_string_lossy()
-					.to_string();
+				let relative = path.strip_prefix(base)?.to_string_lossy().to_string();
 
 				if path.is_file() {
 					result.push_str(&relative);

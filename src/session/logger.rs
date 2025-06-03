@@ -15,9 +15,9 @@
 // Simplified logging module for Octomind - single JSONL session file with prefixes
 
 use anyhow::Result;
-use std::fs::{OpenOptions};
-use std::path::PathBuf;
+use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Get the session file path for a specific session (unified JSONL approach)
@@ -30,7 +30,10 @@ pub fn get_session_log_file(session_name: &str) -> Result<PathBuf> {
 }
 
 /// Log session summary (first line) - tokens, cost, model info
-pub fn log_session_summary(session_name: &str, session_info: &crate::session::SessionInfo) -> Result<()> {
+pub fn log_session_summary(
+	session_name: &str,
+	session_info: &crate::session::SessionInfo,
+) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
 		"type": "SUMMARY",
@@ -95,7 +98,12 @@ pub fn log_api_response(session_name: &str, response: &serde_json::Value) -> Res
 }
 
 /// Log tool call request
-pub fn log_tool_call(session_name: &str, tool_name: &str, tool_id: &str, parameters: &serde_json::Value) -> Result<()> {
+pub fn log_tool_call(
+	session_name: &str,
+	tool_name: &str,
+	tool_id: &str,
+	parameters: &serde_json::Value,
+) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
 		"type": "TOOL_CALL",
@@ -109,7 +117,11 @@ pub fn log_tool_call(session_name: &str, tool_name: &str, tool_id: &str, paramet
 }
 
 /// Log tool response result
-pub fn log_tool_result(session_name: &str, tool_id: &str, result: &serde_json::Value) -> Result<()> {
+pub fn log_tool_result(
+	session_name: &str,
+	tool_id: &str,
+	result: &serde_json::Value,
+) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
 		"type": "TOOL_RESULT",
@@ -134,7 +146,11 @@ pub fn log_assistant_response(session_name: &str, content: &str) -> Result<()> {
 }
 
 /// Log restoration point for /done command
-pub fn log_restoration_point(session_name: &str, user_message: &str, assistant_response: &str) -> Result<()> {
+pub fn log_restoration_point(
+	session_name: &str,
+	user_message: &str,
+	assistant_response: &str,
+) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
 		"type": "RESTORATION_POINT",
@@ -172,7 +188,10 @@ pub fn log_error(session_name: &str, error: &str) -> Result<()> {
 }
 
 /// Update session summary (overwrite first line)
-pub fn update_session_summary(session_name: &str, session_info: &crate::session::SessionInfo) -> Result<()> {
+pub fn update_session_summary(
+	session_name: &str,
+	session_info: &crate::session::SessionInfo,
+) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 
 	if !log_file.exists() {
@@ -189,7 +208,8 @@ pub fn update_session_summary(session_name: &str, session_info: &crate::session:
 
 	// Add all lines except the first (old summary)
 	for (i, line) in lines.iter().enumerate() {
-		if i > 0 { // Skip first line (old summary)
+		if i > 0 {
+			// Skip first line (old summary)
 			new_content.push_str(line);
 			new_content.push('\n');
 		}

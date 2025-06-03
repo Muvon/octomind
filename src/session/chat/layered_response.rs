@@ -14,13 +14,13 @@
 
 // Layered response processing implementation
 
+use super::animation::show_loading_animation;
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
+use anyhow::Result;
 use colored::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use anyhow::Result;
-use super::animation::show_loading_animation;
 
 // Process a response using the layered architecture
 // Returns the final processed text that should be used as input for the main model
@@ -29,7 +29,7 @@ pub async fn process_layered_response(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	operation_cancelled: Arc<AtomicBool>
+	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<String> {
 	// Debug output
 	// println!("{}", "Using layered processing architecture...".cyan());
@@ -54,7 +54,11 @@ pub async fn process_layered_response(
 	if !system_message_cached {
 		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
 			if cached && crate::session::model_supports_caching(&chat_session.model) {
-				println!("{}", "System message has been automatically marked for caching to save tokens.".yellow());
+				println!(
+					"{}",
+					"System message has been automatically marked for caching to save tokens."
+						.yellow()
+				);
 				// Save the session to ensure the cached status is persisted
 				let _ = chat_session.save();
 			}
@@ -79,8 +83,10 @@ pub async fn process_layered_response(
 		&mut chat_session.session,
 		config,
 		role,
-		operation_cancelled.clone()
-	).await {
+		operation_cancelled.clone(),
+	)
+	.await
+	{
 		Ok(output) => output,
 		Err(e) => {
 			// Stop the animation

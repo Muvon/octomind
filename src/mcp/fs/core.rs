@@ -14,15 +14,15 @@
 
 // Core functionality and shared utilities for file system operations
 
-use std::path::Path;
-use std::collections::HashMap;
-use std::sync::Mutex;
-use serde_json::{json, Value};
-use anyhow::{Result, anyhow};
-use tokio::fs as tokio_fs;
-use lazy_static::lazy_static;
 use super::super::{McpToolCall, McpToolResult};
-use crate::mcp::fs::{file_ops, text_editing, directory, html_converter};
+use crate::mcp::fs::{directory, file_ops, html_converter, text_editing};
+use anyhow::{anyhow, Result};
+use lazy_static::lazy_static;
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+use tokio::fs as tokio_fs;
 
 // Thread-safe lazy initialization of file history using lazy_static
 lazy_static! {
@@ -44,7 +44,9 @@ pub async fn save_file_history(path: &Path) -> Result<()> {
 		// Then update the history with the lock held
 		let file_history = get_file_history();
 		{
-			let mut history_guard = file_history.lock().map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
+			let mut history_guard = file_history
+				.lock()
+				.map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
 
 			let history = history_guard.entry(path_str).or_insert_with(Vec::new);
 
@@ -66,7 +68,9 @@ pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult>
 	// First retrieve the previous content while holding the lock
 	let previous_content = {
 		let file_history = get_file_history();
-		let mut history_guard = file_history.lock().map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
+		let mut history_guard = file_history
+			.lock()
+			.map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
 
 		if let Some(history) = history_guard.get_mut(&path_str) {
 			history.pop()
@@ -83,7 +87,9 @@ pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult>
 		// Get remaining history count
 		let history_remaining = {
 			let file_history = get_file_history();
-			let history_guard = file_history.lock().map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
+			let history_guard = file_history
+				.lock()
+				.map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
 
 			history_guard.get(&path_str).map_or(0, |h| h.len())
 		};
@@ -142,7 +148,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 // Execute a text editor command with cancellation support
 pub async fn execute_text_editor_with_cancellation(
 	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 
@@ -338,7 +344,7 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 // Execute list_files command with cancellation support
 pub async fn execute_list_files_with_cancellation(
 	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 
@@ -360,7 +366,7 @@ pub async fn execute_html2md(call: &McpToolCall) -> Result<McpToolResult> {
 // Execute HTML to Markdown conversion with cancellation support
 pub async fn execute_html2md_with_cancellation(
 	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 

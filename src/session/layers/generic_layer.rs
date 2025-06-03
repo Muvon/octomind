@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::layer_trait::{Layer, LayerConfig, LayerResult};
 use crate::config::Config;
 use crate::session::{Message, Session};
-use super::layer_trait::{Layer, LayerConfig, LayerResult};
 use anyhow::Result;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use async_trait::async_trait;
 use colored::Colorize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Generic layer implementation that can work with any layer configuration
 /// This replaces the need for specific layer type implementations
@@ -33,12 +33,7 @@ impl GenericLayer {
 	}
 
 	/// Create messages for the API based on the layer configuration
-	fn create_messages(
-		&self,
-		input: &str,
-		session: &Session,
-		session_model: &str,
-	) -> Vec<Message> {
+	fn create_messages(&self, input: &str, session: &Session, session_model: &str) -> Vec<Message> {
 		let mut messages = Vec::new();
 
 		// Get the effective system prompt for this layer
@@ -96,9 +91,15 @@ impl GenericLayer {
 			println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
 
 			// Check if this tool is allowed for this layer
-			if !self.config.mcp.allowed_tools.is_empty() &&
-			!self.config.mcp.allowed_tools.contains(&tool_call.tool_name) {
-				println!("{} {} {}", "Tool".red(), tool_call.tool_name, "not allowed for this layer".red());
+			if !self.config.mcp.allowed_tools.is_empty()
+				&& !self.config.mcp.allowed_tools.contains(&tool_call.tool_name)
+			{
+				println!(
+					"{} {} {}",
+					"Tool".red(),
+					tool_call.tool_name,
+					"not allowed for this layer".red()
+				);
 				continue;
 			}
 
@@ -106,11 +107,12 @@ impl GenericLayer {
 			let layer_config = self.config.get_merged_config_for_layer(config);
 
 			// Execute the tool call using the layer-specific configuration
-			match crate::mcp::execute_layer_tool_call(tool_call, &layer_config, &self.config).await {
+			match crate::mcp::execute_layer_tool_call(tool_call, &layer_config, &self.config).await
+			{
 				Ok((result, tool_time_ms)) => {
 					results.push(result);
 					total_tool_time_ms += tool_time_ms;
-				},
+				}
 				Err(e) => {
 					println!("{} {}", "Tool execution error:".red(), e);
 					continue;
@@ -137,7 +139,7 @@ impl Layer for GenericLayer {
 		input: &str,
 		session: &Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>
+		operation_cancelled: Arc<AtomicBool>,
 	) -> Result<LayerResult> {
 		// Track total layer processing time
 		let layer_start = std::time::Instant::now();
@@ -163,14 +165,15 @@ impl Layer for GenericLayer {
 			&messages,
 			&effective_model,
 			self.config.temperature,
-			&layer_config
-		).await?;
+			&layer_config,
+		)
+		.await?;
 
 		let (output, exchange, direct_tool_calls, _finish_reason) = (
 			response.content,
 			response.exchange,
 			response.tool_calls,
-			response.finish_reason
+			response.finish_reason,
 		);
 
 		// Track API time from the exchange
@@ -194,7 +197,8 @@ impl Layer for GenericLayer {
 				let output_clone = output.clone();
 
 				// Execute all tool calls and collect results using layer-specific MCP config
-				let (tool_results, tool_execution_time) = self.execute_layer_tool_calls(tool_calls, config).await?;
+				let (tool_results, tool_execution_time) =
+					self.execute_layer_tool_calls(tool_calls, config).await?;
 				total_tool_time_ms += tool_execution_time;
 
 				// If we have results, send them back to the model to get a final response
@@ -239,8 +243,10 @@ impl Layer for GenericLayer {
 						&layer_session,
 						&effective_model,
 						self.config.temperature,
-						&layer_config
-					).await {
+						&layer_config,
+					)
+					.await
+					{
 						Ok(response) => {
 							// Track API time from the second exchange
 							if let Some(ref usage) = response.exchange.usage {
@@ -266,7 +272,7 @@ impl Layer for GenericLayer {
 								tool_time_ms: total_tool_time_ms,
 								total_time_ms,
 							});
-						},
+						}
 						Err(e) => {
 							println!("{} {}", "Error processing tool results:".red(), e);
 							// Continue with the original output

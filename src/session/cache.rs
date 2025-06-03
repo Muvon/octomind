@@ -14,11 +14,11 @@
 
 // Comprehensive caching system for AI providers that support it
 
-use serde::{Serialize, Deserialize};
-use crate::session::{Message, Session};
-use crate::session::chat::format_number;
 use crate::config::Config;
+use crate::session::chat::format_number;
+use crate::session::{Message, Session};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Cache marker types to track different caching strategies
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -89,18 +89,18 @@ impl CacheManager {
 		// This happens automatically when system prompt is generated with tools.
 		// We don't need to add additional markers here as tool definitions
 		// are part of the system message in most cases.
-		
+
 		// Only mark additional system messages if they exist and have tools
 		if has_tools {
 			// Find the LAST system message - this is where tool definitions are typically included
 			let mut last_system_index = None;
-			
+
 			for (i, msg) in messages.iter().enumerate() {
 				if msg.role == "system" {
 					last_system_index = Some(i);
 				}
 			}
-			
+
 			// If we found a system message and it's not already cached, cache it
 			if let Some(index) = last_system_index {
 				if let Some(msg) = messages.get_mut(index) {
@@ -143,8 +143,8 @@ impl CacheManager {
 
 		if msg.role != "user" && msg.role != "tool" {
 			return Err(anyhow::anyhow!(
-			"Only user and tool messages can be marked for content caching"
-		));
+				"Only user and tool messages can be marked for content caching"
+			));
 		}
 
 		// Count existing content cache markers
@@ -241,10 +241,20 @@ impl CacheManager {
 
 		if time_since_last_cache >= config.cache_timeout_seconds {
 			// Find the LAST tool message, and if none, the LAST user message
-			let target_index = session.messages.iter().enumerate().rev()
+			let target_index = session
+				.messages
+				.iter()
+				.enumerate()
+				.rev()
 				.find(|(_, msg)| msg.role == "tool")
-				.or_else(|| session.messages.iter().enumerate().rev()
-					.find(|(_, msg)| msg.role == "user"))
+				.or_else(|| {
+					session
+						.messages
+						.iter()
+						.enumerate()
+						.rev()
+						.find(|(_, msg)| msg.role == "user")
+				})
 				.map(|(i, _)| i);
 
 			if let Some(index) = target_index {
@@ -267,12 +277,24 @@ impl CacheManager {
 		}
 
 		// Check absolute threshold (only check if > 0, meaning enabled)
-		if config.cache_tokens_threshold > 0 && session.current_non_cached_tokens >= config.cache_tokens_threshold {
+		if config.cache_tokens_threshold > 0
+			&& session.current_non_cached_tokens >= config.cache_tokens_threshold
+		{
 			// Find the LAST tool message, and if none, the LAST user message
-			let target_index = session.messages.iter().enumerate().rev()
+			let target_index = session
+				.messages
+				.iter()
+				.enumerate()
+				.rev()
 				.find(|(_, msg)| msg.role == "tool")
-				.or_else(|| session.messages.iter().enumerate().rev()
-					.find(|(_, msg)| msg.role == "user"))
+				.or_else(|| {
+					session
+						.messages
+						.iter()
+						.enumerate()
+						.rev()
+						.find(|(_, msg)| msg.role == "user")
+				})
 				.map(|(i, _)| i);
 
 			if let Some(index) = target_index {
@@ -319,9 +341,11 @@ impl CacheManager {
 
 		// CRITICAL FIX: Check the threshold immediately after the tool result is added
 		// This ensures we're checking against the most up-to-date token counts
-		
+
 		// Check absolute threshold first (only check if > 0, meaning enabled)
-		if config.cache_tokens_threshold > 0 && session.current_non_cached_tokens >= config.cache_tokens_threshold {
+		if config.cache_tokens_threshold > 0
+			&& session.current_non_cached_tokens >= config.cache_tokens_threshold
+		{
 			match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
 				Ok(true) => return Ok(true),
 				Ok(false) => return Ok(false),
@@ -377,15 +401,15 @@ impl CacheManager {
 		// - input_tokens here are the NON-CACHED input tokens processed by the API
 		// - cached_tokens are the input tokens that were served from cache
 		// - output_tokens are generated tokens (never cached)
-		
+
 		// Total input tokens include both processed and cached
 		let total_input_tokens = input_tokens + cached_tokens;
-		
+
 		// For threshold checking:
 		// - Add ALL input tokens (cached + non-cached) to total tracking
 		// - Add ONLY non-cached input tokens to non-cached tracking
 		// - Output tokens don't count toward cache thresholds (they can't be cached)
-		
+
 		session.current_total_tokens += total_input_tokens;
 		session.current_non_cached_tokens += input_tokens; // Only non-cached input tokens
 	}
@@ -422,7 +446,7 @@ impl CacheManager {
 				match msg.role.as_str() {
 					"system" => system_markers += 1,
 					"user" => content_markers += 1,
-					"tool" => tool_markers += 1,  // FIXED: Actually count tool markers
+					"tool" => tool_markers += 1, // FIXED: Actually count tool markers
 					"assistant" => {
 						// Assistant messages could be either tool-related or content
 						// For now, count as content markers
@@ -445,7 +469,9 @@ impl CacheManager {
 			cache_efficiency: if session.info.input_tokens + session.info.cached_tokens > 0 {
 				// Cache efficiency = percentage of INPUT tokens that came from cache
 				// Only input tokens can be cached, so exclude output tokens from this calculation
-				(session.info.cached_tokens as f64 / (session.info.input_tokens + session.info.cached_tokens) as f64) * 100.0
+				(session.info.cached_tokens as f64
+					/ (session.info.input_tokens + session.info.cached_tokens) as f64)
+					* 100.0
 			} else {
 				0.0
 			},
@@ -481,7 +507,10 @@ impl CacheManager {
 
 		// Check if message exists
 		if message_index >= session.messages.len() {
-			return Err(anyhow::anyhow!("Message index {} is out of bounds", message_index));
+			return Err(anyhow::anyhow!(
+				"Message index {} is out of bounds",
+				message_index
+			));
 		}
 
 		// Check if already cached
@@ -618,8 +647,8 @@ pub struct CacheStatistics {
 	pub system_markers: usize,
 	pub tool_markers: usize,
 	pub total_cached_tokens: u64,
-	pub total_input_tokens: u64,   // Total input tokens (cacheable)
-	pub total_output_tokens: u64,  // Total output tokens (not cacheable)
+	pub total_input_tokens: u64,  // Total input tokens (cacheable)
+	pub total_output_tokens: u64, // Total output tokens (not cacheable)
 	pub current_non_cached_tokens: u64,
 	pub current_total_tokens: u64,
 	pub cache_efficiency: f64, // Percentage of INPUT tokens that were cached
@@ -661,11 +690,15 @@ impl CacheStatistics {
 				self.cache_efficiency.to_string().bright_green()
 			));
 		} else {
-			output.push_str(&format!("{}\n", "No cached tokens recorded yet".bright_black()));
+			output.push_str(&format!(
+				"{}\n",
+				"No cached tokens recorded yet".bright_black()
+			));
 		}
 
 		if self.current_total_tokens > 0 {
-			let non_cached_pct = (self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
+			let non_cached_pct =
+				(self.current_non_cached_tokens as f64 / self.current_total_tokens as f64) * 100.0;
 			let cached_pct = 100.0 - non_cached_pct;
 			output.push_str(&format!(
 				"Current session input: {:.1}% cached, {:.1}% processed ({}/{} input tokens)\n",
@@ -746,8 +779,8 @@ mod tests {
 		assert!(result.is_ok());
 		assert!(result.unwrap());
 		assert!(!session.messages[0].cached); // First marker removed
-		assert!(session.messages[2].cached);  // Second marker remains
-		assert!(session.messages[4].cached);  // Third marker added
+		assert!(session.messages[2].cached); // Second marker remains
+		assert!(session.messages[4].cached); // Third marker added
 	}
 
 	#[test]
@@ -770,7 +803,7 @@ mod tests {
 		assert!(manager.validate_cache_support("anthropic", "claude-3-5-haiku"));
 		assert!(!manager.validate_cache_support("anthropic", "claude-3-opus")); // Only 3.5 models
 
-		// Test direct Google (only Gemini 1.5 models)  
+		// Test direct Google (only Gemini 1.5 models)
 		assert!(manager.validate_cache_support("google", "gemini-1.5-pro"));
 		assert!(!manager.validate_cache_support("google", "gemini-pro")); // Only 1.5 models
 

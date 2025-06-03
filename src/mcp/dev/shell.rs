@@ -14,12 +14,12 @@
 
 // Shell execution functionality for the Developer MCP provider
 
-use std::process::Command;
+use super::super::{McpFunction, McpToolCall, McpToolResult};
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::Write;
-use serde_json::{json, Value};
-use anyhow::{Result, anyhow};
-use super::super::{McpToolCall, McpToolResult, McpFunction};
+use std::process::Command;
 
 // Function to add command to shell history
 fn add_to_shell_history(command: &str) -> Result<()> {
@@ -122,7 +122,7 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 // Execute a shell command with cancellation support
 pub async fn execute_shell_command_with_cancellation(
 	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 
@@ -163,13 +163,9 @@ pub async fn execute_shell_command_with_cancellation(
 		let _ = add_to_shell_history(&command_clone);
 
 		let output = if cfg!(target_os = "windows") {
-			Command::new("cmd")
-				.args(["/C", &command_clone])
-				.output()
+			Command::new("cmd").args(["/C", &command_clone]).output()
 		} else {
-			Command::new("sh")
-				.args(["-c", &command_clone])
-				.output()
+			Command::new("sh").args(["-c", &command_clone]).output()
 		};
 
 		match output {
@@ -183,9 +179,12 @@ pub async fn execute_shell_command_with_cancellation(
 				} else if stdout.is_empty() {
 					stderr
 				} else {
-					format!("{}
+					format!(
+						"{}
 
-Error: {}", stdout, stderr)
+Error: {}",
+						stdout, stderr
+					)
 				};
 
 				// Add detailed execution results including status code
@@ -193,19 +192,19 @@ Error: {}", stdout, stderr)
 				let success = output.status.success();
 
 				json!({
-					"success": success,
-					"output": combined,
-					"code": status_code,
-					"parameters": {
-						"command": command_clone
-					},
-					"message": if success {
-					format!("Command executed successfully with exit code {}", status_code)
-				} else {
-					format!("Command failed with exit code {}", status_code)
-				}
-			})
-			},
+						"success": success,
+						"output": combined,
+						"code": status_code,
+						"parameters": {
+							"command": command_clone
+						},
+						"message": if success {
+						format!("Command executed successfully with exit code {}", status_code)
+					} else {
+						format!("Command failed with exit code {}", status_code)
+					}
+				})
+			}
 			Err(e) => json!({
 				"success": false,
 				"output": format!("Failed to execute command: {}", e),
@@ -216,7 +215,8 @@ Error: {}", stdout, stderr)
 				"message": format!("Failed to execute command: {}", e)
 			}),
 		}
-	}).await?;
+	})
+	.await?;
 
 	Ok(McpToolResult {
 		tool_name: "shell".to_string(),

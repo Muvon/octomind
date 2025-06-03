@@ -14,15 +14,15 @@
 
 // HTML to Markdown converter module
 
-use std::path::Path;
-use serde_json::{json, Value};
-use anyhow::{Result, anyhow};
-use tokio::fs as tokio_fs;
 use super::super::{McpToolCall, McpToolResult};
+use anyhow::{anyhow, Result};
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use reqwest;
+use serde_json::{json, Value};
+use std::path::Path;
+use tokio::fs as tokio_fs;
 use url::Url;
 
 // Execute HTML to Markdown conversion
@@ -38,10 +38,11 @@ pub async fn execute_html2md(call: &McpToolCall) -> Result<McpToolResult> {
 		Value::String(source) => {
 			// Single source conversion
 			convert_single_html_to_md(call, source).await
-		},
+		}
 		Value::Array(sources) => {
 			// Multiple sources conversion
-			let source_strings: Result<Vec<String>, _> = sources.iter()
+			let source_strings: Result<Vec<String>, _> = sources
+				.iter()
 				.map(|s| s.as_str().ok_or_else(|| anyhow!("Invalid source in array")))
 				.map(|r| r.map(|s| s.to_string()))
 				.collect();
@@ -50,8 +51,10 @@ pub async fn execute_html2md(call: &McpToolCall) -> Result<McpToolResult> {
 				Ok(source_strs) => convert_multiple_html_to_md(call, &source_strs).await,
 				Err(e) => Err(e),
 			}
-		},
-		_ => Err(anyhow!("'sources' parameter must be a string or array of strings")),
+		}
+		_ => Err(anyhow!(
+			"'sources' parameter must be a string or array of strings"
+		)),
 	}
 }
 
@@ -64,38 +67,39 @@ async fn convert_single_html_to_md(call: &McpToolCall, source: &str) -> Result<M
 		tool_name: "html2md".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"success": true,
-			"conversions": [{
-			"source": source,
-			"type": source_type,
-			"markdown": markdown,
-			"size": markdown.len()
-		}],
-		"count": 1
-	}),
+				"success": true,
+				"conversions": [{
+				"source": source,
+				"type": source_type,
+				"markdown": markdown,
+				"size": markdown.len()
+			}],
+			"count": 1
+		}),
 	})
 }
 
 // Convert multiple HTML sources to Markdown
-async fn convert_multiple_html_to_md(call: &McpToolCall, sources: &[String]) -> Result<McpToolResult> {
+async fn convert_multiple_html_to_md(
+	call: &McpToolCall,
+	sources: &[String],
+) -> Result<McpToolResult> {
 	let mut conversions = Vec::with_capacity(sources.len());
 	let mut failures = Vec::new();
 
 	for source in sources {
 		match fetch_html_content(source).await {
-			Ok((html_content, source_type)) => {
-				match html_to_markdown(&html_content) {
-					Ok(markdown) => {
-						conversions.push(json!({
-							"source": source,
-							"type": source_type,
-							"markdown": markdown,
-							"size": markdown.len()
-						}));
-					},
-					Err(e) => {
-						failures.push(format!("Failed to convert {} to markdown: {}", source, e));
-					}
+			Ok((html_content, source_type)) => match html_to_markdown(&html_content) {
+				Ok(markdown) => {
+					conversions.push(json!({
+						"source": source,
+						"type": source_type,
+						"markdown": markdown,
+						"size": markdown.len()
+					}));
+				}
+				Err(e) => {
+					failures.push(format!("Failed to convert {} to markdown: {}", source, e));
 				}
 			},
 			Err(e) => {
@@ -130,7 +134,9 @@ async fn fetch_html_content(source: &str) -> Result<(String, &'static str)> {
 			Ok((html, "url"))
 		} else if url.scheme() == "file" {
 			// Handle file:// URLs
-			let path = url.to_file_path().map_err(|_| anyhow!("Invalid file URL: {}", source))?;
+			let path = url
+				.to_file_path()
+				.map_err(|_| anyhow!("Invalid file URL: {}", source))?;
 			let html = tokio_fs::read_to_string(&path).await?;
 			Ok((html, "file"))
 		} else {
@@ -173,7 +179,7 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 			for child in node.children.borrow().iter() {
 				walk_node(child, markdown, depth)?;
 			}
-		},
+		}
 		NodeData::Element { name, attrs, .. } => {
 			let tag_name = &name.local;
 			let attrs = attrs.borrow();
@@ -183,60 +189,61 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 					markdown.push_str("\n# ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"h2" => {
 					markdown.push_str("\n## ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"h3" => {
 					markdown.push_str("\n### ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"h4" => {
 					markdown.push_str("\n#### ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"h5" => {
 					markdown.push_str("\n##### ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"h6" => {
 					markdown.push_str("\n###### ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"p" => {
 					markdown.push('\n');
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"strong" | "b" => {
 					markdown.push_str("**");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("**");
-				},
+				}
 				"em" | "i" => {
 					markdown.push('*');
 					process_children(node, markdown, depth)?;
 					markdown.push('*');
-				},
+				}
 				"code" => {
 					markdown.push('`');
 					process_children(node, markdown, depth)?;
 					markdown.push('`');
-				},
+				}
 				"pre" => {
 					markdown.push_str("\n```\n");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n```\n\n");
-				},
+				}
 				"a" => {
 					// Find href attribute
-					let href = attrs.iter()
+					let href = attrs
+						.iter()
 						.find(|attr| &*attr.name.local == "href")
 						.map(|attr| attr.value.to_string());
 
@@ -247,17 +254,17 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 					} else {
 						process_children(node, markdown, depth)?;
 					}
-				},
+				}
 				"ul" => {
 					markdown.push('\n');
 					process_children(node, markdown, depth)?;
 					markdown.push('\n');
-				},
+				}
 				"ol" => {
 					markdown.push('\n');
 					process_children(node, markdown, depth)?;
 					markdown.push('\n');
-				},
+				}
 				"li" => {
 					if depth > 0 {
 						for _ in 0..(depth - 1) {
@@ -267,24 +274,26 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 					markdown.push_str("- ");
 					process_children(node, markdown, depth + 1)?;
 					markdown.push('\n');
-				},
+				}
 				"blockquote" => {
 					markdown.push_str("\n> ");
 					process_children(node, markdown, depth)?;
 					markdown.push_str("\n\n");
-				},
+				}
 				"br" => {
 					markdown.push_str("  \n");
-				},
+				}
 				"hr" => {
 					markdown.push_str("\n---\n\n");
-				},
+				}
 				"img" => {
 					// Find src and alt attributes
-					let src = attrs.iter()
+					let src = attrs
+						.iter()
 						.find(|attr| &*attr.name.local == "src")
 						.map(|attr| attr.value.to_string());
-					let alt = attrs.iter()
+					let alt = attrs
+						.iter()
 						.find(|attr| &*attr.name.local == "alt")
 						.map(|attr| attr.value.to_string())
 						.unwrap_or_else(|| "".to_string());
@@ -292,17 +301,17 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 					if let Some(url) = src {
 						markdown.push_str(&format!("![{}]({})", alt, url));
 					}
-				},
+				}
 				// Skip common non-content elements
 				"script" | "style" | "head" | "meta" | "link" | "title" => {
 					// Don't process children of these elements
-				},
+				}
 				// For all other elements, just process children
 				_ => {
 					process_children(node, markdown, depth)?;
 				}
 			}
-		},
+		}
 		NodeData::Text { contents } => {
 			let text = contents.borrow().to_string();
 			// Clean up whitespace in text nodes
@@ -310,7 +319,7 @@ fn walk_node(handle: &Handle, markdown: &mut String, depth: usize) -> Result<()>
 			if !cleaned_text.is_empty() {
 				markdown.push_str(cleaned_text);
 			}
-		},
+		}
 		_ => {
 			// For other node types (comments, etc.), process children
 			for child in node.children.borrow().iter() {

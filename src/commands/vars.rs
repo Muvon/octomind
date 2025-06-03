@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::session::helper_functions::get_all_placeholders;
 use anyhow::Result;
 use clap::Args;
 use colored::*;
-use std::env;
 use octomind::config::Config;
-use crate::session::helper_functions::get_all_placeholders;
+use std::env;
 
 #[derive(Args)]
 pub struct VarsArgs {
@@ -60,11 +60,15 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 					println!("  {}", value.trim());
 				} else {
 					// Long value, show truncated with meaningful preview
-					println!("  {}", format!("({} lines, {} tokens)", lines.len(), tokens).dimmed());
+					println!(
+						"  {}",
+						format!("({} lines, {} tokens)", lines.len(), tokens).dimmed()
+					);
 
 					// Show first 3 non-empty lines as preview
 					let mut preview_lines = Vec::new();
-					for line in lines.iter().take(10) { // Look at first 10 lines to find 3 non-empty ones
+					for line in lines.iter().take(10) {
+						// Look at first 10 lines to find 3 non-empty ones
 						let trimmed = line.trim();
 						if !trimmed.is_empty() && preview_lines.len() < 3 {
 							preview_lines.push(trimmed);
@@ -112,7 +116,11 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 
 	if !args.expand && !args.preview {
 		println!();
-		println!("{}", "Use --preview (-p) to see preview values or --expand (-e) to see full values.".yellow());
+		println!(
+			"{}",
+			"Use --preview (-p) to see preview values or --expand (-e) to see full values."
+				.yellow()
+		);
 	}
 
 	Ok(())

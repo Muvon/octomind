@@ -14,15 +14,19 @@
 
 // File operations module - handling file viewing, creation, and basic manipulation
 
-use std::path::Path;
-use serde_json::json;
-use anyhow::{Result, anyhow};
-use tokio::fs as tokio_fs;
 use super::super::{McpToolCall, McpToolResult};
 use super::core::detect_language;
+use anyhow::{anyhow, Result};
+use serde_json::json;
+use std::path::Path;
+use tokio::fs as tokio_fs;
 
 // View the content of a file following Anthropic specification - with line numbers and view_range support
-pub async fn view_file_spec(call: &McpToolCall, path: &Path, view_range: Option<(usize, i64)>) -> Result<McpToolResult> {
+pub async fn view_file_spec(
+	call: &McpToolCall,
+	path: &Path,
+	view_range: Option<(usize, i64)>,
+) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
 			tool_name: "text_editor".to_string(),
@@ -37,12 +41,22 @@ pub async fn view_file_spec(call: &McpToolCall, path: &Path, view_range: Option<
 	if path.is_dir() {
 		// List directory contents
 		let mut entries = Vec::new();
-		let read_dir = tokio_fs::read_dir(path).await.map_err(|e| anyhow!("Permission denied. Cannot read directory: {}", e))?;
+		let read_dir = tokio_fs::read_dir(path)
+			.await
+			.map_err(|e| anyhow!("Permission denied. Cannot read directory: {}", e))?;
 		let mut dir_entries = read_dir;
 
-		while let Some(entry) = dir_entries.next_entry().await.map_err(|e| anyhow!("Error reading directory: {}", e))? {
+		while let Some(entry) = dir_entries
+			.next_entry()
+			.await
+			.map_err(|e| anyhow!("Error reading directory: {}", e))?
+		{
 			let name = entry.file_name().to_string_lossy().to_string();
-			let is_dir = entry.file_type().await.map_err(|e| anyhow!("Error reading file type: {}", e))?.is_dir();
+			let is_dir = entry
+				.file_type()
+				.await
+				.map_err(|e| anyhow!("Error reading file type: {}", e))?
+				.is_dir();
 			entries.push(if is_dir { format!("{}/", name) } else { name });
 		}
 
@@ -71,8 +85,11 @@ pub async fn view_file_spec(call: &McpToolCall, path: &Path, view_range: Option<
 	}
 
 	// Check file size to avoid loading very large files
-	let metadata = tokio_fs::metadata(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
-	if metadata.len() > 1024 * 1024 * 5 {  // 5MB limit
+	let metadata = tokio_fs::metadata(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	if metadata.len() > 1024 * 1024 * 5 {
+		// 5MB limit
 		return Ok(McpToolResult {
 			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
@@ -84,12 +101,18 @@ pub async fn view_file_spec(call: &McpToolCall, path: &Path, view_range: Option<
 	}
 
 	// Read the file content
-	let content = tokio_fs::read_to_string(path).await.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let content = tokio_fs::read_to_string(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	let lines: Vec<&str> = content.lines().collect();
 
 	let (content_with_numbers, displayed_lines) = if let Some((start, end)) = view_range {
 		// Handle view_range parameter
-		let start_idx = if start == 0 { 0 } else { start.saturating_sub(1) }; // Convert to 0-indexed
+		let start_idx = if start == 0 {
+			0
+		} else {
+			start.saturating_sub(1)
+		}; // Convert to 0-indexed
 		let end_idx = if end == -1 {
 			lines.len()
 		} else {
@@ -140,7 +163,11 @@ pub async fn view_file_spec(call: &McpToolCall, path: &Path, view_range: Option<
 }
 
 // Create a new file following Anthropic specification
-pub async fn create_file_spec(call: &McpToolCall, path: &Path, content: &str) -> Result<McpToolResult> {
+pub async fn create_file_spec(
+	call: &McpToolCall,
+	path: &Path,
+	content: &str,
+) -> Result<McpToolResult> {
 	// Check if file already exists
 	if path.exists() {
 		return Ok(McpToolResult {
@@ -156,12 +183,16 @@ pub async fn create_file_spec(call: &McpToolCall, path: &Path, content: &str) ->
 	// Create parent directories if they don't exist
 	if let Some(parent) = path.parent() {
 		if !parent.exists() {
-			tokio_fs::create_dir_all(parent).await.map_err(|e| anyhow!("Permission denied. Cannot create directories: {}", e))?;
+			tokio_fs::create_dir_all(parent)
+				.await
+				.map_err(|e| anyhow!("Permission denied. Cannot create directories: {}", e))?;
 		}
 	}
 
 	// Write the content to the file
-	tokio_fs::write(path, content).await.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	tokio_fs::write(path, content)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
@@ -199,12 +230,13 @@ pub async fn view_many_files_spec(call: &McpToolCall, paths: &[String]) -> Resul
 		// Check file size - avoid loading very large files
 		let metadata = match tokio_fs::metadata(path).await {
 			Ok(meta) => {
-				if meta.len() > 1024 * 1024 * 5 { // 5MB limit
+				if meta.len() > 1024 * 1024 * 5 {
+					// 5MB limit
 					failures.push(format!("File too large (>5MB): {}", path_display));
 					continue;
 				}
 				meta
-			},
+			}
 			Err(e) => {
 				failures.push(format!("Cannot read metadata for {}: {}", path_display, e));
 				continue;
@@ -231,9 +263,7 @@ pub async fn view_many_files_spec(call: &McpToolCall, paths: &[String]) -> Resul
 		};
 
 		// Get language from extension for syntax highlighting
-		let ext = path.extension()
-			.and_then(|e| e.to_str())
-			.unwrap_or("");
+		let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
 		// Add line numbers to content
 		let lines: Vec<&str> = content.lines().collect();
@@ -295,12 +325,13 @@ pub async fn view_many_files(call: &McpToolCall, paths: &[String]) -> Result<Mcp
 		// Check file size - avoid loading very large files
 		let metadata = match tokio_fs::metadata(path).await {
 			Ok(meta) => {
-				if meta.len() > 1024 * 1024 * 5 { // 5MB limit
+				if meta.len() > 1024 * 1024 * 5 {
+					// 5MB limit
 					failures.push(format!("File too large (>5MB): {}", path_display));
 					continue;
 				}
 				meta
-			},
+			}
 			Err(e) => {
 				failures.push(format!("Cannot read metadata for {}: {}", path_display, e));
 				continue;
@@ -327,9 +358,7 @@ pub async fn view_many_files(call: &McpToolCall, paths: &[String]) -> Result<Mcp
 		};
 
 		// Get language from extension for syntax highlighting
-		let ext = path.extension()
-			.and_then(|e| e.to_str())
-			.unwrap_or("");
+		let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
 		// Add line numbers to content
 		let lines: Vec<&str> = content.lines().collect();

@@ -14,17 +14,17 @@
 
 // MCP Protocol Implementation
 
-use serde::{Serialize, Deserialize};
-use serde_json::Value;
-use anyhow::Result;
 use crate::log_debug;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::io::Write;
 use uuid;
 
 pub mod dev;
 pub mod fs;
-pub mod server;
 pub mod process;
+pub mod server;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCall {
@@ -60,10 +60,11 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 		let category = guess_tool_category(&result.tool_name);
 
 		// Create a horizontal separator with tool name and category
-		let title = format!(" {} | {} ",
+		let title = format!(
+			" {} | {} ",
 			result.tool_name.bright_cyan(),
-			category.bright_blue())
-		;
+			category.bright_blue()
+		);
 
 		let separator_length = 70.max(title.len() + 4);
 		let dashes = "─".repeat(separator_length - title.len());
@@ -92,7 +93,11 @@ pub fn format_tool_results(results: &[McpToolResult]) -> String {
 					} else {
 						value_str
 					};
-					param_parts.push(format!("{}: {}", key.bright_black(), displayed_value.bright_black()));
+					param_parts.push(format!(
+						"{}: {}",
+						key.bright_black(),
+						displayed_value.bright_black()
+					));
 				}
 
 				if !param_parts.is_empty() && param_parts.join(", ").len() < 60 {
@@ -214,17 +219,29 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	}
 
 	// Get enabled servers from the merged config (which should already be filtered by server_refs)
-	let enabled_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.values().cloned().collect();
-	crate::log_debug!("Found {} enabled servers in merged config", enabled_servers.len());
+	let enabled_servers: Vec<crate::config::McpServerConfig> =
+		config.mcp.servers.values().cloned().collect();
+	crate::log_debug!(
+		"Found {} enabled servers in merged config",
+		enabled_servers.len()
+	);
 
 	// DEBUG: Print all server details
 	for server in &enabled_servers {
-		crate::log_debug!("MCP Server: {} - Type: {:?}, Tools: {:?}",
-			server.name, server.server_type, server.tools);
+		crate::log_debug!(
+			"MCP Server: {} - Type: {:?}, Tools: {:?}",
+			server.name,
+			server.server_type,
+			server.tools
+		);
 	}
 
 	for server in enabled_servers {
-		crate::log_debug!("Processing MCP server: {} (type: {:?})", server.name, server.server_type);
+		crate::log_debug!(
+			"Processing MCP server: {} (type: {:?})",
+			server.name,
+			server.server_type
+		);
 
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
@@ -238,7 +255,11 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.filter(|func| server.tools.contains(&func.name))
 						.collect()
 				};
-				crate::log_debug!("Developer server '{}' provided {} functions", server.name, server_functions.len());
+				crate::log_debug!(
+					"Developer server '{}' provided {} functions",
+					server.name,
+					server_functions.len()
+				);
 				for func in &server_functions {
 					crate::log_debug!("  - Developer tool: {}", func.name);
 				}
@@ -255,7 +276,11 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.filter(|func| server.tools.contains(&func.name))
 						.collect()
 				};
-				crate::log_debug!("Filesystem server '{}' provided {} functions", server.name, server_functions.len());
+				crate::log_debug!(
+					"Filesystem server '{}' provided {} functions",
+					server.name,
+					server_functions.len()
+				);
 				for func in &server_functions {
 					crate::log_debug!("  - Filesystem tool: {}", func.name);
 				}
@@ -263,7 +288,10 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 			}
 			crate::config::McpServerType::External => {
 				// Handle external servers
-				crate::log_debug!("Attempting to get functions from external server: {}", server.name);
+				crate::log_debug!(
+					"Attempting to get functions from external server: {}",
+					server.name
+				);
 				match server::get_server_functions(&server).await {
 					Ok(server_functions) => {
 						let filtered_functions = if server.tools.is_empty() {
@@ -276,14 +304,22 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 								.filter(|func| server.tools.contains(&func.name))
 								.collect()
 						};
-						crate::log_debug!("External server '{}' provided {} functions", server.name, filtered_functions.len());
+						crate::log_debug!(
+							"External server '{}' provided {} functions",
+							server.name,
+							filtered_functions.len()
+						);
 						for func in &filtered_functions {
 							crate::log_debug!("  - External tool: {}", func.name);
 						}
 						functions.extend(filtered_functions);
 					}
 					Err(e) => {
-						crate::log_debug!("Failed to get functions from external server '{}': {}", server.name, e);
+						crate::log_debug!(
+							"Failed to get functions from external server '{}': {}",
+							server.name,
+							e
+						);
 						// Continue with other servers instead of failing completely
 					}
 				}
@@ -299,7 +335,10 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 }
 
 // Execute a tool call
-pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Config) -> Result<(McpToolResult, u64)> {
+pub async fn execute_tool_call(
+	call: &McpToolCall,
+	config: &crate::config::Config,
+) -> Result<(McpToolResult, u64)> {
 	execute_tool_call_with_cancellation(call, config, None).await
 }
 
@@ -307,13 +346,16 @@ pub async fn execute_tool_call(call: &McpToolCall, config: &crate::config::Confi
 pub async fn execute_tool_call_with_cancellation(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(McpToolResult, u64)> {
 	use std::sync::atomic::Ordering;
 
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
-	log_debug!("Debug: MCP has {} servers configured", config.mcp.servers.len());
+	log_debug!(
+		"Debug: MCP has {} servers configured",
+		config.mcp.servers.len()
+	);
 	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
 		log_debug!("Debug: Tool parameters: {}", params);
 	}
@@ -333,7 +375,8 @@ pub async fn execute_tool_call_with_cancellation(
 	// Track tool execution time
 	let tool_start = std::time::Instant::now();
 
-	let result = try_execute_tool_call_with_cancellation(call, config, cancellation_token.clone()).await;
+	let result =
+		try_execute_tool_call_with_cancellation(call, config, cancellation_token.clone()).await;
 
 	// Calculate tool execution time
 	let tool_duration = tool_start.elapsed();
@@ -349,7 +392,7 @@ pub async fn execute_tool_call_with_cancellation(
 async fn try_execute_tool_call_with_cancellation(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 
@@ -368,7 +411,8 @@ async fn try_execute_tool_call_with_cancellation(
 	// CRITICAL FIX: Build a tool-to-server mapping to route tools to the correct server
 	// This prevents sending tools to servers that don't support them
 	let mut tool_to_server_map = std::collections::HashMap::new();
-	let available_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.values().cloned().collect();
+	let available_servers: Vec<crate::config::McpServerConfig> =
+		config.mcp.servers.values().cloned().collect();
 
 	// Map internal tools to their appropriate server types
 	for server in &available_servers {
@@ -401,8 +445,12 @@ async fn try_execute_tool_call_with_cancellation(
 
 	// STEP 1: Try to find the exact server that handles this tool
 	if let Some(target_server) = tool_to_server_map.get(&call.tool_name) {
-		crate::log_debug!("Found direct server mapping for tool '{}' -> server '{}' ({:?})",
-			call.tool_name, target_server.name, target_server.server_type);
+		crate::log_debug!(
+			"Found direct server mapping for tool '{}' -> server '{}' ({:?})",
+			call.tool_name,
+			target_server.name,
+			target_server.server_type
+		);
 
 		// Check for cancellation before execution
 		if let Some(ref token) = cancellation_token {
@@ -413,47 +461,65 @@ async fn try_execute_tool_call_with_cancellation(
 
 		// Execute on the target server
 		match target_server.server_type {
-			crate::config::McpServerType::Developer => {
-				match call.tool_name.as_str() {
-					"shell" => {
-						crate::log_debug!("Executing shell command via developer server");
-						let mut result = dev::execute_shell_command_with_cancellation(call, cancellation_token.clone()).await?;
-						result.tool_id = call.tool_id.clone();
-						return handle_large_response(result, config);
-					}
-					_ => {
-						return Err(anyhow::anyhow!("Tool '{}' not implemented in developer server", call.tool_name));
-					}
+			crate::config::McpServerType::Developer => match call.tool_name.as_str() {
+				"shell" => {
+					crate::log_debug!("Executing shell command via developer server");
+					let mut result = dev::execute_shell_command_with_cancellation(
+						call,
+						cancellation_token.clone(),
+					)
+					.await?;
+					result.tool_id = call.tool_id.clone();
+					return handle_large_response(result, config);
 				}
-			}
-			crate::config::McpServerType::Filesystem => {
-				match call.tool_name.as_str() {
-					"text_editor" => {
-						crate::log_debug!("Executing text_editor via filesystem server");
-						let mut result = fs::execute_text_editor_with_cancellation(call, cancellation_token.clone()).await?;
-						result.tool_id = call.tool_id.clone();
-						return Ok(result);
-					}
-					"html2md" => {
-						crate::log_debug!("Executing html2md via filesystem server");
-						let mut result = fs::execute_html2md_with_cancellation(call, cancellation_token.clone()).await?;
-						result.tool_id = call.tool_id.clone();
-						return Ok(result);
-					}
-					"list_files" => {
-						crate::log_debug!("Executing list_files via filesystem server");
-						let mut result = fs::execute_list_files_with_cancellation(call, cancellation_token.clone()).await?;
-						result.tool_id = call.tool_id.clone();
-						return Ok(result);
-					}
-					_ => {
-						return Err(anyhow::anyhow!("Tool '{}' not implemented in filesystem server", call.tool_name));
-					}
+				_ => {
+					return Err(anyhow::anyhow!(
+						"Tool '{}' not implemented in developer server",
+						call.tool_name
+					));
 				}
-			}
+			},
+			crate::config::McpServerType::Filesystem => match call.tool_name.as_str() {
+				"text_editor" => {
+					crate::log_debug!("Executing text_editor via filesystem server");
+					let mut result =
+						fs::execute_text_editor_with_cancellation(call, cancellation_token.clone())
+							.await?;
+					result.tool_id = call.tool_id.clone();
+					return Ok(result);
+				}
+				"html2md" => {
+					crate::log_debug!("Executing html2md via filesystem server");
+					let mut result =
+						fs::execute_html2md_with_cancellation(call, cancellation_token.clone())
+							.await?;
+					result.tool_id = call.tool_id.clone();
+					return Ok(result);
+				}
+				"list_files" => {
+					crate::log_debug!("Executing list_files via filesystem server");
+					let mut result =
+						fs::execute_list_files_with_cancellation(call, cancellation_token.clone())
+							.await?;
+					result.tool_id = call.tool_id.clone();
+					return Ok(result);
+				}
+				_ => {
+					return Err(anyhow::anyhow!(
+						"Tool '{}' not implemented in filesystem server",
+						call.tool_name
+					));
+				}
+			},
 			crate::config::McpServerType::External => {
 				// This shouldn't happen with direct mapping, but handle it
-				match server::execute_tool_call_with_cancellation(call, target_server, cancellation_token.clone()).await {
+				match server::execute_tool_call_with_cancellation(
+					call,
+					target_server,
+					cancellation_token.clone(),
+				)
+				.await
+				{
 					Ok(mut result) => {
 						result.tool_id = call.tool_id.clone();
 						return handle_large_response(result, config);
@@ -467,7 +533,8 @@ async fn try_execute_tool_call_with_cancellation(
 	}
 
 	// STEP 2: If no direct mapping found, try external servers that might support this tool
-	let mut _last_error = anyhow::anyhow!("No servers available to process tool '{}'", call.tool_name);
+	let mut _last_error =
+		anyhow::anyhow!("No servers available to process tool '{}'", call.tool_name);
 	let mut servers_checked = Vec::new();
 
 	for server in available_servers {
@@ -489,21 +556,44 @@ async fn try_execute_tool_call_with_cancellation(
 
 			// Check if this server can handle the tool (if tool filtering is enabled)
 			if !server.tools.is_empty() && !server.tools.contains(&call.tool_name) {
-				crate::log_debug!("External server '{}' skipped - tool '{}' not in allowed tools: {:?}",
-					server.name, call.tool_name, server.tools);
+				crate::log_debug!(
+					"External server '{}' skipped - tool '{}' not in allowed tools: {:?}",
+					server.name,
+					call.tool_name,
+					server.tools
+				);
 				continue; // Skip this server if it doesn't handle this tool
 			}
 
 			// Try to execute the tool on this external server
-			crate::log_debug!("Trying external server '{}' for tool '{}'", server.name, call.tool_name);
-			match server::execute_tool_call_with_cancellation(call, &server, cancellation_token.clone()).await {
+			crate::log_debug!(
+				"Trying external server '{}' for tool '{}'",
+				server.name,
+				call.tool_name
+			);
+			match server::execute_tool_call_with_cancellation(
+				call,
+				&server,
+				cancellation_token.clone(),
+			)
+			.await
+			{
 				Ok(mut result) => {
-					crate::log_debug!("Successfully executed tool '{}' on external server '{}'", call.tool_name, server.name);
+					crate::log_debug!(
+						"Successfully executed tool '{}' on external server '{}'",
+						call.tool_name,
+						server.name
+					);
 					result.tool_id = call.tool_id.clone();
 					return handle_large_response(result, config);
 				}
 				Err(err) => {
-					crate::log_debug!("External server '{}' failed to execute tool '{}': {}", server.name, call.tool_name, err);
+					crate::log_debug!(
+						"External server '{}' failed to execute tool '{}': {}",
+						server.name,
+						call.tool_name,
+						err
+					);
 					_last_error = err;
 					// Continue trying other external servers
 				}
@@ -512,10 +602,16 @@ async fn try_execute_tool_call_with_cancellation(
 	}
 
 	// If we get here, no server could handle the tool call
-	Err(anyhow::anyhow!("Unknown tool '{}'. Available tools: {}. Checked servers: {}",
+	Err(anyhow::anyhow!(
+		"Unknown tool '{}'. Available tools: {}. Checked servers: {}",
 		call.tool_name,
 		get_available_tool_names(config).await.join(", "),
-		if servers_checked.is_empty() { "none (no external servers to try)".to_string() } else { servers_checked.join(", ") }))
+		if servers_checked.is_empty() {
+			"none (no external servers to try)".to_string()
+		} else {
+			servers_checked.join(", ")
+		}
+	))
 }
 
 // Helper function to get available tool names for error messages
@@ -525,18 +621,33 @@ async fn get_available_tool_names(config: &crate::config::Config) -> Vec<String>
 }
 
 // Helper function to handle large response warnings
-fn handle_large_response(result: McpToolResult, config: &crate::config::Config) -> Result<McpToolResult> {
+fn handle_large_response(
+	result: McpToolResult,
+	config: &crate::config::Config,
+) -> Result<McpToolResult> {
 	// Check if result is large - warn user if it exceeds threshold
 	let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
 	if estimated_tokens > config.mcp_response_warning_threshold {
 		// Create a modified result that warns about the size
 		use colored::Colorize;
-		println!("{}", format!("! WARNING: Tool produced a large output ({} tokens)",
-			estimated_tokens).bright_yellow());
-		println!("{}", "This may consume significant tokens and impact your usage limits.".bright_yellow());
+		println!(
+			"{}",
+			format!(
+				"! WARNING: Tool produced a large output ({} tokens)",
+				estimated_tokens
+			)
+			.bright_yellow()
+		);
+		println!(
+			"{}",
+			"This may consume significant tokens and impact your usage limits.".bright_yellow()
+		);
 
 		// Ask user for confirmation before proceeding
-		print!("{}", "Do you want to continue with this large output? [y/N]: ".bright_cyan());
+		print!(
+			"{}",
+			"Do you want to continue with this large output? [y/N]: ".bright_cyan()
+		);
 		std::io::stdout().flush().unwrap();
 
 		let mut input = String::new();
@@ -557,15 +668,24 @@ fn handle_large_response(result: McpToolResult, config: &crate::config::Config) 
 }
 
 // Execute a tool call with layer-specific restrictions
-pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config::Config, layer_config: &crate::session::layers::LayerConfig) -> Result<(McpToolResult, u64)> {
+pub async fn execute_layer_tool_call(
+	call: &McpToolCall,
+	config: &crate::config::Config,
+	layer_config: &crate::session::layers::LayerConfig,
+) -> Result<(McpToolResult, u64)> {
 	// Check if tools are enabled for this layer (has server_refs)
 	if layer_config.mcp.server_refs.is_empty() {
 		return Err(anyhow::anyhow!("Tool execution is disabled for this layer"));
 	}
 
 	// Check if specific tool is allowed for this layer
-	if !layer_config.mcp.allowed_tools.is_empty() && !layer_config.mcp.allowed_tools.contains(&call.tool_name) {
-		return Err(anyhow::anyhow!("Tool '{}' is not allowed for this layer", call.tool_name));
+	if !layer_config.mcp.allowed_tools.is_empty()
+		&& !layer_config.mcp.allowed_tools.contains(&call.tool_name)
+	{
+		return Err(anyhow::anyhow!(
+			"Tool '{}' is not allowed for this layer",
+			call.tool_name
+		));
 	}
 
 	// Pass to regular tool execution
@@ -573,7 +693,10 @@ pub async fn execute_layer_tool_call(call: &McpToolCall, config: &crate::config:
 }
 
 // Execute multiple tool calls
-pub async fn execute_tool_calls(calls: &[McpToolCall], config: &crate::config::Config) -> Vec<Result<(McpToolResult, u64)>> {
+pub async fn execute_tool_calls(
+	calls: &[McpToolCall],
+	config: &crate::config::Config,
+) -> Vec<Result<(McpToolResult, u64)>> {
 	let mut results = Vec::new();
 
 	for call in calls {

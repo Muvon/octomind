@@ -14,26 +14,26 @@
 
 // Provider abstraction layer for different AI providers
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::Config;
 use crate::session::Message;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub mod openrouter;
-pub mod openai;
-pub mod anthropic;
-pub mod google;
 pub mod amazon;
+pub mod anthropic;
 pub mod cloudflare;
+pub mod google;
+pub mod openai;
+pub mod openrouter;
 
 // Re-export provider implementations
-pub use openrouter::OpenRouterProvider;
-pub use openai::OpenAiProvider;
-pub use anthropic::AnthropicProvider;
-pub use google::GoogleVertexProvider;
 pub use amazon::AmazonBedrockProvider;
+pub use anthropic::AnthropicProvider;
 pub use cloudflare::CloudflareWorkersAiProvider;
+pub use google::GoogleVertexProvider;
+pub use openai::OpenAiProvider;
+pub use openrouter::OpenRouterProvider;
 
 /// Common token usage structure across all providers
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -62,7 +62,12 @@ pub struct ProviderExchange {
 }
 
 impl ProviderExchange {
-	pub fn new(request: serde_json::Value, response: serde_json::Value, usage: Option<TokenUsage>, provider: &str) -> Self {
+	pub fn new(
+		request: serde_json::Value,
+		response: serde_json::Value,
+		usage: Option<TokenUsage>,
+		provider: &str,
+	) -> Self {
 		Self {
 			request,
 			response,
@@ -131,7 +136,9 @@ impl ProviderFactory {
 			let model_name = model[pos + 1..].to_string();
 
 			if provider.is_empty() || model_name.is_empty() {
-				return Err(anyhow::anyhow!("Invalid model format. Use 'provider:model' (e.g., 'openai:gpt-4o')"));
+				return Err(anyhow::anyhow!(
+					"Invalid model format. Use 'provider:model' (e.g., 'openai:gpt-4o')"
+				));
 			}
 
 			Ok((provider, model_name))

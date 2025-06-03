@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap::Args;
 use anyhow::Result;
-use std::io::{self, Read};
-use std::fs;
-use octomind::config::Config;
-use octomind::session::{Message, chat_completion_with_provider, ProviderResponse};
-use octomind::session::chat::markdown::{MarkdownRenderer, is_markdown_content};
-use colored::Colorize;
-use rustyline::{Editor, Config as RustylineConfig, CompletionType, EditMode};
-use rustyline::error::ReadlineError;
-use glob::glob;
 use atty;
+use clap::Args;
+use colored::Colorize;
+use glob::glob;
+use octomind::config::Config;
+use octomind::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
+use octomind::session::{chat_completion_with_provider, Message, ProviderResponse};
+use rustyline::error::ReadlineError;
+use rustyline::{CompletionType, Config as RustylineConfig, EditMode, Editor};
+use std::fs;
+use std::io::{self, Read};
 
 #[derive(Args, Debug)]
 pub struct AskArgs {
@@ -55,8 +55,7 @@ fn print_response(content: &str, use_raw: bool, config: &Config) {
 		println!("{}", content);
 	} else if is_markdown_content(content) {
 		// Use markdown rendering with theme from config
-		let theme = config.markdown_theme.parse()
-			.unwrap_or_default();
+		let theme = config.markdown_theme.parse().unwrap_or_default();
 		let renderer = MarkdownRenderer::with_theme(theme);
 		match renderer.render_and_print(content) {
 			Ok(_) => {
@@ -121,11 +120,16 @@ fn validate_file_patterns(file_patterns: &[String]) -> Result<()> {
 	}
 
 	if has_errors {
-		return Err(anyhow::anyhow!("File validation failed. Please check the file patterns and try again."));
+		return Err(anyhow::anyhow!(
+			"File validation failed. Please check the file patterns and try again."
+		));
 	}
 
 	if total_files > 50 {
-		eprintln!("Warning: Including {} files as context. This may result in a very large prompt.", total_files);
+		eprintln!(
+			"Warning: Including {} files as context. This may result in a very large prompt.",
+			total_files
+		);
 	}
 
 	Ok(())
@@ -156,7 +160,10 @@ fn read_files_as_context(file_patterns: &[String]) -> Result<String> {
 								context.push_str("```\n\n");
 							} else {
 								// This shouldn't happen as we validated earlier, but handle gracefully
-								context.push_str(&format!("### File: {} (could not read)\n\n", path.display()));
+								context.push_str(&format!(
+									"### File: {} (could not read)\n\n",
+									path.display()
+								));
 							}
 						}
 						Err(_) => {
@@ -176,9 +183,18 @@ fn read_files_as_context(file_patterns: &[String]) -> Result<String> {
 
 // Helper function to get multi-line input interactively using rustyline
 fn get_interactive_input() -> Result<String> {
-	println!("{}", "Enter your question (multi-line input supported):".bright_blue());
-	println!("{}","- Press Enter on empty line to finish and send".dimmed());
-	println!("{}","- Type '/exit' or '/quit' to cancel, or press Ctrl+D".dimmed());
+	println!(
+		"{}",
+		"Enter your question (multi-line input supported):".bright_blue()
+	);
+	println!(
+		"{}",
+		"- Press Enter on empty line to finish and send".dimmed()
+	);
+	println!(
+		"{}",
+		"- Type '/exit' or '/quit' to cancel, or press Ctrl+D".dimmed()
+	);
 	println!();
 
 	let config = RustylineConfig::builder()
@@ -246,7 +262,9 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 	}
 
 	// Determine model to use: either from --model flag or effective config model
-	let model = args.model.clone()
+	let model = args
+		.model
+		.clone()
 		.unwrap_or_else(|| config.get_effective_model());
 
 	// Simple system prompt for ask command - no mode complexity needed
@@ -265,7 +283,14 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		};
 
 		// Execute once and return
-		let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
+		let response = execute_single_query(
+			&full_input,
+			&model,
+			args.temperature,
+			&system_prompt,
+			config,
+		)
+		.await?;
 		print_response(&response.content, args.raw, config);
 		Ok(())
 	} else if !atty::is(atty::Stream::Stdin) {
@@ -286,12 +311,22 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		};
 
 		// Execute once and return
-		let response = execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await?;
+		let response = execute_single_query(
+			&full_input,
+			&model,
+			args.temperature,
+			&system_prompt,
+			config,
+		)
+		.await?;
 		print_response(&response.content, args.raw, config);
 		return Ok(());
 	} else {
 		// Interactive multimode - no argument provided and stdin is a terminal
-		println!("{}", "Entering multimode - ask questions continuously (no context preserved)".bright_green());
+		println!(
+			"{}",
+			"Entering multimode - ask questions continuously (no context preserved)".bright_green()
+		);
 		println!();
 
 		loop {
@@ -310,7 +345,15 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 					};
 
 					// Execute the query
-					match execute_single_query(&full_input, &model, args.temperature, &system_prompt, config).await {
+					match execute_single_query(
+						&full_input,
+						&model,
+						args.temperature,
+						&system_prompt,
+						config,
+					)
+					.await
+					{
 						Ok(response) => {
 							print_response(&response.content, args.raw, config);
 							println!(); // Add spacing between responses
@@ -373,10 +416,5 @@ async fn execute_single_query(
 	];
 
 	// Call the AI provider
-	chat_completion_with_provider(
-		&messages,
-		model,
-		temperature,
-		config,
-	).await
+	chat_completion_with_provider(&messages, model, temperature, config).await
 }

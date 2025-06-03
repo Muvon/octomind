@@ -11,7 +11,7 @@ Everything happens within interactive AI sessions. No separate indexing or searc
 
 ### 🔧 Role-Based Configuration
 - **Developer Role**: Full development environment with all tools enabled
-- **Assistant Role**: Simple conversation mode without development tools  
+- **Assistant Role**: Simple conversation mode without development tools
 - **Custom Roles**: User-defined specialized configurations
 
 ### 🛠️ Built-in Development Tools
@@ -81,7 +81,7 @@ Instead of complex command-line tools, simply talk to Octomind:
 
 Within any session, use these commands:
 - `/help` - Show available commands
-- `/model [model]` - Show/change current model  
+- `/model [model]` - Show/change current model
 - `/info` - Display token usage and costs
 - `/cache` - Mark cache checkpoint for cost savings
 - `/done` - Optimize context and restart layered processing

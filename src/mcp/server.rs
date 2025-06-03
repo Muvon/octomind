@@ -14,14 +14,14 @@
 
 // External MCP server provider
 
-use std::collections::HashMap;
-use serde_json::{json, Value};
-use anyhow::Result;
-use reqwest::Client;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use super::{McpToolCall, McpToolResult, McpFunction};
-use crate::config::{Config, McpServerConfig, McpServerMode};
 use super::process;
+use super::{McpFunction, McpToolCall, McpToolResult};
+use crate::config::{Config, McpServerConfig, McpServerMode};
+use anyhow::Result;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 
 // Define MCP server function definitions
 pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
@@ -43,24 +43,27 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 
 			// Add auth token if present
 			if let Some(token) = &server.auth_token {
-				headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", token))?);
+				headers.insert(
+					AUTHORIZATION,
+					HeaderValue::from_str(&format!("Bearer {}", token))?,
+				);
 			}
 
 			// Get schema URL - should be schema endpoint
 			let schema_url = format!("{}/tools/list", server_url); // Correct endpoint
 
 			// Make request to get schema
-			let response = client.get(&schema_url)
-				.headers(headers)
-				.send()
-			.await?;
+			let response = client.get(&schema_url).headers(headers).send().await?;
 
 			// Debug output
 			// println!("Schema response from HTTP server: {}", response.status());
 
 			// Check if request was successful
 			if !response.status().is_success() {
-				return Err(anyhow::anyhow!("Failed to get schema from MCP server: {}", response.status()));
+				return Err(anyhow::anyhow!(
+					"Failed to get schema from MCP server: {}",
+					response.status()
+				));
 			}
 
 			// Parse response
@@ -76,12 +79,15 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 			if let Some(result) = schema.get("result") {
 				if let Some(tools) = result.get("tools").and_then(|t| t.as_array()) {
 					for func in tools {
-						if let (Some(name), Some(description)) = (func.get("name").and_then(|n| n.as_str()),
-							func.get("description").and_then(|d| d.as_str())) {
+						if let (Some(name), Some(description)) = (
+							func.get("name").and_then(|n| n.as_str()),
+							func.get("description").and_then(|d| d.as_str()),
+						) {
 							// Check if this tool is enabled
 							if server.tools.is_empty() || server.tools.contains(&name.to_string()) {
 								// Get the parameters from the inputSchema field if available
-								let parameters = func.get("inputSchema").cloned().unwrap_or(json!({}));
+								let parameters =
+									func.get("inputSchema").cloned().unwrap_or(json!({}));
 
 								functions.push(McpFunction {
 									name: name.to_string(),
@@ -96,12 +102,15 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 				// Legacy support for functions directly in schema
 				if let Some(schema_functions) = schema.get("functions").and_then(|f| f.as_array()) {
 					for func in schema_functions {
-						if let (Some(name), Some(description)) = (func.get("name").and_then(|n| n.as_str()),
-							func.get("description").and_then(|d| d.as_str())) {
+						if let (Some(name), Some(description)) = (
+							func.get("name").and_then(|n| n.as_str()),
+							func.get("description").and_then(|d| d.as_str()),
+						) {
 							// Check if this tool is enabled
 							if server.tools.is_empty() || server.tools.contains(&name.to_string()) {
 								// Get the parameters from the inputSchema field if available
-								let parameters = func.get("inputSchema").cloned().unwrap_or(json!({}));
+								let parameters =
+									func.get("inputSchema").cloned().unwrap_or(json!({}));
 
 								functions.push(McpFunction {
 									name: name.to_string(),
@@ -115,7 +124,7 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 			}
 
 			Ok(functions)
-		},
+		}
 		McpServerMode::Stdin => {
 			// For stdin-based servers, ensure the server is running and get functions
 			process::ensure_server_running(server).await?;
@@ -125,7 +134,10 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 }
 
 // Execute tool call on MCP server (either local or remote)
-pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> Result<McpToolResult> {
+pub async fn execute_tool_call(
+	call: &McpToolCall,
+	server: &McpServerConfig,
+) -> Result<McpToolResult> {
 	execute_tool_call_with_cancellation(call, server, None).await
 }
 
@@ -133,7 +145,7 @@ pub async fn execute_tool_call(call: &McpToolCall, server: &McpServerConfig) -> 
 pub async fn execute_tool_call_with_cancellation(
 	call: &McpToolCall,
 	server: &McpServerConfig,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
 
@@ -178,7 +190,10 @@ pub async fn execute_tool_call_with_cancellation(
 
 			// Add auth token if present
 			if let Some(token) = &server.auth_token {
-				headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", token))?);
+				headers.insert(
+					AUTHORIZATION,
+					HeaderValue::from_str(&format!("Bearer {}", token))?,
+				);
 			}
 
 			// Get execution URL
@@ -198,18 +213,23 @@ pub async fn execute_tool_call_with_cancellation(
 			}
 
 			// Make request to execute tool
-			let response = client.post(&execute_url)
+			let response = client
+				.post(&execute_url)
 				.headers(headers)
 				.json(&request_body)
 				.send()
-			.await?;
+				.await?;
 
 			// Check if request was successful
 			if !response.status().is_success() {
 				// Save the status before consuming the response with text()
 				let status = response.status();
 				let error_text = response.text().await?;
-				return Err(anyhow::anyhow!("Failed to execute tool on MCP server: {}, {}", status, error_text));
+				return Err(anyhow::anyhow!(
+					"Failed to execute tool on MCP server: {}, {}",
+					status,
+					error_text
+				));
 			}
 
 			// Parse response
@@ -237,10 +257,11 @@ pub async fn execute_tool_call_with_cancellation(
 			};
 
 			Ok(tool_result)
-		},
+		}
 		McpServerMode::Stdin => {
 			// For stdin-based servers, use the stdin communication channel with cancellation support
-			process::execute_stdin_tool_call_with_cancellation(call, server, cancellation_token).await
+			process::execute_stdin_tool_call_with_cancellation(call, server, cancellation_token)
+				.await
 		}
 	}
 }
@@ -260,7 +281,7 @@ async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
 				// Neither remote nor local configuration
 				Err(anyhow::anyhow!("Invalid server configuration: neither URL nor command specified for server '{}'", server.name))
 			}
-		},
+		}
 		McpServerMode::Stdin => {
 			// For stdin-based servers, return a pseudo-URL
 			if server.command.is_some() {
@@ -274,7 +295,9 @@ async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
 }
 
 // Get all available functions from all configured servers
-pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String, (McpFunction, McpServerConfig)>> {
+pub async fn get_all_server_functions(
+	config: &Config,
+) -> Result<HashMap<String, (McpFunction, McpServerConfig)>> {
 	let mut functions = HashMap::new();
 
 	// Only proceed if MCP has any servers configured
@@ -283,7 +306,8 @@ pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String,
 	}
 
 	// Get available servers from merged config (which should already be filtered by server_refs)
-	let servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.values().cloned().collect();
+	let servers: Vec<crate::config::McpServerConfig> =
+		config.mcp.servers.values().cloned().collect();
 
 	// Check each server
 	for server in &servers {

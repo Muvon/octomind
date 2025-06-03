@@ -14,13 +14,13 @@
 
 // Chat session implementation
 
-use crate::config::Config;
-use crate::session::{Session, get_sessions_dir, load_session};
 use super::utils::format_number;
-use std::fs::File;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::config::Config;
+use crate::session::{get_sessions_dir, load_session, Session};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::fs::File;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 // Generate a session name in format: YYMMDD-HHMMSS-basename-uuid
@@ -56,7 +56,12 @@ pub struct ChatSession {
 
 impl ChatSession {
 	// Create a new chat session
-	pub fn new(name: String, model: Option<String>, temperature: Option<f32>, config: &Config) -> Self {
+	pub fn new(
+		name: String,
+		model: Option<String>,
+		temperature: Option<f32>,
+		config: &Config,
+	) -> Self {
 		let model_name = model.unwrap_or_else(|| config.get_effective_model());
 		let temperature_value = temperature.unwrap_or(0.7); // Default to 0.7 instead of 0.2
 
@@ -75,7 +80,7 @@ impl ChatSession {
 			total_cost: 0.0,
 			duration_seconds: 0,
 			layer_stats: Vec::new(), // Initialize empty layer stats
-			tool_calls: 0, // Initialize tool call counter
+			tool_calls: 0,           // Initialize tool call counter
 			// Initialize time tracking fields
 			total_api_time_ms: 0,
 			total_tool_time_ms: 0,
@@ -97,13 +102,19 @@ impl ChatSession {
 			last_response: String::new(),
 			model: model_name,
 			temperature: temperature_value, // Use the provided temperature
-			estimated_cost: 0.0, // Initialize estimated cost as zero
+			estimated_cost: 0.0,            // Initialize estimated cost as zero
 			cache_next_user_message: false, // Initialize cache flag
 		}
 	}
 
 	// Initialize a new chat session or load existing one
-	pub fn initialize(name: Option<String>, resume: Option<String>, model: Option<String>, temperature: Option<f32>, config: &Config) -> Result<Self> {
+	pub fn initialize(
+		name: Option<String>,
+		resume: Option<String>,
+		model: Option<String>,
+		temperature: Option<f32>,
+		config: &Config,
+	) -> Result<Self> {
 		let sessions_dir = get_sessions_dir()?;
 
 		// Determine session name
@@ -119,7 +130,8 @@ impl ChatSession {
 		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
 
 		// Check if we should load or create a session
-		let should_resume = (resume.is_some() || (name.is_some() && session_file.exists())) && session_file.exists();
+		let should_resume = (resume.is_some() || (name.is_some() && session_file.exists()))
+			&& session_file.exists();
 
 		if should_resume {
 			use colored::*;
@@ -128,25 +140,47 @@ impl ChatSession {
 			match load_session(&session_file) {
 				Ok(session) => {
 					// When session is loaded successfully, show its info
-					println!("{}", format!("✓ Resuming session: {}", session_name).bright_green());
+					println!(
+						"{}",
+						format!("✓ Resuming session: {}", session_name).bright_green()
+					);
 
 					// Show a brief summary of the session
-					let created_time = DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
-						.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
-						.unwrap_or_else(|| "Unknown".to_string());
+					let created_time =
+						DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
+							.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+							.unwrap_or_else(|| "Unknown".to_string());
 
 					// Simplify model name
 					let model_parts: Vec<&str> = session.info.model.split('/').collect();
-					let model_name = if model_parts.len() > 1 { model_parts[1] } else { &session.info.model };
+					let model_name = if model_parts.len() > 1 {
+						model_parts[1]
+					} else {
+						&session.info.model
+					};
 
 					// Calculate total tokens
-					let total_tokens = session.info.input_tokens + session.info.output_tokens + session.info.cached_tokens;
+					let total_tokens = session.info.input_tokens
+						+ session.info.output_tokens
+						+ session.info.cached_tokens;
 
 					println!("{} {}", "Created:".blue(), created_time.white());
 					println!("{} {}", "Model:".blue(), model_name.yellow());
-					println!("{} {}", "Messages:".blue(), session.messages.len().to_string().white());
-					println!("{} {}", "Tokens:".blue(), format_number(total_tokens).bright_blue());
-					println!("{} ${:.5}", "Cost:".blue(), session.info.total_cost.to_string().bright_magenta());
+					println!(
+						"{} {}",
+						"Messages:".blue(),
+						session.messages.len().to_string().white()
+					);
+					println!(
+						"{} {}",
+						"Tokens:".blue(),
+						format_number(total_tokens).bright_blue()
+					);
+					println!(
+						"{} ${:.5}",
+						"Cost:".blue(),
+						session.info.total_cost.to_string().bright_magenta()
+					);
 
 					// Create chat session from loaded session
 					let mut chat_session = ChatSession {
@@ -170,17 +204,24 @@ impl ChatSession {
 					}
 
 					Ok(chat_session)
-				},
+				}
 				Err(e) => {
 					// If loading fails, inform the user and create a new session
-					println!("{}: {}", format!("Failed to load session {}", session_name).bright_red(), e);
+					println!(
+						"{}: {}",
+						format!("Failed to load session {}", session_name).bright_red(),
+						e
+					);
 					println!("{}", "Creating a new session instead...".yellow());
 
 					// Generate a new unique session name using the new format
 					let new_session_name = generate_session_name();
 					let new_session_file = sessions_dir.join(format!("{}.jsonl", new_session_name));
 
-					println!("{}", format!("Starting new session: {}", new_session_name).bright_green());
+					println!(
+						"{}",
+						format!("Starting new session: {}", new_session_name).bright_green()
+					);
 
 					// Create file if it doesn't exist
 					if !new_session_file.exists() {
@@ -188,7 +229,12 @@ impl ChatSession {
 						drop(file);
 					}
 
-					let mut chat_session = ChatSession::new(new_session_name.clone(), model.clone(), temperature, config);
+					let mut chat_session = ChatSession::new(
+						new_session_name.clone(),
+						model.clone(),
+						temperature,
+						config,
+					);
 					chat_session.session.session_file = Some(new_session_file);
 
 					// Immediately save the session info in new JSON format
@@ -202,7 +248,7 @@ impl ChatSession {
 					});
 					crate::session::append_to_session_file(
 						chat_session.session.session_file.as_ref().unwrap(),
-						&serde_json::to_string(&summary_entry)?
+						&serde_json::to_string(&summary_entry)?,
 					)?;
 
 					Ok(chat_session)
@@ -211,7 +257,10 @@ impl ChatSession {
 		} else {
 			// Create new session
 			use colored::*;
-			println!("{}", format!("Starting new session: {}", session_name).bright_green());
+			println!(
+				"{}",
+				format!("Starting new session: {}", session_name).bright_green()
+			);
 
 			// Create session file if it doesn't exist
 			if !session_file.exists() {
@@ -219,7 +268,8 @@ impl ChatSession {
 				drop(file);
 			}
 
-			let mut chat_session = ChatSession::new(session_name.clone(), model, temperature, config);
+			let mut chat_session =
+				ChatSession::new(session_name.clone(), model, temperature, config);
 			chat_session.session.session_file = Some(session_file);
 
 			// Immediately save the session info in new JSON format
@@ -233,7 +283,7 @@ impl ChatSession {
 			});
 			crate::session::append_to_session_file(
 				chat_session.session.session_file.as_ref().unwrap(),
-				&serde_json::to_string(&summary_entry)?
+				&serde_json::to_string(&summary_entry)?,
 			)?;
 
 			Ok(chat_session)

@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod generic_layer; // New generic layer implementation
 pub mod layer_trait;
-pub mod generic_layer;  // New generic layer implementation
-pub mod processor;      // Keep for backward compatibility
-pub mod types;          // Keep existing types for backward compatibility
 pub mod orchestrator;
+pub mod processor; // Keep for backward compatibility
+pub mod types; // Keep existing types for backward compatibility
 
-pub use layer_trait::{Layer, LayerConfig, LayerResult, InputMode, LayerMcpConfig};
 pub use generic_layer::GenericLayer;
-pub use processor::LayerProcessor;
+pub use layer_trait::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
 pub use orchestrator::LayeredOrchestrator;
+pub use processor::LayerProcessor;
 
 // Main function to process using the layered architecture
 pub async fn process_with_layers(
@@ -29,8 +29,10 @@ pub async fn process_with_layers(
 	session: &mut crate::session::Session,
 	config: &crate::config::Config,
 	role: &str,
-	operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>
+	operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<String> {
 	let orchestrator = LayeredOrchestrator::from_config(config, role);
-	orchestrator.process(input, session, config, operation_cancelled).await
+	orchestrator
+		.process(input, session, config, operation_cancelled)
+		.await
 }

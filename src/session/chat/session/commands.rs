@@ -14,21 +14,29 @@
 
 // Session command processing
 
+use super::super::command_executor;
+use super::super::commands::*;
+use super::super::print_assistant_response;
 use super::core::ChatSession;
 use super::utils::format_number;
-use crate::{config::{Config, LogLevel}, log_info};
-use std::io::{self, Write};
-use anyhow::Result;
-use colored::Colorize;
 use crate::session::list_available_sessions;
+use crate::{
+	config::{Config, LogLevel},
+	log_info,
+};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
-use super::super::commands::*;
-use super::super::command_executor;
-use super::super::print_assistant_response;
+use colored::Colorize;
+use std::io::{self, Write};
 
 impl ChatSession {
 	// Process user commands
-	pub async fn process_command(&mut self, input: &str, config: &Config, role: &str) -> Result<bool> {
+	pub async fn process_command(
+		&mut self,
+		input: &str,
+		config: &Config,
+		role: &str,
+	) -> Result<bool> {
 		// Extract command and potential parameters
 		let input_parts: Vec<&str> = input.split_whitespace().collect();
 		let command = input_parts[0];
@@ -40,30 +48,58 @@ impl ChatSession {
 
 		match command {
 			EXIT_COMMAND | QUIT_COMMAND => {
-				println!("{}", "Ending session. Your conversation has been saved.".bright_green());
+				println!(
+					"{}",
+					"Ending session. Your conversation has been saved.".bright_green()
+				);
 				return Ok(true);
-			},
+			}
 			HELP_COMMAND => {
 				println!("{}", "\nAvailable commands:\n".bright_cyan());
 				println!("{} - Show this help message", HELP_COMMAND.cyan());
 				println!("{} - Copy last response to clipboard", COPY_COMMAND.cyan());
 				println!("{} - Clear the screen", CLEAR_COMMAND.cyan());
 				println!("{} - Save the session", SAVE_COMMAND.cyan());
-				println!("{} - Manage cache checkpoints: /cache [stats|clear|threshold]", CACHE_COMMAND.cyan());
+				println!(
+					"{} - Manage cache checkpoints: /cache [stats|clear|threshold]",
+					CACHE_COMMAND.cyan()
+				);
 				println!("{} - List all available sessions", LIST_COMMAND.cyan());
 				println!("{} [name] - Switch to another session or create a new one (without name creates fresh session)", SESSION_COMMAND.cyan());
-				println!("{} - Display detailed token and cost breakdown for this session", INFO_COMMAND.cyan());
-				println!("{} - Toggle layered processing architecture on/off", LAYERS_COMMAND.cyan());
+				println!(
+					"{} - Display detailed token and cost breakdown for this session",
+					INFO_COMMAND.cyan()
+				);
+				println!(
+					"{} - Toggle layered processing architecture on/off",
+					LAYERS_COMMAND.cyan()
+				);
 				println!("{} - Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting", DONE_COMMAND.cyan());
-				println!("{} [level] - Set logging level: none, info, or debug", LOGLEVEL_COMMAND.cyan());
+				println!(
+					"{} [level] - Set logging level: none, info, or debug",
+					LOGLEVEL_COMMAND.cyan()
+				);
 				println!("{} [threshold] - Toggle automatic context truncation when token limit is reached", TRUNCATE_COMMAND.cyan());
-				println!("{} [model] - Show current model or change to a different model (runtime only)", MODEL_COMMAND.cyan());
-				println!("{} <command_name> - Execute a command layer (e.g., /run estimate)", RUN_COMMAND.cyan());
-				println!("{} or {} - Exit the session\n", EXIT_COMMAND.cyan(), QUIT_COMMAND.cyan());
+				println!(
+					"{} [model] - Show current model or change to a different model (runtime only)",
+					MODEL_COMMAND.cyan()
+				);
+				println!(
+					"{} <command_name> - Execute a command layer (e.g., /run estimate)",
+					RUN_COMMAND.cyan()
+				);
+				println!(
+					"{} or {} - Exit the session\n",
+					EXIT_COMMAND.cyan(),
+					QUIT_COMMAND.cyan()
+				);
 
 				// Add keyboard shortcuts section
 				println!("{}", "Keyboard shortcuts:\n".bright_cyan());
-				println!("{} - Insert newline for multi-line input", "Ctrl+J".bright_green());
+				println!(
+					"{} - Insert newline for multi-line input",
+					"Ctrl+J".bright_green()
+				);
 				println!("{} - Accept hint/completion", "Ctrl+E".bright_green());
 				println!("{} - Cancel input", "Ctrl+C".bright_green());
 				println!("{} - Exit session", "Ctrl+D".bright_green());
@@ -78,7 +114,9 @@ impl ChatSession {
 				println!("Use '/cache threshold' to view auto-cache settings.");
 				println!("Supports 2-marker system: when you add a 3rd marker, the first one moves to the new position.");
 				println!("Automatic caching triggers based on token threshold (configurable).");
-				println!("Cached tokens reduce costs on subsequent requests with the same content.\n");
+				println!(
+					"Cached tokens reduce costs on subsequent requests with the same content.\n"
+				);
 
 				// Add information about layered architecture
 				println!("{}", "** About Layered Processing **".bright_yellow());
@@ -95,7 +133,9 @@ impl ChatSession {
 				// Add information about command layers
 				println!("{}", "** About Command Layers **".bright_yellow());
 				println!("Command layers are specialized AI helpers that can be invoked without affecting the session history.");
-				println!("Commands are defined in the [commands] section of your configuration file.");
+				println!(
+					"Commands are defined in the [commands] section of your configuration file."
+				);
 				println!("Example usage: /run estimate - runs the 'estimate' command layer");
 				println!("Command layers use the same infrastructure as normal layers but don't store context.");
 				println!("This allows you to get specialized help without cluttering your conversation.\n");
@@ -112,25 +152,25 @@ impl ChatSession {
 					}
 					println!();
 				}
-			},
+			}
 			COPY_COMMAND => {
 				println!("Clipboard functionality is disabled in this version.");
-			},
+			}
 			CLEAR_COMMAND => {
 				// ANSI escape code to clear screen and move cursor to top-left
 				print!("\x1B[2J\x1B[1;1H");
 				io::stdout().flush()?;
-			},
+			}
 			SAVE_COMMAND => {
 				if let Err(e) = self.save() {
 					println!("{}: {}", "Failed to save session".bright_red(), e);
 				} else {
 					println!("{}", "Session saved successfully.".bright_green());
 				}
-			},
+			}
 			INFO_COMMAND => {
 				self.display_session_info();
-			},
+			}
 			LAYERS_COMMAND => {
 				// Toggle layered processing
 				// Use selective update to only modify the enable_layers setting without polluting config with internal servers
@@ -144,14 +184,17 @@ impl ChatSession {
 					// Toggle the setting for the appropriate role
 					match current_role {
 						"developer" => {
-							cfg.developer.config.enable_layers = !cfg.developer.config.enable_layers;
-						},
+							cfg.developer.config.enable_layers =
+								!cfg.developer.config.enable_layers;
+						}
 						"assistant" => {
-							cfg.assistant.config.enable_layers = !cfg.assistant.config.enable_layers;
-						},
+							cfg.assistant.config.enable_layers =
+								!cfg.assistant.config.enable_layers;
+						}
 						_ => {
 							// For unknown roles, modify the assistant config as the fallback
-							cfg.assistant.config.enable_layers = !cfg.assistant.config.enable_layers;
+							cfg.assistant.config.enable_layers =
+								!cfg.assistant.config.enable_layers;
 						}
 					}
 				}) {
@@ -168,10 +211,20 @@ impl ChatSession {
 
 				// Show the new state
 				if is_enabled {
-					println!("{}", "Layered processing architecture is now ENABLED.".bright_green());
-					println!("{}", "Your queries will now be processed through multiple AI models.".bright_yellow());
+					println!(
+						"{}",
+						"Layered processing architecture is now ENABLED.".bright_green()
+					);
+					println!(
+						"{}",
+						"Your queries will now be processed through multiple AI models."
+							.bright_yellow()
+					);
 				} else {
-					println!("{}", "Layered processing architecture is now DISABLED.".bright_yellow());
+					println!(
+						"{}",
+						"Layered processing architecture is now DISABLED.".bright_yellow()
+					);
 					// println!("{}", "Using standard single-model processing with Claude.".bright_blue());
 				}
 				log_info!("Configuration has been saved to disk.");
@@ -179,7 +232,7 @@ impl ChatSession {
 				// Return a special code that indicates we should reload the config in the main loop
 				// This will ensure all future commands use the updated config
 				return Ok(true);
-			},
+			}
 			LOGLEVEL_COMMAND => {
 				// Handle log level command
 				if params.is_empty() {
@@ -191,7 +244,10 @@ impl ChatSession {
 						LogLevel::Info => "info",
 						LogLevel::Debug => "debug",
 					};
-					println!("{}", format!("Current log level: {}", level_str).bright_cyan());
+					println!(
+						"{}",
+						format!("Current log level: {}", level_str).bright_cyan()
+					);
 					println!("{}", "Available levels: none, info, debug".bright_yellow());
 					return Ok(false);
 				}
@@ -202,7 +258,10 @@ impl ChatSession {
 					"info" => LogLevel::Info,
 					"debug" => LogLevel::Debug,
 					_ => {
-						println!("{}", "Invalid log level. Use: none, info, or debug".bright_red());
+						println!(
+							"{}",
+							"Invalid log level. Use: none, info, or debug".bright_red()
+						);
 						return Ok(false);
 					}
 				};
@@ -223,22 +282,29 @@ impl ChatSession {
 				match new_level {
 					LogLevel::None => {
 						println!("{}", "Log level set to NONE.".bright_yellow());
-						println!("{}", "Only essential information will be displayed.".bright_blue());
-					},
+						println!(
+							"{}",
+							"Only essential information will be displayed.".bright_blue()
+						);
+					}
 					LogLevel::Info => {
 						println!("{}", "Log level set to INFO.".bright_green());
 						println!("{}", "Moderate logging will be shown.".bright_yellow());
-					},
+					}
 					LogLevel::Debug => {
 						println!("{}", "Log level set to DEBUG.".bright_green());
-						println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
+						println!(
+							"{}",
+							"Detailed logging will be shown for API calls and tool executions."
+								.bright_yellow()
+						);
 					}
 				}
 				log_info!("Configuration has been saved to disk.");
 
 				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);
-			},
+			}
 			DEBUG_COMMAND => {
 				// Backward compatibility - toggle between none and debug
 				// Create a mutable config reference for the update
@@ -260,16 +326,23 @@ impl ChatSession {
 				// Show the new state
 				if temp_config.log_level.is_debug_enabled() {
 					println!("{}", "Debug mode is now ENABLED.".bright_green());
-					println!("{}", "Detailed logging will be shown for API calls and tool executions.".bright_yellow());
+					println!(
+						"{}",
+						"Detailed logging will be shown for API calls and tool executions."
+							.bright_yellow()
+					);
 				} else {
 					println!("{}", "Debug mode is now DISABLED.".bright_yellow());
-					println!("{}", "Only essential information will be displayed.".bright_blue());
+					println!(
+						"{}",
+						"Only essential information will be displayed.".bright_blue()
+					);
 				}
 				log_info!("Configuration has been saved to disk.");
 
 				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);
-			},
+			}
 			TRUNCATE_COMMAND => {
 				// Toggle auto-truncation mode
 				// Create a mutable config reference for the update
@@ -294,35 +367,53 @@ impl ChatSession {
 				// Display threshold update if provided
 				if !params.is_empty() {
 					if let Ok(threshold) = params[0].parse::<usize>() {
-						println!("{}", format!("Max request token threshold set to {} tokens", threshold).bright_green());
+						println!(
+							"{}",
+							format!("Max request token threshold set to {} tokens", threshold)
+								.bright_green()
+						);
 					}
 				}
 
 				// Show the new state
 				if temp_config.enable_auto_truncation {
 					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
-					println!("{}", format!("Context will be automatically truncated when exceeding {} tokens.",
-						temp_config.max_request_tokens_threshold).bright_yellow());
+					println!(
+						"{}",
+						format!(
+							"Context will be automatically truncated when exceeding {} tokens.",
+							temp_config.max_request_tokens_threshold
+						)
+						.bright_yellow()
+					);
 				} else {
 					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
-					println!("{}", "You'll need to manually reduce context when it gets too large.".bright_blue());
+					println!(
+						"{}",
+						"You'll need to manually reduce context when it gets too large."
+							.bright_blue()
+					);
 				}
 				log_info!("Configuration has been saved to disk.");
 
 				// Return a special code that indicates we should reload the config in the main loop
 				return Ok(true);
-			},
+			}
 			CACHE_COMMAND => {
 				// Parse cache command arguments for advanced functionality
 				if params.is_empty() {
 					// Default behavior - set flag to cache the NEXT user message
-					let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
+					let supports_caching =
+						crate::session::model_supports_caching(&self.session.info.model);
 					if !supports_caching {
 						println!("{}", "This model does not support caching.".bright_yellow());
 					} else {
 						// Set the flag to cache the next user message
 						self.cache_next_user_message = true;
-						println!("{}", "The next user message will be marked for caching.".bright_green());
+						println!(
+							"{}",
+							"The next user message will be marked for caching.".bright_green()
+						);
 
 						// Show cache statistics
 						let cache_manager = crate::session::cache::CacheManager::new();
@@ -336,52 +427,81 @@ impl ChatSession {
 							let cache_manager = crate::session::cache::CacheManager::new();
 							let stats = cache_manager.get_cache_statistics(&self.session);
 							println!("{}", stats.format_for_display());
-						},
+						}
 						"clear" => {
 							// Clear content cache markers (but keep system markers)
 							let cache_manager = crate::session::cache::CacheManager::new();
-							let cleared = cache_manager.clear_content_cache_markers(&mut self.session);
+							let cleared =
+								cache_manager.clear_content_cache_markers(&mut self.session);
 
 							if cleared > 0 {
-								println!("{}", format!("Cleared {} content cache markers", cleared).bright_green());
+								println!(
+									"{}",
+									format!("Cleared {} content cache markers", cleared)
+										.bright_green()
+								);
 								let _ = self.save();
 							} else {
 								println!("{}", "No content cache markers to clear".bright_yellow());
 							}
-						},
+						}
 						"threshold" => {
 							// Show current threshold settings using the system-wide configuration getters
 							if config.cache_tokens_threshold > 0 {
-								println!("{}", format!("Current auto-cache threshold: {} tokens",
-									config.cache_tokens_threshold).bright_cyan());
+								println!(
+									"{}",
+									format!(
+										"Current auto-cache threshold: {} tokens",
+										config.cache_tokens_threshold
+									)
+									.bright_cyan()
+								);
 								println!("{}", format!("Auto-cache will trigger when non-cached tokens reach {} tokens",
 									config.cache_tokens_threshold).bright_blue());
 							} else {
-								println!("{}", "Auto-cache is disabled (threshold set to 0)".bright_yellow());
+								println!(
+									"{}",
+									"Auto-cache is disabled (threshold set to 0)".bright_yellow()
+								);
 							}
 
 							// Show time-based threshold
 							let timeout_seconds = config.cache_timeout_seconds;
 							if timeout_seconds > 0 {
 								let timeout_minutes = timeout_seconds / 60;
-								println!("{}", format!("Time-based auto-cache: {} seconds ({} minutes)",
-									timeout_seconds, timeout_minutes).bright_green());
+								println!(
+									"{}",
+									format!(
+										"Time-based auto-cache: {} seconds ({} minutes)",
+										timeout_seconds, timeout_minutes
+									)
+									.bright_green()
+								);
 								println!("{}", format!("Auto-cache will trigger if {} minutes pass since last checkpoint",
 									timeout_minutes).bright_blue());
 							} else {
 								println!("{}", "Time-based auto-cache is disabled".bright_yellow());
 							}
-						},
+						}
 						_ => {
 							println!("{}", "Invalid cache command. Usage:".bright_red());
-							println!("{}", "  /cache - Add cache checkpoint at last user message".cyan());
-							println!("{}", "  /cache stats - Show detailed cache statistics".cyan());
+							println!(
+								"{}",
+								"  /cache - Add cache checkpoint at last user message".cyan()
+							);
+							println!(
+								"{}",
+								"  /cache stats - Show detailed cache statistics".cyan()
+							);
 							println!("{}", "  /cache clear - Clear content cache markers".cyan());
-							println!("{}", "  /cache threshold - Show auto-cache threshold settings".cyan());
+							println!(
+								"{}",
+								"  /cache threshold - Show auto-cache threshold settings".cyan()
+							);
 						}
 					}
 				}
-			},
+			}
 			LIST_COMMAND => {
 				match list_available_sessions() {
 					Ok(sessions) => {
@@ -389,24 +509,32 @@ impl ChatSession {
 							println!("{}", "No sessions found.".bright_yellow());
 						} else {
 							println!("{}", "\nAvailable sessions:\n".bright_cyan());
-							println!("{:<20} {:<25} {:<15} {:<10} {:<10}",
+							println!(
+								"{:<20} {:<25} {:<15} {:<10} {:<10}",
 								"Name".cyan(),
 								"Created".cyan(),
 								"Model".cyan(),
 								"Tokens".cyan(),
-								"Cost".cyan());
+								"Cost".cyan()
+							);
 
 							println!("{}", "─".repeat(80).cyan());
 
 							for (name, info) in sessions {
 								// Format date from timestamp
-								let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-									.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
-									.unwrap_or_else(|| "Unknown".to_string());
+								let created_time =
+									DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
+										.map(|dt| {
+											dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
+										})
+										.unwrap_or_else(|| "Unknown".to_string());
 
 								// Determine if this is the current session
 								let is_current = match &self.session.session_file {
-									Some(path) => path.file_stem().and_then(|s| s.to_str()).unwrap_or("") == name,
+									Some(path) => {
+										path.file_stem().and_then(|s| s.to_str()).unwrap_or("")
+											== name
+									}
 									None => false,
 								};
 
@@ -418,17 +546,24 @@ impl ChatSession {
 
 								// Simplify model name - strip provider prefix if present
 								let model_parts: Vec<&str> = info.model.split('/').collect();
-								let model_name = if model_parts.len() > 1 { model_parts[1] } else { &info.model };
+								let model_name = if model_parts.len() > 1 {
+									model_parts[1]
+								} else {
+									&info.model
+								};
 
 								// Calculate total tokens
-								let total_tokens = info.input_tokens + info.output_tokens + info.cached_tokens;
+								let total_tokens =
+									info.input_tokens + info.output_tokens + info.cached_tokens;
 
-								println!("{:<20} {:<25} {:<15} {:<10} ${:<.5}",
+								println!(
+									"{:<20} {:<25} {:<15} {:<10} ${:<.5}",
 									name_display,
 									created_time.blue(),
 									model_name.yellow(),
 									format_number(total_tokens).bright_blue(),
-									info.total_cost.to_string().bright_magenta());
+									info.total_cost.to_string().bright_magenta()
+								);
 							}
 
 							println!();
@@ -437,25 +572,35 @@ impl ChatSession {
 							println!("{}", "  /session (creates a new session)".bright_green());
 							println!();
 						}
-					},
+					}
 					Err(e) => {
 						println!("{}: {}", "Failed to list sessions".bright_red(), e);
 					}
 				}
-			},
+			}
 			MODEL_COMMAND => {
 				// Handle model command
 				if params.is_empty() {
 					// Show current model and system default
-					println!("{}", format!("Current session model: {}", self.model).bright_cyan());
+					println!(
+						"{}",
+						format!("Current session model: {}", self.model).bright_cyan()
+					);
 
 					// Show the system default model
 					let system_model = config.get_effective_model();
-					println!("{}", format!("System default model: {}", system_model).bright_blue());
+					println!(
+						"{}",
+						format!("System default model: {}", system_model).bright_blue()
+					);
 
 					println!();
 					println!("{}", "Note: Use '/model <model-name>' to change the model for this session only.".bright_yellow());
-					println!("{}", "Model changes are runtime-only and won't be saved to config.".bright_yellow());
+					println!(
+						"{}",
+						"Model changes are runtime-only and won't be saved to config."
+							.bright_yellow()
+					);
 					return Ok(false);
 				}
 
@@ -467,7 +612,14 @@ impl ChatSession {
 				self.model = new_model.clone();
 				self.session.info.model = new_model.clone();
 
-				println!("{}", format!("Model changed from {} to {} (runtime only)", old_model, new_model).bright_green());
+				println!(
+					"{}",
+					format!(
+						"Model changed from {} to {} (runtime only)",
+						old_model, new_model
+					)
+					.bright_green()
+				);
 				println!("{}", "Note: This change only affects the current session and won't be saved to config.".bright_yellow());
 
 				// Save the session with the updated model info (but not config)
@@ -476,7 +628,7 @@ impl ChatSession {
 				}
 
 				return Ok(false);
-			},
+			}
 			SESSION_COMMAND => {
 				// Handle session switching
 				if params.is_empty() {
@@ -488,7 +640,10 @@ impl ChatSession {
 						.as_secs();
 					let new_session_name = format!("session_{}", timestamp);
 
-					println!("{}", format!("Creating new session: {}", new_session_name).bright_green());
+					println!(
+						"{}",
+						format!("Creating new session: {}", new_session_name).bright_green()
+					);
 
 					// Save current session before switching - no need to save here
 					// The main loop will handle saving before switching
@@ -503,7 +658,11 @@ impl ChatSession {
 
 					// Check if we're already in this session
 					if let Some(current_path) = &current_session_path {
-						if current_path.file_stem().and_then(|s| s.to_str()).unwrap_or("") == new_session_name {
+						if current_path
+							.file_stem()
+							.and_then(|s| s.to_str())
+							.unwrap_or("") == new_session_name
+						{
 							println!("{}", "You are already in this session.".blue());
 							return Ok(false);
 						}
@@ -514,17 +673,20 @@ impl ChatSession {
 					self.session.info.name = new_session_name;
 					return Ok(true);
 				}
-			},
+			}
 			RUN_COMMAND => {
 				// Handle /run command for executing command layers
 				if params.is_empty() {
 					// Show available commands for this role
-					let available_commands = command_executor::list_available_commands(config, role);
+					let available_commands =
+						command_executor::list_available_commands(config, role);
 					if available_commands.is_empty() {
 						println!("{}", "No command layers configured.".bright_yellow());
 						println!("{}", "Command layers can be defined in the global [commands] section of your configuration.".bright_blue());
 						println!("{}", "Example configuration:".bright_cyan());
-						println!("{}", r#"[commands.estimate]
+						println!(
+							"{}",
+							r#"[commands.estimate]
 name = "estimate"
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = "You are a project estimation expert. Analyze the work done and provide estimates."
@@ -533,7 +695,9 @@ input_mode = "Last"
 
 [commands.estimate.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = []"#.bright_white());
+allowed_tools = []"#
+								.bright_white()
+						);
 					} else {
 						println!("{}", "Available command layers:".bright_cyan());
 						for cmd in &available_commands {
@@ -550,8 +714,13 @@ allowed_tools = []"#.bright_white());
 
 				// Check if command exists
 				if !command_executor::command_exists(config, role, command_name) {
-					let available_commands = command_executor::list_available_commands(config, role);
-					println!("{} {}", "Command not found:".bright_red(), command_name.bright_yellow());
+					let available_commands =
+						command_executor::list_available_commands(config, role);
+					println!(
+						"{} {}",
+						"Command not found:".bright_red(),
+						command_name.bright_yellow()
+					);
 					if !available_commands.is_empty() {
 						println!("{}", "Available commands:".bright_cyan());
 						for cmd in &available_commands {
@@ -569,7 +738,9 @@ allowed_tools = []"#.bright_white());
 					params[1..].join(" ")
 				} else {
 					// Use the last user message or a default input
-					self.session.messages.iter()
+					self.session
+						.messages
+						.iter()
 						.filter(|m| m.role == "user")
 						.next_back()
 						.map(|m| m.content.clone())
@@ -578,29 +749,32 @@ allowed_tools = []"#.bright_white());
 
 				// Execute the command layer
 				println!();
-				let operation_cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+				let operation_cancelled =
+					std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 				match command_executor::execute_command_layer(
 					command_name,
 					&command_input,
 					self,
 					config,
 					role,
-					operation_cancelled
-				).await {
+					operation_cancelled,
+				)
+				.await
+				{
 					Ok(result) => {
 						println!();
 						println!("{}", "Command result:".bright_green());
 						// Use markdown-aware printing for command results
 						print_assistant_response(&result, config, role);
 						println!();
-					},
+					}
 					Err(e) => {
 						println!("{} {}", "Command execution failed:".bright_red(), e);
 					}
 				}
 
 				return Ok(false);
-			},
+			}
 			_ => return Ok(false), // Not a command
 		}
 

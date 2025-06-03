@@ -14,14 +14,14 @@
 
 // Amazon Bedrock provider implementation
 
+use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use crate::config::Config;
+use crate::log_debug;
+use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::env;
-use crate::config::Config;
-use crate::session::Message;
-use super::{AiProvider, ProviderResponse, ProviderExchange, TokenUsage};
-use crate::log_debug;
 
 /// Amazon Bedrock pricing constants (per 1M tokens in USD)
 /// Source: https://aws.amazon.com/bedrock/pricing/ (as of January 2025)
@@ -33,7 +33,6 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("claude-3-opus", 15.00, 75.00),
 	("claude-3-sonnet", 3.00, 15.00),
 	("claude-3-haiku", 0.25, 1.25),
-
 	// Meta Llama models on Bedrock
 	("llama3-2-90b", 2.00, 2.00),
 	("llama3-2-11b", 0.35, 0.35),
@@ -42,12 +41,10 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("llama3-1-405b", 5.32, 16.00),
 	("llama3-1-70b", 0.99, 0.99),
 	("llama3-1-8b", 0.22, 0.22),
-
 	// Cohere Command models on Bedrock
 	("command-r-plus", 3.00, 15.00),
 	("command-r", 0.50, 1.50),
 	("command-light", 0.30, 0.60),
-
 	// AI21 Jamba models on Bedrock
 	("jamba-1-5-large", 2.00, 8.00),
 	("jamba-1-5-mini", 0.20, 0.40),
@@ -122,7 +119,13 @@ impl AmazonBedrockProvider {
 	}
 
 	/// Sign AWS request (simplified version for Bedrock)
-	async fn sign_request(&self, _method: &str, _uri: &str, headers: &mut std::collections::HashMap<String, String>, _body: &str) -> Result<()> {
+	async fn sign_request(
+		&self,
+		_method: &str,
+		_uri: &str,
+		headers: &mut std::collections::HashMap<String, String>,
+		_body: &str,
+	) -> Result<()> {
 		// This is a simplified AWS signature implementation
 		// In production, you'd want to use aws-sigv4 crate or AWS SDK
 		let access_key = self.get_aws_access_key_id()?;
@@ -130,9 +133,18 @@ impl AmazonBedrockProvider {
 		let _region = self.get_aws_region();
 
 		// Add required headers
-		headers.insert("Authorization".to_string(), format!("AWS4-HMAC-SHA256 Credential={}/...", access_key));
-		headers.insert("X-Amz-Date".to_string(), chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string());
-		headers.insert("X-Amz-Target".to_string(), "BedrockRuntime.InvokeModel".to_string());
+		headers.insert(
+			"Authorization".to_string(),
+			format!("AWS4-HMAC-SHA256 Credential={}/...", access_key),
+		);
+		headers.insert(
+			"X-Amz-Date".to_string(),
+			chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string(),
+		);
+		headers.insert(
+			"X-Amz-Target".to_string(),
+			"BedrockRuntime.InvokeModel".to_string(),
+		);
 
 		// Note: This is a placeholder - actual AWS signing is complex
 		// In a real implementation, you should use the aws-sigv4 crate
@@ -155,14 +167,14 @@ impl AiProvider for AmazonBedrockProvider {
 
 	fn supports_model(&self, model: &str) -> bool {
 		// Amazon Bedrock supported models
-		model.contains("anthropic.claude") ||
-		model.contains("meta.llama") ||
-		model.contains("cohere.command") ||
-		model.contains("ai21.jamba") ||
-		model.contains("claude-3") ||
-		model.contains("llama3") ||
-		model.contains("command-") ||
-		model.contains("jamba-")
+		model.contains("anthropic.claude")
+			|| model.contains("meta.llama")
+			|| model.contains("cohere.command")
+			|| model.contains("ai21.jamba")
+			|| model.contains("claude-3")
+			|| model.contains("llama3")
+			|| model.contains("command-")
+			|| model.contains("jamba-")
 	}
 
 	fn get_api_key(&self, config: &Config) -> Result<String> {
@@ -238,10 +250,12 @@ impl AiProvider for AmazonBedrockProvider {
 		headers.insert("Content-Type".to_string(), "application/json".to_string());
 
 		// Sign the request (simplified - in production use AWS SDK)
-		self.sign_request("POST", &api_url, &mut headers, &request_body.to_string()).await?;
+		self.sign_request("POST", &api_url, &mut headers, &request_body.to_string())
+			.await?;
 
 		// Make the API request
-		let mut request_builder = client.post(&api_url)
+		let mut request_builder = client
+			.post(&api_url)
 			.header("Content-Type", "application/json")
 			.json(&request_body);
 
@@ -262,7 +276,11 @@ impl AiProvider for AmazonBedrockProvider {
 		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
 			Ok(json) => json,
 			Err(e) => {
-				return Err(anyhow::anyhow!("Failed to parse response JSON: {}. Response: {}", e, response_text));
+				return Err(anyhow::anyhow!(
+					"Failed to parse response JSON: {}. Response: {}",
+					e,
+					response_text
+				));
 			}
 		};
 
@@ -272,7 +290,11 @@ impl AiProvider for AmazonBedrockProvider {
 				.get("message")
 				.and_then(|m| m.as_str())
 				.unwrap_or(&response_text);
-			return Err(anyhow::anyhow!("Amazon Bedrock API error ({}): {}", status, error_message));
+			return Err(anyhow::anyhow!(
+				"Amazon Bedrock API error ({}): {}",
+				status,
+				error_message
+			));
 		}
 
 		// Extract content based on model family
@@ -304,8 +326,14 @@ impl AiProvider for AmazonBedrockProvider {
 
 		// Extract token usage (format varies by model)
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
-			let prompt_tokens = usage_obj.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-			let completion_tokens = usage_obj.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+			let prompt_tokens = usage_obj
+				.get("input_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let completion_tokens = usage_obj
+				.get("output_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
 			let total_tokens = prompt_tokens + completion_tokens;
 
 			// Calculate cost using our pricing constants
@@ -378,13 +406,13 @@ fn convert_messages_to_prompt(messages: &[Message]) -> String {
 		match msg.role.as_str() {
 			"system" => {
 				prompt.push_str(&format!("System: {}\n\n", msg.content));
-			},
+			}
 			"user" => {
 				prompt.push_str(&format!("Human: {}\n\n", msg.content));
-			},
+			}
 			"assistant" => {
 				prompt.push_str(&format!("Assistant: {}\n\n", msg.content));
-			},
+			}
 			_ => {
 				prompt.push_str(&format!("{}: {}\n\n", msg.role, msg.content));
 			}

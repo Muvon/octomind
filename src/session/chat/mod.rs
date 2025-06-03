@@ -14,8 +14,8 @@
 
 // Chat session module
 mod animation;
-mod commands;
 mod command_executor;
+mod commands;
 mod context_reduction;
 mod context_truncation;
 mod editorconfig_formatter;
@@ -27,17 +27,22 @@ pub mod session;
 mod syntax;
 
 // Re-export main structures and functions
-pub use session::{ChatSession, run_interactive_session, format_number, format_duration};
-pub use commands::{COMMANDS, HELP_COMMAND, EXIT_COMMAND, QUIT_COMMAND, COPY_COMMAND, CLEAR_COMMAND, SAVE_COMMAND, CACHE_COMMAND, DONE_COMMAND, RUN_COMMAND};
-pub use command_executor::{execute_command_layer, list_available_commands, command_exists, get_command_help};
-pub use input::read_user_input;
-pub use response::{process_response, print_assistant_response};
-pub use layered_response::process_layered_response;
 pub use animation::show_loading_animation;
+pub use command_executor::{
+	command_exists, execute_command_layer, get_command_help, list_available_commands,
+};
+pub use commands::{
+	CACHE_COMMAND, CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND,
+	QUIT_COMMAND, RUN_COMMAND, SAVE_COMMAND,
+};
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
 pub use editorconfig_formatter::apply_editorconfig_formatting;
-pub use markdown::{MarkdownRenderer, is_markdown_content, MarkdownTheme};
+pub use input::read_user_input;
+pub use layered_response::process_layered_response;
+pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
+pub use response::{print_assistant_response, process_response};
+pub use session::{format_duration, format_number, run_interactive_session, ChatSession};
 
 // Model constants
 pub const CLAUDE_MODEL: &str = "openrouter:anthropic/claude-sonnet-4";

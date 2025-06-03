@@ -14,11 +14,11 @@
 
 // Syntax highlighting for code blocks
 
+use anyhow::Result;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{ThemeSet, Style};
+use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
-use anyhow::Result;
 
 pub struct SyntaxHighlighter {
 	pub syntax_set: SyntaxSet,
@@ -33,21 +33,28 @@ impl SyntaxHighlighter {
 		}
 	}
 
-	pub fn highlight_code_with_theme(&self, code: &str, language: &str, theme_name: &str) -> Result<String> {
+	pub fn highlight_code_with_theme(
+		&self,
+		code: &str,
+		language: &str,
+		theme_name: &str,
+	) -> Result<String> {
 		// Try to find syntax definition for the language
-		let syntax = self.syntax_set
+		let syntax = self
+			.syntax_set
 			.find_syntax_by_token(language)
 			.or_else(|| self.syntax_set.find_syntax_by_extension(language))
 			.unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
 		// Try to use the specified theme, fallback to a default if not found
-		let theme = self.theme_set.themes.get(theme_name)
-			.unwrap_or_else(|| {
-				// Fallback order: try base16-ocean.dark, then any available theme
-				self.theme_set.themes.get("base16-ocean.dark")
-					.or_else(|| self.theme_set.themes.values().next())
-					.expect("No syntax themes available")
-			});
+		let theme = self.theme_set.themes.get(theme_name).unwrap_or_else(|| {
+			// Fallback order: try base16-ocean.dark, then any available theme
+			self.theme_set
+				.themes
+				.get("base16-ocean.dark")
+				.or_else(|| self.theme_set.themes.values().next())
+				.expect("No syntax themes available")
+		});
 
 		let mut highlighter = HighlightLines::new(syntax, theme);
 		let mut highlighted = String::new();

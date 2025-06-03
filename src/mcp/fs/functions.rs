@@ -14,8 +14,8 @@
 
 // Function definitions module - MCP function specifications
 
-use serde_json::json;
 use super::super::McpFunction;
+use serde_json::json;
 
 // Define the list_files function
 pub fn get_list_files_function() -> McpFunction {
@@ -50,7 +50,8 @@ pub fn get_list_files_function() -> McpFunction {
 			- Use patterns to target specific file types
 			- Set max_depth to avoid deep directory traversals
 			- Combine with content search for targeted results
-			- Prefer multiple specific calls over one broad search".to_string(),
+			- Prefer multiple specific calls over one broad search"
+			.to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["directory"],
@@ -211,7 +212,8 @@ pub fn get_html2md_function() -> McpFunction {
 			- Single input: `{\"sources\": \"https://example.com/docs\"}`
 			- Multiple inputs: `{\"sources\": [\"./docs/index.html\", \"https://example.com/api\"]}`
 
-			Output is clean Markdown that preserves the document structure and readability.".to_string(),
+			Output is clean Markdown that preserves the document structure and readability."
+			.to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["sources"],

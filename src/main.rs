@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap::{Parser, Subcommand, CommandFactory};
+use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
 use octomind::config::Config;
@@ -75,26 +75,18 @@ async fn main() -> Result<(), anyhow::Error> {
 async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
 	// Execute the appropriate command
 	match &args.command {
-		Commands::Config(config_args) => {
-			commands::config::execute(config_args, config)?
-		},
+		Commands::Config(config_args) => commands::config::execute(config_args, config)?,
 		Commands::Session(session_args) => {
 			session::chat::run_interactive_session(session_args, &config).await?
-		},
-		Commands::Ask(ask_args) => {
-			commands::ask::execute(ask_args, &config).await?
-		},
-		Commands::Shell(shell_args) => {
-			commands::shell::execute(shell_args, &config).await?
-		},
-		Commands::Vars(vars_args) => {
-			commands::vars::execute(vars_args, &config).await?
-		},
+		}
+		Commands::Ask(ask_args) => commands::ask::execute(ask_args, &config).await?,
+		Commands::Shell(shell_args) => commands::shell::execute(shell_args, &config).await?,
+		Commands::Vars(vars_args) => commands::vars::execute(vars_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();
 			let name = app.get_name().to_string();
 			generate(*shell, &mut app, name, &mut std::io::stdout());
-		},
+		}
 	}
 
 	Ok(())

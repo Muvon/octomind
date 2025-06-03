@@ -13,14 +13,14 @@
 // limitations under the License.
 
 // Implementation of a command completer for rustyline
+use colored::*;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::highlight::{Highlighter, CmdKind};
+use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::Validator;
 use rustyline::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
-use colored::*;
 
 #[derive(Default)]
 struct CommandCompleter {
@@ -29,7 +29,10 @@ struct CommandCompleter {
 
 impl CommandCompleter {
 	fn new() -> Self {
-		let commands = crate::session::chat::COMMANDS.iter().map(|&s| s.to_string()).collect();
+		let commands = crate::session::chat::COMMANDS
+			.iter()
+			.map(|&s| s.to_string())
+			.collect();
 		Self { commands }
 	}
 }
@@ -48,7 +51,8 @@ impl Completer for CommandCompleter {
 			return Ok((0, vec![]));
 		}
 
-		let candidates: Vec<Pair> = self.commands
+		let candidates: Vec<Pair> = self
+			.commands
 			.iter()
 			.filter(|cmd| cmd.starts_with(line))
 			.map(|cmd| Pair {
@@ -83,7 +87,10 @@ impl Highlighter for CommandCompleter {
 		// Only apply highlighting to commands (lines starting with '/')
 		if line.starts_with('/') {
 			// Check if this is a valid command
-			let is_valid_command = self.commands.iter().any(|cmd| line == cmd || cmd.starts_with(line));
+			let is_valid_command = self
+				.commands
+				.iter()
+				.any(|cmd| line == cmd || cmd.starts_with(line));
 
 			if is_valid_command {
 				// Highlight valid commands in green

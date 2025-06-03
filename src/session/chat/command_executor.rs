@@ -15,13 +15,13 @@
 // Command executor for /run commands using layers
 
 use crate::config::Config;
-use crate::session::{layers::generic_layer::GenericLayer, layers::layer_trait::Layer};
-use crate::session::chat::session::ChatSession;
 use crate::session::chat::format_number;
+use crate::session::chat::session::ChatSession;
+use crate::session::{layers::generic_layer::GenericLayer, layers::layer_trait::Layer};
 use anyhow::Result;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use colored::Colorize;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// Execute a command layer without storing it in the session history
 pub async fn execute_command_layer(
@@ -30,7 +30,7 @@ pub async fn execute_command_layer(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	operation_cancelled: Arc<AtomicBool>
+	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<String> {
 	// Get role configuration to check for command layers
 	let (_, _, _, commands_config, _) = config.get_mode_config(role);
@@ -40,7 +40,11 @@ pub async fn execute_command_layer(
 		.and_then(|commands| commands.get(command_name))
 		.ok_or_else(|| anyhow::anyhow!("Command '{}' not found in configuration", command_name))?;
 
-	println!("{} {}", "Executing command:".bright_cyan(), command_name.bright_yellow());
+	println!(
+		"{} {}",
+		"Executing command:".bright_cyan(),
+		command_name.bright_yellow()
+	);
 
 	// Log the command execution
 	if let Some(session_file) = &chat_session.session.session_file {
@@ -59,7 +63,10 @@ pub async fn execute_command_layer(
 			"mcp_enabled": !command_config.mcp.server_refs.is_empty()
 		}
 		});
-		let _ = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?);
+		let _ = crate::session::append_to_session_file(
+			session_file,
+			&serde_json::to_string(&log_entry)?,
+		);
 	}
 
 	// Create a generic layer with the command configuration
@@ -76,11 +83,11 @@ pub async fn execute_command_layer(
 			// For "Last" mode, always use prepare_input to get the last assistant response
 			// If explicit input is provided, it will be combined with the last assistant context
 			command_layer.prepare_input(provided_input, &chat_session.session)
-		},
+		}
 		crate::session::layers::layer_trait::InputMode::All => {
 			// For "All" mode, use prepare_input to format the full conversation context
 			command_layer.prepare_input(provided_input, &chat_session.session)
-		},
+		}
 		crate::session::layers::layer_trait::InputMode::Summary => {
 			// For "Summary" mode, use prepare_input to generate a summary
 			command_layer.prepare_input(provided_input, &chat_session.session)
@@ -99,11 +106,21 @@ pub async fn execute_command_layer(
 			"input_length": processed_input.len(),
 			"input_mode": format!("{:?}", command_config.input_mode)
 		});
-		let _ = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?);
+		let _ = crate::session::append_to_session_file(
+			session_file,
+			&serde_json::to_string(&log_entry)?,
+		);
 	}
 
 	// Execute the layer without affecting the session
-	let result = command_layer.process(&processed_input, &chat_session.session, config, operation_cancelled).await?;
+	let result = command_layer
+		.process(
+			&processed_input,
+			&chat_session.session,
+			config,
+			operation_cancelled,
+		)
+		.await?;
 
 	// Log the command result
 	if let Some(session_file) = &chat_session.session.session_file {
@@ -117,7 +134,10 @@ pub async fn execute_command_layer(
 			"output_length": result.output.len(),
 			"usage": result.token_usage
 		});
-		let _ = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?);
+		let _ = crate::session::append_to_session_file(
+			session_file,
+			&serde_json::to_string(&log_entry)?,
+		);
 	}
 
 	// Add command statistics to the session
@@ -131,20 +151,26 @@ pub async fn execute_command_layer(
 			&effective_model,
 			usage.prompt_tokens,
 			usage.completion_tokens,
-			cost
+			cost,
 		);
 
 		// Save the session to persist the statistics
 		let _ = chat_session.save();
 
 		// Display information about the command execution
-		println!("{} {} prompt, {} completion tokens",
+		println!(
+			"{} {} prompt, {} completion tokens",
 			"Command usage:".bright_blue(),
 			format_number(usage.prompt_tokens).bright_green(),
-			format_number(usage.completion_tokens).bright_green());
+			format_number(usage.completion_tokens).bright_green()
+		);
 
 		if cost > 0.0 {
-			println!("{} ${:.5}", "Command cost:".bright_blue(), cost.to_string().bright_magenta());
+			println!(
+				"{} ${:.5}",
+				"Command cost:".bright_blue(),
+				cost.to_string().bright_magenta()
+			);
 		}
 	}
 

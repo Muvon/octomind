@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::generic_layer::GenericLayer;
+use super::layer_trait::{Layer, LayerConfig};
 use crate::config::Config;
 use crate::session::Session;
-use super::layer_trait::{Layer, LayerConfig};
-use super::generic_layer::GenericLayer;
 use anyhow::Result;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use colored::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // Main layered orchestrator that manages the pipeline of layers
 pub struct LayeredOrchestrator {
@@ -87,7 +87,7 @@ impl LayeredOrchestrator {
 		input: &str,
 		session: &mut Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>
+		operation_cancelled: Arc<AtomicBool>,
 	) -> Result<String> {
 		// If no layers are configured (layers disabled), return input unchanged
 		if self.layers.is_empty() {
@@ -102,8 +102,14 @@ impl LayeredOrchestrator {
 		let mut total_cost = 0.0;
 
 		// Debug information for user
-		println!("{}", "═════════════ Layer Processing Pipeline ═════════════".bright_cyan());
-		println!("{}", format!("Starting processing with {} layers", self.layers.len()).bright_green());
+		println!(
+			"{}",
+			"═════════════ Layer Processing Pipeline ═════════════".bright_cyan()
+		);
+		println!(
+			"{}",
+			format!("Starting processing with {} layers", self.layers.len()).bright_green()
+		);
 		println!();
 
 		// Process through each layer sequentially
@@ -115,7 +121,10 @@ impl LayeredOrchestrator {
 			}
 
 			let layer_name = layer.name();
-			println!("{}", format!("───── Layer: {} ─────", layer_name).bright_yellow());
+			println!(
+				"{}",
+				format!("───── Layer: {} ─────", layer_name).bright_yellow()
+			);
 
 			// Process the layer
 			println!("{}", "Input:".bright_blue());
@@ -123,29 +132,37 @@ impl LayeredOrchestrator {
 
 			// Clear any previous animation line and show current cost
 			print!("\r                                                                  \r");
-			println!("{} ${:.5}", "Generating response with current cost:".bright_cyan(), total_cost);
+			println!(
+				"{} ${:.5}",
+				"Generating response with current cost:".bright_cyan(),
+				total_cost
+			);
 
 			// Debug info for model and settings
-			println!("{} {} (temp: {})", "Using model:".bright_magenta(),
-				layer.config().get_effective_model(&session.info.model), layer.config().temperature);
+			println!(
+				"{} {} (temp: {})",
+				"Using model:".bright_magenta(),
+				layer.config().get_effective_model(&session.info.model),
+				layer.config().temperature
+			);
 
 			if !layer.config().mcp.server_refs.is_empty() {
 				if layer.config().mcp.allowed_tools.is_empty() {
 					println!("{}", "All tools enabled for this layer".bright_magenta());
 				} else {
-					println!("{} {}", "Tools enabled:".bright_magenta(),
-						layer.config().mcp.allowed_tools.join(", "));
+					println!(
+						"{} {}",
+						"Tools enabled:".bright_magenta(),
+						layer.config().mcp.allowed_tools.join(", ")
+					);
 				}
 			}
 
 			// Process this layer with its own isolated session
 			// The only input it receives is the output from the previous layer
-			let result = layer.process(
-				&current_input,
-				session,
-				config,
-				operation_cancelled.clone()
-			).await?;
+			let result = layer
+				.process(&current_input, session, config, operation_cancelled.clone())
+				.await?;
 
 			println!("{}", "Output:".bright_green());
 			println!("{}", result.output);
@@ -168,7 +185,7 @@ impl LayeredOrchestrator {
 						cost,
 						result.api_time_ms,
 						result.tool_time_ms,
-						result.total_time_ms
+						result.total_time_ms,
 					);
 
 					// Update totals for summary
@@ -177,7 +194,10 @@ impl LayeredOrchestrator {
 					total_cost += cost;
 				} else {
 					// Try to get cost from raw response JSON if not in TokenUsage
-					let cost_from_raw = result.exchange.response.get("usage")
+					let cost_from_raw = result
+						.exchange
+						.response
+						.get("usage")
 						.and_then(|u| u.get("cost"))
 						.and_then(|c| c.as_f64());
 
@@ -196,7 +216,7 @@ impl LayeredOrchestrator {
 							cost,
 							result.api_time_ms,
 							result.tool_time_ms,
-							result.total_time_ms
+							result.total_time_ms,
 						);
 
 						// Update totals for summary
@@ -205,7 +225,11 @@ impl LayeredOrchestrator {
 						total_cost += cost;
 					} else {
 						// ERROR - OpenRouter did not provide cost data
-						println!("{} {}", "ERROR: Layer".bright_red(), layer_name.bright_yellow());
+						println!(
+							"{} {}",
+							"ERROR: Layer".bright_red(),
+							layer_name.bright_yellow()
+						);
 						println!("{}", "OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
 
 						// Still track tokens and time
@@ -221,15 +245,19 @@ impl LayeredOrchestrator {
 							0.0, // No cost available
 							result.api_time_ms,
 							result.tool_time_ms,
-							result.total_time_ms
+							result.total_time_ms,
 						);
 					}
 				}
 			} else {
-				println!("{} {} | Time: API {}ms, Tools {}ms, Total {}ms",
+				println!(
+					"{} {} | Time: API {}ms, Tools {}ms, Total {}ms",
 					"ERROR: No usage data for layer".bright_red(),
 					layer_name.bright_yellow(),
-					result.api_time_ms, result.tool_time_ms, result.total_time_ms);
+					result.api_time_ms,
+					result.tool_time_ms,
+					result.total_time_ms
+				);
 			}
 
 			// Take the output from this layer and use it as input for the next layer
@@ -246,17 +274,35 @@ impl LayeredOrchestrator {
 		let total_layer_time_ms = session.info.total_layer_time_ms;
 
 		// Display cumulative token usage across all layers
-		println!("{}", format!("Total tokens used: {} (Input: {}, Output: {})",
-			total_input_tokens + total_output_tokens,
-			total_input_tokens,
-			total_output_tokens).bright_blue());
-		println!("{}", format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue());
-		println!("{}", format!("Total time: {}ms (API: {}ms, Tools: {}ms, Layer Processing: {}ms)",
-			total_api_time_ms + total_tool_time_ms + total_layer_time_ms,
-			total_api_time_ms,
-			total_tool_time_ms,
-			total_layer_time_ms).bright_blue());
-		println!("{}", "Use /info for detailed cost breakdown by layer".bright_blue());
+		println!(
+			"{}",
+			format!(
+				"Total tokens used: {} (Input: {}, Output: {})",
+				total_input_tokens + total_output_tokens,
+				total_input_tokens,
+				total_output_tokens
+			)
+			.bright_blue()
+		);
+		println!(
+			"{}",
+			format!("Estimated cost for all layers: ${:.5}", total_cost).bright_blue()
+		);
+		println!(
+			"{}",
+			format!(
+				"Total time: {}ms (API: {}ms, Tools: {}ms, Layer Processing: {}ms)",
+				total_api_time_ms + total_tool_time_ms + total_layer_time_ms,
+				total_api_time_ms,
+				total_tool_time_ms,
+				total_layer_time_ms
+			)
+			.bright_blue()
+		);
+		println!(
+			"{}",
+			"Use /info for detailed cost breakdown by layer".bright_blue()
+		);
 
 		// Return the final layer's output to be used as starting point for the main chat session
 		// This output contains all the necessary context and information from the layer processing

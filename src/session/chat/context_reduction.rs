@@ -49,8 +49,8 @@ pub async fn perform_context_reduction(
 	let original_message_count = chat_session.session.messages.len();
 
 	// Simply add the summarization prompt as a user message
-	let summarization_prompt = "Please create a concise summary of our conversation that preserves all important technical details, decisions made, files modified, and context needed for future development. Focus on actionable information and key outcomes.";
-	
+	let summarization_prompt = "Please memorize critical and important info for future reference first and after create a concise summary of our conversation that preserves all important technical details, decisions made, files modified, and context needed for future development. Focus on actionable information and key outcomes.";
+
 	chat_session.add_user_message(summarization_prompt)?;
 
 	// Create a task to show loading animation with current cost

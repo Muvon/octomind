@@ -55,14 +55,47 @@ impl Config {
 			// Initialize the configuration
 			config.initialize_config();
 
-			// Validate the configuration
-			config.validate()?;
+			// Environment variables take precedence over config file values
+			// Handle provider API keys from environment variables
+			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
+				config.providers.openrouter.api_key = Some(openrouter_key);
+			}
+			if let Ok(openai_key) = std::env::var("OPENAI_API_KEY") {
+				config.providers.openai.api_key = Some(openai_key);
+			}
+			if let Ok(anthropic_key) = std::env::var("ANTHROPIC_API_KEY") {
+				config.providers.anthropic.api_key = Some(anthropic_key);
+			}
+			if let Ok(google_credentials) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+				config.providers.google.api_key = Some(google_credentials);
+			}
+			if let Ok(amazon_key) = std::env::var("AWS_ACCESS_KEY_ID") {
+				config.providers.amazon.api_key = Some(amazon_key);
+			}
+			if let Ok(cloudflare_key) = std::env::var("CLOUDFLARE_API_TOKEN") {
+				config.providers.cloudflare.api_key = Some(cloudflare_key);
+			}
+
+			// Legacy environment variable support for backward compatibility
+			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
+				config.openrouter.api_key = Some(openrouter_key);
+			}
+
+			// Validate the loaded configuration
+			if let Err(e) = config.validate() {
+				eprintln!("Configuration validation warning: {}", e);
+				eprintln!("The application will continue, but you may want to fix these issues.");
+			}
 
 			Ok(config)
 		} else {
 			// Create default config with environment variables
 			let mut config = Self::default_with_env();
 			config.config_path = Some(config_path);
+
+			// CRITICAL FIX: Initialize the configuration when no file exists
+			config.initialize_config();
+
 			Ok(config)
 		}
 	}
@@ -184,9 +217,24 @@ impl Config {
 
 	/// Create a clean copy of the config for saving (removes runtime-only fields)
 	pub fn create_clean_copy_for_saving(&self) -> Self {
-		let clean = self.clone();
-		// Remove runtime-only fields if needed
-		clean
+		let mut clean_config = self.clone();
+
+		// Remove internal servers from the MCP registry before saving
+		let internal_servers = ["developer", "filesystem", "octocode"];
+		for server_name in &internal_servers {
+			clean_config.mcp.servers.remove(*server_name);
+		}
+
+		// CRITICAL FIX: Don't save the [mcp] section at all if it only contains internal servers
+		// The MCP functionality should be controlled by role server_refs, not by a global enabled flag
+		// If there are no user-defined servers, ensure the config will be skipped during serialization
+		if clean_config.mcp.servers.is_empty() && clean_config.mcp.allowed_tools.is_empty() {
+			// Clear the config so it gets skipped during serialization
+			clean_config.mcp.servers.clear();
+			clean_config.mcp.allowed_tools.clear();
+		}
+
+		clean_config
 	}
 
 	/// Update configuration with a closure and save

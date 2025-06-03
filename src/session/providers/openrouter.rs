@@ -88,12 +88,17 @@ impl AiProvider for OpenRouterProvider {
 	}
 
 	fn get_api_key(&self, config: &Config) -> Result<String> {
-		// First check the config file
+		// First check the new providers config
+		if let Some(key) = &config.providers.openrouter.api_key {
+			return Ok(key.clone());
+		}
+
+		// Then check the legacy openrouter config for backward compatibility
 		if let Some(key) = &config.openrouter.api_key {
 			return Ok(key.clone());
 		}
 
-		// Then fall back to environment variable
+		// Finally fall back to environment variable
 		match env::var(OPENROUTER_API_KEY_ENV) {
 			Ok(key) => Ok(key),
 			Err(_) => Err(anyhow::anyhow!(

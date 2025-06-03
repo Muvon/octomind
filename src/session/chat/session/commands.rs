@@ -417,7 +417,7 @@ impl ChatSession {
 
 						// Show cache statistics
 						let cache_manager = crate::session::cache::CacheManager::new();
-						let stats = cache_manager.get_cache_statistics(&self.session);
+						let stats = cache_manager.get_cache_statistics_with_config(&self.session, Some(config));
 						println!("{}", stats.format_for_display());
 					}
 				} else {
@@ -425,7 +425,7 @@ impl ChatSession {
 						"stats" => {
 							// Show detailed cache statistics
 							let cache_manager = crate::session::cache::CacheManager::new();
-							let stats = cache_manager.get_cache_statistics(&self.session);
+							let stats = cache_manager.get_cache_statistics_with_config(&self.session, Some(config));
 							println!("{}", stats.format_for_display());
 						}
 						"clear" => {

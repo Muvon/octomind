@@ -96,13 +96,17 @@ impl AiProvider for OpenAiProvider {
 			|| model.contains("gpt-3.5")
 	}
 
-	fn get_api_key(&self, _config: &Config) -> Result<String> {
-		// For now, only check environment variable
-		// In the future, we could add openai-specific config section
+	fn get_api_key(&self, config: &Config) -> Result<String> {
+		// First check the new providers config
+		if let Some(key) = &config.providers.openai.api_key {
+			return Ok(key.clone());
+		}
+
+		// Fall back to environment variable
 		match env::var(OPENAI_API_KEY_ENV) {
 			Ok(key) => Ok(key),
 			Err(_) => Err(anyhow::anyhow!(
-				"OpenAI API key not found in environment variable {}",
+				"OpenAI API key not found in config or environment variable {}",
 				OPENAI_API_KEY_ENV
 			)),
 		}

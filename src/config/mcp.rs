@@ -247,25 +247,51 @@ pub fn get_core_server_config(server_name: &str) -> Option<McpServerConfig> {
 		"developer" => Some(McpServerConfig {
 			name: "developer".to_string(),
 			server_type: McpServerType::Developer,
-			..Default::default()
+			url: None,
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
+			mode: McpServerMode::Http,
+			timeout_seconds: 30,
+			tools: Vec::new(),
 		}),
 		"filesystem" => Some(McpServerConfig {
 			name: "filesystem".to_string(),
 			server_type: McpServerType::Filesystem,
-			..Default::default()
+			url: None,
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
+			mode: McpServerMode::Http,
+			timeout_seconds: 30,
+			tools: Vec::new(),
 		}),
 		"octocode" => {
-			if is_octocode_available() {
+			let octocode_available = is_octocode_available();
+			if octocode_available {
 				Some(McpServerConfig {
 					name: "octocode".to_string(),
 					server_type: McpServerType::External,
 					command: Some("octocode".to_string()),
-					args: vec!["mcp".to_string()],
+					args: vec!["mcp".to_string(), "--path=.".to_string()],
 					mode: McpServerMode::Stdin,
-					..Default::default()
+					timeout_seconds: 30,
+					tools: vec![], // Empty means all tools are enabled
+					url: None,
+					auth_token: None,
 				})
 			} else {
-				None
+				Some(McpServerConfig {
+					name: "octocode".to_string(),
+					server_type: McpServerType::External,
+					command: Some("octocode".to_string()),
+					args: vec!["mcp".to_string(), "--path=.".to_string()],
+					mode: McpServerMode::Stdin,
+					timeout_seconds: 30,
+					tools: vec!["unavailable".to_string()], // Mark as unavailable if binary not found
+					url: None,
+					auth_token: None,
+				})
 			}
 		}
 		_ => None,

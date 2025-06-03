@@ -437,6 +437,11 @@ impl CacheManager {
 
 	/// Get cache statistics for display
 	pub fn get_cache_statistics(&self, session: &Session) -> CacheStatistics {
+		self.get_cache_statistics_with_config(session, None)
+	}
+
+	/// Get cache statistics for display with optional config for tool detection
+	pub fn get_cache_statistics_with_config(&self, session: &Session, config: Option<&crate::config::Config>) -> CacheStatistics {
 		let mut content_markers = 0;
 		let mut system_markers = 0;
 		let mut tool_markers = 0;
@@ -446,13 +451,45 @@ impl CacheManager {
 				match msg.role.as_str() {
 					"system" => system_markers += 1,
 					"user" => content_markers += 1,
-					"tool" => tool_markers += 1, // FIXED: Actually count tool markers
+					"tool" => tool_markers += 1, // This counts tool result messages that are cached
 					"assistant" => {
 						// Assistant messages could be either tool-related or content
 						// For now, count as content markers
 						content_markers += 1;
 					}
 					_ => {}
+				}
+			}
+		}
+
+		// CRITICAL FIX: Check if tool definitions should be cached based on system message caching
+		// Tool definitions are not stored as messages but are cached when system messages are cached
+		let has_cached_system = system_markers > 0;
+		let supports_caching = crate::session::model_supports_caching(&session.info.model);
+		
+		// If system message is cached and model supports caching, tool definitions are also cached
+		// This is handled automatically by the providers during API requests
+		if has_cached_system && supports_caching {
+			// Check if MCP servers are configured (which means tool definitions exist)
+			let has_tools = if let Some(cfg) = config {
+				!cfg.mcp.servers.is_empty()
+			} else {
+				// Fallback: infer from session usage or provider behavior
+				// If we have tool calls, we definitely have tool definitions
+				// If we have any input tokens but no tool calls yet, check if it's a cacheable model with system cached
+				session.info.tool_calls > 0 || 
+				(session.info.input_tokens > 0 && has_cached_system) ||
+				// For brand new sessions with cacheable models and cached system, assume tools are available
+				(session.info.input_tokens == 0 && session.info.cached_tokens == 0 && has_cached_system)
+			};
+			
+			if has_tools {
+				// Don't overwrite tool result markers - add 1 to represent tool definition cache marker
+				// This accounts for the virtual tool definition cache marker that exists but isn't a message
+				if tool_markers == 0 {
+					tool_markers = 1; // Tool definitions cached (virtual marker)
+				} else {
+					tool_markers += 1; // Tool definitions + existing tool result markers
 				}
 			}
 		}

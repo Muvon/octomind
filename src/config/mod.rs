@@ -457,29 +457,48 @@ impl Config {
 	/// Get a merged config for a specific mode (for backward compatibility)
 	/// This creates a new Config with role-specific settings merged into system-wide settings
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
-		let (mode_config, _role_mcp_config, layers, commands, system_prompt) =
+		let (mode_config, role_mcp_config, layers, commands, system_prompt) =
 			self.get_mode_config(mode);
 
-		Config {
-			log_level: self.log_level.clone(),
-			model: mode_config.model.clone(),
-			mcp_response_warning_threshold: self.mcp_response_warning_threshold,
-			max_request_tokens_threshold: self.max_request_tokens_threshold,
-			enable_auto_truncation: self.enable_auto_truncation,
-			cache_tokens_threshold: self.cache_tokens_threshold,
-			cache_timeout_seconds: self.cache_timeout_seconds,
-			enable_markdown_rendering: self.enable_markdown_rendering,
-			markdown_theme: self.markdown_theme.clone(),
-			providers: self.providers.clone(),
-			developer: self.developer.clone(),
-			assistant: self.assistant.clone(),
-			mcp: self.mcp.clone(),
-			commands: commands.cloned(),
-			openrouter: self.openrouter.clone(),
-			layers: layers.cloned(),
-			system: system_prompt.cloned(),
-			config_path: self.config_path.clone(),
+		let mut merged = self.clone();
+
+		// Create an OpenRouterConfig from the ModeConfig for backward compatibility
+		merged.openrouter = OpenRouterConfig {
+			model: mode_config.get_full_model(),
+			api_key: mode_config.get_api_key(&self.providers),
+			pricing: mode_config.get_pricing(&self.providers),
+		};
+
+		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code
+		// Use the new runtime injection method to ensure core servers are ALWAYS available
+		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config);
+		let mut legacy_servers = std::collections::HashMap::new();
+
+		crate::log_debug!(
+			"TRACE: Role '{}' server_refs: {:?}",
+			mode,
+			role_mcp_config.server_refs
+		);
+		crate::log_debug!(
+			"TRACE: Found {} enabled servers for role",
+			enabled_servers.len()
+		);
+
+		for server in enabled_servers {
+			crate::log_debug!("TRACE: Adding server '{}' to merged config", server.name);
+			legacy_servers.insert(server.name.clone(), server);
 		}
+
+		merged.mcp = McpConfig {
+			servers: legacy_servers, // Only role-enabled servers (with runtime injection)
+			allowed_tools: role_mcp_config.allowed_tools.clone(),
+		};
+
+		merged.layers = layers.cloned();
+		merged.commands = commands.cloned();
+		merged.system = system_prompt.cloned();
+
+		merged
 	}
 
 	/// Get the mode config struct for a specific role

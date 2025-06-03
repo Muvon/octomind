@@ -216,21 +216,25 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		let system_prompt = create_system_prompt(&current_dir, config, &session_args.role).await;
 		chat_session.add_system_message(&system_prompt)?;
 
-		// Mark system message with function declarations as cached by default
-		// This ensures all heavy initial context is cached to save on tokens
-		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
-			if cached && crate::session::model_supports_caching(&chat_session.model) {
-				log_info!("System prompt has been marked for caching to save tokens in future interactions.");
-				// Save the session to ensure the cached status is persisted
-				let _ = chat_session.save();
-			} else if !crate::session::model_supports_caching(&chat_session.model) {
-				// Don't show warning for models that don't support caching
-				log_info!("Note: This model doesn't support caching, but system prompt is still optimized.");
-			} else {
-				log_info!("Warning: Failed to mark system prompt for caching.");
-			}
+		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions
+		// This ensures consistent caching behavior across all supported models
+		let supports_caching = crate::session::model_supports_caching(&chat_session.model);
+		let has_tools = !config.mcp.servers.is_empty();
+		
+		if supports_caching {
+			let cache_manager = crate::session::cache::CacheManager::new();
+			cache_manager.add_automatic_cache_markers(
+				&mut chat_session.session.messages,
+				has_tools,
+				supports_caching,
+			);
+			
+			log_info!("System prompt has been automatically marked for caching to save tokens in future interactions.");
+			// Save the session to ensure the cached status is persisted
+			let _ = chat_session.save();
 		} else {
-			log_info!("Error: Could not set cache checkpoint for system message.");
+			// Don't show warning for models that don't support caching
+			log_info!("Note: This model doesn't support caching, but system prompt is still optimized.");
 		}
 
 		// Add assistant welcome message

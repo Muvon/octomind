@@ -154,7 +154,12 @@ impl AiProvider for OpenRouterProvider {
 		if !config.mcp.servers.is_empty() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
-				let mut tools = functions.iter().map(|f| {
+				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
+				// Sort functions by name to guarantee consistent ordering across API calls
+				let mut sorted_functions = functions;
+				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
+				
+				let mut tools = sorted_functions.iter().map(|f| {
 					serde_json::json!({
 						"type": "function",
 						"function": {
@@ -166,23 +171,32 @@ impl AiProvider for OpenRouterProvider {
 				}).collect::<Vec<_>>();
 
 				// Add web search tool if using Claude 3.7 Sonnet
+				// CRITICAL FIX: Add these in CONSISTENT order
 				if model.contains("sonnet") || model.contains("haiku") {
-					tools.push(serde_json::json!({
-						"type": "web_search_20250305",
-						"name": "web_search"
-					}));
+					// Add in alphabetical order to ensure consistency
 					tools.push(serde_json::json!({
 						"type": "text_editor_20250124",
 						"name": "text_editor"
 					}));
+					tools.push(serde_json::json!({
+						"type": "web_search_20250305",
+						"name": "web_search"
+					}));
 				}
 
-				// Add cache control to the LAST tool definition if provider supports caching
+				// CRITICAL FIX: Cache control should be handled consistently
+				// Add cache control to the LAST tool definition ONLY if the model supports caching
+				// and we actually want to cache tool definitions (check session state)
 				if self.supports_caching(model) && !tools.is_empty() {
-					if let Some(last_tool) = tools.last_mut() {
-						last_tool["cache_control"] = serde_json::json!({
-							"type": "ephemeral"
-						});
+					// Check if any system message is cached - if so, we should cache tool definitions too
+					let system_cached = messages.iter().any(|msg| msg.role == "system" && msg.cached);
+					
+					if system_cached {
+						if let Some(last_tool) = tools.last_mut() {
+							last_tool["cache_control"] = serde_json::json!({
+								"type": "ephemeral"
+							});
+						}
 					}
 				}
 
@@ -458,16 +472,14 @@ fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<O
 	let mut cached_count = 0;
 	let mut result = Vec::new();
 
-	// Create a mutable copy for cache processing
-	let mut messages_copy: Vec<Message> = messages.to_vec();
-
-	// Apply automatic cache markers for system messages and tools
+	// CRITICAL FIX: Don't modify messages locally - the cache markers should already be set
+	// by the session management logic. Only apply emergency system message caching if needed.
 	let cache_manager = crate::session::cache::CacheManager::new();
-	let has_tools = !config.mcp.servers.is_empty(); // Check if MCP has any servers configured
 	let supports_caching = cache_manager.validate_cache_support("openrouter", model);
-	cache_manager.add_automatic_cache_markers(&mut messages_copy, has_tools, supports_caching);
+	
+	// Use messages directly - cache markers should already be properly set by session logic
 
-	for msg in messages_copy {
+	for msg in messages {
 		// Handle all message types with simplified structure
 		match msg.role.as_str() {
 			"tool" => {

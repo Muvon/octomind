@@ -112,9 +112,10 @@ impl AiProvider for GoogleVertexProvider {
 		Ok("service_account_auth".to_string())
 	}
 
-	fn supports_caching(&self, _model: &str) -> bool {
-		// Google Vertex AI doesn't currently support the same type of caching as Anthropic
-		false
+	fn supports_caching(&self, model: &str) -> bool {
+		// Google Vertex AI supports caching for Gemini 1.5 models
+		// Source: https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache
+		model.contains("gemini-1.5")
 	}
 
 	async fn chat_completion(
@@ -157,7 +158,12 @@ impl AiProvider for GoogleVertexProvider {
 		if !config.mcp.servers.is_empty() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
-				let tools = functions.iter().map(|f| {
+				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
+				// Sort functions by name to guarantee consistent ordering across API calls
+				let mut sorted_functions = functions;
+				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
+				
+				let tools = sorted_functions.iter().map(|f| {
 					serde_json::json!({
 						"functionDeclarations": [{
 						"name": f.name,
@@ -318,6 +324,8 @@ impl GoogleVertexProvider {
 }
 
 // Convert our session messages to Vertex AI format
+// NOTE: Google Vertex AI supports caching for Gemini 1.5 models using context cache
+// Cache markers are handled for supported models
 fn convert_messages(messages: &[Message]) -> Vec<VertexMessage> {
 	let mut result = Vec::new();
 

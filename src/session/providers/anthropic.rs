@@ -131,7 +131,12 @@ impl AiProvider for AnthropicProvider {
 		if !config.mcp.servers.is_empty() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
-				let mut tools = functions.iter().map(|f| {
+				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
+				// Sort functions by name to guarantee consistent ordering across API calls
+				let mut sorted_functions = functions;
+				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
+				
+				let mut tools = sorted_functions.iter().map(|f| {
 					serde_json::json!({
 						"name": f.name,
 						"description": f.description,
@@ -139,12 +144,19 @@ impl AiProvider for AnthropicProvider {
 					})
 				}).collect::<Vec<_>>();
 
-				// Add cache control to the LAST tool definition if provider supports caching
+				// CRITICAL FIX: Cache control should be handled consistently
+				// Add cache control to the LAST tool definition ONLY if the model supports caching
+				// and we actually want to cache tool definitions (check session state)
 				if self.supports_caching(model) && !tools.is_empty() {
-					if let Some(last_tool) = tools.last_mut() {
-						last_tool["cache_control"] = serde_json::json!({
-							"type": "ephemeral"
-						});
+					// Check if any system message is cached - if so, we should cache tool definitions too
+					let system_cached = messages.iter().any(|msg| msg.role == "system" && msg.cached);
+					
+					if system_cached {
+						if let Some(last_tool) = tools.last_mut() {
+							last_tool["cache_control"] = serde_json::json!({
+								"type": "ephemeral"
+							});
+						}
 					}
 				}
 
@@ -279,19 +291,16 @@ impl AiProvider for AnthropicProvider {
 
 // Convert our session messages to Anthropic format
 fn convert_messages(messages: &[Message], config: &Config, model: &str) -> Vec<AnthropicMessage> {
-	// Create a mutable copy for cache processing
-	let mut messages_copy: Vec<Message> = messages.to_vec();
-
-	// Apply automatic cache markers for system messages and tools
+	// CRITICAL FIX: Don't modify messages locally - cache markers should already be set
+	// by the session management logic, consistent with OpenRouter implementation
 	let cache_manager = crate::session::cache::CacheManager::new();
-	let has_tools = !config.mcp.servers.is_empty(); // Check if MCP has any servers configured
 	let supports_caching = cache_manager.validate_cache_support("anthropic", model);
-	cache_manager.add_automatic_cache_markers(&mut messages_copy, has_tools, supports_caching);
-
+	
+	// Use messages directly - cache markers should already be properly set by session logic
 	let mut result = Vec::new();
 
-	for msg in messages_copy {
-		// Skip system messages as they're handled separately
+	for msg in messages {
+		// Skip system messages as they're handled separately in Anthropic API
 		if msg.role == "system" {
 			continue;
 		}

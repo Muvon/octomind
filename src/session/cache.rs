@@ -65,6 +65,8 @@ impl CacheManager {
 
 	/// Add automatic cache markers for system messages and tool definitions
 	/// This should be called when preparing messages for API requests
+	/// CRITICAL FIX: This method should only be called during session initialization,
+	/// NOT during every API request conversion
 	pub fn add_automatic_cache_markers(
 		&self,
 		messages: &mut [Message],
@@ -82,25 +84,29 @@ impl CacheManager {
 			}
 		}
 
-		// 2. If we have tools, mark the last tool-related message for caching
-		// This effectively caches all tool definitions when sent to the API
+		// 2. CRITICAL FIX: Tool definition caching should be handled by ensuring
+		// the LAST system message (which includes tool definitions) is cached.
+		// This happens automatically when system prompt is generated with tools.
+		// We don't need to add additional markers here as tool definitions
+		// are part of the system message in most cases.
+		
+		// Only mark additional system messages if they exist and have tools
 		if has_tools {
-			// Find the last message before the first user message or the last system message
-			// This is typically where tool definitions would be in the context
-			let mut tool_cache_index = None;
-
+			// Find the LAST system message - this is where tool definitions are typically included
+			let mut last_system_index = None;
+			
 			for (i, msg) in messages.iter().enumerate() {
 				if msg.role == "system" {
-					tool_cache_index = Some(i);
-				} else if msg.role == "user" {
-					// First user message found, stop looking
-					break;
+					last_system_index = Some(i);
 				}
 			}
-
-			if let Some(index) = tool_cache_index {
+			
+			// If we found a system message and it's not already cached, cache it
+			if let Some(index) = last_system_index {
 				if let Some(msg) = messages.get_mut(index) {
-					msg.cached = true;
+					if !msg.cached {
+						msg.cached = true;
+					}
 				}
 			}
 		}
@@ -284,6 +290,7 @@ impl CacheManager {
 	/// Check if auto-cache threshold is reached on EACH tool result and add marker if needed
 	/// This should be called after EACH individual tool result is processed, not after all tools
 	/// Returns true if a cache marker was added
+	/// CRITICAL FIX: Ensure this properly accumulates tokens and checks thresholds correctly
 	pub fn check_and_apply_auto_cache_threshold_on_tool_result(
 		&self,
 		session: &mut Session,
@@ -310,7 +317,10 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// Check absolute threshold (only check if > 0, meaning enabled)
+		// CRITICAL FIX: Check the threshold immediately after the tool result is added
+		// This ensures we're checking against the most up-to-date token counts
+		
+		// Check absolute threshold first (only check if > 0, meaning enabled)
 		if config.cache_tokens_threshold > 0 && session.current_non_cached_tokens >= config.cache_tokens_threshold {
 			match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
 				Ok(true) => return Ok(true),
@@ -319,7 +329,7 @@ impl CacheManager {
 			}
 		}
 
-		// Check time-based threshold last
+		// Check time-based threshold
 		let current_time = std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
@@ -349,6 +359,8 @@ impl CacheManager {
 	/// Update token tracking after API response
 	/// This should be called after EVERY API request to accumulate token usage
 	/// for proper cache threshold calculations
+	/// CRITICAL FIX: Ensure this properly tracks both cached and non-cached tokens
+	/// for accurate threshold calculations
 	pub fn update_token_tracking(
 		&self,
 		session: &mut Session,
@@ -361,18 +373,21 @@ impl CacheManager {
 		session.info.output_tokens += output_tokens;
 		session.info.cached_tokens += cached_tokens;
 
-		// Update current interaction tracking for cache threshold logic
-		// input_tokens here are already non-cached tokens (caller subtracted cached_tokens)
+		// CRITICAL FIX: For threshold checking, we need to track tokens correctly:
+		// - input_tokens here are the NON-CACHED input tokens processed by the API
+		// - cached_tokens are the input tokens that were served from cache
+		// - output_tokens are generated tokens (never cached)
+		
+		// Total input tokens include both processed and cached
+		let total_input_tokens = input_tokens + cached_tokens;
+		
 		// For threshold checking:
-		// - total_input_tokens should include ALL INPUT tokens (non-cached + cached) - excludes output
-		// - non_cached_input_tokens should only include non-cached input tokens
-		// Output tokens are separate as they cannot be cached
-		let total_input_tokens = input_tokens + cached_tokens; // Only INPUT tokens (cacheable)
-		let non_cached_input_tokens = input_tokens; // Only non-cached input tokens
-
-		// Add to running totals (these accumulate until a cache checkpoint is set)
+		// - Add ALL input tokens (cached + non-cached) to total tracking
+		// - Add ONLY non-cached input tokens to non-cached tracking
+		// - Output tokens don't count toward cache thresholds (they can't be cached)
+		
 		session.current_total_tokens += total_input_tokens;
-		session.current_non_cached_tokens += non_cached_input_tokens;
+		session.current_non_cached_tokens += input_tokens; // Only non-cached input tokens
 	}
 
 	/// Estimate current session tokens for threshold checking

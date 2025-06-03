@@ -469,6 +469,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				let result = super::super::context_reduction::perform_context_reduction(
 					&mut chat_session,
 					&current_config,
+					&session_args.role,
 					operation_cancelled.clone(),
 				)
 				.await;

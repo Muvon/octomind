@@ -23,37 +23,35 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Process context reduction - smart truncation with summarization
-/// Uses same model and session flow, then keeps only the summarized context
+/// Simply adds a summarization prompt and lets the normal session flow handle it
 pub async fn perform_context_reduction(
 	chat_session: &mut ChatSession,
 	config: &Config,
+	role: &str,
 	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<()> {
 	println!("{}", "Summarizing conversation context...".cyan());
 
-	// Build conversation history for summarization (exclude system message)
-	let conversation_history = chat_session
+	// Check if there's anything to summarize (exclude system message)
+	let conversation_messages = chat_session
 		.session
 		.messages
 		.iter()
 		.filter(|m| m.role != "system")
-		.map(|m| format!("{}: {}", m.role.to_uppercase(), m.content))
-		.collect::<Vec<_>>()
-		.join("\n\n");
+		.count();
 
-	if conversation_history.is_empty() {
+	if conversation_messages == 0 {
 		println!("{}", "No conversation to summarize".yellow());
 		return Ok(());
 	}
 
-	// Create summarization prompt as a user message
-	let summarization_prompt = format!(
-		"Please create a concise summary of our conversation that preserves all important technical details, decisions made, files modified, and context needed for future development. Focus on actionable information and key outcomes.\n\nConversation to summarize:\n{}",
-		conversation_history
-	);
+	// Store original message count for logging
+	let original_message_count = chat_session.session.messages.len();
 
-	// Add the summarization request as a regular user message to the session
-	chat_session.add_user_message(&summarization_prompt)?;
+	// Simply add the summarization prompt as a user message
+	let summarization_prompt = "Please create a concise summary of our conversation that preserves all important technical details, decisions made, files modified, and context needed for future development. Focus on actionable information and key outcomes.";
+	
+	chat_session.add_user_message(summarization_prompt)?;
 
 	// Create a task to show loading animation with current cost
 	let animation_cancel = operation_cancelled.clone();
@@ -62,7 +60,7 @@ pub async fn perform_context_reduction(
 		let _ = show_loading_animation(animation_cancel, current_cost).await;
 	});
 
-	// Call the same model using the normal session flow
+	// Use the same API flow as the normal session
 	let api_result = crate::session::chat_completion_with_provider(
 		&chat_session.session.messages,
 		&chat_session.model,
@@ -75,10 +73,31 @@ pub async fn perform_context_reduction(
 	operation_cancelled.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
 
-	match api_result {
+	// Process the response with the normal flow (handles tool calls, etc.)
+	let response_result = match api_result {
 		Ok(response) => {
-			let summary_content = response.content;
+			// Use the normal process_response flow which handles tool calls automatically
+			let process_result = super::response::process_response(
+				response.content.clone(),
+				response.exchange,
+				response.tool_calls,
+				response.finish_reason,
+				chat_session,
+				config,
+				role, // Use the current role instead of hardcoding "developer"
+				operation_cancelled.clone(),
+			).await;
 
+			match process_result {
+				Ok(()) => Ok(response.content),
+				Err(e) => Err(e),
+			}
+		}
+		Err(e) => Err(e),
+	};
+
+	match response_result {
+		Ok(summary_content) => {
 			// Log restoration point for recovery
 			let _ = crate::session::logger::log_restoration_point(
 				&chat_session.session.info.name,
@@ -91,7 +110,7 @@ pub async fn perform_context_reduction(
 				let restoration_data = serde_json::json!({
 					"type": "context_reduction",
 					"summary": summary_content,
-					"original_message_count": chat_session.session.messages.len(),
+					"original_message_count": original_message_count,
 					"timestamp": std::time::SystemTime::now()
 						.duration_since(std::time::UNIX_EPOCH)
 						.unwrap_or_default()
@@ -105,7 +124,6 @@ pub async fn perform_context_reduction(
 			}
 
 			println!("{}", "Context summarization complete".bright_green());
-			println!("{}", summary_content.bright_blue());
 
 			// SMART TRUNCATION: Keep only system message + summary as assistant message
 			let system_message = chat_session
@@ -139,30 +157,6 @@ pub async fn perform_context_reduction(
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs();
-
-			// Update session stats
-			if let Some(usage) = &response.exchange.usage {
-				let cost = usage.cost.unwrap_or(0.0);
-				if cost > 0.0 {
-					println!(
-						"{}",
-						format!("Summarization cost: ${:.5}", cost).bright_magenta()
-					);
-
-					// Add the stats to the session
-					chat_session.session.add_layer_stats(
-						"context_summarization",
-						&chat_session.model,
-						usage.prompt_tokens,
-						usage.completion_tokens,
-						cost,
-					);
-
-					// Update the overall cost in the session
-					chat_session.session.info.total_cost += cost;
-					chat_session.estimated_cost = chat_session.session.info.total_cost;
-				}
-			}
 
 			println!(
 				"{}",

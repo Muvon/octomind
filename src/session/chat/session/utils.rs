@@ -54,37 +54,3 @@ pub fn format_number(number: u64) -> String {
 		}
 	}
 }
-
-// Utility function to format time in a human-readable format
-pub fn format_duration(milliseconds: u64) -> String {
-	if milliseconds == 0 {
-		return "0ms".to_string();
-	}
-
-	let ms = milliseconds % 1000;
-	let seconds = (milliseconds / 1000) % 60;
-	let minutes = (milliseconds / 60000) % 60;
-	let hours = milliseconds / 3600000;
-
-	let mut parts = Vec::new();
-
-	if hours > 0 {
-		parts.push(format!("{}h", hours));
-	}
-	if minutes > 0 {
-		parts.push(format!("{}m", minutes));
-	}
-	if seconds > 0 {
-		parts.push(format!("{}s", seconds));
-	}
-	if ms > 0 || parts.is_empty() {
-		if parts.is_empty() {
-			parts.push(format!("{}ms", ms));
-		} else if ms >= 100 {
-			// Only show milliseconds if >= 100ms when other units are present
-			parts.push(format!("{}ms", ms));
-		}
-	}
-
-	parts.join(" ")
-}

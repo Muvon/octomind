@@ -22,4 +22,4 @@ mod utils;
 
 pub use core::ChatSession;
 pub use runner::run_interactive_session;
-pub use utils::{format_duration, format_number};
+pub use utils::format_number;

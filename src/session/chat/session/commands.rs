@@ -16,7 +16,7 @@
 
 use super::super::command_executor;
 use super::super::commands::*;
-use super::super::print_assistant_response;
+use crate::session::chat::assistant_output::print_assistant_response;
 use super::core::ChatSession;
 use super::utils::format_number;
 use crate::session::list_available_sessions;

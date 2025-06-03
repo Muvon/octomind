@@ -15,7 +15,8 @@
 // Session display functionality
 
 use super::core::ChatSession;
-use super::utils::{format_duration, format_number};
+use super::utils::format_number;
+use crate::session::chat::formatting::format_duration;
 use colored::*;
 
 impl ChatSession {

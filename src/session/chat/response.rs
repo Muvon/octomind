@@ -16,156 +16,17 @@
 
 use super::animation::show_loading_animation;
 use crate::config::Config;
-use crate::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
+use crate::session::chat::assistant_output::print_assistant_response;
+use crate::session::chat::formatting::{format_duration, remove_function_calls};
+use crate::session::chat::tool_error_tracker::ToolErrorTracker;
 use crate::session::chat::session::ChatSession;
 use crate::session::ProviderExchange;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
-use regex::Regex;
 use serde_json;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-// Utility function to format time in a human-readable format
-fn format_duration(milliseconds: u64) -> String {
-	if milliseconds == 0 {
-		return "0ms".to_string();
-	}
-
-	let ms = milliseconds % 1000;
-	let seconds = (milliseconds / 1000) % 60;
-	let minutes = (milliseconds / 60000) % 60;
-	let hours = milliseconds / 3600000;
-
-	let mut parts = Vec::new();
-
-	if hours > 0 {
-		parts.push(format!("{}h", hours));
-	}
-	if minutes > 0 {
-		parts.push(format!("{}m", minutes));
-	}
-	if seconds > 0 {
-		parts.push(format!("{}s", seconds));
-	}
-	if ms > 0 || parts.is_empty() {
-		if parts.is_empty() {
-			parts.push(format!("{}ms", ms));
-		} else if ms >= 100 {
-			// Only show milliseconds if >= 100ms when other units are present
-			parts.push(format!("{}ms", ms));
-		}
-	}
-
-	parts.join(" ")
-}
-
-
-
-// Function to remove function_calls blocks from content
-fn remove_function_calls(content: &str) -> String {
-	// Use multiple regex patterns to catch different function call formats
-	let patterns = [
-		r#"<(antml:)?function_calls>\s*(.+?)\s*</(antml:)?function_calls>"#,
-		r#"```(json)?\s*\[?\s*\{\s*"tool_name":.+?\}\s*\]?\s*```"#,
-		r#"^\s*\{\s*"tool_name":.+?\}\s*$"#,
-	];
-
-	let mut result = content.to_string();
-
-	for pattern in patterns {
-		if let Ok(re) = Regex::new(pattern) {
-			result = re.replace_all(&result, "").to_string();
-		}
-	}
-
-	// Also remove "I'll use the X tool" phrases that often accompany function calls
-	if let Ok(re) = Regex::new(r#"(?i)I'?ll use the \w+ tool[^\n]*"#) {
-		result = re.replace_all(&result, "").to_string();
-	}
-
-	result.trim().to_string()
-}
-
-// Helper function to print content with optional markdown rendering
-pub fn print_assistant_response(content: &str, config: &Config, _role: &str) {
-	if config.enable_markdown_rendering && is_markdown_content(content) {
-		// Use markdown rendering with theme from config
-		let theme = config.markdown_theme.parse().unwrap_or_default();
-		let renderer = MarkdownRenderer::with_theme(theme);
-		match renderer.render_and_print(content) {
-			Ok(_) => {
-				// Successfully rendered as markdown
-			}
-			Err(e) => {
-				// Fallback to plain text if markdown rendering fails
-				if config.get_log_level().is_debug_enabled() {
-					println!("{}: {}", "Warning: Markdown rendering failed".yellow(), e);
-				}
-				println!("{}", content.bright_green());
-			}
-		}
-	} else {
-		// Use plain text with color
-		println!("{}", content.bright_green());
-	}
-}
-
-// Structure to track tool call errors to detect loops
-#[derive(Default)]
-pub(crate) struct ToolErrorTracker {
-	tool_errors: HashMap<String, HashMap<String, usize>>,
-	max_consecutive_errors: usize,
-}
-
-impl ToolErrorTracker {
-	fn new(max_errors: usize) -> Self {
-		Self {
-			tool_errors: HashMap::new(),
-			max_consecutive_errors: max_errors,
-		}
-	}
-
-	// Record an error for a tool and return true if we've hit the error threshold
-	fn record_error(&mut self, tool_name: &str) -> bool {
-		// Get the nested hash map for this tool, creating it if it doesn't exist
-		let server_map = self.tool_errors.entry(tool_name.to_string()).or_default();
-
-		// For now, we use a special key to track errors. In the future this could be server-specific
-		let curr_server = "current_server".to_string();
-
-		// Increment the error count for this tool on this server
-		let count = server_map.entry(curr_server).or_insert(0);
-		*count += 1;
-
-		*count >= self.max_consecutive_errors
-	}
-
-	// Record a successful tool call, resetting the error counter for this tool from any server
-	fn record_success(&mut self, tool_name: &str) {
-		if let Some(server_map) = self.tool_errors.get_mut(tool_name) {
-			server_map.clear(); // Clear all server counts for this tool
-		}
-	}
-
-	// Get the current error count for a specific tool
-	fn get_error_count(&self, tool_name: &str) -> usize {
-		if let Some(server_map) = self.tool_errors.get(tool_name) {
-			if let Some(count) = server_map.get("current_server") {
-				return *count;
-			}
-		}
-		0
-	}
-
-	// Not used for now, but kept for future extensibility
-	#[allow(dead_code)]
-	fn reset(&mut self) {
-		self.tool_errors.clear();
-	}
-}
 
 // Function to process response, handling tool calls recursively
 #[allow(clippy::too_many_arguments)]
@@ -514,7 +375,8 @@ pub async fn process_response(
 
 								// Display the complete tool execution with consolidated info
 								if let Some(tool_call) = &stored_tool_call {
-							let category = crate::mcp::guess_tool_category(&tool_call.tool_name);
+									let category =
+										crate::mcp::guess_tool_category(&tool_call.tool_name);
 									let title = format!(
 										" {} | {} ",
 										tool_call.tool_name.bright_cyan(),
@@ -547,18 +409,27 @@ pub async fn process_response(
 															if s.is_empty() {
 																"\"\"".bright_black().to_string()
 															} else if s.chars().count() > 100 {
-																format!("\"{}...\"", s.chars().take(97).collect::<String>())
+																format!(
+																	"\"{}...\"",
+																	s.chars()
+																		.take(97)
+																		.collect::<String>()
+																)
 															} else if s.contains('\n') {
 																// For multiline strings, show first line + indicator
 																let lines: Vec<&str> =
 																	s.lines().collect();
 																let first_line =
 																	lines.first().unwrap_or(&"");
-																let first_line_chars: Vec<char> = first_line.chars().collect();
-								if first_line_chars.len() > 80 {
+																let first_line_chars: Vec<char> =
+																	first_line.chars().collect();
+																if first_line_chars.len() > 80 {
 																	format!(
 																		"\"{}...\" [+{} lines]",
-																		first_line_chars.into_iter().take(77).collect::<String>(),
+																		first_line_chars
+																			.into_iter()
+																			.take(77)
+																			.collect::<String>(),
 																		lines
 																			.len()
 																			.saturating_sub(1)
@@ -640,8 +511,9 @@ pub async fn process_response(
 													.unwrap_or_default();
 											if params_str != "null" {
 												if params_str.chars().count() > 100 {
-													let truncated: String = params_str.chars().take(97).collect();
-								println!("params: {}...", truncated);
+													let truncated: String =
+														params_str.chars().take(97).collect();
+													println!("params: {}...", truncated);
 												} else {
 													println!("params: {}", params_str);
 												}
@@ -679,7 +551,13 @@ pub async fn process_response(
 																.unwrap_or(&"param".to_string())
 																.bright_blue(),
 															if str_val.chars().count() > 80 {
-																format!("{}...", str_val.chars().take(77).collect::<String>())
+																format!(
+																	"{}...",
+																	str_val
+																		.chars()
+																		.take(77)
+																		.collect::<String>()
+																)
 															} else {
 																str_val.to_string()
 															}
@@ -771,7 +649,8 @@ pub async fn process_response(
 
 								// Display error in consolidated format for other errors
 								if let Some(tool_call) = &stored_tool_call {
-									let category = crate::mcp::guess_tool_category(&tool_call.tool_name);
+									let category =
+										crate::mcp::guess_tool_category(&tool_call.tool_name);
 									let title = format!(
 										" {} | {} ",
 										tool_call.tool_name.bright_cyan(),
@@ -810,7 +689,13 @@ pub async fn process_response(
 															.unwrap_or(&"param".to_string())
 															.bright_blue(),
 														if str_val.chars().count() > 80 {
-															format!("{}...", str_val.chars().take(77).collect::<String>())
+															format!(
+																"{}...",
+																str_val
+																	.chars()
+																	.take(77)
+																	.collect::<String>()
+															)
 														} else {
 															str_val.to_string()
 														}
@@ -830,16 +715,16 @@ pub async fn process_response(
 								if loop_detected {
 									// Always show loop detection warning since it's critical
 									println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
-										tool_name, error_tracker.max_consecutive_errors).bright_yellow());
+										tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
 
 									// Add a detailed error result for loop detection
 									let loop_error_result = crate::mcp::McpToolResult {
 										tool_name: tool_name.clone(),
 										tool_id: tool_id.clone(),
 										result: serde_json::json!({
-											"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, error_tracker.max_consecutive_errors, e),
+											"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, error_tracker.max_consecutive_errors(), e),
 											"tool_name": tool_name,
-											"consecutive_failures": error_tracker.max_consecutive_errors,
+											"consecutive_failures": error_tracker.max_consecutive_errors(),
 											"loop_detected": true,
 											"suggestion": "Try a different tool or approach, or ask user for clarification"
 										}),
@@ -854,14 +739,14 @@ pub async fn process_response(
 											"error": format!("Tool execution failed: {}", e),
 											"tool_name": tool_name,
 											"attempt": error_tracker.get_error_count(&tool_name),
-											"max_attempts": error_tracker.max_consecutive_errors
+											"max_attempts": error_tracker.max_consecutive_errors()
 										}),
 									};
 									tool_results.push(error_result);
 
 									if config.get_log_level().is_info_enabled() {
 										log_info!("Tool '{}' failed {} of {} times. Adding error to context.",
-											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors);
+											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors());
 									}
 								}
 							}
@@ -913,7 +798,8 @@ pub async fn process_response(
 
 							// Display task error in consolidated format for other errors
 							if let Some(tool_call) = &stored_tool_call {
-								let category = crate::mcp::guess_tool_category(&tool_call.tool_name);
+								let category =
+									crate::mcp::guess_tool_category(&tool_call.tool_name);
 								let title = format!(
 									" {} | {} ",
 									tool_call.tool_name.bright_cyan(),
@@ -952,7 +838,13 @@ pub async fn process_response(
 														.unwrap_or(&"param".to_string())
 														.bright_blue(),
 													if str_val.chars().count() > 80 {
-														format!("{}...", str_val.chars().take(77).collect::<String>())
+														format!(
+															"{}...",
+															str_val
+																.chars()
+																.take(77)
+																.collect::<String>()
+														)
 													} else {
 														str_val.to_string()
 													}

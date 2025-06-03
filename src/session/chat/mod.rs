@@ -14,20 +14,23 @@
 
 // Chat session module
 mod animation;
+pub mod assistant_output;
 mod command_executor;
 mod commands;
 mod context_reduction;
 mod context_truncation;
-
+pub mod formatting;
 mod input;
 mod layered_response;
 pub mod markdown;
 mod response;
 pub mod session;
 mod syntax;
+pub mod tool_error_tracker;
 
 // Re-export main structures and functions
 pub use animation::show_loading_animation;
+pub use assistant_output::print_assistant_response;
 pub use command_executor::{
 	command_exists, execute_command_layer, get_command_help, list_available_commands,
 };
@@ -37,12 +40,12 @@ pub use commands::{
 };
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
-
+pub use formatting::{format_duration, remove_function_calls};
 pub use input::read_user_input;
 pub use layered_response::process_layered_response;
 pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
-pub use response::{print_assistant_response, process_response};
-pub use session::{format_duration, format_number, run_interactive_session, ChatSession};
+pub use response::process_response;
+pub use session::{format_number, run_interactive_session, ChatSession};
 
 // Model constants
 pub const CLAUDE_MODEL: &str = "openrouter:anthropic/claude-sonnet-4";

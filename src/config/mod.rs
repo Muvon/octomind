@@ -243,6 +243,10 @@ fn default_markdown_theme() -> String {
 	"default".to_string()
 }
 
+fn default_max_session_spending_threshold() -> f64 {
+	0.0 // Default 0.0 means disabled
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
 	// Root-level log level setting (takes precedence over role-specific)
@@ -269,6 +273,9 @@ pub struct Config {
 	// Markdown theme for styling
 	#[serde(default = "default_markdown_theme")]
 	pub markdown_theme: String,
+	// Session spending threshold in USD - if > 0, prompt user when exceeded
+	#[serde(default = "default_max_session_spending_threshold")]
+	pub max_session_spending_threshold: f64,
 
 	// NEW: Providers configuration - centralized API keys
 	#[serde(default)]

@@ -750,6 +750,23 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			continue;
 		}
 
+		// Check spending threshold before making API call
+		match chat_session.check_spending_threshold(&current_config) {
+			Ok(should_continue) => {
+				if !should_continue {
+					// User chose not to continue due to spending threshold
+					operation_cancelled.store(true, Ordering::SeqCst);
+					let _ = animation_task.await;
+					continue;
+				}
+			}
+			Err(e) => {
+				// Error checking threshold, log and continue
+				use colored::*;
+				println!("{}: {}", "Warning: Error checking spending threshold".bright_yellow(), e);
+			}
+		}
+
 		// Now directly perform the API call - ensure usage parameter is included
 		// for consistent cost tracking across all API requests
 		let api_result = crate::session::chat_completion_with_provider(

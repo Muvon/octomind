@@ -27,6 +27,51 @@ impl ChatSession {
 		self.session.save()
 	}
 
+	// Check if spending threshold is exceeded and prompt user if needed
+	pub fn check_spending_threshold(&mut self, config: &Config) -> Result<bool> {
+		// If threshold is 0 or negative, feature is disabled
+		if config.max_session_spending_threshold <= 0.0 {
+			return Ok(true); // Continue without checking
+		}
+
+		let current_cost = self.session.info.total_cost;
+		let threshold = config.max_session_spending_threshold;
+		let cost_since_checkpoint = current_cost - self.spending_threshold_checkpoint;
+
+		// Check if we've exceeded the threshold since last checkpoint
+		if cost_since_checkpoint >= threshold {
+			use colored::*;
+			use std::io::{self, Write};
+
+			println!();
+			println!("{}", "⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold());
+			println!("{} ${:.5}", "Current session cost:".bright_cyan(), current_cost);
+			println!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
+			println!("{} ${:.5}", "Cost since last checkpoint:".bright_cyan(), cost_since_checkpoint);
+			println!();
+			println!("{}", "Continuing may result in additional charges.".bright_yellow());
+			print!("{}", "Do you want to continue? (y/N): ".bright_white().bold());
+			io::stdout().flush()?;
+
+			let mut input = String::new();
+			io::stdin().read_line(&mut input)?;
+			let response = input.trim().to_lowercase();
+
+			if response == "y" || response == "yes" {
+				// User confirmed, reset checkpoint to current cost
+				self.spending_threshold_checkpoint = current_cost;
+				println!("{}", "✓ Continuing session. Threshold checkpoint reset.".bright_green());
+				println!();
+				Ok(true)
+			} else {
+				println!("{}", "✗ Session cancelled by user due to spending threshold.".bright_red());
+				Ok(false)
+			}
+		} else {
+			Ok(true) // Under threshold, continue
+		}
+	}
+
 	// Add a system message
 	pub fn add_system_message(&mut self, content: &str) -> Result<()> {
 		// Log to raw session log

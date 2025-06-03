@@ -52,6 +52,7 @@ pub struct ChatSession {
 	pub temperature: f32,
 	pub estimated_cost: f64,
 	pub cache_next_user_message: bool, // Flag to cache the next user message
+	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
 }
 
 impl ChatSession {
@@ -104,6 +105,7 @@ impl ChatSession {
 			temperature: temperature_value, // Use the provided temperature
 			estimated_cost: 0.0,            // Initialize estimated cost as zero
 			cache_next_user_message: false, // Initialize cache flag
+			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 		}
 	}
 
@@ -190,10 +192,13 @@ impl ChatSession {
 						temperature: 0.2,
 						estimated_cost: 0.0,
 						cache_next_user_message: false, // Initialize cache flag
+						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 					};
 
 					// Update the estimated cost from the loaded session
 					chat_session.estimated_cost = chat_session.session.info.total_cost;
+				// Initialize spending threshold checkpoint for loaded sessions
+				chat_session.spending_threshold_checkpoint = 0.0;
 
 					// Get last assistant response if any
 					for msg in chat_session.session.messages.iter().rev() {

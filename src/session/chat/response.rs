@@ -1062,6 +1062,24 @@ pub async fn process_response(
 						);
 					}
 
+					// Check spending threshold before making follow-up API call
+					match chat_session.check_spending_threshold(config) {
+						Ok(should_continue) => {
+							if !should_continue {
+								// User chose not to continue due to spending threshold
+								fresh_cancel.store(true, Ordering::SeqCst);
+								let _ = animation_task.await;
+								println!("{}", "✗ Tool follow-up cancelled due to spending threshold.".bright_red());
+								return Ok(());
+							}
+						}
+						Err(e) => {
+							// Error checking threshold, log warning and continue
+							use colored::*;
+							println!("{}: {}", "Warning: Error checking spending threshold".bright_yellow(), e);
+						}
+					}
+
 					// Call OpenRouter for the follow-up response
 					let model = chat_session.model.clone();
 					let temperature = chat_session.temperature;

@@ -18,7 +18,7 @@ mod command_executor;
 mod commands;
 mod context_reduction;
 mod context_truncation;
-mod editorconfig_formatter;
+
 mod input;
 mod layered_response;
 pub mod markdown;
@@ -37,7 +37,7 @@ pub use commands::{
 };
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
-pub use editorconfig_formatter::apply_editorconfig_formatting;
+
 pub use input::read_user_input;
 pub use layered_response::process_layered_response;
 pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};

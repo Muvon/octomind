@@ -502,17 +502,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							.bright_green()
 					);
 
-					// Apply EditorConfig formatting to all modified files
-					let formatter_result =
-						super::super::editorconfig_formatter::apply_editorconfig_formatting(None)
-							.await;
-					if let Err(e) = formatter_result {
-						println!(
-							"{}: {}",
-							"Error applying EditorConfig formatting".bright_red(),
-							e
-						);
-					}
+					// EditorConfig formatting has been removed to simplify dependencies
+					// Users can apply EditorConfig formatting manually or through their IDE
 				}
 				continue;
 			}

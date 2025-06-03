@@ -102,9 +102,8 @@ impl AiProvider for AnthropicProvider {
 		}
 	}
 
-	fn supports_caching(&self, model: &str) -> bool {
-		// Anthropic supports caching for Claude 3.5 models
-		model.contains("claude-3-5") || model.contains("claude-3.5")
+	fn supports_caching(&self, _model: &str) -> bool {
+		true
 	}
 
 	async fn chat_completion(

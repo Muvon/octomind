@@ -620,7 +620,42 @@ pub async fn process_response(
 							Err(e) => {
 								_has_error = true;
 
-								// Display error in consolidated format
+								// Check if this is a user-declined large output error
+								if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
+									println!("⚠ Tool '{}' output declined by user - removing tool call from conversation", tool_name);
+									
+									// CRITICAL FIX: Remove the tool_use block from the assistant message
+									// to prevent "tool_use ids found without tool_result blocks" error
+									if let Some(last_msg) = chat_session.session.messages.last_mut() {
+										if last_msg.role == "assistant" {
+											if let Some(tool_calls_value) = &last_msg.tool_calls {
+												// Parse the tool_calls and remove the declined one
+												if let Ok(mut tool_calls_array) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
+													// Remove the tool call with matching ID
+													tool_calls_array.retain(|tc| {
+														tc.get("id").and_then(|id| id.as_str()) != Some(&tool_id)
+													});
+													
+													// Update the assistant message
+													if tool_calls_array.is_empty() {
+														// No more tool calls, remove the tool_calls field entirely
+														last_msg.tool_calls = None;
+														log_debug!("Removed all tool calls from assistant message after user declined large output");
+													} else {
+														// Update with remaining tool calls
+														last_msg.tool_calls = Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
+														log_debug!("Removed declined tool call '{}' from assistant message", tool_id);
+													}
+												}
+											}
+										}
+									}
+									
+									// Don't add any tool result - the tool_use block is now properly removed
+									continue;
+								}
+
+								// Display error in consolidated format for other errors
 								if let Some(tool_call) = &stored_tool_call {
 									let category = guess_tool_category(&tool_call.tool_name);
 									let title = format!(" {} | {} ",
@@ -655,13 +690,6 @@ pub async fn process_response(
 											}
 										}
 									}
-								}
-
-								// Check if this is a user-declined large output error
-								if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
-									println!("⚠ Tool '{}' output declined by user - removing from conversation", tool_name);
-									// Don't add any tool result - this will cause the tool_use to be removed
-									continue;
 								}
 
 								// Show error status
@@ -712,7 +740,42 @@ pub async fn process_response(
 						Err(e) => {
 							_has_error = true;
 
-							// Display task error in consolidated format
+							// Check if this is a user-declined large output error (can occur at task level too)
+							if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
+								println!("⚠ Tool '{}' task output declined by user - removing tool call from conversation", tool_name);
+								
+								// CRITICAL FIX: Remove the tool_use block from the assistant message
+								// to prevent "tool_use ids found without tool_result blocks" error
+								if let Some(last_msg) = chat_session.session.messages.last_mut() {
+									if last_msg.role == "assistant" {
+										if let Some(tool_calls_value) = &last_msg.tool_calls {
+											// Parse the tool_calls and remove the declined one
+											if let Ok(mut tool_calls_array) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
+												// Remove the tool call with matching ID
+												tool_calls_array.retain(|tc| {
+													tc.get("id").and_then(|id| id.as_str()) != Some(&tool_id)
+												});
+												
+												// Update the assistant message
+												if tool_calls_array.is_empty() {
+													// No more tool calls, remove the tool_calls field entirely
+													last_msg.tool_calls = None;
+													log_debug!("Removed all tool calls from assistant message after user declined large task output");
+												} else {
+													// Update with remaining tool calls
+													last_msg.tool_calls = Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
+													log_debug!("Removed declined tool call '{}' from assistant message (task error)", tool_id);
+												}
+											}
+										}
+									}
+								}
+								
+								// Don't add any tool result - the tool_use block is now properly removed
+								continue;
+							}
+
+							// Display task error in consolidated format for other errors
 							if let Some(tool_call) = &stored_tool_call {
 								let category = guess_tool_category(&tool_call.tool_name);
 								let title = format!(" {} | {} ",
@@ -752,7 +815,7 @@ pub async fn process_response(
 							// Show task error status
 							println!("✗ Task error for '{}': {}", tool_name, e);
 
-							// ALWAYS add error result for task failures too
+							// ALWAYS add error result for task failures too (unless it was a user decline)
 							let error_result = crate::mcp::McpToolResult {
 								tool_name: tool_name.clone(),
 								tool_id: tool_id.clone(),

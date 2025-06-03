@@ -303,8 +303,23 @@ impl AiProvider for AnthropicProvider {
 			None
 		};
 
+		// CRITICAL FIX: Store the original content array for proper tool_use reconstruction
+		// This ensures tool_result messages can reference the correct tool_use_id
+		let stored_tool_calls = if tool_calls.is_some() {
+			// If we found tool_use blocks, store the complete content array
+			// This preserves both text content and tool_use blocks for conversation history
+			response_json.get("content").cloned()
+		} else {
+			None
+		};
+
 		// Create exchange record
-		let exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
+		let mut exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
+
+		// CRITICAL FIX: Store the original tool calls in the exchange for later reconstruction
+		if let Some(ref content_array) = stored_tool_calls {
+			exchange.response["tool_calls_content"] = content_array.clone();
+		}
 
 		Ok(ProviderResponse {
 			content,
@@ -413,21 +428,90 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 			}
 			"assistant" => {
 				// Assistant messages with proper structure
-				let mut text_content = serde_json::json!({
-					"type": "text",
-					"text": msg.content
-				});
+				let mut content_blocks = Vec::new();
 
-				// Add cache_control if needed
-				if msg.cached {
-					text_content["cache_control"] = serde_json::json!({
-						"type": "ephemeral"
+				// Add text content if not empty
+				if !msg.content.is_empty() {
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
 					});
+
+					// Add cache_control if needed
+					if msg.cached {
+						text_content["cache_control"] = serde_json::json!({
+							"type": "ephemeral"
+						});
+					}
+
+					content_blocks.push(text_content);
+				}
+
+				// CRITICAL FIX: Preserve tool_use blocks from original API response
+				// This ensures tool_result messages can reference the correct tool_use_id
+				if let Some(ref tool_calls_data) = msg.tool_calls {
+					// Handle tool calls from Anthropic API format
+					if let Some(content_array) = tool_calls_data.get("content").and_then(|c| c.as_array()) {
+						// If tool_calls contains Anthropic format content blocks, extract tool_use blocks
+						for content_block in content_array {
+							if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+								content_blocks.push(content_block.clone());
+							}
+						}
+					} else if tool_calls_data.is_array() {
+						// Handle OpenRouter/OpenAI format tool calls - convert to Anthropic format
+						if let Some(calls_array) = tool_calls_data.as_array() {
+							for tool_call in calls_array {
+								if let Some(function) = tool_call.get("function") {
+									if let (Some(name), Some(args_str), Some(id)) = (
+										function.get("name").and_then(|n| n.as_str()),
+										function.get("arguments").and_then(|a| a.as_str()),
+										tool_call.get("id").and_then(|i| i.as_str()),
+									) {
+										// Parse arguments string to JSON
+										let input = if args_str.trim().is_empty() {
+											serde_json::json!({})
+										} else {
+											match serde_json::from_str::<serde_json::Value>(args_str) {
+												Ok(json_args) => json_args,
+												Err(_) => serde_json::json!({"arguments": args_str}),
+											}
+										};
+
+										// Create Anthropic format tool_use block
+										let tool_use_block = serde_json::json!({
+											"type": "tool_use",
+											"id": id,
+											"name": name,
+											"input": input
+										});
+
+										content_blocks.push(tool_use_block);
+									}
+								} else if let (Some(id), Some(name)) = (
+									tool_call.get("id").and_then(|i| i.as_str()),
+									tool_call.get("name").and_then(|n| n.as_str()),
+								) {
+									// Direct Anthropic format
+									let input = tool_call.get("input").cloned().unwrap_or_else(|| serde_json::json!({}));
+
+									let tool_use_block = serde_json::json!({
+										"type": "tool_use",
+										"id": id,
+										"name": name,
+										"input": input
+									});
+
+									content_blocks.push(tool_use_block);
+								}
+							}
+						}
+					}
 				}
 
 				result.push(AnthropicMessage {
 					role: msg.role.clone(),
-					content: serde_json::json!([text_content]),
+					content: serde_json::json!(content_blocks),
 				});
 			}
 			_ => {

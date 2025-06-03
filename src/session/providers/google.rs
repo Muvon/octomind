@@ -258,10 +258,23 @@ impl AiProvider for GoogleVertexProvider {
 								function_call.get("name").and_then(|n| n.as_str()),
 								function_call.get("args"),
 							) {
+								// CRITICAL FIX: Generate consistent tool IDs for Google Vertex AI
+								// Instead of random UUIDs, create deterministic IDs based on function name and args
+								let args_hash = {
+									let args_str = serde_json::to_string(args).unwrap_or_default();
+									use std::collections::hash_map::DefaultHasher;
+									use std::hash::{Hash, Hasher};
+									let mut hasher = DefaultHasher::new();
+									name.hash(&mut hasher);
+									args_str.hash(&mut hasher);
+									hasher.finish()
+								};
+								let tool_id = format!("vertex_{}_{:x}", name, args_hash);
+
 								let mcp_call = crate::mcp::McpToolCall {
 									tool_name: name.to_string(),
 									parameters: args.clone(),
-									tool_id: format!("vertex_{}", uuid::Uuid::new_v4()),
+									tool_id,
 								};
 
 								if let Some(ref mut calls) = tool_calls {
@@ -317,8 +330,29 @@ impl AiProvider for GoogleVertexProvider {
 			None
 		};
 
+		// CRITICAL FIX: Store the original content parts for proper function call reconstruction
+		// This ensures functionResponse messages can reference the correct function call
+		let stored_tool_calls = if tool_calls.is_some() {
+			// If we found function calls, store the complete content parts
+			// This preserves both text content and functionCall blocks for conversation history
+			response_json
+				.get("candidates")
+				.and_then(|c| c.as_array())
+				.and_then(|candidates| candidates.first())
+				.and_then(|candidate| candidate.get("content"))
+				.and_then(|content| content.get("parts"))
+				.cloned()
+		} else {
+			None
+		};
+
 		// Create exchange record
-		let exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
+		let mut exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
+
+		// CRITICAL FIX: Store the original function calls in the exchange for later reconstruction
+		if let Some(ref content_parts) = stored_tool_calls {
+			exchange.response["tool_calls_content"] = content_parts.clone();
+		}
 
 		Ok(ProviderResponse {
 			content,
@@ -416,6 +450,38 @@ fn convert_messages(messages: &[Message]) -> Vec<VertexMessage> {
 			"assistant" => "model",
 			_ => "user",
 		};
+
+		// CRITICAL FIX: Handle assistant messages with function calls
+		if msg.role == "assistant" {
+			let mut parts = Vec::new();
+
+			// Add text content if not empty
+			if !msg.content.is_empty() {
+				parts.push(serde_json::json!({
+					"text": msg.content
+				}));
+			}
+
+			// CRITICAL FIX: Preserve function calls from original API response
+			// This ensures functionResponse messages can reference the correct function call
+			if let Some(ref tool_calls_data) = msg.tool_calls {
+				// Handle function calls from Google Vertex AI format
+				if let Some(content_parts) = tool_calls_data.as_array() {
+					// If tool_calls contains Vertex AI format content parts, extract functionCall blocks
+					for content_part in content_parts {
+						if content_part.get("functionCall").is_some() {
+							parts.push(content_part.clone());
+						}
+					}
+				}
+			}
+
+			result.push(VertexMessage {
+				role: vertex_role.to_string(),
+				parts,
+			});
+			continue;
+		}
 
 		// Regular messages
 		result.push(VertexMessage {

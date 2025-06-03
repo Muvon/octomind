@@ -28,6 +28,27 @@ use serde_json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+// CRITICAL FIX: Provider-agnostic function to extract original tool calls
+// This handles different provider formats and ensures proper tool_calls preservation
+fn extract_original_tool_calls(exchange: &ProviderExchange) -> Option<serde_json::Value> {
+	// First check if there's a stored tool_calls_content (for Anthropic and Google)
+	if let Some(content_data) = exchange.response.get("tool_calls_content") {
+		return Some(content_data.clone());
+	}
+	
+	// Then check for OpenRouter/OpenAI format
+	if let Some(tool_calls) = exchange.response
+		.get("choices")
+		.and_then(|choices| choices.get(0))
+		.and_then(|choice| choice.get("message"))
+		.and_then(|message| message.get("tool_calls"))
+	{
+		return Some(tool_calls.clone());
+	}
+	
+	None
+}
+
 // Function to process response, handling tool calls recursively
 #[allow(clippy::too_many_arguments)]
 pub async fn process_response(
@@ -115,14 +136,8 @@ pub async fn process_response(
 				// The standard add_assistant_message only stores text content, but we need
 				// to preserve the tool_calls from the original API response for proper conversation flow
 
-				// Extract the original tool_calls from the exchange response if they exist
-				let original_tool_calls = current_exchange
-					.response
-					.get("choices")
-					.and_then(|choices| choices.get(0))
-					.and_then(|choice| choice.get("message"))
-					.and_then(|message| message.get("tool_calls"))
-					.cloned();
+				// Extract the original tool_calls from the exchange response based on provider
+				let original_tool_calls = extract_original_tool_calls(&current_exchange);
 
 				// Create the assistant message directly with tool_calls preserved from the exchange
 				let assistant_message = crate::session::Message {

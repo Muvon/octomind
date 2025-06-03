@@ -483,14 +483,10 @@ impl CacheManager {
 				(session.info.input_tokens == 0 && session.info.cached_tokens == 0 && has_cached_system)
 			};
 			
-			if has_tools {
-				// Don't overwrite tool result markers - add 1 to represent tool definition cache marker
-				// This accounts for the virtual tool definition cache marker that exists but isn't a message
-				if tool_markers == 0 {
-					tool_markers = 1; // Tool definitions cached (virtual marker)
-				} else {
-					tool_markers += 1; // Tool definitions + existing tool result markers
-				}
+			if has_tools && tool_markers == 0 {
+				// Only add a virtual tool marker if no tool markers exist
+				// This prevents artificially inflating the marker count
+				tool_markers = 1; // Tool definitions cached (virtual marker)
 			}
 		}
 

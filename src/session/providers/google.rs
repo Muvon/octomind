@@ -27,10 +27,19 @@ use std::env;
 /// Source: https://cloud.google.com/vertex-ai/generative-ai/pricing (as of January 2025)
 const PRICING: &[(&str, f64, f64)] = &[
 	// Model, Input price per 1M tokens, Output price per 1M tokens
-	("gemini-1.5-pro", 3.50, 10.50),
-	("gemini-1.5-flash", 0.075, 0.30),
-	("gemini-1.0-pro", 0.50, 1.50),
-	("gemini-pro", 0.50, 1.50), // Alias for gemini-1.0-pro
+	// Gemini 2.5 models (latest)
+	("gemini-2.5-pro", 1.25, 10.00),      // <= 200K tokens, higher rates for >200K
+	("gemini-2.5-flash", 0.15, 0.60),     // Consistent pricing
+	// Gemini 2.0 models
+	("gemini-2.0-flash", 0.15, 0.60),     // Token-based pricing
+	("gemini-2.0-flash-lite", 0.075, 0.30),
+	// Gemini 1.5 models
+	("gemini-1.5-pro", 0.3125, 1.25),     // <= 128K tokens, converted from character pricing
+	("gemini-1.5-flash", 0.075, 0.30),    // <= 128K tokens, converted from character pricing
+	// Gemini 1.0 models
+	("gemini-1.0-pro", 0.50, 1.50),       // Converted from character pricing
+	("gemini-pro", 0.50, 1.50),           // Alias for gemini-1.0-pro
+	// Legacy models
 	("text-bison", 1.00, 2.00),
 	("chat-bison", 1.00, 2.00),
 	("code-bison", 1.00, 2.00),
@@ -84,7 +93,11 @@ impl AiProvider for GoogleVertexProvider {
 
 	fn supports_model(&self, model: &str) -> bool {
 		// Google Vertex AI models
-		model.starts_with("gemini")
+		model.starts_with("gemini-2.5")
+			|| model.starts_with("gemini-2.0")
+			|| model.starts_with("gemini-1.5")
+			|| model.starts_with("gemini-1.0")
+			|| model.starts_with("gemini")
 			|| model.contains("bison")
 			|| model.starts_with("text-")
 			|| model.starts_with("chat-")
@@ -113,9 +126,11 @@ impl AiProvider for GoogleVertexProvider {
 	}
 
 	fn supports_caching(&self, model: &str) -> bool {
-		// Google Vertex AI supports caching for Gemini 1.5 models
+		// Google Vertex AI supports caching for Gemini 1.5+ models
 		// Source: https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache
-		model.contains("gemini-1.5")
+		model.contains("gemini-2.5")
+			|| model.contains("gemini-2.0")
+			|| model.contains("gemini-1.5")
 	}
 
 	async fn chat_completion(

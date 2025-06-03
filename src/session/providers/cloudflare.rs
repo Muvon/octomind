@@ -193,7 +193,7 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		let request_body = serde_json::json!({
 			"messages": cloudflare_messages,
 			"temperature": temperature,
-			// "max_tokens": 4096,
+			"max_tokens": 16384,
 		});
 
 		// Build Cloudflare Workers AI API URL

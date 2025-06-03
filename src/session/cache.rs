@@ -451,12 +451,15 @@ impl CacheManager {
 				match msg.role.as_str() {
 					"system" => system_markers += 1,
 					"user" => content_markers += 1,
-					"tool" => tool_markers += 1, // This counts tool result messages that are cached
-					"assistant" => {
-						// Assistant messages could be either tool-related or content
-						// For now, count as content markers
-						content_markers += 1;
-					}
+					"tool" => {
+						// Only count tool RESULTS as content markers, not tool definitions
+						if msg.tool_call_id.is_some() {
+							content_markers += 1;
+						} else {
+							tool_markers += 1; // Tool definitions go to tool markers
+						}
+					},
+					"assistant" => content_markers += 1, // Always count assistant messages as content markers
 					_ => {}
 				}
 			}

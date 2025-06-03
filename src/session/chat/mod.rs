@@ -19,14 +19,17 @@ mod command_executor;
 mod commands;
 mod context_reduction;
 mod context_truncation;
+mod cost_tracker;
 pub mod formatting;
 mod input;
 mod layered_response;
 pub mod markdown;
+mod message_handler;
 mod response;
 pub mod session;
 mod syntax;
-pub mod tool_error_tracker;
+mod tool_error_tracker;
+mod tool_processor;
 
 // Re-export main structures and functions
 pub use animation::show_loading_animation;
@@ -40,12 +43,15 @@ pub use commands::{
 };
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::check_and_truncate_context;
+pub use cost_tracker::CostTracker;
 pub use formatting::{format_duration, remove_function_calls};
 pub use input::read_user_input;
 pub use layered_response::process_layered_response;
 pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
+pub use message_handler::MessageHandler;
 pub use response::process_response;
 pub use session::{format_number, run_interactive_session, ChatSession};
+pub use tool_processor::ToolProcessor;
 
 // Model constants
 pub const CLAUDE_MODEL: &str = "openrouter:anthropic/claude-sonnet-4";

@@ -15,39 +15,17 @@
 // Response processing module
 
 use super::animation::show_loading_animation;
+use super::{CostTracker, MessageHandler, ToolProcessor};
 use crate::config::Config;
 use crate::session::chat::assistant_output::print_assistant_response;
-use crate::session::chat::formatting::{format_duration, remove_function_calls};
-use crate::session::chat::tool_error_tracker::ToolErrorTracker;
+use crate::session::chat::formatting::remove_function_calls;
 use crate::session::chat::session::ChatSession;
 use crate::session::ProviderExchange;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
-use serde_json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-// CRITICAL FIX: Provider-agnostic function to extract original tool calls
-// This handles different provider formats and ensures proper tool_calls preservation
-fn extract_original_tool_calls(exchange: &ProviderExchange) -> Option<serde_json::Value> {
-	// First check if there's a stored tool_calls_content (for Anthropic and Google)
-	if let Some(content_data) = exchange.response.get("tool_calls_content") {
-		return Some(content_data.clone());
-	}
-	
-	// Then check for OpenRouter/OpenAI format
-	if let Some(tool_calls) = exchange.response
-		.get("choices")
-		.and_then(|choices| choices.get(0))
-		.and_then(|choice| choice.get("message"))
-		.and_then(|message| message.get("tool_calls"))
-	{
-		return Some(tool_calls.clone());
-	}
-	
-	None
-}
 
 // Function to process response, handling tool calls recursively
 #[allow(clippy::too_many_arguments)]
@@ -87,8 +65,8 @@ pub async fn process_response(
 			"Warning: User message not found in session. This is unexpected.".yellow()
 		);
 	}
-	// Initialize tool error tracker with max of 3 consecutive errors
-	let mut error_tracker = ToolErrorTracker::new(3);
+	// Initialize tool processor
+	let mut tool_processor = ToolProcessor::new();
 
 	// Process original content first, then any follow-up tool calls
 	let mut current_content = content.clone();
@@ -137,7 +115,7 @@ pub async fn process_response(
 				// to preserve the tool_calls from the original API response for proper conversation flow
 
 				// Extract the original tool_calls from the exchange response based on provider
-				let original_tool_calls = extract_original_tool_calls(&current_exchange);
+				let original_tool_calls = MessageHandler::extract_original_tool_calls(&current_exchange);
 
 				// Create the assistant message directly with tool_calls preserved from the exchange
 				let assistant_message = crate::session::Message {
@@ -386,7 +364,7 @@ pub async fn process_response(
 						Ok(result) => match result {
 							Ok((res, tool_time_ms)) => {
 								// Tool succeeded, reset the error counter
-								error_tracker.record_success(&tool_name);
+								tool_processor.error_tracker.record_success(&tool_name);
 
 								// Display the complete tool execution with consolidated info
 								if let Some(tool_call) = &stored_tool_call {
@@ -725,21 +703,21 @@ pub async fn process_response(
 								println!("✗ Tool '{}' failed: {}", tool_name, e);
 
 								// Track errors for this tool
-								let loop_detected = error_tracker.record_error(&tool_name);
+								let loop_detected = tool_processor.error_tracker.record_error(&tool_name);
 
 								if loop_detected {
 									// Always show loop detection warning since it's critical
 									println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
-										tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
+										tool_name, tool_processor.error_tracker.max_consecutive_errors()).bright_yellow());
 
 									// Add a detailed error result for loop detection
 									let loop_error_result = crate::mcp::McpToolResult {
 										tool_name: tool_name.clone(),
 										tool_id: tool_id.clone(),
 										result: serde_json::json!({
-											"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, error_tracker.max_consecutive_errors(), e),
+											"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, tool_processor.error_tracker.max_consecutive_errors(), e),
 											"tool_name": tool_name,
-											"consecutive_failures": error_tracker.max_consecutive_errors(),
+											"consecutive_failures": tool_processor.error_tracker.max_consecutive_errors(),
 											"loop_detected": true,
 											"suggestion": "Try a different tool or approach, or ask user for clarification"
 										}),
@@ -753,15 +731,15 @@ pub async fn process_response(
 										result: serde_json::json!({
 											"error": format!("Tool execution failed: {}", e),
 											"tool_name": tool_name,
-											"attempt": error_tracker.get_error_count(&tool_name),
-											"max_attempts": error_tracker.max_consecutive_errors()
+											"attempt": tool_processor.error_tracker.get_error_count(&tool_name),
+											"max_attempts": tool_processor.error_tracker.max_consecutive_errors()
 										}),
 									};
 									tool_results.push(error_result);
 
 									if config.get_log_level().is_info_enabled() {
 										log_info!("Tool '{}' failed {} of {} times. Adding error to context.",
-											tool_name, error_tracker.get_error_count(&tool_name), error_tracker.max_consecutive_errors());
+											tool_name, tool_processor.error_tracker.get_error_count(&tool_name), tool_processor.error_tracker.max_consecutive_errors());
 									}
 								}
 							}
@@ -1437,55 +1415,8 @@ pub async fn process_response(
 	// Print assistant response with color
 	print_assistant_response(&clean_content, config, role);
 
-	// Display cumulative token usage - minimal output when debug is disabled
-	println!();
-
-	// Detailed output in debug mode
-	log_info!(
-		"{}",
-		"── session usage ────────────────────────────────────────"
-	);
-
-	// Format token usage with cached tokens
-	let cached = chat_session.session.info.cached_tokens;
-	let prompt = chat_session.session.info.input_tokens;
-	let completion = chat_session.session.info.output_tokens;
-	let total = prompt + completion + cached;
-
-	log_info!(
-		"tokens: {} prompt ({} cached), {} completion, {} total, ${:.5}",
-		prompt,
-		cached,
-		completion,
-		total,
-		chat_session.session.info.total_cost
-	);
-
-	// If we have cached tokens, show the savings percentage
-	if cached > 0 {
-		let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
-		log_info!(
-			"cached: {:.1}% of prompt tokens ({} tokens saved)",
-			saving_pct,
-			cached
-		);
-	}
-
-	// Show time information if available
-	let total_time_ms = chat_session.session.info.total_api_time_ms
-		+ chat_session.session.info.total_tool_time_ms
-		+ chat_session.session.info.total_layer_time_ms;
-	if total_time_ms > 0 {
-		log_info!(
-			"time: {} (API: {}, Tools: {}, Processing: {})",
-			format_duration(total_time_ms),
-			format_duration(chat_session.session.info.total_api_time_ms),
-			format_duration(chat_session.session.info.total_tool_time_ms),
-			format_duration(chat_session.session.info.total_layer_time_ms)
-		);
-	}
-
-	println!();
+	// Display cumulative token usage using CostTracker
+	CostTracker::display_session_usage(chat_session);
 
 	Ok(())
 }

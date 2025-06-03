@@ -152,6 +152,12 @@ pub async fn perform_context_reduction(
 			println!("{}", "Session context reduced to essential summary".bright_green());
 			println!("{}", "You can now continue the conversation with optimized context".bright_cyan());
 
+			// Auto-commit with octocode if available
+			if let Err(e) = auto_commit_with_octocode().await {
+				// Don't fail the entire operation if commit fails, just warn
+				println!("{}: {}", "Warning: Auto-commit failed".bright_yellow(), e);
+			}
+
 			// Save the updated session
 			chat_session.save()?;
 
@@ -169,4 +175,99 @@ pub async fn perform_context_reduction(
 			Err(anyhow::anyhow!("Context summarization failed: {}", e))
 		}
 	}
+}
+
+/// Auto-commit changes using octocode if the binary is available
+async fn auto_commit_with_octocode() -> Result<()> {
+	// Check if octocode binary is available in PATH
+	let octocode_check = tokio::process::Command::new("which")
+		.arg("octocode")
+		.output()
+		.await;
+
+	match octocode_check {
+		Ok(output) if output.status.success() => {
+			// octocode is available, proceed with commit
+			println!("{}", "🔄 Auto-committing changes with octocode...".bright_blue());
+			
+			let commit_result = tokio::process::Command::new("octocode")
+				.args(["commit", "-a", "-y"])
+				.output()
+				.await;
+
+			match commit_result {
+				Ok(output) => {
+					if output.status.success() {
+						let stdout = String::from_utf8_lossy(&output.stdout);
+						if !stdout.trim().is_empty() {
+							println!("{}", stdout.trim().bright_green());
+						}
+						println!("{}", "✅ Changes auto-committed successfully".bright_green());
+					} else {
+						let stderr = String::from_utf8_lossy(&output.stderr);
+						if stderr.contains("no changes") || stderr.contains("nothing to commit") {
+							println!("{}", "ℹ️  No changes to commit".bright_blue());
+						} else {
+							return Err(anyhow::anyhow!("octocode commit failed: {}", stderr));
+						}
+					}
+				},
+				Err(e) => {
+					return Err(anyhow::anyhow!("Failed to execute octocode commit: {}", e));
+				}
+			}
+		},
+		Ok(_) => {
+			// which command succeeded but octocode not found (empty output)
+			println!("{}", "ℹ️  octocode not found in PATH, skipping auto-commit".bright_blue());
+		},
+		Err(_) => {
+			// which command failed (probably on Windows or which is not available)
+			// Try direct execution as fallback
+			let direct_check = tokio::process::Command::new("octocode")
+				.arg("--version")
+				.output()
+				.await;
+
+			match direct_check {
+				Ok(output) if output.status.success() => {
+					// octocode is available, proceed with commit
+					println!("{}", "🔄 Auto-committing changes with octocode...".bright_blue());
+					
+					let commit_result = tokio::process::Command::new("octocode")
+						.args(["commit", "-a", "-y"])
+						.output()
+						.await;
+
+					match commit_result {
+						Ok(output) => {
+							if output.status.success() {
+								let stdout = String::from_utf8_lossy(&output.stdout);
+								if !stdout.trim().is_empty() {
+									println!("{}", stdout.trim().bright_green());
+								}
+								println!("{}", "✅ Changes auto-committed successfully".bright_green());
+							} else {
+								let stderr = String::from_utf8_lossy(&output.stderr);
+								if stderr.contains("no changes") || stderr.contains("nothing to commit") {
+									println!("{}", "ℹ️  No changes to commit".bright_blue());
+								} else {
+									return Err(anyhow::anyhow!("octocode commit failed: {}", stderr));
+								}
+							}
+						},
+						Err(e) => {
+							return Err(anyhow::anyhow!("Failed to execute octocode commit: {}", e));
+						}
+					}
+				},
+				_ => {
+					// octocode not available
+					println!("{}", "ℹ️  octocode not available, skipping auto-commit".bright_blue());
+				}
+			}
+		}
+	}
+
+	Ok(())
 }

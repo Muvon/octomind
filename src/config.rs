@@ -319,11 +319,11 @@ fn default_max_request_tokens_threshold() -> usize {
 }
 
 fn default_cache_tokens_threshold() -> u64 {
-	3072 // Default 3072 tokens threshold for automatic cache marker movement
+	2048 // Default 2048 tokens threshold for automatic cache marker movement
 }
 
 fn default_cache_timeout_seconds() -> u64 {
-	180 // Default 3 minutes timeout for time-based auto-caching
+	240 // Default 4 minutes timeout for time-based auto-caching
 }
 
 fn default_markdown_theme() -> String {
@@ -1517,7 +1517,7 @@ mod tests {
 		// Test valid thresholds (0 is now valid for disabling features)
 		let config = Config {
 			mcp_response_warning_threshold: 0, // Now valid for disabling
-			cache_tokens_threshold: 3072,
+			cache_tokens_threshold: 2048,
 			..Default::default()
 		};
 		assert!(config.validate_thresholds().is_ok());

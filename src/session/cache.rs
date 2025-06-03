@@ -231,7 +231,7 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// Check time-based threshold first (3 minutes = 180 seconds by default)
+		// Check time-based threshold first
 		let current_time = std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()

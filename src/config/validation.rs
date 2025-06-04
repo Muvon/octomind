@@ -17,72 +17,37 @@ use anyhow::{anyhow, Result};
 use super::Config;
 
 impl Config {
-	/// Validate the configuration for common issues
+	/// Validate the configuration for common issues - STRICT MODE
+	/// All validation errors are now fatal in strict mode
 	pub fn validate(&self) -> Result<()> {
-		// Validate OpenRouter model name
-		if let Err(e) = self.validate_openrouter_model() {
-			eprintln!("Configuration validation warning: {}", e);
-			eprintln!("The application will continue, but you may want to fix these issues.");
-			eprintln!("Update your system config to use the new format:");
-			eprintln!("  Before: model = \"anthropic/claude-3.5-sonnet\"");
-			eprintln!("  After:  model = \"openrouter:anthropic/claude-3.5-sonnet\"");
-			// Don't return error, just warn
-		}
-
-		// Validate threshold values
+		// Validate threshold values - STRICT
 		self.validate_thresholds()?;
 
-		// Validate MCP configuration
+		// Validate MCP configuration - STRICT
 		self.validate_mcp_config()?;
 
-		// Validate layer configuration if present
+		// Validate layer configuration if present - STRICT
 		if let Some(layers) = &self.layers {
 			self.validate_layers(layers)?;
 		}
 
+		// STRICT: Validate required fields are not empty
+		self.validate_required_fields()?;
+
 		Ok(())
 	}
 
-	pub fn validate_openrouter_model(&self) -> Result<()> {
-		let model = &self.openrouter.model;
-
-		// Check if model has the required provider:model format
-		if !model.contains(':') {
-			return Err(anyhow!(
-				"Invalid model format: '{}'. Must use 'provider:model' format (e.g., 'openrouter:anthropic/claude-3.5-sonnet', 'openai:gpt-4o')",
-				model
-			));
+	/// Validate that all required fields are present and not empty
+	fn validate_required_fields(&self) -> Result<()> {
+		if self.model.is_empty() {
+			return Err(anyhow!("Model field cannot be empty"));
 		}
 
-		// Parse and validate using the provider factory
-		match crate::session::ProviderFactory::parse_model(model) {
-			Ok((provider_name, model_name)) => {
-				// Try to create the provider to validate it exists
-				match crate::session::ProviderFactory::create_provider(&provider_name) {
-					Ok(provider) => {
-						// Check if the provider supports this model
-						if !provider.supports_model(&model_name) {
-							return Err(anyhow!(
-								"Provider '{}' does not support model '{}'. Check the provider documentation for supported models.",
-								provider_name, model_name
-							));
-						}
-					}
-					Err(_) => {
-						return Err(anyhow!(
-							"Unsupported provider: '{}'. Supported providers: openrouter, openai, anthropic, google, amazon, cloudflare",
-							provider_name
-						));
-					}
-				}
-			}
-			Err(_) => {
-				return Err(anyhow!(
-					"Invalid model format: '{}'. Must use 'provider:model' format",
-					model
-				));
-			}
+		if self.markdown_theme.is_empty() {
+			return Err(anyhow!("Markdown theme field cannot be empty"));
 		}
+
+		// Role configurations no longer have models - using system-wide model
 
 		Ok(())
 	}
@@ -143,7 +108,8 @@ impl Config {
 
 	fn validate_mcp_config(&self) -> Result<()> {
 		// Validate server configurations
-		for (server_name, server_config) in &self.mcp.servers {
+		for server_config in &self.mcp.servers {
+			let server_name = &server_config.name;
 			// Validate timeout
 			if server_config.timeout_seconds == 0 {
 				return Err(anyhow!(

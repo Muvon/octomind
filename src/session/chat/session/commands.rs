@@ -34,7 +34,7 @@ impl ChatSession {
 	pub async fn process_command(
 		&mut self,
 		input: &str,
-		config: &Config,
+		config: &mut Config,
 		role: &str,
 	) -> Result<bool> {
 		// Extract command and potential parameters
@@ -172,48 +172,39 @@ impl ChatSession {
 				self.display_session_info();
 			}
 			LAYERS_COMMAND => {
-				// Toggle layered processing
-				// Use selective update to only modify the enable_layers setting without polluting config with internal servers
+				// Toggle layered processing (RUNTIME ONLY - no config file changes)
 				let current_role = role; // Use the passed role parameter
 
-				// Create a mutable config reference for the update
-				let mut temp_config = config.clone();
-
-				// Update the specific field using selective update mechanism
-				if let Err(e) = temp_config.update_specific_field(|cfg| {
-					// Toggle the setting for the appropriate role
-					match current_role {
-						"developer" => {
-							cfg.developer.config.enable_layers =
-								!cfg.developer.config.enable_layers;
-						}
-						"assistant" => {
-							cfg.assistant.config.enable_layers =
-								!cfg.assistant.config.enable_layers;
-						}
-						_ => {
-							// For unknown roles, modify the assistant config as the fallback
-							cfg.assistant.config.enable_layers =
-								!cfg.assistant.config.enable_layers;
-						}
+				// Toggle the setting for the appropriate role in the runtime config
+				match current_role {
+					"developer" => {
+						config.developer.config.enable_layers =
+							!config.developer.config.enable_layers;
 					}
-				}) {
-					println!("{}: {}", "Failed to save configuration".bright_red(), e);
-					return Ok(false);
+					"assistant" => {
+						config.assistant.config.enable_layers =
+							!config.assistant.config.enable_layers;
+					}
+					_ => {
+						// For unknown roles, modify the assistant config as the fallback
+						config.assistant.config.enable_layers =
+							!config.assistant.config.enable_layers;
+					}
 				}
 
 				// Get the current state from the updated config
 				let is_enabled = match current_role {
-					"developer" => temp_config.developer.config.enable_layers,
-					"assistant" => temp_config.assistant.config.enable_layers,
-					_ => temp_config.get_enable_layers(current_role), // Use getter for unknown roles
+					"developer" => config.developer.config.enable_layers,
+					"assistant" => config.assistant.config.enable_layers,
+					_ => config.get_enable_layers(current_role), // Use getter for unknown roles
 				};
 
 				// Show the new state
 				if is_enabled {
 					println!(
 						"{}",
-						"Layered processing architecture is now ENABLED.".bright_green()
+						"Layered processing architecture is now ENABLED (runtime only)."
+							.bright_green()
 					);
 					println!(
 						"{}",
@@ -223,15 +214,18 @@ impl ChatSession {
 				} else {
 					println!(
 						"{}",
-						"Layered processing architecture is now DISABLED.".bright_yellow()
+						"Layered processing architecture is now DISABLED (runtime only)."
+							.bright_yellow()
 					);
-					// println!("{}", "Using standard single-model processing with Claude.".bright_blue());
 				}
-				log_info!("Configuration has been saved to disk.");
+				println!(
+					"{}",
+					"Note: This change only affects the current session and won't be saved to config."
+						.bright_blue()
+				);
 
-				// Return a special code that indicates we should reload the config in the main loop
-				// This will ensure all future commands use the updated config
-				return Ok(true);
+				// Return false since we don't need to reload config (runtime-only change)
+				return Ok(false);
 			}
 			LOGLEVEL_COMMAND => {
 				// Handle log level command

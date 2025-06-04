@@ -14,6 +14,7 @@
 
 use clap::Args;
 
+use octomind::config::defaults::{ConfigDefaults, ConfigDefaultsExt};
 use octomind::config::{Config, McpServerConfig, McpServerMode, McpServerType};
 use octomind::directories;
 
@@ -62,6 +63,22 @@ pub struct ConfigArgs {
 	/// Validate configuration without making changes
 	#[arg(long)]
 	pub validate: bool,
+
+	/// Reset specific field to default value (e.g., --reset-default log_level)
+	#[arg(long)]
+	pub reset_default: Option<String>,
+
+	/// Show only customized (non-default) values
+	#[arg(long)]
+	pub show_customized: bool,
+
+	/// Show default values for all fields
+	#[arg(long)]
+	pub show_defaults: bool,
+
+	/// Upgrade config file to latest version
+	#[arg(long)]
+	pub upgrade: bool,
 }
 
 // Handle the configuration command
@@ -92,6 +109,31 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 	}
 
+	// If upgrade flag is set, perform manual upgrade and exit
+	if args.upgrade {
+		let config_path = directories::get_config_file_path()?;
+		octomind::config::migrations::force_upgrade_config(&config_path)?;
+		return Ok(());
+	}
+
+	// If show customized flag is set, display only non-default values and exit
+	if args.show_customized {
+		show_customized_configuration(&config)?;
+		return Ok(());
+	}
+
+	// If show defaults flag is set, display default values and exit
+	if args.show_defaults {
+		show_default_values()?;
+		return Ok(());
+	}
+
+	// If reset default flag is set, reset field to default and exit
+	if let Some(field_name) = &args.reset_default {
+		reset_field_to_default(&mut config, field_name)?;
+		return Ok(());
+	}
+
 	let mut modified = false;
 
 	// Set root-level model if specified
@@ -117,39 +159,18 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 
 		let provider = parts[0];
-		let key = parts[1];
+		let _key = parts[1]; // Unused but needed for parsing
 
-		match provider {
-			"openrouter" => {
-				config.providers.openrouter.api_key = Some(key.to_string());
-				println!("Set OpenRouter API key");
-			}
-			"openai" => {
-				config.providers.openai.api_key = Some(key.to_string());
-				println!("Set OpenAI API key");
-			}
-			"anthropic" => {
-				config.providers.anthropic.api_key = Some(key.to_string());
-				println!("Set Anthropic API key");
-			}
-			"google" => {
-				config.providers.google.api_key = Some(key.to_string());
-				println!("Set Google API key");
-			}
-			"amazon" => {
-				config.providers.amazon.api_key = Some(key.to_string());
-				println!("Set Amazon API key");
-			}
-			"cloudflare" => {
-				config.providers.cloudflare.api_key = Some(key.to_string());
-				println!("Set Cloudflare API key");
-			}
-			_ => {
-				eprintln!("Error: Unsupported provider '{}'. Supported: openrouter, openai, anthropic, google, amazon, cloudflare", provider);
-				return Ok(());
-			}
-		}
-		modified = true;
+		// API keys are now only supported via environment variables for security
+		eprintln!("❌ Error: API keys can no longer be set in config file for security reasons.");
+		eprintln!("Please set the API key as an environment variable instead:");
+		eprintln!(
+			"  For {}: export {}_API_KEY=your-key-here",
+			provider.to_uppercase(),
+			provider.to_uppercase()
+		);
+		eprintln!("  Then restart your shell and try again.");
+		return Ok(());
 	}
 
 	// Set log level if specified
@@ -221,11 +242,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		config.mcp.servers.clear();
 		for server_name in &server_names {
 			// Create basic server config if not exists
-			if !config.mcp.servers.contains_key(server_name) {
-				config
-					.mcp
-					.servers
-					.insert(server_name.clone(), McpServerConfig::from_name(server_name));
+			if !config.mcp.servers.iter().any(|s| s.name == *server_name) {
+				let mut server = McpServerConfig::from_name(server_name);
+				server.name = server_name.clone();
+				config.mcp.servers.push(server);
 			}
 		}
 
@@ -254,6 +274,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				mode: McpServerMode::Http, // Default to HTTP mode
 				tools: Vec::new(),
 				timeout_seconds: 30, // Default timeout
+				builtin: false,      // User-created servers are not builtin
 			};
 
 			// Process remaining parts
@@ -316,7 +337,11 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			// The presence of servers in the registry doesn't automatically enable MCP
 
 			// Add the new server to registry
-			config.mcp.servers.insert(name.clone(), server);
+			// Remove existing server with same name first
+			config.mcp.servers.retain(|s| s.name != name);
+			// Set the name and add the server
+			server.name = name.clone();
+			config.mcp.servers.push(server);
 
 			println!("Added/updated MCP server: {}", name);
 			modified = true;
@@ -370,43 +395,17 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	// Show root-level model
 	println!("Root model: {}", config.get_effective_model());
 
-	// Show provider API keys
-	println!("Provider API keys:");
-	show_api_key_status(
-		"  OpenRouter",
-		&config.providers.openrouter.api_key,
-		"OPENROUTER_API_KEY",
-	);
-	show_api_key_status(
-		"  OpenAI",
-		&config.providers.openai.api_key,
-		"OPENAI_API_KEY",
-	);
-	show_api_key_status(
-		"  Anthropic",
-		&config.providers.anthropic.api_key,
-		"ANTHROPIC_API_KEY",
-	);
-	show_api_key_status(
-		"  Google",
-		&config.providers.google.api_key,
-		"GOOGLE_APPLICATION_CREDENTIALS",
-	);
-	show_api_key_status(
-		"  Amazon",
-		&config.providers.amazon.api_key,
-		"AWS_ACCESS_KEY_ID",
-	);
-	show_api_key_status(
-		"  Cloudflare",
-		&config.providers.cloudflare.api_key,
-		"CLOUDFLARE_API_TOKEN",
-	);
+	// Show provider API keys (from environment variables only)
+	println!("Provider API keys (from environment variables):");
+	show_env_api_key_status("  OpenRouter", "OPENROUTER_API_KEY");
+	show_env_api_key_status("  OpenAI", "OPENAI_API_KEY");
+	show_env_api_key_status("  Anthropic", "ANTHROPIC_API_KEY");
+	show_env_api_key_status("  Google", "GOOGLE_APPLICATION_CREDENTIALS");
+	show_env_api_key_status("  Amazon", "AWS_ACCESS_KEY_ID");
+	show_env_api_key_status("  Cloudflare", "CLOUDFLARE_API_TOKEN");
 
-	// Show role configurations
+	// Show role configurations (models now use system-wide setting)
 	println!("Role configurations:");
-	println!("  Developer model: {}", config.developer.config.model);
-	println!("  Assistant model: {}", config.assistant.config.model);
 
 	// Show MCP status using the new structure
 	// MCP is enabled per-role based on server_refs, not a global flag
@@ -435,7 +434,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	if !config.mcp.servers.is_empty() || dev_mcp_enabled || ass_mcp_enabled {
 		if !config.mcp.servers.is_empty() {
 			println!("MCP servers:");
-			for (name, server) in &config.mcp.servers {
+			for server in &config.mcp.servers {
+				let name = &server.name;
 				// Note: enabled status is now determined by role server_refs, not individual server config
 				// Here we just show what's available in the registry
 
@@ -623,34 +623,14 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	);
 	println!();
 
-	// Provider API keys
-	println!("🔑 Provider API Keys");
-	show_api_key_status(
-		"OpenRouter",
-		&config.providers.openrouter.api_key,
-		"OPENROUTER_API_KEY",
-	);
-	show_api_key_status("OpenAI", &config.providers.openai.api_key, "OPENAI_API_KEY");
-	show_api_key_status(
-		"Anthropic",
-		&config.providers.anthropic.api_key,
-		"ANTHROPIC_API_KEY",
-	);
-	show_api_key_status(
-		"Google",
-		&config.providers.google.api_key,
-		"GOOGLE_APPLICATION_CREDENTIALS",
-	);
-	show_api_key_status(
-		"Amazon",
-		&config.providers.amazon.api_key,
-		"AWS_ACCESS_KEY_ID",
-	);
-	show_api_key_status(
-		"Cloudflare",
-		&config.providers.cloudflare.api_key,
-		"CLOUDFLARE_API_TOKEN",
-	);
+	// Provider API keys (from environment variables only)
+	println!("🔑 Provider API Keys (from environment variables)");
+	show_env_api_key_status("OpenRouter", "OPENROUTER_API_KEY");
+	show_env_api_key_status("OpenAI", "OPENAI_API_KEY");
+	show_env_api_key_status("Anthropic", "ANTHROPIC_API_KEY");
+	show_env_api_key_status("Google", "GOOGLE_APPLICATION_CREDENTIALS");
+	show_env_api_key_status("Amazon", "AWS_ACCESS_KEY_ID");
+	show_env_api_key_status("Cloudflare", "CLOUDFLARE_API_TOKEN");
 	println!();
 
 	// Role configurations
@@ -660,7 +640,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!("  Developer Role:");
 	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
 		config.get_mode_config("developer");
-	println!("    Model:           {}", dev_config.model);
+	println!("    Model:           {} (system-wide)", config.get_effective_model());
 	println!("    Layers enabled:  {}", dev_config.enable_layers);
 	if let Some(_system) = dev_system {
 		println!("    System prompt:   Custom");
@@ -672,7 +652,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!("  Assistant Role:");
 	let (ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
 		config.get_mode_config("assistant");
-	println!("    Model:           {}", ass_config.model);
+	println!("    Model:           {} (system-wide)", config.get_effective_model());
 	println!("    Layers enabled:  {}", ass_config.enable_layers);
 	if let Some(_system) = ass_system {
 		println!("    System prompt:   Custom");
@@ -743,28 +723,27 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 }
 
 /// Show the status of an API key with environment variable fallback
-fn show_api_key_status(provider: &str, config_key: &Option<String>, env_var: &str) {
-	match config_key {
-		Some(key) => println!("{:<15} Set in config ({})", provider, mask_key(key)),
-		None => {
-			if std::env::var(env_var).is_ok() {
-				println!("{:<15} Set via {} environment variable", provider, env_var);
-			} else {
-				println!("{:<15} Not set", provider);
-			}
-		}
+fn show_env_api_key_status(provider: &str, env_var: &str) {
+	if std::env::var(env_var).is_ok() {
+		println!(
+			"{:<15} ✅ Set via {} environment variable",
+			provider, env_var
+		);
+	} else {
+		println!("{:<15} ❌ Not set (export {}=your-key)", provider, env_var);
 	}
 }
 
 /// Display MCP server configurations
-fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>) {
+fn show_mcp_servers(servers: &Vec<McpServerConfig>) {
 	if servers.is_empty() {
 		println!("    Servers:         None configured");
 		return;
 	}
 
 	println!("    Servers:");
-	for (name, server) in servers {
+	for server in servers {
+		let name = &server.name;
 		// Note: Individual servers no longer have enabled flag - determined by role server_refs
 
 		// Auto-detect server type for display
@@ -816,10 +795,220 @@ fn show_mcp_servers(servers: &std::collections::HashMap<String, McpServerConfig>
 }
 
 /// Mask an API key for display purposes
-fn mask_key(key: &str) -> String {
-	if key.len() <= 8 {
-		"*".repeat(key.len())
+/// Show only customized (non-default) configuration values
+fn show_customized_configuration(config: &Config) -> Result<(), anyhow::Error> {
+	println!("🔧 Customized Configuration Values\n");
+
+	let customized_fields = config.get_customized_fields();
+
+	if customized_fields.is_empty() {
+		println!("✅ All configuration values are using defaults.");
+		println!("   Use 'octomind config --show-defaults' to see what the defaults are.");
+		return Ok(());
+	}
+
+	println!("📝 The following fields have been customized from their defaults:\n");
+
+	for field in &customized_fields {
+		let current_value = get_current_field_value(config, field);
+		let default_value = config
+			.get_default_value_string(field)
+			.unwrap_or("N/A".to_string());
+
+		println!("  🔹 {}", field);
+		println!("     Current: {}", current_value);
+		println!("     Default: {}", default_value);
+		println!();
+	}
+
+	println!("💡 Tips:");
+	println!("   • Reset a field to default: octomind config --reset-default <field_name>");
+	println!("   • View all defaults: octomind config --show-defaults");
+	println!("   • View full config: octomind config --show");
+
+	Ok(())
+}
+
+/// Show default values for all configuration fields
+fn show_default_values() -> Result<(), anyhow::Error> {
+	println!("🎯 Default Configuration Values\n");
+
+	println!("These are the built-in default values for all configuration options:");
+	println!("You can customize any of these in your config file or via command line.\n");
+
+	// Root-level defaults
+	println!("🌍 System-wide Defaults:");
+	println!(
+		"  log_level:                     {:?}",
+		ConfigDefaults::DEFAULT_LOG_LEVEL
+	);
+	println!(
+		"  model:                         {}",
+		ConfigDefaults::DEFAULT_MODEL
+	);
+	println!(
+		"  mcp_response_warning_threshold: {}",
+		ConfigDefaults::DEFAULT_MCP_RESPONSE_WARNING_THRESHOLD
+	);
+	println!(
+		"  max_request_tokens_threshold:  {}",
+		ConfigDefaults::DEFAULT_MAX_REQUEST_TOKENS_THRESHOLD
+	);
+	println!(
+		"  enable_auto_truncation:        {}",
+		ConfigDefaults::DEFAULT_ENABLE_AUTO_TRUNCATION
+	);
+	println!(
+		"  cache_tokens_threshold:        {}",
+		ConfigDefaults::DEFAULT_CACHE_TOKENS_THRESHOLD
+	);
+	println!(
+		"  cache_timeout_seconds:         {}",
+		ConfigDefaults::DEFAULT_CACHE_TIMEOUT_SECONDS
+	);
+	println!(
+		"  enable_markdown_rendering:     {}",
+		ConfigDefaults::DEFAULT_ENABLE_MARKDOWN_RENDERING
+	);
+	println!(
+		"  markdown_theme:                {}",
+		ConfigDefaults::DEFAULT_MARKDOWN_THEME
+	);
+	println!(
+		"  max_session_spending_threshold: {}",
+		ConfigDefaults::DEFAULT_MAX_SESSION_SPENDING_THRESHOLD
+	);
+	println!();
+
+	// Role defaults
+	println!("👤 Role Defaults:");
+	println!(
+		"  developer.enable_layers:       {}",
+		ConfigDefaults::DEFAULT_ENABLE_LAYERS
+	);
+	println!(
+		"  developer.mcp.server_refs:     [{}]",
+		ConfigDefaults::DEFAULT_DEVELOPER_SERVER_REFS.join(", ")
+	);
+	println!(
+		"  assistant.enable_layers:       {}",
+		ConfigDefaults::DEFAULT_ENABLE_LAYERS
+	);
+	println!(
+		"  assistant.mcp.server_refs:     [{}]",
+		ConfigDefaults::DEFAULT_ASSISTANT_SERVER_REFS.join(", ")
+	);
+	println!();
+
+	// MCP defaults
+	println!("🔧 MCP Defaults:");
+	println!(
+		"  mcp_server_timeout:            {} seconds",
+		ConfigDefaults::DEFAULT_MCP_SERVER_TIMEOUT
+	);
+	println!();
+
+	// Optional fields (None by default)
+	println!("📝 Optional Fields (None by default):");
+	println!("  developer.system:              None (uses built-in prompt)");
+	println!("  assistant.system:              None (uses built-in prompt)");
+	println!("  layers:                        None (no custom layers)");
+	println!("  commands:                      None (no custom commands)");
+	println!("  system:                        None (uses role-specific prompts)");
+	println!();
+
+	println!("💡 Tips:");
+	println!("   • View your current config: octomind config --show");
+	println!("   • View only customized values: octomind config --show-customized");
+	println!("   • Reset a field to default: octomind config --reset-default <field_name>");
+
+	Ok(())
+}
+
+/// Reset a specific field to its default value
+fn reset_field_to_default(config: &mut Config, field_name: &str) -> Result<(), anyhow::Error> {
+	// Get the current value for display
+	let current_value = get_current_field_value(config, field_name);
+	let default_value = config.get_default_value_string(field_name);
+
+	if let Some(default_val) = &default_value {
+		println!("🔄 Resetting '{}' to default value", field_name);
+		println!("   Current: {}", current_value);
+		println!("   Default: {}", default_val);
+
+		// Reset the field
+		config.reset_to_default(field_name)?;
+
+		// Save the configuration
+		config.save()?;
+
+		println!("✅ Field '{}' has been reset to default value", field_name);
 	} else {
-		format!("{}...{}", &key[..4], &key[key.len() - 4..])
+		return Err(anyhow::anyhow!(
+			"Unknown field '{}'. Use 'octomind config --show-defaults' to see available fields.",
+			field_name
+		));
+	}
+
+	Ok(())
+}
+
+/// Get the current value of a field as a string for display
+fn get_current_field_value(config: &Config, field_name: &str) -> String {
+	match field_name {
+		"log_level" => format!("{:?}", config.log_level),
+		"model" => config.model.clone(),
+		"mcp_response_warning_threshold" => config.mcp_response_warning_threshold.to_string(),
+		"max_request_tokens_threshold" => config.max_request_tokens_threshold.to_string(),
+		"enable_auto_truncation" => config.enable_auto_truncation.to_string(),
+		"cache_tokens_threshold" => config.cache_tokens_threshold.to_string(),
+		"cache_timeout_seconds" => config.cache_timeout_seconds.to_string(),
+		"enable_markdown_rendering" => config.enable_markdown_rendering.to_string(),
+		"markdown_theme" => config.markdown_theme.clone(),
+		"max_session_spending_threshold" => config.max_session_spending_threshold.to_string(),
+		"developer.enable_layers" => config.developer.config.enable_layers.to_string(),
+		"assistant.enable_layers" => config.assistant.config.enable_layers.to_string(),
+		"developer.mcp.server_refs" => format!("[{}]", config.developer.mcp.server_refs.join(", ")),
+		"assistant.mcp.server_refs" => format!("[{}]", config.assistant.mcp.server_refs.join(", ")),
+		"developer.system" => config
+			.developer
+			.config
+			.system
+			.as_ref()
+			.unwrap_or(&"None".to_string())
+			.clone(),
+		"assistant.system" => config
+			.assistant
+			.config
+			.system
+			.as_ref()
+			.unwrap_or(&"None".to_string())
+			.clone(),
+		"layers" => {
+			if config.layers.is_some() {
+				format!(
+					"{} layers configured",
+					config.layers.as_ref().unwrap().len()
+				)
+			} else {
+				"None".to_string()
+			}
+		}
+		"commands" => {
+			if config.commands.is_some() {
+				format!(
+					"{} commands configured",
+					config.commands.as_ref().unwrap().len()
+				)
+			} else {
+				"None".to_string()
+			}
+		}
+		"system" => config
+			.system
+			.as_ref()
+			.unwrap_or(&"None".to_string())
+			.clone(),
+		_ => "Unknown field".to_string(),
 	}
 }

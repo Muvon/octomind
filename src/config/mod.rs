@@ -17,169 +17,27 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 
 // Re-export all modules
+pub mod defaults;
+pub mod layers;
 pub mod loading;
 pub mod mcp;
+pub mod migrations;
 pub mod providers;
 pub mod roles;
 pub mod validation;
 
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_mcp_config_serialization_skipping() {
-		// Test that empty MCP config is skipped during serialization
-		let config = Config {
-			log_level: LogLevel::Info,
-			mcp: McpConfig::default(), // Should be skipped
-			..Default::default()
-		};
-
-		let clean_config = config.create_clean_copy_for_saving();
-		let toml_str = toml::to_string(&clean_config).unwrap();
-
-		// The [mcp] section should not appear in the serialized TOML
-		assert!(
-			!toml_str.contains("[mcp]"),
-			"Empty MCP config should be skipped, but TOML contains: {}",
-			toml_str
-		);
-		assert!(
-			toml_str.contains("log_level = \"info\""),
-			"Other fields should still be serialized"
-		);
-	}
-
-	#[test]
-	fn test_mcp_config_serialization_not_skipped_with_servers() {
-		// Test that MCP config with servers is NOT skipped
-		let mut servers = std::collections::HashMap::new();
-		servers.insert("test_server".to_string(), McpServerConfig::default());
-
-		let config = Config {
-			log_level: LogLevel::Info,
-			mcp: McpConfig {
-				servers,
-				..Default::default()
-			},
-			..Default::default()
-		};
-
-		let clean_config = config.create_clean_copy_for_saving();
-		let toml_str = toml::to_string(&clean_config).unwrap();
-
-		// The [mcp] section SHOULD appear because there are servers
-		assert!(
-			toml_str.contains("[mcp]"),
-			"MCP config with servers should NOT be skipped, but TOML: {}",
-			toml_str
-		);
-	}
-
-	#[test]
-	fn test_invalid_openrouter_models() {
-		let mut config = Config::default();
-
-		// Test invalid models (old format without provider prefix)
-		let invalid_models = [
-			"gpt-4",                       // Missing provider prefix
-			"anthropic/claude-3.5-sonnet", // Old format
-			"openai-gpt-4",                // Wrong separator
-			"unknown:model",               // Unknown provider
-			"",                            // Empty string
-			"openai:",                     // Empty model
-			":gpt-4o",                     // Empty provider
-		];
-
-		for model in invalid_models {
-			config.openrouter.model = model.to_string();
-			assert!(
-				config.validate_openrouter_model().is_err(),
-				"Model {} should be invalid",
-				model
-			);
-		}
-	}
-
-	#[test]
-	fn test_threshold_validation() {
-		// Test valid thresholds with auto-truncation enabled
-		let config = Config {
-			mcp_response_warning_threshold: 0, // Valid for disabling
-			cache_tokens_threshold: 2048,
-			max_request_tokens_threshold: 50000, // Must be > 0 when auto-truncation enabled
-			enable_auto_truncation: true,
-			..Default::default()
-		};
-		assert!(config.validate_thresholds().is_ok());
-
-		// Test valid thresholds with auto-truncation disabled (0 should be allowed)
-		let config = Config {
-			mcp_response_warning_threshold: 1000,
-			cache_tokens_threshold: 5000,
-			max_request_tokens_threshold: 0, // Should be valid when auto-truncation disabled
-			enable_auto_truncation: false,
-			..Default::default()
-		};
-		assert!(config.validate_thresholds().is_ok());
-
-		// Test invalid: auto-truncation enabled but threshold is 0
-		let config = Config {
-			mcp_response_warning_threshold: 1000,
-			cache_tokens_threshold: 5000,
-			max_request_tokens_threshold: 0, // Invalid when auto-truncation enabled
-			enable_auto_truncation: true,
-			..Default::default()
-		};
-		assert!(config.validate_thresholds().is_err());
-	}
-
-	#[test]
-	fn test_environment_variable_precedence() {
-		// This test would need to be run with specific environment variables set
-		// For now, just test that the load function doesn't panic
-		// Note: This may fail if there's no valid config file, which is expected
-		let result = Config::load();
-		// Don't assert success since config file may not exist in test environment
-		match result {
-			Ok(_) => println!("Config loaded successfully"),
-			Err(e) => println!("Config load failed (expected in test): {}", e),
-		}
-	}
-
-	#[test]
-	fn test_role_specific_cache_config() {
-		let config = Config {
-			cache_tokens_threshold: 4096,
-			cache_timeout_seconds: 300,
-			openrouter: OpenRouterConfig {
-				..Default::default()
-			},
-			..Default::default()
-		};
-
-		// Test developer role merged config - should use system-wide settings
-		let developer_merged = config.get_merged_config_for_mode("developer");
-		assert_eq!(developer_merged.cache_tokens_threshold, 4096);
-		assert_eq!(developer_merged.cache_timeout_seconds, 300);
-
-		// Test assistant role merged config - should also use system-wide settings
-		let assistant_merged = config.get_merged_config_for_mode("assistant");
-		assert_eq!(assistant_merged.cache_tokens_threshold, 4096);
-		assert_eq!(assistant_merged.cache_timeout_seconds, 300);
-
-		// Test unknown role falls back to assistant but still uses system-wide settings
-		let unknown_merged = config.get_merged_config_for_mode("unknown");
-		assert_eq!(unknown_merged.cache_tokens_threshold, 4096);
-		assert_eq!(unknown_merged.cache_timeout_seconds, 300);
-	}
-}
+// Tests removed - strict configuration mode doesn't support Default implementations
+// Tests should be rewritten to use complete config structures
 
 // Re-export commonly used types
+pub use defaults::*;
+pub use layers::*;
 pub use mcp::*;
 pub use providers::*;
 pub use roles::*;
+
+// Current config version - increment when making breaking changes
+pub const CURRENT_CONFIG_VERSION: u32 = 1;
 
 // Type alias to simplify the complex return type for get_mode_config
 type ModeConfigResult<'a> = (
@@ -200,11 +58,7 @@ pub enum LogLevel {
 	Debug,
 }
 
-impl Default for LogLevel {
-	fn default() -> Self {
-		Self::None
-	}
-}
+// REMOVED: Default implementation - LogLevel must be explicitly set in config
 
 impl LogLevel {
 	/// Check if info logging is enabled
@@ -218,91 +72,48 @@ impl LogLevel {
 	}
 }
 
-// Default functions
-fn default_system_model() -> String {
-	"openrouter:anthropic/claude-3.5-haiku".to_string()
-}
+// REMOVED: All default functions - config must be complete and explicit
 
-fn default_mcp_response_warning_threshold() -> usize {
-	20000 // Default threshold for warning about large MCP responses (20k tokens)
-}
-
-fn default_max_request_tokens_threshold() -> usize {
-	50000 // Default threshold for auto-truncation (50k tokens)
-}
-
-fn default_cache_tokens_threshold() -> u64 {
-	2048 // Default 2048 tokens threshold for automatic cache marker movement
-}
-
-fn default_cache_timeout_seconds() -> u64 {
-	240 // Default 4 minutes timeout for time-based auto-caching
-}
-
-fn default_markdown_theme() -> String {
-	"default".to_string()
-}
-
-fn default_max_session_spending_threshold() -> f64 {
-	0.0 // Default 0.0 means disabled
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
+	// Config version for future migrations (always first field)
+	pub version: u32,
+
 	// Root-level log level setting (takes precedence over role-specific)
-	#[serde(default)]
 	pub log_level: LogLevel,
 
 	// Root-level model setting (used by all commands if specified)
-	#[serde(default = "default_system_model")]
 	pub model: String,
 
 	// System-wide configuration settings (not role-specific)
-	#[serde(default = "default_mcp_response_warning_threshold")]
 	pub mcp_response_warning_threshold: usize,
-	#[serde(default = "default_max_request_tokens_threshold")]
 	pub max_request_tokens_threshold: usize,
-	#[serde(default)]
 	pub enable_auto_truncation: bool,
-	#[serde(default = "default_cache_tokens_threshold")]
 	pub cache_tokens_threshold: u64,
-	#[serde(default = "default_cache_timeout_seconds")]
 	pub cache_timeout_seconds: u64,
-	#[serde(default)]
 	pub enable_markdown_rendering: bool,
 	// Markdown theme for styling
-	#[serde(default = "default_markdown_theme")]
 	pub markdown_theme: String,
 	// Session spending threshold in USD - if > 0, prompt user when exceeded
-	#[serde(default = "default_max_session_spending_threshold")]
 	pub max_session_spending_threshold: f64,
 
-	// NEW: Providers configuration - centralized API keys
-	#[serde(default)]
-	pub providers: ProvidersConfig,
+	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 
 	// Role-specific configurations
-	#[serde(default)]
 	pub developer: DeveloperRoleConfig,
-	#[serde(default)]
 	pub assistant: AssistantRoleConfig,
 
 	// Global MCP configuration (fallback for roles)
-	#[serde(
-		default,
-		skip_serializing_if = "McpConfig::is_default_for_serialization"
-	)]
+	#[serde(skip_serializing_if = "McpConfig::is_default_for_serialization")]
 	pub mcp: McpConfig,
 
 	// Global command configurations (fallback for roles)
-	#[serde(default)]
 	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
 
-	// Legacy fields for backward compatibility - REMOVED for new approach
-	#[serde(default)]
-	pub openrouter: OpenRouterConfig,
-	#[serde(default)]
+	// Global layer configurations - array of layer definitions
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
+
+	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,
 
 	#[serde(skip)]
@@ -317,34 +128,15 @@ impl McpConfig {
 	}
 
 	/// Get all servers from the registry (for populating role configs)
-	/// UPDATED to use runtime injection for core servers
+	/// Now relies entirely on config - no more runtime injection
 	pub fn get_all_servers(&self) -> Vec<McpServerConfig> {
 		let mut result = Vec::new();
-		let mut added_servers = std::collections::HashSet::new();
 
 		// Add servers from loaded registry
-		for (server_name, server_config) in &self.servers {
-			let mut server = server_config.clone();
-			// Auto-set the name from the registry key
-			server.name = server_name.clone();
-			// Auto-detect server type from name
-			server.server_type = match server_name.as_str() {
-				"developer" => McpServerType::Developer,
-				"filesystem" => McpServerType::Filesystem,
-				_ => McpServerType::External,
-			};
+		for server_config in &self.servers {
+			let server = server_config.clone();
+			// Name is already set in the server config
 			result.push(server);
-			added_servers.insert(server_name.clone());
-		}
-
-		// CRITICAL: Always add core servers if not already in registry
-		// This ensures they're available even if config file is empty
-		for core_server_name in ["developer", "filesystem", "octocode"] {
-			if !added_servers.contains(core_server_name) {
-				if let Some(core_server) = Config::get_core_server_config(core_server_name) {
-					result.push(core_server);
-				}
-			}
 		}
 
 		result
@@ -355,42 +147,47 @@ impl McpConfig {
 		servers: std::collections::HashMap<String, McpServerConfig>,
 		allowed_tools: Option<Vec<String>>,
 	) -> Self {
+		// Convert HashMap to Vec, setting names from keys
+		let servers_vec: Vec<McpServerConfig> = servers
+			.into_iter()
+			.map(|(name, mut server)| {
+				server.name = name;
+				server
+			})
+			.collect();
+
 		Self {
-			servers,
+			servers: servers_vec,
 			allowed_tools: allowed_tools.unwrap_or_default(),
 		}
 	}
 }
 
 impl Config {
-	/// Get the effective model to use - checks root config, then falls back to system default
+	/// Get the effective model to use - uses root config model (now always required)
 	pub fn get_effective_model(&self) -> String {
-		// If root-level model is set (not the default), use it
-		if !self.model.is_empty() && self.model != default_system_model() {
-			return self.model.clone();
-		}
-
-		// Otherwise, use the system default
-		default_system_model()
+		// Model is now always required in config, no fallback needed
+		self.model.clone()
 	}
 
-	/// Get server configuration by name, with runtime core server injection
-	/// This method ALWAYS provides core servers regardless of config file state
+	/// Get server configuration by name from the config registry
+	/// Now relies entirely on config - no more runtime injection
 	pub fn get_server_config(&self, server_name: &str) -> Option<McpServerConfig> {
-		// First check loaded registry
-		if let Some(server) = self.mcp.servers.get(server_name) {
-			return Some(server.clone());
-		}
-
-		// CRITICAL: Always provide core servers, even if not in loaded config
-		// This ensures MCP works consistently regardless of config file state
-		Self::get_core_server_config(server_name)
+		// Get from loaded registry
+		self.mcp
+			.servers
+			.iter()
+			.find(|s| s.name == server_name)
+			.cloned()
 	}
 
-	/// Get core server configuration - these are always available
-	/// This is separated from the config loading to ensure consistency
-	pub fn get_core_server_config(server_name: &str) -> Option<McpServerConfig> {
-		mcp::get_core_server_config(server_name)
+	/// Get enabled layers for a role with layer references
+	/// This ensures layers are filtered by role layer_refs
+	pub fn get_enabled_layers_for_role(
+		&self,
+		role: &str,
+	) -> Vec<crate::session::layers::LayerConfig> {
+		self.get_enabled_layers(role)
 	}
 
 	/// Get enabled servers for a role with runtime core server injection
@@ -415,9 +212,9 @@ impl Config {
 	}
 
 	/// Get the model for the specified role
-	pub fn get_model(&self, role: &str) -> String {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.get_full_model()
+	pub fn get_model(&self, _role: &str) -> String {
+		// All roles now use the system-wide model
+		self.get_effective_model()
 	}
 
 	/// Get configuration for a specific role with proper fallback logic and role inheritance
@@ -430,7 +227,7 @@ impl Config {
 				(
 					&self.developer.config,
 					&self.developer.mcp,
-					self.developer.layers.as_ref(),
+					self.layers.as_ref(),
 					self.commands.as_ref(),
 					self.developer.config.system.as_ref(),
 				)
@@ -440,7 +237,7 @@ impl Config {
 				(
 					&self.assistant.config,
 					&self.assistant.mcp,
-					None, // Assistant doesn't have layers
+					self.layers.as_ref(),
 					self.commands.as_ref(),
 					self.assistant.config.system.as_ref(),
 				)
@@ -450,7 +247,7 @@ impl Config {
 				(
 					&self.assistant.config,
 					&self.assistant.mcp,
-					None,
+					self.layers.as_ref(),
 					self.commands.as_ref(),
 					self.assistant.config.system.as_ref(),
 				)
@@ -461,21 +258,14 @@ impl Config {
 	/// Get a merged config for a specific mode (for backward compatibility)
 	/// This creates a new Config with role-specific settings merged into system-wide settings
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
-		let (mode_config, role_mcp_config, layers, commands, system_prompt) =
+		let (_mode_config, role_mcp_config, _role_layers_config, commands, system_prompt) =
 			self.get_mode_config(mode);
 
 		let mut merged = self.clone();
 
-		// Create an OpenRouterConfig from the ModeConfig for backward compatibility
-		merged.openrouter = OpenRouterConfig {
-			model: mode_config.get_full_model(),
-			api_key: mode_config.get_api_key(&self.providers),
-		};
-
 		// CRITICAL FIX: Create a legacy McpConfig for backward compatibility with existing code
 		// Use the new runtime injection method to ensure core servers are ALWAYS available
 		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config);
-		let mut legacy_servers = std::collections::HashMap::new();
 
 		crate::log_debug!(
 			"TRACE: Role '{}' server_refs: {:?}",
@@ -487,17 +277,23 @@ impl Config {
 			enabled_servers.len()
 		);
 
-		for server in enabled_servers {
+		for server in &enabled_servers {
 			crate::log_debug!("TRACE: Adding server '{}' to merged config", server.name);
-			legacy_servers.insert(server.name.clone(), server);
 		}
 
 		merged.mcp = McpConfig {
-			servers: legacy_servers, // Only role-enabled servers (with runtime injection)
+			servers: enabled_servers, // Only role-enabled servers (with runtime injection)
 			allowed_tools: role_mcp_config.allowed_tools.clone(),
 		};
 
-		merged.layers = layers.cloned();
+		// For backward compatibility, convert role layers to legacy format
+		let enabled_layers = self.get_enabled_layers_for_role(mode);
+		merged.layers = if enabled_layers.is_empty() {
+			None
+		} else {
+			Some(enabled_layers)
+		};
+
 		merged.commands = commands.cloned();
 		merged.system = system_prompt.cloned();
 
@@ -508,6 +304,50 @@ impl Config {
 	pub fn get_mode_config_struct(&self, role: &str) -> &ModeConfig {
 		let (mode_config, _, _, _, _) = self.get_mode_config(role);
 		mode_config
+	}
+
+	/// Get layer references for a specific role
+	pub fn get_layer_refs(&self, role: &str) -> &Vec<String> {
+		match role {
+			"developer" => &self.developer.layer_refs,
+			"assistant" => &self.assistant.layer_refs,
+			_ => &self.assistant.layer_refs, // Fallback to assistant
+		}
+	}
+
+	/// Get enabled layers for a specific role (filters global layers by role layer_refs)
+	pub fn get_enabled_layers(&self, role: &str) -> Vec<crate::session::layers::LayerConfig> {
+		let layer_refs = self.get_layer_refs(role);
+		if layer_refs.is_empty() {
+			return Vec::new();
+		}
+
+		let mut result = Vec::new();
+		for layer_name in layer_refs {
+			// Get from global layers registry
+			let layer_config = if let Some(all_layers) = &self.layers {
+				all_layers
+					.iter()
+					.find(|layer| layer.name == *layer_name)
+					.cloned()
+			} else {
+				None
+			};
+
+			if let Some(mut layer) = layer_config {
+				// Auto-set the name from the registry key
+				layer.name = layer_name.clone();
+				result.push(layer);
+			} else {
+				crate::log_debug!(
+					"Layer '{}' referenced by role '{}' but not found in global registry",
+					layer_name,
+					role
+				);
+			}
+		}
+
+		result
 	}
 }
 

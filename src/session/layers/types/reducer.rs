@@ -41,6 +41,7 @@ impl ReducerLayer {
 				allowed_tools: vec![],
 			},
 			parameters: std::collections::HashMap::new(),
+			builtin: true, // This is a builtin layer
 		}
 	}
 }

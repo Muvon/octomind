@@ -84,7 +84,7 @@ where
 }
 
 // Configuration for layer-specific MCP settings
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct LayerMcpConfig {
 	// Server references - list of server names from the global registry to use for this layer
 	// Empty list means MCP is disabled for this layer
@@ -96,7 +96,7 @@ pub struct LayerMcpConfig {
 }
 
 // Common configuration properties for all layers - extended for flexibility
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LayerConfig {
 	pub name: String,
 	// Model is now optional - falls back to session model if not specified
@@ -113,6 +113,9 @@ pub struct LayerConfig {
 	// Custom parameters that can be used in system prompts via placeholders
 	#[serde(default)]
 	pub parameters: std::collections::HashMap<String, serde_json::Value>,
+	// Mark if this is a builtin layer (affects serialization and maintenance)
+	#[serde(default)]
+	pub builtin: bool,
 }
 
 fn default_temperature() -> f32 {
@@ -138,37 +141,30 @@ impl LayerConfig {
 		// Create role-like MCP config from layer's server_refs
 		if !self.mcp.server_refs.is_empty() {
 			// Get servers from the global registry based on server_refs
-			let mut legacy_servers = std::collections::HashMap::new();
+			let mut layer_servers = Vec::new();
 
 			for server_name in &self.mcp.server_refs {
-				// Try to get from loaded registry first, then fallback to core servers
+				// Get from loaded registry
 				let server_config = base_config
 					.mcp
 					.servers
-					.get(server_name)
-					.cloned()
-					.or_else(|| crate::config::Config::get_core_server_config(server_name));
+					.iter()
+					.find(|s| s.name == *server_name)
+					.cloned();
 
 				if let Some(mut server) = server_config {
-					// Auto-set the name from the registry key
-					server.name = server_name.clone();
-					// Auto-detect server type from name
-					server.server_type = match server_name.as_str() {
-						"developer" => crate::config::McpServerType::Developer,
-						"filesystem" => crate::config::McpServerType::Filesystem,
-						_ => crate::config::McpServerType::External,
-					};
+					// Name is already set in the server config
 					// Apply layer-specific tool filtering if specified
 					if !self.mcp.allowed_tools.is_empty() {
 						server.tools = self.mcp.allowed_tools.clone();
 					}
-					legacy_servers.insert(server_name.clone(), server);
+					layer_servers.push(server);
 				}
 			}
 
 			// Override the global MCP configuration with layer-specific servers
 			merged_config.mcp = crate::config::McpConfig {
-				servers: legacy_servers,
+				servers: layer_servers,
 				allowed_tools: self.mcp.allowed_tools.clone(),
 			};
 		} else {
@@ -188,20 +184,9 @@ impl LayerConfig {
 			// Process placeholders in custom system prompt
 			self.process_prompt_placeholders(custom_prompt)
 		} else {
-			// Use built-in prompt for known layer types
-			match self.name.as_str() {
-				"query_processor" => {
-					crate::session::helper_functions::get_raw_system_prompt("query_processor")
-				}
-				"context_generator" => {
-					crate::session::helper_functions::get_raw_system_prompt("context_generator")
-				}
-				"reducer" => crate::session::helper_functions::get_raw_system_prompt("reducer"),
-				_ => {
-					// For unknown layer types, use a generic prompt
-					format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name)
-				}
-			}
+			// All system prompts should now be defined in config
+			// This fallback should rarely be used
+			format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name)
 		}
 	}
 
@@ -243,6 +228,7 @@ impl LayerConfig {
 					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
+				builtin: true, // Mark as builtin
 			},
 			"context_generator" => Self {
 				name: layer_type.to_string(),
@@ -255,6 +241,7 @@ impl LayerConfig {
 					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
 				},
 				parameters: std::collections::HashMap::new(),
+				builtin: true, // Mark as builtin
 			},
 			"reducer" => Self {
 				name: layer_type.to_string(),
@@ -267,6 +254,7 @@ impl LayerConfig {
 					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
+				builtin: true, // Mark as builtin
 			},
 			_ => Self {
 				name: layer_type.to_string(),
@@ -276,6 +264,7 @@ impl LayerConfig {
 				input_mode: InputMode::Last,
 				mcp: LayerMcpConfig::default(),
 				parameters: std::collections::HashMap::new(),
+				builtin: false, // Custom layers are not builtin
 			},
 		}
 	}

@@ -217,7 +217,7 @@ pub async fn initialize_servers_for_mode(config: &crate::config::Config) -> Resu
 	}
 
 	let enabled_servers: Vec<crate::config::McpServerConfig> =
-		config.mcp.servers.values().cloned().collect();
+		config.mcp.servers.iter().cloned().collect();
 
 	crate::log_debug!(
 		"Initializing {} MCP servers at startup",
@@ -286,7 +286,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 
 	// Get enabled servers from the merged config (which should already be filtered by server_refs)
 	let enabled_servers: Vec<crate::config::McpServerConfig> =
-		config.mcp.servers.values().cloned().collect();
+		config.mcp.servers.iter().cloned().collect();
 	crate::log_debug!(
 		"Found {} enabled servers in merged config",
 		enabled_servers.len()
@@ -480,7 +480,7 @@ async fn try_execute_tool_call_with_cancellation(
 	// This prevents sending tools to servers that don't support them
 	let mut tool_to_server_map = std::collections::HashMap::new();
 	let available_servers: Vec<crate::config::McpServerConfig> =
-		config.mcp.servers.values().cloned().collect();
+		config.mcp.servers.iter().cloned().collect();
 
 	// Map internal tools to their appropriate server types
 	for server in &available_servers {

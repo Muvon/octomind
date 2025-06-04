@@ -521,7 +521,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 
 			let exit = chat_session
-				.process_command(&input, &current_config, &session_args.role)
+				.process_command(&input, &mut current_config, &session_args.role)
 				.await?;
 			if exit {
 				// First check if it's a session switch command
@@ -609,10 +609,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// 2. Use the processed input for the main model chat
 
 		// If layers are enabled and this is the first message, process it through layers first
-		if current_config.get_enable_layers(&session_args.role)
-			&& !first_message_processed
-			&& session_args.role == "developer"
-		{
+		if current_config.get_enable_layers(&session_args.role) && !first_message_processed {
 			// Set processing state to layers
 			*processing_state.lock().unwrap() = ProcessingState::ProcessingLayers;
 

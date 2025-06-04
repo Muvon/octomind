@@ -1,0 +1,341 @@
+# Octomind Configuration File
+# This file contains all configurable settings for Octomind.
+# All values shown here are the defaults - you can customize any of them.
+#
+# 💡 Tips:
+#   • View current config: octomind config --show
+#   • View only customized values: octomind config --show-customized
+#   • View all defaults: octomind config --show-defaults
+#   • Reset field to default: octomind config --reset-default <field_name>
+#   • Validate config: octomind config --validate
+
+# Configuration version (DO NOT MODIFY - used for automatic upgrades)
+version = 1
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYSTEM-WIDE SETTINGS
+# These settings apply globally across all roles and commands
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Log level for system messages (none, info, debug)
+# • none: No logging output (cleanest experience)
+# • info: Show important operations and status messages
+# • debug: Show detailed debugging information
+log_level = "none"
+
+# Default model for all operations (provider:model format)
+# This is the fallback model when role-specific models aren't specified
+# Examples: "openrouter:anthropic/claude-3.5-sonnet", "openai:gpt-4o"
+model = "openrouter:anthropic/claude-3.5-haiku"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PERFORMANCE & LIMITS
+# Configure thresholds and performance-related settings
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Warn when MCP tool responses exceed this token count (0 = disable warnings)
+mcp_response_warning_threshold = 20000
+
+# Maximum tokens per request before auto-truncation kicks in (0 = no limit)
+max_request_tokens_threshold = 50000
+
+# Enable automatic truncation of large inputs to fit within token limits
+enable_auto_truncation = false
+
+# Cache responses when they exceed this token count (0 = no caching)
+cache_tokens_threshold = 2048
+
+# How long to keep cached responses (in seconds)
+cache_timeout_seconds = 240
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# USER INTERFACE
+# Configure how Octomind displays information
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable markdown rendering for AI responses (makes output prettier)
+enable_markdown_rendering = false
+
+# Markdown theme for styling (default, dark, light, ocean, solarized, monokai)
+# Use 'octomind config --list-themes' to see all available themes
+markdown_theme = "default"
+
+# Session spending threshold in USD (0.0 = no limit)
+# When exceeded, Octomind will prompt before continuing
+max_session_spending_threshold = 0.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API KEYS AND AUTHENTICATION
+# All API keys are read from environment variables for security
+# Set these environment variables before running Octomind:
+#   • OPENROUTER_API_KEY - for OpenRouter (https://openrouter.ai/)
+#   • OPENAI_API_KEY - for OpenAI (https://platform.openai.com/)
+#   • ANTHROPIC_API_KEY - for Anthropic (https://console.anthropic.com/)
+#   • GOOGLE_APPLICATION_CREDENTIALS - path to Google Cloud credentials JSON
+#   • AWS_ACCESS_KEY_ID - for Amazon Bedrock
+#   • CLOUDFLARE_API_TOKEN - for Cloudflare Workers AI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROLE CONFIGURATIONS
+# Configure behavior for different roles (developer, assistant)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Developer role - optimized for coding and development tasks
+[developer]
+# Enable layers system for complex multi-step operations
+enable_layers = false
+
+# Layer references for developer role (empty = no layers enabled)
+layer_refs = []
+
+# System prompt for developer role (uses built-in developer prompt if not specified)
+# Default developer system prompt:
+system = """You are an Octomind – top notch fully autonomous AI developer.
+Current working dir: %{CWD}
+**DEVELOPMENT APPROACH:**
+1. Analyze problems thoroughly first
+2. Think through solutions step-by-step
+3. Execute necessary changes directly using available tools
+4. Test your implementations when possible
+
+**CODE QUALITY GUIDELINES:**
+• Provide validated, working solutions
+• Keep code clear and concise
+• Focus on practical solutions and industry best practices
+• Avoid unnecessary abstractions - solve problems directly
+• Balance file size and readability
+• Don't over-fragment code across multiple files
+
+**MISSING CONTEXT COLLECTION CHECKLIST:**
+1. Examine key project files to understand the codebase structure 
+2. Use text_editor view to examine files and understand interfaces and code signatures 
+2. If needed, use list_files to find relevant implementation patterns 
+3. As a last resort, use text_editor to view specific file contents 
+**WHEN WORKING WITH FILES:**
+1. First understand which files you need to read/write
+2. Process files efficiently, preferably in a single operation
+3. Utilize the provided tools proactively without asking if you should use them
+
+%{SYSTEM}
+
+%{CONTEXT}
+
+IMPORTANT:
+- Right now you are *NOT* in the chat only mode and have access to tool use and system.
+- Please follow the task provided and make sure you do only changes required by the task, if you found something outside of task scope, you can mention it and ask.
+- Make sure when you refactor code or do changes, you do not remove critical parts of the codebase."""
+
+# MCP (Model Context Protocol) configuration for developer role
+[developer.mcp]
+# MCP servers available to developer role
+# Built-in servers: "developer" (dev tools), "filesystem" (file ops), "octocode" (code analysis)
+server_refs = ["developer", "filesystem", "octocode"]
+
+# Restrict which MCP tools can be used (empty = all tools allowed)
+allowed_tools = []
+
+# Assistant role - optimized for general assistance tasks
+[assistant]
+# Layers typically not needed for assistant role
+enable_layers = false
+
+# Layer references for assistant role (empty = no layers enabled)
+layer_refs = []
+
+# System prompt for assistant role (uses built-in assistant prompt if not specified)
+# Default assistant system prompt:
+system = "You are a helpful assistant."
+
+# MCP configuration for assistant role
+[assistant.mcp]
+# Assistant typically needs fewer tools than developer
+server_refs = ["filesystem"]
+allowed_tools = []
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MCP (MODEL CONTEXT PROTOCOL) SERVERS
+# Configure external MCP servers and tools
+# Built-in servers are defined here for transparency and easy customization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[mcp]
+# Global tool restrictions (empty = no restrictions)
+allowed_tools = []
+
+# Built-in MCP servers (always available)
+[[mcp.servers]]
+name = "developer"
+server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
+
+[[mcp.servers]]
+name = "filesystem"
+server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
+
+[[mcp.servers]]
+name = "octocode"
+server_type = "external"
+command = "octocode"
+args = ["mcp", "--path=."]
+mode = "stdin"
+timeout_seconds = 30
+tools = []
+builtin = true
+
+# Example external MCP server configuration:
+# [[mcp.servers]]
+# name = "my_custom_server"
+# server_type = "external"
+# url = "http://localhost:3000/mcp"
+# mode = "http"
+# timeout_seconds = 30
+# auth_token = "optional-auth-token"
+# tools = []
+# builtin = false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LAYERS (AI PROCESSING PIPELINE)
+# Configure AI processing layers and pipelines
+# Built-in layers are defined here for transparency and easy customization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Built-in core layers (always available)
+[[layers]]
+name = "query_processor"
+# Default query_processor system prompt:
+system_prompt = """You are an expert query processor and requirement analyst in the Octomind system. Your task is to analyze user requests and transform them into clearer, more actionable forms.
+
+Given a user request:
+1. Identify the core requirement and intent
+2. Structure and refine the request while preserving its fundamental purpose
+3. Clarify ambiguities and add helpful technical specifics
+4. Format the output as well-structured development tasks/requirements
+5. Include relevant edge cases, constraints, and success criteria
+
+Guidelines:
+- Make minimal changes if the request is already clear and specific
+- Return the original text if the request cannot be understood
+- Focus solely on requirement analysis - do not implement solutions or write code
+- Return only the refined task description
+- If you lack of context or do not understand it, keep original request unchanged
+
+%{CONTEXT}"""
+model = "openrouter:openai/gpt-4.1-nano"
+temperature = 0.2
+input_mode = "Last"
+builtin = true
+
+[layers.mcp]
+server_refs = []
+allowed_tools = []
+
+[layers.parameters]
+
+[[layers]]
+name = "context_generator"
+# Default context_generator system prompt:
+system_prompt = """You are a context gathering specialist for development tasks.
+
+When given a new task, help me understand what I need to know before implementing it by:
+
+- First: Look into file signatures with semantic_code tool and try to analyze project structure related to task
+- Then: If needed, use list_files to find relevant implementation patterns 
+- If needed: Use text_editor view to examine files and understand interfaces and code signatures 
+- Only when necessary: Look at detailed implementations
+
+For each task type, focus on different aspects:
+- Configuration tasks: Config files, env settings, build scripts
+- Feature implementation: Related modules, interfaces, patterns
+- Bug fixes: Affected components and dependencies
+- Refactoring: Impacted modules and relationships
+
+Provide a clear summary with:
+- Core task requirements decomposed the way you are project manager who made it
+- Recommendations to look into list of given fields needing examination (with reasons)
+- Key code structures and patterns found
+- Potential implementation challenges
+- Areas where more information might help
+
+Your goal is helping me fully understand what's needed to implement the task successfully.
+
+%{SYSTEM}
+
+%{CONTEXT}"""
+model = "openrouter:google/gemini-2.5-flash-preview"
+temperature = 0.2
+input_mode = "Last"
+builtin = true
+
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "list_files"]
+
+[layers.parameters]
+
+[[layers]]
+name = "reducer"
+# Default reducer system prompt:
+system_prompt = """You are the session optimizer for Octomind, responsible for consolidating information and preparing for the next interaction. 
+
+Your responsibilities: 
+1. Review the original request and the developer's solution 
+2. Ensure documentation (README.md and CHANGES.md) is properly updated 
+3. Create a concise summary of the work that was done 
+4. Condense the context in a way that preserves essential information for future requests 
+
+This condensed information will be cached to reduce token usage in the next iteration. 
+Focus on extracting the most important technical details while removing unnecessary verbosity. 
+Your output will be used as context for the next user interaction, so it must contain all essential information 
+while being as concise as possible.%{CONTEXT}"""
+model = "openrouter:openai/o4-mini"
+temperature = 0.2
+input_mode = "All"
+builtin = true
+
+[layers.mcp]
+server_refs = []
+allowed_tools = []
+
+[layers.parameters]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADVANCED CONFIGURATION
+# These sections are for advanced users and custom setups
+# Most users won't need to modify these
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Example custom layer configuration:
+# [[layers]]
+# name = "analysis"
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# system_prompt = "You are an expert analyst."
+# temperature = 0.3
+# input_mode = "Last"
+# builtin = false
+# 
+# [layers.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = []
+# 
+# [layers.parameters]
+# analysis_type = "detailed"
+
+# Example custom command configuration:
+# [commands.estimate]
+# name = "estimate"
+# model = "openrouter:openai/gpt-4o-mini"
+# system_prompt = "You are a project estimation expert."
+# temperature = 0.2
+
+# Global system prompt override (uncomment to set a global default)
+# system = "You are Octomind, an intelligent AI assistant."

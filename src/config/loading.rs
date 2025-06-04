@@ -15,18 +15,33 @@
 use anyhow::{Context, Result};
 use std::fs;
 
-use super::{Config, ProviderConfig, ProvidersConfig};
+use super::Config;
+
+/// Check if the octocode binary is available in PATH
+fn is_octocode_available() -> bool {
+	use std::process::Command;
+
+	// Try to run `octocode --version` to check if it's available
+	match Command::new("octocode").arg("--version").output() {
+		Ok(output) => output.status.success(),
+		Err(_) => false,
+	}
+}
 
 impl Config {
-	/// Initialize the server registry and API keys
+	/// Initialize the server registry and update dynamic configurations
 	fn initialize_config(&mut self) {
-		// SIMPLIFIED: No longer populate internal servers in loaded config
-		// Internal servers are now provided at runtime via get_core_server_config()
-
-		// Migrate API keys from legacy openrouter config to providers
-		if let Some(api_key) = &self.openrouter.api_key {
-			if self.providers.openrouter.api_key.is_none() {
-				self.providers.openrouter.api_key = Some(api_key.clone());
+		// Update octocode availability in config if it exists
+		if let Some(octocode_server) = self.mcp.servers.iter_mut().find(|s| s.name == "octocode") {
+			let octocode_available = is_octocode_available();
+			if !octocode_available {
+				// Mark as unavailable if binary not found
+				octocode_server.tools = vec!["unavailable".to_string()];
+			} else {
+				// Reset tools to empty (all tools enabled) if available
+				if octocode_server.tools == vec!["unavailable".to_string()] {
+					octocode_server.tools = vec![];
+				}
 			}
 		}
 	}
@@ -36,100 +51,86 @@ impl Config {
 		crate::directories::get_octomind_data_dir()
 	}
 
-	/// Load configuration from the system-wide config file
+	/// Copy the default configuration template when no config exists
+	pub fn copy_default_config_template(config_path: &std::path::Path) -> Result<()> {
+		// Default config template embedded in binary
+		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
+
+		// Ensure the parent directory exists
+		if let Some(parent) = config_path.parent() {
+			fs::create_dir_all(parent).context(format!(
+				"Failed to create config directory: {}",
+				parent.display()
+			))?;
+		}
+
+		// Write the default template
+		fs::write(config_path, DEFAULT_CONFIG_TEMPLATE).context(format!(
+			"Failed to write default config template to {}",
+			config_path.display()
+		))?;
+
+		println!("Created default configuration at {}", config_path.display());
+		println!("Please edit the configuration file to set your API keys and preferences.");
+
+		Ok(())
+	}
+
+	/// Create default config at the standard location (public version for commands)
+	pub fn create_default_config() -> Result<std::path::PathBuf> {
+		let config_path = crate::directories::get_config_file_path()?;
+
+		if !config_path.exists() {
+			Self::copy_default_config_template(&config_path)?;
+		}
+
+		Ok(config_path)
+	}
+
+	/// Load configuration from the system-wide config file with strict validation
 	pub fn load() -> Result<Self> {
 		// Use the new system-wide config file path
 		let config_path = crate::directories::get_config_file_path()?;
 
-		if config_path.exists() {
-			let config_str = fs::read_to_string(&config_path).context(format!(
-				"Failed to read config from {}",
+		if !config_path.exists() {
+			// Copy default template and exit with error - user must configure first
+			Self::copy_default_config_template(&config_path)?;
+			return Err(anyhow::anyhow!(
+				"Configuration file created at {}. Please edit it to configure your API keys and settings, then run the command again.",
 				config_path.display()
-			))?;
-			let mut config: Config =
-				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
-
-			// Store the config path for future saves
-			config.config_path = Some(config_path);
-
-			// Initialize the configuration
-			config.initialize_config();
-
-			// Environment variables take precedence over config file values
-			// Handle provider API keys from environment variables
-			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
-				config.providers.openrouter.api_key = Some(openrouter_key);
-			}
-			if let Ok(openai_key) = std::env::var("OPENAI_API_KEY") {
-				config.providers.openai.api_key = Some(openai_key);
-			}
-			if let Ok(anthropic_key) = std::env::var("ANTHROPIC_API_KEY") {
-				config.providers.anthropic.api_key = Some(anthropic_key);
-			}
-			if let Ok(google_credentials) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
-				config.providers.google.api_key = Some(google_credentials);
-			}
-			if let Ok(amazon_key) = std::env::var("AWS_ACCESS_KEY_ID") {
-				config.providers.amazon.api_key = Some(amazon_key);
-			}
-			if let Ok(cloudflare_key) = std::env::var("CLOUDFLARE_API_TOKEN") {
-				config.providers.cloudflare.api_key = Some(cloudflare_key);
-			}
-
-			// Legacy environment variable support for backward compatibility
-			if let Ok(openrouter_key) = std::env::var("OPENROUTER_API_KEY") {
-				config.openrouter.api_key = Some(openrouter_key);
-			}
-
-			// Validate the loaded configuration
-			if let Err(e) = config.validate() {
-				eprintln!("Configuration validation warning: {}", e);
-				eprintln!("The application will continue, but you may want to fix these issues.");
-			}
-
-			Ok(config)
-		} else {
-			// Create default config with environment variables
-			let mut config = Self::default_with_env();
-			config.config_path = Some(config_path);
-
-			// CRITICAL FIX: Initialize the configuration when no file exists
-			config.initialize_config();
-
-			Ok(config)
+			));
 		}
+
+		// Check for automatic config upgrades
+		super::migrations::check_and_upgrade_config(&config_path)
+			.context("Failed to check/upgrade config version")?;
+
+		let config_str = fs::read_to_string(&config_path).context(format!(
+			"Failed to read config from {}",
+			config_path.display()
+		))?;
+
+		let mut config: Config = toml::from_str(&config_str).context(
+			"Failed to parse TOML configuration. All required fields must be present in strict mode."
+		)?;
+
+		// Store the config path for future saves
+		config.config_path = Some(config_path);
+
+		// Initialize the configuration
+		config.initialize_config();
+
+		// REMOVED: API key population from environment variables
+		// API keys are now read directly from ENV when needed by providers
+
+		// STRICT validation - fail if configuration is invalid
+		config.validate()?;
+
+		Ok(config)
 	}
 
-	/// Create a default configuration with environment variables
-	fn default_with_env() -> Self {
-		Self {
-			providers: ProvidersConfig {
-				openrouter: ProviderConfig {
-					api_key: std::env::var("OPENROUTER_API_KEY").ok(),
-				},
-				openai: ProviderConfig {
-					api_key: std::env::var("OPENAI_API_KEY").ok(),
-				},
-				anthropic: ProviderConfig {
-					api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
-				},
-				google: ProviderConfig {
-					api_key: std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok(),
-				},
-				amazon: ProviderConfig {
-					api_key: std::env::var("AWS_ACCESS_KEY_ID").ok(),
-				},
-				cloudflare: ProviderConfig {
-					api_key: std::env::var("CLOUDFLARE_API_TOKEN").ok(),
-				},
-			},
-			openrouter: super::OpenRouterConfig {
-				api_key: std::env::var("OPENROUTER_API_KEY").ok(),
-				..Default::default()
-			},
-			..Default::default()
-		}
-	}
+	/// REMOVED: No more default_with_env - config must be complete and explicit
+	/// All defaults are now in the template file
 
 	/// Save configuration to file
 	pub fn save(&self) -> Result<()> {
@@ -211,22 +212,14 @@ impl Config {
 
 	/// Create a clean copy of the config for saving (removes runtime-only fields)
 	pub fn create_clean_copy_for_saving(&self) -> Self {
-		let mut clean_config = self.clone();
+		let clean_config = self.clone();
 
-		// Remove internal servers from the MCP registry before saving
-		let internal_servers = ["developer", "filesystem", "octocode"];
-		for server_name in &internal_servers {
-			clean_config.mcp.servers.remove(*server_name);
-		}
+		// Don't remove builtin servers - they should be saved to config for transparency
+		// Only remove servers that are marked as runtime-only or temporary
+		// (Currently there are no runtime-only servers, so we keep all servers)
 
-		// CRITICAL FIX: Don't save the [mcp] section at all if it only contains internal servers
-		// The MCP functionality should be controlled by role server_refs, not by a global enabled flag
-		// If there are no user-defined servers, ensure the config will be skipped during serialization
-		if clean_config.mcp.servers.is_empty() && clean_config.mcp.allowed_tools.is_empty() {
-			// Clear the config so it gets skipped during serialization
-			clean_config.mcp.servers.clear();
-			clean_config.mcp.allowed_tools.clear();
-		}
+		// Keep the MCP section even if it only contains builtin servers
+		// This ensures the config file shows what's actually available
 
 		clean_config
 	}
@@ -271,32 +264,11 @@ impl Config {
 		Ok(())
 	}
 
-	pub fn create_default_config() -> Result<std::path::PathBuf> {
-		let config_path = crate::directories::get_config_file_path()?;
-
-		if !config_path.exists() {
-			let mut config = Config::default();
-
-			// SIMPLIFIED: Initialize the configuration without populating internal servers
-			config.initialize_config();
-
-			// Create clean config for saving (no internal servers)
-			let clean_config = config.create_clean_copy_for_saving();
-			let config_str = toml::to_string(&clean_config)
-				.context("Failed to serialize default configuration to TOML")?;
-
-			fs::write(&config_path, config_str).context(format!(
-				"Failed to write default config to {}",
-				config_path.display()
-			))?;
-
-			println!("Created default configuration at {}", config_path.display());
-		}
-
-		Ok(config_path)
-	}
+	/// REMOVED: create_default_config - use copy_default_config_template instead
+	/// This ensures all defaults come from the template file, not code
 
 	/// Update a specific field in the configuration and save to disk
+	/// STRICT MODE: Requires existing config file
 	pub fn update_specific_field<F>(&mut self, updater: F) -> Result<()>
 	where
 		F: Fn(&mut Config),
@@ -319,11 +291,11 @@ impl Config {
 			// SIMPLIFIED: Don't initialize internal servers
 			config
 		} else {
-			// Create default config if file doesn't exist
-			Config {
-				config_path: Some(config_path.clone()),
-				..Default::default()
-			}
+			// STRICT MODE: Fail if no config file exists
+			return Err(anyhow::anyhow!(
+				"No configuration file found at {}. Run with --init to create a default configuration.",
+				config_path.display()
+			));
 		};
 
 		// Apply the update to the disk config

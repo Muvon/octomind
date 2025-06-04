@@ -15,44 +15,45 @@
 use serde::{Deserialize, Serialize};
 
 // Provider configurations - ONLY contain API keys and provider-specific settings
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProviderConfig {
 	pub api_key: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+impl Default for ProviderConfig {
+	fn default() -> Self {
+		Self { api_key: None }
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProvidersConfig {
-	#[serde(default)]
 	pub openrouter: ProviderConfig,
-	#[serde(default)]
 	pub openai: ProviderConfig,
-	#[serde(default)]
 	pub anthropic: ProviderConfig,
-	#[serde(default)]
 	pub google: ProviderConfig,
-	#[serde(default)]
 	pub amazon: ProviderConfig,
-	#[serde(default)]
 	pub cloudflare: ProviderConfig,
+}
+
+impl Default for ProvidersConfig {
+	fn default() -> Self {
+		Self {
+			openrouter: ProviderConfig::default(),
+			openai: ProviderConfig::default(),
+			anthropic: ProviderConfig::default(),
+			google: ProviderConfig::default(),
+			amazon: ProviderConfig::default(),
+			cloudflare: ProviderConfig::default(),
+		}
+	}
 }
 
 // Legacy OpenRouterConfig for backward compatibility
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OpenRouterConfig {
-	#[serde(default = "default_openrouter_model")]
 	pub model: String,
 	pub api_key: Option<String>,
 }
 
-fn default_openrouter_model() -> String {
-	"openrouter:anthropic/claude-sonnet-4".to_string()
-}
-
-impl Default for OpenRouterConfig {
-	fn default() -> Self {
-		Self {
-			model: default_openrouter_model(),
-			api_key: None,
-		}
-	}
-}
+// REMOVED: Default implementations - all config must be explicit

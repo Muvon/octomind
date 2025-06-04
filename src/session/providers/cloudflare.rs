@@ -157,13 +157,9 @@ impl AiProvider for CloudflareWorkersAiProvider {
 			|| model.contains("hermes")
 	}
 
-	fn get_api_key(&self, config: &Config) -> Result<String> {
-		// Check config first, then environment
-		if let Some(token) = &config.providers.cloudflare.api_key {
-			Ok(token.clone())
-		} else {
-			self.get_api_token()
-		}
+	fn get_api_key(&self, _config: &Config) -> Result<String> {
+		// API keys now only from environment variables for security
+		self.get_api_token()
 	}
 
 	fn supports_caching(&self, _model: &str) -> bool {

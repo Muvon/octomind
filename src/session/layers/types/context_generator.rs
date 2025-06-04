@@ -41,6 +41,7 @@ impl ContextGeneratorLayer {
 				allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
 			},
 			parameters: std::collections::HashMap::new(),
+			builtin: true, // This is a builtin layer
 		}
 	}
 }

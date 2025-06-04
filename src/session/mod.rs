@@ -27,9 +27,7 @@ mod token_counter; // Token counting utilities // Comprehensive caching system
 
 // Provider system exports
 pub use cache::{CacheManager, CacheStatistics};
-pub use helper_functions::{
-	get_layer_system_prompt_for_type, process_placeholders, summarize_context,
-};
+pub use helper_functions::{process_placeholders, summarize_context};
 pub use layers::{process_with_layers, InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
 pub use model_utils::model_supports_caching;
 pub use project_context::ProjectContext;
@@ -39,12 +37,7 @@ pub use token_counter::{estimate_message_tokens, estimate_tokens}; // Export tok
 // Re-export constants
 // Constants moved to config
 
-// System prompts for layer types
-// This function is now replaced by helper_functions::get_layer_system_prompt_for_type
-// It's kept for backward compatibility with existing code
-pub fn get_layer_system_prompt(layer_type_str: &str) -> String {
-	helper_functions::get_layer_system_prompt_for_type(layer_type_str)
-}
+// System prompts are now fully controlled by configuration files
 
 use crate::config::Config;
 use anyhow::Result;
@@ -556,51 +549,16 @@ pub async fn create_system_prompt(
 		return custom_prompt.clone();
 	}
 
-	// For assistant role, use a simple system prompt
+	// Use the default system prompts from helper_functions.rs
+	let base_prompt = crate::config::defaults::ConfigDefaults::get_default_system_prompt(mode);
+
+	// For assistant role, use the simple prompt as-is
 	if mode == "assistant" {
-		return "You are a helpful assistant.".to_string();
+		return base_prompt;
 	}
 
-	// For developer role (default), build the complex system prompt with project context
-	// Collect project context information (README.md, CHANGES.md, git info, file tree)
-	let project_context = ProjectContext::collect(project_dir);
-
-	// Build the base system prompt
-	let mut prompt = format!(
-		"You are an Octomind – top notch fully autonomous AI developer.\n\
-			Current working dir: {}\n\
-			**DEVELOPMENT APPROACH:**\n\
-			1. Analyze problems thoroughly first\n\
-			2. Think through solutions step-by-step\n\
-			3. Execute necessary changes directly using available tools\n\
-			4. Test your implementations when possible\n\n\
-			**CODE QUALITY GUIDELINES:**\n\
-			• Provide validated, working solutions\n\
-			• Keep code clear and concise\n\
-			• Focus on practical solutions and industry best practices\n\
-			• Avoid unnecessary abstractions - solve problems directly\n\
-			• Balance file size and readability\n\
-			• Don't over-fragment code across multiple files\n\n\
-			**MISSING CONTEXT COLLECTION CHECKLIST:**\n\
-			1. Examine key project files to understand the codebase structure \
-			2. Use text_editor view to examine files and understand interfaces and code signatures \
-			2. If needed, use list_files to find relevant implementation patterns \
-			3. As a last resort, use text_editor to view specific file contents \
-			**WHEN WORKING WITH FILES:**\n\
-			1. First understand which files you need to read/write\n\
-			2. Process files efficiently, preferably in a single operation\n\
-			3. Utilize the provided tools proactively without asking if you should use them\n\n\
-			Right now you are *NOT* in the chat only mode and have access to tool use and system.",
-		project_dir.display()
-	);
-
-	// Add Project Context Information
-	let context_info = project_context.format_for_prompt();
-	if !context_info.is_empty() {
-		prompt.push_str("\n\n==== PROJECT CONTEXT ====\n\n");
-		prompt.push_str(&context_info);
-		prompt.push_str("\n\n==== END PROJECT CONTEXT ====\n");
-	}
+	// For developer role, process placeholders to add project context
+	let mut prompt = helper_functions::process_placeholders_async(&base_prompt, project_dir).await;
 
 	// Add MCP tools information if enabled
 	if !mcp_config.server_refs.is_empty() {

@@ -94,17 +94,12 @@ impl AiProvider for AnthropicProvider {
 		model.starts_with("claude-") || model.contains("claude")
 	}
 
-	fn get_api_key(&self, config: &Config) -> Result<String> {
-		// First check the new providers config
-		if let Some(key) = &config.providers.anthropic.api_key {
-			return Ok(key.clone());
-		}
-
-		// Fall back to environment variable
+	fn get_api_key(&self, _config: &Config) -> Result<String> {
+		// API keys now only from environment variables for security
 		match env::var(ANTHROPIC_API_KEY_ENV) {
 			Ok(key) => Ok(key),
 			Err(_) => Err(anyhow::anyhow!(
-				"Anthropic API key not found in config or environment variable {}",
+				"Anthropic API key not found in environment variable: {}",
 				ANTHROPIC_API_KEY_ENV
 			)),
 		}

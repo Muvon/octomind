@@ -30,7 +30,7 @@ impl LayeredOrchestrator {
 	// Create orchestrator from config using the new flexible system
 	pub fn from_config(config: &Config, role: &str) -> Self {
 		// Get role-specific configuration
-		let (mode_config, _, layers_config, _, _) = config.get_mode_config(role);
+		let (mode_config, _, _, _, _) = config.get_mode_config(role);
 
 		// First check if layers are enabled at all
 		if !mode_config.enable_layers {
@@ -38,25 +38,15 @@ impl LayeredOrchestrator {
 			return Self { layers: Vec::new() };
 		}
 
+		// Get enabled layers for this role using the new system
+		let enabled_layers = config.get_enabled_layers_for_role(role);
+
 		// Create layers from configuration
 		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
 
-		// Check if specific layer configs are provided in the role configuration
-		if let Some(layer_configs) = layers_config {
-			// Create layers from role-specific config
-			for layer_config in layer_configs {
-				// If a layer is configured, we assume it's enabled (no more 'enabled' field)
-				layers.push(Box::new(GenericLayer::new(layer_config.clone())));
-			}
-		} else if let Some(global_layer_configs) = &config.layers {
-			// Fall back to global layer configurations if role-specific config is not available
-			for layer_config in global_layer_configs {
-				// If a layer is configured, we assume it's enabled (no more 'enabled' field)
-				layers.push(Box::new(GenericLayer::new(layer_config.clone())));
-			}
-		} else {
-			// No layer config section found, use default system layers
-			layers = Self::create_default_system_layers();
+		// Create layers from enabled layer configs
+		for layer_config in enabled_layers {
+			layers.push(Box::new(GenericLayer::new(layer_config)));
 		}
 
 		// If no layers were configured or enabled, fall back to defaults

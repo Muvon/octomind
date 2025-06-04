@@ -24,6 +24,7 @@ pub enum McpServerType {
 	Filesystem, // Built-in filesystem tools
 }
 
+// Keep Default for runtime usage only (not config defaults)
 impl Default for McpServerType {
 	fn default() -> Self {
 		Self::External
@@ -38,6 +39,7 @@ pub enum McpServerMode {
 	Stdin,
 }
 
+// Keep Default for runtime usage only (not config defaults)
 impl Default for McpServerMode {
 	fn default() -> Self {
 		Self::Http
@@ -46,53 +48,33 @@ impl Default for McpServerMode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct McpServerConfig {
-	// Name is auto-set from registry key (runtime field)
-	#[serde(skip)]
+	// Name field is now explicit in config (like layers)
 	pub name: String,
 
-	// Server type is auto-detected from name (runtime field)
-	#[serde(skip)]
+	// Server type - now part of config to distinguish builtin vs external
 	pub server_type: McpServerType,
 
 	// External server configuration
 	pub url: Option<String>,
 	pub auth_token: Option<String>,
 	pub command: Option<String>,
-	#[serde(default)]
 	pub args: Vec<String>,
 
 	// Communication mode - http or stdin (for external servers)
-	#[serde(default)]
 	pub mode: McpServerMode,
 
 	// Timeout in seconds for tool execution
-	#[serde(default = "default_timeout")]
 	pub timeout_seconds: u64,
 
 	// Tool filtering - empty means all tools are enabled
-	#[serde(default)]
 	pub tools: Vec<String>,
+
+	// Mark if this is a builtin server (affects maintenance and availability)
+	#[serde(default)]
+	pub builtin: bool,
 }
 
-fn default_timeout() -> u64 {
-	30 // Default timeout of 30 seconds
-}
-
-impl Default for McpServerConfig {
-	fn default() -> Self {
-		Self {
-			name: "".to_string(),
-			server_type: McpServerType::External, // Will be auto-detected
-			url: None,
-			auth_token: None,
-			command: None,
-			args: Vec::new(),
-			mode: McpServerMode::Http,
-			timeout_seconds: default_timeout(),
-			tools: Vec::new(),
-		}
-	}
-}
+// REMOVED: Default implementations - all config must be explicit
 
 impl McpServerConfig {
 	/// Create a server config from just the key name, auto-detecting type
@@ -113,6 +95,7 @@ impl McpServerConfig {
 			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools: Vec::new(),
+			builtin: false, // Default to false, set explicitly when needed
 		}
 	}
 
@@ -121,8 +104,14 @@ impl McpServerConfig {
 		Self {
 			name: name.to_string(),
 			server_type: McpServerType::Developer,
+			url: None,
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
+			mode: McpServerMode::Http,
+			timeout_seconds: 30,
 			tools,
-			..Default::default()
+			builtin: true, // Developer servers are builtin
 		}
 	}
 
@@ -131,8 +120,14 @@ impl McpServerConfig {
 		Self {
 			name: name.to_string(),
 			server_type: McpServerType::Filesystem,
+			url: None,
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
+			mode: McpServerMode::Http,
+			timeout_seconds: 30,
 			tools,
-			..Default::default()
+			builtin: true, // Filesystem servers are builtin
 		}
 	}
 
@@ -142,9 +137,13 @@ impl McpServerConfig {
 			name: name.to_string(),
 			server_type: McpServerType::External,
 			url: Some(url.to_string()),
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
 			mode: McpServerMode::Http,
+			timeout_seconds: 30,
 			tools,
-			..Default::default()
+			builtin: false, // External servers are not builtin
 		}
 	}
 
@@ -158,38 +157,59 @@ impl McpServerConfig {
 		Self {
 			name: name.to_string(),
 			server_type: McpServerType::External,
+			url: None,
+			auth_token: None,
 			command: Some(command.to_string()),
 			args,
 			mode: McpServerMode::Stdin,
+			timeout_seconds: 30,
 			tools,
-			..Default::default()
+			builtin: false, // External servers are not builtin
+		}
+	}
+
+	/// Create an octocode server configuration (builtin but external command)
+	pub fn octocode(available: bool) -> Self {
+		Self {
+			name: "octocode".to_string(),
+			server_type: McpServerType::External,
+			command: Some("octocode".to_string()),
+			args: vec!["mcp".to_string(), "--path=.".to_string()],
+			mode: McpServerMode::Stdin,
+			timeout_seconds: 30,
+			tools: if available {
+				vec![]
+			} else {
+				vec!["unavailable".to_string()]
+			},
+			url: None,
+			auth_token: None,
+			builtin: true, // Octocode is builtin even though it's external command
 		}
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct McpConfig {
-	// Server registry - server configurations
-	#[serde(default)]
-	pub servers: std::collections::HashMap<String, McpServerConfig>,
+	// Server registry - array of server configurations (consistent with layers)
+	pub servers: Vec<McpServerConfig>,
 
 	// Tool filtering - allows limiting tools across all enabled servers
-	#[serde(default)]
 	pub allowed_tools: Vec<String>,
 }
 
 // Role-specific MCP configuration with server_refs
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct RoleMcpConfig {
 	// Server references - list of server names from the global registry to use for this role
 	// Empty list means MCP is disabled for this role
-	#[serde(default)]
 	pub server_refs: Vec<String>,
 
 	// Tool filtering - allows limiting tools across all enabled servers for this role
-	#[serde(default)]
 	pub allowed_tools: Vec<String>,
 }
+
+// REMOVED: Default implementations - all config must be explicit
 
 impl RoleMcpConfig {
 	/// Check if MCP is enabled for this role (has any server references)
@@ -198,10 +218,10 @@ impl RoleMcpConfig {
 	}
 
 	/// Get enabled servers from the global registry for this role
-	/// UPDATED: Now uses runtime injection for core servers
+	/// Now works with array format (consistent with layers)
 	pub fn get_enabled_servers(
 		&self,
-		global_servers: &std::collections::HashMap<String, McpServerConfig>,
+		global_servers: &Vec<McpServerConfig>,
 	) -> Vec<McpServerConfig> {
 		if self.server_refs.is_empty() {
 			return Vec::new();
@@ -209,21 +229,9 @@ impl RoleMcpConfig {
 
 		let mut result = Vec::new();
 		for server_name in &self.server_refs {
-			// Try to get from loaded registry first, then fallback to core servers
-			let server_config = global_servers
-				.get(server_name)
-				.cloned()
-				.or_else(|| get_core_server_config(server_name));
-
-			if let Some(mut server) = server_config {
-				// Auto-set the name from the registry key
-				server.name = server_name.clone();
-				// Auto-detect server type from name
-				server.server_type = match server_name.as_str() {
-					"developer" => McpServerType::Developer,
-					"filesystem" => McpServerType::Filesystem,
-					_ => McpServerType::External,
-				};
+			// Find server by name in the array
+			if let Some(server_config) = global_servers.iter().find(|s| s.name == *server_name) {
+				let mut server = server_config.clone();
 				// Apply role-specific tool filtering if specified
 				if !self.allowed_tools.is_empty() {
 					server.tools = self.allowed_tools.clone();
@@ -232,7 +240,10 @@ impl RoleMcpConfig {
 			} else {
 				// Note: Using println instead of log_debug since we're in a module
 				// The log_debug macro would need to be imported
-				println!("DEBUG: Server '{}' referenced by role but not found in global registry or core servers", server_name);
+				println!(
+					"DEBUG: Server '{}' referenced by role but not found in global registry",
+					server_name
+				);
 			}
 		}
 
@@ -240,71 +251,7 @@ impl RoleMcpConfig {
 	}
 }
 
-/// Get core server configuration - these are always available
-/// This is separated from the config loading to ensure consistency
-pub fn get_core_server_config(server_name: &str) -> Option<McpServerConfig> {
-	match server_name {
-		"developer" => Some(McpServerConfig {
-			name: "developer".to_string(),
-			server_type: McpServerType::Developer,
-			url: None,
-			auth_token: None,
-			command: None,
-			args: Vec::new(),
-			mode: McpServerMode::Http,
-			timeout_seconds: 30,
-			tools: Vec::new(),
-		}),
-		"filesystem" => Some(McpServerConfig {
-			name: "filesystem".to_string(),
-			server_type: McpServerType::Filesystem,
-			url: None,
-			auth_token: None,
-			command: None,
-			args: Vec::new(),
-			mode: McpServerMode::Http,
-			timeout_seconds: 30,
-			tools: Vec::new(),
-		}),
-		"octocode" => {
-			let octocode_available = is_octocode_available();
-			if octocode_available {
-				Some(McpServerConfig {
-					name: "octocode".to_string(),
-					server_type: McpServerType::External,
-					command: Some("octocode".to_string()),
-					args: vec!["mcp".to_string(), "--path=.".to_string()],
-					mode: McpServerMode::Stdin,
-					timeout_seconds: 30,
-					tools: vec![], // Empty means all tools are enabled
-					url: None,
-					auth_token: None,
-				})
-			} else {
-				Some(McpServerConfig {
-					name: "octocode".to_string(),
-					server_type: McpServerType::External,
-					command: Some("octocode".to_string()),
-					args: vec!["mcp".to_string(), "--path=.".to_string()],
-					mode: McpServerMode::Stdin,
-					timeout_seconds: 30,
-					tools: vec!["unavailable".to_string()], // Mark as unavailable if binary not found
-					url: None,
-					auth_token: None,
-				})
-			}
-		}
-		_ => None,
-	}
-}
+// Note: Core server configurations are now defined in the config file
+// The get_core_server_config function is removed as we rely entirely on config
 
-/// Check if the octocode binary is available in PATH
-fn is_octocode_available() -> bool {
-	use std::process::Command;
-
-	// Try to run `octocode --version` to check if it's available
-	match Command::new("octocode").arg("--version").output() {
-		Ok(output) => output.status.success(),
-		Err(_) => false,
-	}
-}
+// is_octocode_available function moved to config/loading.rs

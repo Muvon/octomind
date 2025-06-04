@@ -17,8 +17,33 @@
 use anyhow::Result;
 use colored::*;
 use rustyline::error::ReadlineError;
-use rustyline::{Cmd, Event, EventHandler, KeyEvent, Modifiers};
+use rustyline::{
+	Cmd, ConditionalEventHandler, Event, EventHandler, KeyEvent, Modifiers, RepeatCount,
+};
 use rustyline::{CompletionType, Config as RustylineConfig, EditMode, Editor};
+
+// Custom event handler for smart Ctrl+E behavior
+struct SmartCtrlEHandler;
+
+impl ConditionalEventHandler for SmartCtrlEHandler {
+	fn handle(
+		&self,
+		_evt: &Event,
+		_n: RepeatCount,
+		_positive: bool,
+		ctx: &rustyline::EventContext,
+	) -> Option<Cmd> {
+		// Check if there's a hint available using the EventContext
+		if ctx.has_hint() {
+			// There's a hint, so complete it
+			Some(Cmd::CompleteHint)
+		} else {
+			// No hint, use default Emacs behavior (move to end of line)
+			// Return None to let the default key binding take effect
+			None
+		}
+	}
+}
 use std::path::PathBuf;
 
 use crate::log_info;
@@ -47,10 +72,33 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 	use crate::session::chat_helper::CommandHelper;
 	editor.set_helper(Some(CommandHelper::new()));
 
-	// Set up custom key bindings for accepting hints
-	// Ctrl+E to accept hint (complete-hint command)
+	// Set up custom key bindings
+	// Ctrl+E: Smart behavior - ONLY accepts hints when available,
+	// otherwise falls back to default Emacs behavior (move to end of line)
 	editor.bind_sequence(
 		Event::KeySeq(vec![KeyEvent::new('e', Modifiers::CTRL)]),
+		EventHandler::Conditional(Box::new(SmartCtrlEHandler)),
+	);
+
+	// Tab also accepts hints as alternative
+	editor.bind_sequence(
+		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::empty())]),
+		EventHandler::Simple(Cmd::CompleteHint),
+	);
+
+	// Right arrow to accept hint when at end of line
+	editor.bind_sequence(
+		Event::KeySeq(vec![
+			KeyEvent::new('\x1b', Modifiers::empty()),
+			KeyEvent::new('[', Modifiers::empty()),
+			KeyEvent::new('C', Modifiers::empty()),
+		]),
+		EventHandler::Simple(Cmd::CompleteHint),
+	);
+
+	// Tab to accept hints as well
+	editor.bind_sequence(
+		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::empty())]),
 		EventHandler::Simple(Cmd::CompleteHint),
 	);
 

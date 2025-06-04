@@ -76,6 +76,15 @@ fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Op
 	None
 }
 
+/// Check if a model supports the temperature parameter
+/// O1 and O2 series models don't support temperature
+fn supports_temperature(model: &str) -> bool {
+	!model.starts_with("o1")
+		&& !model.starts_with("o2")
+		&& !model.starts_with("o3")
+		&& !model.starts_with("o4")
+}
+
 /// OpenAI provider implementation
 pub struct OpenAiProvider;
 
@@ -166,8 +175,13 @@ impl AiProvider for OpenAiProvider {
 		let mut request_body = serde_json::json!({
 			"model": model,
 			"messages": openai_messages,
-			"temperature": temperature,
 		});
+
+		// Only add temperature for models that support it
+		// O1/O2 series models don't support temperature parameter
+		if supports_temperature(model) {
+			request_body["temperature"] = serde_json::json!(temperature);
+		}
 
 		// Add tool definitions if MCP has any servers configured
 		if !config.mcp.servers.is_empty() {
@@ -485,4 +499,27 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenAiMessage> {
 	}
 
 	result
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_supports_temperature() {
+		// Models that should support temperature
+		assert!(supports_temperature("gpt-4"));
+		assert!(supports_temperature("gpt-4o"));
+		assert!(supports_temperature("gpt-4o-mini"));
+		assert!(supports_temperature("gpt-3.5-turbo"));
+		assert!(supports_temperature("chatgpt-4o-latest"));
+
+		// Models that should NOT support temperature (o1/o2 series)
+		assert!(!supports_temperature("o1"));
+		assert!(!supports_temperature("o1-preview"));
+		assert!(!supports_temperature("o1-mini"));
+		assert!(!supports_temperature("o3"));
+		assert!(!supports_temperature("o3-mini"));
+		assert!(!supports_temperature("o4"));
+	}
 }

@@ -6,18 +6,25 @@ Octomind uses a hierarchical configuration system that allows for flexible custo
 
 ## Configuration Hierarchy
 
-The configuration system follows this priority order:
-1. Role-specific configuration (e.g., `[developer]`, `[assistant]`, `[custom-role]`)
-2. Global configuration sections
-3. Environment variables
-4. Default values
+The configuration system follows a strict, hierarchical priority order:
+1. Environment Variables (Highest Priority)
+2. Configuration File
+3. Default Template Values (Lowest Priority)
 
-### Role Inheritance
+### Configuration Principles
 
-Custom roles inherit from the assistant role as a base, then apply their own overrides:
-- **Developer role**: Inherits from global settings with developer-specific overrides
-- **Assistant role**: Base configuration for all custom roles
-- **Custom roles**: Inherit from assistant, then apply custom overrides
+- **Explicit Configuration**: All settings must be explicitly defined
+- **No Hardcoded Defaults**: Default values are in the configuration template
+- **Environment Variable Precedence**: Environment variables always override file-based settings
+- **Security First**: Sensitive data like API keys are ONLY set via environment variables
+
+### Role Configuration
+
+Roles now use a simplified, more explicit configuration model:
+- **System-Wide Model**: A single model is used across all roles
+- **Explicit Role Settings**: Each role defines its own specific configuration
+- **Minimal Inheritance**: Roles have minimal default settings
+- **Environment Variable Overrides**: Can modify any configuration setting
 
 ## Basic Configuration
 
@@ -54,28 +61,12 @@ enabled = false
 description_model = "openrouter:openai/gpt-4.1-nano"
 relationship_model = "openrouter:openai/gpt-4.1-nano"
 
-# Provider configurations (centralized API keys)
-[providers.openrouter]
-api_key = "your_openrouter_key"  # Optional, can use env var
+# IMPORTANT: API Keys are now ONLY set via environment variables
+# No API keys should be stored in the configuration file
 
-[providers.openai]
-api_key = "your_openai_key"  # Optional, can use env var
-
-[providers.anthropic]
-api_key = "your_anthropic_key"  # Optional, can use env var
-
-[providers.google]
-project_id = "your-gcp-project-id"
-region = "us-central1"
-
-[providers.amazon]
-region = "us-east-1"
-access_key_id = "your_access_key"  # Optional, can use env var
-secret_access_key = "your_secret_key"  # Optional, can use env var
-
-[providers.cloudflare]
-account_id = "your_account_id"
-api_token = "your_api_token"  # Optional, can use env var
+# Provider configuration is now minimal and environment-driven
+[providers]
+# Placeholder for potential future non-sensitive provider configurations
 
 # Legacy OpenRouter configuration (for backward compatibility)
 [openrouter]
@@ -170,39 +161,62 @@ model = "cloudflare:llama-3.1-8b-instruct"  # Using Cloudflare Workers AI
 
 ## Environment Variables
 
-### API Keys
+### API Keys (REQUIRED)
 
 ```bash
-# AI Provider Keys
-export OPENROUTER_API_KEY="your_key"
-export OPENAI_API_KEY="your_key"
-export ANTHROPIC_API_KEY="your_key"
+# 🔐 AI Provider Keys (REQUIRED)
+export OPENROUTER_API_KEY="your_openrouter_key"
+export OPENAI_API_KEY="your_openai_key"
+export ANTHROPIC_API_KEY="your_anthropic_key"
 
-# Google Vertex AI
+# 🌐 Cloud Provider Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
-export GOOGLE_PROJECT_ID="your-project-id"
-export GOOGLE_REGION="us-central1"
+export AWS_ACCESS_KEY_ID="your_aws_access_key"
+export AWS_SECRET_ACCESS_KEY="your_aws_secret_key"
+export CLOUDFLARE_API_TOKEN="your_cloudflare_token"
 
-# Amazon Bedrock
-export AWS_ACCESS_KEY_ID="your_access_key"
-export AWS_SECRET_ACCESS_KEY="your_secret_key"
-export AWS_REGION="us-east-1"
-
-# Cloudflare Workers AI
-export CLOUDFLARE_ACCOUNT_ID="your_account_id"
-export CLOUDFLARE_API_TOKEN="your_api_token"
-
-# Embedding Provider Keys
+# 📊 Optional Embedding Provider Keys
 export JINA_API_KEY="your_jina_key"
 ```
 
 ### Configuration Overrides
 
-Environment variables take precedence over configuration files:
+Environment variables are the PRIMARY method of configuration:
 
 ```bash
+# 🔧 Global Configuration Overrides
 export OCTOMIND_LOG_LEVEL="debug"
+export OCTOMIND_MODEL="openrouter:anthropic/claude-3.5-sonnet"
 export OCTOMIND_EMBEDDING_PROVIDER="jina"
+
+# 🛠️ Role-Specific Overrides
+export OCTOMIND_DEVELOPER_ENABLE_LAYERS="true"
+export OCTOMIND_ASSISTANT_ENABLE_LAYERS="false"
+```
+
+### Security Best Practices
+
+1. 🔒 NEVER commit API keys to version control
+2. 🌐 Use environment variables for ALL sensitive data
+3. 🛡️ Set restrictive file permissions on config files
+4. 🔍 Validate configuration before deployment
+
+```bash
+# Set secure permissions on config file
+chmod 600 ~/.octomind/config.toml
+```
+
+### Configuration Validation
+
+```bash
+# Validate your configuration
+octomind config --validate
+
+# Show only customized values
+octomind config --show-customized
+
+# Show all default values
+octomind config --show-defaults
 ```
 
 ## Role-Specific Configuration

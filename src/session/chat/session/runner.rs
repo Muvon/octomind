@@ -728,10 +728,12 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		let config_clone = current_config.clone();
 
 		// Create a task to show loading animation with current cost
-		let animation_cancel = operation_cancelled.clone();
+		// Use a separate flag for animation to avoid conflicts with user cancellation detection
+		let animation_cancel = Arc::new(AtomicBool::new(false));
+		let animation_cancel_clone = animation_cancel.clone();
 		let current_cost = chat_session.session.info.total_cost;
 		let animation_task = tokio::spawn(async move {
-			let _ = show_loading_animation(animation_cancel, current_cost).await;
+			let _ = show_loading_animation(animation_cancel_clone, current_cost).await;
 		});
 
 		// Start a separate task to monitor for Ctrl+C and propagate to operation_cancelled flag
@@ -789,8 +791,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		)
 		.await;
 
-		// Stop the animation - but use TRUE to stop it, not false!
-		operation_cancelled.store(true, Ordering::SeqCst);
+		// Stop the animation using the separate animation flag (not the operation_cancelled flag)
+		animation_cancel.store(true, Ordering::SeqCst);
 		let _ = animation_task.await;
 
 		// Check for Ctrl+C again before processing response

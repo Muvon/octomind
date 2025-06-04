@@ -66,10 +66,12 @@ pub async fn process_layered_response(
 	}
 
 	// Create a task to show loading animation with current cost
-	let animation_cancel = operation_cancelled.clone();
+	// Use a separate flag for animation to avoid conflicts with user cancellation detection
+	let animation_cancel = Arc::new(AtomicBool::new(false));
+	let animation_cancel_clone = animation_cancel.clone();
 	let current_cost = chat_session.session.info.total_cost;
 	let animation_task = tokio::spawn(async move {
-		let _ = show_loading_animation(animation_cancel, current_cost).await;
+		let _ = show_loading_animation(animation_cancel_clone, current_cost).await;
 	});
 
 	// Process through the layers using the modular layered architecture
@@ -89,15 +91,15 @@ pub async fn process_layered_response(
 	{
 		Ok(output) => output,
 		Err(e) => {
-			// Stop the animation
-			operation_cancelled.store(true, Ordering::SeqCst);
+			// Stop the animation using the separate animation flag
+			animation_cancel.store(true, Ordering::SeqCst);
 			let _ = animation_task.await;
 			return Err(e);
 		}
 	};
 
-	// Stop the animation
-	operation_cancelled.store(true, Ordering::SeqCst);
+	// Stop the animation using the separate animation flag
+	animation_cancel.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
 
 	// Display status message for layered sessions - minimal for non-debug

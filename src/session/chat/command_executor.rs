@@ -37,7 +37,7 @@ pub async fn execute_command_layer(
 
 	// Find the command configuration
 	let command_config = commands_config
-		.and_then(|commands| commands.get(command_name))
+		.and_then(|commands| commands.iter().find(|cmd| cmd.name == command_name))
 		.ok_or_else(|| anyhow::anyhow!("Command '{}' not found in configuration", command_name))?;
 
 	println!(
@@ -182,7 +182,7 @@ pub fn list_available_commands(config: &Config, role: &str) -> Vec<String> {
 	let (_, _, _, commands_config, _) = config.get_mode_config(role);
 
 	commands_config
-		.map(|commands| commands.keys().cloned().collect())
+		.map(|commands| commands.iter().map(|cmd| cmd.name.clone()).collect())
 		.unwrap_or_else(Vec::new)
 }
 
@@ -191,7 +191,7 @@ pub fn command_exists(config: &Config, role: &str, command_name: &str) -> bool {
 	let (_, _, _, commands_config, _) = config.get_mode_config(role);
 
 	commands_config
-		.map(|commands| commands.contains_key(command_name))
+		.map(|commands| commands.iter().any(|cmd| cmd.name == command_name))
 		.unwrap_or(false)
 }
 

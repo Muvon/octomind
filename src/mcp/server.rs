@@ -393,7 +393,7 @@ pub async fn get_all_server_functions(
 	}
 
 	// Get available servers from merged config (which should already be filtered by server_refs)
-	let servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.iter().cloned().collect();
+	let servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.to_vec();
 
 	// Check each server
 	for server in &servers {

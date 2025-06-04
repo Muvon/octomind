@@ -134,7 +134,7 @@ impl ChatSession {
 				println!("{}", "** About Command Layers **".bright_yellow());
 				println!("Command layers are specialized AI helpers that can be invoked without affecting the session history.");
 				println!(
-					"Commands are defined in the [commands] section of your configuration file."
+					"Commands are defined in the [[commands]] section of your configuration file."
 				);
 				println!("Example usage: /run estimate - runs the 'estimate' command layer");
 				println!("Command layers use the same infrastructure as normal layers but don't store context.");
@@ -678,18 +678,18 @@ impl ChatSession {
 						command_executor::list_available_commands(config, role);
 					if available_commands.is_empty() {
 						println!("{}", "No command layers configured.".bright_yellow());
-						println!("{}", "Command layers can be defined in the global [commands] section of your configuration.".bright_blue());
+						println!("{}", "Command layers can be defined in the global [[commands]] section of your configuration.".bright_blue());
 						println!("{}", "Example configuration:".bright_cyan());
 						println!(
 							"{}",
-							r#"[commands.estimate]
+							r#"[[commands]]
 name = "estimate"
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = "You are a project estimation expert. Analyze the work done and provide estimates."
 temperature = 0.2
 input_mode = "Last"
 
-[commands.estimate.mcp]
+[commands.mcp]
 server_refs = ["developer", "filesystem"]
 allowed_tools = []"#
 								.bright_white()

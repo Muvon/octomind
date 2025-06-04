@@ -44,7 +44,7 @@ type ModeConfigResult<'a> = (
 	&'a ModeConfig,
 	&'a RoleMcpConfig,
 	Option<&'a Vec<crate::session::layers::LayerConfig>>,
-	Option<&'a std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
+	Option<&'a Vec<crate::session::layers::LayerConfig>>,
 	Option<&'a String>,
 );
 
@@ -107,8 +107,8 @@ pub struct Config {
 	#[serde(skip_serializing_if = "McpConfig::is_default_for_serialization")]
 	pub mcp: McpConfig,
 
-	// Global command configurations (fallback for roles)
-	pub commands: Option<std::collections::HashMap<String, crate::session::layers::LayerConfig>>,
+	// Global command configurations (fallback for roles) - array format consistent with layers
+	pub commands: Option<Vec<crate::session::layers::LayerConfig>>,
 
 	// Global layer configurations - array of layer definitions
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,

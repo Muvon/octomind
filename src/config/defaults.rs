@@ -60,7 +60,6 @@ impl ConfigDefaults {
 		value == Self::DEFAULT_MODEL
 	}
 
-
 	pub fn is_default_mcp_response_warning_threshold(value: usize) -> bool {
 		value == Self::DEFAULT_MCP_RESPONSE_WARNING_THRESHOLD
 	}

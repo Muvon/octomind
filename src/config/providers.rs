@@ -15,18 +15,12 @@
 use serde::{Deserialize, Serialize};
 
 // Provider configurations - ONLY contain API keys and provider-specific settings
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProviderConfig {
 	pub api_key: Option<String>,
 }
 
-impl Default for ProviderConfig {
-	fn default() -> Self {
-		Self { api_key: None }
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProvidersConfig {
 	pub openrouter: ProviderConfig,
 	pub openai: ProviderConfig,
@@ -34,19 +28,6 @@ pub struct ProvidersConfig {
 	pub google: ProviderConfig,
 	pub amazon: ProviderConfig,
 	pub cloudflare: ProviderConfig,
-}
-
-impl Default for ProvidersConfig {
-	fn default() -> Self {
-		Self {
-			openrouter: ProviderConfig::default(),
-			openai: ProviderConfig::default(),
-			anthropic: ProviderConfig::default(),
-			google: ProviderConfig::default(),
-			amazon: ProviderConfig::default(),
-			cloudflare: ProviderConfig::default(),
-		}
-	}
 }
 
 // Legacy OpenRouterConfig for backward compatibility

@@ -95,10 +95,6 @@ impl Config {
 		if !config_path.exists() {
 			// Copy default template and exit with error - user must configure first
 			Self::copy_default_config_template(&config_path)?;
-			return Err(anyhow::anyhow!(
-				"Configuration file created at {}. Please edit it to configure your API keys and settings, then run the command again.",
-				config_path.display()
-			));
 		}
 
 		// Check for automatic config upgrades
@@ -131,7 +127,7 @@ impl Config {
 
 	/// REMOVED: No more default_with_env - config must be complete and explicit
 	/// All defaults are now in the template file
-
+	///
 	/// Save configuration to file
 	pub fn save(&self) -> Result<()> {
 		// Validate before saving
@@ -212,8 +208,6 @@ impl Config {
 
 	/// Create a clean copy of the config for saving (removes runtime-only fields)
 	pub fn create_clean_copy_for_saving(&self) -> Self {
-		let clean_config = self.clone();
-
 		// Don't remove builtin servers - they should be saved to config for transparency
 		// Only remove servers that are marked as runtime-only or temporary
 		// (Currently there are no runtime-only servers, so we keep all servers)
@@ -221,7 +215,7 @@ impl Config {
 		// Keep the MCP section even if it only contains builtin servers
 		// This ensures the config file shows what's actually available
 
-		clean_config
+		self.clone()
 	}
 
 	/// Update configuration with a closure and save
@@ -266,7 +260,7 @@ impl Config {
 
 	/// REMOVED: create_default_config - use copy_default_config_template instead
 	/// This ensures all defaults come from the template file, not code
-
+	///
 	/// Update a specific field in the configuration and save to disk
 	/// STRICT MODE: Requires existing config file
 	pub fn update_specific_field<F>(&mut self, updater: F) -> Result<()>

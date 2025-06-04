@@ -219,10 +219,7 @@ impl RoleMcpConfig {
 
 	/// Get enabled servers from the global registry for this role
 	/// Now works with array format (consistent with layers)
-	pub fn get_enabled_servers(
-		&self,
-		global_servers: &Vec<McpServerConfig>,
-	) -> Vec<McpServerConfig> {
+	pub fn get_enabled_servers(&self, global_servers: &[McpServerConfig]) -> Vec<McpServerConfig> {
 		if self.server_refs.is_empty() {
 			return Vec::new();
 		}

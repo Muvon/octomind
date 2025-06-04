@@ -640,7 +640,10 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!("  Developer Role:");
 	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
 		config.get_mode_config("developer");
-	println!("    Model:           {} (system-wide)", config.get_effective_model());
+	println!(
+		"    Model:           {} (system-wide)",
+		config.get_effective_model()
+	);
 	println!("    Layers enabled:  {}", dev_config.enable_layers);
 	if let Some(_system) = dev_system {
 		println!("    System prompt:   Custom");
@@ -652,7 +655,10 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!("  Assistant Role:");
 	let (ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
 		config.get_mode_config("assistant");
-	println!("    Model:           {} (system-wide)", config.get_effective_model());
+	println!(
+		"    Model:           {} (system-wide)",
+		config.get_effective_model()
+	);
 	println!("    Layers enabled:  {}", ass_config.enable_layers);
 	if let Some(_system) = ass_system {
 		println!("    System prompt:   Custom");

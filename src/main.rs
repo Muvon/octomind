@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
@@ -73,6 +74,29 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
+	// Initialize MCP servers once at startup for commands that need them
+	match &args.command {
+		Commands::Session(session_args) => {
+			// For session command, initialize MCP servers based on the role
+			let role = &session_args.role;
+			let mode_config = config.get_merged_config_for_mode(role);
+			if let Err(e) = octomind::mcp::initialize_servers_for_mode(&mode_config).await {
+				eprintln!("Warning: Failed to initialize MCP servers: {}", e);
+				// Continue anyway - servers can be started on-demand if needed
+			}
+		}
+		Commands::Ask(_) => {
+			// For ask command, initialize with default role
+			let mode_config = config.get_merged_config_for_mode("developer");
+			if let Err(e) = octomind::mcp::initialize_servers_for_mode(&mode_config).await {
+				eprintln!("Warning: Failed to initialize MCP servers: {}", e);
+			}
+		}
+		_ => {
+			// Other commands don't need MCP servers
+		}
+	}
+
 	// Execute the appropriate command
 	match &args.command {
 		Commands::Config(config_args) => commands::config::execute(config_args, config)?,

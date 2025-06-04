@@ -23,7 +23,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-// Define MCP server function definitions
+// Get server function definitions (will start server if needed)
 pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
 	// Note: enabled check is now handled at the role level via server_refs
 	// All servers in the registry are considered available
@@ -130,6 +130,93 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 			process::ensure_server_running(server).await?;
 			process::get_stdin_server_functions(server).await
 		}
+	}
+}
+
+// Get server function definitions WITHOUT starting the server (for lightweight discovery)
+pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
+	// Check if server is already running
+	let server_id = &server.name;
+	let is_running = {
+		let processes = process::SERVER_PROCESSES.read().unwrap();
+		if let Some(process_arc) = processes.get(server_id) {
+			let mut process = process_arc.lock().unwrap();
+			match &mut *process {
+				process::ServerProcess::Http(child) => child
+					.try_wait()
+					.map(|status| status.is_none())
+					.unwrap_or(false),
+				process::ServerProcess::Stdin {
+					child, is_shutdown, ..
+				} => {
+					let process_alive = child
+						.try_wait()
+						.map(|status| status.is_none())
+						.unwrap_or(false);
+					let not_marked_shutdown =
+						!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
+					process_alive && not_marked_shutdown
+				}
+			}
+		} else {
+			false
+		}
+	};
+
+	if is_running {
+		// Server is running, we can get functions normally
+		get_server_functions(server).await
+	} else {
+		// Server is not running, return empty list or configured tools
+		crate::log_debug!(
+			"Server '{}' is not running - returning configured tools only",
+			server.name
+		);
+
+		if !server.tools.is_empty() {
+			// Return lightweight function entries based on configuration
+			Ok(server
+				.tools
+				.iter()
+				.map(|tool_name| McpFunction {
+					name: tool_name.clone(),
+					description: format!(
+						"External tool '{}' from server '{}' (not yet started)",
+						tool_name, server.name
+					),
+					parameters: serde_json::json!({}),
+				})
+				.collect())
+		} else {
+			// No specific tools configured and server not running
+			Ok(vec![])
+		}
+	}
+}
+
+// Check if a server is already running (helper for initialization)
+pub fn is_server_already_running(server_name: &str) -> bool {
+	let processes = process::SERVER_PROCESSES.read().unwrap();
+	if let Some(process_arc) = processes.get(server_name) {
+		let mut process = process_arc.lock().unwrap();
+		match &mut *process {
+			process::ServerProcess::Http(child) => child
+				.try_wait()
+				.map(|status| status.is_none())
+				.unwrap_or(false),
+			process::ServerProcess::Stdin {
+				child, is_shutdown, ..
+			} => {
+				let process_alive = child
+					.try_wait()
+					.map(|status| status.is_none())
+					.unwrap_or(false);
+				let not_marked_shutdown = !is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
+				process_alive && not_marked_shutdown
+			}
+		}
+	} else {
+		false
 	}
 }
 

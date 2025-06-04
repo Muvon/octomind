@@ -28,7 +28,7 @@ use tokio::time::sleep;
 
 // Global process registry to keep track of running server processes
 lazy_static::lazy_static! {
-	static ref SERVER_PROCESSES: Arc<RwLock<HashMap<String, Arc<Mutex<ServerProcess>>>>> =
+	pub static ref SERVER_PROCESSES: Arc<RwLock<HashMap<String, Arc<Mutex<ServerProcess>>>>> =
 	Arc::new(RwLock::new(HashMap::new()));
 }
 
@@ -75,6 +75,7 @@ impl ServerProcess {
 }
 
 // Start a local MCP server process if not already running
+// This function includes better logging and control to avoid unnecessary spawning
 pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
 	let server_id = &server.name; // Use reference instead of clone
 
@@ -103,13 +104,25 @@ pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
 			};
 
 			if is_alive {
-				// Server is running and healthy
+				// Server is running and healthy - no need to spawn
+				crate::log_debug!("Server '{}' is already running and healthy", server_id);
 				match server.mode {
 					McpServerMode::Http => return get_server_url(server),
 					McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
 				}
+			} else {
+				// Server is dead or shut down
+				crate::log_debug!(
+					"Server '{}' is not running or has shut down - needs restart",
+					server_id
+				);
 			}
-			// If we get here, the server is dead or shut down, so we need to restart it
+		} else {
+			// Server not in registry
+			crate::log_debug!(
+				"Server '{}' not found in registry - needs initial start",
+				server_id
+			);
 		}
 	}
 
@@ -120,6 +133,7 @@ pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
 	}
 
 	// If we get here, we need to start the server
+	crate::log_debug!("Starting MCP server: {}", server_id);
 	start_server_process(server).await
 }
 
@@ -149,7 +163,7 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 
 			// Start the process
 			// Debug output
-			// println!("Starting MCP server (HTTP mode): {}", server.name);
+			crate::log_debug!("🚀 Starting MCP server (HTTP mode): {}", server.name);
 			let child = cmd.spawn().map_err(|e| {
 				anyhow::anyhow!("Failed to start MCP server '{}': {}", server.name, e)
 			})?;
@@ -184,7 +198,7 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				// Try to connect to the server
 				if can_connect(&server_url).await {
 					// Debug output
-					// println!("MCP server started: {} at {}", server.name, server_url);
+					crate::log_debug!("✅ MCP server started: {} at {}", server.name, server_url);
 					return Ok(server_url);
 				}
 
@@ -200,7 +214,7 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 
 			// Start the process
 			// Debug output
-			// println!("Starting MCP server (stdin mode): {}", server.name);
+			crate::log_debug!("🚀 Starting MCP server (stdin mode): {}", server.name);
 			let mut child = cmd.spawn().map_err(|e| {
 				anyhow::anyhow!("Failed to start MCP server '{}': {}", server.name, e)
 			})?;

@@ -208,7 +208,73 @@ pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
 	}
 }
 
-// Gather available functions from enabled servers
+// Initialize all servers for a specific mode/role ONCE at startup
+pub async fn initialize_servers_for_mode(config: &crate::config::Config) -> Result<()> {
+	// Only initialize if MCP has any servers configured
+	if config.mcp.servers.is_empty() {
+		crate::log_debug!("No MCP servers configured for initialization");
+		return Ok(());
+	}
+
+	let enabled_servers: Vec<crate::config::McpServerConfig> =
+		config.mcp.servers.values().cloned().collect();
+
+	crate::log_debug!(
+		"Initializing {} MCP servers at startup",
+		enabled_servers.len()
+	);
+
+	for server in &enabled_servers {
+		// Only initialize external servers that need to be started
+		if let crate::config::McpServerType::External = server.server_type {
+			crate::log_debug!("Initializing external server: {}", server.name);
+
+			// Check if server is already running to avoid double initialization
+			if server::is_server_already_running(&server.name) {
+				crate::log_debug!(
+					"Server '{}' is already running - skipping initialization",
+					server.name
+				);
+				continue;
+			}
+
+			// Start the server and cache its functions
+			match server::get_server_functions(server).await {
+				Ok(functions) => {
+					crate::log_debug!(
+						"Successfully initialized server '{}' with {} functions",
+						server.name,
+						functions.len()
+					);
+					for func in &functions {
+						crate::log_debug!("  - Available: {}", func.name);
+					}
+				}
+				Err(e) => {
+					crate::log_debug!(
+						"Failed to initialize server '{}': {} (will retry on first use)",
+						server.name,
+						e
+					);
+					// Don't fail startup - just log and continue
+				}
+			}
+		} else {
+			// Internal servers (Developer/Filesystem) don't need initialization
+			crate::log_debug!(
+				"Skipping initialization for internal server: {} ({:?})",
+				server.name,
+				server.server_type
+			);
+		}
+	}
+
+	crate::log_debug!("MCP server initialization completed");
+	Ok(())
+}
+
+// Gather available functions from enabled servers WITHOUT spawning servers
+// This is used for system prompt generation and should be fast
 pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	let mut functions = Vec::new();
 
@@ -287,12 +353,14 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::External => {
-				// Handle external servers
+				// CRITICAL FIX: For external servers, use cached function discovery
+				// This avoids spawning servers during system prompt creation
 				crate::log_debug!(
-					"Attempting to get functions from external server: {}",
+					"Getting cached functions for external server: {}",
 					server.name
 				);
-				match server::get_server_functions(&server).await {
+
+				match server::get_server_functions_cached(&server).await {
 					Ok(server_functions) => {
 						let filtered_functions = if server.tools.is_empty() {
 							// No tool filtering - get all functions from server
@@ -305,22 +373,22 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 								.collect()
 						};
 						crate::log_debug!(
-							"External server '{}' provided {} functions",
+							"External server '{}' provided {} cached functions",
 							server.name,
 							filtered_functions.len()
 						);
 						for func in &filtered_functions {
-							crate::log_debug!("  - External tool: {}", func.name);
+							crate::log_debug!("  - External tool (cached): {}", func.name);
 						}
 						functions.extend(filtered_functions);
 					}
 					Err(e) => {
 						crate::log_debug!(
-							"Failed to get functions from external server '{}': {}",
+							"Failed to get cached functions from external server '{}': {} (will be available when server starts)",
 							server.name,
 							e
 						);
-						// Continue with other servers instead of failing completely
+						// Don't fail - just continue without this server's functions
 					}
 				}
 			}

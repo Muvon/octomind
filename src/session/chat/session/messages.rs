@@ -44,13 +44,30 @@ impl ChatSession {
 			use std::io::{self, Write};
 
 			println!();
-			println!("{}", "⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold());
-			println!("{} ${:.5}", "Current session cost:".bright_cyan(), current_cost);
+			println!(
+				"{}",
+				"⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold()
+			);
+			println!(
+				"{} ${:.5}",
+				"Current session cost:".bright_cyan(),
+				current_cost
+			);
 			println!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
-			println!("{} ${:.5}", "Cost since last checkpoint:".bright_cyan(), cost_since_checkpoint);
+			println!(
+				"{} ${:.5}",
+				"Cost since last checkpoint:".bright_cyan(),
+				cost_since_checkpoint
+			);
 			println!();
-			println!("{}", "Continuing may result in additional charges.".bright_yellow());
-			print!("{}", "Do you want to continue? (y/N): ".bright_white().bold());
+			println!(
+				"{}",
+				"Continuing may result in additional charges.".bright_yellow()
+			);
+			print!(
+				"{}",
+				"Do you want to continue? (y/N): ".bright_white().bold()
+			);
 			io::stdout().flush()?;
 
 			let mut input = String::new();
@@ -60,11 +77,17 @@ impl ChatSession {
 			if response == "y" || response == "yes" {
 				// User confirmed, reset checkpoint to current cost
 				self.spending_threshold_checkpoint = current_cost;
-				println!("{}", "✓ Continuing session. Threshold checkpoint reset.".bright_green());
+				println!(
+					"{}",
+					"✓ Continuing session. Threshold checkpoint reset.".bright_green()
+				);
 				println!();
 				Ok(true)
 			} else {
-				println!("{}", "✗ Session cancelled by user due to spending threshold.".bright_red());
+				println!(
+					"{}",
+					"✗ Session cancelled by user due to spending threshold.".bright_red()
+				);
 				Ok(false)
 			}
 		} else {

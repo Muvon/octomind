@@ -14,9 +14,9 @@
 
 // Tool execution module - handles parallel tool execution, display, and error handling
 
-use crate::session::chat::ToolProcessor;
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
+use crate::session::chat::ToolProcessor;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
@@ -111,22 +111,16 @@ pub async fn execute_tools_parallel(
 							Err(e) => {
 								println!(
 									"{}",
-									format!(
-										"⚠ Tool '{}' completed with error: {}",
-										tool_name, e
-									)
-									.bright_yellow()
+									format!("⚠ Tool '{}' completed with error: {}", tool_name, e)
+										.bright_yellow()
 								);
 							}
 						},
 						Err(_) => {
 							println!(
 								"{}",
-								format!(
-									"⚠ Tool '{}' task error during grace period",
-									tool_name
-								)
-								.bright_yellow()
+								format!("⚠ Tool '{}' task error during grace period", tool_name)
+									.bright_yellow()
 							);
 						}
 					}
@@ -175,7 +169,15 @@ pub async fn execute_tools_parallel(
 					tool_processor.error_tracker.record_success(&tool_name);
 
 					// Display the complete tool execution with consolidated info
-					display_tool_success(&stored_tool_call, &res, &tool_name, tool_time_ms, config, &chat_session.session.info.name, &tool_id);
+					display_tool_success(
+						&stored_tool_call,
+						&res,
+						&tool_name,
+						tool_time_ms,
+						config,
+						&chat_session.session.info.name,
+						&tool_id,
+					);
 
 					tool_results.push(res);
 					// Accumulate tool execution time
@@ -229,8 +231,12 @@ pub async fn execute_tools_parallel(
 						tool_results.push(error_result);
 
 						if config.get_log_level().is_info_enabled() {
-							log_info!("Tool '{}' failed {} of {} times. Adding error to context.",
-								tool_name, tool_processor.error_tracker.get_error_count(&tool_name), tool_processor.error_tracker.max_consecutive_errors());
+							log_info!(
+								"Tool '{}' failed {} of {} times. Adding error to context.",
+								tool_name,
+								tool_processor.error_tracker.get_error_count(&tool_name),
+								tool_processor.error_tracker.max_consecutive_errors()
+							);
 						}
 					}
 				}
@@ -303,31 +309,23 @@ fn display_tool_success(
 		}
 
 		// Show completion status with timing at the end
-		println!(
-			"✓ Tool '{}' completed in {}ms",
-			tool_name, tool_time_ms
-		);
+		println!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
 	} else {
 		// Fallback if tool_call info not found
-		println!(
-			"✓ Tool '{}' completed in {}ms",
-			tool_name, tool_time_ms
-		);
+		println!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
 	}
 	println!("──────────────────");
 
 	// Log the tool response with session name
-	let _ = crate::session::logger::log_tool_result(
-		session_name,
-		tool_id,
-		&res.result,
-	);
+	let _ = crate::session::logger::log_tool_result(session_name, tool_id, &res.result);
 }
 
 // Display tool parameters based on log level
 fn display_tool_parameters(tool_call: &crate::mcp::McpToolCall, config: &Config) {
 	if config.get_log_level().is_info_enabled() {
-		if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+		if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+			tool_call.parameters.clone(),
+		) {
 			if !params_obj.is_empty() {
 				// Find the longest key for column alignment (max 20 chars to prevent excessive spacing)
 				let max_key_length = params_obj
@@ -343,12 +341,7 @@ fn display_tool_parameters(tool_call: &crate::mcp::McpToolCall, config: &Config)
 					// Format with proper column alignment and indentation
 					println!(
 						"{}: {}",
-						format!(
-							"{:width$}",
-							key,
-							width = max_key_length
-						)
-						.bright_blue(),
+						format!("{:width$}", key, width = max_key_length).bright_blue(),
 						formatted_value.white()
 					);
 				}
@@ -378,10 +371,7 @@ fn format_parameter_value(value: &serde_json::Value) -> String {
 			if s.is_empty() {
 				"\"\"".bright_black().to_string()
 			} else if s.chars().count() > 100 {
-				format!(
-					"\"{}...\"",
-					s.chars().take(97).collect::<String>()
-				)
+				format!("\"{}...\"", s.chars().take(97).collect::<String>())
 			} else if s.contains('\n') {
 				// For multiline strings, show first line + indicator
 				let lines: Vec<&str> = s.lines().collect();
@@ -415,12 +405,21 @@ fn format_parameter_value(value: &serde_json::Value) -> String {
 				format!("[{} items]", arr.len())
 			} else {
 				// Show small arrays inline
-				let items: Vec<String> = arr.iter().take(3).map(|item| {
-					match item {
-						serde_json::Value::String(s) => format!("\"{}\"", if s.chars().count() > 20 { format!("{}...", s.chars().take(17).collect::<String>()) } else { s.clone() }),
-						_ => item.to_string()
-					}
-				}).collect();
+				let items: Vec<String> = arr
+					.iter()
+					.take(3)
+					.map(|item| match item {
+						serde_json::Value::String(s) => format!(
+							"\"{}\"",
+							if s.chars().count() > 20 {
+								format!("{}...", s.chars().take(17).collect::<String>())
+							} else {
+								s.clone()
+							}
+						),
+						_ => item.to_string(),
+					})
+					.collect();
 				format!("[{}]", items.join(", "))
 			}
 		}
@@ -442,7 +441,9 @@ fn format_parameter_value(value: &serde_json::Value) -> String {
 
 // Display main parameter in compact mode
 fn display_main_parameter(tool_call: &crate::mcp::McpToolCall) {
-	if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone()) {
+	if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+		tool_call.parameters.clone(),
+	) {
 		// Try to find the main parameter (command, path, query, etc.)
 		let main_param = params_obj
 			.get("command")
@@ -466,10 +467,7 @@ fn display_main_parameter(tool_call: &crate::mcp::McpToolCall) {
 							.unwrap_or(&"param".to_string())
 							.bright_blue(),
 						if str_val.chars().count() > 80 {
-							format!(
-								"{}...",
-								str_val.chars().take(77).collect::<String>()
-							)
+							format!("{}...", str_val.chars().take(77).collect::<String>())
 						} else {
 							str_val.to_string()
 						}
@@ -508,7 +506,10 @@ fn display_tool_error(
 
 // Handle user-declined large output
 fn handle_declined_output(tool_name: &str, tool_id: &str, chat_session: &mut ChatSession) {
-	println!("⚠ Tool '{}' output declined by user - removing tool call from conversation", tool_name);
+	println!(
+		"⚠ Tool '{}' output declined by user - removing tool call from conversation",
+		tool_name
+	);
 
 	// CRITICAL FIX: Remove the tool_use block from the assistant message
 	// to prevent "tool_use ids found without tool_result blocks" error
@@ -516,11 +517,12 @@ fn handle_declined_output(tool_name: &str, tool_id: &str, chat_session: &mut Cha
 		if last_msg.role == "assistant" {
 			if let Some(tool_calls_value) = &last_msg.tool_calls {
 				// Parse the tool_calls and remove the declined one
-				if let Ok(mut tool_calls_array) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
+				if let Ok(mut tool_calls_array) =
+					serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
+				{
 					// Remove the tool call with matching ID
-					tool_calls_array.retain(|tc| {
-						tc.get("id").and_then(|id| id.as_str()) != Some(tool_id)
-					});
+					tool_calls_array
+						.retain(|tc| tc.get("id").and_then(|id| id.as_str()) != Some(tool_id));
 
 					// Update the assistant message
 					if tool_calls_array.is_empty() {
@@ -529,8 +531,12 @@ fn handle_declined_output(tool_name: &str, tool_id: &str, chat_session: &mut Cha
 						log_debug!("Removed all tool calls from assistant message after user declined large output");
 					} else {
 						// Update with remaining tool calls
-						last_msg.tool_calls = Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
-						log_debug!("Removed declined tool call '{}' from assistant message", tool_id);
+						last_msg.tool_calls =
+							Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
+						log_debug!(
+							"Removed declined tool call '{}' from assistant message",
+							tool_id
+						);
 					}
 				}
 			}
@@ -540,7 +546,10 @@ fn handle_declined_output(tool_name: &str, tool_id: &str, chat_session: &mut Cha
 
 // Handle user-declined large output at task level
 fn handle_declined_output_task(tool_name: &str, tool_id: &str, chat_session: &mut ChatSession) {
-	println!("⚠ Tool '{}' task output declined by user - removing tool call from conversation", tool_name);
+	println!(
+		"⚠ Tool '{}' task output declined by user - removing tool call from conversation",
+		tool_name
+	);
 
 	// CRITICAL FIX: Remove the tool_use block from the assistant message
 	// to prevent "tool_use ids found without tool_result blocks" error
@@ -548,11 +557,12 @@ fn handle_declined_output_task(tool_name: &str, tool_id: &str, chat_session: &mu
 		if last_msg.role == "assistant" {
 			if let Some(tool_calls_value) = &last_msg.tool_calls {
 				// Parse the tool_calls and remove the declined one
-				if let Ok(mut tool_calls_array) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
+				if let Ok(mut tool_calls_array) =
+					serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
+				{
 					// Remove the tool call with matching ID
-					tool_calls_array.retain(|tc| {
-						tc.get("id").and_then(|id| id.as_str()) != Some(tool_id)
-					});
+					tool_calls_array
+						.retain(|tc| tc.get("id").and_then(|id| id.as_str()) != Some(tool_id));
 
 					// Update the assistant message
 					if tool_calls_array.is_empty() {
@@ -561,8 +571,12 @@ fn handle_declined_output_task(tool_name: &str, tool_id: &str, chat_session: &mu
 						log_debug!("Removed all tool calls from assistant message after user declined large task output");
 					} else {
 						// Update with remaining tool calls
-						last_msg.tool_calls = Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
-						log_debug!("Removed declined tool call '{}' from assistant message (task error)", tool_id);
+						last_msg.tool_calls =
+							Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
+						log_debug!(
+							"Removed declined tool call '{}' from assistant message (task error)",
+							tool_id
+						);
 					}
 				}
 			}

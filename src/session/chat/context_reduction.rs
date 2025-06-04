@@ -86,7 +86,8 @@ pub async fn perform_context_reduction(
 				config,
 				role, // Use the current role instead of hardcoding "developer"
 				operation_cancelled.clone(),
-			).await;
+			)
+			.await;
 
 			match process_result {
 				Ok(()) => Ok(response.content),

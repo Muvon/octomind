@@ -461,10 +461,14 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 				// This ensures tool_result messages can reference the correct tool_use_id
 				if let Some(ref tool_calls_data) = msg.tool_calls {
 					// Handle tool calls from Anthropic API format
-					if let Some(content_array) = tool_calls_data.get("content").and_then(|c| c.as_array()) {
+					if let Some(content_array) =
+						tool_calls_data.get("content").and_then(|c| c.as_array())
+					{
 						// If tool_calls contains Anthropic format content blocks, extract tool_use blocks
 						for content_block in content_array {
-							if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+							if content_block.get("type").and_then(|t| t.as_str())
+								== Some("tool_use")
+							{
 								content_blocks.push(content_block.clone());
 							}
 						}
@@ -482,9 +486,13 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 										let input = if args_str.trim().is_empty() {
 											serde_json::json!({})
 										} else {
-											match serde_json::from_str::<serde_json::Value>(args_str) {
+											match serde_json::from_str::<serde_json::Value>(
+												args_str,
+											) {
 												Ok(json_args) => json_args,
-												Err(_) => serde_json::json!({"arguments": args_str}),
+												Err(_) => {
+													serde_json::json!({"arguments": args_str})
+												}
 											}
 										};
 
@@ -503,7 +511,10 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 									tool_call.get("name").and_then(|n| n.as_str()),
 								) {
 									// Direct Anthropic format
-									let input = tool_call.get("input").cloned().unwrap_or_else(|| serde_json::json!({}));
+									let input = tool_call
+										.get("input")
+										.cloned()
+										.unwrap_or_else(|| serde_json::json!({}));
 
 									let tool_use_block = serde_json::json!({
 										"type": "tool_use",

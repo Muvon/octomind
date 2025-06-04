@@ -15,7 +15,7 @@
 use anyhow::{Context, Result};
 use std::fs;
 
-use super::{Config, ProvidersConfig, ProviderConfig};
+use super::{Config, ProviderConfig, ProvidersConfig};
 
 impl Config {
 	/// Initialize the server registry and API keys
@@ -152,8 +152,8 @@ impl Config {
 		}
 
 		// Serialize to TOML
-		let config_str = toml::to_string_pretty(self)
-			.context("Failed to serialize configuration to TOML")?;
+		let config_str =
+			toml::to_string_pretty(self).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
 		fs::write(&config_path, config_str).context(format!(
@@ -198,8 +198,8 @@ impl Config {
 		}
 
 		// Serialize to TOML
-		let config_str = toml::to_string_pretty(self)
-			.context("Failed to serialize configuration to TOML")?;
+		let config_str =
+			toml::to_string_pretty(self).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
 		fs::write(path, config_str)
@@ -256,8 +256,8 @@ impl Config {
 
 		// Create clean config for saving (no internal servers)
 		let clean_config = self.create_clean_copy_for_saving();
-		let config_str = toml::to_string(&clean_config)
-			.context("Failed to serialize configuration to TOML")?;
+		let config_str =
+			toml::to_string(&clean_config).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
 		fs::write(&config_path, config_str).context(format!(
@@ -342,8 +342,8 @@ impl Config {
 
 		// Create clean config for saving (no internal servers)
 		let clean_config = disk_config.create_clean_copy_for_saving();
-		let config_str = toml::to_string(&clean_config)
-			.context("Failed to serialize configuration to TOML")?;
+		let config_str =
+			toml::to_string(&clean_config).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
 		fs::write(&config_path, config_str).context(format!(

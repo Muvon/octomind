@@ -35,8 +35,6 @@ fn default_full_model() -> String {
 	"openrouter:anthropic/claude-3.5-sonnet".to_string()
 }
 
-
-
 impl Default for ModeConfig {
 	fn default() -> Self {
 		Self {
@@ -78,8 +76,6 @@ impl ModeConfig {
 			None
 		}
 	}
-
-
 }
 
 // Updated role configurations using the new ModeConfig structure

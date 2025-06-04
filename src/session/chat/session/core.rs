@@ -102,9 +102,9 @@ impl ChatSession {
 			},
 			last_response: String::new(),
 			model: model_name,
-			temperature: temperature_value, // Use the provided temperature
-			estimated_cost: 0.0,            // Initialize estimated cost as zero
-			cache_next_user_message: false, // Initialize cache flag
+			temperature: temperature_value,     // Use the provided temperature
+			estimated_cost: 0.0,                // Initialize estimated cost as zero
+			cache_next_user_message: false,     // Initialize cache flag
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 		}
 	}
@@ -191,14 +191,14 @@ impl ChatSession {
 						model: model.unwrap_or_else(|| config.get_model("developer")), // Use role-based getter
 						temperature: 0.2,
 						estimated_cost: 0.0,
-						cache_next_user_message: false, // Initialize cache flag
+						cache_next_user_message: false,     // Initialize cache flag
 						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 					};
 
 					// Update the estimated cost from the loaded session
 					chat_session.estimated_cost = chat_session.session.info.total_cost;
-				// Initialize spending threshold checkpoint for loaded sessions
-				chat_session.spending_threshold_checkpoint = 0.0;
+					// Initialize spending threshold checkpoint for loaded sessions
+					chat_session.spending_threshold_checkpoint = 0.0;
 
 					// Get last assistant response if any
 					for msg in chat_session.session.messages.iter().rev() {

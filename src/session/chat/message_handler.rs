@@ -21,66 +21,67 @@ use anyhow::Result;
 pub struct MessageHandler;
 
 impl MessageHandler {
-    /// Extract original tool calls from provider exchange based on provider format
-    pub fn extract_original_tool_calls(exchange: &ProviderExchange) -> Option<serde_json::Value> {
-        // First check if there's a stored tool_calls_content (for Anthropic and Google)
-        if let Some(content_data) = exchange.response.get("tool_calls_content") {
-            return Some(content_data.clone());
-        }
-        
-        // Then check for OpenRouter/OpenAI format
-        if let Some(tool_calls) = exchange.response
-            .get("choices")
-            .and_then(|choices| choices.get(0))
-            .and_then(|choice| choice.get("message"))
-            .and_then(|message| message.get("tool_calls"))
-        {
-            return Some(tool_calls.clone());
-        }
-        
-        None
-    }
+	/// Extract original tool calls from provider exchange based on provider format
+	pub fn extract_original_tool_calls(exchange: &ProviderExchange) -> Option<serde_json::Value> {
+		// First check if there's a stored tool_calls_content (for Anthropic and Google)
+		if let Some(content_data) = exchange.response.get("tool_calls_content") {
+			return Some(content_data.clone());
+		}
 
-    /// Add assistant message with tool calls preserved
-    pub fn add_assistant_message_with_tool_calls(
-        chat_session: &mut ChatSession,
-        content: &str,
-        exchange: &ProviderExchange,
-    ) -> Result<()> {
-        // Extract the original tool_calls from the exchange response based on provider
-        let original_tool_calls = Self::extract_original_tool_calls(exchange);
+		// Then check for OpenRouter/OpenAI format
+		if let Some(tool_calls) = exchange
+			.response
+			.get("choices")
+			.and_then(|choices| choices.get(0))
+			.and_then(|choice| choice.get("message"))
+			.and_then(|message| message.get("tool_calls"))
+		{
+			return Some(tool_calls.clone());
+		}
 
-        // Create the assistant message directly with tool_calls preserved from the exchange
-        let assistant_message = crate::session::Message {
-            role: "assistant".to_string(),
-            content: content.to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            cached: false,
-            tool_call_id: None,
-            name: None,
-            tool_calls: original_tool_calls, // Store the original tool_calls for proper reconstruction
-        };
+		None
+	}
 
-        // Add the assistant message to the session
-        chat_session.session.messages.push(assistant_message);
-        
-        // Update last response
-        chat_session.last_response = content.to_string();
+	/// Add assistant message with tool calls preserved
+	pub fn add_assistant_message_with_tool_calls(
+		chat_session: &mut ChatSession,
+		content: &str,
+		exchange: &ProviderExchange,
+	) -> Result<()> {
+		// Extract the original tool_calls from the exchange response based on provider
+		let original_tool_calls = Self::extract_original_tool_calls(exchange);
 
-        Ok(())
-    }
+		// Create the assistant message directly with tool_calls preserved from the exchange
+		let assistant_message = crate::session::Message {
+			role: "assistant".to_string(),
+			content: content.to_string(),
+			timestamp: std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			cached: false,
+			tool_call_id: None,
+			name: None,
+			tool_calls: original_tool_calls, // Store the original tool_calls for proper reconstruction
+		};
 
-    /// Log assistant response and exchange data
-    pub fn log_response_data(
-        session_name: &str,
-        content: &str,
-        exchange: &ProviderExchange,
-    ) -> Result<()> {
-        let _ = crate::session::logger::log_assistant_response(session_name, content);
-        let _ = crate::session::logger::log_raw_exchange(exchange);
-        Ok(())
-    }
+		// Add the assistant message to the session
+		chat_session.session.messages.push(assistant_message);
+
+		// Update last response
+		chat_session.last_response = content.to_string();
+
+		Ok(())
+	}
+
+	/// Log assistant response and exchange data
+	pub fn log_response_data(
+		session_name: &str,
+		content: &str,
+		exchange: &ProviderExchange,
+	) -> Result<()> {
+		let _ = crate::session::logger::log_assistant_response(session_name, content);
+		let _ = crate::session::logger::log_raw_exchange(exchange);
+		Ok(())
+	}
 }

@@ -16,9 +16,9 @@
 
 use super::super::command_executor;
 use super::super::commands::*;
-use crate::session::chat::assistant_output::print_assistant_response;
 use super::core::ChatSession;
 use super::utils::format_number;
+use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::list_available_sessions;
 use crate::{
 	config::{Config, LogLevel},
@@ -417,7 +417,8 @@ impl ChatSession {
 
 						// Show cache statistics
 						let cache_manager = crate::session::cache::CacheManager::new();
-						let stats = cache_manager.get_cache_statistics_with_config(&self.session, Some(config));
+						let stats = cache_manager
+							.get_cache_statistics_with_config(&self.session, Some(config));
 						println!("{}", stats.format_for_display());
 					}
 				} else {
@@ -425,7 +426,8 @@ impl ChatSession {
 						"stats" => {
 							// Show detailed cache statistics
 							let cache_manager = crate::session::cache::CacheManager::new();
-							let stats = cache_manager.get_cache_statistics_with_config(&self.session, Some(config));
+							let stats = cache_manager
+								.get_cache_statistics_with_config(&self.session, Some(config));
 							println!("{}", stats.format_for_display());
 						}
 						"clear" => {

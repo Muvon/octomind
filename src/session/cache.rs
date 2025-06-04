@@ -441,7 +441,11 @@ impl CacheManager {
 	}
 
 	/// Get cache statistics for display with optional config for tool detection
-	pub fn get_cache_statistics_with_config(&self, session: &Session, config: Option<&crate::config::Config>) -> CacheStatistics {
+	pub fn get_cache_statistics_with_config(
+		&self,
+		session: &Session,
+		config: Option<&crate::config::Config>,
+	) -> CacheStatistics {
 		let mut content_markers = 0;
 		let mut system_markers = 0;
 		let mut tool_markers = 0;
@@ -458,7 +462,7 @@ impl CacheManager {
 						} else {
 							tool_markers += 1; // Tool definitions go to tool markers
 						}
-					},
+					}
 					"assistant" => content_markers += 1, // Always count assistant messages as content markers
 					_ => {}
 				}
@@ -469,7 +473,7 @@ impl CacheManager {
 		// Tool definitions are not stored as messages but are cached when system messages are cached
 		let has_cached_system = system_markers > 0;
 		let supports_caching = crate::session::model_supports_caching(&session.info.model);
-		
+
 		// If system message is cached and model supports caching, tool definitions are also cached
 		// This is handled automatically by the providers during API requests
 		if has_cached_system && supports_caching {
@@ -480,12 +484,12 @@ impl CacheManager {
 				// Fallback: infer from session usage or provider behavior
 				// If we have tool calls, we definitely have tool definitions
 				// If we have any input tokens but no tool calls yet, check if it's a cacheable model with system cached
-				session.info.tool_calls > 0 || 
+				session.info.tool_calls > 0 ||
 				(session.info.input_tokens > 0 && has_cached_system) ||
 				// For brand new sessions with cacheable models and cached system, assume tools are available
 				(session.info.input_tokens == 0 && session.info.cached_tokens == 0 && has_cached_system)
 			};
-			
+
 			if has_tools && tool_markers == 0 {
 				// Only add a virtual tool marker if no tool markers exist
 				// This prevents artificially inflating the marker count
@@ -734,7 +738,8 @@ impl CacheStatistics {
 
 		// Show session-wide cache efficiency in a clearer way
 		if self.total_input_tokens > 0 {
-			let session_cached_pct = (self.total_cached_tokens as f64 / self.total_input_tokens as f64) * 100.0;
+			let session_cached_pct =
+				(self.total_cached_tokens as f64 / self.total_input_tokens as f64) * 100.0;
 			let session_processed_pct = 100.0 - session_cached_pct;
 			output.push_str(&format!(
 				"Session totals: {:.1}% cached, {:.1}% processed ({}/{} total input tokens)\n",

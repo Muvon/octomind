@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::cell::RefCell;
+use std::path::PathBuf;
 
 // Re-export all modules
 pub mod loading;
@@ -341,9 +341,7 @@ impl McpConfig {
 		// This ensures they're available even if config file is empty
 		for core_server_name in ["developer", "filesystem", "octocode"] {
 			if !added_servers.contains(core_server_name) {
-				if let Some(core_server) =
-					Config::get_core_server_config(core_server_name)
-				{
+				if let Some(core_server) = Config::get_core_server_config(core_server_name) {
 					result.push(core_server);
 				}
 			}
@@ -365,7 +363,6 @@ impl McpConfig {
 }
 
 impl Config {
-
 	/// Get the effective model to use - checks root config, then falls back to system default
 	pub fn get_effective_model(&self) -> String {
 		// If root-level model is set (not the default), use it

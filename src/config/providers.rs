@@ -36,7 +36,6 @@ pub struct ProvidersConfig {
 	pub cloudflare: ProviderConfig,
 }
 
-
 // Legacy OpenRouterConfig for backward compatibility
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OpenRouterConfig {

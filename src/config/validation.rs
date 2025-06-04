@@ -162,7 +162,10 @@ impl Config {
 			}
 
 			// Validate external server configuration
-			if matches!(server_config.server_type, crate::config::McpServerType::External) {
+			if matches!(
+				server_config.server_type,
+				crate::config::McpServerType::External
+			) {
 				if server_config.url.is_none() && server_config.command.is_none() {
 					return Err(anyhow!(
 						"External server '{}' must have either 'url' or 'command' specified",

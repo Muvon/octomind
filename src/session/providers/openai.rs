@@ -35,8 +35,8 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("gpt-4o-2024-05-13", 5.00, 15.00),
 	("chatgpt-4o-latest", 2.50, 10.00),
 	// O-series reasoning models
-	("o4", 25.00, 100.00),  // Latest O4 model
-	("o3", 20.00, 80.00),   // O3 model
+	("o4", 25.00, 100.00),    // Latest O4 model
+	("o3", 20.00, 80.00),     // O3 model
 	("o3-mini", 5.00, 20.00), // O3 mini variant
 	("o1", 15.00, 60.00),
 	("o1-preview", 15.00, 60.00),

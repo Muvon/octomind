@@ -19,18 +19,22 @@ mod tool_result_processor;
 
 use super::{CostTracker, MessageHandler, ToolProcessor};
 use crate::config::Config;
+use crate::log_debug;
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::formatting::remove_function_calls;
 use crate::session::chat::session::ChatSession;
 use crate::session::ProviderExchange;
-use crate::{log_debug};
 use anyhow::Result;
 use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 // Helper function to log debug information about the response
-fn log_response_debug(config: &Config, finish_reason: &Option<String>, tool_calls: &Option<Vec<crate::mcp::McpToolCall>>) {
+fn log_response_debug(
+	config: &Config,
+	finish_reason: &Option<String>,
+	tool_calls: &Option<Vec<crate::mcp::McpToolCall>>,
+) {
 	if config.get_log_level().is_debug_enabled() {
 		if let Some(ref reason) = finish_reason {
 			log_debug!("Processing response with finish_reason: {}", reason);
@@ -52,7 +56,7 @@ fn handle_final_response(
 ) -> Result<()> {
 	// Remove any function_calls blocks if they exist but weren't processed earlier
 	let clean_content = remove_function_calls(current_content);
-	
+
 	// When adding the final assistant message for a response that involved tool calls,
 	// we've already tracked the cost and tokens in the loop above, so we pass None for exchange
 	// to avoid double-counting. If this is a direct response with no tool calls, we pass the
@@ -65,7 +69,7 @@ fn handle_final_response(
 		// in the tool response handling code, so pass None to avoid double counting
 		None
 	};
-	
+
 	chat_session.add_assistant_message(&clean_content, exchange_for_final, config, role)?;
 
 	// Print assistant response with color
@@ -265,7 +269,8 @@ pub async fn process_response(
 		// Check for tool calls if MCP has any servers configured
 		if !config.mcp.servers.is_empty() {
 			// Resolve current tool calls for this iteration
-			let current_tool_calls = resolve_tool_calls(&mut current_tool_calls_param, &current_content);
+			let current_tool_calls =
+				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
 			// Log tool calls in debug mode
 			log_tool_calls_debug(config, &current_tool_calls);
@@ -298,7 +303,8 @@ pub async fn process_response(
 					config,
 					&mut tool_processor,
 					operation_cancelled.clone(),
-				).await?;
+				)
+				.await?;
 
 				// Final cancellation check after all tools processed
 				if operation_cancelled.load(Ordering::SeqCst) {
@@ -313,21 +319,26 @@ pub async fn process_response(
 				// Process tool results if any exist
 				if !tool_results.is_empty() {
 					// Process tool results and handle follow-up API calls using the new module
-					if let Some((new_content, new_exchange, new_tool_calls)) = tool_result_processor::process_tool_results(
-						tool_results,
-						total_tool_time_ms,
-						chat_session,
-						config,
-						role,
-						operation_cancelled.clone(),
-					).await? {
+					if let Some((new_content, new_exchange, new_tool_calls)) =
+						tool_result_processor::process_tool_results(
+							tool_results,
+							total_tool_time_ms,
+							chat_session,
+							config,
+							role,
+							operation_cancelled.clone(),
+						)
+						.await?
+					{
 						// Update current content for next iteration
 						current_content = new_content;
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 
 						// Check if there are more tools to process
-						if current_tool_calls_param.is_some() && !current_tool_calls_param.as_ref().unwrap().is_empty() {
+						if current_tool_calls_param.is_some()
+							&& !current_tool_calls_param.as_ref().unwrap().is_empty()
+						{
 							// Continue processing the new content with tool calls
 							continue;
 						} else {
@@ -336,7 +347,14 @@ pub async fn process_response(
 							if !more_tools.is_empty() {
 								// Log if debug mode is enabled
 								if config.get_log_level().is_debug_enabled() {
-									println!("{}", format!("Debug: Found {} more tool calls to process in content", more_tools.len()).yellow());
+									println!(
+										"{}",
+										format!(
+											"Debug: Found {} more tool calls to process in content",
+											more_tools.len()
+										)
+										.yellow()
+									);
 								}
 								continue;
 							} else {

@@ -14,8 +14,8 @@
 
 // Tool result processor module - handles tool result processing, caching, and follow-up API calls
 
-use crate::session::chat::animation::show_loading_animation;
 use crate::config::Config;
+use crate::session::chat::animation::show_loading_animation;
 use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
 use anyhow::Result;
@@ -31,7 +31,13 @@ pub async fn process_tool_results(
 	config: &Config,
 	role: &str,
 	operation_cancelled: Arc<AtomicBool>,
-) -> Result<Option<(String, crate::session::ProviderExchange, Option<Vec<crate::mcp::McpToolCall>>)>> {
+) -> Result<
+	Option<(
+		String,
+		crate::session::ProviderExchange,
+		Option<Vec<crate::mcp::McpToolCall>>,
+	)>,
+> {
 	// Add the accumulated tool execution time to the session total
 	chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
 
@@ -97,14 +103,13 @@ pub async fn process_tool_results(
 		// This ensures proper 2-marker logic and threshold checking after each tool
 		let tool_message_index = chat_session.session.messages.len() - 1;
 		let cache_start = std::time::Instant::now();
-		if let Ok(true) = cache_manager
-			.check_and_apply_auto_cache_threshold_on_tool_result(
-				&mut chat_session.session,
-				config,
-				supports_caching,
-				tool_message_index,
-				role,
-			) {
+		if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold_on_tool_result(
+			&mut chat_session.session,
+			config,
+			supports_caching,
+			tool_message_index,
+			role,
+		) {
 			log_info!("{}", format!("Auto-cache threshold reached after tool result '{}' - cache checkpoint applied before next API request.", tool_result.tool_name));
 		}
 		cache_check_time += cache_start.elapsed().as_millis();
@@ -121,10 +126,7 @@ pub async fn process_tool_results(
 			)
 			.await
 			{
-				log_info!(
-					"Warning: Error during tool result truncation check: {}",
-					e
-				);
+				log_info!("Warning: Error during tool result truncation check: {}", e);
 			}
 			truncation_time += truncation_start.elapsed().as_millis();
 
@@ -193,14 +195,21 @@ pub async fn process_tool_results(
 				// User chose not to continue due to spending threshold
 				fresh_cancel.store(true, Ordering::SeqCst);
 				let _ = animation_task.await;
-				println!("{}", "✗ Tool follow-up cancelled due to spending threshold.".bright_red());
+				println!(
+					"{}",
+					"✗ Tool follow-up cancelled due to spending threshold.".bright_red()
+				);
 				return Ok(None);
 			}
 		}
 		Err(e) => {
 			// Error checking threshold, log warning and continue
 			use colored::*;
-			println!("{}: {}", "Warning: Error checking spending threshold".bright_yellow(), e);
+			println!(
+				"{}: {}",
+				"Warning: Error checking spending threshold".bright_yellow(),
+				e
+			);
 		}
 	}
 
@@ -229,7 +238,8 @@ pub async fn process_tool_results(
 			}
 
 			// Check finish_reason to determine if we should continue the conversation
-			let should_continue_conversation = check_should_continue(&response, config, has_more_tools);
+			let should_continue_conversation =
+				check_should_continue(&response, config, has_more_tools);
 
 			// Handle cost tracking from follow-up API call
 			handle_follow_up_cost_tracking(chat_session, &response.exchange, config);
@@ -237,10 +247,19 @@ pub async fn process_tool_results(
 			if should_continue_conversation {
 				// Log if debug mode is enabled
 				if config.get_log_level().is_debug_enabled() {
-					println!("{}", "Debug: Continuing conversation due to finish_reason or tool calls".to_string().yellow());
+					println!(
+						"{}",
+						"Debug: Continuing conversation due to finish_reason or tool calls"
+							.to_string()
+							.yellow()
+					);
 				}
 				// Continue processing the new content with tool calls
-				Ok(Some((response.content, response.exchange, response.tool_calls)))
+				Ok(Some((
+					response.content,
+					response.exchange,
+					response.tool_calls,
+				)))
 			} else {
 				// If no more tools, return None to break out of the loop
 				Ok(Some((response.content, response.exchange, None)))
@@ -248,12 +267,14 @@ pub async fn process_tool_results(
 		}
 		Err(e) => {
 			// Extract provider name from the model for better error messaging
-			let provider_name = if let Ok((provider, _)) = crate::session::providers::ProviderFactory::parse_model(&chat_session.model) {
+			let provider_name = if let Ok((provider, _)) =
+				crate::session::providers::ProviderFactory::parse_model(&chat_session.model)
+			{
 				provider
 			} else {
 				"unknown provider".to_string()
 			};
-			
+
 			// IMPROVED: Show provider-aware context about the API error
 			println!(
 				"\n{} {}: {}",
@@ -264,11 +285,7 @@ pub async fn process_tool_results(
 
 			// Additional context if error contains provider information
 			if config.get_log_level().is_debug_enabled() {
-				println!(
-					"{} Model: {}",
-					"Debug:".bright_black(),
-					chat_session.model
-				);
+				println!("{} Model: {}", "Debug:".bright_black(), chat_session.model);
 				println!(
 					"{} Temperature: {}",
 					"Debug:".bright_black(),
@@ -351,7 +368,10 @@ fn check_should_continue(
 		Some(other) => {
 			// Unknown finish_reason, be conservative and continue
 			if config.get_log_level().is_debug_enabled() {
-				log_debug!("Debug: Unknown finish_reason '{}', continuing conversation", other);
+				log_debug!(
+					"Debug: Unknown finish_reason '{}', continuing conversation",
+					other
+				);
 			}
 			true
 		}
@@ -432,8 +452,10 @@ fn handle_follow_up_cost_tracking(
 			chat_session.estimated_cost = chat_session.session.info.total_cost;
 
 			if config.get_log_level().is_debug_enabled() {
-				println!("Debug: Adding ${:.5} from tool response API (total now: ${:.5})",
-					cost, chat_session.session.info.total_cost);
+				println!(
+					"Debug: Adding ${:.5} from tool response API (total now: ${:.5})",
+					cost, chat_session.session.info.total_cost
+				);
 
 				// Enhanced debug for follow-up calls
 				println!("Debug: Tool response usage detail:");
@@ -481,7 +503,11 @@ fn handle_follow_up_cost_tracking(
 				}
 			} else {
 				// Only show error if no cost data found
-				println!("{}", "ERROR: OpenRouter did not provide cost data for tool response API call".bright_red());
+				println!(
+					"{}",
+					"ERROR: OpenRouter did not provide cost data for tool response API call"
+						.bright_red()
+				);
 				println!("{}", "Make sure usage.include=true is set!".bright_red());
 
 				// Check if usage tracking was explicitly requested
@@ -507,6 +533,9 @@ fn handle_follow_up_cost_tracking(
 			}
 		}
 	} else {
-		println!("{}", "ERROR: No usage data for tool response API call".bright_red());
+		println!(
+			"{}",
+			"ERROR: No usage data for tool response API call".bright_red()
+		);
 	}
 }

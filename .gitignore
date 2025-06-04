@@ -2,10 +2,6 @@
 /target
 Cargo.lock
 
-# Octodev data directory
-/.octodev/**
-/.octocode/**
-
 # Cross-compilation build artifacts
 target/cross/
 dist/

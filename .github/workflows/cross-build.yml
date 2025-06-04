@@ -106,15 +106,15 @@ jobs:
         run: |
           mkdir -p artifacts
           if [ "${{ matrix.target }}" = "x86_64-pc-windows-gnu" ]; then
-            cp target/${{ matrix.target }}/release/octodev.exe artifacts/
+            cp target/${{ matrix.target }}/release/octomind.exe artifacts/
           else
-            cp target/${{ matrix.target }}/release/octodev artifacts/
+            cp target/${{ matrix.target }}/release/octomind artifacts/
           fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: octodev-${{ matrix.target }}
+          name: octomind-${{ matrix.target }}
           path: artifacts/*
           retention-days: 30
 
@@ -137,13 +137,13 @@ jobs:
         run: |
           mkdir -p release
           for dir in artifacts/*/; do
-            target=$(basename "$dir" | sed 's/octodev-//')
+            target=$(basename "$dir" | sed 's/octomind-//')
             echo "Creating archive for $target"
             cd "$dir"
             if echo "$target" | grep -q windows; then
-              zip -r "../../release/octodev-${GITHUB_REF_NAME}-${target}.zip" .
+              zip -r "../../release/octomind-${GITHUB_REF_NAME}-${target}.zip" .
             else
-              tar -czf "../../release/octodev-${GITHUB_REF_NAME}-${target}.tar.gz" .
+              tar -czf "../../release/octomind-${GITHUB_REF_NAME}-${target}.tar.gz" .
             fi
             cd - > /dev/null
           done

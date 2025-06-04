@@ -87,14 +87,26 @@ impl Config {
 		Ok(config_path)
 	}
 
+	/// Inject default configuration directly from embedded TOML template
+	fn inject_default_config() -> Result<Self> {
+		// Use the existing embedded template, but parse directly into memory
+		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
+		
+		toml::from_str(DEFAULT_CONFIG_TEMPLATE)
+			.context("Failed to parse default configuration template")
+	}
+
 	/// Load configuration from the system-wide config file with strict validation
 	pub fn load() -> Result<Self> {
 		// Use the new system-wide config file path
 		let config_path = crate::directories::get_config_file_path()?;
 
 		if !config_path.exists() {
-			// Copy default template and exit with error - user must configure first
-			Self::copy_default_config_template(&config_path)?;
+			// Inject default configuration
+			let default_config = Self::inject_default_config()?;
+			
+			// Still write to file for future edits
+			default_config.save_to_path(&config_path)?;
 		}
 
 		// Check for automatic config upgrades

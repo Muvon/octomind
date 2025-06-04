@@ -54,7 +54,7 @@ cache_timeout_seconds = 240
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Enable markdown rendering for AI responses (makes output prettier)
-enable_markdown_rendering = false
+enable_markdown_rendering = true
 
 # Markdown theme for styling (default, dark, light, ocean, solarized, monokai)
 # Use 'octomind config --list-themes' to see all available themes

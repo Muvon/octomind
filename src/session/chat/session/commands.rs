@@ -79,7 +79,10 @@ impl ChatSession {
 					"{} [level] - Set logging level: none, info, or debug",
 					LOGLEVEL_COMMAND.cyan()
 				);
-				println!("{} [threshold] - Toggle automatic context truncation when token limit is reached", TRUNCATE_COMMAND.cyan());
+				println!(
+					"{} - Perform smart context truncation to reduce token usage",
+					TRUNCATE_COMMAND.cyan()
+				);
 				println!(
 					"{} [model] - Show current model or change to a different model (runtime only)",
 					MODEL_COMMAND.cyan()
@@ -338,60 +341,55 @@ impl ChatSession {
 				return Ok(true);
 			}
 			TRUNCATE_COMMAND => {
-				// Toggle auto-truncation mode
-				// Create a mutable config reference for the update
-				let mut temp_config = config.clone();
+				// Perform smart truncation processing once
+				println!("{}", "Performing smart context truncation...".bright_cyan());
 
-				// Update the specific field using selective update mechanism
-				if let Err(e) = temp_config.update_specific_field(|cfg| {
-					// Toggle the global setting (not openrouter-specific)
-					cfg.enable_auto_truncation = !cfg.enable_auto_truncation;
+				// Estimate current token usage
+				let current_tokens =
+					crate::session::estimate_message_tokens(&self.session.messages);
+				println!(
+					"{}",
+					format!(
+						"Current context size: {} tokens",
+						format_number(current_tokens as u64)
+					)
+					.bright_blue()
+				);
 
-					// Update token thresholds if parameters were provided
-					if !params.is_empty() {
-						if let Ok(threshold) = params[0].parse::<usize>() {
-							cfg.max_request_tokens_threshold = threshold;
+				// Use the smart truncation logic directly (bypassing auto-truncation checks)
+				match crate::session::chat::perform_smart_truncation(self, config, current_tokens)
+					.await
+				{
+					Ok(()) => {
+						// Calculate new token count after truncation
+						let new_tokens =
+							crate::session::estimate_message_tokens(&self.session.messages);
+						let tokens_saved = current_tokens.saturating_sub(new_tokens);
+
+						if tokens_saved > 0 {
+							println!(
+								"{}",
+								format!(
+									"Smart truncation completed: {} tokens removed, new context size: {} tokens",
+									format_number(tokens_saved as u64),
+									format_number(new_tokens as u64)
+								)
+								.bright_green()
+							);
+						} else {
+							println!(
+								"{}",
+								"No truncation needed - context size is within optimal range"
+									.bright_yellow()
+							);
 						}
 					}
-				}) {
-					println!("{}: {}", "Failed to save configuration".bright_red(), e);
-					return Ok(false);
-				}
-
-				// Display threshold update if provided
-				if !params.is_empty() {
-					if let Ok(threshold) = params[0].parse::<usize>() {
-						println!(
-							"{}",
-							format!("Max request token threshold set to {} tokens", threshold)
-								.bright_green()
-						);
+					Err(e) => {
+						println!("{}: {}", "Smart truncation failed".bright_red(), e);
 					}
 				}
 
-				// Show the new state
-				if temp_config.enable_auto_truncation {
-					println!("{}", "Auto-truncation is now ENABLED.".bright_green());
-					println!(
-						"{}",
-						format!(
-							"Context will be automatically truncated when exceeding {} tokens.",
-							temp_config.max_request_tokens_threshold
-						)
-						.bright_yellow()
-					);
-				} else {
-					println!("{}", "Auto-truncation is now DISABLED.".bright_yellow());
-					println!(
-						"{}",
-						"You'll need to manually reduce context when it gets too large."
-							.bright_blue()
-					);
-				}
-				log_info!("Configuration has been saved to disk.");
-
-				// Return a special code that indicates we should reload the config in the main loop
-				return Ok(true);
+				return Ok(false);
 			}
 			CACHE_COMMAND => {
 				// Parse cache command arguments for advanced functionality

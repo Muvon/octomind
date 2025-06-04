@@ -91,7 +91,7 @@ impl Config {
 	fn inject_default_config() -> Result<Self> {
 		// Use the existing embedded template, but parse directly into memory
 		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
-		
+
 		toml::from_str(DEFAULT_CONFIG_TEMPLATE)
 			.context("Failed to parse default configuration template")
 	}
@@ -104,7 +104,7 @@ impl Config {
 		if !config_path.exists() {
 			// Inject default configuration
 			let default_config = Self::inject_default_config()?;
-			
+
 			// Still write to file for future edits
 			default_config.save_to_path(&config_path)?;
 		}

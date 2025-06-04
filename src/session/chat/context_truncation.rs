@@ -42,6 +42,16 @@ pub async fn check_and_truncate_context(
 		return Ok(());
 	}
 
+	// Delegate to the core truncation logic
+	perform_smart_truncation(chat_session, config, current_tokens).await
+}
+
+// Perform smart context truncation without checking auto-truncation settings
+pub async fn perform_smart_truncation(
+	chat_session: &mut ChatSession,
+	config: &Config,
+	current_tokens: usize,
+) -> Result<()> {
 	// We need to truncate - inform the user with minimal info
 	log_conditional!(
 		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nApplying smart truncation to reduce context size.",

@@ -229,7 +229,7 @@ pub async fn initialize_servers_for_mode(config: &crate::config::Config) -> Resu
 			crate::log_debug!("Initializing external server: {}", server.name);
 
 			// Check if server is already running to avoid double initialization
-			if server::is_server_already_running(&server.name) {
+			if server::is_server_already_running_with_config(server) {
 				crate::log_debug!(
 					"Server '{}' is already running - skipping initialization",
 					server.name

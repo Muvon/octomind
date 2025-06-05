@@ -92,6 +92,10 @@ impl ChatSession {
 					RUN_COMMAND.cyan()
 				);
 				println!(
+					"{} [list|info|full] - Show MCP server status and tools (info is default)",
+					MCP_COMMAND.cyan()
+				);
+				println!(
 					"{} or {} - Exit the session\n",
 					EXIT_COMMAND.cyan(),
 					QUIT_COMMAND.cyan()
@@ -667,6 +671,424 @@ impl ChatSession {
 					self.session.info.name = new_session_name;
 					return Ok(true);
 				}
+			}
+			MCP_COMMAND => {
+				// Handle /mcp command for showing MCP server status and tools
+				// Support subcommands: list, info, full
+				let subcommand = if params.is_empty() { "info" } else { params[0] };
+
+				match subcommand {
+					"list" => {
+						// Very short list - just tool names
+						println!();
+						println!("{}", "Available Tools".bright_cyan().bold());
+						println!("{}", "─".repeat(30).dimmed());
+
+						let mode_config = config.get_merged_config_for_mode(role);
+						let available_functions =
+							crate::mcp::get_available_functions(&mode_config).await;
+
+						if available_functions.is_empty() {
+							println!("{}", "No tools available.".yellow());
+						} else {
+							// Group tools by category
+							let mut categories: std::collections::HashMap<
+								String,
+								Vec<&crate::mcp::McpFunction>,
+							> = std::collections::HashMap::new();
+
+							for func in &available_functions {
+								let category = crate::mcp::guess_tool_category(&func.name);
+								categories
+									.entry(category.to_string())
+									.or_default()
+									.push(func);
+							}
+
+							for (category, tools) in categories {
+								println!();
+								println!("  {}", category.bright_blue().bold());
+								for tool in tools {
+									println!("    {}", tool.name.bright_white());
+								}
+							}
+						}
+
+						println!();
+						println!("{}", "Use '/mcp info' for descriptions or '/mcp full' for detailed parameters.".dimmed());
+					}
+					"info" => {
+						// Default view - server status + tools with short descriptions
+						println!();
+						println!("{}", "MCP Server Status".bright_cyan().bold());
+						println!("{}", "─".repeat(50).dimmed());
+
+						// Get the merged config for this role
+						let mode_config = config.get_merged_config_for_mode(role);
+
+						if mode_config.mcp.servers.is_empty() {
+							println!("{}", "No MCP servers configured for this role.".yellow());
+							return Ok(false);
+						}
+
+						// Show server status
+						let server_report = crate::mcp::server::get_server_status_report();
+
+						for server in &mode_config.mcp.servers {
+							let (health, restart_info) = match server.server_type {
+								crate::config::McpServerType::Developer
+								| crate::config::McpServerType::Filesystem => {
+									// Internal servers are always running
+									(
+										crate::mcp::process::ServerHealth::Running,
+										Default::default(),
+									)
+								}
+								crate::config::McpServerType::External => {
+									// External servers - get from status report
+									server_report
+										.get(&server.name)
+										.map(|(h, r)| (h.clone(), r.clone()))
+										.unwrap_or((
+											crate::mcp::process::ServerHealth::Dead,
+											Default::default(),
+										))
+								}
+							};
+
+							let health_display = match health {
+								crate::mcp::process::ServerHealth::Running => "✅ Running".green(),
+								crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
+								crate::mcp::process::ServerHealth::Restarting => {
+									"🔄 Restarting".yellow()
+								}
+								crate::mcp::process::ServerHealth::Failed => {
+									"💥 Failed".bright_red()
+								}
+							};
+
+							println!();
+							println!("{}: {}", server.name.bright_white().bold(), health_display);
+							println!("  Type: {:?}", server.server_type);
+							println!("  Mode: {:?}", server.mode);
+
+							if !server.tools.is_empty() {
+								println!(
+									"  Configured tools: {}",
+									server.tools.join(", ").dimmed()
+								);
+							}
+
+							if restart_info.restart_count > 0 {
+								println!("  Restart count: {}", restart_info.restart_count);
+								if restart_info.consecutive_failures > 0 {
+									println!(
+										"  Consecutive failures: {}",
+										restart_info.consecutive_failures
+									);
+								}
+							}
+						}
+
+						// Show available tools with short descriptions
+						println!();
+						println!("{}", "Available Tools".bright_cyan().bold());
+						println!("{}", "─".repeat(50).dimmed());
+
+						let available_functions =
+							crate::mcp::get_available_functions(&mode_config).await;
+						if available_functions.is_empty() {
+							println!("{}", "No tools available.".yellow());
+						} else {
+							// Group tools by category
+							let mut categories: std::collections::HashMap<
+								String,
+								Vec<&crate::mcp::McpFunction>,
+							> = std::collections::HashMap::new();
+
+							for func in &available_functions {
+								let category = crate::mcp::guess_tool_category(&func.name);
+								categories
+									.entry(category.to_string())
+									.or_default()
+									.push(func);
+							}
+
+							for (category, tools) in categories {
+								println!();
+								println!("  {}", category.bright_blue().bold());
+
+								for tool in tools {
+									// Show name and short description
+									let short_desc = if tool.description.len() > 60 {
+										format!("{}...", &tool.description[..57])
+									} else {
+										tool.description.clone()
+									};
+
+									if short_desc.is_empty() {
+										println!("    {}", tool.name.bright_white());
+									} else {
+										println!(
+											"    {} - {}",
+											tool.name.bright_white(),
+											short_desc.dimmed()
+										);
+									}
+								}
+							}
+						}
+
+						println!();
+						println!("{}", "Use '/mcp list' for names only or '/mcp full' for detailed parameters.".dimmed());
+					}
+					"full" => {
+						// Full detailed view with parameters
+						println!();
+						println!(
+							"{}",
+							"MCP Server Status & Tools (Full Details)"
+								.bright_cyan()
+								.bold()
+						);
+						println!("{}", "─".repeat(60).dimmed());
+
+						// Get the merged config for this role
+						let mode_config = config.get_merged_config_for_mode(role);
+
+						if mode_config.mcp.servers.is_empty() {
+							println!("{}", "No MCP servers configured for this role.".yellow());
+							return Ok(false);
+						}
+
+						// Show server status
+						let server_report = crate::mcp::server::get_server_status_report();
+
+						for server in &mode_config.mcp.servers {
+							let (health, restart_info) = match server.server_type {
+								crate::config::McpServerType::Developer
+								| crate::config::McpServerType::Filesystem => {
+									// Internal servers are always running
+									(
+										crate::mcp::process::ServerHealth::Running,
+										Default::default(),
+									)
+								}
+								crate::config::McpServerType::External => {
+									// External servers - get from status report
+									server_report
+										.get(&server.name)
+										.map(|(h, r)| (h.clone(), r.clone()))
+										.unwrap_or((
+											crate::mcp::process::ServerHealth::Dead,
+											Default::default(),
+										))
+								}
+							};
+
+							let health_display = match health {
+								crate::mcp::process::ServerHealth::Running => "✅ Running".green(),
+								crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
+								crate::mcp::process::ServerHealth::Restarting => {
+									"🔄 Restarting".yellow()
+								}
+								crate::mcp::process::ServerHealth::Failed => {
+									"💥 Failed".bright_red()
+								}
+							};
+
+							println!();
+							println!("{}: {}", server.name.bright_white().bold(), health_display);
+							println!("  Type: {:?}", server.server_type);
+							println!("  Mode: {:?}", server.mode);
+
+							if !server.tools.is_empty() {
+								println!(
+									"  Configured tools: {}",
+									server.tools.join(", ").dimmed()
+								);
+							}
+
+							if restart_info.restart_count > 0 {
+								println!("  Restart count: {}", restart_info.restart_count);
+								if restart_info.consecutive_failures > 0 {
+									println!(
+										"  Consecutive failures: {}",
+										restart_info.consecutive_failures
+									);
+								}
+							}
+						}
+
+						// Show available tools with full details
+						println!();
+						println!("{}", "Available Tools (Full Details)".bright_cyan().bold());
+						println!("{}", "─".repeat(60).dimmed());
+
+						let available_functions =
+							crate::mcp::get_available_functions(&mode_config).await;
+						if available_functions.is_empty() {
+							println!("{}", "No tools available.".yellow());
+						} else {
+							// Group tools by category
+							let mut categories: std::collections::HashMap<
+								String,
+								Vec<&crate::mcp::McpFunction>,
+							> = std::collections::HashMap::new();
+
+							for func in &available_functions {
+								let category = crate::mcp::guess_tool_category(&func.name);
+								categories
+									.entry(category.to_string())
+									.or_default()
+									.push(func);
+							}
+
+							for (category, tools) in categories {
+								println!();
+								println!("  {}", category.bright_blue().bold());
+
+								for tool in tools {
+									// Full detailed view with parameters
+									println!("    {}", tool.name.bright_white().bold());
+
+									// Show full description
+									if !tool.description.is_empty() {
+										println!("      {}", tool.description.dimmed());
+									}
+
+									// Show parameters if available
+									if let Some(properties) = tool.parameters.get("properties") {
+										if let Some(props_obj) = properties.as_object() {
+											if !props_obj.is_empty() {
+												println!("      {}", "Parameters:".bright_green());
+
+												// Get required parameters
+												let required_params: std::collections::HashSet<
+													String,
+												> = tool
+													.parameters
+													.get("required")
+													.and_then(|r| r.as_array())
+													.map(|arr| {
+														arr.iter()
+															.filter_map(|v| v.as_str())
+															.map(|s| s.to_string())
+															.collect()
+													})
+													.unwrap_or_default();
+
+												for (param_name, param_info) in props_obj {
+													let is_required =
+														required_params.contains(param_name);
+													let required_marker = if is_required {
+														"*".bright_red()
+													} else {
+														" ".normal()
+													};
+
+													let param_type = param_info
+														.get("type")
+														.and_then(|t| t.as_str())
+														.unwrap_or("any");
+
+													let param_desc = param_info
+														.get("description")
+														.and_then(|d| d.as_str())
+														.unwrap_or("");
+
+													println!(
+														"        {}{}: {} {}",
+														required_marker,
+														param_name.bright_cyan(),
+														param_type.yellow(),
+														if !param_desc.is_empty() {
+															format!("- {}", param_desc).dimmed()
+														} else {
+															"".normal()
+														}
+													);
+
+													// Show enum values if available
+													if let Some(enum_values) =
+														param_info.get("enum")
+													{
+														if let Some(enum_array) =
+															enum_values.as_array()
+														{
+															let values: Vec<String> = enum_array
+																.iter()
+																.filter_map(|v| v.as_str())
+																.map(|s| s.to_string())
+																.collect();
+															if !values.is_empty() {
+																println!(
+																	"          {}: {}",
+																	"options".bright_black(),
+																	values
+																		.join(", ")
+																		.bright_black()
+																);
+															}
+														}
+													}
+
+													// Show default value if available
+													if let Some(default_val) =
+														param_info.get("default")
+													{
+														println!(
+															"          {}: {}",
+															"default".bright_black(),
+															default_val.to_string().bright_black()
+														);
+													}
+												}
+											}
+										}
+									} else if tool.parameters != serde_json::json!({}) {
+										// Show raw parameters if not in standard format
+										println!(
+											"      {}: {}",
+											"Schema".bright_green(),
+											tool.parameters.to_string().dimmed()
+										);
+									}
+
+									println!(); // Add spacing between tools
+								}
+							}
+						}
+
+						println!();
+						println!("{}", "Legend: ".bright_yellow());
+						println!("  {} Required parameter", "*".bright_red());
+						println!(
+							"  {}",
+							"Use '/mcp list' for names only or '/mcp info' for overview.".dimmed()
+						);
+					}
+					_ => {
+						// Invalid subcommand
+						println!();
+						println!("{}", "Invalid MCP subcommand.".bright_red());
+						println!();
+						println!("{}", "Available subcommands:".bright_cyan());
+						println!("  {} - Show tool names only", "/mcp list".cyan());
+						println!(
+							"  {} - Show server status and tools with descriptions (default)",
+							"/mcp info".cyan()
+						);
+						println!(
+							"  {} - Show full details including parameters",
+							"/mcp full".cyan()
+						);
+						println!();
+						println!("{}", "Usage: /mcp [list|info|full]".bright_blue());
+					}
+				}
+
+				return Ok(false);
 			}
 			RUN_COMMAND => {
 				// Handle /run command for executing command layers

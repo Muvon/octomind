@@ -194,30 +194,131 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 	}
 }
 
-// Check if a server is already running (helper for initialization)
+// Check if a server is already running with enhanced health checking
+// Takes server config to properly handle internal vs external servers
+pub fn is_server_already_running_with_config(server: &crate::config::McpServerConfig) -> bool {
+	match server.server_type {
+		crate::config::McpServerType::Developer | crate::config::McpServerType::Filesystem => {
+			// Internal servers are always considered running since they're built-in
+			{
+				let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
+				let info = restart_info_guard.entry(server.name.clone()).or_default();
+				info.health_status = process::ServerHealth::Running;
+				info.last_health_check = Some(std::time::SystemTime::now());
+			}
+			true
+		}
+		crate::config::McpServerType::External => {
+			// External servers - check the process registry
+			let is_process_running = {
+				let processes = process::SERVER_PROCESSES.read().unwrap();
+				if let Some(process_arc) = processes.get(&server.name) {
+					let mut process = process_arc.lock().unwrap();
+					match &mut *process {
+						process::ServerProcess::Http(child) => child
+							.try_wait()
+							.map(|status| status.is_none())
+							.unwrap_or(false),
+						process::ServerProcess::Stdin {
+							child, is_shutdown, ..
+						} => {
+							let process_alive = child
+								.try_wait()
+								.map(|status| status.is_none())
+								.unwrap_or(false);
+							let not_marked_shutdown =
+								!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
+							process_alive && not_marked_shutdown
+						}
+					}
+				} else {
+					false
+				}
+			};
+
+			// Update health status based on actual process state
+			let health_status = if is_process_running {
+				process::ServerHealth::Running
+			} else {
+				process::ServerHealth::Dead
+			};
+
+			// Update restart tracking
+			{
+				let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
+				let info = restart_info_guard.entry(server.name.clone()).or_default();
+				info.health_status = health_status;
+				info.last_health_check = Some(std::time::SystemTime::now());
+			}
+
+			is_process_running
+		}
+	}
+}
+
+// Legacy function for backward compatibility - tries to guess server type
 pub fn is_server_already_running(server_name: &str) -> bool {
-	let processes = process::SERVER_PROCESSES.read().unwrap();
-	if let Some(process_arc) = processes.get(server_name) {
-		let mut process = process_arc.lock().unwrap();
-		match &mut *process {
-			process::ServerProcess::Http(child) => child
-				.try_wait()
-				.map(|status| status.is_none())
-				.unwrap_or(false),
-			process::ServerProcess::Stdin {
-				child, is_shutdown, ..
-			} => {
-				let process_alive = child
+	// For internal servers, we need to determine their type first
+	// Internal servers (Developer/Filesystem) are always "running" since they're built-in
+
+	// Check if this is an internal server by looking for it in a typical config
+	// This is a bit of a hack, but we need to distinguish internal vs external servers
+	if server_name == "developer" || server_name == "filesystem" {
+		// Internal servers are always considered running
+		let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
+		let info = restart_info_guard
+			.entry(server_name.to_string())
+			.or_default();
+		info.health_status = process::ServerHealth::Running;
+		info.last_health_check = Some(std::time::SystemTime::now());
+		return true;
+	}
+
+	// For external servers, check the process registry
+	let is_process_running = {
+		let processes = process::SERVER_PROCESSES.read().unwrap();
+		if let Some(process_arc) = processes.get(server_name) {
+			let mut process = process_arc.lock().unwrap();
+			match &mut *process {
+				process::ServerProcess::Http(child) => child
 					.try_wait()
 					.map(|status| status.is_none())
-					.unwrap_or(false);
-				let not_marked_shutdown = !is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
-				process_alive && not_marked_shutdown
+					.unwrap_or(false),
+				process::ServerProcess::Stdin {
+					child, is_shutdown, ..
+				} => {
+					let process_alive = child
+						.try_wait()
+						.map(|status| status.is_none())
+						.unwrap_or(false);
+					let not_marked_shutdown =
+						!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
+					process_alive && not_marked_shutdown
+				}
 			}
+		} else {
+			false
 		}
+	};
+
+	// Update health status based on actual process state
+	let health_status = if is_process_running {
+		process::ServerHealth::Running
 	} else {
-		false
+		process::ServerHealth::Dead
+	};
+
+	// Update restart tracking
+	{
+		let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
+		let info = restart_info_guard
+			.entry(server_name.to_string())
+			.or_default();
+		info.health_status = health_status.clone();
+		info.last_health_check = Some(std::time::SystemTime::now());
 	}
+
+	is_process_running
 }
 
 // Execute tool call on MCP server (either local or remote)
@@ -228,8 +329,109 @@ pub async fn execute_tool_call(
 	execute_tool_call_with_cancellation(call, server, None).await
 }
 
-// Execute tool call on MCP server with cancellation support
+// Execute tool call on MCP server with intelligent restart handling
 pub async fn execute_tool_call_with_cancellation(
+	call: &McpToolCall,
+	server: &McpServerConfig,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<McpToolResult> {
+	use std::sync::atomic::Ordering;
+
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("External tool execution cancelled"));
+		}
+	}
+
+	// Check server health before attempting execution
+	let server_health = process::get_server_health(&server.name);
+	match server_health {
+		process::ServerHealth::Failed => {
+			return Err(anyhow::anyhow!(
+				"Server '{}' is in failed state. Cannot execute tool '{}'. Try resetting the server or check configuration.",
+				server.name,
+				call.tool_name
+			));
+		}
+		process::ServerHealth::Restarting => {
+			return Err(anyhow::anyhow!(
+				"Server '{}' is currently restarting. Please try again in a moment.",
+				server.name
+			));
+		}
+		_ => {} // Continue with execution
+	}
+
+	// Attempt to execute the tool call
+	let execution_result =
+		execute_tool_call_internal(call, server, cancellation_token.clone()).await;
+
+	match execution_result {
+		Ok(result) => Ok(result),
+		Err(e) => {
+			// Check if this might be a server death issue
+			let error_msg = e.to_string();
+			if error_msg.contains("broken pipe")
+				|| error_msg.contains("Server closed connection")
+				|| error_msg.contains("Failed to flush stdin")
+				|| error_msg.contains("Failed to write to stdin")
+			{
+				crate::log_debug!(
+					"Detected potential server death for '{}' during tool execution: {}",
+					server.name,
+					error_msg
+				);
+
+				// Mark server as dead
+				{
+					let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
+					let info = restart_info_guard.entry(server.name.clone()).or_default();
+					info.health_status = process::ServerHealth::Dead;
+				}
+
+				// Attempt to restart the server and retry the tool call
+				crate::log_debug!(
+					"Attempting to restart server '{}' and retry tool execution",
+					server.name
+				);
+
+				match process::ensure_server_running(server).await {
+					Ok(_) => {
+						crate::log_debug!(
+							"Successfully restarted server '{}', retrying tool execution",
+							server.name
+						);
+
+						// Check for cancellation before retry
+						if let Some(ref token) = cancellation_token {
+							if token.load(Ordering::SeqCst) {
+								return Err(anyhow::anyhow!(
+									"External tool execution cancelled during retry"
+								));
+							}
+						}
+
+						// Retry the tool execution once
+						execute_tool_call_internal(call, server, cancellation_token).await
+					}
+					Err(restart_err) => Err(anyhow::anyhow!(
+							"Server '{}' died during tool execution and failed to restart: {}. Original error: {}",
+							server.name,
+							restart_err,
+							error_msg
+						)),
+				}
+			} else {
+				// Not a server death issue, return original error
+				Err(e)
+			}
+		}
+	}
+}
+
+// Internal function to execute tool call without restart logic
+async fn execute_tool_call_internal(
 	call: &McpToolCall,
 	server: &McpServerConfig,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -410,4 +612,31 @@ pub async fn get_all_server_functions(
 // Clean up any running server processes when the program exits
 pub fn cleanup_servers() -> Result<()> {
 	process::stop_all_servers()
+}
+
+// Get server health status for monitoring
+pub fn get_server_health_status(server_name: &str) -> process::ServerHealth {
+	process::get_server_health(server_name)
+}
+
+// Get detailed server restart information
+pub fn get_server_restart_info(server_name: &str) -> process::ServerRestartInfo {
+	process::get_server_restart_info(server_name)
+}
+
+// Reset server failure state (useful for manual recovery)
+pub fn reset_server_failure_state(server_name: &str) -> Result<()> {
+	process::reset_server_failure_state(server_name)
+}
+
+// Perform health check on all servers
+pub async fn perform_health_check_all_servers(
+) -> std::collections::HashMap<String, process::ServerHealth> {
+	process::perform_health_check_all_servers().await
+}
+
+// Get comprehensive server status report
+pub fn get_server_status_report(
+) -> std::collections::HashMap<String, (process::ServerHealth, process::ServerRestartInfo)> {
+	process::get_server_status_report()
 }

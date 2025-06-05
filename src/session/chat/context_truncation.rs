@@ -27,12 +27,7 @@ use std::sync::Arc;
 /// Message importance scoring for smart truncation
 #[derive(Debug, Clone)]
 struct MessageImportance {
-	recency_score: f64,        // 0.0-1.0 based on position in conversation
-	content_type_score: f64,   // Higher for decisions, errors, solutions
-	reference_score: f64,      // How often content is referenced later
-	tool_result_score: f64,    // Critical tool outputs vs verbose logs
-	file_reference_score: f64, // Contains file paths or modifications
-	total_score: f64,          // Combined weighted score
+	total_score: f64, // Combined weighted score
 }
 
 impl MessageImportance {
@@ -50,14 +45,7 @@ impl MessageImportance {
 			+ (tool_result_score * 0.15)
 			+ (file_reference_score * 0.15);
 
-		Self {
-			recency_score,
-			content_type_score,
-			reference_score,
-			tool_result_score,
-			file_reference_score,
-			total_score,
-		}
+		Self { total_score }
 	}
 
 	fn analyze_content_type(content: &str) -> f64 {

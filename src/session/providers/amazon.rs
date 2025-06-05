@@ -336,12 +336,10 @@ impl AiProvider for AmazonBedrockProvider {
 
 			Some(TokenUsage {
 				prompt_tokens,
-				completion_tokens,
+				output_tokens: completion_tokens,
 				total_tokens,
+				cached_tokens: 0, // Amazon Bedrock doesn't support caching yet
 				cost,
-				completion_tokens_details: None,
-				prompt_tokens_details: None,
-				breakdown: None,
 				request_time_ms: None, // TODO: Add API timing for Amazon
 			})
 		} else {

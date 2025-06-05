@@ -1043,7 +1043,7 @@ pub fn get_server_health(server_name: &str) -> ServerHealth {
 	let restart_info_guard = SERVER_RESTART_INFO.read().unwrap();
 	restart_info_guard
 		.get(server_name)
-		.map(|info| info.health_status.clone())
+		.map(|info| info.health_status)
 		.unwrap_or(ServerHealth::Dead)
 }
 
@@ -1089,7 +1089,7 @@ pub async fn perform_health_check_all_servers() -> HashMap<String, ServerHealth>
 		} else {
 			ServerHealth::Dead
 		};
-		health_status.insert(server_name.clone(), health.clone());
+		health_status.insert(server_name.clone(), health);
 
 		crate::log_debug!("Health check: Server '{}' is {:?}", server_name, health);
 	}

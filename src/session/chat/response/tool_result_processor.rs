@@ -392,51 +392,16 @@ fn handle_follow_up_cost_tracking(
 	config: &Config,
 ) {
 	if let Some(usage) = &exchange.usage {
-		// Calculate regular and cached tokens (same logic as in add_assistant_message)
-		let mut regular_prompt_tokens = usage.prompt_tokens;
-		let mut cached_tokens = 0;
-
-		// Check prompt_tokens_details for cached_tokens first
-		if let Some(details) = &usage.prompt_tokens_details {
-			if let Some(serde_json::Value::Number(num)) = details.get("cached_tokens") {
-				if let Some(num_u64) = num.as_u64() {
-					cached_tokens = num_u64;
-					// Adjust regular tokens to account for cached tokens
-					regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-				}
-			}
-		}
-
-		// Fall back to breakdown field
-		if cached_tokens == 0 && usage.prompt_tokens > 0 {
-			if let Some(breakdown) = &usage.breakdown {
-				if let Some(serde_json::Value::Number(num)) = breakdown.get("cached") {
-					if let Some(num_u64) = num.as_u64() {
-						cached_tokens = num_u64;
-						regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-					}
-				}
-			}
-		}
-
-		// Check for cached tokens in the base API response
-		if cached_tokens == 0 && usage.prompt_tokens > 0 {
-			if let Some(response) = &exchange.response.get("usage") {
-				if let Some(cached) = response.get("cached_tokens") {
-					if let Some(num) = cached.as_u64() {
-						cached_tokens = num;
-						regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-					}
-				}
-			}
-		}
+		// Simple token extraction with clean provider interface
+		let cached_tokens = usage.cached_tokens;
+		let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 
 		// Update session token counts using the cache manager
 		let cache_manager = crate::session::cache::CacheManager::new();
 		cache_manager.update_token_tracking(
 			&mut chat_session.session,
 			regular_prompt_tokens,
-			usage.completion_tokens,
+			usage.output_tokens,
 			cached_tokens,
 		);
 

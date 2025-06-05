@@ -235,48 +235,9 @@ impl ChatSession {
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
 			if let Some(usage) = &ex.usage {
-				// Calculate regular and cached tokens
-				let mut regular_prompt_tokens = usage.prompt_tokens;
-				let mut cached_tokens = 0;
-
-				// Check prompt_tokens_details for cached_tokens first
-				if let Some(details) = &usage.prompt_tokens_details {
-					if let Some(serde_json::Value::Number(num)) = details.get("cached_tokens") {
-						if let Some(num_u64) = num.as_u64() {
-							cached_tokens = num_u64;
-							// Adjust regular tokens to account for cached tokens
-							regular_prompt_tokens =
-								usage.prompt_tokens.saturating_sub(cached_tokens);
-						}
-					}
-				}
-
-				// Fall back to breakdown field if prompt_tokens_details didn't have cached tokens
-				if cached_tokens == 0 && usage.prompt_tokens > 0 {
-					if let Some(breakdown) = &usage.breakdown {
-						if let Some(serde_json::Value::Number(num)) = breakdown.get("cached") {
-							if let Some(num_u64) = num.as_u64() {
-								cached_tokens = num_u64;
-								// Adjust regular tokens to account for cached tokens
-								regular_prompt_tokens =
-									usage.prompt_tokens.saturating_sub(cached_tokens);
-							}
-						}
-					}
-				}
-
-				// Check for cached tokens in the base API response for models that report differently
-				if cached_tokens == 0 && usage.prompt_tokens > 0 {
-					if let Some(response) = &ex.response.get("usage") {
-						if let Some(cached) = response.get("cached_tokens") {
-							if let Some(num) = cached.as_u64() {
-								cached_tokens = num;
-								regular_prompt_tokens =
-									usage.prompt_tokens.saturating_sub(cached_tokens);
-							}
-						}
-					}
-				}
+				// Simple token extraction with clean provider interface
+				let cached_tokens = usage.cached_tokens;
+				let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 
 				// Track API time if available
 				if let Some(api_time_ms) = usage.request_time_ms {
@@ -288,7 +249,7 @@ impl ChatSession {
 				cache_manager.update_token_tracking(
 					&mut self.session,
 					regular_prompt_tokens,
-					usage.completion_tokens,
+					usage.output_tokens,
 					cached_tokens,
 				);
 

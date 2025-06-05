@@ -150,7 +150,7 @@ pub async fn execute_command_layer(
 			&format!("command:{}", command_name),
 			&effective_model,
 			usage.prompt_tokens,
-			usage.completion_tokens,
+			usage.output_tokens,
 			cost,
 		);
 
@@ -162,7 +162,7 @@ pub async fn execute_command_layer(
 			"{} {} prompt, {} completion tokens",
 			"Command usage:".bright_blue(),
 			format_number(usage.prompt_tokens).bright_green(),
-			format_number(usage.completion_tokens).bright_green()
+			format_number(usage.output_tokens).bright_green()
 		);
 
 		if cost > 0.0 {

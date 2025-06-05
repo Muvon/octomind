@@ -748,7 +748,7 @@ impl ChatSession {
 									// External servers - get from status report
 									server_report
 										.get(&server.name)
-										.map(|(h, r)| (h.clone(), r.clone()))
+										.map(|(h, r)| (*h, r.clone()))
 										.unwrap_or((
 											crate::mcp::process::ServerHealth::Dead,
 											Default::default(),
@@ -878,7 +878,7 @@ impl ChatSession {
 									// External servers - get from status report
 									server_report
 										.get(&server.name)
-										.map(|(h, r)| (h.clone(), r.clone()))
+										.map(|(h, r)| (*h, r.clone()))
 										.unwrap_or((
 											crate::mcp::process::ServerHealth::Dead,
 											Default::default(),

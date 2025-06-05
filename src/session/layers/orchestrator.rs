@@ -163,7 +163,7 @@ impl LayeredOrchestrator {
 				if let Some(cost) = usage.cost {
 					// Display the layer cost with time information
 					println!("{}", format!("Layer cost: ${:.5} (Input: {} tokens, Output: {} tokens) | Time: API {}ms, Tools {}ms, Total {}ms",
-						cost, usage.prompt_tokens, usage.completion_tokens,
+						cost, usage.prompt_tokens, usage.output_tokens,
 						result.api_time_ms, result.tool_time_ms, result.total_time_ms).bright_magenta());
 
 					// Add the stats to the session with time tracking
@@ -171,7 +171,7 @@ impl LayeredOrchestrator {
 						layer_name,
 						&layer.config().get_effective_model(&session.info.model),
 						usage.prompt_tokens,
-						usage.completion_tokens,
+						usage.output_tokens,
 						cost,
 						result.api_time_ms,
 						result.tool_time_ms,
@@ -180,7 +180,7 @@ impl LayeredOrchestrator {
 
 					// Update totals for summary
 					total_input_tokens += usage.prompt_tokens;
-					total_output_tokens += usage.completion_tokens;
+					total_output_tokens += usage.output_tokens;
 					total_cost += cost;
 				} else {
 					// Try to get cost from raw response JSON if not in TokenUsage
@@ -194,7 +194,7 @@ impl LayeredOrchestrator {
 					if let Some(cost) = cost_from_raw {
 						// Log that we had to get cost from raw response
 						println!("{}", format!("Layer cost (from raw): ${:.5} (Input: {} tokens, Output: {} tokens) | Time: API {}ms, Tools {}ms, Total {}ms",
-							cost, usage.prompt_tokens, usage.completion_tokens,
+							cost, usage.prompt_tokens, usage.output_tokens,
 							result.api_time_ms, result.tool_time_ms, result.total_time_ms).bright_magenta());
 
 						// Add the stats to the session with time tracking
@@ -202,7 +202,7 @@ impl LayeredOrchestrator {
 							layer_name,
 							&layer.config().get_effective_model(&session.info.model),
 							usage.prompt_tokens,
-							usage.completion_tokens,
+							usage.output_tokens,
 							cost,
 							result.api_time_ms,
 							result.tool_time_ms,
@@ -211,7 +211,7 @@ impl LayeredOrchestrator {
 
 						// Update totals for summary
 						total_input_tokens += usage.prompt_tokens;
-						total_output_tokens += usage.completion_tokens;
+						total_output_tokens += usage.output_tokens;
 						total_cost += cost;
 					} else {
 						// ERROR - OpenRouter did not provide cost data
@@ -224,14 +224,14 @@ impl LayeredOrchestrator {
 
 						// Still track tokens and time
 						total_input_tokens += usage.prompt_tokens;
-						total_output_tokens += usage.completion_tokens;
+						total_output_tokens += usage.output_tokens;
 
 						// Add the stats to the session with time tracking but without cost
 						session.add_layer_stats_with_time(
 							layer_name,
 							&layer.config().get_effective_model(&session.info.model),
 							usage.prompt_tokens,
-							usage.completion_tokens,
+							usage.output_tokens,
 							0.0, // No cost available
 							result.api_time_ms,
 							result.tool_time_ms,

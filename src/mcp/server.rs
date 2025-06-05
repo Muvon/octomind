@@ -314,7 +314,7 @@ pub fn is_server_already_running(server_name: &str) -> bool {
 		let info = restart_info_guard
 			.entry(server_name.to_string())
 			.or_default();
-		info.health_status = health_status.clone();
+		info.health_status = health_status;
 		info.last_health_check = Some(std::time::SystemTime::now());
 	}
 

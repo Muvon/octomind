@@ -298,12 +298,10 @@ impl AiProvider for CloudflareWorkersAiProvider {
 
 		let usage = Some(TokenUsage {
 			prompt_tokens: estimated_prompt_tokens,
-			completion_tokens: estimated_completion_tokens,
+			output_tokens: estimated_completion_tokens,
 			total_tokens,
+			cached_tokens: 0, // Cloudflare Workers AI doesn't support caching yet
 			cost,
-			completion_tokens_details: None,
-			prompt_tokens_details: None,
-			breakdown: None,
 			request_time_ms: None, // TODO: Add API timing for Cloudflare
 		});
 

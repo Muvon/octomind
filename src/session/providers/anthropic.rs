@@ -333,39 +333,15 @@ impl AiProvider for AnthropicProvider {
 				output_tokens,
 			);
 
-			// Store cache breakdown in the breakdown field for detailed tracking
-			let mut breakdown = std::collections::HashMap::new();
-			if cache_creation_input_tokens > 0 {
-				breakdown.insert(
-					"cache_creation_input_tokens".to_string(),
-					serde_json::json!(cache_creation_input_tokens),
-				);
-			}
-			if cache_read_input_tokens > 0 {
-				breakdown.insert(
-					"cache_read_input_tokens".to_string(),
-					serde_json::json!(cache_read_input_tokens),
-				);
-			}
-			if regular_input_tokens > 0 {
-				breakdown.insert(
-					"regular_input_tokens".to_string(),
-					serde_json::json!(regular_input_tokens),
-				);
-			}
+			// Simple interface: only expose total cached tokens (both read and write)
+			let cached_tokens = cache_creation_input_tokens + cache_read_input_tokens;
 
 			Some(TokenUsage {
 				prompt_tokens: input_tokens,
-				completion_tokens: output_tokens,
+				output_tokens,
 				total_tokens,
-				cost,
-				completion_tokens_details: None,
-				prompt_tokens_details: None,
-				breakdown: if breakdown.is_empty() {
-					None
-				} else {
-					Some(breakdown)
-				},
+				cached_tokens,         // Simple: total tokens that came from cache
+				cost,                  // Pre-calculated with proper cache pricing
 				request_time_ms: None, // TODO: Add API timing for Anthropic
 			})
 		} else {

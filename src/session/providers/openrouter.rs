@@ -448,29 +448,20 @@ impl AiProvider for OpenRouterProvider {
 				.and_then(|v| v.as_u64())
 				.unwrap_or(0);
 			let cost = usage_obj.get("cost").and_then(|v| v.as_f64());
-			let completion_tokens_details = usage_obj.get("completion_tokens_details").cloned();
-			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").cloned();
 
-			let breakdown = usage_obj.get("breakdown").and_then(|b| {
-				if let Some(obj) = b.as_object() {
-					let mut map = std::collections::HashMap::new();
-					for (k, v) in obj {
-						map.insert(k.clone(), v.clone());
-					}
-					Some(map)
-				} else {
-					None
-				}
-			});
+			// Extract cached tokens from OpenRouter's detailed response
+			let cached_tokens = usage_obj
+				.get("prompt_tokens_details")
+				.and_then(|details| details.get("cached_tokens"))
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
 
 			Some(TokenUsage {
 				prompt_tokens,
-				completion_tokens,
+				output_tokens: completion_tokens,
 				total_tokens,
+				cached_tokens, // OpenRouter provides cached token information
 				cost,
-				completion_tokens_details,
-				prompt_tokens_details,
-				breakdown,
 				request_time_ms: Some(api_time_ms),
 			})
 		} else {

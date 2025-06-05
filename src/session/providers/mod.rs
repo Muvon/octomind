@@ -38,14 +38,12 @@ pub use openrouter::OpenRouterProvider;
 /// Common token usage structure across all providers
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TokenUsage {
-	pub prompt_tokens: u64,
-	pub completion_tokens: u64,
-	pub total_tokens: u64,
+	pub prompt_tokens: u64, // ALL input tokens (user messages, system prompts, tool definitions, tool responses)
+	pub output_tokens: u64, // AI-generated response tokens only
+	pub total_tokens: u64,  // prompt_tokens + output_tokens
+	pub cached_tokens: u64, // Subset of prompt_tokens that came from cache (discounted)
 	#[serde(default)]
-	pub cost: Option<f64>,
-	pub completion_tokens_details: Option<serde_json::Value>,
-	pub prompt_tokens_details: Option<serde_json::Value>,
-	pub breakdown: Option<std::collections::HashMap<String, serde_json::Value>>,
+	pub cost: Option<f64>, // Pre-calculated total cost (provider handles cache pricing)
 	// Time tracking
 	#[serde(default)]
 	pub request_time_ms: Option<u64>, // Time spent on this API request

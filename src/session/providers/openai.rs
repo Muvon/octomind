@@ -415,41 +415,15 @@ impl AiProvider for OpenAiProvider {
 				calculate_cost(model, prompt_tokens, completion_tokens)
 			};
 
-			let completion_tokens_details = usage_obj.get("completion_tokens_details").cloned();
-			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").cloned();
-
-			// Store cache breakdown in the breakdown field for detailed tracking
-			let mut breakdown = std::collections::HashMap::new();
-			if cache_read_tokens > 0 {
-				breakdown.insert(
-					"cache_read_tokens".to_string(),
-					serde_json::json!(cache_read_tokens),
-				);
-				breakdown.insert(
-					"regular_input_tokens".to_string(),
-					serde_json::json!(regular_input_tokens),
-				);
-				// Note: Cache write tokens are included in regular_input_tokens (no extra cost)
-				breakdown.insert(
-					"note".to_string(),
-					serde_json::json!(
-						"Cache write tokens included in regular_input_tokens at 1x price"
-					),
-				);
-			}
+			// Simple interface: only expose cached tokens (OpenAI only has cache reads, no extra cost for writes)
+			let cached_tokens = cache_read_tokens;
 
 			Some(TokenUsage {
 				prompt_tokens,
-				completion_tokens,
+				output_tokens: completion_tokens,
 				total_tokens,
-				cost,
-				completion_tokens_details,
-				prompt_tokens_details,
-				breakdown: if breakdown.is_empty() {
-					None
-				} else {
-					Some(breakdown)
-				},
+				cached_tokens,         // Simple: total tokens that came from cache
+				cost,                  // Pre-calculated with proper cache pricing
 				request_time_ms: None, // TODO: Add API timing for OpenAI
 			})
 		} else {

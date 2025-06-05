@@ -331,13 +331,7 @@ pub async fn line_replace(
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	let mut lines: Vec<&str> = file_content.lines().collect();
 
-	// Capture the original lines that will be replaced for the snippet
-	let original_lines: Vec<String> = lines[start_line - 1..end_line]
-		.iter()
-		.map(|&line| line.to_string())
-		.collect();
-
-	// Validate line ranges exist in file
+	// Validate line ranges exist in file BEFORE accessing the array
 	if start_line > lines.len() {
 		return Ok(McpToolResult {
 			tool_name: "line_replace".to_string(),
@@ -359,6 +353,14 @@ pub async fn line_replace(
 			}),
 		});
 	}
+
+	// Capture the original lines that will be replaced for the snippet
+	// Ensure end_line doesn't exceed the actual file length to prevent panic
+	let safe_end_line = end_line.min(lines.len());
+	let original_lines: Vec<String> = lines[start_line - 1..safe_end_line]
+		.iter()
+		.map(|&line| line.to_string())
+		.collect();
 
 	// Save the current content for undo
 	save_file_history(path).await?;

@@ -130,6 +130,17 @@ pub async fn view_file_spec(
 			});
 		}
 
+		if start_idx > end_idx {
+			return Ok(McpToolResult {
+				tool_name: "text_editor".to_string(),
+				tool_id: call.tool_id.clone(),
+				result: json!({
+					"error": format!("Start line {} must be less than or equal to end line {}", start, end),
+					"is_error": true
+				}),
+			});
+		}
+
 		let selected_lines = &lines[start_idx..end_idx];
 		let content_with_nums = selected_lines
 			.iter()

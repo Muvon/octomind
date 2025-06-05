@@ -37,7 +37,7 @@ model = "openrouter:anthropic/claude-sonnet-4"
 mcp_response_warning_threshold = 20000
 
 # Maximum tokens per request before auto-truncation kicks in (0 = no limit)
-max_request_tokens_threshold = 50000
+max_request_tokens_threshold = 20000
 
 # Enable automatic truncation of large inputs to fit within token limits
 enable_auto_truncation = false
@@ -84,7 +84,7 @@ max_session_spending_threshold = 0.0
 # Developer role - optimized for coding and development tasks
 [developer]
 # Enable layers system for complex multi-step operations
-enable_layers = false
+enable_layers = true
 
 # Layer references for developer role (empty = no layers enabled)
 layer_refs = ["query_processor", "context_generator"]

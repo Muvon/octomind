@@ -45,13 +45,34 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("claude-instant-1.2", 0.80, 2.40),
 ];
 
-/// Calculate cost for Anthropic models
-fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Option<f64> {
+/// Calculate cost for Anthropic models with cache-aware pricing
+/// - cache_creation_tokens: charged at 1.25x normal price
+/// - cache_read_tokens: charged at 0.1x normal price  
+/// - regular_input_tokens: charged at normal price
+/// - output_tokens: charged at normal price
+fn calculate_cost_with_cache(
+	model: &str,
+	regular_input_tokens: u64,
+	cache_creation_tokens: u64,
+	cache_read_tokens: u64,
+	output_tokens: u64,
+) -> Option<f64> {
 	for (pricing_model, input_price, output_price) in PRICING {
 		if model.contains(pricing_model) {
-			let input_cost = (prompt_tokens as f64 / 1_000_000.0) * input_price;
-			let output_cost = (completion_tokens as f64 / 1_000_000.0) * output_price;
-			return Some(input_cost + output_cost);
+			// Regular input tokens at normal price
+			let regular_input_cost = (regular_input_tokens as f64 / 1_000_000.0) * input_price;
+
+			// Cache creation tokens at 1.25x price (25% more expensive)
+			let cache_creation_cost =
+				(cache_creation_tokens as f64 / 1_000_000.0) * input_price * 1.25;
+
+			// Cache read tokens at 0.1x price (90% cheaper)
+			let cache_read_cost = (cache_read_tokens as f64 / 1_000_000.0) * input_price * 0.1;
+
+			// Output tokens at normal price (never cached)
+			let output_cost = (output_tokens as f64 / 1_000_000.0) * output_price;
+
+			return Some(regular_input_cost + cache_creation_cost + cache_read_cost + output_cost);
 		}
 	}
 	None
@@ -276,7 +297,7 @@ impl AiProvider for AnthropicProvider {
 			log_debug!("Stop reason: {}", reason);
 		}
 
-		// Extract token usage
+		// Extract token usage with cache-aware pricing
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
 			let input_tokens = usage_obj
 				.get("input_tokens")
@@ -286,10 +307,52 @@ impl AiProvider for AnthropicProvider {
 				.get("output_tokens")
 				.and_then(|v| v.as_u64())
 				.unwrap_or(0);
+
+			// Parse cache-specific token fields from Anthropic API
+			let cache_creation_input_tokens = usage_obj
+				.get("cache_creation_input_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let cache_read_input_tokens = usage_obj
+				.get("cache_read_input_tokens")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+
+			// Calculate regular input tokens (total - cache tokens)
+			let regular_input_tokens =
+				input_tokens.saturating_sub(cache_creation_input_tokens + cache_read_input_tokens);
+
 			let total_tokens = input_tokens + output_tokens;
 
-			// Calculate cost using our pricing constants
-			let cost = calculate_cost(model, input_tokens, output_tokens);
+			// Calculate cost with cache-aware pricing
+			let cost = calculate_cost_with_cache(
+				model,
+				regular_input_tokens,
+				cache_creation_input_tokens,
+				cache_read_input_tokens,
+				output_tokens,
+			);
+
+			// Store cache breakdown in the breakdown field for detailed tracking
+			let mut breakdown = std::collections::HashMap::new();
+			if cache_creation_input_tokens > 0 {
+				breakdown.insert(
+					"cache_creation_input_tokens".to_string(),
+					serde_json::json!(cache_creation_input_tokens),
+				);
+			}
+			if cache_read_input_tokens > 0 {
+				breakdown.insert(
+					"cache_read_input_tokens".to_string(),
+					serde_json::json!(cache_read_input_tokens),
+				);
+			}
+			if regular_input_tokens > 0 {
+				breakdown.insert(
+					"regular_input_tokens".to_string(),
+					serde_json::json!(regular_input_tokens),
+				);
+			}
 
 			Some(TokenUsage {
 				prompt_tokens: input_tokens,
@@ -298,7 +361,11 @@ impl AiProvider for AnthropicProvider {
 				cost,
 				completion_tokens_details: None,
 				prompt_tokens_details: None,
-				breakdown: None,
+				breakdown: if breakdown.is_empty() {
+					None
+				} else {
+					Some(breakdown)
+				},
 				request_time_ms: None, // TODO: Add API timing for Anthropic
 			})
 		} else {

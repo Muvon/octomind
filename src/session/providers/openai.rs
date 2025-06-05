@@ -64,13 +64,40 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("gpt-3.5-turbo-1106", 1.00, 2.00),
 ];
 
-/// Calculate cost for OpenAI models
+/// Calculate cost for OpenAI models with basic pricing
 fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Option<f64> {
 	for (pricing_model, input_price, output_price) in PRICING {
 		if model.contains(pricing_model) {
 			let input_cost = (prompt_tokens as f64 / 1_000_000.0) * input_price;
 			let output_cost = (completion_tokens as f64 / 1_000_000.0) * output_price;
 			return Some(input_cost + output_cost);
+		}
+	}
+	None
+}
+
+/// Calculate cost for OpenAI models with cache-aware pricing
+/// - cache_read_tokens: charged at 0.25x normal price (75% cheaper)
+/// - regular_input_tokens: charged at normal price (includes cache write tokens)
+/// - output_tokens: charged at normal price
+fn calculate_cost_with_cache(
+	model: &str,
+	regular_input_tokens: u64,
+	cache_read_tokens: u64,
+	completion_tokens: u64,
+) -> Option<f64> {
+	for (pricing_model, input_price, output_price) in PRICING {
+		if model.contains(pricing_model) {
+			// Regular input tokens at normal price (includes cache write - no additional cost)
+			let regular_input_cost = (regular_input_tokens as f64 / 1_000_000.0) * input_price;
+
+			// Cache read tokens at 0.25x price (75% cheaper)
+			let cache_read_cost = (cache_read_tokens as f64 / 1_000_000.0) * input_price * 0.25;
+
+			// Output tokens at normal price (never cached)
+			let output_cost = (completion_tokens as f64 / 1_000_000.0) * output_price;
+
+			return Some(regular_input_cost + cache_read_cost + output_cost);
 		}
 	}
 	None
@@ -347,7 +374,7 @@ impl AiProvider for OpenAiProvider {
 			None
 		};
 
-		// Extract token usage
+		// Extract token usage with cache-aware pricing
 		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
 			let prompt_tokens = usage_obj
 				.get("prompt_tokens")
@@ -362,14 +389,54 @@ impl AiProvider for OpenAiProvider {
 				.and_then(|v| v.as_u64())
 				.unwrap_or(0);
 
-			// Calculate cost using our pricing constants
-			let cost = calculate_cost(model, prompt_tokens, completion_tokens);
+			// Parse cache-specific token fields from OpenAI API
+			// OpenAI returns cache read tokens in prompt_tokens_details.cached_tokens
+			let cache_read_tokens = usage_obj
+				.get("prompt_tokens_details")
+				.and_then(|details| details.get("cached_tokens"))
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+
+			// For OpenAI: Cache write tokens are NOT charged extra (1x normal price)
+			// Regular input tokens include both new tokens and cache write tokens
+			// Only cache READ tokens get the discount (0.25x price)
+			let regular_input_tokens = prompt_tokens.saturating_sub(cache_read_tokens);
+
+			// Calculate cost with cache-aware pricing
+			let cost = if cache_read_tokens > 0 {
+				calculate_cost_with_cache(
+					model,
+					regular_input_tokens,
+					cache_read_tokens,
+					completion_tokens,
+				)
+			} else {
+				// Fallback to regular pricing if no cache reads
+				calculate_cost(model, prompt_tokens, completion_tokens)
+			};
 
 			let completion_tokens_details = usage_obj.get("completion_tokens_details").cloned();
 			let prompt_tokens_details = usage_obj.get("prompt_tokens_details").cloned();
 
-			// OpenAI doesn't have the same breakdown structure as OpenRouter
-			let breakdown = None;
+			// Store cache breakdown in the breakdown field for detailed tracking
+			let mut breakdown = std::collections::HashMap::new();
+			if cache_read_tokens > 0 {
+				breakdown.insert(
+					"cache_read_tokens".to_string(),
+					serde_json::json!(cache_read_tokens),
+				);
+				breakdown.insert(
+					"regular_input_tokens".to_string(),
+					serde_json::json!(regular_input_tokens),
+				);
+				// Note: Cache write tokens are included in regular_input_tokens (no extra cost)
+				breakdown.insert(
+					"note".to_string(),
+					serde_json::json!(
+						"Cache write tokens included in regular_input_tokens at 1x price"
+					),
+				);
+			}
 
 			Some(TokenUsage {
 				prompt_tokens,
@@ -378,7 +445,11 @@ impl AiProvider for OpenAiProvider {
 				cost,
 				completion_tokens_details,
 				prompt_tokens_details,
-				breakdown,
+				breakdown: if breakdown.is_empty() {
+					None
+				} else {
+					Some(breakdown)
+				},
 				request_time_ms: None, // TODO: Add API timing for OpenAI
 			})
 		} else {

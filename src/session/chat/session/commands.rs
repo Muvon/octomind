@@ -84,6 +84,10 @@ impl ChatSession {
 					TRUNCATE_COMMAND.cyan()
 				);
 				println!(
+					"{} - Create intelligent summary of entire conversation using local processing",
+					SUMMARIZE_COMMAND.cyan()
+				);
+				println!(
 					"{} [model] - Show current model or change to a different model (runtime only)",
 					MODEL_COMMAND.cyan()
 				);
@@ -390,6 +394,50 @@ impl ChatSession {
 					}
 					Err(e) => {
 						println!("{}: {}", "Smart truncation failed".bright_red(), e);
+					}
+				}
+
+				return Ok(false);
+			}
+			SUMMARIZE_COMMAND => {
+				// Perform smart full summarization using local processing
+				println!(
+					"{}",
+					"Performing smart conversation summarization...".bright_cyan()
+				);
+
+				// Estimate current token usage
+				let current_tokens =
+					crate::session::estimate_message_tokens(&self.session.messages);
+				println!(
+					"{}",
+					format!(
+						"Current context size: {} tokens",
+						format_number(current_tokens as u64)
+					)
+					.bright_blue()
+				);
+
+				// Use the smart full summarization logic
+				match crate::session::chat::perform_smart_full_summarization(self, config).await {
+					Ok(()) => {
+						// Calculate new token count after summarization
+						let new_tokens =
+							crate::session::estimate_message_tokens(&self.session.messages);
+						let tokens_saved = current_tokens.saturating_sub(new_tokens);
+
+						println!(
+							"{}",
+							format!(
+								"Smart summarization completed: {} tokens saved, new context size: {} tokens",
+								format_number(tokens_saved as u64),
+								format_number(new_tokens as u64)
+							)
+							.bright_green()
+						);
+					}
+					Err(e) => {
+						println!("{}: {}", "Smart summarization failed".bright_red(), e);
 					}
 				}
 

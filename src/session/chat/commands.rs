@@ -31,12 +31,13 @@ pub const DONE_COMMAND: &str = "/done";
 pub const DEBUG_COMMAND: &str = "/debug";
 pub const LOGLEVEL_COMMAND: &str = "/loglevel";
 pub const TRUNCATE_COMMAND: &str = "/truncate";
+pub const SUMMARIZE_COMMAND: &str = "/summarize";
 pub const MODEL_COMMAND: &str = "/model";
 pub const RUN_COMMAND: &str = "/run";
 pub const MCP_COMMAND: &str = "/mcp";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 19] = [
+pub const COMMANDS: [&str; 20] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -53,6 +54,7 @@ pub const COMMANDS: [&str; 19] = [
 	DEBUG_COMMAND,
 	LOGLEVEL_COMMAND,
 	TRUNCATE_COMMAND,
+	SUMMARIZE_COMMAND,
 	MODEL_COMMAND,
 	RUN_COMMAND,
 	MCP_COMMAND,

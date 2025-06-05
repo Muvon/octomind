@@ -164,19 +164,10 @@ impl AiProvider for OpenRouterProvider {
 					})
 					.collect::<Vec<_>>();
 
-				// Add web search tool if using Claude 3.7 Sonnet
-				// CRITICAL FIX: Add these in CONSISTENT order
-				if model.contains("sonnet") || model.contains("haiku") {
-					// Add in alphabetical order to ensure consistency
-					tools.push(serde_json::json!({
-						"type": "text_editor_20250124",
-						"name": "text_editor"
-					}));
-					tools.push(serde_json::json!({
-						"type": "web_search_20250305",
-						"name": "web_search"
-					}));
-				}
+				// REMOVED: Extra OpenRouter-specific tools that break cache consistency
+				// These tools (text_editor_20250124, web_search_20250305) are not available
+				// in our MCP setup and cause different tool arrays between Anthropic and OpenRouter,
+				// breaking cache effectiveness. Only use tools from MCP configuration.
 
 				// CRITICAL FIX: Cache control should be handled consistently
 				// Add cache control to the LAST tool definition ONLY if the model supports caching

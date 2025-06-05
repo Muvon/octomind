@@ -180,6 +180,33 @@ impl AiProvider for OpenAiProvider {
 		model.contains("gpt-4") || model.contains("o1")
 	}
 
+	fn get_max_input_tokens(&self, model: &str) -> usize {
+		// OpenAI model context window limits (what we can send as input)
+		// These are the actual context windows - API handles output limits
+
+		// GPT-4o models: 128K context window
+		if model.contains("gpt-4o") {
+			return 128_000;
+		}
+		// GPT-4 models: varies by version
+		if model.contains("gpt-4-turbo") || model.contains("gpt-4.5") || model.contains("gpt-4.1") {
+			return 128_000;
+		}
+		if model.contains("gpt-4") && !model.contains("gpt-4o") {
+			return 8_192; // Old GPT-4: 8K context window
+		}
+		// O-series models: 128K context window
+		if model.starts_with("o1") || model.starts_with("o2") || model.starts_with("o3") {
+			return 128_000;
+		}
+		// GPT-3.5: 16K context window
+		if model.contains("gpt-3.5") {
+			return 16_384;
+		}
+		// Default conservative limit
+		8_192
+	}
+
 	async fn chat_completion(
 		&self,
 		messages: &[Message],

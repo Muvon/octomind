@@ -104,6 +104,40 @@ impl AiProvider for OpenRouterProvider {
 		model.contains("claude") || model.contains("gemini")
 	}
 
+	fn get_max_input_tokens(&self, model: &str) -> usize {
+		// OpenRouter model input limits depend on underlying provider
+		// Claude models through OpenRouter: 200K total context
+		if model.contains("claude") {
+			return 200_000 - 32_768; // Reserve 32K for output = ~167K input max
+		}
+		// GPT models through OpenRouter: varies by model
+		if model.contains("gpt-4o") {
+			return 128_000 - 4_096;
+		}
+		if model.contains("gpt-4") {
+			return 128_000 - 4_096;
+		}
+		if model.contains("gpt-3.5") {
+			return 16_384 - 2_048;
+		}
+		// Gemini models through OpenRouter
+		if model.contains("gemini-2.5") {
+			return 2_000_000 - 8_192;
+		}
+		if model.contains("gemini-2.0") || model.contains("gemini-1.5") {
+			return 1_000_000 - 8_192;
+		}
+		if model.contains("gemini") {
+			return 32_768 - 2_048;
+		}
+		// Llama models through OpenRouter: typically 128K
+		if model.contains("llama") {
+			return 128_000 - 4_096;
+		}
+		// Default conservative limit for unknown models
+		32_768 - 2_048
+	}
+
 	async fn chat_completion(
 		&self,
 		messages: &[Message],

@@ -42,7 +42,9 @@ pub use commands::{
 	QUIT_COMMAND, RUN_COMMAND, SAVE_COMMAND,
 };
 pub use context_reduction::perform_context_reduction;
-pub use context_truncation::{check_and_truncate_context, perform_smart_truncation};
+pub use context_truncation::{
+	check_and_truncate_context, perform_smart_full_summarization, perform_smart_truncation,
+};
 pub use cost_tracker::CostTracker;
 pub use formatting::{format_duration, remove_function_calls};
 pub use input::read_user_input;

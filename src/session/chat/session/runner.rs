@@ -778,13 +778,16 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 		}
 
-		// Now directly perform the API call - ensure usage parameter is included
-		// for consistent cost tracking across all API requests
-		let api_result = crate::session::chat_completion_with_provider(
-			&chat_session.session.messages,
+		// Now perform the API call with input validation and context management
+		// This will check input size and prompt user for action if limits are exceeded
+		// Clone messages to avoid borrowing conflicts
+		let messages = chat_session.session.messages.clone();
+		let api_result = crate::session::chat_completion_with_validation(
+			&messages,
 			&model,
 			temperature,
 			&config_clone,
+			Some(&mut chat_session),
 		)
 		.await;
 

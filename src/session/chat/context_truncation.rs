@@ -17,6 +17,7 @@
 use crate::config::Config;
 use crate::log_conditional;
 use crate::session::chat::session::ChatSession;
+use crate::session::SmartSummarizer;
 use anyhow::Result;
 use colored::Colorize;
 use std::sync::atomic::AtomicBool;
@@ -181,9 +182,31 @@ pub async fn perform_smart_truncation(
 	// Add context note only if we actually removed messages
 	if preserved_messages.len() < non_system_messages.len() {
 		let removed_count = non_system_messages.len() - preserved_messages.len();
+
+		// Get the messages that were removed for summarization
+		let removed_messages: Vec<_> = non_system_messages
+			.iter()
+			.take(removed_count)
+			.cloned()
+			.cloned()
+			.collect();
+
+		// Create smart summary of removed messages
+		let summarizer = SmartSummarizer::new();
+		let removed_summary = match summarizer.summarize_messages(&removed_messages) {
+			Ok(summary) => summary,
+			Err(e) => {
+				log_conditional!(
+					debug: format!("Failed to summarize removed messages: {}", e).bright_yellow(),
+					default: "Failed to create summary of removed messages".bright_yellow()
+				);
+				format!("Removed {} older messages", removed_count)
+			}
+		};
+
 		let context_note = format!(
-			"[Smart truncation applied: {} older messages removed to optimize token usage. Tool sequences and recent context preserved.]",
-			removed_count
+			"[Smart truncation applied: {} older messages removed and summarized below]\n\n--- Summary of Removed Context ---\n{}\n--- End Summary ---",
+			removed_count, removed_summary
 		);
 
 		let summary_msg = crate::session::Message {
@@ -218,6 +241,108 @@ pub async fn perform_smart_truncation(
 	);
 
 	// Save the session with truncated messages
+	chat_session.save()?;
+
+	Ok(())
+}
+
+/// Perform smart full context summarization using external crate
+/// This replaces the entire conversation with an intelligent summary
+pub async fn perform_smart_full_summarization(
+	chat_session: &mut ChatSession,
+	_config: &Config,
+) -> Result<()> {
+	log_conditional!(
+		debug: "Performing smart full context summarization...".bright_blue(),
+		default: "Summarizing conversation...".bright_blue()
+	);
+
+	// Extract system message
+	let system_message = chat_session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.role == "system")
+		.cloned();
+
+	// Get all non-system messages for summarization
+	let conversation_messages: Vec<_> = chat_session
+		.session
+		.messages
+		.iter()
+		.filter(|m| m.role != "system")
+		.cloned()
+		.collect();
+
+	if conversation_messages.is_empty() {
+		log_conditional!(
+			debug: "No conversation messages to summarize".bright_yellow(),
+			default: "No conversation to summarize".bright_yellow()
+		);
+		return Ok(());
+	}
+
+	// Create smart summary of entire conversation
+	let summarizer = SmartSummarizer::new();
+	let conversation_summary = match summarizer.summarize_messages(&conversation_messages) {
+		Ok(summary) => summary,
+		Err(e) => {
+			log_conditional!(
+				debug: format!("Failed to summarize conversation: {}", e).bright_red(),
+				default: "Failed to create conversation summary".bright_red()
+			);
+			return Err(anyhow::anyhow!("Summarization failed: {}", e));
+		}
+	};
+
+	// Build new message list with summary
+	let mut new_messages = Vec::new();
+
+	// Add system message first if available
+	if let Some(sys_msg) = system_message {
+		new_messages.push(sys_msg);
+	}
+
+	// Add comprehensive summary as assistant message
+	let summary_note = format!(
+		"--- Conversation Summary ---\n{}\n--- End Summary ---\n\nConversation has been summarized. You can continue from here.",
+		conversation_summary
+	);
+
+	let summary_msg = crate::session::Message {
+		role: "assistant".to_string(),
+		content: summary_note,
+		timestamp: std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs(),
+		cached: true, // Mark for caching
+		tool_call_id: None,
+		name: None,
+		tool_calls: None,
+	};
+	new_messages.push(summary_msg);
+
+	// Replace session messages with summarized version
+	let original_count = chat_session.session.messages.len();
+	chat_session.session.messages = new_messages;
+
+	// Reset token tracking for fresh start
+	chat_session.session.current_non_cached_tokens = 0;
+	chat_session.session.current_total_tokens = 0;
+
+	// Update cache checkpoint time
+	chat_session.session.last_cache_checkpoint_time = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default()
+		.as_secs();
+
+	log_conditional!(
+		debug: format!("Full summarization complete: {} messages replaced with summary", original_count).bright_green(),
+		default: "Conversation summarized successfully".bright_green()
+	);
+
+	// Save the updated session
 	chat_session.save()?;
 
 	Ok(())

@@ -131,6 +131,28 @@ impl AiProvider for GoogleVertexProvider {
 		model.contains("gemini-2.5") || model.contains("gemini-2.0") || model.contains("gemini-1.5")
 	}
 
+	fn get_max_input_tokens(&self, model: &str) -> usize {
+		// Google Vertex AI model context window limits
+		// Gemini 2.5 models: 2M context window
+		if model.contains("gemini-2.5") {
+			return 2_000_000;
+		}
+		// Gemini 2.0 models: 1M context window
+		if model.contains("gemini-2.0") {
+			return 1_000_000;
+		}
+		// Gemini 1.5 models: 1M context window
+		if model.contains("gemini-1.5") {
+			return 1_000_000;
+		}
+		// Gemini 1.0 models: 32K context window
+		if model.contains("gemini-1.0") || model.contains("gemini-pro") {
+			return 32_768;
+		}
+		// Default conservative limit
+		32_768
+	}
+
 	async fn chat_completion(
 		&self,
 		messages: &[Message],

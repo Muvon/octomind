@@ -167,6 +167,27 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		false
 	}
 
+	fn get_max_input_tokens(&self, model: &str) -> usize {
+		// Cloudflare Workers AI model input limits (total context minus reserved output tokens)
+		// Llama models: varies by version
+		if model.contains("llama-3.1") || model.contains("llama-3.2") {
+			return 128_000 - 4_096; // Reserve 4K for output = ~124K input max
+		}
+		if model.contains("llama") {
+			return 32_768 - 2_048; // Older Llama models
+		}
+		// Qwen models: typically 32K
+		if model.contains("qwen") {
+			return 32_768 - 2_048;
+		}
+		// Mistral models: varies
+		if model.contains("mistral") {
+			return 32_768 - 2_048;
+		}
+		// Default conservative limit for Workers AI
+		16_384 - 1_024
+	}
+
 	async fn chat_completion(
 		&self,
 		messages: &[Message],

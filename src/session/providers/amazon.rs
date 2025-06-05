@@ -187,6 +187,31 @@ impl AiProvider for AmazonBedrockProvider {
 		model.contains("claude")
 	}
 
+	fn get_max_input_tokens(&self, model: &str) -> usize {
+		// Amazon Bedrock model input limits (total context minus reserved output tokens)
+		// Claude models on Bedrock: 200K total context
+		if model.contains("claude") {
+			return 200_000 - 32_768; // Reserve 32K for output = ~167K input max
+		}
+		// Llama models on Bedrock: varies by version
+		if model.contains("llama-3.1") || model.contains("llama-3.2") {
+			return 128_000 - 4_096; // Reserve 4K for output = ~124K input max
+		}
+		if model.contains("llama") {
+			return 32_768 - 2_048; // Older Llama models
+		}
+		// Cohere models on Bedrock: typically 128K
+		if model.contains("cohere") {
+			return 128_000 - 4_096;
+		}
+		// Titan models on Bedrock: 32K
+		if model.contains("titan") {
+			return 32_768 - 2_048;
+		}
+		// Default conservative limit
+		32_768 - 2_048
+	}
+
 	async fn chat_completion(
 		&self,
 		messages: &[Message],

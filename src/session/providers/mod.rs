@@ -120,6 +120,10 @@ pub trait AiProvider: Send + Sync {
 		// Default implementation - providers can override if they have specific config sections
 		None
 	}
+
+	/// Get maximum input tokens for a model (actual context window size)
+	/// This is what we can send to the API - the provider handles output limits internally
+	fn get_max_input_tokens(&self, model: &str) -> usize;
 }
 
 /// Provider factory to create the appropriate provider based on model string

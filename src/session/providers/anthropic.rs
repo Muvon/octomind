@@ -45,32 +45,36 @@ const PRICING: &[(&str, f64, f64)] = &[
 	("claude-instant-1.2", 0.80, 2.40),
 ];
 
+/// Token usage breakdown for cache-aware pricing
+struct CacheTokenUsage {
+	regular_input_tokens: u64,
+	cache_creation_tokens: u64,
+	cache_read_tokens: u64,
+	output_tokens: u64,
+}
+
 /// Calculate cost for Anthropic models with cache-aware pricing
 /// - cache_creation_tokens: charged at 1.25x normal price
 /// - cache_read_tokens: charged at 0.1x normal price  
 /// - regular_input_tokens: charged at normal price
 /// - output_tokens: charged at normal price
-fn calculate_cost_with_cache(
-	model: &str,
-	regular_input_tokens: u64,
-	cache_creation_tokens: u64,
-	cache_read_tokens: u64,
-	output_tokens: u64,
-) -> Option<f64> {
+fn calculate_cost_with_cache(model: &str, usage: CacheTokenUsage) -> Option<f64> {
 	for (pricing_model, input_price, output_price) in PRICING {
 		if model.contains(pricing_model) {
 			// Regular input tokens at normal price
-			let regular_input_cost = (regular_input_tokens as f64 / 1_000_000.0) * input_price;
+			let regular_input_cost =
+				(usage.regular_input_tokens as f64 / 1_000_000.0) * input_price;
 
 			// Cache creation tokens at 1.25x price (25% more expensive)
 			let cache_creation_cost =
-				(cache_creation_tokens as f64 / 1_000_000.0) * input_price * 1.25;
+				(usage.cache_creation_tokens as f64 / 1_000_000.0) * input_price * 1.25;
 
 			// Cache read tokens at 0.1x price (90% cheaper)
-			let cache_read_cost = (cache_read_tokens as f64 / 1_000_000.0) * input_price * 0.1;
+			let cache_read_cost =
+				(usage.cache_read_tokens as f64 / 1_000_000.0) * input_price * 0.1;
 
 			// Output tokens at normal price (never cached)
-			let output_cost = (output_tokens as f64 / 1_000_000.0) * output_price;
+			let output_cost = (usage.output_tokens as f64 / 1_000_000.0) * output_price;
 
 			return Some(regular_input_cost + cache_creation_cost + cache_read_cost + output_cost);
 		}
@@ -128,6 +132,38 @@ impl AiProvider for AnthropicProvider {
 
 	fn supports_caching(&self, _model: &str) -> bool {
 		true
+	}
+
+	fn get_max_input_tokens(&self, model: &str) -> usize {
+		// Anthropic model context window limits (what we can send as input)
+		// These are the actual context windows - no output reservation needed
+		// The API will handle output limits internally
+
+		// Claude 4 models: 200K context window
+		if model.contains("claude-opus-4") || model.contains("claude-sonnet-4") {
+			return 200_000;
+		}
+		// Claude 3.7 models: 200K context window
+		if model.contains("claude-3-7-sonnet") {
+			return 200_000;
+		}
+		// Claude 3.5 models: 200K context window
+		if model.contains("claude-3-5-sonnet") || model.contains("claude-3-5-haiku") {
+			return 200_000;
+		}
+		// Claude 3 models: 200K context window
+		if model.contains("claude-3-opus")
+			|| model.contains("claude-3-sonnet")
+			|| model.contains("claude-3-haiku")
+		{
+			return 200_000;
+		}
+		// Legacy models: 100K context window
+		if model.contains("claude-2") || model.contains("claude-instant") {
+			return 100_000;
+		}
+		// Default conservative limit
+		100_000
 	}
 
 	async fn chat_completion(
@@ -327,10 +363,12 @@ impl AiProvider for AnthropicProvider {
 			// Calculate cost with cache-aware pricing
 			let cost = calculate_cost_with_cache(
 				model,
-				regular_input_tokens,
-				cache_creation_input_tokens,
-				cache_read_input_tokens,
-				output_tokens,
+				CacheTokenUsage {
+					regular_input_tokens,
+					cache_creation_tokens: cache_creation_input_tokens,
+					cache_read_tokens: cache_read_input_tokens,
+					output_tokens,
+				},
 			);
 
 			// Simple interface: only expose total cached tokens (both read and write)

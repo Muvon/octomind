@@ -23,6 +23,7 @@ pub mod logger; // Request/response logging utilities
 mod model_utils; // Model-specific utility functions
 mod project_context; // Project context collection and management
 pub mod providers; // Provider abstraction layer
+pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
 
 // Provider system exports
@@ -32,6 +33,7 @@ pub use layers::{process_with_layers, InputMode, Layer, LayerConfig, LayerMcpCon
 pub use model_utils::model_supports_caching;
 pub use project_context::ProjectContext;
 pub use providers::{AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage};
+pub use smart_summarizer::SmartSummarizer;
 pub use token_counter::{estimate_message_tokens, estimate_tokens}; // Export token counting functions // Export cache management
 
 // Re-export constants
@@ -577,6 +579,168 @@ pub async fn create_system_prompt(
 	}
 
 	prompt
+}
+
+/// High-level function to send a chat completion with input validation and context management
+/// This function checks input size and prompts user for handling when limits are exceeded
+pub async fn chat_completion_with_validation(
+	messages: &[Message],
+	model: &str,
+	temperature: f32,
+	config: &Config,
+	chat_session: Option<&mut crate::session::chat::session::ChatSession>,
+) -> Result<ProviderResponse> {
+	// Parse the model string and get the appropriate provider
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+
+	// Get maximum input tokens for this provider/model (actual context window)
+	let max_input_tokens = provider.get_max_input_tokens(&actual_model);
+
+	// Calculate EXACTLY what we're about to send to the API
+	let mut total_input_tokens = estimate_message_tokens(messages);
+
+	// Add estimated tokens for tool definitions if MCP is configured
+	if !config.mcp.servers.is_empty() {
+		// More accurate estimate: ~150 tokens per tool definition on average
+		let tool_count = config.mcp.servers.len();
+		total_input_tokens += tool_count * 150;
+	}
+
+	// Check if our total input exceeds what the provider can handle
+	if total_input_tokens > max_input_tokens {
+		crate::log_error!(
+			"⚠️  Input too large for {} {} ({} tokens, max {} tokens)",
+			provider.name(),
+			actual_model,
+			total_input_tokens,
+			max_input_tokens
+		);
+
+		// If we have a chat session, offer user choices
+		if let Some(session) = chat_session {
+			return handle_context_limit_exceeded(
+				session,
+				config,
+				provider.as_ref(),
+				&actual_model,
+				temperature,
+			)
+			.await;
+		} else {
+			// No session available, just return error
+			return Err(anyhow::anyhow!(
+				"Input size ({} tokens) exceeds provider limit ({} tokens) for {} {}",
+				total_input_tokens,
+				max_input_tokens,
+				provider.name(),
+				actual_model
+			));
+		}
+	}
+
+	// Input size is acceptable, proceed with API call
+	provider
+		.chat_completion(messages, &actual_model, temperature, config)
+		.await
+}
+
+/// Handle context limit exceeded by prompting user for action
+async fn handle_context_limit_exceeded(
+	chat_session: &mut crate::session::chat::session::ChatSession,
+	config: &Config,
+	provider: &dyn AiProvider,
+	model: &str,
+	temperature: f32,
+) -> Result<ProviderResponse> {
+	use colored::Colorize;
+	use rustyline::DefaultEditor;
+
+	println!("{}", "Choose action:".bright_cyan());
+	println!(
+		"  {} - Smart truncate (keep recent + summarize removed)",
+		"t".bright_green()
+	);
+	println!(
+		"  {} - Smart summarize (summarize entire conversation)",
+		"s".bright_yellow()
+	);
+	println!("  {} - Cancel operation", "c".bright_red());
+
+	let mut rl = DefaultEditor::new()
+		.map_err(|e| anyhow::anyhow!("Failed to create input reader: {}", e))?;
+
+	loop {
+		match rl.readline("Your choice (t/s/c): ") {
+			Ok(line) => {
+				let choice = line.trim().to_lowercase();
+				match choice.as_str() {
+					"t" | "truncate" => {
+						println!("{}", "Applying smart truncation...".bright_blue());
+
+						// Apply enhanced smart truncation
+						crate::session::chat::perform_smart_truncation(
+							chat_session,
+							config,
+							crate::session::estimate_message_tokens(&chat_session.session.messages),
+						)
+						.await?;
+
+						// Retry the API call with truncated context
+						return provider
+							.chat_completion(
+								&chat_session.session.messages,
+								model,
+								temperature,
+								config,
+							)
+							.await;
+					}
+					"s" | "summarize" => {
+						println!("{}", "Applying smart summarization...".bright_blue());
+
+						// Apply full context summarization
+						crate::session::chat::perform_smart_full_summarization(
+							chat_session,
+							config,
+						)
+						.await?;
+
+						// Retry the API call with summarized context
+						return provider
+							.chat_completion(
+								&chat_session.session.messages,
+								model,
+								temperature,
+								config,
+							)
+							.await;
+					}
+					"c" | "cancel" => {
+						println!("{}", "Operation cancelled.".bright_yellow());
+						return Err(anyhow::anyhow!("User cancelled due to context size limit"));
+					}
+					_ => {
+						println!(
+							"{}",
+							"Invalid choice. Please enter 't', 's', or 'c'.".bright_red()
+						);
+						continue;
+					}
+				}
+			}
+			Err(rustyline::error::ReadlineError::Interrupted) => {
+				println!("{}", "Operation cancelled.".bright_yellow());
+				return Err(anyhow::anyhow!("User cancelled due to context size limit"));
+			}
+			Err(rustyline::error::ReadlineError::Eof) => {
+				println!("{}", "Operation cancelled.".bright_yellow());
+				return Err(anyhow::anyhow!("User cancelled due to context size limit"));
+			}
+			Err(err) => {
+				return Err(anyhow::anyhow!("Input error: {}", err));
+			}
+		}
+	}
 }
 
 /// High-level function to send a chat completion using the provider abstraction

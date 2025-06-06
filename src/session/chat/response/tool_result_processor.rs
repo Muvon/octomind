@@ -245,16 +245,6 @@ pub async fn process_tool_results(
 			handle_follow_up_cost_tracking(chat_session, &response.exchange, config);
 
 			if should_continue_conversation {
-				// Log if debug mode is enabled
-				if config.get_log_level().is_debug_enabled() {
-					println!(
-						"{}",
-						"Debug: Continuing conversation due to finish_reason or tool calls"
-							.to_string()
-							.yellow()
-					);
-				}
-				// Continue processing the new content with tool calls
 				Ok(Some((
 					response.content,
 					response.exchange,

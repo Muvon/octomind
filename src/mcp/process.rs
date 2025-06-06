@@ -200,14 +200,13 @@ fn ensure_server_running_with_retry(
 						info.last_health_check = Some(SystemTime::now());
 					}
 
-					crate::log_debug!("Server '{}' is already running and healthy", server_id);
 					match server.mode {
 						McpServerMode::Http => return get_server_url(server),
 						McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
 					}
 				} else {
 					// Server is dead - mark it as such
-					crate::log_debug!(
+					crate::log_info!(
 						"Server '{}' is not running or has shut down - needs restart",
 						server_id
 					);

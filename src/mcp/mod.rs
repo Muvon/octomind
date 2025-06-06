@@ -290,23 +290,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 		enabled_servers.len()
 	);
 
-	// DEBUG: Print all server details
-	for server in &enabled_servers {
-		crate::log_debug!(
-			"MCP Server: {} - Type: {:?}, Tools: {:?}",
-			server.name,
-			server.server_type,
-			server.tools
-		);
-	}
-
 	for server in enabled_servers {
-		crate::log_debug!(
-			"Processing MCP server: {} (type: {:?})",
-			server.name,
-			server.server_type
-		);
-
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
 				let server_functions = if server.tools.is_empty() {
@@ -319,14 +303,6 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.filter(|func| server.tools.contains(&func.name))
 						.collect()
 				};
-				crate::log_debug!(
-					"Developer server '{}' provided {} functions",
-					server.name,
-					server_functions.len()
-				);
-				for func in &server_functions {
-					crate::log_debug!("  - Developer tool: {}", func.name);
-				}
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::Filesystem => {
@@ -340,24 +316,11 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 						.filter(|func| server.tools.contains(&func.name))
 						.collect()
 				};
-				crate::log_debug!(
-					"Filesystem server '{}' provided {} functions",
-					server.name,
-					server_functions.len()
-				);
-				for func in &server_functions {
-					crate::log_debug!("  - Filesystem tool: {}", func.name);
-				}
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::External => {
 				// CRITICAL FIX: For external servers, use cached function discovery
 				// This avoids spawning servers during system prompt creation
-				crate::log_debug!(
-					"Getting cached functions for external server: {}",
-					server.name
-				);
-
 				match server::get_server_functions_cached(&server).await {
 					Ok(server_functions) => {
 						let filtered_functions = if server.tools.is_empty() {
@@ -370,18 +333,10 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 								.filter(|func| server.tools.contains(&func.name))
 								.collect()
 						};
-						crate::log_debug!(
-							"External server '{}' provided {} cached functions",
-							server.name,
-							filtered_functions.len()
-						);
-						for func in &filtered_functions {
-							crate::log_debug!("  - External tool (cached): {}", func.name);
-						}
 						functions.extend(filtered_functions);
 					}
 					Err(e) => {
-						crate::log_debug!(
+						crate::log_error!(
 							"Failed to get cached functions from external server '{}': {} (will be available when server starts)",
 							server.name,
 							e
@@ -393,10 +348,6 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 		}
 	}
 
-	crate::log_debug!("Total functions available: {}", functions.len());
-	for func in &functions {
-		crate::log_debug!("Available function: {}", func.name);
-	}
 	functions
 }
 

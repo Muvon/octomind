@@ -82,7 +82,7 @@ impl CostTracker {
 		let cached = chat_session.session.info.cached_tokens;
 		let non_cached_prompt = chat_session.session.info.input_tokens;
 		let completion = chat_session.session.info.output_tokens;
-		
+
 		// FIXED: Show total prompt tokens (cached + non-cached) as "prompt"
 		// This matches user expectation that prompt tokens should show the actual tokens processed
 		let total_prompt = non_cached_prompt + cached;

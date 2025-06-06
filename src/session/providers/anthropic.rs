@@ -363,11 +363,11 @@ impl AiProvider for AnthropicProvider {
 			// - prompt_tokens should be: input_tokens + cache_creation_input_tokens + cache_read_input_tokens
 			// - cached_tokens should ONLY be: cache_read_input_tokens
 			// - This way we show the total prompt tokens processed, with breakdown of what was cached
-			
-			let cached_tokens = cache_read_input_tokens;  // Only cache reads are "cached"
+
+			let cached_tokens = cache_read_input_tokens; // Only cache reads are "cached"
 
 			// For cost calculation, we need to separate the different token types
-			let regular_input_tokens = input_tokens;  // These are already regular tokens from API
+			let regular_input_tokens = input_tokens; // These are already regular tokens from API
 
 			// Calculate cost with cache-aware pricing
 			let cost = calculate_cost_with_cache(
@@ -381,9 +381,12 @@ impl AiProvider for AnthropicProvider {
 			);
 
 			Some(TokenUsage {
-				prompt_tokens: input_tokens + cache_creation_input_tokens + cache_read_input_tokens,  // Total prompt tokens processed
+				prompt_tokens: input_tokens + cache_creation_input_tokens + cache_read_input_tokens, // Total prompt tokens processed
 				output_tokens,
-				total_tokens: input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens,
+				total_tokens: input_tokens
+					+ cache_creation_input_tokens
+					+ cache_read_input_tokens
+					+ output_tokens,
 				cached_tokens,         // Only cache_read_input_tokens are truly "cached"
 				cost,                  // Pre-calculated with proper cache pricing
 				request_time_ms: None, // TODO: Add API timing for Anthropic

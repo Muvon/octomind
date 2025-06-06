@@ -233,7 +233,7 @@ pub async fn process_tool_results(
 			// Debug logging for follow-up finish_reason
 			if config.get_log_level().is_debug_enabled() {
 				if let Some(ref reason) = response.finish_reason {
-					log_debug!("Debug: Follow-up finish_reason: {}", reason);
+					log_debug!("Follow-up finish_reason: {}", reason);
 				}
 			}
 
@@ -348,18 +348,18 @@ fn check_should_continue(
 	has_more_tools: bool,
 ) -> bool {
 	match response.finish_reason.as_deref() {
-		Some("tool_calls") => {
+		Some("tool_calls") | Some("tool_use") => {
 			// Model wants to make more tool calls
 			if config.get_log_level().is_debug_enabled() {
-				log_debug!("Debug: finish_reason is 'tool_calls', continuing conversation");
+				log_debug!("finish_reason is 'tool_calls', continuing conversation");
 			}
 			true
 		}
-		Some("stop") | Some("length") => {
+		Some("stop") | Some("length") | Some("end_turn") => {
 			// Model finished normally or hit length limit
 			if config.get_log_level().is_debug_enabled() {
 				log_debug!(
-					"Debug: finish_reason is '{}', ending conversation",
+					"finish_reason is '{}', ending conversation",
 					response.finish_reason.as_deref().unwrap()
 				);
 			}
@@ -368,10 +368,7 @@ fn check_should_continue(
 		Some(other) => {
 			// Unknown finish_reason, be conservative and continue
 			if config.get_log_level().is_debug_enabled() {
-				log_debug!(
-					"Debug: Unknown finish_reason '{}', continuing conversation",
-					other
-				);
+				log_info!("Unknown finish_reason '{}', continuing conversation", other);
 			}
 			true
 		}

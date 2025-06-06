@@ -21,6 +21,9 @@ use rustyline::{
 	Cmd, ConditionalEventHandler, Event, EventHandler, KeyEvent, Modifiers, RepeatCount,
 };
 use rustyline::{CompletionType, Config as RustylineConfig, EditMode, Editor};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
+use std::sync::Mutex;
 
 // Custom event handler for smart Ctrl+E behavior
 struct SmartCtrlEHandler;
@@ -48,11 +51,55 @@ use std::path::PathBuf;
 
 use crate::log_info;
 
+// Global mutex for history file operations to prevent race conditions
+lazy_static::lazy_static! {
+	static ref HISTORY_MUTEX: Mutex<()> = Mutex::new(());
+}
+
 // Get the history file path
 fn get_history_file_path() -> Result<PathBuf> {
 	// Use system-wide data directory
 	let data_dir = crate::directories::get_octomind_data_dir()?;
 	Ok(data_dir.join("history"))
+}
+
+// Append a single line to history file in thread-safe manner
+fn append_to_history_file(line: &str) -> Result<()> {
+	let _lock = HISTORY_MUTEX.lock().unwrap();
+	let history_path = get_history_file_path()?;
+
+	let mut file = OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(&history_path)?;
+
+	writeln!(file, "{}", line)?;
+	file.flush()?;
+
+	Ok(())
+}
+
+// Load history from file, handling concurrent access safely
+fn load_history_from_file() -> Result<Vec<String>> {
+	let _lock = HISTORY_MUTEX.lock().unwrap();
+	let history_path = get_history_file_path()?;
+
+	if !history_path.exists() {
+		return Ok(Vec::new());
+	}
+
+	let file = std::fs::File::open(&history_path)?;
+	let reader = BufReader::new(file);
+
+	let mut history = Vec::new();
+	for line in reader.lines() {
+		let line = line?;
+		if !line.trim().is_empty() {
+			history.push(line);
+		}
+	}
+
+	Ok(history)
 }
 
 // Read user input with support for multiline input, command completion, and persistent history
@@ -119,16 +166,15 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		EventHandler::Simple(Cmd::Newline),
 	);
 
-	// Load persistent history
-	let history_path = get_history_file_path()?;
-	if history_path.exists() {
-		if let Err(e) = editor.load_history(&history_path) {
-			// Don't fail if history can't be loaded, just log it
-			log_info!(
-				"Could not load history from {}: {}",
-				history_path.display(),
-				e
-			);
+	// Load persistent history using our safe method
+	match load_history_from_file() {
+		Ok(history_lines) => {
+			for line in history_lines {
+				let _ = editor.add_history_entry(line);
+			}
+		}
+		Err(e) => {
+			log_info!("Could not load history: {}", e);
 		}
 	}
 
@@ -147,15 +193,11 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 			// Add to in-memory history (auto_add_history is true, but we also save to file)
 			let _ = editor.add_history_entry(line.clone());
 
-			// Save history to persistent file
+			// Append to persistent file using thread-safe append-only method
 			// This includes ALL inputs - both regular inputs and commands starting with '/'
-			if let Err(e) = editor.save_history(&history_path) {
+			if let Err(e) = append_to_history_file(&line) {
 				// Don't fail if history can't be saved, just log it
-				log_info!(
-					"Could not save history to {}: {}",
-					history_path.display(),
-					e
-				);
+				log_info!("Could not append to history file: {}", e);
 			}
 
 			// Log user input only if it's not a command (doesn't start with '/')

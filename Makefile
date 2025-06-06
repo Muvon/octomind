@@ -68,7 +68,10 @@ help:
 	@echo "  test              - Run tests"
 	@echo "  test-completions  - Test shell completion generation"
 	@echo "  fmt               - Format code"
+	@echo "  fmt-check         - Check code formatting without modifying"
 	@echo "  clippy            - Run clippy lints"
+	@echo "  pre-commit        - Run pre-commit hooks on all files"
+	@echo "  pre-commit-install - Install pre-commit hooks"
 	@echo ""
 	@echo "Individual platform targets:"
 	@echo "  $(TARGETS)" | tr ' ' '\n' | sed 's/^/  /'
@@ -235,11 +238,29 @@ fmt:
 	@echo "Formatting code..."
 	cargo fmt --all
 
+# Check formatting without modifying files
+.PHONY: fmt-check
+fmt-check:
+	@echo "Checking code formatting..."
+	cargo fmt --all -- --check
+
 # Run clippy lints
 .PHONY: clippy
 clippy:
 	@echo "Running clippy..."
 	cargo clippy --all-targets --all-features -- -D warnings
+
+# Run pre-commit hooks on all files
+.PHONY: pre-commit
+pre-commit:
+	@echo "Running pre-commit hooks..."
+	pre-commit run --all-files
+
+# Install pre-commit hooks
+.PHONY: pre-commit-install
+pre-commit-install:
+	@echo "Installing pre-commit hooks..."
+	pre-commit install
 
 # Security audit
 .PHONY: audit
@@ -257,6 +278,11 @@ outdated:
 .PHONY: dev
 dev: fmt clippy test
 	@echo "Development checks complete!"
+
+# Development workflow with pre-commit
+.PHONY: dev-full
+dev-full: pre-commit test
+	@echo "Full development checks complete!"
 
 # CI workflow
 .PHONY: ci

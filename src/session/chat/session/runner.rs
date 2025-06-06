@@ -572,7 +572,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				} else if input.starts_with(LAYERS_COMMAND)
 					|| input.starts_with(DEBUG_COMMAND)
 					|| input.starts_with(LOGLEVEL_COMMAND)
-					|| input.starts_with(TRUNCATE_COMMAND)
 				{
 					// This is a command that requires config reload
 					// Reload the configuration

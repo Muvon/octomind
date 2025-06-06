@@ -377,6 +377,11 @@ pub async fn perform_smart_truncation(
 	config: &Config,
 	current_tokens: usize,
 ) -> Result<()> {
+	// Basic validation
+	if chat_session.session.messages.is_empty() {
+		return Ok(()); // Nothing to truncate
+	}
+
 	// We need to truncate - inform the user with minimal info
 	log_conditional!(
 		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nApplying enhanced smart truncation to reduce context size.",
@@ -484,8 +489,44 @@ pub async fn perform_smart_truncation(
 
 		// Second pass: Fill remaining space with recent messages and tool sequences
 		// Work backwards from most recent, respecting tool sequences
+
+		// First, identify complete tool sequences to preserve them as units
+		let mut tool_sequences = Vec::new();
+		let mut i = 0;
+		while i < compressed_messages.len() {
+			let msg = &compressed_messages[i];
+
+			// Look for assistant messages with tool_calls (start of tool sequence)
+			if msg.role == "assistant" && msg.tool_calls.is_some() {
+				let mut sequence_indices = vec![i];
+				let mut j = i + 1;
+
+				// Collect all subsequent tool messages that belong to this sequence
+				while j < compressed_messages.len() {
+					let next_msg = &compressed_messages[j];
+					if next_msg.role == "tool" {
+						sequence_indices.push(j);
+						j += 1;
+					} else {
+						break; // End of tool sequence
+					}
+				}
+
+				// Calculate total tokens for this sequence
+				let sequence_tokens: usize = sequence_indices
+					.iter()
+					.map(|&idx| crate::session::estimate_tokens(&compressed_messages[idx].content))
+					.sum();
+
+				tool_sequences.push((sequence_indices, sequence_tokens));
+				i = j; // Skip to after this sequence
+			} else {
+				i += 1;
+			}
+		}
+
+		// Now work backwards, preserving complete tool sequences
 		let mut i = compressed_messages.len();
-		let mut incomplete_tool_sequence = false;
 
 		while i > 0 && current_token_count < target_tokens {
 			i -= 1;
@@ -497,70 +538,112 @@ pub async fn perform_smart_truncation(
 			let msg = &compressed_messages[i];
 			let msg_tokens = crate::session::estimate_tokens(&msg.content);
 
-			// Check if adding this message would exceed our budget
-			if current_token_count + msg_tokens > target_tokens && !selected_messages.is_empty() {
-				break;
+			// Check if this message is part of a tool sequence
+			let mut is_part_of_sequence = false;
+			let mut sequence_to_include = None;
+
+			for (seq_indices, seq_tokens) in &tool_sequences {
+				if seq_indices.contains(&i) {
+					is_part_of_sequence = true;
+					// Check if we can include the entire sequence
+					if current_token_count + seq_tokens <= target_tokens {
+						// Check if any part of this sequence is already selected
+						let sequence_already_selected = seq_indices
+							.iter()
+							.any(|&idx| selected_indices.contains(&idx));
+
+						if !sequence_already_selected {
+							sequence_to_include = Some((seq_indices.clone(), *seq_tokens));
+						}
+					}
+					break;
+				}
 			}
 
-			// Tool sequence preservation logic (enhanced from original)
-			match msg.role.as_str() {
-				"tool" => {
-					// Always include tool messages to avoid breaking sequences
-					selected_messages.push((i, msg.clone()));
-					selected_indices.insert(i);
-					current_token_count += msg_tokens;
-					incomplete_tool_sequence = true;
+			if let Some((seq_indices, seq_tokens)) = sequence_to_include {
+				// Include the entire tool sequence
+				for &idx in &seq_indices {
+					let seq_msg = &compressed_messages[idx];
+					selected_messages.push((idx, seq_msg.clone()));
+					selected_indices.insert(idx);
 				}
-				"assistant" => {
-					// Include assistant message
-					selected_messages.push((i, msg.clone()));
-					selected_indices.insert(i);
-					current_token_count += msg_tokens;
+				current_token_count += seq_tokens;
+			} else if !is_part_of_sequence {
+				// Not part of a tool sequence, include individually if it fits and is worth keeping
+				if current_token_count + msg_tokens > target_tokens && !selected_messages.is_empty()
+				{
+					break;
+				}
 
-					// If this assistant message has tool_calls, we have a complete sequence
-					if msg.tool_calls.is_some() && incomplete_tool_sequence {
-						incomplete_tool_sequence = false;
-					}
-				}
-				"user" => {
-					// User messages are good natural breakpoints
-					// Include if we have a complete tool sequence or no tool sequence
-					if !incomplete_tool_sequence {
+				match msg.role.as_str() {
+					"user" => {
+						// User messages are good natural breakpoints
 						selected_messages.push((i, msg.clone()));
 						selected_indices.insert(i);
 						current_token_count += msg_tokens;
-					} else {
-						// If we have incomplete tool sequence, we need to include this user message too
-						// to maintain context, but check token budget
-						if current_token_count + msg_tokens <= target_tokens {
-							selected_messages.push((i, msg.clone()));
-							selected_indices.insert(i);
-							current_token_count += msg_tokens;
-						} else {
-							// Can't fit, but we need to break cleanly
-							break;
-						}
 					}
-				}
-				_ => {
-					// Other message types - include if important or recent enough
-					let (_, importance) =
-						&message_scores.iter().find(|(idx, _)| *idx == i).unwrap();
-					if importance.total_score > 0.5 || i >= compressed_messages.len() - 10 {
-						// Recent or important
-						if current_token_count + msg_tokens <= target_tokens {
-							selected_messages.push((i, msg.clone()));
-							selected_indices.insert(i);
-							current_token_count += msg_tokens;
+					"assistant" => {
+						// Assistant messages without tool_calls
+						selected_messages.push((i, msg.clone()));
+						selected_indices.insert(i);
+						current_token_count += msg_tokens;
+					}
+					_ => {
+						// Other message types - include if important or recent enough
+						let (_, importance) =
+							&message_scores.iter().find(|(idx, _)| *idx == i).unwrap();
+						if importance.total_score > 0.5 || i >= compressed_messages.len() - 10 {
+							// Recent or important
+							if current_token_count + msg_tokens <= target_tokens {
+								selected_messages.push((i, msg.clone()));
+								selected_indices.insert(i);
+								current_token_count += msg_tokens;
+							}
 						}
 					}
 				}
 			}
+			// If it's part of a sequence but we can't include the whole sequence, skip it
 		}
 
 		// Sort selected messages by original index to maintain chronological order
 		selected_messages.sort_by_key(|(index, _)| *index);
 		preserved_messages = selected_messages.into_iter().map(|(_, msg)| msg).collect();
+
+		// Remove any orphaned tool messages (tool messages without preceding assistant message with tool_calls)
+		let mut i = 0;
+		while i < preserved_messages.len() {
+			let msg = &preserved_messages[i];
+
+			// Check for tool messages without preceding assistant message with tool_calls
+			if msg.role == "tool" {
+				// Look backwards for the assistant message that made this tool call
+				let mut found_tool_call = false;
+				for j in (0..i).rev() {
+					let prev_msg = &preserved_messages[j];
+					if prev_msg.role == "assistant" && prev_msg.tool_calls.is_some() {
+						found_tool_call = true;
+						break;
+					} else if prev_msg.role == "user" {
+						// Hit a user message without finding tool_calls, this is an orphan
+						break;
+					}
+				}
+
+				if !found_tool_call {
+					// Remove orphaned tool message
+					preserved_messages.remove(i);
+					continue; // Don't increment i since we removed an element
+				}
+			}
+			i += 1;
+		}
+
+		// Recalculate token count after any removals
+		current_token_count = preserved_messages
+			.iter()
+			.map(|msg| crate::session::estimate_tokens(&msg.content))
+			.sum();
 
 		log_conditional!(
 			debug: format!("Enhanced smart truncation: preserving {} of {} messages ({} tokens, {} saved by compression)",

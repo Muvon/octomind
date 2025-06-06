@@ -403,9 +403,6 @@ pub async fn process_response(
 			let current_tool_calls =
 				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
-			// Display tool headers and parameters for all modes (before execution)
-			display_tool_headers(config, &current_tool_calls);
-
 			if !current_tool_calls.is_empty() {
 				// Add assistant message with tool calls preserved
 				add_assistant_message_with_tool_calls(
@@ -416,9 +413,12 @@ pub async fn process_response(
 					role,
 				)?;
 
-				// Display the clean content (without function calls) to the user
+				// Display the clean content (without function calls) to the user FIRST
 				let clean_content = remove_function_calls(&current_content);
 				print_assistant_response(&clean_content, config, role);
+
+				// Display tool headers and parameters for all modes (after AI response)
+				display_tool_headers(config, &current_tool_calls);
 
 				// Early exit if cancellation was requested
 				if operation_cancelled.load(Ordering::SeqCst) {

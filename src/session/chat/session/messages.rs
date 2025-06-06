@@ -276,18 +276,17 @@ impl ChatSession {
 					self.estimated_cost = self.session.info.total_cost;
 
 					// Log the actual cost received from the API for debugging
-					if config.get_log_level().is_debug_enabled() {
-						println!(
-							"Debug: Adding ${:.5} from OpenRouter API (total now: ${:.5})",
-							cost, self.session.info.total_cost
-						);
+					log_debug!(
+						"Adding ${:.5} from OpenRouter API (total now: ${:.5})",
+						cost,
+						self.session.info.total_cost
+					);
 
-						// Check if there's a raw usage object with additional fields
-						if let Some(raw_usage) = ex.response.get("usage") {
-							log_debug!("Raw usage from response:");
-							if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
-								log_debug!("{}", raw_str);
-							}
+					// Check if there's a raw usage object with additional fields
+					if let Some(raw_usage) = ex.response.get("usage") {
+						log_debug!("Raw usage from response:");
+						if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
+							log_debug!("{}", raw_str);
 						}
 					}
 				} else {
@@ -304,37 +303,34 @@ impl ChatSession {
 						self.estimated_cost = self.session.info.total_cost;
 
 						// Log that we had to fetch cost from raw response
-						if config.get_log_level().is_debug_enabled() {
-							println!(
-								"Debug: Using cost from raw response: ${:.5} (total now: ${:.5})",
-								cost, self.session.info.total_cost
-							);
-						}
+						log_debug!(
+							"Using cost from raw response: ${:.5} (total now: ${:.5})",
+							cost,
+							self.session.info.total_cost
+						);
 					} else {
 						// ERROR - OpenRouter did not provide cost data
 						println!("{}", "ERROR: OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
 
 						// Dump the raw response JSON to debug
-						if config.get_log_level().is_debug_enabled() {
-							println!("{}", "Raw OpenRouter response:".bright_red());
-							if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
-								println!("{}", resp_str);
-							}
-
-							// Check if usage tracking was explicitly requested
-							let has_usage_flag = ex
-								.request
-								.get("usage")
-								.and_then(|u| u.get("include"))
-								.and_then(|i| i.as_bool())
-								.unwrap_or(false);
-
-							println!(
-								"{} {}",
-								"Request had usage.include flag:".bright_yellow(),
-								has_usage_flag
-							);
+						log_debug!("Raw OpenRouter response:");
+						if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
+							log_debug!("{}", resp_str);
 						}
+
+						// Check if usage tracking was explicitly requested
+						let has_usage_flag = ex
+							.request
+							.get("usage")
+							.and_then(|u| u.get("include"))
+							.and_then(|i| i.as_bool())
+							.unwrap_or(false);
+
+						println!(
+							"{} {}",
+							"Request had usage.include flag:".bright_yellow(),
+							has_usage_flag
+						);
 					}
 				}
 

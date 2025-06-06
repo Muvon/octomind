@@ -230,14 +230,12 @@ pub async fn execute_tools_parallel(
 						};
 						tool_results.push(error_result);
 
-						if config.get_log_level().is_info_enabled() {
-							log_info!(
-								"Tool '{}' failed {} of {} times. Adding error to context.",
-								tool_name,
-								tool_processor.error_tracker.get_error_count(&tool_name),
-								tool_processor.error_tracker.max_consecutive_errors()
-							);
-						}
+						log_info!(
+							"Tool '{}' failed {} of {} times. Adding error to context.",
+							tool_name,
+							tool_processor.error_tracker.get_error_count(&tool_name),
+							tool_processor.error_tracker.max_consecutive_errors()
+						);
 					}
 				}
 			},

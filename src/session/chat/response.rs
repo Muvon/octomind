@@ -31,17 +31,15 @@ use std::sync::Arc;
 
 // Helper function to log debug information about the response
 fn log_response_debug(
-	config: &Config,
+	_config: &Config,
 	finish_reason: &Option<String>,
 	tool_calls: &Option<Vec<crate::mcp::McpToolCall>>,
 ) {
-	if config.get_log_level().is_debug_enabled() {
-		if let Some(ref reason) = finish_reason {
-			log_debug!("Processing response with finish_reason: {}", reason);
-		}
-		if let Some(ref calls) = tool_calls {
-			log_debug!("Processing {} tool calls", calls.len());
-		}
+	if let Some(ref reason) = finish_reason {
+		log_debug!("Processing response with finish_reason: {}", reason);
+	}
+	if let Some(ref calls) = tool_calls {
+		log_debug!("Processing {} tool calls", calls.len());
 	}
 }
 
@@ -85,9 +83,7 @@ fn handle_final_response(
 fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
 	if !tool_calls.is_empty() {
 		// Always log debug info if debug enabled
-		if config.get_log_level().is_debug_enabled() {
-			log_debug!("Found {} tool calls in response", tool_calls.len());
-		}
+		log_debug!("Found {} tool calls in response", tool_calls.len());
 
 		// Display headers and parameters for ALL modes
 		for (i, call) in tool_calls.iter().enumerate() {
@@ -112,14 +108,12 @@ fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall])
 			// None mode: No parameters shown
 
 			// Debug mode: Also log detailed debug info
-			if config.get_log_level().is_debug_enabled() {
-				log_debug!(
-					"  Tool call {}: {} with params: {}",
-					i + 1,
-					call.tool_name,
-					call.parameters
-				);
-			}
+			log_debug!(
+				"  Tool call {}: {} with params: {}",
+				i + 1,
+				call.tool_name,
+				call.parameters
+			);
 		}
 	}
 }
@@ -289,7 +283,7 @@ fn add_assistant_message_with_tool_calls(
 	chat_session: &mut ChatSession,
 	current_content: &str,
 	current_exchange: &ProviderExchange,
-	config: &Config,
+	_config: &Config,
 	_role: &str,
 ) -> Result<()> {
 	// CRITICAL FIX: We need to add the assistant message with tool_calls PRESERVED
@@ -344,13 +338,11 @@ fn add_assistant_message_with_tool_calls(
 			chat_session.session.info.total_cost += cost;
 			chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-			if config.get_log_level().is_debug_enabled() {
-				log_debug!(
-					"Adding ${:.5} from initial API (total now: ${:.5})",
-					cost,
-					chat_session.session.info.total_cost
-				);
-			}
+			log_debug!(
+				"Adding ${:.5} from initial API (total now: ${:.5})",
+				cost,
+				chat_session.session.info.total_cost
+			);
 		}
 	}
 
@@ -485,16 +477,10 @@ pub async fn process_response(
 							let more_tools = crate::mcp::parse_tool_calls(&current_content);
 							if !more_tools.is_empty() {
 								// Log if debug mode is enabled
-								if config.get_log_level().is_debug_enabled() {
-									println!(
-										"{}",
-										format!(
-											"Debug: Found {} more tool calls to process in content",
-											more_tools.len()
-										)
-										.yellow()
-									);
-								}
+								log_debug!(
+									"Found {} more tool calls to process in content",
+									more_tools.len()
+								);
 								continue;
 							} else {
 								// No more tool calls, break out of the loop
@@ -510,9 +496,10 @@ pub async fn process_response(
 					let more_tools = crate::mcp::parse_tool_calls(&current_content);
 					if !more_tools.is_empty() {
 						// Log if debug mode is enabled
-						if config.get_log_level().is_debug_enabled() {
-							println!("{}", format!("Debug: Found {} more tool calls to process (no previous tool results)", more_tools.len()).yellow());
-						}
+						log_debug!(
+							"Found {} more tool calls to process (no previous tool results)",
+							more_tools.len()
+						);
 						// If there are more tool calls later in the response, continue processing
 						continue;
 					} else {

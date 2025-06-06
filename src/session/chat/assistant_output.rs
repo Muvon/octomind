@@ -30,9 +30,7 @@ pub fn print_assistant_response(content: &str, config: &Config, _role: &str) {
 			}
 			Err(e) => {
 				// Fallback to plain text if markdown rendering fails
-				if config.get_log_level().is_debug_enabled() {
-					println!("{}: {}", "Warning: Markdown rendering failed".yellow(), e);
-				}
+				crate::log_debug!("{}: {}", "Warning: Markdown rendering failed".yellow(), e);
 				println!("{}", content.bright_green());
 			}
 		}

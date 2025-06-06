@@ -179,7 +179,7 @@ pub async fn process_tool_results(
 	// Add the processing time to the session total
 	chat_session.session.info.total_layer_time_ms += total_processing_time;
 
-	if config.get_log_level().is_debug_enabled() && total_processing_time > 100 {
+	if total_processing_time > 100 {
 		log_debug!(
 			"🔍 Tool result processing took {}ms (cache: {}ms, truncation: {}ms)",
 			total_processing_time,
@@ -231,10 +231,8 @@ pub async fn process_tool_results(
 			};
 
 			// Debug logging for follow-up finish_reason
-			if config.get_log_level().is_debug_enabled() {
-				if let Some(ref reason) = response.finish_reason {
-					log_debug!("Follow-up finish_reason: {}", reason);
-				}
+			if let Some(ref reason) = response.finish_reason {
+				log_debug!("Follow-up finish_reason: {}", reason);
 			}
 
 			// Check finish_reason to determine if we should continue the conversation
@@ -274,14 +272,8 @@ pub async fn process_tool_results(
 			);
 
 			// Additional context if error contains provider information
-			if config.get_log_level().is_debug_enabled() {
-				println!("{} Model: {}", "Debug:".bright_black(), chat_session.model);
-				println!(
-					"{} Temperature: {}",
-					"Debug:".bright_black(),
-					chat_session.temperature
-				);
-			}
+			log_debug!("Model: {}", chat_session.model);
+			log_debug!("Temperature: {}", chat_session.temperature);
 
 			Err(e)
 		}
@@ -334,39 +326,31 @@ async fn make_follow_up_api_call(
 // Check if conversation should continue based on finish_reason
 fn check_should_continue(
 	response: &crate::session::providers::ProviderResponse,
-	config: &Config,
+	_config: &Config,
 	has_more_tools: bool,
 ) -> bool {
 	match response.finish_reason.as_deref() {
 		Some("tool_calls") | Some("tool_use") => {
 			// Model wants to make more tool calls
-			if config.get_log_level().is_debug_enabled() {
-				log_debug!("finish_reason is 'tool_calls', continuing conversation");
-			}
+			log_debug!("finish_reason is 'tool_calls', continuing conversation");
 			true
 		}
 		Some("stop") | Some("length") | Some("end_turn") => {
 			// Model finished normally or hit length limit
-			if config.get_log_level().is_debug_enabled() {
-				log_debug!(
-					"finish_reason is '{}', ending conversation",
-					response.finish_reason.as_deref().unwrap()
-				);
-			}
+			log_debug!(
+				"finish_reason is '{}', ending conversation",
+				response.finish_reason.as_deref().unwrap()
+			);
 			false
 		}
 		Some(other) => {
 			// Unknown finish_reason, be conservative and continue
-			if config.get_log_level().is_debug_enabled() {
-				log_info!("Unknown finish_reason '{}', continuing conversation", other);
-			}
+			log_info!("Unknown finish_reason '{}', continuing conversation", other);
 			true
 		}
 		None => {
 			// No finish_reason, check for tool calls
-			if config.get_log_level().is_debug_enabled() {
-				log_debug!("Debug: No finish_reason, checking for tool calls");
-			}
+			log_debug!("Debug: No finish_reason, checking for tool calls");
 			has_more_tools
 		}
 	}
@@ -376,7 +360,7 @@ fn check_should_continue(
 fn handle_follow_up_cost_tracking(
 	chat_session: &mut ChatSession,
 	exchange: &crate::session::ProviderExchange,
-	config: &Config,
+	_config: &Config,
 ) {
 	if let Some(usage) = &exchange.usage {
 		// Simple token extraction with clean provider interface
@@ -403,37 +387,36 @@ fn handle_follow_up_cost_tracking(
 			chat_session.session.info.total_cost += cost;
 			chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-			if config.get_log_level().is_debug_enabled() {
-				println!(
-					"Debug: Adding ${:.5} to total cost (total now: ${:.5})",
-					cost, chat_session.session.info.total_cost
-				);
+			log_debug!(
+				"Adding ${:.5} to total cost (total now: ${:.5})",
+				cost,
+				chat_session.session.info.total_cost
+			);
 
-				// Enhanced debug for follow-up calls
-				println!("Debug: Tool response usage detail:");
-				if let Ok(usage_str) = serde_json::to_string_pretty(usage) {
-					println!("{}", usage_str);
+			// Enhanced debug for follow-up calls
+			log_debug!("Tool response usage detail:");
+			if let Ok(usage_str) = serde_json::to_string_pretty(usage) {
+				log_debug!("{}", usage_str);
+			}
+
+			// Check for cache-related fields
+			if let Some(raw_usage) = exchange.response.get("usage") {
+				log_debug!("Raw tool response usage object:");
+				if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
+					log_debug!("{}", raw_str);
 				}
 
-				// Check for cache-related fields
-				if let Some(raw_usage) = exchange.response.get("usage") {
-					println!("Debug: Raw tool response usage object:");
-					if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
-						println!("{}", raw_str);
-					}
+				// Look specifically for cache-related fields
+				if let Some(cache_cost) = raw_usage.get("cache_cost") {
+					log_debug!("Found cache_cost field: {}", cache_cost);
+				}
 
-					// Look specifically for cache-related fields
-					if let Some(cache_cost) = raw_usage.get("cache_cost") {
-						println!("Found cache_cost field: {}", cache_cost);
-					}
+				if let Some(cached_cost) = raw_usage.get("cached_cost") {
+					log_debug!("Found cached_cost field: {}", cached_cost);
+				}
 
-					if let Some(cached_cost) = raw_usage.get("cached_cost") {
-						println!("Found cached_cost field: {}", cached_cost);
-					}
-
-					if let Some(any_cache) = raw_usage.get("cached") {
-						println!("Found cached field: {}", any_cache);
-					}
+				if let Some(any_cache) = raw_usage.get("cached") {
+					log_debug!("Found cached field: {}", any_cache);
 				}
 			}
 		} else {
@@ -449,12 +432,11 @@ fn handle_follow_up_cost_tracking(
 				chat_session.session.info.total_cost += cost;
 				chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-				if config.get_log_level().is_debug_enabled() {
-					println!(
-						"Debug: Using cost ${:.5} from raw response (total now: ${:.5})",
-						cost, chat_session.session.info.total_cost
-					);
-				}
+				log_debug!(
+					"Using cost ${:.5} from raw response (total now: ${:.5})",
+					cost,
+					chat_session.session.info.total_cost
+				);
 			} else {
 				// Only show error if no cost data found
 				println!(
@@ -479,10 +461,8 @@ fn handle_follow_up_cost_tracking(
 				);
 
 				// Dump the raw response for debugging
-				if config.get_log_level().is_debug_enabled() {
-					if let Ok(resp_str) = serde_json::to_string_pretty(&exchange.response) {
-						println!("Partial response JSON:\n{}", resp_str);
-					}
+				if let Ok(resp_str) = serde_json::to_string_pretty(&exchange.response) {
+					log_debug!("Partial response JSON:\n{}", resp_str);
 				}
 			}
 		}

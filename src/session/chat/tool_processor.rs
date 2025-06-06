@@ -87,9 +87,7 @@ impl ToolProcessor {
 					let formatted_result =
 						format!("**{}**: {}", tool_call.tool_name, result_content.trim());
 
-					if config.get_log_level().is_debug_enabled() {
-						log_debug!("Tool {} executed successfully", tool_call.tool_name);
-					}
+					log_debug!("Tool {} executed successfully", tool_call.tool_name);
 
 					tool_results.push(formatted_result.clone());
 
@@ -113,9 +111,7 @@ impl ToolProcessor {
 					let has_hit_threshold = self.error_tracker.record_error(&tool_call.tool_name);
 					let error_msg = format!("Error executing {}: {}", tool_call.tool_name, e);
 
-					if config.get_log_level().is_debug_enabled() {
-						log_debug!("{}", error_msg);
-					}
+					log_debug!("{}", error_msg);
 
 					// Check if we should stop due to too many consecutive errors
 					if has_hit_threshold {
@@ -148,9 +144,7 @@ impl ToolProcessor {
 					let has_hit_threshold = self.error_tracker.record_error(&tool_call.tool_name);
 					let error_msg = format!("Task error for {}: {}", tool_call.tool_name, e);
 
-					if config.get_log_level().is_debug_enabled() {
-						log_debug!("{}", error_msg);
-					}
+					log_debug!("{}", error_msg);
 
 					if has_hit_threshold {
 						println!(

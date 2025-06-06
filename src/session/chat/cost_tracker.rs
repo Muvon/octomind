@@ -27,7 +27,7 @@ impl CostTracker {
 	pub fn track_exchange_cost(
 		chat_session: &mut ChatSession,
 		exchange: &ProviderExchange,
-		config: &Config,
+		_config: &Config,
 	) -> Result<()> {
 		if let Some(usage) = &exchange.usage {
 			// Simple token extraction with clean provider interface
@@ -53,13 +53,11 @@ impl CostTracker {
 				chat_session.session.info.total_cost += cost;
 				chat_session.estimated_cost = chat_session.session.info.total_cost;
 
-				if config.get_log_level().is_debug_enabled() {
-					log_debug!(
-						"Adding ${:.5} to total cost (total now: ${:.5})",
-						cost,
-						chat_session.session.info.total_cost
-					);
-				}
+				log_debug!(
+					"Adding ${:.5} to total cost (total now: ${:.5})",
+					cost,
+					chat_session.session.info.total_cost
+				);
 			}
 		}
 

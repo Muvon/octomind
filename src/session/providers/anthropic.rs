@@ -354,11 +354,20 @@ impl AiProvider for AnthropicProvider {
 				.and_then(|v| v.as_u64())
 				.unwrap_or(0);
 
-			// Calculate regular input tokens (total - cache tokens)
-			let regular_input_tokens =
-				input_tokens.saturating_sub(cache_creation_input_tokens + cache_read_input_tokens);
+			// CORRECTED: According to Anthropic API docs:
+			// - input_tokens: Regular input tokens that were NOT cached (normal price)
+			// - cache_creation_input_tokens: Tokens used to CREATE cache (1.25x price) - NOT cached tokens
+			// - cache_read_input_tokens: Tokens READ from cache (0.1x price) - these ARE cached tokens
+			//
+			// For display:
+			// - prompt_tokens should be: input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+			// - cached_tokens should ONLY be: cache_read_input_tokens
+			// - This way we show the total prompt tokens processed, with breakdown of what was cached
+			
+			let cached_tokens = cache_read_input_tokens;  // Only cache reads are "cached"
 
-			let total_tokens = input_tokens + output_tokens;
+			// For cost calculation, we need to separate the different token types
+			let regular_input_tokens = input_tokens;  // These are already regular tokens from API
 
 			// Calculate cost with cache-aware pricing
 			let cost = calculate_cost_with_cache(
@@ -371,14 +380,11 @@ impl AiProvider for AnthropicProvider {
 				},
 			);
 
-			// Simple interface: only expose total cached tokens (both read and write)
-			let cached_tokens = cache_creation_input_tokens + cache_read_input_tokens;
-
 			Some(TokenUsage {
-				prompt_tokens: input_tokens,
+				prompt_tokens: input_tokens + cache_creation_input_tokens + cache_read_input_tokens,  // Total prompt tokens processed
 				output_tokens,
-				total_tokens,
-				cached_tokens,         // Simple: total tokens that came from cache
+				total_tokens: input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens,
+				cached_tokens,         // Only cache_read_input_tokens are truly "cached"
 				cost,                  // Pre-calculated with proper cache pricing
 				request_time_ms: None, // TODO: Add API timing for Anthropic
 			})

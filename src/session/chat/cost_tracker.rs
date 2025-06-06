@@ -80,13 +80,17 @@ impl CostTracker {
 
 		// Format token usage with cached tokens
 		let cached = chat_session.session.info.cached_tokens;
-		let prompt = chat_session.session.info.input_tokens;
+		let non_cached_prompt = chat_session.session.info.input_tokens;
 		let completion = chat_session.session.info.output_tokens;
-		let total = prompt + completion + cached;
+		
+		// FIXED: Show total prompt tokens (cached + non-cached) as "prompt"
+		// This matches user expectation that prompt tokens should show the actual tokens processed
+		let total_prompt = non_cached_prompt + cached;
+		let total = total_prompt + completion;
 
 		log_info!(
 			"tokens: {} prompt ({} cached), {} completion, {} total, ${:.5}",
-			prompt,
+			total_prompt,
 			cached,
 			completion,
 			total,
@@ -95,7 +99,7 @@ impl CostTracker {
 
 		// If we have cached tokens, show the savings percentage
 		if cached > 0 {
-			let saving_pct = (cached as f64 / (prompt + cached) as f64) * 100.0;
+			let saving_pct = (cached as f64 / total_prompt as f64) * 100.0;
 			log_info!(
 				"cached: {:.1}% of prompt tokens ({} tokens saved)",
 				saving_pct,

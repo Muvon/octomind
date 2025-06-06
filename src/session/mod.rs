@@ -544,23 +544,12 @@ pub async fn create_system_prompt(
 	mode: &str,
 ) -> String {
 	// Get mode-specific configuration
-	let (_, mcp_config, _, _, custom_system) = config.get_mode_config(mode);
-
-	// If a custom system prompt is defined for this mode, use it
-	if let Some(custom_prompt) = custom_system {
-		return custom_prompt.clone();
-	}
-
-	// Use the default system prompts from helper_functions.rs
-	let base_prompt = crate::config::defaults::ConfigDefaults::get_default_system_prompt(mode);
-
-	// For assistant role, use the simple prompt as-is
-	if mode == "assistant" {
-		return base_prompt;
-	}
+	let (_, mcp_config, _, _, system_prompt_opt) = config.get_mode_config(mode);
 
 	// For developer role, process placeholders to add project context
-	let mut prompt = helper_functions::process_placeholders_async(&base_prompt, project_dir).await;
+	let mut prompt =
+		helper_functions::process_placeholders_async(&system_prompt_opt.unwrap(), project_dir)
+			.await;
 
 	// Add MCP tools information if enabled
 	if !mcp_config.server_refs.is_empty() {

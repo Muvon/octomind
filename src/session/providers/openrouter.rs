@@ -149,7 +149,7 @@ impl AiProvider for OpenRouterProvider {
 		let api_key = self.get_api_key(config)?;
 
 		// Convert messages to OpenRouter format
-		let openrouter_messages = convert_messages(messages);
+		let openrouter_messages = convert_messages(messages, config);
 
 		// Create the request body
 		let mut request_body = serde_json::json!({
@@ -215,7 +215,8 @@ impl AiProvider for OpenRouterProvider {
 					if system_cached {
 						if let Some(last_tool) = tools.last_mut() {
 							last_tool["cache_control"] = serde_json::json!({
-								"type": "ephemeral"
+								"type": "ephemeral",
+								"ttl": "1h"
 							});
 						}
 					}
@@ -515,7 +516,7 @@ impl AiProvider for OpenRouterProvider {
 }
 
 // Convert our session messages to OpenRouter format
-fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
+fn convert_messages(messages: &[Message], config: &Config) -> Vec<OpenRouterMessage> {
 	let mut cached_count = 0;
 	let mut result = Vec::new();
 
@@ -525,6 +526,36 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenRouterMessage> {
 	for msg in messages {
 		// Handle all message types with simplified structure
 		match msg.role.as_str() {
+			"system" => {
+				// System messages with proper OpenRouter format
+				let content = if msg.cached {
+					cached_count += 1;
+					let mut text_content = serde_json::json!({
+						"type": "text",
+						"text": msg.content
+					});
+					let ttl = if config.use_long_system_cache {
+						"1h"
+					} else {
+						"5m"
+					};
+					text_content["cache_control"] = serde_json::json!({
+						"type": "ephemeral",
+						"ttl": ttl
+					});
+					serde_json::json!([text_content])
+				} else {
+					serde_json::json!(msg.content)
+				};
+
+				result.push(OpenRouterMessage {
+					role: msg.role.clone(),
+					content,
+					tool_call_id: None,
+					name: None,
+					tool_calls: None,
+				});
+			}
 			"tool" => {
 				// Tool messages with proper OpenRouter format
 				let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();

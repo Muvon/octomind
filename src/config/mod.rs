@@ -17,7 +17,6 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 
 // Re-export all modules
-pub mod defaults;
 pub mod layers;
 pub mod loading;
 pub mod mcp;
@@ -30,7 +29,6 @@ pub mod validation;
 // Tests should be rewritten to use complete config structures
 
 // Re-export commonly used types
-pub use defaults::*;
 pub use layers::*;
 pub use mcp::*;
 pub use providers::*;
@@ -96,6 +94,9 @@ pub struct Config {
 	pub markdown_theme: String,
 	// Session spending threshold in USD - if > 0, prompt user when exceeded
 	pub max_session_spending_threshold: f64,
+
+	// Use long-term (1h) caching for system messages (strict: must be in config)
+	pub use_long_system_cache: bool,
 
 	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 

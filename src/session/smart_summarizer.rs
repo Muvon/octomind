@@ -386,25 +386,25 @@ mod tests {
 		let summarizer = SmartSummarizer::new();
 
 		let messages = vec![
-            Message {
-                role: "user".to_string(),
-                content: "Can you help me create a function to parse JSON?".to_string(),
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                cached: false,
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            },
-            Message {
-                role: "assistant".to_string(),
-                content: "I'll help you create a JSON parsing function. Let me create a new file for this.".to_string(),
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                cached: false,
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            },
-        ];
+			Message {
+				role: "user".to_string(),
+				content: "Can you help me create a function to parse JSON?".to_string(),
+				timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+				cached: false,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+			},
+			Message {
+				role: "assistant".to_string(),
+				content: "I'll help you create a JSON parsing function. Let me create a new file for this.".to_string(),
+				timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+				cached: false,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+			},
+		];
 
 		let result = summarizer.summarize_messages(&messages).unwrap();
 		assert!(result.contains("function"));

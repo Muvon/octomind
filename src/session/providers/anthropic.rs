@@ -49,13 +49,15 @@ const PRICING: &[(&str, f64, f64)] = &[
 struct CacheTokenUsage {
 	regular_input_tokens: u64,
 	cache_creation_tokens: u64,
+	cache_creation_tokens_1h: u64, // 1h TTL cache creation tokens (2x price)
 	cache_read_tokens: u64,
 	output_tokens: u64,
 }
 
 /// Calculate cost for Anthropic models with cache-aware pricing
-/// - cache_creation_tokens: charged at 1.25x normal price
-/// - cache_read_tokens: charged at 0.1x normal price  
+/// - cache_creation_tokens: charged at 1.25x normal price (5m cache)
+/// - cache_creation_tokens_1h: charged at 2x normal price (1h cache)
+/// - cache_read_tokens: charged at 0.1x normal price
 /// - regular_input_tokens: charged at normal price
 /// - output_tokens: charged at normal price
 fn calculate_cost_with_cache(model: &str, usage: CacheTokenUsage) -> Option<f64> {
@@ -65,9 +67,13 @@ fn calculate_cost_with_cache(model: &str, usage: CacheTokenUsage) -> Option<f64>
 			let regular_input_cost =
 				(usage.regular_input_tokens as f64 / 1_000_000.0) * input_price;
 
-			// Cache creation tokens at 1.25x price (25% more expensive)
+			// Cache creation tokens at 1.25x price (25% more expensive) for 5m cache
 			let cache_creation_cost =
 				(usage.cache_creation_tokens as f64 / 1_000_000.0) * input_price * 1.25;
+
+			// Cache creation tokens at 2x price (100% more expensive) for 1h cache
+			let cache_creation_cost_1h =
+				(usage.cache_creation_tokens_1h as f64 / 1_000_000.0) * input_price * 2.0;
 
 			// Cache read tokens at 0.1x price (90% cheaper)
 			let cache_read_cost =
@@ -76,7 +82,13 @@ fn calculate_cost_with_cache(model: &str, usage: CacheTokenUsage) -> Option<f64>
 			// Output tokens at normal price (never cached)
 			let output_cost = (usage.output_tokens as f64 / 1_000_000.0) * output_price;
 
-			return Some(regular_input_cost + cache_creation_cost + cache_read_cost + output_cost);
+			return Some(
+				regular_input_cost
+					+ cache_creation_cost
+					+ cache_creation_cost_1h
+					+ cache_read_cost
+					+ output_cost,
+			);
 		}
 	}
 	None
@@ -179,21 +191,41 @@ impl AiProvider for AnthropicProvider {
 		// Convert messages to Anthropic format with automatic cache markers
 		let anthropic_messages = convert_messages(messages);
 
-		// Extract system message if present
+		// Extract system message if present and handle caching
 		let system_message = messages
 			.iter()
 			.find(|m| m.role == "system")
 			.map(|m| m.content.clone())
 			.unwrap_or_else(|| "You are a helpful assistant.".to_string());
 
+		let system_cached = messages.iter().any(|m| m.role == "system" && m.cached);
+
 		// Create the request body
 		let mut request_body = serde_json::json!({
 			"model": model,
 			"max_tokens": 32768,
 			"messages": anthropic_messages,
-			"system": system_message,
 			"temperature": temperature,
 		});
+
+		// Add system message with cache control if needed
+		if system_cached {
+			let ttl = if config.use_long_system_cache {
+				"1h"
+			} else {
+				"5m"
+			};
+			request_body["system"] = serde_json::json!({
+				"type": "text",
+				"text": system_message,
+				"cache_control": {
+					"type": "ephemeral",
+					"ttl": ttl
+				}
+			});
+		} else {
+			request_body["system"] = serde_json::json!(system_message);
+		}
 
 		// Add tool definitions if MCP has any servers configured
 		if !config.mcp.servers.is_empty() {
@@ -227,7 +259,8 @@ impl AiProvider for AnthropicProvider {
 					if system_cached {
 						if let Some(last_tool) = tools.last_mut() {
 							last_tool["cache_control"] = serde_json::json!({
-								"type": "ephemeral"
+								"type": "ephemeral",
+								"ttl": "1h"
 							});
 						}
 					}
@@ -375,6 +408,7 @@ impl AiProvider for AnthropicProvider {
 				CacheTokenUsage {
 					regular_input_tokens,
 					cache_creation_tokens: cache_creation_input_tokens,
+					cache_creation_tokens_1h: 0, // TODO: Distinguish 1h vs 5m cache tokens from API
 					cache_read_tokens: cache_read_input_tokens,
 					output_tokens,
 				},

@@ -689,6 +689,10 @@ pub async fn get_all_server_functions(
 
 // Clean up any running server processes when the program exits
 pub fn cleanup_servers() -> Result<()> {
+	// Stop the health monitor first
+	crate::mcp::health_monitor::stop_health_monitor();
+
+	// Then stop all server processes
 	process::stop_all_servers()
 }
 

@@ -30,6 +30,7 @@ lazy_static::lazy_static! {
 
 pub mod dev;
 pub mod fs;
+pub mod health_monitor;
 pub mod process;
 pub mod server;
 
@@ -273,6 +274,13 @@ pub async fn initialize_servers_for_mode(config: &crate::config::Config) -> Resu
 				server.server_type
 			);
 		}
+	}
+
+	// Start the health monitor for external servers
+	let config_arc = std::sync::Arc::new(config.clone());
+	if let Err(e) = health_monitor::start_health_monitor(config_arc).await {
+		crate::log_debug!("Failed to start health monitor: {}", e);
+		// Don't fail startup - health monitoring is optional
 	}
 
 	crate::log_debug!("MCP server initialization completed");

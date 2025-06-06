@@ -1116,6 +1116,96 @@ impl ChatSession {
 							"Use '/mcp list' for names only or '/mcp info' for overview.".dimmed()
 						);
 					}
+					"health" => {
+						// Health check and restart subcommand
+						println!();
+						println!("{}", "MCP Server Health Check".bright_cyan().bold());
+						println!("{}", "─".repeat(50).dimmed());
+
+						let mode_config = config.get_merged_config_for_mode(role);
+
+						if mode_config.mcp.servers.is_empty() {
+							println!("{}", "No MCP servers configured for this role.".yellow());
+							return Ok(false);
+						}
+
+						// Show current health monitor status
+						if crate::mcp::health_monitor::is_health_monitor_running() {
+							println!("{}", "🔍 Health monitor: RUNNING".bright_green());
+						} else {
+							println!("{}", "🔍 Health monitor: STOPPED".bright_red());
+						}
+						println!();
+
+						// Force a health check on all servers
+						println!(
+							"{}",
+							"Performing health check on all external servers...".bright_blue()
+						);
+
+						if let Err(e) =
+							crate::mcp::health_monitor::force_health_check(&mode_config).await
+						{
+							println!("{}: {}", "Health check failed".bright_red(), e);
+							return Ok(false);
+						}
+
+						// Show updated server status
+						let server_report = crate::mcp::server::get_server_status_report();
+
+						for server in &mode_config.mcp.servers {
+							if let crate::config::McpServerType::External = server.server_type {
+								let (health, restart_info) = server_report
+									.get(&server.name)
+									.map(|(h, r)| (*h, r.clone()))
+									.unwrap_or((
+										crate::mcp::process::ServerHealth::Dead,
+										Default::default(),
+									));
+
+								let health_display = match health {
+									crate::mcp::process::ServerHealth::Running => {
+										"✅ Running".green()
+									}
+									crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
+									crate::mcp::process::ServerHealth::Restarting => {
+										"🔄 Restarting".yellow()
+									}
+									crate::mcp::process::ServerHealth::Failed => {
+										"💥 Failed".bright_red()
+									}
+								};
+
+								println!(
+									"{}: {}",
+									server.name.bright_white().bold(),
+									health_display
+								);
+
+								if restart_info.restart_count > 0 {
+									println!("  Restart count: {}", restart_info.restart_count);
+									if restart_info.consecutive_failures > 0 {
+										println!(
+											"  Consecutive failures: {}",
+											restart_info.consecutive_failures
+										);
+									}
+								}
+
+								// Show last health check time
+								if let Some(last_check) = restart_info.last_health_check {
+									if let Ok(duration) =
+										std::time::SystemTime::now().duration_since(last_check)
+									{
+										println!("  Last checked: {}s ago", duration.as_secs());
+									}
+								}
+							}
+						}
+
+						println!();
+						println!("{}", "Health check completed. Dead servers will be automatically restarted by the health monitor.".bright_blue());
+					}
 					_ => {
 						// Invalid subcommand
 						println!();
@@ -1131,8 +1221,12 @@ impl ChatSession {
 							"  {} - Show full details including parameters",
 							"/mcp full".cyan()
 						);
+						println!(
+							"  {} - Check server health and attempt restart if needed",
+							"/mcp health".cyan()
+						);
 						println!();
-						println!("{}", "Usage: /mcp [list|info|full]".bright_blue());
+						println!("{}", "Usage: /mcp [list|info|full|health]".bright_blue());
 					}
 				}
 

@@ -86,7 +86,7 @@ fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall])
 		log_debug!("Found {} tool calls in response", tool_calls.len());
 
 		// Display headers and parameters for ALL modes
-		for (i, call) in tool_calls.iter().enumerate() {
+		for call in tool_calls.iter() {
 			// Always show the header
 			let category = crate::mcp::guess_tool_category(&call.tool_name);
 			let title = format!(
@@ -106,14 +106,6 @@ fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall])
 				display_tool_parameters_full(call, config);
 			}
 			// None mode: No parameters shown
-
-			// Debug mode: Also log detailed debug info
-			log_debug!(
-				"  Tool call {}: {} with params: {}",
-				i + 1,
-				call.tool_name,
-				call.parameters
-			);
 		}
 	}
 }

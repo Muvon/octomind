@@ -25,6 +25,7 @@ use crate::{
 	log_info,
 };
 use anyhow::Result;
+use arboard::Clipboard;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
 use std::io::{self, Write};
@@ -165,7 +166,26 @@ impl ChatSession {
 				}
 			}
 			COPY_COMMAND => {
-				println!("Clipboard functionality is disabled in this version.");
+				if self.last_response.is_empty() {
+					println!(
+						"{}",
+						"No response to copy. Send a message first.".bright_yellow()
+					);
+				} else {
+					match Clipboard::new() {
+						Ok(mut clipboard) => match clipboard.set_text(&self.last_response) {
+							Ok(_) => {
+								println!("{}", "Last response copied to clipboard.".bright_green());
+							}
+							Err(e) => {
+								println!("{}: {}", "Failed to copy to clipboard".bright_red(), e);
+							}
+						},
+						Err(e) => {
+							println!("{}: {}", "Failed to access clipboard".bright_red(), e);
+						}
+					}
+				}
 			}
 			CLEAR_COMMAND => {
 				// ANSI escape code to clear screen and move cursor to top-left

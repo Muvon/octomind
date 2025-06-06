@@ -472,8 +472,8 @@ impl AiProvider for AnthropicProvider {
 					+ cache_creation_1h_tokens
 					+ cache_read_input_tokens
 					+ output_tokens,
-				cached_tokens,         // Only cache_read_input_tokens are truly "cached"
-				cost,                  // Pre-calculated with proper cache pricing
+				cached_tokens, // Only cache_read_input_tokens are truly "cached"
+				cost,          // Pre-calculated with proper cache pricing
 				request_time_ms: Some(api_time_ms), // Track API timing for Anthropic
 			})
 		} else {

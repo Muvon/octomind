@@ -215,14 +215,14 @@ impl AiProvider for AnthropicProvider {
 			} else {
 				"5m"
 			};
-			request_body["system"] = serde_json::json!({
+			request_body["system"] = serde_json::json!([{
 				"type": "text",
 				"text": system_message,
 				"cache_control": {
 					"type": "ephemeral",
 					"ttl": ttl
 				}
-			});
+			}]);
 		} else {
 			request_body["system"] = serde_json::json!(system_message);
 		}
@@ -279,6 +279,8 @@ impl AiProvider for AnthropicProvider {
 			.header("x-api-key", api_key)
 			.header("Content-Type", "application/json")
 			.header("anthropic-version", "2023-06-01")
+			.header("anthropic-beta", "extended-cache-ttl-2025-04-11")
+			.header("anthropic-beta", "token-efficient-tools-2025-02-19")
 			.json(&request_body)
 			.send()
 			.await?;

@@ -82,13 +82,25 @@ fn calculate_cost_with_cache(model: &str, usage: CacheTokenUsage) -> Option<f64>
 			// Output tokens at normal price (never cached)
 			let output_cost = (usage.output_tokens as f64 / 1_000_000.0) * output_price;
 
-			return Some(
-				regular_input_cost
-					+ cache_creation_cost
-					+ cache_creation_cost_1h
-					+ cache_read_cost
-					+ output_cost,
+			let total_cost = regular_input_cost
+				+ cache_creation_cost
+				+ cache_creation_cost_1h
+				+ cache_read_cost
+				+ output_cost;
+
+			// Debug: Log detailed cost calculation breakdown
+			crate::log_debug!(
+				"Anthropic detailed cost calculation for {}: Regular input: ${:.8} ({} tokens @ ${:.2}/1M), Cache creation 5m: ${:.8} ({} tokens @ ${:.2}/1M), Cache creation 1h: ${:.8} ({} tokens @ ${:.2}/1M), Cache read: ${:.8} ({} tokens @ ${:.2}/1M), Output: ${:.8} ({} tokens @ ${:.2}/1M), Total: ${:.8}",
+				model,
+				regular_input_cost, usage.regular_input_tokens, input_price,
+				cache_creation_cost, usage.cache_creation_tokens, input_price * 1.25,
+				cache_creation_cost_1h, usage.cache_creation_tokens_1h, input_price * 2.0,
+				cache_read_cost, usage.cache_read_tokens, input_price * 0.1,
+				output_cost, usage.output_tokens, output_price,
+				total_cost
 			);
+
+			return Some(total_cost);
 		}
 	}
 	None
@@ -380,10 +392,28 @@ impl AiProvider for AnthropicProvider {
 				.unwrap_or(0);
 
 			// Parse cache-specific token fields from Anthropic API
-			let cache_creation_input_tokens = usage_obj
-				.get("cache_creation_input_tokens")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
+			// Try new nested structure first, fallback to flat structure
+			let (cache_creation_5m_tokens, cache_creation_1h_tokens) =
+				if let Some(cache_creation) = usage_obj.get("cache_creation") {
+					// New nested structure
+					let ephemeral_5m = cache_creation
+						.get("ephemeral_5m_input_tokens")
+						.and_then(|v| v.as_u64())
+						.unwrap_or(0);
+					let ephemeral_1h = cache_creation
+						.get("ephemeral_1h_input_tokens")
+						.and_then(|v| v.as_u64())
+						.unwrap_or(0);
+					(ephemeral_5m, ephemeral_1h)
+				} else {
+					// Fallback to flat structure - assume all cache creation is 5m
+					let total_cache_creation = usage_obj
+						.get("cache_creation_input_tokens")
+						.and_then(|v| v.as_u64())
+						.unwrap_or(0);
+					(total_cache_creation, 0)
+				};
+
 			let cache_read_input_tokens = usage_obj
 				.get("cache_read_input_tokens")
 				.and_then(|v| v.as_u64())
@@ -409,18 +439,30 @@ impl AiProvider for AnthropicProvider {
 				model,
 				CacheTokenUsage {
 					regular_input_tokens,
-					cache_creation_tokens: cache_creation_input_tokens,
-					cache_creation_tokens_1h: 0, // TODO: Distinguish 1h vs 5m cache tokens from API
+					cache_creation_tokens: cache_creation_5m_tokens,
+					cache_creation_tokens_1h: cache_creation_1h_tokens,
 					cache_read_tokens: cache_read_input_tokens,
 					output_tokens,
 				},
 			);
 
+			// Debug: Log detailed cost breakdown for verification
+			if let Some(calculated_cost) = cost {
+				crate::log_debug!(
+					"Anthropic cost breakdown: Regular input: {} tokens, Cache creation (5m): {} tokens, Cache creation (1h): {} tokens, Cache read: {} tokens, Output: {} tokens, Total cost: ${:.8}",
+					regular_input_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_input_tokens, output_tokens, calculated_cost
+				);
+			}
+
 			Some(TokenUsage {
-				prompt_tokens: input_tokens + cache_creation_input_tokens + cache_read_input_tokens, // Total prompt tokens processed
+				prompt_tokens: input_tokens
+					+ cache_creation_5m_tokens
+					+ cache_creation_1h_tokens
+					+ cache_read_input_tokens, // Total prompt tokens processed
 				output_tokens,
 				total_tokens: input_tokens
-					+ cache_creation_input_tokens
+					+ cache_creation_5m_tokens
+					+ cache_creation_1h_tokens
 					+ cache_read_input_tokens
 					+ output_tokens,
 				cached_tokens,         // Only cache_read_input_tokens are truly "cached"

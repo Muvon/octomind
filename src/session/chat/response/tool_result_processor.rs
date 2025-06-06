@@ -405,7 +405,7 @@ fn handle_follow_up_cost_tracking(
 
 			if config.get_log_level().is_debug_enabled() {
 				println!(
-					"Debug: Adding ${:.5} from tool response API (total now: ${:.5})",
+					"Debug: Adding ${:.5} to total cost (total now: ${:.5})",
 					cost, chat_session.session.info.total_cost
 				);
 
@@ -450,8 +450,10 @@ fn handle_follow_up_cost_tracking(
 				chat_session.estimated_cost = chat_session.session.info.total_cost;
 
 				if config.get_log_level().is_debug_enabled() {
-					println!("Debug: Using cost ${:.5} from raw response for tool response (total now: ${:.5})",
-						cost, chat_session.session.info.total_cost);
+					println!(
+						"Debug: Using cost ${:.5} from raw response (total now: ${:.5})",
+						cost, chat_session.session.info.total_cost
+					);
 				}
 			} else {
 				// Only show error if no cost data found

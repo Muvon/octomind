@@ -55,7 +55,7 @@ impl CostTracker {
 
 				if config.get_log_level().is_debug_enabled() {
 					log_debug!(
-						"Adding ${:.5} from API (total now: ${:.5})",
+						"Adding ${:.5} to total cost (total now: ${:.5})",
 						cost,
 						chat_session.session.info.total_cost
 					);

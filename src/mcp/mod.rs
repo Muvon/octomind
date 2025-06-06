@@ -361,7 +361,6 @@ where
 	{
 		let cache = INTERNAL_FUNCTION_CACHE.read().unwrap();
 		if let Some(cached_functions) = cache.get(&cache_key) {
-			crate::log_debug!("Using cached {} functions", server_type);
 			return cached_functions.clone();
 		}
 	}

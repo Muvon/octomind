@@ -149,11 +149,6 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 	{
 		let cache = FUNCTION_CACHE.read().unwrap();
 		if let Some(cached_functions) = cache.get(server_id) {
-			crate::log_debug!(
-				"Using cached functions for server '{}' ({} functions)",
-				server_id,
-				cached_functions.len()
-			);
 			return Ok(cached_functions.clone());
 		}
 	}

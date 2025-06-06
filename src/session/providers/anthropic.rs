@@ -285,6 +285,9 @@ impl AiProvider for AnthropicProvider {
 		// Create HTTP client
 		let client = Client::new();
 
+		// Track API request time
+		let api_start = std::time::Instant::now();
+
 		// Make the actual API request
 		let response = client
 			.post(ANTHROPIC_API_URL)
@@ -296,6 +299,10 @@ impl AiProvider for AnthropicProvider {
 			.json(&request_body)
 			.send()
 			.await?;
+
+		// Calculate API request time
+		let api_duration = api_start.elapsed();
+		let api_time_ms = api_duration.as_millis() as u64;
 
 		// Get response status
 		let status = response.status();
@@ -467,7 +474,7 @@ impl AiProvider for AnthropicProvider {
 					+ output_tokens,
 				cached_tokens,         // Only cache_read_input_tokens are truly "cached"
 				cost,                  // Pre-calculated with proper cache pricing
-				request_time_ms: None, // TODO: Add API timing for Anthropic
+				request_time_ms: Some(api_time_ms), // Track API timing for Anthropic
 			})
 		} else {
 			None

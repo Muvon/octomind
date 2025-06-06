@@ -284,7 +284,14 @@ impl AiProvider for AmazonBedrockProvider {
 			request_builder = request_builder.header(&key, &value);
 		}
 
+		// Track API request time
+		let api_start = std::time::Instant::now();
+
 		let response = request_builder.send().await?;
+
+		// Calculate API request time
+		let api_duration = api_start.elapsed();
+		let api_time_ms = api_duration.as_millis() as u64;
 
 		// Get response status
 		let status = response.status();
@@ -365,7 +372,7 @@ impl AiProvider for AmazonBedrockProvider {
 				total_tokens,
 				cached_tokens: 0, // Amazon Bedrock doesn't support caching yet
 				cost,
-				request_time_ms: None, // TODO: Add API timing for Amazon
+				request_time_ms: Some(api_time_ms), // Track API timing for Amazon
 			})
 		} else {
 			None

@@ -217,6 +217,9 @@ impl AiProvider for GoogleVertexProvider {
 		// Create HTTP client
 		let client = Client::new();
 
+		// Track API request time
+		let api_start = std::time::Instant::now();
+
 		// Make the actual API request
 		let response = client
 			.post(&api_url)
@@ -225,6 +228,10 @@ impl AiProvider for GoogleVertexProvider {
 			.json(&request_body)
 			.send()
 			.await?;
+
+		// Calculate API request time
+		let api_duration = api_start.elapsed();
+		let api_time_ms = api_duration.as_millis() as u64;
 
 		// Get response status
 		let status = response.status();
@@ -357,7 +364,7 @@ impl AiProvider for GoogleVertexProvider {
 				total_tokens,
 				cached_tokens: 0, // Google Vertex AI doesn't support caching yet
 				cost,
-				request_time_ms: None, // TODO: Add API timing for Google
+				request_time_ms: Some(api_time_ms), // Track API timing for Google
 			})
 		} else {
 			None

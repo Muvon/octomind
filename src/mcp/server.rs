@@ -407,7 +407,7 @@ pub async fn execute_tool_call(
 	execute_tool_call_with_cancellation(call, server, None).await
 }
 
-// Execute tool call on MCP server with intelligent restart handling
+// Execute tool call on MCP server (no restart attempts - servers start once and keep running)
 pub async fn execute_tool_call_with_cancellation(
 	call: &McpToolCall,
 	server: &McpServerConfig,
@@ -422,90 +422,36 @@ pub async fn execute_tool_call_with_cancellation(
 		}
 	}
 
-	// Check server health before attempting execution
+	// Check server health before attempting execution (but don't restart)
 	let server_health = process::get_server_health(&server.name);
 	match server_health {
 		process::ServerHealth::Failed => {
 			return Err(anyhow::anyhow!(
-				"Server '{}' is in failed state. Cannot execute tool '{}'. Try resetting the server or check configuration.",
+				"Server '{}' is in failed state. Cannot execute tool '{}'. Server will not be restarted automatically.",
 				server.name,
 				call.tool_name
 			));
 		}
 		process::ServerHealth::Restarting => {
 			return Err(anyhow::anyhow!(
-				"Server '{}' is currently restarting. Please try again in a moment.",
+				"Server '{}' is currently starting. Please try again in a moment.",
 				server.name
 			));
 		}
-		_ => {} // Continue with execution
-	}
-
-	// Attempt to execute the tool call
-	let execution_result =
-		execute_tool_call_internal(call, server, cancellation_token.clone()).await;
-
-	match execution_result {
-		Ok(result) => Ok(result),
-		Err(e) => {
-			// Check if this might be a server death issue
-			let error_msg = e.to_string();
-			if error_msg.contains("broken pipe")
-				|| error_msg.contains("Server closed connection")
-				|| error_msg.contains("Failed to flush stdin")
-				|| error_msg.contains("Failed to write to stdin")
-			{
-				crate::log_debug!(
-					"Detected potential server death for '{}' during tool execution: {}",
-					server.name,
-					error_msg
-				);
-
-				// Mark server as dead
-				{
-					let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
-					let info = restart_info_guard.entry(server.name.clone()).or_default();
-					info.health_status = process::ServerHealth::Dead;
-				}
-
-				// Attempt to restart the server and retry the tool call
-				crate::log_debug!(
-					"Attempting to restart server '{}' and retry tool execution",
-					server.name
-				);
-
-				match process::ensure_server_running(server).await {
-					Ok(_) => {
-						crate::log_debug!(
-							"Successfully restarted server '{}', retrying tool execution",
-							server.name
-						);
-
-						// Check for cancellation before retry
-						if let Some(ref token) = cancellation_token {
-							if token.load(Ordering::SeqCst) {
-								return Err(anyhow::anyhow!(
-									"External tool execution cancelled during retry"
-								));
-							}
-						}
-
-						// Retry the tool execution once
-						execute_tool_call_internal(call, server, cancellation_token).await
-					}
-					Err(restart_err) => Err(anyhow::anyhow!(
-							"Server '{}' died during tool execution and failed to restart: {}. Original error: {}",
-							server.name,
-							restart_err,
-							error_msg
-						)),
-				}
-			} else {
-				// Not a server death issue, return original error
-				Err(e)
-			}
+		process::ServerHealth::Dead => {
+			return Err(anyhow::anyhow!(
+				"Server '{}' is not running. Cannot execute tool '{}'. Server will not be restarted automatically.",
+				server.name,
+				call.tool_name
+			));
+		}
+		process::ServerHealth::Running => {
+			// Server is running, proceed with execution
 		}
 	}
+
+	// Execute the tool call directly (no restart logic)
+	execute_tool_call_internal(call, server, cancellation_token).await
 }
 
 // Internal function to execute tool call without restart logic

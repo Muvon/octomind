@@ -57,9 +57,13 @@ impl Default for ServerRestartInfo {
 	}
 }
 
-// Global server restart tracking
+// Global server restart tracking with synchronization
 lazy_static::lazy_static! {
 	pub static ref SERVER_RESTART_INFO: Arc<RwLock<HashMap<String, ServerRestartInfo>>> =
+		Arc::new(RwLock::new(HashMap::new()));
+
+	// Per-server restart mutexes to prevent concurrent restart attempts
+	static ref SERVER_RESTART_MUTEXES: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
 		Arc::new(RwLock::new(HashMap::new()));
 }
 
@@ -84,17 +88,80 @@ pub enum ServerProcess {
 impl ServerProcess {
 	pub fn kill(&mut self) -> Result<()> {
 		match self {
-			ServerProcess::Http(child) => child
-				.kill()
-				.map_err(|e| anyhow::anyhow!("Failed to kill HTTP process: {}", e)),
-			ServerProcess::Stdin {
-				child, is_shutdown, ..
-			} => {
-				// Mark as shutdown
-				is_shutdown.store(true, Ordering::SeqCst);
+			ServerProcess::Http(child) => {
+				// For HTTP processes, kill immediately
 				child
 					.kill()
-					.map_err(|e| anyhow::anyhow!("Failed to kill stdin process: {}", e))
+					.map_err(|e| anyhow::anyhow!("Failed to kill HTTP process: {}", e))?;
+
+				// Wait for process termination with timeout
+				let start = std::time::Instant::now();
+				let timeout = std::time::Duration::from_secs(5);
+				while start.elapsed() < timeout {
+					match child.try_wait() {
+						Ok(Some(_)) => return Ok(()), // Process terminated
+						Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+						Err(e) => {
+							return Err(anyhow::anyhow!("Error waiting for HTTP process: {}", e))
+						}
+					}
+				}
+				crate::log_debug!("HTTP process did not terminate within timeout, may be zombie");
+				Ok(())
+			}
+			ServerProcess::Stdin {
+				child,
+				is_shutdown,
+				writer,
+				..
+			} => {
+				// Mark as shutdown first to prevent new communications
+				is_shutdown.store(true, Ordering::SeqCst);
+
+				// Try graceful shutdown: flush and close stdin first
+				if let Err(e) = writer.flush() {
+					crate::log_debug!("Failed to flush stdin before shutdown: {}", e);
+				}
+				// Note: writer will be dropped when the struct is dropped, closing stdin
+
+				// Give process a moment to terminate gracefully
+				std::thread::sleep(std::time::Duration::from_millis(100));
+
+				// Check if process terminated gracefully
+				match child.try_wait() {
+					Ok(Some(_)) => {
+						crate::log_debug!("Process terminated gracefully after stdin close");
+						return Ok(());
+					}
+					Ok(None) => {
+						// Process still running, need to force kill
+						crate::log_debug!("Process didn't terminate gracefully, force killing");
+					}
+					Err(e) => {
+						crate::log_debug!("Error checking process status: {}", e);
+					}
+				}
+
+				// Force kill the process
+				child
+					.kill()
+					.map_err(|e| anyhow::anyhow!("Failed to kill stdin process: {}", e))?;
+
+				// Wait for process termination with timeout
+				let start = std::time::Instant::now();
+				let timeout = std::time::Duration::from_secs(5);
+				while start.elapsed() < timeout {
+					match child.try_wait() {
+						Ok(Some(_)) => return Ok(()), // Process terminated
+						Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+						Err(e) => {
+							return Err(anyhow::anyhow!("Error waiting for stdin process: {}", e))
+						}
+					}
+				}
+
+				crate::log_debug!("Stdin process did not terminate within timeout, may be zombie");
+				Ok(())
 			}
 		}
 	}
@@ -111,233 +178,163 @@ impl ServerProcess {
 	}
 }
 
-// Start a local MCP server process if not already running with intelligent restart logic
-// This function includes retry mechanism with exponential backoff (max 3 attempts)
-pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
-	ensure_server_running_with_retry(server, true).await
+// Get or create a restart mutex for a server to prevent concurrent restart attempts
+fn get_server_restart_mutex(server_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+	let mutexes = SERVER_RESTART_MUTEXES.read().unwrap();
+	if let Some(mutex) = mutexes.get(server_id) {
+		return mutex.clone();
+	}
+	drop(mutexes);
+
+	// Create new mutex if not found
+	let mut mutexes = SERVER_RESTART_MUTEXES.write().unwrap();
+	// Double-check in case another thread created it
+	if let Some(mutex) = mutexes.get(server_id) {
+		return mutex.clone();
+	}
+
+	let new_mutex = Arc::new(tokio::sync::Mutex::new(()));
+	mutexes.insert(server_id.to_string(), new_mutex.clone());
+	new_mutex
 }
 
-// Internal function to handle server startup with retry logic
-fn ensure_server_running_with_retry(
-	server: &McpServerConfig,
-	allow_retry: bool,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>> {
-	Box::pin(async move {
-		let server_id = &server.name;
-		const MAX_RESTART_ATTEMPTS: u32 = 3;
-		const BASE_RETRY_DELAY_MS: u64 = 1000; // Start with 1 second
+// Clean up restart mutex when server is permanently removed
+fn cleanup_server_restart_mutex(server_id: &str) {
+	let mut mutexes = SERVER_RESTART_MUTEXES.write().unwrap();
+	mutexes.remove(server_id);
+}
 
-		// Check current restart info
-		let restart_info = {
-			let restart_info_guard = SERVER_RESTART_INFO.read().unwrap();
-			restart_info_guard
-				.get(server_id)
-				.cloned()
-				.unwrap_or_default()
-		};
+// Start a local MCP server process if not already running - START ONCE approach
+// This function will only start servers that are truly not running
+pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
+	let server_id = &server.name;
 
-		// If server has failed too many times, don't retry immediately
-		if restart_info.health_status == ServerHealth::Failed && allow_retry {
-			// Check if enough time has passed since last failure (circuit breaker pattern)
-			if let Some(last_restart) = restart_info.last_restart_time {
-				let time_since_last_restart = SystemTime::now()
-					.duration_since(last_restart)
-					.unwrap_or(Duration::from_secs(0));
+	// Use per-server mutex to prevent concurrent start attempts
+	let restart_mutex = get_server_restart_mutex(server_id);
+	let _guard = restart_mutex.lock().await;
 
-				// Wait at least 30 seconds before retrying a failed server
-				if time_since_last_restart < Duration::from_secs(30) {
-					return Err(anyhow::anyhow!(
-					"Server '{}' is in failed state. Too many restart attempts ({}). Will retry after cooldown period.",
-					server_id,
-					restart_info.restart_count
-				));
-				} else {
-					// Reset failure count after cooldown
-					crate::log_debug!(
-						"Resetting failure count for server '{}' after cooldown",
-						server_id
-					);
-					let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-					if let Some(info) = restart_info_guard.get_mut(server_id) {
-						info.restart_count = 0;
-						info.consecutive_failures = 0;
-						info.health_status = ServerHealth::Dead;
-					}
-				}
-			}
-		}
+	crate::log_debug!("Checking server '{}' status for potential start", server_id);
 
-		// Check if the server is already running and healthy
-		{
-			let processes = SERVER_PROCESSES.read().unwrap();
-			if let Some(process_arc) = processes.get(server_id) {
-				let mut process = process_arc.lock().unwrap();
+	let result = start_server_once_if_needed(server).await;
 
-				// Check if the process is still alive and not marked as shutdown
-				let is_alive = match &mut *process {
-					ServerProcess::Http(child) => child
+	crate::log_debug!("Completed server '{}' check", server_id);
+
+	result
+}
+
+// Simple function to start server once if it's truly not running
+async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String> {
+	let server_id = &server.name;
+
+	// Check if the server is already running and healthy
+	{
+		let processes = SERVER_PROCESSES.read().unwrap();
+		if let Some(process_arc) = processes.get(server_id) {
+			let mut process = process_arc.lock().unwrap();
+
+			// Check if the process is still alive and not marked as shutdown
+			let is_alive = match &mut *process {
+				ServerProcess::Http(child) => child
+					.try_wait()
+					.map(|status| status.is_none())
+					.unwrap_or(false),
+				ServerProcess::Stdin {
+					child, is_shutdown, ..
+				} => {
+					let process_alive = child
 						.try_wait()
 						.map(|status| status.is_none())
-						.unwrap_or(false),
-					ServerProcess::Stdin {
-						child, is_shutdown, ..
-					} => {
-						let process_alive = child
-							.try_wait()
-							.map(|status| status.is_none())
-							.unwrap_or(false);
-						let not_marked_shutdown = !is_shutdown.load(Ordering::SeqCst);
-						process_alive && not_marked_shutdown
-					}
-				};
-
-				if is_alive {
-					// Server is running and healthy - update health status
-					{
-						let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-						let info = restart_info_guard.entry(server_id.clone()).or_default();
-						info.health_status = ServerHealth::Running;
-						info.last_health_check = Some(SystemTime::now());
-					}
-
-					match server.mode {
-						McpServerMode::Http => return get_server_url(server),
-						McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
-					}
-				} else {
-					// Server is dead - mark it as such
-					crate::log_info!(
-						"Server '{}' is not running or has shut down - needs restart",
-						server_id
-					);
-					{
-						let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-						let info = restart_info_guard.entry(server_id.clone()).or_default();
-						info.health_status = ServerHealth::Dead;
-					}
+						.unwrap_or(false);
+					let not_marked_shutdown = !is_shutdown.load(Ordering::SeqCst);
+					process_alive && not_marked_shutdown
 				}
-			} else {
-				// Server not in registry
-				crate::log_debug!(
-					"Server '{}' not found in registry - needs initial start",
-					server_id
-				);
-			}
-		}
+			};
 
-		// Remove dead server from registry before starting new one
-		{
-			let mut processes = SERVER_PROCESSES.write().unwrap();
-			processes.remove(server_id);
-		}
-
-		// Check if we should attempt restart based on retry count
-		if allow_retry && restart_info.restart_count >= MAX_RESTART_ATTEMPTS {
-			// Mark server as failed
-			{
-				let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-				let info = restart_info_guard.entry(server_id.clone()).or_default();
-				info.health_status = ServerHealth::Failed;
-			}
-
-			return Err(anyhow::anyhow!(
-			"Server '{}' has failed {} times. Maximum restart attempts ({}) exceeded. Server marked as failed.",
-			server_id,
-			restart_info.restart_count,
-			MAX_RESTART_ATTEMPTS
-		));
-		}
-
-		// If this is a retry attempt, implement exponential backoff
-		if allow_retry && restart_info.restart_count > 0 {
-			let delay_ms = BASE_RETRY_DELAY_MS * (2_u64.pow(restart_info.restart_count.min(3)));
-			crate::log_debug!(
-				"Waiting {}ms before restart attempt {} for server '{}'",
-				delay_ms,
-				restart_info.restart_count + 1,
-				server_id
-			);
-			sleep(Duration::from_millis(delay_ms)).await;
-		}
-
-		// Update restart tracking before attempting start
-		{
-			let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-			let info = restart_info_guard.entry(server_id.clone()).or_default();
-			info.restart_count += 1;
-			info.last_restart_time = Some(SystemTime::now());
-			info.health_status = ServerHealth::Restarting;
-		}
-
-		// If we get here, we need to start the server
-		crate::log_debug!(
-			"Starting MCP server: {} (attempt {}/{})",
-			server_id,
-			restart_info.restart_count + 1,
-			MAX_RESTART_ATTEMPTS
-		);
-
-		match start_server_process(server).await {
-			Ok(url) => {
-				// Server started successfully - update health status
+			if is_alive {
+				// Server is running and healthy - return URL without any restart attempts
 				{
 					let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
 					let info = restart_info_guard.entry(server_id.clone()).or_default();
 					info.health_status = ServerHealth::Running;
-					info.consecutive_failures = 0; // Reset failure count on success
 					info.last_health_check = Some(SystemTime::now());
 				}
-				crate::log_debug!(
-					"Successfully started server '{}' on attempt {}",
-					server_id,
-					restart_info.restart_count + 1
+
+				crate::log_debug!("Server '{}' is already running and healthy", server_id);
+
+				match server.mode {
+					McpServerMode::Http => return get_server_url(server),
+					McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
+				}
+			} else {
+				// Server process exists but is dead - clean it up
+				crate::log_info!(
+					"Server '{}' process is dead - cleaning up before restart",
+					server_id
 				);
-				Ok(url)
-			}
-			Err(e) => {
-				// Server failed to start - update failure tracking
+
+				// Try to clean up the dead process
+				if let Err(e) = process.kill() {
+					crate::log_debug!("Failed to kill dead server process '{}': {}", server_id, e);
+				}
+
+				// Mark as dead
 				{
 					let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
 					let info = restart_info_guard.entry(server_id.clone()).or_default();
-					info.consecutive_failures += 1;
 					info.health_status = ServerHealth::Dead;
 				}
-
-				crate::log_debug!(
-					"Failed to start server '{}' on attempt {}: {}",
-					server_id,
-					restart_info.restart_count,
-					e
-				);
-
-				// If we haven't exceeded max attempts and retries are allowed, try again
-				if allow_retry && restart_info.restart_count < MAX_RESTART_ATTEMPTS {
-					crate::log_debug!(
-						"Retrying server '{}' startup (attempt {} of {})",
-						server_id,
-						restart_info.restart_count + 1,
-						MAX_RESTART_ATTEMPTS
-					);
-					return Box::pin(ensure_server_running_with_retry(server, true)).await;
-				}
-
-				// Mark as failed if all attempts exhausted
-				{
-					let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-					let info = restart_info_guard.entry(server_id.clone()).or_default();
-					info.health_status = ServerHealth::Failed;
-				}
-
-				Err(anyhow::anyhow!(
-					"Failed to start server '{}' after {} attempts. Last error: {}",
-					server_id,
-					restart_info.restart_count,
-					e
-				))
 			}
+		} else {
+			// Server not in registry - needs initial start
+			crate::log_debug!(
+				"Server '{}' not found in registry - needs initial start",
+				server_id
+			);
 		}
-	})
+	}
+
+	// Clean up dead server from registry before starting new one
+	{
+		let mut processes = SERVER_PROCESSES.write().unwrap();
+		processes.remove(server_id);
+	}
+
+	// Start the server (this is the ONLY place where we start servers)
+	crate::log_info!("Starting MCP server: {}", server_id);
+
+	match start_server_process(server).await {
+		Ok(url) => {
+			// Server started successfully - update health status
+			{
+				let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+				let info = restart_info_guard.entry(server_id.clone()).or_default();
+				info.health_status = ServerHealth::Running;
+				info.restart_count += 1; // Track that we started it
+				info.last_restart_time = Some(SystemTime::now());
+				info.last_health_check = Some(SystemTime::now());
+				info.consecutive_failures = 0;
+			}
+			crate::log_info!("Successfully started server '{}'", server_id);
+			Ok(url)
+		}
+		Err(e) => {
+			// Server failed to start - mark as failed but don't retry
+			{
+				let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+				let info = restart_info_guard.entry(server_id.clone()).or_default();
+				info.health_status = ServerHealth::Failed;
+				info.consecutive_failures += 1;
+			}
+			crate::log_error!("Failed to start server '{}': {}", server_id, e);
+			Err(anyhow::anyhow!(
+				"Failed to start server '{}': {}",
+				server_id,
+				e
+			))
+		}
+	}
 }
+// Start a server process based on configuration
 
 // Start a server process based on configuration
 async fn start_server_process(server: &McpServerConfig) -> Result<String> {
@@ -473,15 +470,13 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 					server.name, e
 				);
 
-				// Try to kill the process before returning error
-				if let Ok(mut processes) = SERVER_PROCESSES.write() {
-					if let Some(process_arc) = processes.remove(&server.name) {
-						if let Ok(mut process) = process_arc.lock() {
-							let _ = process.kill(); // Ignore kill errors
-						}
-						// Clear function cache when removing failed server
-						crate::mcp::server::clear_function_cache_for_server(&server.name);
-					}
+				// Use the proper cleanup function to kill the process
+				if let Err(cleanup_err) = cleanup_server_process(&server.name) {
+					crate::log_debug!(
+						"Failed to cleanup server '{}' after init failure: {}",
+						server.name,
+						cleanup_err
+					);
 				}
 
 				return Err(anyhow::anyhow!(
@@ -712,7 +707,7 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 						Err(e) => {
 							// Check if this is a broken pipe error (server died)
 							if e.kind() == std::io::ErrorKind::BrokenPipe {
-								// Mark server as dead and attempt restart
+								// Mark server as dead and schedule cleanup
 								{
 									let mut restart_info_guard =
 										SERVER_RESTART_INFO.write().unwrap();
@@ -721,8 +716,12 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 										.or_default();
 									info.health_status = ServerHealth::Dead;
 								}
+
+								// Schedule server cleanup (but don't do it here to avoid deadlocks)
+								crate::log_debug!("Broken pipe detected on write for server '{}', marking for cleanup", server_name_for_closure);
+
 								return Err(anyhow::anyhow!(
-									"Server '{}' appears to have died (broken pipe). Will attempt restart on next call.",
+									"Server '{}' appears to have died (broken pipe on write). Will attempt restart on next call.",
 									server_name_for_closure
 								));
 							}
@@ -735,7 +734,7 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 						Err(e) => {
 							// Check if this is a broken pipe error (server died)
 							if e.kind() == std::io::ErrorKind::BrokenPipe {
-								// Mark server as dead and attempt restart
+								// Mark server as dead and schedule cleanup
 								{
 									let mut restart_info_guard =
 										SERVER_RESTART_INFO.write().unwrap();
@@ -744,8 +743,12 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 										.or_default();
 									info.health_status = ServerHealth::Dead;
 								}
+
+								// Schedule server cleanup (but don't do it here to avoid deadlocks)
+								crate::log_debug!("Broken pipe detected on flush for server '{}', marking for cleanup", server_name_for_closure);
+
 								return Err(anyhow::anyhow!(
-									"Server '{}' appears to have died (broken pipe during flush). Will attempt restart on next call.",
+									"Server '{}' appears to have died (broken pipe on flush). Will attempt restart on next call.",
 									server_name_for_closure
 								));
 							}
@@ -989,16 +992,25 @@ pub async fn execute_stdin_tool_call_with_cancellation(
 	Ok(tool_result)
 }
 
-// Stop all running server processes
+// Stop all running server processes with proper cleanup
 pub fn stop_all_servers() -> Result<()> {
 	let mut processes = SERVER_PROCESSES.write().unwrap();
 
 	for (name, process_arc) in processes.iter() {
-		let mut process = process_arc.lock().unwrap();
-		// Debug output
-		// println!("Stopping MCP server: {}", name);
-		if let Err(e) = process.kill() {
-			eprintln!("Failed to kill MCP server '{}': {}", name, e);
+		crate::log_debug!("Stopping MCP server: {}", name);
+
+		// Try to get the process with a timeout
+		match process_arc.try_lock() {
+			Ok(mut process) => {
+				if let Err(e) = process.kill() {
+					eprintln!("Failed to kill MCP server '{}': {}", name, e);
+				}
+			}
+			Err(_) => {
+				crate::log_debug!("Could not acquire lock for server '{}', may be busy", name);
+				// For busy processes, we'll just remove them from registry
+				// The process cleanup will happen when the lock is released
+			}
 		}
 	}
 
@@ -1007,7 +1019,51 @@ pub fn stop_all_servers() -> Result<()> {
 	// Clear all function cache when stopping all servers
 	crate::mcp::server::clear_all_function_cache();
 
+	// Clear all restart mutexes
+	{
+		let mut mutexes = SERVER_RESTART_MUTEXES.write().unwrap();
+		mutexes.clear();
+		crate::log_debug!("Cleared all server restart mutexes");
+	}
+
 	Ok(())
+}
+
+// Cleanup a specific server process (helper function)
+pub fn cleanup_server_process(server_name: &str) -> Result<()> {
+	let mut processes = SERVER_PROCESSES.write().unwrap();
+
+	if let Some(process_arc) = processes.remove(server_name) {
+		// Try to kill the process properly
+		match process_arc.try_lock() {
+			Ok(mut process) => {
+				crate::log_debug!("Cleaning up server process '{}'", server_name);
+				if let Err(e) = process.kill() {
+					crate::log_debug!("Failed to kill server process '{}': {}", server_name, e);
+				}
+			}
+			Err(_) => {
+				crate::log_debug!(
+					"Could not acquire lock for server '{}' during cleanup",
+					server_name
+				);
+			}
+		}
+
+		// Clear function cache for this server
+		crate::mcp::server::clear_function_cache_for_server(server_name);
+
+		// Clean up restart mutex
+		cleanup_server_restart_mutex(server_name);
+
+		crate::log_debug!("Server '{}' removed from registry", server_name);
+		Ok(())
+	} else {
+		Err(anyhow::anyhow!(
+			"Server '{}' not found in registry",
+			server_name
+		))
+	}
 }
 
 // Check if a server process is still running with enhanced health tracking

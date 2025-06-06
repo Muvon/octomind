@@ -379,6 +379,9 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				);
 			}
 
+			// Clear function cache for this server since it's restarting
+			crate::mcp::server::clear_function_cache_for_server(&server.name);
+
 			// Wait a moment to let the server start
 			let start_time = Instant::now();
 			let max_wait = Duration::from_secs(10); // Maximum 10 seconds to wait for server to start
@@ -449,6 +452,9 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				processes.insert(server.name.clone(), Arc::new(Mutex::new(server_process)));
 			}
 
+			// Clear function cache for this server since it's restarting
+			crate::mcp::server::clear_function_cache_for_server(&server.name);
+
 			// Initialize the server by sending the initialize request, following the MCP protocol
 			// This also verifies the server is responsive
 			let _process_arc = {
@@ -473,6 +479,8 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 						if let Ok(mut process) = process_arc.lock() {
 							let _ = process.kill(); // Ignore kill errors
 						}
+						// Clear function cache when removing failed server
+						crate::mcp::server::clear_function_cache_for_server(&server.name);
 					}
 				}
 
@@ -995,6 +1003,10 @@ pub fn stop_all_servers() -> Result<()> {
 	}
 
 	processes.clear();
+
+	// Clear all function cache when stopping all servers
+	crate::mcp::server::clear_all_function_cache();
+
 	Ok(())
 }
 

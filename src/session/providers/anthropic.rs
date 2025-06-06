@@ -28,8 +28,8 @@ use std::env;
 const PRICING: &[(&str, f64, f64)] = &[
 	// Model, Input price per 1M tokens, Output price per 1M tokens
 	// Claude 4 models
-	("claude-opus-4", 15.00, 75.00),
-	("claude-sonnet-4", 3.00, 15.00),
+	("claude-opus-4-0", 15.00, 75.00),
+	("claude-sonnet-4-0", 3.00, 15.00),
 	// Claude 3.7 models
 	("claude-3-7-sonnet", 3.00, 15.00),
 	// Claude 3.5 models

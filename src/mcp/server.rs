@@ -22,6 +22,14 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+// Global cache for server function definitions to avoid repeated JSON-RPC calls
+// Functions are cached until server restarts (no TTL needed)
+lazy_static::lazy_static! {
+	static ref FUNCTION_CACHE: Arc<RwLock<HashMap<String, Vec<McpFunction>>>> =
+		Arc::new(RwLock::new(HashMap::new()));
+}
 
 // Get server function definitions (will start server if needed)
 pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
@@ -133,14 +141,95 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 	}
 }
 
-// Get server function definitions WITHOUT starting the server (for lightweight discovery)
+// Get server function definitions WITHOUT making JSON-RPC calls (optimized for system prompt generation)
 pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
-	// Check if server is already running
 	let server_id = &server.name;
-	let is_running = {
-		let processes = process::SERVER_PROCESSES.read().unwrap();
-		if let Some(process_arc) = processes.get(server_id) {
-			let mut process = process_arc.lock().unwrap();
+
+	// First, check if we have cached functions
+	{
+		let cache = FUNCTION_CACHE.read().unwrap();
+		if let Some(cached_functions) = cache.get(server_id) {
+			crate::log_debug!(
+				"Using cached functions for server '{}' ({} functions)",
+				server_id,
+				cached_functions.len()
+			);
+			return Ok(cached_functions.clone());
+		}
+	}
+
+	// Check if server is currently running
+	let is_running = is_server_running_for_cache_check(server_id);
+
+	if is_running {
+		// Server is running - get fresh functions and cache them
+		crate::log_debug!(
+			"Server '{}' is running - fetching and caching function definitions",
+			server_id
+		);
+
+		match get_server_functions(server).await {
+			Ok(functions) => {
+				// Cache the functions (no expiration - only cleared on server restart)
+				{
+					let mut cache = FUNCTION_CACHE.write().unwrap();
+					cache.insert(server_id.clone(), functions.clone());
+				}
+				crate::log_debug!(
+					"Cached {} functions for server '{}'",
+					functions.len(),
+					server_id
+				);
+				Ok(functions)
+			}
+			Err(e) => {
+				crate::log_error!(
+					"Failed to get functions from running server '{}': {}",
+					server_id,
+					e
+				);
+				// Fall back to configured tools
+				get_fallback_functions(server)
+			}
+		}
+	} else {
+		// Server is not running - return configured tools or empty list
+		crate::log_debug!(
+			"Server '{}' is not running - using fallback function definitions",
+			server_id
+		);
+		get_fallback_functions(server)
+	}
+}
+
+// Helper function to get fallback functions when server is not running
+fn get_fallback_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
+	if !server.tools.is_empty() {
+		// Return lightweight function entries based on configuration
+		Ok(server
+			.tools
+			.iter()
+			.map(|tool_name| McpFunction {
+				name: tool_name.clone(),
+				description: format!(
+					"External tool '{}' from server '{}' (server not started)",
+					tool_name, server.name
+				),
+				parameters: serde_json::json!({}),
+			})
+			.collect())
+	} else {
+		// No specific tools configured and server not running
+		Ok(vec![])
+	}
+}
+
+// Optimized server running check that doesn't hold locks for long
+fn is_server_running_for_cache_check(server_name: &str) -> bool {
+	let processes = process::SERVER_PROCESSES.read().unwrap();
+	if let Some(process_arc) = processes.get(server_name) {
+		// Try to get a quick lock - if we can't, assume it's busy and running
+		if let Ok(mut process) = process_arc.try_lock() {
 			match &mut *process {
 				process::ServerProcess::Http(child) => child
 					.try_wait()
@@ -159,38 +248,32 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 				}
 			}
 		} else {
-			false
+			// If we can't get the lock, assume the server is busy and running
+			true
 		}
-	};
-
-	if is_running {
-		// Server is running, we can get functions normally
-		get_server_functions(server).await
 	} else {
-		// Server is not running, return empty list or configured tools
-		crate::log_debug!(
-			"Server '{}' is not running - returning configured tools only",
-			server.name
-		);
+		false
+	}
+}
 
-		if !server.tools.is_empty() {
-			// Return lightweight function entries based on configuration
-			Ok(server
-				.tools
-				.iter()
-				.map(|tool_name| McpFunction {
-					name: tool_name.clone(),
-					description: format!(
-						"External tool '{}' from server '{}' (not yet started)",
-						tool_name, server.name
-					),
-					parameters: serde_json::json!({}),
-				})
-				.collect())
-		} else {
-			// No specific tools configured and server not running
-			Ok(vec![])
-		}
+// Clear cached functions for a specific server (called when server restarts)
+pub fn clear_function_cache_for_server(server_name: &str) {
+	let mut cache = FUNCTION_CACHE.write().unwrap();
+	if cache.remove(server_name).is_some() {
+		crate::log_debug!(
+			"Cleared function cache for server '{}' due to restart",
+			server_name
+		);
+	}
+}
+
+// Clear all cached functions (useful for cleanup)
+pub fn clear_all_function_cache() {
+	let mut cache = FUNCTION_CACHE.write().unwrap();
+	let count = cache.len();
+	cache.clear();
+	if count > 0 {
+		crate::log_debug!("Cleared function cache for {} servers", count);
 	}
 }
 

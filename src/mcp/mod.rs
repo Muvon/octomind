@@ -19,7 +19,14 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Write;
+use std::sync::{Arc, RwLock};
 use uuid;
+
+// Cache for internal server function definitions (static during session)
+lazy_static::lazy_static! {
+	static ref INTERNAL_FUNCTION_CACHE: Arc<RwLock<std::collections::HashMap<String, Vec<McpFunction>>>> =
+		Arc::new(RwLock::new(std::collections::HashMap::new()));
+}
 
 pub mod dev;
 pub mod fs;
@@ -285,37 +292,21 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 
 	// Get enabled servers from the merged config (which should already be filtered by server_refs)
 	let enabled_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.to_vec();
-	crate::log_debug!(
-		"Found {} enabled servers in merged config",
-		enabled_servers.len()
-	);
 
 	for server in enabled_servers {
 		match server.server_type {
 			crate::config::McpServerType::Developer => {
-				let server_functions = if server.tools.is_empty() {
-					// No tool filtering - get all developer functions
-					dev::get_all_functions()
-				} else {
-					// Filter functions based on allowed tools
-					dev::get_all_functions()
-						.into_iter()
-						.filter(|func| server.tools.contains(&func.name))
-						.collect()
-				};
+				let server_functions =
+					get_cached_internal_functions("developer", &server.tools, || {
+						dev::get_all_functions()
+					});
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::Filesystem => {
-				let server_functions = if server.tools.is_empty() {
-					// No tool filtering - get all filesystem functions
-					fs::get_all_functions()
-				} else {
-					// Filter functions based on allowed tools
-					fs::get_all_functions()
-						.into_iter()
-						.filter(|func| server.tools.contains(&func.name))
-						.collect()
-				};
+				let server_functions =
+					get_cached_internal_functions("filesystem", &server.tools, || {
+						fs::get_all_functions()
+					});
 				functions.extend(server_functions);
 			}
 			crate::config::McpServerType::External => {
@@ -349,6 +340,61 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	}
 
 	functions
+}
+
+// Helper function to get cached internal functions with filtering
+fn get_cached_internal_functions<F>(
+	server_type: &str,
+	allowed_tools: &[String],
+	get_functions: F,
+) -> Vec<McpFunction>
+where
+	F: FnOnce() -> Vec<McpFunction>,
+{
+	let cache_key = if allowed_tools.is_empty() {
+		format!("{}_all", server_type)
+	} else {
+		format!("{}_{}", server_type, allowed_tools.join(","))
+	};
+
+	// Try to get from cache first
+	{
+		let cache = INTERNAL_FUNCTION_CACHE.read().unwrap();
+		if let Some(cached_functions) = cache.get(&cache_key) {
+			crate::log_debug!("Using cached {} functions", server_type);
+			return cached_functions.clone();
+		}
+	}
+
+	// Not in cache - compute and cache
+	crate::log_debug!("Computing and caching {} functions", server_type);
+	let all_functions = get_functions();
+	let filtered_functions = if allowed_tools.is_empty() {
+		all_functions
+	} else {
+		all_functions
+			.into_iter()
+			.filter(|func| allowed_tools.contains(&func.name))
+			.collect()
+	};
+
+	// Cache the result
+	{
+		let mut cache = INTERNAL_FUNCTION_CACHE.write().unwrap();
+		cache.insert(cache_key, filtered_functions.clone());
+	}
+
+	filtered_functions
+}
+
+// Clear internal function cache (useful for testing or when tools configuration changes)
+pub fn clear_internal_function_cache() {
+	let mut cache = INTERNAL_FUNCTION_CACHE.write().unwrap();
+	let count = cache.len();
+	cache.clear();
+	if count > 0 {
+		crate::log_debug!("Cleared internal function cache for {} entries", count);
+	}
 }
 
 // Execute a tool call

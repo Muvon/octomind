@@ -548,7 +548,7 @@ pub async fn create_system_prompt(
 
 	// For developer role, process placeholders to add project context
 	let mut prompt =
-		helper_functions::process_placeholders_async(&system_prompt_opt.unwrap(), project_dir)
+		helper_functions::process_placeholders_async(system_prompt_opt.unwrap(), project_dir)
 			.await;
 
 	// Add MCP tools information if enabled

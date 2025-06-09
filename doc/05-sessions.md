@@ -61,26 +61,36 @@ Three-layer processing for complex tasks:
 
 ```toml
 [developer]
-model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
+layer_refs = []
 system = "You are an Octomind AI developer assistant with full access to development tools."
 
-# MCP configuration using new server registry approach
+# MCP configuration using current server structure
 [developer.mcp]
-enabled = true
-server_refs = ["developer", "filesystem"]  # Reference servers from registry
+server_refs = ["developer", "filesystem", "octocode"]
 allowed_tools = []  # Empty means all tools from referenced servers
 
-# Server registry (define once, reference everywhere)
-[mcp_server_registry.developer]
-enabled = true
+# Server definitions in main MCP section
+[mcp]
+allowed_tools = []
+
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
-[mcp_server_registry.filesystem]
-enabled = true
+[[mcp.servers]]
 name = "filesystem"
 server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 ```
 
 ## Assistant Role

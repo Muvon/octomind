@@ -43,93 +43,108 @@ octomind config --validate
 
 ### Example Configuration File
 
+**View Complete Template**: [`config-templates/default.toml`](../config-templates/default.toml)
+
 ```toml
-# Global embedding configuration
-embedding_provider = "fastembed"
+# Configuration version (DO NOT MODIFY)
+version = 1
 
-[fastembed]
-code_model = "all-MiniLM-L6-v2"
-text_model = "all-MiniLM-L6-v2"
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYSTEM-WIDE SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-[jina]
-code_model = "jina-embeddings-v2-base-code"
-text_model = "jina-embeddings-v3"
+# Log level for system messages (none, info, debug)
+log_level = "none"
 
-# GraphRAG configuration
-[graphrag]
-enabled = false
-description_model = "openrouter:openai/gpt-4.1-nano"
-relationship_model = "openrouter:openai/gpt-4.1-nano"
-
-# IMPORTANT: API Keys are now ONLY set via environment variables
-# No API keys should be stored in the configuration file
-
-# Provider configuration is now minimal and environment-driven
-[providers]
-# Placeholder for potential future non-sensitive provider configurations
-
-# Legacy OpenRouter configuration (for backward compatibility)
-[openrouter]
+# Default model for all operations (provider:model format)
 model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
-log_level = "info"
+
+# Performance & Limits
 mcp_response_warning_threshold = 20000
-max_request_tokens_threshold = 50000
-cache_tokens_pct_threshold = 40
+max_request_tokens_threshold = 20000
+enable_auto_truncation = false
+cache_tokens_threshold = 2048
+cache_timeout_seconds = 240
+use_long_system_cache = true
 
-# Global MCP configuration (fallback for all roles)
-[mcp]
-enabled = true
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROLE CONFIGURATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-[[mcp.servers]]
-enabled = true
-name = "developer"
-server_type = "developer"
-
-[[mcp.servers]]
-enabled = true
-name = "filesystem"
-server_type = "filesystem"
-
-# Developer role configuration (inherits from global MCP)
+# Developer role - full development environment
 [developer]
-model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
-system = "You are an Octomind AI developer assistant with full access to development tools."
+layer_refs = []
+system = """You are an Octomind – top notch fully autonomous AI developer..."""
 
-# Assistant role configuration (tools disabled by default)
+# MCP configuration for developer role
+[developer.mcp]
+server_refs = ["developer", "filesystem", "octocode"]
+allowed_tools = []
+
+# Assistant role - optimized for general assistance
 [assistant]
-model = "openrouter:anthropic/claude-3.5-haiku"
 enable_layers = false
+layer_refs = []
 system = "You are a helpful assistant."
 
+# MCP configuration for assistant role
 [assistant.mcp]
-enabled = false
+server_refs = ["filesystem"]
+allowed_tools = []
 
-# Custom role example (inherits from assistant, then applies overrides)
-[my-custom-role]
-model = "openrouter:openai/gpt-4o"
-enable_layers = true
-system = "You are a specialized assistant for my specific use case."
+# ═══════════════════════════════════════════════════════════════════════════════
+# MCP (MODEL CONTEXT PROTOCOL) SERVERS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-[my-custom-role.mcp]
-enabled = true
+[mcp]
+allowed_tools = []
 
-[[my-custom-role.mcp.servers]]
-enabled = true
+# Built-in MCP servers
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
-tools = ["shell", "text_editor"]  # Limit to specific tools
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
-# External MCP server example
-[[my-custom-role.mcp.servers]]
-enabled = true
-name = "WebSearch"
+[[mcp.servers]]
+name = "filesystem"
+server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
+
+[[mcp.servers]]
+name = "octocode"
 server_type = "external"
-url = "https://mcp.so/server/webSearch-Tools"
-auth_token = "optional_token"
-tools = []  # Empty means all tools enabled
+command = "octocode"
+args = ["mcp", "--path=."]
+mode = "stdin"
+timeout_seconds = 30
+tools = []
+builtin = true
+
+# Example external MCP server configuration:
+# [[mcp.servers]]
+# name = "web_search"
+# server_type = "external"
+# url = "https://mcp.so/server/webSearch-Tools"
+# mode = "http"
+# timeout_seconds = 30
+# tools = []
+# builtin = false
 ```
+
+**Important Notes:**
+- **API Keys**: Set via environment variables only (e.g., `OPENROUTER_API_KEY`)
+- **Server References**: Roles use `server_refs` to reference servers by name
+- **Tool Filtering**: Use `allowed_tools` to limit available tools per role
+- **Builtin Servers**: Developer, filesystem, and octocode are always available
 
 ## AI Provider Configuration
 
@@ -333,25 +348,31 @@ input_mode = "All"
 The MCP system has been significantly improved with a new server registry approach that eliminates configuration duplication. Servers are now defined once in a central registry and referenced by roles and commands:
 
 ```toml
-# MCP Server Registry - Define servers once, reference everywhere
-[mcp_server_registry]
+# MCP Server Configuration - Define servers in main MCP section
+[mcp]
+allowed_tools = []
 
-# Built-in servers (defined by default but can be customized)
-[mcp_server_registry.developer]
-enabled = true
+# Built-in servers (always available)
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
 tools = []  # Empty means all tools enabled
+builtin = true
 
-[mcp_server_registry.filesystem]
-enabled = true
+[[mcp.servers]]
 name = "filesystem"
 server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
 tools = []  # Empty means all tools enabled
+builtin = true
 
 # External HTTP server
-[mcp_server_registry.web_search]
-enabled = true
+[[mcp.servers]]
 name = "web_search"
 server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
@@ -359,10 +380,10 @@ auth_token = "optional_token"
 mode = "http"
 timeout_seconds = 30
 tools = []  # Empty means all tools enabled
+builtin = false
 
 # External command-based server
-[mcp_server_registry.local_tools]
-enabled = true
+[[mcp.servers]]
 name = "local_tools"
 server_type = "external"
 command = "python"
@@ -370,8 +391,9 @@ args = ["-m", "my_mcp_server", "--port", "8008"]
 mode = "stdin"  # Communication mode: "http" or "stdin"
 timeout_seconds = 30
 tools = []
+builtin = false
 
-# Role configurations now reference servers from registry
+# Role configurations reference servers by name
 [developer.mcp]
 enabled = true
 server_refs = ["developer", "filesystem"]  # Reference servers by name
@@ -424,16 +446,24 @@ server_type = "filesystem"
 
 **New registry format (recommended):**
 ```toml
-# Define servers once in registry
-[mcp_server_registry.developer]
-enabled = true
+# Define servers in main MCP section
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
-[mcp_server_registry.filesystem]
-enabled = true
+[[mcp.servers]]
 name = "filesystem"
 server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
 # Reference from roles
 [developer.mcp]

@@ -1,91 +1,33 @@
-#Octomind 🤖 - AI-Powered Development Assistant
+# Octomind 🤖 - AI-Powered Development Assistant
 
-**© 2025 Muvon Un Limited** | [Documentation](doc/README.md)
+**© 2025 Muvon Un Limited** | [Complete Documentation](doc/README.md)
 
-## 🚀 Session-First AI Development Assistant
+> **Transform your development workflow with AI conversations that understand your codebase**
 
-Octomind is an AI-powered development assistant that helps you understand, analyze, and interact with your codebase through natural language conversations in interactive sessions.
+Octomind is an AI-powered development assistant that helps you understand, analyze, and interact with your codebase through natural language conversations. No complex setup, no indexing—just intelligent AI sessions with built-in development tools.
 
-### 🌟 Key Features
+## ✨ Why Octomind?
 
-- 🤖 **Session-Based AI Interaction** - Everything happens in interactive sessions
+- 🎯 **Session-First Architecture** - Everything happens in interactive AI conversations
 - 🛠️ **Built-in Development Tools** - File operations, code analysis, shell commands via MCP
 - 🌐 **Multi-Provider AI Support** - OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare
-- 🔧 **Role-Based Configuration** - Developer (with tools) and Assistant (chat only) modes
+- 💰 **Cost Tracking & Optimization** - Real-time usage monitoring with detailed reporting
+- 🔧 **Role-Based Configuration** - Developer (full tools) and Assistant (chat-only) modes
 
-### 🔧 Quick Start
+## 🚀 Quick Start
 
 ```bash
 # Install Octomind
 curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
 
-# Set AI Provider API Key
+# Set your AI provider API key
 export OPENROUTER_API_KEY="your_key"
 
-# Start a development session
+# Start coding with AI
 octomind session
 ```
 
-### 📖 Documentation
-
-- [**Complete Documentation**](doc/README.md) - Comprehensive guides and references
-- [**Installation Guide**](doc/01-installation.md) - Installation methods and setup
-- [**Configuration**](doc/02-configuration.md) - Configuration system and settings
-
-### 🌐 Supported AI Providers
-
-| Provider | Format | Features |
-|----------|--------|----------|
-| OpenRouter | `openrouter:provider/model` | Multi-provider access, caching |
-| OpenAI | `openai:model-name` | Direct API, cost calculation |
-| Anthropic | `anthropic:model-name` | Claude models, caching |
-| Google | `google:model-name` | Vertex AI, multimodal |
-| Amazon | `amazon:model-name` | Bedrock models, AWS integration |
-| Cloudflare | `cloudflare:model-name` | Edge AI, fast inference |
-
-## 🚀 Installation & Setup
-
-### Installation
-
-```bash
-# One-line install (recommended)
-curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
-
-# Or build from source
-git clone https://github.com/muvon/octomind.git
-cd octomind && cargo build --release
-```
-
-### Setup
-
-```bash
-# Set your AI provider API key
-export OPENROUTER_API_KEY="your_key"  # or OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
-
-# Create configuration
-octomind config
-
-# Start your first session
-octomind session
-```
-
-### Basic Usage
-
-```bash
-# Start development session (includes all tools)
-octomind session
-
-# Start simple chat session (no tools)
-octomind session --role=assistant
-
-# Resume a session
-octomind session --resume my_session
-
-# Use specific model
-octomind session --model "openrouter:anthropic/claude-3.5-sonnet"
-```
-
-## How It Works
+## 💬 How It Works
 
 Instead of complex command-line tools, simply talk to Octomind:
 
@@ -100,110 +42,10 @@ Instead of complex command-line tools, simply talk to Octomind:
 [AI checks build errors, analyzes code, suggests fixes]
 
 > /report
-[Shows detailed breakdown: $0.02 spent, 3 requests, 5 tool calls, timing analysis]
+[Shows: $0.02 spent, 3 requests, 5 tool calls, timing analysis]
 ```
 
-### Core Principles
-
-#### 🎯 Session-First Architecture
-Everything happens within interactive AI sessions. No separate indexing or search commands - just natural conversation with AI assistants that have built-in development tools.
-
-#### 🔧 Role-Based Configuration
-- **Developer Role**: Full development environment with all tools enabled
-- **Assistant Role**: Simple conversation mode without development tools
-
-#### 🛠️ Built-in Development Tools
-File operations, code analysis, and shell command execution via MCP (Model-Centric Programming) protocol - all accessible through natural conversation.
-
-#### 🌐 Multiple AI Provider Support
-OpenRouter, OpenAI, Anthropic, Google Vertex AI, Amazon Bedrock, Cloudflare Workers AI with unified `provider:model` format.
-
-### Session Commands
-
-Within any session, use these commands:
-- `/help` - Show available commands
-- `/model [model]` - Show/change current model
-- `/info` - Display token usage and costs
-- `/report` - Generate detailed usage report with cost breakdown per request
-- `/cache` - Mark cache checkpoint for cost savings
-- `/done` - Optimize context and restart layered processing
-- `/layers` - Toggle layered processing on/off
-- `/debug` - Toggle debug logging
-- `/exit` - Exit session
-
-## Key Features
-
-- **Interactive AI Sessions**: Work with your codebase through natural conversation
-- **Project Context Awareness**: Automatic project analysis and context collection
-- **Layered Architecture**: Multi-stage AI processing for complex development tasks
-- **Token Management**: Cost tracking, caching, and automatic context optimization
-- **Session Reporting**: Detailed usage reports with cost breakdown per request and timing analysis
-- **Session Management**: Save, resume, and organize development conversations
-- **Extensible Tool System**: MCP protocol support for integrating external tools
-
-## Documentation
-
-📖 **[Complete Documentation](./doc/README.md)** - Comprehensive guides and references
-
-### Quick Links
-- **[Installation Guide](./doc/01-installation.md)** - Detailed installation methods
-- **[Configuration Guide](./doc/02-configuration.md)** - Configuration system and settings
-
-## Configuration Example
-
-```toml
-# .octomind/config.toml
-version = 1
-log_level = "none"
-model = "openrouter:anthropic/claude-3.5-sonnet"
-mcp_response_warning_threshold = 20000
-max_request_tokens_threshold = 50000
-enable_auto_truncation = false
-cache_tokens_threshold = 2048
-cache_timeout_seconds = 240
-enable_markdown_rendering = false
-markdown_theme = "default"
-max_session_spending_threshold = 0.0
-
-# Developer role configuration
-[developer]
-enable_layers = true
-layer_refs = []
-
-[developer.config]
-enable_layers = true
-system = "You are an Octomind AI developer assistant with full access to development tools."
-
-[developer.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = []
-
-# Assistant role configuration
-[assistant]
-enable_layers = false
-layer_refs = []
-
-[assistant.config]
-enable_layers = false
-system = "You are a helpful assistant."
-
-[assistant.mcp]
-server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "list_files"]
-
-# MCP server registry
-[mcp.servers]
-# Servers are configured here
-```
-
-### Key Configuration Points
-
-- API keys set via environment variables for security
-- Single system-wide model setting
-- Role-based configurations (developer/assistant)
-- MCP server registry for tool integration
-
-## Supported AI Providers
+## 🌐 Supported AI Providers
 
 | Provider | Format | Features |
 |----------|--------|----------|
@@ -214,73 +56,106 @@ allowed_tools = ["text_editor", "list_files"]
 | Amazon | `amazon:model-name` | Bedrock models, AWS integration |
 | Cloudflare | `cloudflare:model-name` | Edge AI, fast inference |
 
-## Architecture
+## 🛠️ Installation & Setup
 
-```mermaid
-graph TB
-    A[User] --> B[Session Interface]
-    B --> C[Role Configuration]
-    B --> D[MCP Tools]
-    B --> E[AI Providers]
-
-    C --> F[Developer Role]
-    C --> G[Assistant Role]
-    C --> H[Custom Roles]
-
-    D --> I[File Operations]
-    D --> J[Code Analysis]
-    D --> K[Shell Commands]
-    D --> L[External Tools]
-
-    E --> M[OpenRouter]
-    E --> N[OpenAI]
-    E --> O[Anthropic]
-    E --> P[Google/Amazon/Cloudflare]
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-- **Adding New AI Providers**: See `src/session/providers/` for examples
-- **Adding New MCP Tools**: Configure via MCP server registry or add to existing servers
-- **Documentation Updates**: Update both code and documentation
+### Installation Options
 
 ```bash
-# Development setup
-cargo test
-cargo build
-make install
+# One-line install (recommended)
+curl -fsSL https://raw.githubusercontent.com/muvon/octomind/main/install.sh | bash
+
+# Build from source
+cargo install --git https://github.com/muvon/octomind.git
+
+# Manual download from releases
+# See: https://github.com/muvon/octomind/releases
 ```
 
-## Troubleshooting
+### Basic Setup
 
-### Common Issues
-- **Configuration Errors**: Check your `.octomind/config.toml` file
-- **Missing API Keys**: Set environment variables for your AI provider
-- **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-3.5-sonnet`)
-- **Session Issues**: Use `/debug` to toggle debug logging
+```bash
+# Set your AI provider API key
+export OPENROUTER_API_KEY="your_key"  # or OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
 
-### Getting Help
-- **Issues**: [GitHub Issues](https://github.com/muvon/octomind/issues)
-- **Documentation**: [Complete Documentation](./doc/README.md)
-- **Email**: [opensource@muvon.io](mailto:opensource@muvon.io)
+# Create configuration (optional - uses smart defaults)
+octomind config
 
-## 📞 Support & Contact
+# Start your first session
+octomind session
+```
 
-- **Issues**: [GitHub Issues](https://github.com/muvon/octomind/issues)
-- **Email**: [opensource@muvon.io](mailto:opensource@muvon.io)
-- **Company**: Muvon Un Limited (Hong Kong)
-- **Website**: [muvon.io](https://muvon.io)
-- **Product Page**: [octomind.muvon.io](https://octomind.muvon.io)
+### Essential Commands
 
-## Contributing
+```bash
+# Development session (full tools)
+octomind session
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+# Chat-only session
+octomind session --role=assistant
 
-- **Adding New AI Providers**: See `src/session/providers/` for examples
-- **Adding New MCP Tools**: Configure via MCP server registry or add to existing servers
-- **Documentation Updates**: Update both code and documentation
+# Resume previous session
+octomind session --resume my_session
+
+# Use specific model
+octomind session --model "openrouter:anthropic/claude-3.5-sonnet"
+```
+
+## 🎮 Session Commands
+
+Within any session, use these commands:
+- `/help` - Show available commands and features
+- `/model [model]` - View or change current AI model
+- `/info` - Display token usage and costs
+- `/report` - Generate detailed usage report with cost breakdown
+- `/cache` - Mark cache checkpoint for cost savings
+- `/layers` - Toggle layered processing on/off
+- `/debug` - Toggle debug logging
+- `/exit` - Exit current session
+
+## 🔧 Configuration
+
+Octomind uses a flexible configuration system with smart defaults. Configuration is optional for basic usage.
+
+**View Configuration Template**: [`config-templates/default.toml`](config-templates/default.toml)
+
+```bash
+# Generate default config
+octomind config
+
+# Validate configuration
+octomind config --validate
+
+# View current settings
+octomind config --show
+```
+
+**Key Configuration Features:**
+- Environment variable precedence for security
+- Role-based configurations (developer/assistant)
+- MCP server registry for tool integration
+- Cost thresholds and performance tuning
+
+## 📖 Documentation
+
+📚 **[Complete Documentation](./doc/README.md)** - Comprehensive guides and references
+
+### Quick Navigation
+- **[Installation Guide](./doc/01-installation.md)** - Detailed installation methods and building from source
+- **[Overview](./doc/02-overview.md)** - Introduction and core concepts
+- **[Configuration Guide](./doc/03-configuration.md)** - Configuration system, templates, and customization
+- **[AI Providers](./doc/04-providers.md)** - Provider setup, API keys, and model selection
+- **[Sessions Guide](./doc/05-sessions.md)** - Interactive sessions, commands, and workflow
+- **[Advanced Features](./doc/06-advanced.md)** - MCP tools, layered architecture, and extensibility
+- **[Command Layers](./doc/07-command-layers.md)** - Specialized AI helpers and command processing
+
+## 🚀 Contributing
+
+Contributions are welcome! We appreciate your help in making Octomind better.
+
+**Development Areas:**
+- **AI Providers**: Add new providers in `src/session/providers/`
+- **MCP Tools**: Extend tool capabilities via MCP server registry
+- **Documentation**: Improve guides and examples
 
 ```bash
 # Development setup
@@ -290,10 +165,28 @@ cargo build --release
 cargo test
 ```
 
-## Requirements
-- Rust 1.70+
-- Cargo
-- API key from supported providers
+**Requirements:** Rust 1.70+, Cargo, API key from supported providers
+
+## 🆘 Troubleshooting
+
+**Common Issues:**
+- **Configuration Errors**: Check `.octomind/config.toml` or regenerate with `octomind config`
+- **Missing API Keys**: Set environment variables for your AI provider
+- **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-3.5-sonnet`)
+- **Session Issues**: Use `/debug` to enable detailed logging
+
+**Getting Help:**
+- 🐛 **Issues**: [GitHub Issues](https://github.com/muvon/octomind/issues)
+- 📖 **Documentation**: [Complete Documentation](./doc/README.md)
+- ✉️ **Email**: [opensource@muvon.io](mailto:opensource@muvon.io)
+
+## 📞 Support & Contact
+
+- **🏢 Company**: Muvon Un Limited (Hong Kong)
+- **🌐 Website**: [muvon.io](https://muvon.io)
+- **📦 Product Page**: [octomind.muvon.io](https://octomind.muvon.io)
+- **📧 Email**: [opensource@muvon.io](mailto:opensource@muvon.io)
+- **🐛 Issues**: [GitHub Issues](https://github.com/muvon/octomind/issues)
 
 ## ⚖️ License
 

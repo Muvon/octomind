@@ -8,13 +8,13 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ### 📖 Getting Started
 - **[01-installation.md](./01-installation.md)** - Installation methods, cross-compilation, shell completions
-- **[01-overview.md](./01-overview.md)** - Introduction and core concepts
-- **[02-configuration.md](./02-configuration.md)** - Configuration system and settings
-- **[03-providers.md](./03-providers.md)** - AI provider setup and management
+- **[02-overview.md](./02-overview.md)** - Introduction and core concepts
+- **[03-configuration.md](./03-configuration.md)** - Configuration system and settings
+- **[04-providers.md](./04-providers.md)** - AI provider setup and management
 
 ### 🔧 Core Features
 - **[05-sessions.md](./05-sessions.md)** - Interactive sessions and modes
-- **[command_layers.md](./command_layers.md)** - Specialized AI helpers and command processing
+- **[07-command-layers.md](./07-command-layers.md)** - Specialized AI helpers and command processing
 
 ### 🚀 Advanced Features
 - **[06-advanced.md](./06-advanced.md)** - MCP tools, layered architecture, and extensibility
@@ -40,20 +40,27 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - **Proper Session Context**: Commands receive appropriate session history based on input mode
 - **Enhanced Configuration**: Simplified MCP configuration using server references
 
-### MCP Server Registry
-New centralized server configuration approach:
+### MCP Server Configuration
+Current centralized server configuration approach:
 
 ```toml
-# Define servers once in registry
-[mcp_server_registry.developer]
-enabled = true
+# Define servers in main MCP section
+[mcp]
+allowed_tools = []
+
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
 # Reference from roles
 [developer.mcp]
-enabled = true
-server_refs = ["developer"]
+server_refs = ["developer", "filesystem"]
+allowed_tools = []
 ```
 
 ## Quick Reference
@@ -107,7 +114,7 @@ Environment Variables
     ↓
 Role-specific config [developer] / [assistant] / [custom-role]
     ↓
-Global config [providers] / [mcp_server_registry]
+Global config [providers] / [mcp]
     ↓
 Default values
 ```
@@ -138,9 +145,9 @@ Default values
 
 ### Documentation Navigation
 - Start with **[Installation](./01-installation.md)** for setup methods
-- Read **[Overview](./01-overview.md)** for basic concepts
-- Follow **[Configuration](./02-configuration.md)** for detailed setup
-- Check **[Providers](./03-providers.md)** for AI model setup
+- Read **[Overview](./02-overview.md)** for basic concepts
+- Follow **[Configuration](./03-configuration.md)** for detailed setup
+- Check **[Providers](./04-providers.md)** for AI model setup
 - Explore **[Sessions](./05-sessions.md)** for interactive use
 - Dive into **[Advanced](./06-advanced.md)** for complex features
 
@@ -198,20 +205,27 @@ graph TB
 
 ## Recent Updates
 
-### MCP Server Registry
-New centralized server configuration approach:
+### MCP Server Configuration
+Current centralized server configuration approach:
 
 ```toml
-# Define servers once in registry
-[mcp_server_registry.developer]
-enabled = true
+# Define servers in main MCP section
+[mcp]
+allowed_tools = []
+
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
 # Reference from roles
 [developer.mcp]
-enabled = true
-server_refs = ["developer"]
+server_refs = ["developer", "filesystem"]
+allowed_tools = []
 ```
 
 ### Provider Format

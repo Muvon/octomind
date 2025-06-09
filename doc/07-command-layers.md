@@ -224,7 +224,7 @@ No command layers configured for this role.
 Failed to execute tool 'shell': No servers available to process tool
 ```
 - **Missing server references**: Check `server_refs` in your command's MCP configuration
-- **Server registry**: Ensure servers are defined in `[mcp_server_registry]`
+- **Server configuration**: Ensure servers are defined in `[[mcp.servers]]` array
 - **Tool mapping**: Verify tools are available on the referenced servers
 
 ### Context Processing Problems

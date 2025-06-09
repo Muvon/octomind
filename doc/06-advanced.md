@@ -21,30 +21,36 @@ MCP enables AI models to use external tools and services through a standardized 
 - **list_files**: Browse directory structures with pattern matching and content search
 - **html2md**: Convert HTML content to Markdown format
 
-### MCP Server Registry Configuration
+### MCP Server Configuration
 
-The MCP system uses a centralized server registry that eliminates configuration duplication:
+The MCP system uses a centralized server configuration in the main `[mcp]` section:
 
 ```toml
-# MCP Server Registry - Define servers once, reference everywhere
-[mcp_server_registry]
+# MCP Server Configuration - Define servers once, reference everywhere
+[mcp]
+allowed_tools = []
 
 # Built-in server definitions
-[mcp_server_registry.developer]
-enabled = true
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
 tools = []  # Empty means all tools enabled
+builtin = true
 
-[mcp_server_registry.filesystem]
-enabled = true
+[[mcp.servers]]
 name = "filesystem"
 server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
 tools = []  # Empty means all tools enabled
+builtin = true
 
 # External HTTP server example
-[mcp_server_registry.web_search]
-enabled = true
+[[mcp.servers]]
 name = "web_search"
 server_type = "external"
 url = "https://mcp.so/server/webSearch-Tools"
@@ -52,10 +58,10 @@ auth_token = "optional_token"
 mode = "http"
 timeout_seconds = 30
 tools = []
+builtin = false
 
 # External command-based server example
-[mcp_server_registry.local_tools]
-enabled = true
+[[mcp.servers]]
 name = "local_tools"
 server_type = "external"
 command = "python"
@@ -63,28 +69,26 @@ args = ["-m", "my_mcp_server", "--port", "8008"]
 mode = "stdin"
 timeout_seconds = 30
 tools = ["custom_tool1", "custom_tool2"]  # Only these tools enabled
+builtin = false
 ```
 
 ### Role-Based Server Access
 
-Roles reference servers from the registry and can limit tool access:
+Roles reference servers from the main MCP configuration and can limit tool access:
 
 ```toml
 # Developer role with full access
 [developer.mcp]
-enabled = true
 server_refs = ["developer", "filesystem"]
 allowed_tools = []  # Empty means all tools from referenced servers
 
 # Assistant role with limited access
 [assistant.mcp]
-enabled = true
 server_refs = ["filesystem"]
 allowed_tools = ["text_editor", "list_files"]  # Only specific tools
 
 # Custom role with external tools
 [code-reviewer.mcp]
-enabled = true
 server_refs = ["developer", "web_search"]
 allowed_tools = ["text_editor", "shell"]
 ```
@@ -99,20 +103,20 @@ allowed_tools = ["text_editor", "shell"]
 
 #### HTTP-based Servers
 ```toml
-[mcp_server_registry.web_tools]
-enabled = true
+[[mcp.servers]]
 name = "web_tools"
 server_type = "external"
 url = "https://api.example.com/mcp"
 auth_token = "your_token"
 mode = "http"
 timeout_seconds = 30
+tools = []
+builtin = false
 ```
 
 #### Command-based Servers
 ```toml
-[mcp_server_registry.custom_tools]
-enabled = true
+[[mcp.servers]]
 name = "custom_tools"
 server_type = "external"
 command = "python"
@@ -255,11 +259,14 @@ enabled = true
 server_refs = ["developer", "filesystem", "web_tools"]
 
 # Add web-specific MCP server
-[mcp_server_registry.web_tools]
-enabled = true
+[[mcp.servers]]
 name = "web_tools"
 server_type = "external"
 url = "https://mcp.so/server/web-dev-tools"
+mode = "http"
+timeout_seconds = 30
+tools = []
+builtin = false
 ```
 
 ## Session Management
@@ -420,16 +427,20 @@ enabled = true
 providers = ["core"]
 ```
 
-**New registry format:**
+**Current format:**
 ```toml
-[mcp_server_registry.developer]
-enabled = true
+[[mcp.servers]]
 name = "developer"
 server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
 
 [developer.mcp]
-enabled = true
 server_refs = ["developer"]
+allowed_tools = []
 ```
 
 ### Provider Migration

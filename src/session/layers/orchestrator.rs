@@ -57,6 +57,50 @@ impl LayeredOrchestrator {
 		Self { layers }
 	}
 
+	// Create orchestrator from config and process system prompts (async version for session initialization)
+	pub async fn from_config_with_processed_prompts(
+		config: &Config,
+		role: &str,
+		project_dir: &std::path::Path,
+	) -> Self {
+		// Get role-specific configuration
+		let (mode_config, _, _, _, _) = config.get_mode_config(role);
+
+		// First check if layers are enabled at all
+		if !mode_config.enable_layers {
+			// Return empty orchestrator when layers are disabled
+			return Self { layers: Vec::new() };
+		}
+
+		// Get enabled layers for this role using the new system
+		let enabled_layers = config.get_enabled_layers_for_role(role);
+
+		// Create layers from configuration and process their system prompts
+		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
+
+		// Create layers from enabled layer configs
+		for mut layer_config in enabled_layers {
+			// Process and cache the system prompt for this layer
+			layer_config
+				.process_and_cache_system_prompt(project_dir)
+				.await;
+			layers.push(Box::new(GenericLayer::new(layer_config)));
+		}
+
+		// If no layers were configured or enabled, fall back to defaults
+		if layers.is_empty() {
+			let default_layers = Self::create_default_system_layers_configs();
+			for mut layer_config in default_layers {
+				layer_config
+					.process_and_cache_system_prompt(project_dir)
+					.await;
+				layers.push(Box::new(GenericLayer::new(layer_config)));
+			}
+		}
+
+		Self { layers }
+	}
+
 	// Create default system layers using the new generic layer approach
 	fn create_default_system_layers() -> Vec<Box<dyn Layer + Send + Sync>> {
 		let mut layers: Vec<Box<dyn Layer + Send + Sync>> = Vec::new();
@@ -69,6 +113,14 @@ impl LayeredOrchestrator {
 		layers.push(Box::new(GenericLayer::new(context_config)));
 
 		layers
+	}
+
+	// Create default system layer configs (for async processing)
+	fn create_default_system_layers_configs() -> Vec<LayerConfig> {
+		vec![
+			LayerConfig::create_system_layer("query_processor"),
+			LayerConfig::create_system_layer("context_generator"),
+		]
 	}
 
 	// Process user input through the layer architecture

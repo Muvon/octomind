@@ -116,6 +116,9 @@ pub struct LayerConfig {
 	// Mark if this is a builtin layer (affects serialization and maintenance)
 	#[serde(default)]
 	pub builtin: bool,
+	// Cached processed system prompt (not serialized - computed at session initialization)
+	#[serde(skip)]
+	pub processed_system_prompt: Option<String>,
 }
 
 fn default_temperature() -> f32 {
@@ -178,26 +181,48 @@ impl LayerConfig {
 	}
 
 	/// Get the effective system prompt for this layer
-	/// Uses custom prompt if provided, otherwise uses built-in prompt for known layer types
+	/// Returns the pre-processed system prompt (processed once during session initialization)
 	pub fn get_effective_system_prompt(&self) -> String {
-		if let Some(ref custom_prompt) = self.system_prompt {
-			// Process placeholders in custom system prompt
-			self.process_prompt_placeholders(custom_prompt)
+		// Return cached processed prompt if available
+		if let Some(ref processed) = self.processed_system_prompt {
+			processed.clone()
 		} else {
-			// All system prompts should now be defined in config
-			// This fallback should rarely be used
-			format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name)
+			// Fallback for layers that haven't been processed yet
+			// This should rarely happen in normal operation
+			if let Some(ref custom_prompt) = self.system_prompt {
+				custom_prompt.clone()
+			} else {
+				format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name)
+			}
 		}
 	}
 
-	/// Process placeholders in system prompt using layer parameters
-	fn process_prompt_placeholders(&self, prompt: &str) -> String {
+	/// Process and cache the system prompt for this layer (called once during session initialization)
+	pub async fn process_and_cache_system_prompt(&mut self, project_dir: &std::path::Path) {
+		if let Some(ref custom_prompt) = self.system_prompt {
+			let processed = self
+				.process_prompt_placeholders_async(custom_prompt, project_dir)
+				.await;
+			self.processed_system_prompt = Some(processed);
+		} else {
+			// Cache the fallback prompt as well
+			let fallback = format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name);
+			self.processed_system_prompt = Some(fallback);
+		}
+	}
+
+	/// Process placeholders in system prompt using layer parameters (async version)
+	async fn process_prompt_placeholders_async(
+		&self,
+		prompt: &str,
+		project_dir: &std::path::Path,
+	) -> String {
 		let mut processed = prompt.to_string();
 
-		// Replace standard placeholders
-		if let Ok(project_dir) = std::env::current_dir() {
-			processed = crate::session::process_placeholders(&processed, &project_dir);
-		}
+		// Replace standard placeholders using the async version
+		processed =
+			crate::session::helper_functions::process_placeholders_async(&processed, project_dir)
+				.await;
 
 		// Replace custom parameter placeholders
 		for (key, value) in &self.parameters {
@@ -228,7 +253,8 @@ impl LayerConfig {
 					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
-				builtin: true, // Mark as builtin
+				builtin: true,                 // Mark as builtin
+				processed_system_prompt: None, // Will be processed during session initialization
 			},
 			"context_generator" => Self {
 				name: layer_type.to_string(),
@@ -241,7 +267,8 @@ impl LayerConfig {
 					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
 				},
 				parameters: std::collections::HashMap::new(),
-				builtin: true, // Mark as builtin
+				builtin: true,                 // Mark as builtin
+				processed_system_prompt: None, // Will be processed during session initialization
 			},
 			"reducer" => Self {
 				name: layer_type.to_string(),
@@ -254,7 +281,8 @@ impl LayerConfig {
 					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
-				builtin: true, // Mark as builtin
+				builtin: true,                 // Mark as builtin
+				processed_system_prompt: None, // Will be processed during session initialization
 			},
 			_ => Self {
 				name: layer_type.to_string(),
@@ -264,7 +292,8 @@ impl LayerConfig {
 				input_mode: InputMode::Last,
 				mcp: LayerMcpConfig::default(),
 				parameters: std::collections::HashMap::new(),
-				builtin: false, // Custom layers are not builtin
+				builtin: false,                // Custom layers are not builtin
+				processed_system_prompt: None, // Will be processed during session initialization
 			},
 		}
 	}

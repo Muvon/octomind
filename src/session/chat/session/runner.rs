@@ -216,6 +216,21 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		let system_prompt = create_system_prompt(&current_dir, config, &session_args.role).await;
 		chat_session.add_system_message(&system_prompt)?;
 
+		// Process layer system prompts during session initialization
+		// This ensures layer system prompts are processed once and cached for the entire session
+		let (role_config, _, _, _, _) = config.get_mode_config(&session_args.role);
+		if role_config.enable_layers {
+			use crate::session::layers::LayeredOrchestrator;
+			// Create orchestrator with processed system prompts
+			let _orchestrator = LayeredOrchestrator::from_config_with_processed_prompts(
+				config,
+				&session_args.role,
+				&current_dir,
+			)
+			.await;
+			log_info!("Layer system prompts processed and cached for session");
+		}
+
 		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions
 		// This ensures consistent caching behavior across all supported models
 		let supports_caching = crate::session::model_supports_caching(&chat_session.model);

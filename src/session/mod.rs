@@ -408,6 +408,10 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 						messages.clear();
 						restoration_messages.clear();
 					}
+					"COMMAND" => {
+						// Commands are processed separately in extract_runtime_state_from_log
+						continue;
+					}
 					"API_REQUEST" | "API_RESPONSE" | "TOOL_CALL" | "TOOL_RESULT" | "CACHE"
 					| "ERROR" | "SYSTEM" | "USER" | "ASSISTANT" => {
 						// Skip debug log entries during message parsing
@@ -508,7 +512,15 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 		messages
 	};
 
-	if let Some(info) = session_info {
+	if let Some(mut info) = session_info {
+		// Extract runtime state from log file
+		let runtime_state = extract_runtime_state_from_log(session_file)?;
+
+		// Apply runtime state to session info
+		if let Some(model) = runtime_state.model {
+			info.model = model;
+		}
+
 		let session = Session {
 			info,
 			messages: final_messages,
@@ -517,11 +529,78 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			current_total_tokens: 0,
 			last_cache_checkpoint_time: current_timestamp(), // Initialize to current time for existing sessions
 		};
+
 		Ok(session)
 	} else {
 		Err(anyhow::anyhow!(
 			"Invalid session file: missing session info"
 		))
+	}
+}
+
+/// Runtime state extracted from session commands
+#[derive(Debug, Default)]
+pub struct SessionRuntimeState {
+	pub model: Option<String>,
+	pub layers_enabled: Option<bool>,
+	pub cache_next_message: bool,
+}
+
+/// Extract runtime state from session log file
+pub fn extract_runtime_state_from_log(session_file: &PathBuf) -> Result<SessionRuntimeState> {
+	let file = File::open(session_file)?;
+	let reader = BufReader::new(file);
+	let mut state = SessionRuntimeState::default();
+
+	for line in reader.lines() {
+		let line = line?;
+
+		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
+			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
+				match log_type {
+					"RESTORATION_POINT" => {
+						// Reset state tracking after restoration point
+						state = SessionRuntimeState::default();
+					}
+					"COMMAND" => {
+						// Process all commands to get the final state
+						if let Some(command) = json_value.get("command").and_then(|c| c.as_str()) {
+							apply_command_to_runtime_state(&mut state, command);
+						}
+					}
+					_ => {}
+				}
+			}
+		}
+	}
+	Ok(state)
+}
+
+/// Apply a command to runtime state (for state extraction)
+fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line: &str) {
+	let parts: Vec<&str> = command_line.split_whitespace().collect();
+	if parts.is_empty() {
+		return;
+	}
+
+	match parts[0] {
+		"/model" => {
+			if parts.len() > 1 {
+				let new_model = parts[1..].join(" ");
+				state.model = Some(new_model);
+			}
+		}
+		"/layers" => {
+			// Toggle layers state - we don't know the previous state, so we assume it toggles
+			state.layers_enabled = Some(!state.layers_enabled.unwrap_or(false));
+		}
+		"/cache" => {
+			// Set cache next message flag
+			state.cache_next_message = true;
+		}
+		_ => {
+			// Unknown command, ignore
+		}
 	}
 }
 

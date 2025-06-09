@@ -162,6 +162,18 @@ pub fn log_restoration_point(
 	Ok(())
 }
 
+/// Log session command execution (runtime-only commands like /model, /cache, etc.)
+pub fn log_session_command(session_name: &str, command_line: &str) -> Result<()> {
+	let log_file = get_session_log_file(session_name)?;
+	let log_entry = serde_json::json!({
+		"type": "COMMAND",
+		"timestamp": get_timestamp(),
+		"command": command_line
+	});
+	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
+	Ok(())
+}
+
 /// Log cache operations for debugging
 pub fn log_cache_operation(session_name: &str, operation: &str, details: &str) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;

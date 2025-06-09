@@ -141,6 +141,10 @@ impl ChatSession {
 			// Try to load session
 			match load_session(&session_file) {
 				Ok(session) => {
+					// Extract runtime state from session log
+					let runtime_state =
+						crate::session::extract_runtime_state_from_log(&session_file)
+							.unwrap_or_default();
 					// When session is loaded successfully, show its info
 					println!(
 						"{}",
@@ -185,10 +189,11 @@ impl ChatSession {
 					);
 
 					// Create chat session from loaded session
+					let restored_model = session.info.model.clone(); // Extract model before moving session
 					let mut chat_session = ChatSession {
 						session,
 						last_response: String::new(),
-						model: model.unwrap_or_else(|| config.get_model("developer")), // Use role-based getter
+						model: restored_model, // Use restored model from session
 						temperature: 0.2,
 						estimated_cost: 0.0,
 						cache_next_user_message: false,     // Initialize cache flag
@@ -199,6 +204,9 @@ impl ChatSession {
 					chat_session.estimated_cost = chat_session.session.info.total_cost;
 					// Initialize spending threshold checkpoint for loaded sessions
 					chat_session.spending_threshold_checkpoint = 0.0;
+
+					// Apply runtime state from session log
+					chat_session.cache_next_user_message = runtime_state.cache_next_message;
 
 					// Get last assistant response if any
 					for msg in chat_session.session.messages.iter().rev() {
@@ -293,5 +301,10 @@ impl ChatSession {
 
 			Ok(chat_session)
 		}
+	}
+
+	/// Get the effective model for this session (uses session.info.model directly)
+	pub fn get_effective_model(&self) -> &str {
+		&self.session.info.model
 	}
 }

@@ -1,4 +1,4 @@
-# Octomind 🤖 - AI-Powered Development Assistant
+#Octomind 🤖 - AI-Powered Development Assistant
 
 **© 2025 Muvon Un Limited** | [Documentation](doc/README.md)
 

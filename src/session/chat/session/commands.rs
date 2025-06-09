@@ -230,6 +230,17 @@ impl ChatSession {
 					_ => config.get_enable_layers(current_role), // Use getter for unknown roles
 				};
 
+				// Log the command execution
+				if let Some(session_file) = &self.session.session_file {
+					if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {
+						let command_line = "/layers".to_string();
+						let _ = crate::session::logger::log_session_command(
+							session_name,
+							&command_line,
+						);
+					}
+				}
+
 				// Show the new state
 				if is_enabled {
 					println!(
@@ -254,6 +265,11 @@ impl ChatSession {
 					"Note: This change only affects the current session and won't be saved to config."
 						.bright_blue()
 				);
+
+				// Save the session with updated runtime state
+				if let Err(e) = self.save() {
+					println!("{} {}", "Warning: Could not save session:".bright_red(), e);
+				}
 
 				// Return false since we don't need to reload config (runtime-only change)
 				return Ok(false);
@@ -474,6 +490,20 @@ impl ChatSession {
 					} else {
 						// Set the flag to cache the next user message
 						self.cache_next_user_message = true;
+
+						// Log the command execution
+						if let Some(session_file) = &self.session.session_file {
+							if let Some(session_name) =
+								session_file.file_stem().and_then(|s| s.to_str())
+							{
+								let command_line = "/cache".to_string();
+								let _ = crate::session::logger::log_session_command(
+									session_name,
+									&command_line,
+								);
+							}
+						}
+
 						println!(
 							"{}",
 							"The next user message will be marked for caching.".bright_green()
@@ -484,6 +514,11 @@ impl ChatSession {
 						let stats = cache_manager
 							.get_cache_statistics_with_config(&self.session, Some(config));
 						println!("{}", stats.format_for_display());
+
+						// Save the session with updated runtime state
+						if let Err(e) = self.save() {
+							println!("{} {}", "Warning: Could not save session:".bright_red(), e);
+						}
 					}
 				} else {
 					match params[0] {
@@ -673,6 +708,17 @@ impl ChatSession {
 				// Change to a new model (runtime only)
 				let new_model = params.join(" ");
 				let old_model = self.model.clone();
+
+				// Log the command execution
+				if let Some(session_file) = &self.session.session_file {
+					if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {
+						let command_line = format!("/model {}", new_model);
+						let _ = crate::session::logger::log_session_command(
+							session_name,
+							&command_line,
+						);
+					}
+				}
 
 				// Update session model (runtime only - don't update config)
 				self.model = new_model.clone();

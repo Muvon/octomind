@@ -302,41 +302,8 @@ fn add_assistant_message_with_tool_calls(
 	// Add the assistant message to the session
 	chat_session.session.messages.push(assistant_message);
 
-	// Update last response and handle exchange/cost tracking if provided
+	// Update last response - no cost tracking here as it will be handled by follow-up processing
 	chat_session.last_response = current_content.to_string();
-
-	// Handle cost tracking from the exchange (same logic as add_assistant_message)
-	if let Some(usage) = &current_exchange.usage {
-		// Simple token extraction with clean provider interface
-		let cached_tokens = usage.cached_tokens;
-		let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-
-		// Track API time if available
-		if let Some(api_time_ms) = usage.request_time_ms {
-			chat_session.session.info.total_api_time_ms += api_time_ms;
-		}
-
-		// Update session token counts using cache manager
-		let cache_manager = crate::session::cache::CacheManager::new();
-		cache_manager.update_token_tracking(
-			&mut chat_session.session,
-			regular_prompt_tokens,
-			usage.output_tokens,
-			cached_tokens,
-		);
-
-		// Update cost
-		if let Some(cost) = usage.cost {
-			chat_session.session.info.total_cost += cost;
-			chat_session.estimated_cost = chat_session.session.info.total_cost;
-
-			log_debug!(
-				"Adding ${:.5} from initial API (total now: ${:.5})",
-				cost,
-				chat_session.session.info.total_cost
-			);
-		}
-	}
 
 	// Log the assistant response and exchange
 	let _ = crate::session::logger::log_assistant_response(

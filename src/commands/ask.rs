@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use anyhow::Result;
-use atty;
 use clap::Args;
 use colored::Colorize;
 use glob::glob;
@@ -23,6 +22,7 @@ use octomind::session::{chat_completion_with_provider, Message, ProviderResponse
 use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config as RustylineConfig, EditMode, Editor};
 use std::fs;
+use std::io::IsTerminal;
 use std::io::{self, Read};
 
 #[derive(Args, Debug)]
@@ -293,7 +293,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 		.await?;
 		print_response(&response.content, args.raw, config);
 		Ok(())
-	} else if !atty::is(atty::Stream::Stdin) {
+	} else if !std::io::stdin().is_terminal() {
 		// Read from stdin if it's being piped
 		let mut buffer = String::new();
 		io::stdin().read_to_string(&mut buffer)?;

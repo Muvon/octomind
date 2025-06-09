@@ -166,6 +166,7 @@ impl ChatSession {
 			&self.session.info.name,
 			tool_call_id,
 			&serde_json::json!({"output": content}),
+			0, // No timing info available in this context
 		);
 
 		// Create the tool message
@@ -220,7 +221,11 @@ impl ChatSession {
 		// Log raw API exchange if available
 		if let Some(ref ex) = exchange {
 			let _ = crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
-			let _ = crate::session::logger::log_api_response(&self.session.info.name, &ex.response);
+			let _ = crate::session::logger::log_api_response(
+				&self.session.info.name,
+				&ex.response,
+				ex.usage.as_ref(),
+			);
 		}
 
 		// Add message to session
@@ -354,9 +359,18 @@ impl ChatSession {
 				// Save API request and response as separate prefixed lines for debugging
 				let _ =
 					crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
-				let _ =
-					crate::session::logger::log_api_response(&self.session.info.name, &ex.response);
+				let _ = crate::session::logger::log_api_response(
+					&self.session.info.name,
+					&ex.response,
+					ex.usage.as_ref(),
+				);
 			}
+
+			// Log session stats snapshot after each assistant response
+			let _ = crate::session::logger::log_session_stats(
+				&self.session.info.name,
+				&self.session.info,
+			);
 		}
 
 		Ok(())

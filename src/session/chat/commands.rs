@@ -35,9 +35,10 @@ pub const SUMMARIZE_COMMAND: &str = "/summarize";
 pub const MODEL_COMMAND: &str = "/model";
 pub const RUN_COMMAND: &str = "/run";
 pub const MCP_COMMAND: &str = "/mcp";
+pub const REPORT_COMMAND: &str = "/report";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 20] = [
+pub const COMMANDS: [&str; 21] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -58,4 +59,5 @@ pub const COMMANDS: [&str; 20] = [
 	MODEL_COMMAND,
 	RUN_COMMAND,
 	MCP_COMMAND,
+	REPORT_COMMAND,
 ];

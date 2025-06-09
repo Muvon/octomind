@@ -304,8 +304,9 @@ fn display_tool_success(
 	println!("✓ Tool '{}' completed in {}ms", tool_name, tool_time_ms);
 	println!("──────────────────");
 
-	// Log the tool response with session name
-	let _ = crate::session::logger::log_tool_result(session_name, tool_id, &res.result);
+	// Log the tool response with session name and timing
+	let _ =
+		crate::session::logger::log_tool_result(session_name, tool_id, &res.result, tool_time_ms);
 }
 
 // Display tool output in smart format (for info mode)

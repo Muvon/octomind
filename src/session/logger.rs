@@ -29,23 +29,27 @@ pub fn get_session_log_file(session_name: &str) -> Result<PathBuf> {
 	Ok(log_file)
 }
 
-/// Log session summary (first line) - tokens, cost, model info
-pub fn log_session_summary(
+/// Log session stats snapshot after each request completion
+pub fn log_session_stats(
 	session_name: &str,
 	session_info: &crate::session::SessionInfo,
 ) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
-		"type": "SUMMARY",
+		"type": "STATS",
 		"timestamp": get_timestamp(),
-		"session_info": session_info
+		"total_cost": session_info.total_cost,
+		"input_tokens": session_info.input_tokens,
+		"output_tokens": session_info.output_tokens,
+		"cached_tokens": session_info.cached_tokens,
+		"tool_calls": session_info.tool_calls,
+		"total_api_time_ms": session_info.total_api_time_ms,
+		"total_tool_time_ms": session_info.total_tool_time_ms,
+		"total_layer_time_ms": session_info.total_layer_time_ms,
+		"model": session_info.model,
+		"provider": session_info.provider
 	});
-
-	// Only write summary if file doesn't exist or is empty
-	if !log_file.exists() || std::fs::metadata(&log_file)?.len() == 0 {
-		append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	}
-
+	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
 	Ok(())
 }
 
@@ -85,13 +89,18 @@ pub fn log_api_request(session_name: &str, request: &serde_json::Value) -> Resul
 	Ok(())
 }
 
-/// Log RAW API response (what we get from the API)
-pub fn log_api_response(session_name: &str, response: &serde_json::Value) -> Result<()> {
+/// Log RAW API response (what we get from the API) with processed usage data
+pub fn log_api_response(
+	session_name: &str,
+	response: &serde_json::Value,
+	usage: Option<&crate::session::providers::TokenUsage>,
+) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
 		"type": "API_RESPONSE",
 		"timestamp": get_timestamp(),
-		"data": response
+		"data": response,
+		"usage": usage
 	});
 	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
 	Ok(())
@@ -116,18 +125,20 @@ pub fn log_tool_call(
 	Ok(())
 }
 
-/// Log tool response result
+/// Log tool response result with execution timing
 pub fn log_tool_result(
 	session_name: &str,
 	tool_id: &str,
 	result: &serde_json::Value,
+	execution_time_ms: u64,
 ) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({
 		"type": "TOOL_RESULT",
 		"timestamp": get_timestamp(),
 		"tool_id": tool_id,
-		"result": result
+		"result": result,
+		"execution_time_ms": execution_time_ms
 	});
 	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
 	Ok(())
@@ -199,38 +210,6 @@ pub fn log_error(session_name: &str, error: &str) -> Result<()> {
 	Ok(())
 }
 
-/// Update session summary (overwrite first line)
-pub fn update_session_summary(
-	session_name: &str,
-	session_info: &crate::session::SessionInfo,
-) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-
-	if !log_file.exists() {
-		return log_session_summary(session_name, session_info);
-	}
-
-	// Read all lines except the first one
-	let content = std::fs::read_to_string(&log_file)?;
-	let lines: Vec<&str> = content.lines().collect();
-
-	// Write new summary + all existing lines except first
-	let summary_json = serde_json::to_string(session_info)?;
-	let mut new_content = format!("SUMMARY: {}\n", summary_json);
-
-	// Add all lines except the first (old summary)
-	for (i, line) in lines.iter().enumerate() {
-		if i > 0 {
-			// Skip first line (old summary)
-			new_content.push_str(line);
-			new_content.push('\n');
-		}
-	}
-
-	std::fs::write(&log_file, new_content)?;
-	Ok(())
-}
-
 /// Helper to get timestamp
 fn get_timestamp() -> u64 {
 	SystemTime::now()
@@ -264,7 +243,7 @@ pub fn log_raw_exchange(exchange: &crate::session::ProviderExchange) -> Result<(
 
 	// Log both request and response separately for easier debugging
 	log_api_request(session_name, &exchange.request)?;
-	log_api_response(session_name, &exchange.response)?;
+	log_api_response(session_name, &exchange.response, exchange.usage.as_ref())?;
 	Ok(())
 }
 

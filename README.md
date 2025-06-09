@@ -98,6 +98,9 @@ Instead of complex command-line tools, simply talk to Octomind:
 
 > "Why is the build failing?"
 [AI checks build errors, analyzes code, suggests fixes]
+
+> /report
+[Shows detailed breakdown: $0.02 spent, 3 requests, 5 tool calls, timing analysis]
 ```
 
 ### Core Principles
@@ -121,6 +124,7 @@ Within any session, use these commands:
 - `/help` - Show available commands
 - `/model [model]` - Show/change current model
 - `/info` - Display token usage and costs
+- `/report` - Generate detailed usage report with cost breakdown per request
 - `/cache` - Mark cache checkpoint for cost savings
 - `/done` - Optimize context and restart layered processing
 - `/layers` - Toggle layered processing on/off
@@ -133,6 +137,7 @@ Within any session, use these commands:
 - **Project Context Awareness**: Automatic project analysis and context collection
 - **Layered Architecture**: Multi-stage AI processing for complex development tasks
 - **Token Management**: Cost tracking, caching, and automatic context optimization
+- **Session Reporting**: Detailed usage reports with cost breakdown per request and timing analysis
 - **Session Management**: Save, resume, and organize development conversations
 - **Extensible Tool System**: MCP protocol support for integrating external tools
 

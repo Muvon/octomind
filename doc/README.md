@@ -21,7 +21,14 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ## Recent Updates
 
-### Enhanced Tool Execution (Latest)
+### Session Usage Reporting (Latest)
+- **`/report` Command**: Comprehensive usage analysis with cost breakdown per request
+- **Time Separation**: Distinct tracking of Human Time, AI Time, and Processing Time
+- **Cost Accuracy**: Real-time cost tracking using session stats snapshots
+- **Tool Breakdown**: Detailed tool usage analysis (e.g., `text_editor(3), shell(1)`)
+- **Professional Output**: Clean table format with comprehensive timing analysis
+
+### Enhanced Tool Execution
 - **Smart Tool Routing**: Tools are now automatically routed to the correct server type
 - **Error Prevention**: No more "Unknown tool" errors from server mismatches
 - **Robust Error Handling**: Clear diagnostic messages when tool execution fails

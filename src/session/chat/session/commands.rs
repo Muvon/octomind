@@ -101,6 +101,10 @@ impl ChatSession {
 					MCP_COMMAND.cyan()
 				);
 				println!(
+					"{} - Generate detailed usage report with cost breakdown per request",
+					REPORT_COMMAND.cyan()
+				);
+				println!(
 					"{} or {} - Exit the session\n",
 					EXIT_COMMAND.cyan(),
 					QUIT_COMMAND.cyan()
@@ -201,6 +205,35 @@ impl ChatSession {
 			}
 			INFO_COMMAND => {
 				self.display_session_info();
+			}
+			REPORT_COMMAND => {
+				// Generate and display session usage report
+				if let Some(ref session_file) = self.session.session_file {
+					let session_file_str = session_file.to_string_lossy();
+					match crate::session::report::SessionReport::generate_from_log(
+						&session_file_str,
+					) {
+						Ok(report) => {
+							report.display();
+						}
+						Err(e) => {
+							println!("{}: Failed to generate report: {}", "Error".bright_red(), e);
+							println!(
+								"{}: Make sure the session log file exists and is readable.",
+								"Hint".bright_yellow()
+							);
+						}
+					}
+				} else {
+					println!(
+						"{}: No session file available for report generation.",
+						"Error".bright_red()
+					);
+					println!(
+						"{}: Save the session first with /save command.",
+						"Hint".bright_yellow()
+					);
+				}
 			}
 			LAYERS_COMMAND => {
 				// Toggle layered processing (RUNTIME ONLY - no config file changes)

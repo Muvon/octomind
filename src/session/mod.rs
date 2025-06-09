@@ -23,6 +23,7 @@ pub mod logger; // Request/response logging utilities
 mod model_utils; // Model-specific utility functions
 mod project_context; // Project context collection and management
 pub mod providers; // Provider abstraction layer
+pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
 
@@ -274,25 +275,12 @@ impl Session {
 		self.info.total_layer_time_ms += total_time_ms;
 	}
 
-	// Save the session to a file - unified JSONL approach with proper JSON formatting
+	// Save the session to a file - clean JSONL approach without summary
 	pub fn save(&self) -> Result<(), anyhow::Error> {
 		if let Some(session_file) = &self.session_file {
 			// Always rewrite the entire file for simplicity and consistency
-			// Since we're using a unified approach, we want all data in one place
-
 			// Create the file (or truncate if exists)
 			let _ = File::create(session_file)?;
-
-			// Save session info as the first line in JSON format
-			let summary_entry = serde_json::json!({
-				"type": "SUMMARY",
-				"timestamp": SystemTime::now()
-				.duration_since(UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_secs(),
-				"session_info": &self.info
-			});
-			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
 
 			// Save all messages in standard JSONL format
 			for message in &self.messages {

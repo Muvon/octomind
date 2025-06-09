@@ -313,6 +313,7 @@ During a session, use these commands:
 #### Configuration Commands
 - `/model [model]` - Show/change current model
 - `/info` - Display token usage and costs
+- `/report` - Generate detailed usage report with cost breakdown per request
 - `/debug` - Toggle debug mode
 
 #### Context Management
@@ -342,6 +343,78 @@ Each session file contains:
 - Layer processing stats
 - Cache markers
 - Session metadata
+
+## Session Reporting
+
+### Usage Reports
+
+The `/report` command generates comprehensive usage analysis for your current session:
+
+```bash
+> /report
+```
+
+#### Report Structure
+
+The report provides a detailed breakdown of each request in your session:
+
+```
+┌─────────────────────────────────────┬──────────┬────────────┬───────────────┬────────────┬─────────┬─────────────────┐
+│ User Request                        │ Cost ($) │ Tool Calls │ Tools Used    │ Human Time │ AI Time │ Processing Time │
+├─────────────────────────────────────┼──────────┼────────────┼───────────────┼────────────┼─────────┼─────────────────┤
+│ analyze this authentication code    │ 0.01234  │ 3          │ text_editor(2)│ 2m 15s     │ 1.2s    │ 68ms            │
+│                                     │          │            │ search_code(1)│            │         │                 │
+│ add error handling to login         │ 0.00890  │ 2          │ text_editor(2)│ 1m 45s     │ 950ms   │ 45ms            │
+│ /done                               │ 0.00156  │ 0          │ -             │ 30s        │ 800ms   │ 0ms             │
+├─────────────────────────────────────┼──────────┼────────────┼───────────────┼────────────┼─────────┼─────────────────┤
+│ TOTAL                               │ 0.02280  │ 5          │ 5 total calls │ 4m 30s     │ 2.95s   │ 113ms           │
+└─────────────────────────────────────┴──────────┴────────────┴───────────────┴────────────┴─────────┴─────────────────┘
+
+📈 Summary: 3 requests, $0.02280 total cost, 5 tool calls, 4m 30s human time, 2.95s AI time, 113ms processing time
+```
+
+#### Column Descriptions
+
+- **User Request**: Your input (truncated for display)
+- **Cost ($)**: Actual cost spent on this specific request
+- **Tool Calls**: Number of tools executed
+- **Tools Used**: Detailed breakdown like `text_editor(2), shell(1)`
+- **Human Time**: Real-world time between requests
+- **AI Time**: API latency (network + AI processing)
+- **Processing Time**: Local tool execution time
+
+#### Time Categories
+
+1. **Human Time**: Time you spent between sending requests
+   - Calculated from log timestamps
+   - Shows actual working session duration
+   - Last request shows time to when report was generated
+
+2. **AI Time**: Time waiting for AI responses
+   - Pure API request/response latency
+   - Network time + AI model processing
+   - Sourced from provider response timing
+
+3. **Processing Time**: Local tool execution
+   - File operations, shell commands, code analysis
+   - Only time spent executing tools locally
+   - Excludes AI thinking time
+
+#### Cost Tracking
+
+- **Per-Request Costs**: Exact cost delta for each user input
+- **Command Costs**: Includes `/done`, `/model` and other session commands
+- **Real-Time Calculation**: Uses session stats snapshots for accuracy
+- **Provider Agnostic**: Works with all supported AI providers
+
+### Comparison with `/info`
+
+| Command | Purpose | Scope |
+|---------|---------|-------|
+| `/info` | Current session totals | Overall session statistics |
+| `/report` | Per-request breakdown | Detailed request-by-request analysis |
+
+Use `/info` for quick session overview, `/report` for detailed usage analysis.
 
 ## Layered Architecture
 

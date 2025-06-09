@@ -16,12 +16,12 @@
 
 use crate::log_debug;
 use crate::session::chat::formatting::format_duration;
+use crate::session::chat::markdown::MarkdownRenderer;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use tabled::{settings::Style, settings::Width, Table, Tabled};
 
 #[derive(Debug, Clone)]
 pub struct SessionReport {
@@ -29,21 +29,14 @@ pub struct SessionReport {
 	pub totals: ReportTotals,
 }
 
-#[derive(Debug, Clone, Tabled)]
+#[derive(Debug, Clone)]
 pub struct ReportEntry {
-	#[tabled(rename = "User Request")]
 	pub user_request: String,
-	#[tabled(rename = "Cost ($)")]
 	pub cost: String,
-	#[tabled(rename = "Tool Calls")]
 	pub tool_calls: u32,
-	#[tabled(rename = "Tools Used")]
 	pub tools_used: String,
-	#[tabled(rename = "Human Time")]
 	pub human_time: String,
-	#[tabled(rename = "AI Time")]
 	pub ai_time: String,
-	#[tabled(rename = "Processing Time")]
 	pub processing_time: String,
 }
 
@@ -304,63 +297,99 @@ impl SessionReport {
 		}
 	}
 
-	/// Render the report as a formatted table
-	pub fn render_table(&self) -> String {
-		let mut table = Table::new(&self.entries);
-		table.with(Style::rounded());
+	/// Generate markdown table for the report
+	pub fn generate_markdown_table(&self) -> String {
+		let mut markdown = String::new();
 
-		// Try to respect terminal width for better wrapping
-		if let Ok((width, _)) = crossterm::terminal::size() {
-			if width > 10 {
-				// Sanity check
-				table.with(Width::wrap(width as usize).keep_words(true));
-			}
+		// Table header
+		markdown.push_str("| User Request | Cost ($) | Tool Calls | Tools Used | Human Time | AI Time | Processing Time |\n");
+		markdown.push_str("|--------------|----------|------------|------------|------------|---------|----------------|\n");
+
+		// Table rows
+		for entry in &self.entries {
+			markdown.push_str(&format!(
+				"| {} | {} | {} | {} | {} | {} | {} |\n",
+				self.escape_markdown(&entry.user_request),
+				entry.cost,
+				entry.tool_calls,
+				self.escape_markdown(&entry.tools_used),
+				entry.human_time,
+				entry.ai_time,
+				entry.processing_time
+			));
 		}
 
-		// Add totals row
-		let totals_row = ReportEntry {
-			user_request: "TOTAL".to_string(),
-			cost: format!("{:.5}", self.totals.total_cost),
-			tool_calls: self.totals.total_tool_calls,
-			tools_used: format!("{} total calls", self.totals.total_tool_calls),
-			human_time: format_duration(self.totals.total_human_time_ms),
-			ai_time: format_duration(self.totals.total_ai_time_ms),
-			processing_time: format_duration(self.totals.total_processing_time_ms),
-		};
+		// Totals row
+		markdown.push_str(&format!(
+			"| **TOTAL** | **{:.5}** | **{}** | **{} total calls** | **{}** | **{}** | **{}** |\n",
+			self.totals.total_cost,
+			self.totals.total_tool_calls,
+			self.totals.total_tool_calls,
+			format_duration(self.totals.total_human_time_ms),
+			format_duration(self.totals.total_ai_time_ms),
+			format_duration(self.totals.total_processing_time_ms)
+		));
 
-		// Create a new table with entries + totals
-		let mut all_entries = self.entries.clone();
-		all_entries.push(totals_row);
-
-		let mut final_table = Table::new(&all_entries);
-		final_table.with(Style::rounded());
-
-		// Try to respect terminal width for better wrapping
-		if let Ok((width, _)) = crossterm::terminal::size() {
-			if width > 10 {
-				// Sanity check
-				final_table.with(Width::wrap(width as usize).keep_words(true));
-			}
-		}
-
-		final_table.to_string()
+		markdown
 	}
 
-	/// Display the report with summary information
-	pub fn display(&self) {
-		println!("\n📊 Session Usage Report");
-		println!("──────────────────────────────────────────────────────────────────");
-		println!("{}", self.render_table());
-		println!();
-		println!(
-			"📈 Summary: {} requests, ${:.5} total cost, {} tool calls, {} human time, {} AI time, {} processing time",
+	/// Escape markdown special characters in table cells
+	fn escape_markdown(&self, text: &str) -> String {
+		text.replace("|", "\\|")
+			.replace("\n", " ")
+			.replace("\r", "")
+	}
+
+	/// Display the report with summary information using markdown rendering
+	pub fn display(&self, config: &crate::config::Config) {
+		// Generate the full markdown report
+		let mut markdown_report = String::new();
+
+		// Header
+		markdown_report.push_str("# 📊 Session Usage Report\n\n");
+
+		// Table
+		markdown_report.push_str(&self.generate_markdown_table());
+		markdown_report.push('\n');
+
+		// Summary
+		markdown_report.push_str(&format!(
+			"## 📈 Summary\n\n**{}** requests • **${:.5}** total cost • **{}** tool calls • **{}** human time • **{}** AI time • **{}** processing time\n",
 			self.totals.total_requests,
 			self.totals.total_cost,
 			self.totals.total_tool_calls,
 			format_duration(self.totals.total_human_time_ms),
 			format_duration(self.totals.total_ai_time_ms),
 			format_duration(self.totals.total_processing_time_ms)
-		);
-		println!();
+		));
+
+		// Render using markdown renderer if enabled
+		if config.enable_markdown_rendering {
+			let theme = config.markdown_theme.parse().unwrap_or_default();
+			let renderer = MarkdownRenderer::with_theme(theme);
+			match renderer.render_and_print(&markdown_report) {
+				Ok(_) => {
+					// Successfully rendered as markdown
+				}
+				Err(_) => {
+					// Fallback to plain text if markdown rendering fails
+					self.display_plain(&markdown_report);
+				}
+			}
+		} else {
+			// Use plain text rendering
+			self.display_plain(&markdown_report);
+		}
+	}
+
+	/// Display report as plain text (fallback)
+	fn display_plain(&self, markdown_report: &str) {
+		// Convert markdown to plain text for fallback
+		let plain_text = markdown_report
+			.replace("# ", "")
+			.replace("## ", "")
+			.replace("**", "")
+			.replace("*", "");
+		println!("{}", plain_text);
 	}
 }

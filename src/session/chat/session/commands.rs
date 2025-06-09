@@ -214,7 +214,7 @@ impl ChatSession {
 						&session_file_str,
 					) {
 						Ok(report) => {
-							report.display();
+							report.display(config);
 						}
 						Err(e) => {
 							println!("{}: Failed to generate report: {}", "Error".bright_red(), e);

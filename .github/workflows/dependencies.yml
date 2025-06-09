@@ -1,0 +1,78 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run every Monday at 10:00 AM UTC
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  update-dependencies:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@1.87.0
+
+    - name: Install protobuf compiler
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+
+    - name: Install cargo-edit
+      run: cargo install cargo-edit --locked
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --locked
+
+    - name: Update dependencies
+      run: |
+        cargo update
+        cargo upgrade --incompatible
+
+    - name: Run tests
+      run: cargo test
+
+    - name: Run audit
+      run: cargo audit
+
+    - name: Check for changes
+      id: changes
+      run: |
+        if git diff --quiet; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create Pull Request
+      if: steps.changes.outputs.has_changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: 'chore: update dependencies'
+        title: 'chore: update dependencies'
+        body: |
+          ## Dependency Updates
+
+          This PR updates the project dependencies to their latest versions.
+
+          ### Changes
+          - Updated Cargo.lock
+          - Updated dependencies in Cargo.toml (if any incompatible updates were available)
+
+          ### Verification
+          - ✅ Tests pass
+          - ✅ Security audit passes
+
+          This PR was automatically created by the dependency update workflow.
+        branch: chore/update-dependencies
+        delete-branch: true

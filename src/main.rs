@@ -85,13 +85,6 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 				// Continue anyway - servers can be started on-demand if needed
 			}
 		}
-		Commands::Ask(_) => {
-			// For ask command, initialize with default role
-			let mode_config = config.get_merged_config_for_mode("developer");
-			if let Err(e) = octomind::mcp::initialize_servers_for_mode(&mode_config).await {
-				eprintln!("Warning: Failed to initialize MCP servers: {}", e);
-			}
-		}
 		_ => {
 			// Other commands don't need MCP servers
 		}

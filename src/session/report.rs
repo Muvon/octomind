@@ -310,7 +310,7 @@ impl SessionReport {
 		table.with(Style::rounded());
 
 		// Try to respect terminal width for better wrapping
-		if let Some((width, _)) = crossterm::terminal::size().ok() {
+		if let Ok((width, _)) = crossterm::terminal::size() {
 			if width > 10 {
 				// Sanity check
 				table.with(Width::wrap(width as usize).keep_words(true));
@@ -336,7 +336,7 @@ impl SessionReport {
 		final_table.with(Style::rounded());
 
 		// Try to respect terminal width for better wrapping
-		if let Some((width, _)) = crossterm::terminal::size().ok() {
+		if let Ok((width, _)) = crossterm::terminal::size() {
 			if width > 10 {
 				// Sanity check
 				final_table.with(Width::wrap(width as usize).keep_words(true));

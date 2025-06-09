@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use tabled::{settings::Style, Table, Tabled};
+use tabled::{settings::Style, settings::Width, Table, Tabled};
 
 #[derive(Debug, Clone)]
 pub struct SessionReport {
@@ -64,8 +64,10 @@ struct RequestContext {
 	pub cost_before: f64,
 	pub cost_after: f64,
 	pub tools: HashMap<String, u32>,
-	pub api_time_ms: u64,  // AI latency (API request/response time)
-	pub tool_time_ms: u64, // Tool execution time (local processing)
+	pub api_time_before: u64,  // Total API time before this request
+	pub api_time_after: u64,   // Total API time after this request
+	pub tool_time_before: u64, // Total tool time before this request
+	pub tool_time_after: u64,  // Total tool time after this request
 }
 
 impl SessionReport {
@@ -77,6 +79,8 @@ impl SessionReport {
 		let mut contexts: Vec<RequestContext> = Vec::new();
 		let mut current_context: Option<RequestContext> = None;
 		let mut last_total_cost = 0.0;
+		let mut last_total_api_time_ms = 0u64;
+		let mut last_total_tool_time_ms = 0u64;
 
 		// Read all log entries
 		let mut all_entries: Vec<Value> = Vec::new();
@@ -96,15 +100,27 @@ impl SessionReport {
 
 			match log_type {
 				"STATS" => {
-					// Update last known total cost from session stats
+					// Update last known totals from session stats
 					if let Some(total_cost) = log_entry.get("total_cost").and_then(|c| c.as_f64()) {
 						last_total_cost = total_cost;
+					}
+					if let Some(total_api_time) =
+						log_entry.get("total_api_time_ms").and_then(|t| t.as_u64())
+					{
+						last_total_api_time_ms = total_api_time;
+					}
+					if let Some(total_tool_time) =
+						log_entry.get("total_tool_time_ms").and_then(|t| t.as_u64())
+					{
+						last_total_tool_time_ms = total_tool_time;
 					}
 				}
 				"USER" | "COMMAND" => {
 					// Save previous context if exists
 					if let Some(mut ctx) = current_context.take() {
 						ctx.cost_after = last_total_cost;
+						ctx.api_time_after = last_total_api_time_ms;
+						ctx.tool_time_after = last_total_tool_time_ms;
 						contexts.push(ctx);
 					}
 
@@ -134,36 +150,15 @@ impl SessionReport {
 						cost_before: last_total_cost,
 						cost_after: last_total_cost,
 						tools: HashMap::new(),
-						api_time_ms: 0,
-						tool_time_ms: 0,
+						api_time_before: last_total_api_time_ms,
+						api_time_after: last_total_api_time_ms,
+						tool_time_before: last_total_tool_time_ms,
+						tool_time_after: last_total_tool_time_ms,
 					});
 				}
 				"API_RESPONSE" => {
-					// Track time from API responses
-					if let Some(ref mut ctx) = current_context {
-						// First try to get timing from the usage field (new format)
-						if let Some(usage) = log_entry.get("usage") {
-							if let Some(api_time) =
-								usage.get("request_time_ms").and_then(|t| t.as_u64())
-							{
-								ctx.api_time_ms += api_time;
-							}
-						} else if let Some(data) = log_entry.get("data") {
-							// Fallback: try to get timing from data.usage (old format)
-							if let Some(usage) = data.get("usage") {
-								if let Some(api_time) =
-									usage.get("request_time_ms").and_then(|t| t.as_u64())
-								{
-									ctx.api_time_ms += api_time;
-								}
-
-								// Track cost from usage data
-								if let Some(cost) = usage.get("cost").and_then(|c| c.as_f64()) {
-									last_total_cost += cost;
-								}
-							}
-						}
-					}
+					// API responses are now tracked via STATS entries for timing
+					// We don't need to extract timing here anymore
 				}
 				"TOOL_CALL" => {
 					// Track tool usage
@@ -175,14 +170,8 @@ impl SessionReport {
 					}
 				}
 				"TOOL_RESULT" => {
-					// Track tool execution time
-					if let Some(ref mut ctx) = current_context {
-						if let Some(execution_time) =
-							log_entry.get("execution_time_ms").and_then(|t| t.as_u64())
-						{
-							ctx.tool_time_ms += execution_time;
-						}
-					}
+					// Tool execution time is now tracked via STATS entries
+					// We don't need to extract timing here anymore
 				}
 				_ => {
 					// Check for any other entries that might contain session cost updates
@@ -200,6 +189,8 @@ impl SessionReport {
 		// Save the last context if exists
 		if let Some(mut ctx) = current_context {
 			ctx.cost_after = last_total_cost;
+			ctx.api_time_after = last_total_api_time_ms;
+			ctx.tool_time_after = last_total_tool_time_ms;
 			contexts.push(ctx);
 		}
 
@@ -219,11 +210,11 @@ impl SessionReport {
 			let tools_used = Self::format_tools_used(&ctx.tools);
 			let cost_delta = ctx.cost_after - ctx.cost_before;
 
-			// AI Time = API latency (request to response from AI endpoint)
-			let ai_time_ms = ctx.api_time_ms;
+			// AI Time = API latency delta from STATS entries
+			let ai_time_ms = ctx.api_time_after.saturating_sub(ctx.api_time_before);
 
-			// Processing Time = Only tool execution time (our local processing)
-			let processing_time_ms = ctx.tool_time_ms;
+			// Processing Time = Tool execution time delta from STATS entries
+			let processing_time_ms = ctx.tool_time_after.saturating_sub(ctx.tool_time_before);
 
 			// Calculate human time (time until next request or current time)
 			let human_time_ms = if i + 1 < contexts.len() {
@@ -318,6 +309,14 @@ impl SessionReport {
 		let mut table = Table::new(&self.entries);
 		table.with(Style::rounded());
 
+		// Try to respect terminal width for better wrapping
+		if let Some((width, _)) = crossterm::terminal::size().ok() {
+			if width > 10 {
+				// Sanity check
+				table.with(Width::wrap(width as usize).keep_words(true));
+			}
+		}
+
 		// Add totals row
 		let totals_row = ReportEntry {
 			user_request: "TOTAL".to_string(),
@@ -335,6 +334,14 @@ impl SessionReport {
 
 		let mut final_table = Table::new(&all_entries);
 		final_table.with(Style::rounded());
+
+		// Try to respect terminal width for better wrapping
+		if let Some((width, _)) = crossterm::terminal::size().ok() {
+			if width > 10 {
+				// Sanity check
+				final_table.with(Width::wrap(width as usize).keep_words(true));
+			}
+		}
 
 		final_table.to_string()
 	}

@@ -430,7 +430,6 @@ pub async fn process_placeholders_async(prompt: &str, project_dir: &Path) -> Str
 			// Build comprehensive system information
 			let mut system_context = String::new();
 			system_context.push_str("# System Information\n\n");
-			system_context.push_str(&format!("**Date**: {}\n", info.date_with_timezone));
 			system_context.push_str(&format!("**Shell**: {}\n", info.shell_info));
 			system_context.push_str(&format!("**Operating System**: {}\n", info.os_info));
 			system_context.push_str(&format!(

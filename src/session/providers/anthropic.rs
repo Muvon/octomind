@@ -158,6 +158,14 @@ impl AiProvider for AnthropicProvider {
 		true
 	}
 
+	fn supports_vision(&self, model: &str) -> bool {
+		// Claude 3+ models support vision
+		model.contains("claude-3")
+			|| model.contains("claude-4")
+			|| model.contains("claude-3.5")
+			|| model.contains("claude-3.7")
+	}
+
 	fn get_max_input_tokens(&self, model: &str) -> usize {
 		// Anthropic model context window limits (what we can send as input)
 		// These are the actual context windows - no output reservation needed
@@ -586,7 +594,10 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 				}
 
 				// Regular user messages with proper structure
-				// CRITICAL FIX: Only create message if content is not empty
+				// Handle both text and image content
+				let mut content_blocks = Vec::new();
+
+				// Add text content if not empty
 				if !msg.content.trim().is_empty() {
 					let mut text_content = serde_json::json!({
 						"type": "text",
@@ -600,9 +611,30 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 						});
 					}
 
+					content_blocks.push(text_content);
+				}
+
+				// Add image attachments if present
+				if let Some(ref images) = msg.images {
+					for img in images {
+						if let crate::session::image::ImageData::Base64(ref data) = img.data {
+							content_blocks.push(serde_json::json!({
+								"type": "image",
+								"source": {
+									"type": "base64",
+									"media_type": img.media_type,
+									"data": data
+								}
+							}));
+						}
+					}
+				}
+
+				// Only create message if we have content
+				if !content_blocks.is_empty() {
 					result.push(AnthropicMessage {
 						role: msg.role.clone(),
-						content: serde_json::json!([text_content]),
+						content: serde_json::json!(content_blocks),
 					});
 				}
 			}

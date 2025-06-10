@@ -124,6 +124,12 @@ pub trait AiProvider: Send + Sync {
 	/// Get maximum input tokens for a model (actual context window size)
 	/// This is what we can send to the API - the provider handles output limits internally
 	fn get_max_input_tokens(&self, model: &str) -> usize;
+
+	/// Check if the provider/model supports vision capabilities
+	fn supports_vision(&self, _model: &str) -> bool {
+		// Default implementation - providers can override
+		false
+	}
 }
 
 /// Provider factory to create the appropriate provider based on model string

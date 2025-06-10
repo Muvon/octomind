@@ -53,6 +53,7 @@ impl LayerProcessor {
 			tool_call_id: None,   // No tool_call_id for system messages
 			name: None,           // No name for system messages
 			tool_calls: None,     // No tool_calls for system messages
+			images: None,         // No images for system messages
 		});
 
 		// Prepare input based on input_mode using the trait's prepare_input method
@@ -70,6 +71,7 @@ impl LayerProcessor {
 			tool_call_id: None, // No tool_call_id for user messages
 			name: None,         // No name for user messages
 			tool_calls: None,   // No tool_calls for user messages
+			images: None,       // No images for user messages
 		});
 
 		messages
@@ -189,6 +191,7 @@ impl Layer for LayerProcessor {
 						tool_call_id: None, // No tool_call_id for assistant messages
 						name: None,         // No name for assistant messages
 						tool_calls: None,   // No tool_calls for assistant messages
+						images: None,       // No images for assistant messages
 					});
 
 					// Add each tool result as a tool message in standard OpenRouter format
@@ -205,6 +208,7 @@ impl Layer for LayerProcessor {
 							tool_call_id: Some(tool_result.tool_id.clone()), // Include the tool_call_id
 							name: Some(tool_result.tool_name.clone()),       // Include the tool name
 							tool_calls: None,                                // No tool_calls for tool messages
+							images: None,                                    // No images for tool messages
 						});
 					}
 

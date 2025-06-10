@@ -297,6 +297,7 @@ fn add_assistant_message_with_tool_calls(
 		tool_call_id: None,
 		name: None,
 		tool_calls: original_tool_calls, // Store the original tool_calls for proper reconstruction
+		images: None,
 	};
 
 	// Add the assistant message to the session

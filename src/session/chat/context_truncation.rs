@@ -491,26 +491,51 @@ pub async fn perform_smart_truncation(
 		// Work backwards from most recent, respecting tool sequences
 
 		// First, identify complete tool sequences to preserve them as units
-		let mut tool_sequences = Vec::new();
-		let mut i = 0;
-		while i < compressed_messages.len() {
-			let msg = &compressed_messages[i];
+		// Build a map of tool_call_id to assistant message index for proper linking
+		let mut tool_call_map: std::collections::HashMap<String, usize> =
+			std::collections::HashMap::new();
 
-			// Look for assistant messages with tool_calls (start of tool sequence)
+		// First pass: map all tool_call_ids from assistant messages
+		for (i, msg) in compressed_messages.iter().enumerate() {
 			if msg.role == "assistant" && msg.tool_calls.is_some() {
-				let mut sequence_indices = vec![i];
-				let mut j = i + 1;
-
-				// Collect all subsequent tool messages that belong to this sequence
-				while j < compressed_messages.len() {
-					let next_msg = &compressed_messages[j];
-					if next_msg.role == "tool" {
-						sequence_indices.push(j);
-						j += 1;
-					} else {
-						break; // End of tool sequence
+				if let Some(tool_calls_value) = &msg.tool_calls {
+					if let Some(tool_calls_array) = tool_calls_value.as_array() {
+						for tool_call in tool_calls_array {
+							if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+								tool_call_map.insert(id.to_string(), i);
+							}
+						}
 					}
 				}
+			}
+		}
+
+		// Second pass: build complete tool sequences by linking tool messages to their assistant messages
+		let mut tool_sequences: Vec<(Vec<usize>, usize)> = Vec::new();
+		let mut processed_assistants: std::collections::HashSet<usize> =
+			std::collections::HashSet::new();
+
+		for (i, msg) in compressed_messages.iter().enumerate() {
+			if msg.role == "assistant"
+				&& msg.tool_calls.is_some()
+				&& !processed_assistants.contains(&i)
+			{
+				let mut sequence_indices = vec![i];
+				processed_assistants.insert(i);
+
+				// Find all tool messages that belong to this assistant's tool calls
+				for (j, tool_msg) in compressed_messages.iter().enumerate() {
+					if tool_msg.role == "tool" {
+						if let Some(tool_call_id) = &tool_msg.tool_call_id {
+							if tool_call_map.get(tool_call_id) == Some(&i) {
+								sequence_indices.push(j);
+							}
+						}
+					}
+				}
+
+				// Sort sequence indices to maintain chronological order
+				sequence_indices.sort();
 
 				// Calculate total tokens for this sequence
 				let sequence_tokens: usize = sequence_indices
@@ -519,9 +544,6 @@ pub async fn perform_smart_truncation(
 					.sum();
 
 				tool_sequences.push((sequence_indices, sequence_tokens));
-				i = j; // Skip to after this sequence
-			} else {
-				i += 1;
 			}
 		}
 
@@ -610,28 +632,81 @@ pub async fn perform_smart_truncation(
 		selected_messages.sort_by_key(|(index, _)| *index);
 		preserved_messages = selected_messages.into_iter().map(|(_, msg)| msg).collect();
 
-		// Remove any orphaned tool messages (tool messages without preceding assistant message with tool_calls)
+		// Remove any orphaned tool messages (tool messages without corresponding assistant message with tool_calls)
+		// Build a map of assistant messages and their tool_call_ids in preserved messages
+		let mut preserved_tool_call_map: std::collections::HashMap<String, bool> =
+			std::collections::HashMap::new();
+
+		for msg in &preserved_messages {
+			if msg.role == "assistant" && msg.tool_calls.is_some() {
+				if let Some(tool_calls_value) = &msg.tool_calls {
+					if let Some(tool_calls_array) = tool_calls_value.as_array() {
+						for tool_call in tool_calls_array {
+							if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+								preserved_tool_call_map.insert(id.to_string(), true);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Remove tool messages that don't have corresponding assistant messages
 		let mut i = 0;
 		while i < preserved_messages.len() {
 			let msg = &preserved_messages[i];
 
-			// Check for tool messages without preceding assistant message with tool_calls
 			if msg.role == "tool" {
-				// Look backwards for the assistant message that made this tool call
-				let mut found_tool_call = false;
-				for j in (0..i).rev() {
-					let prev_msg = &preserved_messages[j];
-					if prev_msg.role == "assistant" && prev_msg.tool_calls.is_some() {
-						found_tool_call = true;
-						break;
-					} else if prev_msg.role == "user" {
-						// Hit a user message without finding tool_calls, this is an orphan
-						break;
+				let mut is_orphaned = true;
+
+				// Check if this tool message has a corresponding assistant message
+				if let Some(tool_call_id) = &msg.tool_call_id {
+					if preserved_tool_call_map.contains_key(tool_call_id) {
+						is_orphaned = false;
 					}
 				}
 
-				if !found_tool_call {
+				if is_orphaned {
 					// Remove orphaned tool message
+					preserved_messages.remove(i);
+					continue; // Don't increment i since we removed an element
+				}
+			}
+			i += 1;
+		}
+
+		// Also remove assistant messages with tool_calls if none of their tool results are preserved
+		let mut i = 0;
+		while i < preserved_messages.len() {
+			let msg = &preserved_messages[i];
+
+			if msg.role == "assistant" && msg.tool_calls.is_some() {
+				let mut has_tool_results = false;
+
+				// Check if any tool results for this assistant message are preserved
+				if let Some(tool_calls_value) = &msg.tool_calls {
+					if let Some(tool_calls_array) = tool_calls_value.as_array() {
+						for tool_call in tool_calls_array {
+							if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+								// Look for tool messages with this tool_call_id
+								for tool_msg in &preserved_messages {
+									if tool_msg.role == "tool"
+										&& tool_msg.tool_call_id.as_ref() == Some(&id.to_string())
+									{
+										has_tool_results = true;
+										break;
+									}
+								}
+								if has_tool_results {
+									break;
+								}
+							}
+						}
+					}
+				}
+
+				// If this assistant message has tool_calls but no tool results are preserved, remove it
+				if !has_tool_results {
 					preserved_messages.remove(i);
 					continue; // Don't increment i since we removed an element
 				}
@@ -649,6 +724,13 @@ pub async fn perform_smart_truncation(
 			debug: format!("Enhanced smart truncation: preserving {} of {} messages ({} tokens, {} saved by compression)",
 				preserved_messages.len(), non_system_messages.len(), current_token_count, compression_savings).bright_blue(),
 			default: format!("Preserving {} recent messages with intelligent compression", preserved_messages.len()).bright_blue()
+		);
+
+		// Debug: Log tool sequence preservation
+		log_conditional!(
+			debug: format!("Tool sequences identified: {}, Tool call mappings: {}",
+				tool_sequences.len(), tool_call_map.len()).bright_green(),
+			default: "".to_string()
 		);
 	}
 
@@ -829,4 +911,198 @@ pub async fn perform_smart_full_summarization(
 	chat_session.save()?;
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::session::Message;
+	use serde_json::json;
+
+	fn create_test_message(
+		role: &str,
+		content: &str,
+		tool_calls: Option<serde_json::Value>,
+		tool_call_id: Option<String>,
+		name: Option<String>,
+	) -> Message {
+		Message {
+			role: role.to_string(),
+			content: content.to_string(),
+			timestamp: 0,
+			cached: false,
+			tool_call_id,
+			name,
+			tool_calls,
+			images: None,
+		}
+	}
+
+	#[test]
+	fn test_tool_sequence_identification() {
+		let messages = vec![
+			create_test_message("user", "Hello", None, None, None),
+			create_test_message(
+				"assistant",
+				"I'll help you",
+				Some(
+					json!([{"id": "call_123", "type": "function", "function": {"name": "test_tool"}}]),
+				),
+				None,
+				None,
+			),
+			create_test_message(
+				"tool",
+				"Tool result 1",
+				None,
+				Some("call_123".to_string()),
+				Some("test_tool".to_string()),
+			),
+			create_test_message("assistant", "Based on the result...", None, None, None),
+			create_test_message(
+				"assistant",
+				"Let me use another tool",
+				Some(
+					json!([{"id": "call_456", "type": "function", "function": {"name": "another_tool"}}]),
+				),
+				None,
+				None,
+			),
+			create_test_message(
+				"tool",
+				"Tool result 2",
+				None,
+				Some("call_456".to_string()),
+				Some("another_tool".to_string()),
+			),
+		];
+
+		// Build tool call map
+		let mut tool_call_map: std::collections::HashMap<String, usize> =
+			std::collections::HashMap::new();
+		for (i, msg) in messages.iter().enumerate() {
+			if msg.role == "assistant" && msg.tool_calls.is_some() {
+				if let Some(tool_calls_value) = &msg.tool_calls {
+					if let Some(tool_calls_array) = tool_calls_value.as_array() {
+						for tool_call in tool_calls_array {
+							if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+								tool_call_map.insert(id.to_string(), i);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Verify tool call mapping
+		assert_eq!(tool_call_map.get("call_123"), Some(&1));
+		assert_eq!(tool_call_map.get("call_456"), Some(&4));
+
+		// Build tool sequences
+		let mut tool_sequences: Vec<(Vec<usize>, usize)> = Vec::new();
+		let mut processed_assistants: std::collections::HashSet<usize> =
+			std::collections::HashSet::new();
+
+		for (i, msg) in messages.iter().enumerate() {
+			if msg.role == "assistant"
+				&& msg.tool_calls.is_some()
+				&& !processed_assistants.contains(&i)
+			{
+				let mut sequence_indices = vec![i];
+				processed_assistants.insert(i);
+
+				// Find all tool messages that belong to this assistant's tool calls
+				for (j, tool_msg) in messages.iter().enumerate() {
+					if tool_msg.role == "tool" {
+						if let Some(tool_call_id) = &tool_msg.tool_call_id {
+							if tool_call_map.get(tool_call_id) == Some(&i) {
+								sequence_indices.push(j);
+							}
+						}
+					}
+				}
+
+				sequence_indices.sort();
+				tool_sequences.push((sequence_indices, 0)); // Token count not important for this test
+			}
+		}
+
+		// Verify sequences
+		assert_eq!(tool_sequences.len(), 2);
+		assert_eq!(tool_sequences[0].0, vec![1, 2]); // Assistant at index 1, tool at index 2
+		assert_eq!(tool_sequences[1].0, vec![4, 5]); // Assistant at index 4, tool at index 5
+	}
+
+	#[test]
+	fn test_orphan_detection() {
+		let mut messages = vec![
+			create_test_message(
+				"assistant",
+				"I'll help you",
+				Some(
+					json!([{"id": "call_123", "type": "function", "function": {"name": "test_tool"}}]),
+				),
+				None,
+				None,
+			),
+			create_test_message(
+				"tool",
+				"Tool result 1",
+				None,
+				Some("call_123".to_string()),
+				Some("test_tool".to_string()),
+			),
+			create_test_message(
+				"tool",
+				"Orphaned tool result",
+				None,
+				Some("call_999".to_string()),
+				Some("missing_tool".to_string()),
+			), // This should be removed
+		];
+
+		// Build preserved tool call map
+		let mut preserved_tool_call_map: std::collections::HashMap<String, bool> =
+			std::collections::HashMap::new();
+		for msg in &messages {
+			if msg.role == "assistant" && msg.tool_calls.is_some() {
+				if let Some(tool_calls_value) = &msg.tool_calls {
+					if let Some(tool_calls_array) = tool_calls_value.as_array() {
+						for tool_call in tool_calls_array {
+							if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+								preserved_tool_call_map.insert(id.to_string(), true);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Remove orphaned tool messages
+		let mut i = 0;
+		while i < messages.len() {
+			let msg = &messages[i];
+
+			if msg.role == "tool" {
+				let mut is_orphaned = true;
+
+				if let Some(tool_call_id) = &msg.tool_call_id {
+					if preserved_tool_call_map.contains_key(tool_call_id) {
+						is_orphaned = false;
+					}
+				}
+
+				if is_orphaned {
+					messages.remove(i);
+					continue;
+				}
+			}
+			i += 1;
+		}
+
+		// Should have removed the orphaned tool message
+		assert_eq!(messages.len(), 2);
+		assert_eq!(messages[0].role, "assistant");
+		assert_eq!(messages[1].role, "tool");
+		assert_eq!(messages[1].tool_call_id, Some("call_123".to_string()));
+	}
 }

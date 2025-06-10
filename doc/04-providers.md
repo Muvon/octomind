@@ -23,8 +23,9 @@ Octomind supports multiple AI providers through a unified, extensible interface.
 **Access to multiple AI models through a single API**
 
 - **Format**: `openrouter:provider/model`
-- **Features**: Full tool support, caching (Claude models), cost tracking
+- **Features**: Full tool support, caching (Claude models), cost tracking, **vision support**
 - **Models**: Anthropic, OpenAI, Google, and many others
+- **Vision Models**: All vision-capable models from underlying providers (Claude 3+, GPT-4o, Gemini, Llama 3.2 vision, Pixtral)
 
 #### Setup
 ```bash
@@ -55,8 +56,9 @@ octomind session --model "openrouter:google/gemini-1.5-pro"
 **Direct access to OpenAI models**
 
 - **Format**: `openai:model-name`
-- **Features**: Full tool support, built-in cost calculation
+- **Features**: Full tool support, built-in cost calculation, **vision support**
 - **Models**: GPT-4o, GPT-4o-mini, O1, GPT-3.5
+- **Vision Models**: GPT-4o, GPT-4o-mini, GPT-4-turbo, GPT-4-vision
 
 #### Setup
 ```bash
@@ -70,6 +72,16 @@ octomind session --model "openai:gpt-4o-mini"
 octomind session --model "openai:o1-preview"
 ```
 
+#### Vision Support
+```bash
+# Use vision-capable model
+octomind session --model "openai:gpt-4o"
+
+# Analyze images
+> /image diagram.png
+> Explain this architecture
+```
+
 #### Pricing (per 1M tokens)
 | Model | Input | Output |
 |-------|-------|--------|
@@ -81,8 +93,9 @@ octomind session --model "openai:o1-preview"
 **Direct access to Claude models**
 
 - **Format**: `anthropic:model-name`
-- **Features**: Full tool support, caching (3.5 models), cost calculation
+- **Features**: Full tool support, caching (3.5 models), cost calculation, **vision support**
 - **Models**: Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus
+- **Vision Models**: All Claude 3+ models support image analysis
 
 #### Setup
 ```bash
@@ -96,6 +109,16 @@ octomind session --model "anthropic:claude-3-5-haiku"
 octomind session --model "anthropic:claude-3-opus"
 ```
 
+#### Vision Support
+```bash
+# Start session with vision-capable model
+octomind session --model "anthropic:claude-3-5-sonnet"
+
+# Attach image and analyze
+> /image screenshot.png
+> What's in this image?
+```
+
 #### Pricing (per 1M tokens)
 | Model | Input | Output |
 |-------|-------|--------|
@@ -107,8 +130,9 @@ octomind session --model "anthropic:claude-3-opus"
 **Google's AI models via Vertex AI**
 
 - **Format**: `google:model-name`
-- **Features**: Tool support, cost calculation
+- **Features**: Tool support, cost calculation, **vision support**
 - **Models**: Gemini 1.5 Pro, Gemini 1.5 Flash, Gemini 1.0 Pro
+- **Vision Models**: Gemini 1.5+, 2.0+, 2.5+ models support image analysis
 - **Note**: Requires additional OAuth2 setup
 
 #### Setup
@@ -142,8 +166,9 @@ octomind session --model "google:gemini-1.5-flash"
 **AWS Bedrock AI models**
 
 - **Format**: `amazon:model-name`
-- **Features**: Tool support, cost calculation
+- **Features**: Tool support, cost calculation, **vision support**
 - **Models**: Claude, Titan, Jurassic, and other AWS Bedrock models
+- **Vision Models**: Claude 3+ models on Bedrock support image analysis
 - **Note**: Requires AWS credentials
 
 #### Setup
@@ -171,8 +196,9 @@ octomind session --model "amazon:amazon.titan-text-express"
 **Cloudflare's AI models**
 
 - **Format**: `cloudflare:model-name`
-- **Features**: Tool support, edge computing
+- **Features**: Tool support, edge computing, **vision support**
 - **Models**: Various models available through Cloudflare Workers AI
+- **Vision Models**: Llama 3.2 vision models support image analysis
 - **Note**: Requires Cloudflare account and API token
 
 #### Setup

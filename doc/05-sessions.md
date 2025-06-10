@@ -322,6 +322,7 @@ During a session, use these commands:
 
 #### Configuration Commands
 - `/model [model]` - Show/change current model
+- `/image <path>` - Attach image to your next message (PNG, JPEG, GIF, WebP, BMP)
 - `/info` - Display token usage and costs
 - `/report` - Generate detailed usage report with cost breakdown per request
 - `/debug` - Toggle debug mode
@@ -335,6 +336,60 @@ During a session, use these commands:
 
 #### Architecture Commands
 - `/layers` - Toggle layered processing
+
+## Multimodal Vision Support
+
+Octomind supports image analysis across all AI providers through the `/image` command.
+
+### Supported Formats
+
+- **Image Types**: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, SVG, AVIF, HEIC, HEIF
+- **Path Types**: Relative paths, absolute paths, tilde expansion (`~/images/`)
+- **Intelligent Completion**: Tab completion with image file filtering
+
+### Usage Examples
+
+```bash
+# Attach local image
+> /image screenshot.png
+> What's wrong with this UI layout?
+
+# Absolute path
+> /image /path/to/diagram.jpg
+> Explain this architecture diagram
+
+# Tilde expansion
+> /image ~/Downloads/error_message.png
+> Help me debug this error
+
+# Relative path with directory
+> /image ./assets/mockup.png
+> Review this design mockup
+```
+
+### Vision-Capable Models by Provider
+
+| Provider | Vision Models |
+|----------|---------------|
+| **Anthropic** | Claude 3+, Claude 3.5+, Claude 4+ |
+| **OpenAI** | GPT-4o, GPT-4o-mini, GPT-4-turbo, GPT-4-vision |
+| **OpenRouter** | All vision models from underlying providers |
+| **Google** | Gemini 1.5+, Gemini 2.0+, Gemini 2.5+ |
+| **Amazon** | Claude models on Bedrock |
+| **Cloudflare** | Llama 3.2 vision models |
+
+### Features
+
+- **Model Detection**: Automatic vision support detection for current model
+- **Terminal Preview**: Small image preview in terminal when attached
+- **Path Completion**: Smart autocomplete for image files with filtering
+- **Error Handling**: Clear feedback for unsupported formats or missing files
+
+### Tips
+
+- Copy an image to clipboard and run `/image` to auto-attach (when available)
+- Use `/model` to switch to a vision-capable model if needed
+- Images are attached to your next message - send text after attaching
 
 ### Session Storage
 

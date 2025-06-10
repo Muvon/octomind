@@ -11,6 +11,7 @@ Octomind is an AI-powered development assistant that helps you understand, analy
 - 🎯 **Session-First Architecture** - Everything happens in interactive AI conversations
 - 🛠️ **Built-in Development Tools** - File operations, code analysis, shell commands via MCP
 - 🌐 **Multi-Provider AI Support** - OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare
+- 🖼️ **Multimodal Vision Support** - Analyze images, screenshots, diagrams with AI across all providers
 - 💰 **Cost Tracking & Optimization** - Real-time usage monitoring with detailed reporting
 - 🔧 **Role-Based Configuration** - Developer (full tools) and Assistant (chat-only) modes
 
@@ -38,6 +39,10 @@ Instead of complex command-line tools, simply talk to Octomind:
 > "Add error handling to the login function"
 [AI examines login code, implements error handling, shows changes]
 
+> /image screenshot.png
+> "What's wrong with this UI layout?"
+[AI analyzes the image, identifies layout issues, suggests CSS fixes]
+
 > "Why is the build failing?"
 [AI checks build errors, analyzes code, suggests fixes]
 
@@ -49,12 +54,12 @@ Instead of complex command-line tools, simply talk to Octomind:
 
 | Provider | Format | Features |
 |----------|--------|----------|
-| OpenRouter | `openrouter:provider/model` | Multi-provider access, caching |
-| OpenAI | `openai:model-name` | Direct API, cost calculation |
-| Anthropic | `anthropic:model-name` | Claude models, caching |
-| Google | `google:model-name` | Vertex AI, multimodal |
-| Amazon | `amazon:model-name` | Bedrock models, AWS integration |
-| Cloudflare | `cloudflare:model-name` | Edge AI, fast inference |
+| OpenRouter | `openrouter:provider/model` | Multi-provider access, caching, vision models |
+| OpenAI | `openai:model-name` | Direct API, cost calculation, GPT-4o vision |
+| Anthropic | `anthropic:model-name` | Claude models, caching, Claude 3+ vision |
+| Google | `google:model-name` | Vertex AI, Gemini 1.5+ vision support |
+| Amazon | `amazon:model-name` | Bedrock models, AWS integration, Claude vision |
+| Cloudflare | `cloudflare:model-name` | Edge AI, fast inference, Llama 3.2 vision |
 
 ## 🛠️ Installation & Setup
 
@@ -104,6 +109,7 @@ octomind session --model "openrouter:anthropic/claude-3.5-sonnet"
 
 Within any session, use these commands:
 - `/help` - Show available commands and features
+- `/image <path>` - Attach image to your next message (PNG, JPEG, GIF, WebP, BMP)
 - `/model [model]` - View or change current AI model
 - `/info` - Display token usage and costs
 - `/report` - Generate detailed usage report with cost breakdown

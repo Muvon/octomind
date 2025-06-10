@@ -1,20 +1,15 @@
-# Multi-stage Dockerfile for building static Octomind binary
-# Copyright 2025 Muvon Un Limited
-# Licensed under the Apache License, Version 2.0
-# This creates a minimal runtime image with just the static binary
+# Multi-stage Dockerfile for octomind
+# Stage 1: Build
+FROM rust:1.75-slim as builder
 
-# Build stage
-FROM rust:1.75 as builder
-
-WORKDIR /usr/src/app
-
-# Install cross-compilation dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-		musl-tools \
+		pkg-config \
+		libssl-dev \
 		&& rm -rf /var/lib/apt/lists/*
 
-# Add musl target for static linking
-RUN rustup target add x86_64-unknown-linux-musl
+# Create app directory
+WORKDIR /app
 
 # Copy manifests
 COPY Cargo.toml Cargo.lock ./
@@ -22,18 +17,40 @@ COPY Cargo.toml Cargo.lock ./
 # Copy source code
 COPY src ./src
 
-# Build for musl target to create static binary
-ENV RUSTFLAGS="-C target-feature=+crt-static"
-RUN cargo build --release --target x86_64-unknown-linux-musl
+# Build the application
+RUN cargo build --release
 
-# Runtime stage - use scratch for minimal image
-FROM scratch
+# Stage 2: Runtime
+FROM debian:bookworm-slim
 
-# Copy the static binary from builder stage
-COPY --from=builder /usr/src/app/target/x86_64-unknown-linux-musl/release/octomind /octomind
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+		ca-certificates \
+		&& rm -rf /var/lib/apt/lists/* \
+		&& update-ca-certificates
 
-# Expose any ports if needed (uncomment if your app serves HTTP)
+# Create a non-root user
+RUN groupadd -r octomind && useradd -r -g octomind octomind
+
+# Create app directory
+WORKDIR /app
+
+# Copy the binary from builder stage
+COPY --from=builder /app/target/release/octomind /usr/local/bin/octomind
+
+# Change ownership to non-root user
+RUN chown -R octomind:octomind /app
+
+# Switch to non-root user
+USER octomind
+
+# Expose port (if applicable)
 # EXPOSE 8080
 
-# Set the binary as entrypoint
-ENTRYPOINT ["/octomind"]
+# Health check (customize based on your application)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+		CMD octomind --help || exit 1
+
+# Set the entrypoint
+ENTRYPOINT ["octomind"]
+CMD ["--help"]

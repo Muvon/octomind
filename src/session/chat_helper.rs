@@ -82,57 +82,66 @@ impl CommandCompleter {
 			return Self::list_directory_contents(&expanded_str);
 		}
 
-		// Otherwise, find the parent directory and filter by the filename part
-		if let Some(parent) = expanded_path.parent() {
+		// Determine the parent directory and filename part
+		let (parent_dir, filename_part) = if let Some(parent) = expanded_path.parent() {
+			let parent_str = parent.to_str().unwrap_or(".");
+			// If parent is empty string (for relative paths without ./), use current directory
+			let actual_parent = if parent_str.is_empty() {
+				"."
+			} else {
+				parent_str
+			};
+
 			let filename_part = expanded_path
 				.file_name()
 				.and_then(|n| n.to_str())
 				.unwrap_or("");
 
-			let mut candidates = Self::list_directory_contents(parent.to_str().unwrap_or("."));
+			(actual_parent, filename_part)
+		} else {
+			// No parent found, treat as current directory search
+			(".", file_part)
+		};
 
-			// Filter candidates that start with the filename part
-			if !filename_part.is_empty() {
-				let filename_lower = filename_part.to_lowercase();
-				candidates.retain(|candidate| {
-					let name = Path::new(&candidate.replacement)
-						.file_name()
-						.and_then(|n| n.to_str())
-						.unwrap_or("")
-						.to_lowercase();
-					name.starts_with(&filename_lower)
-				});
-			}
+		let mut candidates = Self::list_directory_contents(parent_dir);
 
-			// Adjust the replacement paths to be relative to the original input
-			for candidate in &mut candidates {
-				if file_part.starts_with("~/") {
-					// Convert back to tilde notation
-					if let Some(home) = dirs::home_dir() {
-						if let Ok(relative) =
-							PathBuf::from(&candidate.replacement).strip_prefix(&home)
-						{
-							candidate.replacement = format!("~/{}", relative.to_string_lossy());
-						}
-					}
-				} else if file_part.starts_with('/') {
-					// Keep absolute path
-					// candidate.replacement is already correct
-				} else {
-					// For relative paths, make sure we maintain the relative nature
-					if let Ok(relative) = PathBuf::from(&candidate.replacement)
-						.strip_prefix(std::env::current_dir().unwrap_or_default())
+		// Filter candidates that start with the filename part
+		if !filename_part.is_empty() {
+			let filename_lower = filename_part.to_lowercase();
+			candidates.retain(|candidate| {
+				let name = Path::new(&candidate.replacement)
+					.file_name()
+					.and_then(|n| n.to_str())
+					.unwrap_or("")
+					.to_lowercase();
+				name.starts_with(&filename_lower)
+			});
+		}
+
+		// Adjust the replacement paths to be relative to the original input
+		for candidate in &mut candidates {
+			if file_part.starts_with("~/") {
+				// Convert back to tilde notation
+				if let Some(home) = dirs::home_dir() {
+					if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(&home)
 					{
-						candidate.replacement = relative.to_string_lossy().to_string();
+						candidate.replacement = format!("~/{}", relative.to_string_lossy());
 					}
 				}
+			} else if file_part.starts_with('/') {
+				// Keep absolute path
+				// candidate.replacement is already correct
+			} else {
+				// For relative paths, make sure we maintain the relative nature
+				if let Ok(relative) = PathBuf::from(&candidate.replacement)
+					.strip_prefix(std::env::current_dir().unwrap_or_default())
+				{
+					candidate.replacement = relative.to_string_lossy().to_string();
+				}
 			}
-
-			candidates
-		} else {
-			// If no parent (shouldn't happen), return empty
-			Vec::new()
 		}
+
+		candidates
 	}
 
 	/// List contents of a directory, returning both directories and image files

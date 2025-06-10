@@ -21,6 +21,8 @@ use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::Validator;
 use rustyline::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Default)]
 struct CommandCompleter {
@@ -35,6 +37,158 @@ impl CommandCompleter {
 			.collect();
 		Self { commands }
 	}
+
+	/// Check if the given file extension is a supported image format
+	fn is_image_file(path: &str) -> bool {
+		let supported_extensions = [
+			".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".ico", ".svg",
+			".avif", ".heic", ".heif",
+		];
+
+		let path_lower = path.to_lowercase();
+		supported_extensions
+			.iter()
+			.any(|ext| path_lower.ends_with(ext))
+	}
+
+	/// Expand tilde (~) to home directory
+	fn expand_tilde(path: &str) -> PathBuf {
+		if let Some(stripped) = path.strip_prefix("~/") {
+			if let Some(home) = dirs::home_dir() {
+				home.join(stripped)
+			} else {
+				PathBuf::from(path)
+			}
+		} else if path == "~" {
+			dirs::home_dir().unwrap_or_else(|| PathBuf::from(path))
+		} else {
+			PathBuf::from(path)
+		}
+	}
+
+	/// Custom file completion that handles absolute paths and tilde expansion
+	fn complete_file_path(file_part: &str) -> Vec<Pair> {
+		if file_part.is_empty() {
+			// Show current directory contents
+			return Self::list_directory_contents(".");
+		}
+
+		// Expand tilde if present
+		let expanded_path = Self::expand_tilde(file_part);
+		let expanded_str = expanded_path.to_string_lossy();
+
+		// If the path ends with a separator, list contents of that directory
+		if file_part.ends_with('/') || file_part.ends_with('\\') {
+			return Self::list_directory_contents(&expanded_str);
+		}
+
+		// Otherwise, find the parent directory and filter by the filename part
+		if let Some(parent) = expanded_path.parent() {
+			let filename_part = expanded_path
+				.file_name()
+				.and_then(|n| n.to_str())
+				.unwrap_or("");
+
+			let mut candidates = Self::list_directory_contents(parent.to_str().unwrap_or("."));
+
+			// Filter candidates that start with the filename part
+			if !filename_part.is_empty() {
+				let filename_lower = filename_part.to_lowercase();
+				candidates.retain(|candidate| {
+					let name = Path::new(&candidate.replacement)
+						.file_name()
+						.and_then(|n| n.to_str())
+						.unwrap_or("")
+						.to_lowercase();
+					name.starts_with(&filename_lower)
+				});
+			}
+
+			// Adjust the replacement paths to be relative to the original input
+			for candidate in &mut candidates {
+				if file_part.starts_with("~/") {
+					// Convert back to tilde notation
+					if let Some(home) = dirs::home_dir() {
+						if let Ok(relative) =
+							PathBuf::from(&candidate.replacement).strip_prefix(&home)
+						{
+							candidate.replacement = format!("~/{}", relative.to_string_lossy());
+						}
+					}
+				} else if file_part.starts_with('/') {
+					// Keep absolute path
+					// candidate.replacement is already correct
+				} else {
+					// For relative paths, make sure we maintain the relative nature
+					if let Ok(relative) = PathBuf::from(&candidate.replacement)
+						.strip_prefix(std::env::current_dir().unwrap_or_default())
+					{
+						candidate.replacement = relative.to_string_lossy().to_string();
+					}
+				}
+			}
+
+			candidates
+		} else {
+			// If no parent (shouldn't happen), return empty
+			Vec::new()
+		}
+	}
+
+	/// List contents of a directory, returning both directories and image files
+	fn list_directory_contents(dir_path: &str) -> Vec<Pair> {
+		let mut candidates = Vec::new();
+
+		if let Ok(entries) = fs::read_dir(dir_path) {
+			for entry in entries.flatten() {
+				let path = entry.path();
+				let path_str = path.to_string_lossy().to_string();
+
+				if path.is_dir() {
+					// Add directory with trailing slash
+					let display = format!(
+						"{}/",
+						path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+					);
+					candidates.push(Pair {
+						display: display.clone(),
+						replacement: format!("{}/", path_str),
+					});
+				} else if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+					if Self::is_image_file(filename) {
+						candidates.push(Pair {
+							display: filename.to_string(),
+							replacement: path_str,
+						});
+					}
+				}
+			}
+		}
+
+		// Sort: directories first, then files
+		candidates.sort_by(|a, b| {
+			let a_is_dir = a.replacement.ends_with('/');
+			let b_is_dir = b.replacement.ends_with('/');
+
+			match (a_is_dir, b_is_dir) {
+				(true, false) => std::cmp::Ordering::Less,
+				(false, true) => std::cmp::Ordering::Greater,
+				_ => a.replacement.cmp(&b.replacement),
+			}
+		});
+
+		candidates
+	}
+
+	/// Filter and prepare completion candidates for better UX with circular completion
+	fn filter_and_limit_candidates(candidates: Vec<Pair>, _file_part: &str) -> Vec<Pair> {
+		// For circular completion, limit to fewer total candidates for better UX
+		const MAX_TOTAL: usize = 8; // Reasonable limit for circular experience
+
+		let mut result = candidates;
+		result.truncate(MAX_TOTAL);
+		result
+	}
 }
 
 impl Completer for CommandCompleter {
@@ -43,25 +197,47 @@ impl Completer for CommandCompleter {
 	fn complete(
 		&self,
 		line: &str,
-		_pos: usize,
+		pos: usize,
 		_ctx: &rustyline::Context<'_>,
 	) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
-		// Only complete if the line starts with a slash
-		if !line.starts_with('/') {
-			return Ok((0, vec![]));
+		// Handle /image command with file completion
+		if line.starts_with("/image ") {
+			let image_prefix = "/image ";
+			let prefix_len = image_prefix.len();
+
+			// Extract the file path part after "/image "
+			let file_part = if line.len() > prefix_len {
+				&line[prefix_len..]
+			} else {
+				""
+			};
+
+			// Calculate position within the file part (not used in our custom completion)
+			let _file_pos = pos.saturating_sub(prefix_len);
+
+			// Use our custom file completion that handles absolute paths and tilde expansion
+			let candidates = Self::complete_file_path(file_part);
+			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
+
+			// For file completion, we want to replace from the start of the file part
+			Ok((prefix_len, filtered_candidates))
+		} else if !line.starts_with('/') {
+			// No completion for non-commands
+			Ok((0, vec![]))
+		} else {
+			// Handle regular command completion
+			let candidates: Vec<Pair> = self
+				.commands
+				.iter()
+				.filter(|cmd| cmd.starts_with(line))
+				.map(|cmd| Pair {
+					display: cmd.clone(),
+					replacement: cmd.clone(),
+				})
+				.collect();
+
+			Ok((0, candidates))
 		}
-
-		let candidates: Vec<Pair> = self
-			.commands
-			.iter()
-			.filter(|cmd| cmd.starts_with(line))
-			.map(|cmd| Pair {
-				display: cmd.clone(),
-				replacement: cmd.clone(),
-			})
-			.collect();
-
-		Ok((0, candidates))
 	}
 }
 
@@ -72,6 +248,19 @@ impl Hinter for CommandCompleter {
 	fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
 		if line.is_empty() || !line.starts_with('/') {
 			return None;
+		}
+
+		// Special hint for /image command
+		if line == "/image" {
+			return Some(" <path_to_image>".to_string());
+		}
+
+		if line.starts_with("/image ") && line.len() > 7 {
+			let file_part = &line[7..]; // "/image ".len() = 7
+			if file_part.is_empty() {
+				return Some("Start typing image file path...".to_string());
+			}
+			return None; // Let filename completer handle this
 		}
 
 		// Look for a command that starts with the current input
@@ -86,6 +275,31 @@ impl Highlighter for CommandCompleter {
 	fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
 		// Only apply highlighting to commands (lines starting with '/')
 		if line.starts_with('/') {
+			// Special handling for /image command with file path
+			if line.starts_with("/image ") && line.len() > 7 {
+				let image_cmd = "/image";
+				let file_part = &line[7..]; // "/image ".len() = 7
+
+				// Check if the file path points to a valid image
+				if !file_part.is_empty()
+					&& Path::new(file_part).exists()
+					&& Self::is_image_file(file_part)
+				{
+					// Highlight valid image path in bright green
+					return Owned(format!(
+						"{} {}",
+						image_cmd.green(),
+						file_part.bright_green()
+					));
+				} else if !file_part.is_empty() {
+					// Highlight invalid/non-existent path in yellow
+					return Owned(format!("{} {}", image_cmd.green(), file_part.yellow()));
+				} else {
+					// Just the command part is green
+					return Owned(format!("{} ", image_cmd.green()));
+				}
+			}
+
 			// Check if this is a valid command
 			let is_valid_command = self
 				.commands

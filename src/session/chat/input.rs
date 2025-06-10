@@ -162,12 +162,13 @@ fn load_history_from_file() -> Result<Vec<String>> {
 
 // Read user input with support for multiline input, command completion, and persistent history
 pub fn read_user_input(estimated_cost: f64) -> Result<String> {
-	// Configure rustyline
+	// Configure rustyline with proper completion behavior for file completion
 	let config = RustylineConfig::builder()
-		.completion_type(CompletionType::List)
+		.completion_type(CompletionType::Circular) // Cycle through completions inline, no menu
 		.edit_mode(EditMode::Emacs)
 		.auto_add_history(true) // Automatically add lines to history
 		.bell_style(rustyline::config::BellStyle::None) // No bell
+		.max_history_size(1000)? // Limit history size
 		.build();
 
 	// Create editor with our custom helper
@@ -185,10 +186,10 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 		EventHandler::Conditional(Box::new(SmartCtrlEHandler)),
 	);
 
-	// Tab also accepts hints as alternative
+	// Tab for completion - use Complete for proper file completion behavior
 	editor.bind_sequence(
 		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::empty())]),
-		EventHandler::Simple(Cmd::CompleteHint),
+		EventHandler::Simple(Cmd::Complete),
 	);
 
 	// Right arrow to accept hint when at end of line
@@ -198,12 +199,6 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 			KeyEvent::new('[', Modifiers::empty()),
 			KeyEvent::new('C', Modifiers::empty()),
 		]),
-		EventHandler::Simple(Cmd::CompleteHint),
-	);
-
-	// Tab to accept hints as well
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::empty())]),
 		EventHandler::Simple(Cmd::CompleteHint),
 	);
 

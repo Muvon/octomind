@@ -225,7 +225,14 @@ impl AiProvider for AmazonBedrockProvider {
 		model: &str,
 		temperature: f32,
 		_config: &Config,
+		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
+		// Check for cancellation before starting
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before starting"));
+			}
+		}
 		// Validate AWS credentials
 		let _access_key = self.get_aws_access_key_id()?;
 		let _secret_key = self.get_aws_secret_access_key()?;

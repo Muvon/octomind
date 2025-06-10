@@ -204,7 +204,14 @@ impl AiProvider for AnthropicProvider {
 		model: &str,
 		temperature: f32,
 		config: &Config,
+		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
+		// Check for cancellation before starting
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before starting"));
+			}
+		}
 		// Get API key
 		let api_key = self.get_api_key(config)?;
 
@@ -290,14 +297,21 @@ impl AiProvider for AnthropicProvider {
 			}
 		}
 
+		// Check for cancellation before making HTTP request
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before HTTP call"));
+			}
+		}
+
 		// Create HTTP client
 		let client = Client::new();
 
 		// Track API request time
 		let api_start = std::time::Instant::now();
 
-		// Make the actual API request
-		let response = client
+		// Create the HTTP request
+		let request_future = client
 			.post(ANTHROPIC_API_URL)
 			.header("x-api-key", api_key)
 			.header("Content-Type", "application/json")
@@ -305,8 +319,30 @@ impl AiProvider for AnthropicProvider {
 			.header("anthropic-beta", "extended-cache-ttl-2025-04-11")
 			.header("anthropic-beta", "token-efficient-tools-2025-02-19")
 			.json(&request_body)
-			.send()
-			.await?;
+			.send();
+
+		// Race the HTTP request against cancellation
+		let response = if let Some(ref token) = cancellation_token {
+			let cancellation_future = async {
+				loop {
+					if token.load(std::sync::atomic::Ordering::SeqCst) {
+						break;
+					}
+					tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+				}
+			};
+
+			tokio::select! {
+				result = request_future => {
+					result?
+				}
+				_ = cancellation_future => {
+					return Err(anyhow::anyhow!("Request cancelled during HTTP call"));
+				}
+			}
+		} else {
+			request_future.await?
+		};
 
 		// Calculate API request time
 		let api_duration = api_start.elapsed();

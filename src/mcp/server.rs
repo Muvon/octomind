@@ -403,14 +403,6 @@ pub fn is_server_already_running(server_name: &str) -> bool {
 pub async fn execute_tool_call(
 	call: &McpToolCall,
 	server: &McpServerConfig,
-) -> Result<McpToolResult> {
-	execute_tool_call_with_cancellation(call, server, None).await
-}
-
-// Execute tool call on MCP server (no restart attempts - servers start once and keep running)
-pub async fn execute_tool_call_with_cancellation(
-	call: &McpToolCall,
-	server: &McpServerConfig,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	use std::sync::atomic::Ordering;
@@ -573,8 +565,7 @@ async fn execute_tool_call_internal(
 		}
 		McpServerMode::Stdin => {
 			// For stdin-based servers, use the stdin communication channel with cancellation support
-			process::execute_stdin_tool_call_with_cancellation(call, server, cancellation_token)
-				.await
+			process::execute_stdin_tool_call(call, server, cancellation_token).await
 		}
 	}
 }

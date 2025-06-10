@@ -54,7 +54,7 @@ impl ToolProcessor {
 			let operation_cancelled_clone = operation_cancelled.clone();
 			let config_clone = config.clone();
 			let task = tokio::spawn(async move {
-				crate::mcp::execute_tool_call_with_cancellation(
+				crate::mcp::execute_tool_call(
 					&tool_call,
 					&config_clone,
 					Some(operation_cancelled_clone),

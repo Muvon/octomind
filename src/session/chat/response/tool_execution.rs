@@ -63,12 +63,8 @@ pub async fn execute_tools_parallel(
 			let mut call_with_id = tool_call_clone.clone();
 			// CRITICAL: Use the original tool_id, don't change it
 			call_with_id.tool_id = tool_id_for_task.clone();
-			crate::mcp::execute_tool_call_with_cancellation(
-				&call_with_id,
-				&config_clone,
-				Some(cancel_token_for_task),
-			)
-			.await
+			crate::mcp::execute_tool_call(&call_with_id, &config_clone, Some(cancel_token_for_task))
+				.await
 		});
 
 		tool_tasks.push((tool_name, task, original_tool_id));

@@ -648,7 +648,15 @@ pub async fn chat_completion_with_validation(
 	temperature: f32,
 	config: &Config,
 	chat_session: Option<&mut crate::session::chat::session::ChatSession>,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ProviderResponse> {
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(std::sync::atomic::Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("Request cancelled before validation"));
+		}
+	}
+
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
 
@@ -683,6 +691,7 @@ pub async fn chat_completion_with_validation(
 				provider.as_ref(),
 				&actual_model,
 				temperature,
+				cancellation_token,
 			)
 			.await;
 		} else {
@@ -697,9 +706,22 @@ pub async fn chat_completion_with_validation(
 		}
 	}
 
+	// Check for cancellation before API call
+	if let Some(ref token) = cancellation_token {
+		if token.load(std::sync::atomic::Ordering::SeqCst) {
+			return Err(anyhow::anyhow!("Request cancelled before API call"));
+		}
+	}
+
 	// Input size is acceptable, proceed with API call
 	provider
-		.chat_completion(messages, &actual_model, temperature, config)
+		.chat_completion(
+			messages,
+			&actual_model,
+			temperature,
+			config,
+			cancellation_token,
+		)
 		.await
 }
 
@@ -710,6 +732,7 @@ async fn handle_context_limit_exceeded(
 	provider: &dyn AiProvider,
 	model: &str,
 	temperature: f32,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ProviderResponse> {
 	use colored::Colorize;
 	use rustyline::DefaultEditor;
@@ -729,6 +752,14 @@ async fn handle_context_limit_exceeded(
 		.map_err(|e| anyhow::anyhow!("Failed to create input reader: {}", e))?;
 
 	loop {
+		// Check for cancellation before prompting user
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				println!("{}", "Operation cancelled.".bright_yellow());
+				return Err(anyhow::anyhow!("User cancelled due to context size limit"));
+			}
+		}
+
 		match rl.readline("Your choice (t/s/c): ") {
 			Ok(line) => {
 				let choice = line.trim().to_lowercase();
@@ -744,13 +775,14 @@ async fn handle_context_limit_exceeded(
 						)
 						.await?;
 
-						// Retry the API call with truncated context
+						// Retry the API call with truncated context and cancellation support
 						return provider
 							.chat_completion(
 								&chat_session.session.messages,
 								model,
 								temperature,
 								config,
+								cancellation_token,
 							)
 							.await;
 					}
@@ -764,13 +796,14 @@ async fn handle_context_limit_exceeded(
 						)
 						.await?;
 
-						// Retry the API call with summarized context
+						// Retry the API call with summarized context and cancellation support
 						return provider
 							.chat_completion(
 								&chat_session.session.messages,
 								model,
 								temperature,
 								config,
+								cancellation_token,
 							)
 							.await;
 					}
@@ -815,6 +848,6 @@ pub async fn chat_completion_with_provider(
 
 	// Call the provider's chat completion method
 	provider
-		.chat_completion(messages, &actual_model, temperature, config)
+		.chat_completion(messages, &actual_model, temperature, config, None)
 		.await
 }

@@ -408,14 +408,6 @@ pub fn clear_internal_function_cache() {
 pub async fn execute_tool_call(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-) -> Result<(McpToolResult, u64)> {
-	execute_tool_call_with_cancellation(call, config, None).await
-}
-
-// Execute a tool call with cancellation support
-pub async fn execute_tool_call_with_cancellation(
-	call: &McpToolCall,
-	config: &crate::config::Config,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(McpToolResult, u64)> {
 	use std::sync::atomic::Ordering;
@@ -445,8 +437,7 @@ pub async fn execute_tool_call_with_cancellation(
 	// Track tool execution time
 	let tool_start = std::time::Instant::now();
 
-	let result =
-		try_execute_tool_call_with_cancellation(call, config, cancellation_token.clone()).await;
+	let result = try_execute_tool_call(call, config, cancellation_token.clone()).await;
 
 	// Calculate tool execution time
 	let tool_duration = tool_start.elapsed();
@@ -459,7 +450,7 @@ pub async fn execute_tool_call_with_cancellation(
 }
 
 // Internal function to actually execute the tool call with cancellation support
-async fn try_execute_tool_call_with_cancellation(
+async fn try_execute_tool_call(
 	call: &McpToolCall,
 	config: &crate::config::Config,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -533,11 +524,8 @@ async fn try_execute_tool_call_with_cancellation(
 			crate::config::McpServerType::Developer => match call.tool_name.as_str() {
 				"shell" => {
 					crate::log_debug!("Executing shell command via developer server");
-					let mut result = dev::execute_shell_command_with_cancellation(
-						call,
-						cancellation_token.clone(),
-					)
-					.await?;
+					let mut result =
+						dev::execute_shell_command(call, cancellation_token.clone()).await?;
 					result.tool_id = call.tool_id.clone();
 					return handle_large_response(result, config);
 				}
@@ -552,24 +540,20 @@ async fn try_execute_tool_call_with_cancellation(
 				"text_editor" => {
 					crate::log_debug!("Executing text_editor via filesystem server");
 					let mut result =
-						fs::execute_text_editor_with_cancellation(call, cancellation_token.clone())
-							.await?;
+						fs::execute_text_editor(call, cancellation_token.clone()).await?;
 					result.tool_id = call.tool_id.clone();
 					return Ok(result);
 				}
 				"html2md" => {
 					crate::log_debug!("Executing html2md via filesystem server");
-					let mut result =
-						fs::execute_html2md_with_cancellation(call, cancellation_token.clone())
-							.await?;
+					let mut result = fs::execute_html2md(call, cancellation_token.clone()).await?;
 					result.tool_id = call.tool_id.clone();
 					return Ok(result);
 				}
 				"list_files" => {
 					crate::log_debug!("Executing list_files via filesystem server");
 					let mut result =
-						fs::execute_list_files_with_cancellation(call, cancellation_token.clone())
-							.await?;
+						fs::execute_list_files(call, cancellation_token.clone()).await?;
 					result.tool_id = call.tool_id.clone();
 					return Ok(result);
 				}
@@ -582,12 +566,8 @@ async fn try_execute_tool_call_with_cancellation(
 			},
 			crate::config::McpServerType::External => {
 				// This shouldn't happen with direct mapping, but handle it
-				match server::execute_tool_call_with_cancellation(
-					call,
-					target_server,
-					cancellation_token.clone(),
-				)
-				.await
+				match server::execute_tool_call(call, target_server, cancellation_token.clone())
+					.await
 				{
 					Ok(mut result) => {
 						result.tool_id = call.tool_id.clone();
@@ -640,13 +620,7 @@ async fn try_execute_tool_call_with_cancellation(
 				server.name,
 				call.tool_name
 			);
-			match server::execute_tool_call_with_cancellation(
-				call,
-				&server,
-				cancellation_token.clone(),
-			)
-			.await
-			{
+			match server::execute_tool_call(call, &server, cancellation_token.clone()).await {
 				Ok(mut result) => {
 					crate::log_debug!(
 						"Successfully executed tool '{}' on external server '{}'",
@@ -758,7 +732,7 @@ pub async fn execute_layer_tool_call(
 	}
 
 	// Pass to regular tool execution
-	execute_tool_call(call, config).await
+	execute_tool_call(call, config, None).await
 }
 
 // Execute multiple tool calls
@@ -770,7 +744,7 @@ pub async fn execute_tool_calls(
 
 	for call in calls {
 		// Execute the tool call
-		let result = execute_tool_call(call, config).await;
+		let result = execute_tool_call(call, config, None).await;
 		results.push(result);
 	}
 

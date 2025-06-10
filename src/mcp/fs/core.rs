@@ -141,12 +141,7 @@ pub fn detect_language(ext: &str) -> &str {
 // Main execution functions
 
 // Execute a text editor command following modern text editor specifications
-pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
-	execute_text_editor_with_cancellation(call, None).await
-}
-
-// Execute a text editor command with cancellation support
-pub async fn execute_text_editor_with_cancellation(
+pub async fn execute_text_editor(
 	call: &McpToolCall,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
@@ -337,12 +332,7 @@ pub async fn execute_text_editor_with_cancellation(
 }
 
 // Execute list_files command
-pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
-	execute_list_files_with_cancellation(call, None).await
-}
-
-// Execute list_files command with cancellation support
-pub async fn execute_list_files_with_cancellation(
+pub async fn execute_list_files(
 	call: &McpToolCall,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
@@ -359,12 +349,7 @@ pub async fn execute_list_files_with_cancellation(
 }
 
 // Execute HTML to Markdown conversion
-pub async fn execute_html2md(call: &McpToolCall) -> Result<McpToolResult> {
-	execute_html2md_with_cancellation(call, None).await
-}
-
-// Execute HTML to Markdown conversion with cancellation support
-pub async fn execute_html2md_with_cancellation(
+pub async fn execute_html2md(
 	call: &McpToolCall,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {

@@ -891,14 +891,6 @@ pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<
 pub async fn execute_stdin_tool_call(
 	call: &McpToolCall,
 	server: &McpServerConfig,
-) -> Result<McpToolResult> {
-	execute_stdin_tool_call_with_cancellation(call, server, None).await
-}
-
-// Execute a tool on a stdin-based server with cancellation support
-pub async fn execute_stdin_tool_call_with_cancellation(
-	call: &McpToolCall,
-	server: &McpServerConfig,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {
 	// Debug output

@@ -114,12 +114,7 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 }
 
 // Execute a shell command
-pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> {
-	execute_shell_command_with_cancellation(call, None).await
-}
-
-// Execute a shell command with cancellation support
-pub async fn execute_shell_command_with_cancellation(
+pub async fn execute_shell_command(
 	call: &McpToolCall,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<McpToolResult> {

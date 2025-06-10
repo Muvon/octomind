@@ -239,7 +239,14 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		model: &str,
 		temperature: f32,
 		config: &Config,
+		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
+		// Check for cancellation before starting
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before starting"));
+			}
+		}
 		// Get API credentials
 		let api_token = self.get_api_key(config)?;
 		let account_id = self.get_account_id()?;

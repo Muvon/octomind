@@ -24,6 +24,18 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::OnceLock;
 
+// Helper struct to group response processing parameters and reduce function argument count
+struct ResponseProcessingContext<'a> {
+	response_json: serde_json::Value,
+	status: reqwest::StatusCode,
+	api_time_ms: u64,
+	model: &'a str,
+	temperature: f32,
+	request_body: &'a serde_json::Value,
+	response_text: &'a str,
+	config: &'a Config,
+}
+
 // Global HTTP client with optimized settings - PERFORMANCE BEAST! 🔥
 static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 
@@ -158,7 +170,15 @@ impl AiProvider for OpenRouterProvider {
 		model: &str,
 		temperature: f32,
 		config: &Config,
+		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
+		// Check for cancellation before starting
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before starting"));
+			}
+		}
+
 		// Get API key
 		let api_key = self.get_api_key(config)?;
 
@@ -241,22 +261,51 @@ impl AiProvider for OpenRouterProvider {
 			}
 		}
 
+		// Check for cancellation before making HTTP request
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before HTTP call"));
+			}
+		}
+
 		// Create HTTP client - USE THE OPTIMIZED GLOBAL POOL! 🚀
 		let client = get_optimized_client();
 
 		// Track API request time
 		let api_start = std::time::Instant::now();
 
-		// Make the actual API request
-		let response = client
+		// Create the HTTP request
+		let request_future = client
 			.post(OPENROUTER_API_URL)
 			.header("Authorization", format!("Bearer {}", api_key))
 			.header("Content-Type", "application/json")
 			.header("HTTP-Referer", "https://github.com/muvon/octomind")
 			.header("X-Title", "Octomind")
 			.json(&request_body)
-			.send()
-			.await?;
+			.send();
+
+		// Race the HTTP request against cancellation
+		let response = if let Some(ref token) = cancellation_token {
+			let cancellation_future = async {
+				loop {
+					if token.load(std::sync::atomic::Ordering::SeqCst) {
+						break;
+					}
+					tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+				}
+			};
+
+			tokio::select! {
+				result = request_future => {
+					result?
+				}
+				_ = cancellation_future => {
+					return Err(anyhow::anyhow!("Request cancelled during HTTP call"));
+				}
+			}
+		} else {
+			request_future.await?
+		};
 
 		// Calculate API request time
 		let api_duration = api_start.elapsed();
@@ -280,13 +329,44 @@ impl AiProvider for OpenRouterProvider {
 			}
 		};
 
-		// Enhanced error handling with detailed logging
-		if !status.is_success() {
-			let mut error_details = Vec::new();
-			error_details.push(format!("HTTP {}", status));
-			error_details.push(format!("Model: {}", model));
+		// Check for cancellation before processing response
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!(
+					"Request cancelled during response processing"
+				));
+			}
+		}
 
-			if let Some(error_obj) = response_json.get("error") {
+		// Continue with the rest of the original implementation...
+		// Just call the original method for the response processing part
+		self.process_openrouter_response(ResponseProcessingContext {
+			response_json,
+			status,
+			api_time_ms,
+			model,
+			temperature,
+			request_body: &request_body,
+			response_text: &response_text,
+			config,
+		})
+		.await
+	}
+}
+
+impl OpenRouterProvider {
+	// Helper method to process the OpenRouter response (extracted from original method)
+	async fn process_openrouter_response(
+		&self,
+		ctx: ResponseProcessingContext<'_>,
+	) -> Result<ProviderResponse> {
+		// Enhanced error handling with detailed logging
+		if !ctx.status.is_success() {
+			let mut error_details = Vec::new();
+			error_details.push(format!("HTTP {}", ctx.status));
+			error_details.push(format!("Model: {}", ctx.model));
+
+			if let Some(error_obj) = ctx.response_json.get("error") {
 				if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
 					error_details.push(format!("Message: {}", msg));
 				}
@@ -313,24 +393,24 @@ impl AiProvider for OpenRouterProvider {
 			}
 
 			// Always include raw response for debugging when there's an HTTP error
-			error_details.push(format!("Raw response: {}", response_text));
+			error_details.push(format!("Raw response: {}", ctx.response_text));
 
 			let full_error = error_details.join(" | ");
 
 			// Log detailed error information using the log_error! macro
 			crate::log_error!("OpenRouter API HTTP Error Details:");
-			crate::log_error!("  Status: {}", status);
-			crate::log_error!("  Model: {}", model);
-			crate::log_error!("  Temperature: {}", temperature);
+			crate::log_error!("  Status: {}", ctx.status);
+			crate::log_error!("  Model: {}", ctx.model);
+			crate::log_error!("  Temperature: {}", ctx.temperature);
 			crate::log_error!(
 				"  Request size: {} chars",
-				serde_json::to_string(&request_body).map_or(0, |s| s.len())
+				serde_json::to_string(ctx.request_body).map_or(0, |s| s.len())
 			);
-			crate::log_error!("  Response: {}", response_text);
+			crate::log_error!("  Response: {}", ctx.response_text);
 
 			// If in debug mode, also log the full request
-			if config.get_log_level().is_debug_enabled() {
-				if let Ok(request_str) = serde_json::to_string_pretty(&request_body) {
+			if ctx.config.get_log_level().is_debug_enabled() {
+				if let Ok(request_str) = serde_json::to_string_pretty(ctx.request_body) {
 					crate::log_error!("  Request body: {}", request_str);
 				}
 			}
@@ -339,10 +419,10 @@ impl AiProvider for OpenRouterProvider {
 		}
 
 		// Enhanced error handling for HTTP 200 responses with errors
-		if let Some(error_obj) = response_json.get("error") {
+		if let Some(error_obj) = ctx.response_json.get("error") {
 			let mut error_details = Vec::new();
 			error_details.push("HTTP 200 but error in response".to_string());
-			error_details.push(format!("Model: {}", model));
+			error_details.push(format!("Model: {}", ctx.model));
 
 			let error_message = error_obj
 				.get("message")
@@ -367,18 +447,18 @@ impl AiProvider for OpenRouterProvider {
 
 			// Log comprehensive error information using the log_error! macro
 			crate::log_error!("OpenRouter API Response Error Details:");
-			crate::log_error!("  Model: {}", model);
-			crate::log_error!("  Temperature: {}", temperature);
+			crate::log_error!("  Model: {}", ctx.model);
+			crate::log_error!("  Temperature: {}", ctx.temperature);
 			crate::log_error!("  Error message: {}", error_message);
 			crate::log_error!(
 				"  Request size: {} chars",
-				serde_json::to_string(&request_body).map_or(0, |s| s.len())
+				serde_json::to_string(ctx.request_body).map_or(0, |s| s.len())
 			);
-			crate::log_error!("  Full response: {}", response_text);
+			crate::log_error!("  Full response: {}", ctx.response_text);
 
 			// If in debug mode, log the full request and parsed error object
-			if config.get_log_level().is_debug_enabled() {
-				if let Ok(request_str) = serde_json::to_string_pretty(&request_body) {
+			if ctx.config.get_log_level().is_debug_enabled() {
+				if let Ok(request_str) = serde_json::to_string_pretty(ctx.request_body) {
 					crate::log_error!("  Request body: {}", request_str);
 				}
 				if let Ok(error_str) = serde_json::to_string_pretty(&error_obj) {
@@ -390,16 +470,21 @@ impl AiProvider for OpenRouterProvider {
 		}
 
 		// Extract content and tool calls from response
-		let message = response_json
+		let message = ctx
+			.response_json
 			.get("choices")
 			.and_then(|choices| choices.get(0))
 			.and_then(|choice| choice.get("message"))
 			.ok_or_else(|| {
-				anyhow::anyhow!("Invalid response format from OpenRouter: {}", response_text)
+				anyhow::anyhow!(
+					"Invalid response format from OpenRouter: {}",
+					ctx.response_text
+				)
 			})?;
 
 		// Extract finish_reason
-		let finish_reason = response_json
+		let finish_reason = ctx
+			.response_json
 			.get("choices")
 			.and_then(|choices| choices.get(0))
 			.and_then(|choice| choice.get("finish_reason"))
@@ -407,7 +492,7 @@ impl AiProvider for OpenRouterProvider {
 			.map(|s| s.to_string());
 
 		if let Some(ref reason) = finish_reason {
-			log_debug!("Finish reason: {}", reason);
+			crate::log_debug!("Finish reason: {}", reason);
 		}
 
 		// Extract content
@@ -483,7 +568,7 @@ impl AiProvider for OpenRouterProvider {
 		};
 
 		// Extract token usage
-		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
+		let usage: Option<TokenUsage> = if let Some(usage_obj) = ctx.response_json.get("usage") {
 			let prompt_tokens = usage_obj
 				.get("prompt_tokens")
 				.and_then(|v| v.as_u64())
@@ -511,14 +596,19 @@ impl AiProvider for OpenRouterProvider {
 				total_tokens,
 				cached_tokens, // OpenRouter provides cached token information
 				cost,
-				request_time_ms: Some(api_time_ms),
+				request_time_ms: Some(ctx.api_time_ms),
 			})
 		} else {
 			None
 		};
 
 		// Create exchange record
-		let exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
+		let exchange = ProviderExchange::new(
+			ctx.request_body.clone(),
+			ctx.response_json,
+			usage,
+			self.name(),
+		);
 
 		Ok(ProviderResponse {
 			content,

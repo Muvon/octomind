@@ -802,6 +802,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			temperature,
 			&config_clone,
 			Some(&mut chat_session),
+			Some(operation_cancelled.clone()),
 		)
 		.await;
 

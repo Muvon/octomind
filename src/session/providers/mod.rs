@@ -104,6 +104,7 @@ pub trait AiProvider: Send + Sync {
 		model: &str,
 		temperature: f32,
 		config: &Config,
+		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse>;
 
 	/// Get API key for this provider from config or environment

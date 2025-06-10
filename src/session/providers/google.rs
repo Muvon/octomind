@@ -166,7 +166,14 @@ impl AiProvider for GoogleVertexProvider {
 		model: &str,
 		temperature: f32,
 		config: &Config,
+		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
+		// Check for cancellation before starting
+		if let Some(ref token) = cancellation_token {
+			if token.load(std::sync::atomic::Ordering::SeqCst) {
+				return Err(anyhow::anyhow!("Request cancelled before starting"));
+			}
+		}
 		// Get required environment variables
 		let project_id = env::var(GOOGLE_PROJECT_ID_ENV)
 			.map_err(|_| anyhow::anyhow!("GOOGLE_PROJECT_ID environment variable is required"))?;

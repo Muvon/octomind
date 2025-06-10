@@ -23,9 +23,5 @@ pub mod html_converter;
 pub mod text_editing;
 
 // Re-export main functionality
-pub use core::{
-	execute_html2md, execute_html2md_with_cancellation, execute_list_files,
-	execute_list_files_with_cancellation, execute_text_editor,
-	execute_text_editor_with_cancellation,
-};
+pub use core::{execute_html2md, execute_list_files, execute_text_editor};
 pub use functions::get_all_functions;

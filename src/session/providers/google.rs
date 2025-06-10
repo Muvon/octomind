@@ -131,6 +131,13 @@ impl AiProvider for GoogleVertexProvider {
 		model.contains("gemini-2.5") || model.contains("gemini-2.0") || model.contains("gemini-1.5")
 	}
 
+	fn supports_vision(&self, model: &str) -> bool {
+		// Google Vertex AI vision-capable models
+		// Gemini 1.5+ models support multimodal input including images
+		// Source: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/overview
+		model.contains("gemini-2.5") || model.contains("gemini-2.0") || model.contains("gemini-1.5")
+	}
+
 	fn get_max_input_tokens(&self, model: &str) -> usize {
 		// Google Vertex AI model context window limits
 		// Gemini 2.5 models: 2M context window
@@ -523,14 +530,71 @@ fn convert_messages(messages: &[Message]) -> Vec<VertexMessage> {
 			continue;
 		}
 
-		// Regular messages
+		// Regular messages - handle multimodal content
+		let mut parts = Vec::new();
+
+		// Add text content if not empty
+		if !msg.content.is_empty() {
+			parts.push(serde_json::json!({
+				"text": msg.content
+			}));
+		}
+
+		// Add image attachments if present
+		if let Some(ref images) = msg.images {
+			for image in images {
+				if let crate::session::image::ImageData::Base64(ref base64_data) = image.data {
+					parts.push(serde_json::json!({
+						"inlineData": {
+							"mimeType": image.media_type,
+							"data": base64_data
+						}
+					}));
+				}
+			}
+		}
+
 		result.push(VertexMessage {
 			role: vertex_role.to_string(),
-			parts: vec![serde_json::json!({
-				"text": msg.content
-			})],
+			parts,
 		});
 	}
 
 	result
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_supports_vision() {
+		let provider = GoogleVertexProvider::new();
+
+		// Models that should support vision
+		assert!(provider.supports_vision("gemini-2.5-pro"));
+		assert!(provider.supports_vision("gemini-2.5-flash"));
+		assert!(provider.supports_vision("gemini-2.0-flash"));
+		assert!(provider.supports_vision("gemini-1.5-pro"));
+		assert!(provider.supports_vision("gemini-1.5-flash"));
+
+		// Models that should NOT support vision
+		assert!(!provider.supports_vision("gemini-1.0-pro"));
+		assert!(!provider.supports_vision("text-bison"));
+		assert!(!provider.supports_vision("chat-bison"));
+	}
+
+	#[test]
+	fn test_supports_caching() {
+		let provider = GoogleVertexProvider::new();
+
+		// Models that should support caching
+		assert!(provider.supports_caching("gemini-2.5-pro"));
+		assert!(provider.supports_caching("gemini-2.0-flash"));
+		assert!(provider.supports_caching("gemini-1.5-pro"));
+
+		// Models that should NOT support caching
+		assert!(!provider.supports_caching("gemini-1.0-pro"));
+		assert!(!provider.supports_caching("text-bison"));
+	}
 }

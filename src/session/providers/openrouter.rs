@@ -113,6 +113,8 @@ impl AiProvider for OpenRouterProvider {
 			|| model.contains("claude-3")
 			|| model.contains("claude-4")
 			|| model.contains("gemini")
+			|| model.contains("llama-3.2-vision")
+			|| model.contains("pixtral")
 	}
 
 	fn get_max_input_tokens(&self, model: &str) -> usize {

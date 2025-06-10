@@ -807,7 +807,9 @@ mod tests {
 		assert!(provider.supports_vision("anthropic/claude-3.5-sonnet"));
 		assert!(provider.supports_vision("anthropic/claude-3.5-haiku"));
 		assert!(provider.supports_vision("anthropic/claude-3.7-sonnet"));
-		assert!(provider.supports_vision("anthropic/claude-4-opus"));
+
+		assert!(provider.supports_vision("anthropic/claude-sonnet-4-0"));
+		assert!(provider.supports_vision("anthropic/claude-opus-4-0"));
 
 		// Google models through OpenRouter
 		assert!(provider.supports_vision("google/gemini-1.5-pro"));

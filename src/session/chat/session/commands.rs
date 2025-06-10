@@ -65,7 +65,10 @@ impl ChatSession {
 					"{} - Manage cache checkpoints: /cache [stats|clear|threshold]",
 					CACHE_COMMAND.cyan()
 				);
-				println!("{} - List all available sessions", LIST_COMMAND.cyan());
+				println!(
+					"{} [page] - List all available sessions with pagination (default: page 1)",
+					LIST_COMMAND.cyan()
+				);
 				println!("{} [name] - Switch to another session or create a new one (without name creates fresh session)", SESSION_COMMAND.cyan());
 				println!(
 					"{} - Display detailed token and cost breakdown for this session",
@@ -641,29 +644,75 @@ impl ChatSession {
 				}
 			}
 			LIST_COMMAND => {
+				// Parse optional page parameter
+				let page = if !params.is_empty() {
+					match params[0].parse::<usize>() {
+						Ok(p) if p > 0 => p,
+						_ => {
+							println!(
+								"{}: Page number must be a positive integer",
+								"Error".bright_red()
+							);
+							return Ok(false);
+						}
+					}
+				} else {
+					1 // Default to page 1
+				};
+
 				match list_available_sessions() {
 					Ok(sessions) => {
 						if sessions.is_empty() {
 							println!("{}", "No sessions found.".bright_yellow());
 						} else {
-							println!("{}", "\nAvailable sessions:\n".bright_cyan());
-							println!(
-								"{:<20} {:<25} {:<15} {:<10} {:<10}",
-								"Name".cyan(),
-								"Created".cyan(),
-								"Model".cyan(),
-								"Tokens".cyan(),
-								"Cost".cyan()
-							);
+							// Pagination settings
+							const SESSIONS_PER_PAGE: usize = 15;
+							let total_sessions = sessions.len();
+							let total_pages = total_sessions.div_ceil(SESSIONS_PER_PAGE);
 
-							println!("{}", "─".repeat(80).cyan());
+							if page > total_pages {
+								println!(
+									"{}: Page {} not found. Total pages: {}",
+									"Error".bright_red(),
+									page,
+									total_pages
+								);
+								return Ok(false);
+							}
 
-							for (name, info) in sessions {
+							// Calculate pagination bounds
+							let start_idx = (page - 1) * SESSIONS_PER_PAGE;
+							let end_idx =
+								std::cmp::min(start_idx + SESSIONS_PER_PAGE, total_sessions);
+							let page_sessions = &sessions[start_idx..end_idx];
+
+							// Create markdown table
+							let mut markdown_content = String::new();
+
+							// Add header with pagination info
+							markdown_content.push_str(&format!(
+								"# Available Sessions (Page {} of {})\n\n",
+								page, total_pages
+							));
+							markdown_content.push_str(&format!(
+								"Showing {} of {} sessions\n\n",
+								page_sessions.len(),
+								total_sessions
+							));
+
+							// Create table header
+							markdown_content
+								.push_str("| Name | Created | Model | Tokens | Cost |\n");
+							markdown_content
+								.push_str("|------|---------|-------|--------|------|\n");
+
+							// Add table rows
+							for (name, info) in page_sessions {
 								// Format date from timestamp
 								let created_time =
 									DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
 										.map(|dt| {
-											dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
+											dt.naive_local().format("%Y-%m-%d %H:%M").to_string()
 										})
 										.unwrap_or_else(|| "Unknown".to_string());
 
@@ -677,9 +726,9 @@ impl ChatSession {
 								};
 
 								let name_display = if is_current {
-									format!("{} (current)", name).bright_green()
+									format!("**{}** *(current)*", name)
 								} else {
-									name.white()
+									name.clone()
 								};
 
 								// Simplify model name - strip provider prefix if present
@@ -694,21 +743,61 @@ impl ChatSession {
 								let total_tokens =
 									info.input_tokens + info.output_tokens + info.cached_tokens;
 
-								println!(
-									"{:<20} {:<25} {:<15} {:<10} ${:<.5}",
+								markdown_content.push_str(&format!(
+									"| {} | {} | {} | {} | ${:.5} |\n",
 									name_display,
-									created_time.blue(),
-									model_name.yellow(),
-									format_number(total_tokens).bright_blue(),
-									info.total_cost.to_string().bright_magenta()
-								);
+									created_time,
+									model_name,
+									format_number(total_tokens),
+									info.total_cost
+								));
 							}
 
-							println!();
-							println!("{}", "You can switch to another session with:".blue());
-							println!("{}", "  /session <session_name>".bright_green());
-							println!("{}", "  /session (creates a new session)".bright_green());
-							println!();
+							// Add navigation info
+							markdown_content.push_str("\n## Navigation\n\n");
+							if total_pages > 1 {
+								if page > 1 {
+									markdown_content
+										.push_str(&format!("- Previous: `/list {}`\n", page - 1));
+								}
+								if page < total_pages {
+									markdown_content
+										.push_str(&format!("- Next: `/list {}`\n", page + 1));
+								}
+								markdown_content.push_str(&format!(
+									"- Go to page: `/list <page>` (1-{})\n\n",
+									total_pages
+								));
+							}
+
+							markdown_content.push_str("## Session Management\n\n");
+							markdown_content
+								.push_str("- Switch to session: `/session <session_name>`\n");
+							markdown_content.push_str("- Create new session: `/session`\n");
+
+							// Render using markdown renderer if available
+							if config.enable_markdown_rendering {
+								use crate::session::chat::markdown::MarkdownRenderer;
+								let theme = config.markdown_theme.parse().unwrap_or_default();
+								let renderer = MarkdownRenderer::with_theme(theme);
+								match renderer.render_and_print(&markdown_content) {
+									Ok(_) => {
+										// Successfully rendered as markdown
+									}
+									Err(e) => {
+										// Fallback to plain text if markdown rendering fails
+										crate::log_debug!(
+											"{}: {}",
+											"Warning: Markdown rendering failed".yellow(),
+											e
+										);
+										println!("{}", markdown_content);
+									}
+								}
+							} else {
+								// Fallback to plain text
+								println!("{}", markdown_content);
+							}
 						}
 					}
 					Err(e) => {

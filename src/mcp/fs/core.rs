@@ -311,7 +311,7 @@ pub async fn execute_text_editor(
 				Some(Value::String(s)) => s.clone(),
 				_ => return Err(anyhow!("Missing or invalid 'new_str' parameter for line_replace command")),
 			};
-			text_editing::line_replace(call, Path::new(&path), view_range, &new_str).await
+			text_editing::line_replace_spec(call, Path::new(&path), view_range, &new_str).await
 		},
 		"undo_edit" => {
 			// Check for cancellation before undo_edit operation

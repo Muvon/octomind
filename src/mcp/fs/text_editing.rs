@@ -160,119 +160,8 @@ pub async fn insert_text_spec(
 	})
 }
 
-// Replace content within a specific line range following modern text editor specifications
+// Replace content within a specific line range following text editor specifications
 pub async fn line_replace_spec(
-	call: &McpToolCall,
-	path: &Path,
-	start_line: usize,
-	end_line: usize,
-	new_text: &str,
-) -> Result<McpToolResult> {
-	if !path.exists() {
-		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"error": "File not found",
-				"is_error": true
-			}),
-		});
-	}
-
-	// Validate line numbers
-	if start_line == 0 || end_line == 0 {
-		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"error": "Line numbers must be 1-indexed (start from 1)",
-				"is_error": true
-			}),
-		});
-	}
-
-	if start_line > end_line {
-		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"error": format!("start_line ({}) must be less than or equal to end_line ({})", start_line, end_line),
-				"is_error": true
-			}),
-		});
-	}
-
-	// Read the file content
-	let content = tokio_fs::read_to_string(path)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
-	let mut lines: Vec<&str> = content.lines().collect();
-
-	// Validate line ranges exist in file
-	if start_line > lines.len() {
-		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"error": format!("start_line ({}) exceeds file length ({} lines)", start_line, lines.len()),
-				"is_error": true
-			}),
-		});
-	}
-
-	if end_line > lines.len() {
-		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"error": format!("end_line ({}) exceeds file length ({} lines)", end_line, lines.len()),
-				"is_error": true
-			}),
-		});
-	}
-
-	// Save the current content for undo
-	save_file_history(path).await?;
-
-	// Split new content into lines
-	let new_lines: Vec<&str> = new_text.lines().collect();
-
-	// Convert to 0-indexed for array operations
-	let start_idx = start_line - 1;
-	let end_idx = end_line; // end_idx is exclusive in splice
-
-	// Replace the lines using splice
-	lines.splice(start_idx..end_idx, new_lines);
-
-	// Join lines back to string
-	let new_content = lines.join("\n");
-
-	// Add final newline if original file had one
-	let final_content = if content.ends_with('\n') {
-		format!("{}\n", new_content)
-	} else {
-		new_content
-	};
-
-	// Write the new content
-	tokio_fs::write(path, final_content)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
-
-	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": format!("Successfully replaced {} lines with {} lines", end_line - start_line + 1, new_text.lines().count()),
-			"path": path.to_string_lossy(),
-			"lines_replaced": end_line - start_line + 1,
-			"new_lines": new_text.lines().count()
-		}),
-	})
-}
-
-// Replace lines in a single file using view_range and new_str parameters
-pub async fn line_replace(
 	call: &McpToolCall,
 	path: &Path,
 	view_range: (usize, usize),
@@ -280,7 +169,7 @@ pub async fn line_replace(
 ) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
-			tool_name: "line_replace".to_string(),
+			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"error": "File not found",
@@ -291,7 +180,7 @@ pub async fn line_replace(
 
 	if !path.is_file() {
 		return Ok(McpToolResult {
-			tool_name: "line_replace".to_string(),
+			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"error": "Path is not a file",
@@ -305,7 +194,7 @@ pub async fn line_replace(
 	// Validate line numbers
 	if start_line == 0 || end_line == 0 {
 		return Ok(McpToolResult {
-			tool_name: "line_replace".to_string(),
+			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"error": "Line numbers must be 1-indexed (start from 1)",
@@ -316,7 +205,7 @@ pub async fn line_replace(
 
 	if start_line > end_line {
 		return Ok(McpToolResult {
-			tool_name: "line_replace".to_string(),
+			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"error": format!("start_line ({}) must be less than or equal to end_line ({})", start_line, end_line),
@@ -334,7 +223,7 @@ pub async fn line_replace(
 	// Validate line ranges exist in file BEFORE accessing the array
 	if start_line > lines.len() {
 		return Ok(McpToolResult {
-			tool_name: "line_replace".to_string(),
+			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"error": format!("start_line ({}) exceeds file length ({} lines)", start_line, lines.len()),
@@ -345,7 +234,7 @@ pub async fn line_replace(
 
 	if end_line > lines.len() {
 		return Ok(McpToolResult {
-			tool_name: "line_replace".to_string(),
+			tool_name: "text_editor".to_string(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"error": format!("end_line ({}) exceeds file length ({} lines)", end_line, lines.len()),
@@ -407,12 +296,14 @@ pub async fn line_replace(
 	};
 
 	Ok(McpToolResult {
-		tool_name: "line_replace".to_string(),
+		tool_name: "text_editor".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"success": true,
 			"content": format!("Successfully replaced {} lines with {} lines", end_line - start_line + 1, new_str.lines().count()),
-			"replaced": replaced_snippet
+			"path": path.to_string_lossy(),
+			"lines_replaced": end_line - start_line + 1,
+			"new_lines": new_str.lines().count(),
+			"replaced_snippet": replaced_snippet
 		}),
 	})
 }

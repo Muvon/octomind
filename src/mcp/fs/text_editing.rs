@@ -17,7 +17,7 @@
 use super::super::{McpToolCall, McpToolResult};
 use super::core::save_file_history;
 use anyhow::{anyhow, Result};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::Path;
 use tokio::fs as tokio_fs;
 
@@ -304,6 +304,250 @@ pub async fn line_replace_spec(
 			"lines_replaced": end_line - start_line + 1,
 			"new_lines": new_str.lines().count(),
 			"replaced_snippet": replaced_snippet
+		}),
+	})
+}
+
+// Batch edit operations - perform multiple text editing operations in a single call
+// This is recommended for making changes across multiple files or multiple non-interconnected modifications
+pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result<McpToolResult> {
+	let mut results = Vec::new();
+	let mut successful_operations = 0;
+	let mut failed_operations = 0;
+	let mut operation_details = Vec::new();
+
+	for (index, operation) in operations.iter().enumerate() {
+		let operation_obj = match operation.as_object() {
+			Some(obj) => obj,
+			None => {
+				failed_operations += 1;
+				operation_details.push(json!({
+					"operation_index": index,
+					"status": "failed",
+					"error": "Operation must be an object"
+				}));
+				continue;
+			}
+		};
+
+		// Extract operation type
+		let op_type = match operation_obj.get("operation").and_then(|v| v.as_str()) {
+			Some(op) => op,
+			None => {
+				failed_operations += 1;
+				operation_details.push(json!({
+					"operation_index": index,
+					"status": "failed",
+					"error": "Missing 'operation' field"
+				}));
+				continue;
+			}
+		};
+
+		// Extract path
+		let path_str = match operation_obj.get("path").and_then(|v| v.as_str()) {
+			Some(p) => p,
+			None => {
+				failed_operations += 1;
+				operation_details.push(json!({
+					"operation_index": index,
+					"status": "failed",
+					"error": "Missing 'path' field"
+				}));
+				continue;
+			}
+		};
+
+		let path = Path::new(path_str);
+
+		// Create a temporary McpToolCall for individual operations
+		let temp_call = McpToolCall {
+			tool_id: format!("{}_batch_{}", call.tool_id, index),
+			tool_name: call.tool_name.clone(),
+			parameters: operation.clone(),
+		};
+
+		// Execute the operation based on type
+		let operation_result = match op_type {
+			"str_replace" => {
+				let old_str = match operation_obj.get("old_str").and_then(|v| v.as_str()) {
+					Some(s) => s,
+					None => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type,
+							"path": path_str,
+							"status": "failed",
+							"error": "Missing 'old_str' field for str_replace operation"
+						}));
+						continue;
+					}
+				};
+
+				let new_str = match operation_obj.get("new_str").and_then(|v| v.as_str()) {
+					Some(s) => s,
+					None => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type,
+							"path": path_str,
+							"status": "failed",
+							"error": "Missing 'new_str' field for str_replace operation"
+						}));
+						continue;
+					}
+				};
+
+				str_replace_spec(&temp_call, path, old_str, new_str).await
+			}
+			"insert" => {
+				let insert_line = match operation_obj.get("insert_line").and_then(|v| v.as_u64()) {
+					Some(n) => n as usize,
+					None => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type,
+							"path": path_str,
+							"status": "failed",
+							"error": "Missing or invalid 'insert_line' field for insert operation"
+						}));
+						continue;
+					}
+				};
+
+				let new_str = match operation_obj.get("new_str").and_then(|v| v.as_str()) {
+					Some(s) => s,
+					None => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type,
+							"path": path_str,
+							"status": "failed",
+							"error": "Missing 'new_str' field for insert operation"
+						}));
+						continue;
+					}
+				};
+
+				insert_text_spec(&temp_call, path, insert_line, new_str).await
+			}
+			"line_replace" => {
+				let view_range = match operation_obj.get("view_range").and_then(|v| v.as_array()) {
+					Some(arr) if arr.len() == 2 => {
+						let start = arr[0].as_u64().unwrap_or(0) as usize;
+						let end = arr[1].as_u64().unwrap_or(0) as usize;
+						if start == 0 || end == 0 {
+							failed_operations += 1;
+							operation_details.push(json!({
+								"operation_index": index,
+								"operation": op_type,
+								"path": path_str,
+								"status": "failed",
+								"error": "Invalid 'view_range' - line numbers must be 1-indexed"
+							}));
+							continue;
+						}
+						(start, end)
+					}
+					_ => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type,
+							"path": path_str,
+							"status": "failed",
+							"error": "Missing or invalid 'view_range' field for line_replace operation"
+						}));
+						continue;
+					}
+				};
+
+				let new_str = match operation_obj.get("new_str").and_then(|v| v.as_str()) {
+					Some(s) => s,
+					None => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type,
+							"path": path_str,
+							"status": "failed",
+							"error": "Missing 'new_str' field for line_replace operation"
+						}));
+						continue;
+					}
+				};
+
+				line_replace_spec(&temp_call, path, view_range, new_str).await
+			}
+			_ => {
+				failed_operations += 1;
+				operation_details.push(json!({
+					"operation_index": index,
+					"operation": op_type,
+					"path": path_str,
+					"status": "failed",
+					"error": format!("Unsupported operation type: '{}'. Supported operations: str_replace, insert, line_replace", op_type)
+				}));
+				continue;
+			}
+		};
+
+		// Process the result
+		match operation_result {
+			Ok(result) => {
+				successful_operations += 1;
+				operation_details.push(json!({
+					"operation_index": index,
+					"operation": op_type,
+					"path": path_str,
+					"status": "success",
+					"result": result.result
+				}));
+				results.push(result);
+			}
+			Err(e) => {
+				failed_operations += 1;
+				operation_details.push(json!({
+					"operation_index": index,
+					"operation": op_type,
+					"path": path_str,
+					"status": "failed",
+					"error": e.to_string()
+				}));
+			}
+		}
+	}
+
+	// Determine overall success
+	let overall_success = failed_operations == 0;
+	let summary_message = if overall_success {
+		format!(
+			"Successfully completed all {} batch operations",
+			successful_operations
+		)
+	} else {
+		format!(
+			"Completed {} operations successfully, {} failed",
+			successful_operations, failed_operations
+		)
+	};
+
+	Ok(McpToolResult {
+		tool_name: "text_editor".to_string(),
+		tool_id: call.tool_id.clone(),
+		result: json!({
+			"content": summary_message,
+			"batch_summary": {
+				"total_operations": operations.len(),
+				"successful_operations": successful_operations,
+				"failed_operations": failed_operations,
+				"overall_success": overall_success
+			},
+			"operation_details": operation_details
 		}),
 	})
 }

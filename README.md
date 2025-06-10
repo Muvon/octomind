@@ -9,7 +9,7 @@ Octomind is an AI-powered development assistant that helps you understand, analy
 ## ✨ Why Octomind?
 
 - 🎯 **Session-First Architecture** - Everything happens in interactive AI conversations
-- 🛠️ **Built-in Development Tools** - File operations, code analysis, shell commands via MCP
+- 🛠️ **Built-in Development Tools** - File operations, batch editing, code analysis, shell commands via MCP
 - 🌐 **Multi-Provider AI Support** - OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare
 - 🖼️ **Multimodal Vision Support** - Analyze images, screenshots, diagrams with AI across all providers
 - 💰 **Cost Tracking & Optimization** - Real-time usage monitoring with detailed reporting
@@ -38,6 +38,9 @@ Instead of complex command-line tools, simply talk to Octomind:
 
 > "Add error handling to the login function"
 [AI examines login code, implements error handling, shows changes]
+
+> "Rename 'processData' to 'processUserData' across all files"
+[AI finds all occurrences, performs batch edit across multiple files]
 
 > /image screenshot.png
 > "What's wrong with this UI layout?"

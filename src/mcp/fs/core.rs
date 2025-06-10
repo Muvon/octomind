@@ -327,7 +327,27 @@ pub async fn execute_text_editor(
 			};
 			undo_edit(call, Path::new(&path)).await
 		},
-		_ => Err(anyhow!("Invalid command: {}. Allowed commands are: view, view_many, create, str_replace, insert, line_replace, undo_edit", command)),
+		"batch_edit" => {
+			// Check for cancellation before batch_edit operation
+			if let Some(ref token) = cancellation_token {
+				if token.load(Ordering::SeqCst) {
+					return Err(anyhow!("Text editor operation cancelled"));
+				}
+			}
+
+			let operations = match call.parameters.get("operations") {
+				Some(Value::Array(ops)) => {
+					if ops.len() > 50 {
+						return Err(anyhow!("Too many operations in batch. Maximum 50 operations allowed."));
+					}
+					ops
+				},
+				_ => return Err(anyhow!("Missing or invalid 'operations' parameter for batch_edit command - must be an array")),
+			};
+
+			text_editing::batch_edit_spec(call, operations).await
+		},
+		_ => Err(anyhow!("Invalid command: {}. Allowed commands are: view, view_many, create, str_replace, insert, line_replace, undo_edit, batch_edit", command)),
 	}
 }
 

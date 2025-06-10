@@ -103,11 +103,10 @@ Current working dir: %{CWD}
 
 **CODE QUALITY GUIDELINES:**
 • Provide validated, working solutions
-• Keep code clear and concise
+• Keep code clear, concise and maintainable
 • Focus on practical solutions and industry best practices
 • Avoid unnecessary abstractions - solve problems directly
-• Balance file size and readability
-• Don't over-fragment code across multiple files
+• Don't over-fragment code across very small multiple files
 
 **MISSING CONTEXT COLLECTION CHECKLIST:**
 1. Read your memories first if you missing context or lack of understanding
@@ -120,7 +119,8 @@ Current working dir: %{CWD}
 **WHEN WORKING WITH FILES:**
 1. First, understand which files you need to read/write and most important what parts of it due to files may be large
 2. Process files efficiently, preferably in a single operation to avoid many tokens return
-3. Utilize the provided tools proactively without asking if you should use them
+3. For multiple file modifications, use batch_edit command to perform all changes in one operation
+4. Utilize the provided tools proactively without asking if you should use them
 
 %{SYSTEM}
 

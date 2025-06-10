@@ -17,9 +17,97 @@ MCP enables AI models to use external tools and services through a standardized 
 - **Code analysis**: Built-in code understanding and project analysis
 
 #### Filesystem Tools (server_type: "filesystem")
-- **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many)
+- **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many, batch_edit)
 - **list_files**: Browse directory structures with pattern matching and content search
 - **html2md**: Convert HTML content to Markdown format
+
+### Text Editor Tool Reference
+
+The `text_editor` tool provides comprehensive file manipulation capabilities through multiple commands:
+
+#### Individual Operations
+
+**view** - Examine file contents or directory listings
+```json
+{"command": "view", "path": "src/main.rs"}
+{"command": "view", "path": "src/main.rs", "view_range": [10, 20]}
+{"command": "view", "path": "src/"}
+```
+
+**create** - Create new files with content
+```json
+{"command": "create", "path": "src/new_module.rs", "file_text": "pub fn hello() {\n    println!(\"Hello!\");\n}"}
+```
+
+**str_replace** - Replace specific strings in files
+```json
+{"command": "str_replace", "path": "src/main.rs", "old_str": "fn old_name()", "new_str": "fn new_name()"}
+```
+
+**insert** - Insert text at specific line positions
+```json
+{"command": "insert", "path": "src/main.rs", "insert_line": 5, "new_str": "// New comment\nlet x = 10;"}
+```
+
+**line_replace** - Replace content within specific line ranges
+```json
+{"command": "line_replace", "path": "src/main.rs", "view_range": [5, 8], "new_str": "fn updated_function() {\n    // New implementation\n}"}
+```
+
+**undo_edit** - Revert the most recent edit
+```json
+{"command": "undo_edit", "path": "src/main.rs"}
+```
+
+**view_many** - View multiple files simultaneously
+```json
+{"command": "view_many", "paths": ["src/main.rs", "src/lib.rs", "tests/test.rs"]}
+```
+
+#### Batch Operations
+
+**batch_edit** - Perform multiple editing operations in a single call
+```json
+{
+  "command": "batch_edit",
+  "operations": [
+    {
+      "operation": "str_replace",
+      "path": "src/main.rs",
+      "old_str": "old_function_name",
+      "new_str": "new_function_name"
+    },
+    {
+      "operation": "insert",
+      "path": "src/lib.rs",
+      "insert_line": 5,
+      "new_str": "// New comment\nuse new_module;"
+    },
+    {
+      "operation": "line_replace",
+      "path": "src/config.rs",
+      "view_range": [10, 15],
+      "new_str": "// Updated configuration\nconst NEW_CONFIG: &str = \"value\";"
+    }
+  ]
+}
+```
+
+**Batch Edit Features:**
+- **Maximum 50 operations** per batch for performance
+- **Supported operations**: str_replace, insert, line_replace
+- **Cross-file editing**: Make changes across multiple files simultaneously
+- **Detailed reporting**: Success/failure status for each operation
+- **Error isolation**: Failed operations don't affect successful ones
+- **File history preservation**: Each operation saves file history for undo
+
+**When to Use Batch Edit:**
+- ✅ **Multiple file refactoring** - Rename functions across files
+- ✅ **Consistent changes** - Apply same pattern to multiple files
+- ✅ **Independent modifications** - Changes that don't depend on each other
+- ✅ **Bulk updates** - Update imports, comments, or configuration
+- ❌ **Sequential dependencies** - When changes depend on previous results
+- ❌ **Complex logic** - When you need conditional modifications
 
 ### MCP Server Configuration
 
@@ -330,7 +418,7 @@ Through natural conversation:
 3. **Powerful models** for complex development tasks (Developer)
 
 ### Tool Usage Optimization
-- **Batch operations**: Use `view_many` instead of multiple `text_editor` calls
+- **Batch operations**: Use `view_many` for reading multiple files, `batch_edit` for modifying multiple files
 - **Specific patterns**: Use `list_files` with patterns to filter results
 - **Smart caching**: Use `/cache` before large context operations
 

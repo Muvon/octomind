@@ -128,6 +128,14 @@ pub fn get_text_editor_function() -> McpFunction {
 			- Available for str_replace, insert, and line_replace operations
 			- Restores the file to its state before the last edit
 
+			**batch_edit**: Perform multiple text editing operations in a single call
+			- `{\"command\": \"batch_edit\", \"operations\": [{\"operation\": \"str_replace\", \"path\": \"src/main.rs\", \"old_str\": \"old\", \"new_str\": \"new\"}, {\"operation\": \"insert\", \"path\": \"src/lib.rs\", \"insert_line\": 5, \"new_str\": \"// New comment\"}]}`
+			- Recommended for making changes across multiple files or multiple non-interconnected modifications
+			- Each operation in the array follows the same parameter structure as individual commands
+			- Supported operations: str_replace, insert, line_replace
+			- Returns detailed results for each operation including success/failure status
+			- Ideal for batch refactoring, applying consistent changes across files, or making multiple independent edits
+
 			**Error Handling:**
 			- File not found: Returns descriptive error message
 			- Multiple matches: Returns error asking for more specific context
@@ -148,8 +156,8 @@ pub fn get_text_editor_function() -> McpFunction {
 			"properties": {
 				"command": {
 					"type": "string",
-					"enum": ["view", "view_many", "create", "str_replace", "insert", "line_replace", "undo_edit"],
-					"description": "The operation to perform: view, view_many, create, str_replace, insert, line_replace, or undo_edit"
+					"enum": ["view", "view_many", "create", "str_replace", "insert", "line_replace", "undo_edit", "batch_edit"],
+					"description": "The operation to perform: view, view_many, create, str_replace, insert, line_replace, undo_edit, or batch_edit"
 				},
 				"path": {
 					"type": "string",
@@ -184,6 +192,46 @@ pub fn get_text_editor_function() -> McpFunction {
 					"type": "integer",
 					"minimum": 0,
 					"description": "Line number after which to insert text (0 for beginning of file, 1-indexed)"
+				},
+				"operations": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"required": ["operation", "path"],
+						"properties": {
+							"operation": {
+								"type": "string",
+								"enum": ["str_replace", "insert", "line_replace"],
+								"description": "Type of operation to perform"
+							},
+							"path": {
+								"type": "string",
+								"description": "Path to the file to modify"
+							},
+							"old_str": {
+								"type": "string",
+								"description": "Text to replace (required for str_replace)"
+							},
+							"new_str": {
+								"type": "string",
+								"description": "New text content (required for all operations)"
+							},
+							"insert_line": {
+								"type": "integer",
+								"minimum": 0,
+								"description": "Line number after which to insert (required for insert)"
+							},
+							"view_range": {
+								"type": "array",
+								"items": {"type": "integer"},
+								"minItems": 2,
+								"maxItems": 2,
+								"description": "Line range [start, end] for line_replace (required for line_replace)"
+							}
+						}
+					},
+					"maxItems": 50,
+					"description": "Array of operations for batch_edit command (maximum 50 operations)"
 				}
 			}
 		}),

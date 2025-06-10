@@ -133,7 +133,45 @@ impl CloudflareWorkersAiProvider {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudflareMessage {
 	pub role: String,
-	pub content: String,
+	pub content: CloudflareContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CloudflareContent {
+	Text(String),
+	Multimodal(Vec<CloudflareContentPart>),
+}
+
+impl CloudflareContent {
+	pub fn as_str(&self) -> &str {
+		match self {
+			CloudflareContent::Text(text) => text,
+			CloudflareContent::Multimodal(parts) => {
+				// For multimodal content, return the first text part or empty string
+				for part in parts {
+					if let CloudflareContentPart::Text { text } = part {
+						return text;
+					}
+				}
+				""
+			}
+		}
+	}
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CloudflareContentPart {
+	#[serde(rename = "text")]
+	Text { text: String },
+	#[serde(rename = "image_url")]
+	ImageUrl { image_url: CloudflareImageUrl },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudflareImageUrl {
+	pub url: String,
 }
 
 #[async_trait::async_trait]
@@ -165,6 +203,13 @@ impl AiProvider for CloudflareWorkersAiProvider {
 	fn supports_caching(&self, _model: &str) -> bool {
 		// Cloudflare Workers AI doesn't currently support caching
 		false
+	}
+
+	fn supports_vision(&self, model: &str) -> bool {
+		// Cloudflare Workers AI vision-capable models
+		// Llama 3.2 vision models support multimodal input
+		// Source: https://developers.cloudflare.com/workers-ai/models/
+		model.contains("llama-3.2") && model.contains("vision")
 	}
 
 	fn get_max_input_tokens(&self, model: &str) -> usize {
@@ -361,7 +406,34 @@ fn convert_messages(messages: &[Message]) -> Vec<CloudflareMessage> {
 			continue;
 		}
 
-		// Convert regular messages
+		// Convert regular messages - handle multimodal content
+		let content = if let Some(ref images) = msg.images {
+			// Create multimodal content
+			let mut parts = Vec::new();
+
+			// Add text content if not empty
+			if !msg.content.is_empty() {
+				parts.push(CloudflareContentPart::Text {
+					text: msg.content.clone(),
+				});
+			}
+
+			// Add image attachments
+			for image in images {
+				if let crate::session::image::ImageData::Base64(ref base64_data) = image.data {
+					let data_url = format!("data:{};base64,{}", image.media_type, base64_data);
+					parts.push(CloudflareContentPart::ImageUrl {
+						image_url: CloudflareImageUrl { url: data_url },
+					});
+				}
+			}
+
+			CloudflareContent::Multimodal(parts)
+		} else {
+			// Simple text content
+			CloudflareContent::Text(msg.content.clone())
+		};
+
 		result.push(CloudflareMessage {
 			role: match msg.role.as_str() {
 				"assistant" => "assistant".to_string(),
@@ -369,9 +441,67 @@ fn convert_messages(messages: &[Message]) -> Vec<CloudflareMessage> {
 				"system" => "system".to_string(),
 				_ => "user".to_string(), // Default to user for unknown roles
 			},
-			content: msg.content.clone(),
+			content,
 		});
 	}
 
 	result
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_supports_vision() {
+		let provider = CloudflareWorkersAiProvider::new();
+
+		// Models that should support vision
+		assert!(provider.supports_vision("llama-3.2-11b-vision-instruct"));
+		assert!(provider.supports_vision("llama-3.2-90b-vision-instruct"));
+
+		// Models that should NOT support vision
+		assert!(!provider.supports_vision("llama-3.1-8b-instruct"));
+		assert!(!provider.supports_vision("llama-3.1-70b-instruct"));
+		assert!(!provider.supports_vision("mistral-7b-instruct"));
+		assert!(!provider.supports_vision("llama-3.2-1b-instruct")); // No vision
+	}
+
+	#[test]
+	fn test_supports_caching() {
+		let provider = CloudflareWorkersAiProvider::new();
+
+		// Cloudflare doesn't support caching currently
+		assert!(!provider.supports_caching("llama-3.2-11b-vision-instruct"));
+		assert!(!provider.supports_caching("llama-3.1-8b-instruct"));
+	}
+
+	#[test]
+	fn test_cloudflare_content_as_str() {
+		// Test text content
+		let text_content = CloudflareContent::Text("Hello world".to_string());
+		assert_eq!(text_content.as_str(), "Hello world");
+
+		// Test multimodal content with text
+		let multimodal_content = CloudflareContent::Multimodal(vec![
+			CloudflareContentPart::Text {
+				text: "Describe this image".to_string(),
+			},
+			CloudflareContentPart::ImageUrl {
+				image_url: CloudflareImageUrl {
+					url: "data:image/jpeg;base64,abc123".to_string(),
+				},
+			},
+		]);
+		assert_eq!(multimodal_content.as_str(), "Describe this image");
+
+		// Test multimodal content without text
+		let image_only_content =
+			CloudflareContent::Multimodal(vec![CloudflareContentPart::ImageUrl {
+				image_url: CloudflareImageUrl {
+					url: "data:image/jpeg;base64,abc123".to_string(),
+				},
+			}]);
+		assert_eq!(image_only_content.as_str(), "");
+	}
 }

@@ -187,6 +187,13 @@ impl AiProvider for AmazonBedrockProvider {
 		model.contains("claude")
 	}
 
+	fn supports_vision(&self, model: &str) -> bool {
+		// Amazon Bedrock vision-capable models
+		// Claude 3+ models on Bedrock support vision
+		// Source: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
+		model.contains("claude-3") || model.contains("claude-4")
+	}
+
 	fn get_max_input_tokens(&self, model: &str) -> usize {
 		// Amazon Bedrock model input limits (total context minus reserved output tokens)
 		// Claude models on Bedrock: 200K total context
@@ -409,14 +416,48 @@ fn convert_messages(messages: &[Message]) -> Vec<BedrockMessage> {
 			continue;
 		}
 
-		// Convert regular messages
+		// Convert regular messages - handle multimodal content
+		let mut content_parts = Vec::new();
+
+		// Add text content if not empty
+		if !msg.content.is_empty() {
+			content_parts.push(serde_json::json!({
+				"type": "text",
+				"text": msg.content
+			}));
+		}
+
+		// Add image attachments if present (for Claude models on Bedrock)
+		if let Some(ref images) = msg.images {
+			for image in images {
+				if let crate::session::image::ImageData::Base64(ref base64_data) = image.data {
+					content_parts.push(serde_json::json!({
+						"type": "image",
+						"source": {
+							"type": "base64",
+							"media_type": image.media_type,
+							"data": base64_data
+						}
+					}));
+				}
+			}
+		}
+
+		// Use array format for multimodal content, or simple text for text-only
+		let content =
+			if content_parts.len() > 1 || (content_parts.len() == 1 && msg.images.is_some()) {
+				serde_json::json!(content_parts)
+			} else {
+				serde_json::json!(msg.content)
+			};
+
 		result.push(BedrockMessage {
 			role: match msg.role.as_str() {
 				"assistant" => "assistant".to_string(),
 				"user" => "user".to_string(),
 				_ => "user".to_string(), // Default to user for unknown roles
 			},
-			content: serde_json::json!(msg.content),
+			content,
 		});
 	}
 
@@ -448,4 +489,40 @@ fn convert_messages_to_prompt(messages: &[Message]) -> String {
 	prompt.push_str("Assistant: ");
 
 	prompt
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_supports_vision() {
+		let provider = AmazonBedrockProvider::new();
+
+		// Models that should support vision
+		assert!(provider.supports_vision("claude-3-5-sonnet"));
+		assert!(provider.supports_vision("claude-3-5-haiku"));
+		assert!(provider.supports_vision("claude-3-opus"));
+		assert!(provider.supports_vision("claude-3-sonnet"));
+		assert!(provider.supports_vision("claude-3-haiku"));
+		assert!(provider.supports_vision("claude-4-opus"));
+
+		// Models that should NOT support vision
+		assert!(!provider.supports_vision("llama-3-70b"));
+		assert!(!provider.supports_vision("cohere-command"));
+		assert!(!provider.supports_vision("titan-text"));
+	}
+
+	#[test]
+	fn test_supports_caching() {
+		let provider = AmazonBedrockProvider::new();
+
+		// Models that should support caching
+		assert!(provider.supports_caching("claude-3-5-sonnet"));
+		assert!(provider.supports_caching("claude-3-opus"));
+
+		// Models that should NOT support caching
+		assert!(!provider.supports_caching("llama-3-70b"));
+		assert!(!provider.supports_caching("cohere-command"));
+	}
 }

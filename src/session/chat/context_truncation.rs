@@ -701,6 +701,7 @@ pub async fn perform_smart_truncation(
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
+			images: None,
 		};
 		truncated_messages.push(summary_msg);
 	}
@@ -801,6 +802,7 @@ pub async fn perform_smart_full_summarization(
 		tool_call_id: None,
 		name: None,
 		tool_calls: None,
+		images: None,
 	};
 	new_messages.push(summary_msg);
 

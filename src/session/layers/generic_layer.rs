@@ -56,6 +56,7 @@ impl GenericLayer {
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
+			images: None,
 		});
 
 		// Prepare input based on input_mode using the trait's prepare_input method
@@ -73,6 +74,7 @@ impl GenericLayer {
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
+			images: None,
 		});
 
 		messages
@@ -220,6 +222,7 @@ impl Layer for GenericLayer {
 						tool_call_id: None,
 						name: None,
 						tool_calls: None,
+						images: None,
 					});
 
 					// Add each tool result as a tool message
@@ -235,6 +238,7 @@ impl Layer for GenericLayer {
 							tool_call_id: Some(tool_result.tool_id.clone()),
 							name: Some(tool_result.tool_name.clone()),
 							tool_calls: None,
+							images: None,
 						});
 					}
 

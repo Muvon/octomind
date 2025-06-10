@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::session::{get_sessions_dir, load_session, Session};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use colored::Colorize;
 use std::fs::File;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -53,6 +54,7 @@ pub struct ChatSession {
 	pub estimated_cost: f64,
 	pub cache_next_user_message: bool, // Flag to cache the next user message
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
+	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
 }
 
 impl ChatSession {
@@ -106,6 +108,7 @@ impl ChatSession {
 			estimated_cost: 0.0,                // Initialize estimated cost as zero
 			cache_next_user_message: false,     // Initialize cache flag
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
+			pending_image: None,                // Initialize pending image
 		}
 	}
 
@@ -198,6 +201,7 @@ impl ChatSession {
 						estimated_cost: 0.0,
 						cache_next_user_message: false,     // Initialize cache flag
 						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
+						pending_image: None,                // Initialize pending image
 					};
 
 					// Update the estimated cost from the loaded session
@@ -306,5 +310,91 @@ impl ChatSession {
 	/// Get the effective model for this session (uses session.info.model directly)
 	pub fn get_effective_model(&self) -> &str {
 		&self.session.info.model
+	}
+
+	/// Attach image from file path
+	pub async fn attach_image_from_path(&mut self, path: &str) -> Result<()> {
+		use crate::session::image::ImageProcessor;
+		use std::path::Path;
+
+		// Check if input is a URL
+		if ImageProcessor::is_url(path) {
+			println!("{}", "🌐 Downloading image from URL...".bright_cyan());
+
+			let image_attachment = ImageProcessor::load_from_url(path).await?;
+
+			// Show preview
+			println!("{}", "📸 Image preview:".bright_cyan());
+			ImageProcessor::show_preview(&image_attachment)?;
+
+			// Store for next message
+			self.pending_image = Some(image_attachment);
+
+			println!(
+				"{}",
+				"✅ Image downloaded and ready to attach!".bright_green()
+			);
+			return Ok(());
+		}
+
+		// Handle as file path
+		let image_path = Path::new(path);
+
+		// Check if file exists
+		if !image_path.exists() {
+			return Err(anyhow::anyhow!("Image file not found: {}", path));
+		}
+
+		// Check if it's a supported image format
+		if !ImageProcessor::is_supported_image(image_path) {
+			return Err(anyhow::anyhow!(
+				"Unsupported image format. Supported: {}",
+				ImageProcessor::supported_extensions().join(", ")
+			));
+		}
+
+		// Load and process the image
+		let image_attachment = ImageProcessor::load_from_path(image_path)?;
+
+		// Show preview
+		println!("{}", "📸 Image preview:".bright_cyan());
+		ImageProcessor::show_preview(&image_attachment)?;
+
+		// Store for next message
+		self.pending_image = Some(image_attachment);
+
+		Ok(())
+	}
+
+	/// Try to attach image from clipboard
+	pub async fn try_attach_from_clipboard(&mut self) -> Result<bool> {
+		use crate::session::image::ImageProcessor;
+
+		match ImageProcessor::load_from_clipboard()? {
+			Some(image_attachment) => {
+				println!("{}", "📋 Image detected in clipboard!".bright_cyan());
+
+				// Show preview
+				println!("{}", "📸 Image preview:".bright_cyan());
+				ImageProcessor::show_preview(&image_attachment)?;
+
+				// Store for next message
+				self.pending_image = Some(image_attachment);
+
+				println!("{}", "✅ Clipboard image ready to attach!".bright_green());
+				Ok(true)
+			}
+			None => Ok(false),
+		}
+	}
+
+	/// Check if there's a pending image attachment
+	pub fn has_pending_image(&self) -> bool {
+		self.pending_image.is_some()
+	}
+
+	/// Take the pending image (consumes it)
+	pub fn take_pending_image(&mut self) -> Option<crate::session::image::ImageAttachment> {
+		self.pending_image.take()
 	}
 }

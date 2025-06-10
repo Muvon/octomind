@@ -18,6 +18,7 @@ pub mod cache;
 pub mod chat; // Chat session logic
 mod chat_helper; // Chat command completion
 pub mod helper_functions; // Helper functions for layers and other components
+pub mod image; // Image processing and attachment utilities
 pub mod layers; // Layered architecture implementation
 pub mod logger; // Request/response logging utilities
 mod model_utils; // Model-specific utility functions
@@ -64,6 +65,8 @@ pub struct Message {
 	pub name: Option<String>, // For tool messages: the name of the tool
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub tool_calls: Option<serde_json::Value>, // For assistant messages: original tool calls from API response
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub images: Option<Vec<crate::session::image::ImageAttachment>>, // For messages with image attachments
 }
 
 fn default_cache_marker() -> bool {
@@ -177,6 +180,7 @@ impl Session {
 			tool_call_id: None, // Default to no tool_call_id
 			name: None,         // Default to no name
 			tool_calls: None,   // Default to no tool_calls
+			images: None,       // Default to no images
 		};
 
 		self.messages.push(message.clone());

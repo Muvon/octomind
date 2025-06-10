@@ -117,8 +117,18 @@ impl ChatSession {
 		// Log to raw session log
 		let _ = crate::session::logger::log_user_input(&self.session.info.name, content);
 
-		// Add message to session
-		self.session.add_message("user", content);
+		// Add message to session with image if available
+		let mut message = self.session.add_message("user", content);
+
+		// Attach pending image if available
+		if let Some(image_attachment) = self.take_pending_image() {
+			message.images = Some(vec![image_attachment]);
+			// Update the message in the session
+			if let Some(last_msg) = self.session.messages.last_mut() {
+				last_msg.images = message.images.clone();
+			}
+			println!("{}", "📎 Image attached to message".bright_green());
+		}
 
 		// Check if we should cache this user message
 		if self.cache_next_user_message {
@@ -181,6 +191,7 @@ impl ChatSession {
 			tool_call_id: Some(tool_call_id.to_string()),
 			name: Some(tool_name.to_string()),
 			tool_calls: None,
+			images: None,
 		};
 
 		// Add message to session

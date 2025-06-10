@@ -105,6 +105,10 @@ impl ChatSession {
 					REPORT_COMMAND.cyan()
 				);
 				println!(
+					"{} <path_or_url> - Attach image to your next message (supports PNG, JPEG, GIF, WebP, BMP)",
+					IMAGE_COMMAND.cyan()
+				);
+				println!(
 					"{} or {} - Exit the session\n",
 					EXIT_COMMAND.cyan(),
 					QUIT_COMMAND.cyan()
@@ -1430,6 +1434,76 @@ allowed_tools = []"#
 					}
 				}
 
+				return Ok(false);
+			}
+			IMAGE_COMMAND => {
+				// Handle /image command for attaching images
+				if params.is_empty() {
+					println!("{}", "Usage: /image <path_to_image_or_url>".bright_yellow());
+					println!("{}", "Examples:".bright_blue());
+					println!("{}", "  /image screenshot.png".bright_white());
+					println!("{}", "  /image /path/to/image.jpg".bright_white());
+					println!(
+						"{}",
+						"  /image https://example.com/image.png".bright_white()
+					);
+					println!(
+						"{}",
+						"Supported formats: PNG, JPEG, GIF, WebP, BMP".bright_blue()
+					);
+
+					// Check if current model supports vision
+					let (provider, model_name) =
+						match crate::session::providers::ProviderFactory::get_provider_for_model(
+							&self.model,
+						) {
+							Ok((provider, model)) => (provider, model),
+							Err(_) => {
+								println!(
+									"{}",
+									"Unable to check vision support for current model".bright_red()
+								);
+								return Ok(false);
+							}
+						};
+
+					if provider.supports_vision(&model_name) {
+						println!("{}", "✅ Current model supports vision".bright_green());
+					} else {
+						println!(
+							"{}",
+							"⚠️  Current model does not support vision".bright_yellow()
+						);
+					}
+
+					// Check clipboard for images
+					if let Ok(true) = self.try_attach_from_clipboard().await {
+						// Image was found and attached from clipboard
+						return Ok(false);
+					} else {
+						println!(
+							"{}",
+							"💡 Tip: Copy an image to clipboard and run /image to auto-attach it"
+								.bright_blue()
+						);
+					}
+
+					return Ok(false);
+				}
+
+				let image_path = params.join(" ");
+				match self.attach_image_from_path(&image_path).await {
+					Ok(_) => {
+						println!("{}", "✅ Image attached successfully!".bright_green());
+						println!(
+							"{}",
+							"Your next message will include this image.".bright_cyan()
+						);
+					}
+					Err(e) => {
+						println!("{}: {}", "❌ Failed to attach image".bright_red(), e);
+					}
+				}
 				return Ok(false);
 			}
 			_ => return Ok(false), // Not a command

@@ -93,8 +93,8 @@ impl ImageProcessor {
 		let parsed_url = url::Url::parse(url).map_err(|_| anyhow::anyhow!("Invalid URL format"))?;
 
 		// Check if URL looks like an image
-		if let Some(path) = parsed_url.path_segments() {
-			if let Some(filename) = path.last() {
+		if let Some(mut path) = parsed_url.path_segments() {
+			if let Some(filename) = path.next_back() {
 				if !Self::is_supported_image_by_name(filename) {
 					return Err(anyhow::anyhow!(
 						"URL does not appear to point to a supported image format: {}",
@@ -295,7 +295,7 @@ impl ImageProcessor {
 
 	/// Check if filename has supported image extension
 	pub fn is_supported_image_by_name(filename: &str) -> bool {
-		if let Some(ext) = filename.split('.').last() {
+		if let Some(ext) = filename.split('.').next_back() {
 			Self::is_supported_extension(ext)
 		} else {
 			false
@@ -312,7 +312,7 @@ impl ImageProcessor {
 
 	/// Guess media type from URL
 	fn guess_media_type_from_url(url: &str) -> Option<String> {
-		if let Some(ext) = url.split('.').last() {
+		if let Some(ext) = url.split('.').next_back() {
 			match ext.to_lowercase().as_str() {
 				"png" => Some("image/png".to_string()),
 				"jpg" | "jpeg" => Some("image/jpeg".to_string()),

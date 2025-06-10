@@ -21,7 +21,15 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ## Recent Updates
 
-### Session Usage Reporting (Latest)
+### Multimodal Vision Support (Latest)
+- **`/image` Command**: Attach images to your messages with intelligent file completion
+- **Universal Provider Support**: Vision support across all 6 providers (Anthropic, OpenAI, OpenRouter, Google, Amazon, Cloudflare)
+- **Smart Format Detection**: Automatic support for PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, SVG, AVIF, HEIC, HEIF
+- **Path Completion**: Enhanced autocomplete for image files including relative paths, absolute paths, and tilde expansion
+- **Terminal Preview**: Small image previews in terminal for attached images
+- **Model Compatibility**: Automatic vision support detection for current model
+
+### Session Usage Reporting
 - **`/report` Command**: Comprehensive usage analysis with cost breakdown per request
 - **Time Separation**: Distinct tracking of Human Time, AI Time, and Processing Time
 - **Cost Accuracy**: Real-time cost tracking using session stats snapshots

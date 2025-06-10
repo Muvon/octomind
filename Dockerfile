@@ -14,8 +14,9 @@ WORKDIR /app
 # Copy manifests
 COPY Cargo.toml Cargo.lock ./
 
-# Copy source code
+# Copy source code and config templates
 COPY src ./src
+COPY config-templates ./config-templates
 
 # Build the application
 RUN cargo build --release

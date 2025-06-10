@@ -104,6 +104,17 @@ impl AiProvider for OpenRouterProvider {
 		model.contains("claude") || model.contains("gemini")
 	}
 
+	fn supports_vision(&self, model: &str) -> bool {
+		// OpenRouter supports vision through various models
+		model.contains("gpt-4o")
+			|| model.contains("gpt-4.1")
+			|| model.contains("gpt-4-vision")
+			|| model.contains("gpt-4-turbo")
+			|| model.contains("claude-3")
+			|| model.contains("claude-4")
+			|| model.contains("gemini")
+	}
+
 	fn get_max_input_tokens(&self, model: &str) -> usize {
 		// OpenRouter model input limits depend on underlying provider
 		// Claude models through OpenRouter: 200K total context
@@ -669,28 +680,73 @@ fn convert_messages(messages: &[Message], config: &Config) -> Vec<OpenRouterMess
 					}
 				}
 
-				// Regular user messages with proper structure
-				let content = if msg.cached {
-					cached_count += 1;
-					let mut text_content = serde_json::json!({
-						"type": "text",
-						"text": msg.content
-					});
-					text_content["cache_control"] = serde_json::json!({
-						"type": "ephemeral"
-					});
-					serde_json::json!([text_content])
-				} else {
-					serde_json::json!(msg.content)
-				};
+				// Handle user messages with images - use OpenAI/OpenRouter multimodal format
+				if msg.images.is_some() {
+					let mut content_parts = Vec::new();
 
-				result.push(OpenRouterMessage {
-					role: msg.role.clone(),
-					content,
-					tool_call_id: None,
-					name: None,
-					tool_calls: None,
-				});
+					// Add text content if not empty
+					if !msg.content.trim().is_empty() {
+						let mut text_content = serde_json::json!({
+							"type": "text",
+							"text": msg.content
+						});
+
+						// Add cache_control if needed
+						if msg.cached {
+							cached_count += 1;
+							text_content["cache_control"] = serde_json::json!({
+								"type": "ephemeral"
+							});
+						}
+
+						content_parts.push(text_content);
+					}
+
+					// Add image attachments
+					if let Some(ref images) = msg.images {
+						for img in images {
+							if let crate::session::image::ImageData::Base64(ref data) = img.data {
+								content_parts.push(serde_json::json!({
+									"type": "image_url",
+									"image_url": {
+										"url": format!("data:{};base64,{}", img.media_type, data)
+									}
+								}));
+							}
+						}
+					}
+
+					result.push(OpenRouterMessage {
+						role: msg.role.clone(),
+						content: serde_json::json!(content_parts),
+						tool_call_id: None,
+						name: None,
+						tool_calls: None,
+					});
+				} else {
+					// Regular user messages with proper structure
+					let content = if msg.cached {
+						cached_count += 1;
+						let mut text_content = serde_json::json!({
+							"type": "text",
+							"text": msg.content
+						});
+						text_content["cache_control"] = serde_json::json!({
+							"type": "ephemeral"
+						});
+						serde_json::json!([text_content])
+					} else {
+						serde_json::json!(msg.content)
+					};
+
+					result.push(OpenRouterMessage {
+						role: msg.role.clone(),
+						content,
+						tool_call_id: None,
+						name: None,
+						tool_calls: None,
+					});
+				}
 			}
 			_ => {
 				// All other message types with proper structure
@@ -725,4 +781,61 @@ fn convert_messages(messages: &[Message], config: &Config) -> Vec<OpenRouterMess
 	}
 
 	result
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_supports_vision() {
+		let provider = OpenRouterProvider::new();
+
+		// OpenAI models through OpenRouter
+		assert!(provider.supports_vision("openai/gpt-4o"));
+		assert!(provider.supports_vision("openai/gpt-4o-mini"));
+		assert!(provider.supports_vision("openai/gpt-4-turbo"));
+		assert!(provider.supports_vision("openai/gpt-4-vision-preview"));
+
+		// Anthropic models through OpenRouter
+		assert!(provider.supports_vision("anthropic/claude-3-opus"));
+		assert!(provider.supports_vision("anthropic/claude-3-sonnet"));
+		assert!(provider.supports_vision("anthropic/claude-3-haiku"));
+		assert!(provider.supports_vision("anthropic/claude-3.5-sonnet"));
+		assert!(provider.supports_vision("anthropic/claude-3.5-haiku"));
+		assert!(provider.supports_vision("anthropic/claude-3.7-sonnet"));
+		assert!(provider.supports_vision("anthropic/claude-4-opus"));
+
+		// Google models through OpenRouter
+		assert!(provider.supports_vision("google/gemini-1.5-pro"));
+		assert!(provider.supports_vision("google/gemini-1.5-flash"));
+
+		// Meta models through OpenRouter
+		assert!(provider.supports_vision("meta-llama/llama-3.2-vision"));
+
+		// Mistral models through OpenRouter
+		assert!(provider.supports_vision("mistralai/pixtral-12b"));
+
+		// Models that should NOT support vision
+		assert!(!provider.supports_vision("openai/gpt-3.5-turbo"));
+		assert!(!provider.supports_vision("anthropic/claude-2"));
+		assert!(!provider.supports_vision("openai/text-davinci-003"));
+		assert!(!provider.supports_vision("cohere/command-r"));
+	}
+
+	#[test]
+	fn test_supports_caching() {
+		let provider = OpenRouterProvider::new();
+
+		// Models that should support caching
+		assert!(provider.supports_caching("anthropic/claude-3.5-sonnet"));
+		assert!(provider.supports_caching("claude-3-opus"));
+		assert!(provider.supports_caching("google/gemini-1.5-pro"));
+		assert!(provider.supports_caching("gemini-1.5-flash"));
+
+		// Models that should NOT support caching
+		assert!(!provider.supports_caching("openai/gpt-4o"));
+		assert!(!provider.supports_caching("openai/gpt-3.5-turbo"));
+		assert!(!provider.supports_caching("cohere/command-r"));
+	}
 }

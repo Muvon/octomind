@@ -180,6 +180,15 @@ impl AiProvider for OpenAiProvider {
 		model.contains("gpt-4") || model.contains("o1")
 	}
 
+	fn supports_vision(&self, model: &str) -> bool {
+		// OpenAI vision-capable models
+		model.contains("gpt-4o")
+			|| model.contains("gpt-4.1")
+			|| model.contains("gpt-4-turbo")
+			|| model.contains("gpt-4-vision-preview")
+			|| model.starts_with("gpt-4o-")
+	}
+
 	fn get_max_input_tokens(&self, model: &str) -> usize {
 		// OpenAI model context window limits (what we can send as input)
 		// These are the actual context windows - API handles output limits
@@ -562,14 +571,50 @@ fn convert_messages(messages: &[Message]) -> Vec<OpenAiMessage> {
 			continue;
 		}
 
-		// Regular messages (OpenAI doesn't have the same caching as Anthropic, so we ignore cached flag)
-		result.push(OpenAiMessage {
-			role: msg.role.clone(),
-			content: serde_json::json!(msg.content),
-			tool_call_id: None,
-			name: None,
-			tool_calls: None,
-		});
+		// Regular messages - handle both text and images
+		if msg.role == "user" && msg.images.is_some() {
+			// User message with images - use multimodal format
+			let mut content_parts = Vec::new();
+
+			// Add text content if not empty
+			if !msg.content.trim().is_empty() {
+				content_parts.push(serde_json::json!({
+					"type": "text",
+					"text": msg.content
+				}));
+			}
+
+			// Add image attachments
+			if let Some(ref images) = msg.images {
+				for img in images {
+					if let crate::session::image::ImageData::Base64(ref data) = img.data {
+						content_parts.push(serde_json::json!({
+							"type": "image_url",
+							"image_url": {
+								"url": format!("data:{};base64,{}", img.media_type, data)
+							}
+						}));
+					}
+				}
+			}
+
+			result.push(OpenAiMessage {
+				role: msg.role.clone(),
+				content: serde_json::json!(content_parts),
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+			});
+		} else {
+			// Regular text-only messages
+			result.push(OpenAiMessage {
+				role: msg.role.clone(),
+				content: serde_json::json!(msg.content),
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+			});
+		}
 	}
 
 	result
@@ -595,5 +640,24 @@ mod tests {
 		assert!(!supports_temperature("o3"));
 		assert!(!supports_temperature("o3-mini"));
 		assert!(!supports_temperature("o4"));
+	}
+
+	#[test]
+	fn test_supports_vision() {
+		let provider = OpenAiProvider::new();
+
+		// Models that should support vision
+		assert!(provider.supports_vision("gpt-4o"));
+		assert!(provider.supports_vision("gpt-4o-mini"));
+		assert!(provider.supports_vision("gpt-4o-2024-05-13"));
+		assert!(provider.supports_vision("gpt-4-turbo"));
+		assert!(provider.supports_vision("gpt-4-vision-preview"));
+
+		// Models that should NOT support vision
+		assert!(!provider.supports_vision("gpt-3.5-turbo"));
+		assert!(!provider.supports_vision("gpt-4"));
+		assert!(!provider.supports_vision("o1-preview"));
+		assert!(!provider.supports_vision("o1-mini"));
+		assert!(!provider.supports_vision("text-davinci-003"));
 	}
 }

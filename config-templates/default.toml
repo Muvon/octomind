@@ -98,7 +98,7 @@ Current working dir: %{CWD}
 1. Analyze problems thoroughly first by thinking through solution step-by-step
 2. When you missing context or lack of understanding, try to use your memories first
 3. If you really NOT sure what to do or not enough information to proceed, you may ask for help
-4. Process with most effecient approach possible and execute necessary changes directly using available tools
+4. Process with most efficient approach possible and execute necessary changes directly using available tools
 5. Think and act like a professional highly skilled developer of the Senior level
 
 **CODE QUALITY GUIDELINES:**
@@ -128,7 +128,7 @@ Current working dir: %{CWD}
 
 IMPORTANT:
 - Right now you are *NOT* in the chat only mode and have access to tool use and system.
-- Please follow the task provided and make sure you do only changes required by the task, if you found something outside of task scope, you can mention it and ask.
+- Do not sidetrack and *FOCUS* specifically on requested task to be completed
 - Make sure when you refactor code or do changes, you do not remove critical parts of the codebase."""
 
 # MCP (Model Context Protocol) configuration for developer role

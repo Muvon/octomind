@@ -378,8 +378,16 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// Show MCP status using the new structure
 	// MCP is enabled per-role based on server_refs, not a global flag
-	let dev_mcp_enabled = !config.developer.mcp.server_refs.is_empty();
-	let ass_mcp_enabled = !config.assistant.mcp.server_refs.is_empty();
+	let dev_mcp_enabled = config
+		.role_map
+		.get("developer")
+		.map(|r| !r.mcp.server_refs.is_empty())
+		.unwrap_or(false);
+	let ass_mcp_enabled = config
+		.role_map
+		.get("assistant")
+		.map(|r| !r.mcp.server_refs.is_empty())
+		.unwrap_or(false);
 
 	println!("MCP status:");
 	println!(

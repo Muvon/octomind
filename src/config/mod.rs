@@ -101,14 +101,12 @@ pub struct Config {
 
 	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 
-	// Role-specific configurations
-	pub developer: DeveloperRoleConfig,
-	pub assistant: AssistantRoleConfig,
+	// Role configurations - array format like layers
+	pub roles: Vec<crate::config::roles::Role>,
 
-	// Custom role configurations (for roles beyond developer and assistant)
-	// This will be populated during loading by parsing additional role sections
+	// Internal role lookup map (populated during loading)
 	#[serde(skip)]
-	pub custom_roles: HashMap<String, CustomRoleConfig>,
+	pub role_map: HashMap<String, crate::config::roles::Role>,
 
 	// Global MCP configuration (fallback for roles)
 	#[serde(skip_serializing_if = "McpConfig::is_default_for_serialization")]
@@ -224,52 +222,34 @@ impl Config {
 		self.get_effective_model()
 	}
 
-	/// Get configuration for a specific role with proper fallback logic and role inheritance
+	/// Get configuration for a specific role
 	/// Returns: (mode_config, role_mcp_config, layers, commands, system_prompt)
-	/// Role inheritance: any role inherits from 'assistant' first, then applies its own overrides
 	pub fn get_mode_config(&self, role: &str) -> ModeConfigResult<'_> {
-		match role {
-			"developer" => {
-				// Developer role - uses its own MCP config with server_refs
-				(
-					&self.developer.config,
-					&self.developer.mcp,
-					self.layers.as_ref(),
-					self.commands.as_ref(),
-					self.developer.config.system.as_ref(),
-				)
-			}
-			"assistant" => {
-				// Base assistant role
-				(
-					&self.assistant.config,
-					&self.assistant.mcp,
-					self.layers.as_ref(),
-					self.commands.as_ref(),
-					self.assistant.config.system.as_ref(),
-				)
-			}
-			_ => {
-				// Check for custom role configuration
-				if let Some(custom_role) = self.custom_roles.get(role) {
-					(
-						&custom_role.config,
-						&custom_role.mcp,
-						self.layers.as_ref(),
-						self.commands.as_ref(),
-						custom_role.config.system.as_ref(),
-					)
-				} else {
-					// Unknown role - fallback to assistant
-					(
-						&self.assistant.config,
-						&self.assistant.mcp,
-						self.layers.as_ref(),
-						self.commands.as_ref(),
-						self.assistant.config.system.as_ref(),
-					)
-				}
-			}
+		if let Some(role_config) = self.role_map.get(role) {
+			(
+				&role_config.config,
+				&role_config.mcp,
+				self.layers.as_ref(),
+				self.commands.as_ref(),
+				role_config.config.system.as_ref(),
+			)
+		} else {
+			// Unknown role - create minimal fallback
+			static DEFAULT_MODE_CONFIG: ModeConfig = ModeConfig {
+				enable_layers: false,
+				system: None,
+			};
+			static DEFAULT_MCP_CONFIG: RoleMcpConfig = RoleMcpConfig {
+				server_refs: Vec::new(),
+				allowed_tools: Vec::new(),
+			};
+			(
+				&DEFAULT_MODE_CONFIG,
+				&DEFAULT_MCP_CONFIG,
+				self.layers.as_ref(),
+				self.commands.as_ref(),
+				None,
+			)
 		}
 	}
 
@@ -326,10 +306,12 @@ impl Config {
 
 	/// Get layer references for a specific role
 	pub fn get_layer_refs(&self, role: &str) -> &Vec<String> {
-		match role {
-			"developer" => &self.developer.layer_refs,
-			"assistant" => &self.assistant.layer_refs,
-			_ => &self.assistant.layer_refs, // Fallback to assistant
+		if let Some(role_config) = self.role_map.get(role) {
+			&role_config.layer_refs
+		} else {
+			// Return empty vec for unknown roles
+			static EMPTY_VEC: Vec<String> = Vec::new();
+			&EMPTY_VEC
 		}
 	}
 
@@ -366,6 +348,14 @@ impl Config {
 		}
 
 		result
+	}
+
+	/// Build the internal role map from the roles array for fast lookup
+	pub fn build_role_map(&mut self) {
+		self.role_map.clear();
+		for role in &self.roles {
+			self.role_map.insert(role.name.clone(), role.clone());
+		}
 	}
 }
 

@@ -29,32 +29,20 @@ pub struct ModeConfig {
 // REMOVED: Default implementations - all config must be explicit
 // REMOVED: Model-related methods - roles now use system-wide model only
 
-// Updated role configurations using the new ModeConfig structure
+// Unified role configuration for all roles (developer, assistant, custom)
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DeveloperRoleConfig {
-	#[serde(flatten)]
-	pub config: ModeConfig,
-	pub mcp: RoleMcpConfig,
-	// Layer references - list of layer names to use for this role
-	pub layer_refs: Vec<String>,
-}
+pub struct Role {
+	// Role name (e.g., "developer", "assistant", "tester")
+	pub name: String,
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AssistantRoleConfig {
+	// Flattened mode configuration
 	#[serde(flatten)]
 	pub config: ModeConfig,
-	pub mcp: RoleMcpConfig,
-	// Layer references - list of layer names to use for this role
-	pub layer_refs: Vec<String>,
-}
 
-// Generic custom role configuration for roles beyond developer and assistant
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CustomRoleConfig {
-	#[serde(flatten)]
-	pub config: ModeConfig,
+	// MCP configuration for this role
 	#[serde(default)]
 	pub mcp: RoleMcpConfig,
+
 	// Layer references - list of layer names to use for this role
 	#[serde(default)]
 	pub layer_refs: Vec<String>,

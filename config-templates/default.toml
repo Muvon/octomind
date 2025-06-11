@@ -78,11 +78,12 @@ max_session_spending_threshold = 0.0
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROLE CONFIGURATIONS
-# Configure behavior for different roles (developer, assistant)
+# Configure behavior for different roles using [[roles]] array format
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Developer role - optimized for coding and development tasks
-[developer]
+[[roles]]
+name = "developer"
 # Enable layers system for complex multi-step operations
 enable_layers = true
 
@@ -131,32 +132,17 @@ IMPORTANT:
 - Do not sidetrack and *FOCUS* specifically on requested task to be completed
 - Make sure when you refactor code or do changes, you do not remove critical parts of the codebase."""
 
-# MCP (Model Context Protocol) configuration for developer role
-[developer.mcp]
-# MCP servers available to developer role
-# Built-in servers: "developer" (dev tools), "filesystem" (file ops), "octocode" (code analysis)
-server_refs = ["developer", "filesystem", "octocode"]
-
-# Restrict which MCP tools can be used (empty = all tools allowed)
-allowed_tools = []
+# MCP configuration for developer role
+mcp = { server_refs = ["developer", "filesystem", "octocode"], allowed_tools = [] }
 
 # Assistant role - optimized for general assistance tasks
-[assistant]
-# Layers typically not needed for assistant role
+[[roles]]
+name = "assistant"
 enable_layers = false
-
-# Layer references for assistant role (empty = no layers enabled)
 layer_refs = []
-
-# System prompt for assistant role (uses built-in assistant prompt if not specified)
-# Default assistant system prompt:
 system = "You are a helpful assistant."
-
 # MCP configuration for assistant role
-[assistant.mcp]
-# Assistant typically needs fewer tools than developer
-server_refs = ["filesystem"]
-allowed_tools = []
+mcp = { server_refs = ["filesystem"], allowed_tools = [] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MCP (MODEL CONTEXT PROTOCOL) SERVERS

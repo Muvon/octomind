@@ -247,28 +247,16 @@ impl ChatSession {
 				let current_role = role; // Use the passed role parameter
 
 				// Toggle the setting for the appropriate role in the runtime config
-				match current_role {
-					"developer" => {
-						config.developer.config.enable_layers =
-							!config.developer.config.enable_layers;
-					}
-					"assistant" => {
-						config.assistant.config.enable_layers =
-							!config.assistant.config.enable_layers;
-					}
-					_ => {
-						// For unknown roles, modify the assistant config as the fallback
-						config.assistant.config.enable_layers =
-							!config.assistant.config.enable_layers;
-					}
+				if let Some(role) = config.role_map.get_mut(current_role) {
+					role.config.enable_layers = !role.config.enable_layers;
 				}
 
 				// Get the current state from the updated config
-				let is_enabled = match current_role {
-					"developer" => config.developer.config.enable_layers,
-					"assistant" => config.assistant.config.enable_layers,
-					_ => config.get_enable_layers(current_role), // Use getter for unknown roles
-				};
+				let is_enabled = config
+					.role_map
+					.get(current_role)
+					.map(|r| r.config.enable_layers)
+					.unwrap_or(false);
 
 				// Log the command execution
 				if let Some(session_file) = &self.session.session_file {

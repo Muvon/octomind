@@ -48,12 +48,25 @@ pub async fn process_tool_results(
 		return Ok(None);
 	}
 
-	// Create a fresh cancellation flag for the next phase
-	let fresh_cancel = Arc::new(AtomicBool::new(false));
+	// Create separate animation flag but monitor global cancellation
+	let animation_cancel = Arc::new(AtomicBool::new(false));
+
+	// Set up monitor task to propagate global cancellation to animation
+	let animation_cancel_monitor = animation_cancel.clone();
+	let operation_cancelled_monitor = operation_cancelled.clone();
+	let _cancel_monitor = tokio::spawn(async move {
+		while !animation_cancel_monitor.load(Ordering::SeqCst) {
+			if operation_cancelled_monitor.load(Ordering::SeqCst) {
+				animation_cancel_monitor.store(true, Ordering::SeqCst);
+				break;
+			}
+			tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+		}
+	});
 
 	// 🎯 SENIOR FIX: Show "Generating response..." IMMEDIATELY after tools complete
 	// This provides instant feedback while tool results are being processed
-	let animation_cancel_flag = fresh_cancel.clone();
+	let animation_cancel_flag = animation_cancel.clone();
 	let current_cost = chat_session.session.info.total_cost;
 	let animation_task = tokio::spawn(async move {
 		let _ = show_loading_animation(animation_cancel_flag, current_cost).await;
@@ -193,7 +206,7 @@ pub async fn process_tool_results(
 		Ok(should_continue) => {
 			if !should_continue {
 				// User chose not to continue due to spending threshold
-				fresh_cancel.store(true, Ordering::SeqCst);
+				animation_cancel.store(true, Ordering::SeqCst);
 				let _ = animation_task.await;
 				println!(
 					"{}",
@@ -213,11 +226,21 @@ pub async fn process_tool_results(
 		}
 	}
 
+	// CRITICAL FIX: Check for cancellation before making follow-up API call
+	if operation_cancelled.load(Ordering::SeqCst) {
+		// Stop animation before returning
+		animation_cancel.store(true, Ordering::SeqCst);
+		let _ = animation_task.await;
+		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		return Ok(None);
+	}
+
 	// Make follow-up API call
-	let follow_up_result = make_follow_up_api_call(chat_session, config).await;
+	let follow_up_result =
+		make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
 
 	// Stop the animation and wait for completion
-	fresh_cancel.store(true, Ordering::SeqCst);
+	animation_cancel.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
 
 	match follow_up_result {
@@ -304,21 +327,23 @@ fn extract_tool_content(tool_result: &crate::mcp::McpToolResult) -> String {
 	}
 }
 
-// Make follow-up API call
+// Make follow-up API call with cancellation support
 async fn make_follow_up_api_call(
 	chat_session: &ChatSession,
 	config: &Config,
+	cancellation_token: Arc<AtomicBool>,
 ) -> Result<crate::session::providers::ProviderResponse> {
 	let model = chat_session.model.clone();
 	let temperature = chat_session.temperature;
 
-	// Make sure to include the usage parameter for every API call
-	// This ensures cost information is always returned
-	crate::session::chat_completion_with_provider(
+	// CRITICAL FIX: Pass cancellation token to ensure immediate cancellation
+	crate::session::chat_completion_with_validation(
 		&chat_session.session.messages,
 		&model,
 		temperature,
 		config,
+		None,                     // No chat session needed for this call
+		Some(cancellation_token), // Pass the cancellation token
 	)
 	.await
 }

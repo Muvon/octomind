@@ -1398,6 +1398,126 @@ impl ChatSession {
 						println!();
 						println!("{}", "Health check completed. Dead servers will be automatically restarted by the health monitor.".bright_blue());
 					}
+					"dump" => {
+						// Dump raw tool definitions in JSON format for debugging
+						println!();
+						println!("{}", "Raw MCP Tool Definitions (JSON)".bright_cyan().bold());
+						println!("{}", "─".repeat(50).dimmed());
+
+						let mode_config = config.get_merged_config_for_mode(role);
+						let available_functions =
+							crate::mcp::get_available_functions(&mode_config).await;
+
+						if available_functions.is_empty() {
+							println!("{}", "No tools available.".yellow());
+						} else {
+							for (i, func) in available_functions.iter().enumerate() {
+								println!();
+								println!("{}. {}", i + 1, func.name.bright_white().bold());
+								println!(
+									"{}",
+									serde_json::to_string_pretty(&serde_json::json!({
+										"name": func.name,
+										"description": func.description,
+										"parameters": func.parameters
+									}))
+									.unwrap_or_default()
+								);
+							}
+						}
+
+						println!();
+						println!(
+							"{}",
+							"Use this output to debug tool schema validation issues.".dimmed()
+						);
+					}
+					"validate" => {
+						// Validate tool schema definitions
+						println!();
+						println!("{}", "MCP Tool Schema Validation".bright_cyan().bold());
+						println!("{}", "─".repeat(50).dimmed());
+
+						let mode_config = config.get_merged_config_for_mode(role);
+						let available_functions =
+							crate::mcp::get_available_functions(&mode_config).await;
+
+						if available_functions.is_empty() {
+							println!("{}", "No tools available to validate.".yellow());
+						} else {
+							let mut all_valid = true;
+
+							for (i, func) in available_functions.iter().enumerate() {
+								println!();
+								println!(
+									"{}. Validating {}",
+									i + 1,
+									func.name.bright_white().bold()
+								);
+
+								let mut issues = Vec::new();
+
+								// Check if parameters has "type" field OR "oneOf" field (MCP schema requirement)
+								let has_type = func.parameters.get("type").is_some();
+								let has_one_of = func.parameters.get("oneOf").is_some();
+
+								if !has_type && !has_one_of {
+									issues.push(
+										"Missing 'type' or 'oneOf' field in root schema"
+											.to_string(),
+									);
+								}
+
+								// Check if properties exist and have proper type definitions
+								if let Some(properties) = func.parameters.get("properties") {
+									if let Some(props_obj) = properties.as_object() {
+										for (prop_name, prop_def) in props_obj {
+											let prop_has_type = prop_def.get("type").is_some();
+											let prop_has_one_of = prop_def.get("oneOf").is_some();
+
+											if !prop_has_type && !prop_has_one_of {
+												issues.push(format!(
+													"Property '{}' missing 'type' or 'oneOf' field",
+													prop_name
+												));
+											}
+										}
+									}
+								} else if has_type {
+									// Only require properties if we have a type field (not for oneOf schemas)
+									let schema_type =
+										func.parameters.get("type").and_then(|t| t.as_str());
+									if schema_type == Some("object") {
+										issues.push(
+											"Object type schema missing 'properties' field"
+												.to_string(),
+										);
+									}
+								}
+
+								if issues.is_empty() {
+									println!("  {}", "✅ Valid schema".bright_green());
+								} else {
+									all_valid = false;
+									println!("  {}", "❌ Schema issues found:".bright_red());
+									for issue in issues {
+										println!("    - {}", issue.yellow());
+									}
+								}
+							}
+
+							println!();
+							if all_valid {
+								println!("{}", "✅ All tool schemas are valid!".bright_green());
+							} else {
+								println!(
+									"{}",
+									"❌ Some tool schemas have validation issues.".bright_red()
+								);
+								println!("{}", "These issues may cause API errors with providers like Anthropic.".yellow());
+							}
+						}
+					}
 					_ => {
 						// Invalid subcommand
 						println!();
@@ -1417,8 +1537,20 @@ impl ChatSession {
 							"  {} - Check server health and attempt restart if needed",
 							"/mcp health".cyan()
 						);
+						println!(
+							"  {} - Dump raw tool definitions in JSON format",
+							"/mcp dump".cyan()
+						);
 						println!();
-						println!("{}", "Usage: /mcp [list|info|full|health]".bright_blue());
+						println!(
+							"  {} - Validate tool schema definitions",
+							"/mcp validate".cyan()
+						);
+						println!();
+						println!(
+							"{}",
+							"Usage: /mcp [list|info|full|health|dump|validate]".bright_blue()
+						);
 					}
 				}
 

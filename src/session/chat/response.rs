@@ -79,59 +79,79 @@ fn handle_final_response(
 	Ok(())
 }
 
-// Get the actual server name for a tool (instead of guessing category)
-fn get_tool_server_name(tool_name: &str, config: &Config) -> String {
-	// Create the same tool-to-server mapping logic used in tool execution
-	let available_servers: Vec<&crate::config::McpServerConfig> =
-		config.mcp.servers.iter().collect();
+// Get the actual server name for a tool (async version that matches execution)
+async fn get_tool_server_name_async(tool_name: &str, config: &Config) -> String {
+	// Use the SAME logic as execution - build the actual tool-to-server map
+	let tool_server_map = build_tool_server_map(config).await;
 
-	// Check internal servers first (same logic as in try_execute_tool_call)
-	for server in &available_servers {
-		match server.server_type {
+	if let Some(target_server) = tool_server_map.get(tool_name) {
+		target_server.name.clone()
+	} else {
+		// Fallback to category guess if no server found
+		crate::mcp::guess_tool_category(tool_name).to_string()
+	}
+}
+
+// Build a simple tool-to-server lookup map for instant routing (same as in mod.rs)
+async fn build_tool_server_map(
+	config: &Config,
+) -> std::collections::HashMap<String, crate::config::McpServerConfig> {
+	let mut tool_map = std::collections::HashMap::new();
+	let enabled_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.to_vec();
+
+	for server in enabled_servers {
+		// Get all functions this server provides
+		let server_functions = match server.server_type {
 			crate::config::McpServerType::Developer => {
-				let dev_tools = ["shell"];
-				for tool in &dev_tools {
-					if *tool == tool_name
-						&& (server.tools.is_empty() || server.tools.contains(&tool.to_string()))
-					{
-						return server.name.clone();
-					}
-				}
+				crate::mcp::get_cached_internal_functions("developer", &server.tools, || {
+					crate::mcp::dev::get_all_functions()
+				})
 			}
 			crate::config::McpServerType::Filesystem => {
-				let fs_tools = ["text_editor", "html2md", "list_files"];
-				for tool in &fs_tools {
-					if *tool == tool_name
-						&& (server.tools.is_empty() || server.tools.contains(&tool.to_string()))
-					{
-						return server.name.clone();
-					}
-				}
+				crate::mcp::get_cached_internal_functions("filesystem", &server.tools, || {
+					crate::mcp::fs::get_all_functions()
+				})
 			}
 			crate::config::McpServerType::External => {
-				// For external servers, if tools list is empty (all tools allowed) or contains this tool
-				if server.tools.is_empty() || server.tools.contains(&tool_name.to_string()) {
-					// This is likely the server that provides this tool
-					return server.name.clone();
+				// For external servers, get their actual functions
+				match crate::mcp::server::get_server_functions_cached(&server).await {
+					Ok(functions) => {
+						if server.tools.is_empty() {
+							functions // All functions allowed
+						} else {
+							functions
+								.into_iter()
+								.filter(|func| server.tools.contains(&func.name))
+								.collect()
+						}
+					}
+					Err(_) => Vec::new(), // Server not available, skip
 				}
 			}
+		};
+
+		// Map each function name to this server
+		for function in server_functions {
+			// CONFIGURATION ORDER PRIORITY: First server wins for each tool
+			tool_map
+				.entry(function.name)
+				.or_insert_with(|| server.clone());
 		}
 	}
 
-	// Fallback to the original guess_tool_category for unknown tools
-	crate::mcp::guess_tool_category(tool_name).to_string()
+	tool_map
 }
 
 // Display tool headers and parameters for all log levels (before execution)
-fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
+async fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
 	if !tool_calls.is_empty() {
 		// Always log debug info if debug enabled
 		log_debug!("Found {} tool calls in response", tool_calls.len());
 
 		// Display headers and parameters for ALL modes
 		for call in tool_calls.iter() {
-			// Always show the header
-			let server_name = get_tool_server_name(&call.tool_name, config);
+			// Always show the header - use async version for accurate server lookup
+			let server_name = get_tool_server_name_async(&call.tool_name, config).await;
 			let title = format!(
 				" {} | {} ",
 				call.tool_name.bright_cyan(),
@@ -421,7 +441,7 @@ pub async fn process_response(
 				print_assistant_response(&clean_content, config, role);
 
 				// Display tool headers and parameters for all modes (after AI response)
-				display_tool_headers(config, &current_tool_calls);
+				display_tool_headers(config, &current_tool_calls).await;
 
 				// Early exit if cancellation was requested
 				if operation_cancelled.load(Ordering::SeqCst) {

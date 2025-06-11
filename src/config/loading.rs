@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 
-use super::Config;
+use super::{Config, CustomRoleConfig};
 
 /// Check if the octocode binary is available in PATH
 fn is_octocode_available() -> bool {
@@ -29,7 +31,52 @@ fn is_octocode_available() -> bool {
 }
 
 impl Config {
-	/// Initialize the server registry and update dynamic configurations
+	/// Parse custom roles from TOML configuration string
+	/// This extracts role sections beyond 'developer' and 'assistant'
+	fn parse_custom_roles(&mut self, config_str: &str) -> Result<()> {
+		// Parse the TOML as a generic value to extract custom role sections
+		let toml_value: toml::Value = toml::from_str(config_str)
+			.context("Failed to parse TOML for custom role extraction")?;
+
+		if let Some(table) = toml_value.as_table() {
+			for (key, value) in table {
+				// Skip known top-level sections
+				if matches!(
+					key.as_str(),
+					"version"
+						| "log_level" | "model"
+						| "mcp_response_warning_threshold"
+						| "max_request_tokens_threshold"
+						| "enable_auto_truncation"
+						| "cache_tokens_threshold"
+						| "cache_timeout_seconds"
+						| "enable_markdown_rendering"
+						| "markdown_theme" | "max_session_spending_threshold"
+						| "use_long_system_cache"
+						| "developer" | "assistant"
+						| "mcp" | "commands"
+						| "layers" | "system"
+				) {
+					continue;
+				}
+
+				// This could be a custom role section
+				if let Some(_role_table) = value.as_table() {
+					// Try to parse as a custom role configuration
+					if let Ok(custom_role) = CustomRoleConfig::deserialize(value.clone()) {
+						self.custom_roles.insert(key.clone(), custom_role);
+						crate::log_debug!(
+							"Parsed custom role '{}' with server_refs: {:?}",
+							key,
+							self.custom_roles.get(key).map(|r| &r.mcp.server_refs)
+						);
+					}
+				}
+			}
+		}
+
+		Ok(())
+	}
 	fn initialize_config(&mut self) {
 		// Update octocode availability in config if it exists
 		if let Some(octocode_server) = self.mcp.servers.iter_mut().find(|s| s.name == "octocode") {
@@ -92,8 +139,13 @@ impl Config {
 		// Use the existing embedded template, but parse directly into memory
 		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
 
-		toml::from_str(DEFAULT_CONFIG_TEMPLATE)
-			.context("Failed to parse default configuration template")
+		let mut config: Config = toml::from_str(DEFAULT_CONFIG_TEMPLATE)
+			.context("Failed to parse default configuration template")?;
+
+		// Initialize custom roles HashMap for default config
+		config.custom_roles = HashMap::new();
+
+		Ok(config)
 	}
 
 	/// Load configuration from the system-wide config file with strict validation
@@ -124,6 +176,12 @@ impl Config {
 
 		// Store the config path for future saves
 		config.config_path = Some(config_path);
+
+		// Initialize custom roles HashMap
+		config.custom_roles = HashMap::new();
+
+		// Parse custom roles from the TOML string
+		config.parse_custom_roles(&config_str)?;
 
 		// Initialize the configuration
 		config.initialize_config();
@@ -183,6 +241,12 @@ impl Config {
 
 		// Store the config path for future saves
 		config.config_path = Some(path.to_path_buf());
+
+		// Initialize custom roles HashMap
+		config.custom_roles = HashMap::new();
+
+		// Parse custom roles from the TOML string
+		config.parse_custom_roles(&config_str)?;
 
 		// Initialize the configuration
 		config.initialize_config();
@@ -333,5 +397,188 @@ impl Config {
 		updater(self);
 
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_custom_role_parsing() {
+		let test_config = r#"
+version = 1
+log_level = "none"
+model = "openrouter:anthropic/claude-sonnet-4"
+mcp_response_warning_threshold = 20000
+max_request_tokens_threshold = 20000
+enable_auto_truncation = false
+cache_tokens_threshold = 2048
+cache_timeout_seconds = 240
+use_long_system_cache = true
+enable_markdown_rendering = true
+markdown_theme = "default"
+max_session_spending_threshold = 0.0
+
+[developer]
+enable_layers = true
+layer_refs = []
+
+[developer.mcp]
+server_refs = ["developer"]
+allowed_tools = []
+
+[assistant]
+enable_layers = false
+layer_refs = []
+
+[assistant.mcp]
+server_refs = ["filesystem"]
+allowed_tools = []
+
+[tester]
+enable_layers = false
+
+[tester.mcp]
+server_refs = ["octocode", "clt"]
+allowed_tools = []
+
+[mcp]
+allowed_tools = []
+servers = []
+"#;
+
+		// Parse the config
+		let mut config: Config = toml::from_str(test_config).expect("Failed to parse test config");
+		config.custom_roles = HashMap::new();
+		config
+			.parse_custom_roles(test_config)
+			.expect("Failed to parse custom roles");
+
+		// Verify custom role was parsed
+		assert_eq!(config.custom_roles.len(), 1);
+		assert!(config.custom_roles.contains_key("tester"));
+
+		let tester_role = config.custom_roles.get("tester").unwrap();
+		assert_eq!(tester_role.mcp.server_refs, vec!["octocode", "clt"]);
+		assert!(!tester_role.config.enable_layers);
+
+		// Test get_mode_config for custom role
+		let (mode_config, mcp_config, _, _, _) = config.get_mode_config("tester");
+		assert!(!mode_config.enable_layers);
+		assert_eq!(mcp_config.server_refs, vec!["octocode", "clt"]);
+
+		// Test fallback for unknown role
+		let (_, mcp_config, _, _, _) = config.get_mode_config("unknown");
+		assert_eq!(mcp_config.server_refs, vec!["filesystem"]); // Should fallback to assistant
+
+		// Test get_merged_config_for_mode for custom role
+		let merged_config = config.get_merged_config_for_mode("tester");
+		assert_eq!(merged_config.mcp.servers.len(), 0); // No actual servers in test config, but server_refs should be processed
+		                                          // The server_refs would be used to filter actual servers from the mcp.servers list
+	}
+
+	#[test]
+	fn test_custom_role_merged_config() {
+		let test_config = r#"
+version = 1
+log_level = "debug"
+model = "openrouter:anthropic/claude-sonnet-4"
+mcp_response_warning_threshold = 20000
+max_request_tokens_threshold = 20000
+enable_auto_truncation = false
+cache_tokens_threshold = 2048
+cache_timeout_seconds = 240
+use_long_system_cache = true
+enable_markdown_rendering = true
+markdown_theme = "default"
+max_session_spending_threshold = 0.0
+
+[developer]
+enable_layers = true
+layer_refs = []
+
+[developer.mcp]
+server_refs = ["developer"]
+allowed_tools = []
+
+[assistant]
+enable_layers = false
+layer_refs = []
+
+[assistant.mcp]
+server_refs = ["filesystem"]
+allowed_tools = []
+
+[tester]
+enable_layers = false
+
+[tester.mcp]
+server_refs = ["octocode", "clt"]
+allowed_tools = []
+
+[mcp]
+allowed_tools = []
+
+[[mcp.servers]]
+name = "developer"
+server_type = "developer"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
+
+[[mcp.servers]]
+name = "filesystem"
+server_type = "filesystem"
+mode = "http"
+timeout_seconds = 30
+args = []
+tools = []
+builtin = true
+
+[[mcp.servers]]
+name = "octocode"
+server_type = "external"
+command = "octocode"
+args = ["mcp", "--path=."]
+mode = "stdin"
+timeout_seconds = 30
+tools = []
+builtin = true
+
+[[mcp.servers]]
+name = "clt"
+server_type = "external"
+command = "clt"
+args = ["mcp"]
+mode = "stdin"
+timeout_seconds = 30
+tools = []
+builtin = true
+"#;
+
+		// Parse the config
+		let mut config: Config = toml::from_str(test_config).expect("Failed to parse test config");
+		config.custom_roles = HashMap::new();
+		config
+			.parse_custom_roles(test_config)
+			.expect("Failed to parse custom roles");
+
+		// Test that the merged config for tester role only includes the specified servers
+		let merged_config = config.get_merged_config_for_mode("tester");
+
+		// The merged config should only have servers that are in the tester role's server_refs
+		let server_names: Vec<&str> = merged_config
+			.mcp
+			.servers
+			.iter()
+			.map(|s| s.name.as_str())
+			.collect();
+		assert!(server_names.contains(&"octocode"));
+		assert!(server_names.contains(&"clt"));
+		assert!(!server_names.contains(&"developer")); // Should not be included
+		assert!(!server_names.contains(&"filesystem")); // Should not be included
 	}
 }

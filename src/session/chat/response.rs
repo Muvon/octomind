@@ -79,6 +79,49 @@ fn handle_final_response(
 	Ok(())
 }
 
+// Get the actual server name for a tool (instead of guessing category)
+fn get_tool_server_name(tool_name: &str, config: &Config) -> String {
+	// Create the same tool-to-server mapping logic used in tool execution
+	let available_servers: Vec<&crate::config::McpServerConfig> =
+		config.mcp.servers.iter().collect();
+
+	// Check internal servers first (same logic as in try_execute_tool_call)
+	for server in &available_servers {
+		match server.server_type {
+			crate::config::McpServerType::Developer => {
+				let dev_tools = ["shell"];
+				for tool in &dev_tools {
+					if *tool == tool_name
+						&& (server.tools.is_empty() || server.tools.contains(&tool.to_string()))
+					{
+						return server.name.clone();
+					}
+				}
+			}
+			crate::config::McpServerType::Filesystem => {
+				let fs_tools = ["text_editor", "html2md", "list_files"];
+				for tool in &fs_tools {
+					if *tool == tool_name
+						&& (server.tools.is_empty() || server.tools.contains(&tool.to_string()))
+					{
+						return server.name.clone();
+					}
+				}
+			}
+			crate::config::McpServerType::External => {
+				// For external servers, if tools list is empty (all tools allowed) or contains this tool
+				if server.tools.is_empty() || server.tools.contains(&tool_name.to_string()) {
+					// This is likely the server that provides this tool
+					return server.name.clone();
+				}
+			}
+		}
+	}
+
+	// Fallback to the original guess_tool_category for unknown tools
+	crate::mcp::guess_tool_category(tool_name).to_string()
+}
+
 // Display tool headers and parameters for all log levels (before execution)
 fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
 	if !tool_calls.is_empty() {
@@ -88,11 +131,11 @@ fn display_tool_headers(config: &Config, tool_calls: &[crate::mcp::McpToolCall])
 		// Display headers and parameters for ALL modes
 		for call in tool_calls.iter() {
 			// Always show the header
-			let category = crate::mcp::guess_tool_category(&call.tool_name);
+			let server_name = get_tool_server_name(&call.tool_name, config);
 			let title = format!(
 				" {} | {} ",
 				call.tool_name.bright_cyan(),
-				category.bright_blue()
+				server_name.bright_blue()
 			);
 			let separator_length = 70.max(title.len() + 4);
 			let dashes = "─".repeat(separator_length - title.len());

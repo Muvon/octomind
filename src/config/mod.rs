@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 // Re-export all modules
@@ -103,6 +104,11 @@ pub struct Config {
 	// Role-specific configurations
 	pub developer: DeveloperRoleConfig,
 	pub assistant: AssistantRoleConfig,
+
+	// Custom role configurations (for roles beyond developer and assistant)
+	// This will be populated during loading by parsing additional role sections
+	#[serde(skip)]
+	pub custom_roles: HashMap<String, CustomRoleConfig>,
 
 	// Global MCP configuration (fallback for roles)
 	#[serde(skip_serializing_if = "McpConfig::is_default_for_serialization")]
@@ -244,14 +250,25 @@ impl Config {
 				)
 			}
 			_ => {
-				// Unknown role - fallback to assistant
-				(
-					&self.assistant.config,
-					&self.assistant.mcp,
-					self.layers.as_ref(),
-					self.commands.as_ref(),
-					self.assistant.config.system.as_ref(),
-				)
+				// Check for custom role configuration
+				if let Some(custom_role) = self.custom_roles.get(role) {
+					(
+						&custom_role.config,
+						&custom_role.mcp,
+						self.layers.as_ref(),
+						self.commands.as_ref(),
+						custom_role.config.system.as_ref(),
+					)
+				} else {
+					// Unknown role - fallback to assistant
+					(
+						&self.assistant.config,
+						&self.assistant.mcp,
+						self.layers.as_ref(),
+						self.commands.as_ref(),
+						self.assistant.config.system.as_ref(),
+					)
+				}
 			}
 		}
 	}

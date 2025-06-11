@@ -17,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use super::mcp::RoleMcpConfig;
 
 // Mode configuration - contains all behavior settings but NOT API keys or model (uses system-wide model)
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ModeConfig {
 	// Layer configurations
+	#[serde(default)]
 	pub enable_layers: bool,
 	// Custom system prompt
 	pub system: Option<String>,
@@ -44,6 +45,18 @@ pub struct AssistantRoleConfig {
 	pub config: ModeConfig,
 	pub mcp: RoleMcpConfig,
 	// Layer references - list of layer names to use for this role
+	pub layer_refs: Vec<String>,
+}
+
+// Generic custom role configuration for roles beyond developer and assistant
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomRoleConfig {
+	#[serde(flatten)]
+	pub config: ModeConfig,
+	#[serde(default)]
+	pub mcp: RoleMcpConfig,
+	// Layer references - list of layer names to use for this role
+	#[serde(default)]
 	pub layer_refs: Vec<String>,
 }
 

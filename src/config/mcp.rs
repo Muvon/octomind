@@ -199,7 +199,7 @@ pub struct McpConfig {
 }
 
 // Role-specific MCP configuration with server_refs
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct RoleMcpConfig {
 	// Server references - list of server names from the global registry to use for this role
 	// Empty list means MCP is disabled for this role

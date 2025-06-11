@@ -278,19 +278,18 @@ fn display_tool_success(
 	session_name: &str,
 	tool_id: &str,
 ) {
-	// Show the actual tool output based on log level
+	// Show the actual tool output based on log level using MCP protocol
 	if config.get_log_level().is_info_enabled() || config.get_log_level().is_debug_enabled() {
-		if let Some(output) = res.result.get("output") {
-			if let Some(output_str) = output.as_str() {
-				if !output_str.trim().is_empty() {
-					if config.get_log_level().is_debug_enabled() {
-						// Debug mode: Show full output
-						println!("{}", output_str);
-					} else {
-						// Info mode: Show smart output (with some reasonable limits)
-						display_tool_output_smart(output_str);
-					}
-				}
+		// Extract content using MCP protocol
+		let content = crate::mcp::extract_mcp_content(&res.result);
+
+		if !content.trim().is_empty() {
+			if config.get_log_level().is_debug_enabled() {
+				// Debug mode: Show full content
+				println!("{}", content);
+			} else {
+				// Info mode: Show smart output (with some reasonable limits)
+				display_tool_output_smart(&content);
 			}
 		}
 	}

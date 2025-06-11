@@ -94,20 +94,19 @@ pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult>
 			history_guard.get(&path_str).map_or(0, |h| h.len())
 		};
 
-		Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"success": true,
-				"output": format!("Successfully undid the last edit to {}", path.to_string_lossy()),
+		Ok(McpToolResult::success_with_metadata(
+			"text_editor".to_string(),
+			call.tool_id.clone(),
+			format!(
+				"Successfully undid the last edit to {}",
+				path.to_string_lossy()
+			),
+			json!({
 				"path": path.to_string_lossy(),
 				"history_remaining": history_remaining,
-				"parameters": {
-					"command": "undo_edit",
-					"path": path.to_string_lossy()
-				}
+				"command": "undo_edit"
 			}),
-		})
+		))
 	} else {
 		Err(anyhow!("No edit history available for this file"))
 	}

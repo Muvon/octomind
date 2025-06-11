@@ -921,18 +921,11 @@ pub async fn execute_stdin_tool_call(
 		Err(e) => {
 			eprintln!("Error executing tool call '{}': {}", call.tool_name, e);
 			// Return a formatted error as the tool result rather than failing
-			return Ok(McpToolResult {
-				tool_name: call.tool_name.clone(),
-				tool_id: call.tool_id.clone(),
-				result: json!({
-					"output": {
-						"error": true,
-						"success": false,
-						"message": format!("Error executing tool: {}", e)
-					},
-					"parameters": call.parameters
-				}),
-			});
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Error executing tool: {}", e),
+			));
 		}
 	};
 
@@ -948,21 +941,18 @@ pub async fn execute_stdin_tool_call(
 			.unwrap_or("Unknown error");
 		let error_code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
 
-		let output = json!({
+		let _output = json!({
 			"error": true,
 			"success": false,
 			"message": error_message,
 			"code": error_code
 		});
 
-		return Ok(McpToolResult {
-			tool_name: call.tool_name.clone(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"output": output,
-				"parameters": call.parameters
-			}),
-		});
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("{} (code: {})", error_message, error_code),
+		));
 	}
 
 	// Extract the result
@@ -971,15 +961,12 @@ pub async fn execute_stdin_tool_call(
 		.cloned()
 		.unwrap_or(json!("No result"));
 
-	// Create tool result
-	let tool_result = McpToolResult {
-		tool_name: call.tool_name.clone(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"output": output,
-			"parameters": call.parameters
-		}),
-	};
+	// Create MCP-compliant tool result
+	let tool_result = McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()),
+	);
 
 	Ok(tool_result)
 }

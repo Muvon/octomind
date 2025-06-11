@@ -551,15 +551,12 @@ async fn execute_tool_call_internal(
 				result.get("result").cloned().unwrap_or(json!("No result"))
 			};
 
-			// Create tool result
-			let tool_result = McpToolResult {
-				tool_name: tool_name.clone(),
-				tool_id: call.tool_id.clone(),
-				result: json!({
-					"output": output,
-					"parameters": parameters
-				}),
-			};
+			// Create MCP-compliant tool result
+			let tool_result = McpToolResult::success(
+				tool_name.clone(),
+				call.tool_id.clone(),
+				serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()),
+			);
 
 			Ok(tool_result)
 		}

@@ -159,7 +159,7 @@ allowed_tools = []
 name = "developer"
 server_type = "developer"
 mode = "http"
-timeout_seconds = 30
+timeout_seconds = 240
 args = []
 tools = []
 builtin = true
@@ -168,7 +168,7 @@ builtin = true
 name = "filesystem"
 server_type = "filesystem"
 mode = "http"
-timeout_seconds = 30
+timeout_seconds = 240
 args = []
 tools = []
 builtin = true
@@ -179,7 +179,7 @@ server_type = "external"
 command = "octocode"
 args = ["mcp", "--path=."]
 mode = "stdin"
-timeout_seconds = 30
+timeout_seconds = 240
 tools = []
 builtin = true
 

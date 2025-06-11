@@ -17,7 +17,7 @@
 use crate::log_debug;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::io::Write;
 use std::sync::{Arc, RwLock};
 use uuid;
@@ -50,99 +50,114 @@ pub struct McpToolResult {
 	pub tool_id: String,
 }
 
+// MCP Protocol-compliant result creation helpers
+impl McpToolResult {
+	// Create a successful MCP result with text content
+	pub fn success(tool_name: String, tool_id: String, content: String) -> Self {
+		Self {
+			tool_name,
+			tool_id,
+			result: json!({
+				"content": [
+					{
+						"type": "text",
+						"text": content
+					}
+				],
+				"isError": false
+			}),
+		}
+	}
+
+	// Create a successful MCP result with rich content (includes metadata)
+	pub fn success_with_metadata(
+		tool_name: String,
+		tool_id: String,
+		content: String,
+		metadata: serde_json::Value,
+	) -> Self {
+		Self {
+			tool_name,
+			tool_id,
+			result: json!({
+				"content": [
+					{
+						"type": "text",
+						"text": content
+					}
+				],
+				"isError": false,
+				"metadata": metadata
+			}),
+		}
+	}
+
+	// Create an error MCP result
+	pub fn error(tool_name: String, tool_id: String, error_message: String) -> Self {
+		Self {
+			tool_name,
+			tool_id,
+			result: json!({
+				"content": [
+					{
+						"type": "text",
+						"text": error_message
+					}
+				],
+				"isError": true
+			}),
+		}
+	}
+}
+
+// Extract content from MCP-compliant result
+pub fn extract_mcp_content(result: &Value) -> String {
+	// MCP Standard: Extract from content array
+	if let Some(content_array) = result.get("content") {
+		if let Some(content_items) = content_array.as_array() {
+			let main_content = content_items
+				.iter()
+				.filter_map(|item| {
+					if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+						item.get("text").and_then(|t| t.as_str())
+					} else {
+						None
+					}
+				})
+				.collect::<Vec<_>>()
+				.join("\n");
+
+			// For debug mode, also include metadata if available
+			if let Some(metadata) = result.get("metadata") {
+				if !metadata.is_null() {
+					return format!(
+						"{}\n\n[Metadata: {}]",
+						main_content,
+						serde_json::to_string_pretty(metadata).unwrap_or_default()
+					);
+				}
+			}
+
+			return main_content;
+		}
+	}
+
+	// Fallback: Check for old "output" field for backward compatibility
+	if let Some(output) = result.get("output") {
+		if let Some(output_str) = output.as_str() {
+			return output_str.to_string();
+		}
+	}
+
+	// Last resort: serialize the whole result for debugging
+	serde_json::to_string_pretty(result).unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpFunction {
 	pub name: String,
 	pub description: String,
 	pub parameters: Value,
-}
-
-// Format tool results to be shown to the user
-pub fn format_tool_results(results: &[McpToolResult]) -> String {
-	use colored::*;
-
-	let mut output = String::new();
-
-	for result in results {
-		// Determine the category of the tool
-		let category = guess_tool_category(&result.tool_name);
-
-		// Create a horizontal separator with tool name and category
-		let title = format!(
-			" {} | {} ",
-			result.tool_name.bright_cyan(),
-			category.bright_blue()
-		);
-
-		let separator_length = 70.max(title.len() + 4);
-		let dashes = "─".repeat(separator_length - title.len());
-
-		// Format the separator with colors
-		let separator = format!("──{}{}────", title, dashes.dimmed());
-
-		output.push_str(&separator);
-		output.push('\n');
-
-		// Format the parameters if available and in debug mode
-		if let Some(params) = result.result.get("parameters") {
-			// Only show parameters in a very condensed format
-			if let Some(params_obj) = params.as_object() {
-				let mut param_parts = Vec::new();
-				for (key, value) in params_obj {
-					let value_str = if value.is_string() {
-						value.as_str().unwrap_or("").to_string()
-					} else {
-						value.to_string()
-					};
-
-					// Show very short parameter summary
-					let displayed_value = if value_str.len() > 30 {
-						format!("{:.27}...", value_str)
-					} else {
-						value_str
-					};
-					param_parts.push(format!(
-						"{}: {}",
-						key.bright_black(),
-						displayed_value.bright_black()
-					));
-				}
-
-				if !param_parts.is_empty() && param_parts.join(", ").len() < 60 {
-					output.push_str(&format!("{}\n", param_parts.join(", ")));
-				}
-			}
-		}
-
-		// Format the main output content
-		let result_output = if let Some(output_value) = result.result.get("output") {
-			if output_value.is_string() {
-				output_value.as_str().unwrap_or("").to_string()
-			} else {
-				output_value.to_string().replace("\\n", "\n")
-			}
-		} else {
-			result.result.to_string().replace("\\n", "\n")
-		};
-
-		// Check if there's an error
-		let is_error = if let Some(success) = result.result.get("success") {
-			!success.as_bool().unwrap_or(true)
-		} else {
-			false
-		};
-
-		// Print the output content
-		if is_error {
-			output.push_str(&result_output.bright_red());
-		} else {
-			output.push_str(&result_output);
-		}
-
-		output.push('\n');
-	}
-
-	output
 }
 
 // Guess the category of a tool based on its name

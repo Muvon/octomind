@@ -112,6 +112,18 @@ async fn build_tool_server_map(
 					crate::mcp::fs::get_all_functions()
 				})
 			}
+			crate::config::McpServerType::Agent => {
+				// For agent server, get all agent functions based on config
+				let server_functions = crate::mcp::agent::get_all_functions(config);
+				if server.tools.is_empty() {
+					server_functions
+				} else {
+					server_functions
+						.into_iter()
+						.filter(|f| server.tools.contains(&f.name))
+						.collect()
+				}
+			}
 			crate::config::McpServerType::External => {
 				// For external servers, get their actual functions
 				match crate::mcp::server::get_server_functions_cached(&server).await {

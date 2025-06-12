@@ -276,7 +276,9 @@ pub fn clear_all_function_cache() {
 // Takes server config to properly handle internal vs external servers
 pub fn is_server_already_running_with_config(server: &crate::config::McpServerConfig) -> bool {
 	match server.server_type {
-		crate::config::McpServerType::Developer | crate::config::McpServerType::Filesystem => {
+		crate::config::McpServerType::Developer
+		| crate::config::McpServerType::Filesystem
+		| crate::config::McpServerType::Agent => {
 			// Internal servers are always considered running since they're built-in
 			{
 				let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();

@@ -965,7 +965,8 @@ impl ChatSession {
 						for server in &mode_config.mcp.servers {
 							let (health, restart_info) = match server.server_type {
 								crate::config::McpServerType::Developer
-								| crate::config::McpServerType::Filesystem => {
+								| crate::config::McpServerType::Filesystem
+								| crate::config::McpServerType::Agent => {
 									// Internal servers are always running
 									(
 										crate::mcp::process::ServerHealth::Running,
@@ -1095,7 +1096,8 @@ impl ChatSession {
 						for server in &mode_config.mcp.servers {
 							let (health, restart_info) = match server.server_type {
 								crate::config::McpServerType::Developer
-								| crate::config::McpServerType::Filesystem => {
+								| crate::config::McpServerType::Filesystem
+								| crate::config::McpServerType::Agent => {
 									// Internal servers are always running
 									(
 										crate::mcp::process::ServerHealth::Running,

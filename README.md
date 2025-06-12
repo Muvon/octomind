@@ -49,6 +49,9 @@ Instead of complex command-line tools, simply talk to Octomind:
 > "Why is the build failing?"
 [AI checks build errors, analyzes code, suggests fixes]
 
+> agent(name="code_reviewer", task="Review this function for performance issues")
+[Routes task to specialized code review AI agent with development tools]
+
 > /report
 [Shows: $0.02 spent, 3 requests, 5 tool calls, timing analysis]
 ```

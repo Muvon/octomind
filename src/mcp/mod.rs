@@ -28,6 +28,7 @@ lazy_static::lazy_static! {
 		Arc::new(RwLock::new(std::collections::HashMap::new()));
 }
 
+pub mod agent;
 pub mod dev;
 pub mod fs;
 pub mod health_monitor;
@@ -332,6 +333,20 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 					});
 				functions.extend(server_functions);
 			}
+			crate::config::McpServerType::Agent => {
+				// For agent server, get all agent functions based on config
+				// Don't cache agent functions since they depend on config
+				let server_functions = agent::get_all_functions(config);
+				let filtered_functions = if server.tools.is_empty() {
+					server_functions
+				} else {
+					server_functions
+						.into_iter()
+						.filter(|f| server.tools.contains(&f.name))
+						.collect()
+				};
+				functions.extend(filtered_functions);
+			}
 			crate::config::McpServerType::External => {
 				// CRITICAL FIX: For external servers, use cached function discovery
 				// This avoids spawning servers during system prompt creation
@@ -475,6 +490,7 @@ async fn build_tool_server_map(
 		// Get all functions this server provides
 		let server_functions = match server.server_type {
 			crate::config::McpServerType::Developer => {
+				// Developer server only has shell and other dev tools (agent moved to separate server)
 				get_cached_internal_functions("developer", &server.tools, || {
 					dev::get_all_functions()
 				})
@@ -483,6 +499,19 @@ async fn build_tool_server_map(
 				get_cached_internal_functions("filesystem", &server.tools, || {
 					fs::get_all_functions()
 				})
+			}
+			crate::config::McpServerType::Agent => {
+				// For agent server, get all agent functions based on config
+				// Don't cache agent functions since they depend on config
+				let server_functions = agent::get_all_functions(config);
+				if server.tools.is_empty() {
+					server_functions
+				} else {
+					server_functions
+						.into_iter()
+						.filter(|f| server.tools.contains(&f.name))
+						.collect()
+				}
 			}
 			crate::config::McpServerType::External => {
 				// For external servers, get their actual functions
@@ -611,6 +640,26 @@ async fn try_execute_tool_call(
 					));
 				}
 			},
+			crate::config::McpServerType::Agent => {
+				// Handle any agent tool (agent_<name>)
+				if call.tool_name.starts_with("agent_") {
+					crate::log_debug!(
+						"Executing agent command '{}' via agent server '{}'",
+						call.tool_name,
+						target_server.name
+					);
+					let mut result =
+						agent::execute_agent_command(call, config, cancellation_token.clone())
+							.await?;
+					result.tool_id = call.tool_id.clone();
+					return Ok(result);
+				} else {
+					return Err(anyhow::anyhow!(
+						"Tool '{}' not implemented in agent server",
+						call.tool_name
+					));
+				}
+			}
 			crate::config::McpServerType::External => {
 				// Execute on external server
 				match server::execute_tool_call(call, target_server, cancellation_token.clone())

@@ -14,12 +14,84 @@ MCP enables AI models to use external tools and services through a standardized 
 
 #### Developer Tools (server_type: "developer")
 - **shell**: Execute terminal commands and development scripts
+- **agent**: Route tasks to configured AI layers for specialized processing
 - **Code analysis**: Built-in code understanding and project analysis
 
 #### Filesystem Tools (server_type: "filesystem")
 - **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many, batch_edit)
 - **list_files**: Browse directory structures with pattern matching and content search
 - **html2md**: Convert HTML content to Markdown format
+
+### Agent Tool Reference
+
+The `agent` tool enables task delegation to specialized AI layers configured in your system. This allows you to create and use domain-specific AI agents for different types of work.
+
+#### Usage
+
+```json
+{"name": "layer_name", "task": "Task description in human language"}
+```
+
+**Parameters:**
+- `name` (string, required): Name of the configured layer to use as an agent
+- `task` (string, required): Task description in human language
+
+#### Examples
+
+**Code Review Agent:**
+```json
+{"name": "code_reviewer", "task": "Review this function for performance issues and suggest improvements"}
+```
+
+**Documentation Agent:**
+```json
+{"name": "docs_writer", "task": "Write comprehensive documentation for this API endpoint"}
+```
+
+**Bug Hunting Agent:**
+```json
+{"name": "bug_hunter", "task": "Help me debug this error: Cannot find module 'express'"}
+```
+
+#### Configuration
+
+To use the agent tool, you need to configure layers in your `config.toml`:
+
+```toml
+# Configure agent tool description
+agent_description = "Execute tasks using configured AI layers. Specify the layer name and task description to route work to specialized AI agents."
+
+# Example agent layers
+[[layers]]
+name = "code_reviewer"
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices."
+temperature = 0.1
+input_mode = "Last"
+
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "list_files"]
+
+[[layers]]
+name = "docs_writer"
+model = "openrouter:openai/gpt-4o"
+system_prompt = "You are a technical documentation specialist. Write clear, comprehensive documentation."
+temperature = 0.2
+input_mode = "Last"
+
+[layers.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["text_editor"]
+```
+
+#### Key Features
+
+- **Layer Integration**: Uses the full layer system (models, prompts, MCP tools)
+- **Configurable**: Custom agent description and specialized layers
+- **Flexible**: Any configured layer can be used as an agent
+- **Simple**: Just specify the layer name and task description
+- **Powerful**: Agents can use MCP tools for complex workflows
 
 ### Text Editor Tool Reference
 

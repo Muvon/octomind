@@ -156,16 +156,22 @@ impl Layer for LayerProcessor {
 						continue;
 					}
 
-					let result =
-						match crate::mcp::execute_layer_tool_call(tool_call, config, &self.config)
-							.await
-						{
-							Ok((res, _tool_time_ms)) => res, // Extract result from tuple
-							Err(e) => {
-								println!("{} {}", "Tool execution error:".red(), e);
-								continue;
-							}
-						};
+					// Create a layer-specific config that only includes this layer's MCP servers
+					let layer_config = self.config.get_merged_config_for_layer(config);
+
+					let result = match crate::mcp::execute_layer_tool_call(
+						tool_call,
+						&layer_config,
+						&self.config,
+					)
+					.await
+					{
+						Ok((res, _tool_time_ms)) => res, // Extract result from tuple
+						Err(e) => {
+							println!("{} {}", "Tool execution error:".red(), e);
+							continue;
+						}
+					};
 
 					// Add result to collection
 					tool_results.push(result);

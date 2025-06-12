@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // Tool execution module - handles parallel tool execution, display, and error handling
+// Unified interface for both main sessions and layers
 
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
@@ -23,7 +24,110 @@ use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-// Execute all tool calls in parallel and collect results
+/// Context for tool execution - can be either main session or layer context
+pub enum ToolExecutionContext<'a> {
+	/// Main session context with full session access
+	MainSession {
+		chat_session: &'a mut ChatSession,
+		tool_processor: &'a mut ToolProcessor,
+	},
+	/// Layer context with layer-specific configuration
+	Layer {
+		session_name: String,
+		layer_config: &'a crate::session::layers::LayerConfig,
+		layer_name: String,
+	},
+}
+
+impl ToolExecutionContext<'_> {
+	/// Get session name for logging
+	pub fn session_name(&self) -> &str {
+		match self {
+			ToolExecutionContext::MainSession { chat_session, .. } => {
+				&chat_session.session.info.name
+			}
+			ToolExecutionContext::Layer { session_name, .. } => session_name,
+		}
+	}
+
+	/// Check if tool is allowed in this context
+	pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+		match self {
+			ToolExecutionContext::MainSession { .. } => true, // Main session allows all tools
+			ToolExecutionContext::Layer { layer_config, .. } => {
+				layer_config.mcp.allowed_tools.is_empty()
+					|| layer_config
+						.mcp
+						.allowed_tools
+						.contains(&tool_name.to_string())
+			}
+		}
+	}
+
+	/// Get error tracker (if available)
+	pub fn error_tracker(
+		&mut self,
+	) -> Option<&mut crate::session::chat::tool_error_tracker::ToolErrorTracker> {
+		match self {
+			ToolExecutionContext::MainSession { tool_processor, .. } => {
+				Some(&mut tool_processor.error_tracker)
+			}
+			ToolExecutionContext::Layer { .. } => None, // Layers don't have error tracking yet
+		}
+	}
+
+	/// Increment tool call counter
+	pub fn increment_tool_calls(&mut self) {
+		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
+			chat_session.session.info.tool_calls += 1;
+		}
+	}
+
+	/// Handle declined output by removing tool call from conversation
+	pub fn handle_declined_output(&mut self, tool_id: &str) {
+		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
+			handle_declined_output_internal(tool_id, chat_session);
+		}
+		// For layers, we don't need to modify conversation history
+	}
+}
+
+/// Execute all tool calls in parallel and collect results - unified interface
+pub async fn execute_tools_parallel_unified(
+	current_tool_calls: Vec<crate::mcp::McpToolCall>,
+	context: &mut ToolExecutionContext<'_>,
+	config: &Config,
+	operation_cancelled: Option<Arc<AtomicBool>>,
+) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
+	let operation_cancelled =
+		operation_cancelled.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+
+	// Filter tools based on context permissions
+	let allowed_tool_calls: Vec<_> = current_tool_calls
+		.into_iter()
+		.filter(|tool_call| {
+			if context.is_tool_allowed(&tool_call.tool_name) {
+				true
+			} else {
+				println!(
+					"{} {} {}",
+					"Tool".red(),
+					tool_call.tool_name,
+					"not allowed in this context".red()
+				);
+				false
+			}
+		})
+		.collect();
+
+	if allowed_tool_calls.is_empty() {
+		return Ok((Vec::new(), 0));
+	}
+
+	execute_tools_parallel_internal(allowed_tool_calls, context, config, operation_cancelled).await
+}
+
+// Execute all tool calls in parallel and collect results (legacy interface for main session)
 pub async fn execute_tools_parallel(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	chat_session: &mut ChatSession,
@@ -31,11 +135,32 @@ pub async fn execute_tools_parallel(
 	tool_processor: &mut ToolProcessor,
 	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
+	let mut context = ToolExecutionContext::MainSession {
+		chat_session,
+		tool_processor,
+	};
+
+	execute_tools_parallel_unified(
+		current_tool_calls,
+		&mut context,
+		config,
+		Some(operation_cancelled),
+	)
+	.await
+}
+
+// Internal implementation that works with the unified context
+async fn execute_tools_parallel_internal(
+	current_tool_calls: Vec<crate::mcp::McpToolCall>,
+	context: &mut ToolExecutionContext<'_>,
+	config: &Config,
+	operation_cancelled: Arc<AtomicBool>,
+) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
 
 	for tool_call in current_tool_calls.clone() {
 		// Increment tool call counter
-		chat_session.session.info.tool_calls += 1;
+		context.increment_tool_calls();
 
 		// CRITICAL FIX: Use the EXACT tool_id from the original API response
 		// Don't generate a new UUID - use the one from the original tool_calls
@@ -50,7 +175,7 @@ pub async fn execute_tools_parallel(
 
 		// Log the tool request with the session name and ORIGINAL tool_id
 		let _ = crate::session::logger::log_tool_call(
-			&chat_session.session.info.name,
+			context.session_name(),
 			&tool_name,
 			&original_tool_id,
 			&params_clone,
@@ -59,13 +184,37 @@ pub async fn execute_tools_parallel(
 		let tool_id_for_task = original_tool_id.clone();
 		let tool_call_clone = tool_call.clone(); // Clone for async move
 		let cancel_token_for_task = operation_cancelled.clone(); // Pass cancellation token
-		let task = tokio::spawn(async move {
-			let mut call_with_id = tool_call_clone.clone();
-			// CRITICAL: Use the original tool_id, don't change it
-			call_with_id.tool_id = tool_id_for_task.clone();
-			crate::mcp::execute_tool_call(&call_with_id, &config_clone, Some(cancel_token_for_task))
-				.await
-		});
+
+		// Create the appropriate execution task based on context
+		let task = match context {
+			ToolExecutionContext::MainSession { .. } => {
+				tokio::spawn(async move {
+					let mut call_with_id = tool_call_clone.clone();
+					// CRITICAL: Use the original tool_id, don't change it
+					call_with_id.tool_id = tool_id_for_task.clone();
+					crate::mcp::execute_tool_call(
+						&call_with_id,
+						&config_clone,
+						Some(cancel_token_for_task),
+					)
+					.await
+				})
+			}
+			ToolExecutionContext::Layer { layer_config, .. } => {
+				let layer_config_clone = layer_config.clone();
+				tokio::spawn(async move {
+					let mut call_with_id = tool_call_clone.clone();
+					// CRITICAL: Use the original tool_id, don't change it
+					call_with_id.tool_id = tool_id_for_task.clone();
+					crate::mcp::execute_layer_tool_call(
+						&call_with_id,
+						&config_clone,
+						&layer_config_clone,
+					)
+					.await
+				})
+			}
+		};
 
 		tool_tasks.push((tool_name, task, original_tool_id));
 	}
@@ -161,8 +310,10 @@ pub async fn execute_tools_parallel(
 		match task.await {
 			Ok(result) => match result {
 				Ok((res, tool_time_ms)) => {
-					// Tool succeeded, reset the error counter
-					tool_processor.error_tracker.record_success(&tool_name);
+					// Tool succeeded, reset the error counter (if available)
+					if let Some(error_tracker) = context.error_tracker() {
+						error_tracker.record_success(&tool_name);
+					}
 
 					// Display the complete tool execution with consolidated info
 					display_tool_success(
@@ -171,7 +322,7 @@ pub async fn execute_tools_parallel(
 						&tool_name,
 						tool_time_ms,
 						config,
-						&chat_session.session.info.name,
+						context.session_name(),
 						&tool_id,
 					);
 
@@ -184,54 +335,74 @@ pub async fn execute_tools_parallel(
 
 					// Check if this is a user-declined large output error
 					if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
-						handle_declined_output(&tool_name, &tool_id, chat_session);
+						context.handle_declined_output(&tool_id);
 						continue;
 					}
 
 					// Display error in consolidated format for other errors
 					display_tool_error(&stored_tool_call, &tool_name, &e);
 
-					// Track errors for this tool
-					let loop_detected = tool_processor.error_tracker.record_error(&tool_name);
+					// Track errors for this tool (if error tracking is available)
+					let loop_detected = if let Some(error_tracker) = context.error_tracker() {
+						error_tracker.record_error(&tool_name)
+					} else {
+						false
+					};
 
 					if loop_detected {
 						// Always show loop detection warning since it's critical
-						println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
-							tool_name, tool_processor.error_tracker.max_consecutive_errors()).bright_yellow());
+						if let Some(error_tracker) = context.error_tracker() {
+							println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
+								tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
 
-						// Add a detailed error result for loop detection
-						let loop_error_result = crate::mcp::McpToolResult {
-							tool_name: tool_name.clone(),
-							tool_id: tool_id.clone(),
-							result: serde_json::json!({
-								"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, tool_processor.error_tracker.max_consecutive_errors(), e),
-								"tool_name": tool_name,
-								"consecutive_failures": tool_processor.error_tracker.max_consecutive_errors(),
-								"loop_detected": true,
-								"suggestion": "Try a different tool or approach, or ask user for clarification"
-							}),
-						};
-						tool_results.push(loop_error_result);
+							// Add a detailed error result for loop detection
+							let loop_error_result = crate::mcp::McpToolResult {
+								tool_name: tool_name.clone(),
+								tool_id: tool_id.clone(),
+								result: serde_json::json!({
+									"error": format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, error_tracker.max_consecutive_errors(), e),
+									"tool_name": tool_name,
+									"consecutive_failures": error_tracker.max_consecutive_errors(),
+									"loop_detected": true,
+									"suggestion": "Try a different tool or approach, or ask user for clarification"
+								}),
+							};
+							tool_results.push(loop_error_result);
+						}
 					} else {
 						// Regular error - add normal error result
-						let error_result = crate::mcp::McpToolResult {
-							tool_name: tool_name.clone(),
-							tool_id: tool_id.clone(),
-							result: serde_json::json!({
-								"error": format!("Tool execution failed: {}", e),
-								"tool_name": tool_name,
-								"attempt": tool_processor.error_tracker.get_error_count(&tool_name),
-								"max_attempts": tool_processor.error_tracker.max_consecutive_errors()
-							}),
+						let error_result = if let Some(error_tracker) = context.error_tracker() {
+							crate::mcp::McpToolResult {
+								tool_name: tool_name.clone(),
+								tool_id: tool_id.clone(),
+								result: serde_json::json!({
+									"error": format!("Tool execution failed: {}", e),
+									"tool_name": tool_name,
+									"attempt": error_tracker.get_error_count(&tool_name),
+									"max_attempts": error_tracker.max_consecutive_errors()
+								}),
+							}
+						} else {
+							// For layers without error tracking
+							crate::mcp::McpToolResult {
+								tool_name: tool_name.clone(),
+								tool_id: tool_id.clone(),
+								result: serde_json::json!({
+									"error": format!("Tool execution failed: {}", e),
+									"tool_name": tool_name,
+								}),
+							}
 						};
 						tool_results.push(error_result);
 
-						log_info!(
-							"Tool '{}' failed {} of {} times. Adding error to context.",
-							tool_name,
-							tool_processor.error_tracker.get_error_count(&tool_name),
-							tool_processor.error_tracker.max_consecutive_errors()
-						);
+						if let Some(error_tracker) = context.error_tracker() {
+							log_info!(
+								"Tool '{}' failed {} of {} times. Adding error to context.",
+								tool_name,
+								error_tracker.get_error_count(&tool_name),
+								error_tracker.max_consecutive_errors()
+							);
+						}
 					}
 				}
 			},
@@ -240,7 +411,7 @@ pub async fn execute_tools_parallel(
 
 				// Check if this is a user-declined large output error (can occur at task level too)
 				if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
-					handle_declined_output_task(&tool_name, &tool_id, chat_session);
+					context.handle_declined_output(&tool_id);
 					continue;
 				}
 
@@ -349,12 +520,9 @@ fn display_tool_error(
 	println!("✗ Tool '{}' failed: {}", tool_name, error);
 }
 
-// Handle user-declined large output
-fn handle_declined_output(tool_name: &str, tool_id: &str, chat_session: &mut ChatSession) {
-	println!(
-		"⚠ Tool '{}' output declined by user - removing tool call from conversation",
-		tool_name
-	);
+// Handle user-declined large output (internal implementation)
+fn handle_declined_output_internal(tool_id: &str, chat_session: &mut ChatSession) {
+	println!("⚠ Tool output declined by user - removing tool call from conversation");
 
 	// CRITICAL FIX: Remove the tool_use block from the assistant message
 	// to prevent "tool_use ids found without tool_result blocks" error
@@ -389,42 +557,20 @@ fn handle_declined_output(tool_name: &str, tool_id: &str, chat_session: &mut Cha
 	}
 }
 
-// Handle user-declined large output at task level
-fn handle_declined_output_task(tool_name: &str, tool_id: &str, chat_session: &mut ChatSession) {
-	println!(
-		"⚠ Tool '{}' task output declined by user - removing tool call from conversation",
-		tool_name
-	);
+/// Execute tool calls for layers using the unified parallel execution logic
+pub async fn execute_layer_tool_calls_parallel(
+	tool_calls: Vec<crate::mcp::McpToolCall>,
+	session_name: String,
+	layer_config: &crate::session::layers::LayerConfig,
+	layer_name: String,
+	config: &Config,
+	operation_cancelled: Option<Arc<AtomicBool>>,
+) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
+	let mut context = ToolExecutionContext::Layer {
+		session_name,
+		layer_config,
+		layer_name,
+	};
 
-	// CRITICAL FIX: Remove the tool_use block from the assistant message
-	// to prevent "tool_use ids found without tool_result blocks" error
-	if let Some(last_msg) = chat_session.session.messages.last_mut() {
-		if last_msg.role == "assistant" {
-			if let Some(tool_calls_value) = &last_msg.tool_calls {
-				// Parse the tool_calls and remove the declined one
-				if let Ok(mut tool_calls_array) =
-					serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
-				{
-					// Remove the tool call with matching ID
-					tool_calls_array
-						.retain(|tc| tc.get("id").and_then(|id| id.as_str()) != Some(tool_id));
-
-					// Update the assistant message
-					if tool_calls_array.is_empty() {
-						// No more tool calls, remove the tool_calls field entirely
-						last_msg.tool_calls = None;
-						log_debug!("Removed all tool calls from assistant message after user declined large task output");
-					} else {
-						// Update with remaining tool calls
-						last_msg.tool_calls =
-							Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
-						log_debug!(
-							"Removed declined tool call '{}' from assistant message (task error)",
-							tool_id
-						);
-					}
-				}
-			}
-		}
-	}
+	execute_tools_parallel_unified(tool_calls, &mut context, config, operation_cancelled).await
 }

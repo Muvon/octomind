@@ -25,7 +25,7 @@ mod input;
 mod layered_response;
 pub mod markdown;
 mod message_handler;
-mod response;
+pub mod response;
 pub mod session;
 mod syntax;
 mod tool_error_tracker;

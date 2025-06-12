@@ -80,49 +80,22 @@ impl GenericLayer {
 		messages
 	}
 
-	/// Execute MCP tool calls for this layer using its own MCP configuration
+	/// Execute MCP tool calls for this layer using the unified parallel execution logic
 	async fn execute_layer_tool_calls(
 		&self,
 		tool_calls: &[crate::mcp::McpToolCall],
 		config: &Config,
 	) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
-		let mut results = Vec::new();
-		let mut total_tool_time_ms = 0;
-
-		for tool_call in tool_calls {
-			println!("{} {}", "Tool call:".yellow(), tool_call.tool_name);
-
-			// Check if this tool is allowed for this layer
-			if !self.config.mcp.allowed_tools.is_empty()
-				&& !self.config.mcp.allowed_tools.contains(&tool_call.tool_name)
-			{
-				println!(
-					"{} {} {}",
-					"Tool".red(),
-					tool_call.tool_name,
-					"not allowed for this layer".red()
-				);
-				continue;
-			}
-
-			// Create a layer-specific config that only includes this layer's MCP servers
-			let layer_config = self.config.get_merged_config_for_layer(config);
-
-			// Execute the tool call using the layer-specific configuration
-			match crate::mcp::execute_layer_tool_call(tool_call, &layer_config, &self.config).await
-			{
-				Ok((result, tool_time_ms)) => {
-					results.push(result);
-					total_tool_time_ms += tool_time_ms;
-				}
-				Err(e) => {
-					println!("{} {}", "Tool execution error:".red(), e);
-					continue;
-				}
-			}
-		}
-
-		Ok((results, total_tool_time_ms))
+		// Use the unified parallel tool execution logic
+		crate::session::chat::response::tool_execution::execute_layer_tool_calls_parallel(
+			tool_calls.to_vec(),
+			format!("layer_{}", self.config.name), // Generate session name for layer
+			&self.config,                          // Pass the layer config
+			self.config.name.clone(),
+			config, // Pass the main config
+			None,   // No cancellation support for layers yet
+		)
+		.await
 	}
 }
 

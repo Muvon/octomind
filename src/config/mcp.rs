@@ -22,6 +22,8 @@ pub enum McpServerType {
 	Developer, // Built-in developer tools
 	#[serde(rename = "filesystem")]
 	Filesystem, // Built-in filesystem tools
+	#[serde(rename = "agent")]
+	Agent, // Built-in agent tool
 }
 
 // Keep Default for runtime usage only (not config defaults)
@@ -82,6 +84,7 @@ impl McpServerConfig {
 		let server_type = match name {
 			"developer" => McpServerType::Developer,
 			"filesystem" => McpServerType::Filesystem,
+			"agent" => McpServerType::Agent,
 			_ => McpServerType::External,
 		};
 
@@ -128,6 +131,22 @@ impl McpServerConfig {
 			timeout_seconds: 30,
 			tools,
 			builtin: true, // Filesystem servers are builtin
+		}
+	}
+
+	/// Create an agent server configuration
+	pub fn agent(name: &str, tools: Vec<String>) -> Self {
+		Self {
+			name: name.to_string(),
+			server_type: McpServerType::Agent,
+			url: None,
+			auth_token: None,
+			command: None,
+			args: Vec::new(),
+			mode: McpServerMode::Http,
+			timeout_seconds: 30,
+			tools,
+			builtin: true, // Agent servers are builtin
 		}
 	}
 

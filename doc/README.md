@@ -18,6 +18,7 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ### 🚀 Advanced Features
 - **[06-advanced.md](./06-advanced.md)** - MCP tools, layered architecture, and extensibility
+- **[08-mcp-server-development.md](./08-mcp-server-development.md)** - Guide for adding new built-in MCP servers
 
 ## Recent Updates
 

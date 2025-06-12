@@ -35,6 +35,16 @@ pub use mcp::*;
 pub use providers::*;
 pub use roles::*;
 
+// Agent configuration
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct AgentConfig {
+	// Layer name to route to (must match a layer name in config)
+	pub name: String,
+
+	// Tool description for this specific agent
+	pub description: String,
+}
+
 // Current config version - increment when making breaking changes
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
 
@@ -98,6 +108,10 @@ pub struct Config {
 
 	// Use long-term (1h) caching for system messages (strict: must be in config)
 	pub use_long_system_cache: bool,
+
+	// Agent configurations - array of agent definitions
+	#[serde(default)]
+	pub agents: Vec<AgentConfig>,
 
 	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 
@@ -285,13 +299,9 @@ impl Config {
 			allowed_tools: role_mcp_config.allowed_tools.clone(),
 		};
 
-		// For backward compatibility, convert role layers to legacy format
-		let enabled_layers = self.get_enabled_layers_for_role(mode);
-		merged.layers = if enabled_layers.is_empty() {
-			None
-		} else {
-			Some(enabled_layers)
-		};
+		// Role-specific layers (only enabled via layer_refs) - NOT USED ANYWHERE
+		// Keep merged.layers as original registry for agent tools
+		// let enabled_layers = self.get_enabled_layers_for_role(mode);
 
 		merged.commands = commands.cloned();
 		merged.system = system_prompt.cloned();

@@ -49,6 +49,25 @@ cache_timeout_seconds = 240
 use_long_system_cache = true
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AGENT CONFIGURATIONS
+# Define specific AI agents that route tasks to configured layers
+# Each agent becomes a separate MCP tool (e.g., agent_code_reviewer, agent_debugger)
+# name = name in defined layers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# [[agents]]
+# name = "code_reviewer"
+# description = "Review code for performance, security, and best practices issues. Analyzes code quality and suggests improvements."
+
+# [[agents]]
+# name = "debugger"
+# description = "Analyze bugs, trace issues, and suggest debugging approaches. Helps identify root causes and solutions."
+
+# [[agents]]
+# name = "architect"
+# description = "Design system architecture and evaluate technical decisions. Provides high-level design guidance."
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # USER INTERFACE
 # Configure how Octomind displays information
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -161,20 +180,26 @@ allowed_tools = []
 [[mcp.servers]]
 name = "developer"
 server_type = "developer"
-mode = "http"
-timeout_seconds = 240
+timeout_seconds = 30
 args = []
+mode = "http"
 tools = []
-builtin = true
+
+[[mcp.servers]]
+name = "agent"
+server_type = "agent"
+timeout_seconds = 30
+args = []
+mode = "http"
+tools = []
 
 [[mcp.servers]]
 name = "filesystem"
 server_type = "filesystem"
-mode = "http"
-timeout_seconds = 240
+timeout_seconds = 30
 args = []
+mode = "http"
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "octocode"
@@ -326,6 +351,48 @@ allowed_tools = []
 #
 # [layers.parameters]
 # analysis_type = "detailed"
+
+# Example agent layers (use with agent tool):
+# [[layers]]
+# name = "code_reviewer"
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices. Provide detailed feedback with specific suggestions for improvement."
+# temperature = 0.1
+# input_mode = "Last"
+# builtin = false
+#
+# [layers.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = ["text_editor", "list_files"]
+#
+# [[layers]]
+# name = "docs_writer"
+# model = "openrouter:openai/gpt-4o"
+# system_prompt = "You are a technical documentation specialist. Write clear, comprehensive documentation that is easy to understand and follow. Include examples and best practices."
+# temperature = 0.2
+# input_mode = "Last"
+# builtin = false
+#
+# [layers.mcp]
+# server_refs = ["filesystem"]
+# allowed_tools = ["text_editor", "list_files"]
+#
+# [[layers]]
+# name = "bug_hunter"
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
+# temperature = 0.1
+# input_mode = "Last"
+# builtin = false
+#
+# [layers.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = []
+#
+# Usage examples:
+# - agent(name="code_reviewer", task="Review this function for performance issues")
+# - agent(name="docs_writer", task="Write documentation for this API endpoint")
+# - agent(name="bug_hunter", task="Help me debug this error message")
 
 # Example custom command configuration:
 # [[commands]]

@@ -420,6 +420,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				let effective_type = match name.as_str() {
 					"developer" => McpServerType::Developer,
 					"filesystem" => McpServerType::Filesystem,
+					"agent" => McpServerType::Agent,
 					_ => McpServerType::External,
 				};
 
@@ -429,6 +430,9 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					}
 					McpServerType::Filesystem => {
 						println!("  - {} (built-in filesystem tools) - available", name)
+					}
+					McpServerType::Agent => {
+						println!("  - {} (built-in agent tool) - available", name)
 					}
 					McpServerType::External => {
 						if name == "octocode" {
@@ -733,6 +737,7 @@ fn show_mcp_servers(servers: &Vec<McpServerConfig>) {
 		let effective_type = match name.as_str() {
 			"developer" => McpServerType::Developer,
 			"filesystem" => McpServerType::Filesystem,
+			"agent" => McpServerType::Agent,
 			_ => McpServerType::External,
 		};
 
@@ -742,6 +747,9 @@ fn show_mcp_servers(servers: &Vec<McpServerConfig>) {
 			}
 			McpServerType::Filesystem => {
 				println!("      📂 {} (built-in filesystem tools)", name);
+			}
+			McpServerType::Agent => {
+				println!("      🤖 {} (built-in agent tool)", name);
 			}
 			McpServerType::External => {
 				if name == "octocode" {

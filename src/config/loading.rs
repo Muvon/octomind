@@ -369,18 +369,21 @@ max_session_spending_threshold = 0.0
 [[roles]]
 name = "developer"
 enable_layers = true
+temperature = 0.7
 layer_refs = []
 mcp = { server_refs = ["developer"], allowed_tools = [] }
 
 [[roles]]
 name = "assistant"
 enable_layers = false
+temperature = 0.7
 layer_refs = []
 mcp = { server_refs = ["filesystem"], allowed_tools = [] }
 
 [[roles]]
 name = "tester"
 enable_layers = false
+temperature = 0.7
 layer_refs = []
 mcp = { server_refs = ["octocode", "clt"], allowed_tools = [] }
 
@@ -436,18 +439,21 @@ max_session_spending_threshold = 0.0
 [[roles]]
 name = "developer"
 enable_layers = true
+temperature = 0.7
 layer_refs = []
 mcp = { server_refs = ["developer"], allowed_tools = [] }
 
 [[roles]]
 name = "assistant"
 enable_layers = false
+temperature = 0.7
 layer_refs = []
 mcp = { server_refs = ["filesystem"], allowed_tools = [] }
 
 [[roles]]
 name = "tester"
 enable_layers = false
+temperature = 0.7
 layer_refs = []
 mcp = { server_refs = ["octocode", "clt"], allowed_tools = [] }
 

@@ -14,7 +14,7 @@
 
 // Response processing module - main orchestrator
 
-mod tool_execution;
+pub mod tool_execution;
 mod tool_result_processor;
 
 use super::{CostTracker, MessageHandler, ToolProcessor};

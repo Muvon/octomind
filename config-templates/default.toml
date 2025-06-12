@@ -86,6 +86,8 @@ max_session_spending_threshold = 0.0
 name = "developer"
 # Enable layers system for complex multi-step operations
 enable_layers = true
+# Temperature for AI responses (0.0 to 1.0)
+temperature = 0.2
 
 # Layer references for developer role (empty = no layers enabled)
 layer_refs = ["query_processor", "context_generator"]
@@ -139,6 +141,7 @@ mcp = { server_refs = ["developer", "filesystem", "octocode"], allowed_tools = [
 [[roles]]
 name = "assistant"
 enable_layers = false
+temperature = 0.7
 layer_refs = []
 system = "You are a helpful assistant."
 # MCP configuration for assistant role

@@ -17,13 +17,15 @@ use serde::{Deserialize, Serialize};
 use super::mcp::RoleMcpConfig;
 
 // Mode configuration - contains all behavior settings but NOT API keys or model (uses system-wide model)
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModeConfig {
 	// Layer configurations
 	#[serde(default)]
 	pub enable_layers: bool,
 	// Custom system prompt
 	pub system: Option<String>,
+	// Temperature for AI responses (0.0 to 1.0) - STRICT: must be in config
+	pub temperature: f32,
 }
 
 // REMOVED: Default implementations - all config must be explicit

@@ -185,6 +185,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		session_args.model.clone(),
 		Some(session_args.temperature),
 		&mode_config,
+		&session_args.role, // Pass role to read temperature from config
 	)?;
 
 	// If runtime model override is provided, update the session's model (runtime only)
@@ -552,8 +553,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						Some(new_session_name), // Use the name from the command
 						None,
 						None, // Keep using the default model
-						None, // Use default temperature
+						None, // Use config temperature
 						&current_config,
+						&session_args.role, // Pass role for temperature config
 					)?;
 
 					// Replace the current chat session

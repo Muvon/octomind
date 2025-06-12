@@ -66,7 +66,8 @@ impl ChatSession {
 		config: &Config,
 	) -> Self {
 		let model_name = model.unwrap_or_else(|| config.get_effective_model());
-		let temperature_value = temperature.unwrap_or(0.7); // Default to 0.7 instead of 0.2
+		// STRICT: temperature should always be provided from role config, no fallbacks
+		let temperature_value = temperature.expect("Temperature must be provided from role config");
 
 		// Create a new session with initial info
 		let session_info = crate::session::SessionInfo {
@@ -119,6 +120,7 @@ impl ChatSession {
 		model: Option<String>,
 		temperature: Option<f32>,
 		config: &Config,
+		role: &str,
 	) -> Result<Self> {
 		let sessions_dir = get_sessions_dir()?;
 
@@ -133,6 +135,15 @@ impl ChatSession {
 		};
 
 		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
+
+		// Get temperature from role config if not provided via command line
+		let effective_temperature = if let Some(temp) = temperature {
+			temp // Use command line override
+		} else {
+			// Read from role configuration - STRICT: assume it exists
+			let (mode_config, _, _, _, _) = config.get_mode_config(role);
+			mode_config.temperature
+		};
 
 		// Check if we should load or create a session
 		let should_resume = (resume.is_some() || (name.is_some() && session_file.exists()))
@@ -196,8 +207,8 @@ impl ChatSession {
 					let mut chat_session = ChatSession {
 						session,
 						last_response: String::new(),
-						model: restored_model, // Use restored model from session
-						temperature: 0.2,
+						model: restored_model,              // Use restored model from session
+						temperature: effective_temperature, // Use config-based temperature
 						estimated_cost: 0.0,
 						cache_next_user_message: false,     // Initialize cache flag
 						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
@@ -249,7 +260,7 @@ impl ChatSession {
 					let mut chat_session = ChatSession::new(
 						new_session_name.clone(),
 						model.clone(),
-						temperature,
+						Some(effective_temperature), // Use config-based temperature
 						config,
 					);
 					chat_session.session.session_file = Some(new_session_file);
@@ -285,8 +296,12 @@ impl ChatSession {
 				drop(file);
 			}
 
-			let mut chat_session =
-				ChatSession::new(session_name.clone(), model, temperature, config);
+			let mut chat_session = ChatSession::new(
+				session_name.clone(),
+				model,
+				Some(effective_temperature),
+				config,
+			);
 			chat_session.session.session_file = Some(session_file);
 
 			// Immediately save the session info in new JSON format

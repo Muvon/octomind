@@ -623,8 +623,8 @@ pub async fn create_system_prompt(
 
 	// Add MCP tools information if enabled
 	if !mcp_config.server_refs.is_empty() {
-		let mode_config = config.get_merged_config_for_mode(mode);
-		let functions = crate::mcp::get_available_functions(&mode_config).await;
+		let config_for_role = config.get_merged_config_for_role(mode);
+		let functions = crate::mcp::get_available_functions(&config_for_role).await;
 		if !functions.is_empty() {
 			prompt.push_str("\n\nYou have access to the following tools:");
 

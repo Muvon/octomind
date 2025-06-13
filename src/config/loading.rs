@@ -415,7 +415,7 @@ servers = []
 		assert_eq!(mcp_config.server_refs, Vec::<String>::new()); // Should return empty for unknown roles
 
 		// Test get_merged_config_for_mode for custom role
-		let merged_config = config.get_merged_config_for_mode("tester");
+		let merged_config = config.get_merged_config_for_role("tester");
 		assert_eq!(merged_config.mcp.servers.len(), 0); // No actual servers in test config, but server_refs should be processed
 		                                          // The server_refs would be used to filter actual servers from the mcp.servers list
 	}
@@ -504,7 +504,7 @@ builtin = true
 		config.build_role_map();
 
 		// Test that the merged config for tester role only includes the specified servers
-		let merged_config = config.get_merged_config_for_mode("tester");
+		let merged_config = config.get_merged_config_for_role("tester");
 
 		// The merged config should only have servers that are in the tester role's server_refs
 		let server_names: Vec<&str> = merged_config

@@ -270,7 +270,7 @@ impl Config {
 
 	/// Get a merged config for a specific role (for backward compatibility)
 	/// This creates a new Config with role-specific settings merged into system-wide settings
-	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
+	pub fn get_merged_config_for_role(&self, mode: &str) -> Config {
 		let (_role_config, role_mcp_config, _role_layers_config, commands, system_prompt) =
 			self.get_role_config(mode);
 

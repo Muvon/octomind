@@ -233,7 +233,7 @@ pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
 }
 
 // Initialize all servers for a specific mode/role ONCE at startup
-pub async fn initialize_servers_for_mode(config: &crate::config::Config) -> Result<()> {
+pub async fn initialize_servers_for_role(config: &crate::config::Config) -> Result<()> {
 	// Only initialize if MCP has any servers configured
 	if config.mcp.servers.is_empty() {
 		crate::log_debug!("No MCP servers configured for initialization");

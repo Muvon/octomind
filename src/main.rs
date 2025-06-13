@@ -79,8 +79,8 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		Commands::Session(session_args) => {
 			// For session command, initialize MCP servers based on the role
 			let role = &session_args.role;
-			let mode_config = config.get_merged_config_for_mode(role);
-			if let Err(e) = octomind::mcp::initialize_servers_for_mode(&mode_config).await {
+			let config_for_role = config.get_merged_config_for_role(role);
+			if let Err(e) = octomind::mcp::initialize_servers_for_role(&config_for_role).await {
 				eprintln!("Warning: Failed to initialize MCP servers: {}", e);
 				// Continue anyway - servers can be started on-demand if needed
 			}

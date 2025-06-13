@@ -176,7 +176,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	}
 
 	// Get the merged configuration for the specified role
-	let mode_config = config.get_merged_config_for_mode(&session_args.role);
+	let config_for_role = config.get_merged_config_for_role(&session_args.role);
 
 	// Create or load session
 	let mut chat_session = ChatSession::initialize(
@@ -184,7 +184,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		session_args.resume,
 		session_args.model.clone(),
 		Some(session_args.temperature),
-		&mode_config,
+		&config_for_role,
 		&session_args.role, // Pass role to read temperature from config
 	)?;
 
@@ -267,7 +267,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		chat_session.add_assistant_message(
 			&welcome_message,
 			None,
-			&mode_config,
+			&config_for_role,
 			&session_args.role,
 		)?;
 
@@ -362,7 +362,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	.expect("Error setting Ctrl+C handler");
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
-	let mut current_config = mode_config.clone();
+	let mut current_config = config_for_role.clone();
 
 	// Set the thread-local config for logging macros
 	crate::config::set_thread_config(&current_config);
@@ -596,7 +596,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						Ok(updated_config) => {
 							// Update our current config with the new role-specific config
 							current_config =
-								updated_config.get_merged_config_for_mode(&session_args.role);
+								updated_config.get_merged_config_for_role(&session_args.role);
 							// Update thread config for logging macros
 							crate::config::set_thread_config(&current_config);
 							log_info!("Configuration reloaded successfully");

@@ -924,9 +924,9 @@ impl ChatSession {
 						println!("{}", "Available Tools".bright_cyan().bold());
 						println!("{}", "─".repeat(30).dimmed());
 
-						let mode_config = config.get_merged_config_for_mode(role);
+						let config_for_role = config.get_merged_config_for_role(role);
 						let available_functions =
-							crate::mcp::get_available_functions(&mode_config).await;
+							crate::mcp::get_available_functions(&config_for_role).await;
 
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
@@ -939,7 +939,7 @@ impl ChatSession {
 
 							for func in &available_functions {
 								let server_name =
-									get_tool_server_name_async(&func.name, &mode_config).await;
+									get_tool_server_name_async(&func.name, &config_for_role).await;
 								servers.entry(server_name).or_default().push(func);
 							}
 
@@ -962,9 +962,9 @@ impl ChatSession {
 						println!("{}", "─".repeat(50).dimmed());
 
 						// Get the merged config for this role
-						let mode_config = config.get_merged_config_for_mode(role);
+						let config_for_role = config.get_merged_config_for_role(role);
 
-						if mode_config.mcp.servers.is_empty() {
+						if config_for_role.mcp.servers.is_empty() {
 							println!("{}", "No MCP servers configured for this role.".yellow());
 							return Ok(false);
 						}
@@ -972,7 +972,7 @@ impl ChatSession {
 						// Show server status
 						let server_report = crate::mcp::server::get_server_status_report();
 
-						for server in &mode_config.mcp.servers {
+						for server in &config_for_role.mcp.servers {
 							let (health, restart_info) = match server.server_type {
 								crate::config::McpServerType::Developer
 								| crate::config::McpServerType::Filesystem
@@ -1035,7 +1035,7 @@ impl ChatSession {
 						println!("{}", "─".repeat(50).dimmed());
 
 						let available_functions =
-							crate::mcp::get_available_functions(&mode_config).await;
+							crate::mcp::get_available_functions(&config_for_role).await;
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
 						} else {
@@ -1047,7 +1047,7 @@ impl ChatSession {
 
 							for func in &available_functions {
 								let server_name =
-									get_tool_server_name_async(&func.name, &mode_config).await;
+									get_tool_server_name_async(&func.name, &config_for_role).await;
 								servers.entry(server_name).or_default().push(func);
 							}
 
@@ -1093,9 +1093,9 @@ impl ChatSession {
 						println!("{}", "─".repeat(60).dimmed());
 
 						// Get the merged config for this role
-						let mode_config = config.get_merged_config_for_mode(role);
+						let config_for_role = config.get_merged_config_for_role(role);
 
-						if mode_config.mcp.servers.is_empty() {
+						if config_for_role.mcp.servers.is_empty() {
 							println!("{}", "No MCP servers configured for this role.".yellow());
 							return Ok(false);
 						}
@@ -1103,7 +1103,7 @@ impl ChatSession {
 						// Show server status
 						let server_report = crate::mcp::server::get_server_status_report();
 
-						for server in &mode_config.mcp.servers {
+						for server in &config_for_role.mcp.servers {
 							let (health, restart_info) = match server.server_type {
 								crate::config::McpServerType::Developer
 								| crate::config::McpServerType::Filesystem
@@ -1166,7 +1166,7 @@ impl ChatSession {
 						println!("{}", "─".repeat(60).dimmed());
 
 						let available_functions =
-							crate::mcp::get_available_functions(&mode_config).await;
+							crate::mcp::get_available_functions(&config_for_role).await;
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
 						} else {
@@ -1178,7 +1178,7 @@ impl ChatSession {
 
 							for func in &available_functions {
 								let server_name =
-									get_tool_server_name_async(&func.name, &mode_config).await;
+									get_tool_server_name_async(&func.name, &config_for_role).await;
 								servers.entry(server_name).or_default().push(func);
 							}
 
@@ -1312,9 +1312,9 @@ impl ChatSession {
 						println!("{}", "MCP Server Health Check".bright_cyan().bold());
 						println!("{}", "─".repeat(50).dimmed());
 
-						let mode_config = config.get_merged_config_for_mode(role);
+						let config_for_role = config.get_merged_config_for_role(role);
 
-						if mode_config.mcp.servers.is_empty() {
+						if config_for_role.mcp.servers.is_empty() {
 							println!("{}", "No MCP servers configured for this role.".yellow());
 							return Ok(false);
 						}
@@ -1334,7 +1334,7 @@ impl ChatSession {
 						);
 
 						if let Err(e) =
-							crate::mcp::health_monitor::force_health_check(&mode_config).await
+							crate::mcp::health_monitor::force_health_check(&config_for_role).await
 						{
 							println!("{}: {}", "Health check failed".bright_red(), e);
 							return Ok(false);
@@ -1343,7 +1343,7 @@ impl ChatSession {
 						// Show updated server status
 						let server_report = crate::mcp::server::get_server_status_report();
 
-						for server in &mode_config.mcp.servers {
+						for server in &config_for_role.mcp.servers {
 							if let crate::config::McpServerType::External = server.server_type {
 								let (health, restart_info) = server_report
 									.get(&server.name)
@@ -1402,9 +1402,9 @@ impl ChatSession {
 						println!("{}", "Raw MCP Tool Definitions (JSON)".bright_cyan().bold());
 						println!("{}", "─".repeat(50).dimmed());
 
-						let mode_config = config.get_merged_config_for_mode(role);
+						let config_for_role = config.get_merged_config_for_role(role);
 						let available_functions =
-							crate::mcp::get_available_functions(&mode_config).await;
+							crate::mcp::get_available_functions(&config_for_role).await;
 
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
@@ -1436,9 +1436,9 @@ impl ChatSession {
 						println!("{}", "MCP Tool Schema Validation".bright_cyan().bold());
 						println!("{}", "─".repeat(50).dimmed());
 
-						let mode_config = config.get_merged_config_for_mode(role);
+						let config_for_role = config.get_merged_config_for_role(role);
 						let available_functions =
-							crate::mcp::get_available_functions(&mode_config).await;
+							crate::mcp::get_available_functions(&config_for_role).await;
 
 						if available_functions.is_empty() {
 							println!("{}", "No tools available to validate.".yellow());

@@ -270,6 +270,11 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 	// Simple system prompt for ask command - no mode complexity needed
 	let system_prompt = "You are a helpful assistant.".to_string();
 
+	// Create a clean config with no MCP servers for ask command
+	// This ensures no tools are sent to the API
+	let mut clean_config = config.clone();
+	clean_config.mcp.servers.clear();
+
 	// Read file context once (validation already done)
 	let file_context = read_files_as_context(&args.files)?;
 
@@ -288,7 +293,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 			&model,
 			args.temperature,
 			&system_prompt,
-			config,
+			&clean_config,
 		)
 		.await?;
 		print_response(&response.content, args.raw, config);
@@ -316,7 +321,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 			&model,
 			args.temperature,
 			&system_prompt,
-			config,
+			&clean_config,
 		)
 		.await?;
 		print_response(&response.content, args.raw, config);
@@ -350,7 +355,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 						&model,
 						args.temperature,
 						&system_prompt,
-						config,
+						&clean_config,
 					)
 					.await
 					{

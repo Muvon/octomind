@@ -125,6 +125,11 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 		.clone()
 		.unwrap_or_else(|| config.get_effective_model());
 
+	// Create a clean config with no MCP servers for shell command
+	// This ensures no tools are sent to the API
+	let mut clean_config = config.clone();
+	clean_config.mcp.servers.clear();
+
 	// Create specialized system prompt for shell commands
 	let system_prompt = create_shell_system_prompt();
 
@@ -171,7 +176,7 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 
 	// Call the AI provider
 	let response =
-		chat_completion_with_provider(&messages, &model, args.temperature, config).await?;
+		chat_completion_with_provider(&messages, &model, args.temperature, &clean_config).await?;
 
 	// Parse the JSON response
 	let shell_response: ShellResponse = match serde_json::from_str(&response.content) {

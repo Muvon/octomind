@@ -412,4 +412,14 @@ impl ChatSession {
 	pub fn take_pending_image(&mut self) -> Option<crate::session::image::ImageAttachment> {
 		self.pending_image.take()
 	}
+
+	/// Process user commands
+	pub async fn process_command(
+		&mut self,
+		input: &str,
+		config: &mut Config,
+		role: &str,
+	) -> Result<bool> {
+		super::commands::process_command(self, input, config, role).await
+	}
 }

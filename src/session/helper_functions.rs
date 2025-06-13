@@ -129,8 +129,9 @@ pub fn summarize_context(session: &Session, input: &str) -> String {
 
 	format!("Current input: {}\n\nSummary of previous context: {}\n\nPlease generate a concise summary of the above context.",
 		input,
-		if history.len() > 2000 {
-			format!("{} (truncated)...", &history[..2000])
+		if history.chars().count() > 2000 {
+			let truncated: String = history.chars().take(2000).collect();
+			format!("{} (truncated)...", truncated)
 		} else {
 			history
 		}

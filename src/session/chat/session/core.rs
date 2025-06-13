@@ -40,7 +40,7 @@ fn generate_session_name() -> String {
 
 	// Generate a short UUID (first 8 characters)
 	let uuid = Uuid::new_v4().to_string();
-	let short_uuid = &uuid[..8];
+	let short_uuid: String = uuid.chars().take(8).collect();
 
 	format!("{}-{}-{}-{}", date_str, time_str, basename, short_uuid)
 }

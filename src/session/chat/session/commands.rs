@@ -1049,8 +1049,10 @@ impl ChatSession {
 
 								for tool in tools {
 									// Show name and short description
-									let short_desc = if tool.description.len() > 60 {
-										format!("{}...", &tool.description[..57])
+									let short_desc = if tool.description.chars().count() > 60 {
+										let truncated: String =
+											tool.description.chars().take(57).collect();
+										format!("{}...", truncated)
 									} else {
 										tool.description.clone()
 									};

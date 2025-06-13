@@ -81,8 +81,9 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 					if !preview_lines.is_empty() {
 						println!("  {} ", "Preview:".dimmed());
 						for line in preview_lines.iter() {
-							let display_line = if line.len() > 100 {
-								format!("{}...", &line[..97])
+							let display_line = if line.chars().count() > 100 {
+								let truncated: String = line.chars().take(97).collect();
+								format!("{}...", truncated)
 							} else {
 								line.to_string()
 							};

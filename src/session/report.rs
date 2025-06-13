@@ -290,10 +290,11 @@ impl SessionReport {
 
 	/// Truncate long user requests for table display
 	fn truncate_request(request: &str, max_len: usize) -> String {
-		if request.len() <= max_len {
+		if request.chars().count() <= max_len {
 			request.to_string()
 		} else {
-			format!("{}...", &request[..max_len - 3])
+			let truncated: String = request.chars().take(max_len - 3).collect();
+			format!("{}...", truncated)
 		}
 	}
 

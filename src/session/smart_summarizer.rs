@@ -268,15 +268,17 @@ impl SmartSummarizer {
 	fn extract_key_points(&self, content: &str) -> String {
 		let sentences: Vec<&str> = content.split('.').collect();
 		if let Some(first_sentence) = sentences.first() {
-			if first_sentence.len() <= 150 {
+			if first_sentence.chars().count() <= 150 {
 				first_sentence.trim().to_string()
 			} else {
-				format!("{}...", &first_sentence[..147].trim())
+				let truncated: String = first_sentence.chars().take(147).collect();
+				format!("{}...", truncated.trim())
 			}
-		} else if content.len() <= 150 {
+		} else if content.chars().count() <= 150 {
 			content.trim().to_string()
 		} else {
-			format!("{}...", &content[..147].trim())
+			let truncated: String = content.chars().take(147).collect();
+			format!("{}...", truncated.trim())
 		}
 	}
 
@@ -335,8 +337,10 @@ impl SmartSummarizer {
 	/// Extract tool usage summary
 	fn extract_tool_summary(&self, content: &str) -> String {
 		// Extract tool name or action from tool result
-		if content.len() > 50 {
-			format!("tool execution ({}...)", &content[..47])
+		// Use char-based truncation to avoid UTF-8 boundary issues
+		if content.chars().count() > 50 {
+			let truncated: String = content.chars().take(47).collect();
+			format!("tool execution ({}...)", truncated)
 		} else {
 			format!("tool execution ({})", content)
 		}

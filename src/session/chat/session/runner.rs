@@ -125,8 +125,8 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let current_dir = std::env::current_dir()?;
 	if session_args.role == "developer" {
 		// Check if external MCP server is configured
-		let mode_config = config.get_mode_config(&session_args.role);
-		let mcp_config = &mode_config.1;
+		let role_config = config.get_role_config(&session_args.role);
+		let mcp_config = &role_config.1;
 
 		if mcp_config.server_refs.is_empty() {
 			use colored::*;
@@ -219,7 +219,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 		// Process layer system prompts during session initialization
 		// This ensures layer system prompts are processed once and cached for the entire session
-		let (role_config, _, _, _, _) = config.get_mode_config(&session_args.role);
+		let (role_config, _, _, _, _) = config.get_role_config(&session_args.role);
 		if role_config.enable_layers {
 			use crate::session::layers::LayeredOrchestrator;
 			// Create orchestrator with processed system prompts

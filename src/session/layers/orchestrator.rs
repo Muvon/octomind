@@ -30,10 +30,10 @@ impl LayeredOrchestrator {
 	// Create orchestrator from config using the new flexible system
 	pub fn from_config(config: &Config, role: &str) -> Self {
 		// Get role-specific configuration
-		let (mode_config, _, _, _, _) = config.get_mode_config(role);
+		let (role_config, _, _, _, _) = config.get_role_config(role);
 
 		// First check if layers are enabled at all
-		if !mode_config.enable_layers {
+		if !role_config.enable_layers {
 			// Return empty orchestrator when layers are disabled
 			return Self { layers: Vec::new() };
 		}
@@ -64,10 +64,10 @@ impl LayeredOrchestrator {
 		project_dir: &std::path::Path,
 	) -> Self {
 		// Get role-specific configuration
-		let (mode_config, _, _, _, _) = config.get_mode_config(role);
+		let (role_config, _, _, _, _) = config.get_role_config(role);
 
 		// First check if layers are enabled at all
-		if !mode_config.enable_layers {
+		if !role_config.enable_layers {
 			// Return empty orchestrator when layers are disabled
 			return Self { layers: Vec::new() };
 		}

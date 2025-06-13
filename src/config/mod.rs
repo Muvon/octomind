@@ -48,9 +48,9 @@ pub struct AgentConfig {
 // Current config version - increment when making breaking changes
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
 
-// Type alias to simplify the complex return type for get_mode_config
-type ModeConfigResult<'a> = (
-	&'a ModeConfig,
+// Type alias to simplify the complex return type for get_role_config
+type RoleConfigResult<'a> = (
+	&'a RoleConfig,
 	&'a RoleMcpConfig,
 	Option<&'a Vec<crate::session::layers::LayerConfig>>,
 	Option<&'a Vec<crate::session::layers::LayerConfig>>,
@@ -226,8 +226,8 @@ impl Config {
 	/// Role-based configuration getters - these delegate to role configs
 	/// Get enable layers setting for the specified role
 	pub fn get_enable_layers(&self, role: &str) -> bool {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config.enable_layers
+		let (role_config, _, _, _, _) = self.get_role_config(role);
+		role_config.enable_layers
 	}
 
 	/// Get the model for the specified role
@@ -237,8 +237,8 @@ impl Config {
 	}
 
 	/// Get configuration for a specific role
-	/// Returns: (mode_config, role_mcp_config, layers, commands, system_prompt)
-	pub fn get_mode_config(&self, role: &str) -> ModeConfigResult<'_> {
+	/// Returns: (role_config, role_mcp_config, layers, commands, system_prompt)
+	pub fn get_role_config(&self, role: &str) -> RoleConfigResult<'_> {
 		if let Some(role_config) = self.role_map.get(role) {
 			(
 				&role_config.config,
@@ -249,7 +249,7 @@ impl Config {
 			)
 		} else {
 			// Unknown role - create minimal fallback
-			static DEFAULT_MODE_CONFIG: ModeConfig = ModeConfig {
+			static DEFAULT_ROLE_CONFIG: RoleConfig = RoleConfig {
 				enable_layers: false,
 				system: None,
 				temperature: 0.7, // Fallback temperature for unknown roles
@@ -259,7 +259,7 @@ impl Config {
 				allowed_tools: Vec::new(),
 			};
 			(
-				&DEFAULT_MODE_CONFIG,
+				&DEFAULT_ROLE_CONFIG,
 				&DEFAULT_MCP_CONFIG,
 				self.layers.as_ref(),
 				self.commands.as_ref(),
@@ -268,11 +268,11 @@ impl Config {
 		}
 	}
 
-	/// Get a merged config for a specific mode (for backward compatibility)
+	/// Get a merged config for a specific role (for backward compatibility)
 	/// This creates a new Config with role-specific settings merged into system-wide settings
 	pub fn get_merged_config_for_mode(&self, mode: &str) -> Config {
-		let (_mode_config, role_mcp_config, _role_layers_config, commands, system_prompt) =
-			self.get_mode_config(mode);
+		let (_role_config, role_mcp_config, _role_layers_config, commands, system_prompt) =
+			self.get_role_config(mode);
 
 		let mut merged = self.clone();
 
@@ -309,10 +309,10 @@ impl Config {
 		merged
 	}
 
-	/// Get the mode config struct for a specific role
-	pub fn get_mode_config_struct(&self, role: &str) -> &ModeConfig {
-		let (mode_config, _, _, _, _) = self.get_mode_config(role);
-		mode_config
+	/// Get the role config struct for a specific role
+	pub fn get_role_config_struct(&self, role: &str) -> &RoleConfig {
+		let (role_config, _, _, _, _) = self.get_role_config(role);
+		role_config
 	}
 
 	/// Get layer references for a specific role

@@ -405,13 +405,13 @@ servers = []
 		assert_eq!(tester_role.mcp.server_refs, vec!["octocode", "clt"]);
 		assert!(!tester_role.config.enable_layers);
 
-		// Test get_mode_config for custom role
-		let (mode_config, mcp_config, _, _, _) = config.get_mode_config("tester");
-		assert!(!mode_config.enable_layers);
+		// Test get_role_config for custom role
+		let (role_config, mcp_config, _, _, _) = config.get_role_config("tester");
+		assert!(!role_config.enable_layers);
 		assert_eq!(mcp_config.server_refs, vec!["octocode", "clt"]);
 
 		// Test fallback for unknown role
-		let (_, mcp_config, _, _, _) = config.get_mode_config("unknown");
+		let (_, mcp_config, _, _, _) = config.get_role_config("unknown");
 		assert_eq!(mcp_config.server_refs, Vec::<String>::new()); // Should return empty for unknown roles
 
 		// Test get_merged_config_for_mode for custom role

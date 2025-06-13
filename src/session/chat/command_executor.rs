@@ -33,7 +33,7 @@ pub async fn execute_command_layer(
 	operation_cancelled: Arc<AtomicBool>,
 ) -> Result<String> {
 	// Get role configuration to check for command layers
-	let (_, _, _, commands_config, _) = config.get_mode_config(role);
+	let (_, _, _, commands_config, _) = config.get_role_config(role);
 
 	// Find the command configuration
 	let command_config = commands_config
@@ -179,7 +179,7 @@ pub async fn execute_command_layer(
 
 /// List all available command layers for the current role
 pub fn list_available_commands(config: &Config, role: &str) -> Vec<String> {
-	let (_, _, _, commands_config, _) = config.get_mode_config(role);
+	let (_, _, _, commands_config, _) = config.get_role_config(role);
 
 	commands_config
 		.map(|commands| commands.iter().map(|cmd| cmd.name.clone()).collect())
@@ -188,7 +188,7 @@ pub fn list_available_commands(config: &Config, role: &str) -> Vec<String> {
 
 /// Check if a command exists for the current role
 pub fn command_exists(config: &Config, role: &str, command_name: &str) -> bool {
-	let (_, _, _, commands_config, _) = config.get_mode_config(role);
+	let (_, _, _, commands_config, _) = config.get_role_config(role);
 
 	commands_config
 		.map(|commands| commands.iter().any(|cmd| cmd.name == command_name))

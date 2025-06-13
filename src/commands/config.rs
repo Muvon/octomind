@@ -620,7 +620,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	// Developer role
 	println!("  Developer Role:");
 	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
-		config.get_mode_config("developer");
+		config.get_role_config("developer");
 	println!(
 		"    Model:           {} (system-wide)",
 		config.get_effective_model()
@@ -635,7 +635,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	// Assistant role
 	println!("  Assistant Role:");
 	let (ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
-		config.get_mode_config("assistant");
+		config.get_role_config("assistant");
 	println!(
 		"    Model:           {} (system-wide)",
 		config.get_effective_model()

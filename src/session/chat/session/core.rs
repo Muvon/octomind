@@ -141,8 +141,8 @@ impl ChatSession {
 			temp // Use command line override
 		} else {
 			// Read from role configuration - STRICT: assume it exists
-			let (mode_config, _, _, _, _) = config.get_mode_config(role);
-			mode_config.temperature
+			let (role_config, _, _, _, _) = config.get_role_config(role);
+			role_config.temperature
 		};
 
 		// Check if we should load or create a session

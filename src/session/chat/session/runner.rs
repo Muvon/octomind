@@ -982,7 +982,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 				// Extract provider name from the model string
 				let provider_name = if let Ok((provider, _)) =
-					crate::session::providers::ProviderFactory::parse_model(&model)
+					crate::providers::ProviderFactory::parse_model(&model)
 				{
 					provider
 				} else {

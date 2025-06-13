@@ -16,6 +16,7 @@
 pub mod config;
 pub mod directories;
 pub mod mcp;
+pub mod providers;
 pub mod session;
 pub mod state;
 

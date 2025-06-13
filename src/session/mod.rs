@@ -23,18 +23,20 @@ pub mod layers; // Layered architecture implementation
 pub mod logger; // Request/response logging utilities
 mod model_utils; // Model-specific utility functions
 mod project_context; // Project context collection and management
-pub mod providers; // Provider abstraction layer
+					 // Provider abstraction layer moved to src/providers
 pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
 
 // Provider system exports
+pub use crate::providers::{
+	AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage,
+};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::{process_placeholders, summarize_context};
 pub use layers::{process_with_layers, InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
 pub use model_utils::model_supports_caching;
 pub use project_context::ProjectContext;
-pub use providers::{AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage};
 pub use smart_summarizer::SmartSummarizer;
 pub use token_counter::{estimate_message_tokens, estimate_tokens}; // Export token counting functions // Export cache management
 

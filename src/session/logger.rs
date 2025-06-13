@@ -93,7 +93,7 @@ pub fn log_api_request(session_name: &str, request: &serde_json::Value) -> Resul
 pub fn log_api_response(
 	session_name: &str,
 	response: &serde_json::Value,
-	usage: Option<&crate::session::providers::TokenUsage>,
+	usage: Option<&crate::providers::TokenUsage>,
 ) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let log_entry = serde_json::json!({

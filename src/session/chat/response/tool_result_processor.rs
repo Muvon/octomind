@@ -279,7 +279,7 @@ pub async fn process_tool_results(
 		Err(e) => {
 			// Extract provider name from the model for better error messaging
 			let provider_name = if let Ok((provider, _)) =
-				crate::session::providers::ProviderFactory::parse_model(&chat_session.model)
+				crate::providers::ProviderFactory::parse_model(&chat_session.model)
 			{
 				provider
 			} else {
@@ -332,7 +332,7 @@ async fn make_follow_up_api_call(
 	chat_session: &ChatSession,
 	config: &Config,
 	cancellation_token: Arc<AtomicBool>,
-) -> Result<crate::session::providers::ProviderResponse> {
+) -> Result<crate::providers::ProviderResponse> {
 	let model = chat_session.model.clone();
 	let temperature = chat_session.temperature;
 
@@ -350,7 +350,7 @@ async fn make_follow_up_api_call(
 
 // Check if conversation should continue based on finish_reason
 fn check_should_continue(
-	response: &crate::session::providers::ProviderResponse,
+	response: &crate::providers::ProviderResponse,
 	_config: &Config,
 	has_more_tools: bool,
 ) -> bool {

@@ -36,8 +36,7 @@ pub async fn handle_image(session: &mut ChatSession, params: &[&str]) -> Result<
 
 		// Check if current model supports vision
 		let (provider, model_name) =
-			match crate::session::providers::ProviderFactory::get_provider_for_model(&session.model)
-			{
+			match crate::providers::ProviderFactory::get_provider_for_model(&session.model) {
 				Ok((provider, model)) => (provider, model),
 				Err(_) => {
 					println!(

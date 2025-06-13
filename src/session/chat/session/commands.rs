@@ -120,6 +120,10 @@ impl ChatSession {
 					REPORT_COMMAND.cyan()
 				);
 				println!(
+					"{} - Display current session context that would be sent to AI",
+					CONTEXT_COMMAND.cyan()
+				);
+				println!(
 					"{} <path_or_url> - Attach image to your next message (supports PNG, JPEG, GIF, WebP, BMP)",
 					IMAGE_COMMAND.cyan()
 				);
@@ -253,6 +257,10 @@ impl ChatSession {
 						"Hint".bright_yellow()
 					);
 				}
+			}
+			CONTEXT_COMMAND => {
+				// Display current session context that would be sent to AI
+				self.display_session_context(config);
 			}
 			LAYERS_COMMAND => {
 				// Toggle layered processing (RUNTIME ONLY - no config file changes)

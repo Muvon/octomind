@@ -269,4 +269,145 @@ impl ChatSession {
 
 		println!();
 	}
+
+	// Display current session context that would be sent to AI
+	pub fn display_session_context(&self, config: &crate::config::Config) {
+		// Check if debug mode is enabled
+		let is_debug = config.log_level.is_debug_enabled();
+
+		// Display header
+		println!(
+			"{}",
+			"───────────── Session Context ─────────────".bright_cyan()
+		);
+
+		if self.session.messages.is_empty() {
+			println!("{}", "No messages in current session.".yellow());
+			println!();
+			return;
+		}
+
+		// Build markdown content for the context
+		let mut markdown_content = String::new();
+		markdown_content.push_str("# Session Context\n\n");
+		markdown_content.push_str(&format!("**Session:** {}\n", self.session.info.name));
+		markdown_content.push_str(&format!("**Model:** {}\n", self.session.info.model));
+		markdown_content.push_str(&format!(
+			"**Messages:** {}\n\n",
+			self.session.messages.len()
+		));
+
+		// Content length limits
+		let content_limit = if is_debug { None } else { Some(200) };
+
+		// Process each message
+		for (index, message) in self.session.messages.iter().enumerate() {
+			markdown_content.push_str(&format!(
+				"## Message {} - {}\n\n",
+				index + 1,
+				message.role.to_uppercase()
+			));
+
+			// Add timestamp
+			if let Some(datetime) = chrono::DateTime::from_timestamp(message.timestamp as i64, 0) {
+				markdown_content.push_str(&format!(
+					"**Time:** {}\n",
+					datetime.format("%Y-%m-%d %H:%M:%S UTC")
+				));
+			}
+
+			// Add cached status
+			if message.cached {
+				markdown_content.push_str("**Cached:** ✅ Yes\n");
+			}
+
+			// Add tool call ID if present
+			if let Some(ref tool_call_id) = message.tool_call_id {
+				markdown_content.push_str(&format!("**Tool Call ID:** {}\n", tool_call_id));
+			}
+
+			// Add tool name if present
+			if let Some(ref name) = message.name {
+				markdown_content.push_str(&format!("**Tool:** {}\n", name));
+			}
+
+			// Add content
+			let content = if let Some(limit) = content_limit {
+				if message.content.len() > limit {
+					format!("{}...\n\n*[Content truncated - {} total chars. Use debug mode (/debug) for full content]*",
+						&message.content[..limit], message.content.len())
+				} else {
+					message.content.clone()
+				}
+			} else {
+				message.content.clone()
+			};
+
+			markdown_content.push_str("**Content:**\n");
+			markdown_content.push_str("```\n");
+			markdown_content.push_str(&content);
+			markdown_content.push_str("\n```\n");
+
+			// Add tool calls if present
+			if let Some(ref tool_calls) = message.tool_calls {
+				markdown_content.push_str("**Tool Calls:**\n");
+				markdown_content.push_str("```json\n");
+				markdown_content.push_str(
+					&serde_json::to_string_pretty(tool_calls)
+						.unwrap_or_else(|_| "Invalid JSON".to_string()),
+				);
+				markdown_content.push_str("\n```\n");
+			}
+
+			// Add images if present
+			if let Some(ref images) = message.images {
+				markdown_content.push_str(&format!("**Images:** {} attachment(s)\n", images.len()));
+				for (i, image) in images.iter().enumerate() {
+					markdown_content.push_str(&format!(
+						"  {}. Type: {}\n",
+						i + 1,
+						image.media_type
+					));
+				}
+			}
+
+			markdown_content.push_str("\n---\n\n");
+		}
+
+		// Add summary
+		markdown_content.push_str("## Summary\n\n");
+		markdown_content.push_str(&format!(
+			"- **Total Messages:** {}\n",
+			self.session.messages.len()
+		));
+		markdown_content.push_str(&format!(
+			"- **Total Tokens:** {}\n",
+			format_number(
+				self.session.info.input_tokens
+					+ self.session.info.output_tokens
+					+ self.session.info.cached_tokens
+			)
+		));
+		markdown_content.push_str(&format!(
+			"- **Total Cost:** ${:.5}\n",
+			self.session.info.total_cost
+		));
+
+		if is_debug {
+			markdown_content.push_str("\n*Debug mode: Showing full content*\n");
+		} else {
+			markdown_content.push_str(
+				"\n*Compact mode: Content truncated. Use `/debug` to toggle full content*\n",
+			);
+		}
+
+		// Render using existing markdown renderer
+		crate::session::chat::assistant_output::print_assistant_response(
+			&markdown_content,
+			config,
+			"assistant", // role parameter for markdown rendering
+		);
+
+		println!();
+	}
 }

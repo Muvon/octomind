@@ -83,7 +83,14 @@ pub fn get_text_editor_function() -> McpFunction {
 		name: "text_editor".to_string(),
 		description: "Perform text editing operations on files with comprehensive file manipulation capabilities.
 
-			The `command` parameter specifies the operation to perform. Available commands:
+			The `command` parameter specifies the operation to perform.
+
+			🚨 CRITICAL: LINE NUMBERS CHANGE AFTER EVERY EDIT OPERATION! 🚨
+			- After ANY edit (str_replace, insert, line_replace), line numbers become invalid
+			- ALWAYS use 'view' command first to get current line numbers before line_replace
+			- PREFER line_replace when you know exact lines (fastest), str_replace when you know content
+
+			Available commands:
 
 			**view**: Examine content of a file or list directory contents
 			- View entire file: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
@@ -101,20 +108,29 @@ pub fn get_text_editor_function() -> McpFunction {
 			- `{\"command\": \"str_replace\", \"path\": \"src/main.rs\", \"old_str\": \"fn old_name()\", \"new_str\": \"fn new_name()\"}`
 			- The old_str must match exactly, including whitespace and indentation
 			- Returns error if string appears 0 times or more than once for safety
+			- Content-based replacement - works regardless of line numbers
+			- PREFER when: exact text is known but line numbers are uncertain or may change
+			- Use when content might appear in different line positions across files
 			- Automatically saves file history for undo operations
 
 			**insert**: Insert text at a specific location in a file
 			- `{\"command\": \"insert\", \"path\": \"src/main.rs\", \"insert_line\": 5, \"new_str\": \"    // New comment\\n    let x = 10;\"}`
 			- insert_line specifies the line number after which to insert (0 for beginning of file)
 			- new_str can contain multiple lines using \\n
+			- ⚠️ WARNING: Changes line numbers for all content AFTER insertion point
 			- Line numbers are 1-indexed for intuitive operation
 
 			**line_replace**: Replace content within a specific line range
 			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"view_range\": [5, 8], \"new_str\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
 			- Replaces lines from view_range[0] to view_range[1] (inclusive, 1-indexed)
-			- More precise than str_replace when you know exact line numbers
+			- ⚡ FASTEST option when you know exact line numbers - no content searching needed
+			- ⚠️ CRITICAL: Line numbers change after ANY edit operation (insert, line_replace, str_replace)
+			- ⚠️ NEVER use line_replace twice in sequence without viewing file again
+			- ⚠️ ALWAYS use 'view' command first to get current line numbers before line_replace
+			- PREFER when: You just viewed the file and know exact line positions
 			- Returns snippet of replaced content for verification
 			- Ideal for replacing function implementations, code blocks, or configuration sections
+			- Use when you want to replace entire lines or line ranges precisely
 
 			**view_many**: View multiple files simultaneously for comprehensive analysis
 			- `{\"command\": \"view_many\", \"paths\": [\"src/main.rs\", \"src/lib.rs\", \"tests/test.rs\"]}`
@@ -144,12 +160,31 @@ pub fn get_text_editor_function() -> McpFunction {
 			- Line range errors: Validates line numbers exist in file
 
 			**Best Practices:**
-			- Use view with line ranges to examine specific sections before editing
-			- Always verify file content before making changes
-			- Use str_replace for content-based replacements
-			- Use line_replace when you know exact line positions
+			- ALWAYS use 'view' command first to get current line numbers before any edit
+			- Never assume line numbers from previous operations - they change after every edit
+
+			**CHOOSE line_replace when:**
+			- ✅ You just viewed the file and know exact line numbers
+			- ✅ Replacing entire lines or line ranges precisely
+			- ✅ Want fastest performance (no content searching)
+			- ✅ Working with structured code blocks, functions, or configuration sections
+
+			**CHOOSE str_replace when:**
+			- ✅ You know exact text content but not line numbers
+			- ✅ Text might be at different line positions across files
+			- ✅ Making multiple sequential edits (line numbers become unreliable)
+			- ✅ Content-based replacement regardless of position
+
+			**CRITICAL LINE NUMBER RULES:**
+			- 🚨 Line numbers become INVALID after ANY edit operation
+			- 🚨 NEVER use line_replace twice without viewing file between operations
+			- 🚨 After str_replace, insert, or line_replace: line numbers change
+			- 🚨 Always view file again to get fresh line numbers before next line_replace
+
+			**General Guidelines:**
 			- Use insert for adding new code at specific locations
-			- Use create for new files and modules".to_string(),
+			- Use create for new files and modules
+			- Use undo_edit to revert the last operation if needed".to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],

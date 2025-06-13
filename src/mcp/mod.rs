@@ -480,7 +480,7 @@ pub async fn execute_tool_call(
 }
 
 // Build a simple tool-to-server lookup map for instant routing
-async fn build_tool_server_map(
+pub async fn build_tool_server_map(
 	config: &crate::config::Config,
 ) -> std::collections::HashMap<String, crate::config::McpServerConfig> {
 	let mut tool_map = std::collections::HashMap::new();

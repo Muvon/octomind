@@ -80,78 +80,16 @@ fn handle_final_response(
 }
 
 // Get the actual server name for a tool (async version that matches execution)
-async fn get_tool_server_name_async(tool_name: &str, config: &Config) -> String {
+pub async fn get_tool_server_name_async(tool_name: &str, config: &Config) -> String {
 	// Use the SAME logic as execution - build the actual tool-to-server map
-	let tool_server_map = build_tool_server_map(config).await;
+	let tool_server_map = crate::mcp::build_tool_server_map(config).await;
 
 	if let Some(target_server) = tool_server_map.get(tool_name) {
 		target_server.name.clone()
 	} else {
-		// Fallback to category guess if no server found
-		crate::mcp::guess_tool_category(tool_name).to_string()
+		// Return "unknown" if no server found instead of guessing
+		"unknown".to_string()
 	}
-}
-
-// Build a simple tool-to-server lookup map for instant routing (same as in mod.rs)
-async fn build_tool_server_map(
-	config: &Config,
-) -> std::collections::HashMap<String, crate::config::McpServerConfig> {
-	let mut tool_map = std::collections::HashMap::new();
-	let enabled_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.to_vec();
-
-	for server in enabled_servers {
-		// Get all functions this server provides
-		let server_functions = match server.server_type {
-			crate::config::McpServerType::Developer => {
-				crate::mcp::get_cached_internal_functions("developer", &server.tools, || {
-					crate::mcp::dev::get_all_functions()
-				})
-			}
-			crate::config::McpServerType::Filesystem => {
-				crate::mcp::get_cached_internal_functions("filesystem", &server.tools, || {
-					crate::mcp::fs::get_all_functions()
-				})
-			}
-			crate::config::McpServerType::Agent => {
-				// For agent server, get all agent functions based on config
-				let server_functions = crate::mcp::agent::get_all_functions(config);
-				if server.tools.is_empty() {
-					server_functions
-				} else {
-					server_functions
-						.into_iter()
-						.filter(|f| server.tools.contains(&f.name))
-						.collect()
-				}
-			}
-			crate::config::McpServerType::External => {
-				// For external servers, get their actual functions
-				match crate::mcp::server::get_server_functions_cached(&server).await {
-					Ok(functions) => {
-						if server.tools.is_empty() {
-							functions // All functions allowed
-						} else {
-							functions
-								.into_iter()
-								.filter(|func| server.tools.contains(&func.name))
-								.collect()
-						}
-					}
-					Err(_) => Vec::new(), // Server not available, skip
-				}
-			}
-		};
-
-		// Map each function name to this server
-		for function in server_functions {
-			// CONFIGURATION ORDER PRIORITY: First server wins for each tool
-			tool_map
-				.entry(function.name)
-				.or_insert_with(|| server.clone());
-		}
-	}
-
-	tool_map
 }
 
 // Display tool headers and parameters for all log levels (before execution)

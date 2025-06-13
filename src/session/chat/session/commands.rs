@@ -30,6 +30,18 @@ use chrono::{DateTime, Utc};
 use colored::Colorize;
 use std::io::{self, Write};
 
+// Helper function to get the actual server name for a tool using the same logic as execution
+async fn get_tool_server_name_async(tool_name: &str, config: &Config) -> String {
+	let tool_server_map = crate::mcp::build_tool_server_map(config).await;
+
+	if let Some(target_server) = tool_server_map.get(tool_name) {
+		target_server.name.clone()
+	} else {
+		// Fallback to category guess if no server found, but ensure we still show the tool
+		crate::mcp::guess_tool_category(tool_name).to_string()
+	}
+}
+
 impl ChatSession {
 	// Process user commands
 	pub async fn process_command(
@@ -919,23 +931,21 @@ impl ChatSession {
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
 						} else {
-							// Group tools by category
-							let mut categories: std::collections::HashMap<
+							// Group tools by server name
+							let mut servers: std::collections::HashMap<
 								String,
 								Vec<&crate::mcp::McpFunction>,
 							> = std::collections::HashMap::new();
 
 							for func in &available_functions {
-								let category = crate::mcp::guess_tool_category(&func.name);
-								categories
-									.entry(category.to_string())
-									.or_default()
-									.push(func);
+								let server_name =
+									get_tool_server_name_async(&func.name, &mode_config).await;
+								servers.entry(server_name).or_default().push(func);
 							}
 
-							for (category, tools) in categories {
+							for (server_name, tools) in servers {
 								println!();
-								println!("  {}", category.bright_blue().bold());
+								println!("  {}", server_name.bright_blue().bold());
 								for tool in tools {
 									println!("    {}", tool.name.bright_white());
 								}
@@ -1029,23 +1039,21 @@ impl ChatSession {
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
 						} else {
-							// Group tools by category
-							let mut categories: std::collections::HashMap<
+							// Group tools by server name
+							let mut servers: std::collections::HashMap<
 								String,
 								Vec<&crate::mcp::McpFunction>,
 							> = std::collections::HashMap::new();
 
 							for func in &available_functions {
-								let category = crate::mcp::guess_tool_category(&func.name);
-								categories
-									.entry(category.to_string())
-									.or_default()
-									.push(func);
+								let server_name =
+									get_tool_server_name_async(&func.name, &mode_config).await;
+								servers.entry(server_name).or_default().push(func);
 							}
 
-							for (category, tools) in categories {
+							for (server_name, tools) in servers {
 								println!();
-								println!("  {}", category.bright_blue().bold());
+								println!("  {}", server_name.bright_blue().bold());
 
 								for tool in tools {
 									// Show name and short description
@@ -1162,23 +1170,21 @@ impl ChatSession {
 						if available_functions.is_empty() {
 							println!("{}", "No tools available.".yellow());
 						} else {
-							// Group tools by category
-							let mut categories: std::collections::HashMap<
+							// Group tools by server name
+							let mut servers: std::collections::HashMap<
 								String,
 								Vec<&crate::mcp::McpFunction>,
 							> = std::collections::HashMap::new();
 
 							for func in &available_functions {
-								let category = crate::mcp::guess_tool_category(&func.name);
-								categories
-									.entry(category.to_string())
-									.or_default()
-									.push(func);
+								let server_name =
+									get_tool_server_name_async(&func.name, &mode_config).await;
+								servers.entry(server_name).or_default().push(func);
 							}
 
-							for (category, tools) in categories {
+							for (server_name, tools) in servers {
 								println!();
-								println!("  {}", category.bright_blue().bold());
+								println!("  {}", server_name.bright_blue().bold());
 
 								for tool in tools {
 									// Full detailed view with parameters

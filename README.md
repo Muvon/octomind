@@ -182,7 +182,7 @@ cargo test
 ## 🆘 Troubleshooting
 
 **Common Issues:**
-- **Configuration Errors**: Check `.octomind/config.toml` or regenerate with `octomind config`
+- **Configuration Errors**: Check system config directory or regenerate with `octomind config`
 - **Missing API Keys**: Set environment variables for your AI provider
 - **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-3.5-sonnet`)
 - **Session Issues**: Use `/loglevel debug` to enable detailed logging

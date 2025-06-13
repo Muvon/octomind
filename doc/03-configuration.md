@@ -2,7 +2,11 @@
 
 ## Overview
 
-Octomind uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in `.octomind/config.toml` files and supports role-specific overrides with inheritance patterns.
+Octomind uses a hierarchical configuration system that allows for flexible customization while providing sensible defaults. Configuration is stored in system-wide directories and supports role-specific overrides with inheritance patterns.
+
+**Configuration Location:**
+- **macOS/Linux**: `~/.local/share/octomind/config/config.toml`
+- **Windows**: `%LOCALAPPDATA%/octomind/config/config.toml`
 
 ## Configuration Hierarchy
 
@@ -218,7 +222,7 @@ export OCTOMIND_ASSISTANT_ENABLE_LAYERS="false"
 
 ```bash
 # Set secure permissions on config file
-chmod 600 ~/.octomind/config.toml
+chmod 600 ~/.local/share/octomind/config/config.toml
 ```
 
 ### Configuration Validation
@@ -612,7 +616,7 @@ Common validation checks:
 
 ```bash
 # Secure config file permissions
-chmod 600 .octomind/config.toml
+chmod 600 ~/.local/share/octomind/config/config.toml
 ```
 
 ## Migration Guide

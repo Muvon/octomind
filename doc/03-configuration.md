@@ -304,17 +304,38 @@ tools = ["text_editor", "shell"]  # Limited tool set
 
 ### Layer-Specific Models
 
-```toml
+# Layered Architecture Configuration
+
+# Layered architecture is now configured using named layers instead of separate keys.
+# Remove developer_model and reducer_model keys and use [[layers]] array with named layers.
+
 [openrouter]
-model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 
-# Specific models for each layer
-query_processor_model = "openrouter:openai/gpt-4.1-nano"
-context_generator_model = "openrouter:google/gemini-2.5-flash-preview"
-developer_model = "openrouter:anthropic/claude-sonnet-4"
-reducer_model = "openrouter:openai/o4-mini"
-```
+[[layers]]
+name = "query_processor"
+enabled = true
+model = "openrouter:openai/gpt-4.1-nano"
+temperature = 0.1
+enable_tools = false
+input_mode = "last"
+
+[[layers]]
+name = "context_generator"
+enabled = true
+model = "openrouter:google/gemini-2.5-flash-preview"
+temperature = 0.2
+enable_tools = true
+allowed_tools = ["core", "text_editor"]
+input_mode = "last"
+
+[[layers]]
+name = "developer"
+enabled = true
+model = "openrouter:anthropic/claude-sonnet-4"
+temperature = 0.3
+enable_tools = true
+input_mode = "all"
 
 ### Custom Layer Configuration
 

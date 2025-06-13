@@ -517,12 +517,21 @@ enable_layers = true
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 
-# Override models for specific layers
+# Layered Architecture Configuration
+
+# Layered architecture is now configured using named layers instead of separate keys.
+# Remove developer_model and reducer_model keys and use [[layers]] array with named layers.
+
 query_processor_model = "openrouter:openai/gpt-4.1-nano"
 context_generator_model = "openrouter:google/gemini-1.5-flash"
-developer_model = "openrouter:anthropic/claude-sonnet-4"
-reducer_model = "openrouter:openai/gpt-4o-mini"
-```
+
+[[layers]]
+name = "developer"
+enabled = true
+model = "openrouter:anthropic/claude-sonnet-4"
+temperature = 0.3
+enable_tools = true
+input_mode = "all"
 
 #### Advanced Layer Configuration
 ```toml

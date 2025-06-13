@@ -279,19 +279,51 @@ pub async fn line_replace_spec(
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
-	// Create a snippet showing the replaced lines
+	// Create a snippet showing the replaced lines with smart highlighting
 	let replaced_snippet = if original_lines.is_empty() {
 		"(empty range)".to_string()
 	} else if original_lines.len() == 1 {
-		original_lines[0].clone()
+		// For single line replacement, show exactly what was replaced
+		format!("{}: {}", start_line, original_lines[0])
 	} else if original_lines.len() <= 3 {
-		original_lines.join("\n")
+		// For 2-3 lines, show all lines with line numbers
+		original_lines
+			.iter()
+			.enumerate()
+			.map(|(i, line)| format!("{}: {}", start_line + i, line))
+			.collect::<Vec<_>>()
+			.join("\n")
 	} else {
+		// For more than 3 lines, show first and last with summary
 		format!(
-			"{}\n... [{} more lines]\n{}",
+			"{}: {}\n... [{} more lines]\n{}: {}",
+			start_line,
 			original_lines[0],
 			original_lines.len() - 2,
+			start_line + original_lines.len() - 1,
 			original_lines[original_lines.len() - 1]
+		)
+	};
+
+	let lines_replaced_count = end_line - start_line + 1;
+	let new_lines_count = new_str.lines().count();
+
+	let content_message = if lines_replaced_count == 1 && new_lines_count == 1 {
+		format!("Successfully replaced line {} with new content", start_line)
+	} else if lines_replaced_count == 1 {
+		format!(
+			"Successfully replaced line {} with {} lines",
+			start_line, new_lines_count
+		)
+	} else if new_lines_count == 1 {
+		format!(
+			"Successfully replaced {} lines ({}-{}) with 1 line",
+			lines_replaced_count, start_line, end_line
+		)
+	} else {
+		format!(
+			"Successfully replaced {} lines ({}-{}) with {} lines",
+			lines_replaced_count, start_line, end_line, new_lines_count
 		)
 	};
 
@@ -299,11 +331,12 @@ pub async fn line_replace_spec(
 		tool_name: "text_editor".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"content": format!("Successfully replaced {} lines with {} lines", end_line - start_line + 1, new_str.lines().count()),
+			"content": content_message,
 			"path": path.to_string_lossy(),
-			"lines_replaced": end_line - start_line + 1,
-			"new_lines": new_str.lines().count(),
-			"replaced_snippet": replaced_snippet
+			"lines_replaced": lines_replaced_count,
+			"new_lines": new_lines_count,
+			"replaced_snippet": replaced_snippet,
+			"range": format!("{}-{}", start_line, end_line)
 		}),
 	})
 }

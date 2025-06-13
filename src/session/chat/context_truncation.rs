@@ -305,12 +305,10 @@ impl ContentCompressor {
 				)
 			} else {
 				// Just truncate very long single lines
-				if content.len() > 5000 {
-					format!(
-						"{}...[truncated {} chars]",
-						&content[..2000],
-						content.len() - 2000
-					)
+				if content.chars().count() > 5000 {
+					let truncated: String = content.chars().take(2000).collect();
+					let char_count = content.chars().count();
+					format!("{}...[truncated {} chars]", truncated, char_count - 2000)
 				} else {
 					content.to_string()
 				}

@@ -300,7 +300,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let ctrl_c_pressed = Arc::new(AtomicBool::new(false));
 	let ctrl_c_pressed_clone = ctrl_c_pressed.clone();
 
-	// Track the processing state to determine what to do on cancellation
+	// Enhanced processing state tracking for smart cancellation
 	#[derive(Debug, Clone, PartialEq)]
 	enum ProcessingState {
 		Idle,                 // No operation in progress
@@ -315,8 +315,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let processing_state = Arc::new(std::sync::Mutex::new(ProcessingState::Idle));
 	let processing_state_clone = processing_state.clone();
 
-	// Track the last user message index to know what to remove on cancellation
-	let last_user_message_index = Arc::new(std::sync::Mutex::new(None::<usize>));
+	// Smart operation tracking for surgical cleanup
+	#[derive(Debug, Clone)]
+	struct OperationContext {
+		user_message_index: Option<usize>,
+		assistant_message_index: Option<usize>,
+		operation_id: String,
+		has_tool_calls: bool,
+		completed_tool_ids: Vec<String>,
+	}
+
+	let current_operation = Arc::new(std::sync::Mutex::new(None::<OperationContext>));
 
 	// Set up sophisticated Ctrl+C handler with immediate feedback
 	ctrlc::set_handler(move || {
@@ -372,110 +381,91 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Set processing state to idle
 		*processing_state.lock().unwrap() = ProcessingState::Idle;
 
-		// Handle cancellation at the start of each loop iteration
+		// SMART CANCELLATION: Handle cancellation with surgical cleanup
 		if ctrl_c_pressed.load(Ordering::SeqCst) {
-			log_debug!("Ctrl+C detected - checking for incomplete tool calls to clean up");
+			log_debug!("Ctrl+C detected - performing smart cleanup based on operation state");
 
-			// CRITICAL FIX: Always check for and clean up incomplete tool calls when Ctrl+C is pressed
-			// This ensures MCP protocol compliance regardless of processing state
+			let current_state = processing_state.lock().unwrap().clone();
+			let operation = current_operation.lock().unwrap().clone();
 
-			// Check if we have any incomplete tool calls in the conversation
-			let mut cleanup_needed = false;
-			let mut cleanup_from_index = None;
+			match current_state {
+				ProcessingState::Idle | ProcessingState::ReadingInput => {
+					// Nothing to clean up - just reset and continue
+					log_debug!("Cancelled during idle state - no cleanup needed");
+				}
+				ProcessingState::ProcessingLayers => {
+					// Layers processing was interrupted - remove only the current user message if it was added
+					if let Some(op) = operation {
+						if let Some(user_idx) = op.user_message_index {
+							if user_idx < chat_session.session.messages.len() {
+								chat_session.session.messages.truncate(user_idx);
+								log_debug!("Removed incomplete user message due to layer processing cancellation");
+							}
+						}
+					}
+				}
+				ProcessingState::CallingAPI => {
+					// API call was interrupted - remove only incomplete assistant response if any
+					if let Some(op) = operation {
+						if let Some(assistant_idx) = op.assistant_message_index {
+							// Remove incomplete assistant message
+							if assistant_idx < chat_session.session.messages.len() {
+								chat_session.session.messages.truncate(assistant_idx);
+								log_debug!("Removed incomplete assistant response due to API call cancellation");
+							}
+						}
+						// Keep user message - it's complete and valid
+					}
+				}
+				ProcessingState::ExecutingTools => {
+					// Tool execution was interrupted - surgical cleanup of incomplete tools only
+					if let Some(op) = operation {
+						// Find and remove only incomplete tool results
+						let mut messages_to_remove = Vec::new();
 
-			// Look for assistant messages with tool_calls that don't have corresponding tool_result messages
-			for i in 0..chat_session.session.messages.len() {
-				if let Some(msg) = chat_session.session.messages.get(i) {
-					if msg.role == "assistant" && msg.tool_calls.is_some() {
-						// This assistant message has tool_calls - check if all have matching tool results
-						if let Some(tool_calls_value) = &msg.tool_calls {
-							if let Ok(tool_calls_array) = serde_json::from_value::<
-								Vec<serde_json::Value>,
-							>(tool_calls_value.clone())
-							{
-								for tool_call in tool_calls_array {
-									if let Some(tool_id) =
-										tool_call.get("id").and_then(|id| id.as_str())
-									{
-										// Check if there's a matching tool result message after this assistant message
-										let has_matching_result = chat_session.session.messages
-											[i + 1..]
-											.iter()
-											.any(|result_msg| {
-												result_msg.role == "tool"
-													&& result_msg.tool_call_id.as_ref()
-														== Some(&tool_id.to_string())
-											});
-
-										if !has_matching_result {
-											// Found incomplete tool call - need to clean up from here
-											cleanup_needed = true;
-											cleanup_from_index = Some(i);
-											break;
-										}
+						// Look for tool messages that don't have completed tool IDs
+						for (i, msg) in chat_session.session.messages.iter().enumerate().rev() {
+							if msg.role == "tool" {
+								if let Some(tool_call_id) = &msg.tool_call_id {
+									if !op.completed_tool_ids.contains(tool_call_id) {
+										// This tool result is incomplete - mark for removal
+										messages_to_remove.push(i);
 									}
 								}
 							}
 						}
-					}
-				}
-				if cleanup_needed {
-					break;
-				}
-			}
 
-			// If we found incomplete tool calls, clean them up
-			if cleanup_needed {
-				if let Some(cleanup_index) = cleanup_from_index {
-					// Find the user message that preceded this assistant message with incomplete tool calls
-					let mut user_message_index = cleanup_index;
-					for i in (0..cleanup_index).rev() {
-						if let Some(msg) = chat_session.session.messages.get(i) {
-							if msg.role == "user" {
-								user_message_index = i;
-								break;
-							}
+						// Remove incomplete tool results (in reverse order to maintain indices)
+						for &idx in &messages_to_remove {
+							chat_session.session.messages.remove(idx);
 						}
-					}
 
-					// Remove everything from the user message that led to incomplete tool calls
-					chat_session.session.messages.truncate(user_message_index);
-					log_debug!(
-						"Removed incomplete tool calls and related messages due to cancellation (from index {})",
-						user_message_index
-					);
+						if !messages_to_remove.is_empty() {
+							log_debug!("Removed {} incomplete tool results due to tool execution cancellation", messages_to_remove.len());
+						}
+
+						// Keep all completed tool results and the assistant message with tool calls
+					}
 				}
-			} else {
-				// No incomplete tool calls, but still clean up based on processing state
-				let should_remove_last_message = {
-					let state = processing_state.lock().unwrap().clone();
-					matches!(
-						state,
-						ProcessingState::CallingAPI
-							| ProcessingState::ExecutingTools
-							| ProcessingState::ProcessingResponse
-					)
-				};
-
-				if should_remove_last_message {
-					if let Some(last_index) = *last_user_message_index.lock().unwrap() {
-						chat_session.session.messages.truncate(last_index);
-						log_debug!("Removed incomplete request due to cancellation");
-					}
+				ProcessingState::ProcessingResponse => {
+					// Response processing was interrupted - minimal cleanup
+					// Most work is already done, just ensure consistency
+					log_debug!("Cancelled during response processing - preserving completed work");
+				}
+				ProcessingState::CompletedWithResults => {
+					// Operation completed successfully - nothing to clean up
+					log_debug!("Cancelled after completion - all work preserved");
 				}
 			}
 
 			// Save the session after cleanup to persist changes
 			if let Err(e) = chat_session.save() {
-				log_debug!(
-					"Warning: Failed to save session after cancellation cleanup: {}",
-					e
-				);
+				log_debug!("Warning: Failed to save session after smart cleanup: {}", e);
 			}
 
 			// Reset for next iteration
 			ctrl_c_pressed.store(false, Ordering::SeqCst);
-			*last_user_message_index.lock().unwrap() = None;
+			*current_operation.lock().unwrap() = None;
 			continue;
 		}
 
@@ -685,14 +675,37 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 		}
 
-		// Store the user message index before adding it
-		*last_user_message_index.lock().unwrap() = Some(chat_session.session.messages.len());
+		// Initialize operation context for smart tracking
+		let operation_id = format!(
+			"op_{}",
+			std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_millis()
+		);
+
+		let user_message_index = chat_session.session.messages.len();
 
 		// UNIFIED STANDARD PROCESSING FLOW
 		// The same code path is used whether the input is from layers or direct user input
 
 		// Add user message for standard processing flow
 		chat_session.add_user_message(&input)?;
+
+		// Create operation context for tracking
+		*current_operation.lock().unwrap() = Some(OperationContext {
+			user_message_index: Some(user_message_index),
+			assistant_message_index: None,
+			operation_id: operation_id.clone(),
+			has_tool_calls: false,
+			completed_tool_ids: Vec::new(),
+		});
+
+		log_debug!(
+			"Started operation {} with user message at index {}",
+			operation_id,
+			user_message_index
+		);
 
 		// Check if we need to truncate the context to stay within token limits
 		let truncate_cancelled = Arc::new(AtomicBool::new(false));
@@ -818,6 +831,20 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Process the response
 		match api_result {
 			Ok(response) => {
+				// Update operation context with assistant message info
+				if let Some(ref mut op) = *current_operation.lock().unwrap() {
+					op.assistant_message_index = Some(chat_session.session.messages.len());
+					op.has_tool_calls = response
+						.tool_calls
+						.as_ref()
+						.is_some_and(|calls| !calls.is_empty());
+					log_debug!(
+						"Updated operation {} with assistant message at index {}",
+						op.operation_id,
+						chat_session.session.messages.len()
+					);
+				}
+
 				// Set processing state based on whether we have tool calls
 				if response
 					.tool_calls
@@ -861,6 +888,29 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					tool_process_cancelled.clone(),
 				)
 				.await;
+
+				// After processing, update operation context with completed tool IDs
+				if let Some(ref mut op) = *current_operation.lock().unwrap() {
+					// Find all tool result messages that were added during this operation
+					let mut completed_tools = Vec::new();
+					for msg in &chat_session.session.messages {
+						if msg.role == "tool" {
+							if let Some(tool_id) = &msg.tool_call_id {
+								if !op.completed_tool_ids.contains(tool_id) {
+									completed_tools.push(tool_id.clone());
+								}
+							}
+						}
+					}
+					op.completed_tool_ids.extend(completed_tools.clone());
+					if !completed_tools.is_empty() {
+						log_debug!(
+							"Operation {} completed tools: {:?}",
+							op.operation_id,
+							completed_tools
+						);
+					}
+				}
 
 				// Update processing state to completed when done
 				*processing_state.lock().unwrap() = ProcessingState::CompletedWithResults;
@@ -920,6 +970,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				}
 			}
 		}
+
+		// Clear operation context at the end of each successful iteration
+		*current_operation.lock().unwrap() = None;
 	}
 
 	Ok(())

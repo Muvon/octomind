@@ -252,7 +252,12 @@ impl AiProvider for OpenAiProvider {
 		if !config.mcp.servers.is_empty() {
 			let functions = crate::mcp::get_available_functions(config).await;
 			if !functions.is_empty() {
-				let tools = functions
+				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
+				// Sort functions by name to guarantee consistent ordering across API calls
+				let mut sorted_functions = functions;
+				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
+
+				let tools = sorted_functions
 					.iter()
 					.map(|f| {
 						serde_json::json!({

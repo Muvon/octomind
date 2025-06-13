@@ -418,33 +418,88 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					}
 				}
 				ProcessingState::ExecutingTools => {
-					// Tool execution was interrupted - surgical cleanup of incomplete tools only
-					if let Some(op) = operation {
-						// Find and remove only incomplete tool results
-						let mut messages_to_remove = Vec::new();
+					// Tool execution was interrupted - need to clean up incomplete tool calls properly
+					// The issue: if we have tool_use without tool_result, Anthropic API breaks
+					// Solution: Remove specific tool_use requests that have no corresponding tool_result
 
-						// Look for tool messages that don't have completed tool IDs
+					// First, collect information about which tool calls need to be removed
+					let message_updates = {
+						let mut updates = Vec::new();
+
+						// Find the last assistant message with tool_calls
 						for (i, msg) in chat_session.session.messages.iter().enumerate().rev() {
-							if msg.role == "tool" {
-								if let Some(tool_call_id) = &msg.tool_call_id {
-									if !op.completed_tool_ids.contains(tool_call_id) {
-										// This tool result is incomplete - mark for removal
-										messages_to_remove.push(i);
+							if msg.role == "assistant" && msg.tool_calls.is_some() {
+								if let Some(tool_calls_value) = &msg.tool_calls {
+									if let Ok(tool_calls_array) =
+										serde_json::from_value::<Vec<serde_json::Value>>(
+											tool_calls_value.clone(),
+										) {
+										// Filter out tool calls that don't have results
+										let mut valid_tool_calls = Vec::new();
+										let original_count = tool_calls_array.len();
+
+										for tool_call in &tool_calls_array {
+											if let Some(tool_id) =
+												tool_call.get("id").and_then(|id| id.as_str())
+											{
+												// Check if there's a matching tool result
+												let has_result = chat_session.session.messages
+													[i + 1..]
+													.iter()
+													.any(|result_msg| {
+														result_msg.role == "tool"
+															&& result_msg.tool_call_id.as_ref()
+																== Some(&tool_id.to_string())
+													});
+
+												if has_result {
+													valid_tool_calls.push(tool_call.clone());
+												} else {
+													log_debug!("Removing tool_use request with ID {} - no corresponding tool_result", tool_id);
+												}
+											}
+										}
+
+										// Store the update information
+										if valid_tool_calls.is_empty() {
+											updates.push((i, None, original_count, 0));
+										} else if valid_tool_calls.len() < original_count {
+											let new_tool_calls =
+												serde_json::to_value(&valid_tool_calls).unwrap();
+											updates.push((
+												i,
+												Some(new_tool_calls),
+												original_count,
+												valid_tool_calls.len(),
+											));
+										}
 									}
+								}
+								break; // Only process the last assistant message with tool_calls
+							}
+						}
+						updates
+					};
+
+					// Apply the updates
+					for (msg_index, new_tool_calls, original_count, valid_count) in message_updates
+					{
+						if let Some(msg) = chat_session.session.messages.get_mut(msg_index) {
+							match new_tool_calls {
+								None => {
+									msg.tool_calls = None;
+									log_debug!("Removed all tool_calls from assistant message - no valid tool results");
+								}
+								Some(tool_calls) => {
+									msg.tool_calls = Some(tool_calls);
+									log_debug!(
+										"Kept {} valid tool_calls, removed {} incomplete ones",
+										valid_count,
+										original_count - valid_count
+									);
 								}
 							}
 						}
-
-						// Remove incomplete tool results (in reverse order to maintain indices)
-						for &idx in &messages_to_remove {
-							chat_session.session.messages.remove(idx);
-						}
-
-						if !messages_to_remove.is_empty() {
-							log_debug!("Removed {} incomplete tool results due to tool execution cancellation", messages_to_remove.len());
-						}
-
-						// Keep all completed tool results and the assistant message with tool calls
 					}
 				}
 				ProcessingState::ProcessingResponse => {

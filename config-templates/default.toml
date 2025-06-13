@@ -52,9 +52,10 @@ use_long_system_cache = true
 # AGENT CONFIGURATIONS
 # Define specific AI agents that route tasks to configured layers
 # Each agent becomes a separate MCP tool (e.g., agent_code_reviewer, agent_debugger)
-# name = name in defined layers
+# Requires corresponding layers with matching names to be configured
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Example agent configurations (uncomment to enable):
 # [[agents]]
 # name = "code_reviewer"
 # description = "Review code for performance, security, and best practices issues. Analyzes code quality and suggests improvements."
@@ -154,7 +155,7 @@ IMPORTANT:
 - Make sure when you refactor code or do changes, you do not remove critical parts of the codebase."""
 
 # MCP configuration for developer role
-mcp = { server_refs = ["developer", "filesystem", "octocode"], allowed_tools = [] }
+mcp = { server_refs = ["developer", "filesystem", "agent", "octocode"], allowed_tools = [] }
 
 # Assistant role - optimized for general assistance tasks
 [[roles]]
@@ -352,7 +353,7 @@ allowed_tools = []
 # [layers.parameters]
 # analysis_type = "detailed"
 
-# Example agent layers (use with agent tool):
+# Example agent layers (use with agent tools):
 # [[layers]]
 # name = "code_reviewer"
 # model = "openrouter:anthropic/claude-3.5-sonnet"
@@ -366,19 +367,7 @@ allowed_tools = []
 # allowed_tools = ["text_editor", "list_files"]
 #
 # [[layers]]
-# name = "docs_writer"
-# model = "openrouter:openai/gpt-4o"
-# system_prompt = "You are a technical documentation specialist. Write clear, comprehensive documentation that is easy to understand and follow. Include examples and best practices."
-# temperature = 0.2
-# input_mode = "Last"
-# builtin = false
-#
-# [layers.mcp]
-# server_refs = ["filesystem"]
-# allowed_tools = ["text_editor", "list_files"]
-#
-# [[layers]]
-# name = "bug_hunter"
+# name = "debugger"
 # model = "openrouter:anthropic/claude-3.5-sonnet"
 # system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
 # temperature = 0.1
@@ -387,12 +376,24 @@ allowed_tools = []
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = []
+# allowed_tools = ["text_editor", "shell", "list_files"]
 #
-# Usage examples:
-# - agent(name="code_reviewer", task="Review this function for performance issues")
-# - agent(name="docs_writer", task="Write documentation for this API endpoint")
-# - agent(name="bug_hunter", task="Help me debug this error message")
+# [[layers]]
+# name = "architect"
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# system_prompt = "You are a senior software architect. Design system architecture, evaluate technical decisions, and provide high-level design guidance."
+# temperature = 0.2
+# input_mode = "Last"
+# builtin = false
+#
+# [layers.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = ["text_editor", "list_files"]
+#
+# Usage examples (requires agents config above):
+# - agent_code_reviewer(task="Review this function for performance issues")
+# - agent_debugger(task="Help me debug this error message")
+# - agent_architect(task="Design a scalable user authentication system")
 
 # Example custom command configuration:
 # [[commands]]

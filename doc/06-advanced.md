@@ -22,76 +22,115 @@ MCP enables AI models to use external tools and services through a standardized 
 - **list_files**: Browse directory structures with pattern matching and content search
 - **html2md**: Convert HTML content to Markdown format
 
-### Agent Tool Reference
+### Agent Tools Reference
 
-The `agent` tool enables task delegation to specialized AI layers configured in your system. This allows you to create and use domain-specific AI agents for different types of work.
+The agent system enables task delegation to specialized AI agents configured in your system. Each configured agent becomes a separate MCP tool that routes tasks to specialized AI layers.
 
-#### Usage
+#### How It Works
 
-```json
-{"name": "layer_name", "task": "Task description in human language"}
-```
+1. **Configure Agents**: Define agents in the `[[agents]]` section of your config
+2. **Configure Layers**: Create corresponding layers that agents will use
+3. **Use Agent Tools**: Each agent becomes a tool like `agent_code_reviewer`, `agent_debugger`, etc.
 
-**Parameters:**
-- `name` (string, required): Name of the configured layer to use as an agent
-- `task` (string, required): Task description in human language
+#### Agent Configuration
 
-#### Examples
-
-**Code Review Agent:**
-```json
-{"name": "code_reviewer", "task": "Review this function for performance issues and suggest improvements"}
-```
-
-**Documentation Agent:**
-```json
-{"name": "docs_writer", "task": "Write comprehensive documentation for this API endpoint"}
-```
-
-**Bug Hunting Agent:**
-```json
-{"name": "bug_hunter", "task": "Help me debug this error: Cannot find module 'express'"}
-```
-
-#### Configuration
-
-To use the agent tool, you need to configure layers in your `config.toml`:
+First, define your agents in `config.toml`:
 
 ```toml
-# Configure agent tool description
-agent_description = "Execute tasks using configured AI layers. Specify the layer name and task description to route work to specialized AI agents."
+# Agent definitions - each becomes a separate MCP tool
+[[agents]]
+name = "code_reviewer"
+description = "Review code for performance, security, and best practices issues. Analyzes code quality and suggests improvements."
 
-# Example agent layers
+[[agents]]
+name = "debugger"
+description = "Analyze bugs, trace issues, and suggest debugging approaches. Helps identify root causes and solutions."
+
+[[agents]]
+name = "architect"
+description = "Design system architecture and evaluate technical decisions. Provides high-level design guidance."
+```
+
+#### Layer Configuration
+
+Then create corresponding layers that agents will use:
+
+```toml
+# Agent layers - specialized AI configurations
 [[layers]]
 name = "code_reviewer"
 model = "openrouter:anthropic/claude-3.5-sonnet"
-system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices."
+system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices. Provide detailed feedback with specific suggestions for improvement."
 temperature = 0.1
 input_mode = "Last"
+builtin = false
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
 allowed_tools = ["text_editor", "list_files"]
 
 [[layers]]
-name = "docs_writer"
-model = "openrouter:openai/gpt-4o"
-system_prompt = "You are a technical documentation specialist. Write clear, comprehensive documentation."
-temperature = 0.2
+name = "debugger"
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
+temperature = 0.1
 input_mode = "Last"
+builtin = false
 
 [layers.mcp]
-server_refs = ["filesystem"]
-allowed_tools = ["text_editor"]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "shell", "list_files"]
+
+[[layers]]
+name = "architect"
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are a senior software architect. Design system architecture, evaluate technical decisions, and provide high-level design guidance."
+temperature = 0.2
+input_mode = "Last"
+builtin = false
+
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "list_files"]
 ```
+
+#### Usage Examples
+
+Once configured, each agent becomes a separate tool:
+
+**Code Review Agent:**
+```bash
+# In session
+agent_code_reviewer(task="Review this function for performance issues and suggest improvements")
+```
+
+**Debugging Agent:**
+```bash
+# In session
+agent_debugger(task="Help me debug this error: Cannot find module 'express'")
+```
+
+**Architecture Agent:**
+```bash
+# In session
+agent_architect(task="Design a scalable architecture for user authentication system")
+```
+
+#### Tool Parameters
+
+Each agent tool has the same parameter structure:
+
+**Parameters:**
+- `task` (string, required): Task description in human language for the agent to process
 
 #### Key Features
 
+- **Individual Tools**: Each agent becomes a separate MCP tool (e.g., `agent_code_reviewer`)
 - **Layer Integration**: Uses the full layer system (models, prompts, MCP tools)
-- **Configurable**: Custom agent description and specialized layers
-- **Flexible**: Any configured layer can be used as an agent
-- **Simple**: Just specify the layer name and task description
-- **Powerful**: Agents can use MCP tools for complex workflows
+- **Configurable**: Custom agent descriptions and specialized layers
+- **Isolated Processing**: Each agent runs in its own session context
+- **Tool Access**: Agents can use MCP tools based on their layer configuration
+- **Flexible**: Easy to add new specialized agents for different tasks
 
 ### Text Editor Tool Reference
 

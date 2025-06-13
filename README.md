@@ -6,6 +6,8 @@
 
 Octomind is an AI-powered development assistant that helps you understand, analyze, and interact with your codebase through natural language conversations. No complex setup, no indexing—just intelligent AI sessions with built-in development tools.
 
+[![asciicast](https://asciinema.org/a/wpZmOSOgFXp8HRzTltncgN7e3.svg)](https://asciinema.org/a/wpZmOSOgFXp8HRzTltncgN7e3)
+
 ## ✨ Why Octomind?
 
 - 🎯 **Session-First Architecture** - Everything happens in interactive AI conversations

@@ -583,10 +583,9 @@ octomind config --validate
 ### Debug Mode
 ```bash
 # Enable debug logging in session
-/debug
+/loglevel debug
 
 # Or in configuration
-[developer]
 log_level = "debug"
 ```
 

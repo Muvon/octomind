@@ -325,7 +325,7 @@ During a session, use these commands:
 - `/image <path>` - Attach image to your next message (PNG, JPEG, GIF, WebP, BMP)
 - `/info` - Display token usage and costs
 - `/report` - Generate detailed usage report with cost breakdown per request
-- `/debug` - Toggle debug mode
+- `/loglevel [debug|info|none]` - Set log level
 
 #### Context Management
 - `/cache` - Mark cache checkpoint

@@ -18,12 +18,9 @@ use super::super::command_executor;
 use super::super::commands::*;
 use super::core::ChatSession;
 use super::utils::format_number;
+use crate::config::{Config, LogLevel};
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::list_available_sessions;
-use crate::{
-	config::{Config, LogLevel},
-	log_info,
-};
 use anyhow::Result;
 use arboard::Clipboard;
 use chrono::{DateTime, Utc};
@@ -323,7 +320,7 @@ impl ChatSession {
 				return Ok(false);
 			}
 			LOGLEVEL_COMMAND => {
-				// Handle log level command
+				// Handle log level command (runtime-only, does NOT save to disk)
 				if params.is_empty() {
 					// Show current log level - use system-wide getter
 					let current_level = config.get_log_level();
@@ -338,6 +335,11 @@ impl ChatSession {
 						format!("Current log level: {}", level_str).bright_cyan()
 					);
 					println!("{}", "Available levels: none, info, debug".bright_yellow());
+					println!(
+						"{}",
+						"Note: Changes are runtime-only and do not persist to config file."
+							.bright_blue()
+					);
 					return Ok(false);
 				}
 
@@ -355,33 +357,30 @@ impl ChatSession {
 					}
 				};
 
-				// Create a mutable config reference for the update
-				let mut temp_config = config.clone();
-
-				// Update the specific field using selective update mechanism
-				if let Err(e) = temp_config.update_specific_field(|cfg| {
-					// Update the root configuration (takes precedence)
-					cfg.log_level = new_level.clone();
-				}) {
-					println!("{}: {}", "Failed to save configuration".bright_red(), e);
-					return Ok(false);
-				}
+				// Update ONLY the runtime config, do NOT save to disk
+				config.log_level = new_level.clone();
 
 				// Show the new state
 				match new_level {
 					LogLevel::None => {
-						println!("{}", "Log level set to NONE.".bright_yellow());
+						println!(
+							"{}",
+							"Log level set to NONE (runtime only).".bright_yellow()
+						);
 						println!(
 							"{}",
 							"Only essential information will be displayed.".bright_blue()
 						);
 					}
 					LogLevel::Info => {
-						println!("{}", "Log level set to INFO.".bright_green());
+						println!("{}", "Log level set to INFO (runtime only).".bright_green());
 						println!("{}", "Moderate logging will be shown.".bright_yellow());
 					}
 					LogLevel::Debug => {
-						println!("{}", "Log level set to DEBUG.".bright_green());
+						println!(
+							"{}",
+							"Log level set to DEBUG (runtime only).".bright_green()
+						);
 						println!(
 							"{}",
 							"Detailed logging will be shown for API calls and tool executions."
@@ -389,48 +388,14 @@ impl ChatSession {
 						);
 					}
 				}
-				log_info!("Configuration has been saved to disk.");
+				println!(
+					"{}",
+					"Note: This change is runtime-only and will not persist after session ends."
+						.bright_blue()
+				);
 
-				// Return a special code that indicates we should reload the config in the main loop
-				return Ok(true);
-			}
-			DEBUG_COMMAND => {
-				// Backward compatibility - toggle between none and debug
-				// Create a mutable config reference for the update
-				let mut temp_config = config.clone();
-
-				// Update the specific field using selective update mechanism
-				if let Err(e) = temp_config.update_specific_field(|cfg| {
-					// Toggle between none and debug for backward compatibility
-					let current_level = cfg.get_log_level();
-					cfg.log_level = match current_level {
-						LogLevel::Debug => LogLevel::None,
-						_ => LogLevel::Debug,
-					};
-				}) {
-					println!("{}: {}", "Failed to save configuration".bright_red(), e);
-					return Ok(false);
-				}
-
-				// Show the new state
-				if temp_config.log_level.is_debug_enabled() {
-					println!("{}", "Debug mode is now ENABLED.".bright_green());
-					println!(
-						"{}",
-						"Detailed logging will be shown for API calls and tool executions."
-							.bright_yellow()
-					);
-				} else {
-					println!("{}", "Debug mode is now DISABLED.".bright_yellow());
-					println!(
-						"{}",
-						"Only essential information will be displayed.".bright_blue()
-					);
-				}
-				log_info!("Configuration has been saved to disk.");
-
-				// Return a special code that indicates we should reload the config in the main loop
-				return Ok(true);
+				// Do NOT return Ok(true) - we don't want config reload
+				return Ok(false);
 			}
 			TRUNCATE_COMMAND => {
 				// Perform smart truncation processing once

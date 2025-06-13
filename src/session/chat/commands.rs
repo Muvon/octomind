@@ -28,7 +28,6 @@ pub const SESSION_COMMAND: &str = "/session";
 pub const LAYERS_COMMAND: &str = "/layers";
 pub const INFO_COMMAND: &str = "/info";
 pub const DONE_COMMAND: &str = "/done";
-pub const DEBUG_COMMAND: &str = "/debug";
 pub const LOGLEVEL_COMMAND: &str = "/loglevel";
 pub const TRUNCATE_COMMAND: &str = "/truncate";
 pub const SUMMARIZE_COMMAND: &str = "/summarize";
@@ -40,7 +39,7 @@ pub const IMAGE_COMMAND: &str = "/image";
 pub const CONTEXT_COMMAND: &str = "/context";
 
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 23] = [
+pub const COMMANDS: [&str; 22] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -54,7 +53,6 @@ pub const COMMANDS: [&str; 23] = [
 	LAYERS_COMMAND,
 	INFO_COMMAND,
 	DONE_COMMAND,
-	DEBUG_COMMAND,
 	LOGLEVEL_COMMAND,
 	TRUNCATE_COMMAND,
 	SUMMARIZE_COMMAND,

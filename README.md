@@ -121,7 +121,7 @@ Within any session, use these commands:
 - `/report` - Generate detailed usage report with cost breakdown
 - `/cache` - Mark cache checkpoint for cost savings
 - `/layers` - Toggle layered processing on/off
-- `/debug` - Toggle debug logging
+- `/loglevel [debug|info|none]` - Set log level
 - `/exit` - Exit current session
 
 ## 🔧 Configuration
@@ -185,7 +185,7 @@ cargo test
 - **Configuration Errors**: Check `.octomind/config.toml` or regenerate with `octomind config`
 - **Missing API Keys**: Set environment variables for your AI provider
 - **Invalid Model Format**: Use `provider:model` format (e.g., `openrouter:anthropic/claude-3.5-sonnet`)
-- **Session Issues**: Use `/debug` to enable detailed logging
+- **Session Issues**: Use `/loglevel debug` to enable detailed logging
 
 **Getting Help:**
 - 🐛 **Issues**: [GitHub Issues](https://github.com/muvon/octomind/issues)

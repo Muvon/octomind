@@ -165,7 +165,6 @@ Default values
 # In any session
 > /help              # Show available commands
 > /info              # Token and cost breakdown
-> /debug             # Toggle debug mode
 > /layers            # Toggle layered processing
 > /cache             # Mark cache checkpoint
 > /done              # Optimize context

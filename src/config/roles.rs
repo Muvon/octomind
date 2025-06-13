@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 
 use super::mcp::RoleMcpConfig;
 
-// Mode configuration - contains all behavior settings but NOT API keys or model (uses system-wide model)
+// Role configuration - contains all behavior settings but NOT API keys or model (uses system-wide model)
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ModeConfig {
+pub struct RoleConfig {
 	// Layer configurations
 	#[serde(default)]
 	pub enable_layers: bool,
@@ -37,9 +37,9 @@ pub struct Role {
 	// Role name (e.g., "developer", "assistant", "tester")
 	pub name: String,
 
-	// Flattened mode configuration
+	// Flattened role configuration
 	#[serde(flatten)]
-	pub config: ModeConfig,
+	pub config: RoleConfig,
 
 	// MCP configuration for this role
 	#[serde(default)]

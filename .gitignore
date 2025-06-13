@@ -1,6 +1,5 @@
 # Rust build artifacts
 /target
-Cargo.lock
 
 # Cross-compilation build artifacts
 target/cross/

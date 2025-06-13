@@ -224,7 +224,7 @@ impl AiProvider for AmazonBedrockProvider {
 		messages: &[Message],
 		model: &str,
 		temperature: f32,
-		_config: &Config,
+		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
@@ -246,7 +246,7 @@ impl AiProvider for AmazonBedrockProvider {
 		let bedrock_messages = convert_messages(messages);
 
 		// Create request body (format varies by model family)
-		let request_body = if full_model_id.contains("anthropic.claude") {
+		let mut request_body = if full_model_id.contains("anthropic.claude") {
 			// Anthropic Claude format on Bedrock
 			serde_json::json!({
 				"anthropic_version": "bedrock-2023-05-31",
@@ -269,6 +269,60 @@ impl AiProvider for AmazonBedrockProvider {
 				// "max_tokens": 4096,
 			})
 		};
+
+		// Add tool definitions if MCP has any servers configured
+		// Different models on Bedrock have different tool formats
+		if !config.mcp.servers.is_empty() {
+			let functions = crate::mcp::get_available_functions(config).await;
+			if !functions.is_empty() {
+				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
+				// Sort functions by name to guarantee consistent ordering across API calls
+				let mut sorted_functions = functions;
+				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
+
+				if full_model_id.contains("anthropic.claude") {
+					// Anthropic Claude on Bedrock uses Anthropic's tools format
+					let tools = sorted_functions
+						.iter()
+						.map(|f| {
+							serde_json::json!({
+								"name": f.name,
+								"description": f.description,
+								"input_schema": f.parameters
+							})
+						})
+						.collect::<Vec<_>>();
+
+					request_body["tools"] = serde_json::json!(tools);
+				} else if full_model_id.contains("meta.llama") {
+					// Llama models on Bedrock don't support tools in the same way
+					// We could potentially include tool descriptions in the prompt
+					// For now, skip tool support for Llama models
+					log_debug!(
+						"Tool calls not supported for Llama models on Bedrock: {}",
+						full_model_id
+					);
+				} else {
+					// Generic models might use OpenAI-compatible format
+					let tools = sorted_functions
+						.iter()
+						.map(|f| {
+							serde_json::json!({
+								"type": "function",
+								"function": {
+									"name": f.name,
+									"description": f.description,
+									"parameters": f.parameters
+								}
+							})
+						})
+						.collect::<Vec<_>>();
+
+					request_body["tools"] = serde_json::json!(tools);
+					request_body["tool_choice"] = serde_json::json!("auto");
+				}
+			}
+		}
 
 		// Build Bedrock API URL
 		let api_url = format!(
@@ -338,31 +392,114 @@ impl AiProvider for AmazonBedrockProvider {
 			));
 		}
 
-		// Extract content based on model family
-		let content = if full_model_id.contains("anthropic.claude") {
-			// Anthropic Claude response format
-			response_json
-				.get("content")
-				.and_then(|content_arr| content_arr.as_array())
-				.and_then(|arr| arr.first())
-				.and_then(|first| first.get("text"))
-				.and_then(|text| text.as_str())
-				.unwrap_or("")
-				.to_string()
+		// Extract content and tool calls based on model family
+		let mut content = String::new();
+		let mut tool_calls = None;
+
+		if full_model_id.contains("anthropic.claude") {
+			// Anthropic Claude response format on Bedrock
+			if let Some(content_arr) = response_json.get("content").and_then(|c| c.as_array()) {
+				for content_block in content_arr {
+					if let Some(text) = content_block.get("text").and_then(|t| t.as_str()) {
+						content.push_str(text);
+					} else if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+					{
+						// Handle tool calls in Anthropic format
+						if tool_calls.is_none() {
+							tool_calls = Some(Vec::new());
+						}
+
+						if let (Some(name), Some(input), Some(id)) = (
+							content_block.get("name").and_then(|n| n.as_str()),
+							content_block.get("input"),
+							content_block.get("id").and_then(|i| i.as_str()),
+						) {
+							let mcp_call = crate::mcp::McpToolCall {
+								tool_name: name.to_string(),
+								parameters: input.clone(),
+								tool_id: id.to_string(),
+							};
+
+							if let Some(ref mut calls) = tool_calls {
+								calls.push(mcp_call);
+							}
+						}
+					}
+				}
+			}
 		} else if full_model_id.contains("meta.llama") {
 			// Meta Llama response format
-			response_json
+			content = response_json
 				.get("generation")
 				.and_then(|gen| gen.as_str())
 				.unwrap_or("")
-				.to_string()
+				.to_string();
+			// Llama models don't support structured tool calls
 		} else {
-			// Generic response format
-			response_json
-				.get("content")
-				.and_then(|c| c.as_str())
-				.unwrap_or("")
-				.to_string()
+			// Generic response format - could be OpenAI-compatible
+			if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
+				if let Some(choice) = choices.first() {
+					if let Some(message) = choice.get("message") {
+						// Extract content
+						if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
+							content = text.to_string();
+						}
+
+						// Extract tool calls (OpenAI format)
+						if let Some(tool_calls_val) = message.get("tool_calls") {
+							if tool_calls_val.is_array()
+								&& !tool_calls_val.as_array().unwrap().is_empty()
+							{
+								let mut extracted_tool_calls = Vec::new();
+
+								for tool_call in tool_calls_val.as_array().unwrap() {
+									if let Some(function) = tool_call.get("function") {
+										if let (Some(name), Some(args)) = (
+											function.get("name").and_then(|n| n.as_str()),
+											function.get("arguments").and_then(|a| a.as_str()),
+										) {
+											let params = if args.trim().is_empty() {
+												serde_json::json!({})
+											} else {
+												match serde_json::from_str::<serde_json::Value>(
+													args,
+												) {
+													Ok(json_params) => json_params,
+													Err(_) => {
+														serde_json::Value::String(args.to_string())
+													}
+												}
+											};
+
+											let tool_id = tool_call
+												.get("id")
+												.and_then(|i| i.as_str())
+												.unwrap_or("");
+											let mcp_call = crate::mcp::McpToolCall {
+												tool_name: name.to_string(),
+												parameters: params,
+												tool_id: tool_id.to_string(),
+											};
+
+											extracted_tool_calls.push(mcp_call);
+										}
+									}
+								}
+
+								crate::mcp::ensure_tool_call_ids(&mut extracted_tool_calls);
+								tool_calls = Some(extracted_tool_calls);
+							}
+						}
+					}
+				}
+			} else {
+				// Fallback to simple content extraction
+				content = response_json
+					.get("content")
+					.and_then(|c| c.as_str())
+					.unwrap_or("")
+					.to_string();
+			}
 		};
 
 		// Extract token usage (format varies by model)
@@ -392,14 +529,27 @@ impl AiProvider for AmazonBedrockProvider {
 			None
 		};
 
-		// For now, Bedrock tool calls are not implemented in this basic version
-		let tool_calls = None;
-
-		// Extract finish reason
-		let finish_reason = response_json
-			.get("stop_reason")
-			.and_then(|fr| fr.as_str())
-			.map(|s| s.to_string());
+		// Extract finish reason (varies by model)
+		let finish_reason = if full_model_id.contains("anthropic.claude") {
+			response_json
+				.get("stop_reason")
+				.and_then(|fr| fr.as_str())
+				.map(|s| s.to_string())
+		} else {
+			response_json
+				.get("choices")
+				.and_then(|choices| choices.as_array())
+				.and_then(|arr| arr.first())
+				.and_then(|choice| choice.get("finish_reason"))
+				.and_then(|fr| fr.as_str())
+				.map(|s| s.to_string())
+				.or_else(|| {
+					response_json
+						.get("stop_reason")
+						.and_then(|fr| fr.as_str())
+						.map(|s| s.to_string())
+				})
+		};
 
 		// Create exchange record
 		let exchange = ProviderExchange::new(request_body, response_json, usage, self.name());

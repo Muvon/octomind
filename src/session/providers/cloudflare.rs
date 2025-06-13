@@ -259,11 +259,40 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		let cloudflare_messages = convert_messages(messages);
 
 		// Create request body
-		let request_body = serde_json::json!({
+		let mut request_body = serde_json::json!({
 			"messages": cloudflare_messages,
 			"temperature": temperature,
 			"max_tokens": 16384,
 		});
+
+		// Add tool definitions if MCP has any servers configured
+		// Cloudflare Workers AI uses OpenAI-compatible tools format
+		if !config.mcp.servers.is_empty() {
+			let functions = crate::mcp::get_available_functions(config).await;
+			if !functions.is_empty() {
+				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
+				// Sort functions by name to guarantee consistent ordering across API calls
+				let mut sorted_functions = functions;
+				sorted_functions.sort_by(|a, b| a.name.cmp(&b.name));
+
+				let tools = sorted_functions
+					.iter()
+					.map(|f| {
+						serde_json::json!({
+							"type": "function",
+							"function": {
+								"name": f.name,
+								"description": f.description,
+								"parameters": f.parameters
+							}
+						})
+					})
+					.collect::<Vec<_>>();
+
+				request_body["tools"] = serde_json::json!(tools);
+				request_body["tool_choice"] = serde_json::json!("auto");
+			}
+		}
 
 		// Build Cloudflare Workers AI API URL
 		let api_url = format!(
@@ -351,13 +380,77 @@ impl AiProvider for CloudflareWorkersAiProvider {
 			));
 		}
 
-		// Extract content from response
-		let content = response_json
-			.get("result")
-			.and_then(|result| result.get("response"))
-			.and_then(|resp| resp.as_str())
-			.unwrap_or("")
-			.to_string();
+		// Extract content and tool calls from response
+		let mut content = String::new();
+		let mut tool_calls = None;
+
+		// Cloudflare Workers AI returns OpenAI-compatible format
+		if let Some(result) = response_json.get("result") {
+			// Check if it's a chat completion format with choices
+			if let Some(choices) = result.get("choices").and_then(|c| c.as_array()) {
+				if let Some(choice) = choices.first() {
+					if let Some(message) = choice.get("message") {
+						// Extract content
+						if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
+							content = text.to_string();
+						}
+
+						// Extract tool calls
+						if let Some(tool_calls_val) = message.get("tool_calls") {
+							if tool_calls_val.is_array()
+								&& !tool_calls_val.as_array().unwrap().is_empty()
+							{
+								let mut extracted_tool_calls = Vec::new();
+
+								for tool_call in tool_calls_val.as_array().unwrap() {
+									if let Some(function) = tool_call.get("function") {
+										if let (Some(name), Some(args)) = (
+											function.get("name").and_then(|n| n.as_str()),
+											function.get("arguments").and_then(|a| a.as_str()),
+										) {
+											let params = if args.trim().is_empty() {
+												serde_json::json!({})
+											} else {
+												match serde_json::from_str::<serde_json::Value>(
+													args,
+												) {
+													Ok(json_params) => json_params,
+													Err(_) => {
+														serde_json::Value::String(args.to_string())
+													}
+												}
+											};
+
+											let tool_id = tool_call
+												.get("id")
+												.and_then(|i| i.as_str())
+												.unwrap_or("");
+											let mcp_call = crate::mcp::McpToolCall {
+												tool_name: name.to_string(),
+												parameters: params,
+												tool_id: tool_id.to_string(),
+											};
+
+											extracted_tool_calls.push(mcp_call);
+										}
+									}
+								}
+
+								crate::mcp::ensure_tool_call_ids(&mut extracted_tool_calls);
+								tool_calls = Some(extracted_tool_calls);
+							}
+						}
+					}
+				}
+			} else {
+				// Fallback to simple response format
+				content = result
+					.get("response")
+					.and_then(|resp| resp.as_str())
+					.unwrap_or("")
+					.to_string();
+			}
+		}
 
 		// Cloudflare Workers AI doesn't provide detailed token usage, so we estimate
 		let prompt_text = cloudflare_messages
@@ -385,11 +478,16 @@ impl AiProvider for CloudflareWorkersAiProvider {
 			request_time_ms: Some(api_time_ms), // Track API timing for Cloudflare
 		});
 
-		// Cloudflare Workers AI doesn't support tool calls in this basic implementation
-		let tool_calls = None;
-
-		// Cloudflare doesn't provide finish_reason in the same way
-		let finish_reason = Some("stop".to_string());
+		// Extract finish_reason
+		let finish_reason = response_json
+			.get("result")
+			.and_then(|result| result.get("choices"))
+			.and_then(|choices| choices.as_array())
+			.and_then(|arr| arr.first())
+			.and_then(|choice| choice.get("finish_reason"))
+			.and_then(|fr| fr.as_str())
+			.map(|s| s.to_string())
+			.or_else(|| Some("stop".to_string())); // Default fallback
 
 		// Create exchange record
 		let exchange = ProviderExchange::new(request_body, response_json, usage, self.name());

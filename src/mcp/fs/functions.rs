@@ -123,14 +123,14 @@ pub fn get_text_editor_function() -> McpFunction {
 			**line_replace**: Replace content within a specific line range
 			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"view_range\": [5, 8], \"new_str\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
 			- Replaces lines from view_range[0] to view_range[1] (inclusive, 1-indexed)
-			- ⚡ FASTEST option when you know exact line numbers - no content searching needed
+			- ⚡ FASTEST option - 3x faster than str_replace (no content searching needed)
+			- 🎯 PERFECT for: parameter changes, variable assignments, single function calls
 			- ⚠️ CRITICAL: Line numbers change after ANY edit operation (insert, line_replace, str_replace)
 			- ⚠️ NEVER use line_replace twice in sequence without viewing file again
 			- ⚠️ ALWAYS use 'view' command first to get current line numbers before line_replace
 			- PREFER when: You just viewed the file and know exact line positions
 			- Returns snippet of replaced content for verification
-			- Ideal for replacing function implementations, code blocks, or configuration sections
-			- Use when you want to replace entire lines or line ranges precisely
+			- Use for: config parameters, imports, simple assignments, single-line changes
 
 			**view_many**: View multiple files simultaneously for comprehensive analysis
 			- `{\"command\": \"view_many\", \"paths\": [\"src/main.rs\", \"src/lib.rs\", \"tests/test.rs\"]}`
@@ -146,11 +146,15 @@ pub fn get_text_editor_function() -> McpFunction {
 
 			**batch_edit**: Perform multiple text editing operations in a single call
 			- `{\"command\": \"batch_edit\", \"operations\": [{\"operation\": \"str_replace\", \"path\": \"src/main.rs\", \"old_str\": \"old\", \"new_str\": \"new\"}, {\"operation\": \"insert\", \"path\": \"src/lib.rs\", \"insert_line\": 5, \"new_str\": \"// New comment\"}]}`
-			- Recommended for making changes across multiple files or multiple non-interconnected modifications
+			- 🚀 **ALWAYS USE when making 2+ changes across multiple files**
+			- 🚀 **ALWAYS USE when making 3+ changes in same file**
+			- ⚡ **10x more efficient** than individual operations (single API call vs multiple)
+			- 💰 **Saves tokens** - one tool call instead of many
+			- 🎯 **Perfect for**: refactoring, applying consistent changes, multi-file updates
 			- Each operation in the array follows the same parameter structure as individual commands
 			- Supported operations: str_replace, insert, line_replace
 			- Returns detailed results for each operation including success/failure status
-			- Ideal for batch refactoring, applying consistent changes across files, or making multiple independent edits
+			- **MANDATORY for planned multi-file changes** - never do individual calls
 
 			**Error Handling:**
 			- File not found: Returns descriptive error message
@@ -163,23 +167,64 @@ pub fn get_text_editor_function() -> McpFunction {
 			- ALWAYS use 'view' command first to get current line numbers before any edit
 			- Never assume line numbers from previous operations - they change after every edit
 
+			**OPTIMAL WORKFLOW:**
+			0. 🎯 **PLAN FIRST**: If 2+ files or 3+ edits → USE batch_edit
+			1. 🔍 Use `view` to see file structure and get line numbers
+			2. 🚀 For multiple changes: use `batch_edit` (10x more efficient)
+			3. 🎯 For single changes: use `line_replace` ONCE per file
+			4. 🔄 If more edits needed: `view` again to get fresh line numbers, then `line_replace` again
+			5. 🔧 For multiple changes: use `str_replace` (position-independent) or `batch_edit`
+			6. ✅ Move to next file
+
+			**BATCH_EDIT EXAMPLES:**
+			- Fix same issue across 3 files → batch_edit with 3 str_replace operations
+			- Add import + modify function + update config → batch_edit with 3 operations
+			- Rename variable in 5 files → batch_edit with 5 str_replace operations
+
+			**MULTI-EDIT STRATEGIES:**
+			- Multiple line_replace: view → line_replace → view → line_replace
+			- Multiple str_replace: view → str_replace → str_replace → str_replace
+			- Mixed edits: view → line_replace → view → str_replace → str_replace
+
+			**CHOOSE batch_edit when:**
+			- ✅ Making 2+ changes across different files
+			- ✅ Making 3+ changes in same file (any combination of operations)
+			- ✅ Applying same change pattern across multiple files
+			- ✅ Any planned multi-step editing task
+			- ✅ Want maximum efficiency (10x faster than individual calls)
+
 			**CHOOSE line_replace when:**
 			- ✅ You just viewed the file and know exact line numbers
-			- ✅ Replacing entire lines or line ranges precisely
-			- ✅ Want fastest performance (no content searching)
-			- ✅ Working with structured code blocks, functions, or configuration sections
+			- ✅ Changing single parameters: `config,` → `&clean_config,` (line 296)
+			- ✅ Simple variable assignments: `let x = 5;` → `let x = 10;` (line 42)
+			- ✅ Single function calls: `func(a, b)` → `func(a, b, c)` (line 15)
+			- ✅ Complete function body replacement: lines 15-25 entire function
+			- ✅ Import statements: add/remove single imports (line 8)
+			- ✅ Want 3x faster performance (no content searching needed)
+			- ✅ Replacing 1-20 consecutive lines precisely
+			- ✅ ONLY ONE line_replace per file before re-viewing
+			- ✅ **SINGLE EDIT ONLY** - use batch_edit for multiple edits
 
 			**CHOOSE str_replace when:**
+			- ✅ Complex multi-line logic changes spanning 5+ lines
 			- ✅ You know exact text content but not line numbers
 			- ✅ Text might be at different line positions across files
 			- ✅ Making multiple sequential edits (line numbers become unreliable)
-			- ✅ Content-based replacement regardless of position
+			- ✅ Refactoring that changes indentation or structure
 
 			**CRITICAL LINE NUMBER RULES:**
 			- 🚨 Line numbers become INVALID after ANY edit operation
 			- 🚨 NEVER use line_replace twice without viewing file between operations
 			- 🚨 After str_replace, insert, or line_replace: line numbers change
 			- 🚨 Always view file again to get fresh line numbers before next line_replace
+			- 🚨 ONE line_replace per file per editing session - then re-view if more edits needed
+
+			**SAFE SEQUENCING PATTERNS:**
+			✅ GOOD: view → line_replace → (done with file)
+			✅ GOOD: view → line_replace → view → line_replace
+			✅ GOOD: view → str_replace → str_replace → str_replace (str_replace is position-independent)
+			❌ BAD: view → line_replace → line_replace (second will use wrong line numbers)
+			❌ BAD: line_replace → view → line_replace (on same file without re-viewing)
 
 			**General Guidelines:**
 			- Use insert for adding new code at specific locations

@@ -123,6 +123,7 @@ Within any session, use these commands:
 - `/report` - Generate detailed usage report with cost breakdown
 - `/cache` - Mark cache checkpoint for cost savings
 - `/layers` - Toggle layered processing on/off
+- `/reduce` - Compress session history using configured reducer layer
 - `/loglevel [debug|info|none]` - Set log level
 - `/exit` - Exit current session
 

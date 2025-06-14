@@ -325,6 +325,7 @@ During a session, use these commands:
 
 #### Context Management
 - `/cache` - Mark cache checkpoint for cost optimization
+- `/context [filter]` - Display session context with optional filtering: all, assistant, user, tool, large
 - `/done` - Finalize task with comprehensive summarization, memorization, and auto-commit (task completion)
 - `/clear` - Clear screen
 - `/save` - Save session
@@ -332,6 +333,41 @@ During a session, use these commands:
 **Context Management Strategy:**
 - Use `/done` when task is complete (preserves full context with current model + auto-commit)
 - `/done` acts like "git commit" for conversations - finalizes and preserves work phase
+
+#### Context Display Command
+
+The `/context` command displays the current session context that would be sent to the AI, with optional filtering capabilities:
+
+```bash
+# Show all messages (default)
+> /context
+> /context all
+
+# Show only assistant responses
+> /context assistant
+
+# Show only user messages
+> /context user
+
+# Show only tool-related messages (tool calls, tool responses)
+> /context tool
+
+# Show only large messages (>2 standard deviations from median)
+> /context large
+```
+
+**Filter Options:**
+- **`all`** (default) - Display all messages in the session
+- **`assistant`** - Show only AI assistant responses
+- **`user`** - Show only user messages
+- **`tool`** - Show messages with tool calls, tool responses, or tool-related content
+- **`large`** - Show messages significantly above average size (>2 standard deviations from median)
+
+**Features:**
+- Token count and percentage for each message
+- Content truncation in normal mode (use `/loglevel debug` for full content)
+- Session statistics (total vs. filtered message counts)
+- For `large` filter: displays median, standard deviation, and threshold information
 
 #### Architecture Commands
 - `/layers` - Toggle layered processing
@@ -679,6 +715,34 @@ enable_auto_truncation = true
 ## Context Management Commands
 
 Octomind provides commands for managing session context:
+
+### `/context` - Session Context Display & Filtering
+
+**Purpose**: Display the current session context that would be sent to the AI with optional filtering capabilities.
+
+**Usage**:
+```bash
+/context [filter]
+```
+
+**Filter Options**:
+- **`all`** (default) - Display all messages in the session
+- **`assistant`** - Show only AI assistant responses
+- **`user`** - Show only user messages
+- **`tool`** - Show messages with tool calls, tool responses, or tool-related content
+- **`large`** - Show messages significantly above average size (>2 standard deviations from median)
+
+**Features**:
+- Token count and percentage for each message
+- Content truncation in normal mode (use `/loglevel debug` for full content)
+- Session statistics (total vs. filtered message counts)
+- For `large` filter: displays median, standard deviation, and threshold information
+
+**When to use**:
+- ✅ Debug context issues or understand what's being sent to AI
+- ✅ Analyze conversation patterns or find specific message types
+- ✅ Identify large messages that may be consuming excessive tokens
+- ✅ Review tool usage and AI responses
 
 ### `/done` - Task Completion & Finalization
 

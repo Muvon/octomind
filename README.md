@@ -121,6 +121,7 @@ Within any session, use these commands:
 - `/model [model]` - View or change current AI model
 - `/info` - Display token usage and costs
 - `/report` - Generate detailed usage report with cost breakdown
+- `/context [filter]` - Display session context with optional filtering (all, assistant, user, tool, large)
 - `/cache` - Mark cache checkpoint for cost savings
 - `/layers` - Toggle layered processing on/off
 - `/done` - Finalize task with memorization, comprehensive summarization, and auto-commit

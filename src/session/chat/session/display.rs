@@ -272,13 +272,23 @@ impl ChatSession {
 
 	// Display current session context that would be sent to AI
 	pub fn display_session_context(&self, config: &crate::config::Config) {
+		// Use the filtered version with "all" filter for backward compatibility
+		self.display_session_context_filtered(config, "all");
+	}
+
+	// Display current session context with filtering options
+	pub fn display_session_context_filtered(&self, config: &crate::config::Config, filter: &str) {
 		// Check if debug mode is enabled
 		let is_debug = config.log_level.is_debug_enabled();
 
-		// Display header
+		// Display header with filter info
 		println!(
 			"{}",
-			"───────────── Session Context ─────────────".bright_cyan()
+			format!(
+				"───────────── Session Context ({}) ─────────────",
+				filter.to_uppercase()
+			)
+			.bright_cyan()
 		);
 
 		if self.session.messages.is_empty() {
@@ -287,14 +297,118 @@ impl ChatSession {
 			return;
 		}
 
-		// Build markdown content for the context
+		// Filter messages based on the filter parameter
+		let filtered_messages: Vec<(usize, &crate::session::Message)> = match filter {
+			"all" => self.session.messages.iter().enumerate().collect(),
+			"assistant" => self
+				.session
+				.messages
+				.iter()
+				.enumerate()
+				.filter(|(_, msg)| msg.role == "assistant")
+				.collect(),
+			"user" => self
+				.session
+				.messages
+				.iter()
+				.enumerate()
+				.filter(|(_, msg)| msg.role == "user")
+				.collect(),
+			"tool" => self
+				.session
+				.messages
+				.iter()
+				.enumerate()
+				.filter(|(_, msg)| {
+					msg.role == "tool" || msg.tool_calls.is_some() || msg.tool_call_id.is_some()
+				})
+				.collect(),
+			"large" => {
+				// Calculate median and standard deviation for robust outlier detection
+				let mut token_counts: Vec<f64> = self
+					.session
+					.messages
+					.iter()
+					.map(|msg| crate::session::token_counter::estimate_tokens(&msg.content) as f64)
+					.collect();
+
+				if token_counts.is_empty() {
+					Vec::new()
+				} else {
+					// Calculate median
+					token_counts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+					let median = if token_counts.len() % 2 == 0 {
+						(token_counts[token_counts.len() / 2 - 1]
+							+ token_counts[token_counts.len() / 2])
+							/ 2.0
+					} else {
+						token_counts[token_counts.len() / 2]
+					};
+
+					// Calculate standard deviation
+					let variance: f64 = self
+						.session
+						.messages
+						.iter()
+						.map(|msg| {
+							let tokens =
+								crate::session::token_counter::estimate_tokens(&msg.content) as f64;
+							(tokens - median).powi(2)
+						})
+						.sum::<f64>() / self.session.messages.len() as f64;
+					let std_dev = variance.sqrt();
+
+					// Filter messages > 2 standard deviations from median
+					let threshold = median + (2.0 * std_dev);
+					self.session
+						.messages
+						.iter()
+						.enumerate()
+						.filter(|(_, msg)| {
+							let msg_tokens =
+								crate::session::token_counter::estimate_tokens(&msg.content) as f64;
+							msg_tokens > threshold
+						})
+						.collect()
+				}
+			}
+			_ => {
+				println!(
+					"{}",
+					format!(
+						"Unknown filter '{}'. Available filters: all, assistant, user, tool, large",
+						filter
+					)
+					.bright_red()
+				);
+				println!(
+					"{}",
+					"Usage: /context [all|assistant|user|tool|large]".bright_yellow()
+				);
+				println!();
+				return;
+			}
+		};
+
+		if filtered_messages.is_empty() {
+			println!(
+				"{}",
+				format!("No messages match the '{}' filter.", filter).yellow()
+			);
+			println!();
+			return;
+		}
+
+		// Build markdown content for the filtered context
 		let mut markdown_content = String::new();
 		markdown_content.push_str("# Session Context\n\n");
 		markdown_content.push_str(&format!("**Session:** {}\n", self.session.info.name));
 		markdown_content.push_str(&format!("**Model:** {}\n", self.session.info.model));
 		markdown_content.push_str(&format!(
-			"**Messages:** {}\n\n",
-			self.session.messages.len()
+			"**Messages:** {} total, {} shown (filter: {})\n\n",
+			self.session.messages.len(),
+			filtered_messages.len(),
+			filter
 		));
 
 		// Content length limits
@@ -305,8 +419,47 @@ impl ChatSession {
 			+ self.session.info.output_tokens
 			+ self.session.info.cached_tokens;
 
-		// Process each message
-		for (index, message) in self.session.messages.iter().enumerate() {
+		// Add median and std dev info for large filter
+		if filter == "large" && !self.session.messages.is_empty() {
+			let mut token_counts: Vec<f64> = self
+				.session
+				.messages
+				.iter()
+				.map(|msg| crate::session::token_counter::estimate_tokens(&msg.content) as f64)
+				.collect();
+
+			// Calculate median
+			token_counts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+			let median = if token_counts.len() % 2 == 0 {
+				(token_counts[token_counts.len() / 2 - 1] + token_counts[token_counts.len() / 2])
+					/ 2.0
+			} else {
+				token_counts[token_counts.len() / 2]
+			};
+
+			// Calculate standard deviation
+			let variance: f64 =
+				self.session
+					.messages
+					.iter()
+					.map(|msg| {
+						let tokens =
+							crate::session::token_counter::estimate_tokens(&msg.content) as f64;
+						(tokens - median).powi(2)
+					})
+					.sum::<f64>() / self.session.messages.len() as f64;
+			let std_dev = variance.sqrt();
+
+			let threshold = median + (2.0 * std_dev);
+
+			markdown_content.push_str(&format!(
+				"**Filter Info:** Showing messages > {:.0} tokens (median: {:.0}, std dev: {:.0}, threshold: median + 2σ)\\n\\n",
+				threshold, median, std_dev
+			));
+		}
+
+		// Process each filtered message
+		for (original_index, message) in &filtered_messages {
 			// Calculate tokens for this message
 			let message_tokens = crate::session::token_counter::estimate_tokens(&message.content);
 			let percentage = if total_session_tokens > 0 {
@@ -317,7 +470,7 @@ impl ChatSession {
 
 			markdown_content.push_str(&format!(
 				"## Message {} - {}\n\n",
-				index + 1,
+				*original_index + 1,
 				message.role.to_uppercase()
 			));
 
@@ -332,7 +485,7 @@ impl ChatSession {
 			// Add token information
 			markdown_content.push_str(&format!(
 				"**Tokens:** {} ({:.2}%)\n",
-				format_number(message_tokens as u64),
+				crate::session::chat::format_number(message_tokens as u64),
 				percentage
 			));
 
@@ -354,7 +507,7 @@ impl ChatSession {
 			// Add content
 			let content = if let Some(limit) = content_limit {
 				if message.content.len() > limit {
-					format!("{}...\n\n*[Content truncated - {} total chars. Use debug mode (/debug) for full content]*",
+					format!("{}...\n\n*[Content truncated - {} total chars. Use debug mode (/loglevel debug) for full content]*",
 						&message.content[..limit], message.content.len())
 				} else {
 					message.content.clone()
@@ -401,8 +554,12 @@ impl ChatSession {
 			self.session.messages.len()
 		));
 		markdown_content.push_str(&format!(
+			"- **Filtered Messages:** {}\n",
+			filtered_messages.len()
+		));
+		markdown_content.push_str(&format!(
 			"- **Total Tokens:** {}\n",
-			format_number(
+			crate::session::chat::format_number(
 				self.session.info.input_tokens
 					+ self.session.info.output_tokens
 					+ self.session.info.cached_tokens

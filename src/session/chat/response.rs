@@ -418,48 +418,13 @@ pub async fn process_response(
 							.bright_yellow()
 					);
 
-					// CRITICAL FIX: Clean up tool_calls from assistant message immediately
-					// This prevents the "tool_use ids found without tool_result blocks" error
-					if let Some(last_msg) = chat_session.session.messages.last_mut() {
+					// BOSS FIX: Remove the assistant message with tool_calls when cancelled
+					// The problem: we added assistant message with tool_calls but cancellation prevents proper tool_result processing
+					if let Some(last_msg) = chat_session.session.messages.last() {
 						if last_msg.role == "assistant" && last_msg.tool_calls.is_some() {
-							// Collect tool IDs that actually have results
-							let completed_tool_ids: std::collections::HashSet<String> =
-								tool_results
-									.iter()
-									.map(|result| result.tool_id.clone())
-									.collect();
-
-							if let Some(tool_calls_value) = &last_msg.tool_calls {
-								if let Ok(tool_calls_array) = serde_json::from_value::<
-									Vec<serde_json::Value>,
-								>(tool_calls_value.clone())
-								{
-									// Filter tool_calls to only include those with results
-									let valid_tool_calls: Vec<_> = tool_calls_array
-										.into_iter()
-										.filter(|tool_call| {
-											if let Some(tool_id) =
-												tool_call.get("id").and_then(|id| id.as_str())
-											{
-												completed_tool_ids.contains(tool_id)
-											} else {
-												false
-											}
-										})
-										.collect();
-
-									if valid_tool_calls.is_empty() {
-										// No tools completed - remove tool_calls entirely
-										last_msg.tool_calls = None;
-										log_debug!("Removed all tool_calls from assistant message - operation cancelled");
-									} else {
-										// Some tools completed - keep only those
-										last_msg.tool_calls =
-											Some(serde_json::to_value(&valid_tool_calls).unwrap());
-										log_debug!("Filtered tool_calls in assistant message after cancellation: {} completed", valid_tool_calls.len());
-									}
-								}
-							}
+							// Last message is broken assistant with tool_calls - remove it on cancellation
+							chat_session.session.messages.pop();
+							log_debug!("Removed last assistant message with tool_calls due to cancellation");
 						}
 					}
 

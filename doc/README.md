@@ -168,7 +168,6 @@ Default values
 > /layers            # Toggle layered processing
 > /cache             # Mark cache checkpoint
 > /done              # Optimize context
-> /reduce            # Use reducer layer
 ```
 
 ### Common Issues

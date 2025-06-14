@@ -60,9 +60,8 @@ For complex development tasks, an optional multi-stage processing system:
 - **Query Processor**: Improves and clarifies user requests
 - **Context Generator**: Gathers necessary code context using tools
 - **Developer**: Implements solutions and produces responses
-- **Reducer**: Optimizes context (manual trigger via `/reduce` for cost optimization during work)
 
-**Context Management**: Use `/done` to finalize tasks with comprehensive summarization (current model) or `/reduce` for cost-optimized context compression (cheaper model).
+**Context Management**: Use `/done` to finalize tasks with comprehensive summarization.
 
 ## Key Features
 

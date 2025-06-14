@@ -329,13 +329,11 @@ During a session, use these commands:
 
 #### Context Management
 - `/cache` - Mark cache checkpoint for cost optimization
-- `/reduce` - Compress session history using cheaper reducer model (cost optimization during ongoing work)
 - `/done` - Finalize task with comprehensive summarization, memorization, and auto-commit (task completion)
 - `/clear` - Clear screen
 - `/save` - Save session
 
 **Context Management Strategy:**
-- Use `/reduce` when context gets large but work continues (optimizes cost with cheaper model)
 - Use `/done` when task is complete (preserves full context with current model + auto-commit)
 - `/done` acts like "git commit" for conversations - finalizes and preserves work phase
 
@@ -473,7 +471,7 @@ The report provides a detailed breakdown of each request in your session:
 #### Cost Tracking
 
 - **Per-Request Costs**: Exact cost delta for each user input
-- **Command Costs**: Includes `/done`, `/reduce`, `/model` and other session commands
+- **Command Costs**: Includes `/done`, `/model` and other session commands
 - **Real-Time Calculation**: Uses session stats snapshots for accuracy
 - **Provider Agnostic**: Works with all supported AI providers
 
@@ -499,8 +497,7 @@ graph TB
     C --> D[Context Generator - output_mode: replace]
     D --> E[Final Response]
 
-    F[Manual /reduce] --> G[Reducer Layer - output_mode: replace]
-    G --> H[Optimized Context]
+
 ```
 
 ### Layer Configuration
@@ -515,7 +512,6 @@ enable_layers = true
 # Built-in layers with default configurations:
 # - Query Processor: output_mode = "none" (intermediate)
 # - Context Generator: output_mode = "replace" (replaces input)
-# - Reducer: output_mode = "replace" (manual trigger via /reduce)
 ```
 
 #### Custom Layer Configuration
@@ -682,12 +678,11 @@ enable_auto_truncation = true
 /truncate        # Toggle auto-truncation
 /info            # Check token usage
 /done            # Complete task with memorization & commit
-/reduce          # Compress context with reducer layer
 ```
 
 ## Context Management Commands
 
-Octomind provides two distinct commands for managing session context, each serving different purposes:
+Octomind provides commands for managing session context:
 
 ### `/done` - Task Completion & Finalization
 
@@ -717,49 +712,6 @@ Octomind provides two distinct commands for managing session context, each servi
 # Memorizes all changes, summarizes implementation, commits files
 # Next message will go through layers again with preserved context
 ```
-
-### `/reduce` - Manual Context Compression
-
-**Purpose**: Compress session history to save tokens without task finalization.
-
-**What it does**:
-- **Compresses** conversation history using a configured reducer layer
-- **Cuts context** to essential information only
-- **Uses cheaper model** (configured reducer layer, not current model)
-- **No memorization** - just compression for token efficiency
-- **No auto-commit** - purely for context management
-- **No task finalization** - continues current work
-
-**When to use**:
-- ✅ Session is getting long but task isn't complete
-- ✅ Want to reduce token costs during development
-- ✅ Need to free up context space for more work
-- ✅ Task is ongoing and doesn't need preservation yet
-
-**Requirements**:
-- Must have a "reducer" layer configured in your config
-- Reducer layer should use a cheaper/faster model
-
-**Example workflow**:
-```bash
-> "Debug this complex function"
-[Long conversation with multiple iterations]
-> /reduce
-# Compresses history to essential debugging context only
-# Continues debugging with reduced context, no finalization
-```
-
-### Key Differences Summary
-
-| Aspect | `/done` | `/reduce` |
-|--------|---------|-----------|
-| **Purpose** | Task completion & finalization | Context compression only |
-| **Model Used** | Current session model | Configured reducer layer |
-| **Memorization** | ✅ Stores important info | ❌ No memorization |
-| **Auto-commit** | ✅ Commits changes | ❌ No commit |
-| **Context Preservation** | ✅ Full task context preserved | ❌ Minimal compression only |
-| **Layer Reset** | ✅ Resets for next task | ❌ Continues current work |
-| **Use Case** | "I'm done with this feature" | "This is getting long, compress it" |
 
 ## Best Practices
 
@@ -801,7 +753,7 @@ octomind session -n security_audit --role=security-analyst
 2. **Enable caching**: Reduce repeated context costs
 3. **Monitor usage**: Check `/info` regularly
 4. **Optimize layers**: Use cheap models for processing layers
-5. **Truncate context**: Use `/done` for task completion or `/reduce` for manual compression
+5. **Truncate context**: Use `/done` for task completion
 
 ### Session Hygiene
 

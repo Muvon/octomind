@@ -174,6 +174,82 @@ pub async fn execute_command_layer(
 		}
 	}
 
+	// Handle output_mode to determine how this command's output affects the session
+	use crate::session::layers::layer_trait::OutputMode;
+	match command_config.output_mode {
+		OutputMode::None => {
+			// Command output is returned but doesn't modify session (default behavior)
+			println!(
+				"{}",
+				"Output mode: none (command output only)".bright_cyan()
+			);
+		}
+		OutputMode::Append => {
+			// Add command output as new assistant message to session
+			println!(
+				"{}",
+				"Output mode: append (adding to session)".bright_cyan()
+			);
+			chat_session
+				.session
+				.add_message("assistant", &result.output);
+
+			// Log the append operation for session restoration
+			if let Some(session_file) = &chat_session.session.session_file {
+				let log_entry = serde_json::json!({
+					"type": "OUTPUT_MODE_APPEND",
+					"timestamp": std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
+					"command": command_name,
+					"content_length": result.output.len()
+				});
+				let _ = crate::session::append_to_session_file(
+					session_file,
+					&serde_json::to_string(&log_entry)?,
+				);
+			}
+
+			// Save session to persist the new message
+			let _ = chat_session.save();
+		}
+		OutputMode::Replace => {
+			// Replace entire session with this command's output
+			println!(
+				"{}",
+				"Output mode: replace (replacing session content)".bright_cyan()
+			);
+
+			// Log the replace operation for session restoration
+			if let Some(session_file) = &chat_session.session.session_file {
+				let log_entry = serde_json::json!({
+					"type": "OUTPUT_MODE_REPLACE",
+					"timestamp": std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
+					"command": command_name,
+					"previous_message_count": chat_session.session.messages.len(),
+					"content_length": result.output.len()
+				});
+				let _ = crate::session::append_to_session_file(
+					session_file,
+					&serde_json::to_string(&log_entry)?,
+				);
+			}
+
+			// Clear existing messages and replace with command output
+			chat_session.session.messages.clear();
+			chat_session
+				.session
+				.add_message("assistant", &result.output);
+
+			// Save session to persist the replacement
+			let _ = chat_session.save();
+		}
+	}
+
 	Ok(result.output)
 }
 

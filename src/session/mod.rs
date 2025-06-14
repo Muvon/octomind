@@ -406,6 +406,29 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 						// Commands are processed separately in extract_runtime_state_from_log
 						continue;
 					}
+					"OUTPUT_MODE_REPLACE" => {
+						// Handle Replace mode operations during session restoration
+						// This clears messages like a restoration point but from a command
+						if restoration_point_found {
+							restoration_messages.clear();
+						} else {
+							messages.clear();
+						}
+
+						// Log the replace operation for debugging
+						if let Some(command) = json_value.get("command").and_then(|c| c.as_str()) {
+							println!(
+								"Session restoration: Found OUTPUT_MODE_REPLACE from command '{}'",
+								command
+							);
+						}
+					}
+					"OUTPUT_MODE_APPEND" => {
+						// Handle Append mode operations during session restoration
+						// These are tracked but don't need special handling since the messages
+						// are already in the session file as regular assistant messages
+						continue;
+					}
 					"API_REQUEST" | "API_RESPONSE" | "TOOL_CALL" | "TOOL_RESULT" | "CACHE"
 					| "ERROR" | "SYSTEM" | "USER" | "ASSISTANT" => {
 						// Skip debug log entries during message parsing

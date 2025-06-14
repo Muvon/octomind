@@ -150,9 +150,12 @@ pub async fn execute_tools_parallel(
 
 	// CRITICAL FIX: Ensure conversation state integrity after tool execution
 	// Fix the assistant message's tool_calls field to match actual tool results
-	if let Ok((ref tool_results, _)) = result {
-		fix_assistant_message_tool_calls(&current_tool_calls, tool_results, chat_session);
-	}
+	// This must run regardless of success/failure to handle Ctrl+C cancellations
+	let tool_results = match &result {
+		Ok((results, _)) => results.as_slice(),
+		Err(_) => &[], // No results when all tools failed/cancelled
+	};
+	fix_assistant_message_tool_calls(&current_tool_calls, tool_results, chat_session);
 
 	result
 }

@@ -418,62 +418,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					}
 				}
 				ProcessingState::ExecutingTools => {
-					// Tool execution was interrupted - remove only tool_calls that don't have results
-					// Keep completed tool results and their corresponding tool_calls
-					if let Some(_op) = operation {
-						// First, collect all tool_call_ids that have results
-						let completed_tool_ids: std::collections::HashSet<String> = chat_session
-							.session
-							.messages
-							.iter()
-							.filter(|msg| msg.role == "tool")
-							.filter_map(|msg| msg.tool_call_id.clone())
-							.collect();
-
-						// Now update the assistant message with tool_calls
-						for msg in chat_session.session.messages.iter_mut().rev() {
-							if msg.role == "assistant" && msg.tool_calls.is_some() {
-								if let Some(tool_calls_value) = &msg.tool_calls {
-									if let Ok(tool_calls_array) =
-										serde_json::from_value::<Vec<serde_json::Value>>(
-											tool_calls_value.clone(),
-										) {
-										let original_count = tool_calls_array.len();
-
-										// Filter out tool_calls that don't have corresponding tool results
-										let valid_tool_calls: Vec<_> = tool_calls_array
-											.into_iter()
-											.filter(|tool_call| {
-												if let Some(tool_id) =
-													tool_call.get("id").and_then(|id| id.as_str())
-												{
-													completed_tool_ids.contains(tool_id)
-												} else {
-													false
-												}
-											})
-											.collect();
-
-										if valid_tool_calls.is_empty() {
-											// No tool calls have results - remove tool_calls entirely
-											msg.tool_calls = None;
-											log_debug!("Removed all tool_calls - no results found");
-										} else if valid_tool_calls.len() < original_count {
-											// Some tool calls have results - keep only those
-											msg.tool_calls = Some(
-												serde_json::to_value(&valid_tool_calls).unwrap(),
-											);
-											log_debug!("Kept {} tool_calls with results, removed {} without results",
-                                                valid_tool_calls.len(),
-                                                original_count - valid_tool_calls.len()
-                                            );
-										}
-									}
-								}
-								break; // Only process the last assistant message with tool_calls
-							}
-						}
-					}
+					// Tool execution was interrupted - cleanup is now handled immediately in response.rs
+					// This ensures conversation state integrity without waiting for next loop iteration
+					log_debug!("Tool execution cancelled - cleanup handled immediately during response processing");
 				}
 				ProcessingState::ProcessingResponse => {
 					// Response processing was interrupted - minimal cleanup

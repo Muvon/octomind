@@ -140,13 +140,21 @@ pub async fn execute_tools_parallel(
 		tool_processor,
 	};
 
-	execute_tools_parallel_unified(
-		current_tool_calls,
+	let result = execute_tools_parallel_unified(
+		current_tool_calls.clone(),
 		&mut context,
 		config,
 		Some(operation_cancelled),
 	)
-	.await
+	.await;
+
+	// CRITICAL FIX: Ensure conversation state integrity after tool execution
+	// Fix the assistant message's tool_calls field to match actual tool results
+	if let Ok((ref tool_results, _)) = result {
+		fix_assistant_message_tool_calls(&current_tool_calls, tool_results, chat_session);
+	}
+
+	result
 }
 
 // Internal implementation that works with the unified context
@@ -573,4 +581,68 @@ pub async fn execute_layer_tool_calls_parallel(
 	};
 
 	execute_tools_parallel_unified(tool_calls, &mut context, config, operation_cancelled).await
+}
+
+/// CRITICAL FIX: Ensure conversation state integrity after tool execution
+///
+/// This function fixes the assistant message's tool_calls field to match actual tool results.
+/// It prevents API errors like "tool_use ids found without tool_result blocks" by ensuring
+/// every tool_use in the assistant message has a corresponding tool_result.
+///
+/// This is essential when tools are cancelled via Ctrl+C but some complete successfully.
+fn fix_assistant_message_tool_calls(
+	original_tool_calls: &[crate::mcp::McpToolCall],
+	tool_results: &[crate::mcp::McpToolResult],
+	chat_session: &mut ChatSession,
+) {
+	// Collect tool IDs that actually produced results
+	let completed_tool_ids: std::collections::HashSet<String> = tool_results
+		.iter()
+		.map(|result| result.tool_id.clone())
+		.collect();
+
+	// Find the most recent assistant message with tool_calls
+	if let Some(assistant_msg) = chat_session
+		.session
+		.messages
+		.iter_mut()
+		.rev() // Start from the end
+		.find(|msg| msg.role == "assistant" && msg.tool_calls.is_some())
+	{
+		if let Some(tool_calls_value) = &assistant_msg.tool_calls {
+			// Parse the existing tool_calls array
+			if let Ok(mut tool_calls_array) =
+				serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
+			{
+				// Filter to keep only tool_calls that have corresponding results
+				tool_calls_array.retain(|tc| {
+					if let Some(tool_id) = tc.get("id").and_then(|id| id.as_str()) {
+						completed_tool_ids.contains(tool_id)
+					} else {
+						false // Remove tool_calls without valid IDs
+					}
+				});
+
+				// Update the assistant message based on remaining tool_calls
+				if tool_calls_array.is_empty() {
+					// No tools completed - remove tool_calls field entirely
+					assistant_msg.tool_calls = None;
+					log_debug!(
+						"Removed all tool_calls from assistant message - no tools completed"
+					);
+				} else if tool_calls_array.len() < original_tool_calls.len() {
+					// Some tools completed - update with filtered array
+					let completed_count = tool_calls_array.len();
+					assistant_msg.tool_calls =
+						Some(serde_json::to_value(&tool_calls_array).unwrap_or_default());
+					log_debug!(
+						"Filtered tool_calls in assistant message: {} of {} tools completed",
+						completed_count,
+						original_tool_calls.len()
+					);
+				}
+				// If all tools completed, no changes needed (normal flow)
+			}
+		}
+	}
 }

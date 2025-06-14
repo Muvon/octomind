@@ -210,7 +210,7 @@ args = ["mcp", "--path=."]
 mode = "stdin"
 timeout_seconds = 240
 tools = []
-builtin = true
+builtin = false
 
 # Example external MCP server configuration:
 # [[mcp.servers]]
@@ -345,10 +345,15 @@ allowed_tools = ["search_code", "view_signatures", "list_files"]
 
 [layers.parameters]
 
-[[layers]]
-name = "reducer"
-# Cost-optimized reducer for /reduce command - uses cheaper model for context compression
-# Default reducer system prompt:
+# ═══════════════════════════════════════════════════════════════════════════════
+# CUSTOM COMMANDS
+# Define custom commands that can be triggered with /run <command_name>
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[[commands]]
+name = "reduce"
+description = "Compress session history for cost optimization during ongoing work"
+# System prompt for context reduction - preserves architectural information
 system_prompt = """You are a Session History Reducer for Octomind. Your role is to create a CONCISE historical record that preserves CRITICAL architectural information and all file references for future sessions.
 
 **CRITICAL PRESERVATION STRATEGY:**
@@ -410,17 +415,16 @@ Create a compressed history that captures ESSENTIAL architectural knowledge and 
 This architectural history will be essential for future development sessions.
 
 %{CONTEXT}"""
-model = "openrouter:openai/o4-mini"
+model = "openrouter:openai/o4-mini"  # Use cheaper model for cost optimization
 temperature = 0.2
-input_mode = "All"
-output_mode = "replace"  # Replaces entire session with reduced content
-builtin = true
+input_mode = "all"
+output_mode = "replace"  # Replace session content with compressed history
 
-[layers.mcp]
+[commands.mcp]
 server_refs = []
 allowed_tools = []
 
-[layers.parameters]
+[commands.parameters]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ADVANCED CONFIGURATION

@@ -337,8 +337,7 @@ graph TB
     C --> D[Context Generator - output_mode: replace]
     D --> E[Final Response]
 
-    F[Manual /reduce] --> G[Reducer Layer - output_mode: replace]
-    G --> H[Optimized Context]
+
 ```
 
 ### Layer Configuration System
@@ -355,11 +354,10 @@ All layers are configured through the `[[layers]]` section in your configuration
 
 - **`none`**: Intermediate layer that doesn't modify the session (like query_processor)
 - **`append`**: Adds layer output as a new message to the session
-- **`replace`**: Replaces the entire session content with the layer output (used by reducer layer for `/reduce` command)
+- **`replace`**: Replaces the entire session content with the layer output
 
 **Context Management Commands:**
 - **`/done`**: Task completion using current model - comprehensive summarization with memorization and auto-commit
-- **`/reduce`**: Cost optimization using cheaper reducer model - compresses context without task finalization
 
 ### Built-in Layer Types
 
@@ -457,7 +455,6 @@ input_mode = "all"
 
 - `/layers` - Toggle layered processing on/off
 - `/done` - Manually trigger context optimization
-- `/reduce` - Manually trigger reducer layer for session compression
 - `/info` - View token usage by layer
 
 ## Token Management
@@ -609,7 +606,6 @@ Through natural conversation:
 ### Context Management
 - **Auto-truncation**: Enable for long sessions
 - **Task completion**: Use `/done` to finalize tasks with memorization and commit
-- **Context compression**: Use `/reduce` for manual context reduction during ongoing work
 - **Token monitoring**: Use `/info` to track usage
 
 ## Troubleshooting

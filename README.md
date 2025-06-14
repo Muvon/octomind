@@ -123,7 +123,6 @@ Within any session, use these commands:
 - `/report` - Generate detailed usage report with cost breakdown
 - `/cache` - Mark cache checkpoint for cost savings
 - `/layers` - Toggle layered processing on/off
-- `/reduce` - Compress session history using cheaper reducer model (manual context optimization)
 - `/done` - Finalize task with memorization, comprehensive summarization, and auto-commit
 - `/loglevel [debug|info|none]` - Set log level
 - `/exit` - Exit current session
@@ -143,17 +142,6 @@ Octomind provides two distinct commands for managing conversation context:
   - Preserves complete context for task continuation
 - **Result**: Clean session start with rich task summary as context
 
-### `/reduce` - Manual Context Optimization
-**Purpose**: Reduce context size during ongoing work (cost optimization)
-- **When to use**: When context is getting large but task isn't finished
-- **What it does**:
-  - Compresses session history using cheaper reducer model
-  - Focuses on context size reduction, not task completion
-  - No memorization or auto-commit
-  - Quick optimization for continued work
-- **Result**: Smaller context, lower costs, work continues
-
-**Key Difference**: `/done` finalizes work with full context preservation, `/reduce` optimizes ongoing work for cost efficiency.
 
 ## 🔧 Configuration
 

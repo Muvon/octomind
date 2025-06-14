@@ -57,16 +57,12 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<bool> {
 		SUMMARIZE_COMMAND.cyan()
 	);
 	println!(
-		"{} - Compress session history using configured reducer layer (manual context reduction only)",
-		REDUCE_COMMAND.cyan()
+		"{} <command_name> - Execute a command layer",
+		RUN_COMMAND.cyan()
 	);
 	println!(
 		"{} [model] - Show current model or change to a different model (runtime only)",
 		MODEL_COMMAND.cyan()
-	);
-	println!(
-		"{} <command_name> - Execute a command layer (e.g., /run estimate)",
-		RUN_COMMAND.cyan()
 	);
 	println!(
 		"{} [list|info|full] - Show MCP server status and tools (info is default)",

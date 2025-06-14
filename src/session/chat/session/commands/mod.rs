@@ -27,7 +27,6 @@ mod list;
 mod loglevel;
 mod mcp;
 mod model;
-mod reduce;
 mod report;
 mod run;
 mod save;
@@ -70,7 +69,6 @@ pub async fn process_command(
 		LOGLEVEL_COMMAND => loglevel::handle_loglevel(config, params),
 		TRUNCATE_COMMAND => truncate::handle_truncate(session, config).await,
 		SUMMARIZE_COMMAND => summarize::handle_summarize(session, config).await,
-		REDUCE_COMMAND => reduce::handle_reduce(session, config).await,
 		CACHE_COMMAND => cache::handle_cache(session, config, params).await,
 		LIST_COMMAND => list::handle_list(session, config, params),
 		MODEL_COMMAND => model::handle_model(session, config, params),
@@ -113,7 +111,6 @@ async fn handle_unknown_command(command: &str, config: &Config, role: &str) -> R
 	println!("{} - Optimize session context", DONE_COMMAND.cyan());
 	println!("{} - Smart context truncation", TRUNCATE_COMMAND.cyan());
 	println!("{} - Summarize conversation", SUMMARIZE_COMMAND.cyan());
-	println!("{} - Compress session history", REDUCE_COMMAND.cyan());
 	println!("{} - Manage cache checkpoints", CACHE_COMMAND.cyan());
 	println!("{} - Display session context", CONTEXT_COMMAND.cyan());
 	println!("{} - Show MCP server status", MCP_COMMAND.cyan());

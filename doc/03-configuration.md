@@ -337,12 +337,8 @@ name = "reducer"
 model = "openrouter:openai/o4-mini"  # Use cheaper model for cost-optimized context compression
 temperature = 0.2
 input_mode = "All"
-output_mode = "replace"  # Replaces session content (triggered by /reduce for cost optimization)
+output_mode = "replace"  # Replaces session content when triggered
 builtin = true
-
-# Context Management Commands:
-# - /reduce: Uses this cheaper reducer model for cost-optimized context compression during ongoing work
-# - /done: Uses your current model for comprehensive task finalization with memorization and auto-commit
 
 ### Custom Layer Configuration
 

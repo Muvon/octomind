@@ -165,9 +165,6 @@ pub struct LayerConfig {
 	// Custom parameters that can be used in system prompts via placeholders
 	#[serde(default)]
 	pub parameters: std::collections::HashMap<String, serde_json::Value>,
-	// Mark if this is a builtin layer (affects serialization and maintenance)
-	#[serde(default)]
-	pub builtin: bool,
 	// Cached processed system prompt (not serialized - computed at session initialization)
 	#[serde(skip)]
 	pub processed_system_prompt: Option<String>,
@@ -306,7 +303,6 @@ impl LayerConfig {
 					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
-				builtin: true,                 // Mark as builtin
 				processed_system_prompt: None, // Will be processed during session initialization
 			},
 			"context_generator" => Self {
@@ -321,7 +317,6 @@ impl LayerConfig {
 					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
 				},
 				parameters: std::collections::HashMap::new(),
-				builtin: true,                 // Mark as builtin
 				processed_system_prompt: None, // Will be processed during session initialization
 			},
 			"reducer" => Self {
@@ -336,7 +331,6 @@ impl LayerConfig {
 					allowed_tools: vec![],
 				},
 				parameters: std::collections::HashMap::new(),
-				builtin: true,                 // Mark as builtin
 				processed_system_prompt: None, // Will be processed during session initialization
 			},
 			_ => Self {
@@ -348,7 +342,6 @@ impl LayerConfig {
 				output_mode: OutputMode::None, // Default: intermediate layer
 				mcp: LayerMcpConfig::default(),
 				parameters: std::collections::HashMap::new(),
-				builtin: false,                // Custom layers are not builtin
 				processed_system_prompt: None, // Will be processed during session initialization
 			},
 		}

@@ -53,7 +53,7 @@ pub struct McpServerConfig {
 	// Name field is now explicit in config (like layers)
 	pub name: String,
 
-	// Server type - now part of config to distinguish builtin vs external
+	// Server type - distinguishes between different server implementations
 	pub server_type: McpServerType,
 
 	// External server configuration
@@ -70,10 +70,6 @@ pub struct McpServerConfig {
 
 	// Tool filtering - empty means all tools are enabled
 	pub tools: Vec<String>,
-
-	// Mark if this is a builtin server (affects maintenance and availability)
-	#[serde(default)]
-	pub builtin: bool,
 }
 
 // REMOVED: Default implementations - all config must be explicit
@@ -98,7 +94,6 @@ impl McpServerConfig {
 			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools: Vec::new(),
-			builtin: false, // Default to false, set explicitly when needed
 		}
 	}
 
@@ -114,7 +109,6 @@ impl McpServerConfig {
 			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
-			builtin: true, // Developer servers are builtin
 		}
 	}
 
@@ -130,7 +124,6 @@ impl McpServerConfig {
 			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
-			builtin: true, // Filesystem servers are builtin
 		}
 	}
 
@@ -146,7 +139,6 @@ impl McpServerConfig {
 			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
-			builtin: true, // Agent servers are builtin
 		}
 	}
 
@@ -162,7 +154,6 @@ impl McpServerConfig {
 			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
-			builtin: false, // External servers are not builtin
 		}
 	}
 
@@ -183,27 +174,6 @@ impl McpServerConfig {
 			mode: McpServerMode::Stdin,
 			timeout_seconds: 30,
 			tools,
-			builtin: false, // External servers are not builtin
-		}
-	}
-
-	/// Create an octocode server configuration (builtin but external command)
-	pub fn octocode(available: bool) -> Self {
-		Self {
-			name: "octocode".to_string(),
-			server_type: McpServerType::External,
-			command: Some("octocode".to_string()),
-			args: vec!["mcp".to_string(), "--path=.".to_string()],
-			mode: McpServerMode::Stdin,
-			timeout_seconds: 30,
-			tools: if available {
-				vec![]
-			} else {
-				vec!["unavailable".to_string()]
-			},
-			url: None,
-			auth_token: None,
-			builtin: true, // Octocode is builtin even though it's external command
 		}
 	}
 }
@@ -269,5 +239,3 @@ impl RoleMcpConfig {
 
 // Note: Core server configurations are now defined in the config file
 // The get_core_server_config function is removed as we rely entirely on config
-
-// is_octocode_available function moved to config/loading.rs

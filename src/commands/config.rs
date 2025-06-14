@@ -243,7 +243,6 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				mode: McpServerMode::Http, // Default to HTTP mode
 				tools: Vec::new(),
 				timeout_seconds: 30, // Default timeout
-				builtin: false,      // User-created servers are not builtin
 			};
 
 			// Process remaining parts

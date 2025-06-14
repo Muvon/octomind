@@ -813,6 +813,8 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 	};
 
 	// Race between operation, timeout, and cancellation
+	// CRITICAL: tokio::select! ensures we only cancel the REQUEST, not the server process
+	// The server remains running and available for future tool calls
 	tokio::select! {
 		result = timeout_future => {
 			match result {
@@ -821,6 +823,7 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 			}
 		},
 		_ = cancellation_future => {
+			// Server process is preserved - only this communication is cancelled
 			Err(anyhow::anyhow!("Operation cancelled while communicating with server: {}", server_name_for_error))
 		}
 	}

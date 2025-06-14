@@ -233,72 +233,17 @@ async fn execute_tools_parallel_internal(
 	let mut total_tool_time_ms = 0; // Track cumulative tool execution time
 
 	for (tool_name, task, tool_id) in tool_tasks {
-		// Enhanced cancellation check with real-time feedback and delay
+		// IMMEDIATE cancellation check - no delays, no grace periods
 		if operation_cancelled.load(Ordering::SeqCst) {
 			use colored::*;
 			println!(
 				"{}",
-				format!("🛑 Cancelling tool execution: {}", tool_name).bright_yellow()
+				format!("🛑 Tool '{}' cancelled - server preserved", tool_name).bright_yellow()
 			);
 
-			// Give the tool a brief moment to finish gracefully (500ms)
-			let grace_start = std::time::Instant::now();
-			let grace_period = std::time::Duration::from_millis(500);
-
-			loop {
-				// Check if tool finished during grace period
-				if task.is_finished() {
-					println!(
-						"{}",
-						format!("✓ Tool '{}' completed during grace period", tool_name)
-							.bright_green()
-					);
-
-					// Process the completed result
-					match task.await {
-						Ok(result) => match result {
-							Ok((res, tool_time_ms)) => {
-								tool_results.push(res);
-								total_tool_time_ms += tool_time_ms;
-							}
-							Err(e) => {
-								println!(
-									"{}",
-									format!("⚠ Tool '{}' completed with error: {}", tool_name, e)
-										.bright_yellow()
-								);
-							}
-						},
-						Err(_) => {
-							println!(
-								"{}",
-								format!("⚠ Tool '{}' task error during grace period", tool_name)
-									.bright_yellow()
-							);
-						}
-					}
-					break;
-				}
-
-				// Check if grace period expired
-				if grace_start.elapsed() >= grace_period {
-					println!(
-						"{}",
-						format!(
-							"🗑️ Force cancelling tool '{}' - grace period expired",
-							tool_name
-						)
-						.bright_red()
-					);
-					task.abort(); // Force abort the task
-					break;
-				}
-
-				// Short sleep to avoid busy waiting
-				tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-			}
-
-			// Skip to next tool or finish cancellation
+			// CRITICAL: We only cancel the REQUEST, never the MCP server
+			// The cancellation token in the MCP communication layer handles this properly
+			// Skip to next tool immediately - no waiting, no task.abort()
 			continue;
 		}
 

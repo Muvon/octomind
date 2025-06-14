@@ -16,12 +16,14 @@
 
 use super::super::core::ChatSession;
 use super::utils::format_number;
+use crate::config::Config;
+use crate::session::chat::markdown::MarkdownRenderer;
 use crate::session::list_available_sessions;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
 
-pub fn handle_list(session: &ChatSession, params: &[&str]) -> Result<bool> {
+pub fn handle_list(session: &ChatSession, config: &Config, params: &[&str]) -> Result<bool> {
 	// Parse optional page parameter
 	let page = if !params.is_empty() {
 		match params[0].parse::<usize>() {
@@ -142,9 +144,23 @@ pub fn handle_list(session: &ChatSession, params: &[&str]) -> Result<bool> {
 				markdown_content.push_str("- Switch to session: `/session <session_name>`\n");
 				markdown_content.push_str("- Create new session: `/session`\n");
 
-				// For now, just print the markdown content
-				// TODO: Add markdown rendering if available
-				println!("{}", markdown_content);
+				// Render using markdown renderer if enabled
+				if config.enable_markdown_rendering {
+					let theme = config.markdown_theme.parse().unwrap_or_default();
+					let renderer = MarkdownRenderer::with_theme(theme);
+					match renderer.render_and_print(&markdown_content) {
+						Ok(_) => {
+							// Successfully rendered as markdown
+						}
+						Err(_) => {
+							// Fallback to plain text if markdown rendering fails
+							display_plain(&markdown_content);
+						}
+					}
+				} else {
+					// Use plain text rendering
+					display_plain(&markdown_content);
+				}
 			}
 		}
 		Err(e) => {
@@ -152,4 +168,15 @@ pub fn handle_list(session: &ChatSession, params: &[&str]) -> Result<bool> {
 		}
 	}
 	Ok(false)
+}
+
+/// Display markdown as plain text (fallback)
+fn display_plain(markdown_content: &str) {
+	// Convert markdown to plain text for fallback
+	let plain_text = markdown_content
+		.replace("# ", "")
+		.replace("## ", "")
+		.replace("**", "")
+		.replace("*", "");
+	println!("{}", plain_text);
 }

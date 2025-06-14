@@ -72,7 +72,7 @@ pub async fn process_command(
 		SUMMARIZE_COMMAND => summarize::handle_summarize(session, config).await,
 		REDUCE_COMMAND => reduce::handle_reduce(session, config).await,
 		CACHE_COMMAND => cache::handle_cache(session, config, params).await,
-		LIST_COMMAND => list::handle_list(session, params),
+		LIST_COMMAND => list::handle_list(session, config, params),
 		MODEL_COMMAND => model::handle_model(session, config, params),
 		SESSION_COMMAND => session::handle_session(session, params),
 		MCP_COMMAND => mcp::handle_mcp(config, role, params).await,

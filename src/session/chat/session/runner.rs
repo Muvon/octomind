@@ -897,6 +897,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				}
 			}
 			Err(e) => {
+				// CRITICAL FIX: Remove the user message that was added before the failed API call
+				// This prevents the failed message from polluting the conversation context
+				if let Some(ref op) = *current_operation.lock().unwrap() {
+					if let Some(user_idx) = op.user_message_index {
+						if user_idx < chat_session.session.messages.len() {
+							chat_session.session.messages.truncate(user_idx);
+							log_debug!("Removed user message due to API call failure");
+						}
+					}
+				}
+
 				// Print colorful error message with provider-aware context
 				use colored::*;
 

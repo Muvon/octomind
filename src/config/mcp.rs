@@ -14,35 +14,18 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum McpServerType {
-	#[serde(rename = "external")]
-	External, // External server (URL or command)
-	#[serde(rename = "developer")]
-	Developer, // Built-in developer tools
-	#[serde(rename = "filesystem")]
-	Filesystem, // Built-in filesystem tools
-	#[serde(rename = "agent")]
-	Agent, // Built-in agent tool
-}
-
-// Keep Default for runtime usage only (not config defaults)
-impl Default for McpServerType {
-	fn default() -> Self {
-		Self::External
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum McpServerMode {
-	#[serde(rename = "http")]
-	Http,
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+pub enum McpConnectionType {
+	#[serde(rename = "builtin")]
+	Builtin, // Built-in server (developer, filesystem, agent)
 	#[serde(rename = "stdin")]
-	Stdin,
+	Stdin, // External server via stdin/command
+	#[serde(rename = "http")]
+	Http, // External server via HTTP
 }
 
 // Keep Default for runtime usage only (not config defaults)
-impl Default for McpServerMode {
+impl Default for McpConnectionType {
 	fn default() -> Self {
 		Self::Http
 	}
@@ -53,17 +36,15 @@ pub struct McpServerConfig {
 	// Name field is now explicit in config (like layers)
 	pub name: String,
 
-	// Server type - distinguishes between different server implementations
-	pub server_type: McpServerType,
+	// Connection type - determines how to connect to the server
+	#[serde(rename = "type")]
+	pub connection_type: McpConnectionType,
 
 	// External server configuration
 	pub url: Option<String>,
 	pub auth_token: Option<String>,
 	pub command: Option<String>,
 	pub args: Vec<String>,
-
-	// Communication mode - http or stdin (for external servers)
-	pub mode: McpServerMode,
 
 	// Timeout in seconds for tool execution
 	pub timeout_seconds: u64,
@@ -77,21 +58,18 @@ pub struct McpServerConfig {
 impl McpServerConfig {
 	/// Create a server config from just the key name, auto-detecting type
 	pub fn from_name(name: &str) -> Self {
-		let server_type = match name {
-			"developer" => McpServerType::Developer,
-			"filesystem" => McpServerType::Filesystem,
-			"agent" => McpServerType::Agent,
-			_ => McpServerType::External,
+		let connection_type = match name {
+			"developer" | "filesystem" | "agent" => McpConnectionType::Builtin,
+			_ => McpConnectionType::Http,
 		};
 
 		Self {
 			name: name.to_string(),
-			server_type,
+			connection_type,
 			url: None,
 			auth_token: None,
 			command: None,
 			args: Vec::new(),
-			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools: Vec::new(),
 		}
@@ -101,12 +79,11 @@ impl McpServerConfig {
 	pub fn developer(name: &str, tools: Vec<String>) -> Self {
 		Self {
 			name: name.to_string(),
-			server_type: McpServerType::Developer,
+			connection_type: McpConnectionType::Builtin,
 			url: None,
 			auth_token: None,
 			command: None,
 			args: Vec::new(),
-			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
 		}
@@ -116,12 +93,11 @@ impl McpServerConfig {
 	pub fn filesystem(name: &str, tools: Vec<String>) -> Self {
 		Self {
 			name: name.to_string(),
-			server_type: McpServerType::Filesystem,
+			connection_type: McpConnectionType::Builtin,
 			url: None,
 			auth_token: None,
 			command: None,
 			args: Vec::new(),
-			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
 		}
@@ -131,12 +107,11 @@ impl McpServerConfig {
 	pub fn agent(name: &str, tools: Vec<String>) -> Self {
 		Self {
 			name: name.to_string(),
-			server_type: McpServerType::Agent,
+			connection_type: McpConnectionType::Builtin,
 			url: None,
 			auth_token: None,
 			command: None,
 			args: Vec::new(),
-			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
 		}
@@ -146,12 +121,11 @@ impl McpServerConfig {
 	pub fn external_http(name: &str, url: &str, tools: Vec<String>) -> Self {
 		Self {
 			name: name.to_string(),
-			server_type: McpServerType::External,
+			connection_type: McpConnectionType::Http,
 			url: Some(url.to_string()),
 			auth_token: None,
 			command: None,
 			args: Vec::new(),
-			mode: McpServerMode::Http,
 			timeout_seconds: 30,
 			tools,
 		}
@@ -166,12 +140,11 @@ impl McpServerConfig {
 	) -> Self {
 		Self {
 			name: name.to_string(),
-			server_type: McpServerType::External,
+			connection_type: McpConnectionType::Stdin,
 			url: None,
 			auth_token: None,
 			command: Some(command.to_string()),
 			args,
-			mode: McpServerMode::Stdin,
 			timeout_seconds: 30,
 			tools,
 		}

@@ -76,21 +76,17 @@ allowed_tools = []
 
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 ```
 
 ## Assistant Role

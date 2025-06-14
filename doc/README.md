@@ -59,12 +59,10 @@ allowed_tools = []
 
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 # Reference from roles
 [developer.mcp]
@@ -223,12 +221,10 @@ allowed_tools = []
 
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 # Reference from roles
 [developer.mcp]

@@ -50,12 +50,12 @@ Add your server to the `from_name` method:
 
 ```rust
 pub fn from_name(name: &str) -> Self {
-    let server_type = match name {
-        "developer" => McpServerType::Developer,
-        "filesystem" => McpServerType::Filesystem,
-        "agent" => McpServerType::Agent,
-        "database" => McpServerType::Database,  // <- Add here
-        _ => McpServerType::External,
+    let connection_type = match name {
+        "developer" => McpConnectionType::Builtin,
+        "filesystem" => McpConnectionType::Builtin,
+        "agent" => McpConnectionType::Builtin,
+        "database" => McpConnectionType::Builtin,  // <- Add here
+        _ => McpConnectionType::Http,
     };
     // ...
 }
@@ -68,15 +68,13 @@ Add a helper constructor method:
 pub fn database(name: &str, tools: Vec<String>) -> Self {
     Self {
         name: name.to_string(),
-        server_type: McpServerType::Database,
+        connection_type: McpConnectionType::Builtin,
         url: None,
         auth_token: None,
         command: None,
         args: Vec::new(),
-        mode: McpServerMode::Http,
         timeout_seconds: 30,
         tools,
-        builtin: true, // Built-in servers are always builtin
     }
 }
 ```
@@ -225,10 +223,22 @@ Add your server to the `get_available_functions` method:
 
 ```rust
 for server in enabled_servers {
-    match server.server_type {
-        crate::config::McpServerType::Developer => {
-            // existing code...
+    match server.connection_type {
+        crate::config::McpConnectionType::Builtin => {
+            // Handle builtin servers by name
+            match server.name.as_str() {
+                "developer" => {
+                    // existing code...
+                }
+                "database" => {
+                    // Add database handling here
+                }
+                _ => {}
+            }
         }
+        // existing code...
+    }
+}
         crate::config::McpServerType::Filesystem => {
             // existing code...
         }
@@ -250,10 +260,12 @@ for server in enabled_servers {
 Add to the `build_tool_server_map` function:
 
 ```rust
-let server_functions = match server.server_type {
-    // existing cases...
-    crate::config::McpServerType::Database => {
-        get_cached_internal_functions("database", &server.tools, || {
+let server_functions = match server.connection_type {
+    crate::config::McpConnectionType::Builtin => {
+        // Handle builtin servers by name
+        match server.name.as_str() {
+            "database" => {
+                get_cached_internal_functions("database", &server.tools, || {
             database::get_all_functions()
         })
     }
@@ -268,9 +280,11 @@ let server_functions = match server.server_type {
 Add execution handling in `try_execute_tool_call`:
 
 ```rust
-match target_server.server_type {
-    // existing cases...
-    crate::config::McpServerType::Database => match call.tool_name.as_str() {
+match target_server.connection_type {
+    crate::config::McpConnectionType::Builtin => {
+        // Handle builtin servers by name
+        match target_server.name.as_str() {
+            "database" => match call.tool_name.as_str() {
         "db_query" | "db_schema" => {
             crate::log_debug!(
                 "Executing database command via database server '{}'",
@@ -299,10 +313,9 @@ match target_server.server_type {
 Add your server type to the builtin server check:
 
 ```rust
-match server.server_type {
-    crate::config::McpServerType::Developer
-    | crate::config::McpServerType::Filesystem
-    | crate::config::McpServerType::Agent
+match server.connection_type {
+    crate::config::McpConnectionType::Builtin => {
+        // All builtin servers are always available
     | crate::config::McpServerType::Database => {  // <- Add here
         // Internal servers are always considered running
         // ...
@@ -318,10 +331,9 @@ match server.server_type {
 Add to server health status checks (2 locations):
 
 ```rust
-let (health, restart_info) = match server.server_type {
-    crate::config::McpServerType::Developer
-    | crate::config::McpServerType::Filesystem
-    | crate::config::McpServerType::Agent
+let (health, restart_info) = match server.connection_type {
+    crate::config::McpConnectionType::Builtin => {
+        // All builtin servers are always healthy
     | crate::config::McpServerType::Database => {  // <- Add here
         // Internal servers are always running
         // ...
@@ -337,10 +349,12 @@ let (health, restart_info) = match server.server_type {
 Add to server function gathering:
 
 ```rust
-let server_functions = match server.server_type {
-    // existing cases...
-    crate::config::McpServerType::Database => {
-        crate::mcp::get_cached_internal_functions("database", &server.tools, || {
+let server_functions = match server.connection_type {
+    crate::config::McpConnectionType::Builtin => {
+        // Handle builtin servers by name
+        match server.name.as_str() {
+            "database" => {
+                crate::mcp::get_cached_internal_functions("database", &server.tools, || {
             crate::mcp::database::get_all_functions()
         })
     }
@@ -393,7 +407,7 @@ Add your server to the MCP servers section:
 ```toml
 [[mcp.servers]]
 name = "database"
-server_type = "builtin"
+type = "builtin"
 timeout_seconds = 30
 tools = []
 ```

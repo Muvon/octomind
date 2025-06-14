@@ -15,7 +15,7 @@
 // Background health monitoring for MCP servers
 
 use super::process::{self, ServerHealth};
-use crate::config::{Config, McpServerConfig, McpServerType};
+use crate::config::{Config, McpConnectionType, McpServerConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +48,12 @@ pub async fn start_health_monitor(config: Arc<Config>) -> Result<(), anyhow::Err
 		.mcp
 		.servers
 		.iter()
-		.filter(|server| matches!(server.server_type, McpServerType::External))
+		.filter(|server| {
+			matches!(
+				server.connection_type,
+				McpConnectionType::Http | McpConnectionType::Stdin
+			)
+		})
 		.cloned()
 		.collect();
 
@@ -264,16 +269,20 @@ async fn verify_server_responsiveness(server: &McpServerConfig) -> bool {
 	// BUT: Failed responses are normal due to misled requests
 	// We should only check if the PROCESS is alive, not if it responds correctly
 
-	match server.mode {
-		crate::config::McpServerMode::Stdin => {
+	match server.connection_type {
+		McpConnectionType::Stdin => {
 			// For stdin servers, just check if the process is alive
 			// Don't try to communicate - that might fail due to misled requests
 			process::is_server_running(&server.name)
 		}
-		crate::config::McpServerMode::Http => {
+		McpConnectionType::Http => {
 			// For HTTP servers, just check if the process is running
 			// Don't make HTTP requests - failed responses are normal
 			process::is_server_running(&server.name)
+		}
+		McpConnectionType::Builtin => {
+			// Built-in servers are always "running"
+			true
 		}
 	}
 }
@@ -291,7 +300,12 @@ pub async fn force_health_check(config: &Config) -> Result<(), anyhow::Error> {
 		.mcp
 		.servers
 		.iter()
-		.filter(|server| matches!(server.server_type, McpServerType::External))
+		.filter(|server| {
+			matches!(
+				server.connection_type,
+				McpConnectionType::Http | McpConnectionType::Stdin
+			)
+		})
 		.cloned()
 		.collect();
 

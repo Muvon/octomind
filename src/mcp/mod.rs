@@ -14,6 +14,7 @@
 
 // MCP Protocol Implementation
 
+use crate::config::McpConnectionType;
 use crate::log_debug;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -249,7 +250,7 @@ pub async fn initialize_servers_for_role(config: &crate::config::Config) -> Resu
 
 	for server in &enabled_servers {
 		// Only initialize external servers that need to be started
-		if let crate::config::McpServerType::External = server.server_type {
+		if let McpConnectionType::Http | McpConnectionType::Stdin = server.connection_type {
 			crate::log_debug!("Initializing external server: {}", server.name);
 
 			// Check if server is already running to avoid double initialization
@@ -287,7 +288,7 @@ pub async fn initialize_servers_for_role(config: &crate::config::Config) -> Resu
 			crate::log_debug!(
 				"Skipping initialization for internal server: {} ({:?})",
 				server.name,
-				server.server_type
+				server.connection_type
 			);
 		}
 	}
@@ -318,36 +319,44 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	let enabled_servers: Vec<crate::config::McpServerConfig> = config.mcp.servers.to_vec();
 
 	for server in enabled_servers {
-		match server.server_type {
-			crate::config::McpServerType::Developer => {
-				let server_functions =
-					get_cached_internal_functions("developer", &server.tools, || {
-						dev::get_all_functions()
-					});
-				functions.extend(server_functions);
+		match server.connection_type {
+			McpConnectionType::Builtin => {
+				match server.name.as_str() {
+					"developer" => {
+						let server_functions =
+							get_cached_internal_functions("developer", &server.tools, || {
+								dev::get_all_functions()
+							});
+						functions.extend(server_functions);
+					}
+					"filesystem" => {
+						let server_functions =
+							get_cached_internal_functions("filesystem", &server.tools, || {
+								fs::get_all_functions()
+							});
+						functions.extend(server_functions);
+					}
+					"agent" => {
+						// For agent server, get all agent functions based on config
+						// Don't cache agent functions since they depend on config
+						let server_functions = agent::get_all_functions(config);
+						let filtered_functions = if server.tools.is_empty() {
+							server_functions
+						} else {
+							server_functions
+								.into_iter()
+								.filter(|f| server.tools.contains(&f.name))
+								.collect()
+						};
+						functions.extend(filtered_functions);
+					}
+					_ => {
+						// Unknown builtin server
+						crate::log_debug!("Unknown builtin server: {}", server.name);
+					}
+				}
 			}
-			crate::config::McpServerType::Filesystem => {
-				let server_functions =
-					get_cached_internal_functions("filesystem", &server.tools, || {
-						fs::get_all_functions()
-					});
-				functions.extend(server_functions);
-			}
-			crate::config::McpServerType::Agent => {
-				// For agent server, get all agent functions based on config
-				// Don't cache agent functions since they depend on config
-				let server_functions = agent::get_all_functions(config);
-				let filtered_functions = if server.tools.is_empty() {
-					server_functions
-				} else {
-					server_functions
-						.into_iter()
-						.filter(|f| server.tools.contains(&f.name))
-						.collect()
-				};
-				functions.extend(filtered_functions);
-			}
-			crate::config::McpServerType::External => {
+			McpConnectionType::Http | McpConnectionType::Stdin => {
 				// CRITICAL FIX: For external servers, use cached function discovery
 				// This avoids spawning servers during system prompt creation
 				match server::get_server_functions_cached(&server).await {
@@ -488,32 +497,40 @@ pub async fn build_tool_server_map(
 
 	for server in enabled_servers {
 		// Get all functions this server provides
-		let server_functions = match server.server_type {
-			crate::config::McpServerType::Developer => {
-				// Developer server only has shell and other dev tools (agent moved to separate server)
-				get_cached_internal_functions("developer", &server.tools, || {
-					dev::get_all_functions()
-				})
-			}
-			crate::config::McpServerType::Filesystem => {
-				get_cached_internal_functions("filesystem", &server.tools, || {
-					fs::get_all_functions()
-				})
-			}
-			crate::config::McpServerType::Agent => {
-				// For agent server, get all agent functions based on config
-				// Don't cache agent functions since they depend on config
-				let server_functions = agent::get_all_functions(config);
-				if server.tools.is_empty() {
-					server_functions
-				} else {
-					server_functions
-						.into_iter()
-						.filter(|f| server.tools.contains(&f.name))
-						.collect()
+		let server_functions = match server.connection_type {
+			McpConnectionType::Builtin => {
+				match server.name.as_str() {
+					"developer" => {
+						// Developer server only has shell and other dev tools (agent moved to separate server)
+						get_cached_internal_functions("developer", &server.tools, || {
+							dev::get_all_functions()
+						})
+					}
+					"filesystem" => {
+						get_cached_internal_functions("filesystem", &server.tools, || {
+							fs::get_all_functions()
+						})
+					}
+					"agent" => {
+						// For agent server, get all agent functions based on config
+						// Don't cache agent functions since they depend on config
+						let server_functions = agent::get_all_functions(config);
+						if server.tools.is_empty() {
+							server_functions
+						} else {
+							server_functions
+								.into_iter()
+								.filter(|f| server.tools.contains(&f.name))
+								.collect()
+						}
+					}
+					_ => {
+						crate::log_debug!("Unknown builtin server: {}", server.name);
+						Vec::new()
+					}
 				}
 			}
-			crate::config::McpServerType::External => {
+			McpConnectionType::Http | McpConnectionType::Stdin => {
 				// For external servers, get their actual functions
 				match server::get_server_functions_cached(&server).await {
 					Ok(functions) => {
@@ -573,7 +590,7 @@ async fn try_execute_tool_call(
 			"Routing tool '{}' to server '{}' ({:?})",
 			call.tool_name,
 			target_server.name,
-			target_server.server_type
+			target_server.connection_type
 		);
 
 		// Check for cancellation before execution
@@ -584,83 +601,98 @@ async fn try_execute_tool_call(
 		}
 
 		// Execute on the target server
-		match target_server.server_type {
-			crate::config::McpServerType::Developer => match call.tool_name.as_str() {
-				"shell" => {
-					crate::log_debug!(
-						"Executing shell command via developer server '{}'",
-						target_server.name
-					);
-					let mut result =
-						dev::execute_shell_command(call, cancellation_token.clone()).await?;
-					result.tool_id = call.tool_id.clone();
-					return handle_large_response(result, config);
-				}
-				_ => {
-					return Err(anyhow::anyhow!(
-						"Tool '{}' not implemented in developer server",
-						call.tool_name
-					));
-				}
-			},
-			crate::config::McpServerType::Filesystem => match call.tool_name.as_str() {
-				"text_editor" => {
-					crate::log_debug!(
-						"Executing text_editor via filesystem server '{}'",
-						target_server.name
-					);
-					let mut result =
-						fs::execute_text_editor(call, cancellation_token.clone()).await?;
-					result.tool_id = call.tool_id.clone();
-					return Ok(result);
-				}
-				"html2md" => {
-					crate::log_debug!(
-						"Executing html2md via filesystem server '{}'",
-						target_server.name
-					);
-					let mut result = fs::execute_html2md(call, cancellation_token.clone()).await?;
-					result.tool_id = call.tool_id.clone();
-					return Ok(result);
-				}
-				"list_files" => {
-					crate::log_debug!(
-						"Executing list_files via filesystem server '{}'",
-						target_server.name
-					);
-					let mut result =
-						fs::execute_list_files(call, cancellation_token.clone()).await?;
-					result.tool_id = call.tool_id.clone();
-					return Ok(result);
-				}
-				_ => {
-					return Err(anyhow::anyhow!(
-						"Tool '{}' not implemented in filesystem server",
-						call.tool_name
-					));
-				}
-			},
-			crate::config::McpServerType::Agent => {
-				// Handle any agent tool (agent_<name>)
-				if call.tool_name.starts_with("agent_") {
-					crate::log_debug!(
-						"Executing agent command '{}' via agent server '{}'",
-						call.tool_name,
-						target_server.name
-					);
-					let mut result =
-						agent::execute_agent_command(call, config, cancellation_token.clone())
+		match target_server.connection_type {
+			McpConnectionType::Builtin => {
+				match target_server.name.as_str() {
+					"developer" => match call.tool_name.as_str() {
+						"shell" => {
+							crate::log_debug!(
+								"Executing shell command via developer server '{}'",
+								target_server.name
+							);
+							let mut result =
+								dev::execute_shell_command(call, cancellation_token.clone())
+									.await?;
+							result.tool_id = call.tool_id.clone();
+							return handle_large_response(result, config);
+						}
+						_ => {
+							return Err(anyhow::anyhow!(
+								"Tool '{}' not implemented in developer server",
+								call.tool_name
+							));
+						}
+					},
+					"filesystem" => match call.tool_name.as_str() {
+						"text_editor" => {
+							crate::log_debug!(
+								"Executing text_editor via filesystem server '{}'",
+								target_server.name
+							);
+							let mut result =
+								fs::execute_text_editor(call, cancellation_token.clone()).await?;
+							result.tool_id = call.tool_id.clone();
+							return Ok(result);
+						}
+						"html2md" => {
+							crate::log_debug!(
+								"Executing html2md via filesystem server '{}'",
+								target_server.name
+							);
+							let mut result =
+								fs::execute_html2md(call, cancellation_token.clone()).await?;
+							result.tool_id = call.tool_id.clone();
+							return Ok(result);
+						}
+						"list_files" => {
+							crate::log_debug!(
+								"Executing list_files via filesystem server '{}'",
+								target_server.name
+							);
+							let mut result =
+								fs::execute_list_files(call, cancellation_token.clone()).await?;
+							result.tool_id = call.tool_id.clone();
+							return Ok(result);
+						}
+						_ => {
+							return Err(anyhow::anyhow!(
+								"Tool '{}' not implemented in filesystem server",
+								call.tool_name
+							));
+						}
+					},
+					"agent" => {
+						// Handle any agent tool (agent_<name>)
+						if call.tool_name.starts_with("agent_") {
+							crate::log_debug!(
+								"Executing agent command '{}' via agent server '{}'",
+								call.tool_name,
+								target_server.name
+							);
+							let mut result = agent::execute_agent_command(
+								call,
+								config,
+								cancellation_token.clone(),
+							)
 							.await?;
-					result.tool_id = call.tool_id.clone();
-					return Ok(result);
-				} else {
-					return Err(anyhow::anyhow!(
-						"Tool '{}' not implemented in agent server",
-						call.tool_name
-					));
+							result.tool_id = call.tool_id.clone();
+							return Ok(result);
+						} else {
+							return Err(anyhow::anyhow!(
+								"Tool '{}' not implemented in agent server",
+								call.tool_name
+							));
+						}
+					}
+					_ => {
+						return Err(anyhow::anyhow!(
+							"Unknown builtin server: {}",
+							target_server.name
+						));
+					}
 				}
 			}
-			crate::config::McpServerType::External => {
+			McpConnectionType::Http | McpConnectionType::Stdin => {
 				// Execute on external server
 				match server::execute_tool_call(call, target_server, cancellation_token.clone())
 					.await

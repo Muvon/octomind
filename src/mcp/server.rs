@@ -16,7 +16,7 @@
 
 use super::process;
 use super::{McpFunction, McpToolCall, McpToolResult};
-use crate::config::{Config, McpServerConfig, McpServerMode};
+use crate::config::{Config, McpConnectionType, McpServerConfig};
 use anyhow::Result;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
@@ -36,9 +36,9 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 	// Note: enabled check is now handled at the role level via server_refs
 	// All servers in the registry are considered available
 
-	// Handle different server modes
-	match server.mode {
-		McpServerMode::Http => {
+	// Handle different server connection types
+	match server.connection_type {
+		McpConnectionType::Http => {
 			// Handle local vs remote servers
 			let server_url = get_server_base_url(server).await?;
 
@@ -133,10 +133,16 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 
 			Ok(functions)
 		}
-		McpServerMode::Stdin => {
+		McpConnectionType::Stdin => {
 			// For stdin-based servers, ensure the server is running and get functions
 			process::ensure_server_running(server).await?;
 			process::get_stdin_server_functions(server).await
+		}
+		McpConnectionType::Builtin => {
+			// Built-in servers don't need external processes
+			Err(anyhow::anyhow!(
+				"Built-in servers should not use get_server_functions"
+			))
 		}
 	}
 }
@@ -275,10 +281,8 @@ pub fn clear_all_function_cache() {
 // Check if a server is already running with enhanced health checking
 // Takes server config to properly handle internal vs external servers
 pub fn is_server_already_running_with_config(server: &crate::config::McpServerConfig) -> bool {
-	match server.server_type {
-		crate::config::McpServerType::Developer
-		| crate::config::McpServerType::Filesystem
-		| crate::config::McpServerType::Agent => {
+	match server.connection_type {
+		McpConnectionType::Builtin => {
 			// Internal servers are always considered running since they're built-in
 			{
 				let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
@@ -288,7 +292,7 @@ pub fn is_server_already_running_with_config(server: &crate::config::McpServerCo
 			}
 			true
 		}
-		crate::config::McpServerType::External => {
+		McpConnectionType::Http | McpConnectionType::Stdin => {
 			// External servers - check the process registry
 			let is_process_running = {
 				let processes = process::SERVER_PROCESSES.read().unwrap();
@@ -472,9 +476,9 @@ async fn execute_tool_call_internal(
 
 	// Tool execution display is now handled in response.rs to avoid duplication
 
-	// Handle different server modes
-	match server.mode {
-		McpServerMode::Http => {
+	// Handle different server connection types
+	match server.connection_type {
+		McpConnectionType::Http => {
 			// Check for cancellation before HTTP request
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
@@ -562,17 +566,23 @@ async fn execute_tool_call_internal(
 
 			Ok(tool_result)
 		}
-		McpServerMode::Stdin => {
+		McpConnectionType::Stdin => {
 			// For stdin-based servers, use the stdin communication channel with cancellation support
 			process::execute_stdin_tool_call(call, server, cancellation_token).await
+		}
+		McpConnectionType::Builtin => {
+			// Built-in servers should not use this function
+			Err(anyhow::anyhow!(
+				"Built-in servers should not use execute_tool_call"
+			))
 		}
 	}
 }
 
 // Get the base URL for a server, starting it if necessary for local servers
 async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
-	match server.mode {
-		McpServerMode::Http => {
+	match server.connection_type {
+		McpConnectionType::Http => {
 			// Check if this is a local server that needs to be started
 			if server.command.is_some() {
 				// This is a local server, ensure it's running
@@ -585,7 +595,7 @@ async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
 				Err(anyhow::anyhow!("Invalid server configuration: neither URL nor command specified for server '{}'", server.name))
 			}
 		}
-		McpServerMode::Stdin => {
+		McpConnectionType::Stdin => {
 			// For stdin-based servers, return a pseudo-URL
 			if server.command.is_some() {
 				// Ensure the stdin server is running
@@ -593,6 +603,10 @@ async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
 			} else {
 				Err(anyhow::anyhow!("Invalid server configuration: command not specified for stdin-based server '{}'", server.name))
 			}
+		}
+		McpConnectionType::Builtin => {
+			// Built-in servers don't have URLs
+			Err(anyhow::anyhow!("Built-in servers don't have URLs"))
 		}
 	}
 }

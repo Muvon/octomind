@@ -417,7 +417,7 @@ impl ChatSession {
 			markdown_content.push_str("\n*Debug mode: Showing full content*\n");
 		} else {
 			markdown_content.push_str(
-				"\n*Compact mode: Content truncated. Use `/debug` to toggle full content*\n",
+				"\n*Compact mode: Content truncated. Use `/loglevel debug` to toggle full content*\n",
 			);
 		}
 

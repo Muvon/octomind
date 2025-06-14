@@ -328,11 +328,16 @@ During a session, use these commands:
 - `/loglevel [debug|info|none]` - Set log level
 
 #### Context Management
-- `/cache` - Mark cache checkpoint
-- `/truncate [threshold]` - Toggle auto-truncation
-- `/done` - Optimize context and restart layers
+- `/cache` - Mark cache checkpoint for cost optimization
+- `/reduce` - Compress session history using cheaper reducer model (cost optimization during ongoing work)
+- `/done` - Finalize task with comprehensive summarization, memorization, and auto-commit (task completion)
 - `/clear` - Clear screen
 - `/save` - Save session
+
+**Context Management Strategy:**
+- Use `/reduce` when context gets large but work continues (optimizes cost with cheaper model)
+- Use `/done` when task is complete (preserves full context with current model + auto-commit)
+- `/done` acts like "git commit" for conversations - finalizes and preserves work phase
 
 #### Architecture Commands
 - `/layers` - Toggle layered processing
@@ -468,7 +473,7 @@ The report provides a detailed breakdown of each request in your session:
 #### Cost Tracking
 
 - **Per-Request Costs**: Exact cost delta for each user input
-- **Command Costs**: Includes `/done`, `/model` and other session commands
+- **Command Costs**: Includes `/done`, `/reduce`, `/model` and other session commands
 - **Real-Time Calculation**: Uses session stats snapshots for accuracy
 - **Provider Agnostic**: Works with all supported AI providers
 
@@ -485,90 +490,105 @@ Use `/info` for quick session overview, `/report` for detailed usage analysis.
 
 ### How Layers Work
 
-The layered architecture processes complex requests through specialized stages:
+The layered architecture processes complex requests through configurable stages. All layers use the same `GenericLayer` implementation with different configurations:
 
 ```mermaid
 graph TB
-    A[User Input] --> B[Query Processor]
-    B --> C[Context Generator]
-    C --> D[Developer]
-    D --> E[Response]
+    A[User Input] --> B[Layer Pipeline]
+    B --> C[Query Processor - output_mode: none]
+    C --> D[Context Generator - output_mode: replace]
+    D --> E[Final Response]
 
-    F[Manual /done] --> G[Reducer]
+    F[Manual /reduce] --> G[Reducer Layer - output_mode: replace]
     G --> H[Optimized Context]
 ```
 
 ### Layer Configuration
 
-#### Default Layers
+All layers are configured through the `[[layers]]` section with consistent parameters:
+
+#### Built-in Layer Defaults
 ```toml
-[openrouter]
+[developer]
 enable_layers = true
 
-# Uses default models for each layer:
-# - Query Processor: openrouter:openai/gpt-4.1-nano
-# - Context Generator: openrouter:google/gemini-2.5-flash-preview
-# - Developer: main model from config
+# Built-in layers with default configurations:
+# - Query Processor: output_mode = "none" (intermediate)
+# - Context Generator: output_mode = "replace" (replaces input)
+# - Reducer: output_mode = "replace" (manual trigger via /reduce)
 ```
 
-#### Custom Layer Models
+#### Custom Layer Configuration
 ```toml
-[openrouter]
+[developer]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
 
-# Layered Architecture Configuration
+# All layers are configured through [[layers]] sections
 
-# Layered architecture is now configured using named layers instead of separate keys.
-# Remove developer_model and reducer_model keys and use [[layers]] array with named layers.
-
-query_processor_model = "openrouter:openai/gpt-4.1-nano"
-context_generator_model = "openrouter:google/gemini-1.5-flash"
-
-[[layers]]
-name = "developer"
-enabled = true
-model = "openrouter:anthropic/claude-sonnet-4"
-temperature = 0.3
-enable_tools = true
-input_mode = "all"
-
-#### Advanced Layer Configuration
-```toml
 [[layers]]
 name = "query_processor"
-enabled = true
-model = "openrouter:openai/gpt-4.1-nano"
-temperature = 0.1
-enable_tools = false
+model = "openrouter:openai/gpt-4.1-mini"
+temperature = 0.2
 input_mode = "Last"
-system_prompt = "You analyze and improve user queries."
+output_mode = "none"  # Intermediate layer
+builtin = true
 
 [[layers]]
 name = "context_generator"
-enabled = true
-model = "openrouter:google/gemini-1.5-flash"
+model = "openrouter:google/gemini-2.5-flash-preview"
 temperature = 0.2
-enable_tools = true
-allowed_tools = ["core", "text_editor"]
 input_mode = "Last"
+output_mode = "replace"  # Replaces input with context
+builtin = true
+
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["search_code", "view_signatures", "list_files"]
 
 [[layers]]
-name = "developer"
-enabled = true
-model = "openrouter:anthropic/claude-sonnet-4"
-temperature = 0.3
-enable_tools = true
+name = "reducer"
+model = "openrouter:openai/o4-mini"
+temperature = 0.2
 input_mode = "All"
+output_mode = "replace"  # Replaces session content
+builtin = true
 ```
 
-### Input Modes
+#### Advanced Layer Configuration
 
+You can create custom layers with any combination of settings:
+
+```toml
+[[layers]]
+name = "custom_analyzer"
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are a specialized code analyzer..."
+temperature = 0.1
+input_mode = "Last"
+output_mode = "append"  # Add analysis to session
+builtin = false
+
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "list_files"]
+```
+
+### Input and Output Modes
+
+#### Input Modes
 Layers can process input in different modes:
 
 - **Last**: Only the most recent output from previous layer
 - **All**: All context from previous layers
 - **Summary**: Summarized version of all previous context
+
+#### Output Modes
+Layers can affect the session in different ways:
+
+- **none**: Intermediate layer that doesn't modify the session (like query_processor)
+- **append**: Adds layer output as a new message to the session
+- **replace**: Replaces the entire session content with the layer output (like reducer)
 
 ## Tool Integration (MCP)
 
@@ -661,8 +681,85 @@ enable_auto_truncation = true
 /cache           # Mark cache point
 /truncate        # Toggle auto-truncation
 /info            # Check token usage
-/done            # Optimize context
+/done            # Complete task with memorization & commit
+/reduce          # Compress context with reducer layer
 ```
+
+## Context Management Commands
+
+Octomind provides two distinct commands for managing session context, each serving different purposes:
+
+### `/done` - Task Completion & Finalization
+
+**Purpose**: Complete and finalize a development task with full preservation of context for future work.
+
+**What it does**:
+- **Memorizes** important information for future reference using the `memorize` tool
+- **Summarizes** the entire conversation preserving all technical details, decisions, and context
+- **Auto-commits** changes using octocode (if available) - similar to `git add` for task finalization
+- **Preserves** all files modified, commands used, and task completion status
+- **Resets** layer processing for the next task while maintaining full context
+- Uses the **current model** (not a cheaper reducer layer)
+
+**When to use**:
+- ✅ Task is complete or at a major milestone
+- ✅ You want to preserve all work and context for future sessions
+- ✅ Ready to commit changes and document progress
+- ✅ Want to continue working on related tasks with full context
+
+**Example workflow**:
+```bash
+> "Add authentication to the login system"
+[AI implements authentication, modifies files]
+> "Add error handling and validation"
+[AI adds error handling, updates multiple files]
+> /done
+# Memorizes all changes, summarizes implementation, commits files
+# Next message will go through layers again with preserved context
+```
+
+### `/reduce` - Manual Context Compression
+
+**Purpose**: Compress session history to save tokens without task finalization.
+
+**What it does**:
+- **Compresses** conversation history using a configured reducer layer
+- **Cuts context** to essential information only
+- **Uses cheaper model** (configured reducer layer, not current model)
+- **No memorization** - just compression for token efficiency
+- **No auto-commit** - purely for context management
+- **No task finalization** - continues current work
+
+**When to use**:
+- ✅ Session is getting long but task isn't complete
+- ✅ Want to reduce token costs during development
+- ✅ Need to free up context space for more work
+- ✅ Task is ongoing and doesn't need preservation yet
+
+**Requirements**:
+- Must have a "reducer" layer configured in your config
+- Reducer layer should use a cheaper/faster model
+
+**Example workflow**:
+```bash
+> "Debug this complex function"
+[Long conversation with multiple iterations]
+> /reduce
+# Compresses history to essential debugging context only
+# Continues debugging with reduced context, no finalization
+```
+
+### Key Differences Summary
+
+| Aspect | `/done` | `/reduce` |
+|--------|---------|-----------|
+| **Purpose** | Task completion & finalization | Context compression only |
+| **Model Used** | Current session model | Configured reducer layer |
+| **Memorization** | ✅ Stores important info | ❌ No memorization |
+| **Auto-commit** | ✅ Commits changes | ❌ No commit |
+| **Context Preservation** | ✅ Full task context preserved | ❌ Minimal compression only |
+| **Layer Reset** | ✅ Resets for next task | ❌ Continues current work |
+| **Use Case** | "I'm done with this feature" | "This is getting long, compress it" |
 
 ## Best Practices
 
@@ -704,7 +801,7 @@ octomind session -n security_audit --role=security-analyst
 2. **Enable caching**: Reduce repeated context costs
 3. **Monitor usage**: Check `/info` regularly
 4. **Optimize layers**: Use cheap models for processing layers
-5. **Truncate context**: Use `/done` to optimize
+5. **Truncate context**: Use `/done` for task completion or `/reduce` for manual compression
 
 ### Session Hygiene
 

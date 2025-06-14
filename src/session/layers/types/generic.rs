@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::layer_trait::{Layer, LayerConfig, LayerResult};
+use super::super::layer_trait::{Layer, LayerConfig, LayerResult};
 use crate::config::Config;
 use crate::session::{Message, Session};
 use anyhow::Result;

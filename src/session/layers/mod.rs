@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod generic_layer; // New generic layer implementation
 pub mod layer_trait;
 pub mod orchestrator;
-pub mod processor; // Keep for backward compatibility
-pub mod types; // Keep existing types for backward compatibility
+pub mod processor;
+pub mod types; // Keep for backward compatibility
 
-pub use generic_layer::GenericLayer;
-pub use layer_trait::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
+pub use layer_trait::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult, OutputMode};
 pub use orchestrator::LayeredOrchestrator;
 pub use processor::LayerProcessor;
+pub use types::GenericLayer;
 
 // Main function to process using the layered architecture
 pub async fn process_with_layers(

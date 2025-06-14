@@ -15,7 +15,7 @@
 // Agent functions - routes tasks to configured layers
 
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
-use crate::session::layers::layer_trait::Layer;
+use crate::session::layers::{GenericLayer, Layer};
 use anyhow::Result;
 use serde_json::json;
 use std::sync::atomic::AtomicBool;
@@ -105,7 +105,7 @@ async fn process_layer_as_agent(
 	);
 
 	// Create GenericLayer from config (reuse existing pattern)
-	let layer = crate::session::layers::generic_layer::GenericLayer::new(layer_config.clone());
+	let layer = GenericLayer::new(layer_config.clone());
 
 	// Process task through layer with full MCP tools support
 	let operation_cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

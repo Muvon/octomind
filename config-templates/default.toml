@@ -267,6 +267,7 @@ Return only the refined task description. No commentary, explanations, or meta-t
 model = "openrouter:openai/gpt-4.1-mini"
 temperature = 0.2
 input_mode = "Last"
+output_mode = "none"  # Intermediate layer - doesn't modify session
 builtin = true
 
 [layers.mcp]
@@ -335,6 +336,7 @@ Provide a comprehensive project management breakdown:
 model = "openrouter:google/gemini-2.5-flash-preview"
 temperature = 0.2
 input_mode = "Last"
+output_mode = "replace"  # Replaces input with processed context
 builtin = true
 
 [layers.mcp]
@@ -345,6 +347,7 @@ allowed_tools = ["search_code", "view_signatures", "list_files"]
 
 [[layers]]
 name = "reducer"
+# Cost-optimized reducer for /reduce command - uses cheaper model for context compression
 # Default reducer system prompt:
 system_prompt = """You are a Session History Reducer for Octomind. Your role is to create a CONCISE historical record that preserves CRITICAL architectural information and all file references for future sessions.
 
@@ -410,6 +413,7 @@ This architectural history will be essential for future development sessions.
 model = "openrouter:openai/o4-mini"
 temperature = 0.2
 input_mode = "All"
+output_mode = "replace"  # Replaces entire session with reduced content
 builtin = true
 
 [layers.mcp]
@@ -431,6 +435,7 @@ allowed_tools = []
 # system_prompt = "You are an expert analyst."
 # temperature = 0.3
 # input_mode = "Last"
+# output_mode = "append"  # Options: "none", "append", "replace"
 # builtin = false
 #
 # [layers.mcp]
@@ -447,6 +452,7 @@ allowed_tools = []
 # system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices. Provide detailed feedback with specific suggestions for improvement."
 # temperature = 0.1
 # input_mode = "Last"
+# output_mode = "append"  # Add review results to session
 # builtin = false
 #
 # [layers.mcp]
@@ -459,6 +465,7 @@ allowed_tools = []
 # system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
 # temperature = 0.1
 # input_mode = "Last"
+# output_mode = "append"  # Add debug findings to session
 # builtin = false
 #
 # [layers.mcp]
@@ -471,6 +478,7 @@ allowed_tools = []
 # system_prompt = "You are a senior software architect. Design system architecture, evaluate technical decisions, and provide high-level design guidance."
 # temperature = 0.2
 # input_mode = "Last"
+# output_mode = "append"  # Add architectural guidance to session
 # builtin = false
 #
 # [layers.mcp]

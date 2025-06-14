@@ -43,7 +43,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<bool> {
 		"{} - Toggle layered processing architecture on/off",
 		LAYERS_COMMAND.cyan()
 	);
-	println!("{} - Optimize the session context, restart layered processing for next message, and apply EditorConfig formatting", DONE_COMMAND.cyan());
+	println!("{} - Finalize task with memorization, summarization, and auto-commit (resets layered processing for next task)", DONE_COMMAND.cyan());
 	println!(
 		"{} [level] - Set logging level: none, info, or debug",
 		LOGLEVEL_COMMAND.cyan()
@@ -57,7 +57,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<bool> {
 		SUMMARIZE_COMMAND.cyan()
 	);
 	println!(
-		"{} - Compress session history using configured reducer layer to single message",
+		"{} - Compress session history using configured reducer layer (manual context reduction only)",
 		REDUCE_COMMAND.cyan()
 	);
 	println!(

@@ -83,6 +83,56 @@ where
 	InputMode::from_str(&s).map_err(D::Error::custom)
 }
 
+// Output mode determines how the layer's output affects the session
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputMode {
+	None,    // Don't modify session (intermediate layer like query_processor)
+	Append,  // Add output as new message to session
+	Replace, // Replace entire session with output (reducer functionality)
+}
+
+impl Default for OutputMode {
+	fn default() -> Self {
+		Self::None
+	}
+}
+
+impl OutputMode {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			OutputMode::None => "none",
+			OutputMode::Append => "append",
+			OutputMode::Replace => "replace",
+		}
+	}
+}
+
+impl FromStr for OutputMode {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s.to_lowercase().as_str() {
+			"none" => Ok(OutputMode::None),
+			"append" => Ok(OutputMode::Append),
+			"replace" => Ok(OutputMode::Replace),
+			_ => Err(format!(
+				"Unknown output mode: '{}'. Valid options: none, append, replace",
+				s
+			)),
+		}
+	}
+}
+
+// Custom deserializer for OutputMode to handle string values from config
+fn deserialize_output_mode<'de, D>(deserializer: D) -> Result<OutputMode, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	use serde::de::Error;
+	let s = String::deserialize(deserializer)?;
+	OutputMode::from_str(&s).map_err(D::Error::custom)
+}
+
 // Configuration for layer-specific MCP settings
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct LayerMcpConfig {
@@ -107,6 +157,8 @@ pub struct LayerConfig {
 	pub temperature: f32,
 	#[serde(default, deserialize_with = "deserialize_input_mode")]
 	pub input_mode: InputMode,
+	#[serde(default, deserialize_with = "deserialize_output_mode")]
+	pub output_mode: OutputMode,
 	// MCP configuration for this layer
 	#[serde(default)]
 	pub mcp: LayerMcpConfig,
@@ -248,6 +300,7 @@ impl LayerConfig {
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
+				output_mode: OutputMode::None, // Intermediate layer - doesn't modify session
 				mcp: LayerMcpConfig {
 					server_refs: vec![],
 					allowed_tools: vec![],
@@ -262,6 +315,7 @@ impl LayerConfig {
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
+				output_mode: OutputMode::Replace, // Replaces input with processed context
 				mcp: LayerMcpConfig {
 					server_refs: vec!["developer".to_string(), "filesystem".to_string()],
 					allowed_tools: vec!["text_editor".to_string(), "list_files".to_string()],
@@ -276,6 +330,7 @@ impl LayerConfig {
 				system_prompt: None, // Use built-in prompt
 				temperature: 0.2,
 				input_mode: InputMode::All,
+				output_mode: OutputMode::Replace, // Replaces entire session with reduced content
 				mcp: LayerMcpConfig {
 					server_refs: vec![],
 					allowed_tools: vec![],
@@ -290,6 +345,7 @@ impl LayerConfig {
 				system_prompt: None, // Use generic prompt
 				temperature: 0.2,
 				input_mode: InputMode::Last,
+				output_mode: OutputMode::None, // Default: intermediate layer
 				mcp: LayerMcpConfig::default(),
 				parameters: std::collections::HashMap::new(),
 				builtin: false,                // Custom layers are not builtin

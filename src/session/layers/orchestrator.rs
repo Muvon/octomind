@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::generic_layer::GenericLayer;
 use super::layer_trait::{Layer, LayerConfig};
+use super::types::GenericLayer;
 use crate::config::Config;
 use crate::session::Session;
 use anyhow::Result;
@@ -300,6 +300,33 @@ impl LayeredOrchestrator {
 					result.tool_time_ms,
 					result.total_time_ms
 				);
+			}
+
+			// Handle output_mode to determine how this layer's output affects the session
+			use crate::session::layers::OutputMode;
+			match layer.config().output_mode {
+				OutputMode::None => {
+					// Intermediate layer - just pass output to next layer, don't modify session
+					println!("{}", "Output mode: none (intermediate layer)".bright_cyan());
+				}
+				OutputMode::Append => {
+					// Add layer output as new message to session
+					println!(
+						"{}",
+						"Output mode: append (adding to session)".bright_cyan()
+					);
+					session.add_message("assistant", &result.output);
+				}
+				OutputMode::Replace => {
+					// Replace entire session with this layer's output
+					println!(
+						"{}",
+						"Output mode: replace (replacing session content)".bright_cyan()
+					);
+					// Clear existing messages and replace with layer output
+					session.messages.clear();
+					session.add_message("assistant", &result.output);
+				}
 			}
 
 			// Take the output from this layer and use it as input for the next layer

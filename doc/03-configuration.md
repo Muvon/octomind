@@ -306,42 +306,51 @@ tools = ["text_editor", "shell"]  # Limited tool set
 
 # Layered Architecture Configuration
 
-# Layered architecture is now configured using named layers instead of separate keys.
-# Remove developer_model and reducer_model keys and use [[layers]] array with named layers.
+All layers use the same GenericLayer implementation with different configurations.
+Each layer supports input_mode and output_mode for flexible behavior.
 
-[openrouter]
+[developer]
 enable_layers = true
 
 [[layers]]
 name = "query_processor"
-enabled = true
-model = "openrouter:openai/gpt-4.1-nano"
-temperature = 0.1
-enable_tools = false
-input_mode = "last"
+model = "openrouter:openai/gpt-4.1-mini"
+temperature = 0.2
+input_mode = "Last"
+output_mode = "none"  # Intermediate layer
+builtin = true
 
 [[layers]]
 name = "context_generator"
-enabled = true
 model = "openrouter:google/gemini-2.5-flash-preview"
 temperature = 0.2
-enable_tools = true
-allowed_tools = ["core", "text_editor"]
-input_mode = "last"
+input_mode = "Last"
+output_mode = "replace"  # Replaces input with context
+builtin = true
+
+[layers.mcp]
+server_refs = ["developer", "filesystem", "octocode"]
+allowed_tools = ["search_code", "view_signatures", "list_files"]
 
 [[layers]]
-name = "developer"
-enabled = true
-model = "openrouter:anthropic/claude-sonnet-4"
-temperature = 0.3
-enable_tools = true
-input_mode = "all"
+name = "reducer"
+model = "openrouter:openai/o4-mini"  # Use cheaper model for cost-optimized context compression
+temperature = 0.2
+input_mode = "All"
+output_mode = "replace"  # Replaces session content (triggered by /reduce for cost optimization)
+builtin = true
+
+# Context Management Commands:
+# - /reduce: Uses this cheaper reducer model for cost-optimized context compression during ongoing work
+# - /done: Uses your current model for comprehensive task finalization with memorization and auto-commit
 
 ### Custom Layer Configuration
 
+Create layers with any combination of settings:
+
 ```toml
 [[layers]]
-name = "query_processor"
+name = "custom_layer"
 enabled = true
 model = "openrouter:openai/gpt-4.1-nano"
 temperature = 0.1

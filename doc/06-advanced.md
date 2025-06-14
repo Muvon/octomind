@@ -328,68 +328,119 @@ timeout_seconds = 30
 
 ### Overview
 
-For complex development tasks, Octomind uses a multi-stage AI processing system that breaks down work into specialized layers:
+For complex development tasks, Octomind uses a flexible multi-stage AI processing system where each layer is fully configurable through the configuration file. All layers use the same `GenericLayer` implementation with different configurations.
 
 ```mermaid
 graph TB
-    A[User Input] --> B[Query Processor]
-    B --> C[Context Generator]
-    C --> D[Developer]
+    A[User Input] --> B[Layer Pipeline]
+    B --> C[Query Processor - output_mode: none]
+    C --> D[Context Generator - output_mode: replace]
     D --> E[Final Response]
 
-    F[Manual /done] --> G[Reducer]
+    F[Manual /reduce] --> G[Reducer Layer - output_mode: replace]
     G --> H[Optimized Context]
 ```
 
-### Layer Responsibilities
+### Layer Configuration System
+
+All layers are configured through the `[[layers]]` section in your configuration file. Each layer supports:
+
+- **Input Mode**: How the layer receives input (`last`, `all`, `summary`)
+- **Output Mode**: How the layer affects the session (`none`, `append`, `replace`)
+- **Model Selection**: Specific model for this layer
+- **MCP Tools**: Which tools the layer can access
+- **Custom Prompts**: Layer-specific system prompts
+
+#### Output Modes Explained
+
+- **`none`**: Intermediate layer that doesn't modify the session (like query_processor)
+- **`append`**: Adds layer output as a new message to the session
+- **`replace`**: Replaces the entire session content with the layer output (used by reducer layer for `/reduce` command)
+
+**Context Management Commands:**
+- **`/done`**: Task completion using current model - comprehensive summarization with memorization and auto-commit
+- **`/reduce`**: Cost optimization using cheaper reducer model - compresses context without task finalization
+
+### Built-in Layer Types
 
 #### Query Processor
 - **Purpose**: Analyze and improve user requests
-- **Tools**: None (pure analysis)
-- **Model**: Fast, efficient model for text processing
-- **Output**: Clarified, actionable instructions
+- **Configuration**: `output_mode = "none"` (intermediate processing)
+- **Default Model**: Fast, cost-effective model for text analysis
 
 #### Context Generator
-- **Purpose**: Gather necessary information using tools
-- **Tools**: Limited set (file reading, code search)
-- **Model**: Balanced model with tool capabilities
-- **Output**: Relevant code, documentation, and context
+- **Purpose**: Gather project context and prepare comprehensive responses
+- **Configuration**: `output_mode = "replace"` (replaces input with enriched context)
+- **Default Model**: Balanced model with tool access for code analysis
 
-#### Developer
-- **Purpose**: Execute development tasks and provide solutions
-- **Tools**: Full access to all available tools
-- **Model**: Most capable model for complex reasoning
-- **Output**: Complete response with code changes and explanations
-
-#### Reducer (Manual)
-- **Purpose**: Optimize context for future interactions
-- **Trigger**: Manual via `/done` command
-- **Tools**: None (pure optimization)
-- **Output**: Optimized conversation context
-
+#### Reducer
+- **Purpose**: Optimize and compress session history
+- **Configuration**: `output_mode = "replace"` (replaces session with compressed content)
 ### Layered Architecture Configuration
+
+All layers are configured through the `[[layers]]` section with consistent parameters:
 
 ```toml
 [developer]
 enable_layers = true
 
-# Layered architecture is now configured using named layers instead of separate keys.
-# Remove developer_model and reducer_model keys and use [[layers]] array with named layers.
+# All layers use the same GenericLayer implementation with different configurations
 
 [[layers]]
 name = "query_processor"
-enabled = true
-model = "openrouter:openai/gpt-4o-mini"
-temperature = 0.1
-enable_tools = false
-input_mode = "last"
+model = "openrouter:openai/gpt-4.1-mini"
+temperature = 0.2
+input_mode = "Last"
+output_mode = "none"  # Intermediate layer - doesn't modify session
+builtin = true
+
+[layers.mcp]
+server_refs = []
+allowed_tools = []
 
 [[layers]]
 name = "context_generator"
-enabled = true
-model = "openrouter:google/gemini-1.5-flash"
+model = "openrouter:google/gemini-2.5-flash-preview"
 temperature = 0.2
-enable_tools = true
+input_mode = "Last"
+output_mode = "replace"  # Replaces input with processed context
+builtin = true
+
+[layers.mcp]
+server_refs = ["developer", "filesystem", "octocode"]
+allowed_tools = ["search_code", "view_signatures", "list_files"]
+
+[[layers]]
+name = "reducer"
+model = "openrouter:openai/o4-mini"
+temperature = 0.2
+input_mode = "All"
+output_mode = "replace"  # Replaces entire session with reduced content
+builtin = true
+
+[layers.mcp]
+server_refs = []
+allowed_tools = []
+```
+
+### Custom Layer Configuration
+
+You can create custom layers with any combination of settings:
+
+```toml
+[[layers]]
+name = "code_reviewer"
+model = "openrouter:anthropic/claude-3.5-sonnet"
+system_prompt = "You are a senior code reviewer..."
+temperature = 0.1
+input_mode = "Last"
+output_mode = "append"  # Add review results to session
+builtin = false
+
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "list_files"]
+```
 allowed_tools = ["core", "text_editor"]
 input_mode = "last"
 
@@ -404,10 +455,9 @@ input_mode = "all"
 
 ### Session Commands for Layers
 
-### Session Commands for Layers
-
 - `/layers` - Toggle layered processing on/off
 - `/done` - Manually trigger context optimization
+- `/reduce` - Manually trigger reducer layer for session compression
 - `/info` - View token usage by layer
 
 ## Token Management
@@ -558,7 +608,8 @@ Through natural conversation:
 
 ### Context Management
 - **Auto-truncation**: Enable for long sessions
-- **Manual optimization**: Use `/done` to optimize context
+- **Task completion**: Use `/done` to finalize tasks with memorization and commit
+- **Context compression**: Use `/reduce` for manual context reduction during ongoing work
 - **Token monitoring**: Use `/info` to track usage
 
 ## Troubleshooting

@@ -17,7 +17,7 @@
 use crate::config::Config;
 use crate::session::chat::format_number;
 use crate::session::chat::session::ChatSession;
-use crate::session::{layers::generic_layer::GenericLayer, layers::layer_trait::Layer};
+use crate::session::{layers::layer_trait::Layer, layers::GenericLayer};
 use anyhow::Result;
 use colored::Colorize;
 use std::sync::atomic::AtomicBool;

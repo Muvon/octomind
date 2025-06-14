@@ -78,6 +78,67 @@ pub async fn process_command(
 		MCP_COMMAND => mcp::handle_mcp(config, role, params).await,
 		RUN_COMMAND => run::handle_run(session, config, role, params).await,
 		IMAGE_COMMAND => image::handle_image(session, params).await,
-		_ => Ok(false), // Not a command
+		_ => handle_unknown_command(command, config, role).await,
 	}
+}
+
+// Handle unknown commands by showing error and available commands
+async fn handle_unknown_command(command: &str, config: &Config, role: &str) -> Result<bool> {
+	use colored::Colorize;
+
+	// Show error message
+	println!(
+		"{}: {}",
+		"Unknown command".bright_red(),
+		command.bright_yellow()
+	);
+
+	// Show available commands
+	println!("\n{}", "Available commands:".bright_cyan());
+
+	// Basic session commands
+	println!("{} - Show help and available commands", HELP_COMMAND.cyan());
+	println!("{} - Display token usage and costs", INFO_COMMAND.cyan());
+	println!("{} - Generate detailed usage report", REPORT_COMMAND.cyan());
+	println!("{} - Copy last response to clipboard", COPY_COMMAND.cyan());
+	println!("{} - Clear the screen", CLEAR_COMMAND.cyan());
+	println!("{} - Save the session", SAVE_COMMAND.cyan());
+	println!("{} - List all sessions", LIST_COMMAND.cyan());
+	println!("{} - Switch to another session", SESSION_COMMAND.cyan());
+	println!("{} - Show/change current model", MODEL_COMMAND.cyan());
+	println!("{} - Set logging level", LOGLEVEL_COMMAND.cyan());
+
+	// Advanced commands
+	println!("{} - Toggle layered processing", LAYERS_COMMAND.cyan());
+	println!("{} - Optimize session context", DONE_COMMAND.cyan());
+	println!("{} - Smart context truncation", TRUNCATE_COMMAND.cyan());
+	println!("{} - Summarize conversation", SUMMARIZE_COMMAND.cyan());
+	println!("{} - Compress session history", REDUCE_COMMAND.cyan());
+	println!("{} - Manage cache checkpoints", CACHE_COMMAND.cyan());
+	println!("{} - Display session context", CONTEXT_COMMAND.cyan());
+	println!("{} - Show MCP server status", MCP_COMMAND.cyan());
+	println!("{} - Execute command layer", RUN_COMMAND.cyan());
+	println!("{} - Attach image to message", IMAGE_COMMAND.cyan());
+	println!(
+		"{}/{} - Exit the session",
+		EXIT_COMMAND.cyan(),
+		QUIT_COMMAND.cyan()
+	);
+
+	// Show command layers if available
+	let available_commands =
+		crate::session::chat::command_executor::list_available_commands(config, role);
+	if !available_commands.is_empty() {
+		println!("\n{}", "Available command layers:".bright_blue());
+		for cmd in &available_commands {
+			println!("  {} {}", "/run".cyan(), cmd.bright_yellow());
+		}
+	}
+
+	println!(
+		"\n💡 Type {} for detailed help with examples",
+		"/help".bright_green()
+	);
+
+	Ok(false) // Command was handled, don't exit
 }

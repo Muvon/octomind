@@ -300,8 +300,21 @@ impl ChatSession {
 		// Content length limits
 		let content_limit = if is_debug { None } else { Some(200) };
 
+		// Calculate total session tokens for percentage calculation
+		let total_session_tokens = self.session.info.input_tokens
+			+ self.session.info.output_tokens
+			+ self.session.info.cached_tokens;
+
 		// Process each message
 		for (index, message) in self.session.messages.iter().enumerate() {
+			// Calculate tokens for this message
+			let message_tokens = crate::session::token_counter::estimate_tokens(&message.content);
+			let percentage = if total_session_tokens > 0 {
+				(message_tokens as f64 / total_session_tokens as f64) * 100.0
+			} else {
+				0.0
+			};
+
 			markdown_content.push_str(&format!(
 				"## Message {} - {}\n\n",
 				index + 1,
@@ -315,6 +328,13 @@ impl ChatSession {
 					datetime.format("%Y-%m-%d %H:%M:%S UTC")
 				));
 			}
+
+			// Add token information
+			markdown_content.push_str(&format!(
+				"**Tokens:** {} ({:.2}%)\n",
+				format_number(message_tokens as u64),
+				percentage
+			));
 
 			// Add cached status
 			if message.cached {

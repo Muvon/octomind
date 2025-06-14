@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Function definitions module - MCP function specifications
+// Optimized function definitions module - MCP function specifications with reduced tokens
 
 use super::super::McpFunction;
 use serde_json::json;
 
-// Define the list_files function
+// Define the list_files function - optimized
 pub fn get_list_files_function() -> McpFunction {
 	McpFunction {
 		name: "list_files".to_string(),
@@ -26,27 +26,27 @@ pub fn get_list_files_function() -> McpFunction {
 			This tool uses ripgrep for efficient searching that respects .gitignore files.
 			You can use it to find files by name pattern or search for files containing specific content.
 
-			**⚠️ PERFORMANCE WARNING: Use filtering to avoid large outputs that consume excessive tokens**
+			PERFORMANCE WARNING: Use filtering to avoid large outputs that consume excessive tokens
 
-			**Parameters:**
+			Parameters:
 			- `directory`: Target directory to search
 			- `pattern`: Optional filename pattern (uses ripgrep syntax)
 			- `content`: Optional content search within files
 			- `max_depth`: Optional depth limit for directory traversal
 
-			**🎯 Best Practices:**
-			1. **Always use specific patterns** - avoid listing entire large directories
-			2. **Use max_depth** to limit scope and reduce token usage
-			3. **Combine with content search** when looking for specific functionality
-			4. **Filter by file type** using patterns like '\\*.rs' or '\\*.toml'
+			Best Practices:
+			- Always use specific patterns - avoid listing entire large directories
+			- Use max_depth to limit scope and reduce token usage
+			- Combine with content search when looking for specific functionality
+			- Filter by file type using patterns like '\\*.rs' or '\\*.toml'
 
-			**Examples:**
+			Examples:
 			- Find Rust files: `{\"directory\": \"src\", \"pattern\": \"\\*.rs\"}`
 			- Find config files: `{\"directory\": \".\", \"pattern\": \"\\*.toml|\\*.yaml|\\*.json\"}`
 			- Search for function: `{\"directory\": \"src\", \"content\": \"fn main\"}`
 			- Limited depth: `{\"directory\": \".\", \"max_depth\": 2, \"pattern\": \"\\*.rs\"}`
 
-			**Token-Efficient Usage:**
+			Token-Efficient Usage:
 			- Use patterns to target specific file types
 			- Set max_depth to avoid deep directory traversals
 			- Combine with content search for targeted results
@@ -77,7 +77,7 @@ pub fn get_list_files_function() -> McpFunction {
 	}
 }
 
-// Define the text editor function for modifying files - comprehensive file editing capabilities
+// Define the text editor function - DRAMATICALLY OPTIMIZED
 pub fn get_text_editor_function() -> McpFunction {
 	McpFunction {
 		name: "text_editor".to_string(),
@@ -85,151 +85,110 @@ pub fn get_text_editor_function() -> McpFunction {
 
 			The `command` parameter specifies the operation to perform.
 
-			🚨 CRITICAL: LINE NUMBERS CHANGE AFTER EVERY EDIT OPERATION! 🚨
+			CRITICAL: LINE NUMBERS CHANGE AFTER EVERY EDIT OPERATION!
 			- After ANY edit (str_replace, insert, line_replace), line numbers become invalid
 			- ALWAYS use 'view' command first to get current line numbers before line_replace
 			- PREFER line_replace when you know exact lines (fastest), str_replace when you know content
 
 			Available commands:
 
-			**view**: Examine content of a file or list directory contents
+			`view`: Examine file content or list directory contents
 			- View entire file: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
 			- View specific lines: `{\"command\": \"view\", \"path\": \"src/main.rs\", \"view_range\": [10, 20]}`
 			- List directory: `{\"command\": \"view\", \"path\": \"src/\"}`
-			- The view_range parameter is optional and specifies start and end line numbers (1-indexed)
-			- Returns content with line numbers for precise editing reference
+			- Returns content with line numbers for editing reference
 
-			**create**: Create a new file with specified content
+			`create`: Create new file with specified content
 			- `{\"command\": \"create\", \"path\": \"src/new_module.rs\", \"file_text\": \"pub fn hello() {\\n    println!(\\\"Hello!\\\");\\n}\"}`
 			- Creates parent directories if they don't exist
 			- Returns error if file already exists to prevent accidental overwrites
 
-			**str_replace**: Replace a specific string in a file with new content
+			`str_replace`: Replace specific string in file with new content
 			- `{\"command\": \"str_replace\", \"path\": \"src/main.rs\", \"old_str\": \"fn old_name()\", \"new_str\": \"fn new_name()\"}`
 			- The old_str must match exactly, including whitespace and indentation
 			- Returns error if string appears 0 times or more than once for safety
 			- Content-based replacement - works regardless of line numbers
-			- PREFER when: exact text is known but line numbers are uncertain or may change
-			- Use when content might appear in different line positions across files
-			- Automatically saves file history for undo operations
+			- Use when exact text is known but line numbers uncertain
 
-			**insert**: Insert text at a specific location in a file
+			`insert`: Insert text at specific location in file
 			- `{\"command\": \"insert\", \"path\": \"src/main.rs\", \"insert_line\": 5, \"new_str\": \"    // New comment\\n    let x = 10;\"}`
 			- insert_line specifies the line number after which to insert (0 for beginning of file)
-			- new_str can contain multiple lines using \\n
-			- ⚠️ WARNING: Changes line numbers for all content AFTER insertion point
-			- Line numbers are 1-indexed for intuitive operation
+			- WARNING: Changes line numbers for all content AFTER insertion point
 
-			**line_replace**: Replace content within a specific line range
+			`line_replace`: Replace content within specific line range
 			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"view_range\": [5, 8], \"new_str\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
 			- Replaces lines from view_range[0] to view_range[1] (inclusive, 1-indexed)
-			- ⚡ FASTEST option - 3x faster than str_replace (no content searching needed)
-			- 🎯 PERFECT for: parameter changes, variable assignments, single function calls
-			- ⚠️ CRITICAL: Line numbers change after ANY edit operation (insert, line_replace, str_replace)
-			- ⚠️ NEVER use line_replace twice in sequence without viewing file again
-			- ⚠️ ALWAYS use 'view' command first to get current line numbers before line_replace
-			- PREFER when: You just viewed the file and know exact line positions
-			- Returns snippet of replaced content for verification
-			- Use for: config parameters, imports, simple assignments, single-line changes
+			- FASTEST option - 3x faster than str_replace (no content searching)
+			- CRITICAL: Line numbers change after ANY edit operation
+			- NEVER use line_replace twice without viewing file between operations
+			- ALWAYS use 'view' first to get current line numbers before line_replace
 
-			**view_many**: View multiple files simultaneously for comprehensive analysis
+			`view_many`: View multiple files simultaneously
 			- `{\"command\": \"view_many\", \"paths\": [\"src/main.rs\", \"src/lib.rs\", \"tests/test.rs\"]}`
 			- Returns content with line numbers for all files in a single operation
-			- Efficient for understanding relationships between files, code analysis, and refactoring
-			- Includes binary file detection, size limits, and error resilience
 			- Maximum 50 files per request to maintain performance
 
-			**undo_edit**: Revert the most recent edit made to a specified file
+			`undo_edit`: Revert most recent edit to specified file
 			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`
 			- Available for str_replace, insert, and line_replace operations
-			- Restores the file to its state before the last edit
 
-			**batch_edit**: Perform multiple text editing operations in a single call
+			`batch_edit`: Perform multiple text editing operations in single call
 			- `{\"command\": \"batch_edit\", \"operations\": [{\"operation\": \"str_replace\", \"path\": \"src/main.rs\", \"old_str\": \"old\", \"new_str\": \"new\"}, {\"operation\": \"insert\", \"path\": \"src/lib.rs\", \"insert_line\": 5, \"new_str\": \"// New comment\"}]}`
-			- 🚀 **ALWAYS USE when making 2+ changes across multiple files**
-			- 🚀 **ALWAYS USE when making 3+ changes in same file**
-			- ⚡ **10x more efficient** than individual operations (single API call vs multiple)
-			- 💰 **Saves tokens** - one tool call instead of many
-			- 🎯 **Perfect for**: refactoring, applying consistent changes, multi-file updates
-			- Each operation in the array follows the same parameter structure as individual commands
+			- ALWAYS USE when making 2+ changes across multiple files
+			- ALWAYS USE when making 3+ changes in same file
+			- 10x more efficient than individual operations
+			- Saves tokens - one tool call instead of many
+			- Perfect for: refactoring, consistent changes, multi-file updates
 			- Supported operations: str_replace, insert, line_replace
-			- Returns detailed results for each operation including success/failure status
-			- **MANDATORY for planned multi-file changes** - never do individual calls
+			- MANDATORY for planned multi-file changes
 
-			**Error Handling:**
+			Error Handling:
 			- File not found: Returns descriptive error message
 			- Multiple matches: Returns error asking for more specific context
 			- No matches: Returns error with suggestion to check the text
 			- Permission errors: Returns permission denied message
 			- Line range errors: Validates line numbers exist in file
 
-			**Best Practices:**
-			- ALWAYS use 'view' command first to get current line numbers before any edit
+			Best Practices:
+			- ALWAYS use 'view' first to get current line numbers before any edit
 			- Never assume line numbers from previous operations - they change after every edit
 
-			**OPTIMAL WORKFLOW:**
-			0. 🎯 **PLAN FIRST**: If 2+ files or 3+ edits → USE batch_edit
-			1. 🔍 Use `view` to see file structure and get line numbers
-			2. 🚀 For multiple changes: use `batch_edit` (10x more efficient)
-			3. 🎯 For single changes: use `line_replace` ONCE per file
-			4. 🔄 If more edits needed: `view` again to get fresh line numbers, then `line_replace` again
-			5. 🔧 For multiple changes: use `str_replace` (position-independent) or `batch_edit`
-			6. ✅ Move to next file
+			OPTIMAL WORKFLOW:
+			- PLAN FIRST: If 2+ files or 3+ edits → USE batch_edit
+			- Use `view` to see file structure and get line numbers
+			- For multiple changes: use `batch_edit` (10x more efficient)
+			- For single changes: use `line_replace` ONCE per file
+			- If more edits needed: `view` again to get fresh line numbers, then `line_replace` again
 
-			**BATCH_EDIT EXAMPLES:**
-			- Fix same issue across 3 files → batch_edit with 3 str_replace operations
-			- Add import + modify function + update config → batch_edit with 3 operations
-			- Rename variable in 5 files → batch_edit with 5 str_replace operations
+			CHOOSE batch_edit when:
+			- Making 2+ changes across different files
+			- Making 3+ changes in same file (any combination of operations)
+			- Applying same change pattern across multiple files
+			- Want maximum efficiency (10x faster than individual calls)
 
-			**MULTI-EDIT STRATEGIES:**
-			- Multiple line_replace: view → line_replace → view → line_replace
-			- Multiple str_replace: view → str_replace → str_replace → str_replace
-			- Mixed edits: view → line_replace → view → str_replace → str_replace
+			CHOOSE line_replace when:
+			- You just viewed the file and know exact line numbers
+			- Changing single parameters, variable assignments, function calls
+			- Want 3x faster performance (no content searching needed)
+			- ONLY ONE line_replace per file before re-viewing
 
-			**CHOOSE batch_edit when:**
-			- ✅ Making 2+ changes across different files
-			- ✅ Making 3+ changes in same file (any combination of operations)
-			- ✅ Applying same change pattern across multiple files
-			- ✅ Any planned multi-step editing task
-			- ✅ Want maximum efficiency (10x faster than individual calls)
+			CHOOSE str_replace when:
+			- You know exact text content but not line numbers
+			- Text might be at different line positions across files
+			- Making multiple sequential edits (line numbers become unreliable)
 
-			**CHOOSE line_replace when:**
-			- ✅ You just viewed the file and know exact line numbers
-			- ✅ Changing single parameters: `config,` → `&clean_config,` (line 296)
-			- ✅ Simple variable assignments: `let x = 5;` → `let x = 10;` (line 42)
-			- ✅ Single function calls: `func(a, b)` → `func(a, b, c)` (line 15)
-			- ✅ Complete function body replacement: lines 15-25 entire function
-			- ✅ Import statements: add/remove single imports (line 8)
-			- ✅ Want 3x faster performance (no content searching needed)
-			- ✅ Replacing 1-20 consecutive lines precisely
-			- ✅ ONLY ONE line_replace per file before re-viewing
-			- ✅ **SINGLE EDIT ONLY** - use batch_edit for multiple edits
+			CRITICAL LINE NUMBER RULES:
+			- Line numbers become INVALID after ANY edit operation
+			- NEVER use line_replace twice without viewing file between operations
+			- After str_replace, insert, or line_replace: line numbers change
+			- Always view file again to get fresh line numbers before next line_replace
+			- ONE line_replace per file per editing session - then re-view if more edits needed
 
-			**CHOOSE str_replace when:**
-			- ✅ Complex multi-line logic changes spanning 5+ lines
-			- ✅ You know exact text content but not line numbers
-			- ✅ Text might be at different line positions across files
-			- ✅ Making multiple sequential edits (line numbers become unreliable)
-			- ✅ Refactoring that changes indentation or structure
-
-			**CRITICAL LINE NUMBER RULES:**
-			- 🚨 Line numbers become INVALID after ANY edit operation
-			- 🚨 NEVER use line_replace twice without viewing file between operations
-			- 🚨 After str_replace, insert, or line_replace: line numbers change
-			- 🚨 Always view file again to get fresh line numbers before next line_replace
-			- 🚨 ONE line_replace per file per editing session - then re-view if more edits needed
-
-			**SAFE SEQUENCING PATTERNS:**
-			✅ GOOD: view → line_replace → (done with file)
-			✅ GOOD: view → line_replace → view → line_replace
-			✅ GOOD: view → str_replace → str_replace → str_replace (str_replace is position-independent)
-			❌ BAD: view → line_replace → line_replace (second will use wrong line numbers)
-			❌ BAD: line_replace → view → line_replace (on same file without re-viewing)
-
-			**General Guidelines:**
+			General Guidelines:
 			- Use insert for adding new code at specific locations
 			- Use create for new files and modules
-			- Use undo_edit to revert the last operation if needed".to_string(),
+			- Use undo_edit to revert the last operation if needed"
+			.to_string(),
 		parameters: json!({
 			"type": "object",
 			"required": ["command", "path"],

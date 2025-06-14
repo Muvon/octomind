@@ -129,8 +129,8 @@ impl Config {
 
 			// Validate external server configuration
 			if matches!(
-				server_config.server_type,
-				crate::config::McpServerType::External
+				server_config.connection_type,
+				crate::config::McpConnectionType::Http
 			) {
 				if server_config.url.is_none() && server_config.command.is_none() {
 					return Err(anyhow!(

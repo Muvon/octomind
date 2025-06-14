@@ -12,12 +12,12 @@ MCP enables AI models to use external tools and services through a standardized 
 
 ### Built-in MCP Tools
 
-#### Developer Tools (server_type: "developer")
+#### Developer Tools (type: "builtin")
 - **shell**: Execute terminal commands and development scripts
 - **agent**: Route tasks to configured AI layers for specialized processing
 - **Code analysis**: Built-in code understanding and project analysis
 
-#### Filesystem Tools (server_type: "filesystem")
+#### Filesystem Tools (type: "builtin")
 - **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many, batch_edit)
 - **list_files**: Browse directory structures with pattern matching and content search
 - **html2md**: Convert HTML content to Markdown format
@@ -232,43 +232,35 @@ allowed_tools = []
 # Built-in server definitions
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []  # Empty means all tools enabled
-builtin = true
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []  # Empty means all tools enabled
-builtin = true
 
 # External HTTP server example
 [[mcp.servers]]
 name = "web_search"
-server_type = "external"
+type = "http"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "optional_token"
-mode = "http"
 timeout_seconds = 30
 tools = []
-builtin = false
 
 # External command-based server example
 [[mcp.servers]]
 name = "local_tools"
-server_type = "external"
+type = "stdin"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
-mode = "stdin"
 timeout_seconds = 30
 tools = ["custom_tool1", "custom_tool2"]  # Only these tools enabled
-builtin = false
 ```
 
 ### Role-Based Server Access
@@ -304,23 +296,20 @@ allowed_tools = ["text_editor", "shell"]
 ```toml
 [[mcp.servers]]
 name = "web_tools"
-server_type = "external"
+type = "http"
 url = "https://api.example.com/mcp"
 auth_token = "your_token"
-mode = "http"
 timeout_seconds = 30
 tools = []
-builtin = false
 ```
 
 #### Command-based Servers
 ```toml
 [[mcp.servers]]
 name = "custom_tools"
-server_type = "external"
+type = "stdin"
 command = "python"
 args = ["/path/to/mcp_server.py"]
-mode = "stdin"
 timeout_seconds = 30
 ```
 
@@ -530,12 +519,10 @@ server_refs = ["developer", "filesystem", "web_tools"]
 # Add web-specific MCP server
 [[mcp.servers]]
 name = "web_tools"
-server_type = "external"
+type = "http"
 url = "https://mcp.so/server/web-dev-tools"
-mode = "http"
 timeout_seconds = 30
 tools = []
-builtin = false
 ```
 
 ## Session Management
@@ -699,12 +686,10 @@ providers = ["core"]
 ```toml
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 [developer.mcp]
 server_refs = ["developer"]

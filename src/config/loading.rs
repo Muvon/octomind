@@ -435,34 +435,31 @@ allowed_tools = []
 
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
 
+[[mcp.servers]]
 name = "octocode"
-server_type = "external"
+type = "stdin"
 command = "octocode"
 args = ["mcp", "--path=."]
-mode = "stdin"
 timeout_seconds = 30
 tools = []
 
 [[mcp.servers]]
 name = "clt"
-server_type = "external"
+type = "stdin"
 command = "clt"
 args = ["mcp"]
-mode = "stdin"
 timeout_seconds = 30
 tools = []
 "#;

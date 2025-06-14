@@ -180,43 +180,38 @@ allowed_tools = []
 # Built-in MCP servers (always available)
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
+type = "builtin"
 timeout_seconds = 30
 args = []
-mode = "http"
 tools = []
 
 [[mcp.servers]]
 name = "agent"
-server_type = "agent"
+type = "builtin"
 timeout_seconds = 30
 args = []
-mode = "http"
 tools = []
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
+type = "builtin"
 timeout_seconds = 30
 args = []
-mode = "http"
 tools = []
 
 [[mcp.servers]]
 name = "octocode"
-server_type = "external"
+type = "stdin"
 command = "octocode"
 args = ["mcp", "--path=."]
-mode = "stdin"
 timeout_seconds = 240
 tools = []
 
 # Example external MCP server configuration:
 # [[mcp.servers]]
 # name = "my_custom_server"
-# server_type = "external"
+# type = "http"
 # url = "http://localhost:3000/mcp"
-# mode = "http"
 # timeout_seconds = 30
 # auth_token = "optional-auth-token"
 # tools = []

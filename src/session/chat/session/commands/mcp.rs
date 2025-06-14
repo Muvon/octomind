@@ -15,7 +15,7 @@
 // MCP command handler
 
 use super::utils::get_tool_server_name_async;
-use crate::config::Config;
+use crate::config::{Config, McpConnectionType};
 use anyhow::Result;
 use colored::Colorize;
 
@@ -91,17 +91,15 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<bool> {
 	let server_report = crate::mcp::server::get_server_status_report();
 
 	for server in &config_for_role.mcp.servers {
-		let (health, restart_info) = match server.server_type {
-			crate::config::McpServerType::Developer
-			| crate::config::McpServerType::Filesystem
-			| crate::config::McpServerType::Agent => {
+		let (health, restart_info) = match server.connection_type {
+			McpConnectionType::Builtin => {
 				// Internal servers are always running
 				(
 					crate::mcp::process::ServerHealth::Running,
 					Default::default(),
 				)
 			}
-			crate::config::McpServerType::External => {
+			McpConnectionType::Http | McpConnectionType::Stdin => {
 				// External servers - get from status report
 				server_report
 					.get(&server.name)
@@ -119,8 +117,8 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<bool> {
 
 		println!();
 		println!("{}: {}", server.name.bright_white().bold(), health_display);
-		println!("  Type: {:?}", server.server_type);
-		println!("  Mode: {:?}", server.mode);
+		println!("  Type: {:?}", server.connection_type);
+		// Connection type field was removed
 
 		if !server.tools.is_empty() {
 			println!("  Configured tools: {}", server.tools.join(", ").dimmed());
@@ -208,14 +206,12 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<bool> {
 	let server_report = crate::mcp::server::get_server_status_report();
 
 	for server in &config_for_role.mcp.servers {
-		let (health, restart_info) = match server.server_type {
-			crate::config::McpServerType::Developer
-			| crate::config::McpServerType::Filesystem
-			| crate::config::McpServerType::Agent => (
+		let (health, restart_info) = match server.connection_type {
+			McpConnectionType::Builtin => (
 				crate::mcp::process::ServerHealth::Running,
 				Default::default(),
 			),
-			crate::config::McpServerType::External => server_report
+			McpConnectionType::Http | McpConnectionType::Stdin => server_report
 				.get(&server.name)
 				.map(|(h, r)| (*h, r.clone()))
 				.unwrap_or((crate::mcp::process::ServerHealth::Dead, Default::default())),
@@ -230,8 +226,8 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<bool> {
 
 		println!();
 		println!("{}: {}", server.name.bright_white().bold(), health_display);
-		println!("  Type: {:?}", server.server_type);
-		println!("  Mode: {:?}", server.mode);
+		println!("  Type: {:?}", server.connection_type);
+		// Connection type field was removed
 
 		if !server.tools.is_empty() {
 			println!("  Configured tools: {}", server.tools.join(", ").dimmed());
@@ -417,7 +413,7 @@ async fn handle_mcp_health(config: &Config, role: &str) -> Result<bool> {
 	let server_report = crate::mcp::server::get_server_status_report();
 
 	for server in &config_for_role.mcp.servers {
-		if let crate::config::McpServerType::External = server.server_type {
+		if let McpConnectionType::Http | McpConnectionType::Stdin = server.connection_type {
 			let (health, restart_info) = server_report
 				.get(&server.name)
 				.map(|(h, r)| (*h, r.clone()))

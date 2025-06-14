@@ -14,7 +14,7 @@
 
 use clap::Args;
 
-use octomind::config::{Config, McpServerConfig, McpServerMode, McpServerType};
+use octomind::config::{Config, McpConnectionType, McpServerConfig};
 use octomind::directories;
 
 #[derive(Args)]
@@ -235,12 +235,11 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			// Create a new server config
 			let mut server = McpServerConfig {
 				name: name.clone(),
-				server_type: McpServerType::External, // Default to external type
+				connection_type: McpConnectionType::Http, // Default to HTTP
 				url: None,
 				command: None,
 				args: Vec::new(),
 				auth_token: None,
-				mode: McpServerMode::Http, // Default to HTTP mode
 				tools: Vec::new(),
 				timeout_seconds: 30, // Default timeout
 			};
@@ -269,10 +268,11 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 						"token" | "auth_token" => {
 							server.auth_token = Some(value.to_string());
 						}
-						"mode" => match value.to_lowercase().as_str() {
-							"http" => server.mode = McpServerMode::Http,
-							"stdin" => server.mode = McpServerMode::Stdin,
-							_ => println!("Unknown server mode: {}, defaulting to HTTP", value),
+						"type" => match value.to_lowercase().as_str() {
+							"http" => server.connection_type = McpConnectionType::Http,
+							"stdin" => server.connection_type = McpConnectionType::Stdin,
+							"builtin" => server.connection_type = McpConnectionType::Builtin,
+							_ => println!("Unknown server type: {}, defaulting to HTTP", value),
 						},
 						"timeout" | "timeout_seconds" => {
 							if let Ok(timeout) = value.parse::<u64>() {
@@ -289,14 +289,14 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			}
 
 			// Validate the server config
-			match server.server_type {
-				McpServerType::External => {
+			match server.connection_type {
+				McpConnectionType::Http | McpConnectionType::Stdin => {
 					if server.url.is_none() && server.command.is_none() {
 						println!("Error: Either url or command must be specified for external MCP server");
 						return Ok(());
 					}
 				}
-				_ => {
+				McpConnectionType::Builtin => {
 					// Built-in servers are always valid
 				}
 			}
@@ -417,23 +417,22 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 				// Auto-detect server type for display
 				let effective_type = match name.as_str() {
-					"developer" => McpServerType::Developer,
-					"filesystem" => McpServerType::Filesystem,
-					"agent" => McpServerType::Agent,
-					_ => McpServerType::External,
+					"developer" | "filesystem" | "agent" => McpConnectionType::Builtin,
+					_ => server.connection_type,
 				};
 
 				match effective_type {
-					McpServerType::Developer => {
-						println!("  - {} (built-in developer tools) - available", name)
-					}
-					McpServerType::Filesystem => {
-						println!("  - {} (built-in filesystem tools) - available", name)
-					}
-					McpServerType::Agent => {
-						println!("  - {} (built-in agent tool) - available", name)
-					}
-					McpServerType::External => {
+					McpConnectionType::Builtin => match name.as_str() {
+						"developer" => {
+							println!("  - {} (built-in developer tools) - available", name)
+						}
+						"filesystem" => {
+							println!("  - {} (built-in filesystem tools) - available", name)
+						}
+						"agent" => println!("  - {} (built-in agent tool) - available", name),
+						_ => println!("  - {} (built-in tools) - available", name),
+					},
+					McpConnectionType::Http | McpConnectionType::Stdin => {
 						if name == "octocode" {
 							// Check if octocode binary is available
 							use std::process::Command;
@@ -734,23 +733,18 @@ fn show_mcp_servers(servers: &Vec<McpServerConfig>) {
 
 		// Auto-detect server type for display
 		let effective_type = match name.as_str() {
-			"developer" => McpServerType::Developer,
-			"filesystem" => McpServerType::Filesystem,
-			"agent" => McpServerType::Agent,
-			_ => McpServerType::External,
+			"developer" | "filesystem" | "agent" => McpConnectionType::Builtin,
+			_ => server.connection_type,
 		};
 
 		match effective_type {
-			McpServerType::Developer => {
-				println!("      📦 {} (built-in developer tools)", name);
-			}
-			McpServerType::Filesystem => {
-				println!("      📂 {} (built-in filesystem tools)", name);
-			}
-			McpServerType::Agent => {
-				println!("      🤖 {} (built-in agent tool)", name);
-			}
-			McpServerType::External => {
+			McpConnectionType::Builtin => match name.as_str() {
+				"developer" => println!("      📦 {} (built-in developer tools)", name),
+				"filesystem" => println!("      📂 {} (built-in filesystem tools)", name),
+				"agent" => println!("      🤖 {} (built-in agent tool)", name),
+				_ => println!("      📦 {} (built-in tools)", name),
+			},
+			McpConnectionType::Http | McpConnectionType::Stdin => {
 				if name == "octocode" {
 					// Check if octocode binary is available
 					use std::process::Command;

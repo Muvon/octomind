@@ -15,7 +15,7 @@
 // MCP local server process manager
 
 use super::{McpFunction, McpToolCall, McpToolResult};
-use crate::config::{McpServerConfig, McpServerMode};
+use crate::config::{McpConnectionType, McpServerConfig};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -261,9 +261,12 @@ async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String>
 
 				crate::log_debug!("Server '{}' is already running and healthy", server_id);
 
-				match server.mode {
-					McpServerMode::Http => return get_server_url(server),
-					McpServerMode::Stdin => return Ok("stdin://".to_string() + server_id),
+				match server.connection_type {
+					McpConnectionType::Http => return get_server_url(server),
+					McpConnectionType::Stdin => return Ok("stdin://".to_string() + server_id),
+					McpConnectionType::Builtin => {
+						unreachable!("Builtin servers should not use this function")
+					}
 				}
 			} else {
 				// Server process exists but is dead - clean it up
@@ -354,9 +357,9 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 		cmd.args(&server.args);
 	}
 
-	// Configure standard I/O based on mode
-	match server.mode {
-		McpServerMode::Http => {
+	// Configure standard I/O based on connection type
+	match server.connection_type {
+		McpConnectionType::Http => {
 			// For HTTP mode, we pipe stdout/stderr but don't need stdin
 			cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -408,7 +411,7 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				sleep(Duration::from_millis(500)).await;
 			}
 		}
-		McpServerMode::Stdin => {
+		McpConnectionType::Stdin => {
 			// For stdin mode, we need bidirectional communication
 			cmd.stdin(Stdio::piped())
 				.stdout(Stdio::piped())
@@ -492,6 +495,9 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 			// println!("MCP server started and initialized (stdin mode): {} at {}", server.name, stdin_url);
 			Ok(stdin_url)
 		}
+		McpConnectionType::Builtin => Err(anyhow::anyhow!(
+			"Builtin servers should not use process management"
+		)),
 	}
 }
 
@@ -567,7 +573,7 @@ fn get_server_url(server: &McpServerConfig) -> Result<String> {
 	}
 
 	// For stdin-based servers, return a pseudo-URL
-	if let McpServerMode::Stdin = server.mode {
+	if let McpConnectionType::Stdin = server.connection_type {
 		return Ok(format!("stdin://{}", server.name));
 	}
 

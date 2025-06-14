@@ -107,41 +107,33 @@ allowed_tools = []
 # Built-in MCP servers
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "octocode"
-server_type = "external"
+type = "stdin"
 command = "octocode"
 args = ["mcp", "--path=."]
-mode = "stdin"
-timeout_seconds = 30
+timeout_seconds = 240
 tools = []
-builtin = true
 
 # Example external MCP server configuration:
 # [[mcp.servers]]
 # name = "web_search"
-# server_type = "external"
+# type = "http"
 # url = "https://mcp.so/server/webSearch-Tools"
-# mode = "http"
 # timeout_seconds = 30
 # tools = []
-# builtin = false
 ```
 
 **Important Notes:**
@@ -252,12 +244,12 @@ enabled = true
 [[mcp.servers]]
 enabled = true
 name = "developer"
-server_type = "developer"
+type = "builtin"
 
 [[mcp.servers]]
 enabled = true
 name = "filesystem"
-server_type = "filesystem"
+type = "builtin"
 
 # Developer role (inherits global MCP automatically)
 [developer]
@@ -296,7 +288,7 @@ enabled = true
 [[code-reviewer.mcp.servers]]
 enabled = true
 name = "developer"
-server_type = "developer"
+type = "builtin"
 tools = ["text_editor", "shell"]  # Limited tool set
 ```
 
@@ -385,43 +377,35 @@ allowed_tools = []
 # Built-in servers (always available)
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []  # Empty means all tools enabled
-builtin = true
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []  # Empty means all tools enabled
-builtin = true
 
 # External HTTP server
 [[mcp.servers]]
 name = "web_search"
-server_type = "external"
+type = "http"
 url = "https://mcp.so/server/webSearch-Tools"
 auth_token = "optional_token"
-mode = "http"
 timeout_seconds = 30
 tools = []  # Empty means all tools enabled
-builtin = false
 
 # External command-based server
 [[mcp.servers]]
 name = "local_tools"
-server_type = "external"
+type = "stdin"
 command = "python"
 args = ["-m", "my_mcp_server", "--port", "8008"]
-mode = "stdin"  # Communication mode: "http" or "stdin"
 timeout_seconds = 30
 tools = []
-builtin = false
 
 # Role configurations reference servers by name
 [developer.mcp]
@@ -466,12 +450,12 @@ enabled = true
 [[mcp.servers]]
 enabled = true
 name = "developer"
-server_type = "developer"
+type = "builtin"
 
 [[mcp.servers]]
 enabled = true
 name = "filesystem"
-server_type = "filesystem"
+type = "builtin"
 ```
 
 **New registry format (recommended):**
@@ -479,21 +463,17 @@ server_type = "filesystem"
 # Define servers in main MCP section
 [[mcp.servers]]
 name = "developer"
-server_type = "developer"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "filesystem"
-server_type = "filesystem"
-mode = "http"
+type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 # Reference from roles
 [developer.mcp]
@@ -667,7 +647,7 @@ enabled = true
 [[developer.mcp.servers]]
 enabled = true
 name = "developer"
-server_type = "developer"
+type = "builtin"
 
 [developer.config]
 model = "openrouter:anthropic/claude-3.5-sonnet"

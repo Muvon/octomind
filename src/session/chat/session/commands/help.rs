@@ -73,7 +73,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<bool> {
 		REPORT_COMMAND.cyan()
 	);
 	println!(
-		"{} - Display current session context that would be sent to AI",
+		"{} [filter] - Display session context with optional filtering: all, assistant, user, tool, large",
 		CONTEXT_COMMAND.cyan()
 	);
 	println!(

@@ -64,7 +64,7 @@ pub async fn process_command(
 		SAVE_COMMAND => save::handle_save(session),
 		INFO_COMMAND => info::handle_info(session),
 		REPORT_COMMAND => report::handle_report(session, config),
-		CONTEXT_COMMAND => context::handle_context(session, config),
+		CONTEXT_COMMAND => context::handle_context(session, config, params),
 		LAYERS_COMMAND => layers::handle_layers(session, config, role).await,
 		LOGLEVEL_COMMAND => loglevel::handle_loglevel(config, params),
 		TRUNCATE_COMMAND => truncate::handle_truncate(session, config).await,

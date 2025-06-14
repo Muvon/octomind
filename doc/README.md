@@ -22,7 +22,14 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ## Recent Updates
 
-### Multimodal Vision Support (Latest)
+### Session Context Display & Filtering (Latest)
+- **`/context` Command**: Display session context with advanced filtering capabilities
+- **Multiple Filter Options**: `all`, `assistant`, `user`, `tool`, `large` filters for targeted context analysis
+- **Smart Large Message Detection**: Automatically identifies messages >2 standard deviations from median
+- **Token Analysis**: Per-message token count and percentage breakdown
+- **Debug Integration**: Use `/loglevel debug` for full content display
+
+### Multimodal Vision Support
 - **`/image` Command**: Attach images to your messages with intelligent file completion
 - **Universal Provider Support**: Vision support across all 6 providers (Anthropic, OpenAI, OpenRouter, Google, Amazon, Cloudflare)
 - **Smart Format Detection**: Automatic support for PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, SVG, AVIF, HEIC, HEIF

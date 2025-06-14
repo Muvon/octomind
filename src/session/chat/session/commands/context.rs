@@ -18,8 +18,15 @@ use super::super::core::ChatSession;
 use crate::config::Config;
 use anyhow::Result;
 
-pub fn handle_context(session: &ChatSession, config: &Config) -> Result<bool> {
-	// Display current session context that would be sent to AI
-	session.display_session_context(config);
+pub fn handle_context(session: &ChatSession, config: &Config, params: &[&str]) -> Result<bool> {
+	// Parse filter parameter if provided
+	let filter = if params.is_empty() {
+		"all".to_string()
+	} else {
+		params[0].to_lowercase()
+	};
+
+	// Display current session context with filtering
+	session.display_session_context_filtered(config, &filter);
 	Ok(false)
 }

@@ -210,7 +210,6 @@ args = ["mcp", "--path=."]
 mode = "stdin"
 timeout_seconds = 240
 tools = []
-builtin = false
 
 # Example external MCP server configuration:
 # [[mcp.servers]]
@@ -221,7 +220,6 @@ builtin = false
 # timeout_seconds = 30
 # auth_token = "optional-auth-token"
 # tools = []
-# builtin = false
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LAYERS (AI PROCESSING PIPELINE)
@@ -268,7 +266,6 @@ model = "openrouter:openai/gpt-4.1-mini"
 temperature = 0.2
 input_mode = "Last"
 output_mode = "none"  # Intermediate layer - doesn't modify session
-builtin = true
 
 [layers.mcp]
 server_refs = []
@@ -337,7 +334,6 @@ model = "openrouter:google/gemini-2.5-flash-preview"
 temperature = 0.2
 input_mode = "Last"
 output_mode = "replace"  # Replaces input with processed context
-builtin = true
 
 [layers.mcp]
 server_refs = ["developer", "filesystem", "octocode"]
@@ -440,7 +436,6 @@ allowed_tools = []
 # temperature = 0.3
 # input_mode = "Last"
 # output_mode = "append"  # Options: "none", "append", "replace"
-# builtin = false
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
@@ -457,7 +452,6 @@ allowed_tools = []
 # temperature = 0.1
 # input_mode = "Last"
 # output_mode = "append"  # Add review results to session
-# builtin = false
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
@@ -470,7 +464,6 @@ allowed_tools = []
 # temperature = 0.1
 # input_mode = "Last"
 # output_mode = "append"  # Add debug findings to session
-# builtin = false
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
@@ -483,7 +476,6 @@ allowed_tools = []
 # temperature = 0.2
 # input_mode = "Last"
 # output_mode = "append"  # Add architectural guidance to session
-# builtin = false
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]

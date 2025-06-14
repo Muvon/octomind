@@ -17,33 +17,8 @@ use std::fs;
 
 use super::Config;
 
-/// Check if the octocode binary is available in PATH
-fn is_octocode_available() -> bool {
-	use std::process::Command;
-
-	// Try to run `octocode --version` to check if it's available
-	match Command::new("octocode").arg("--version").output() {
-		Ok(output) => output.status.success(),
-		Err(_) => false,
-	}
-}
-
 impl Config {
-	fn initialize_config(&mut self) {
-		// Update octocode availability in config if it exists
-		if let Some(octocode_server) = self.mcp.servers.iter_mut().find(|s| s.name == "octocode") {
-			let octocode_available = is_octocode_available();
-			if !octocode_available {
-				// Mark as unavailable if binary not found
-				octocode_server.tools = vec!["unavailable".to_string()];
-			} else {
-				// Reset tools to empty (all tools enabled) if available
-				if octocode_server.tools == vec!["unavailable".to_string()] {
-					octocode_server.tools = vec![];
-				}
-			}
-		}
-	}
+	fn initialize_config(&mut self) {}
 
 	pub fn ensure_octomind_dir() -> Result<std::path::PathBuf> {
 		// Use the system-wide directory
@@ -230,12 +205,10 @@ impl Config {
 
 	/// Create a clean copy of the config for saving (removes runtime-only fields)
 	pub fn create_clean_copy_for_saving(&self) -> Self {
-		// Don't remove builtin servers - they should be saved to config for transparency
 		// Only remove servers that are marked as runtime-only or temporary
 		// (Currently there are no runtime-only servers, so we keep all servers)
 
-		// Keep the MCP section even if it only contains builtin servers
-		// This ensures the config file shows what's actually available
+		// Keep the MCP section to show what's actually available
 
 		self.clone()
 	}
@@ -467,7 +440,6 @@ mode = "http"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "filesystem"
@@ -476,9 +448,7 @@ mode = "http"
 timeout_seconds = 30
 args = []
 tools = []
-builtin = true
 
-[[mcp.servers]]
 name = "octocode"
 server_type = "external"
 command = "octocode"
@@ -486,7 +456,6 @@ args = ["mcp", "--path=."]
 mode = "stdin"
 timeout_seconds = 30
 tools = []
-builtin = true
 
 [[mcp.servers]]
 name = "clt"
@@ -496,7 +465,6 @@ args = ["mcp"]
 mode = "stdin"
 timeout_seconds = 30
 tools = []
-builtin = true
 "#;
 
 		// Parse the config
@@ -505,7 +473,6 @@ builtin = true
 
 		// Test that the merged config for tester role only includes the specified servers
 		let merged_config = config.get_merged_config_for_role("tester");
-
 		// The merged config should only have servers that are in the tester role's server_refs
 		let server_names: Vec<&str> = merged_config
 			.mcp

@@ -418,86 +418,59 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					}
 				}
 				ProcessingState::ExecutingTools => {
-					// Tool execution was interrupted - need to clean up incomplete tool calls properly
-					// The issue: if we have tool_use without tool_result, Anthropic API breaks
-					// Solution: Remove specific tool_use requests that have no corresponding tool_result
+					// Tool execution was interrupted - remove only tool_calls that don't have results
+					// Keep completed tool results and their corresponding tool_calls
+					if let Some(_op) = operation {
+						// First, collect all tool_call_ids that have results
+						let completed_tool_ids: std::collections::HashSet<String> = chat_session
+							.session
+							.messages
+							.iter()
+							.filter(|msg| msg.role == "tool")
+							.filter_map(|msg| msg.tool_call_id.clone())
+							.collect();
 
-					// First, collect information about which tool calls need to be removed
-					let message_updates = {
-						let mut updates = Vec::new();
-
-						// Find the last assistant message with tool_calls
-						for (i, msg) in chat_session.session.messages.iter().enumerate().rev() {
+						// Now update the assistant message with tool_calls
+						for msg in chat_session.session.messages.iter_mut().rev() {
 							if msg.role == "assistant" && msg.tool_calls.is_some() {
 								if let Some(tool_calls_value) = &msg.tool_calls {
 									if let Ok(tool_calls_array) =
 										serde_json::from_value::<Vec<serde_json::Value>>(
 											tool_calls_value.clone(),
 										) {
-										// Filter out tool calls that don't have results
-										let mut valid_tool_calls = Vec::new();
 										let original_count = tool_calls_array.len();
 
-										for tool_call in &tool_calls_array {
-											if let Some(tool_id) =
-												tool_call.get("id").and_then(|id| id.as_str())
-											{
-												// Check if there's a matching tool result
-												let has_result = chat_session.session.messages
-													[i + 1..]
-													.iter()
-													.any(|result_msg| {
-														result_msg.role == "tool"
-															&& result_msg.tool_call_id.as_ref()
-																== Some(&tool_id.to_string())
-													});
-
-												if has_result {
-													valid_tool_calls.push(tool_call.clone());
+										// Filter out tool_calls that don't have corresponding tool results
+										let valid_tool_calls: Vec<_> = tool_calls_array
+											.into_iter()
+											.filter(|tool_call| {
+												if let Some(tool_id) =
+													tool_call.get("id").and_then(|id| id.as_str())
+												{
+													completed_tool_ids.contains(tool_id)
 												} else {
-													log_debug!("Removing tool_use request with ID {} - no corresponding tool_result", tool_id);
+													false
 												}
-											}
-										}
+											})
+											.collect();
 
-										// Store the update information
 										if valid_tool_calls.is_empty() {
-											updates.push((i, None, original_count, 0));
+											// No tool calls have results - remove tool_calls entirely
+											msg.tool_calls = None;
+											log_debug!("Removed all tool_calls - no results found");
 										} else if valid_tool_calls.len() < original_count {
-											let new_tool_calls =
-												serde_json::to_value(&valid_tool_calls).unwrap();
-											updates.push((
-												i,
-												Some(new_tool_calls),
-												original_count,
-												valid_tool_calls.len(),
-											));
+											// Some tool calls have results - keep only those
+											msg.tool_calls = Some(
+												serde_json::to_value(&valid_tool_calls).unwrap(),
+											);
+											log_debug!("Kept {} tool_calls with results, removed {} without results",
+                                                valid_tool_calls.len(),
+                                                original_count - valid_tool_calls.len()
+                                            );
 										}
 									}
 								}
 								break; // Only process the last assistant message with tool_calls
-							}
-						}
-						updates
-					};
-
-					// Apply the updates
-					for (msg_index, new_tool_calls, original_count, valid_count) in message_updates
-					{
-						if let Some(msg) = chat_session.session.messages.get_mut(msg_index) {
-							match new_tool_calls {
-								None => {
-									msg.tool_calls = None;
-									log_debug!("Removed all tool_calls from assistant message - no valid tool results");
-								}
-								Some(tool_calls) => {
-									msg.tool_calls = Some(tool_calls);
-									log_debug!(
-										"Kept {} valid tool_calls, removed {} incomplete ones",
-										valid_count,
-										original_count - valid_count
-									);
-								}
 							}
 						}
 					}

@@ -320,7 +320,26 @@ impl LayeredOrchestrator {
 						session.add_message("assistant", output_text);
 					}
 				}
-			}
+				OutputMode::Last => {
+					println!(
+						"{}",
+						"Output mode: last (adding last layer output)".bright_cyan()
+					);
+					// Clear existing messages and add all layer outputs
+					let last_message = result.outputs.last().unwrap_or(&String::new()).clone();
+					session.add_message("assistant", &last_message);
+				}
+				OutputMode::Restart => {
+					println!(
+						"{}",
+						"Output mode: last (replacing with last layer output)".bright_cyan()
+					);
+					// Clear existing messages and add all layer outputs
+					session.messages.clear();
+					let last_message = result.outputs.last().unwrap_or(&String::new()).clone();
+					session.add_message("assistant", &last_message);
+				}
+			};
 
 			// Take the LAST output from this layer and use it as input for the next layer
 			current_input = result.outputs.last().unwrap_or(&String::new()).clone();

@@ -249,6 +249,74 @@ pub async fn execute_command_layer(
 			// Save session to persist the replacement
 			let _ = chat_session.save();
 		}
+		OutputMode::Last => {
+			// Add only the last command output as assistant message to session
+			println!(
+				"{}",
+				"Output mode: last (adding last response only to session)".bright_cyan()
+			);
+
+			// Add only the last output as assistant message to session
+			if let Some(last_output) = result.outputs.last() {
+				chat_session.session.add_message("assistant", last_output);
+			}
+
+			// Log the last append operation for session restoration
+			if let Some(session_file) = &chat_session.session.session_file {
+				let log_entry = serde_json::json!({
+					"type": "OUTPUT_MODE_LAST",
+					"timestamp": std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
+					"command": command_name,
+					"content_length": result.outputs.last().map(|s| s.len()).unwrap_or(0),
+					"total_outputs": result.outputs.len()
+				});
+				let _ = crate::session::append_to_session_file(
+					session_file,
+					&serde_json::to_string(&log_entry)?,
+				);
+			}
+
+			// Save session to persist the new message
+			let _ = chat_session.save();
+		}
+		OutputMode::Restart => {
+			// Replace entire session with only the last command output (fresh start)
+			println!(
+				"{}",
+				"Output mode: restart (replacing session with last response only)".bright_cyan()
+			);
+
+			// Log the restart operation for session restoration
+			if let Some(session_file) = &chat_session.session.session_file {
+				let log_entry = serde_json::json!({
+					"type": "OUTPUT_MODE_RESTART",
+					"timestamp": std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
+					"command": command_name,
+					"previous_message_count": chat_session.session.messages.len(),
+					"content_length": result.outputs.last().map(|s| s.len()).unwrap_or(0),
+					"total_outputs": result.outputs.len()
+				});
+				let _ = crate::session::append_to_session_file(
+					session_file,
+					&serde_json::to_string(&log_entry)?,
+				);
+			}
+
+			// Clear existing messages and replace with only the last command output
+			chat_session.session.messages.clear();
+			if let Some(last_output) = result.outputs.last() {
+				chat_session.session.add_message("assistant", last_output);
+			}
+
+			// Save session to persist the replacement
+			let _ = chat_session.save();
+		}
 	}
 
 	Ok(result.outputs.last().unwrap_or(&String::new()).clone())

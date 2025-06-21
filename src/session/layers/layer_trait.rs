@@ -89,6 +89,8 @@ pub enum OutputMode {
 	None,    // Don't modify session (intermediate layer like task_refiner)
 	Append,  // Add output as new message to session
 	Replace, // Replace entire session with output (reducer functionality)
+	Last,    // Append only the last response to session (ignore multiple outputs)
+	Restart, // Replace session with only the last response (fresh start with last message)
 }
 
 impl Default for OutputMode {
@@ -103,6 +105,8 @@ impl OutputMode {
 			OutputMode::None => "none",
 			OutputMode::Append => "append",
 			OutputMode::Replace => "replace",
+			OutputMode::Last => "last",
+			OutputMode::Restart => "restart",
 		}
 	}
 }
@@ -115,8 +119,10 @@ impl FromStr for OutputMode {
 			"none" => Ok(OutputMode::None),
 			"append" => Ok(OutputMode::Append),
 			"replace" => Ok(OutputMode::Replace),
+			"last" => Ok(OutputMode::Last),
+			"restart" => Ok(OutputMode::Restart),
 			_ => Err(format!(
-				"Unknown output mode: '{}'. Valid options: none, append, replace",
+				"Unknown output mode: '{}'. Valid options: none, append, replace, last, restart",
 				s
 			)),
 		}

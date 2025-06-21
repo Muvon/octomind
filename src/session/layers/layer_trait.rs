@@ -200,6 +200,8 @@ pub struct LayerConfig {
 	pub system_prompt: Option<String>,
 	#[serde(default = "default_temperature")]
 	pub temperature: f32,
+	#[serde(default = "default_max_tokens")]
+	pub max_tokens: u32,
 	#[serde(default, deserialize_with = "deserialize_input_mode")]
 	pub input_mode: InputMode,
 	#[serde(default, deserialize_with = "deserialize_output_mode")]
@@ -217,6 +219,10 @@ pub struct LayerConfig {
 
 fn default_temperature() -> f32 {
 	0.2
+}
+
+fn default_max_tokens() -> u32 {
+	16384
 }
 
 impl LayerConfig {

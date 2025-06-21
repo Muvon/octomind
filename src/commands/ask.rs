@@ -39,6 +39,10 @@ pub struct AskArgs {
 	#[arg(long)]
 	pub model: Option<String>,
 
+	/// Maximum tokens for the AI response (runtime only, not saved)
+	#[arg(long, default_value = "16384")]
+	pub max_tokens: u32,
+
 	/// Temperature for the AI response (0.0 to 1.0, runtime only, not saved)
 	#[arg(long, default_value = "0.7")]
 	pub temperature: f32,
@@ -306,6 +310,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 			&full_input,
 			&model,
 			args.temperature,
+			args.max_tokens,
 			&system_prompt,
 			&clean_config,
 		)
@@ -334,6 +339,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 			&full_input,
 			&model,
 			args.temperature,
+			args.max_tokens,
 			&system_prompt,
 			&clean_config,
 		)
@@ -368,6 +374,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 						&full_input,
 						&model,
 						args.temperature,
+						args.max_tokens,
 						&system_prompt,
 						&clean_config,
 					)
@@ -403,6 +410,7 @@ async fn execute_single_query(
 	input: &str,
 	model: &str,
 	temperature: f32,
+	max_tokens: u32,
 	system_prompt: &str,
 	config: &Config,
 ) -> Result<ProviderResponse> {
@@ -437,5 +445,5 @@ async fn execute_single_query(
 	];
 
 	// Call the AI provider
-	chat_completion_with_provider(&messages, model, temperature, config).await
+	chat_completion_with_provider(&messages, model, temperature, max_tokens, config).await
 }

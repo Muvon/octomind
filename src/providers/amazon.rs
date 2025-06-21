@@ -224,6 +224,7 @@ impl AiProvider for AmazonBedrockProvider {
 		messages: &[Message],
 		model: &str,
 		temperature: f32,
+		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
@@ -248,26 +249,38 @@ impl AiProvider for AmazonBedrockProvider {
 		// Create request body (format varies by model family)
 		let mut request_body = if full_model_id.contains("anthropic.claude") {
 			// Anthropic Claude format on Bedrock
-			serde_json::json!({
+			let mut body = serde_json::json!({
 				"anthropic_version": "bedrock-2023-05-31",
-				"max_tokens": 16384,
 				"temperature": temperature,
 				"messages": bedrock_messages,
-			})
+			});
+			// Add max_tokens if specified (0 means don't include it in request)
+			if max_tokens > 0 {
+				body["max_tokens"] = serde_json::json!(max_tokens);
+			}
+			body
 		} else if full_model_id.contains("meta.llama") {
 			// Meta Llama format on Bedrock
-			serde_json::json!({
+			let mut body = serde_json::json!({
 				"prompt": convert_messages_to_prompt(messages),
-				"max_gen_len": 4096,
 				"temperature": temperature,
-			})
+			});
+			// Add max_gen_len if specified (0 means don't include it in request)
+			if max_tokens > 0 {
+				body["max_gen_len"] = serde_json::json!(max_tokens);
+			}
+			body
 		} else {
 			// Generic format
-			serde_json::json!({
+			let mut body = serde_json::json!({
 				"messages": bedrock_messages,
 				"temperature": temperature,
-				// "max_tokens": 4096,
-			})
+			});
+			// Add max_tokens if specified (0 means don't include it in request)
+			if max_tokens > 0 {
+				body["max_tokens"] = serde_json::json!(max_tokens);
+			}
+			body
 		};
 
 		// Add tool definitions if MCP has any servers configured

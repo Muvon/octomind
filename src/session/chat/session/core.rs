@@ -51,6 +51,7 @@ pub struct ChatSession {
 	pub last_response: String,
 	pub model: String,
 	pub temperature: f32,
+	pub max_tokens: u32,
 	pub estimated_cost: f64,
 	pub cache_next_user_message: bool, // Flag to cache the next user message
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
@@ -63,11 +64,14 @@ impl ChatSession {
 		name: String,
 		model: Option<String>,
 		temperature: Option<f32>,
+		max_tokens: Option<u32>,
 		config: &Config,
 	) -> Self {
 		let model_name = model.unwrap_or_else(|| config.get_effective_model());
 		// STRICT: temperature should always be provided from role config, no fallbacks
 		let temperature_value = temperature.expect("Temperature must be provided from role config");
+		// STRICT: max_tokens should always be provided from role config, no fallbacks
+		let max_tokens_value = max_tokens.expect("Max tokens must be provided from role config");
 
 		// Create a new session with initial info
 		let session_info = crate::session::SessionInfo {
@@ -106,6 +110,7 @@ impl ChatSession {
 			last_response: String::new(),
 			model: model_name,
 			temperature: temperature_value,     // Use the provided temperature
+			max_tokens: max_tokens_value,       // Use the provided max_tokens
 			estimated_cost: 0.0,                // Initialize estimated cost as zero
 			cache_next_user_message: false,     // Initialize cache flag
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
@@ -119,6 +124,7 @@ impl ChatSession {
 		resume: Option<String>,
 		model: Option<String>,
 		temperature: Option<f32>,
+		max_tokens: Option<u32>,
 		config: &Config,
 		role: &str,
 	) -> Result<Self> {
@@ -143,6 +149,15 @@ impl ChatSession {
 			// Read from role configuration - STRICT: assume it exists
 			let (role_config, _, _, _, _) = config.get_role_config(role);
 			role_config.temperature
+		};
+
+		// Get max_tokens from role config if not provided via command line
+		let effective_max_tokens = if let Some(tokens) = max_tokens {
+			tokens // Use command line override
+		} else {
+			// Read from role configuration - STRICT: assume it exists
+			let (role_config, _, _, _, _) = config.get_role_config(role);
+			role_config.max_tokens
 		};
 
 		// Check if we should load or create a session
@@ -223,6 +238,7 @@ impl ChatSession {
 						last_response: String::new(),
 						model: restored_model,              // Use restored model from session
 						temperature: effective_temperature, // Use config-based temperature
+						max_tokens: effective_max_tokens,   // Use config-based max_tokens
 						estimated_cost: 0.0,
 						cache_next_user_message: false,     // Initialize cache flag
 						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
@@ -284,6 +300,7 @@ impl ChatSession {
 						new_session_name.clone(),
 						model.clone(),
 						Some(effective_temperature), // Use config-based temperature
+						Some(effective_max_tokens),  // Use config-based max_tokens
 						config,
 					);
 					chat_session.session.session_file = Some(new_session_file);
@@ -323,6 +340,7 @@ impl ChatSession {
 				session_name.clone(),
 				model,
 				Some(effective_temperature),
+				Some(effective_max_tokens),
 				config,
 			);
 			chat_session.session.session_file = Some(session_file);

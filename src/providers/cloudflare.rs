@@ -238,6 +238,7 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		messages: &[Message],
 		model: &str,
 		temperature: f32,
+		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
@@ -262,8 +263,12 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		let mut request_body = serde_json::json!({
 			"messages": cloudflare_messages,
 			"temperature": temperature,
-			"max_tokens": 16384,
 		});
+
+		// Add max_tokens if specified (0 means don't include it in request)
+		if max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(max_tokens);
+		}
 
 		// Add tool definitions if MCP has any servers configured
 		// Cloudflare Workers AI uses OpenAI-compatible tools format

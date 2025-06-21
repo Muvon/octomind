@@ -169,6 +169,7 @@ impl AiProvider for OpenRouterProvider {
 		messages: &[Message],
 		model: &str,
 		temperature: f32,
+		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
@@ -208,6 +209,11 @@ impl AiProvider for OpenRouterProvider {
 				"allow_fallbacks": true,
 			},
 		});
+
+		// Add max_tokens if specified (0 means don't include it in request)
+		if max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(max_tokens);
+		}
 
 		// Add tool definitions if MCP has any servers configured
 		if !config.mcp.servers.is_empty() {

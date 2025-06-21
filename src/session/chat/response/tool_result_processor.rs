@@ -340,6 +340,7 @@ async fn make_follow_up_api_call(
 		&chat_session.session.messages,
 		&model,
 		temperature,
+		chat_session.max_tokens,
 		config,
 		None,                     // No chat session needed for this call
 		Some(cancellation_token), // Pass the cancellation token

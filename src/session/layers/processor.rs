@@ -112,6 +112,7 @@ impl Layer for LayerProcessor {
 			&messages,
 			&effective_model,
 			self.config.temperature,
+			self.config.max_tokens,
 			config,
 		)
 		.await?;
@@ -224,6 +225,7 @@ impl Layer for LayerProcessor {
 						&layer_session,
 						&effective_model,
 						self.config.temperature,
+						self.config.max_tokens,
 						config,
 					)
 					.await

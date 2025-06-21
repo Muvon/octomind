@@ -55,6 +55,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		#[arg(long, default_value = "0.7")]
 		temperature: f32,
 
+		/// Maximum tokens for the AI response
+		#[arg(long, default_value = "16384")]
+		max_tokens: u32,
+
 		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 		#[arg(long, default_value = "developer")]
 		role: String,
@@ -112,11 +116,25 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			0.7 // Default temperature
 		};
 
+		// Get max_tokens
+		let max_tokens = if args_str.contains("max_tokens: ") {
+			let start = args_str.find("max_tokens: ").unwrap() + 12;
+			let end = args_str[start..].find(',').unwrap_or(
+				args_str[start..]
+					.find('}')
+					.unwrap_or(args_str.len() - start),
+			) + start;
+			args_str[start..end].trim().parse::<u32>().unwrap_or(16384)
+		} else {
+			16384 // Default max_tokens
+		};
+
 		SessionArgs {
 			name,
 			resume,
 			model,
 			temperature,
+			max_tokens,
 			role,
 		}
 	};
@@ -184,6 +202,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		session_args.resume,
 		session_args.model.clone(),
 		Some(session_args.temperature),
+		Some(session_args.max_tokens),
 		&config_for_role,
 		&session_args.role, // Pass role to read temperature from config
 	)?;
@@ -574,6 +593,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 						None,
 						None, // Keep using the default model
 						None, // Use config temperature
+						None, // Use config max_tokens
 						&current_config,
 						&session_args.role, // Pass role for temperature config
 					)?;
@@ -865,6 +885,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			&messages,
 			&model,
 			temperature,
+			chat_session.max_tokens,
 			&config_clone,
 			Some(&mut chat_session),
 			Some(operation_cancelled.clone()),
@@ -1073,6 +1094,10 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		#[arg(long, default_value = "0.7")]
 		temperature: f32,
 
+		/// Maximum tokens for the AI response
+		#[arg(long, default_value = "16384")]
+		max_tokens: u32,
+
 		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 		#[arg(long, default_value = "developer")]
 		role: String,
@@ -1130,11 +1155,25 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 			0.7 // Default temperature
 		};
 
+		// Get max_tokens
+		let max_tokens = if args_str.contains("max_tokens: ") {
+			let start = args_str.find("max_tokens: ").unwrap() + 12;
+			let end = args_str[start..].find(',').unwrap_or(
+				args_str[start..]
+					.find('}')
+					.unwrap_or(args_str.len() - start),
+			) + start;
+			args_str[start..end].trim().parse::<u32>().unwrap_or(16384)
+		} else {
+			16384 // Default max_tokens
+		};
+
 		SessionArgs {
 			name,
 			resume,
 			model,
 			temperature,
+			max_tokens,
 			role,
 		}
 	};
@@ -1151,6 +1190,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		session_args.resume,
 		session_args.model.clone(),
 		Some(session_args.temperature),
+		Some(session_args.max_tokens),
 		&config_for_role,
 		&session_args.role,
 	)?;
@@ -1423,6 +1463,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		&messages,
 		&model,
 		temperature,
+		chat_session.max_tokens,
 		&config_clone,
 		Some(&mut chat_session),
 		Some(operation_cancelled.clone()),

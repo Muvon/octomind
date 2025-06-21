@@ -203,6 +203,7 @@ impl AiProvider for AnthropicProvider {
 		messages: &[Message],
 		model: &str,
 		temperature: f32,
+		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
@@ -230,10 +231,14 @@ impl AiProvider for AnthropicProvider {
 		// Create the request body
 		let mut request_body = serde_json::json!({
 			"model": model,
-			"max_tokens": 32768,
 			"messages": anthropic_messages,
 			"temperature": temperature,
 		});
+
+		// Add max_tokens if specified (0 means don't include it in request)
+		if max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(max_tokens);
+		}
 
 		// Add system message with cache control if needed
 		if system_cached {

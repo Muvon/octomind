@@ -94,6 +94,9 @@ pub struct Config {
 	// Root-level model setting (used by all commands if specified)
 	pub model: String,
 
+	// Root-level max_tokens setting (used by all commands if specified)
+	pub max_tokens: u32,
+
 	// Custom instructions file name (relative to project root)
 	pub custom_instructions_file_name: String,
 

@@ -221,6 +221,7 @@ impl AiProvider for OpenAiProvider {
 		messages: &[Message],
 		model: &str,
 		temperature: f32,
+		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 	) -> Result<ProviderResponse> {
@@ -246,6 +247,11 @@ impl AiProvider for OpenAiProvider {
 		// O1/O2 series models don't support temperature parameter
 		if supports_temperature(model) {
 			request_body["temperature"] = serde_json::json!(temperature);
+		}
+
+		// Add max_tokens if specified (0 means don't include it in request)
+		if max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(max_tokens);
 		}
 
 		// Add tool definitions if MCP has any servers configured

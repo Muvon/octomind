@@ -349,6 +349,7 @@ impl GenericLayer {
 			session,
 			model: model.to_string(),
 			temperature: self.config.temperature,
+			max_tokens: self.config.max_tokens,
 			last_response: String::new(),
 			estimated_cost: 0.0,
 			cache_next_user_message: false,
@@ -410,6 +411,7 @@ impl GenericLayer {
 			&layer_session.session.messages,
 			model,
 			self.config.temperature,
+			self.config.max_tokens,
 			layer_config,
 			None,                              // No chat session for layers
 			Some(operation_cancelled.clone()), // Pass cancellation token
@@ -506,6 +508,7 @@ impl Layer for GenericLayer {
 			&messages,
 			&effective_model,
 			self.config.temperature,
+			self.config.max_tokens,
 			&layer_config,
 			None,                              // No chat session for layers
 			Some(operation_cancelled.clone()), // Pass cancellation token

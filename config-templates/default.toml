@@ -25,6 +25,10 @@ log_level = "none"
 # Examples: "openrouter:anthropic/claude-3.5-sonnet", "openai:gpt-4o"
 model = "openrouter:anthropic/claude-sonnet-4"
 
+# Default max_tokens for all operations
+# This is the fallback max_tokens when role/layer-specific max_tokens aren't specified
+max_tokens = 16384
+
 # Custom instructions file name (relative to project root)
 # This file will be automatically loaded as a user message in new sessions
 # Set to empty string to disable: custom_instructions_file_name = ""
@@ -91,6 +95,7 @@ max_session_spending_threshold = 0.0
 name = "developer"
 enable_layers = true
 temperature = 0.2
+max_tokens = 16384
 system = """
 You are Octomind - ELITE AUTONOMOUS AI DEVELOPER
 
@@ -301,6 +306,7 @@ allowed_tools = ["developer:*", "filesystem:*", "web_search", "read_html", "octo
 name = "assistant"
 enable_layers = false
 temperature = 0.7
+max_tokens = 8192
 layer_refs = []
 system = "You are a helpful assistant."
 
@@ -382,6 +388,7 @@ tools = []
 [[layers]]
 name = "task_refiner"
 model = "openrouter:openai/gpt-4.1-mini"
+max_tokens = 2048
 system_prompt = """
 You are a simple query processor for the Octomind system. Your ONLY job is basic query refinement and initial file guessing.
 
@@ -423,6 +430,7 @@ allowed_tools = []
 [[layers]]
 name = "task_researcher"
 model = "openrouter:google/gemini-2.5-flash-preview"
+max_tokens = 8192
 system_prompt = """
 You are a research assistant and information gatherer for development tasks. Think of yourself as a junior developer doing reconnaissance work.
 
@@ -477,6 +485,7 @@ allowed_tools = ["list_files", "semantic_search", "remember", "view_signatures"]
 [[layers]]
 name = "context_gatherer"
 model = "openrouter:google/gemini-2.5-flash-preview"
+max_tokens = 8192
 system_prompt = """You are a specialized READ-ONLY context gathering agent for development tasks. Your role is to efficiently collect and analyze information from files and codebase to provide comprehensive context.
 
 CRITICAL RESTRICTIONS:

@@ -87,6 +87,10 @@ pub struct ShellArgs {
 	#[arg(long)]
 	pub model: Option<String>,
 
+	/// Maximum tokens for the AI response (runtime only, not saved)
+	#[arg(long, default_value = "2048")]
+	pub max_tokens: u32,
+
 	/// Skip confirmation and execute command directly
 	#[arg(long, short)]
 	pub yes: bool,
@@ -177,8 +181,14 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 	];
 
 	// Call the AI provider
-	let response =
-		chat_completion_with_provider(&messages, &model, args.temperature, &clean_config).await?;
+	let response = chat_completion_with_provider(
+		&messages,
+		&model,
+		args.temperature,
+		args.max_tokens,
+		&clean_config,
+	)
+	.await?;
 
 	// Parse the JSON response
 	let shell_response: ShellResponse = match serde_json::from_str(&response.content) {

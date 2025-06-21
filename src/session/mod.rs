@@ -871,6 +871,7 @@ pub async fn chat_completion_with_validation(
 	messages: &[Message],
 	model: &str,
 	temperature: f32,
+	max_tokens: u32,
 	config: &Config,
 	chat_session: Option<&mut crate::session::chat::session::ChatSession>,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -916,6 +917,7 @@ pub async fn chat_completion_with_validation(
 				provider.as_ref(),
 				&actual_model,
 				temperature,
+				max_tokens,
 				cancellation_token,
 			)
 			.await;
@@ -944,6 +946,7 @@ pub async fn chat_completion_with_validation(
 			messages,
 			&actual_model,
 			temperature,
+			max_tokens,
 			config,
 			cancellation_token,
 		)
@@ -957,6 +960,7 @@ async fn handle_context_limit_exceeded(
 	provider: &dyn AiProvider,
 	model: &str,
 	temperature: f32,
+	max_tokens: u32,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ProviderResponse> {
 	use colored::Colorize;
@@ -1006,6 +1010,7 @@ async fn handle_context_limit_exceeded(
 								&chat_session.session.messages,
 								model,
 								temperature,
+								max_tokens,
 								config,
 								cancellation_token,
 							)
@@ -1027,6 +1032,7 @@ async fn handle_context_limit_exceeded(
 								&chat_session.session.messages,
 								model,
 								temperature,
+								max_tokens,
 								config,
 								cancellation_token,
 							)
@@ -1066,13 +1072,20 @@ pub async fn chat_completion_with_provider(
 	messages: &[Message],
 	model: &str,
 	temperature: f32,
+	max_tokens: u32,
 	config: &Config,
 ) -> Result<ProviderResponse> {
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
-
 	// Call the provider's chat completion method
 	provider
-		.chat_completion(messages, &actual_model, temperature, config, None)
+		.chat_completion(
+			messages,
+			&actual_model,
+			temperature,
+			max_tokens,
+			config,
+			None,
+		)
 		.await
 }

@@ -33,6 +33,9 @@ pub struct RunArgs {
 	#[arg(long)]
 	pub model: Option<String>,
 
+	/// Maximum tokens for the AI response (runtime only, not saved)
+	#[arg(long, default_value = "16384")]
+	pub max_tokens: u32,
 	/// Temperature for the AI response (0.0 to 1.0, runtime only, not saved)
 	#[arg(long, default_value = "0.7")]
 	pub temperature: f32,
@@ -50,6 +53,7 @@ impl RunArgs {
 			resume: self.resume.clone(),
 			model: self.model.clone(),
 			temperature: self.temperature,
+			max_tokens: self.max_tokens,
 			role: self.role.clone(),
 		}
 	}

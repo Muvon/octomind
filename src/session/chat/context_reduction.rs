@@ -66,6 +66,7 @@ pub async fn perform_context_reduction(
 		&chat_session.session.messages,
 		&chat_session.model,
 		chat_session.temperature,
+		chat_session.max_tokens,
 		config,
 	)
 	.await;

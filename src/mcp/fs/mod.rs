@@ -21,6 +21,9 @@ pub mod file_ops;
 pub mod functions;
 pub mod text_editing;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export main functionality
 pub use core::{execute_list_files, execute_text_editor};
 pub use functions::get_all_functions;

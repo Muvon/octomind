@@ -218,7 +218,7 @@ pub async fn line_replace_spec(
 	let file_content = tokio_fs::read_to_string(path)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
-	let mut lines: Vec<&str> = file_content.lines().collect();
+	let lines: Vec<&str> = file_content.lines().collect();
 
 	// Validate line ranges exist in file BEFORE accessing the array
 	if start_line > lines.len() {
@@ -254,22 +254,32 @@ pub async fn line_replace_spec(
 	// Save the current content for undo
 	save_file_history(path).await?;
 
-	// Split new content into lines
-	let new_lines: Vec<&str> = new_str.lines().collect();
-
-	// Convert to 0-indexed for array operations
-	let start_idx = start_line - 1;
-	let end_idx = end_line; // end_idx is exclusive in splice
-
-	// Replace the lines using splice
-	lines.splice(start_idx..end_idx, new_lines);
-
-	// Join lines back to string
-	let new_content = lines.join("\n");
-
-	// Add final newline if original file had one
-	let final_content = if file_content.ends_with('\n') {
-		format!("{}\n", new_content)
+	// Simple and correct approach: use the lines array we already have
+	// but reconstruct the content properly preserving line endings
+	let mut result_parts = Vec::new();
+	
+	// Add lines before target range
+	for i in 0..(start_line - 1) {
+		result_parts.push(lines[i]);
+	}
+	
+	// Add the replacement content
+	result_parts.push(new_str);
+	
+	// Add lines after target range  
+	for i in end_line..lines.len() {
+		result_parts.push(lines[i]);
+	}
+	
+	// Detect original line ending style
+	let line_ending = if file_content.contains("\r\n") { "\r\n" } else { "\n" };
+	
+	// Reconstruct content
+	let new_content = result_parts.join(line_ending);
+	
+	// Preserve final line ending behavior
+	let final_content = if file_content.ends_with(line_ending) {
+		format!("{}{}", new_content, line_ending)
 	} else {
 		new_content
 	};

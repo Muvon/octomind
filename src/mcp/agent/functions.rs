@@ -109,24 +109,7 @@ async fn process_layer_as_agent(
 			// Return only the final layer output (cleanest for tool use)
 			Ok(result.outputs.last().unwrap_or(&String::new()).clone())
 		}
-		OutputMode::Append => {
-			// Return layer output + session messages (for debugging)
-			let all_messages: Vec<String> = agent_session
-				.messages
-				.iter()
-				.map(|msg| format!("[{}] {}", msg.role, msg.content))
-				.collect();
-
-			if all_messages.is_empty() {
-				Ok(result.outputs.last().unwrap_or(&String::new()).clone())
-			} else {
-				Ok(format!(
-					"{}\n\n--- Session Messages ---\n{}",
-					result.outputs.last().unwrap_or(&String::new()),
-					all_messages.join("\n")
-				))
-			}
-		}
+		OutputMode::Append => Ok(result.outputs.join("\n---\n")),
 		OutputMode::Replace => {
 			// For agents, same as None - return only the layer output
 			Ok(result.outputs.last().unwrap_or(&String::new()).clone())

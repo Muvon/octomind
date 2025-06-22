@@ -460,24 +460,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 						_ => println!("  - {} (built-in tools) - available", name),
 					},
 					McpConnectionType::Http | McpConnectionType::Stdin => {
-						if name == "octocode" {
-							// Check if octocode binary is available
-							use std::process::Command;
-							let available = match Command::new("octocode").arg("--version").output()
-							{
-								Ok(output) => output.status.success(),
-								Err(_) => false,
-							};
-
-							if available {
-								println!("  - {} (codebase analysis) - available ✓", name);
-							} else {
-								println!(
-									"  - {} (codebase analysis) - binary not found in PATH",
-									name
-								);
-							}
-						} else if let Some(url) = server.url() {
+						if let Some(url) = server.url() {
 							println!("  - {} (HTTP: {}) - available", name, url);
 						} else if let Some(command) = server.command() {
 							println!("  - {} (Command: {}) - available", name, command);
@@ -764,20 +747,7 @@ fn show_mcp_servers(servers: &Vec<McpServerConfig>) {
 				_ => println!("      📦 {} (built-in tools)", name),
 			},
 			McpConnectionType::Http | McpConnectionType::Stdin => {
-				if name == "octocode" {
-					// Check if octocode binary is available
-					use std::process::Command;
-					let available = match Command::new("octocode").arg("--version").output() {
-						Ok(output) => output.status.success(),
-						Err(_) => false,
-					};
-
-					if available {
-						println!("      🔍 {} (codebase analysis) ✓", name);
-					} else {
-						println!("      🔍 {} (binary not found in PATH)", name);
-					}
-				} else if let Some(url) = server.url() {
+				if let Some(url) = server.url() {
 					println!("      🌐 {} (HTTP: {})", name, url);
 				} else if let Some(command) = server.command() {
 					println!("      ⚙️  {} (Command: {})", name, command);

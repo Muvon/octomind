@@ -343,9 +343,17 @@ temperature = 0.7
 layer_refs = []
 system = "You are a test assistant."
 welcome = "Hello! Test tester role."
-mcp = { server_refs = ["octocode", "clt"], allowed_tools = [] }
+mcp = { server_refs = ["test_server", "clt"], allowed_tools = [] }
 
 # Additional test MCP servers for tester role
+[[mcp.servers]]
+name = "test_server"
+type = "stdin"
+command = "test_command"
+args = ["mcp"]
+timeout_seconds = 30
+tools = []
+
 [[mcp.servers]]
 name = "clt"
 type = "stdin"
@@ -373,19 +381,19 @@ tools = []
 		assert!(config.role_map.contains_key("tester"));
 
 		let tester_role = config.role_map.get("tester").unwrap();
-		assert_eq!(tester_role.mcp.server_refs, vec!["octocode", "clt"]);
+		assert_eq!(tester_role.mcp.server_refs, vec!["test_server", "clt"]);
 		assert!(!tester_role.config.enable_layers);
 
 		// Test get_role_config for custom role
 		let (role_config, mcp_config, _, _, _) = config.get_role_config("tester");
 		assert!(!role_config.enable_layers);
-		assert_eq!(mcp_config.server_refs, vec!["octocode", "clt"]);
+		assert_eq!(mcp_config.server_refs, vec!["test_server", "clt"]);
 
 		// Test get_merged_config_for_mode for custom role
 		let merged_config = config.get_merged_config_for_role("tester");
 		// The merged config should only include servers that are referenced by the tester role
 		let server_names: Vec<&str> = merged_config.mcp.servers.iter().map(|s| s.name()).collect();
-		assert!(server_names.contains(&"octocode"));
+		assert!(server_names.contains(&"test_server"));
 		assert!(server_names.contains(&"clt"));
 		// Should not contain servers not referenced by the tester role
 		assert!(!server_names.contains(&"developer"));
@@ -404,7 +412,7 @@ tools = []
 		let merged_config = config.get_merged_config_for_role("tester");
 		// The merged config should only have servers that are in the tester role's server_refs
 		let server_names: Vec<&str> = merged_config.mcp.servers.iter().map(|s| s.name()).collect();
-		assert!(server_names.contains(&"octocode"));
+		assert!(server_names.contains(&"test_server"));
 		assert!(server_names.contains(&"clt"));
 		assert!(!server_names.contains(&"developer")); // Should not be included
 		assert!(!server_names.contains(&"filesystem")); // Should not be included

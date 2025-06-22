@@ -141,57 +141,6 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 
 	// For developer role, show MCP server status
 	let current_dir = std::env::current_dir()?;
-	if session_args.role == "developer" {
-		// Check if external MCP server is configured
-		let role_config = config.get_role_config(&session_args.role);
-		let mcp_config = &role_config.1;
-
-		if mcp_config.server_refs.is_empty() {
-			use colored::*;
-			println!(
-				"{}",
-				"💡 Tip: For code development, consider starting an external MCP server:"
-					.bright_yellow()
-			);
-			println!("{}", "   octocode mcp --path=.".bright_cyan());
-			println!(
-				"{}",
-				"   Then configure it in your system config:".bright_cyan()
-			);
-			if let Ok(config_path) = crate::directories::get_config_file_path() {
-				println!("{}", format!("   {}", config_path.display()).bright_cyan());
-			}
-			println!();
-		} else {
-			// Check if octocode is enabled in the server_refs
-			let octocode_enabled = mcp_config.server_refs.contains(&"octocode".to_string());
-
-			if octocode_enabled {
-				use colored::*;
-				println!(
-					"{}",
-					"🔗 octocode MCP server is enabled for enhanced codebase analysis"
-						.bright_green()
-				);
-				println!();
-			} else {
-				use colored::*;
-				println!(
-					"{}",
-					"💡 Tip: Install octocode for enhanced codebase analysis:".bright_yellow()
-				);
-				println!(
-					"{}",
-					"   cargo install octocode  # or download from releases".bright_cyan()
-				);
-				println!(
-					"{}",
-					"   It will be auto-enabled when available in PATH".bright_cyan()
-				);
-				println!();
-			}
-		}
-	}
 
 	// Get the merged configuration for the specified role
 	let config_for_role = config.get_merged_config_for_role(&session_args.role);

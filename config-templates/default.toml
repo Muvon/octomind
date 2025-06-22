@@ -93,7 +93,7 @@ max_session_spending_threshold = 0.0
 # Developer role - optimized for coding and development tasks
 [[roles]]
 name = "developer"
-enable_layers = true
+enable_layers = false
 temperature = 0.2
 max_tokens = 16384
 system = """
@@ -153,13 +153,7 @@ OPERATIONAL WORKFLOW
 - Build on existing knowledge before new investigation
 - MEMORIZE ONLY: When user confirms task completion AND insight has significant reuse value
 
-3. CONTEXT GATHERING STRATEGY
-ALWAYS first delegate context information gathering tasks to context_gatherer agent:
-- Use agent_context_gatherer(task="detailed description") for comprehensive file reading and analysis
-- Delegate when you need to understand large codebases, multiple file relationships, or complex patterns
-- Let context_gatherer handle the discovery phase, if you still missing something, you can proceed next, then focus on implementation
-
-4. MANDATORY PARALLEL DISCOVERY
+3. MANDATORY PARALLEL DISCOVERY
 Execute ALL discovery operations simultaneously, never sequentially unless output A is required for input B.
 CRITICAL INSTRUCTION: For maximum efficiency, whenever you perform multiple operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. When running multiple read-only comman always run all of the commands in parallel.
 
@@ -382,11 +376,13 @@ tools = []
 # LAYERS (AI PROCESSING PIPELINE)
 # Configure AI processing layers and pipelines
 # Built-in layers are defined here for transparency and easy customization
+# NOTE: 'description' field is now REQUIRED for all layers (used for agents, commands, and documentation)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Built-in core layers (always available)
 [[layers]]
 name = "task_refiner"
+description = "Refines and clarifies user requests for better processing by subsequent layers"
 model = "openrouter:openai/gpt-4.1-mini"
 max_tokens = 2048
 system_prompt = """
@@ -429,6 +425,7 @@ allowed_tools = []
 
 [[layers]]
 name = "task_researcher"
+description = "Gathers information and context needed for development tasks through code analysis and research"
 model = "openrouter:google/gemini-2.5-flash-preview"
 max_tokens = 8192
 system_prompt = """
@@ -482,57 +479,10 @@ allowed_tools = ["list_files", "semantic_search", "remember", "view_signatures"]
 
 [layers.parameters]
 
-[[layers]]
-name = "context_gatherer"
-model = "openrouter:google/gemini-2.5-flash-preview"
-max_tokens = 8192
-system_prompt = """You are a specialized READ-ONLY context gathering agent for development tasks. Your role is to efficiently collect and analyze information from files and codebase to provide comprehensive context.
-
-CRITICAL RESTRICTIONS:
-- NEVER make any changes to files - you are READ-ONLY
-- NEVER use text_editor for editing operations (str_replace, insert, line_replace)
-- ONLY use text_editor for viewing files (view command only)
-- NEVER suggest code changes or implementations
-- NEVER use shell commands that modify files or system state
-- Focus ONLY on information gathering and analysis
-
-Your capabilities:
-- Read and analyze files using text_editor view command with targeted ranges
-- Search codebase semantically for related functions, patterns, documentation
-- Discover file structures and project layout
-- Access past knowledge and patterns from memory
-- Use shell for read-only operations (grep, find, ls, etc.)
-- Process detailed information requests efficiently
-
-Process:
-1. **Parallel Discovery**: Execute remember() + semantic_search() + list_files() simultaneously when gathering information
-2. **Targeted Reading**: Use text_editor view with specific ranges or view_signatures for overview
-3. **Smart Analysis**: Focus on gathering relevant context, not implementing solutions
-4. **Read-Only Exploration**: Use shell for safe read-only commands to explore structure
-5. **Structured Output**: Present findings clearly organized by categories
-
-Output Format:
-- **Files Examined**: List of files read with their purpose/relevance
-- **Key Findings**: Important functions, structures, patterns discovered
-- **Context Summary**: Relevant background information and relationships
-- **Recommendations**: Suggested areas to investigate (NOT implementation suggestions)
-
-REMEMBER: You are a READ-ONLY information gatherer. Never modify anything, only observe and report.
-
-%{CONTEXT}"""
-temperature = 0.2
-input_mode = "last"
-output_mode = "append"
-
-[layers.mcp]
-server_refs = ["filesystem", "octocode", "developer"]
-allowed_tools = ["text_editor", "list_files", "semantic_search", "remember", "view_signatures", "shell"]
-
-[layers.parameters]
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # CUSTOM COMMANDS
 # Define custom commands that can be triggered with /run <command_name>
+# NOTE: 'description' field is now REQUIRED for all commands (shown in help text)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 [[commands]]
@@ -601,6 +551,7 @@ This architectural history will be essential for future development sessions.
 
 %{CONTEXT}"""
 model = "openrouter:openai/o4-mini"  # Use cheaper model for cost optimization
+max_tokens = 0
 temperature = 0.2
 input_mode = "all"
 output_mode = "replace"  # Replace session content with compressed history
@@ -620,7 +571,9 @@ allowed_tools = []
 # Example custom layer configuration:
 # [[layers]]
 # name = "analysis"
+# description = "Performs detailed analysis of code, systems, or requirements"
 # model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
 # system_prompt = "You are an expert analyst."
 # temperature = 0.3
 # input_mode = "Last"
@@ -636,7 +589,9 @@ allowed_tools = []
 # Example agent layers (use with agent tools):
 # [[layers]]
 # name = "code_reviewer"
+# description = "Reviews code for quality, performance, security, and best practices"
 # model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
 # system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices. Provide detailed feedback with specific suggestions for improvement."
 # temperature = 0.1
 # input_mode = "Last"
@@ -648,7 +603,9 @@ allowed_tools = []
 #
 # [[layers]]
 # name = "debugger"
+# description = "Analyzes bugs, traces issues, and suggests debugging approaches"
 # model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
 # system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
 # temperature = 0.1
 # input_mode = "Last"
@@ -660,7 +617,9 @@ allowed_tools = []
 #
 # [[layers]]
 # name = "architect"
+# description = "Designs system architecture and evaluates technical decisions"
 # model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
 # system_prompt = "You are a senior software architect. Design system architecture, evaluate technical decisions, and provide high-level design guidance."
 # temperature = 0.2
 # input_mode = "Last"
@@ -678,7 +637,9 @@ allowed_tools = []
 # Example custom command configuration:
 # [[commands]]
 # name = "estimate"
+# description = "Provides project estimation and time analysis for development tasks"
 # model = "openrouter:openai/gpt-4o-mini"
+# max_tokens = 0
 # system_prompt = "You are a project estimation expert."
 # temperature = 0.2
 # input_mode = "Last"
@@ -694,24 +655,97 @@ allowed_tools = []
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # AGENT CONFIGURATIONS
-# Define specific AI agents that route tasks to configured layers
+# Define AI agents using the same layer configuration as commands
 # Each agent becomes a separate MCP tool (e.g., agent_code_reviewer, agent_debugger)
-# Requires corresponding layers with matching names to be configured
+# NOTE: 'description' field is now REQUIRED for all agents (used as function description in MCP)
+# The output_mode controls what the agent tool returns:
+#   - "none": Returns only the final layer output (cleanest for tool use)
+#   - "append": Returns layer output + session messages (for debugging)
+#   - "replace": Returns layer output (same as none for agents)
+#   - "last": Returns only the last layer output
+#   - "restart": Returns only the last layer output (same as last for agents)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Example agent configurations (uncomment to enable):
 # [[agents]]
 # name = "code_reviewer"
 # description = "Review code for performance, security, and best practices issues. Analyzes code quality and suggests improvements."
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
+# system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices. Provide detailed feedback with specific suggestions for improvement."
+# temperature = 0.1
+# input_mode = "last"
+# output_mode = "none"  # Return only the review results (cleanest for tool use)
+#
+# [agents.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = ["text_editor", "list_files"]
 
 # [[agents]]
 # name = "debugger"
 # description = "Analyze bugs, trace issues, and suggest debugging approaches. Helps identify root causes and solutions."
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
+# system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
+# temperature = 0.1
+# input_mode = "last"
+# output_mode = "none"  # Return only the debug findings (cleanest for tool use)
+#
+# [agents.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = ["text_editor", "shell", "list_files"]
 
 # [[agents]]
 # name = "architect"
 # description = "Design system architecture and evaluate technical decisions. Provides high-level design guidance."
+# model = "openrouter:anthropic/claude-3.5-sonnet"
+# max_tokens = 8192
+# system_prompt = "You are a senior software architect. Design system architecture, evaluate technical decisions, and provide high-level design guidance."
+# temperature = 0.2
+# input_mode = "last"
+# output_mode = "none"  # Return only the architectural guidance (cleanest for tool use)
+#
+# [agents.mcp]
+# server_refs = ["developer", "filesystem"]
+# allowed_tools = ["text_editor", "list_files"]
 
+# Built-in context gatherer agent
 [[agents]]
 name = "context_gatherer"
 description = "Gather detailed context from files and codebase. Reads files, searches code patterns, and provides comprehensive information about specific areas of the codebase for development tasks."
+model = "openrouter:google/gemini-2.5-flash-preview"
+max_tokens = 16384
+system_prompt = """You are a comprehensive context gatherer and code analyst for development tasks. Your role is to thoroughly examine codebases, understand patterns, and provide detailed information about specific areas.
+
+Your capabilities:
+- Read and analyze multiple files simultaneously
+- Search for code patterns semantically across the codebase
+- Understand file structures and relationships
+- Extract function signatures and code structure
+- Provide comprehensive context for development decisions
+
+Research Process:
+1. **Parallel Discovery**: Execute multiple tools simultaneously for maximum efficiency
+2. **Comprehensive Analysis**: Read relevant files, search patterns, examine structures
+3. **Contextual Understanding**: Connect different parts of the codebase
+4. **Detailed Reporting**: Provide thorough information for informed development
+
+Tools Strategy:
+- Use semantic_search() for finding related code patterns and functionality
+- Use text_editor to read and examine specific files in detail
+- Use view_signatures to understand code structure and interfaces
+- Use list_files to discover relevant files and understand project structure
+- Execute tools in parallel whenever possible for efficiency
+
+Always provide comprehensive, detailed analysis that helps developers understand the codebase and make informed decisions.
+
+%{SYSTEM}
+
+%{CONTEXT}"""
+temperature = 0.2
+input_mode = "last"
+output_mode = "none"  # Return only the gathered context (cleanest for tool use)
+
+[agents.mcp]
+server_refs = ["filesystem", "octocode"]
+allowed_tools = ["text_editor", "list_files", "semantic_search", "view_signatures"]

@@ -35,15 +35,7 @@ pub use mcp::*;
 pub use providers::*;
 pub use roles::*;
 
-// Agent configuration
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct AgentConfig {
-	// Layer name to route to (must match a layer name in config)
-	pub name: String,
-
-	// Tool description for this specific agent
-	pub description: String,
-}
+// Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
@@ -115,9 +107,9 @@ pub struct Config {
 	// Use long-term (1h) caching for system messages (strict: must be in config)
 	pub use_long_system_cache: bool,
 
-	// Agent configurations - array of agent definitions
+	// Agent configurations - array of layer definitions (same structure as commands)
 	#[serde(default)]
-	pub agents: Vec<AgentConfig>,
+	pub agents: Vec<crate::session::layers::LayerConfig>,
 
 	// REMOVED: Providers configuration - API keys now only from ENV variables for security
 

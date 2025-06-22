@@ -342,14 +342,23 @@ pub fn command_exists(config: &Config, role: &str, command_name: &str) -> bool {
 
 /// Get help text for command layers
 pub fn get_command_help(config: &Config, role: &str) -> String {
-	let available_commands = list_available_commands(config, role);
+	let (_, _, _, commands_config, _) = config.get_role_config(role);
 
-	if available_commands.is_empty() {
-		"No command layers configured.".to_string()
+	if let Some(commands) = commands_config {
+		if commands.is_empty() {
+			"No command layers configured.".to_string()
+		} else {
+			let mut help_text = String::from("Available command layers:\n");
+			for command in commands {
+				help_text.push_str(&format!(
+					"  /run {} - {}\n",
+					command.name, command.description
+				));
+			}
+			help_text.push_str("\nUsage: /run <command_name>\nExample: /run reduce");
+			help_text
+		}
 	} else {
-		format!(
-			"Available command layers: {}\nUsage: /run <command_name>\nExample: /run estimate",
-			available_commands.join(", ")
-		)
+		"No command layers configured.".to_string()
 	}
 }

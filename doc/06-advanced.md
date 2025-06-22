@@ -147,96 +147,84 @@ Parameters:
 
 ### Agent Tools Reference
 
-The agent system enables task delegation to specialized AI agents configured in your system. Each configured agent becomes a separate MCP tool that routes tasks to specialized AI layers.
+The agent system enables task delegation to specialized AI agents configured in your system. Each configured agent becomes a separate MCP tool that uses the same layer configuration system as commands and regular layers.
 
 #### How It Works
 
-1. **Configure Agents**: Define agents in the `[[agents]]` section of your config
-2. **Configure Layers**: Create corresponding layers that agents will use
-3. **Use Agent Tools**: Each agent becomes a tool like `agent_code_reviewer`, `agent_debugger`, etc.
+1. **Configure Agents**: Define agents using the same `LayerConfig` structure as commands and layers
+2. **Use Agent Tools**: Each agent becomes a tool like `agent_context_gatherer`, `agent_code_reviewer`, etc.
+3. **Output Control**: The `output_mode` setting controls what the agent tool returns
 
 #### Agent Configuration
 
-First, define your agents in `config.toml`:
+Agents now use the **same configuration structure** as commands and layers. Define them in the `[[agents]]` section:
 
 ```toml
 # Agent definitions - each becomes a separate MCP tool
 [[agents]]
+name = "context_gatherer"
+description = "Gather detailed context from files and codebase. Reads files, searches code patterns, and provides comprehensive information about specific areas of the codebase for development tasks."
+model = "openrouter:google/gemini-2.5-flash-preview"
+max_tokens = 16384
+system_prompt = """You are a comprehensive context gatherer and code analyst for development tasks. Your role is to thoroughly examine codebases, understand patterns, and provide detailed information about specific areas.
+
+Your capabilities:
+- Read and analyze multiple files simultaneously
+- Search for code patterns semantically across the codebase
+- Understand file structures and relationships
+- Extract function signatures and code structure
+- Provide comprehensive context for development decisions
+
+Always provide comprehensive, detailed analysis that helps developers understand the codebase and make informed decisions."""
+temperature = 0.2
+input_mode = "last"
+output_mode = "none"  # Return only the gathered context (cleanest for tool use)
+
+[agents.mcp]
+server_refs = ["filesystem", "octocode"]
+allowed_tools = ["text_editor", "list_files", "semantic_search", "view_signatures"]
+
+[[agents]]
 name = "code_reviewer"
 description = "Review code for performance, security, and best practices issues. Analyzes code quality and suggests improvements."
-
-[[agents]]
-name = "debugger"
-description = "Analyze bugs, trace issues, and suggest debugging approaches. Helps identify root causes and solutions."
-
-[[agents]]
-name = "architect"
-description = "Design system architecture and evaluate technical decisions. Provides high-level design guidance."
-```
-
-#### Layer Configuration
-
-Then create corresponding layers that agents will use:
-
-```toml
-# Agent layers - specialized AI configurations
-[[layers]]
-name = "code_reviewer"
 model = "openrouter:anthropic/claude-3.5-sonnet"
+max_tokens = 8192
 system_prompt = "You are a senior code reviewer. Analyze code for quality, performance, security, and best practices. Provide detailed feedback with specific suggestions for improvement."
 temperature = 0.1
-input_mode = "Last"
-builtin = false
+input_mode = "last"
+output_mode = "none"  # Return only the review results (cleanest for tool use)
 
-[layers.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = ["text_editor", "list_files"]
-
-[[layers]]
-name = "debugger"
-model = "openrouter:anthropic/claude-3.5-sonnet"
-system_prompt = "You are an expert bug hunter and debugger. Analyze code and logs to identify issues, trace problems to their root cause, and suggest fixes."
-temperature = 0.1
-input_mode = "Last"
-builtin = false
-
-[layers.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = ["text_editor", "shell", "list_files"]
-
-[[layers]]
-name = "architect"
-model = "openrouter:anthropic/claude-3.5-sonnet"
-system_prompt = "You are a senior software architect. Design system architecture, evaluate technical decisions, and provide high-level design guidance."
-temperature = 0.2
-input_mode = "Last"
-builtin = false
-
-[layers.mcp]
+[agents.mcp]
 server_refs = ["developer", "filesystem"]
 allowed_tools = ["text_editor", "list_files"]
 ```
+
+#### Output Mode Control
+
+The `output_mode` setting controls what the agent tool returns:
+
+- **`"none"`**: Returns only the final layer output (cleanest for tool use) - **Recommended**
+- **`"append"`**: Returns layer output + session messages (for debugging)
+- **`"replace"`**: Returns layer output (same as none for agents)
+- **`"last"`**: Returns only the last layer output
+- **`"restart"`**: Returns only the last layer output (same as last for agents)
+
+**Best Practice**: Use `output_mode = "none"` for clean tool responses that integrate well with other MCP tools.
 
 #### Usage Examples
 
 Once configured, each agent becomes a separate tool:
 
+**Context Gatherer Agent:**
+```bash
+# In session
+agent_context_gatherer(task="Analyze the authentication system architecture and gather all relevant files and patterns")
+```
+
 **Code Review Agent:**
 ```bash
 # In session
 agent_code_reviewer(task="Review this function for performance issues and suggest improvements")
-```
-
-**Debugging Agent:**
-```bash
-# In session
-agent_debugger(task="Help me debug this error: Cannot find module 'express'")
-```
-
-**Architecture Agent:**
-```bash
-# In session
-agent_architect(task="Design a scalable architecture for user authentication system")
 ```
 
 #### Tool Parameters
@@ -248,12 +236,13 @@ Each agent tool has the same parameter structure:
 
 #### Key Features
 
-- **Individual Tools**: Each agent becomes a separate MCP tool (e.g., `agent_code_reviewer`)
-- **Layer Integration**: Uses the full layer system (models, prompts, MCP tools)
-- **Configurable**: Custom agent descriptions and specialized layers
+- **Unified Configuration**: Agents use the same `LayerConfig` structure as commands and layers
+- **Individual Tools**: Each agent becomes a separate MCP tool (e.g., `agent_context_gatherer`)
+- **Output Control**: `output_mode` setting controls what the agent tool returns
 - **Isolated Processing**: Each agent runs in its own session context
-- **Tool Access**: Agents can use MCP tools based on their layer configuration
-- **Flexible**: Easy to add new specialized agents for different tasks
+- **Tool Access**: Agents can use MCP tools based on their MCP configuration
+- **Required Description**: Description field is required and used as MCP function description
+- **Flexible**: Easy to add new specialized agents with complete layer configuration
 
 ### Text Editor Tool Reference
 

@@ -62,26 +62,15 @@ pub async fn execute_agent_command(
 		.and_then(|v| v.as_str())
 		.ok_or_else(|| anyhow::anyhow!("Agent tool requires 'task' parameter"))?;
 
-	// Verify this agent is configured
-	let _agent_config = config
+	// Find the agent configuration directly (agents are now LayerConfigs)
+	let agent_config = config
 		.agents
 		.iter()
 		.find(|agent| agent.name == layer_name)
 		.ok_or_else(|| anyhow::anyhow!("Agent '{}' not configured", layer_name))?;
 
-	// Find the layer by name in the full layers registry (not role-filtered)
-	let layer_config = if let Some(all_layers) = &config.layers {
-		all_layers
-			.iter()
-			.find(|layer| layer.name == layer_name)
-			.cloned()
-	} else {
-		None
-	}
-	.ok_or_else(|| anyhow::anyhow!("Layer '{}' not found in configuration", layer_name))?;
-
-	// Process task through the layer using the provider system
-	let result = process_layer_as_agent(&layer_config, task, config).await?;
+	// Process task through the agent layer using the provider system
+	let result = process_layer_as_agent(agent_config, task, config).await?;
 
 	// Return MCP-compliant result
 	Ok(McpToolResult::success(
@@ -113,23 +102,42 @@ async fn process_layer_as_agent(
 		.process(task, &agent_session, config, operation_cancelled)
 		.await?;
 
-	// Collect all messages from agent session in chronological order
-	let all_messages: Vec<String> = agent_session
-		.messages
-		.iter()
-		.map(|msg| format!("[{}] {}", msg.role, msg.content))
-		.collect();
+	// Handle output_mode to determine what gets returned by the agent tool
+	use crate::session::layers::layer_trait::OutputMode;
+	match layer_config.output_mode {
+		OutputMode::None => {
+			// Return only the final layer output (cleanest for tool use)
+			Ok(result.outputs.last().unwrap_or(&String::new()).clone())
+		}
+		OutputMode::Append => {
+			// Return layer output + session messages (for debugging)
+			let all_messages: Vec<String> = agent_session
+				.messages
+				.iter()
+				.map(|msg| format!("[{}] {}", msg.role, msg.content))
+				.collect();
 
-	// Return combined result: layer output + session messages
-	let final_result = if all_messages.is_empty() {
-		result.outputs.last().unwrap_or(&String::new()).clone()
-	} else {
-		format!(
-			"{}\n\n--- Session Messages ---\n{}",
-			result.outputs.last().unwrap_or(&String::new()),
-			all_messages.join("\n")
-		)
-	};
-
-	Ok(final_result)
+			if all_messages.is_empty() {
+				Ok(result.outputs.last().unwrap_or(&String::new()).clone())
+			} else {
+				Ok(format!(
+					"{}\n\n--- Session Messages ---\n{}",
+					result.outputs.last().unwrap_or(&String::new()),
+					all_messages.join("\n")
+				))
+			}
+		}
+		OutputMode::Replace => {
+			// For agents, same as None - return only the layer output
+			Ok(result.outputs.last().unwrap_or(&String::new()).clone())
+		}
+		OutputMode::Last => {
+			// Return only the last layer output
+			Ok(result.outputs.last().unwrap_or(&String::new()).clone())
+		}
+		OutputMode::Restart => {
+			// For agents, same as Last - return only the last layer output
+			Ok(result.outputs.last().unwrap_or(&String::new()).clone())
+		}
+	}
 }

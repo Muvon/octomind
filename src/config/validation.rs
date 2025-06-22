@@ -158,6 +158,15 @@ impl Config {
 				return Err(anyhow!("Layer at index {} has empty name", index));
 			}
 
+			// Validate layer description
+			if layer.description.is_empty() {
+				return Err(anyhow!(
+					"Layer '{}' at index {} has empty description",
+					layer.name,
+					index
+				));
+			}
+
 			// Validate layer name is not empty (layer_type field doesn't exist)
 			// Additional layer-specific validation can be added here if needed
 

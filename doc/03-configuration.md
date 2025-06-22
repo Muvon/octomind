@@ -384,73 +384,131 @@ tools = ["text_editor", "shell"]  # Limited tool set
 
 ## Layered Architecture Configuration
 
-### Layer-Specific Models
+### Layer Configuration Requirements
 
-# Layered Architecture Configuration
+**Important**: All layers, commands, and agents now require a `description` field:
+- **Layers**: Used for documentation and understanding layer purpose
+- **Commands**: Displayed in `/help` command output
+- **Agents**: Used as MCP function description for tool discovery
+
+### Layer-Specific Models
 
 All layers use the same GenericLayer implementation with different configurations.
 Each layer supports input_mode and output_mode for flexible behavior.
 
-[developer]
-enable_layers = true
-
+```toml
 [[layers]]
 name = "task_refiner"
+description = "Refines and clarifies user requests for better processing by subsequent layers"
 model = "openrouter:openai/gpt-4.1-mini"
 temperature = 0.2
-input_mode = "Last"
+input_mode = "last"
 output_mode = "none"  # Intermediate layer
-builtin = true
+
+[layers.mcp]
+server_refs = []
+allowed_tools = []
 
 [[layers]]
 name = "task_researcher"
+description = "Gathers information and context needed for development tasks through code analysis and research"
 model = "openrouter:google/gemini-2.5-flash-preview"
 temperature = 0.2
-input_mode = "Last"
-output_mode = "replace"  # Replaces input with context
-builtin = true
+input_mode = "last"
+output_mode = "append"  # Adds research findings to session
 
 [layers.mcp]
-server_refs = ["developer", "filesystem", "web", "octocode"]
-allowed_tools = ["search_code", "view_signatures", "list_files"]
-
-[[layers]]
-name = "reducer"
-model = "openrouter:openai/o4-mini"  # Use cheaper model for cost-optimized context compression
-temperature = 0.2
-input_mode = "All"
-output_mode = "replace"  # Replaces session content when triggered
-builtin = true
+server_refs = ["filesystem", "octocode"]
+allowed_tools = ["list_files", "semantic_search", "view_signatures"]
+```
 
 ### Custom Layer Configuration
 
-Create layers with any combination of settings:
+Create layers with any combination of settings (description is required):
 
 ```toml
 [[layers]]
-name = "custom_layer"
-enabled = true
-model = "openrouter:openai/gpt-4.1-nano"
+name = "custom_analyzer"
+description = "Performs specialized analysis of code patterns and architecture"
+model = "openrouter:openai/gpt-4.1-mini"
 temperature = 0.1
-enable_tools = false
-input_mode = "Last"
+input_mode = "last"
+output_mode = "append"
+
+[layers.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["text_editor", "list_files"]
 
 [[layers]]
-name = "task_researcher"
-enabled = true
-model = "openrouter:google/gemini-2.5-flash-preview"
+name = "code_optimizer"
+description = "Optimizes code for performance and maintainability"
+model = "openrouter:anthropic/claude-3.5-sonnet"
 temperature = 0.2
-enable_tools = true
-allowed_tools = ["core", "text_editor"]
-input_mode = "Last"
+input_mode = "all"
+output_mode = "append"
 
-[[layers]]
-name = "developer"
-enabled = true
-model = "openrouter:anthropic/claude-sonnet-4"
-temperature = 0.3
-enable_tools = true
-input_mode = "All"
+[layers.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "shell"]
+```
+
+### Agent Configuration
+
+Agents use the same `LayerConfig` structure as commands and layers. Each agent becomes a separate MCP tool (e.g., `agent_context_gatherer`):
+
+```toml
+[[agents]]
+name = "context_gatherer"
+description = "Gather detailed context from files and codebase. Reads files, searches code patterns, and provides comprehensive information about specific areas of the codebase for development tasks."
+model = "openrouter:google/gemini-2.5-flash-preview"
+max_tokens = 16384
+system_prompt = """You are a comprehensive context gatherer and code analyst..."""
+temperature = 0.2
+input_mode = "last"
+output_mode = "none"  # Return only the gathered context (cleanest for tool use)
+
+[agents.mcp]
+server_refs = ["filesystem", "octocode"]
+allowed_tools = ["text_editor", "list_files", "semantic_search", "view_signatures"]
+
+[[agents]]
+name = "code_reviewer"
+description = "Review code for performance, security, and best practices issues. Analyzes code quality and suggests improvements."
+model = "openrouter:anthropic/claude-3.5-sonnet"
+max_tokens = 8192
+system_prompt = "You are a senior code reviewer..."
+temperature = 0.1
+input_mode = "last"
+output_mode = "none"  # Return only the review results
+
+[agents.mcp]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["text_editor", "list_files"]
+```
+
+**Key Features:**
+- **Unified Configuration**: Same structure as layers and commands
+- **Required Description**: Used as MCP function description
+- **Output Control**: `output_mode` controls what the agent tool returns
+- **MCP Integration**: Full access to development tools via MCP configuration
+
+### Command Configuration
+
+Commands use the same `LayerConfig` structure and can be invoked with `/run <command_name>`:
+
+```toml
+[[commands]]
+name = "reduce"
+description = "Compress session history for cost optimization during ongoing work"
+model = "openrouter:openai/o4-mini"
+system_prompt = "You are a Session History Reducer..."
+temperature = 0.2
+input_mode = "all"
+output_mode = "replace"  # Replace session content with compressed history
+
+[commands.mcp]
+server_refs = []
+allowed_tools = []
 ```
 
 ## MCP Configuration

@@ -204,6 +204,8 @@ pub struct LayerConfig {
 	pub model: Option<String>,
 	// System prompt is optional - uses built-in prompts for known layer types
 	pub system_prompt: Option<String>,
+	// Description for this layer (required - used for agents, commands, and documentation)
+	pub description: String,
 	#[serde(default = "default_temperature")]
 	pub temperature: f32,
 	#[serde(default = "default_max_tokens")]

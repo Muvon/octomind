@@ -29,15 +29,18 @@ Command layers are defined in the `[commands]` section of your configuration fil
 
 ### Basic Configuration
 
+**Note**: The `description` field is now **required** for all command layers and is used in help text when running `/help`.
+
 ```toml
-[developer.commands.estimate]
+[[commands]]
 name = "estimate"
+description = "Provides project estimation and time analysis for development tasks"
 model = "openrouter:openai/gpt-4.1-mini"  # Optional - uses session model if not specified
 system_prompt = "You are a project estimation expert..."
 temperature = 0.2
 input_mode = "last"  # "last", "all", or "summary" (case-insensitive)
 
-[developer.commands.estimate.mcp]
+[commands.mcp]
 server_refs = ["developer", "filesystem"]  # Reference servers from registry
 allowed_tools = []  # Empty means all tools from referenced servers
 ```
@@ -73,8 +76,9 @@ allowed_tools = ["text_editor", "shell"]   # Limit to specific tools
 ### 1. Project Estimation
 
 ```toml
-[developer.commands.estimate]
+[[commands]]
 name = "estimate"
+description = "Provides project estimation and time analysis for development tasks"
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = """You are a project estimation expert. Analyze the work done or discussed and provide:
 
@@ -87,7 +91,7 @@ Be specific and practical."""
 temperature = 0.2
 input_mode = "last"  # Gets the last assistant response for analysis
 
-[developer.commands.estimate.mcp]
+[commands.mcp]
 server_refs = []  # No tools needed for estimation
 ```
 

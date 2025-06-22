@@ -15,9 +15,11 @@
 // Developer MCP provider - modular structure
 // Handles shell execution and other development tools
 
+pub mod ast_grep;
 pub mod functions;
 pub mod shell;
 
 // Re-export main functionality
+pub use ast_grep::execute_ast_grep_command;
 pub use functions::get_all_functions;
 pub use shell::execute_shell_command;

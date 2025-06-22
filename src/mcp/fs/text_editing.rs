@@ -257,26 +257,30 @@ pub async fn line_replace_spec(
 	// Simple and correct approach: use the lines array we already have
 	// but reconstruct the content properly preserving line endings
 	let mut result_parts = Vec::new();
-	
+
 	// Add lines before target range
 	for i in 0..(start_line - 1) {
 		result_parts.push(lines[i]);
 	}
-	
+
 	// Add the replacement content
 	result_parts.push(new_str);
-	
-	// Add lines after target range  
+
+	// Add lines after target range
 	for i in end_line..lines.len() {
 		result_parts.push(lines[i]);
 	}
-	
+
 	// Detect original line ending style
-	let line_ending = if file_content.contains("\r\n") { "\r\n" } else { "\n" };
-	
+	let line_ending = if file_content.contains("\r\n") {
+		"\r\n"
+	} else {
+		"\n"
+	};
+
 	// Reconstruct content
 	let new_content = result_parts.join(line_ending);
-	
+
 	// Preserve final line ending behavior
 	let final_content = if file_content.ends_with(line_ending) {
 		format!("{}{}", new_content, line_ending)

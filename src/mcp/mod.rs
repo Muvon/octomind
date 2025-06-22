@@ -646,6 +646,17 @@ async fn try_execute_tool_call(
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						}
+						"ast_grep" => {
+							crate::log_debug!(
+								"Executing ast_grep command via developer server '{}'",
+								target_server.name()
+							);
+							let mut result =
+								dev::execute_ast_grep_command(call, cancellation_token.clone())
+									.await?;
+							result.tool_id = call.tool_id.clone();
+							return Ok(result);
+						}
 						_ => {
 							return Err(anyhow::anyhow!(
 								"Tool '{}' not implemented in developer server",

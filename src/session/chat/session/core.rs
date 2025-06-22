@@ -151,13 +151,12 @@ impl ChatSession {
 			role_config.temperature
 		};
 
-		// Get max_tokens from role config if not provided via command line
+		// Get max_tokens from root config if not provided via command line
 		let effective_max_tokens = if let Some(tokens) = max_tokens {
 			tokens // Use command line override
 		} else {
-			// Read from role configuration - STRICT: assume it exists
-			let (role_config, _, _, _, _) = config.get_role_config(role);
-			role_config.max_tokens
+			// Read from root configuration - STRICT: assume it exists
+			config.get_effective_max_tokens()
 		};
 
 		// Check if we should load or create a session

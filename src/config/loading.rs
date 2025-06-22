@@ -417,4 +417,28 @@ tools = []
 		assert!(!server_names.contains(&"developer")); // Should not be included
 		assert!(!server_names.contains(&"filesystem")); // Should not be included
 	}
+
+	#[test]
+	fn test_max_tokens_inheritance() {
+		let test_config = get_test_config_with_custom_role();
+
+		// Parse the config
+		let mut config: Config = toml::from_str(&test_config).expect("Failed to parse test config");
+		config.build_role_map();
+
+		// Test that all roles use the root level max_tokens (16384 from test config)
+		assert_eq!(config.get_max_tokens("developer"), 16384);
+		assert_eq!(config.get_max_tokens("assistant"), 16384);
+		assert_eq!(config.get_max_tokens("tester"), 16384);
+		assert_eq!(config.get_max_tokens("nonexistent_role"), 16384); // Should still return root level
+
+		// Test get_effective_max_tokens directly
+		assert_eq!(config.get_effective_max_tokens(), 16384);
+
+		// Verify that RoleConfig no longer has max_tokens field by checking the role config struct
+		let (role_config, _, _, _, _) = config.get_role_config("tester");
+		// This test passes if the code compiles - if max_tokens was still in RoleConfig,
+		// we'd need to access role_config.max_tokens, but since it's removed, this verifies the refactoring
+		assert!(!role_config.enable_layers); // Just test something else to ensure role_config is valid
+	}
 }

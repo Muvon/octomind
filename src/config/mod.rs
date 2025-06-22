@@ -221,6 +221,12 @@ impl Config {
 		self.model.clone()
 	}
 
+	/// Get the effective max_tokens to use - uses root config max_tokens (now always required)
+	pub fn get_effective_max_tokens(&self) -> u32 {
+		// Max tokens is now always required in config, no fallback needed
+		self.max_tokens
+	}
+
 	/// Get server configuration by name from the config registry
 	/// Now relies entirely on config - no more runtime injection
 	pub fn get_server_config(&self, server_name: &str) -> Option<McpServerConfig> {
@@ -266,6 +272,12 @@ impl Config {
 	pub fn get_model(&self, _role: &str) -> String {
 		// All roles now use the system-wide model
 		self.get_effective_model()
+	}
+
+	/// Get the max_tokens for the specified role
+	pub fn get_max_tokens(&self, _role: &str) -> u32 {
+		// All roles now use the system-wide max_tokens
+		self.get_effective_max_tokens()
 	}
 
 	/// Get configuration for a specific role

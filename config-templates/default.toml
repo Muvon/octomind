@@ -95,7 +95,6 @@ max_session_spending_threshold = 0.0
 name = "developer"
 enable_layers = false
 temperature = 0.2
-max_tokens = 16384
 system = """
 You are Octomind - ELITE AUTONOMOUS AI DEVELOPER
 
@@ -300,7 +299,6 @@ allowed_tools = ["developer:*", "filesystem:*", "web_search", "read_html", "octo
 name = "assistant"
 enable_layers = false
 temperature = 0.7
-max_tokens = 8192
 layer_refs = []
 system = "You are a helpful assistant."
 

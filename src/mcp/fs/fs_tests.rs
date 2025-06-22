@@ -31,7 +31,7 @@ mod tests {
 			.unwrap();
 
 		// Check that operation succeeded
-		assert!(!result.result.get("error").is_some());
+		assert!(result.result.get("error").is_none());
 
 		// Check file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -301,7 +301,7 @@ mod tests {
 			.unwrap();
 
 		// Check that operation succeeded
-		assert!(!result.result.get("error").is_some());
+		assert!(result.result.get("error").is_none());
 
 		// Read and verify byte content
 		let actual_bytes = fs::read(temp_file.path()).await.unwrap();
@@ -341,7 +341,7 @@ mod tests {
 		.unwrap();
 
 		// Check that operation succeeded
-		assert!(!result.result.get("error").is_some());
+		assert!(result.result.get("error").is_none());
 
 		// Check file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -545,7 +545,7 @@ mod tests {
 		.unwrap();
 
 		// Check that operation succeeded
-		assert!(!result.result.get("error").is_some());
+		assert!(result.result.get("error").is_none());
 
 		// Read and verify byte content
 		let actual_bytes = fs::read(temp_file.path()).await.unwrap();
@@ -579,7 +579,7 @@ mod tests {
 		.unwrap();
 
 		// Check that operation succeeded
-		assert!(!result.result.get("error").is_some());
+		assert!(result.result.get("error").is_none());
 
 		// Check file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();

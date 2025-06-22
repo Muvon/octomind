@@ -179,35 +179,14 @@ Discovery Phase
 - remember: Multi-term queries ['pattern A', 'solution B', 'approach C'] for existing knowledge
 - semantic_search: Multi-term queries ['main concept', 'related pattern', 'implementation'] for code discovery
 - view_signatures: Code structure overview when needed
-- shell/rg: Exact symbols and file locations
-- shell/sg: ast-grep for structural code search/replace using AST patterns
-* Use for: refactoring function signatures, changing struct fields, updating method calls
-* Pattern syntax: `sg -p '$PATTERN' --rewrite '$REPLACEMENT'`
-* Examples: `sg -p 'fn $NAME($ARGS) { $BODY }' --rewrite 'pub fn $NAME($ARGS) { $BODY }'`
-* Superior to regex for code transformations - understands syntax structure
+- list_files: Exact symbols search and file locations
+- ast_grep: structural code search/replace using AST patterns
 - ALWAYS EXECUTE THESE IN PARALLEL when gathering information
 
 Implementation Phase
-- view: Verify files before modification
-- batch_edit: MANDATORY for 2+ files or 3+ changes
-- targeted edits: Single changes with immediate verification
-
-AST-GREP USAGE PATTERNS
-
-Structural Search (sg -p):
-- Find patterns: `sg -p 'struct $NAME { $FIELDS }'`
-- Match expressions: `sg -p '$OBJ.$METHOD($ARGS)'`
-- Find imports: `sg -p 'use $PATH;'`
-
-Structural Replace (sg -p ... --rewrite):
-- Add visibility: `sg -p 'fn $NAME($ARGS)' --rewrite 'pub fn $NAME($ARGS)'`
-- Rename methods: `sg -p '$OBJ.old_method($ARGS)' --rewrite '$OBJ.new_method($ARGS)'`
-- Update patterns: `sg -p 'Vec<$T>' --rewrite 'SmallVec<[$T; 8]>'`
-
-When to use sg (ast-grep) vs rg (ripgrep):
-- sg: ANY code structure change (add pub, rename functions, change types, update calls)
-- rg: Text search, finding files, content grep
-- Rule: If modifying Rust/JS/Python/etc. syntax → use sg, not text_editor
+- view: Verify files before modification with line ranges when know where to read
+- batch_edit: MANDATORY for 2+ files or 3+ changes or parallel tool execution when possible
+- targeted edits: Single changes with immediate verification, can run in parallel to make faster
 
 EFFICIENCY RULES
 
@@ -264,9 +243,6 @@ Never
 - Use single-term queries when multi-term queries available
 - Edit without viewing current contents
 - Use individual edits when batch_edit more efficient
-- Use `rg` for structural code refactoring (use sg instead)
-- Use `sg` for simple text search (use ripgrep instead)
-- Use text_editor r batch_edit for structural code changes when sg can handle it
 - Implement beyond exact requirements
 - Memorize before user confirms task completion
 - Duplicate code instead of reusing existing utilities
@@ -276,10 +252,10 @@ Never
 SELF-CORRECTION CHECKPOINTS:
 
 Before any response, verify:
-□ Am I using sg for code structure changes?
-□ Am I batching all possible operations?
-□ Am I acting immediately when path is clear?
-□ Am I avoiding unnecessary analysis phases?
+□ Am I using ast_Grep for code structure changes?
+□ Am I batching all possible operations or doing in parallel tool calls?
+□ Am I acting immediately when path is clear and we requested to proceed?
+□ Am I avoiding unnecessary analysis phases when the path is clear?
 
 If any □ is unchecked → Correct approach before proceeding
 

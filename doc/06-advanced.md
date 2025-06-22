@@ -13,9 +13,79 @@ MCP enables AI models to use external tools and services through a standardized 
 ### Built-in MCP Tools
 
 #### Developer Tools (type: "builtin")
-- **shell**: Execute terminal commands and development scripts
-- **agent**: Route tasks to configured AI layers for specialized processing
-- **Code analysis**: Built-in code understanding and project analysis
+
+The developer MCP server provides essential development tools for code analysis, shell operations, and structural code transformations.
+
+**shell** - Execute terminal commands with foreground and background execution support
+- **Foreground execution**: Standard command execution with output capture
+- **Background execution**: Long-running processes that return PID for manual management
+- **Process management**: Background processes continue until explicitly killed or app exits
+- **Shell history integration**: Commands are automatically added to shell history
+
+```json
+// Foreground execution (default)
+{"command": "ls -la"}
+
+// Background execution
+{"command": "python -m http.server 8000", "background": true}
+// Returns: {"success": true, "background": true, "pid": 12345, "message": "...", "note": "Use 'kill 12345' to terminate..."}
+
+// Kill background process
+{"command": "kill 12345"}
+```
+
+**Parameters:**
+- `command` (string, required): The shell command to execute
+- `background` (boolean, default: false): Run command in background and return PID instead of waiting for completion
+
+**ast_grep** - Search and refactor code using AST patterns with ast-grep (sg)
+- **Structural search**: Use AST patterns instead of regex for precise code matching
+- **Code refactoring**: Apply transformations using rewrite patterns
+- **Multi-language support**: JavaScript, TypeScript, PHP, Rust, Python, Go, Java, C/C++
+- **Context-aware output**: Configurable context lines around matches
+
+```json
+// Search for console.log calls
+{"pattern": "console.log($$$)", "language": "javascript"}
+
+// Rename function calls
+{"pattern": "oldFunc($ARGS)", "rewrite": "newFunc($ARGS)", "language": "javascript"}
+
+// Search specific files with context
+{"pattern": "class $NAME", "language": "php", "paths": ["src/**/*.php"], "context": 2}
+```
+
+**Parameters:**
+- `pattern` (string, required): The AST pattern to search for using ast-grep syntax
+- `paths` (array, optional): File paths or glob patterns to search within (default: current directory)
+- `language` (string, optional): Language of the code (e.g., 'rust', 'javascript', 'python', 'typescript', 'go', 'java', 'c', 'cpp', 'php')
+- `rewrite` (string, optional): Rewrite pattern to apply for refactoring transformations
+- `json_output` (boolean, default: false): Get output in JSON format
+- `context` (integer, default: 0): Number of lines of context to show around matches
+- `update_all` (boolean, default: false): Apply rewrites to all matches without confirmation
+
+**Pattern Syntax Examples:**
+
+*JavaScript/TypeScript:*
+- Function calls: `console.log($$$)`, `$OBJ.$METHOD($$$)`
+- Functions: `function $NAME($ARGS) { $$$ }`
+- Arrow functions: `($ARGS) => $BODY`
+- Variables: `const $VAR = $VALUE`
+
+*PHP:*
+- Function calls: `$NAME($$$)`
+- Method calls: `$OBJ->$METHOD($$$)`
+- Classes: `class $NAME { $$$ }`
+
+*Rust:*
+- Macros: `println!($$$)`
+- Functions: `fn $NAME($ARGS) { $$$ }`
+- Structs: `struct $NAME { $$$ }`
+
+**agent** - Route tasks to configured AI layers for specialized processing
+- **Task delegation**: Route complex tasks to specialized AI agents
+- **Layer integration**: Uses the same configuration system as commands and layers
+- **Tool access**: Agents can use MCP tools based on their configuration
 
 #### Filesystem Tools (type: "builtin")
 - **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many, batch_edit)
@@ -405,9 +475,17 @@ allowed_tools = ["text_editor", "shell"]
 
 ### Server Types
 
-- **developer**: Built-in development tools (shell commands, code analysis)
-- **filesystem**: Built-in file operations (reading, writing, editing files)
-- **web**: Built-in web tools (web search, HTML conversion)
+- **developer**: Built-in development tools
+  - `shell`: Terminal command execution with foreground/background support
+  - `ast_grep`: AST-based code search and refactoring using ast-grep (sg)
+  - `agent`: Task routing to specialized AI layers
+- **filesystem**: Built-in file operations
+  - `text_editor`: Comprehensive file editing with batch operations
+  - `list_files`: Directory browsing with pattern matching and content search
+- **web**: Built-in web tools
+  - `web_search`: Web search using Brave Search API
+  - `image_search`, `video_search`, `news_search`: Specialized search tools
+  - `read_html`: HTML to Markdown conversion
 - **external**: External MCP servers (HTTP or command-based)
 
 ### External MCP Servers

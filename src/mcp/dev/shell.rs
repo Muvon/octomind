@@ -87,9 +87,14 @@ This will return the output and error concatenated into a single string, as
 you would see from running on the command line. There will also be an indication
 of if the command succeeded or failed.
 
-Avoid commands that produce a large amount of output, and consider piping those outputs to files.
-If you need to run a long lived command, background it - e.g. `uvicorn main:app &` so that
-this tool does not run indefinitely.
+Parameters:
+- `command`: The shell command to execute (required)
+- `background`: Run command in background and return PID instead of waiting for completion (default: false)
+
+**Background Execution:**
+When `background` is true, the command runs in the background and returns immediately with the process PID.
+Background processes continue running until explicitly killed or the main application exits.
+Use the returned PID with `kill <pid>` command to terminate background processes.
 
 **Important**: Each shell command runs in its own process. Things like directory changes or
 sourcing files do not persist between tool calls. So you may need to repeat them each time by
@@ -99,6 +104,11 @@ stringing together commands, e.g. `cd example && ls` or `source env/bin/activate
 may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 - List files by name: `rg --files | rg <filename>`
 - List files that contain a regex: `rg '<regex>' -l`
+
+Examples:
+- Foreground: `{\"command\": \"ls -la\"}`
+- Background: `{\"command\": \"python -m http.server 8000\", \"background\": true}`
+- Kill background: `{\"command\": \"kill 12345\"}` (where 12345 is the returned PID)
 ".to_string(),
 		parameters: json!({
 			"type": "object",
@@ -106,6 +116,11 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 				"command": {
 					"type": "string",
 					"description": "The shell command to execute"
+				},
+				"background": {
+					"type": "boolean",
+					"default": false,
+					"description": "Run command in background and return PID instead of waiting for completion"
 				}
 			},
 			"required": ["command"]
@@ -126,6 +141,13 @@ pub async fn execute_shell_command(
 		Some(Value::String(cmd)) => cmd.clone(),
 		_ => return Err(anyhow!("Missing or invalid 'command' parameter")),
 	};
+
+	// Extract background parameter
+	let background = call
+		.parameters
+		.get("background")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false);
 
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
@@ -148,17 +170,52 @@ pub async fn execute_shell_command(
 		cmd
 	};
 
-	// Configure the command
-	cmd.stdout(std::process::Stdio::piped())
-		.stderr(std::process::Stdio::piped())
-		.stdin(std::process::Stdio::null())
-		.kill_on_drop(true); // CRITICAL: Kill process when dropped
+	// Configure the command based on execution mode
+	if background {
+		// Background execution: detach process and return PID immediately
+		cmd.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::null())
+			.stdin(std::process::Stdio::null())
+			.kill_on_drop(false); // Don't kill when dropped - let it run independently
+	} else {
+		// Foreground execution: capture output and wait for completion
+		cmd.stdout(std::process::Stdio::piped())
+			.stderr(std::process::Stdio::piped())
+			.stdin(std::process::Stdio::null())
+			.kill_on_drop(true); // CRITICAL: Kill process when dropped
+	}
 
 	// Spawn the process
 	let child = cmd
 		.spawn()
 		.map_err(|e| anyhow!("Failed to spawn command: {}", e))?;
 
+	// Handle background vs foreground execution
+	if background {
+		// Background execution: return PID immediately
+		let pid = child
+			.id()
+			.ok_or_else(|| anyhow!("Failed to get process ID"))?;
+
+		// Detach the child process so it continues running independently
+		// We do this by forgetting the child handle, which prevents kill_on_drop
+		std::mem::forget(child);
+
+		return Ok(McpToolResult {
+			tool_name: "shell".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"success": true,
+				"background": true,
+				"pid": pid,
+				"command": command,
+				"message": format!("Command started in background with PID {}", pid),
+				"note": format!("Use 'kill {}' to terminate this background process if needed", pid)
+			}),
+		});
+	}
+
+	// Foreground execution: wait for completion and return output
 	// Get the process ID for potential killing
 	let child_id = child.id();
 

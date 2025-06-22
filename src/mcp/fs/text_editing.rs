@@ -256,19 +256,19 @@ pub async fn line_replace_spec(
 
 	// Simple and correct approach: use the lines array we already have
 	// but reconstruct the content properly preserving line endings
-	let mut result_parts = Vec::new();
+	let mut result_parts: Vec<&str> = Vec::new();
 
 	// Add lines before target range
-	for i in 0..(start_line - 1) {
-		result_parts.push(lines[i]);
+	for line in lines.iter().take(start_line - 1) {
+		result_parts.push(*line);
 	}
 
 	// Add the replacement content
 	result_parts.push(new_str);
 
 	// Add lines after target range
-	for i in end_line..lines.len() {
-		result_parts.push(lines[i]);
+	for line in lines.iter().skip(end_line) {
+		result_parts.push(*line);
 	}
 
 	// Detect original line ending style

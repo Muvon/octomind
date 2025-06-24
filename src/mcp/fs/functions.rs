@@ -116,6 +116,7 @@ pub fn get_text_editor_function() -> McpFunction {
 			- After ANY edit (str_replace, insert, line_replace), line numbers become invalid
 			- ALWAYS use 'view' command first to get current line numbers before line_replace
 			- PREFER line_replace when you know exact lines (fastest), str_replace when you know content
+			- new_str contains RAW FILE CONTENT - use actual whitespace characters, not escape sequences!
 
 			Available commands:
 
@@ -256,7 +257,7 @@ pub fn get_text_editor_function() -> McpFunction {
 				},
 				"new_str": {
 					"type": "string",
-					"description": "Replacement text for str_replace or line_replace, text to insert for insert command, treat it as a file content with exactly what you provide - no interpretation or escaping, avoid DOUBLE escaping"
+					"description": "Raw file content exactly as it should appear in the file. Use actual tabs/spaces, NOT escape sequences like \\t or \\n. Copy exact indentation from original code. No string literal escaping needed - this is direct file content."
 				},
 				"insert_line": {
 					"type": "integer",

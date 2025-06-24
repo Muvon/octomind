@@ -76,43 +76,33 @@ async fn main() -> Result<(), anyhow::Error> {
 	result
 }
 
+/// Initialize MCP servers and tool map for role-based commands
+async fn initialize_mcp_for_role(role: &str, config: &Config) -> Result<(), anyhow::Error> {
+	let config_for_role = config.get_merged_config_for_role(role);
+
+	// Step 1: Initialize MCP servers first
+	if let Err(e) = octomind::mcp::initialize_servers_for_role(&config_for_role).await {
+		octomind::log_error!("Warning: Failed to initialize MCP servers: {}", e);
+		// Continue anyway - servers can be started on-demand if needed
+	}
+
+	// Step 2: Initialize tool map after servers are ready
+	if let Err(e) = octomind::mcp::tool_map::initialize_tool_map(&config_for_role).await {
+		octomind::log_error!("Warning: Failed to initialize tool map: {}", e);
+		// Continue anyway - will fall back to building tool map on each use
+	}
+
+	Ok(())
+}
+
 async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
 	// Initialize MCP servers and tool map once at startup for commands that need them
 	match &args.command {
 		Commands::Session(session_args) => {
-			// For session command, initialize MCP servers based on the role
-			let role = &session_args.role;
-			let config_for_role = config.get_merged_config_for_role(role);
-
-			// Step 1: Initialize MCP servers first
-			if let Err(e) = octomind::mcp::initialize_servers_for_role(&config_for_role).await {
-				octomind::log_error!("Warning: Failed to initialize MCP servers: {}", e);
-				// Continue anyway - servers can be started on-demand if needed
-			}
-
-			// Step 2: Initialize tool map after servers are ready (non-blocking for user)
-			// This runs in background - if it fails, we fall back to original logic
-			if let Err(e) = octomind::mcp::tool_map::initialize_tool_map(&config_for_role).await {
-				octomind::log_error!("Warning: Failed to initialize tool map: {}", e);
-				// Continue anyway - will fall back to building tool map on each use
-			}
+			initialize_mcp_for_role(&session_args.role, &config).await?;
 		}
 		Commands::Run(run_args) => {
-			// For run command, initialize MCP servers based on the role
-			let role = &run_args.role;
-			let config_for_role = config.get_merged_config_for_role(role);
-
-			// Step 1: Initialize MCP servers first
-			if let Err(e) = octomind::mcp::initialize_servers_for_role(&config_for_role).await {
-				octomind::log_error!("Warning: Failed to initialize MCP servers: {}", e);
-				// Continue anyway - servers can be started on-demand if needed
-			}
-
-			// Step 2: Initialize tool map after servers are ready
-			if let Err(e) = octomind::mcp::tool_map::initialize_tool_map(&config_for_role).await {
-				octomind::log_error!("Warning: Failed to initialize tool map: {}", e);
-				// Continue anyway - will fall back to building tool map on each use
-			}
+			initialize_mcp_for_role(&run_args.role, &config).await?;
 		}
 		_ => {
 			// Other commands don't need MCP servers

@@ -221,11 +221,11 @@ pub async fn perform_smart_truncation(
 	conversation_units.reverse();
 
 	// Step 4: Select complete units that fit within token budget
-	let mut selected_messages = Vec::new();
+	let mut selected_units = Vec::new();
 	let mut current_token_count = 0usize;
 
 	// Always try to keep the most recent units
-	for (unit_messages, _) in conversation_units.iter().rev() {
+	for (unit_messages, start_idx) in conversation_units.iter().rev() {
 		let unit_tokens: usize = unit_messages
 			.iter()
 			.map(|msg| crate::session::estimate_tokens(&msg.content))
@@ -233,7 +233,7 @@ pub async fn perform_smart_truncation(
 
 		if current_token_count + unit_tokens <= target_tokens {
 			// This unit fits, add it
-			selected_messages.extend(unit_messages.clone());
+			selected_units.push((unit_messages.clone(), *start_idx));
 			current_token_count += unit_tokens;
 		} else {
 			// This unit doesn't fit, we found our truncation boundary
@@ -241,13 +241,17 @@ pub async fn perform_smart_truncation(
 		}
 	}
 
-	// Sort selected messages to maintain chronological order
-	selected_messages.sort_by_key(|msg| {
-		non_system_messages
-			.iter()
-			.position(|m| m.content == msg.content && m.role == msg.role)
-			.unwrap_or(0)
-	});
+	// Reverse selected units to maintain chronological order (oldest first)
+	selected_units.reverse();
+
+	// Build final selected messages in correct chronological order
+	let mut selected_messages = Vec::new();
+	for (unit_messages, _) in selected_units {
+		selected_messages.extend(unit_messages);
+	}
+
+	// Messages are already in correct chronological order from unit processing
+	// No need to re-sort as it can break tool sequence ordering
 
 	// Step 5: Build the new truncated message list
 	let mut truncated_messages = Vec::new();
@@ -722,5 +726,39 @@ mod tests {
 		assert_eq!(messages[0].role, "assistant");
 		assert_eq!(messages[1].role, "tool");
 		assert_eq!(messages[1].tool_call_id, Some("call_123".to_string()));
+	}
+
+	#[test]
+	fn test_tool_sequence_ordering() {
+		// Test that tool sequences maintain correct ordering
+		let assistant_with_tools = create_test_message(
+			"assistant",
+			"I'll use a tool",
+			Some(
+				json!([{"id": "call_123", "type": "function", "function": {"name": "test_tool"}}]),
+			),
+			None,
+			None,
+		);
+
+		let tool_result = create_test_message(
+			"tool",
+			"Tool result",
+			None,
+			Some("call_123".to_string()),
+			Some("test_tool".to_string()),
+		);
+
+		// Test identify_tool_sequence_unit
+		let messages = vec![assistant_with_tools.clone(), tool_result.clone()];
+		let unit = super::identify_tool_sequence_unit(&messages, 0);
+
+		assert!(unit.is_some());
+		let (unit_messages, start_idx) = unit.unwrap();
+		assert_eq!(start_idx, 0);
+		assert_eq!(unit_messages.len(), 2);
+		assert_eq!(unit_messages[0].role, "assistant");
+		assert_eq!(unit_messages[1].role, "tool");
+		assert_eq!(unit_messages[1].tool_call_id, Some("call_123".to_string()));
 	}
 }

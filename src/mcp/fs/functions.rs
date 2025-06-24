@@ -256,7 +256,7 @@ pub fn get_text_editor_function() -> McpFunction {
 				},
 				"new_str": {
 					"type": "string",
-					"description": "Replacement text for str_replace, text to insert for insert command, or new content for line_replace command"
+					"description": "Replacement text for str_replace or line_replace, text to insert for insert command, treat it as a file content with exactly what you provide - no interpretation or escaping, avoid DOUBLE escaping"
 				},
 				"insert_line": {
 					"type": "integer",

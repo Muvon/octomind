@@ -210,8 +210,12 @@ function testFunction() {
 		assert!(result.is_ok());
 		let result = result.unwrap();
 		let output = result.result.as_object().unwrap();
-		// The result depends on how ast-grep handles empty patterns
-		assert!(output.contains_key("success"));
+		assert_eq!(output["isError"], true);
+		let error_content = &output["content"][0]["text"];
+		assert!(error_content
+			.as_str()
+			.unwrap()
+			.contains("Pattern parameter cannot be empty"));
 	}
 
 	#[tokio::test]
@@ -331,11 +335,15 @@ function testFunction() {
 		};
 
 		let result = execute_ast_grep_command(&call, None).await;
-		assert!(result.is_err());
-		assert!(result
-			.unwrap_err()
-			.to_string()
-			.contains("Missing or invalid 'pattern' parameter"));
+		assert!(result.is_ok());
+		let result = result.unwrap();
+		let output = result.result.as_object().unwrap();
+		assert_eq!(output["isError"], true);
+		let error_content = &output["content"][0]["text"];
+		assert!(error_content
+			.as_str()
+			.unwrap()
+			.contains("Missing required 'pattern' parameter"));
 	}
 
 	#[tokio::test]

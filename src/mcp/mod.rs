@@ -652,11 +652,22 @@ async fn try_execute_tool_call(
 								"Executing ast_grep command via developer server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								dev::execute_ast_grep_command(call, cancellation_token.clone())
-									.await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
+							match dev::execute_ast_grep_command(call, cancellation_token.clone())
+								.await
+							{
+								Ok(mut result) => {
+									result.tool_id = call.tool_id.clone();
+									return Ok(result);
+								}
+								Err(e) => {
+									// Convert execution errors to proper MCP error results
+									return Ok(McpToolResult::error(
+										call.tool_name.clone(),
+										call.tool_id.clone(),
+										format!("AST-grep execution failed: {}", e),
+									));
+								}
+							}
 						}
 						_ => {
 							return Err(anyhow::anyhow!(

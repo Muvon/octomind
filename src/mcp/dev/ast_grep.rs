@@ -263,8 +263,30 @@ pub async fn execute_ast_grep_command(
 
 	// Extract pattern parameter (required)
 	let pattern = match call.parameters.get("pattern") {
-		Some(Value::String(p)) => p.clone(),
-		_ => return Err(anyhow!("Missing or invalid 'pattern' parameter")),
+		Some(Value::String(p)) => {
+			if p.trim().is_empty() {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Pattern parameter cannot be empty".to_string(),
+				));
+			}
+			p.clone()
+		}
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Pattern parameter must be a string".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required 'pattern' parameter".to_string(),
+			));
+		}
 	};
 
 	// Extract optional parameters
@@ -386,7 +408,11 @@ pub async fn execute_ast_grep_command(
 			}
 		}
 		Err(e) => {
-			return Err(anyhow!("Failed to expand glob patterns: {}", e));
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Failed to expand glob patterns: {}", e),
+			));
 		}
 	};
 

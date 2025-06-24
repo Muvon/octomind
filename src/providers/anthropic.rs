@@ -307,6 +307,13 @@ impl AiProvider for AnthropicProvider {
 		}
 
 		// Implement retry logic with exponential backoff
+		if params.max_retries > 0 {
+			crate::log_debug!(
+				"🔄 Anthropic provider configured with {} max retries",
+				params.max_retries
+			);
+		}
+
 		let mut last_error = None;
 		for attempt in 0..=params.max_retries {
 			// Check for cancellation before each attempt
@@ -396,30 +403,58 @@ impl AiProvider for AnthropicProvider {
 
 				// Determine retry delay using Anthropic rate limit headers
 				let retry_delay_ms = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+					crate::log_info!("🚦 Anthropic rate limit exceeded (429) - analyzing headers for optimal retry timing...");
+
 					// Check for Anthropic's retry-after header first
 					if let Some(retry_after) = headers.get("retry-after") {
 						if let Ok(retry_after_str) = retry_after.to_str() {
 							if let Ok(retry_seconds) = retry_after_str.parse::<u64>() {
+								let delay_ms = retry_seconds * 1000;
 								crate::log_info!(
-									"Anthropic rate limit hit, retry-after header says wait {} seconds",
-									retry_seconds
+									"📋 Using retry-after header: waiting {:.1}s as specified by Anthropic",
+									delay_ms as f64 / 1000.0
 								);
-								retry_seconds * 1000 // Convert to milliseconds
+								delay_ms
 							} else {
 								// Fallback to exponential backoff for rate limits
-								2000 * (1 << attempt) // 2s, 4s, 8s, 16s...
+								let delay_ms = 2000 * (1 << attempt);
+								crate::log_info!(
+									"⚠️  Invalid retry-after header, using exponential backoff: {:.1}s",
+									delay_ms as f64 / 1000.0
+								);
+								delay_ms
 							}
 						} else {
-							2000 * (1 << attempt)
+							let delay_ms = 2000 * (1 << attempt);
+							crate::log_info!(
+								"⚠️  Could not parse retry-after header, using exponential backoff: {:.1}s",
+								delay_ms as f64 / 1000.0
+							);
+							delay_ms
 						}
 					} else {
 						// Check for Anthropic rate limit reset headers to calculate smart delay
 						let smart_delay = calculate_smart_retry_delay(&headers, attempt);
-						smart_delay.unwrap_or_else(|| 2000 * (1 << attempt))
+						if let Some(delay_ms) = smart_delay {
+							delay_ms
+						} else {
+							let delay_ms = 2000 * (1 << attempt);
+							crate::log_info!(
+								"📈 No rate limit headers found, using exponential backoff: {:.1}s",
+								delay_ms as f64 / 1000.0
+							);
+							delay_ms
+						}
 					}
 				} else {
 					// Server errors - use exponential backoff
-					1000 * (1 << attempt) // 1s, 2s, 4s, 8s...
+					let delay_ms = 1000 * (1 << attempt);
+					crate::log_info!(
+						"🔧 Server error ({}), using exponential backoff: {:.1}s",
+						status,
+						delay_ms as f64 / 1000.0
+					);
+					delay_ms
 				};
 
 				if attempt < params.max_retries {
@@ -427,10 +462,10 @@ impl AiProvider for AnthropicProvider {
 					log_rate_limit_info(&headers);
 
 					crate::log_info!(
-						"Anthropic API returned {} (attempt {}), retrying in {}ms...",
-						status,
+						"🔄 Anthropic API retry {}/{}: waiting {:.1}s before next attempt...",
 						attempt + 1,
-						retry_delay_ms
+						params.max_retries,
+						retry_delay_ms as f64 / 1000.0
 					);
 					tokio::time::sleep(tokio::time::Duration::from_millis(retry_delay_ms)).await;
 					continue;
@@ -964,9 +999,9 @@ fn calculate_smart_retry_delay(headers: &reqwest::header::HeaderMap, attempt: u3
 			let final_wait_ms = wait_ms.min(max_wait_ms);
 
 			crate::log_info!(
-				"Using Anthropic rate limit reset time: waiting {}ms until {}",
-				final_wait_ms,
-				reset_time.format("%H:%M:%S UTC")
+				"🎯 Using Anthropic rate limit reset time: waiting {:.1}s until {} UTC",
+				final_wait_ms as f64 / 1000.0,
+				reset_time.format("%H:%M:%S")
 			);
 
 			return Some(final_wait_ms);
@@ -1029,6 +1064,6 @@ fn log_rate_limit_info(headers: &reqwest::header::HeaderMap) {
 	}
 
 	if !rate_limit_info.is_empty() {
-		crate::log_debug!("Anthropic rate limits: {}", rate_limit_info.join(", "));
+		crate::log_info!("📊 Anthropic rate limits: {}", rate_limit_info.join(" | "));
 	}
 }

@@ -27,6 +27,7 @@ pub mod markdown;
 mod message_handler;
 pub mod response;
 pub mod session;
+pub mod session_continuation;
 mod syntax;
 mod tool_display;
 mod tool_error_tracker;

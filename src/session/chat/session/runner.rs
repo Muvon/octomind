@@ -18,7 +18,7 @@ use super::super::animation::{show_loading_animation, show_no_animation};
 use super::super::commands::*;
 use super::super::context_truncation::check_and_truncate_context;
 use super::super::input::read_user_input;
-use super::super::response::process_response;
+use super::super::response::{process_response, ResponseProcessingParams};
 use super::core::{ChatSession, SessionInitParams};
 use crate::config::Config;
 use crate::session::{create_system_prompt, ChatCompletionWithValidationParams};
@@ -897,7 +897,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				// Convert to legacy format for compatibility
 				let legacy_exchange = response.exchange;
 
-				let process_result = process_response(
+				let process_result = process_response(ResponseProcessingParams::new(
 					response.content,
 					legacy_exchange,
 					response.tool_calls,
@@ -906,7 +906,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					&current_config,
 					&role,
 					tool_process_cancelled.clone(),
-				)
+				))
 				.await;
 
 				// After processing, update operation context with completed tool IDs
@@ -1332,7 +1332,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			let tool_process_cancelled = Arc::new(AtomicBool::new(false));
 			let legacy_exchange = response.exchange;
 
-			let process_result = process_response(
+			let process_result = process_response(ResponseProcessingParams::new(
 				response.content,
 				legacy_exchange,
 				response.tool_calls,
@@ -1341,7 +1341,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 				&current_config,
 				&role,
 				tool_process_cancelled.clone(),
-			)
+			))
 			.await;
 
 			if let Err(e) = process_result {

@@ -23,11 +23,49 @@ use crate::log_debug;
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::formatting::remove_function_calls;
 use crate::session::chat::session::ChatSession;
+use crate::session::chat::session_continuation;
 use crate::session::ProviderExchange;
 use anyhow::Result;
 use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+// Response processing parameters struct
+pub struct ResponseProcessingParams<'a> {
+	pub content: String,
+	pub exchange: ProviderExchange,
+	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
+	pub finish_reason: Option<String>,
+	pub chat_session: &'a mut ChatSession,
+	pub config: &'a Config,
+	pub role: &'a str,
+	pub operation_cancelled: Arc<AtomicBool>,
+}
+
+impl<'a> ResponseProcessingParams<'a> {
+	#[allow(clippy::too_many_arguments)]
+	pub fn new(
+		content: String,
+		exchange: ProviderExchange,
+		tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
+		finish_reason: Option<String>,
+		chat_session: &'a mut ChatSession,
+		config: &'a Config,
+		role: &'a str,
+		operation_cancelled: Arc<AtomicBool>,
+	) -> Self {
+		Self {
+			content,
+			exchange,
+			tool_calls,
+			finish_reason,
+			chat_session,
+			config,
+			role,
+			operation_cancelled,
+		}
+	}
+}
 
 // Helper function to log debug information about the response
 fn log_response_debug(
@@ -223,25 +261,36 @@ fn add_assistant_message_with_tool_calls(
 }
 
 // Function to process response, handling tool calls recursively
-#[allow(clippy::too_many_arguments)]
-pub async fn process_response(
-	content: String,
-	exchange: ProviderExchange,
-	tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
-	finish_reason: Option<String>,
-	chat_session: &mut ChatSession,
-	config: &Config,
-	role: &str,
-	operation_cancelled: Arc<AtomicBool>,
-) -> Result<()> {
+pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()> {
 	// Check if operation has been cancelled at the very start
-	check_cancellation(&operation_cancelled)?;
+	check_cancellation(&params.operation_cancelled)?;
 
 	// Debug logging for finish_reason and tool calls
-	log_response_debug(config, &finish_reason, &tool_calls);
+	log_response_debug(params.config, &params.finish_reason, &params.tool_calls);
+
+	// CRITICAL: Check for continuation BEFORE any processing
+	// This handles token growth from recursive tool calls
+	if session_continuation::check_and_handle_continuation(params.chat_session, params.config)? {
+		// Continuation was triggered - let the normal flow continue with injected message
+		return Ok(());
+	}
+
+	// Check if this is a continuation response (AI responding to our summary request)
+	let has_tool_calls = params
+		.tool_calls
+		.as_ref()
+		.is_some_and(|calls| !calls.is_empty());
+	if session_continuation::process_continuation_response(
+		params.chat_session,
+		&params.content,
+		has_tool_calls,
+	)? {
+		// This was a continuation response - session has been reset, skip normal processing
+		return Ok(());
+	}
 
 	// First, add the user message before processing response
-	let last_message = chat_session.session.messages.last();
+	let last_message = params.chat_session.session.messages.last();
 	if last_message.is_none_or(|msg| msg.role != "user") {
 		// This is an edge case - the content variable here is the AI response, not user input
 		// We should have added the user message earlier in the main run_interactive_session
@@ -255,16 +304,16 @@ pub async fn process_response(
 	let mut tool_processor = ToolProcessor::new();
 
 	// Process original content first, then any follow-up tool calls
-	let mut current_content = content.clone();
-	let mut current_exchange = exchange;
-	let mut current_tool_calls_param = tool_calls.clone(); // Track the tool_calls parameter
+	let mut current_content = params.content.clone();
+	let mut current_exchange = params.exchange;
+	let mut current_tool_calls_param = params.tool_calls.clone(); // Track the tool_calls parameter
 
 	loop {
 		// Check for cancellation at the start of each loop iteration
-		check_cancellation(&operation_cancelled)?;
+		check_cancellation(&params.operation_cancelled)?;
 
 		// Check for tool calls if MCP has any servers configured
-		if !config.mcp.servers.is_empty() {
+		if !params.config.mcp.servers.is_empty() {
 			// Resolve current tool calls for this iteration
 			let current_tool_calls =
 				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
@@ -272,22 +321,22 @@ pub async fn process_response(
 			if !current_tool_calls.is_empty() {
 				// Add assistant message with tool calls preserved
 				add_assistant_message_with_tool_calls(
-					chat_session,
+					params.chat_session,
 					&current_content,
 					&current_exchange,
-					config,
-					role,
+					params.config,
+					params.role,
 				)?;
 
 				// Display the clean content (without function calls) to the user FIRST
 				let clean_content = remove_function_calls(&current_content);
-				print_assistant_response(&clean_content, config, role);
+				print_assistant_response(&clean_content, params.config, params.role);
 
 				// Display tool parameters upfront (headers will be shown per-tool during execution)
-				display_tool_parameters_only(config, &current_tool_calls).await;
+				display_tool_parameters_only(params.config, &current_tool_calls).await;
 
 				// Early exit if cancellation was requested
-				if operation_cancelled.load(Ordering::SeqCst) {
+				if params.operation_cancelled.load(Ordering::SeqCst) {
 					println!("{}", "\nOperation cancelled by user.".bright_yellow());
 					// Do NOT add any confusing message to the session
 					return Ok(());
@@ -296,15 +345,15 @@ pub async fn process_response(
 				// Execute all tool calls in parallel using the new module
 				let (tool_results, total_tool_time_ms) = tool_execution::execute_tools_parallel(
 					current_tool_calls,
-					chat_session,
-					config,
+					params.chat_session,
+					params.config,
 					&mut tool_processor,
-					operation_cancelled.clone(),
+					params.operation_cancelled.clone(),
 				)
 				.await?;
 
 				// Final cancellation check after all tools processed
-				if operation_cancelled.load(Ordering::SeqCst) {
+				if params.operation_cancelled.load(Ordering::SeqCst) {
 					println!(
 						"{}",
 						"\nTool execution cancelled - cleaning up conversation state."
@@ -313,10 +362,10 @@ pub async fn process_response(
 
 					// BOSS FIX: Remove the assistant message with tool_calls when cancelled
 					// The problem: we added assistant message with tool_calls but cancellation prevents proper tool_result processing
-					if let Some(last_msg) = chat_session.session.messages.last() {
+					if let Some(last_msg) = params.chat_session.session.messages.last() {
 						if last_msg.role == "assistant" && last_msg.tool_calls.is_some() {
 							// Last message is broken assistant with tool_calls - remove it on cancellation
-							chat_session.session.messages.pop();
+							params.chat_session.session.messages.pop();
 							log_debug!("Removed last assistant message with tool_calls due to cancellation");
 						}
 					}
@@ -332,10 +381,10 @@ pub async fn process_response(
 						tool_result_processor::process_tool_results(
 							tool_results,
 							total_tool_time_ms,
-							chat_session,
-							config,
-							role,
-							operation_cancelled.clone(),
+							params.chat_session,
+							params.config,
+							params.role,
+							params.operation_cancelled.clone(),
 						)
 						.await?
 					{
@@ -397,11 +446,11 @@ pub async fn process_response(
 
 	// Handle final response using helper function
 	handle_final_response(
-		&content,
+		&params.content,
 		&current_content,
 		current_exchange,
-		chat_session,
-		config,
-		role,
+		params.chat_session,
+		params.config,
+		params.role,
 	)
 }

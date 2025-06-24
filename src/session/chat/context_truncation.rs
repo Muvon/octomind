@@ -17,6 +17,7 @@
 use crate::config::Config;
 use crate::log_conditional;
 use crate::session::chat::session::ChatSession;
+use crate::session::chat::session_continuation;
 use crate::session::SmartSummarizer;
 use anyhow::Result;
 use colored::Colorize;
@@ -35,15 +36,16 @@ pub async fn check_and_truncate_context(
 		return Ok(());
 	}
 
-	// Estimate current token usage
 	let current_tokens = crate::session::estimate_message_tokens(&chat_session.session.messages);
 
-	// If we're under the threshold, nothing to do
-	if current_tokens < config.max_session_tokens_threshold {
+	// If we're under the threshold or continuation is in progress, nothing to do
+	if current_tokens < config.max_session_tokens_threshold
+		|| session_continuation::is_continuation_in_progress(chat_session)
+	{
 		return Ok(());
 	}
 
-	// Delegate to the core truncation logic
+	// Fallback to original truncation logic if continuation didn't handle it
 	perform_smart_truncation(chat_session, config, current_tokens).await
 }
 

@@ -132,6 +132,7 @@ pub struct ChatSession {
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
 	pub max_retries: u32,              // Maximum number of retries for provider errors
+	pub continuation_pending: bool,    // Flag for session continuation state
 }
 
 impl ChatSession {
@@ -195,6 +196,7 @@ impl ChatSession {
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 			pending_image: None,                // Initialize pending image
 			max_retries: max_retries_value,     // Set max retries value
+			continuation_pending: false,        // Initialize continuation state
 		}
 	}
 
@@ -315,6 +317,7 @@ impl ChatSession {
 						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 						pending_image: None,                // Initialize pending image
 						max_retries: params.max_retries.unwrap_or(0), // Use provided max_retries or default to 0
+						continuation_pending: false,        // Initialize continuation state
 					};
 
 					// Update the estimated cost from the loaded session

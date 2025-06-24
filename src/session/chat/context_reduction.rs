@@ -80,17 +80,18 @@ pub async fn perform_context_reduction(
 	let response_result = match api_result {
 		Ok(response) => {
 			// Use the normal process_response flow which handles tool calls automatically
-			let process_result = super::response::process_response(
-				response.content.clone(),
-				response.exchange,
-				response.tool_calls,
-				response.finish_reason,
-				chat_session,
-				config,
-				role, // Use the current role instead of hardcoding "developer"
-				operation_cancelled.clone(),
-			)
-			.await;
+			let process_result =
+				super::response::process_response(super::response::ResponseProcessingParams::new(
+					response.content.clone(),
+					response.exchange,
+					response.tool_calls,
+					response.finish_reason,
+					chat_session,
+					config,
+					role, // Use the current role instead of hardcoding "developer"
+					operation_cancelled.clone(),
+				))
+				.await;
 
 			match process_result {
 				Ok(()) => Ok(response.content),

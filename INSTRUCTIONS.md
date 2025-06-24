@@ -94,6 +94,12 @@ crate::log_debug!("Something happened");
 - `src/session/cache.rs` - Caching system (2-marker approach)
 - `src/session/chat/input.rs` - User input handling with history
 
+**Smart Session Continuation:**
+- `src/session/chat/session_continuation.rs` - Core smart continuation module with file context parsing
+- `src/session/chat/response.rs` - Integration point for continuation checks
+- `src/session/chat/context_truncation.rs` - Continuation-aware truncation logic
+- `src/session/chat/session/core.rs` - ChatSession structure with continuation state
+
 **Cost & Performance:**
 - `src/session/chat/cost_tracker.rs` - Cost accumulation across sessions/layers/tools
 - `src/session/mod.rs` SessionInfo - Token/cost tracking per session
@@ -217,6 +223,12 @@ crate::log_debug!("Something happened");
 1. **Layer**: First create the layer in `[[layers]]` section
 2. **Agent config**: Add to template agents section with layer name
 3. **Usage**: `agent_<name>(task="...")` MCP tool routes to the layer
+
+### Modify Session Continuation System
+1. **Core module**: `src/session/chat/session_continuation.rs` - All continuation logic and file context system
+2. **Integration**: `src/session/chat/response.rs` - Entry point for continuation checks
+3. **State management**: `src/session/chat/session/core.rs` - ChatSession continuation state
+4. **Configuration**: `config-templates/default.toml` - `max_session_tokens_threshold` field (0=disabled)
 
 ## 📋 CRITICAL PATTERNS
 

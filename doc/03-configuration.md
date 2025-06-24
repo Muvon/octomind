@@ -70,8 +70,7 @@ custom_instructions_file_name = "INSTRUCTIONS.md"
 
 # Performance & Limits
 mcp_response_warning_threshold = 20000
-max_request_tokens_threshold = 20000
-enable_auto_truncation = false
+max_session_tokens_threshold = 20000
 cache_tokens_threshold = 2048
 cache_timeout_seconds = 240
 use_long_system_cache = true
@@ -683,6 +682,51 @@ relationship_model = "openrouter:openai/gpt-4.1-nano"
 
 ## Token Management
 
+### Smart Session Continuation System
+
+Octomind features an intelligent session continuation system that automatically manages token limits while preserving essential context through AI-driven file analysis.
+
+#### How It Works
+
+When your session approaches token limits during any operation (user input, tool execution, long conversations), the system:
+
+1. **Detects Token Threshold**: Monitors session tokens against `max_session_tokens_threshold`
+2. **Requests Summary**: Automatically injects a structured summary request to the AI
+3. **Parses File Requirements**: AI specifies needed files in format `filename:startline:endline`
+4. **Reads File Context**: Automatically includes file contents with line numbers
+5. **Resets Session**: Continues with preserved summary and full file context
+
+#### Configuration
+
+```toml
+# Token threshold for smart continuation (0 = disabled, >0 = enabled)
+max_session_tokens_threshold = 20000
+
+# When threshold exceeded, system automatically:
+# - Requests structured summary from AI
+# - Parses required file contexts
+# - Resets session with preserved context
+```
+
+#### Features
+
+- **Zero Configuration**: No prompts to configure - all built-in
+- **AI-Driven Context**: AI selects exactly which files and line ranges to preserve
+- **Seamless Continuation**: No interruption to your workflow
+- **Visual Feedback**: Clear indication when continuation occurs
+- **Error Resilience**: Graceful handling of missing files or parsing errors
+- **Performance Limits**: Maximum 10 file contexts, reasonable line limits
+
+#### File Context Format
+
+The AI specifies required files using this exact format:
+```
+src/config/mod.rs:95:105
+src/session/chat/response.rs:264:280
+```
+
+The system automatically reads these files and includes them with 1-indexed line numbers in the continuation.
+
 ### Automatic Token Management
 
 ```toml
@@ -690,9 +734,8 @@ relationship_model = "openrouter:openai/gpt-4.1-nano"
 # Warn when MCP tools generate large outputs (in tokens)
 mcp_response_warning_threshold = 20000
 
-# Auto-truncate context when this limit is reached
-max_request_tokens_threshold = 50000
-enable_auto_truncation = false
+# Smart session continuation when this limit is reached (0 = disabled)
+max_session_tokens_threshold = 50000
 
 # Automatically move cache markers when context reaches this percentage
 cache_tokens_pct_threshold = 40
@@ -702,7 +745,6 @@ cache_tokens_pct_threshold = 40
 
 Use session commands to manage tokens:
 - `/cache` - Mark cache checkpoint
-- `/truncate [threshold]` - Toggle auto-truncation
 - `/info` - Show token usage breakdown
 - `/done` - Optimize context
 
@@ -717,7 +759,7 @@ name = "estimate"
 model = "openrouter:openai/gpt-4.1-mini"
 system_prompt = "You are a project estimation expert..."
 temperature = 0.2
-input_mode = "last"  # Case-insensitive: "last", "all", "summary"
+input_mode = "last"  # Case-insensitive: "last", "all"
 
 [developer.commands.estimate.mcp]
 server_refs = []  # Reference servers from registry
@@ -837,22 +879,35 @@ Octomind automatically migrates legacy configurations on load, but it's recommen
 
 4. **Input mode configuration errors**
   ```
-  Unknown input mode: 'Last'. Valid options: last, all, summary
-  Solution: Use lowercase input modes: 'last', 'all', 'summary'
+  Unknown input mode: 'Last'. Valid options: last, all
+  Solution: Use lowercase input modes: 'last', 'all'
   ```
 
-5. **Configuration validation failed**
+5. **Session continuation not working**
+  ```
+  Session continues growing without continuation
+  Solution: Check max_session_tokens_threshold > 0 (0 = disabled)
+  ```
+
+6. **Legacy configuration fields**
+  ```
+  Unknown configuration field: enable_auto_truncation
+  Unknown configuration field: max_request_tokens_threshold
+  Solution: Update to max_session_tokens_threshold, remove enable_auto_truncation
+  ```
+
+7. **Configuration validation failed**
   ```bash
   octomind config --validate
   ```
 
-6. **Role inheritance issues**
+8. **Role inheritance issues**
   ```
   Error: Custom role configuration invalid
   Solution: Ensure custom roles inherit from assistant base
   ```
 
-7. **MCP server registry issues**
+9. **MCP server registry issues**
   ```
   Failed to execute tool: No servers available to process tool
   Solution: Check server_refs and ensure servers are defined in registry

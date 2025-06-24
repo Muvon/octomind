@@ -749,6 +749,62 @@ providers = ["core", "filesystem", "development"]
 enabled = false  # No tools in chat mode
 ```
 
+## Smart Session Continuation
+
+### Automatic Context Preservation
+
+Octomind features an intelligent session continuation system that automatically manages token limits while preserving essential context through AI-driven file analysis.
+
+#### How It Works
+
+When your session approaches the configured token threshold during any operation:
+
+1. **Automatic Detection**: System monitors tokens against `max_session_tokens_threshold`
+2. **Structured Summary Request**: AI receives a detailed prompt to summarize the session
+3. **File Context Parsing**: AI specifies needed files using format `filename:startline:endline`
+4. **Context Preservation**: System reads specified files with line numbers
+5. **Seamless Continuation**: Session resets with summary and file context intact
+
+#### Configuration
+
+```toml
+# Enable smart continuation (0 = disabled, >0 = enabled)
+max_session_tokens_threshold = 20000
+```
+
+#### Example Continuation Flow
+
+```
+[Session approaching token limit during tool execution]
+
+System: Injecting continuation request...
+AI: Provides structured summary with file requirements:
+```
+src/config/mod.rs:95:105
+src/session/chat/response.rs:264:280
+```
+
+System: Loading file contexts...
+=== src/config/mod.rs (lines 95-105) ===
+95: pub struct Config {
+96:     // Configuration fields
+...
+
+=== src/session/chat/response.rs (lines 264-280) ===
+264: pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()> {
+...
+
+Continuing with preserved context...
+```
+
+#### Features
+
+- **Zero Configuration**: All prompts and logic are built-in
+- **AI-Driven Selection**: AI chooses exactly which files and lines to preserve
+- **Visual Feedback**: Clear indication when continuation occurs
+- **Error Resilience**: Graceful handling of missing files or parsing errors
+- **Performance Limits**: Maximum 10 file contexts, 10k lines per file
+
 ## Performance and Cost Optimization
 
 ### Model Selection by Use Case
@@ -785,15 +841,13 @@ model = "openrouter:anthropic/claude-sonnet-4"  # Expensive for complex work
 ```toml
 [openrouter]
 cache_tokens_pct_threshold = 40  # Auto-cache at 40%
-max_request_tokens_threshold = 50000  # Auto-truncate
-enable_auto_truncation = true
+max_session_tokens_threshold = 50000  # Smart continuation threshold
 ```
 
 #### Manual Management
 ```bash
 # In session:
 /cache           # Mark cache point
-/truncate        # Toggle auto-truncation
 /info            # Check token usage
 /done            # Complete task with memorization & commit
 ```

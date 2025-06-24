@@ -550,7 +550,7 @@ graph TB
 
 All layers are configured through the `[[layers]]` section in your configuration file. Each layer supports:
 
-- **Input Mode**: How the layer receives input (`last`, `all`, `summary`)
+- **Input Mode**: How the layer receives input (`last`, `all`)
 - **Output Mode**: How the layer affects the session (`none`, `append`, `replace`)
 - **Model Selection**: Specific model for this layer
 - **MCP Tools**: Which tools the layer can access
@@ -665,6 +665,75 @@ input_mode = "all"
 
 ## Token Management
 
+### Smart Session Continuation System
+
+Octomind features an advanced session continuation system that automatically preserves context when token limits are reached, using AI-driven file context selection.
+
+#### Architecture
+
+The continuation system is built around these core components:
+
+- **`src/session/chat/session_continuation.rs`**: Core continuation logic with file context parsing
+- **`src/session/chat/response.rs`**: Integration point for continuation checks
+- **`src/session/chat/context_truncation.rs`**: Continuation-aware context management
+- **`src/session/chat/session/core.rs`**: Session state management with continuation tracking
+
+#### How It Works
+
+1. **Token Monitoring**: Every response processing checks against `max_session_tokens_threshold`
+2. **Structured Summary**: AI receives a detailed prompt requesting:
+   - Task objective and progress summary
+   - Current state and next actions
+   - Required file contexts in exact format: `filename:startline:endline`
+3. **File Context Processing**: System parses AI response using regex `([^\s:]+):(\d+):(\d+)`
+4. **Context Preservation**: Reads specified files with 1-indexed line numbers
+5. **Session Reset**: Continues with preserved summary and file context
+
+#### Configuration
+
+```toml
+# Smart continuation threshold (0 = disabled, >0 = enabled)
+max_session_tokens_threshold = 20000
+
+# The system automatically handles:
+# - Summary request injection
+# - File context parsing and reading
+# - Session reset with preserved context
+# - Visual feedback and error handling
+```
+
+#### File Context Format
+
+The AI must specify required files using this exact format:
+```
+src/config/mod.rs:95:105
+src/session/chat/response.rs:264:280
+src/session/chat/session_continuation.rs:1:50
+```
+
+The system automatically:
+- Parses these specifications using regex pattern matching
+- Reads the specified line ranges (1-indexed)
+- Includes formatted file content with line numbers
+- Handles missing files gracefully with error messages
+
+#### Advanced Features
+
+**Error Resilience:**
+- Graceful handling of missing or unreadable files
+- Regex parsing with comprehensive error checking
+- Fallback to original truncation if continuation fails
+
+**Performance Optimization:**
+- Maximum 10 file contexts per continuation
+- Line limits to prevent excessive content (10k lines per file)
+- Efficient file reading with range specification
+
+**Integration Points:**
+- Works during any token-consuming operation (user input, tool calls, etc.)
+- Integrates with existing cache and cost tracking systems
+- Maintains session state consistency across continuations
+
 ### Automatic Token Management
 
 ```toml
@@ -672,9 +741,8 @@ input_mode = "all"
 # Warn when tool outputs exceed threshold
 mcp_response_warning_threshold = 20000
 
-# Auto-truncate context when limit reached
-max_request_tokens_threshold = 50000
-enable_auto_truncation = false
+# Smart session continuation when limit reached (0 = disabled)
+max_session_tokens_threshold = 50000
 
 # Cache management
 cache_tokens_pct_threshold = 40
@@ -683,7 +751,6 @@ cache_tokens_pct_threshold = 40
 ### Session Token Commands
 
 - `/cache` - Mark cache checkpoint for cost savings
-- `/truncate [threshold]` - Toggle auto-truncation
 - `/info` - Display token usage and cost breakdown
 
 ## Advanced Configuration Patterns
@@ -844,11 +911,11 @@ octomind config --validate
 
 #### Token Limit Issues
 ```bash
-# Enable auto-truncation
-/truncate 30000
-
 # Mark cache checkpoint
 /cache
+
+# Check current usage
+/info
 
 # Optimize context manually
 /done

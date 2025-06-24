@@ -56,6 +56,7 @@ pub struct ChatSession {
 	pub cache_next_user_message: bool, // Flag to cache the next user message
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
+	pub max_retries: u32,              // Maximum number of retries for provider errors
 }
 
 impl ChatSession {
@@ -65,6 +66,7 @@ impl ChatSession {
 		model: Option<String>,
 		temperature: Option<f32>,
 		max_tokens: Option<u32>,
+		max_retries: Option<u32>,
 		config: &Config,
 	) -> Self {
 		let model_name = model.unwrap_or_else(|| config.get_effective_model());
@@ -72,6 +74,8 @@ impl ChatSession {
 		let temperature_value = temperature.expect("Temperature must be provided from role config");
 		// STRICT: max_tokens should always be provided from role config, no fallbacks
 		let max_tokens_value = max_tokens.expect("Max tokens must be provided from role config");
+		// max_retries defaults to 0 if not provided (runtime-only parameter)
+		let max_retries_value = max_retries.unwrap_or(0);
 
 		// Create a new session with initial info
 		let session_info = crate::session::SessionInfo {
@@ -115,6 +119,7 @@ impl ChatSession {
 			cache_next_user_message: false,     // Initialize cache flag
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 			pending_image: None,                // Initialize pending image
+			max_retries: max_retries_value,     // Set max retries value
 		}
 	}
 
@@ -125,6 +130,7 @@ impl ChatSession {
 		model: Option<String>,
 		temperature: Option<f32>,
 		max_tokens: Option<u32>,
+		max_retries: Option<u32>,
 		config: &Config,
 		role: &str,
 	) -> Result<Self> {
@@ -239,9 +245,10 @@ impl ChatSession {
 						temperature: effective_temperature, // Use config-based temperature
 						max_tokens: effective_max_tokens,   // Use config-based max_tokens
 						estimated_cost: 0.0,
-						cache_next_user_message: false,     // Initialize cache flag
-						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
-						pending_image: None,                // Initialize pending image
+						cache_next_user_message: false,        // Initialize cache flag
+						spending_threshold_checkpoint: 0.0,    // Initialize spending checkpoint
+						pending_image: None,                   // Initialize pending image
+						max_retries: max_retries.unwrap_or(0), // Use provided max_retries or default to 0
 					};
 
 					// Update the estimated cost from the loaded session
@@ -300,6 +307,7 @@ impl ChatSession {
 						model.clone(),
 						Some(effective_temperature), // Use config-based temperature
 						Some(effective_max_tokens),  // Use config-based max_tokens
+						max_retries,                 // Pass max_retries through
 						config,
 					);
 					chat_session.session.session_file = Some(new_session_file);
@@ -340,6 +348,7 @@ impl ChatSession {
 				model,
 				Some(effective_temperature),
 				Some(effective_max_tokens),
+				max_retries,
 				config,
 			);
 			chat_session.session.session_file = Some(session_file);

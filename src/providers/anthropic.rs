@@ -206,6 +206,7 @@ impl AiProvider for AnthropicProvider {
 		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+		max_retries: u32, // Implement retry logic for Anthropic provider
 	) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
 		if let Some(ref token) = cancellation_token {
@@ -309,250 +310,359 @@ impl AiProvider for AnthropicProvider {
 			}
 		}
 
-		// Create HTTP client
-		let client = Client::new();
+		// Implement retry logic with exponential backoff
+		let mut last_error = None;
+		for attempt in 0..=max_retries {
+			// Check for cancellation before each attempt
+			if let Some(ref token) = cancellation_token {
+				if token.load(std::sync::atomic::Ordering::SeqCst) {
+					return Err(anyhow::anyhow!(
+						"Request cancelled during retry attempt {}",
+						attempt
+					));
+				}
+			}
 
-		// Track API request time
-		let api_start = std::time::Instant::now();
+			// Create HTTP client
+			let client = Client::new();
 
-		// Create the HTTP request
-		let request_future = client
-			.post(ANTHROPIC_API_URL)
-			.header("x-api-key", api_key)
-			.header("Content-Type", "application/json")
-			.header("anthropic-version", "2023-06-01")
-			.header("anthropic-beta", "extended-cache-ttl-2025-04-11")
-			.header("anthropic-beta", "token-efficient-tools-2025-02-19")
-			.json(&request_body)
-			.send();
+			// Track API request time
+			let api_start = std::time::Instant::now();
 
-		// Race the HTTP request against cancellation
-		let response = if let Some(ref token) = cancellation_token {
-			let cancellation_future = async {
-				loop {
-					if token.load(std::sync::atomic::Ordering::SeqCst) {
-						break;
+			// Create the HTTP request
+			let request_future = client
+				.post(ANTHROPIC_API_URL)
+				.header("x-api-key", api_key.clone())
+				.header("Content-Type", "application/json")
+				.header("anthropic-version", "2023-06-01")
+				.header("anthropic-beta", "extended-cache-ttl-2025-04-11")
+				.header("anthropic-beta", "token-efficient-tools-2025-02-19")
+				.json(&request_body)
+				.send();
+
+			// Race the HTTP request against cancellation
+			let response_result = if let Some(ref token) = cancellation_token {
+				let cancellation_future = async {
+					loop {
+						if token.load(std::sync::atomic::Ordering::SeqCst) {
+							break;
+						}
+						tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 					}
-					tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+				};
+
+				tokio::select! {
+					result = request_future => {
+						result
+					}
+					_ = cancellation_future => {
+						return Err(anyhow::anyhow!("Request cancelled during HTTP call"));
+					}
+				}
+			} else {
+				request_future.await
+			};
+
+			let response = match response_result {
+				Ok(resp) => resp,
+				Err(e) => {
+					last_error = Some(e);
+					if attempt < max_retries {
+						// Exponential backoff: 1s, 2s, 4s, 8s...
+						let delay_ms = 1000 * (1 << attempt);
+						crate::log_info!(
+							"Anthropic API request failed (attempt {}), retrying in {}ms...",
+							attempt + 1,
+							delay_ms
+						);
+						tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+						continue;
+					}
+					break;
 				}
 			};
 
-			tokio::select! {
-				result = request_future => {
-					result?
-				}
-				_ = cancellation_future => {
-					return Err(anyhow::anyhow!("Request cancelled during HTTP call"));
-				}
-			}
-		} else {
-			request_future.await?
-		};
+			// Calculate API request time
+			let api_duration = api_start.elapsed();
+			let api_time_ms = api_duration.as_millis() as u64;
 
-		// Calculate API request time
-		let api_duration = api_start.elapsed();
-		let api_time_ms = api_duration.as_millis() as u64;
+			// Get response status and headers
+			let status = response.status();
+			let headers = response.headers().clone();
 
-		// Get response status
-		let status = response.status();
+			// Check if we should retry based on status code
+			if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+				// Get response body for error details
+				let response_text = response
+					.text()
+					.await
+					.unwrap_or_else(|_| "Failed to read response".to_string());
 
-		// Get response body as text first for debugging
-		let response_text = response.text().await?;
-
-		// Parse the text to JSON
-		let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
-			Ok(json) => json,
-			Err(e) => {
-				return Err(anyhow::anyhow!(
-					"Failed to parse response JSON: {}. Response: {}",
-					e,
-					response_text
-				));
-			}
-		};
-
-		// Handle error responses
-		if !status.is_success() {
-			let mut error_details = Vec::new();
-			error_details.push(format!("HTTP {}", status));
-
-			if let Some(error_obj) = response_json.get("error") {
-				if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
-					error_details.push(format!("Message: {}", msg));
-				}
-				if let Some(error_type) = error_obj.get("type").and_then(|t| t.as_str()) {
-					error_details.push(format!("Type: {}", error_type));
-				}
-			}
-
-			if error_details.len() == 1 {
-				error_details.push(format!("Raw response: {}", response_text));
-			}
-
-			let full_error = error_details.join(" | ");
-			return Err(anyhow::anyhow!("Anthropic API error: {}", full_error));
-		}
-
-		// Extract content from response
-		let mut content = String::new();
-		let mut tool_calls = None;
-
-		if let Some(content_array) = response_json.get("content").and_then(|c| c.as_array()) {
-			for content_block in content_array {
-				if let Some(text) = content_block.get("text").and_then(|t| t.as_str()) {
-					content.push_str(text);
-				} else if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-					// Handle tool calls
-					if tool_calls.is_none() {
-						tool_calls = Some(Vec::new());
+				// Determine retry delay using Anthropic rate limit headers
+				let retry_delay_ms = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+					// Check for Anthropic's retry-after header first
+					if let Some(retry_after) = headers.get("retry-after") {
+						if let Ok(retry_after_str) = retry_after.to_str() {
+							if let Ok(retry_seconds) = retry_after_str.parse::<u64>() {
+								crate::log_info!(
+									"Anthropic rate limit hit, retry-after header says wait {} seconds",
+									retry_seconds
+								);
+								retry_seconds * 1000 // Convert to milliseconds
+							} else {
+								// Fallback to exponential backoff for rate limits
+								2000 * (1 << attempt) // 2s, 4s, 8s, 16s...
+							}
+						} else {
+							2000 * (1 << attempt)
+						}
+					} else {
+						// Check for Anthropic rate limit reset headers to calculate smart delay
+						let smart_delay = calculate_smart_retry_delay(&headers, attempt);
+						smart_delay.unwrap_or_else(|| 2000 * (1 << attempt))
 					}
+				} else {
+					// Server errors - use exponential backoff
+					1000 * (1 << attempt) // 1s, 2s, 4s, 8s...
+				};
 
-					if let (Some(name), Some(input), Some(id)) = (
-						content_block.get("name").and_then(|n| n.as_str()),
-						content_block.get("input"),
-						content_block.get("id").and_then(|i| i.as_str()),
-					) {
-						let mcp_call = crate::mcp::McpToolCall {
-							tool_name: name.to_string(),
-							parameters: input.clone(),
-							tool_id: id.to_string(),
-						};
+				if attempt < max_retries {
+					// Log rate limit info if available
+					log_rate_limit_info(&headers);
 
-						if let Some(ref mut calls) = tool_calls {
-							calls.push(mcp_call);
+					crate::log_info!(
+						"Anthropic API returned {} (attempt {}), retrying in {}ms...",
+						status,
+						attempt + 1,
+						retry_delay_ms
+					);
+					tokio::time::sleep(tokio::time::Duration::from_millis(retry_delay_ms)).await;
+					continue;
+				} else {
+					return Err(anyhow::anyhow!(
+						"Anthropic API error after {} retries: {} - {}",
+						max_retries + 1,
+						status,
+						response_text
+					));
+				}
+			}
+
+			// Success or non-retryable error - process the response
+			// Get response body as text first for debugging
+			let response_text = response.text().await?;
+
+			// Parse the text to JSON
+			let response_json: serde_json::Value = match serde_json::from_str(&response_text) {
+				Ok(json) => json,
+				Err(e) => {
+					return Err(anyhow::anyhow!(
+						"Failed to parse response JSON: {}. Response: {}",
+						e,
+						response_text
+					));
+				}
+			};
+
+			// Handle error responses
+			if !status.is_success() {
+				let mut error_details = Vec::new();
+				error_details.push(format!("HTTP {}", status));
+
+				if let Some(error_obj) = response_json.get("error") {
+					if let Some(msg) = error_obj.get("message").and_then(|m| m.as_str()) {
+						error_details.push(format!("Message: {}", msg));
+					}
+					if let Some(error_type) = error_obj.get("type").and_then(|t| t.as_str()) {
+						error_details.push(format!("Type: {}", error_type));
+					}
+				}
+
+				if error_details.len() == 1 {
+					error_details.push(format!("Raw response: {}", response_text));
+				}
+
+				let full_error = error_details.join(" | ");
+				return Err(anyhow::anyhow!("Anthropic API error: {}", full_error));
+			}
+
+			// Extract content from response
+			let mut content = String::new();
+			let mut tool_calls = None;
+
+			if let Some(content_array) = response_json.get("content").and_then(|c| c.as_array()) {
+				for content_block in content_array {
+					if let Some(text) = content_block.get("text").and_then(|t| t.as_str()) {
+						content.push_str(text);
+					} else if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+					{
+						// Handle tool calls
+						if tool_calls.is_none() {
+							tool_calls = Some(Vec::new());
+						}
+
+						if let (Some(name), Some(input), Some(id)) = (
+							content_block.get("name").and_then(|n| n.as_str()),
+							content_block.get("input"),
+							content_block.get("id").and_then(|i| i.as_str()),
+						) {
+							let mcp_call = crate::mcp::McpToolCall {
+								tool_name: name.to_string(),
+								parameters: input.clone(),
+								tool_id: id.to_string(),
+							};
+
+							if let Some(ref mut calls) = tool_calls {
+								calls.push(mcp_call);
+							}
 						}
 					}
 				}
 			}
-		}
 
-		// Extract finish_reason
-		let finish_reason = response_json
-			.get("stop_reason")
-			.and_then(|fr| fr.as_str())
-			.map(|s| s.to_string());
+			// Extract finish_reason
+			let finish_reason = response_json
+				.get("stop_reason")
+				.and_then(|fr| fr.as_str())
+				.map(|s| s.to_string());
 
-		if let Some(ref reason) = finish_reason {
-			log_debug!("Stop reason: {}", reason);
-		}
+			if let Some(ref reason) = finish_reason {
+				log_debug!("Stop reason: {}", reason);
+			}
 
-		// Extract token usage with cache-aware pricing
-		let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
-			let input_tokens = usage_obj
-				.get("input_tokens")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
-			let output_tokens = usage_obj
-				.get("output_tokens")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
+			// Extract token usage with cache-aware pricing
+			let usage: Option<TokenUsage> = if let Some(usage_obj) = response_json.get("usage") {
+				let input_tokens = usage_obj
+					.get("input_tokens")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
+				let output_tokens = usage_obj
+					.get("output_tokens")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
 
-			// Parse cache-specific token fields from Anthropic API
-			// Try new nested structure first, fallback to flat structure
-			let (cache_creation_5m_tokens, cache_creation_1h_tokens) =
-				if let Some(cache_creation) = usage_obj.get("cache_creation") {
-					// New nested structure
-					let ephemeral_5m = cache_creation
-						.get("ephemeral_5m_input_tokens")
-						.and_then(|v| v.as_u64())
-						.unwrap_or(0);
-					let ephemeral_1h = cache_creation
-						.get("ephemeral_1h_input_tokens")
-						.and_then(|v| v.as_u64())
-						.unwrap_or(0);
-					(ephemeral_5m, ephemeral_1h)
-				} else {
-					// Fallback to flat structure - assume all cache creation is 5m
-					let total_cache_creation = usage_obj
-						.get("cache_creation_input_tokens")
-						.and_then(|v| v.as_u64())
-						.unwrap_or(0);
-					(total_cache_creation, 0)
-				};
+				// Parse cache-specific token fields from Anthropic API
+				// Try new nested structure first, fallback to flat structure
+				let (cache_creation_5m_tokens, cache_creation_1h_tokens) =
+					if let Some(cache_creation) = usage_obj.get("cache_creation") {
+						// New nested structure
+						let ephemeral_5m = cache_creation
+							.get("ephemeral_5m_input_tokens")
+							.and_then(|v| v.as_u64())
+							.unwrap_or(0);
+						let ephemeral_1h = cache_creation
+							.get("ephemeral_1h_input_tokens")
+							.and_then(|v| v.as_u64())
+							.unwrap_or(0);
+						(ephemeral_5m, ephemeral_1h)
+					} else {
+						// Fallback to flat structure - assume all cache creation is 5m
+						let total_cache_creation = usage_obj
+							.get("cache_creation_input_tokens")
+							.and_then(|v| v.as_u64())
+							.unwrap_or(0);
+						(total_cache_creation, 0)
+					};
 
-			let cache_read_input_tokens = usage_obj
-				.get("cache_read_input_tokens")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
+				let cache_read_input_tokens = usage_obj
+					.get("cache_read_input_tokens")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
 
-			// CORRECTED: According to Anthropic API docs:
-			// - input_tokens: Regular input tokens that were NOT cached (normal price)
-			// - cache_creation_input_tokens: Tokens used to CREATE cache (1.25x price) - NOT cached tokens
-			// - cache_read_input_tokens: Tokens READ from cache (0.1x price) - these ARE cached tokens
-			//
-			// For display:
-			// - prompt_tokens should be: input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-			// - cached_tokens should ONLY be: cache_read_input_tokens
-			// - This way we show the total prompt tokens processed, with breakdown of what was cached
+				// CORRECTED: According to Anthropic API docs:
+				// - input_tokens: Regular input tokens that were NOT cached (normal price)
+				// - cache_creation_input_tokens: Tokens used to CREATE cache (1.25x price) - NOT cached tokens
+				// - cache_read_input_tokens: Tokens READ from cache (0.1x price) - these ARE cached tokens
+				//
+				// For display:
+				// - prompt_tokens should be: input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+				// - cached_tokens should ONLY be: cache_read_input_tokens
+				// - This way we show the total prompt tokens processed, with breakdown of what was cached
 
-			let cached_tokens = cache_read_input_tokens; // Only cache reads are "cached"
+				let cached_tokens = cache_read_input_tokens; // Only cache reads are "cached"
 
-			// For cost calculation, we need to separate the different token types
-			let regular_input_tokens = input_tokens; // These are already regular tokens from API
+				// For cost calculation, we need to separate the different token types
+				let regular_input_tokens = input_tokens; // These are already regular tokens from API
 
-			// Calculate cost with cache-aware pricing
-			let cost = calculate_cost_with_cache(
-				model,
-				CacheTokenUsage {
-					regular_input_tokens,
-					cache_creation_tokens: cache_creation_5m_tokens,
-					cache_creation_tokens_1h: cache_creation_1h_tokens,
-					cache_read_tokens: cache_read_input_tokens,
-					output_tokens,
-				},
-			);
+				// Calculate cost with cache-aware pricing
+				let cost = calculate_cost_with_cache(
+					model,
+					CacheTokenUsage {
+						regular_input_tokens,
+						cache_creation_tokens: cache_creation_5m_tokens,
+						cache_creation_tokens_1h: cache_creation_1h_tokens,
+						cache_read_tokens: cache_read_input_tokens,
+						output_tokens,
+					},
+				);
 
-			// Debug: Log detailed cost breakdown for verification
-			if let Some(calculated_cost) = cost {
-				crate::log_debug!(
+				// Debug: Log detailed cost breakdown for verification
+				if let Some(calculated_cost) = cost {
+					crate::log_debug!(
 					"Anthropic cost breakdown: Regular input: {} tokens, Cache creation (5m): {} tokens, Cache creation (1h): {} tokens, Cache read: {} tokens, Output: {} tokens, Total cost: ${:.8}",
 					regular_input_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_input_tokens, output_tokens, calculated_cost
 				);
+				}
+
+				Some(TokenUsage {
+					prompt_tokens: input_tokens
+						+ cache_creation_5m_tokens
+						+ cache_creation_1h_tokens
+						+ cache_read_input_tokens, // Total prompt tokens processed
+					output_tokens,
+					total_tokens: input_tokens
+						+ cache_creation_5m_tokens
+						+ cache_creation_1h_tokens
+						+ cache_read_input_tokens
+						+ output_tokens,
+					cached_tokens, // Only cache_read_input_tokens are truly "cached"
+					cost,          // Pre-calculated with proper cache pricing
+					request_time_ms: Some(api_time_ms), // Track API timing for Anthropic
+				})
+			} else {
+				None
+			};
+
+			// CRITICAL FIX: Store the original content array for proper tool_use reconstruction
+			// This ensures tool_result messages can reference the correct tool_use_id
+			let stored_tool_calls = if tool_calls.is_some() {
+				// If we found tool_use blocks, store the complete content array
+				// This preserves both text content and tool_use blocks for conversation history
+				response_json.get("content").cloned()
+			} else {
+				None
+			};
+
+			// Create exchange record
+			let mut exchange =
+				ProviderExchange::new(request_body, response_json, usage, self.name());
+
+			// CRITICAL FIX: Store the original tool calls in the exchange for later reconstruction
+			if let Some(ref content_array) = stored_tool_calls {
+				exchange.response["tool_calls_content"] = content_array.clone();
 			}
 
-			Some(TokenUsage {
-				prompt_tokens: input_tokens
-					+ cache_creation_5m_tokens
-					+ cache_creation_1h_tokens
-					+ cache_read_input_tokens, // Total prompt tokens processed
-				output_tokens,
-				total_tokens: input_tokens
-					+ cache_creation_5m_tokens
-					+ cache_creation_1h_tokens
-					+ cache_read_input_tokens
-					+ output_tokens,
-				cached_tokens, // Only cache_read_input_tokens are truly "cached"
-				cost,          // Pre-calculated with proper cache pricing
-				request_time_ms: Some(api_time_ms), // Track API timing for Anthropic
-			})
-		} else {
-			None
-		};
-
-		// CRITICAL FIX: Store the original content array for proper tool_use reconstruction
-		// This ensures tool_result messages can reference the correct tool_use_id
-		let stored_tool_calls = if tool_calls.is_some() {
-			// If we found tool_use blocks, store the complete content array
-			// This preserves both text content and tool_use blocks for conversation history
-			response_json.get("content").cloned()
-		} else {
-			None
-		};
-
-		// Create exchange record
-		let mut exchange = ProviderExchange::new(request_body, response_json, usage, self.name());
-
-		// CRITICAL FIX: Store the original tool calls in the exchange for later reconstruction
-		if let Some(ref content_array) = stored_tool_calls {
-			exchange.response["tool_calls_content"] = content_array.clone();
+			return Ok(ProviderResponse {
+				content,
+				exchange,
+				tool_calls,
+				finish_reason,
+			});
 		}
 
-		Ok(ProviderResponse {
-			content,
-			exchange,
-			tool_calls,
-			finish_reason,
-		})
+		// If we reach here, all retries were exhausted
+		if let Some(error) = last_error {
+			Err(anyhow::anyhow!(
+				"Anthropic API request failed after {} retries: {}",
+				max_retries + 1,
+				error
+			))
+		} else {
+			Err(anyhow::anyhow!(
+				"Anthropic API request failed after {} retries with unknown error",
+				max_retries + 1
+			))
+		}
 	}
 }
 
@@ -808,4 +918,121 @@ fn convert_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 	}
 
 	result
+}
+
+/// Calculate smart retry delay based on Anthropic rate limit headers
+/// Returns None if no suitable headers are found, falling back to exponential backoff
+fn calculate_smart_retry_delay(headers: &reqwest::header::HeaderMap, attempt: u32) -> Option<u64> {
+	// Check for token-based rate limit reset times
+	let token_reset = headers
+		.get("anthropic-ratelimit-tokens-reset")
+		.and_then(|h| h.to_str().ok())
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+
+	let input_token_reset = headers
+		.get("anthropic-ratelimit-input-tokens-reset")
+		.and_then(|h| h.to_str().ok())
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+
+	let output_token_reset = headers
+		.get("anthropic-ratelimit-output-tokens-reset")
+		.and_then(|h| h.to_str().ok())
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+
+	let request_reset = headers
+		.get("anthropic-ratelimit-requests-reset")
+		.and_then(|h| h.to_str().ok())
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+
+	// Find the earliest reset time (most restrictive limit)
+	let earliest_reset = [
+		token_reset,
+		input_token_reset,
+		output_token_reset,
+		request_reset,
+	]
+	.iter()
+	.filter_map(|&reset| reset)
+	.min();
+
+	if let Some(reset_time) = earliest_reset {
+		let now = chrono::Utc::now();
+		let wait_duration = reset_time.signed_duration_since(now);
+
+		if wait_duration.num_seconds() > 0 {
+			// Add a small buffer (1-2 seconds) to ensure we're past the reset time
+			let wait_ms = (wait_duration.num_milliseconds() + 1000 + (attempt as i64 * 500)) as u64;
+
+			// Cap the wait time to reasonable limits (max 5 minutes)
+			let max_wait_ms = 5 * 60 * 1000; // 5 minutes
+			let final_wait_ms = wait_ms.min(max_wait_ms);
+
+			crate::log_info!(
+				"Using Anthropic rate limit reset time: waiting {}ms until {}",
+				final_wait_ms,
+				reset_time.format("%H:%M:%S UTC")
+			);
+
+			return Some(final_wait_ms);
+		}
+	}
+
+	None
+}
+
+/// Log rate limit information from Anthropic headers for debugging
+fn log_rate_limit_info(headers: &reqwest::header::HeaderMap) {
+	let mut rate_limit_info = Vec::new();
+
+	// Request limits
+	if let (Some(limit), Some(remaining)) = (
+		headers
+			.get("anthropic-ratelimit-requests-limit")
+			.and_then(|h| h.to_str().ok()),
+		headers
+			.get("anthropic-ratelimit-requests-remaining")
+			.and_then(|h| h.to_str().ok()),
+	) {
+		rate_limit_info.push(format!("Requests: {}/{}", remaining, limit));
+	}
+
+	// Token limits
+	if let (Some(limit), Some(remaining)) = (
+		headers
+			.get("anthropic-ratelimit-tokens-limit")
+			.and_then(|h| h.to_str().ok()),
+		headers
+			.get("anthropic-ratelimit-tokens-remaining")
+			.and_then(|h| h.to_str().ok()),
+	) {
+		rate_limit_info.push(format!("Tokens: {}/{}", remaining, limit));
+	}
+
+	// Input token limits
+	if let (Some(limit), Some(remaining)) = (
+		headers
+			.get("anthropic-ratelimit-input-tokens-limit")
+			.and_then(|h| h.to_str().ok()),
+		headers
+			.get("anthropic-ratelimit-input-tokens-remaining")
+			.and_then(|h| h.to_str().ok()),
+	) {
+		rate_limit_info.push(format!("Input tokens: {}/{}", remaining, limit));
+	}
+
+	// Output token limits
+	if let (Some(limit), Some(remaining)) = (
+		headers
+			.get("anthropic-ratelimit-output-tokens-limit")
+			.and_then(|h| h.to_str().ok()),
+		headers
+			.get("anthropic-ratelimit-output-tokens-remaining")
+			.and_then(|h| h.to_str().ok()),
+	) {
+		rate_limit_info.push(format!("Output tokens: {}/{}", remaining, limit));
+	}
+
+	if !rate_limit_info.is_empty() {
+		crate::log_debug!("Anthropic rate limits: {}", rate_limit_info.join(", "));
+	}
 }

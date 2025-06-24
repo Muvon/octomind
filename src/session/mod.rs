@@ -916,6 +916,7 @@ pub async fn chat_completion_with_validation(
 	config: &Config,
 	chat_session: Option<&mut crate::session::chat::session::ChatSession>,
 	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	max_retries: u32,
 ) -> Result<ProviderResponse> {
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
@@ -990,6 +991,7 @@ pub async fn chat_completion_with_validation(
 			max_tokens,
 			config,
 			cancellation_token,
+			max_retries,
 		)
 		.await
 }
@@ -1054,6 +1056,7 @@ async fn handle_context_limit_exceeded(
 								max_tokens,
 								config,
 								cancellation_token,
+								0, // Default max_retries for context reduction
 							)
 							.await;
 					}
@@ -1076,6 +1079,7 @@ async fn handle_context_limit_exceeded(
 								max_tokens,
 								config,
 								cancellation_token,
+								0, // Default max_retries for context reduction
 							)
 							.await;
 					}
@@ -1115,6 +1119,7 @@ pub async fn chat_completion_with_provider(
 	temperature: f32,
 	max_tokens: u32,
 	config: &Config,
+	max_retries: u32,
 ) -> Result<ProviderResponse> {
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
@@ -1127,6 +1132,7 @@ pub async fn chat_completion_with_provider(
 			max_tokens,
 			config,
 			None,
+			max_retries,
 		)
 		.await
 }

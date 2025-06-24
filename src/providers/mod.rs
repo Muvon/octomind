@@ -108,6 +108,7 @@ pub trait AiProvider: Send + Sync {
 		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+		max_retries: u32,
 	) -> Result<ProviderResponse>;
 
 	/// Get API key for this provider from config or environment

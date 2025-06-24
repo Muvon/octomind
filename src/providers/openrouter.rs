@@ -172,6 +172,7 @@ impl AiProvider for OpenRouterProvider {
 		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+		_max_retries: u32, // TODO: Implement retry logic for OpenRouter provider
 	) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
 		if let Some(ref token) = cancellation_token {

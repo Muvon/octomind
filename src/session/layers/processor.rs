@@ -114,6 +114,7 @@ impl Layer for LayerProcessor {
 			self.config.temperature,
 			self.config.max_tokens,
 			config,
+			0, // Default max_retries for layer processor
 		)
 		.await?;
 
@@ -227,6 +228,7 @@ impl Layer for LayerProcessor {
 						self.config.temperature,
 						self.config.max_tokens,
 						config,
+						0, // Default max_retries for layer processor
 					)
 					.await
 					{

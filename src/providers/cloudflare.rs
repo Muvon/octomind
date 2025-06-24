@@ -241,6 +241,7 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		max_tokens: u32,
 		config: &Config,
 		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+		_max_retries: u32, // TODO: Implement retry logic for Cloudflare provider
 	) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
 		if let Some(ref token) = cancellation_token {

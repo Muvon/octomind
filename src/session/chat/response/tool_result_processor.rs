@@ -349,6 +349,7 @@ async fn make_follow_up_api_call(
 		config,
 		None,                     // No chat session needed for this call
 		Some(cancellation_token), // Pass the cancellation token
+		chat_session.max_retries, // Pass max_retries from chat session
 	)
 	.await
 }

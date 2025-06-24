@@ -355,6 +355,7 @@ impl GenericLayer {
 			cache_next_user_message: false,
 			pending_image: None,
 			spending_threshold_checkpoint: 0.0,
+			max_retries: 0, // Default max_retries for layers
 		}
 	}
 
@@ -415,6 +416,7 @@ impl GenericLayer {
 			layer_config,
 			None,                              // No chat session for layers
 			Some(operation_cancelled.clone()), // Pass cancellation token
+			0,                                 // Default max_retries for layers
 		)
 		.await
 		{
@@ -512,6 +514,7 @@ impl Layer for GenericLayer {
 			&layer_config,
 			None,                              // No chat session for layers
 			Some(operation_cancelled.clone()), // Pass cancellation token
+			0,                                 // Default max_retries for layers
 		)
 		.await?;
 

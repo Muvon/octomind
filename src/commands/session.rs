@@ -39,6 +39,10 @@ pub struct SessionArgs {
 	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 	#[arg(long, default_value = "developer")]
 	pub role: String,
+
+	/// Maximum number of retries for provider errors (runtime only, not saved)
+	#[arg(long, default_value = "0")]
+	pub max_retries: u32,
 }
 
 // No execute function here since it's handled directly by the session::chat module

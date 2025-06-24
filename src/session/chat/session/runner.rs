@@ -62,6 +62,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 		#[arg(long, default_value = "developer")]
 		role: String,
+
+		/// Maximum number of retries for provider errors
+		#[arg(long, default_value = "0")]
+		max_retries: u32,
 	}
 
 	// Read args as SessionArgs
@@ -129,6 +133,19 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			None // No max_tokens specified
 		};
 
+		// Get max_retries
+		let max_retries = if args_str.contains("max_retries: ") {
+			let start = args_str.find("max_retries: ").unwrap() + 13;
+			let end = args_str[start..].find(',').unwrap_or(
+				args_str[start..]
+					.find('}')
+					.unwrap_or(args_str.len() - start),
+			) + start;
+			args_str[start..end].trim().parse::<u32>().unwrap_or(0)
+		} else {
+			0 // Default max_retries
+		};
+
 		SessionArgs {
 			name,
 			resume,
@@ -136,6 +153,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			temperature,
 			max_tokens,
 			role,
+			max_retries,
 		}
 	};
 
@@ -154,6 +172,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		session_args
 			.max_tokens
 			.or_else(|| Some(config_for_role.get_effective_max_tokens())),
+		Some(session_args.max_retries), // Pass max_retries from session args
 		&config_for_role,
 		&session_args.role, // Pass role to read temperature from config
 	)?;
@@ -542,9 +561,10 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					let new_chat_session = ChatSession::initialize(
 						Some(new_session_name), // Use the name from the command
 						None,
-						None, // Keep using the default model
-						None, // Use config temperature
-						None, // Use config max_tokens
+						None,                           // Keep using the default model
+						None,                           // Use config temperature
+						None,                           // Use config max_tokens
+						Some(session_args.max_retries), // Pass max_retries from session args
 						&current_config,
 						&session_args.role, // Pass role for temperature config
 					)?;
@@ -832,6 +852,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// This will check input size and prompt user for action if limits are exceeded
 		// Clone messages to avoid borrowing conflicts
 		let messages = chat_session.session.messages.clone();
+		let max_retries = chat_session.max_retries; // Extract before mutable borrow
 		let api_result = crate::session::chat_completion_with_validation(
 			&messages,
 			&model,
@@ -840,6 +861,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			&config_clone,
 			Some(&mut chat_session),
 			Some(operation_cancelled.clone()),
+			max_retries, // Use extracted value
 		)
 		.await;
 
@@ -1052,6 +1074,10 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 		#[arg(long, default_value = "developer")]
 		role: String,
+
+		/// Maximum number of retries for provider errors
+		#[arg(long, default_value = "0")]
+		max_retries: u32,
 	}
 
 	// Read args as SessionArgs - same parsing logic as interactive session
@@ -1119,6 +1145,19 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 			None // No max_tokens specified
 		};
 
+		// Get max_retries
+		let max_retries = if args_str.contains("max_retries: ") {
+			let start = args_str.find("max_retries: ").unwrap() + 13;
+			let end = args_str[start..].find(',').unwrap_or(
+				args_str[start..]
+					.find('}')
+					.unwrap_or(args_str.len() - start),
+			) + start;
+			args_str[start..end].trim().parse::<u32>().unwrap_or(0)
+		} else {
+			0 // Default max_retries
+		};
+
 		SessionArgs {
 			name,
 			resume,
@@ -1126,6 +1165,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 			temperature,
 			max_tokens,
 			role,
+			max_retries,
 		}
 	};
 
@@ -1144,6 +1184,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		session_args
 			.max_tokens
 			.or_else(|| Some(config_for_role.get_effective_max_tokens())),
+		Some(session_args.max_retries), // Pass max_retries from session args
 		&config_for_role,
 		&session_args.role,
 	)?;
@@ -1412,6 +1453,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 	let config_clone = current_config.clone();
 
 	let messages = chat_session.session.messages.clone();
+	let max_retries = chat_session.max_retries; // Extract before mutable borrow
 	let api_result = crate::session::chat_completion_with_validation(
 		&messages,
 		&model,
@@ -1420,6 +1462,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		&config_clone,
 		Some(&mut chat_session),
 		Some(operation_cancelled.clone()),
+		max_retries, // Use extracted value
 	)
 	.await;
 

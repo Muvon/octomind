@@ -43,6 +43,10 @@ pub struct RunArgs {
 	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 	#[arg(long, default_value = "developer")]
 	pub role: String,
+
+	/// Maximum number of retries for provider errors (runtime only, not saved)
+	#[arg(long, default_value = "0")]
+	pub max_retries: u32,
 }
 
 impl RunArgs {
@@ -55,6 +59,7 @@ impl RunArgs {
 			temperature: self.temperature,
 			max_tokens: self.max_tokens,
 			role: self.role.clone(),
+			max_retries: self.max_retries,
 		}
 	}
 

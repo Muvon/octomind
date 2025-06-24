@@ -448,5 +448,5 @@ async fn execute_single_query(
 	];
 
 	// Call the AI provider
-	chat_completion_with_provider(&messages, model, temperature, max_tokens, config).await
+	chat_completion_with_provider(&messages, model, temperature, max_tokens, config, 0).await
 }

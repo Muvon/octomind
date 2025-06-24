@@ -68,6 +68,7 @@ pub async fn perform_context_reduction(
 		chat_session.temperature,
 		chat_session.max_tokens,
 		config,
+		chat_session.max_retries, // Use max_retries from chat session
 	)
 	.await;
 

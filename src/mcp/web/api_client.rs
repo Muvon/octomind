@@ -18,24 +18,34 @@ use super::super::{McpToolCall, McpToolResult};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
-// Helper function to extract and validate query parameter
-pub fn extract_and_validate_query(call: &McpToolCall) -> Result<String> {
+// Helper function to extract and validate query parameter - returns MCP-compliant results
+pub fn extract_and_validate_query(call: &McpToolCall) -> Result<String, McpToolResult> {
 	let query = match call.parameters.get("query") {
-		Some(Value::String(q)) => q.clone(),
+		Some(Value::String(q)) => {
+			if q.trim().is_empty() {
+				return Err(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Query parameter cannot be empty".to_string(),
+				));
+			}
+			q.clone()
+		}
 		Some(other) => {
-			return Err(anyhow!(
-				"Query parameter must be a string, got: {}",
-				other.to_string()
+			return Err(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Query parameter must be a string, got: {}", other),
 			));
 		}
 		None => {
-			return Err(anyhow!("Missing required parameter: query"));
+			return Err(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required parameter: query".to_string(),
+			));
 		}
 	};
-
-	if query.trim().is_empty() {
-		return Err(anyhow!("Query cannot be empty"));
-	}
 
 	Ok(query)
 }

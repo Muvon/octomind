@@ -149,14 +149,31 @@ pub async fn execute_text_editor(
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
 		if token.load(Ordering::SeqCst) {
-			return Err(anyhow!("Text editor operation cancelled"));
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Text editor operation cancelled".to_string(),
+			));
 		}
 	}
 
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
-		_ => return Err(anyhow!("Missing or invalid 'command' parameter")),
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Command parameter must be a string".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required 'command' parameter".to_string(),
+			));
+		}
 	};
 
 	// Execute the appropriate command with cancellation checks
@@ -165,7 +182,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before view operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -194,7 +211,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before view_many operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -225,7 +242,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before create operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -243,7 +260,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before str_replace operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -265,7 +282,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before insert operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -287,7 +304,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before line_replace operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -316,7 +333,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before undo_edit operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 
@@ -330,7 +347,7 @@ pub async fn execute_text_editor(
 			// Check for cancellation before batch_edit operation
 			if let Some(ref token) = cancellation_token {
 				if token.load(Ordering::SeqCst) {
-					return Err(anyhow!("Text editor operation cancelled"));
+					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
 				}
 			}
 

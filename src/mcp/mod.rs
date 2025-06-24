@@ -682,10 +682,19 @@ async fn try_execute_tool_call(
 								"Executing text_editor via filesystem server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								fs::execute_text_editor(call, cancellation_token.clone()).await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
+							match fs::execute_text_editor(call, cancellation_token.clone()).await {
+								Ok(mut result) => {
+									result.tool_id = call.tool_id.clone();
+									return Ok(result);
+								}
+								Err(e) => {
+									return Ok(McpToolResult::error(
+										call.tool_name.clone(),
+										call.tool_id.clone(),
+										format!("Text editor execution failed: {}", e),
+									));
+								}
+							}
 						}
 						"list_files" => {
 							crate::log_debug!(
@@ -733,10 +742,19 @@ async fn try_execute_tool_call(
 								"Executing web_search via web server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								web::execute_web_search(call, cancellation_token.clone()).await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
+							match web::execute_web_search(call, cancellation_token.clone()).await {
+								Ok(mut result) => {
+									result.tool_id = call.tool_id.clone();
+									return Ok(result);
+								}
+								Err(e) => {
+									return Ok(McpToolResult::error(
+										call.tool_name.clone(),
+										call.tool_id.clone(),
+										format!("Web search execution failed: {}", e),
+									));
+								}
+							}
 						}
 						"image_search" => {
 							crate::log_debug!(
@@ -773,10 +791,19 @@ async fn try_execute_tool_call(
 								"Executing read_html via web server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								web::execute_read_html(call, cancellation_token.clone()).await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
+							match web::execute_read_html(call, cancellation_token.clone()).await {
+								Ok(mut result) => {
+									result.tool_id = call.tool_id.clone();
+									return Ok(result);
+								}
+								Err(e) => {
+									return Ok(McpToolResult::error(
+										call.tool_name.clone(),
+										call.tool_id.clone(),
+										format!("Read HTML execution failed: {}", e),
+									));
+								}
+							}
 						}
 						_ => {
 							return Err(anyhow::anyhow!(

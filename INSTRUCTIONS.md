@@ -12,6 +12,15 @@
 
 ## 🚫 CRITICAL CODE QUALITY RULES
 
+### **MCP PROTOCOL COMPLIANCE - MANDATORY**
+- **NEVER return `Err()` from MCP tool functions** - use `Ok(McpToolResult::error())` instead
+- **ALWAYS validate parameters** with clear error messages for missing/empty/wrong type
+- **ALWAYS handle API key failures** gracefully with actionable error messages
+- **ALWAYS handle cancellation** by returning proper MCP error results
+- **FOLLOW MCP standard format**: `{content: [{type: "text", text: "..."}], isError: true/false}`
+- **PRESERVE tool_id** in all result scenarios (success and error)
+- **USE line_replace for precision** when str_replace loses accuracy
+
 ### **DEVELOPMENT RESTRICTIONS - NEVER TOUCH THESE**
 - **NEVER run tests that affect global configuration** or create session files
 - **NEVER create example configs** or modify existing config structures in system-wide files
@@ -91,21 +100,30 @@ crate::log_debug!("Something happened");
 - Auto cache markers: system messages, tools (supports caching models only)
 - 2-marker system: content cache management for cost optimization
 
-### 🔧 MCP TOOLS
+### 🔧 MCP TOOLS - FULLY PROTOCOL COMPLIANT
+**CRITICAL MCP COMPLIANCE**: All tools now return proper MCP-compliant error responses instead of crashing communication flow.
+
 **Tool System Core:**
-- `src/mcp/mod.rs` - Tool routing, execution, `try_execute_tool_call()`
+- `src/mcp/mod.rs` - Tool routing, execution, `try_execute_tool_call()` with proper error handling
 - `src/mcp/tool_map.rs` - Static tool-to-server mapping for performance
 
 **Built-in Tool Servers:**
-- **Developer**: `src/mcp/dev/` (shell execution)
+- **Developer**: `src/mcp/dev/` (shell execution, ast_grep)
 - **Filesystem**: `src/mcp/fs/` (text_editor, list_files)
-- **Web**: `src/mcp/web/` (web_search, read_html, image_search)
+- **Web**: `src/mcp/web/` (web_search, read_html, image_search, video_search, news_search)
 - **Agent**: `src/mcp/agent/` (layer routing for AI tasks via `agent_<name>` tools)
 
 **External Server Management:**
 - `src/mcp/server.rs` - HTTP server communication
 - `src/mcp/process.rs` - Stdin server process management
 - `src/mcp/health_monitor.rs` - Server health monitoring
+
+**MCP Protocol Standards:**
+- ✅ All tools return `Ok(McpToolResult::error())` for failures (never `Err()`)
+- ✅ Error format: `{content: [{type: "text", text: "error"}], isError: true}`
+- ✅ Success format: `{content: [{type: "text", text: "result"}], isError: false}`
+- ✅ Parameter validation with clear error messages
+- ✅ Graceful handling of missing API keys, empty parameters, cancellation
 
 ### 🤖 AI PROVIDERS
 **Provider System:**
@@ -133,6 +151,10 @@ crate::log_debug!("Something happened");
 ### Tool Not Working
 1. **Check tool routing**: `src/mcp/mod.rs` → `build_tool_server_map()`
 2. **Check tool execution**: `src/mcp/mod.rs` → `try_execute_tool_call()`
+3. **Check tool definitions**: `src/mcp/*/functions.rs` files
+4. **Check allowed_tools patterns**: Role/layer config in template
+5. **Check MCP compliance**: Tool should return `McpToolResult::error()` not `Err()`
+6. **Check parameter validation**: Required parameters properly validated
 3. **Check tool definitions**: `src/mcp/*/functions.rs` files
 4. **Check allowed_tools patterns**: Role/layer config in template
 
@@ -167,7 +189,9 @@ crate::log_debug!("Something happened");
 ### Add New MCP Tool
 1. **Function definition**: Add to `src/mcp/*/functions.rs`
 2. **Implementation**: Add to `src/mcp/*/` (core.rs or new file)
-3. **Routing**: Update `src/mcp/mod.rs` → `try_execute_tool_call()`
+3. **Routing**: Update `src/mcp/mod.rs` → `try_execute_tool_call()` with proper error handling
+4. **CRITICAL**: Return `Ok(McpToolResult::error())` for all failures, never `Err()`
+5. **Parameter validation**: Use proper MCP-compliant validation patterns
 
 ### Add New Provider
 1. **Implementation**: Create `src/providers/new_provider.rs`
@@ -195,6 +219,52 @@ crate::log_debug!("Something happened");
 3. **Usage**: `agent_<name>(task="...")` MCP tool routes to the layer
 
 ## 📋 CRITICAL PATTERNS
+
+### MCP Tool Error Handling Pattern
+```rust
+// ✅ CORRECT MCP-compliant parameter validation
+let param = match call.parameters.get("param") {
+    Some(Value::String(p)) => {
+        if p.trim().is_empty() {
+            return Ok(McpToolResult::error(
+                call.tool_name.clone(),
+                call.tool_id.clone(),
+                "Parameter 'param' cannot be empty".to_string(),
+            ));
+        }
+        p.clone()
+    }
+    Some(_) => {
+        return Ok(McpToolResult::error(
+            call.tool_name.clone(),
+            call.tool_id.clone(),
+            "Parameter 'param' must be a string".to_string(),
+        ));
+    }
+    None => {
+        return Ok(McpToolResult::error(
+            call.tool_name.clone(),
+            call.tool_id.clone(),
+            "Missing required parameter 'param'".to_string(),
+        ));
+    }
+};
+
+// ✅ CORRECT MCP-compliant routing
+match tool::execute_command(call, token).await {
+    Ok(mut result) => {
+        result.tool_id = call.tool_id.clone();
+        return Ok(result);
+    }
+    Err(e) => {
+        return Ok(McpToolResult::error(
+            call.tool_name.clone(),
+            call.tool_id.clone(),
+            format!("Tool execution failed: {}", e),
+        ));
+    }
+}
+```
 
 ### File Patterns
 - **Config**: `src/config/*.rs` + `config-templates/default.toml`

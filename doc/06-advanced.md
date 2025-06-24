@@ -10,6 +10,16 @@ Octomind's advanced features enable sophisticated development workflows through 
 
 MCP enables AI models to use external tools and services through a standardized protocol. Octomind provides development capabilities through natural conversation by integrating tools seamlessly into AI interactions.
 
+### MCP Protocol Compliance
+
+**CRITICAL**: All Octomind MCP tools are fully protocol-compliant and handle errors gracefully:
+
+- ✅ **Error Handling**: Tools return `McpToolResult::error()` instead of crashing communication
+- ✅ **Parameter Validation**: Clear error messages for missing, empty, or wrong-type parameters
+- ✅ **API Key Management**: Graceful handling of missing environment variables
+- ✅ **Cancellation Support**: Proper handling of user cancellation requests
+- ✅ **Standard Format**: All responses follow MCP standard: `{content: [{type: "text", text: "..."}], isError: true/false}`
+
 ### Built-in MCP Tools
 
 #### Developer Tools (type: "builtin")
@@ -21,6 +31,15 @@ The developer MCP server provides essential development tools for code analysis,
 - **Background execution**: Long-running processes that return PID for manual management
 - **Process management**: Background processes continue until explicitly killed or app exits
 - **Shell history integration**: Commands are automatically added to shell history
+- **Error handling**: Clear messages for missing commands, execution failures, and cancellation
+
+**ast_grep** - AST-based code search and refactoring with semantic understanding
+- **Pattern Matching**: Use AST patterns like `$NAME`, `$ARGS`, `$$$` for flexible code matching
+- **Language Support**: JavaScript/TypeScript, PHP, Rust, Python, Go, Java, C/C++
+- **Rewrite Capabilities**: Transform code using rewrite patterns with `--update-all` support
+- **Context Control**: Configurable context lines around matches
+- **Glob Support**: Search across multiple files using glob patterns with file count protection
+- **Error handling**: Validation of patterns, file limits, and execution failures
 
 ```json
 // Foreground execution (default)

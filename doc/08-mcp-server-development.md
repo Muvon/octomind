@@ -291,8 +291,16 @@ match target_server.connection_type {
                 "Executing database command via database server '{}'",
                 target_server.name
             );
-            let mut result =
-                database::execute_database_command(call, config, cancellation_token.clone()).await?;
+            let mut result = match database::execute_database_command(call, config, cancellation_token.clone()).await {
+                Ok(res) => res,
+                Err(e) => {
+                    return Ok(McpToolResult::error(
+                        call.tool_name.clone(),
+                        call.tool_id.clone(),
+                        format!("Database execution failed: {}", e),
+                    ));
+                }
+            };
             result.tool_id = call.tool_id.clone();
             return Ok(result);
         }

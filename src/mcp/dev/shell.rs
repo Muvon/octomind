@@ -181,8 +181,30 @@ pub async fn execute_shell_command(
 
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
-		Some(Value::String(cmd)) => cmd.clone(),
-		_ => return Err(anyhow!("Missing or invalid 'command' parameter")),
+		Some(Value::String(cmd)) => {
+			if cmd.trim().is_empty() {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Command parameter cannot be empty".to_string(),
+				));
+			}
+			cmd.clone()
+		}
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Command parameter must be a string".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required 'command' parameter".to_string(),
+			));
+		}
 	};
 
 	// Extract background parameter

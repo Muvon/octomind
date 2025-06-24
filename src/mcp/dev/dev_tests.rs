@@ -319,11 +319,15 @@ function testFunction() {
 		};
 
 		let result = execute_shell_command(&call, None).await;
-		assert!(result.is_err());
-		assert!(result
-			.unwrap_err()
-			.to_string()
-			.contains("Missing or invalid 'command' parameter"));
+		assert!(result.is_ok());
+		let result = result.unwrap();
+		let output = result.result.as_object().unwrap();
+		assert_eq!(output["isError"], true);
+		let error_content = &output["content"][0]["text"];
+		assert!(error_content
+			.as_str()
+			.unwrap()
+			.contains("Missing required 'command' parameter"));
 	}
 
 	#[tokio::test]

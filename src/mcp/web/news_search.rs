@@ -19,7 +19,7 @@ use super::api_client::{
 	create_api_error_result, extract_and_validate_query, make_brave_api_request,
 };
 use super::formatters::format_news_results;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde_json::json;
 
 // Define the news_search function for the MCP protocol
@@ -108,19 +108,20 @@ pub async fn execute_news_search(
 	// Extract and validate query
 	let query = match extract_and_validate_query(call) {
 		Ok(q) => q,
-		Err(e) => {
-			return Ok(create_api_error_result(
-				e,
-				"news",
-				"news_search",
-				&call.tool_id,
-			))
-		}
+		Err(error_result) => return Ok(error_result),
 	};
 
 	// Get API key from environment
-	let api_key = std::env::var("BRAVE_API_KEY")
-		.map_err(|_| anyhow!("BRAVE_API_KEY environment variable is not set"))?;
+	let api_key = match std::env::var("BRAVE_API_KEY") {
+		Ok(key) => key,
+		Err(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"BRAVE_API_KEY environment variable is not set".to_string(),
+			));
+		}
+	};
 
 	// Extract optional parameters with defaults
 	let count = call

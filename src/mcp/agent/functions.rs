@@ -93,34 +93,75 @@ pub async fn execute_agent_command(
 	}
 
 	// Extract layer name from tool name (agent_<layer_name>)
-	let layer_name = call
-		.tool_name
-		.strip_prefix("agent_")
-		.ok_or_else(|| anyhow::anyhow!("Invalid agent tool name: {}", call.tool_name))?;
+	let layer_name = match call.tool_name.strip_prefix("agent_") {
+		Some(name) => name,
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Invalid agent tool name: {}", call.tool_name),
+			));
+		}
+	};
 
-	let task = call
-		.parameters
-		.get("task")
-		.and_then(|v| v.as_str())
-		.ok_or_else(|| anyhow::anyhow!("Agent tool requires 'task' parameter"))?;
+	let task = match call.parameters.get("task").and_then(|v| v.as_str()) {
+		Some(t) => {
+			if t.trim().is_empty() {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Task parameter cannot be empty".to_string(),
+				));
+			}
+			t
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Agent tool requires 'task' parameter".to_string(),
+			));
+		}
+	};
 
 	// Find the agent configuration directly (agents are now LayerConfigs)
-	let agent_config = config
-		.agents
-		.iter()
-		.find(|agent| agent.name == layer_name)
-		.ok_or_else(|| anyhow::anyhow!("Agent '{}' not configured", layer_name))?;
+	let agent_config = match config.agents.iter().find(|agent| agent.name == layer_name) {
+		Some(config) => config,
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Agent '{}' not configured", layer_name),
+			));
+		}
+	};
 
 	// Process task through the agent layer using the provider system
-	let (result, agent_costs) = process_layer_as_agent(agent_config, task, config).await?;
+	let (result, agent_costs) = match process_layer_as_agent(agent_config, task, config).await {
+		Ok(res) => res,
+		Err(e) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Agent processing failed: {}", e),
+			));
+		}
+	};
 
 	// Return MCP-compliant result with cost metadata
-	Ok(McpToolResult::success_with_metadata(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		result,
-		serde_json::to_value(agent_costs)?,
-	))
+	match serde_json::to_value(agent_costs) {
+		Ok(metadata) => Ok(McpToolResult::success_with_metadata(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			result,
+			metadata,
+		)),
+		Err(e) => Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Failed to serialize agent costs: {}", e),
+		)),
+	}
 }
 
 // Process layer as agent using isolated session with full layer processing

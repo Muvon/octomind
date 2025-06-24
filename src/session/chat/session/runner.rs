@@ -28,172 +28,149 @@ use std::io::Write; // Added for stdout flushing
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-// Run an interactive session
-pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
-	args: &T,
-	config: &Config,
-) -> Result<()> {
-	use clap::Args;
-	use std::fmt::Debug;
+// Type alias for extracted session parameters
+type SessionParams = (
+	Option<String>, // name
+	Option<String>, // resume
+	Option<String>, // model
+	Option<u32>,    // max_tokens
+	f32,            // temperature
+	String,         // role
+	u32,            // max_retries
+);
 
-	// Extract args from clap::Args
-	#[derive(Args, Debug)]
-	struct SessionArgs {
-		/// Name of the session to start or resume
-		#[arg(long, short)]
-		name: Option<String>,
-
-		/// Resume an existing session
-		#[arg(long, short)]
-		resume: Option<String>,
-
-		/// Model to use instead of the one configured in config
-		#[arg(long)]
-		model: Option<String>,
-
-		/// Temperature for the AI response
-		#[arg(long, default_value = "0.7")]
-		temperature: f32,
-
-		/// Maximum tokens for the AI response
-		#[arg(long)]
-		max_tokens: Option<u32>,
-
-		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
-		#[arg(long, default_value = "developer")]
-		role: String,
-
-		/// Maximum number of retries for provider errors
-		#[arg(long, default_value = "0")]
-		max_retries: u32,
-	}
-
-	// Read args as SessionArgs
+// Helper function to extract session parameters from Debug format
+// This allows both SessionArgs and RunArgs (after conversion) to work
+fn extract_session_params<T: std::fmt::Debug>(args: &T) -> SessionParams {
 	let args_str = format!("{:?}", args);
-	let session_args: SessionArgs = {
-		// Get model
-		let model = if args_str.contains("model: Some(\"") {
-			let start = args_str.find("model: Some(\"").unwrap() + 13;
-			let end = args_str[start..].find('\"').unwrap() + start;
-			Some(args_str[start..end].to_string())
-		} else {
-			None
-		};
 
-		// Get name
-		let name = if args_str.contains("name: Some(\"") {
-			let start = args_str.find("name: Some(\"").unwrap() + 12;
-			let end = args_str[start..].find('\"').unwrap() + start;
-			Some(args_str[start..end].to_string())
-		} else {
-			None
-		};
-
-		// Get resume
-		let resume = if args_str.contains("resume: Some(\"") {
-			let start = args_str.find("resume: Some(\"").unwrap() + 14;
-			let end = args_str[start..].find('\"').unwrap() + start;
-			Some(args_str[start..end].to_string())
-		} else {
-			None
-		};
-
-		// Get role
-		let role = if args_str.contains("role: \"") {
-			let start = args_str.find("role: \"").unwrap() + 7;
-			let end = args_str[start..].find('\"').unwrap() + start;
-			args_str[start..end].to_string()
-		} else {
-			"developer".to_string() // Default role
-		};
-
-		// Get temperature
-		let temperature = if args_str.contains("temperature: ") {
-			let start = args_str.find("temperature: ").unwrap() + 13;
-			let end = args_str[start..].find(',').unwrap_or(
-				args_str[start..]
-					.find('}')
-					.unwrap_or(args_str.len() - start),
-			) + start;
-			args_str[start..end].trim().parse::<f32>().unwrap_or(0.7)
-		} else {
-			0.7 // Default temperature
-		};
-
-		// Get max_tokens
-		let max_tokens = if args_str.contains("max_tokens: ") {
-			let start = args_str.find("max_tokens: ").unwrap() + 12;
-			let end = args_str[start..].find(',').unwrap_or(
-				args_str[start..]
-					.find('}')
-					.unwrap_or(args_str.len() - start),
-			) + start;
-			args_str[start..end].trim().parse::<u32>().ok()
-		} else {
-			None // No max_tokens specified
-		};
-
-		// Get max_retries
-		let max_retries = if args_str.contains("max_retries: ") {
-			let start = args_str.find("max_retries: ").unwrap() + 13;
-			let end = args_str[start..].find(',').unwrap_or(
-				args_str[start..]
-					.find('}')
-					.unwrap_or(args_str.len() - start),
-			) + start;
-			args_str[start..end].trim().parse::<u32>().unwrap_or(0)
-		} else {
-			0 // Default max_retries
-		};
-
-		SessionArgs {
-			name,
-			resume,
-			model,
-			temperature,
-			max_tokens,
-			role,
-			max_retries,
-		}
+	// Get model
+	let model = if args_str.contains("model: Some(\"") {
+		let start = args_str.find("model: Some(\"").unwrap() + 13;
+		let end = args_str[start..].find('"').unwrap() + start;
+		Some(args_str[start..end].to_string())
+	} else {
+		None
 	};
 
+	// Get name
+	let name = if args_str.contains("name: Some(\"") {
+		let start = args_str.find("name: Some(\"").unwrap() + 12;
+		let end = args_str[start..].find('"').unwrap() + start;
+		Some(args_str[start..end].to_string())
+	} else {
+		None
+	};
+
+	// Get resume
+	let resume = if args_str.contains("resume: Some(\"") {
+		let start = args_str.find("resume: Some(\"").unwrap() + 14;
+		let end = args_str[start..].find('"').unwrap() + start;
+		Some(args_str[start..end].to_string())
+	} else {
+		None
+	};
+
+	// Get role
+	let role = if args_str.contains("role: \"") {
+		let start = args_str.find("role: \"").unwrap() + 7;
+		let end = args_str[start..].find('"').unwrap() + start;
+		args_str[start..end].to_string()
+	} else {
+		"developer".to_string() // Default role
+	};
+
+	// Get temperature
+	let temperature = if args_str.contains("temperature: ") {
+		let start = args_str.find("temperature: ").unwrap() + 13;
+		let end = args_str[start..].find(',').unwrap_or(
+			args_str[start..]
+				.find('}')
+				.unwrap_or(args_str.len() - start),
+		) + start;
+		args_str[start..end].trim().parse::<f32>().unwrap_or(0.7)
+	} else {
+		0.7 // Default temperature
+	};
+
+	// Get max_tokens
+	let max_tokens = if args_str.contains("max_tokens: ") {
+		let start = args_str.find("max_tokens: ").unwrap() + 12;
+		let end = args_str[start..].find(',').unwrap_or(
+			args_str[start..]
+				.find('}')
+				.unwrap_or(args_str.len() - start),
+		) + start;
+		args_str[start..end].trim().parse::<u32>().ok()
+	} else {
+		None // No max_tokens specified
+	};
+
+	// Get max_retries
+	let max_retries = if args_str.contains("max_retries: ") {
+		let start = args_str.find("max_retries: ").unwrap() + 13;
+		let end = args_str[start..].find(',').unwrap_or(
+			args_str[start..]
+				.find('}')
+				.unwrap_or(args_str.len() - start),
+		) + start;
+		args_str[start..end].trim().parse::<u32>().unwrap_or(0)
+	} else {
+		0 // Default max_retries
+	};
+
+	(
+		name,
+		resume,
+		model,
+		max_tokens,
+		temperature,
+		role,
+		max_retries,
+	)
+}
+
+// Run an interactive session
+pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
+	// Extract session parameters
+	let (name, resume, model, max_tokens, temperature, role, max_retries) =
+		extract_session_params(args);
 	// For developer role, show MCP server status
 	let current_dir = std::env::current_dir()?;
 
 	// Get the merged configuration for the specified role
-	let config_for_role = config.get_merged_config_for_role(&session_args.role);
+	let config_for_role = config.get_merged_config_for_role(&role);
 
 	// Create or load session
-	let mut session_params = SessionInitParams::new(&config_for_role, &session_args.role);
+	let mut session_params = SessionInitParams::new(&config_for_role, &role);
 
-	if let Some(name) = session_args.name {
+	if let Some(name) = name {
 		session_params = session_params.with_name(name);
 	}
-	if let Some(resume) = session_args.resume {
+	if let Some(resume) = resume {
 		session_params = session_params.with_resume(resume);
 	}
-	if let Some(model) = session_args.model.clone() {
+	if let Some(model) = model.clone() {
 		session_params = session_params.with_model(model);
 	}
-	session_params = session_params.with_temperature(session_args.temperature);
-	if let Some(max_tokens) = session_args
-		.max_tokens
-		.or_else(|| Some(config_for_role.get_effective_max_tokens()))
+	session_params = session_params.with_temperature(temperature);
+	if let Some(max_tokens) =
+		max_tokens.or_else(|| Some(config_for_role.get_effective_max_tokens()))
 	{
 		session_params = session_params.with_max_tokens(max_tokens);
 	}
-	session_params = session_params.with_max_retries(session_args.max_retries);
+	session_params = session_params.with_max_retries(max_retries);
 
 	let mut chat_session = ChatSession::initialize(session_params)?;
 
 	// If runtime model override is provided, update the session's model (runtime only)
-	if let Some(ref runtime_model) = session_args.model {
+	if let Some(runtime_model) = &model {
 		chat_session.model = runtime_model.clone();
 		log_info!("Using runtime model override: {}", runtime_model);
 	}
 
 	// Always set the temperature from the command line (runtime only)
-	chat_session.temperature = session_args.temperature;
+	chat_session.temperature = temperature;
 
 	// Track if the first message has been processed through layers
 	let mut first_message_processed = !chat_session.session.messages.is_empty();
@@ -212,19 +189,18 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {
 		// Create system prompt based on role - use merged config for role
-		let system_prompt =
-			create_system_prompt(&current_dir, &config_for_role, &session_args.role).await;
+		let system_prompt = create_system_prompt(&current_dir, &config_for_role, &role).await;
 		chat_session.add_system_message(&system_prompt)?;
 
 		// Process layer system prompts during session initialization
 		// This ensures layer system prompts are processed once and cached for the entire session
-		let (role_config, _, _, _, _) = config_for_role.get_role_config(&session_args.role);
+		let (role_config, _, _, _, _) = config_for_role.get_role_config(&role);
 		if role_config.enable_layers {
 			use crate::session::layers::LayeredOrchestrator;
 			// Create orchestrator with processed system prompts - use original config for layers
 			let _orchestrator = LayeredOrchestrator::from_config_with_processed_prompts(
 				config,
-				&session_args.role,
+				&role,
 				&current_dir,
 			)
 			.await;
@@ -255,21 +231,16 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		}
 
 		// Add assistant welcome message with variable processing
-		let role_config = config.get_role_config_struct(&session_args.role);
+		let role_config = config.get_role_config_struct(&role);
 		let welcome_message =
 			crate::session::helper_functions::process_placeholders_async_with_role(
 				&role_config.welcome,
 				&current_dir,
-				Some(&session_args.role),
+				Some(&role),
 			)
 			.await;
 
-		chat_session.add_assistant_message(
-			&welcome_message,
-			None,
-			&config_for_role,
-			&session_args.role,
-		)?;
+		chat_session.add_assistant_message(&welcome_message, None, &config_for_role, &role)?;
 
 		// Apply cache marker to welcome message as well for consistency
 		if supports_caching {
@@ -293,7 +264,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 							crate::session::helper_functions::process_placeholders_async_with_role(
 								&instructions_content,
 								&current_dir,
-								Some(&session_args.role),
+								Some(&role),
 							)
 							.await;
 
@@ -528,7 +499,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				let result = super::super::context_reduction::perform_context_reduction(
 					&mut chat_session,
 					&current_config,
-					&session_args.role,
+					&role,
 					operation_cancelled.clone(),
 				)
 				.await;
@@ -555,7 +526,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 			}
 
 			let exit = chat_session
-				.process_command(&input, &mut current_config, &session_args.role)
+				.process_command(&input, &mut current_config, &role)
 				.await?;
 			if exit {
 				// First check if it's a session switch command
@@ -567,10 +538,9 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					chat_session.save()?;
 
 					// Initialize the new session
-					let session_params =
-						SessionInitParams::new(&current_config, &session_args.role)
-							.with_name(new_session_name)
-							.with_max_retries(session_args.max_retries);
+					let session_params = SessionInitParams::new(&current_config, &role)
+						.with_name(new_session_name)
+						.with_max_retries(max_retries);
 					let new_chat_session = ChatSession::initialize(session_params)?;
 
 					// Replace the current chat session
@@ -607,8 +577,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					match crate::config::Config::load() {
 						Ok(updated_config) => {
 							// Update our current config with the new role-specific config
-							current_config =
-								updated_config.get_merged_config_for_role(&session_args.role);
+							current_config = updated_config.get_merged_config_for_role(&role);
 							// Update thread config for logging macros
 							crate::config::set_thread_config(&current_config);
 							log_info!("Configuration reloaded successfully");
@@ -637,7 +606,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// 2. Use the processed input for the main model chat
 
 		// If layers are enabled and this is the first message, process it through layers first
-		if current_config.get_enable_layers(&session_args.role) && !first_message_processed {
+		if current_config.get_enable_layers(&role) && !first_message_processed {
 			// Set processing state to layers
 			*processing_state.lock().unwrap() = ProcessingState::ProcessingLayers;
 
@@ -660,7 +629,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 				&input,
 				&mut chat_session,
 				&current_config,
-				&session_args.role,
+				&role,
 				operation_cancelled.clone(),
 			)
 			.await;
@@ -760,7 +729,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		check_and_truncate_context(
 			&mut chat_session,
 			&current_config,
-			&session_args.role,
+			&role,
 			truncate_cancelled.clone(),
 		)
 		.await?;
@@ -935,7 +904,7 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					response.finish_reason,
 					&mut chat_session,
 					&current_config,
-					&session_args.role,
+					&role,
 					tool_process_cancelled.clone(),
 				)
 				.await;
@@ -1044,187 +1013,65 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 // THIS IS just helper and USED as simplified version of interactive session
 // That used for run command THAT is not interactive and get request and process it
 // in the same way session procsss interactive request from the user but without inetractive
-pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>(
+pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	args: &T,
 	config: &Config,
 	initial_input: &str,
 ) -> Result<()> {
-	use clap::Args;
-	use std::fmt::Debug;
-
-	// Extract args from clap::Args - reusing same parsing logic as interactive session
-	#[derive(Args, Debug)]
-	struct SessionArgs {
-		/// Name of the session to start or resume
-		#[arg(long, short)]
-		name: Option<String>,
-
-		/// Resume an existing session
-		#[arg(long, short)]
-		resume: Option<String>,
-
-		/// Model to use instead of the one configured in config
-		#[arg(long)]
-		model: Option<String>,
-
-		/// Temperature for the AI response
-		#[arg(long, default_value = "0.7")]
-		temperature: f32,
-
-		/// Maximum tokens for the AI response
-		#[arg(long)]
-		max_tokens: Option<u32>,
-
-		/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
-		#[arg(long, default_value = "developer")]
-		role: String,
-
-		/// Maximum number of retries for provider errors
-		#[arg(long, default_value = "0")]
-		max_retries: u32,
-	}
-
-	// Read args as SessionArgs - same parsing logic as interactive session
-	let args_str = format!("{:?}", args);
-	let session_args: SessionArgs = {
-		// Get model
-		let model = if args_str.contains("model: Some(\"") {
-			let start = args_str.find("model: Some(\"").unwrap() + 13;
-			let end = args_str[start..].find('"').unwrap() + start;
-			Some(args_str[start..end].to_string())
-		} else {
-			None
-		};
-
-		// Get name
-		let name = if args_str.contains("name: Some(\"") {
-			let start = args_str.find("name: Some(\"").unwrap() + 12;
-			let end = args_str[start..].find('"').unwrap() + start;
-			Some(args_str[start..end].to_string())
-		} else {
-			None
-		};
-
-		// Get resume
-		let resume = if args_str.contains("resume: Some(\"") {
-			let start = args_str.find("resume: Some(\"").unwrap() + 14;
-			let end = args_str[start..].find('"').unwrap() + start;
-			Some(args_str[start..end].to_string())
-		} else {
-			None
-		};
-
-		// Get role
-		let role = if args_str.contains("role: \"") {
-			let start = args_str.find("role: \"").unwrap() + 7;
-			let end = args_str[start..].find('"').unwrap() + start;
-			args_str[start..end].to_string()
-		} else {
-			"developer".to_string() // Default role
-		};
-
-		// Get temperature
-		let temperature = if args_str.contains("temperature: ") {
-			let start = args_str.find("temperature: ").unwrap() + 13;
-			let end = args_str[start..].find(',').unwrap_or(
-				args_str[start..]
-					.find('}')
-					.unwrap_or(args_str.len() - start),
-			) + start;
-			args_str[start..end].trim().parse::<f32>().unwrap_or(0.7)
-		} else {
-			0.7 // Default temperature
-		};
-
-		// Get max_tokens
-		let max_tokens = if args_str.contains("max_tokens: ") {
-			let start = args_str.find("max_tokens: ").unwrap() + 12;
-			let end = args_str[start..].find(',').unwrap_or(
-				args_str[start..]
-					.find('}')
-					.unwrap_or(args_str.len() - start),
-			) + start;
-			args_str[start..end].trim().parse::<u32>().ok()
-		} else {
-			None // No max_tokens specified
-		};
-
-		// Get max_retries
-		let max_retries = if args_str.contains("max_retries: ") {
-			let start = args_str.find("max_retries: ").unwrap() + 13;
-			let end = args_str[start..].find(',').unwrap_or(
-				args_str[start..]
-					.find('}')
-					.unwrap_or(args_str.len() - start),
-			) + start;
-			args_str[start..end].trim().parse::<u32>().unwrap_or(0)
-		} else {
-			0 // Default max_retries
-		};
-
-		SessionArgs {
-			name,
-			resume,
-			model,
-			temperature,
-			max_tokens,
-			role,
-			max_retries,
-		}
-	};
+	// Extract session parameters
+	let (name, resume, model, max_tokens, temperature, role, max_retries) =
+		extract_session_params(args);
 
 	// Suppress MCP server status messages for non-interactive mode
 	let current_dir = std::env::current_dir()?;
 
 	// Get the merged configuration for the specified role
-	let config_for_role = config.get_merged_config_for_role(&session_args.role);
+	let config_for_role = config.get_merged_config_for_role(&role);
 
 	// Create or load session - same as interactive
-	let mut session_params = SessionInitParams::new(&config_for_role, &session_args.role);
+	let mut session_params = SessionInitParams::new(&config_for_role, &role);
 
-	if let Some(name) = session_args.name {
+	if let Some(name) = name {
 		session_params = session_params.with_name(name);
 	}
-	if let Some(resume) = session_args.resume {
+	if let Some(resume) = resume {
 		session_params = session_params.with_resume(resume);
 	}
-	if let Some(model) = session_args.model.clone() {
+	if let Some(model) = model.clone() {
 		session_params = session_params.with_model(model);
 	}
-	session_params = session_params.with_temperature(session_args.temperature);
-	if let Some(max_tokens) = session_args
-		.max_tokens
-		.or_else(|| Some(config_for_role.get_effective_max_tokens()))
+	session_params = session_params.with_temperature(temperature);
+	if let Some(max_tokens) =
+		max_tokens.or_else(|| Some(config_for_role.get_effective_max_tokens()))
 	{
 		session_params = session_params.with_max_tokens(max_tokens);
 	}
-	session_params = session_params.with_max_retries(session_args.max_retries);
+	session_params = session_params.with_max_retries(max_retries);
 
 	let mut chat_session = ChatSession::initialize(session_params)?;
 
 	// Apply runtime overrides - same as interactive
-	if let Some(ref runtime_model) = session_args.model {
+	if let Some(runtime_model) = &model {
 		chat_session.model = runtime_model.clone();
 		log_info!("Using runtime model override: {}", runtime_model);
 	}
-	chat_session.temperature = session_args.temperature;
+	chat_session.temperature = temperature;
 
 	// Track if the first message has been processed through layers
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
 	// Initialize with system prompt if new session - same as interactive
 	if chat_session.session.messages.is_empty() {
-		let system_prompt =
-			create_system_prompt(&current_dir, &config_for_role, &session_args.role).await;
+		let system_prompt = create_system_prompt(&current_dir, &config_for_role, &role).await;
 		chat_session.add_system_message(&system_prompt)?;
 
 		// Process layer system prompts - same as interactive
-		let (role_config, _, _, _, _) = config.get_role_config(&session_args.role);
+		let (role_config, _, _, _, _) = config.get_role_config(&role);
 		if role_config.enable_layers {
 			use crate::session::layers::LayeredOrchestrator;
 			let _orchestrator = LayeredOrchestrator::from_config_with_processed_prompts(
 				config,
-				&session_args.role,
+				&role,
 				&current_dir,
 			)
 			.await;
@@ -1251,21 +1098,16 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 		}
 
 		// Add assistant welcome message - same as interactive
-		let role_config = config.get_role_config_struct(&session_args.role);
+		let role_config = config.get_role_config_struct(&role);
 		let welcome_message =
 			crate::session::helper_functions::process_placeholders_async_with_role(
 				&role_config.welcome,
 				&current_dir,
-				Some(&session_args.role),
+				Some(&role),
 			)
 			.await;
 
-		chat_session.add_assistant_message(
-			&welcome_message,
-			None,
-			&config_for_role,
-			&session_args.role,
-		)?;
+		chat_session.add_assistant_message(&welcome_message, None, &config_for_role, &role)?;
 
 		// Apply cache marker to welcome message - same as interactive
 		if supports_caching {
@@ -1288,7 +1130,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 							crate::session::helper_functions::process_placeholders_async_with_role(
 								&instructions_content,
 								&current_dir,
-								Some(&session_args.role),
+								Some(&role),
 							)
 							.await;
 
@@ -1352,7 +1194,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 
 		// Process the command
 		let exit = chat_session
-			.process_command(&input, &mut current_config, &session_args.role)
+			.process_command(&input, &mut current_config, &role)
 			.await?;
 
 		if exit {
@@ -1368,7 +1210,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 	}
 
 	// Layer processing if enabled and first message - same as interactive
-	if current_config.get_enable_layers(&session_args.role) && !first_message_processed {
+	if current_config.get_enable_layers(&role) && !first_message_processed {
 		// Track session message count before layer processing
 		let messages_before_layers = chat_session.session.messages.len();
 
@@ -1377,7 +1219,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 			&input,
 			&mut chat_session,
 			&current_config,
-			&session_args.role,
+			&role,
 			operation_cancelled.clone(),
 		)
 		.await;
@@ -1424,7 +1266,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 	check_and_truncate_context(
 		&mut chat_session,
 		&current_config,
-		&session_args.role,
+		&role,
 		truncate_cancelled.clone(),
 	)
 	.await?;
@@ -1497,7 +1339,7 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 				response.finish_reason,
 				&mut chat_session,
 				&current_config,
-				&session_args.role,
+				&role,
 				tool_process_cancelled.clone(),
 			)
 			.await;

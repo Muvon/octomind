@@ -17,35 +17,59 @@
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
 use anyhow::Result;
+use regex::Regex;
+use std::path::Path;
 
 // All constants kept internal - no configuration needed
 const SUMMARY_REQUEST_PROMPT: &str = r#"
-CRITICAL: This session is approaching token limits. Please provide a comprehensive summary:
+CRITICAL: Session approaching token limits. Provide STRUCTURED summary for seamless continuation:
 
-**CURRENT OBJECTIVE**: What is the main task/goal we're working on?
+## OBJECTIVE
+Current main task/goal being worked on.
 
-**WORK COMPLETED**: What has been accomplished so far? Include:
-- Code changes made
-- Files modified
-- Tools used
+## PROGRESS
+What has been accomplished:
+- Specific code changes made
+- Files modified with key changes
+- Tools used and results
 - Problems solved
 
-**CURRENT STATE**: Where are we right now? Include:
-- What's currently in progress
-- Any pending operations
-- Current context/focus
+## CURRENT STATE
+Exact current situation:
+- Active work in progress
+- Pending operations
+- Current focus area
 
-**NEXT STEPS**: What needs to be done next? Include:
-- Immediate next actions
-- Planned approach
-- Expected outcomes
+## REQUIRED FILE CONTEXTS
+List ALL files needed as context to continue work. Use EXACT format:
+```
+filename:startline:endline
+filename:startline:endline
+```
+- Use absolute paths from project root
+- Include only essential line ranges
+- Focus on relevant functions/classes/sections
+- Maximum 10 file ranges total
 
-**CRITICAL CONTEXT**: Any important details, decisions, or constraints that must be preserved.
+## NEXT ACTIONS
+Immediate next steps:
+- Specific actions to take
+- Expected approach
+- Anticipated outcomes
 
-Provide this summary in a clear, actionable format so we can continue seamlessly.
+## CRITICAL NOTES
+Key details/decisions/constraints that must be preserved.
+
+Follow this structure EXACTLY for optimal continuation.
 "#;
 
-const CONTINUATION_USER_MESSAGE: &str = r#"Thank you for the summary. Let's continue our work from where we left off. Please proceed with the next steps as outlined in your summary."#;
+const CONTINUATION_USER_MESSAGE_TEMPLATE: &str = r#"Thank you for the summary. Here's the required file context:
+
+{}
+
+Let's continue our work from where we left off.
+Please proceed with the next steps as outlined in your summary.
+CRITICAL: use tool calling in paralell when its possible to reach results faster and more efficiently."#;
 
 /// Parameters for continuation processing
 pub struct ContinuationParams<'a> {
@@ -172,10 +196,18 @@ pub fn process_continuation_response(
 	};
 	chat_session.session.messages.push(summary_message);
 
-	// Add continuation user message
+	// Parse file context requirements from the AI's summary
+	let file_contexts = parse_file_contexts(response_content);
+
+	// Generate file context content
+	let context_content = generate_file_context_content(&file_contexts);
+
+	// Create continuation message with file context
+	let continuation_content = CONTINUATION_USER_MESSAGE_TEMPLATE.replace("{}", &context_content);
+
 	let continue_message = crate::session::Message {
 		role: "user".to_string(),
-		content: CONTINUATION_USER_MESSAGE.to_string(),
+		content: continuation_content,
 		timestamp: std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
@@ -190,6 +222,17 @@ pub fn process_continuation_response(
 
 	// Reset continuation state
 	chat_session.continuation_pending = false;
+
+	// Log context information
+	if !file_contexts.is_empty() {
+		println!(
+			"{}",
+			format!("📁 Loaded context from {} file(s)", file_contexts.len()).bright_cyan()
+		);
+		for (filepath, start, end) in &file_contexts {
+			println!("   {} (lines {}-{})", filepath, start, end);
+		}
+	}
 
 	println!(
 		"{}",
@@ -215,4 +258,105 @@ pub fn check_and_handle_continuation(
 	}
 
 	Ok(false) // No continuation needed
+}
+
+/// Parse file context requirements from AI summary response
+/// Expected format: filename:startline:endline
+fn parse_file_contexts(summary_content: &str) -> Vec<(String, usize, usize)> {
+	let mut contexts = Vec::new();
+
+	// Look for code blocks or lines with filename:startline:endline pattern
+	let file_pattern = Regex::new(r"([^\s:]+):(\d+):(\d+)").unwrap();
+
+	for captures in file_pattern.captures_iter(summary_content) {
+		if let (Some(filename), Some(start_str), Some(end_str)) =
+			(captures.get(1), captures.get(2), captures.get(3))
+		{
+			if let (Ok(start_line), Ok(end_line)) = (
+				start_str.as_str().parse::<usize>(),
+				end_str.as_str().parse::<usize>(),
+			) {
+				let filename = filename.as_str().to_string();
+
+				// Validate line range
+				if start_line > 0 && end_line >= start_line && end_line <= 10000 {
+					contexts.push((filename, start_line, end_line));
+				}
+			}
+		}
+	}
+
+	// Limit to maximum 10 file contexts for performance
+	contexts.truncate(10);
+	contexts
+}
+
+/// Read file content for specified line ranges with 1-indexed line numbers
+fn read_file_context(filepath: &str, start_line: usize, end_line: usize) -> Result<String> {
+	use std::fs;
+	use std::io::{BufRead, BufReader};
+
+	// Validate file exists and is readable
+	if !Path::new(filepath).exists() {
+		return Ok(format!("// File not found: {}", filepath));
+	}
+
+	let file = fs::File::open(filepath)?;
+	let reader = BufReader::new(file);
+	let mut result = String::new();
+
+	result.push_str(&format!(
+		"=== {} (lines {}-{}) ===\n",
+		filepath, start_line, end_line
+	));
+
+	for (line_num, line_result) in reader.lines().enumerate() {
+		let line_number = line_num + 1; // Convert to 1-indexed
+
+		if line_number < start_line {
+			continue;
+		}
+
+		if line_number > end_line {
+			break;
+		}
+
+		match line_result {
+			Ok(line_content) => {
+				result.push_str(&format!("{}: {}\n", line_number, line_content));
+			}
+			Err(_) => {
+				result.push_str(&format!("{}: // Error reading line\n", line_number));
+			}
+		}
+	}
+
+	result.push('\n');
+	Ok(result)
+}
+
+/// Generate file context content from parsed file requirements
+fn generate_file_context_content(file_contexts: &[(String, usize, usize)]) -> String {
+	if file_contexts.is_empty() {
+		return "No specific file context requested.".to_string();
+	}
+
+	let mut context_content = String::new();
+	context_content.push_str("FILE CONTEXT:\n\n");
+
+	for (filepath, start_line, end_line) in file_contexts {
+		match read_file_context(filepath, *start_line, *end_line) {
+			Ok(file_content) => {
+				context_content.push_str(&file_content);
+			}
+			Err(e) => {
+				context_content.push_str(&format!(
+					"=== {} (lines {}-{}) ===\n// Error reading file: {}\n\n",
+					filepath, start_line, end_line, e
+				));
+			}
+		}
+	}
+
+	context_content
 }

@@ -24,6 +24,81 @@ use std::fs::File;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+/// Parameters for chat session initialization
+///
+/// This struct groups all parameters needed for creating or resuming a chat session,
+/// following best practices for parameter passing and future extensibility.
+pub struct SessionInitParams<'a> {
+	/// Optional session name (if None, generates UUID)
+	pub name: Option<String>,
+	/// Optional session ID to resume
+	pub resume: Option<String>,
+	/// Optional model override
+	pub model: Option<String>,
+	/// Optional temperature override
+	pub temperature: Option<f32>,
+	/// Optional max tokens override
+	pub max_tokens: Option<u32>,
+	/// Optional max retries override
+	pub max_retries: Option<u32>,
+	/// Configuration object
+	pub config: &'a Config,
+	/// Role for the session
+	pub role: &'a str,
+}
+
+impl<'a> SessionInitParams<'a> {
+	/// Create new session initialization parameters with required fields
+	pub fn new(config: &'a Config, role: &'a str) -> Self {
+		Self {
+			name: None,
+			resume: None,
+			model: None,
+			temperature: None,
+			max_tokens: None,
+			max_retries: None,
+			config,
+			role,
+		}
+	}
+
+	/// Set session name
+	pub fn with_name(mut self, name: String) -> Self {
+		self.name = Some(name);
+		self
+	}
+
+	/// Set session to resume
+	pub fn with_resume(mut self, resume: String) -> Self {
+		self.resume = Some(resume);
+		self
+	}
+
+	/// Set model override
+	pub fn with_model(mut self, model: String) -> Self {
+		self.model = Some(model);
+		self
+	}
+
+	/// Set temperature override
+	pub fn with_temperature(mut self, temperature: f32) -> Self {
+		self.temperature = Some(temperature);
+		self
+	}
+
+	/// Set max tokens override
+	pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+		self.max_tokens = Some(max_tokens);
+		self
+	}
+
+	/// Set max retries override
+	pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+		self.max_retries = Some(max_retries);
+		self
+	}
+}
+
 // Generate a session name in format: YYMMDD-HHMMSS-basename-uuid
 fn generate_session_name() -> String {
 	let now = chrono::Local::now();
@@ -124,22 +199,13 @@ impl ChatSession {
 	}
 
 	// Initialize a new chat session or load existing one
-	pub fn initialize(
-		name: Option<String>,
-		resume: Option<String>,
-		model: Option<String>,
-		temperature: Option<f32>,
-		max_tokens: Option<u32>,
-		max_retries: Option<u32>,
-		config: &Config,
-		role: &str,
-	) -> Result<Self> {
+	pub fn initialize(params: SessionInitParams<'_>) -> Result<Self> {
 		let sessions_dir = get_sessions_dir()?;
 
 		// Determine session name
-		let session_name = if let Some(name_arg) = &name {
+		let session_name = if let Some(name_arg) = &params.name {
 			name_arg.clone()
-		} else if let Some(resume_name) = &resume {
+		} else if let Some(resume_name) = &params.resume {
 			resume_name.clone()
 		} else {
 			// Generate a name using the new format
@@ -149,24 +215,24 @@ impl ChatSession {
 		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
 
 		// Get temperature from role config if not provided via command line
-		let effective_temperature = if let Some(temp) = temperature {
+		let effective_temperature = if let Some(temp) = params.temperature {
 			temp // Use command line override
 		} else {
 			// Read from role configuration - STRICT: assume it exists
-			let (role_config, _, _, _, _) = config.get_role_config(role);
+			let (role_config, _, _, _, _) = params.config.get_role_config(params.role);
 			role_config.temperature
 		};
 
 		// Get max_tokens from root config if not provided via command line
-		let effective_max_tokens = if let Some(tokens) = max_tokens {
+		let effective_max_tokens = if let Some(tokens) = params.max_tokens {
 			tokens // Use command line override
 		} else {
 			// Read from root configuration - STRICT: assume it exists
-			config.get_effective_max_tokens()
+			params.config.get_effective_max_tokens()
 		};
 
 		// Check if we should load or create a session
-		let should_resume = if resume.is_some() {
+		let should_resume = if params.resume.is_some() {
 			// Explicit resume request - session MUST exist
 			if !session_file.exists() {
 				return Err(anyhow::anyhow!(
@@ -175,7 +241,7 @@ impl ChatSession {
 				));
 			}
 			true
-		} else if name.is_some() && session_file.exists() {
+		} else if params.name.is_some() && session_file.exists() {
 			// Named session that exists - resume it
 			true
 		} else {
@@ -245,10 +311,10 @@ impl ChatSession {
 						temperature: effective_temperature, // Use config-based temperature
 						max_tokens: effective_max_tokens,   // Use config-based max_tokens
 						estimated_cost: 0.0,
-						cache_next_user_message: false,        // Initialize cache flag
-						spending_threshold_checkpoint: 0.0,    // Initialize spending checkpoint
-						pending_image: None,                   // Initialize pending image
-						max_retries: max_retries.unwrap_or(0), // Use provided max_retries or default to 0
+						cache_next_user_message: false,     // Initialize cache flag
+						spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
+						pending_image: None,                // Initialize pending image
+						max_retries: params.max_retries.unwrap_or(0), // Use provided max_retries or default to 0
 					};
 
 					// Update the estimated cost from the loaded session
@@ -271,7 +337,7 @@ impl ChatSession {
 				}
 				Err(e) => {
 					// If this was an explicit resume request, return the error
-					if resume.is_some() {
+					if params.resume.is_some() {
 						return Err(anyhow::anyhow!(
 							"Failed to load session '{}': {}. Cannot resume corrupted or invalid session.",
 							session_name,
@@ -304,11 +370,11 @@ impl ChatSession {
 
 					let mut chat_session = ChatSession::new(
 						new_session_name.clone(),
-						model.clone(),
+						params.model.clone(),
 						Some(effective_temperature), // Use config-based temperature
 						Some(effective_max_tokens),  // Use config-based max_tokens
-						max_retries,                 // Pass max_retries through
-						config,
+						params.max_retries,          // Pass max_retries through
+						params.config,
 					);
 					chat_session.session.session_file = Some(new_session_file);
 
@@ -345,11 +411,11 @@ impl ChatSession {
 
 			let mut chat_session = ChatSession::new(
 				session_name.clone(),
-				model,
+				params.model,
 				Some(effective_temperature),
 				Some(effective_max_tokens),
-				max_retries,
-				config,
+				params.max_retries,
+				params.config,
 			);
 			chat_session.session.session_file = Some(session_file);
 

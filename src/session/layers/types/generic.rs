@@ -14,7 +14,7 @@
 
 use super::super::layer_trait::{Layer, LayerConfig, LayerResult};
 use crate::config::Config;
-use crate::session::{Message, Session};
+use crate::session::{ChatCompletionWithValidationParams, Message, Session};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -408,18 +408,16 @@ impl GenericLayer {
 
 		// Make follow-up API call with tool results
 		// CRITICAL FIX: Pass cancellation token to make API calls immediately cancellable
-		match crate::session::chat_completion_with_validation(
+		let validation_params = ChatCompletionWithValidationParams::new(
 			&layer_session.session.messages,
 			model,
 			self.config.temperature,
 			self.config.max_tokens,
 			layer_config,
-			None,                              // No chat session for layers
-			Some(operation_cancelled.clone()), // Pass cancellation token
-			0,                                 // Default max_retries for layers
 		)
-		.await
-		{
+		.with_max_retries(0)
+		.with_cancellation_token(operation_cancelled.clone());
+		match crate::session::chat_completion_with_validation(validation_params).await {
 			Ok(response) => {
 				// Check for cancellation after API call
 				if operation_cancelled.load(Ordering::SeqCst) {
@@ -506,17 +504,16 @@ impl Layer for GenericLayer {
 
 		// Call the model with the layer's effective model and temperature
 		// CRITICAL FIX: Pass cancellation token to make API calls immediately cancellable
-		let response = crate::session::chat_completion_with_validation(
+		let validation_params = ChatCompletionWithValidationParams::new(
 			&messages,
 			&effective_model,
 			self.config.temperature,
 			self.config.max_tokens,
 			&layer_config,
-			None,                              // No chat session for layers
-			Some(operation_cancelled.clone()), // Pass cancellation token
-			0,                                 // Default max_retries for layers
 		)
-		.await?;
+		.with_max_retries(0)
+		.with_cancellation_token(operation_cancelled.clone());
+		let response = crate::session::chat_completion_with_validation(validation_params).await?;
 
 		// Check for cancellation after API call
 		if operation_cancelled.load(Ordering::SeqCst) {

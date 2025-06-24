@@ -14,7 +14,7 @@
 
 // OpenRouter provider implementation
 
-use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use super::{AiProvider, ChatCompletionParams, ProviderExchange, ProviderResponse, TokenUsage};
 use crate::config::Config;
 use crate::log_debug;
 use crate::session::Message;
@@ -164,34 +164,25 @@ impl AiProvider for OpenRouterProvider {
 		32_768 - 2_048
 	}
 
-	async fn chat_completion(
-		&self,
-		messages: &[Message],
-		model: &str,
-		temperature: f32,
-		max_tokens: u32,
-		config: &Config,
-		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-		_max_retries: u32, // TODO: Implement retry logic for OpenRouter provider
-	) -> Result<ProviderResponse> {
+	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!("Request cancelled before starting"));
 			}
 		}
 
 		// Get API key
-		let api_key = self.get_api_key(config)?;
+		let api_key = self.get_api_key(params.config)?;
 
 		// Convert messages to OpenRouter format
-		let openrouter_messages = convert_messages(messages, config);
+		let openrouter_messages = convert_messages(params.messages, params.config);
 
 		// Create the request body
 		let mut request_body = serde_json::json!({
-			"model": model,
+			"model": params.model,
 			"messages": openrouter_messages,
-			"temperature": temperature,
+			"temperature": params.temperature,
 			"top_p": 0.3,
 			"repetition_penalty": 1.1,
 			"usage": {
@@ -212,13 +203,13 @@ impl AiProvider for OpenRouterProvider {
 		});
 
 		// Add max_tokens if specified (0 means don't include it in request)
-		if max_tokens > 0 {
-			request_body["max_tokens"] = serde_json::json!(max_tokens);
+		if params.max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(params.max_tokens);
 		}
 
 		// Add tool definitions if MCP has any servers configured
-		if !config.mcp.servers.is_empty() {
-			let functions = crate::mcp::get_available_functions(config).await;
+		if !params.config.mcp.servers.is_empty() {
+			let functions = crate::mcp::get_available_functions(params.config).await;
 			if !functions.is_empty() {
 				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
 				// Sort functions by name to guarantee consistent ordering across API calls
@@ -247,9 +238,10 @@ impl AiProvider for OpenRouterProvider {
 				// CRITICAL FIX: Cache control should be handled consistently
 				// Add cache control to the LAST tool definition ONLY if the model supports caching
 				// and we actually want to cache tool definitions (check session state)
-				if self.supports_caching(model) && !tools.is_empty() {
+				if self.supports_caching(params.model) && !tools.is_empty() {
 					// Check if any system message is cached - if so, we should cache tool definitions too
-					let system_cached = messages
+					let system_cached = params
+						.messages
 						.iter()
 						.any(|msg| msg.role == "system" && msg.cached);
 
@@ -269,7 +261,7 @@ impl AiProvider for OpenRouterProvider {
 		}
 
 		// Check for cancellation before making HTTP request
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!("Request cancelled before HTTP call"));
 			}
@@ -292,7 +284,7 @@ impl AiProvider for OpenRouterProvider {
 			.send();
 
 		// Race the HTTP request against cancellation
-		let response = if let Some(ref token) = cancellation_token {
+		let response = if let Some(ref token) = params.cancellation_token {
 			let cancellation_future = async {
 				loop {
 					if token.load(std::sync::atomic::Ordering::SeqCst) {
@@ -337,7 +329,7 @@ impl AiProvider for OpenRouterProvider {
 		};
 
 		// Check for cancellation before processing response
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!(
 					"Request cancelled during response processing"
@@ -351,11 +343,11 @@ impl AiProvider for OpenRouterProvider {
 			response_json,
 			status,
 			api_time_ms,
-			model,
-			temperature,
+			model: params.model,
+			temperature: params.temperature,
 			request_body: &request_body,
 			response_text: &response_text,
-			config,
+			config: params.config,
 		})
 		.await
 	}

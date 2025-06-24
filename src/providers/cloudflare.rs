@@ -14,7 +14,7 @@
 
 // Cloudflare Workers AI provider implementation
 
-use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use super::{AiProvider, ChatCompletionParams, ProviderExchange, ProviderResponse, TokenUsage};
 use crate::config::Config;
 use crate::log_debug;
 use crate::session::Message;
@@ -233,48 +233,39 @@ impl AiProvider for CloudflareWorkersAiProvider {
 		16_384 - 1_024
 	}
 
-	async fn chat_completion(
-		&self,
-		messages: &[Message],
-		model: &str,
-		temperature: f32,
-		max_tokens: u32,
-		config: &Config,
-		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-		_max_retries: u32, // TODO: Implement retry logic for Cloudflare provider
-	) -> Result<ProviderResponse> {
+	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!("Request cancelled before starting"));
 			}
 		}
 		// Get API credentials
-		let api_token = self.get_api_key(config)?;
+		let api_token = self.get_api_key(params.config)?;
 		let account_id = self.get_account_id()?;
 
 		// Get full model ID
-		let full_model_id = self.get_full_model_id(model);
+		let full_model_id = self.get_full_model_id(params.model);
 		log_debug!("Using Cloudflare Workers AI model: {}", full_model_id);
 
 		// Convert messages to Cloudflare format
-		let cloudflare_messages = convert_messages(messages);
+		let cloudflare_messages = convert_messages(params.messages);
 
 		// Create request body
 		let mut request_body = serde_json::json!({
 			"messages": cloudflare_messages,
-			"temperature": temperature,
+			"temperature": params.temperature,
 		});
 
 		// Add max_tokens if specified (0 means don't include it in request)
-		if max_tokens > 0 {
-			request_body["max_tokens"] = serde_json::json!(max_tokens);
+		if params.max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(params.max_tokens);
 		}
 
 		// Add tool definitions if MCP has any servers configured
 		// Cloudflare Workers AI uses OpenAI-compatible tools format
-		if !config.mcp.servers.is_empty() {
-			let functions = crate::mcp::get_available_functions(config).await;
+		if !params.config.mcp.servers.is_empty() {
+			let functions = crate::mcp::get_available_functions(params.config).await;
 			if !functions.is_empty() {
 				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
 				// Sort functions by name to guarantee consistent ordering across API calls

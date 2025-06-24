@@ -14,7 +14,7 @@
 
 // Amazon Bedrock provider implementation
 
-use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use super::{AiProvider, ChatCompletionParams, ProviderExchange, ProviderResponse, TokenUsage};
 use crate::config::Config;
 use crate::log_debug;
 use crate::session::Message;
@@ -219,18 +219,9 @@ impl AiProvider for AmazonBedrockProvider {
 		32_768 - 2_048
 	}
 
-	async fn chat_completion(
-		&self,
-		messages: &[Message],
-		model: &str,
-		temperature: f32,
-		max_tokens: u32,
-		config: &Config,
-		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-		_max_retries: u32, // TODO: Implement retry logic for Amazon provider
-	) -> Result<ProviderResponse> {
+	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!("Request cancelled before starting"));
 			}
@@ -241,53 +232,53 @@ impl AiProvider for AmazonBedrockProvider {
 		let region = self.get_aws_region();
 
 		// Get full model ID
-		let full_model_id = self.get_full_model_id(model);
+		let full_model_id = self.get_full_model_id(params.model);
 		log_debug!("Using Bedrock model: {}", full_model_id);
 
 		// Convert messages to Bedrock format
-		let bedrock_messages = convert_messages(messages);
+		let bedrock_messages = convert_messages(params.messages);
 
 		// Create request body (format varies by model family)
 		let mut request_body = if full_model_id.contains("anthropic.claude") {
 			// Anthropic Claude format on Bedrock
 			let mut body = serde_json::json!({
 				"anthropic_version": "bedrock-2023-05-31",
-				"temperature": temperature,
+				"temperature": params.temperature,
 				"messages": bedrock_messages,
 			});
 			// Add max_tokens if specified (0 means don't include it in request)
-			if max_tokens > 0 {
-				body["max_tokens"] = serde_json::json!(max_tokens);
+			if params.max_tokens > 0 {
+				body["max_tokens"] = serde_json::json!(params.max_tokens);
 			}
 			body
 		} else if full_model_id.contains("meta.llama") {
 			// Meta Llama format on Bedrock
 			let mut body = serde_json::json!({
-				"prompt": convert_messages_to_prompt(messages),
-				"temperature": temperature,
+				"prompt": convert_messages_to_prompt(params.messages),
+				"temperature": params.temperature,
 			});
 			// Add max_gen_len if specified (0 means don't include it in request)
-			if max_tokens > 0 {
-				body["max_gen_len"] = serde_json::json!(max_tokens);
+			if params.max_tokens > 0 {
+				body["max_gen_len"] = serde_json::json!(params.max_tokens);
 			}
 			body
 		} else {
 			// Generic format
 			let mut body = serde_json::json!({
 				"messages": bedrock_messages,
-				"temperature": temperature,
+				"temperature": params.temperature,
 			});
 			// Add max_tokens if specified (0 means don't include it in request)
-			if max_tokens > 0 {
-				body["max_tokens"] = serde_json::json!(max_tokens);
+			if params.max_tokens > 0 {
+				body["max_tokens"] = serde_json::json!(params.max_tokens);
 			}
 			body
 		};
 
 		// Add tool definitions if MCP has any servers configured
 		// Different models on Bedrock have different tool formats
-		if !config.mcp.servers.is_empty() {
-			let functions = crate::mcp::get_available_functions(config).await;
+		if !params.config.mcp.servers.is_empty() {
+			let functions = crate::mcp::get_available_functions(params.config).await;
 			if !functions.is_empty() {
 				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
 				// Sort functions by name to guarantee consistent ordering across API calls

@@ -18,7 +18,63 @@ use crate::config::Config;
 use crate::session::Message;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Parameters for chat completion requests
+///
+/// This struct groups all parameters needed for AI provider chat completion calls,
+/// following best practices for parameter passing and future extensibility.
+#[derive(Clone)]
+pub struct ChatCompletionParams<'a> {
+	/// Array of conversation messages
+	pub messages: &'a [Message],
+	/// Model identifier (e.g., "claude-3-5-sonnet", "gpt-4")
+	pub model: &'a str,
+	/// Sampling temperature (0.0 to 2.0)
+	pub temperature: f32,
+	/// Maximum tokens to generate (0 = no limit)
+	pub max_tokens: u32,
+	/// Maximum retry attempts on failure
+	pub max_retries: u32,
+	/// Configuration object
+	pub config: &'a Config,
+	/// Cancellation token for request abortion
+	pub cancellation_token: Option<Arc<AtomicBool>>,
+}
+
+impl<'a> ChatCompletionParams<'a> {
+	/// Create new chat completion parameters
+	pub fn new(
+		messages: &'a [Message],
+		model: &'a str,
+		temperature: f32,
+		max_tokens: u32,
+		config: &'a Config,
+	) -> Self {
+		Self {
+			messages,
+			model,
+			temperature,
+			max_tokens,
+			max_retries: 0,
+			config,
+			cancellation_token: None,
+		}
+	}
+
+	/// Set maximum retry attempts
+	pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+		self.max_retries = max_retries;
+		self
+	}
+
+	/// Set cancellation token
+	pub fn with_cancellation_token(mut self, token: Arc<AtomicBool>) -> Self {
+		self.cancellation_token = Some(token);
+		self
+	}
+}
 
 pub mod amazon;
 pub mod anthropic;
@@ -100,16 +156,7 @@ pub trait AiProvider: Send + Sync {
 	fn supports_model(&self, model: &str) -> bool;
 
 	/// Send a chat completion request
-	async fn chat_completion(
-		&self,
-		messages: &[Message],
-		model: &str,
-		temperature: f32,
-		max_tokens: u32,
-		config: &Config,
-		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-		max_retries: u32,
-	) -> Result<ProviderResponse>;
+	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse>;
 
 	/// Get API key for this provider from config or environment
 	fn get_api_key(&self, config: &Config) -> Result<String>;

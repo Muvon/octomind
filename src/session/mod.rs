@@ -46,13 +46,81 @@ pub use token_counter::{estimate_message_tokens, estimate_tokens}; // Export tok
 // System prompts are now fully controlled by configuration files
 
 use crate::config::Config;
+use crate::providers::ChatCompletionParams;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs::{self as std_fs, File, OpenOptions};
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Parameters for chat completion with validation
+///
+/// This struct groups all parameters needed for validated chat completion calls,
+/// following best practices for parameter passing and future extensibility.
+pub struct ChatCompletionWithValidationParams<'a> {
+	/// Array of conversation messages
+	pub messages: &'a [Message],
+	/// Model identifier (e.g., "claude-3-5-sonnet", "gpt-4")
+	pub model: &'a str,
+	/// Sampling temperature (0.0 to 2.0)
+	pub temperature: f32,
+	/// Maximum tokens to generate (0 = no limit)
+	pub max_tokens: u32,
+	/// Maximum retry attempts on failure
+	pub max_retries: u32,
+	/// Configuration object
+	pub config: &'a Config,
+	/// Optional chat session for context management
+	pub chat_session: Option<&'a mut crate::session::chat::session::ChatSession>,
+	/// Cancellation token for request abortion
+	pub cancellation_token: Option<Arc<AtomicBool>>,
+}
+
+impl<'a> ChatCompletionWithValidationParams<'a> {
+	/// Create new chat completion with validation parameters
+	pub fn new(
+		messages: &'a [Message],
+		model: &'a str,
+		temperature: f32,
+		max_tokens: u32,
+		config: &'a Config,
+	) -> Self {
+		Self {
+			messages,
+			model,
+			temperature,
+			max_tokens,
+			max_retries: 0,
+			config,
+			chat_session: None,
+			cancellation_token: None,
+		}
+	}
+
+	/// Set maximum retry attempts
+	pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+		self.max_retries = max_retries;
+		self
+	}
+
+	/// Set chat session for context management
+	pub fn with_chat_session(
+		mut self,
+		chat_session: &'a mut crate::session::chat::session::ChatSession,
+	) -> Self {
+		self.chat_session = Some(chat_session);
+		self
+	}
+
+	/// Set cancellation token
+	pub fn with_cancellation_token(mut self, token: Arc<AtomicBool>) -> Self {
+		self.cancellation_token = Some(token);
+		self
+	}
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -909,35 +977,28 @@ pub async fn create_system_prompt(
 /// High-level function to send a chat completion with input validation and context management
 /// This function checks input size and prompts user for handling when limits are exceeded
 pub async fn chat_completion_with_validation(
-	messages: &[Message],
-	model: &str,
-	temperature: f32,
-	max_tokens: u32,
-	config: &Config,
-	chat_session: Option<&mut crate::session::chat::session::ChatSession>,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-	max_retries: u32,
+	params: ChatCompletionWithValidationParams<'_>,
 ) -> Result<ProviderResponse> {
 	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
+	if let Some(ref token) = params.cancellation_token {
 		if token.load(std::sync::atomic::Ordering::SeqCst) {
 			return Err(anyhow::anyhow!("Request cancelled before validation"));
 		}
 	}
 
 	// Parse the model string and get the appropriate provider
-	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(params.model)?;
 
 	// Get maximum input tokens for this provider/model (actual context window)
 	let max_input_tokens = provider.get_max_input_tokens(&actual_model);
 
 	// Calculate EXACTLY what we're about to send to the API
-	let mut total_input_tokens = estimate_message_tokens(messages);
+	let mut total_input_tokens = estimate_message_tokens(params.messages);
 
 	// Add estimated tokens for tool definitions if MCP is configured
-	if !config.mcp.servers.is_empty() {
+	if !params.config.mcp.servers.is_empty() {
 		// More accurate estimate: ~150 tokens per tool definition on average
-		let tool_count = config.mcp.servers.len();
+		let tool_count = params.config.mcp.servers.len();
 		total_input_tokens += tool_count * 150;
 	}
 
@@ -952,15 +1013,15 @@ pub async fn chat_completion_with_validation(
 		);
 
 		// If we have a chat session, offer user choices
-		if let Some(session) = chat_session {
+		if let Some(session) = params.chat_session {
 			return handle_context_limit_exceeded(
 				session,
-				config,
+				params.config,
 				provider.as_ref(),
-				&actual_model,
-				temperature,
-				max_tokens,
-				cancellation_token,
+				params.model,
+				params.temperature,
+				params.max_tokens,
+				params.cancellation_token,
 			)
 			.await;
 		} else {
@@ -976,24 +1037,29 @@ pub async fn chat_completion_with_validation(
 	}
 
 	// Check for cancellation before API call
-	if let Some(ref token) = cancellation_token {
+	if let Some(ref token) = params.cancellation_token {
 		if token.load(std::sync::atomic::Ordering::SeqCst) {
 			return Err(anyhow::anyhow!("Request cancelled before API call"));
 		}
 	}
 
 	// Input size is acceptable, proceed with API call
-	provider
-		.chat_completion(
-			messages,
-			&actual_model,
-			temperature,
-			max_tokens,
-			config,
-			cancellation_token,
-			max_retries,
-		)
-		.await
+	let chat_params = ChatCompletionParams::new(
+		params.messages,
+		&actual_model,
+		params.temperature,
+		params.max_tokens,
+		params.config,
+	)
+	.with_max_retries(params.max_retries);
+
+	let chat_params = if let Some(token) = params.cancellation_token {
+		chat_params.with_cancellation_token(token)
+	} else {
+		chat_params
+	};
+
+	provider.chat_completion(chat_params).await
 }
 
 /// Handle context limit exceeded by prompting user for action
@@ -1048,17 +1114,19 @@ async fn handle_context_limit_exceeded(
 						.await?;
 
 						// Retry the API call with truncated context and cancellation support
-						return provider
-							.chat_completion(
-								&chat_session.session.messages,
-								model,
-								temperature,
-								max_tokens,
-								config,
-								cancellation_token,
-								0, // Default max_retries for context reduction
-							)
-							.await;
+						let chat_params = ChatCompletionParams::new(
+							&chat_session.session.messages,
+							model,
+							temperature,
+							max_tokens,
+							config,
+						)
+						.with_max_retries(0);
+						let mut chat_params = chat_params;
+						if let Some(token) = cancellation_token {
+							chat_params = chat_params.with_cancellation_token(token);
+						}
+						return provider.chat_completion(chat_params).await;
 					}
 					"s" | "summarize" => {
 						println!("{}", "Applying smart summarization...".bright_blue());
@@ -1071,17 +1139,19 @@ async fn handle_context_limit_exceeded(
 						.await?;
 
 						// Retry the API call with summarized context and cancellation support
-						return provider
-							.chat_completion(
-								&chat_session.session.messages,
-								model,
-								temperature,
-								max_tokens,
-								config,
-								cancellation_token,
-								0, // Default max_retries for context reduction
-							)
-							.await;
+						let chat_params = ChatCompletionParams::new(
+							&chat_session.session.messages,
+							model,
+							temperature,
+							max_tokens,
+							config,
+						)
+						.with_max_retries(0);
+						let mut chat_params = chat_params;
+						if let Some(token) = cancellation_token {
+							chat_params = chat_params.with_cancellation_token(token);
+						}
+						return provider.chat_completion(chat_params).await;
 					}
 					"c" | "cancel" => {
 						println!("{}", "Operation cancelled.".bright_yellow());
@@ -1124,15 +1194,8 @@ pub async fn chat_completion_with_provider(
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
 	// Call the provider's chat completion method
-	provider
-		.chat_completion(
-			messages,
-			&actual_model,
-			temperature,
-			max_tokens,
-			config,
-			None,
-			max_retries,
-		)
-		.await
+	let chat_params =
+		ChatCompletionParams::new(messages, &actual_model, temperature, max_tokens, config)
+			.with_max_retries(max_retries);
+	provider.chat_completion(chat_params).await
 }

@@ -14,7 +14,7 @@
 
 // Anthropic provider implementation
 
-use super::{AiProvider, ProviderExchange, ProviderResponse, TokenUsage};
+use super::{AiProvider, ChatCompletionParams, ProviderExchange, ProviderResponse, TokenUsage};
 use crate::config::Config;
 use crate::log_debug;
 use crate::session::Message;
@@ -198,52 +198,47 @@ impl AiProvider for AnthropicProvider {
 		100_000
 	}
 
-	async fn chat_completion(
-		&self,
-		messages: &[Message],
-		model: &str,
-		temperature: f32,
-		max_tokens: u32,
-		config: &Config,
-		cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-		max_retries: u32, // Implement retry logic for Anthropic provider
-	) -> Result<ProviderResponse> {
+	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!("Request cancelled before starting"));
 			}
 		}
 		// Get API key
-		let api_key = self.get_api_key(config)?;
+		let api_key = self.get_api_key(params.config)?;
 
 		// Convert messages to Anthropic format with automatic cache markers
-		let anthropic_messages = convert_messages(messages);
+		let anthropic_messages = convert_messages(params.messages);
 
 		// Extract system message if present and handle caching
-		let system_message = messages
+		let system_message = params
+			.messages
 			.iter()
 			.find(|m| m.role == "system")
 			.map(|m| m.content.clone())
 			.unwrap_or_else(|| "You are a helpful assistant.".to_string());
 
-		let system_cached = messages.iter().any(|m| m.role == "system" && m.cached);
+		let system_cached = params
+			.messages
+			.iter()
+			.any(|m| m.role == "system" && m.cached);
 
 		// Create the request body
 		let mut request_body = serde_json::json!({
-			"model": model,
+			"model": params.model,
 			"messages": anthropic_messages,
-			"temperature": temperature,
+			"temperature": params.temperature,
 		});
 
 		// Add max_tokens if specified (0 means don't include it in request)
-		if max_tokens > 0 {
-			request_body["max_tokens"] = serde_json::json!(max_tokens);
+		if params.max_tokens > 0 {
+			request_body["max_tokens"] = serde_json::json!(params.max_tokens);
 		}
 
 		// Add system message with cache control if needed
 		if system_cached {
-			let ttl = if config.use_long_system_cache {
+			let ttl = if params.config.use_long_system_cache {
 				"1h"
 			} else {
 				"5m"
@@ -261,8 +256,8 @@ impl AiProvider for AnthropicProvider {
 		}
 
 		// Add tool definitions if MCP has any servers configured
-		if !config.mcp.servers.is_empty() {
-			let functions = crate::mcp::get_available_functions(config).await;
+		if !params.config.mcp.servers.is_empty() {
+			let functions = crate::mcp::get_available_functions(params.config).await;
 			if !functions.is_empty() {
 				// CRITICAL FIX: Ensure tool definitions are ALWAYS in the same order
 				// Sort functions by name to guarantee consistent ordering across API calls
@@ -283,9 +278,10 @@ impl AiProvider for AnthropicProvider {
 				// CRITICAL FIX: Cache control should be handled consistently
 				// Add cache control to the LAST tool definition ONLY if the model supports caching
 				// and we actually want to cache tool definitions (check session state)
-				if self.supports_caching(model) && !tools.is_empty() {
+				if self.supports_caching(params.model) && !tools.is_empty() {
 					// Check if any system message is cached - if so, we should cache tool definitions too
-					let system_cached = messages
+					let system_cached = params
+						.messages
 						.iter()
 						.any(|msg| msg.role == "system" && msg.cached);
 
@@ -304,7 +300,7 @@ impl AiProvider for AnthropicProvider {
 		}
 
 		// Check for cancellation before making HTTP request
-		if let Some(ref token) = cancellation_token {
+		if let Some(ref token) = params.cancellation_token {
 			if token.load(std::sync::atomic::Ordering::SeqCst) {
 				return Err(anyhow::anyhow!("Request cancelled before HTTP call"));
 			}
@@ -312,9 +308,9 @@ impl AiProvider for AnthropicProvider {
 
 		// Implement retry logic with exponential backoff
 		let mut last_error = None;
-		for attempt in 0..=max_retries {
+		for attempt in 0..=params.max_retries {
 			// Check for cancellation before each attempt
-			if let Some(ref token) = cancellation_token {
+			if let Some(ref token) = params.cancellation_token {
 				if token.load(std::sync::atomic::Ordering::SeqCst) {
 					return Err(anyhow::anyhow!(
 						"Request cancelled during retry attempt {}",
@@ -341,7 +337,7 @@ impl AiProvider for AnthropicProvider {
 				.send();
 
 			// Race the HTTP request against cancellation
-			let response_result = if let Some(ref token) = cancellation_token {
+			let response_result = if let Some(ref token) = params.cancellation_token {
 				let cancellation_future = async {
 					loop {
 						if token.load(std::sync::atomic::Ordering::SeqCst) {
@@ -367,7 +363,7 @@ impl AiProvider for AnthropicProvider {
 				Ok(resp) => resp,
 				Err(e) => {
 					last_error = Some(e);
-					if attempt < max_retries {
+					if attempt < params.max_retries {
 						// Exponential backoff: 1s, 2s, 4s, 8s...
 						let delay_ms = 1000 * (1 << attempt);
 						crate::log_info!(
@@ -426,7 +422,7 @@ impl AiProvider for AnthropicProvider {
 					1000 * (1 << attempt) // 1s, 2s, 4s, 8s...
 				};
 
-				if attempt < max_retries {
+				if attempt < params.max_retries {
 					// Log rate limit info if available
 					log_rate_limit_info(&headers);
 
@@ -441,7 +437,7 @@ impl AiProvider for AnthropicProvider {
 				} else {
 					return Err(anyhow::anyhow!(
 						"Anthropic API error after {} retries: {} - {}",
-						max_retries + 1,
+						params.max_retries + 1,
 						status,
 						response_text
 					));
@@ -586,7 +582,7 @@ impl AiProvider for AnthropicProvider {
 
 				// Calculate cost with cache-aware pricing
 				let cost = calculate_cost_with_cache(
-					model,
+					params.model,
 					CacheTokenUsage {
 						regular_input_tokens,
 						cache_creation_tokens: cache_creation_5m_tokens,
@@ -654,13 +650,13 @@ impl AiProvider for AnthropicProvider {
 		if let Some(error) = last_error {
 			Err(anyhow::anyhow!(
 				"Anthropic API request failed after {} retries: {}",
-				max_retries + 1,
+				params.max_retries + 1,
 				error
 			))
 		} else {
 			Err(anyhow::anyhow!(
 				"Anthropic API request failed after {} retries with unknown error",
-				max_retries + 1
+				params.max_retries + 1
 			))
 		}
 	}

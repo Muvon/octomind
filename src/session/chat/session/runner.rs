@@ -19,9 +19,9 @@ use super::super::commands::*;
 use super::super::context_truncation::check_and_truncate_context;
 use super::super::input::read_user_input;
 use super::super::response::process_response;
-use super::core::ChatSession;
+use super::core::{ChatSession, SessionInitParams};
 use crate::config::Config;
-use crate::session::create_system_prompt;
+use crate::session::{create_system_prompt, ChatCompletionWithValidationParams};
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use std::io::Write; // Added for stdout flushing
@@ -164,18 +164,27 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 	let config_for_role = config.get_merged_config_for_role(&session_args.role);
 
 	// Create or load session
-	let mut chat_session = ChatSession::initialize(
-		session_args.name,
-		session_args.resume,
-		session_args.model.clone(),
-		Some(session_args.temperature),
-		session_args
-			.max_tokens
-			.or_else(|| Some(config_for_role.get_effective_max_tokens())),
-		Some(session_args.max_retries), // Pass max_retries from session args
-		&config_for_role,
-		&session_args.role, // Pass role to read temperature from config
-	)?;
+	let mut session_params = SessionInitParams::new(&config_for_role, &session_args.role);
+
+	if let Some(name) = session_args.name {
+		session_params = session_params.with_name(name);
+	}
+	if let Some(resume) = session_args.resume {
+		session_params = session_params.with_resume(resume);
+	}
+	if let Some(model) = session_args.model.clone() {
+		session_params = session_params.with_model(model);
+	}
+	session_params = session_params.with_temperature(session_args.temperature);
+	if let Some(max_tokens) = session_args
+		.max_tokens
+		.or_else(|| Some(config_for_role.get_effective_max_tokens()))
+	{
+		session_params = session_params.with_max_tokens(max_tokens);
+	}
+	session_params = session_params.with_max_retries(session_args.max_retries);
+
+	let mut chat_session = ChatSession::initialize(session_params)?;
 
 	// If runtime model override is provided, update the session's model (runtime only)
 	if let Some(ref runtime_model) = session_args.model {
@@ -558,16 +567,11 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 					chat_session.save()?;
 
 					// Initialize the new session
-					let new_chat_session = ChatSession::initialize(
-						Some(new_session_name), // Use the name from the command
-						None,
-						None,                           // Keep using the default model
-						None,                           // Use config temperature
-						None,                           // Use config max_tokens
-						Some(session_args.max_retries), // Pass max_retries from session args
-						&current_config,
-						&session_args.role, // Pass role for temperature config
-					)?;
+					let session_params =
+						SessionInitParams::new(&current_config, &session_args.role)
+							.with_name(new_session_name)
+							.with_max_retries(session_args.max_retries);
+					let new_chat_session = ChatSession::initialize(session_params)?;
 
 					// Replace the current chat session
 					chat_session = new_chat_session;
@@ -853,17 +857,17 @@ pub async fn run_interactive_session<T: clap::Args + std::fmt::Debug>(
 		// Clone messages to avoid borrowing conflicts
 		let messages = chat_session.session.messages.clone();
 		let max_retries = chat_session.max_retries; // Extract before mutable borrow
-		let api_result = crate::session::chat_completion_with_validation(
+		let validation_params = ChatCompletionWithValidationParams::new(
 			&messages,
 			&model,
 			temperature,
 			chat_session.max_tokens,
 			&config_clone,
-			Some(&mut chat_session),
-			Some(operation_cancelled.clone()),
-			max_retries, // Use extracted value
 		)
-		.await;
+		.with_max_retries(max_retries)
+		.with_chat_session(&mut chat_session)
+		.with_cancellation_token(operation_cancelled.clone());
+		let api_result = crate::session::chat_completion_with_validation(validation_params).await;
 
 		// Stop the animation using the separate animation flag (not the operation_cancelled flag)
 		animation_cancel.store(true, Ordering::SeqCst);
@@ -1176,18 +1180,27 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 	let config_for_role = config.get_merged_config_for_role(&session_args.role);
 
 	// Create or load session - same as interactive
-	let mut chat_session = ChatSession::initialize(
-		session_args.name,
-		session_args.resume,
-		session_args.model.clone(),
-		Some(session_args.temperature),
-		session_args
-			.max_tokens
-			.or_else(|| Some(config_for_role.get_effective_max_tokens())),
-		Some(session_args.max_retries), // Pass max_retries from session args
-		&config_for_role,
-		&session_args.role,
-	)?;
+	let mut session_params = SessionInitParams::new(&config_for_role, &session_args.role);
+
+	if let Some(name) = session_args.name {
+		session_params = session_params.with_name(name);
+	}
+	if let Some(resume) = session_args.resume {
+		session_params = session_params.with_resume(resume);
+	}
+	if let Some(model) = session_args.model.clone() {
+		session_params = session_params.with_model(model);
+	}
+	session_params = session_params.with_temperature(session_args.temperature);
+	if let Some(max_tokens) = session_args
+		.max_tokens
+		.or_else(|| Some(config_for_role.get_effective_max_tokens()))
+	{
+		session_params = session_params.with_max_tokens(max_tokens);
+	}
+	session_params = session_params.with_max_retries(session_args.max_retries);
+
+	let mut chat_session = ChatSession::initialize(session_params)?;
 
 	// Apply runtime overrides - same as interactive
 	if let Some(ref runtime_model) = session_args.model {
@@ -1454,17 +1467,17 @@ pub async fn run_interactive_session_with_input<T: clap::Args + std::fmt::Debug>
 
 	let messages = chat_session.session.messages.clone();
 	let max_retries = chat_session.max_retries; // Extract before mutable borrow
-	let api_result = crate::session::chat_completion_with_validation(
+	let validation_params = ChatCompletionWithValidationParams::new(
 		&messages,
 		&model,
 		temperature,
 		chat_session.max_tokens,
 		&config_clone,
-		Some(&mut chat_session),
-		Some(operation_cancelled.clone()),
-		max_retries, // Use extracted value
 	)
-	.await;
+	.with_max_retries(max_retries)
+	.with_chat_session(&mut chat_session)
+	.with_cancellation_token(operation_cancelled.clone());
+	let api_result = crate::session::chat_completion_with_validation(validation_params).await;
 
 	// Stop animation
 	animation_cancel.store(true, Ordering::SeqCst);

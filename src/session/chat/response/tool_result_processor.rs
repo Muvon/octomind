@@ -17,6 +17,7 @@
 use crate::config::Config;
 use crate::session::chat::animation::show_smart_animation;
 use crate::session::chat::session::ChatSession;
+use crate::session::ChatCompletionWithValidationParams;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
@@ -341,17 +342,16 @@ async fn make_follow_up_api_call(
 	let temperature = chat_session.temperature;
 
 	// CRITICAL FIX: Pass cancellation token to ensure immediate cancellation
-	crate::session::chat_completion_with_validation(
+	let validation_params = ChatCompletionWithValidationParams::new(
 		&chat_session.session.messages,
 		&model,
 		temperature,
 		chat_session.max_tokens,
 		config,
-		None,                     // No chat session needed for this call
-		Some(cancellation_token), // Pass the cancellation token
-		chat_session.max_retries, // Pass max_retries from chat session
 	)
-	.await
+	.with_max_retries(chat_session.max_retries)
+	.with_cancellation_token(cancellation_token);
+	crate::session::chat_completion_with_validation(validation_params).await
 }
 
 // Check if conversation should continue based on finish_reason

@@ -558,6 +558,15 @@ impl ChatSession {
 			"- **Filtered Messages:** {}\n",
 			filtered_messages.len()
 		));
+
+		// Calculate current session context tokens
+		let current_context_tokens =
+			crate::session::token_counter::estimate_message_tokens(&self.session.messages);
+		markdown_content.push_str(&format!(
+			"- **Current Context Tokens:** {}\n",
+			crate::session::chat::format_number(current_context_tokens as u64)
+		));
+
 		markdown_content.push_str(&format!(
 			"- **Total Tokens:** {}\n",
 			crate::session::chat::format_number(

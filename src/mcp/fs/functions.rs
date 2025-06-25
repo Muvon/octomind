@@ -148,6 +148,8 @@ pub fn get_text_editor_function() -> McpFunction {
 			- `{\"command\": \"line_replace\", \"path\": \"src/main.rs\", \"view_range\": [5, 8], \"new_str\": \"fn updated_function() {\\n    // New implementation\\n}\"}`
 			- Replaces lines from view_range[0] to view_range[1] (inclusive, 1-indexed)
 			- FASTEST option - 3x faster than str_replace (no content searching)
+			- **REMOVE LINES**: Use empty `new_str` (\"\" or \"\") to remove lines completely
+			- **USEFUL FOR REFACTORING**: Extract code with `extract_lines`, then remove original with `line_replace` + empty `new_str`
 			- CRITICAL: Line numbers change after ANY edit operation
 			- NEVER use line_replace twice without viewing file between operations
 			- ALWAYS use 'view' first to get current line numbers before line_replace
@@ -310,7 +312,76 @@ pub fn get_text_editor_function() -> McpFunction {
 	}
 }
 
+// Define the extract_lines function
+pub fn get_extract_lines_function() -> McpFunction {
+	McpFunction {
+		name: "extract_lines".to_string(),
+		description: "Extract lines from a source file and append them to a target file without modifying the source file.
+
+			This tool is perfect for extracting code blocks, functions, or any text sections from one file
+			and appending them to another file. The source file remains unchanged.
+
+			**Parameters:**
+			- `from_path` (string, required): Path to the source file to extract lines from
+			- `from_range` (array, required): Two-element array [start, end] with 1-indexed line numbers (inclusive)
+			- `append_path` (string, required): Path to the target file where extracted lines will be appended (auto-created if doesn't exist)
+			- `append_line` (integer, required): Position where to append the extracted content:
+			  - `0`: Insert at the beginning of the file
+			  - `-1`: Append at the very end of the file
+			  - `N` (positive): Insert after line N (1-indexed)
+
+			**Examples:**
+			- Extract function: `{\"from_path\": \"src/utils.rs\", \"from_range\": [10, 25], \"append_path\": \"src/extracted.rs\", \"append_line\": -1}`
+			- Extract to beginning: `{\"from_path\": \"config.toml\", \"from_range\": [1, 5], \"append_path\": \"new_config.toml\", \"append_line\": 0}`
+			- Insert after line 3: `{\"from_path\": \"main.rs\", \"from_range\": [50, 60], \"append_path\": \"module.rs\", \"append_line\": 3}`
+
+			**Use Cases:**
+			- Extracting functions or code blocks for refactoring
+			- Moving configuration sections between files
+			- Creating new files with specific content from existing files
+			- Building modular code by extracting reusable components
+
+			**Returns:**
+			- Success: Information about extracted lines and where they were appended
+			- Error: Clear error message if file not found, invalid range, or write permission issues
+
+			**MCP Protocol Compliance:**
+			- Proper parameter validation with descriptive error messages
+			- Graceful handling of file system errors
+			- Returns structured success/error responses".to_string(),
+		parameters: json!({
+			"type": "object",
+			"properties": {
+				"from_path": {
+					"type": "string",
+					"description": "Path to the source file to extract lines from"
+				},
+				"from_range": {
+					"type": "array",
+					"items": {"type": "integer"},
+					"minItems": 2,
+					"maxItems": 2,
+					"description": "Two-element array [start, end] with 1-indexed line numbers (inclusive)"
+				},
+				"append_path": {
+					"type": "string",
+					"description": "Path to the target file where extracted lines will be appended (auto-created if doesn't exist)"
+				},
+				"append_line": {
+					"type": "integer",
+					"description": "Position where to append: 0=beginning, -1=end, N=after line N (1-indexed)"
+				}
+			},
+			"required": ["from_path", "from_range", "append_path", "append_line"]
+		}),
+	}
+}
+
 // Get all available filesystem functions
 pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![get_text_editor_function(), get_list_files_function()]
+	vec![
+		get_text_editor_function(),
+		get_list_files_function(),
+		get_extract_lines_function(),
+	]
 }

@@ -405,3 +405,398 @@ pub async fn execute_list_files(
 
 	directory::execute_list_files(call).await
 }
+
+// Execute extract_lines command - MCP compliant implementation
+pub async fn execute_extract_lines(
+	call: &McpToolCall,
+	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<McpToolResult> {
+	use std::path::Path;
+	use std::sync::atomic::Ordering;
+	use tokio::fs;
+
+	// Check for cancellation before starting
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Extract lines operation cancelled".to_string(),
+			));
+		}
+	}
+
+	// Validate and extract from_path parameter
+	let from_path = match call.parameters.get("from_path") {
+		Some(Value::String(p)) => {
+			if p.trim().is_empty() {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Parameter 'from_path' cannot be empty".to_string(),
+				));
+			}
+			p.clone()
+		}
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Parameter 'from_path' must be a string".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required parameter 'from_path'".to_string(),
+			));
+		}
+	};
+
+	// Validate and extract from_range parameter
+	let from_range = match call.parameters.get("from_range") {
+		Some(Value::Array(arr)) => {
+			if arr.len() != 2 {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Parameter 'from_range' must be an array with exactly 2 elements".to_string(),
+				));
+			}
+
+			let start = match arr[0].as_i64() {
+				Some(n) if n > 0 => n as usize,
+				Some(n) => {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						format!("Start line number must be positive, got: {}", n),
+					));
+				}
+				None => {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						"Start line number must be an integer".to_string(),
+					));
+				}
+			};
+
+			let end = match arr[1].as_i64() {
+				Some(n) if n > 0 => n as usize,
+				Some(n) => {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						format!("End line number must be positive, got: {}", n),
+					));
+				}
+				None => {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						"End line number must be an integer".to_string(),
+					));
+				}
+			};
+
+			if start > end {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!(
+						"Start line ({}) cannot be greater than end line ({})",
+						start, end
+					),
+				));
+			}
+
+			(start, end)
+		}
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Parameter 'from_range' must be an array".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required parameter 'from_range'".to_string(),
+			));
+		}
+	};
+
+	// Validate and extract append_path parameter
+	let append_path = match call.parameters.get("append_path") {
+		Some(Value::String(p)) => {
+			if p.trim().is_empty() {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Parameter 'append_path' cannot be empty".to_string(),
+				));
+			}
+			p.clone()
+		}
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Parameter 'append_path' must be a string".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required parameter 'append_path'".to_string(),
+			));
+		}
+	};
+
+	// Validate and extract append_line parameter
+	let append_line = match call.parameters.get("append_line") {
+		Some(Value::Number(n)) => match n.as_i64() {
+			Some(line) => line,
+			None => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Parameter 'append_line' must be an integer".to_string(),
+				));
+			}
+		},
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Parameter 'append_line' must be an integer".to_string(),
+			));
+		}
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required parameter 'append_line'".to_string(),
+			));
+		}
+	};
+
+	// Check for cancellation before file operations
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Extract lines operation cancelled".to_string(),
+			));
+		}
+	}
+
+	// Read source file
+	let from_path_obj = Path::new(&from_path);
+	if !from_path_obj.exists() {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Source file does not exist: {}", from_path),
+		));
+	}
+
+	let source_content = match fs::read_to_string(&from_path_obj).await {
+		Ok(content) => content,
+		Err(e) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Failed to read source file '{}': {}", from_path, e),
+			));
+		}
+	};
+
+	// Split content into lines and validate range
+	let source_lines: Vec<&str> = source_content.lines().collect();
+	let total_lines = source_lines.len();
+
+	if from_range.0 > total_lines {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!(
+				"Start line {} exceeds file length ({} lines) in '{}'",
+				from_range.0, total_lines, from_path
+			),
+		));
+	}
+
+	if from_range.1 > total_lines {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!(
+				"End line {} exceeds file length ({} lines) in '{}'",
+				from_range.1, total_lines, from_path
+			),
+		));
+	}
+
+	// Extract the specified lines (convert to 0-indexed)
+	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1].to_vec();
+
+	// Preserve original newline structure by checking if source content ends with newline
+	// and if we're extracting the last line
+	let source_ends_with_newline = source_content.ends_with('\n');
+	let extracting_last_line = from_range.1 == total_lines;
+
+	let extracted_content =
+		if extracted_lines.len() == 1 && extracting_last_line && !source_ends_with_newline {
+			// Single line extraction from end of file without trailing newline
+			extracted_lines[0].to_string()
+		} else if extracting_last_line && source_ends_with_newline {
+			// Extracting from end and source has trailing newline - preserve it
+			format!("{}\n", extracted_lines.join("\n"))
+		} else {
+			// Normal case - join lines with newlines
+			extracted_lines.join("\n")
+		};
+
+	// Check for cancellation before target file operations
+	if let Some(ref token) = cancellation_token {
+		if token.load(Ordering::SeqCst) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Extract lines operation cancelled".to_string(),
+			));
+		}
+	}
+
+	// Handle target file - create parent directories if needed
+	let append_path_obj = Path::new(&append_path);
+	if let Some(parent) = append_path_obj.parent() {
+		if let Err(e) = fs::create_dir_all(parent).await {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Failed to create parent directories for '{}': {}",
+					append_path, e
+				),
+			));
+		}
+	}
+
+	// Read existing target file content or create empty if doesn't exist
+	let target_content = if append_path_obj.exists() {
+		match fs::read_to_string(&append_path_obj).await {
+			Ok(content) => content,
+			Err(e) => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!("Failed to read target file '{}': {}", append_path, e),
+				));
+			}
+		}
+	} else {
+		String::new()
+	};
+
+	// Determine insertion logic based on append_line
+	let final_content = if append_line == 0 {
+		// Insert at beginning
+		if target_content.is_empty() {
+			extracted_content.clone()
+		} else {
+			// Check if extracted content already ends with newline
+			if extracted_content.ends_with('\n') {
+				format!("{}{}", extracted_content, target_content)
+			} else {
+				format!("{}\n{}", extracted_content, target_content)
+			}
+		}
+	} else if append_line == -1 {
+		// Append at end
+		if target_content.is_empty() {
+			extracted_content.clone()
+		} else if target_content.ends_with('\n') {
+			format!("{}{}", target_content, extracted_content)
+		} else {
+			format!("{}\n{}", target_content, extracted_content)
+		}
+	} else {
+		// Insert after specific line
+		let target_lines: Vec<&str> = target_content.lines().collect();
+		let insert_after = append_line as usize;
+
+		if insert_after > target_lines.len() {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Insert position {} exceeds target file length ({} lines) in '{}'",
+					insert_after,
+					target_lines.len(),
+					append_path
+				),
+			));
+		}
+
+		let mut new_lines = Vec::new();
+
+		// Add lines before insertion point
+		new_lines.extend(target_lines[..insert_after].iter().map(|s| s.to_string()));
+
+		// Add extracted content
+		new_lines.extend(extracted_lines.iter().map(|s| s.to_string()));
+
+		// Add remaining lines after insertion point
+		if insert_after < target_lines.len() {
+			new_lines.extend(target_lines[insert_after..].iter().map(|s| s.to_string()));
+		}
+
+		// Preserve target file's newline structure
+		let target_ends_with_newline = target_content.ends_with('\n');
+		if target_ends_with_newline {
+			format!("{}\n", new_lines.join("\n"))
+		} else {
+			new_lines.join("\n")
+		}
+	};
+
+	// Write the final content to target file
+	if let Err(e) = fs::write(&append_path_obj, &final_content).await {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Failed to write to target file '{}': {}", append_path, e),
+		));
+	}
+
+	// Return success result with useful information
+	let lines_extracted = from_range.1 - from_range.0 + 1;
+	let position_desc = match append_line {
+		0 => "beginning of file".to_string(),
+		-1 => "end of file".to_string(),
+		n => format!("after line {}", n),
+	};
+
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		format!(
+			"Successfully extracted {} lines (lines {}-{}) from '{}' and appended to '{}' at {}.\n\nExtracted content:\n{}",
+			lines_extracted,
+			from_range.0,
+			from_range.1,
+			from_path,
+			append_path,
+			position_desc,
+			extracted_content
+		),
+	))
+}

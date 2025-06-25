@@ -108,6 +108,7 @@ The developer MCP server provides essential development tools for code analysis,
 
 #### Filesystem Tools (type: "builtin")
 - **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many, batch_edit)
+- **extract_lines**: Extract lines from source file and append to target file without modifying source (perfect for refactoring)
 - **list_files**: Browse directory structures with pattern matching and content search
 
 #### Web Tools (type: "builtin")
@@ -365,6 +366,19 @@ The `text_editor` tool provides comprehensive file manipulation capabilities thr
 ```json
 {"command": "line_replace", "path": "src/main.rs", "view_range": [5, 8], "new_str": "fn updated_function() {\n    // New implementation\n}"}
 ```
+- **Remove lines**: Use empty `new_str` ("") to remove lines completely
+- **Refactoring workflow**: Extract code with `extract_lines`, then remove original with `line_replace` + empty `new_str`
+
+**extract_lines** - Extract lines from source file and append to target file
+```json
+{"from_path": "src/utils.rs", "from_range": [10, 25], "append_path": "src/extracted.rs", "append_line": -1}
+```
+- **Parameters**:
+  - `from_path`: Source file to extract from
+  - `from_range`: [start, end] line numbers (1-indexed, inclusive)
+  - `append_path`: Target file (auto-created if needed)
+  - `append_line`: Insert position (0=beginning, -1=end, N=after line N)
+- **Perfect for refactoring**: Move code blocks between files without modifying source
 
 **undo_edit** - Revert the most recent edit
 ```json
@@ -412,6 +426,8 @@ The `text_editor` tool provides comprehensive file manipulation capabilities thr
 - **Detailed reporting**: Success/failure status for each operation
 - **Error isolation**: Failed operations don't affect successful ones
 - **File history preservation**: Each operation saves file history for undo
+
+**Note**: `extract_lines` is not supported in batch operations as it's a standalone tool for file-to-file extraction.
 
 **When to Use Batch Edit:**
 - ✅ **Multiple file refactoring** - Rename functions across files

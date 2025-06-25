@@ -1036,7 +1036,7 @@ mod tests {
 			(1, 3),
 			"",
 			-1,
-			"all 1\nall 2\nall 3",
+			"all 1\nall 2\nall 3\n",
 		)
 		.await;
 	}

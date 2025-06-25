@@ -19,12 +19,12 @@ pub mod tool_result_processor;
 
 use super::{CostTracker, MessageHandler, ToolProcessor};
 use crate::config::Config;
-use crate::log_debug;
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::formatting::remove_function_calls;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::session_continuation;
 use crate::session::ProviderExchange;
+use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -285,8 +285,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		&params.content,
 		has_tool_calls,
 	)? {
-		// This was a continuation response - session has been reset, skip normal processing
-		return Ok(());
+		// This was a continuation response - session has been reset with continuation message
+		// Now immediately process the continuation message through API (fully invisible to user)
+		return process_continuation_message_immediately(params).await;
 	}
 
 	// First, add the user message before processing response
@@ -453,4 +454,62 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.config,
 		params.role,
 	)
+}
+
+/// Process continuation message immediately after session reset
+/// This keeps the continuation completely invisible to the user
+async fn process_continuation_message_immediately(
+	params: ResponseProcessingParams<'_>,
+) -> Result<()> {
+	use crate::session::ChatCompletionWithValidationParams;
+	use colored::*;
+
+	log_info!("Auto-continuing with preserved context...");
+
+	// Get the continuation message (last message in session after reset)
+	let messages = params.chat_session.session.messages.clone();
+	let model = params.chat_session.model.clone();
+	let temperature = params.chat_session.temperature;
+	let max_retries = params.chat_session.max_retries;
+
+	// Create validation params for continuation API call
+	let validation_params = ChatCompletionWithValidationParams::new(
+		&messages,
+		&model,
+		temperature,
+		params.chat_session.max_tokens,
+		params.config,
+	)
+	.with_max_retries(max_retries)
+	.with_chat_session(params.chat_session)
+	.with_cancellation_token(params.operation_cancelled.clone());
+
+	// Make API call with continuation message (invisible to user)
+	let api_result = crate::session::chat_completion_with_validation(validation_params).await;
+
+	match api_result {
+		Ok(response) => {
+			log_info!("Continuation response received - resuming work...");
+
+			// Process the continuation response normally with full tool support
+			let continuation_params = ResponseProcessingParams::new(
+				response.content,
+				response.exchange,
+				response.tool_calls,
+				response.finish_reason,
+				params.chat_session,
+				params.config,
+				params.role,
+				params.operation_cancelled,
+			);
+
+			// Use boxed future to avoid recursion issue
+			Box::pin(process_response(continuation_params)).await
+		}
+		Err(e) => {
+			println!("{}: {}", "Error in continuation API call".bright_red(), e);
+			println!("{}", "Returning to normal session flow...".yellow());
+			Ok(())
+		}
+	}
 }

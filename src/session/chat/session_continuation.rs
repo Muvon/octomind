@@ -14,8 +14,8 @@
 
 // Session continuation module - handles automatic session reset when token limits are reached
 
-use crate::config::Config;
 use crate::session::chat::session::ChatSession;
+use crate::{config::Config, log_info};
 use anyhow::Result;
 use regex::Regex;
 use std::path::Path;
@@ -132,10 +132,7 @@ pub fn inject_summary_request(params: &mut ContinuationParams) -> Result<()> {
 	params.chat_session.session.messages.push(summary_message);
 	params.chat_session.continuation_pending = true;
 
-	println!(
-		"{}",
-		"   Summary request injected into conversation flow".cyan()
-	);
+	log_info!("Summary request injected into conversation flow");
 
 	Ok(())
 }
@@ -225,19 +222,13 @@ pub fn process_continuation_response(
 
 	// Log context information
 	if !file_contexts.is_empty() {
-		println!(
-			"{}",
-			format!("📁 Loaded context from {} file(s)", file_contexts.len()).bright_cyan()
-		);
+		log_info!("Loaded context from {} file(s)", file_contexts.len());
 		for (filepath, start, end) in &file_contexts {
-			println!("   {} (lines {}-{})", filepath, start, end);
+			log_info!("   {} (lines {}-{})", filepath, start, end);
 		}
 	}
 
-	println!(
-		"{}",
-		"🚀 Session continued with preserved context - resuming work...".bright_cyan()
-	);
+	log_info!("Session context preserved - continuing automatically...");
 
 	Ok(true)
 }

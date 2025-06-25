@@ -24,7 +24,7 @@ use colored::Colorize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-// Perform smart context truncation when token limit is approaching
+// Check and handle auto-truncation using session continuation when token limit is approaching
 pub async fn check_and_truncate_context(
 	chat_session: &mut ChatSession,
 	config: &Config,
@@ -36,310 +36,109 @@ pub async fn check_and_truncate_context(
 		return Ok(());
 	}
 
-	let current_tokens = crate::session::estimate_message_tokens(&chat_session.session.messages);
-
-	// If we're under the threshold or continuation is in progress, nothing to do
-	if current_tokens < config.max_session_tokens_threshold
-		|| session_continuation::is_continuation_in_progress(chat_session)
-	{
+	// If continuation is already in progress, nothing to do
+	if session_continuation::is_continuation_in_progress(chat_session) {
 		return Ok(());
 	}
 
-	// Fallback to original truncation logic if continuation didn't handle it
-	perform_smart_truncation(chat_session, config, current_tokens).await
+	// Use session continuation for auto-truncation (NEW smart system)
+	let _continuation_triggered =
+		session_continuation::check_and_handle_continuation(chat_session, config)?;
+
+	Ok(())
 }
 
-/// Identify a complete conversation unit starting from the given index (working backwards)
-/// Returns (messages_in_unit, start_index_of_unit) or None if no complete unit can be formed
-fn identify_conversation_unit(
-	messages: &[crate::session::Message],
-	end_idx: usize,
-) -> Option<(Vec<crate::session::Message>, usize)> {
-	if end_idx >= messages.len() {
-		return None;
-	}
-
-	let end_msg = &messages[end_idx];
-
-	match end_msg.role.as_str() {
-		"user" => {
-			// User message is a complete unit by itself
-			Some((vec![end_msg.clone()], end_idx))
-		}
-		"assistant" => {
-			if end_msg.tool_calls.is_some() {
-				// Assistant message with tool calls - need to find all corresponding tool results
-				identify_tool_sequence_unit(messages, end_idx)
-			} else {
-				// Simple assistant message is a complete unit by itself
-				Some((vec![end_msg.clone()], end_idx))
-			}
-		}
-		"tool" => {
-			// Tool messages should be part of a tool sequence, not standalone
-			// Skip individual tool messages - they should be picked up as part of assistant sequences
-			None
-		}
-		_ => {
-			// Other message types (system, etc.) - treat as individual units
-			Some((vec![end_msg.clone()], end_idx))
-		}
-	}
-}
-
-/// Identify a complete tool sequence unit (assistant with tool_calls + all tool results)
-fn identify_tool_sequence_unit(
-	messages: &[crate::session::Message],
-	assistant_idx: usize,
-) -> Option<(Vec<crate::session::Message>, usize)> {
-	let assistant_msg = &messages[assistant_idx];
-
-	// Verify this is an assistant message with tool_calls
-	if assistant_msg.role != "assistant" || assistant_msg.tool_calls.is_none() {
-		return None;
-	}
-
-	// Extract tool_call_ids from the assistant message
-	let mut expected_tool_call_ids = Vec::new();
-	if let Some(tool_calls_value) = &assistant_msg.tool_calls {
-		if let Some(tool_calls_array) = tool_calls_value.as_array() {
-			for tool_call in tool_calls_array {
-				if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
-					expected_tool_call_ids.push(id.to_string());
-				}
-			}
-		}
-	}
-
-	if expected_tool_call_ids.is_empty() {
-		// Assistant message with tool_calls but no valid IDs - treat as simple assistant message
-		return Some((vec![assistant_msg.clone()], assistant_idx));
-	}
-
-	// Find all tool messages that belong to this assistant message
-	let mut tool_messages = Vec::new();
-	let mut found_tool_call_ids = std::collections::HashSet::new();
-
-	// Look forward from the assistant message to find tool results
-	for (i, msg) in messages.iter().enumerate().skip(assistant_idx + 1) {
-		if msg.role == "tool" {
-			if let Some(tool_call_id) = &msg.tool_call_id {
-				if expected_tool_call_ids.contains(tool_call_id) {
-					tool_messages.push((i, msg.clone()));
-					found_tool_call_ids.insert(tool_call_id.clone());
-				}
-			}
-		} else if msg.role == "user" || msg.role == "assistant" {
-			// Stop at the next user or assistant message
-			break;
-		}
-	}
-
-	// Check if we found all expected tool results
-	let all_tool_results_found = expected_tool_call_ids
-		.iter()
-		.all(|id| found_tool_call_ids.contains(id));
-
-	if !all_tool_results_found {
-		// Incomplete tool sequence - don't include it as a unit
-		// This prevents breaking partial tool sequences
-		return None;
-	}
-
-	// Build the complete tool sequence unit
-	let mut unit_messages = vec![assistant_msg.clone()];
-	unit_messages.extend(tool_messages.into_iter().map(|(_, msg)| msg));
-
-	Some((unit_messages, assistant_idx))
-}
-
-// Perform smart context truncation without checking auto-truncation settings
-pub async fn perform_smart_truncation(
+/// Simple boundary truncation for manual /truncate command
+/// Cuts messages until reaching assistant without tool calls OR user message
+/// This preserves order and removes tool sequences safely
+pub async fn perform_simple_boundary_truncation(
 	chat_session: &mut ChatSession,
-	config: &Config,
+	_config: &Config,
 	current_tokens: usize,
 ) -> Result<()> {
+	use colored::Colorize;
+
 	// Basic validation
 	if chat_session.session.messages.is_empty() {
 		return Ok(()); // Nothing to truncate
 	}
 
-	log_conditional!(
-		debug: format!("\nℹ️  Message history exceeds configured token limit ({} > {})\nApplying enhanced safe boundary truncation with intelligent summarization.",
-			current_tokens, config.max_session_tokens_threshold).bright_blue(),
-		default: "Applying enhanced safe boundary truncation with intelligent summarization".bright_blue()
-	);
+	// Find system message to preserve
+	let system_message = chat_session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.role == "system")
+		.cloned();
 
-	// SAFE BOUNDARY TRUNCATION STRATEGY:
-	// 1. Always preserve system message
-	// 2. Identify complete conversation units (user messages, assistant responses, tool sequences)
-	// 3. Work backwards from most recent, keeping complete units
-	// 4. Truncate only at safe boundaries between complete conversation exchanges
+	// SIMPLE LOGIC: Work backwards, keep messages until we need to cut
+	// Cut when we hit: assistant with tool calls (to avoid orphaned tools)
+	// Keep: user messages, assistant without tool calls
+	let mut kept_messages = Vec::new();
 
-	// Step 1: Extract system message
-	let mut system_message = None;
-	let mut non_system_messages = Vec::new();
-
-	for msg in &chat_session.session.messages {
+	// Work backwards through all messages (skip system)
+	for msg in chat_session.session.messages.iter().rev() {
 		if msg.role == "system" {
-			system_message = Some(msg.clone());
-		} else {
-			non_system_messages.push(msg.clone());
+			continue; // Handle system separately
 		}
-	}
 
-	if non_system_messages.is_empty() {
-		return Ok(()); // Only system message, nothing to truncate
-	}
-
-	// Step 2: Calculate available token budget
-	let system_tokens = system_message
-		.as_ref()
-		.map(|msg| crate::session::estimate_tokens(&msg.content))
-		.unwrap_or(0);
-
-	let available_tokens = config
-		.max_session_tokens_threshold
-		.saturating_sub(system_tokens);
-	let target_tokens = (available_tokens as f64 * 0.85) as usize; // 85% of available tokens
-
-	// Step 3: Identify conversation units by working backwards
-	let mut conversation_units = Vec::new();
-	let mut i = non_system_messages.len();
-
-	while i > 0 {
-		// Look for complete conversation units working backwards
-		let unit = identify_conversation_unit(&non_system_messages, i - 1);
-
-		if let Some((unit_messages, start_idx)) = unit {
-			conversation_units.push((unit_messages, start_idx));
-			i = start_idx; // Move to the message before this unit
-		} else {
-			i -= 1; // Skip this message if it can't form a complete unit
-		}
-	}
-
-	// Reverse to get chronological order
-	conversation_units.reverse();
-
-	// Step 4: Select complete units that fit within token budget
-	let mut selected_units = Vec::new();
-	let mut current_token_count = 0usize;
-
-	// Always try to keep the most recent units
-	for (unit_messages, start_idx) in conversation_units.iter().rev() {
-		let unit_tokens: usize = unit_messages
-			.iter()
-			.map(|msg| crate::session::estimate_tokens(&msg.content))
-			.sum();
-
-		if current_token_count + unit_tokens <= target_tokens {
-			// This unit fits, add it
-			selected_units.push((unit_messages.clone(), *start_idx));
-			current_token_count += unit_tokens;
-		} else {
-			// This unit doesn't fit, we found our truncation boundary
-			break;
-		}
-	}
-
-	// Reverse selected units to maintain chronological order (oldest first)
-	selected_units.reverse();
-
-	// Build final selected messages in correct chronological order
-	let mut selected_messages = Vec::new();
-	for (unit_messages, _) in selected_units {
-		selected_messages.extend(unit_messages);
-	}
-
-	// Messages are already in correct chronological order from unit processing
-	// No need to re-sort as it can break tool sequence ordering
-
-	// Step 5: Build the new truncated message list
-	let mut truncated_messages = Vec::new();
-
-	// Add system message first if available
-	if let Some(sys_msg) = system_message {
-		truncated_messages.push(sys_msg);
-	}
-
-	// Add intelligent summary if we removed messages
-	if selected_messages.len() < non_system_messages.len() {
-		let removed_count = non_system_messages.len() - selected_messages.len();
-
-		// Collect removed messages for summarization
-		let removed_messages: Vec<crate::session::Message> = non_system_messages
-			.iter()
-			.filter(|msg| {
-				// Check if this message was NOT selected (i.e., it was removed)
-				!selected_messages.iter().any(|selected| {
-					selected.content == msg.content
-						&& selected.role == msg.role
-						&& selected.timestamp == msg.timestamp
-				})
-			})
-			.cloned()
-			.collect();
-
-		// Generate intelligent summary of removed content
-		let summary_content = if !removed_messages.is_empty() {
-			let summarizer = SmartSummarizer::new();
-			match summarizer.summarize_messages(&removed_messages) {
-				Ok(summary) if !summary.trim().is_empty() => {
-					format!(
-						"📋 **Context Summary** (Removed {} messages at safe boundary)\n\n{}\n\n---\nTruncation preserved complete conversation exchanges to maintain tool sequence integrity.",
-						removed_count, summary
-					)
-				}
-				_ => {
-					// Fallback to simple message if summarization fails or is empty
-					format!(
-						"📋 **Context Truncated** (Removed {} messages at safe boundary)\n\nTruncation preserved complete conversation exchanges to maintain tool sequence integrity.",
-						removed_count
-					)
+		match msg.role.as_str() {
+			"user" => {
+				// User messages are safe boundaries - always keep
+				kept_messages.push(msg.clone());
+			}
+			"assistant" => {
+				if msg.tool_calls.is_none() {
+					// Assistant without tool calls - safe boundary, keep it
+					kept_messages.push(msg.clone());
+				} else {
+					// Assistant with tool calls - STOP here to avoid orphaned tools
+					break;
 				}
 			}
-		} else {
-			// Fallback if no removed messages to summarize
-			format!(
-				"📋 **Context Truncated** (Removed {} messages at safe boundary)\n\nTruncation preserved complete conversation exchanges to maintain tool sequence integrity.",
-				removed_count
-			)
-		};
-
-		let summary_message = crate::session::Message {
-			role: "assistant".to_string(),
-			content: summary_content,
-			timestamp: std::time::SystemTime::now()
-				.duration_since(std::time::UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_secs(),
-			cached: false,
-			tool_calls: None,
-			tool_call_id: None,
-			name: None,
-			images: None,
-		};
-
-		truncated_messages.push(summary_message);
+			"tool" => {
+				// Tool messages - STOP here, they need their assistant message
+				break;
+			}
+			_ => {
+				// Other message types - keep them
+				kept_messages.push(msg.clone());
+			}
+		}
 	}
 
-	// Add selected messages
-	truncated_messages.extend(selected_messages);
+	// Reverse to restore chronological order
+	kept_messages.reverse();
 
-	// Step 6: Update session and report results
-	chat_session.session.messages = truncated_messages;
+	// Build final message list
+	let mut final_messages = Vec::new();
+
+	// Add system message first
+	if let Some(sys_msg) = system_message {
+		final_messages.push(sys_msg);
+	}
+
+	// Add kept messages
+	final_messages.extend(kept_messages);
+
+	// Update session
+	let original_count = chat_session.session.messages.len();
+	chat_session.session.messages = final_messages;
 
 	let new_token_count = crate::session::estimate_message_tokens(&chat_session.session.messages);
 	let tokens_saved = current_tokens.saturating_sub(new_token_count);
+	let messages_removed = original_count - chat_session.session.messages.len();
 
-	log_conditional!(
-		debug: format!("Enhanced safe boundary truncation complete: {} tokens removed, new context size: {} tokens.",
-			tokens_saved, new_token_count).bright_green(),
-		default: format!("Reduced context size by {} tokens with intelligent summarization", tokens_saved).bright_green()
+	println!(
+		"{}",
+		format!(
+			"Simple boundary truncation complete: {} messages removed, {} tokens saved",
+			messages_removed, tokens_saved
+		)
+		.bright_green()
 	);
 
-	// Save the session with truncated messages
+	// Save the session
 	chat_session.save()?;
 
 	Ok(())

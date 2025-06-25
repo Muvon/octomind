@@ -1103,10 +1103,10 @@ async fn handle_context_limit_exceeded(
 				let choice = line.trim().to_lowercase();
 				match choice.as_str() {
 					"t" | "truncate" => {
-						println!("{}", "Applying smart truncation...".bright_blue());
+						println!("{}", "Applying simple boundary truncation...".bright_blue());
 
-						// Apply enhanced smart truncation
-						crate::session::chat::perform_smart_truncation(
+						// Apply simple boundary truncation for manual truncation
+						crate::session::chat::perform_simple_boundary_truncation(
 							chat_session,
 							config,
 							crate::session::estimate_message_tokens(&chat_session.session.messages),

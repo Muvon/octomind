@@ -22,7 +22,10 @@ use colored::Colorize;
 
 pub async fn handle_truncate(session: &mut ChatSession, config: &Config) -> Result<bool> {
 	// Perform smart truncation processing once
-	println!("{}", "Performing smart context truncation...".bright_cyan());
+	println!(
+		"{}",
+		"Performing simple boundary truncation...".bright_cyan()
+	);
 
 	// Estimate current token usage
 	let current_tokens = crate::session::estimate_message_tokens(&session.session.messages);
@@ -35,8 +38,10 @@ pub async fn handle_truncate(session: &mut ChatSession, config: &Config) -> Resu
 		.bright_blue()
 	);
 
-	// Use the smart truncation logic directly (bypassing auto-truncation checks)
-	match crate::session::chat::perform_smart_truncation(session, config, current_tokens).await {
+	// Use the simple boundary truncation logic for manual /truncate command
+	match crate::session::chat::perform_simple_boundary_truncation(session, config, current_tokens)
+		.await
+	{
 		Ok(()) => {
 			// Calculate new token count after truncation
 			let new_tokens = crate::session::estimate_message_tokens(&session.session.messages);
@@ -46,7 +51,7 @@ pub async fn handle_truncate(session: &mut ChatSession, config: &Config) -> Resu
 				println!(
                     "{}",
                     format!(
-                        "Smart truncation completed: {} tokens removed, new context size: {} tokens",
+                        "Simple boundary truncation completed: {} tokens removed, new context size: {} tokens",
                         format_number(tokens_saved as u64),
                         format_number(new_tokens as u64)
                     )
@@ -60,7 +65,11 @@ pub async fn handle_truncate(session: &mut ChatSession, config: &Config) -> Resu
 			}
 		}
 		Err(e) => {
-			println!("{}: {}", "Smart truncation failed".bright_red(), e);
+			println!(
+				"{}: {}",
+				"Simple boundary truncation failed".bright_red(),
+				e
+			);
 		}
 	}
 

@@ -47,7 +47,8 @@ pub use commands::{
 };
 pub use context_reduction::perform_context_reduction;
 pub use context_truncation::{
-	check_and_truncate_context, perform_smart_full_summarization, perform_smart_truncation,
+	check_and_truncate_context, perform_simple_boundary_truncation,
+	perform_smart_full_summarization,
 };
 pub use cost_tracker::CostTracker;
 pub use formatting::{format_duration, remove_function_calls};

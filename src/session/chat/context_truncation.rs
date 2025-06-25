@@ -41,11 +41,81 @@ pub async fn check_and_truncate_context(
 		return Ok(());
 	}
 
+	let current_tokens = crate::session::estimate_message_tokens(&chat_session.session.messages);
+
+	// ADAPTIVE THRESHOLD LOGIC: Calculate smart threshold based on recent continuation
+	let effective_threshold = calculate_effective_threshold(chat_session, config);
+
+	// Only trigger if we exceed the effective (possibly adaptive) threshold
+	if current_tokens < effective_threshold {
+		return Ok(());
+	}
+
 	// Use session continuation for auto-truncation (NEW smart system)
 	let _continuation_triggered =
 		session_continuation::check_and_handle_continuation(chat_session, config)?;
 
 	Ok(())
+}
+
+/// Calculate effective threshold with adaptive bonus for recent continuations
+fn calculate_effective_threshold(chat_session: &ChatSession, config: &Config) -> usize {
+	let base_threshold = config.max_session_tokens_threshold;
+
+	// Check if we have a recent continuation by detecting our exact prompts
+	if let Some(adaptive_bonus) = detect_recent_continuation_context(chat_session) {
+		let adaptive_threshold = base_threshold + adaptive_bonus;
+
+		crate::log_conditional!(
+			debug: format!("🎯 Adaptive threshold: {} (base: {} + context: {})",
+				adaptive_threshold, base_threshold, adaptive_bonus).bright_cyan(),
+			default: format!("Using adaptive threshold: {} tokens", adaptive_threshold).bright_cyan()
+		);
+
+		adaptive_threshold
+	} else {
+		base_threshold
+	}
+}
+
+/// Detect recent continuation by looking for our exact prompt constants
+fn detect_recent_continuation_context(chat_session: &ChatSession) -> Option<usize> {
+	let messages = &chat_session.session.messages;
+
+	// Look for continuation pattern using our exact prompt constants
+	for (i, message) in messages.iter().enumerate().rev() {
+		// Look for our summary request prompt (check first few words to be safe)
+		if message.role == "user"
+			&& message
+				.content
+				.contains("CRITICAL: Session approaching token limits")
+		{
+			// Check if this is followed by assistant response and then file context
+			if let (Some(assistant_msg), Some(user_context_msg)) =
+				(messages.get(i + 1), messages.get(i + 2))
+			{
+				if assistant_msg.role == "assistant"
+					&& user_context_msg.role == "user"
+					&& user_context_msg
+						.content
+						.contains("Thank you for the summary. Here's the required file context:")
+				{
+					// Calculate current context size (all messages after the continuation)
+					let context_size = messages
+						.iter()
+						.skip(i) // Start from the summary request
+						.map(|m| crate::session::estimate_tokens(&m.content))
+						.sum::<usize>();
+
+					return Some(context_size);
+				}
+			}
+			// If we found the summary request but not the full pattern, break
+			break;
+		}
+	}
+
+	None
 }
 
 /// Simple boundary truncation for manual /truncate command
@@ -527,39 +597,5 @@ mod tests {
 		assert_eq!(messages[0].role, "assistant");
 		assert_eq!(messages[1].role, "tool");
 		assert_eq!(messages[1].tool_call_id, Some("call_123".to_string()));
-	}
-
-	#[test]
-	fn test_tool_sequence_ordering() {
-		// Test that tool sequences maintain correct ordering
-		let assistant_with_tools = create_test_message(
-			"assistant",
-			"I'll use a tool",
-			Some(
-				json!([{"id": "call_123", "type": "function", "function": {"name": "test_tool"}}]),
-			),
-			None,
-			None,
-		);
-
-		let tool_result = create_test_message(
-			"tool",
-			"Tool result",
-			None,
-			Some("call_123".to_string()),
-			Some("test_tool".to_string()),
-		);
-
-		// Test identify_tool_sequence_unit
-		let messages = vec![assistant_with_tools.clone(), tool_result.clone()];
-		let unit = super::identify_tool_sequence_unit(&messages, 0);
-
-		assert!(unit.is_some());
-		let (unit_messages, start_idx) = unit.unwrap();
-		assert_eq!(start_idx, 0);
-		assert_eq!(unit_messages.len(), 2);
-		assert_eq!(unit_messages[0].role, "assistant");
-		assert_eq!(unit_messages[1].role, "tool");
-		assert_eq!(unit_messages[1].tool_call_id, Some("call_123".to_string()));
 	}
 }

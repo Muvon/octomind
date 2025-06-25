@@ -21,7 +21,7 @@ use regex::Regex;
 use std::path::Path;
 
 // All constants kept internal - no configuration needed
-const SUMMARY_REQUEST_PROMPT: &str = r#"
+pub const SUMMARY_REQUEST_PROMPT: &str = r#"
 CRITICAL: Session approaching token limits. Provide STRUCTURED summary for seamless continuation:
 
 ## OBJECTIVE
@@ -63,7 +63,7 @@ Key details/decisions/constraints that must be preserved.
 Follow this structure EXACTLY for optimal continuation.
 "#;
 
-const CONTINUATION_USER_MESSAGE_TEMPLATE: &str = r#"Thank you for the summary. Here's the required file context:
+pub const CONTINUATION_USER_MESSAGE_TEMPLATE: &str = r#"Thank you for the summary. Here's the required file context:
 
 {}
 

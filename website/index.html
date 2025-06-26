@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Octomind - Autonomous Agentic AI Developer | CLI Development Tool</title>
+		<meta name="description" content="Autonomous agentic AI developer with session-first architecture. Built-in MCP tools, multi-provider AI, vision support, layered processing, and intelligent cost optimization.">
+		<meta name="keywords" content="AI development assistant, agentic development tool, AI coding assistant, MCP protocol, session-based AI, conversational coding, Rust AI assistant">
+
+		<!-- Open Graph -->
+		<meta property="og:title" content="Octomind - Autonomous Agentic AI Developer">
+		<meta property="og:description" content="Transform your development workflow with autonomous agentic AI. Session-first architecture, built-in MCP tools, multi-provider support, and intelligent automation.">
+		<meta property="og:type" content="website">
+		<meta property="og:url" content="https://octomind.muvon.io">
+
+		<!-- Schema.org structured data -->
+		<script type="application/ld+json">
+		{
+		"@context": "https://schema.org",
+		"@type": "SoftwareApplication",
+		"name": "Octomind",
+		"description": "Autonomous Agentic AI Developer",
+		"applicationCategory": "DeveloperApplication",
+		"operatingSystem": "macOS, Linux, Windows",
+		"programmingLanguage": "Rust",
+		"license": "Apache-2.0",
+		"author": {
+		"@type": "Organization",
+		"name": "Muvon Un Limited"
+		}
+		}
+		</script>
+
+		<link rel="stylesheet" href="styles.css">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+	</head>
+	<body>
+		<!-- Navigation -->
+		<nav class="nav">
+			<div class="nav-container">
+				<div class="nav-brand">
+					<div class="logo">
+						<svg width="126" height="40" viewBox="0 0 126 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="16.7757" cy="6.04188" r="6.04188" fill="#76B744"></circle><circle cx="37.5282" cy="31.2601" r="6.04188" fill="#76B744"></circle><path fill-rule="evenodd" clip-rule="evenodd" d="M40.4889 14.7002C40.6847 18.0313 38.1431 20.8904 34.812 21.0862C33.2728 21.1767 31.6218 21.4473 30.5785 22.5826L25.4075 28.2087C24.2377 29.4814 24.1311 31.3703 24.1311 33.099C24.1311 36.4359 21.4261 39.1409 18.0892 39.1409C14.7524 39.1409 12.0473 36.4359 12.0473 33.099C12.0473 33.0689 12.0475 33.0387 12.048 33.0087C12.0696 31.5357 11.9005 29.9507 10.8815 28.8867C9.74425 27.6992 7.93379 27.5495 6.29084 27.615C6.01445 27.6261 5.73401 27.6182 5.45092 27.5904C2.13011 27.2638 -0.297169 24.3069 0.0294542 20.9861C0.356077 17.6653 3.31291 15.238 6.63373 15.5646C9.95454 15.8913 12.3818 18.8481 12.0552 22.1689C11.9519 23.2191 12.1129 24.3374 12.8427 25.0995L13.3778 25.6582C14.5465 26.8785 16.3995 27.0571 18.0892 27.0571C19.5836 27.0571 21.1971 26.8255 22.2084 25.7252L27.3209 20.1627C28.456 18.9277 28.5244 17.0838 28.426 15.4092C28.2302 12.0781 30.7718 9.21903 34.1029 9.02323C37.434 8.82742 40.2931 11.3691 40.4889 14.7002Z" fill="#76B744"></path><path d="M65.6534 17.4566C65.3946 16.9132 64.8877 16.6414 64.1329 16.6414C63.2559 16.6414 62.6664 16.9132 62.3644 17.4566C62.1991 17.7661 62.1164 18.227 62.1164 18.8392V25.6079H59V14.3818H61.987V16.0224C62.368 15.4377 62.7275 15.0215 63.0654 14.7739C63.662 14.3336 64.4348 14.1135 65.3838 14.1135C66.2824 14.1135 67.0085 14.3027 67.562 14.681C68.0078 15.0318 68.3456 15.4824 68.5757 16.0327C68.9783 15.3723 69.4779 14.8874 70.0746 14.5778C70.7072 14.2683 71.4117 14.1135 72.1881 14.1135C72.7057 14.1135 73.2161 14.2098 73.7194 14.4024C74.2226 14.595 74.6791 14.9321 75.0889 15.4136C75.4196 15.8057 75.6424 16.2872 75.7574 16.8581C75.8293 17.2365 75.8653 17.7902 75.8653 18.5193L75.8437 25.6079H72.6949V18.4471C72.6949 18.0206 72.6231 17.6698 72.4793 17.3947C72.2061 16.8719 71.7029 16.6105 70.9696 16.6105C70.1213 16.6105 69.5354 16.9475 69.2119 17.6217C69.0466 17.9794 68.9639 18.4093 68.9639 18.9114V25.6079H65.869V18.9114C65.869 18.2442 65.7972 17.7592 65.6534 17.4566Z" fill="white"></path><path d="M85.5764 24.0189C85.5476 24.0533 85.4757 24.1565 85.3607 24.3285C85.2457 24.5004 85.1091 24.6518 84.951 24.7825C84.4693 25.1952 84.002 25.4772 83.5491 25.6285C83.1034 25.7799 82.5786 25.8555 81.9747 25.8555C80.235 25.8555 79.0632 25.2571 78.4593 24.0602C78.1215 23.3998 77.9525 22.4265 77.9525 21.1402V14.3611H81.1013V21.1402C81.1013 21.7799 81.1804 22.2614 81.3385 22.5847C81.6189 23.1556 82.1688 23.4411 82.9884 23.4411C84.038 23.4411 84.7569 23.0353 85.1451 22.2236C85.3463 21.7833 85.447 21.2021 85.447 20.4798V14.3611H88.5634V25.6079H85.5764V24.0189Z" fill="white"></path><path d="M89.7233 14.3611H93.174L95.6218 22.6569L98.1236 14.3611H101.423L97.1854 25.6079H93.9396L89.7233 14.3611Z" fill="white"></path><path d="M112.31 15.785C113.302 16.9751 113.798 18.3818 113.798 20.0052C113.798 21.6561 113.302 23.0696 112.31 24.2459C111.318 25.4153 109.812 26 107.792 26C105.771 26 104.265 25.4153 103.273 24.2459C102.281 23.0696 101.785 21.6561 101.785 20.0052C101.785 18.3818 102.281 16.9751 103.273 15.785C104.265 14.595 105.771 14 107.792 14C109.812 14 111.318 14.595 112.31 15.785ZM107.781 16.4867C106.882 16.4867 106.188 16.7928 105.7 17.405C105.218 18.0103 104.977 18.877 104.977 20.0052C104.977 21.1333 105.218 22.0034 105.7 22.6156C106.188 23.2279 106.882 23.534 107.781 23.534C108.679 23.534 109.37 23.2279 109.851 22.6156C110.333 22.0034 110.574 21.1333 110.574 20.0052C110.574 18.877 110.333 18.0103 109.851 17.405C109.37 16.7928 108.679 16.4867 107.781 16.4867Z" fill="white"></path><path d="M120.878 16.5383C119.835 16.5383 119.12 16.9613 118.732 17.8074C118.531 18.2545 118.43 18.8255 118.43 19.5202V25.6079H115.368V14.3818H118.333V16.0224C118.728 15.4445 119.102 15.0284 119.454 14.7739C120.087 14.3199 120.889 14.0929 121.859 14.0929C123.074 14.0929 124.066 14.399 124.835 15.0112C125.612 15.6165 126 16.6242 126 18.0344V25.6079H122.851V18.767C122.851 18.1754 122.769 17.7214 122.603 17.405C122.301 16.8272 121.726 16.5383 120.878 16.5383Z" fill="white"></path></svg>
+					</div>
+					<span class="open-source-badge">OPEN SOURCE</span>
+				</div>
+				<div class="nav-links">
+					<a href="#features">Features</a>
+					<a href="#mcp-tools">MCP Tools</a>
+					<a href="#session-commands">Commands</a>
+					<a href="#installation">Installation</a>
+					<a href="https://github.com/muvon/octomind/blob/master/doc/README.md">Docs</a>
+					<a href="https://github.com/muvon/octomind" class="github-link">
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+						</svg>
+						GitHub
+					</a>
+					<div class="github-stars" id="github-stars">
+						<span class="star-icon">⭐</span>
+						<span class="star-count">Loading...</span>
+					</div>
+				</div>
+			</div>
+		</nav>
+
+		<!-- Hero Section -->
+		<header class="hero">
+			<div class="hero-background"></div>
+			<div class="hero-content">
+				<div class="hero-badge">BRINGING IDEAS TO LIFE</div>
+				<h1 class="hero-title">
+					Autonomous Agentic
+					<span class="hero-highlight">AI Developer</span>
+				</h1>
+				<p class="hero-subtitle">
+					Session-First Architecture & Intelligent MCP Automation
+				</p>
+				<p class="hero-description">
+					Transform your development workflow with autonomous agentic AI.<br>
+					Built-in MCP tools, layered processing, vision support, and<br>
+					intelligent cost optimization for professional developers.
+				</p>
+				<div class="hero-buttons">
+					<a href="#installation" class="btn-primary">Start Development</a>
+					<a href="https://github.com/muvon/octomind" class="btn-secondary">
+						<span class="star-icon">⭐</span>
+						Star on GitHub
+					</a>
+				</div>
+				<div class="hero-features">
+					<span>Apache 2.0</span>
+					<span>•</span>
+					<span>6 AI Providers</span>
+					<span>•</span>
+					<span>Vision Support</span>
+					<span>•</span>
+					<span>Autonomous Agents</span>
+				</div>
+			</div>
+		</header>
+
+		<!-- Problem/Solution Section -->
+		<section class="problem-solution">
+			<div class="container">
+				<div class="comparison">
+					<div class="problem">
+						<h3>Traditional Development Workflow</h3>
+						<ul>
+							<li>❌ Manual, repetitive development tasks</li>
+							<li>❌ Complex CLI tools with steep learning curves</li>
+							<li>❌ Separate indexing and search systems</li>
+							<li>❌ Context switching between tools</li>
+							<li>❌ Limited AI provider options</li>
+							<li>❌ No autonomous task execution</li>
+						</ul>
+					</div>
+					<div class="solution">
+						<h3>Octomind Approach</h3>
+						<ul>
+							<li>✅ Autonomous agentic AI development</li>
+							<li>✅ Natural language conversations</li>
+							<li>✅ Built-in development tools via MCP</li>
+							<li>✅ Session-first architecture with persistence</li>
+							<li>✅ Multi-provider AI support (6 providers)</li>
+							<li>✅ Vision support & intelligent automation</li>
+						</ul>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- How It Works -->
+		<section class="how-it-works">
+			<div class="container">
+				<h2>How It Works</h2>
+				<p class="section-subtitle">Instead of learning complex commands, just have a conversation:</p>
+
+				<div class="conversation-examples">
+					<div class="example">
+						<div class="user-message">
+							<span class="message-label">You:</span>
+							"How does authentication work in this project?"
+						</div>
+						<div class="ai-response">
+							<span class="message-label">AI:</span>
+							[AI analyzes project structure, finds auth-related files, explains implementation]
+						</div>
+					</div>
+
+					<div class="example">
+						<div class="user-message">
+							<span class="message-label">You:</span>
+							"Add error handling to the login function"
+						</div>
+						<div class="ai-response">
+							<span class="message-label">AI:</span>
+							[AI examines login code, implements error handling, shows changes]
+						</div>
+					</div>
+
+					<div class="example">
+						<div class="user-message">
+							<span class="message-label">You:</span>
+							"Rename 'processData' to 'processUserData' across all files"
+						</div>
+						<div class="ai-response">
+							<span class="message-label">AI:</span>
+							[AI finds all occurrences, performs batch edit across multiple files]
+						</div>
+					</div>
+
+					<div class="example">
+						<div class="user-message">
+							<span class="message-label">You:</span>
+							"/image screenshot.png<br>What's wrong with this UI layout?"
+						</div>
+						<div class="ai-response">
+							<span class="message-label">AI:</span>
+							[AI analyzes the image, identifies layout issues, suggests CSS fixes]
+						</div>
+					</div>
+
+					<div class="example">
+						<div class="user-message">
+							<span class="message-label">You:</span>
+							"agent_context_gatherer(task=\"Analyze the authentication system architecture\")"
+						</div>
+						<div class="ai-response">
+							<span class="message-label">AI:</span>
+							[Routes task to specialized context gathering AI agent with development tools]
+						</div>
+					</div>
+
+					<div class="example">
+						<div class="user-message">
+							<span class="message-label">You:</span>
+							"/done"
+						</div>
+						<div class="ai-response">
+							<span class="message-label">AI:</span>
+							[Finalizes task with memorization, summarization, and auto-commit. Shows: $0.02 spent, 3 requests, 5 tool calls]
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- Core Features -->
+		<section id="features" class="features">
+			<div class="container">
+				<h2>Core Features</h2>
+				<div class="features-grid">
+					<div class="feature">
+						<div class="feature-icon">🤖</div>
+						<h3>Autonomous Agentic AI</h3>
+						<p>Intelligent agents that understand context, execute complex tasks autonomously, and route work to specialized AI layers for optimal results.</p>
+					</div>
+					<div class="feature">
+						<div class="feature-icon">🎯</div>
+						<h3>Session-First Architecture</h3>
+						<p>Everything happens in persistent AI conversations. Save, resume, and organize development sessions with intelligent context management and continuation.</p>
+					</div>
+					<div class="feature">
+						<div class="feature-icon">🖼️</div>
+						<h3>Multimodal Vision Support</h3>
+						<p>Analyze images, screenshots, diagrams, and UI layouts with AI across all 6 providers. Perfect for debugging visual issues and design analysis.</p>
+					</div>
+					<div class="feature">
+						<div class="feature-icon">🛠️</div>
+						<h3>Built-in Development Tools</h3>
+						<p>File operations, code analysis, shell commands, and more through MCP protocol integration. No external dependencies or complex setup required.</p>
+					</div>
+					<div class="feature">
+						<div class="feature-icon">🌐</div>
+						<h3>Multi-Provider AI Support</h3>
+						<p>OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare. Route different tasks to optimal models for cost efficiency and quality.</p>
+					</div>
+					<div class="feature">
+						<div class="feature-icon">💰</div>
+						<h3>Intelligent Cost Optimization</h3>
+						<p>Real-time usage tracking, 2-marker cache system, smart model routing, and detailed reporting to optimize costs without sacrificing quality.</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- MCP Tools -->
+		<section id="mcp-tools" class="mcp-tools">
+			<div class="container">
+				<h2>Built-in MCP Tools</h2>
+				<p class="section-subtitle">Powered by MCP (Model-Centric Programming) protocol for seamless AI-tool integration:</p>
+
+				<div class="tools-grid">
+					<div class="tool">
+						<h4>agent_&lt;name&gt;</h4>
+						<p>Autonomous AI agents for specialized tasks: code review, debugging, context gathering, and more</p>
+					</div>
+					<div class="tool">
+						<h4>text_editor</h4>
+						<p>Smart file operations with batch editing, line-precise modifications, and undo support</p>
+					</div>
+					<div class="tool">
+						<h4>shell</h4>
+						<p>Terminal commands with foreground/background execution and process management</p>
+					</div>
+					<div class="tool">
+						<h4>ast_grep</h4>
+						<p>AST-based code search and refactoring with semantic understanding across languages</p>
+					</div>
+					<div class="tool">
+						<h4>semantic_search</h4>
+						<p>Intelligent codebase search (works best with <strong>octocode MCP</strong> for enhanced results)</p>
+					</div>
+					<div class="tool">
+						<h4>web_search</h4>
+						<p>Research and documentation lookup via Brave Search API integration</p>
+					</div>
+				</div>
+
+				<div class="octocode-highlight">
+					<h3>🚀 Works Best with Octocode MCP</h3>
+					<p>Octomind integrates seamlessly with <strong>octocode MCP server</strong> for semantic codebase search and enhanced code understanding. Get the most out of your AI development workflow.</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- Session Commands -->
+		<section id="session-commands" class="session-commands">
+			<div class="container">
+				<h2>Powerful Session Commands</h2>
+				<p class="section-subtitle">Rich CLI interface with intelligent commands for autonomous development:</p>
+
+				<div class="commands-grid">
+					<div class="command-group">
+						<h4>🎯 Task Management</h4>
+						<div class="command-list">
+							<div class="command">
+								<code>/done</code>
+								<p>Finalize task with memorization, summarization, and auto-commit</p>
+							</div>
+							<div class="command">
+								<code>/run &lt;command&gt;</code>
+								<p>Execute configured layer-based workflows</p>
+							</div>
+							<div class="command">
+								<code>/layers</code>
+								<p>Toggle layered processing on/off</p>
+							</div>
+						</div>
+					</div>
+
+					<div class="command-group">
+						<h4>🖼️ Multimodal & Context</h4>
+						<div class="command-list">
+							<div class="command">
+								<code>/image &lt;path&gt;</code>
+								<p>Attach images for AI analysis (PNG, JPEG, GIF, WebP, BMP)</p>
+							</div>
+							<div class="command">
+								<code>/context [filter]</code>
+								<p>Display session context with filtering (all, assistant, user, tool)</p>
+							</div>
+							<div class="command">
+								<code>/cache</code>
+								<p>Mark cache checkpoint for cost savings</p>
+							</div>
+						</div>
+					</div>
+
+					<div class="command-group">
+						<h4>📊 Monitoring & Control</h4>
+						<div class="command-list">
+							<div class="command">
+								<code>/report</code>
+								<p>Generate detailed usage report with cost breakdown</p>
+							</div>
+							<div class="command">
+								<code>/info</code>
+								<p>Display token usage and costs in real-time</p>
+							</div>
+							<div class="command">
+								<code>/model [model]</code>
+								<p>View or change current AI model dynamically</p>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="session-highlight">
+					<h3>💡 Autonomous Session Management</h3>
+					<p>Sessions automatically manage context, optimize costs, and provide intelligent continuation. Resume any session exactly where you left off with full context preservation.</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- Configuration Flexibility -->
+		<section class="configuration">
+			<div class="container">
+				<h2>Ultimate Flexibility</h2>
+				<div class="config-grid">
+					<div class="config-item">
+						<h4>Template-Based Configuration</h4>
+						<p>All defaults in <code>config-templates/default.toml</code>. No hardcoded values, complete customization possible.</p>
+					</div>
+					<div class="config-item">
+						<h4>Role-Based Access</h4>
+						<p><strong>Developer</strong> (full tools) vs <strong>Assistant</strong> (chat only). Create custom roles for specific workflows.</p>
+					</div>
+					<div class="config-item">
+						<h4>Layered Processing</h4>
+						<p>Route tasks through specialized AI layers: task_refiner → task_researcher → developer. Use cheaper models for simple tasks.</p>
+					</div>
+					<div class="config-item">
+						<h4>Autonomous Agents</h4>
+						<p><code>agent_&lt;name&gt;(task="...")</code> MCP tools route tasks to specialized AI agents for focused, autonomous processing.</p>
+					</div>
+					<div class="config-item">
+						<h4>Custom Commands</h4>
+						<p><code>/run &lt;command&gt;</code> executes configured layer-based workflows. <code>/done</code> finalizes tasks with auto-commit.</p>
+					</div>
+					<div class="config-item">
+						<h4>Intelligent Cost Control</h4>
+						<p>Spending thresholds, smart model routing, 2-marker caching, and detailed reporting to optimize costs while maintaining quality.</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- AI Providers -->
+		<section class="providers">
+			<div class="container">
+				<h2>Supported AI Providers</h2>
+				<div class="providers-table-container">
+					<table class="providers-table">
+						<thead>
+							<tr>
+								<th>Provider</th>
+								<th>Format</th>
+								<th>Features</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td><strong>OpenRouter</strong></td>
+								<td><code>openrouter:provider/model</code></td>
+								<td>Multi-provider access, caching, vision models</td>
+							</tr>
+							<tr>
+								<td><strong>OpenAI</strong></td>
+								<td><code>openai:model-name</code></td>
+								<td>Direct API, cost calculation, GPT-4o vision</td>
+							</tr>
+							<tr>
+								<td><strong>Anthropic</strong></td>
+								<td><code>anthropic:model-name</code></td>
+								<td>Claude models, caching, Claude 3+ vision</td>
+							</tr>
+							<tr>
+								<td><strong>Google</strong></td>
+								<td><code>google:model-name</code></td>
+								<td>Vertex AI, Gemini 1.5+ vision support</td>
+							</tr>
+							<tr>
+								<td><strong>Amazon</strong></td>
+								<td><code>amazon:model-name</code></td>
+								<td>Bedrock models, AWS integration, Claude vision</td>
+							</tr>
+							<tr>
+								<td><strong>Cloudflare</strong></td>
+								<td><code>cloudflare:model-name</code></td>
+								<td>Edge AI, fast inference, Llama 3.2 vision</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+
+		<!-- Effectiveness -->
+		<section class="effectiveness">
+			<div class="container">
+				<h2>Built for Effectiveness</h2>
+				<div class="effectiveness-grid">
+					<div class="highlight">
+						<div class="highlight-icon">🤖</div>
+						<h4>Autonomous Execution</h4>
+						<p>AI agents that understand context and execute complex development tasks without constant supervision.</p>
+					</div>
+					<div class="highlight">
+						<div class="highlight-icon">⚡</div>
+						<h4>Zero Setup</h4>
+						<p>No indexing, no complex configuration. Install and start autonomous development immediately.</p>
+					</div>
+					<div class="highlight">
+						<div class="highlight-icon">🎯</div>
+						<h4>Octocode Ready</h4>
+						<p>Works best with <strong>octocode MCP</strong> for semantic codebase search and enhanced understanding.</p>
+					</div>
+					<div class="highlight">
+						<div class="highlight-icon">🖼️</div>
+						<h4>Vision Intelligence</h4>
+						<p>Analyze screenshots, diagrams, and UI layouts across all 6 AI providers for comprehensive visual debugging.</p>
+					</div>
+					<div class="highlight">
+						<div class="highlight-icon">💡</div>
+						<h4>Smart Model Routing</h4>
+						<p>Route simple tasks to cheaper models, complex analysis to premium models. Maximize efficiency and cost savings.</p>
+					</div>
+					<div class="highlight">
+						<div class="highlight-icon">🔧</div>
+						<h4>Configuration-Only Tools</h4>
+						<p>Create new capabilities, agents, and workflows through configuration alone. No code changes needed.</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- Installation -->
+		<section id="installation" class="installation">
+			<div class="container">
+				<h2>Quick Start</h2>
+				<div class="install-steps">
+					<div class="step">
+						<div class="step-number">1</div>
+						<div class="step-content">
+							<h4>Install Octomind</h4>
+							<pre><code>curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash</code></pre>
+						</div>
+					</div>
+					<div class="step">
+						<div class="step-number">2</div>
+						<div class="step-content">
+							<h4>Set API Key</h4>
+							<pre><code>export OPENROUTER_API_KEY="your_key"</code></pre>
+						</div>
+					</div>
+					<div class="step">
+						<div class="step-number">3</div>
+						<div class="step-content">
+							<h4>Start Coding</h4>
+							<pre><code>octomind session</code></pre>
+						</div>
+					</div>
+				</div>
+
+				<div class="alternative-installs">
+					<h4>Alternative Installation Methods</h4>
+					<pre><code># Build from source
+						cargo install --git https://github.com/muvon/octomind.git
+
+						# Download from releases
+						# See: https://github.com/muvon/octomind/releases</code></pre>
+				</div>
+			</div>
+		</section>
+
+		<!-- Open Source -->
+		<section class="open-source">
+			<div class="container">
+				<h2>Open Source & Community</h2>
+				<div class="os-content">
+					<div class="os-info">
+						<h4>Apache 2.0 License</h4>
+						<p>Free and open source software. Use, modify, and distribute freely.</p>
+
+						<h4>Built with Rust</h4>
+						<p>Performance, safety, and reliability. Cross-platform support for macOS, Linux, and Windows.</p>
+
+						<h4>Community Driven</h4>
+						<p>Contributions welcome! Help improve AI-powered development tools for everyone.</p>
+					</div>
+					<div class="os-links">
+						<a href="https://github.com/muvon/octomind" class="os-link">
+							📦 GitHub Repository
+						</a>
+						<a href="https://github.com/muvon/octomind/issues" class="os-link">
+							🐛 Report Issues
+						</a>
+						<a href="https://github.com/muvon/octomind/blob/master/doc/README.md" class="os-link">
+							📖 Documentation
+						</a>
+						<a href="https://crates.io/crates/octomind" class="os-link">
+							📦 Crates.io
+						</a>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- Footer -->
+		<footer class="footer">
+			<div class="container">
+				<div class="footer-content">
+					<div class="company-info">
+						<div class="footer-logo">
+							<svg width="126" height="40" viewBox="0 0 126 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="16.7757" cy="6.04188" r="6.04188" fill="#76B744"></circle><circle cx="37.5282" cy="31.2601" r="6.04188" fill="#76B744"></circle><path fill-rule="evenodd" clip-rule="evenodd" d="M40.4889 14.7002C40.6847 18.0313 38.1431 20.8904 34.812 21.0862C33.2728 21.1767 31.6218 21.4473 30.5785 22.5826L25.4075 28.2087C24.2377 29.4814 24.1311 31.3703 24.1311 33.099C24.1311 36.4359 21.4261 39.1409 18.0892 39.1409C14.7524 39.1409 12.0473 36.4359 12.0473 33.099C12.0473 33.0689 12.0475 33.0387 12.048 33.0087C12.0696 31.5357 11.9005 29.9507 10.8815 28.8867C9.74425 27.6992 7.93379 27.5495 6.29084 27.615C6.01445 27.6261 5.73401 27.6182 5.45092 27.5904C2.13011 27.2638 -0.297169 24.3069 0.0294542 20.9861C0.356077 17.6653 3.31291 15.238 6.63373 15.5646C9.95454 15.8913 12.3818 18.8481 12.0552 22.1689C11.9519 23.2191 12.1129 24.3374 12.8427 25.0995L13.3778 25.6582C14.5465 26.8785 16.3995 27.0571 18.0892 27.0571C19.5836 27.0571 21.1971 26.8255 22.2084 25.7252L27.3209 20.1627C28.456 18.9277 28.5244 17.0838 28.426 15.4092C28.2302 12.0781 30.7718 9.21903 34.1029 9.02323C37.434 8.82742 40.2931 11.3691 40.4889 14.7002Z" fill="#76B744"></path><path d="M65.6534 17.4566C65.3946 16.9132 64.8877 16.6414 64.1329 16.6414C63.2559 16.6414 62.6664 16.9132 62.3644 17.4566C62.1991 17.7661 62.1164 18.227 62.1164 18.8392V25.6079H59V14.3818H61.987V16.0224C62.368 15.4377 62.7275 15.0215 63.0654 14.7739C63.662 14.3336 64.4348 14.1135 65.3838 14.1135C66.2824 14.1135 67.0085 14.3027 67.562 14.681C68.0078 15.0318 68.3456 15.4824 68.5757 16.0327C68.9783 15.3723 69.4779 14.8874 70.0746 14.5778C70.7072 14.2683 71.4117 14.1135 72.1881 14.1135C72.7057 14.1135 73.2161 14.2098 73.7194 14.4024C74.2226 14.595 74.6791 14.9321 75.0889 15.4136C75.4196 15.8057 75.6424 16.2872 75.7574 16.8581C75.8293 17.2365 75.8653 17.7902 75.8653 18.5193L75.8437 25.6079H72.6949V18.4471C72.6949 18.0206 72.6231 17.6698 72.4793 17.3947C72.2061 16.8719 71.7029 16.6105 70.9696 16.6105C70.1213 16.6105 69.5354 16.9475 69.2119 17.6217C69.0466 17.9794 68.9639 18.4093 68.9639 18.9114V25.6079H65.869V18.9114C65.869 18.2442 65.7972 17.7592 65.6534 17.4566Z" fill="white"></path><path d="M85.5764 24.0189C85.5476 24.0533 85.4757 24.1565 85.3607 24.3285C85.2457 24.5004 85.1091 24.6518 84.951 24.7825C84.4693 25.1952 84.002 25.4772 83.5491 25.6285C83.1034 25.7799 82.5786 25.8555 81.9747 25.8555C80.235 25.8555 79.0632 25.2571 78.4593 24.0602C78.1215 23.3998 77.9525 22.4265 77.9525 21.1402V14.3611H81.1013V21.1402C81.1013 21.7799 81.1804 22.2614 81.3385 22.5847C81.6189 23.1556 82.1688 23.4411 82.9884 23.4411C84.038 23.4411 84.7569 23.0353 85.1451 22.2236C85.3463 21.7833 85.447 21.2021 85.447 20.4798V14.3611H88.5634V25.6079H85.5764V24.0189Z" fill="white"></path><path d="M89.7233 14.3611H93.174L95.6218 22.6569L98.1236 14.3611H101.423L97.1854 25.6079H93.9396L89.7233 14.3611Z" fill="white"></path><path d="M112.31 15.785C113.302 16.9751 113.798 18.3818 113.798 20.0052C113.798 21.6561 113.302 23.0696 112.31 24.2459C111.318 25.4153 109.812 26 107.792 26C105.771 26 104.265 25.4153 103.273 24.2459C102.281 23.0696 101.785 21.6561 101.785 20.0052C101.785 18.3818 102.281 16.9751 103.273 15.785C104.265 14.595 105.771 14 107.792 14C109.812 14 111.318 14.595 112.31 15.785ZM107.781 16.4867C106.882 16.4867 106.188 16.7928 105.7 17.405C105.218 18.0103 104.977 18.877 104.977 20.0052C104.977 21.1333 105.218 22.0034 105.7 22.6156C106.188 23.2279 106.882 23.534 107.781 23.534C108.679 23.534 109.37 23.2279 109.851 22.6156C110.333 22.0034 110.574 21.1333 110.574 20.0052C110.574 18.877 110.333 18.0103 109.851 17.405C109.37 16.7928 108.679 16.4867 107.781 16.4867Z" fill="white"></path><path d="M120.878 16.5383C119.835 16.5383 119.12 16.9613 118.732 17.8074C118.531 18.2545 118.43 18.8255 118.43 19.5202V25.6079H115.368V14.3818H118.333V16.0224C118.728 15.4445 119.102 15.0284 119.454 14.7739C120.087 14.3199 120.889 14.0929 121.859 14.0929C123.074 14.0929 124.066 14.399 124.835 15.0112C125.612 15.6165 126 16.6242 126 18.0344V25.6079H122.851V18.767C122.851 18.1754 122.769 17.7214 122.603 17.405C122.301 16.8272 121.726 16.5383 120.878 16.5383Z" fill="white"></path></svg>
+						</div>
+						<p>© 2025 Muvon Un Limited (Hong Kong)</p>
+						<p>Autonomous Agentic AI Developer</p>
+					</div>
+					<div class="footer-links">
+						<div class="link-group">
+							<h5>Product</h5>
+							<a href="https://github.com/muvon/octomind">GitHub</a>
+							<a href="https://github.com/muvon/octomind/releases">Releases</a>
+							<a href="https://crates.io/crates/octomind">Crates.io</a>
+						</div>
+						<div class="link-group">
+							<h5>Documentation</h5>
+							<a href="https://github.com/muvon/octomind/blob/master/doc/README.md">Complete Guide</a>
+							<a href="https://github.com/muvon/octomind/blob/master/doc/01-installation.md">Installation</a>
+							<a href="https://github.com/muvon/octomind/blob/master/doc/05-sessions.md">Sessions</a>
+						</div>
+						<div class="link-group">
+							<h5>Support</h5>
+							<a href="https://github.com/muvon/octomind/issues">Issues</a>
+							<a href="mailto:opensource@muvon.io">Email</a>
+							<a href="https://muvon.io">Muvon.io</a>
+						</div>
+					</div>
+				</div>
+			</div>
+		</footer>
+
+		<script src="script.js"></script>
+	</body>
+</html>

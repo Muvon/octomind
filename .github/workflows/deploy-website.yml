@@ -98,7 +98,7 @@ jobs:
 
             if (deployments.length > 0) {
               const deployment = deployments[0];
-              const previewUrl = `https://octomind-${context.payload.pull_request.head.sha.substring(0, 8)}.octomind.pages.dev`;
+              const previewUrl = `https://${context.payload.pull_request.head.sha.substring(0, 8)}.octomind.pages.dev`;
 
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -107,49 +107,3 @@ jobs:
                 body: `🚀 **Website Preview Deployed**\n\n📄 Preview URL: ${previewUrl}\n\n*This preview will be available for testing the website changes.*`
               });
             }
-
-  lighthouse:
-    runs-on: ubuntu-latest
-    name: Lighthouse Performance Check
-    needs: deploy
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install Lighthouse CI
-        run: npm install -g @lhci/cli@latest
-
-      - name: Run Lighthouse CI
-        run: |
-          # Wait a bit for deployment to be ready
-          sleep 30
-
-          # Run Lighthouse on the preview URL
-          PREVIEW_URL="https://${GITHUB_SHA:0:8}.octomind.pages.dev"
-
-          lhci autorun \
-            --collect.url="$PREVIEW_URL" \
-            --collect.numberOfRuns=3 \
-            --assert.preset="lighthouse:recommended" \
-            --upload.target="temporary-public-storage" || true
-
-      - name: Comment Lighthouse results
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const previewUrl = `https://${context.sha.substring(0, 8)}.octomind.pages.dev`;
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: `⚡ **Lighthouse Performance Check**\n\n🔗 Tested URL: ${previewUrl}\n\n*Check the Actions tab for detailed Lighthouse results.*`
-            });

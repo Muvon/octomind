@@ -753,7 +753,7 @@ enabled = false  # No tools in chat mode
 
 ### Automatic Context Preservation
 
-Octomind features an intelligent session continuation system that automatically manages token limits while preserving essential context through AI-driven file analysis.
+Octomind features an intelligent session continuation system that automatically manages token limits while preserving essential context through AI-driven file analysis. **Recently refactored** into a modular architecture with enhanced user experience and display fixes.
 
 #### How It Works
 
@@ -799,11 +799,15 @@ Continuing with preserved context...
 
 #### Features
 
+- **Modular Architecture**: **NEW** - Refactored into focused modules for better maintainability
+- **Enhanced User Experience**: **CRITICAL FIX** - Assistant summaries now displayed to users during continuation
+- **Professional Display**: Colored headers and organized status information during continuation
 - **Zero Configuration**: All prompts and logic are built-in
 - **AI-Driven Selection**: AI chooses exactly which files and lines to preserve
-- **Visual Feedback**: Clear indication when continuation occurs
+- **Visual Feedback**: Clear indication when continuation occurs with file context details
 - **Error Resilience**: Graceful handling of missing files or parsing errors
 - **Performance Limits**: Maximum 10 file contexts, 10k lines per file
+- **Backward Compatible**: All existing functionality preserved via re-exports
 
 ## Performance and Cost Optimization
 

@@ -95,7 +95,14 @@ crate::log_debug!("Something happened");
 - `src/session/chat/input.rs` - User input handling with history
 
 **Smart Session Continuation:**
-- `src/session/chat/session_continuation.rs` - Core smart continuation module with file context parsing
+- `src/session/chat/continuation/` - **REFACTORED MODULAR ARCHITECTURE**
+  - `mod.rs` - Main module coordinator with public API re-exports
+  - `detection.rs` - Continuation trigger logic and state checks
+  - `injection.rs` - Summary request injection when limits reached
+  - `processing.rs` - Response processing with **DISPLAY FIXES** for user visibility
+  - `file_context.rs` - File parsing, context generation, and tests
+  - `constants.rs` - All prompts and message templates
+- `src/session/chat/session_continuation.rs` - **LEGACY COMPATIBILITY** - re-exports new API
 - `src/session/chat/response.rs` - Integration point for continuation checks
 - `src/session/chat/context_truncation.rs` - Continuation-aware truncation logic
 - `src/session/chat/session/core.rs` - ChatSession structure with continuation state
@@ -225,10 +232,16 @@ crate::log_debug!("Something happened");
 3. **Usage**: `agent_<name>(task="...")` MCP tool routes to the layer
 
 ### Modify Session Continuation System
-1. **Core module**: `src/session/chat/session_continuation.rs` - All continuation logic and file context system
-2. **Integration**: `src/session/chat/response.rs` - Entry point for continuation checks
-3. **State management**: `src/session/chat/session/core.rs` - ChatSession continuation state
-4. **Configuration**: `config-templates/default.toml` - `max_session_tokens_threshold` field (0=disabled)
+1. **Modular architecture**: `src/session/chat/continuation/` - **NEW REFACTORED STRUCTURE**
+   - `processing.rs` - Main response processing with user display fixes
+   - `detection.rs` - Trigger logic and state checks  
+   - `injection.rs` - Summary request injection
+   - `file_context.rs` - File parsing and context generation
+   - `constants.rs` - All prompts and templates
+2. **Legacy compatibility**: `src/session/chat/session_continuation.rs` - Re-exports for backward compatibility
+3. **Integration**: `src/session/chat/response.rs` - Entry point for continuation checks
+4. **State management**: `src/session/chat/session/core.rs` - ChatSession continuation state
+5. **Configuration**: `config-templates/default.toml` - `max_session_tokens_threshold` field (0=disabled)
 
 ## 📋 CRITICAL PATTERNS
 
@@ -282,6 +295,7 @@ match tool::execute_command(call, token).await {
 - **Config**: `src/config/*.rs` + `config-templates/default.toml`
 - **Tools**: `src/mcp/*/functions.rs` + `src/mcp/*/core.rs`
 - **Sessions**: `src/session/chat/` + `src/session/layers/`
+- **Continuation**: `src/session/chat/continuation/` (modular architecture)
 - **Providers**: `src/providers/*/`
 
 ### Environment Variables

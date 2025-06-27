@@ -22,14 +22,17 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ## Recent Updates
 
-### Smart Session Continuation System (Latest)
+### Smart Session Continuation System (Latest) - **REFACTORED & ENHANCED**
+- **Modular Architecture**: Refactored into focused modules (`detection`, `processing`, `injection`, `file_context`)
+- **Enhanced User Experience**: **CRITICAL FIX** - Assistant summaries now visible to users during continuation
+- **Visual Feedback**: Professional colored output showing continuation status and loaded file contexts  
 - **Intelligent Token Management**: Automatic session continuation when token limits reached
 - **AI-Driven Context Preservation**: AI selects exactly which files and line ranges to preserve
 - **Zero Configuration**: All prompts and logic built-in for seamless operation
 - **File Context Parsing**: AI specifies files using format `filename:startline:endline`
-- **Visual Feedback**: Clear indication when continuation occurs with file context display
 - **Error Resilience**: Graceful handling of missing files and parsing errors
 - **Performance Optimized**: Maximum 10 file contexts, reasonable line limits
+- **Backward Compatible**: All existing imports continue to work via re-exports
 
 ### Session Context Display & Filtering
 - **`/context` Command**: Display session context with advanced filtering capabilities
@@ -192,7 +195,7 @@ Default values
 5. **Tool Execution Failures**: Verify tools are routed to correct server types
 6. **Input Mode Errors**: Use lowercase input modes: `"last"`, `"all"`
 7. **Command Layer Issues**: Check server references and registry configuration
-8. **Session Continuation Issues**: Check `max_session_tokens_threshold` setting (0=disabled, >0=enabled)
+8. **Session Continuation Issues**: Check `max_session_tokens_threshold` setting (0=disabled, >0=enabled). **NEW**: Continuation system refactored into modular architecture in `src/session/chat/continuation/`
 9. **Legacy Configuration**: Update `max_request_tokens_threshold` to `max_session_tokens_threshold`, remove `enable_auto_truncation`
 
 ## Simplified Architecture

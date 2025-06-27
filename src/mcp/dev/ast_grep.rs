@@ -166,7 +166,19 @@ Parameters:
 Pattern Syntax:
 - Use metavariables like $NAME, $ARGS, $BODY for flexible matching
 - Use $$$ for matching any number of statements/expressions
+- Use $_ for anonymous wildcards (non-capturing)
 - Patterns match AST structure, not text
+
+Meta Variables:
+- `$VAR` - matches single AST node (like `$NAME`, `$VALUE`)
+- `$$$` - matches zero or more nodes (like `$$$ARGS`, `$$$BODY`)
+- `$_` - anonymous wildcard, doesn't capture content
+- Same-named variables must match identical content
+
+Advanced Patterns:
+- Structural matching: `if ($COND) { $$$BODY }` finds all if statements
+- Method chains: `$OBJ.$METHOD1().$METHOD2($$$)` finds chained calls
+- Nested expressions: `console.log($$$)` matches even in `func(console.log(x))`
 
 Common Examples by Language:
 
@@ -213,7 +225,7 @@ Usage Examples:
 			"properties": {
 				"pattern": {
 					"type": "string",
-					"description": "The AST pattern to search for using ast-grep syntax"
+					"description": "The AST pattern to search for. Use metavariables ($NAME, $$$) to match code structure, not text content"
 				},
 				"paths": {
 					"type": "array",

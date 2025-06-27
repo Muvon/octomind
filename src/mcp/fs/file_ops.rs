@@ -15,6 +15,7 @@
 // File operations module - handling file viewing, creation, and basic manipulation
 
 use super::super::{McpToolCall, McpToolResult};
+use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, Result};
 use serde_json::json;
 use std::path::Path;
@@ -23,96 +24,7 @@ use tokio::fs as tokio_fs;
 // Helper function to format file content with line numbers and smart truncation
 // This is the core logic shared between view and view_many commands
 fn format_file_content_with_numbers(lines: &[&str], view_range: Option<(usize, i64)>) -> String {
-	if let Some((start, end)) = view_range {
-		// Handle view_range parameter with smart elision
-		let start_idx = if start == 0 {
-			0
-		} else {
-			start.saturating_sub(1)
-		}; // Convert to 0-indexed
-		let end_idx = if end == -1 {
-			lines.len()
-		} else {
-			(end as usize).min(lines.len())
-		};
-
-		if start_idx >= lines.len() || start_idx > end_idx {
-			// Return error info for invalid ranges
-			return if start_idx >= lines.len() {
-				format!(
-					"Start line {} exceeds file length ({} lines)",
-					start,
-					lines.len()
-				)
-			} else {
-				format!(
-					"Start line {} must be less than or equal to end line {}",
-					start, end
-				)
-			};
-		}
-
-		// Smart elision: show context around the requested range
-		let mut result_lines = Vec::new();
-
-		// Show lines before the range if there's a significant gap
-		if start_idx > 3 {
-			// Show first few lines
-			for (i, line) in lines.iter().enumerate().take(2) {
-				result_lines.push(format!("{}: {}", i + 1, line));
-			}
-			if start_idx > 5 {
-				result_lines.push(format!("[...{} lines more]", start_idx - 2));
-			} else {
-				// Show the gap lines
-				for (i, line) in lines.iter().enumerate().take(start_idx).skip(2) {
-					result_lines.push(format!("{}: {}", i + 1, line));
-				}
-			}
-		} else {
-			// Show all lines from beginning to start
-			for (i, line) in lines.iter().enumerate().take(start_idx) {
-				result_lines.push(format!("{}: {}", i + 1, line));
-			}
-		}
-
-		// Show the requested range
-		for (i, line) in lines.iter().enumerate().take(end_idx).skip(start_idx) {
-			result_lines.push(format!("{}: {}", i + 1, line));
-		}
-
-		// Show lines after the range if there's a significant gap
-		let remaining_lines = lines.len() - end_idx;
-		if remaining_lines > 3 {
-			if remaining_lines > 5 {
-				result_lines.push(format!("[...{} lines more]", remaining_lines - 2));
-				// Show last few lines
-				for (i, line) in lines.iter().enumerate().skip(lines.len() - 2) {
-					result_lines.push(format!("{}: {}", i + 1, line));
-				}
-			} else {
-				// Show the remaining lines
-				for (i, line) in lines.iter().enumerate().skip(end_idx) {
-					result_lines.push(format!("{}: {}", i + 1, line));
-				}
-			}
-		} else {
-			// Show all remaining lines
-			for (i, line) in lines.iter().enumerate().skip(end_idx) {
-				result_lines.push(format!("{}: {}", i + 1, line));
-			}
-		}
-
-		result_lines.join("\n")
-	} else {
-		// Show entire file with line numbers
-		lines
-			.iter()
-			.enumerate()
-			.map(|(i, line)| format!("{}: {}", i + 1, line))
-			.collect::<Vec<_>>()
-			.join("\n")
-	}
+	format_content_with_line_numbers(lines, 1, view_range)
 }
 
 // View the content of a file following Anthropic specification - with line numbers and view_range support

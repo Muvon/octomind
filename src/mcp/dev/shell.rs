@@ -15,7 +15,7 @@
 // Shell execution functionality for the Developer MCP provider
 
 use super::super::{McpFunction, McpToolCall, McpToolResult};
-use crate::session::estimate_tokens;
+use crate::utils::truncation::truncate_content_smart;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
@@ -80,31 +80,7 @@ fn add_to_shell_history(command: &str) -> Result<()> {
 
 // Truncate shell output if it exceeds token limit
 fn truncate_shell_output(output: &str, max_tokens: usize) -> String {
-	let token_count = estimate_tokens(output);
-
-	if token_count <= max_tokens {
-		return output.to_string();
-	}
-
-	// Simple truncation - cut at character boundary
-	// Estimate roughly where to cut (tokens are ~4 chars average)
-	let estimated_chars = max_tokens * 3; // Conservative estimate
-	let truncated = if output.len() > estimated_chars {
-		&output[..estimated_chars]
-	} else {
-		output
-	};
-
-	// Find last newline to avoid cutting mid-line
-	let last_newline = truncated.rfind('\n').unwrap_or(truncated.len());
-	let final_truncated = &truncated[..last_newline];
-
-	format!(
-		"{}\n\n[Output truncated - {} tokens estimated, max {} allowed. Use more specific commands to reduce output size]",
-		final_truncated,
-		token_count,
-		max_tokens
-	)
+	truncate_content_smart(output, max_tokens)
 }
 
 // Define the shell function for the MCP protocol with enhanced description

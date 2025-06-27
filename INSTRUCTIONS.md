@@ -234,7 +234,7 @@ crate::log_debug!("Something happened");
 ### Modify Session Continuation System
 1. **Modular architecture**: `src/session/chat/continuation/` - **NEW REFACTORED STRUCTURE**
    - `processing.rs` - Main response processing with user display fixes
-   - `detection.rs` - Trigger logic and state checks  
+   - `detection.rs` - Trigger logic and state checks
    - `injection.rs` - Summary request injection
    - `file_context.rs` - File parsing and context generation
    - `constants.rs` - All prompts and templates

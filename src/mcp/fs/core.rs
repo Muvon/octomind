@@ -16,6 +16,7 @@
 
 use super::super::{McpToolCall, McpToolResult};
 use crate::mcp::fs::{directory, file_ops, text_editing};
+use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use serde_json::{json, Value};
@@ -647,8 +648,15 @@ pub async fn execute_extract_lines(
 	// Extract the specified lines (convert to 0-indexed)
 	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1].to_vec();
 
+	// Create smart formatted content with proper line numbers for display
+	let extracted_content_display = format_extracted_content_smart(
+		&extracted_lines,
+		from_range.0, // Start line number (1-indexed)
+		Some(30),     // Limit display to 30 lines with smart truncation
+	);
+
 	// Preserve original newline structure by checking if source content ends with newline
-	// and if we're extracting the last line
+	// and if we're extracting the last line (for file writing purposes)
 	let source_ends_with_newline = source_content.ends_with('\n');
 	let extracting_last_line = from_range.1 == total_lines;
 
@@ -796,7 +804,7 @@ pub async fn execute_extract_lines(
 			from_path,
 			append_path,
 			position_desc,
-			extracted_content
+			extracted_content_display
 		),
 	))
 }

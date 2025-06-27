@@ -25,7 +25,7 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 ### Smart Session Continuation System (Latest) - **REFACTORED & ENHANCED**
 - **Modular Architecture**: Refactored into focused modules (`detection`, `processing`, `injection`, `file_context`)
 - **Enhanced User Experience**: **CRITICAL FIX** - Assistant summaries now visible to users during continuation
-- **Visual Feedback**: Professional colored output showing continuation status and loaded file contexts  
+- **Visual Feedback**: Professional colored output showing continuation status and loaded file contexts
 - **Intelligent Token Management**: Automatic session continuation when token limits reached
 - **AI-Driven Context Preservation**: AI selects exactly which files and line ranges to preserve
 - **Zero Configuration**: All prompts and logic built-in for seamless operation

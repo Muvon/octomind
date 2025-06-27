@@ -12,14 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Main lib.rs file that exports our modules
-pub mod config;
-pub mod directories;
-pub mod mcp;
-pub mod providers;
-pub mod session;
-pub mod state;
-pub mod utils;
+// Shared utilities module
 
-// Re-export commonly used items for convenience
-pub use config::Config;
+pub mod truncation;

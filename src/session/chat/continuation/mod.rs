@@ -13,10 +13,14 @@
 // limitations under the License.
 
 // Session continuation module - handles automatic session reset when token limits are reached
-// REFACTORED: This module is now organized into smaller, focused sub-modules
 
-// Re-export the main public API from the continuation submodules
-pub use crate::session::chat::continuation::{
-	check_and_handle_continuation, inject_summary_request, is_continuation_in_progress,
-	process_continuation_response, should_trigger_continuation, ContinuationParams,
-};
+pub mod constants;
+pub mod detection;
+pub mod file_context;
+pub mod injection;
+pub mod processing;
+
+// Re-export main public API
+pub use detection::{is_continuation_in_progress, should_trigger_continuation, ContinuationParams};
+pub use injection::inject_summary_request;
+pub use processing::{check_and_handle_continuation, process_continuation_response};

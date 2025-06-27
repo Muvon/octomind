@@ -284,6 +284,8 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.chat_session,
 		&params.content,
 		has_tool_calls,
+		params.config,
+		params.role,
 	)? {
 		// This was a continuation response - session has been reset with continuation message
 		// Process the continuation message immediately to make it invisible to user

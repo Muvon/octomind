@@ -19,6 +19,7 @@ mod command_executor;
 mod commands;
 mod context_reduction;
 mod context_truncation;
+pub mod continuation;
 mod cost_tracker;
 pub mod formatting;
 mod input;

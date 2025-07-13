@@ -129,7 +129,10 @@ pub async fn execute_command_layer(
 			&processed_input,
 			&chat_session.session,
 			config,
-			operation_cancelled,
+			tokio::sync::watch::channel(
+				operation_cancelled.load(std::sync::atomic::Ordering::SeqCst),
+			)
+			.1,
 		)
 		.await?;
 

@@ -18,8 +18,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 // Layer result that contains data returned from a layer's processing
 pub struct LayerResult {
@@ -382,7 +380,7 @@ pub trait Layer {
 		input: &str,
 		session: &Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<LayerResult>;
 
 	// Helper function to prepare input based on input_mode

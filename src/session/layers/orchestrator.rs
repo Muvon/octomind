@@ -19,8 +19,6 @@ use crate::session::Session;
 use anyhow::Result;
 use colored::*;
 use std::io::IsTerminal;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 // Main layered orchestrator that manages the pipeline of layers
 pub struct LayeredOrchestrator {
@@ -104,7 +102,7 @@ impl LayeredOrchestrator {
 		input: &str,
 		session: &mut Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<String> {
 		// If no layers are configured (layers disabled), return input unchanged
 		if self.layers.is_empty() {
@@ -141,7 +139,7 @@ impl LayeredOrchestrator {
 		// Each layer operates in its own isolated session and handles its own function calls
 		for layer in &self.layers {
 			// Skip if operation cancelled
-			if operation_cancelled.load(Ordering::SeqCst) {
+			if *operation_cancelled.borrow() {
 				return Err(anyhow::anyhow!("Operation cancelled"));
 			}
 
@@ -194,7 +192,7 @@ impl LayeredOrchestrator {
 				.await?;
 
 			// Check for cancellation after layer processing
-			if operation_cancelled.load(Ordering::SeqCst) {
+			if *operation_cancelled.borrow() {
 				return Err(anyhow::anyhow!("Operation cancelled"));
 			}
 

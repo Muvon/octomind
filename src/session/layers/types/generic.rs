@@ -17,8 +17,6 @@ use crate::config::Config;
 use crate::session::{ChatCompletionWithValidationParams, Message, Session};
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 /// Generic layer implementation that can work with any layer configuration
 /// This replaces the need for specific layer type implementations
@@ -94,7 +92,7 @@ impl GenericLayer {
 		mut total_api_time_ms: u64,
 		mut total_tool_time_ms: u64,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<LayerResult> {
 		// Create a mock chat session for the layer to use the unified response processing
 		let mut layer_chat_session =
@@ -114,7 +112,7 @@ impl GenericLayer {
 		// Main recursive processing loop - same as main sessions
 		loop {
 			// Check for cancellation at the start of each loop iteration
-			if operation_cancelled.load(Ordering::SeqCst) {
+			if *operation_cancelled.borrow() {
 				return Err(anyhow::anyhow!("Operation cancelled"));
 			}
 
@@ -145,7 +143,7 @@ impl GenericLayer {
 					total_tool_time_ms += tool_time;
 
 					// Final cancellation check after all tools processed
-					if operation_cancelled.load(Ordering::SeqCst) {
+					if *operation_cancelled.borrow() {
 						return Err(anyhow::anyhow!("Operation cancelled"));
 					}
 
@@ -372,7 +370,7 @@ impl GenericLayer {
 		layer_session: &mut crate::session::chat::session::ChatSession,
 		model: &str,
 		layer_config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<
 		Option<(
 			String,
@@ -408,7 +406,7 @@ impl GenericLayer {
 		}
 
 		// Check for cancellation before making another request
-		if operation_cancelled.load(Ordering::SeqCst) {
+		if *operation_cancelled.borrow() {
 			return Ok(None);
 		}
 
@@ -428,7 +426,7 @@ impl GenericLayer {
 		match crate::session::chat_completion_with_validation(validation_params).await {
 			Ok(response) => {
 				// Check for cancellation after API call
-				if operation_cancelled.load(Ordering::SeqCst) {
+				if *operation_cancelled.borrow() {
 					return Ok(None);
 				}
 
@@ -489,7 +487,7 @@ impl Layer for GenericLayer {
 		input: &str,
 		session: &Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<LayerResult> {
 		// Track total layer processing time
 		let layer_start = std::time::Instant::now();
@@ -497,7 +495,7 @@ impl Layer for GenericLayer {
 		let total_tool_time_ms = 0;
 
 		// Check if operation was cancelled
-		if operation_cancelled.load(Ordering::SeqCst) {
+		if *operation_cancelled.borrow() {
 			return Err(anyhow::anyhow!("Operation cancelled"));
 		}
 
@@ -526,7 +524,7 @@ impl Layer for GenericLayer {
 		let response = crate::session::chat_completion_with_validation(validation_params).await?;
 
 		// Check for cancellation after API call
-		if operation_cancelled.load(Ordering::SeqCst) {
+		if *operation_cancelled.borrow() {
 			return Err(anyhow::anyhow!("Operation cancelled"));
 		}
 
@@ -590,7 +588,7 @@ impl Layer for GenericLayer {
 						total_api_time_ms,
 						total_tool_time_ms,
 						config,
-						operation_cancelled,
+						operation_cancelled.clone(),
 					)
 					.await;
 			}

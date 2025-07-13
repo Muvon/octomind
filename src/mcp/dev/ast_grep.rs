@@ -187,11 +187,7 @@ Usage Examples:
 }
 
 // Execute an ast-grep command
-pub async fn execute_ast_grep_command(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
+pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResult> {
 	use tokio::process::Command as TokioCommand;
 
 	// Extract pattern parameter (required)
@@ -268,17 +264,6 @@ pub async fn execute_ast_grep_command(
 		.get("max_lines")
 		.and_then(|v| v.as_i64())
 		.unwrap_or(20) as usize;
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"AST-grep command execution cancelled".to_string(),
-			));
-		}
-	}
 
 	// Build the ast-grep command using proper argument passing
 	let mut cmd = TokioCommand::new("sg");
@@ -406,172 +391,87 @@ pub async fn execute_ast_grep_command(
 		.spawn()
 		.map_err(|e| anyhow!("Failed to spawn ast-grep command: {}", e))?;
 
-	// Get the process ID for potential killing
-	let child_id = child.id();
+	// Execute the command and wait for completion
+	let result = child.wait_with_output().await;
+	let output = match result.map_err(|e| anyhow!("AST-grep command execution failed: {}", e)) {
+		Ok(output) => {
+			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-	// Create a cancellation future
-	let cancellation_future = async {
-		if let Some(ref token) = cancellation_token {
-			loop {
-				tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-				if token.load(Ordering::SeqCst) {
-					return true; // Indicate cancellation occurred
-				}
-			}
-		} else {
-			std::future::pending::<bool>().await
-		}
-	};
+			// Group FIRST to preserve file-based organization
+			let grouped_output = group_ast_grep_output(&stdout);
 
-	// Race between command completion and cancellation
-	let output = tokio::select! {
-		result = child.wait_with_output() => {
-			match result.map_err(|e| anyhow!("AST-grep command execution failed: {}", e)) {
-				Ok(output) => {
-					let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-					let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+			// Then apply truncation to the grouped output
+			let output_lines: Vec<String> = grouped_output.lines().map(|s| s.to_string()).collect();
+			let (truncated_lines, truncation_info) =
+				crate::mcp::shared_utils::apply_head_truncation(&output_lines, max_lines);
 
-					// Group FIRST to preserve file-based organization
-					let grouped_output = group_ast_grep_output(&stdout);
-
-					// Then apply truncation to the grouped output
-					let output_lines: Vec<String> = grouped_output.lines().map(|s| s.to_string()).collect();
-					let (truncated_lines, truncation_info) = crate::mcp::shared_utils::apply_head_truncation(
-						&output_lines,
-						max_lines
-					);
-
-					// Format the final output
-					let combined = if stderr.is_empty() {
-						truncated_lines.join("\n")
-					} else if truncated_lines.is_empty() {
-						stderr
-					} else {
-						format!("{}\n\nError: {}", truncated_lines.join("\n"), stderr)
-					};
-
-					// Add detailed execution results including status code
-					let status_code = output.status.code().unwrap_or(-1);
-					let success = output.status.success();
-
-					// For rewrite operations, provide additional context
-					let operation_type = if rewrite.is_some() {
-						"rewrite"
-					} else {
-						"search"
-					};
-
-					let mut result = json!({
-						"success": success,
-						"output": combined,
-						"code": status_code,
-						"operation": operation_type,
-						"parameters": {
-							"pattern": pattern,
-							"paths": paths,
-							"language": language,
-							"rewrite": rewrite,
-							"json_output": json_output,
-							"context": context,
-							"update_all": update_all,
-							"max_lines": max_lines
-						},
-						"message": if success {
-							format!("AST-grep {} executed successfully with exit code {}", operation_type, status_code)
-						} else {
-							format!("AST-grep {} failed with exit code {}", operation_type, status_code)
-						}
-					});
-
-					// Add truncation info if present
-					if let Some(info) = truncation_info {
-						result["truncation_info"] = json!(info);
-					}
-
-					result
-				}
-				Err(e) => json!({
-					"success": false,
-					"output": format!("Failed to execute ast-grep command: {}", e),
-					"code": -1,
-					"operation": if rewrite.is_some() { "rewrite" } else { "search" },
-					"parameters": {
-						"pattern": pattern,
-						"paths": paths,
-						"language": language,
-						"rewrite": rewrite,
-						"json_output": json_output,
-						"context": context,
-						"update_all": update_all,
-						"max_lines": max_lines
-					},
-					"message": format!("Failed to execute ast-grep command: {}", e)
-				}),
-			}
-		}
-		cancelled = cancellation_future => {
-			if cancelled {
-				// Try to kill the process using system commands if we have the PID
-				if let Some(pid) = child_id {
-					#[cfg(unix)]
-					{
-						// On Unix systems, try to kill the process using system commands
-						let _ = std::process::Command::new("kill")
-							.args(["-TERM", &pid.to_string()])
-							.output();
-						// Give it a moment to terminate gracefully
-						std::thread::sleep(std::time::Duration::from_millis(100));
-						let _ = std::process::Command::new("kill")
-							.args(["-KILL", &pid.to_string()])
-							.output();
-					}
-					#[cfg(windows)]
-					{
-						// On Windows, use taskkill
-						let _ = std::process::Command::new("taskkill")
-							.args(["/F", "/PID", &pid.to_string()])
-							.output();
-					}
-				}
-
-				json!({
-					"success": false,
-					"output": "AST-grep command execution cancelled by user (Ctrl+C)",
-					"code": -1,
-					"operation": if rewrite.is_some() { "rewrite" } else { "search" },
-					"parameters": {
-						"pattern": pattern,
-						"paths": paths,
-						"language": language,
-						"rewrite": rewrite,
-						"json_output": json_output,
-						"context": context,
-						"update_all": update_all,
-						"max_lines": max_lines
-					},
-					"message": "AST-grep command execution cancelled by user"
-				})
+			// Format the final output
+			let combined = if stderr.is_empty() {
+				truncated_lines.join("\n")
+			} else if truncated_lines.is_empty() {
+				stderr
 			} else {
-				// This shouldn't happen, but handle it gracefully
-				json!({
-					"success": false,
-					"output": "Unexpected cancellation state",
-					"code": -1,
-					"operation": if rewrite.is_some() { "rewrite" } else { "search" },
-					"parameters": {
-						"pattern": pattern,
-						"paths": paths,
-						"language": language,
-						"rewrite": rewrite,
-						"json_output": json_output,
-						"context": context,
-						"update_all": update_all,
-						"max_lines": max_lines
-					},
-					"message": "Unexpected cancellation state"
-				})
+				format!("{}\n\nError: {}", truncated_lines.join("\n"), stderr)
+			};
+
+			// Add detailed execution results including status code
+			let status_code = output.status.code().unwrap_or(-1);
+			let success = output.status.success();
+
+			// For rewrite operations, provide additional context
+			let operation_type = if rewrite.is_some() {
+				"rewrite"
+			} else {
+				"search"
+			};
+
+			let mut result = json!({
+				"success": success,
+				"output": combined,
+				"code": status_code,
+				"operation": operation_type,
+				"parameters": {
+					"pattern": pattern,
+					"paths": paths,
+					"language": language,
+					"rewrite": rewrite,
+					"json_output": json_output,
+					"context": context,
+					"update_all": update_all,
+					"max_lines": max_lines
+				},
+				"message": if success {
+					format!("AST-grep {} executed successfully with exit code {}", operation_type, status_code)
+				} else {
+					format!("AST-grep {} failed with exit code {}", operation_type, status_code)
+				}
+			});
+
+			// Add truncation info if present
+			if let Some(info) = truncation_info {
+				result["truncation_info"] = json!(info);
 			}
+
+			result
 		}
+		Err(e) => json!({
+			"success": false,
+			"output": format!("Failed to execute ast-grep command: {}", e),
+			"code": -1,
+			"operation": if rewrite.is_some() { "rewrite" } else { "search" },
+			"parameters": {
+				"pattern": pattern,
+				"paths": paths,
+				"language": language,
+				"rewrite": rewrite,
+				"json_output": json_output,
+				"context": context,
+				"update_all": update_all,
+				"max_lines": max_lines
+			},
+			"message": format!("Failed to execute ast-grep command: {}", e)
+		}),
 	};
 
 	Ok(McpToolResult {

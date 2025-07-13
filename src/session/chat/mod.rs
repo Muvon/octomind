@@ -53,7 +53,7 @@ pub use context_truncation::{
 };
 pub use cost_tracker::CostTracker;
 pub use formatting::format_duration;
-pub use input::read_user_input;
+pub use input::{read_user_input, InputResult};
 pub use layered_response::process_layered_response;
 pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
 pub use message_handler::MessageHandler;

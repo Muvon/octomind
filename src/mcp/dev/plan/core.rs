@@ -32,7 +32,7 @@ use super::storage::{PlanStorage, TaskStatus};
 use crate::mcp::{McpToolCall, McpToolResult};
 use anyhow::Result;
 use serde_json::Value;
-use std::sync::atomic::Ordering;
+
 use std::sync::{Arc, Mutex};
 
 // Global storage instance - using memory storage for now
@@ -41,21 +41,7 @@ lazy_static::lazy_static! {
 }
 
 /// Execute plan tool command
-pub async fn execute_plan(
-	call: &McpToolCall,
-	cancellation_token: Option<Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	// Check for cancellation
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Plan operation cancelled".to_string(),
-			));
-		}
-	}
-
+pub async fn execute_plan(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => {

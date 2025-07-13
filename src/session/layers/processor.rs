@@ -18,8 +18,6 @@ use crate::session::{Message, Session};
 use anyhow::Result;
 use async_trait::async_trait;
 use colored::Colorize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 // Base processor that handles common functionality for all layers
 pub struct LayerProcessor {
@@ -94,10 +92,10 @@ impl Layer for LayerProcessor {
 		input: &str,
 		session: &Session,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<LayerResult> {
 		// Check if operation was cancelled
-		if operation_cancelled.load(Ordering::SeqCst) {
+		if *operation_cancelled.borrow() {
 			return Err(anyhow::anyhow!("Operation cancelled"));
 		}
 

@@ -154,11 +154,7 @@ Examples:
 }
 
 // Execute a shell command
-pub async fn execute_shell_command(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
+pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> {
 	use tokio::process::Command as TokioCommand;
 
 	// Extract command parameter
@@ -203,17 +199,6 @@ pub async fn execute_shell_command(
 		.and_then(|v| v.as_u64())
 		.map(|n| n as usize)
 		.unwrap_or(2000);
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Shell command execution cancelled".to_string(),
-			));
-		}
-	}
 
 	// Add command to shell history before execution
 	let _ = add_to_shell_history(&command);
@@ -275,116 +260,57 @@ pub async fn execute_shell_command(
 	}
 
 	// Foreground execution: wait for completion and return output
-	// Get the process ID for potential killing
-	let child_id = child.id();
+	let result = child.wait_with_output().await;
+	match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
+		Ok(output) => {
+			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-	// Create a cancellation future
-	let cancellation_future = async {
-		if let Some(ref token) = cancellation_token {
-			loop {
-				tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-				if token.load(Ordering::SeqCst) {
-					return true; // Indicate cancellation occurred
-				}
-			}
-		} else {
-			std::future::pending::<bool>().await
-		}
-	};
-
-	// Race between command completion and cancellation
-	tokio::select! {
-			result = child.wait_with_output() => {
-				match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
-					Ok(output) => {
-						let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-						let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-						// Format the output more clearly with error handling
-						let combined = if stderr.is_empty() {
-							stdout
-						} else if stdout.is_empty() {
-							stderr
-						} else {
-							format!(
-								"{}
+			// Format the output more clearly with error handling
+			let combined = if stderr.is_empty() {
+				stdout
+			} else if stdout.is_empty() {
+				stderr
+			} else {
+				format!(
+					"{}
 
 Error: {}",
-								stdout, stderr
-							)
-						};
+					stdout, stderr
+				)
+			};
 
-						// Apply token-based truncation to prevent huge outputs
-						let truncated_output = truncate_shell_output(&combined, max_tokens);
+			// Apply token-based truncation to prevent huge outputs
+			let truncated_output = truncate_shell_output(&combined, max_tokens);
 
-						// Add detailed execution results including status code
-						let status_code = output.status.code().unwrap_or(-1);
-						let success = output.status.success();
+			// Add detailed execution results including status code
+			let status_code = output.status.code().unwrap_or(-1);
+			let success = output.status.success();
 
-						// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
-						if success {
-							// Command succeeded - use success format
-							Ok(McpToolResult::success(
-								"shell".to_string(),
-								call.tool_id.clone(),
-					  truncated_output
-							))
-						} else {
-							// Command failed - use error format per MCP protocol
-							Ok(McpToolResult::error(
-								"shell".to_string(),
-								call.tool_id.clone(),
-								format!("Command failed with exit code {}\nCommand: {}\n\nOutput:\n{}", status_code, command, truncated_output)
-							))
-						}
-				}
-				Err(e) => {
-					Ok(McpToolResult::error(
-						"shell".to_string(),
-						call.tool_id.clone(),
-				  format!("Error: {}", e)
-					))
-				}
+			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
+			if success {
+				// Command succeeded - use success format
+				Ok(McpToolResult::success(
+					"shell".to_string(),
+					call.tool_id.clone(),
+					truncated_output,
+				))
+			} else {
+				// Command failed - use error format per MCP protocol
+				Ok(McpToolResult::error(
+					"shell".to_string(),
+					call.tool_id.clone(),
+					format!(
+						"Command failed with exit code {}\nCommand: {}\n\nOutput:\n{}",
+						status_code, command, truncated_output
+					),
+				))
 			}
 		}
-		cancelled = cancellation_future => {
-			if cancelled {
-				// Try to kill the process using system commands if we have the PID
-				if let Some(pid) = child_id {
-					#[cfg(unix)]
-					{
-						// On Unix systems, try to kill the process using system commands
-						let _ = std::process::Command::new("kill")
-							.args(["-TERM", &pid.to_string()])
-							.output();
-						// Give it a moment to terminate gracefully
-						std::thread::sleep(std::time::Duration::from_millis(100));
-						let _ = std::process::Command::new("kill")
-							.args(["-KILL", &pid.to_string()])
-							.output();
-					}
-					#[cfg(windows)]
-					{
-						// On Windows, use taskkill
-						let _ = std::process::Command::new("taskkill")
-							.args(["/F", "/PID", &pid.to_string()])
-							.output();
-					}
-				}
-
-			Ok(McpToolResult::error(
-				"shell".to_string(),
-				call.tool_id.clone(),
-				format!("Command execution cancelled by user (Ctrl+C)\nCommand: {}", command)
-			))
-		} else {
-			// This shouldn't happen, but handle it gracefully
-			Ok(McpToolResult::error(
-				"shell".to_string(),
-				call.tool_id.clone(),
-				format!("Unexpected cancellation state\nCommand: {}", command)
-			))
-		}
-		}
+		Err(e) => Ok(McpToolResult::error(
+			"shell".to_string(),
+			call.tool_id.clone(),
+			format!("Error: {}", e),
+		)),
 	}
 }

@@ -222,7 +222,7 @@ impl AiProvider for AmazonBedrockProvider {
 	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
 		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
+			if *token.borrow() {
 				return Err(anyhow::anyhow!("Request cancelled before starting"));
 			}
 		}
@@ -353,7 +353,7 @@ impl AiProvider for AmazonBedrockProvider {
 		for attempt in 0..=params.max_retries {
 			// Check for cancellation before each attempt
 			if let Some(ref token) = params.cancellation_token {
-				if token.load(std::sync::atomic::Ordering::SeqCst) {
+				if *token.borrow() {
 					return Err(anyhow::anyhow!(
 						"Request cancelled during retry attempt {}",
 						attempt

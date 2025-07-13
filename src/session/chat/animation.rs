@@ -19,6 +19,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
 use std::time::Duration;
 
 // Show loading animation while waiting for response (interactive mode)
@@ -41,11 +42,11 @@ pub async fn show_loading_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> 
 		"Generating response...".to_string()
 	};
 	spinner.set_message(message);
-	spinner.enable_steady_tick(Duration::from_millis(100));
+	spinner.enable_steady_tick(Duration::from_millis(50));
 
-	// Wait for cancellation
+	// Wait for cancellation with faster polling
 	while !cancel_flag.load(Ordering::SeqCst) {
-		tokio::time::sleep(Duration::from_millis(50)).await;
+		tokio::time::sleep(Duration::from_millis(10)).await;
 	}
 
 	// Clean finish - removes the spinner completely
@@ -63,9 +64,9 @@ pub async fn show_no_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> Resul
 		);
 	}
 
-	// Wait for cancellation without showing any visual animation
+	// Wait for cancellation without showing any visual animation (faster polling)
 	while !cancel_flag.load(Ordering::SeqCst) {
-		tokio::time::sleep(Duration::from_millis(100)).await;
+		tokio::time::sleep(Duration::from_millis(10)).await;
 	}
 	Ok(())
 }

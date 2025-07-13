@@ -165,12 +165,8 @@ impl AiProvider for OpenRouterProvider {
 	}
 
 	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
-		// Check for cancellation before starting
-		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
-				return Err(anyhow::anyhow!("Request cancelled before starting"));
-			}
-		}
+		// Don't check cancellation at start - only during the actual request
+		// This prevents stale cancellation state from blocking new requests
 
 		// Get API key
 		let api_key = self.get_api_key(params.config)?;
@@ -261,12 +257,7 @@ impl AiProvider for OpenRouterProvider {
 			}
 		}
 
-		// Check for cancellation before making HTTP request
-		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
-				return Err(anyhow::anyhow!("Request cancelled before HTTP call"));
-			}
-		}
+		// Don't check cancellation before HTTP - handled during the request
 
 		// Implement retry logic with exponential backoff
 		if params.max_retries > 0 {
@@ -289,36 +280,54 @@ impl AiProvider for OpenRouterProvider {
 
 				Box::pin(async move {
 					// Create the HTTP request
-					let request_future = client
+					let request = client
 						.post(OPENROUTER_API_URL)
 						.header("Authorization", format!("Bearer {}", api_key))
 						.header("Content-Type", "application/json")
 						.header("HTTP-Referer", "https://github.com/muvon/octomind")
 						.header("X-Title", "Octomind")
-						.json(&request_body)
-						.send();
+						.json(&request_body);
 
 					// Race the HTTP request against cancellation
 					if let Some(ref token) = cancellation_token {
+						// Create an abortable wrapper using tokio's JoinHandle
+						let mut request_handle = tokio::spawn(async move { request.send().await });
+
 						let cancellation_future = async {
+							let mut token_watch = token.clone();
 							loop {
-								if token.load(std::sync::atomic::Ordering::SeqCst) {
+								// Check current state first
+								if *token_watch.borrow() {
 									break;
 								}
-								tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+								// Wait for change and check if cancelled
+								token_watch.changed().await.ok();
 							}
 						};
 
 						tokio::select! {
-							result = request_future => {
-								result.map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))
-							}
+							biased;
+
 							_ = cancellation_future => {
+								// Abort the spawned task - this will actually cancel the HTTP request
+								request_handle.abort();
 								Err(anyhow::anyhow!("Request cancelled during HTTP call"))
+							}
+							result = &mut request_handle => {
+								// Handle the JoinHandle result
+								match result {
+									Ok(Ok(response)) => Ok(response),
+									Ok(Err(e)) => Err(anyhow::anyhow!("HTTP request failed: {}", e)),
+									Err(_) => {
+										// JoinError means the task was aborted
+										Err(anyhow::anyhow!("Request aborted"))
+									}
+								}
 							}
 						}
 					} else {
-						request_future
+						request
+							.send()
 							.await
 							.map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))
 					}
@@ -352,14 +361,7 @@ impl AiProvider for OpenRouterProvider {
 			}
 		};
 
-		// Check for cancellation before processing response
-		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
-				return Err(anyhow::anyhow!(
-					"Request cancelled during response processing"
-				));
-			}
-		}
+		// Don't check cancellation after response - if we got here, complete the processing
 
 		// Continue with the rest of the original implementation...
 		// Just call the original method for the response processing part

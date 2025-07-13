@@ -19,16 +19,18 @@ use super::super::commands::*;
 use super::super::context_truncation::{
 	check_and_truncate_context_with_cancellation, TruncationOptions,
 };
-use super::super::input::read_user_input;
+use super::super::input::{read_user_input, InputResult};
 use super::super::response::{process_response, ResponseProcessingParams};
 use super::core::{ChatSession, SessionInitParams};
 use crate::config::Config;
+use crate::session::cancellation::SessionCancellation;
 use crate::session::{create_system_prompt, ChatCompletionWithValidationParams};
 use crate::{log_debug, log_info};
 use anyhow::Result;
-use std::io::Write; // Added for stdout flushing
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use tokio::sync::watch;
 
 // Type alias for extracted session parameters
 type SessionParams = (
@@ -374,7 +376,7 @@ async fn process_layers_if_enabled(
 	config: &Config,
 	role: &str,
 	first_message_processed: bool,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_rx: watch::Receiver<bool>,
 ) -> Result<(String, bool)> {
 	let layers_enabled = config.get_enable_layers(role);
 	if layers_enabled && !first_message_processed {
@@ -387,7 +389,7 @@ async fn process_layers_if_enabled(
 			chat_session,
 			config,
 			role,
-			operation_cancelled,
+			operation_rx,
 		)
 		.await;
 
@@ -413,7 +415,20 @@ async fn process_layers_if_enabled(
 				}
 			}
 			Err(e) => {
-				// Print colorful error message and continue with original input
+				// Check if this is a cancellation error - if so, propagate it to main loop
+				let error_msg = e.to_string();
+				if error_msg.contains("Operation cancelled")
+					|| error_msg.contains("Request cancelled")
+				{
+					// This is a cancellation error - handle gracefully and continue session
+					use colored::*;
+					println!("{}", "\nOperation cancelled by user.".bright_yellow());
+					println!("{}", "Continuing with original input.".yellow());
+					// Return original input and continue session normally
+					return Ok((input.to_string(), false));
+				}
+
+				// Regular layer processing error - print message and continue with original input
 				use colored::*;
 				println!(
 					"\n{}: {}",
@@ -435,14 +450,16 @@ async fn process_layers_if_enabled(
 async fn prepare_for_api_call(
 	chat_session: &mut ChatSession,
 	config: &Config,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
 	// Check if we need to truncate the context to stay within token limits
 	check_and_truncate_context_with_cancellation(
 		chat_session,
 		config,
 		TruncationOptions::default(), // Normal truncation, no defer
-		Some(operation_cancelled),
+		Some(Arc::new(std::sync::atomic::AtomicBool::new(
+			*operation_rx.borrow(),
+		))),
 	)
 	.await?;
 
@@ -478,7 +495,7 @@ async fn execute_api_call_and_process_response(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_rx: watch::Receiver<bool>,
 	is_interactive: bool,
 ) -> Result<()> {
 	let model = chat_session.model.clone();
@@ -489,6 +506,21 @@ async fn execute_api_call_and_process_response(
 	let animation_cancel = Arc::new(AtomicBool::new(false));
 	let animation_cancel_clone = animation_cancel.clone();
 	let current_cost = chat_session.session.info.total_cost;
+
+	// Set up monitor task to propagate global cancellation to animation
+	let animation_cancel_monitor = animation_cancel.clone();
+	let operation_cancelled_monitor = operation_rx.clone();
+	let operation_rx_for_response = operation_rx.clone();
+	let _cancel_monitor = tokio::spawn(async move {
+		while !animation_cancel_monitor.load(Ordering::SeqCst) {
+			if *operation_cancelled_monitor.borrow() {
+				animation_cancel_monitor.store(true, Ordering::SeqCst);
+				break;
+			}
+			tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+		}
+	});
+
 	let animation_task = tokio::spawn(async move {
 		if is_interactive {
 			let _ = show_loading_animation(animation_cancel_clone, current_cost).await;
@@ -503,7 +535,6 @@ async fn execute_api_call_and_process_response(
 			Ok(should_continue) => {
 				if !should_continue {
 					// User chose not to continue due to spending threshold
-					operation_cancelled.store(true, Ordering::SeqCst);
 					let _ = animation_task.await;
 					return Ok(());
 				}
@@ -534,7 +565,7 @@ async fn execute_api_call_and_process_response(
 	)
 	.with_max_retries(max_retries)
 	.with_chat_session(chat_session)
-	.with_cancellation_token(operation_cancelled.clone());
+	.with_cancellation_token(operation_rx);
 	let api_result = crate::session::chat_completion_with_validation(validation_params).await;
 
 	// Stop animation
@@ -545,8 +576,8 @@ async fn execute_api_call_and_process_response(
 	match api_result {
 		Ok(response) => {
 			// Process the response with tool calls
-			let tool_process_cancelled = Arc::new(AtomicBool::new(false));
-
+			// CRITICAL FIX: Use operation_cancelled instead of creating a new token
+			// This ensures Ctrl+C cancellation works properly during tool execution
 			let process_result = process_response(ResponseProcessingParams::new(
 				response.content,
 				response.exchange,
@@ -555,7 +586,7 @@ async fn execute_api_call_and_process_response(
 				chat_session,
 				config,
 				role,
-				tool_process_cancelled,
+				operation_rx_for_response.clone(),
 			))
 			.await;
 
@@ -681,14 +712,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 	}
 
 	// Set up advanced cancellation system for proper CTRL+C handling
-	let ctrl_c_pressed = Arc::new(AtomicBool::new(false));
-	let ctrl_c_count = Arc::new(AtomicBool::new(false)); // For double Ctrl+C detection
-	let _ctrl_c_pressed_clone = ctrl_c_pressed.clone();
-
-	// Create tokio-native cancellation token for immediate async cancellation (commented out for now)
-	// let cancellation_token = CancellationToken::new();
-	// let cancellation_token_clone = cancellation_token.clone();
-
 	// Enhanced processing state tracking for smart cancellation
 	#[derive(Debug, Clone, PartialEq)]
 	#[allow(dead_code)] // Some variants may not be used after refactoring
@@ -718,71 +741,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 	let current_operation = Arc::new(std::sync::Mutex::new(None::<OperationContext>));
 
-	// Set up tokio-native signal handling for immediate cancellation response
-	let ctrl_c_signal = ctrl_c_pressed.clone();
-	let ctrl_c_counter = ctrl_c_count.clone();
-	tokio::spawn(async move {
-		// Create signal handlers ONCE outside the loop
-		#[cfg(unix)]
-		let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-			.expect("Failed to register SIGINT handler");
-		#[cfg(unix)]
-		let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-			.expect("Failed to register SIGTERM handler");
+	// Create the cancellation manager for this session
+	let mut cancellation = SessionCancellation::new();
+	let _ctrl_c_count = Arc::new(AtomicBool::new(false)); // Keep for now
 
-		loop {
-			// Cross-platform signal handling with persistent handlers
-			#[cfg(unix)]
-			{
-				tokio::select! {
-					_ = sigint.recv() => {
-						// Immediate user feedback - CRITICAL for user experience
-						println!("\n🛑 Ctrl+C pressed - interrupting...");
-						std::io::stdout().flush().unwrap_or(());
-						log_debug!("SIGINT received - checking if this is first or second Ctrl+C");
-					}
-					_ = sigterm.recv() => {
-						println!("\n🛑 Termination signal received - exiting...");
-						std::io::stdout().flush().unwrap_or(());
-						log_debug!("SIGTERM received - triggering immediate cancellation");
-						ctrl_c_signal.store(true, Ordering::SeqCst);
-						std::process::exit(130);
-					}
-				}
-			}
-			#[cfg(windows)]
-			{
-				let _ = tokio::signal::ctrl_c().await;
-				// Immediate user feedback - CRITICAL for user experience
-				println!("\n🛑 Ctrl+C pressed - interrupting...");
-				std::io::stdout().flush().unwrap_or(());
-				log_debug!("Ctrl+C received - checking if this is first or second Ctrl+C");
-			}
-
-			// Check if this is the first or second Ctrl+C
-			if ctrl_c_counter.load(Ordering::SeqCst) {
-				// Second Ctrl+C - force exit immediately
-				println!("🛑 Forcing exit due to repeated Ctrl+C...");
-				std::io::stdout().flush().unwrap_or(());
-				std::process::exit(130);
-			} else {
-				// First Ctrl+C - set flag for graceful cancellation
-				ctrl_c_counter.store(true, Ordering::SeqCst);
-				ctrl_c_signal.store(true, Ordering::SeqCst);
-
-				// Provide context-aware feedback
-				println!("💡 Press Ctrl+C again within 2 seconds to force exit");
-				std::io::stdout().flush().unwrap_or(());
-
-				// Start a timer to reset the double-Ctrl+C detection after 2 seconds
-				let counter_reset = ctrl_c_counter.clone();
-				tokio::spawn(async move {
-					tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-					counter_reset.store(false, Ordering::SeqCst);
-				});
-			}
-		}
-	});
+	// Start signal handler
+	let _signal_handler = cancellation.start_signal_handler();
 
 	// We need to handle configuration reloading, so keep our own copy that we can update
 	let mut current_config = config_for_role.clone();
@@ -796,7 +760,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		*processing_state.lock().unwrap() = ProcessingState::Idle;
 
 		// SMART CANCELLATION: Handle cancellation with surgical cleanup
-		if ctrl_c_pressed.load(Ordering::SeqCst) {
+		if cancellation.is_cancelled() {
 			log_debug!("Ctrl+C detected - performing smart cleanup based on operation state");
 
 			// CRITICAL FIX: Display cost information before cleanup
@@ -857,38 +821,31 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				log_debug!("Warning: Failed to save session after smart cleanup: {}", e);
 			}
 
-			// Reset for next iteration
-			ctrl_c_pressed.store(false, Ordering::SeqCst);
+			// Clear operation context
 			*current_operation.lock().unwrap() = None;
+
+			// CRITICAL FIX: Reset cancellation state BEFORE continuing
+			// This prevents infinite loop where cancellation is always true
+			cancellation.reset();
+			log_debug!("Cancellation state reset - ready for new operation");
+
 			continue;
 		}
 
 		// Set state to reading input
 		*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
 
-		// Create a fresh cancellation flag for this iteration
-		let operation_cancelled = Arc::new(AtomicBool::new(false));
+		// Get a new operation token for this iteration
+		let operation_rx = cancellation.new_operation();
 
-		// CRITICAL FIX: Connect operation_cancelled to global ctrl_c_pressed signal
-		// This ensures Ctrl+C cancels the current operation immediately
-		let global_signal = ctrl_c_pressed.clone();
-		let operation_signal = operation_cancelled.clone();
-		let sync_handle = tokio::spawn(async move {
-			while !operation_signal.load(Ordering::SeqCst) {
-				if global_signal.load(Ordering::SeqCst) {
-					operation_signal.store(true, Ordering::SeqCst);
-					break;
-				}
-				tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-			}
-		});
+		// No more legacy compatibility bridge needed - use watch receiver directly
 
 		// Create a child cancellation token for this operation (commented out for now)
 		// let operation_cancellation_token = cancellation_token.child_token();
 
 		// CRITICAL FIX: Check if continuation is pending from previous iteration
 		// If so, skip reading user input and process the injected summary request immediately
-		let mut input = if chat_session.continuation_pending {
+		let input_result = if chat_session.continuation_pending {
 			log_debug!("Continuation pending - processing injected summary request automatically");
 			// Get the last message which should be the injected summary request
 			chat_session
@@ -896,26 +853,59 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				.messages
 				.last()
 				.filter(|msg| msg.role == "user")
-				.map(|msg| msg.content.clone())
+				.map(|msg| InputResult::Text(msg.content.clone()))
 				.unwrap_or_else(|| {
 					log_debug!("Warning: Expected summary request message not found, falling back to user input");
-					read_user_input(chat_session.estimated_cost).unwrap_or_default()
+					read_user_input(chat_session.estimated_cost)
+						.unwrap_or(InputResult::Text(String::new()))
 				})
 		} else {
 			// Read user input with command completion and cost estimation
 			read_user_input(chat_session.estimated_cost)?
 		};
 
-		// Check if the input is an exit command from Ctrl+D
+		// Handle the input result with proper error recovery
+		let input = match input_result {
+			InputResult::Text(text) => text,
+			InputResult::Cancelled => {
+				// Ctrl+C pressed during input
+				log_debug!("Input cancelled by user - cleaning up");
+
+				// Ensure session is saved
+				if let Err(e) = chat_session.save() {
+					log_debug!("Warning: Failed to save session after cancellation: {}", e);
+				}
+				continue;
+			}
+			InputResult::Exit => {
+				// Ctrl+D pressed - graceful exit
+				println!("Ending session. Your conversation has been saved.");
+
+				// Ensure session is saved
+				if let Err(e) = chat_session.save() {
+					eprintln!("Warning: Failed to save session: {}", e);
+				}
+				break;
+			}
+		};
+
+		// Check if the input is an exit command
 		if input == "/exit" || input == "/quit" {
 			println!("Ending session. Your conversation has been saved.");
 			break;
 		}
 
-		// Skip if input is empty (could be from Ctrl+C)
+		// Skip if input is empty
 		if input.trim().is_empty() {
-			sync_handle.abort();
 			continue;
+		}
+
+		// Immediate feedback - show that we received the input
+		// This reduces perceived latency by giving instant visual feedback
+		if !input.starts_with('/') {
+			// Flush stdout to ensure prompt is cleared immediately
+			print!("\r\x1B[K");
+			std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 		}
 
 		// Check if this is a command
@@ -938,7 +928,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					&mut chat_session,
 					&current_config,
 					&role,
-					operation_cancelled.clone(),
+					operation_rx.clone(),
 				)
 				.await;
 
@@ -1037,7 +1027,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		}
 
 		// Check for cancellation before starting layered processing
-		if ctrl_c_pressed.load(Ordering::SeqCst) {
+		if cancellation.is_cancelled() {
 			continue;
 		}
 
@@ -1052,26 +1042,27 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			&current_config,
 			&role,
 			first_message_processed,
-			operation_cancelled.clone(),
+			operation_rx.clone(),
 		)
 		.await?;
 
 		// Check for cancellation after layer processing
-		if ctrl_c_pressed.load(Ordering::SeqCst) {
+		if cancellation.is_cancelled() {
 			continue;
 		}
 
-		if layers_modified_session {
+		let final_input = if layers_modified_session {
 			// Layers used output_mode append/replace and added messages to session
 			// Skip adding user message to avoid duplicates and continue with the user message
 			// to guarantee that the output from layer next processed with the main loop
 			first_message_processed = true;
+			input // Use original input
 		} else {
 			// Use the processed input from layers (or original if layers not enabled)
-			input = processed_input;
 			// Mark that we've processed the first message through layers
 			first_message_processed = true;
-		}
+			processed_input
+		};
 
 		// Initialize operation context for smart tracking
 		let operation_id = format!(
@@ -1113,7 +1104,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// - layers_modified_session = true: Layers added messages to session → Skip (avoid duplicates)
 		// - layers_modified_session = false: Layers didn't add messages → Add user message (needed for conversation)
 		if !chat_session.continuation_pending && !layers_modified_session {
-			chat_session.add_user_message(&input)?;
+			chat_session.add_user_message(&final_input)?;
 		}
 
 		// Create operation context for tracking
@@ -1132,37 +1123,17 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		);
 
 		// Prepare for API call using helper function
-		prepare_for_api_call(
-			&mut chat_session,
-			&current_config,
-			operation_cancelled.clone(),
-		)
-		.await?;
+		prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
 		// Set processing state to calling API
 		*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
 
-		// Start a separate task to monitor for Ctrl+C and propagate to operation_cancelled flag
-		let op_cancelled = operation_cancelled.clone();
-		let ctrlc_flag = ctrl_c_pressed.clone();
-		let _cancel_monitor = tokio::spawn(async move {
-			while !op_cancelled.load(Ordering::SeqCst) {
-				// Check if global Ctrl+C flag is set
-				if ctrlc_flag.load(Ordering::SeqCst) {
-					// Set the operation cancellation flag immediately
-					op_cancelled.store(true, Ordering::SeqCst);
-					break; // Exit the loop once cancelled
-				}
-				// Use very fast polling for immediate response
-				tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
-			}
-		});
+		// The cancellation is already being monitored by the watch channel
+		// No need for additional monitoring here
 
 		// Check for Ctrl+C before making API call
-		if ctrl_c_pressed.load(Ordering::SeqCst) {
+		if cancellation.is_cancelled() {
 			// Immediately stop and return to main loop
-			operation_cancelled.store(true, Ordering::SeqCst);
-			sync_handle.abort();
 			continue;
 		}
 
@@ -1173,7 +1144,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			&mut chat_session,
 			&current_config,
 			&role,
-			operation_cancelled.clone(),
+			operation_rx.clone(),
 			true, // is_interactive
 		)
 		.await
@@ -1189,7 +1160,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					log_debug!("Continuation triggered during tool processing - skipping to next iteration to process summary request automatically");
 					// The summary request message has already been injected by check_and_handle_continuation
 					// Just continue the loop to process it immediately without waiting for user input
-					sync_handle.abort();
 					continue;
 				}
 
@@ -1212,7 +1182,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		*current_operation.lock().unwrap() = None;
 
 		// Clean up the cancellation sync task
-		sync_handle.abort();
 	}
 
 	Ok(())
@@ -1235,35 +1204,10 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
 
 	// Set up cancellation handling for non-interactive mode (simplified)
-	let ctrl_c_pressed = Arc::new(AtomicBool::new(false));
+	let mut cancellation = SessionCancellation::new();
 
 	// Simplified tokio-based Ctrl+C handler for non-interactive mode
-	let ctrl_c_signal = ctrl_c_pressed.clone();
-	tokio::spawn(async move {
-		// Cross-platform signal handling with immediate feedback
-		#[cfg(unix)]
-		{
-			let mut sigint =
-				tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-					.expect("Failed to register SIGINT handler");
-			let _ = sigint.recv().await;
-			// Immediate user feedback
-			println!("\n🛑 Ctrl+C pressed - cancelling operation...");
-			std::io::stdout().flush().unwrap_or(());
-		}
-		#[cfg(windows)]
-		{
-			let _ = tokio::signal::ctrl_c().await;
-			// Immediate user feedback
-			println!("\n🛑 Ctrl+C pressed - cancelling operation...");
-			std::io::stdout().flush().unwrap_or(());
-		}
-
-		ctrl_c_signal.store(true, Ordering::SeqCst);
-		println!("🛑 Operation cancelled by user");
-		std::io::stdout().flush().unwrap_or(());
-		std::process::exit(130); // Exit immediately in non-interactive mode
-	});
+	let _signal_handler = cancellation.start_signal_handler();
 
 	// Set the thread-local config for logging macros
 	let mut current_config = config_for_role.clone();
@@ -1271,21 +1215,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 	// Process the single input (same logic as interactive session)
 	let mut input = initial_input.to_string();
-	let operation_cancelled = Arc::new(AtomicBool::new(false));
-
-	// CRITICAL FIX: Connect operation_cancelled to global ctrl_c_pressed signal
-	// This ensures Ctrl+C cancels the current operation immediately
-	let global_signal = ctrl_c_pressed.clone();
-	let operation_signal = operation_cancelled.clone();
-	let _sync_handle = tokio::spawn(async move {
-		while !operation_signal.load(Ordering::SeqCst) {
-			if global_signal.load(Ordering::SeqCst) {
-				operation_signal.store(true, Ordering::SeqCst);
-				break;
-			}
-			tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-		}
-	});
+	let operation_rx = cancellation.new_operation();
 
 	// Check if this is a command (same logic as interactive session)
 	if input.starts_with('/') {
@@ -1336,7 +1266,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		&current_config,
 		&role,
 		first_message_processed,
-		operation_cancelled.clone(),
+		operation_rx.clone(),
 	)
 	.await?;
 
@@ -1360,21 +1290,17 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	}
 
 	// Prepare for API call using helper function
-	prepare_for_api_call(
-		&mut chat_session,
-		&current_config,
-		operation_cancelled.clone(),
-	)
-	.await?;
+	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
 	// Execute API call and process response using helper function (non-interactive mode)
 	let user_message_index_for_error = user_message_index;
+	let operation_rx_clone = operation_rx.clone();
 	let model_for_error = chat_session.model.clone();
 	match execute_api_call_and_process_response(
 		&mut chat_session,
 		&current_config,
 		&role,
-		operation_cancelled.clone(),
+		operation_rx_clone,
 		false, // is_interactive = false
 	)
 	.await
@@ -1395,6 +1321,5 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 	// Save session before exit
 	let _ = chat_session.save();
-
 	Ok(())
 }

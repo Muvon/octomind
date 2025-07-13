@@ -532,13 +532,11 @@ pub fn is_server_already_running(server_name: &str) -> bool {
 pub async fn execute_tool_call(
 	call: &McpToolCall,
 	server: &McpServerConfig,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("External tool execution cancelled"));
 		}
 	}
@@ -579,13 +577,11 @@ pub async fn execute_tool_call(
 async fn execute_tool_call_internal(
 	call: &McpToolCall,
 	server: &McpServerConfig,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("External tool execution cancelled"));
 		}
 	}
@@ -604,7 +600,7 @@ async fn execute_tool_call_internal(
 		McpConnectionType::Http => {
 			// Check for cancellation before HTTP request
 			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
+				if *token.borrow() {
 					return Err(anyhow::anyhow!("External tool execution cancelled"));
 				}
 			}
@@ -638,7 +634,7 @@ async fn execute_tool_call_internal(
 
 			// Check for cancellation one more time before sending request
 			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
+				if *token.borrow() {
 					return Err(anyhow::anyhow!("External tool execution cancelled"));
 				}
 			}

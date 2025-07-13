@@ -101,10 +101,7 @@ Examples:
 }
 
 // Execute a web search using Brave Search API
-pub async fn execute_web_search(
-	call: &McpToolCall,
-	_cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
+pub async fn execute_web_search(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract and validate query
 	let query = match extract_and_validate_query(call) {
 		Ok(q) => q,

@@ -20,8 +20,6 @@ use crate::session::chat::session::ChatSession;
 use crate::session::chat::tool_error_tracker::ToolErrorTracker;
 use anyhow::Result;
 use colored::Colorize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 pub struct ToolProcessor {
 	pub error_tracker: ToolErrorTracker,
@@ -40,14 +38,14 @@ impl ToolProcessor {
 		tool_calls: Vec<crate::mcp::McpToolCall>,
 		chat_session: &mut ChatSession,
 		config: &Config,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Result<(Vec<String>, bool)> {
 		let mut tool_tasks = Vec::new();
 		let mut tool_results = Vec::new();
 
 		// Execute all tool calls in parallel
 		for tool_call in tool_calls.clone() {
-			if operation_cancelled.load(Ordering::SeqCst) {
+			if *operation_cancelled.borrow() {
 				return Ok((tool_results, false));
 			}
 
@@ -66,7 +64,7 @@ impl ToolProcessor {
 
 		// Collect all results and display them cleanly with real-time cancellation feedback
 		for (i, task) in tool_tasks.into_iter().enumerate() {
-			if operation_cancelled.load(Ordering::SeqCst) {
+			if *operation_cancelled.borrow() {
 				return Ok((tool_results, false));
 			}
 

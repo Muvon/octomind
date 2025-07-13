@@ -500,10 +500,8 @@ pub fn clear_internal_function_cache() {
 pub async fn execute_tool_call(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(McpToolResult, u64)> {
-	use std::sync::atomic::Ordering;
-
 	// Debug logging for tool execution
 	log_debug!("Debug: Executing tool call: {}", call.tool_name);
 	log_debug!(
@@ -521,7 +519,7 @@ pub async fn execute_tool_call(
 
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("Tool execution cancelled"));
 		}
 	}
@@ -529,7 +527,7 @@ pub async fn execute_tool_call(
 	// Track tool execution time
 	let tool_start = std::time::Instant::now();
 
-	let result = try_execute_tool_call(call, config, cancellation_token.clone()).await;
+	let result = try_execute_tool_call(call, config, cancellation_token).await;
 
 	// Calculate tool execution time
 	let tool_duration = tool_start.elapsed();
@@ -609,22 +607,56 @@ pub async fn build_tool_server_map(
 async fn try_execute_tool_call(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
 	// Only execute if MCP has any servers configured
 	if config.mcp.servers.is_empty() {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
 	}
 
-	// Check for cancellation before proceeding
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
+	// Create the actual tool execution future (without cancellation handling)
+	let tool_execution_future = execute_tool_without_cancellation(call, config);
+
+	// Apply centralized cancellation wrapper
+	if let Some(token) = cancellation_token {
+		// Check for cancellation before proceeding
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("Tool execution cancelled"));
 		}
-	}
 
+		// Create cancellation future
+		let mut cancel_receiver = token.clone();
+		let cancellation_future = async move {
+			loop {
+				if *cancel_receiver.borrow() {
+					break;
+				}
+				cancel_receiver.changed().await.ok();
+			}
+		};
+
+		// Race between tool execution and cancellation
+		tokio::select! {
+			biased;
+
+			_ = cancellation_future => {
+				Err(anyhow::anyhow!("Tool execution cancelled during execution"))
+			}
+			result = tool_execution_future => {
+				result
+			}
+		}
+	} else {
+		// No cancellation token - execute directly
+		tool_execution_future.await
+	}
+}
+
+// Execute tool without any cancellation handling - pure tool logic
+async fn execute_tool_without_cancellation(
+	call: &McpToolCall,
+	config: &crate::config::Config,
+) -> Result<McpToolResult> {
 	// STATIC ROUTING: Use pre-built tool map ONLY
 	let tool_server_map = {
 		let mut map = std::collections::HashMap::new();
@@ -643,13 +675,6 @@ async fn try_execute_tool_call(
 			target_server.connection_type()
 		);
 
-		// Check for cancellation before execution
-		if let Some(ref token) = cancellation_token {
-			if token.load(Ordering::SeqCst) {
-				return Err(anyhow::anyhow!("Tool execution cancelled"));
-			}
-		}
-
 		// Execute on the target server
 		match target_server.connection_type() {
 			McpConnectionType::Builtin => {
@@ -660,9 +685,7 @@ async fn try_execute_tool_call(
 								"Executing shell command via developer server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								dev::execute_shell_command(call, cancellation_token.clone())
-									.await?;
+							let mut result = dev::execute_shell_command(call).await?;
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						}
@@ -671,9 +694,7 @@ async fn try_execute_tool_call(
 								"Executing ast_grep command via developer server '{}'",
 								target_server.name()
 							);
-							match dev::execute_ast_grep_command(call, cancellation_token.clone())
-								.await
-							{
+							match dev::execute_ast_grep_command(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -693,7 +714,7 @@ async fn try_execute_tool_call(
 								"Executing plan command via developer server '{}'",
 								target_server.name()
 							);
-							match dev::execute_plan(call, cancellation_token.clone()).await {
+							match dev::execute_plan(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -720,7 +741,7 @@ async fn try_execute_tool_call(
 								"Executing text_editor via filesystem server '{}'",
 								target_server.name()
 							);
-							match fs::execute_text_editor(call, cancellation_token.clone()).await {
+							match fs::execute_text_editor(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -739,8 +760,7 @@ async fn try_execute_tool_call(
 								"Executing list_files via filesystem server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								fs::execute_list_files(call, cancellation_token.clone()).await?;
+							let mut result = fs::execute_list_files(call).await?;
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						}
@@ -749,8 +769,7 @@ async fn try_execute_tool_call(
 								"Executing extract_lines via filesystem server '{}'",
 								target_server.name()
 							);
-							match fs::execute_extract_lines(call, cancellation_token.clone()).await
-							{
+							match fs::execute_extract_lines(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -769,7 +788,7 @@ async fn try_execute_tool_call(
 								"Executing batch_edit via filesystem server '{}'",
 								target_server.name()
 							);
-							match fs::execute_batch_edit(call, cancellation_token.clone()).await {
+							match fs::execute_batch_edit(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -798,12 +817,7 @@ async fn try_execute_tool_call(
 								call.tool_name,
 								target_server.name()
 							);
-							let mut result = agent::execute_agent_command(
-								call,
-								config,
-								cancellation_token.clone(),
-							)
-							.await?;
+							let mut result = agent::execute_agent_command(call, config).await?;
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						} else {
@@ -819,7 +833,7 @@ async fn try_execute_tool_call(
 								"Executing web_search via web server '{}'",
 								target_server.name()
 							);
-							match web::execute_web_search(call, cancellation_token.clone()).await {
+							match web::execute_web_search(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -838,8 +852,7 @@ async fn try_execute_tool_call(
 								"Executing image_search via web server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								web::execute_image_search(call, cancellation_token.clone()).await?;
+							let mut result = web::execute_image_search(call).await?;
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						}
@@ -848,8 +861,7 @@ async fn try_execute_tool_call(
 								"Executing video_search via web server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								web::execute_video_search(call, cancellation_token.clone()).await?;
+							let mut result = web::execute_video_search(call).await?;
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						}
@@ -858,8 +870,7 @@ async fn try_execute_tool_call(
 								"Executing news_search via web server '{}'",
 								target_server.name()
 							);
-							let mut result =
-								web::execute_news_search(call, cancellation_token.clone()).await?;
+							let mut result = web::execute_news_search(call).await?;
 							result.tool_id = call.tool_id.clone();
 							return Ok(result);
 						}
@@ -868,7 +879,7 @@ async fn try_execute_tool_call(
 								"Executing read_html via web server '{}'",
 								target_server.name()
 							);
-							match web::execute_read_html(call, cancellation_token.clone()).await {
+							match web::execute_read_html(call).await {
 								Ok(mut result) => {
 									result.tool_id = call.tool_id.clone();
 									return Ok(result);
@@ -899,9 +910,7 @@ async fn try_execute_tool_call(
 			}
 			McpConnectionType::Http | McpConnectionType::Stdin => {
 				// Execute on external server
-				match server::execute_tool_call(call, target_server, cancellation_token.clone())
-					.await
-				{
+				match server::execute_tool_call(call, target_server, None).await {
 					Ok(mut result) => {
 						result.tool_id = call.tool_id.clone();
 						return Ok(result);

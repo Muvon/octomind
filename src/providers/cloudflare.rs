@@ -236,7 +236,7 @@ impl AiProvider for CloudflareWorkersAiProvider {
 	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
 		// Check for cancellation before starting
 		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
+			if *token.borrow() {
 				return Err(anyhow::anyhow!("Request cancelled before starting"));
 			}
 		}

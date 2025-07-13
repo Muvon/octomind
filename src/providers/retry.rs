@@ -15,8 +15,9 @@
 use anyhow::Result;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{atomic::AtomicBool, Arc};
+
 use std::time::Duration;
+use tokio::sync::watch;
 use tokio::time::sleep;
 
 /// Generic retry logic with exponential backoff for providers that don't have smart retry
@@ -37,7 +38,7 @@ pub async fn retry_with_exponential_backoff<F, T, E>(
 	mut operation: F,
 	max_retries: u32,
 	base_timeout: Duration,
-	cancellation_token: Option<&Arc<AtomicBool>>,
+	cancellation_token: Option<&watch::Receiver<bool>>,
 ) -> Result<T, E>
 where
 	F: FnMut() -> Pin<Box<dyn Future<Output = Result<T, E>> + Send>>,
@@ -48,7 +49,7 @@ where
 	for attempt in 0..=max_retries {
 		// Check for cancellation before each attempt
 		if let Some(token) = cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
+			if *token.borrow() {
 				return Err(last_error.unwrap_or_else(|| {
 					// This is a bit tricky since we need to return E, but we know it's cancelled
 					// In practice, this shouldn't happen since we check cancellation first
@@ -93,7 +94,7 @@ where
 pub async fn retry_http_request<T, E>(
 	max_retries: u32,
 	base_timeout: Duration,
-	cancellation_token: Option<&Arc<AtomicBool>>,
+	cancellation_token: Option<&watch::Receiver<bool>>,
 	request_builder: impl Fn() -> Pin<Box<dyn Future<Output = Result<T, E>> + Send>>,
 ) -> Result<T, E>
 where

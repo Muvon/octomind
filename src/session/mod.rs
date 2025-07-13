@@ -15,6 +15,7 @@
 // Session module for handling interactive coding sessions
 
 pub mod cache;
+pub mod cancellation; // Cancellation management
 pub mod chat; // Chat session logic
 mod chat_helper; // Chat command completion
 pub mod helper_functions; // Helper functions for layers and other components
@@ -56,8 +57,9 @@ use std::fs::{self as std_fs, File, OpenOptions};
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::{atomic::AtomicBool, Arc};
+
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::watch;
 
 /// Parameters for chat completion with validation
 ///
@@ -83,7 +85,7 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	/// Optional chat session for context management
 	pub chat_session: Option<&'a mut crate::session::chat::session::ChatSession>,
 	/// Cancellation token for request abortion
-	pub cancellation_token: Option<Arc<AtomicBool>>,
+	pub cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
@@ -127,7 +129,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 	}
 
 	/// Set cancellation token
-	pub fn with_cancellation_token(mut self, token: Arc<AtomicBool>) -> Self {
+	pub fn with_cancellation_token(mut self, token: watch::Receiver<bool>) -> Self {
 		self.cancellation_token = Some(token);
 		self
 	}
@@ -999,7 +1001,7 @@ pub async fn chat_completion_with_validation(
 ) -> Result<ProviderResponse> {
 	// Check for cancellation before starting
 	if let Some(ref token) = params.cancellation_token {
-		if token.load(std::sync::atomic::Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("Request cancelled before validation"));
 		}
 	}
@@ -1096,7 +1098,7 @@ pub async fn chat_completion_with_validation(
 
 	// Check for cancellation before API call
 	if let Some(ref token) = params.cancellation_token {
-		if token.load(std::sync::atomic::Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("Request cancelled before API call"));
 		}
 	}

@@ -28,6 +28,7 @@ use crate::session::chat::continuation::injection::inject_summary_request;
 use crate::session::chat::session::ChatSession;
 use anyhow::Result;
 use colored::Colorize;
+use std::sync::atomic::Ordering;
 
 /// Process continuation after AI responds with summary
 /// Returns true if continuation was processed, false if this wasn't a continuation response
@@ -209,8 +210,6 @@ pub async fn check_and_handle_continuation_with_cancellation(
 	config: &Config,
 	operation_cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<bool> {
-	use std::sync::atomic::Ordering;
-
 	// Check for cancellation at the start
 	if let Some(ref cancelled) = operation_cancelled {
 		if cancelled.load(Ordering::SeqCst) {

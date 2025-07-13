@@ -31,7 +31,7 @@ pub async fn process_tool_results(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<
 	Option<(
 		String,
@@ -43,7 +43,7 @@ pub async fn process_tool_results(
 	chat_session.session.info.total_tool_time_ms += total_tool_time_ms;
 
 	// Check for cancellation before making another request
-	if operation_cancelled.load(Ordering::SeqCst) {
+	if *operation_cancelled.borrow() {
 		println!("{}", "\nOperation cancelled by user.".bright_yellow());
 		// Do NOT add any confusing message to the session
 		return Ok(None);
@@ -57,7 +57,7 @@ pub async fn process_tool_results(
 	let operation_cancelled_monitor = operation_cancelled.clone();
 	let _cancel_monitor = tokio::spawn(async move {
 		while !animation_cancel_monitor.load(Ordering::SeqCst) {
-			if operation_cancelled_monitor.load(Ordering::SeqCst) {
+			if *operation_cancelled_monitor.borrow() {
 				animation_cancel_monitor.store(true, Ordering::SeqCst);
 				break;
 			}
@@ -221,7 +221,7 @@ pub async fn process_tool_results(
 	}
 
 	// CRITICAL FIX: Check for cancellation before making follow-up API call
-	if operation_cancelled.load(Ordering::SeqCst) {
+	if *operation_cancelled.borrow() {
 		// Stop animation before returning
 		animation_cancel.store(true, Ordering::SeqCst);
 		let _ = animation_task.await;
@@ -330,7 +330,7 @@ fn extract_tool_content(tool_result: &crate::mcp::McpToolResult) -> String {
 async fn make_follow_up_api_call(
 	chat_session: &ChatSession,
 	config: &Config,
-	cancellation_token: Arc<AtomicBool>,
+	cancellation_token: tokio::sync::watch::Receiver<bool>,
 ) -> Result<crate::providers::ProviderResponse> {
 	let model = chat_session.model.clone();
 	let temperature = chat_session.temperature;

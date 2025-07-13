@@ -29,7 +29,7 @@ pub async fn process_layered_response(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
 	// Ensure system message is cached before processing with layers
 	// This is important because system messages contain all the function definitions

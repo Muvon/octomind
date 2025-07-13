@@ -26,8 +26,6 @@ use crate::session::chat::session_continuation;
 use crate::session::ProviderExchange;
 use anyhow::Result;
 use colored::Colorize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 // Response processing parameters struct
 pub struct ResponseProcessingParams<'a> {
@@ -38,7 +36,7 @@ pub struct ResponseProcessingParams<'a> {
 	pub chat_session: &'a mut ChatSession,
 	pub config: &'a Config,
 	pub role: &'a str,
-	pub operation_cancelled: Arc<AtomicBool>,
+	pub operation_cancelled: tokio::sync::watch::Receiver<bool>,
 }
 
 impl<'a> ResponseProcessingParams<'a> {
@@ -51,7 +49,7 @@ impl<'a> ResponseProcessingParams<'a> {
 		chat_session: &'a mut ChatSession,
 		config: &'a Config,
 		role: &'a str,
-		operation_cancelled: Arc<AtomicBool>,
+		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	) -> Self {
 		Self {
 			content,
@@ -189,8 +187,8 @@ fn resolve_tool_calls(
 }
 
 // Helper function to check for cancellation
-fn check_cancellation(operation_cancelled: &Arc<AtomicBool>) -> Result<()> {
-	if operation_cancelled.load(Ordering::SeqCst) {
+fn check_cancellation(operation_cancelled: &tokio::sync::watch::Receiver<bool>) -> Result<()> {
+	if *operation_cancelled.borrow() {
 		println!("{}", "\nOperation cancelled by user.".bright_yellow());
 		return Err(anyhow::anyhow!("Operation cancelled"));
 	}
@@ -298,10 +296,11 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 	let mut current_content = params.content.clone();
 	let mut current_exchange = params.exchange;
 	let mut current_tool_calls_param = params.tool_calls.clone(); // Track the tool_calls parameter
+	let operation_cancelled_ref = &params.operation_cancelled; // Create a reference to avoid moves
 
 	loop {
 		// Check for cancellation at the start of each loop iteration
-		check_cancellation(&params.operation_cancelled)?;
+		check_cancellation(operation_cancelled_ref)?;
 
 		// Check for tool calls if MCP has any servers configured
 		if !params.config.mcp.servers.is_empty() {
@@ -325,8 +324,11 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				// Display tool parameters upfront (headers will be shown per-tool during execution)
 				display_tool_parameters_only(params.config, &current_tool_calls).await;
 
+				// Clone operation_cancelled to avoid borrow issues
+				let operation_cancelled_clone = params.operation_cancelled.clone();
+
 				// Early exit if cancellation was requested
-				if params.operation_cancelled.load(Ordering::SeqCst) {
+				if *operation_cancelled_clone.borrow() {
 					println!("{}", "\nOperation cancelled by user.".bright_yellow());
 					// Do NOT add any confusing message to the session
 					return Ok(());
@@ -338,12 +340,12 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 					params.chat_session,
 					params.config,
 					&mut tool_processor,
-					params.operation_cancelled.clone(),
+					operation_cancelled_clone.clone(),
 				)
 				.await?;
 
 				// Final cancellation check after all tools processed
-				if params.operation_cancelled.load(Ordering::SeqCst) {
+				if *operation_cancelled_clone.borrow() {
 					println!(
 						"{}",
 						"\nTool execution cancelled - cleaning up conversation state."
@@ -374,7 +376,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 							params.chat_session,
 							params.config,
 							params.role,
-							params.operation_cancelled.clone(),
+							operation_cancelled_clone.clone(),
 						)
 						.await?
 					{

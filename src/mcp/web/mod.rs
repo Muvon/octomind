@@ -35,22 +35,6 @@ pub use search::{
 };
 
 // Execute HTML to Markdown conversion with cancellation support
-pub async fn execute_read_html(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"HTML to Markdown conversion cancelled".to_string(),
-			));
-		}
-	}
-
+pub async fn execute_read_html(call: &McpToolCall) -> Result<McpToolResult> {
 	html_converter::execute_read_html(call).await
 }

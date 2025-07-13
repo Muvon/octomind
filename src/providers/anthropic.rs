@@ -223,12 +223,8 @@ impl AiProvider for AnthropicProvider {
 	}
 
 	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse> {
-		// Check for cancellation before starting
-		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
-				return Err(anyhow::anyhow!("Request cancelled before starting"));
-			}
-		}
+		// Don't check cancellation at start - only during the actual request
+		// This prevents stale cancellation state from blocking new requests
 		// Get API key
 		let api_key = self.get_api_key(params.config)?;
 
@@ -327,7 +323,7 @@ impl AiProvider for AnthropicProvider {
 
 		// Check for cancellation before making HTTP request
 		if let Some(ref token) = params.cancellation_token {
-			if token.load(std::sync::atomic::Ordering::SeqCst) {
+			if *token.borrow() {
 				return Err(anyhow::anyhow!("Request cancelled before HTTP call"));
 			}
 		}
@@ -666,11 +662,11 @@ struct AnthropicResponseData {
 async fn execute_anthropic_request(
 	api_key: String,
 	request_body: serde_json::Value,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<AnthropicResponseData, String> {
 	// Check for cancellation before starting
 	if let Some(ref token) = cancellation_token {
-		if token.load(std::sync::atomic::Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err("Request cancelled before starting".to_string());
 		}
 	}
@@ -682,40 +678,64 @@ async fn execute_anthropic_request(
 	let api_start = std::time::Instant::now();
 
 	// Create the HTTP request
-	let request_future = client
+	let request = client
 		.post(ANTHROPIC_API_URL)
 		.header("x-api-key", api_key.clone())
 		.header("Content-Type", "application/json")
 		.header("anthropic-version", "2023-06-01")
 		.header("anthropic-beta", "extended-cache-ttl-2025-04-11")
 		.header("anthropic-beta", "token-efficient-tools-2025-02-19")
-		.json(&request_body)
-		.send();
+		.json(&request_body);
 
 	// Race the HTTP request against cancellation
-	let response_result = if let Some(ref token) = cancellation_token {
-		let cancellation_future = async {
+	let response = if let Some(token) = cancellation_token {
+		let token_clone = token.clone();
+
+		// Check current cancellation state immediately
+		if *token_clone.borrow() {
+			return Err("Request cancelled before HTTP call".to_string());
+		}
+
+		// Create an abortable wrapper using tokio's JoinHandle
+		let mut request_handle = tokio::spawn(async move { request.send().await });
+
+		// Create cancellation future
+		let mut cancel_receiver = token_clone;
+		let cancellation_future = async move {
 			loop {
-				if token.load(std::sync::atomic::Ordering::SeqCst) {
+				if *cancel_receiver.borrow() {
 					break;
 				}
-				tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+				cancel_receiver.changed().await.ok();
 			}
 		};
 
+		// Use biased select to prioritize cancellation checking
 		tokio::select! {
-			result = request_future => {
-				result
-			}
+			biased;
+
 			_ = cancellation_future => {
-				return Err("Request cancelled during HTTP call".to_string());
+				// Abort the spawned task - this will actually cancel the HTTP request
+				request_handle.abort();
+				Err("Request cancelled during HTTP call".to_string())
+			}
+			result = &mut request_handle => {
+				// Handle the JoinHandle result
+				match result {
+					Ok(Ok(response)) => Ok(response),
+					Ok(Err(e)) => Err(e.to_string()),
+					Err(_) => {
+						// JoinError means the task was aborted
+						Err("Request aborted".to_string())
+					}
+				}
 			}
 		}
 	} else {
-		request_future.await
-	};
+		request.send().await.map_err(|e| e.to_string())
+	}?;
 
-	let response = response_result.map_err(|e| e.to_string())?;
+	// response is already a Response, not a Result
 
 	// Calculate API request time
 	let api_duration = api_start.elapsed();

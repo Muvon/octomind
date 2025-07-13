@@ -25,6 +25,17 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::Mutex;
 
+/// Result of user input operation
+#[derive(Debug)]
+pub enum InputResult {
+	/// Normal text input from user
+	Text(String),
+	/// Input was cancelled (Ctrl+C)
+	Cancelled,
+	/// User wants to exit (Ctrl+D)
+	Exit,
+}
+
 // Custom event handler for smart Ctrl+E behavior
 struct SmartCtrlEHandler;
 
@@ -161,7 +172,7 @@ fn load_history_from_file() -> Result<Vec<String>> {
 }
 
 // Read user input with support for multiline input, command completion, and persistent history
-pub fn read_user_input(estimated_cost: f64) -> Result<String> {
+pub fn read_user_input(estimated_cost: f64) -> Result<InputResult> {
 	// Configure rustyline with proper completion behavior for file completion
 	let config = RustylineConfig::builder()
 		.completion_type(CompletionType::List) // Bash-like completion with partial matches
@@ -264,12 +275,11 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 				let _ = crate::session::logger::log_user_request(&line);
 			}
 
-			Ok(line)
+			Ok(InputResult::Text(line))
 		}
 		Err(ReadlineError::Interrupted) => {
-			// Ctrl+C
-			println!("\nCancelled");
-			Ok(String::new())
+			// Ctrl+C - Return cancellation result
+			Ok(InputResult::Cancelled)
 		}
 		Err(ReadlineError::Eof) => {
 			// Ctrl+D - Show session file path before exiting
@@ -281,11 +291,11 @@ pub fn read_user_input(estimated_cost: f64) -> Result<String> {
 			}
 
 			log_info!("Session preserved for future reference.");
-			Ok("/exit".to_string())
+			Ok(InputResult::Exit)
 		}
 		Err(err) => {
 			println!("Error: {:?}", err);
-			Ok(String::new())
+			Ok(InputResult::Text(String::new()))
 		}
 	}
 }

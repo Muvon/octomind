@@ -21,8 +21,6 @@ use crate::session::chat::ToolProcessor;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 /// Context for tool execution - can be either main session or layer context
 pub enum ToolExecutionContext<'a> {
@@ -106,11 +104,8 @@ pub async fn execute_tools_parallel_unified(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	context: &mut ToolExecutionContext<'_>,
 	config: &Config,
-	operation_cancelled: Option<Arc<AtomicBool>>,
+	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
-	let operation_cancelled =
-		operation_cancelled.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-
 	// Filter tools based on context permissions
 	let allowed_tool_calls: Vec<_> = current_tool_calls
 		.into_iter()
@@ -142,7 +137,7 @@ pub async fn execute_tools_parallel(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	tool_processor: &mut ToolProcessor,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::MainSession {
 		chat_session,
@@ -174,7 +169,7 @@ async fn execute_tools_parallel_internal(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	context: &mut ToolExecutionContext<'_>,
 	config: &Config,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
 	let is_single_tool = current_tool_calls.len() == 1;
@@ -217,7 +212,7 @@ async fn execute_tools_parallel_internal(
 					crate::mcp::execute_tool_call(
 						&call_with_id,
 						&config_clone,
-						Some(cancel_token_for_task),
+						cancel_token_for_task,
 					)
 					.await
 				})
@@ -423,14 +418,7 @@ async fn execute_tools_parallel_internal(
 		}
 			}
 		},
-		_ = async {
-			loop {
-				if operation_cancelled.load(Ordering::SeqCst) {
-					break;
-				}
-				tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-			}
-		} => {
+		_ = async { std::future::pending::<()>().await } => {
 			// Cancellation occurred - provide immediate feedback
 			use colored::*;
 			println!(
@@ -597,7 +585,7 @@ pub async fn execute_layer_tool_calls_parallel(
 	layer_config: &crate::session::layers::LayerConfig,
 	layer_name: String,
 	config: &Config,
-	operation_cancelled: Option<Arc<AtomicBool>>,
+	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::Layer {
 		session_name,

@@ -18,8 +18,9 @@ use crate::config::Config;
 use crate::session::Message;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::sync::{atomic::AtomicBool, Arc};
+
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::watch;
 
 /// Parameters for chat completion requests
 ///
@@ -46,7 +47,7 @@ pub struct ChatCompletionParams<'a> {
 	/// Configuration object
 	pub config: &'a Config,
 	/// Cancellation token for request abortion
-	pub cancellation_token: Option<Arc<AtomicBool>>,
+	pub cancellation_token: Option<watch::Receiver<bool>>,
 }
 
 impl<'a> ChatCompletionParams<'a> {
@@ -81,7 +82,7 @@ impl<'a> ChatCompletionParams<'a> {
 	}
 
 	/// Set cancellation token
-	pub fn with_cancellation_token(mut self, token: Arc<AtomicBool>) -> Self {
+	pub fn with_cancellation_token(mut self, token: watch::Receiver<bool>) -> Self {
 		self.cancellation_token = Some(token);
 		self
 	}

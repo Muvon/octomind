@@ -632,7 +632,7 @@ pub async fn communicate_with_stdin_server(
 	server_name: &str,
 	message: &Value,
 	override_id: u64,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<Value> {
 	communicate_with_stdin_server_extended_timeout(
 		server_name,
@@ -650,11 +650,11 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 	message: &Value,
 	override_id: u64,
 	timeout_seconds: u64,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<Value> {
 	// Early cancellation check
 	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
+		if *token.borrow() {
 			return Err(anyhow::anyhow!("Operation cancelled before communication"));
 		}
 	}
@@ -853,7 +853,7 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 		if let Some(ref token) = cancellation_token {
 			loop {
 				tokio::time::sleep(Duration::from_millis(10)).await; // Much faster polling
-				if token.load(Ordering::SeqCst) {
+				if *token.borrow() {
 					break;
 				}
 			}
@@ -946,7 +946,7 @@ pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<
 pub async fn execute_stdin_tool_call(
 	call: &McpToolCall,
 	server: &McpServerConfig,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
 	// Debug output
 	// println!("Executing tool '{}' on server '{}'", call.tool_name, server.name);

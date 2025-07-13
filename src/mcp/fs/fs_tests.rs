@@ -961,7 +961,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 
 		// Check that operation succeeded
 		assert!(
@@ -1090,7 +1090,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail with invalid range"
@@ -1120,7 +1120,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail when start > end"
@@ -1148,7 +1148,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail with missing source file"
@@ -1179,7 +1179,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail with invalid append position"
@@ -1209,7 +1209,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(false)),
 			"Should succeed creating parent directories"
@@ -1239,7 +1239,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail with missing from_path"
@@ -1261,7 +1261,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail with invalid from_range"
@@ -1283,7 +1283,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert!(
 			result.result.get("isError") == Some(&json!(true)),
 			"Should fail with empty from_path"
@@ -1323,7 +1323,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1367,7 +1367,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1406,7 +1406,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1448,7 +1448,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1490,7 +1490,7 @@ mod tests {
 			}),
 		};
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1522,7 +1522,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1572,7 +1572,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -1620,7 +1620,7 @@ mod tests {
 		]);
 
 		let batch_call = create_batch_edit_call(&path, operations).await;
-		let batch_result = crate::mcp::fs::core::execute_batch_edit(&batch_call, None)
+		let batch_result = crate::mcp::fs::core::execute_batch_edit(&batch_call)
 			.await
 			.unwrap();
 
@@ -1701,7 +1701,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1721,7 +1721,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1741,7 +1741,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1771,7 +1771,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1812,7 +1812,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(true)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1846,7 +1846,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
@@ -1865,7 +1865,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
@@ -1888,7 +1888,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
@@ -1923,7 +1923,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call, None).await.unwrap();
+		let result = execute_extract_lines(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(true)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1959,7 +1959,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call, None).await.unwrap();
+		let result = execute_batch_edit(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 
 		let content = fs::read_to_string(&file_path).await.unwrap();
@@ -1992,7 +1992,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call, None).await.unwrap();
+		let result = execute_batch_edit(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 
 		let content = fs::read_to_string(&file_path).await.unwrap();
@@ -2029,7 +2029,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call, None).await.unwrap();
+		let result = execute_batch_edit(&call).await.unwrap();
 		// Check if operation succeeded
 		if let Some(content_array) = result.result["content"].as_array() {
 			if let Some(first_content) = content_array.first() {
@@ -2080,7 +2080,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call, None).await.unwrap();
+		let result = execute_batch_edit(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(true)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -2109,7 +2109,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -2129,7 +2129,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_text_editor(&call, None).await.unwrap();
+		let result = execute_text_editor(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(true)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -2173,7 +2173,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2223,7 +2223,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2262,7 +2262,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2307,7 +2307,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2366,7 +2366,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2431,7 +2431,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2473,7 +2473,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2516,7 +2516,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2576,7 +2576,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2653,7 +2653,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2732,7 +2732,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 
@@ -2847,7 +2847,7 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call, None)
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
 

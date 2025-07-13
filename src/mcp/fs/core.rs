@@ -189,23 +189,7 @@ pub fn detect_language(ext: &str) -> &str {
 // Main execution functions
 
 // Execute a text editor command following modern text editor specifications
-pub async fn execute_text_editor(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Text editor operation cancelled".to_string(),
-			));
-		}
-	}
-
+pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
@@ -228,13 +212,6 @@ pub async fn execute_text_editor(
 	// Execute the appropriate command with cancellation checks
 	match command.as_str() {
 		"view" => {
-			// Check for cancellation before view operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
-
 			// Extract path parameter for view command
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
@@ -308,13 +285,6 @@ pub async fn execute_text_editor(
 			file_ops::view_file_spec(call, Path::new(&path), view_range).await
 		},
 		"view_many" => {
-			// Check for cancellation before view_many operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
-
 			// Extract paths parameter for view_many command
 			let paths = match call.parameters.get("paths") {
 				Some(Value::Array(arr)) => {
@@ -347,13 +317,6 @@ pub async fn execute_text_editor(
 			file_ops::view_many_files_spec(call, &paths).await
 		},
 		"create" => {
-			// Check for cancellation before create operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
-
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Ok(McpToolResult::error(
@@ -373,12 +336,6 @@ pub async fn execute_text_editor(
 			file_ops::create_file_spec(call, Path::new(&path), &file_text).await
 		},
 		"str_replace" => {
-			// Check for cancellation before str_replace operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
 
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
@@ -407,13 +364,6 @@ pub async fn execute_text_editor(
 			text_editing::str_replace_spec(call, Path::new(&path), &old_str, &new_str).await
 		},
 		"insert" => {
-			// Check for cancellation before insert operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
-
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Ok(McpToolResult::error(
@@ -450,13 +400,6 @@ pub async fn execute_text_editor(
 			text_editing::insert_text_spec(call, Path::new(&path), insert_line, &new_str).await
 		},
 		"line_replace" => {
-			// Check for cancellation before line_replace operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
-
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Ok(McpToolResult::error(
@@ -509,13 +452,6 @@ pub async fn execute_text_editor(
 			text_editing::line_replace_spec(call, Path::new(&path), view_range, &new_str).await
 		},
 		"undo_edit" => {
-			// Check for cancellation before undo_edit operation
-			if let Some(ref token) = cancellation_token {
-				if token.load(Ordering::SeqCst) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), "Text editor operation cancelled".to_string()));
-				}
-			}
-
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => return Ok(McpToolResult::error(
@@ -535,46 +471,12 @@ pub async fn execute_text_editor(
 }
 
 // Execute list_files command
-pub async fn execute_list_files(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				"list_files".to_string(),
-				"unknown".to_string(),
-				"List files operation cancelled".to_string(),
-			));
-		}
-	}
-
+pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 	directory::execute_list_files(call).await
 }
 
 // Execute extract_lines command - MCP compliant implementation
-pub async fn execute_extract_lines(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::path::Path;
-	use std::sync::atomic::Ordering;
-	use tokio::fs;
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Extract lines operation cancelled".to_string(),
-			));
-		}
-	}
-
+pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> {
 	// Validate and extract from_path parameter
 	let from_path = match call.parameters.get("from_path") {
 		Some(Value::String(p)) => {
@@ -724,17 +626,6 @@ pub async fn execute_extract_lines(
 		}
 	};
 
-	// Check for cancellation before file operations
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Extract lines operation cancelled".to_string(),
-			));
-		}
-	}
-
 	// Read source file
 	let from_path_obj = Path::new(&from_path);
 	if !from_path_obj.exists() {
@@ -745,7 +636,7 @@ pub async fn execute_extract_lines(
 		));
 	}
 
-	let source_content = match fs::read_to_string(&from_path_obj).await {
+	let source_content = match tokio_fs::read_to_string(&from_path_obj).await {
 		Ok(content) => content,
 		Err(e) => {
 			return Ok(McpToolResult::error(
@@ -800,21 +691,10 @@ pub async fn execute_extract_lines(
 			extracted_lines.join("\n")
 		};
 
-	// Check for cancellation before target file operations
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Extract lines operation cancelled".to_string(),
-			));
-		}
-	}
-
 	// Handle target file - create parent directories if needed
 	let append_path_obj = Path::new(&append_path);
 	if let Some(parent) = append_path_obj.parent() {
-		if let Err(e) = fs::create_dir_all(parent).await {
+		if let Err(e) = tokio_fs::create_dir_all(parent).await {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
@@ -828,7 +708,7 @@ pub async fn execute_extract_lines(
 
 	// Read existing target file content or create empty if doesn't exist
 	let target_content = if append_path_obj.exists() {
-		match fs::read_to_string(&append_path_obj).await {
+		match tokio_fs::read_to_string(&append_path_obj).await {
 			Ok(content) => content,
 			Err(e) => {
 				return Ok(McpToolResult::error(
@@ -905,7 +785,7 @@ pub async fn execute_extract_lines(
 	};
 
 	// Write the final content to target file
-	if let Err(e) = fs::write(&append_path_obj, &final_content).await {
+	if let Err(e) = tokio_fs::write(&append_path_obj, &final_content).await {
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -938,23 +818,7 @@ pub async fn execute_extract_lines(
 }
 
 // Execute batch_edit operations on a single file
-pub async fn execute_batch_edit(
-	call: &McpToolCall,
-	cancellation_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<McpToolResult> {
-	use std::sync::atomic::Ordering;
-
-	// Check for cancellation before starting
-	if let Some(ref token) = cancellation_token {
-		if token.load(Ordering::SeqCst) {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Batch edit operation cancelled".to_string(),
-			));
-		}
-	}
-
+pub async fn execute_batch_edit(call: &McpToolCall) -> Result<McpToolResult> {
 	let (operations_vec, ai_format_warning) = match call.parameters.get("operations") {
 		Some(Value::Array(ops)) => {
 			// Correct format - AI passed array directly

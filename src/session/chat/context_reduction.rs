@@ -28,7 +28,7 @@ pub async fn perform_context_reduction(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	operation_cancelled: Arc<AtomicBool>,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
 	println!("{}", "Finalizing current task...".cyan());
 

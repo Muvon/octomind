@@ -59,7 +59,7 @@ mod tests {
 				"tasks": ["Task 1", "Task 2"]
 			})),
 		);
-		let result = execute_plan(&call, None).await.unwrap();
+		let result = execute_plan(&call).await.unwrap();
 
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(false));
@@ -87,7 +87,7 @@ mod tests {
 				"tasks": ["Task 1"]
 			})),
 		);
-		let result = execute_plan(&call, None).await.unwrap();
+		let result = execute_plan(&call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Missing required parameter 'title'"));
@@ -99,7 +99,7 @@ mod tests {
 				"title": "Test Plan"
 			})),
 		);
-		let result = execute_plan(&call, None).await.unwrap();
+		let result = execute_plan(&call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Missing required parameter 'tasks'"));
@@ -112,7 +112,7 @@ mod tests {
 				"tasks": []
 			})),
 		);
-		let result = execute_plan(&call, None).await.unwrap();
+		let result = execute_plan(&call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Tasks array cannot be empty"));
@@ -125,7 +125,7 @@ mod tests {
 				"tasks": ["Task 1"]
 			})),
 		);
-		let result = execute_plan(&call, None).await.unwrap();
+		let result = execute_plan(&call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Title parameter cannot be empty"));
@@ -143,7 +143,7 @@ mod tests {
 				"tasks": ["Task 1", "Task 2"]
 			})),
 		);
-		let _ = execute_plan(&start_call, None).await;
+		let _ = execute_plan(&start_call).await;
 
 		// Test adding step details
 		let step_call = create_plan_call(
@@ -152,14 +152,14 @@ mod tests {
 				"content": "Working on authentication logic"
 			})),
 		);
-		let result = execute_plan(&step_call, None).await.unwrap();
+		let result = execute_plan(&step_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(false));
 		assert!(extract_mcp_content(&result.result).contains("Step details added to Task"));
 
 		// Test getting step details (no content parameter)
 		let get_call = create_plan_call("step", None);
-		let result = execute_plan(&get_call, None).await.unwrap();
+		let result = execute_plan(&get_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(false));
 		let content = extract_mcp_content(&result.result);
@@ -173,7 +173,7 @@ mod tests {
 				"content": ""
 			})),
 		);
-		let result = execute_plan(&empty_call, None).await.unwrap();
+		let result = execute_plan(&empty_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Content parameter cannot be empty"));
@@ -194,7 +194,7 @@ mod tests {
 				"tasks": ["Design", "Implement", "Test", "Deploy"]
 			})),
 		);
-		let _ = execute_plan(&start_call, None).await;
+		let _ = execute_plan(&start_call).await;
 
 		// Complete first task
 		let next_call = create_plan_call(
@@ -203,11 +203,11 @@ mod tests {
 				"content": "Design completed"
 			})),
 		);
-		let _ = execute_plan(&next_call, None).await;
+		let _ = execute_plan(&next_call).await;
 
 		// Test list command
 		let list_call = create_plan_call("list", None);
-		let result = execute_plan(&list_call, None).await.unwrap();
+		let result = execute_plan(&list_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(false));
 
@@ -234,7 +234,7 @@ mod tests {
 				"tasks": ["Complete project"]
 			})),
 		);
-		let _ = execute_plan(&start_call, None).await;
+		let _ = execute_plan(&start_call).await;
 
 		// Test done command
 		let done_call = create_plan_call(
@@ -243,7 +243,7 @@ mod tests {
 				"content": "Project completed successfully"
 			})),
 		);
-		let result = execute_plan(&done_call, None).await.unwrap();
+		let result = execute_plan(&done_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(false));
 
@@ -267,18 +267,18 @@ mod tests {
 				"tasks": ["Task 1"]
 			})),
 		);
-		let _ = execute_plan(&start_call, None).await;
+		let _ = execute_plan(&start_call).await;
 
 		// Test reset command
 		let reset_call = create_plan_call("reset", None);
-		let result = execute_plan(&reset_call, None).await.unwrap();
+		let result = execute_plan(&reset_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(false));
 		assert!(extract_mcp_content(&result.result).contains("Plan data cleared successfully"));
 
 		// Verify plan is cleared
 		let list_call = create_plan_call("list", None);
-		let result = execute_plan(&list_call, None).await.unwrap();
+		let result = execute_plan(&list_call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("No active plan"));
@@ -288,7 +288,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_plan_invalid_command() {
 		let call = create_plan_call("invalid_command", None);
-		let result = execute_plan(&call, None).await.unwrap();
+		let result = execute_plan(&call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Unknown command 'invalid_command'"));
@@ -308,7 +308,7 @@ mod tests {
 				"tasks": ["Task 1", "Task 2"]
 			})),
 		);
-		let _ = execute_plan(&start_call, None).await;
+		let _ = execute_plan(&start_call).await;
 
 		// Add step details - should NOT complete the task
 		let step_call = create_plan_call(
@@ -317,11 +317,11 @@ mod tests {
 				"content": "Working on task 1"
 			})),
 		);
-		let _ = execute_plan(&step_call, None).await;
+		let _ = execute_plan(&step_call).await;
 
 		// Check that we're still on task 1
 		let list_call = create_plan_call("list", None);
-		let result = execute_plan(&list_call, None).await.unwrap();
+		let result = execute_plan(&list_call).await.unwrap();
 		let content = extract_mcp_content(&result.result);
 		assert!(content.contains("🔄 1. Task 1 (IN PROGRESS)")); // Still in progress
 		assert!(content.contains("⏳ 2. Task 2")); // Still pending
@@ -333,11 +333,11 @@ mod tests {
 				"content": "Task 1 completed"
 			})),
 		);
-		let _ = execute_plan(&next_call, None).await;
+		let _ = execute_plan(&next_call).await;
 
 		// Check that task 1 is completed and we moved to task 2
 		let list_call = create_plan_call("list", None);
-		let result = execute_plan(&list_call, None).await.unwrap();
+		let result = execute_plan(&list_call).await.unwrap();
 		let content = extract_mcp_content(&result.result);
 		assert!(content.contains("✅ 1. Task 1")); // Now completed
 		assert!(content.contains("🔄 2. Task 2 (IN PROGRESS)")); // Now current
@@ -360,7 +360,7 @@ mod tests {
 				"tasks": ["Task A", "Task B"]
 			})),
 		);
-		let result1 = execute_plan(&start_call1, None).await.unwrap();
+		let result1 = execute_plan(&start_call1).await.unwrap();
 		let output1 = result1.result.as_object().unwrap();
 		assert_eq!(output1["isError"], json!(false));
 		let content1 = extract_mcp_content(&result1.result);
@@ -374,7 +374,7 @@ mod tests {
 				"content": "Working on Task A"
 			})),
 		);
-		let _ = execute_plan(&step_call, None).await;
+		let _ = execute_plan(&step_call).await;
 
 		// Try to create second plan - should ERROR with clear message
 		let start_call2 = create_plan_call(
@@ -384,7 +384,7 @@ mod tests {
 				"tasks": ["Task X", "Task Y", "Task Z"]
 			})),
 		);
-		let result2 = execute_plan(&start_call2, None).await.unwrap();
+		let result2 = execute_plan(&start_call2).await.unwrap();
 		let output2 = result2.result.as_object().unwrap();
 		assert_eq!(output2["isError"], json!(true)); // Should fail
 		let error_content = extract_mcp_content(&result2.result);
@@ -395,7 +395,7 @@ mod tests {
 
 		// Verify the first plan is still intact
 		let list_call = create_plan_call("list", None);
-		let result = execute_plan(&list_call, None).await.unwrap();
+		let result = execute_plan(&list_call).await.unwrap();
 		let content = extract_mcp_content(&result.result);
 		assert!(content.contains("First Plan"));
 		assert!(content.contains("Task A"));
@@ -420,7 +420,7 @@ mod tests {
 				"tasks": ["Task A"]
 			})),
 		);
-		let _ = execute_plan(&start_call1, None).await;
+		let _ = execute_plan(&start_call1).await;
 
 		let done_call = create_plan_call(
 			"done",
@@ -428,7 +428,7 @@ mod tests {
 				"content": "First plan completed"
 			})),
 		);
-		let _ = execute_plan(&done_call, None).await;
+		let _ = execute_plan(&done_call).await;
 
 		// Now start second plan should work
 		let start_call2 = create_plan_call(
@@ -438,7 +438,7 @@ mod tests {
 				"tasks": ["Task X", "Task Y"]
 			})),
 		);
-		let result2 = execute_plan(&start_call2, None).await.unwrap();
+		let result2 = execute_plan(&start_call2).await.unwrap();
 		let output2 = result2.result.as_object().unwrap();
 		assert_eq!(output2["isError"], json!(false)); // Should succeed
 		let content2 = extract_mcp_content(&result2.result);
@@ -463,7 +463,7 @@ mod tests {
 				"tasks": ["Task A", "Task B"]
 			})),
 		);
-		let _ = execute_plan(&start_call1, None).await;
+		let _ = execute_plan(&start_call1).await;
 
 		let step_call = create_plan_call(
 			"step",
@@ -471,11 +471,11 @@ mod tests {
 				"content": "Working on Task A"
 			})),
 		);
-		let _ = execute_plan(&step_call, None).await;
+		let _ = execute_plan(&step_call).await;
 
 		// Reset the plan
 		let reset_call = create_plan_call("reset", None);
-		let _ = execute_plan(&reset_call, None).await;
+		let _ = execute_plan(&reset_call).await;
 
 		// Now start second plan should work
 		let start_call2 = create_plan_call(
@@ -485,7 +485,7 @@ mod tests {
 				"tasks": ["Task X", "Task Y"]
 			})),
 		);
-		let result2 = execute_plan(&start_call2, None).await.unwrap();
+		let result2 = execute_plan(&start_call2).await.unwrap();
 		let output2 = result2.result.as_object().unwrap();
 		assert_eq!(output2["isError"], json!(false)); // Should succeed
 		let content2 = extract_mcp_content(&result2.result);

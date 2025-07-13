@@ -28,7 +28,7 @@ pub async fn process_with_layers(
 	session: &mut crate::session::Session,
 	config: &crate::config::Config,
 	role: &str,
-	operation_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<String> {
 	let orchestrator = LayeredOrchestrator::from_config(config, role);
 	orchestrator

@@ -18,8 +18,6 @@ use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use crate::session::layers::{GenericLayer, Layer};
 use anyhow::Result;
 use serde_json::json;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 // Get all available agent functions based on config
 pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
@@ -85,7 +83,6 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 pub async fn execute_agent_command(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-	_cancellation_token: Option<Arc<AtomicBool>>,
 ) -> Result<McpToolResult> {
 	// Handle call_llm tool
 	if call.tool_name == "call_llm" {
@@ -196,7 +193,7 @@ async fn process_layer_as_agent(
 	let layer = GenericLayer::new(agent_layer_config);
 
 	// Process task through layer with full MCP tools support
-	let operation_cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let operation_cancelled = tokio::sync::watch::channel(false).1;
 	let result = layer
 		.process(task, &agent_session, config, operation_cancelled)
 		.await?;

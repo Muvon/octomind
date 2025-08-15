@@ -252,3 +252,54 @@ pub fn truncate_tool_output_smart(content: &str, max_lines: usize, max_chars: us
 		format!("{}...", truncated)
 	}
 }
+
+/// Global MCP response truncation - simple and effective
+///
+/// Applies consistent truncation across ALL MCP tools when responses exceed threshold.
+/// Uses 0 = unlimited, otherwise applies smart truncation with MCP-specific notice.
+pub fn truncate_mcp_response_global(content: &str, max_tokens: usize) -> String {
+	if max_tokens == 0 {
+		return content.to_string();
+	}
+
+	let token_count = estimate_tokens(content);
+	if token_count <= max_tokens {
+		return content.to_string();
+	}
+
+	// Use existing smart truncation
+	let truncated = truncate_content_smart(content, max_tokens);
+
+	// Replace the truncation message with MCP-specific one
+	truncated.replace(
+		"[Content truncated -",
+		"⚠️ **MCP RESPONSE TRUNCATED** - Original:",
+	)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_mcp_truncation_unlimited() {
+		let content = "This is a test content";
+		let result = truncate_mcp_response_global(content, 0);
+		assert_eq!(result, content);
+	}
+
+	#[test]
+	fn test_mcp_truncation_under_limit() {
+		let content = "Short content";
+		let result = truncate_mcp_response_global(content, 1000);
+		assert_eq!(result, content);
+	}
+
+	#[test]
+	fn test_mcp_truncation_over_limit() {
+		let content = "This is a very long content that should be truncated when it exceeds the token limit. ".repeat(100);
+		let result = truncate_mcp_response_global(&content, 50);
+		assert!(result.contains("⚠️ **MCP RESPONSE TRUNCATED**"));
+		assert!(result.len() < content.len());
+	}
+}

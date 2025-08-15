@@ -213,16 +213,27 @@ pub struct ToolResponseMessage {
 	pub content: String,
 }
 
-// Convert tool results to proper messages
-pub fn tool_results_to_messages(results: &[McpToolResult]) -> Vec<ToolResponseMessage> {
+// Convert tool results to proper messages with global truncation
+pub fn tool_results_to_messages(
+	results: &[McpToolResult],
+	config: &crate::config::Config,
+) -> Vec<ToolResponseMessage> {
 	let mut messages = Vec::new();
 
 	for result in results {
+		let content_str = serde_json::to_string(&result.result).unwrap_or_default();
+
+		// Apply global MCP response truncation
+		let final_content = crate::utils::truncation::truncate_mcp_response_global(
+			&content_str,
+			config.mcp_response_tokens_threshold,
+		);
+
 		messages.push(ToolResponseMessage {
 			role: "tool".to_string(),
 			tool_call_id: result.tool_id.clone(),
 			name: result.tool_name.clone(),
-			content: serde_json::to_string(&result.result).unwrap_or_default(),
+			content: final_content,
 		});
 	}
 

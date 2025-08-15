@@ -15,7 +15,6 @@
 // Shell execution functionality for the Developer MCP provider
 
 use super::super::{McpFunction, McpToolCall, McpToolResult};
-use crate::utils::truncation::truncate_content_smart;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
@@ -78,11 +77,6 @@ fn add_to_shell_history(command: &str) -> Result<()> {
 	Ok(())
 }
 
-// Truncate shell output if it exceeds token limit
-fn truncate_shell_output(output: &str, max_tokens: usize) -> String {
-	truncate_content_smart(output, max_tokens)
-}
-
 // Define the shell function for the MCP protocol with enhanced description
 pub fn get_shell_function() -> McpFunction {
 	McpFunction {
@@ -96,7 +90,6 @@ of if the command succeeded or failed.
 Parameters:
 - `command`: The shell command to execute (required)
 - `background`: Run command in background and return PID instead of waiting for completion (default: false)
-- `max_tokens`: Maximum tokens allowed in output before truncation (default: 2000)
 
 **Working Directory:**
 All commands execute from the current working directory.
@@ -104,9 +97,9 @@ NO `cd` command is required when you working with current project files.
 REMEMBER that each command you run has NO knowledge of previous runs, other context, or variables that were set BEFORE in another command.
 
 **Output Truncation:**
-To prevent huge outputs from consuming excessive tokens, output is automatically truncated
-if it exceeds max_tokens. Avoid commands that produce large outputs (like `cat large_file`
-or `find /` without filters). When large output is needed, increase max_tokens parameter.
+Output size is controlled by global mcp_response_tokens_threshold setting.
+Avoid commands that produce large outputs (like `cat large_file` or `find /` without filters).
+Use more specific commands to reduce output size if responses are truncated.
 
 **Background Execution:**
 When `background` is true, the command runs in the background and returns immediately with the process PID.
@@ -126,7 +119,6 @@ may show ignored or hidden files. For example *do not* use `find` or `ls -r`
 Examples:
 - Foreground: `{\"command\": \"ls -la\"}`
 - Background: `{\"command\": \"python -m http.server 8000\", \"background\": true}`
-- Large output: `{\"command\": \"cat large_file.txt\", \"max_tokens\": 5000}`
 - Kill background: `{\"command\": \"kill 12345\"}` (where 12345 is the returned PID)
 ".to_string(),
 		parameters: json!({
@@ -140,12 +132,6 @@ Examples:
 					"type": "boolean",
 					"default": false,
 					"description": "Run command in background and return PID instead of waiting for completion (no need to append '&')"
-				},
-				"max_tokens": {
-					"type": "integer",
-					"default": 2000,
-					"minimum": 100,
-					"description": "Maximum tokens allowed in output before truncation (default: 2000)"
 				}
 			},
 			"required": ["command"]
@@ -191,14 +177,6 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 		.get("background")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
-
-	// Extract max_tokens parameter
-	let max_tokens = call
-		.parameters
-		.get("max_tokens")
-		.and_then(|v| v.as_u64())
-		.map(|n| n as usize)
-		.unwrap_or(2000);
 
 	// Add command to shell history before execution
 	let _ = add_to_shell_history(&command);
@@ -275,8 +253,8 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 				format!("{stdout}\n\nError: {stderr}")
 			};
 
-			// Apply token-based truncation to prevent huge outputs
-			let truncated_output = truncate_shell_output(&combined, max_tokens);
+			// Apply global truncation (handled by global MCP response truncation)
+			let final_output = combined;
 
 			// Add detailed execution results including status code
 			let status_code = output.status.code().unwrap_or(-1);
@@ -288,7 +266,7 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 				Ok(McpToolResult::success(
 					"shell".to_string(),
 					call.tool_id.clone(),
-					truncated_output,
+					final_output,
 				))
 			} else {
 				// Command failed - use error format per MCP protocol
@@ -296,7 +274,7 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 					"shell".to_string(),
 					call.tool_id.clone(),
 					format!(
-						"Command failed with exit code {status_code}\nCommand: {command}\n\nOutput:\n{truncated_output}"
+						"Command failed with exit code {status_code}\nCommand: {command}\n\nOutput:\n{final_output}"
 					),
 				))
 			}

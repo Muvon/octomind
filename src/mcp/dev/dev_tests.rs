@@ -465,8 +465,8 @@ fn private_func() {
 	}
 
 	#[tokio::test]
-	async fn test_ast_grep_truncation() {
-		// Test that ast_grep supports smart truncation like list_files
+	async fn test_ast_grep_basic_functionality() {
+		// Test that ast_grep works correctly without tool-level truncation
 		// Create a temporary Rust file with many functions
 		let temp_content = r#"
 fn function1() { println!("1"); }
@@ -486,15 +486,14 @@ fn function14() { println!("14"); }
 fn function15() { println!("15"); }
 "#;
 
-		let temp_file = "test_ast_grep_truncation.rs";
+		let temp_file = "test_ast_grep_basic.rs";
 		std::fs::write(temp_file, temp_content).unwrap();
 
-		// Test with max_lines = 5 (should truncate)
+		// Test basic ast_grep functionality (no max_lines parameter)
 		let params = json!({
 			"pattern": "fn $NAME() { $$$ }",
 			"language": "rust",
-			"paths": [temp_file],
-			"max_lines": 5
+			"paths": [temp_file]
 		});
 
 		let call = McpToolCall {
@@ -513,40 +512,46 @@ fn function15() { println!("15"); }
 		let result = result.unwrap();
 		let output = result.result.as_object().unwrap();
 
-		// Check that parameters include max_lines
+		// Check basic result structure (no max_lines parameter)
 		let params = &output["parameters"];
-		assert_eq!(params["max_lines"], 5);
+		assert!(params.get("max_lines").is_none()); // max_lines should not be present
+		assert_eq!(params["pattern"], "fn $NAME() { $$$ }");
+		assert_eq!(params["language"], "rust");
 
-		// If ast-grep finds matches and we have more than 5 lines, should have truncation info
+		// Should have successful execution
+		assert_eq!(output["success"], true);
+		assert_eq!(output["operation"], "search");
+
+		// Should have output with function matches
 		let output_text = output["output"].as_str().unwrap_or("");
-		println!("ast_grep truncation test output:\n{}", output_text);
+		println!("ast_grep basic test output:\n{}", output_text);
 
-		// Test with max_lines = 0 (unlimited)
-		let params_unlimited = json!({
+		// Test with context parameter
+		let params_with_context = json!({
 			"pattern": "fn $NAME() { $$$ }",
 			"language": "rust",
 			"paths": [temp_file],
-			"max_lines": 0
+			"context": 1
 		});
-
-		let call_unlimited = McpToolCall {
-			tool_name: "ast_grep".to_string(),
-			parameters: params_unlimited,
-			tool_id: "test-call-id".to_string(),
-		};
 
 		// Recreate the file for the second test
 		std::fs::write(temp_file, temp_content).unwrap();
-		let result_unlimited = execute_ast_grep_command(&call_unlimited).await;
+
+		let call_with_context = McpToolCall {
+			tool_name: "ast_grep".to_string(),
+			parameters: params_with_context,
+			tool_id: "test-call-id".to_string(),
+		};
+
+		let result_with_context = execute_ast_grep_command(&call_with_context).await;
 		let _ = std::fs::remove_file(temp_file);
 
-		assert!(result_unlimited.is_ok());
-		let result_unlimited = result_unlimited.unwrap();
-		let output_unlimited = result_unlimited.result.as_object().unwrap();
+		assert!(result_with_context.is_ok());
+		let result_with_context = result_with_context.unwrap();
+		let output_with_context = result_with_context.result.as_object().unwrap();
 
-		// Should not have truncation with max_lines = 0
-		assert!(!output_unlimited.contains_key("truncation_info"));
-		assert_eq!(output_unlimited["parameters"]["max_lines"], 0);
+		// Should have context parameter
+		assert_eq!(output_with_context["parameters"]["context"], 1);
 	}
 
 	#[tokio::test]

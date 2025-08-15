@@ -34,9 +34,11 @@ pub fn get_list_files_function() -> McpFunction {
 			- `content`: Optional content search within files
 			- `max_depth`: Optional depth limit for directory traversal
 			- `include_hidden`: Include hidden files/directories starting with '.' (default: false)
-			- `max_lines`: Maximum lines to return (default: 20, set to 0 for unlimited)
 			- `line_numbers`: Show line numbers for content search (default: true)
 			- `context`: Number of context lines to show around matches (default: 0)
+
+			Note: Response size is controlled by global mcp_response_tokens_threshold setting.
+			Use specific patterns and filters to reduce output size if responses are truncated.
 
 			Best Practices:
 			- Always use specific patterns - avoid listing entire large directories
@@ -83,11 +85,6 @@ pub fn get_list_files_function() -> McpFunction {
 					"type": "boolean",
 					"default": false,
 					"description": "Include hidden files and directories starting with '.' (default: false)"
-				},
-				"max_lines": {
-					"type": "integer",
-					"default": 20,
-					"description": "Maximum lines to return (default: 20, set to 0 for unlimited)"
 				},
 				"line_numbers": {
 					"type": "boolean",

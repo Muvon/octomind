@@ -81,8 +81,10 @@ Parameters:
 - `rewrite`: Optional rewrite pattern to apply for refactoring transformations
 - `json_output`: Optional boolean to get output in JSON format (default: false)
 - `context`: Optional number of lines of context to show around matches (default: 0)
-- `max_lines`: Maximum lines to return (default: 20, set to 0 for unlimited)
 - `update_all`: Optional boolean to apply rewrites to all matches without confirmation (default: false)
+
+Note: Response size is controlled by global mcp_response_tokens_threshold setting.
+Use more specific patterns to reduce output size if responses are truncated.
 
 Pattern Syntax:
 - Use metavariables like $NAME, $ARGS, $BODY for flexible matching
@@ -175,11 +177,6 @@ Usage Examples:
 					"type": "boolean",
 					"default": false,
 					"description": "Optional boolean to apply rewrites to all matches without confirmation (default: false)"
-				},
-				"max_lines": {
-					"type": "integer",
-					"default": 20,
-					"description": "Maximum lines to return (default: 20, set to 0 for unlimited)"
 				}
 			}
 		}),
@@ -258,12 +255,6 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 		.get("update_all")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
-
-	let max_lines = call
-		.parameters
-		.get("max_lines")
-		.and_then(|v| v.as_i64())
-		.unwrap_or(20) as usize;
 
 	// Build the ast-grep command using proper argument passing
 	let mut cmd = TokioCommand::new("sg");
@@ -401,18 +392,16 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 			// Group FIRST to preserve file-based organization
 			let grouped_output = group_ast_grep_output(&stdout);
 
-			// Then apply truncation to the grouped output
-			let output_lines: Vec<String> = grouped_output.lines().map(|s| s.to_string()).collect();
-			let (truncated_lines, truncation_info) =
-				crate::mcp::shared_utils::apply_head_truncation(&output_lines, max_lines);
+			// Global truncation will be applied by MCP response handler
+			let final_output = grouped_output;
 
 			// Format the final output
 			let combined = if stderr.is_empty() {
-				truncated_lines.join("\n")
-			} else if truncated_lines.is_empty() {
+				final_output
+			} else if final_output.is_empty() {
 				stderr
 			} else {
-				format!("{}\n\nError: {}", truncated_lines.join("\n"), stderr)
+				format!("{}\n\nError: {}", final_output, stderr)
 			};
 
 			// Add detailed execution results including status code
@@ -426,7 +415,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 				"search"
 			};
 
-			let mut result = json!({
+			let result = json!({
 				"success": success,
 				"output": combined,
 				"code": status_code,
@@ -438,8 +427,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 					"rewrite": rewrite,
 					"json_output": json_output,
 					"context": context,
-					"update_all": update_all,
-					"max_lines": max_lines
+					"update_all": update_all
 				},
 				"message": if success {
 					format!("AST-grep {operation_type} executed successfully with exit code {status_code}")
@@ -447,11 +435,6 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 					format!("AST-grep {operation_type} failed with exit code {status_code}")
 				}
 			});
-
-			// Add truncation info if present
-			if let Some(info) = truncation_info {
-				result["truncation_info"] = json!(info);
-			}
 
 			result
 		}
@@ -467,8 +450,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 				"rewrite": rewrite,
 				"json_output": json_output,
 				"context": context,
-				"update_all": update_all,
-				"max_lines": max_lines
+				"update_all": update_all
 			},
 			"message": format!("Failed to execute ast-grep command: {}", e)
 		}),

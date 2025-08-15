@@ -275,12 +275,6 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
 
-	let max_lines = call
-		.parameters
-		.get("max_lines")
-		.and_then(|v| v.as_i64())
-		.unwrap_or(20) as usize;
-
 	let line_numbers = call
 		.parameters
 		.get("line_numbers")
@@ -359,25 +353,22 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 					// Group FIRST to preserve match + context relationships
 					let grouped_output = group_ripgrep_output(&lines);
 
-					// Then apply truncation to the grouped output
-					let output_lines: Vec<String> =
-						grouped_output.lines().map(|s| s.to_string()).collect();
-					let (truncated_lines, truncation_info) =
-						crate::mcp::shared_utils::apply_head_truncation(&output_lines, max_lines);
+					// Global truncation will be applied by MCP response handler
+					let final_output = grouped_output;
 
 					let output_str = if stdout.is_empty() && !stderr.is_empty() {
 						stderr
 					} else {
-						truncated_lines.join("\n")
+						final_output
 					};
 
 					// For content search, we return the formatted output with matches
-					let mut result = json!({
+					let result = json!({
 							"success": output.status.success(),
 							"output": output_str,
-							"lines": truncated_lines,
+							"lines": lines,
 							"total_lines": lines.len(),
-							"displayed_lines": truncated_lines.len(),
+							"displayed_lines": lines.len(),
 							"type": output_type,
 							"parameters": {
 							"directory": directory,
@@ -385,16 +376,11 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 							"content": content,
 							"max_depth": max_depth,
 							"include_hidden": include_hidden,
-							"max_lines": max_lines,
+
 							"line_numbers": line_numbers,
 							"context": context_lines
 						}
 					});
-
-					// Add truncation info if present
-					if let Some(info) = truncation_info {
-						result["truncation_info"] = json!(info);
-					}
 
 					result
 				} else {
@@ -408,23 +394,22 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 							files.retain(|file| regex.is_match(file));
 						}
 					}
-
-					// Apply head truncation for consistent behavior
-					let (truncated_files, truncation_info) =
-						crate::mcp::shared_utils::apply_head_truncation(&files, max_lines);
+					// Global truncation will be applied by MCP response handler
+					let files_count = files.len();
+					let final_files = files;
 
 					let output_str = if stdout.is_empty() && !stderr.is_empty() {
 						stderr
 					} else {
-						truncated_files.join("\n")
+						final_files.join("\n")
 					};
 
-					let mut result = json!({
+					let result = json!({
 							"success": output.status.success(),
 							"output": output_str,
-							"files": truncated_files,
-							"count": files.len(),
-							"displayed_count": truncated_files.len(),
+							"files": final_files,
+							"count": files_count,
+							"displayed_count": final_files.len(),
 							"type": output_type,
 							"parameters": {
 							"directory": directory,
@@ -432,16 +417,11 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 							"content": content,
 							"max_depth": max_depth,
 							"include_hidden": include_hidden,
-							"max_lines": max_lines,
+
 							"line_numbers": line_numbers,
 							"context": context_lines
 						}
 					});
-
-					// Add truncation info if present
-					if let Some(info) = truncation_info {
-						result["truncation_info"] = json!(info);
-					}
 
 					result
 				}
@@ -458,7 +438,6 @@ pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
 					"content": content,
 					"max_depth": max_depth,
 					"include_hidden": include_hidden,
-					"max_lines": max_lines,
 					"line_numbers": line_numbers,
 					"context": context_lines
 				}

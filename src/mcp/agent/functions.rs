@@ -44,7 +44,20 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	// Add call_llm function
 	functions.push(McpFunction {
 		name: "call_llm".to_string(),
-		description: "Make a direct LLM call with runtime parameters, bypassing agent configuration".to_string(),
+		description: "Make a direct LLM call with runtime parameters, bypassing agent configuration.
+
+		Parameters:
+		- `prompt`: The input/prompt to process
+		- `model`: Model in 'provider:model' format (e.g., 'openai:gpt-4o', 'openrouter:anthropic/claude-3.5-sonnet')
+		- `system`: System prompt for the LLM
+		- `temperature`: Temperature for randomness (0.0-2.0, default: 0.7)
+
+		Note: Response size is controlled by global mcp_response_tokens_threshold setting.
+		Use more specific prompts to reduce output size if responses are truncated.
+
+		Examples:
+		- Basic call: `{\"prompt\": \"Explain quantum computing\", \"model\": \"openai:gpt-4o\", \"system\": \"You are a helpful assistant\"}`
+		- With temperature: `{\"prompt\": \"Write a poem\", \"model\": \"openrouter:anthropic/claude-3.5-sonnet\", \"system\": \"You are a creative writer\", \"temperature\": 1.2}`".to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -66,11 +79,7 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 					"minimum": 0.0,
 					"maximum": 2.0
 				},
-				"max_tokens": {
-					"type": "integer",
-					"description": "Maximum output tokens (default: 4096)",
-					"minimum": 1
-				}
+
 			},
 			"required": ["prompt", "model", "system"]
 		}),

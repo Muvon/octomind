@@ -13,6 +13,12 @@
 // limitations under the License.
 
 // DeepSeek provider implementation
+//
+// PRICING UPDATE: September 5, 2025 at 16:00 UTC
+// New unified pricing for ALL models (no time-based discounts):
+// - Cache Hit: $0.07 per 1M tokens
+// - Cache Miss (Input): $0.56 per 1M tokens
+// - Output: $1.68 per 1M tokens
 
 use super::{AiProvider, ChatCompletionParams, ProviderExchange, ProviderResponse, TokenUsage};
 use crate::config::Config;
@@ -23,88 +29,37 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
 
-// Model pricing maps: Standard and Discount (per 1M tokens in USD)
+// Model pricing (per 1M tokens in USD) - Updated Sept 5, 2025
+// New unified pricing for ALL models (no time-based discounts)
 lazy_static::lazy_static! {
-	/// Standard pricing: model -> (input, output)
-	static ref STANDARD_PRICING: std::collections::HashMap<&'static str, (f64, f64)> = [
-		("deepseek-chat", (0.27, 1.10)),
-		("deepseek-reasoner", (0.55, 2.19)),
-	].iter().cloned().collect();
-	/// Discount pricing: model -> (input, output)
-	static ref DISCOUNT_PRICING: std::collections::HashMap<&'static str, (f64, f64)> = [
-		("deepseek-chat", (0.135, 0.55)),
-		("deepseek-reasoner", (0.135, 0.55)),
-	].iter().cloned().collect();
+	/// Input pricing (cache miss): $0.56 per 1M tokens for all models
+	static ref INPUT_PRICING: f64 = 0.56;
+	/// Output pricing: $1.68 per 1M tokens for all models
+	static ref OUTPUT_PRICING: f64 = 1.68;
+	/// Cache hit pricing: $0.07 per 1M tokens for all models
+	static ref CACHE_HIT_PRICING: f64 = 0.07;
 }
 
-// Cache pricing: model -> (standard, discount)
-lazy_static::lazy_static! {
-	static ref CACHE_PRICING: std::collections::HashMap<&'static str, (f64, f64)> = [
-		("deepseek-chat", (0.07, 0.035)),
-		("deepseek-reasoner", (0.14, 0.035)),
-	].iter().cloned().collect();
-}
+// Time-based discount system removed as of Sept 5, 2025
+// All models now use unified pricing regardless of time
 
-/// Check if current UTC time falls within discount hours (16:30-00:30 UTC)
-fn is_discount_time() -> bool {
-	use chrono::{Timelike, Utc};
-	let now = Utc::now();
-	let hour = now.hour();
-	let minute = now.minute();
-	let time_minutes = hour * 60 + minute;
-
-	// Discount period: 16:30 (990 minutes) to 00:30 (30 minutes next day)
-	// This spans midnight, so we check if time is >= 16:30 OR <= 00:30
-	time_minutes >= 990 || time_minutes <= 30
-}
-
-/// Calculate cost for DeepSeek models with time-based and cache-aware pricing
+/// Calculate cost for DeepSeek models with unified pricing (Sept 5, 2025+)
 fn calculate_cost_with_cache(
-	model: &str,
+	_model: &str, // Model parameter kept for API compatibility but not used
 	regular_input_tokens: u64,
 	cache_hit_tokens: u64,
 	completion_tokens: u64,
 ) -> Option<f64> {
-	let is_discount = is_discount_time();
-	let (input_price, output_price) = if is_discount {
-		get_discount_pricing(model)?
-	} else {
-		get_standard_pricing(model)?
-	};
-	let cache_price = if is_discount {
-		get_discount_cache_pricing(model)?
-	} else {
-		get_standard_cache_pricing(model)?
-	};
-	let regular_input_cost = (regular_input_tokens as f64 / 1_000_000.0) * input_price;
-	let cache_hit_cost = (cache_hit_tokens as f64 / 1_000_000.0) * cache_price;
-	let output_cost = (completion_tokens as f64 / 1_000_000.0) * output_price;
+	// New unified pricing for all models
+	let regular_input_cost = (regular_input_tokens as f64 / 1_000_000.0) * *INPUT_PRICING;
+	let cache_hit_cost = (cache_hit_tokens as f64 / 1_000_000.0) * *CACHE_HIT_PRICING;
+	let output_cost = (completion_tokens as f64 / 1_000_000.0) * *OUTPUT_PRICING;
 	Some(regular_input_cost + cache_hit_cost + output_cost)
 }
 
-/// Return (input, output) pricing for standard period
-fn get_standard_pricing(model: &str) -> Option<(f64, f64)> {
-	STANDARD_PRICING.get(model).cloned()
-}
-
-/// Return (input, output) pricing for discount period
-fn get_discount_pricing(model: &str) -> Option<(f64, f64)> {
-	DISCOUNT_PRICING.get(model).cloned()
-}
-
-/// Return cache hit price for standard period
-fn get_standard_cache_pricing(model: &str) -> Option<f64> {
-	CACHE_PRICING.get(model).map(|(std, _)| *std)
-}
-
-/// Return cache hit price for discount period
-fn get_discount_cache_pricing(model: &str) -> Option<f64> {
-	CACHE_PRICING.get(model).map(|(_, disc)| *disc)
-}
-
-/// Calculate cost for DeepSeek models with basic time-based pricing
-fn calculate_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Option<f64> {
-	calculate_cost_with_cache(model, prompt_tokens, 0, completion_tokens)
+/// Calculate cost for DeepSeek models with unified pricing (no cache)
+fn calculate_cost(_model: &str, prompt_tokens: u64, completion_tokens: u64) -> Option<f64> {
+	calculate_cost_with_cache(_model, prompt_tokens, 0, completion_tokens)
 }
 
 /// DeepSeek provider implementation
@@ -423,11 +378,11 @@ impl AiProvider for DeepSeekProvider {
 				.and_then(|v| v.as_u64())
 				.unwrap_or(0);
 
-			// For DeepSeek: Cache hit tokens get special pricing
-			// Regular input tokens are charged at normal rate (cache miss rate)
+			// For DeepSeek: Cache hit tokens get special pricing ($0.07/1M)
+			// Regular input tokens are charged at cache miss rate ($0.56/1M)
 			let regular_input_tokens = prompt_tokens.saturating_sub(cache_hit_tokens);
 
-			// Calculate cost with cache-aware and time-based pricing
+			// Calculate cost with unified pricing (Sept 5, 2025+)
 			let cost = if cache_hit_tokens > 0 {
 				calculate_cost_with_cache(
 					params.model,
@@ -448,7 +403,7 @@ impl AiProvider for DeepSeekProvider {
 				output_tokens: completion_tokens,
 				total_tokens,
 				cached_tokens,                      // Simple: total tokens that came from cache
-				cost,                               // Pre-calculated with proper cache and time-based pricing
+				cost,                               // Pre-calculated with unified pricing (Sept 5, 2025+)
 				request_time_ms: Some(api_time_ms), // Track API timing for DeepSeek
 			})
 		} else {
@@ -585,37 +540,35 @@ mod tests {
 	}
 
 	#[test]
-	fn test_discount_time_logic() {
-		// This test would need to mock the current time to test properly
-		// For now, just verify the function doesn't panic
-		let _is_discount = is_discount_time();
-	}
-
-	#[test]
 	fn test_calculate_cost() {
-		// Test basic cost calculation for deepseek-chat
+		// Test basic cost calculation with new unified pricing (Sept 5, 2025+)
+		// Input: $0.56/1M, Output: $1.68/1M
 		let cost = calculate_cost("deepseek-chat", 1_000_000, 500_000);
 		assert!(cost.is_some());
 		let cost_value = cost.unwrap();
-		// Cost should be reasonable (input + output costs)
-		assert!(cost_value > 0.0);
-		assert!(cost_value < 10.0); // Should be less than $10 for 1M+500K tokens
 
-		// Test cost calculation for deepseek-reasoner
-		let cost = calculate_cost("deepseek-reasoner", 1_000_000, 500_000);
-		assert!(cost.is_some());
-		let cost_value = cost.unwrap();
-		// Reasoner should be more expensive than chat
-		assert!(cost_value > 0.0);
+		// Expected: (1M * $0.56) + (0.5M * $1.68) = $0.56 + $0.84 = $1.40
+		let expected = 0.56 + (0.5 * 1.68);
+		assert!((cost_value - expected).abs() < 0.01); // Allow small floating point differences
+
+		// Test with different model - should be same price now
+		let cost2 = calculate_cost("deepseek-reasoner", 1_000_000, 500_000);
+		assert!(cost2.is_some());
+		assert!((cost2.unwrap() - expected).abs() < 0.01); // Same pricing for all models
 	}
 
 	#[test]
 	fn test_calculate_cost_with_cache() {
-		// Test cache-aware cost calculation
+		// Test cache-aware cost calculation with new unified pricing
+		// Cache hit: $0.07/1M, Cache miss: $0.56/1M, Output: $1.68/1M
 		let cost = calculate_cost_with_cache("deepseek-chat", 500_000, 500_000, 250_000);
 		assert!(cost.is_some());
 		let cost_value = cost.unwrap();
-		assert!(cost_value > 0.0);
+
+		// Expected: (0.5M * $0.56) + (0.5M * $0.07) + (0.25M * $1.68)
+		//         = $0.28 + $0.035 + $0.42 = $0.735
+		let expected = (0.5 * 0.56) + (0.5 * 0.07) + (0.25 * 1.68);
+		assert!((cost_value - expected).abs() < 0.01);
 
 		// Cost with cache should be less than without cache for same total input
 		let cost_no_cache = calculate_cost("deepseek-chat", 1_000_000, 250_000);

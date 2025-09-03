@@ -33,6 +33,53 @@ use std::sync::Arc;
 
 use tokio::sync::watch;
 
+/// Determine if input starting with '/' is likely a command or user content
+///
+/// This function helps distinguish between:
+/// - Actual commands (short, single words): `/help`, `/q`, `/exit`
+/// - User content that happens to start with '/': `/path/to/file`, `/Users/dk/Work/...`
+///
+/// Rules:
+/// 1. If length >= 10 characters, likely user content (not a typo)
+/// 2. If contains multiple '/' characters, likely a file path
+/// 3. If contains spaces and is long, likely user content
+/// 4. Otherwise, treat as potential command
+fn is_likely_command(input: &str) -> bool {
+	let trimmed = input.trim();
+
+	// Very short inputs starting with '/' are likely commands or typos
+	if trimmed.len() < 3 {
+		return true;
+	}
+
+	// If it's long (>=10 chars), it's probably user content, not a command typo
+	if trimmed.len() >= 10 {
+		// Check if it looks like a file path (multiple slashes)
+		let slash_count = trimmed.chars().filter(|&c| c == '/').count();
+		if slash_count >= 2 {
+			return false; // Likely a file path like /path/to/file
+		}
+
+		// If it contains spaces and is long, likely user content
+		if trimmed.contains(' ') {
+			return false; // Likely user content like "/some long user message"
+		}
+
+		// Long single word starting with '/' - could be either, but lean towards user content
+		// since commands are typically short
+		return false;
+	}
+
+	// Medium length (3-9 chars) - check for path-like patterns
+	let slash_count = trimmed.chars().filter(|&c| c == '/').count();
+	if slash_count >= 2 {
+		return false; // Likely a short path like /usr/bin
+	}
+
+	// Default: treat as potential command for medium-length single words
+	true
+}
+
 // Type alias for extracted session parameters
 type SessionParams = (
 	Option<String>, // name
@@ -1057,8 +1104,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 		}
 
-		// Check if this is a command
-		if input.starts_with('/') {
+		// Check if this is a command or user input that happens to start with '/'
+		if input.starts_with('/') && is_likely_command(&input) {
 			// Handle special /done command separately
 			if input.trim() == "/done" {
 				// Handle /done command using dedicated handler

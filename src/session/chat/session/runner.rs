@@ -33,53 +33,6 @@ use std::sync::Arc;
 
 use tokio::sync::watch;
 
-/// Determine if input starting with '/' is likely a command or user content
-///
-/// This function helps distinguish between:
-/// - Actual commands (short, single words): `/help`, `/q`, `/exit`
-/// - User content that happens to start with '/': `/path/to/file`, `/Users/dk/Work/...`
-///
-/// Rules:
-/// 1. If length >= 10 characters, likely user content (not a typo)
-/// 2. If contains multiple '/' characters, likely a file path
-/// 3. If contains spaces and is long, likely user content
-/// 4. Otherwise, treat as potential command
-fn is_likely_command(input: &str) -> bool {
-	let trimmed = input.trim();
-
-	// Very short inputs starting with '/' are likely commands or typos
-	if trimmed.len() < 3 {
-		return true;
-	}
-
-	// If it's long (>=10 chars), it's probably user content, not a command typo
-	if trimmed.len() >= 10 {
-		// Check if it looks like a file path (multiple slashes)
-		let slash_count = trimmed.chars().filter(|&c| c == '/').count();
-		if slash_count >= 2 {
-			return false; // Likely a file path like /path/to/file
-		}
-
-		// If it contains spaces and is long, likely user content
-		if trimmed.contains(' ') {
-			return false; // Likely user content like "/some long user message"
-		}
-
-		// Long single word starting with '/' - could be either, but lean towards user content
-		// since commands are typically short
-		return false;
-	}
-
-	// Medium length (3-9 chars) - check for path-like patterns
-	let slash_count = trimmed.chars().filter(|&c| c == '/').count();
-	if slash_count >= 2 {
-		return false; // Likely a short path like /usr/bin
-	}
-
-	// Default: treat as potential command for medium-length single words
-	true
-}
-
 // Type alias for extracted session parameters
 type SessionParams = (
 	Option<String>, // name
@@ -1105,101 +1058,113 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		}
 
 		// Check if this is a command or user input that happens to start with '/'
-		if input.starts_with('/') && is_likely_command(&input) {
-			// Handle special /done command separately
-			if input.trim() == "/done" {
-				// Handle /done command using dedicated handler
-				match super::commands::handle_done(
-					&mut chat_session,
-					&current_config,
-					&role,
-					operation_rx.clone(),
-				)
-				.await
-				{
-					Ok((exit_flag, reset_first_message)) => {
-						if reset_first_message {
-							// Reset first_message_processed to false so that the next message goes through layers again
-							first_message_processed = false;
-						}
-						if exit_flag {
-							break;
-						}
-					}
-					Err(e) => {
-						use colored::*;
-						println!("{}: {}", "❌ /done command failed".bright_red(), e);
-					}
-				}
-				continue;
-			}
+		if input.starts_with('/') {
+			// For simple invalid commands like "/wrongcommand", show error
+			// For complex input like "/path/to/file", treat as user input
+			let input_parts: Vec<&str> = input.split_whitespace().collect();
+			let command = input_parts[0];
 
-			let exit = chat_session
-				.process_command(&input, &mut current_config, &role, operation_rx.clone())
-				.await?;
-			if exit {
-				// First check if it's a session switch command
-				if input.starts_with(SESSION_COMMAND) {
-					// We need to switch to another session
-					let new_session_name = chat_session.session.info.name.clone();
+			// Check if this looks like a file path or complex user input
+			let is_likely_user_input = command.chars().filter(|&c| c == '/').count() > 1;
 
-					// Save current session before switching
-					chat_session.save()?;
-
-					// Initialize the new session
-					let session_params = SessionInitParams::new(&current_config, &role)
-						.with_name(new_session_name)
-						.with_max_retries(current_config.max_retries);
-					let new_chat_session = ChatSession::initialize(session_params).await?;
-
-					// Replace the current chat session
-					chat_session = new_chat_session;
-
-					// Reset first message flag for new session
-					first_message_processed = !chat_session.session.messages.is_empty();
-
-					// Print the last few messages for context with colors
-					if !chat_session.session.messages.is_empty() {
-						let last_messages = chat_session
-							.session
-							.messages
-							.iter()
-							.rev()
-							.take(3)
-							.collect::<Vec<_>>();
-						use colored::*;
-
-						for msg in last_messages.iter().rev() {
-							if msg.role == "assistant" {
-								println!("{}", msg.content.bright_green());
-							} else if msg.role == "user" {
-								println!("> {}", msg.content.bright_blue());
+			if is_likely_user_input {
+				// This looks like "/path/to/file" - treat as user input, don't process as command
+			} else {
+				// Handle special /done command separately
+				if input.trim() == "/done" {
+					// Handle /done command using dedicated handler
+					match super::commands::handle_done(
+						&mut chat_session,
+						&current_config,
+						&role,
+						operation_rx.clone(),
+					)
+					.await
+					{
+						Ok((exit_flag, reset_first_message)) => {
+							if reset_first_message {
+								// Reset first_message_processed to false so that the next message goes through layers again
+								first_message_processed = false;
+							}
+							if exit_flag {
+								break;
 							}
 						}
-					}
-
-					// Continue with the session
-					continue;
-				} else if input.starts_with(LAYERS_COMMAND) {
-					// This is a command that requires config reload
-					// Reload the configuration
-					match crate::config::Config::load() {
-						Ok(updated_config) => {
-							// Update our current config with the new role-specific config
-							current_config = updated_config.get_merged_config_for_role(&role);
-							// Update thread config for logging macros
-							crate::config::set_thread_config(&current_config);
-							log_info!("Configuration reloaded successfully");
-						}
 						Err(e) => {
-							log_info!("Error reloading configuration: {}", e);
+							use colored::*;
+							println!("{}: {}", "❌ /done command failed".bright_red(), e);
 						}
 					}
-					// Continue with the session
 					continue;
-				} else {
-					// It's a regular exit command
-					break;
+				}
+
+				let exit = chat_session
+					.process_command(&input, &mut current_config, &role, operation_rx.clone())
+					.await?;
+				if exit {
+					// First check if it's a session switch command
+					if input.starts_with(SESSION_COMMAND) {
+						// We need to switch to another session
+						let new_session_name = chat_session.session.info.name.clone();
+
+						// Save current session before switching
+						chat_session.save()?;
+
+						// Initialize the new session
+						let session_params = SessionInitParams::new(&current_config, &role)
+							.with_name(new_session_name)
+							.with_max_retries(current_config.max_retries);
+						let new_chat_session = ChatSession::initialize(session_params).await?;
+
+						// Replace the current chat session
+						chat_session = new_chat_session;
+
+						// Reset first message flag for new session
+						first_message_processed = !chat_session.session.messages.is_empty();
+
+						// Print the last few messages for context with colors
+						if !chat_session.session.messages.is_empty() {
+							let last_messages = chat_session
+								.session
+								.messages
+								.iter()
+								.rev()
+								.take(3)
+								.collect::<Vec<_>>();
+							use colored::*;
+
+							for msg in last_messages.iter().rev() {
+								if msg.role == "assistant" {
+									println!("{}", msg.content.bright_green());
+								} else if msg.role == "user" {
+									println!("> {}", msg.content.bright_blue());
+								}
+							}
+						}
+
+						// Continue with the session
+						continue;
+					} else if input.starts_with(LAYERS_COMMAND) {
+						// This is a command that requires config reload
+						// Reload the configuration
+						match crate::config::Config::load() {
+							Ok(updated_config) => {
+								// Update our current config with the new role-specific config
+								current_config = updated_config.get_merged_config_for_role(&role);
+								// Update thread config for logging macros
+								crate::config::set_thread_config(&current_config);
+								log_info!("Configuration reloaded successfully");
+							}
+							Err(e) => {
+								log_info!("Error reloading configuration: {}", e);
+							}
+						}
+						// Continue with the session
+						continue;
+					} else {
+						// It's a regular exit command
+						break;
+					}
 				}
 			}
 			continue;
@@ -1440,44 +1405,56 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 	// Check if this is a command (same logic as interactive session)
 	if input.starts_with('/') {
-		use colored::*;
+		// For simple invalid commands like "/wrongcommand", show error
+		// For complex input like "/path/to/file", treat as user input
+		let input_parts: Vec<&str> = input.split_whitespace().collect();
+		let command = input_parts[0];
 
-		// Handle special /done command separately
-		if input.trim() == "/done" {
-			// Disable continuation triggers during /done processing
-			chat_session.disable_continuation();
+		// Check if this looks like a file path or complex user input
+		let is_likely_user_input = command.chars().filter(|&c| c == '/').count() > 1;
 
-			// Clear plan data
-			if let Err(e) = crate::mcp::dev::plan::clear_plan_data().await {
-				crate::log_debug!("Failed to clear plan data: {}", e);
+		if is_likely_user_input {
+			// This looks like "/path/to/file" - treat as user input, don't process as command
+		} else {
+			use colored::*;
+
+			// Handle special /done command separately
+			if input.trim() == "/done" {
+				// Disable continuation triggers during /done processing
+				chat_session.disable_continuation();
+
+				// Clear plan data
+				if let Err(e) = crate::mcp::dev::plan::clear_plan_data().await {
+					crate::log_debug!("Failed to clear plan data: {}", e);
+				}
+
+				// Re-enable continuation triggers after /done processing
+				chat_session.enable_continuation();
+
+				println!(
+					"{}",
+					"✓ Session optimized and ready for next message".bright_green()
+				);
+				let _ = chat_session.save();
+				return Ok(());
 			}
 
-			// Re-enable continuation triggers after /done processing
-			chat_session.enable_continuation();
+			// Process the command
+			let exit = chat_session
+				.process_command(&input, &mut current_config, &role, operation_rx.clone())
+				.await?;
 
-			println!(
-				"{}",
-				"✓ Session optimized and ready for next message".bright_green()
-			);
+			if exit {
+				// Check if it's a session switch command
+				if input.starts_with(crate::session::chat::commands::SESSION_COMMAND) {
+					println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind session' for interactive session management.".yellow());
+				}
+			}
+
+			// Save session after command execution
 			let _ = chat_session.save();
 			return Ok(());
 		}
-
-		// Process the command
-		let exit = chat_session
-			.process_command(&input, &mut current_config, &role, operation_rx.clone())
-			.await?;
-
-		if exit {
-			// Check if it's a session switch command
-			if input.starts_with(crate::session::chat::commands::SESSION_COMMAND) {
-				println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind session' for interactive session management.".yellow());
-			}
-		}
-
-		// Save session after command execution
-		let _ = chat_session.save();
-		return Ok(());
 	}
 
 	// Layer processing if enabled and first message using helper function

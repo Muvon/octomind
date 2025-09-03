@@ -50,7 +50,7 @@ rustyline = { version = "17.0.0", features = ["custom-bindings"] }
 regex = "1.11.1"
 colored = "3.0.0"
 async-trait = "0.1.88"
-termimad = "0.33.0"
+termimad = "0.34.0"
 syntect = "5.2.0"
 html5ever = "0.35.0"
 markup5ever_rcdom = "0.35.0-unofficial"

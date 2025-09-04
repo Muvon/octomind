@@ -45,6 +45,14 @@ use super::core::ChatSession;
 use crate::config::Config;
 use anyhow::Result;
 
+// Command processing result
+#[derive(Debug)]
+pub enum CommandResult {
+	Handled,          // Command was processed successfully, continue session
+	Exit,             // Exit the session
+	TreatAsUserInput, // This input should be treated as user input, not a command
+}
+
 // Process user commands
 pub async fn process_command(
 	session: &mut ChatSession,
@@ -52,7 +60,7 @@ pub async fn process_command(
 	config: &mut Config,
 	_role: &str, // Original role - now unused, keeping for API compatibility
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
-) -> Result<bool> {
+) -> Result<CommandResult> {
 	// Extract command and potential parameters
 	let input_parts: Vec<&str> = input.split_whitespace().collect();
 	let command = input_parts[0];
@@ -66,107 +74,102 @@ pub async fn process_command(
 	let current_role = session.role.clone();
 
 	match command {
-		EXIT_COMMAND | QUIT_COMMAND => exit::handle_exit(),
-		HELP_COMMAND => help::handle_help(config, &current_role).await,
-		COPY_COMMAND => copy::handle_copy(&session.last_response),
-		CLEAR_COMMAND => clear::handle_clear(),
-		SAVE_COMMAND => save::handle_save(session),
-		INFO_COMMAND => info::handle_info(session),
-		REPORT_COMMAND => report::handle_report(session, config),
-		CONTEXT_COMMAND => context::handle_context(session, config, params),
-		LAYERS_COMMAND => layers::handle_layers(session, config, &current_role).await,
-		LOGLEVEL_COMMAND => loglevel::handle_loglevel(config, params),
+		EXIT_COMMAND | QUIT_COMMAND => {
+			exit::handle_exit()?;
+			Ok(CommandResult::Exit)
+		}
+		HELP_COMMAND => {
+			help::handle_help(config, &current_role).await?;
+			Ok(CommandResult::Handled)
+		}
+		COPY_COMMAND => {
+			copy::handle_copy(&session.last_response)?;
+			Ok(CommandResult::Handled)
+		}
+		CLEAR_COMMAND => {
+			clear::handle_clear()?;
+			Ok(CommandResult::Handled)
+		}
+		SAVE_COMMAND => {
+			save::handle_save(session)?;
+			Ok(CommandResult::Handled)
+		}
+		INFO_COMMAND => {
+			info::handle_info(session)?;
+			Ok(CommandResult::Handled)
+		}
+		REPORT_COMMAND => {
+			report::handle_report(session, config)?;
+			Ok(CommandResult::Handled)
+		}
+		CONTEXT_COMMAND => {
+			context::handle_context(session, config, params)?;
+			Ok(CommandResult::Handled)
+		}
+		LAYERS_COMMAND => {
+			layers::handle_layers(session, config, &current_role).await?;
+			Ok(CommandResult::Handled)
+		}
+		LOGLEVEL_COMMAND => {
+			loglevel::handle_loglevel(config, params)?;
+			Ok(CommandResult::Handled)
+		}
 		DONE_COMMAND => {
 			// /done is handled directly in runner.rs main loop for session lifecycle management
 			// This case should not be reached as /done is intercepted before process_command
 			unreachable!("/done command should be handled in runner.rs main loop")
 		}
-		TRUNCATE_COMMAND => truncate::handle_truncate(session, config, &current_role).await,
-		SUMMARIZE_COMMAND => summarize::handle_summarize(session, config).await,
-		CACHE_COMMAND => cache::handle_cache(session, config, params).await,
-		LIST_COMMAND => list::handle_list(session, config, params),
-		MODEL_COMMAND => model::handle_model(session, config, params),
-		SESSION_COMMAND => session::handle_session(session, params),
-		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,
+		TRUNCATE_COMMAND => {
+			truncate::handle_truncate(session, config, &current_role).await?;
+			Ok(CommandResult::Handled)
+		}
+		SUMMARIZE_COMMAND => {
+			summarize::handle_summarize(session, config).await?;
+			Ok(CommandResult::Handled)
+		}
+		CACHE_COMMAND => {
+			cache::handle_cache(session, config, params).await?;
+			Ok(CommandResult::Handled)
+		}
+		LIST_COMMAND => {
+			list::handle_list(session, config, params)?;
+			Ok(CommandResult::Handled)
+		}
+		MODEL_COMMAND => {
+			model::handle_model(session, config, params)?;
+			Ok(CommandResult::Handled)
+		}
+		SESSION_COMMAND => {
+			session::handle_session(session, params)?;
+			Ok(CommandResult::Handled)
+		}
+		MCP_COMMAND => {
+			mcp::handle_mcp(config, &current_role, params).await?;
+			Ok(CommandResult::Handled)
+		}
 		RUN_COMMAND => {
-			run::handle_run(session, config, &current_role, params, operation_cancelled).await
+			run::handle_run(session, config, &current_role, params, operation_cancelled).await?;
+			Ok(CommandResult::Handled)
 		}
-		IMAGE_COMMAND => image::handle_image(session, params).await,
-		ROLE_COMMAND => role::handle_role(session, config, params).await,
-		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
-		PLAN_COMMAND => plan::handle_plan().await,
-		_ => handle_unknown_command(command, config, &current_role).await,
-	}
-}
-
-// Handle unknown commands by showing error and available commands
-async fn handle_unknown_command(command: &str, config: &Config, role: &str) -> Result<bool> {
-	use colored::Colorize;
-
-	// Show error message
-	println!(
-		"{}: {}",
-		"Unknown command".bright_red(),
-		command.bright_yellow()
-	);
-
-	// Show available commands
-	println!("\n{}", "Available commands:".bright_cyan());
-
-	// Basic session commands
-	println!("{} - Show help and available commands", HELP_COMMAND.cyan());
-	println!("{} - Display token usage and costs", INFO_COMMAND.cyan());
-	println!("{} - Generate detailed usage report", REPORT_COMMAND.cyan());
-	println!("{} - Copy last response to clipboard", COPY_COMMAND.cyan());
-	println!("{} - Clear the screen", CLEAR_COMMAND.cyan());
-	println!("{} - Save the session", SAVE_COMMAND.cyan());
-	println!("{} - List all sessions", LIST_COMMAND.cyan());
-	println!("{} - Switch to another session", SESSION_COMMAND.cyan());
-	println!("{} - Show/change current model", MODEL_COMMAND.cyan());
-	println!("{} - Set logging level", LOGLEVEL_COMMAND.cyan());
-
-	// Advanced commands
-	println!("{} - Toggle layered processing", LAYERS_COMMAND.cyan());
-	println!(
-		"{} - Finalize task with context optimization",
-		DONE_COMMAND.cyan()
-	);
-	println!("{} - Smart context truncation", TRUNCATE_COMMAND.cyan());
-	println!("{} - Summarize conversation", SUMMARIZE_COMMAND.cyan());
-	println!("{} - Manage cache checkpoints", CACHE_COMMAND.cyan());
-	println!("{} - Display session context", CONTEXT_COMMAND.cyan());
-	println!("{} - Show MCP server status", MCP_COMMAND.cyan());
-	println!("{} - Execute command layer", RUN_COMMAND.cyan());
-	println!(
-		"{} - Send predefined prompt templates",
-		PROMPT_COMMAND.cyan()
-	);
-	println!("{} - Attach image to message", IMAGE_COMMAND.cyan());
-	println!("{} - Switch session role", ROLE_COMMAND.cyan());
-	println!(
-		"{} - Display current plan status (for complex tasks only)",
-		PLAN_COMMAND.cyan()
-	);
-	println!(
-		"{}/{} - Exit the session",
-		EXIT_COMMAND.cyan(),
-		QUIT_COMMAND.cyan()
-	);
-
-	// Show command layers if available
-	let available_commands =
-		crate::session::chat::command_executor::list_available_commands(config, role);
-	if !available_commands.is_empty() {
-		println!("\n{}", "Available command layers:".bright_blue());
-		for cmd in &available_commands {
-			println!("  {} {}", "/run".cyan(), cmd.bright_yellow());
+		IMAGE_COMMAND => {
+			image::handle_image(session, params).await?;
+			Ok(CommandResult::Handled)
+		}
+		ROLE_COMMAND => {
+			role::handle_role(session, config, params).await?;
+			Ok(CommandResult::Handled)
+		}
+		PROMPT_COMMAND => {
+			prompt::handle_prompt(session, config, &current_role, params).await?;
+			Ok(CommandResult::Handled)
+		}
+		PLAN_COMMAND => {
+			plan::handle_plan().await?;
+			Ok(CommandResult::Handled)
+		}
+		_ => {
+			// Unknown command - treat as user input instead of showing error
+			Ok(CommandResult::TreatAsUserInput)
 		}
 	}
-
-	println!(
-		"\n💡 Type {} for detailed help with examples",
-		"/help".bright_green()
-	);
-
-	Ok(false) // Command was handled, don't exit
 }

@@ -1057,51 +1057,46 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 		}
 
-		// Check if this is a command or user input that happens to start with '/'
+		// Check if this is a command
 		if input.starts_with('/') {
-			// For simple invalid commands like "/wrongcommand", show error
-			// For complex input like "/path/to/file", treat as user input
-			let input_parts: Vec<&str> = input.split_whitespace().collect();
-			let command = input_parts[0];
-
-			// Check if this looks like a file path or complex user input
-			let is_likely_user_input = command.chars().filter(|&c| c == '/').count() > 1;
-
-			if is_likely_user_input {
-				// This looks like "/path/to/file" - treat as user input, don't process as command
-			} else {
-				// Handle special /done command separately
-				if input.trim() == "/done" {
-					// Handle /done command using dedicated handler
-					match super::commands::handle_done(
-						&mut chat_session,
-						&current_config,
-						&role,
-						operation_rx.clone(),
-					)
-					.await
-					{
-						Ok((exit_flag, reset_first_message)) => {
-							if reset_first_message {
-								// Reset first_message_processed to false so that the next message goes through layers again
-								first_message_processed = false;
-							}
-							if exit_flag {
-								break;
-							}
+			// Handle special /done command separately
+			if input.trim() == "/done" {
+				// Handle /done command using dedicated handler
+				match super::commands::handle_done(
+					&mut chat_session,
+					&current_config,
+					&role,
+					operation_rx.clone(),
+				)
+				.await
+				{
+					Ok((exit_flag, reset_first_message)) => {
+						if reset_first_message {
+							// Reset first_message_processed to false so that the next message goes through layers again
+							first_message_processed = false;
 						}
-						Err(e) => {
-							use colored::*;
-							println!("{}: {}", "❌ /done command failed".bright_red(), e);
+						if exit_flag {
+							break;
 						}
 					}
-					continue;
+					Err(e) => {
+						use colored::*;
+						println!("{}: {}", "❌ /done command failed".bright_red(), e);
+					}
 				}
+				continue;
+			}
 
-				let exit = chat_session
-					.process_command(&input, &mut current_config, &role, operation_rx.clone())
-					.await?;
-				if exit {
+			// Try to process as command
+			let command_result = chat_session
+				.process_command(&input, &mut current_config, &role, operation_rx.clone())
+				.await?;
+
+			match command_result {
+				super::commands::CommandResult::TreatAsUserInput => {
+					// This input should be treated as user input, fall through to normal processing
+				}
+				super::commands::CommandResult::Exit => {
 					// First check if it's a session switch command
 					if input.starts_with(SESSION_COMMAND) {
 						// We need to switch to another session
@@ -1166,8 +1161,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 						break;
 					}
 				}
+				super::commands::CommandResult::Handled => {
+					// Command was handled successfully, continue with session
+					continue;
+				}
 			}
-			continue;
 		}
 
 		// Check for cancellation before starting layered processing
@@ -1405,55 +1403,53 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 	// Check if this is a command (same logic as interactive session)
 	if input.starts_with('/') {
-		// For simple invalid commands like "/wrongcommand", show error
-		// For complex input like "/path/to/file", treat as user input
-		let input_parts: Vec<&str> = input.split_whitespace().collect();
-		let command = input_parts[0];
+		use colored::*;
 
-		// Check if this looks like a file path or complex user input
-		let is_likely_user_input = command.chars().filter(|&c| c == '/').count() > 1;
+		// Handle special /done command separately
+		if input.trim() == "/done" {
+			// Disable continuation triggers during /done processing
+			chat_session.disable_continuation();
 
-		if is_likely_user_input {
-			// This looks like "/path/to/file" - treat as user input, don't process as command
-		} else {
-			use colored::*;
-
-			// Handle special /done command separately
-			if input.trim() == "/done" {
-				// Disable continuation triggers during /done processing
-				chat_session.disable_continuation();
-
-				// Clear plan data
-				if let Err(e) = crate::mcp::dev::plan::clear_plan_data().await {
-					crate::log_debug!("Failed to clear plan data: {}", e);
-				}
-
-				// Re-enable continuation triggers after /done processing
-				chat_session.enable_continuation();
-
-				println!(
-					"{}",
-					"✓ Session optimized and ready for next message".bright_green()
-				);
-				let _ = chat_session.save();
-				return Ok(());
+			// Clear plan data
+			if let Err(e) = crate::mcp::dev::plan::clear_plan_data().await {
+				crate::log_debug!("Failed to clear plan data: {}", e);
 			}
 
-			// Process the command
-			let exit = chat_session
-				.process_command(&input, &mut current_config, &role, operation_rx.clone())
-				.await?;
+			// Re-enable continuation triggers after /done processing
+			chat_session.enable_continuation();
 
-			if exit {
+			println!(
+				"{}",
+				"✓ Session optimized and ready for next message".bright_green()
+			);
+			let _ = chat_session.save();
+			return Ok(());
+		}
+
+		// Try to process as command
+		let command_result = chat_session
+			.process_command(&input, &mut current_config, &role, operation_rx.clone())
+			.await?;
+
+		match command_result {
+			crate::session::chat::session::commands::CommandResult::TreatAsUserInput => {
+				// This input should be treated as user input, fall through to normal processing
+			}
+			crate::session::chat::session::commands::CommandResult::Exit => {
 				// Check if it's a session switch command
 				if input.starts_with(crate::session::chat::commands::SESSION_COMMAND) {
 					println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind session' for interactive session management.".yellow());
 				}
+				// Save session after command execution
+				let _ = chat_session.save();
+				return Ok(());
 			}
-
-			// Save session after command execution
-			let _ = chat_session.save();
-			return Ok(());
+			crate::session::chat::session::commands::CommandResult::Handled => {
+				// Command was handled successfully
+				// Save session after command execution
+				let _ = chat_session.save();
+				return Ok(());
+			}
 		}
 	}
 

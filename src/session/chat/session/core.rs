@@ -601,7 +601,7 @@ impl ChatSession {
 		config: &mut Config,
 		role: &str,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
-	) -> Result<bool> {
+	) -> Result<super::commands::CommandResult> {
 		super::commands::process_command(self, input, config, role, operation_cancelled).await
 	}
 

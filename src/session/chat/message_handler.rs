@@ -21,25 +21,64 @@ use anyhow::Result;
 pub struct MessageHandler;
 
 impl MessageHandler {
-	/// Extract original tool calls from provider exchange based on provider format
+	/// Extract original tool calls from provider exchange with type safety
 	pub fn extract_original_tool_calls(exchange: &ProviderExchange) -> Option<serde_json::Value> {
-		// First check if there's a stored tool_calls_content (for Anthropic and Google)
-		if let Some(content_data) = exchange.response.get("tool_calls_content") {
-			return Some(content_data.clone());
-		}
-
-		// Then check for OpenRouter/OpenAI format
-		if let Some(tool_calls) = exchange
-			.response
-			.get("choices")
-			.and_then(|choices| choices.get(0))
-			.and_then(|choice| choice.get("message"))
-			.and_then(|message| message.get("tool_calls"))
-		{
+		// Check for unified format first (new clean approach)
+		if let Some(tool_calls) = exchange.response.get("tool_calls") {
 			return Some(tool_calls.clone());
 		}
 
-		None
+		// Use the type-safe tool call extraction
+		match octolib::ProviderToolCalls::extract_from_exchange(exchange) {
+			Ok(Some(provider_calls)) => {
+				// Convert to unified GenericToolCall format
+				match provider_calls {
+					octolib::ProviderToolCalls::Anthropic { content } => {
+						let generic_calls: Vec<octolib::GenericToolCall> = content
+							.into_iter()
+							.map(|tool_use| octolib::GenericToolCall {
+								id: tool_use.id,
+								name: tool_use.name,
+								arguments: tool_use.input,
+							})
+							.collect();
+						Some(serde_json::to_value(&generic_calls).unwrap_or_default())
+					}
+					octolib::ProviderToolCalls::OpenAI { tool_calls }
+					| octolib::ProviderToolCalls::OpenRouter { tool_calls }
+					| octolib::ProviderToolCalls::DeepSeek { tool_calls } => {
+						let generic_calls: Vec<octolib::GenericToolCall> = tool_calls
+							.into_iter()
+							.map(|tc| {
+								let arguments = if tc.function.arguments.trim().is_empty() {
+									serde_json::json!({})
+								} else {
+									match serde_json::from_str::<serde_json::Value>(
+										&tc.function.arguments,
+									) {
+										Ok(json_args) => json_args,
+										Err(_) => {
+											serde_json::json!({"raw_arguments": tc.function.arguments})
+										}
+									}
+								};
+								octolib::GenericToolCall {
+									id: tc.id,
+									name: tc.function.name,
+									arguments,
+								}
+							})
+							.collect();
+						Some(serde_json::to_value(&generic_calls).unwrap_or_default())
+					}
+					octolib::ProviderToolCalls::Generic { calls } => {
+						Some(serde_json::to_value(&calls).unwrap_or_default())
+					}
+				}
+			}
+			Ok(None) => None,
+			Err(_) => None, // No fallback - unified format is mandatory
+		}
 	}
 
 	/// Add assistant message with tool calls preserved

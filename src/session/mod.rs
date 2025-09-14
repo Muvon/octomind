@@ -1316,7 +1316,17 @@ pub async fn chat_completion_with_validation(
 		chat_params
 	};
 
-	provider.chat_completion(chat_params).await
+	// Convert to octolib params and call provider
+	let octolib_params = chat_params
+		.to_octolib_params()
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
+	let octolib_response = provider.chat_completion(octolib_params).await?;
+
+	// Convert response back to Octomind format
+	Ok(crate::providers::convert_response_from_octolib(
+		octolib_response,
+	))
 }
 
 /// Parameters for chat completion with provider
@@ -1349,7 +1359,18 @@ pub async fn chat_completion_with_provider(
 		params.config,
 	)
 	.with_max_retries(params.max_retries);
-	provider.chat_completion(chat_params).await
+
+	// Convert to octolib params and call provider
+	let octolib_params = chat_params
+		.to_octolib_params()
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
+	let octolib_response = provider.chat_completion(octolib_params).await?;
+
+	// Convert response back to Octomind format
+	Ok(crate::providers::convert_response_from_octolib(
+		octolib_response,
+	))
 }
 
 #[cfg(test)]

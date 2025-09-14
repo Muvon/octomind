@@ -30,6 +30,8 @@ panic = "abort"  # Abort on panic for smaller binary size
 strip = true      # Strip symbols from binary
 
 [dependencies]
+# octolib = { path = "../octolib" }
+octolib = { git = "https://github.com/muvon/octolib.git", rev = "d15982fafba229ac849c8dbf7c25ee63107fad45" }
 tokio = { version = "1.45.1", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal"] }
 crossterm = "0.29.0"
 indicatif = "0.18.0"

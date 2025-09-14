@@ -2,7 +2,9 @@
 
 ## Overview
 
-Octomind supports multiple AI providers through a unified, extensible interface. All providers use the **required** `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
+Octomind supports multiple AI providers through a unified interface powered by the **octolib** library. All providers use the **required** `provider:model` format for consistency and support various features like tool calling, caching, and cost tracking.
+
+**Architecture**: Octomind uses octolib as the underlying provider implementation, with an adapter layer that maintains backward compatibility while leveraging the comprehensive provider ecosystem.
 
 ## Recent Changes
 

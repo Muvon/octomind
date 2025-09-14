@@ -309,16 +309,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
 			if !current_tool_calls.is_empty() {
-				// Add assistant message with tool calls preserved
-				add_assistant_message_with_tool_calls(
-					params.chat_session,
-					&current_content,
-					&current_exchange,
-					params.config,
-					params.role,
-				)?;
-
-				// Display the content to the user FIRST
+				// Display the content to the user FIRST (before adding to session)
 				print_assistant_response(&current_content, params.config, params.role);
 
 				// Display tool parameters upfront (headers will be shown per-tool during execution)
@@ -327,47 +318,54 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				// Clone operation_cancelled to avoid borrow issues
 				let operation_cancelled_clone = params.operation_cancelled.clone();
 
-				// Early exit if cancellation was requested
+				// Early exit if cancellation was requested BEFORE adding message
 				if *operation_cancelled_clone.borrow() {
 					println!("{}", "\nOperation cancelled by user.".bright_yellow());
-					// Do NOT add any confusing message to the session
+					// Do NOT add any message to the session since tools weren't executed
 					return Ok(());
 				}
 
 				// Execute all tool calls in parallel using the new module
-				let (tool_results, total_tool_time_ms) = tool_execution::execute_tools_parallel(
-					current_tool_calls,
-					params.chat_session,
-					params.config,
-					&mut tool_processor,
-					operation_cancelled_clone.clone(),
-				)
-				.await?;
+				let (tool_results, total_tool_time_ms) =
+					match tool_execution::execute_tools_parallel(
+						current_tool_calls.clone(),
+						params.chat_session,
+						params.config,
+						&mut tool_processor,
+						operation_cancelled_clone.clone(),
+					)
+					.await
+					{
+						Ok(results) => results,
+						Err(e) => {
+							// Check if this was a cancellation
+							if e.to_string().contains("cancelled")
+								|| *operation_cancelled_clone.borrow()
+							{
+								println!("{}", "\nOperation cancelled by user.".bright_yellow());
+								// Don't add assistant message since tools weren't executed
+								return Ok(());
+							}
+							return Err(e);
+						}
+					};
 
-				// Final cancellation check after all tools processed
+				// Check for cancellation BEFORE adding assistant message
+				// This prevents adding tool_use blocks without corresponding tool_result blocks
 				if *operation_cancelled_clone.borrow() {
-					println!(
-						"{}",
-						"\nTool execution cancelled - cleaning up conversation state."
-							.bright_yellow()
-					);
-
-					// BOSS FIX: Remove the assistant message with tool_calls when cancelled
-					// The problem: we added assistant message with tool_calls but cancellation prevents proper tool_result processing
-					// Use shared cleanup logic for consistency
-					if crate::session::clean_interrupted_tool_calls(
-						&mut params.chat_session.session.messages,
-						&params.chat_session.session.info.name,
-						"Tool execution interrupted by Ctrl+C",
-					) {
-						log_debug!(
-							"Removed last assistant message with tool_calls due to cancellation"
-						);
-					}
-
-					// DO NOT process tool results when cancelled - this prevents conversation corruption
+					println!("{}", "\nTool execution cancelled.".bright_yellow());
+					// Don't add assistant message since tools were cancelled
 					return Ok(());
 				}
+
+				// ONLY add assistant message if tools were NOT cancelled
+				add_assistant_message_with_tool_calls(
+					params.chat_session,
+					&current_content,
+					&current_exchange,
+					params.config,
+					params.role,
+				)?;
 
 				// Process tool results if any exist
 				if !tool_results.is_empty() {

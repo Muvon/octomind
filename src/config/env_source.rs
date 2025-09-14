@@ -58,6 +58,17 @@ impl EnvTracker {
 			self.dotenv_loaded = true;
 			crate::log_debug!("Loaded .env file with override - tracking enabled");
 		}
+
+		// Check if extra variables are not set and set them if needed
+		// This is a bit tricky but we set it to use in octolib to make it easier
+		if std::env::var("OPENROUTER_APP_TITLE").is_err() {
+			std::env::set_var("OPENROUTER_APP_TITLE", "Octomind");
+		}
+
+		if std::env::var("OPENROUTER_HTTP_REFERER").is_err() {
+			std::env::set_var("OPENROUTER_HTTP_REFERER", "https://octomind.muvon.io");
+		}
+
 		Ok(())
 	}
 

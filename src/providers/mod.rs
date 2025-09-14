@@ -12,20 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Provider abstraction layer for different AI providers
+//! Provider abstraction layer - now powered by octolib
+//!
+//! This module serves as an adapter between Octomind and the octolib provider system.
+//! It maintains backward compatibility while leveraging the self-sufficient octolib crate.
 
 use crate::config::Config;
 use crate::session::Message;
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 
-/// Parameters for chat completion requests
+// Re-export octolib types with compatibility aliases
+pub use octolib::llm::{
+	AiProvider, AmazonBedrockProvider, AnthropicProvider, CloudflareWorkersAiProvider,
+	DeepSeekProvider, GenericToolCall, GoogleVertexProvider, OpenAiProvider, OpenRouterProvider,
+	ProviderFactory,
+};
+
+// Re-export some octolib types directly
+pub use octolib::llm::{ProviderExchange, TokenUsage};
+
+// Define Octomind-specific ProviderResponse that uses McpToolCall
+#[derive(Debug, Clone)]
+pub struct ProviderResponse {
+	pub content: String,
+	pub exchange: ProviderExchange,
+	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
+	pub finish_reason: Option<String>,
+}
+
+// Keep the original ChatCompletionParams for backward compatibility
+/// Parameters for chat completion requests (Octomind version)
 ///
-/// This struct groups all parameters needed for AI provider chat completion calls,
-/// following best practices for parameter passing and future extensibility.
+/// This struct maintains the original Octomind API while adapting to octolib internally.
 #[derive(Clone)]
 pub struct ChatCompletionParams<'a> {
 	/// Array of conversation messages
@@ -86,244 +104,242 @@ impl<'a> ChatCompletionParams<'a> {
 		self.cancellation_token = Some(token);
 		self
 	}
-}
 
-pub mod amazon;
-pub mod anthropic;
-pub mod cloudflare;
-pub mod deepseek;
-pub mod google;
-pub mod openai;
-pub mod openrouter;
-pub mod retry;
+	/// Convert to octolib ChatCompletionParams with MCP tools
+	pub async fn to_octolib_params(
+		&self,
+	) -> Result<octolib::llm::ChatCompletionParams, octolib::MessageError> {
+		let octolib_messages: Result<Vec<octolib::llm::Message>, _> = self
+			.messages
+			.iter()
+			.map(convert_message_to_octolib)
+			.collect();
 
-// Re-export provider implementations
-pub use amazon::AmazonBedrockProvider;
-pub use anthropic::AnthropicProvider;
-pub use cloudflare::CloudflareWorkersAiProvider;
-pub use deepseek::DeepSeekProvider;
-pub use google::GoogleVertexProvider;
-pub use openai::OpenAiProvider;
-pub use openrouter::OpenRouterProvider;
+		let octolib_messages = octolib_messages?;
 
-/// Common token usage structure across all providers
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TokenUsage {
-	pub prompt_tokens: u64, // ALL input tokens (user messages, system prompts, tool definitions, tool responses)
-	pub output_tokens: u64, // AI-generated response tokens only
-	pub total_tokens: u64,  // prompt_tokens + output_tokens
-	pub cached_tokens: u64, // Subset of prompt_tokens that came from cache (discounted)
-	#[serde(default)]
-	pub cost: Option<f64>, // Pre-calculated total cost (provider handles cache pricing)
-	// Time tracking
-	#[serde(default)]
-	pub request_time_ms: Option<u64>, // Time spent on this API request
-}
+		let mut params = octolib::llm::ChatCompletionParams::new(
+			&octolib_messages,
+			self.model,
+			self.temperature,
+			self.top_p,
+			self.top_k,
+			self.max_tokens,
+		)
+		.with_max_retries(self.max_retries)
+		.with_retry_timeout(self.retry_timeout);
 
-/// Common exchange record for logging across all providers
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProviderExchange {
-	pub request: serde_json::Value,
-	pub response: serde_json::Value,
-	pub timestamp: u64,
-	pub usage: Option<TokenUsage>,
-	pub provider: String, // Which provider was used
-}
-
-impl ProviderExchange {
-	pub fn new(
-		request: serde_json::Value,
-		response: serde_json::Value,
-		usage: Option<TokenUsage>,
-		provider: &str,
-	) -> Self {
-		Self {
-			request,
-			response,
-			timestamp: SystemTime::now()
-				.duration_since(UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_secs(),
-			usage,
-			provider: provider.to_string(),
+		if let Some(token) = &self.cancellation_token {
+			params = params.with_cancellation_token(token.clone());
 		}
-	}
-}
 
-/// Provider response containing the AI completion
-#[derive(Debug, Clone)]
-pub struct ProviderResponse {
-	pub content: String,
-	pub exchange: ProviderExchange,
-	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
-	pub finish_reason: Option<String>,
-}
+		// Fetch and add MCP tools if MCP is configured
+		if !self.config.mcp.servers.is_empty() {
+			let mcp_functions = crate::mcp::get_available_functions(self.config).await;
+			if !mcp_functions.is_empty() {
+				// Convert MCP functions to octolib FunctionDefinitions
+				let mut octolib_tools: Vec<octolib::llm::FunctionDefinition> = mcp_functions
+					.into_iter()
+					.map(|f| octolib::llm::FunctionDefinition {
+						name: f.name,
+						description: f.description,
+						parameters: f.parameters,
+						cache_control: None, // Will be set below if needed
+					})
+					.collect();
 
-/// Trait that all AI providers must implement
-#[async_trait::async_trait]
-pub trait AiProvider: Send + Sync {
-	/// Get the provider name (e.g., "openrouter", "openai", "anthropic")
-	fn name(&self) -> &str;
+				// Add cache control to the LAST tool if system message is cached
+				// This matches the old Anthropic provider behavior
+				let system_cached = self.messages.iter().any(|m| m.role == "system" && m.cached);
+				if system_cached && !octolib_tools.is_empty() {
+					if let Some(last_tool) = octolib_tools.last_mut() {
+						// Use same TTL logic as system message
+						let ttl = if self.config.use_long_system_cache {
+							"1h"
+						} else {
+							"5m"
+						};
+						last_tool.cache_control = Some(serde_json::json!({
+							"type": "ephemeral",
+							"ttl": ttl
+						}));
+					}
+				}
 
-	/// Check if the provider supports the given model
-	fn supports_model(&self, model: &str) -> bool;
-
-	/// Send a chat completion request
-	async fn chat_completion(&self, params: ChatCompletionParams<'_>) -> Result<ProviderResponse>;
-
-	/// Get API key for this provider from config or environment
-	fn get_api_key(&self, config: &Config) -> Result<String>;
-
-	/// Check if the provider/model supports caching
-	fn supports_caching(&self, _model: &str) -> bool {
-		// Default implementation - providers can override
-		false
-	}
-
-	/// Get provider-specific configuration from the config
-	fn get_provider_config<'a>(&self, _config: &'a Config) -> Option<&'a serde_json::Value> {
-		// Default implementation - providers can override if they have specific config sections
-		None
-	}
-
-	/// Get maximum input tokens for a model (actual context window size)
-	/// This is what we can send to the API - the provider handles output limits internally
-	fn get_max_input_tokens(&self, model: &str) -> usize;
-
-	/// Check if the provider/model supports vision capabilities
-	fn supports_vision(&self, _model: &str) -> bool {
-		// Default implementation - providers can override
-		false
-	}
-}
-
-/// Provider factory to create the appropriate provider based on model string
-pub struct ProviderFactory;
-
-impl ProviderFactory {
-	/// Parse a model string in format "provider:model" and return (provider_name, model_name)
-	/// Provider prefix is now REQUIRED
-	pub fn parse_model(model: &str) -> Result<(String, String)> {
-		if let Some(pos) = model.find(':') {
-			let provider = model[..pos].to_string();
-			let model_name = model[pos + 1..].to_string();
-
-			if provider.is_empty() || model_name.is_empty() {
-				return Err(anyhow::anyhow!(
-					"Invalid model format. Use 'provider:model' (e.g., 'openai:gpt-4o')"
-				));
+				params = params.with_tools(octolib_tools);
 			}
-
-			Ok((provider, model_name))
-		} else {
-			Err(anyhow::anyhow!("Invalid model format '{}'. Must specify provider like 'openai:gpt-4o' or 'openrouter:anthropic/claude-3.5-sonnet'", model))
-		}
-	}
-
-	/// Create a provider instance based on the provider name
-	pub fn create_provider(provider_name: &str) -> Result<Box<dyn AiProvider>> {
-		match provider_name.to_lowercase().as_str() {
-			"openrouter" => Ok(Box::new(OpenRouterProvider::new())),
-			"openai" => Ok(Box::new(OpenAiProvider::new())),
-			"anthropic" => Ok(Box::new(AnthropicProvider::new())),
-			"google" => Ok(Box::new(GoogleVertexProvider::new())),
-			"amazon" => Ok(Box::new(AmazonBedrockProvider::new())),
-			"cloudflare" => Ok(Box::new(CloudflareWorkersAiProvider::new())),
-			"deepseek" => Ok(Box::new(DeepSeekProvider::new())),
-			_ => Err(anyhow::anyhow!("Unsupported provider: {}. Supported providers: openrouter, openai, anthropic, google, amazon, cloudflare, deepseek", provider_name)),
-		}
-	}
-
-	/// Get the appropriate provider for a given model string
-	pub fn get_provider_for_model(model: &str) -> Result<(Box<dyn AiProvider>, String)> {
-		let (provider_name, model_name) = Self::parse_model(model)?;
-		let provider = Self::create_provider(&provider_name)?;
-
-		// Verify the provider supports this model
-		if !provider.supports_model(&model_name) {
-			return Err(anyhow::anyhow!(
-				"Provider '{}' does not support model '{}'",
-				provider_name,
-				model_name
-			));
 		}
 
-		Ok((provider, model_name))
+		Ok(params)
 	}
 }
 
-#[cfg(test)]
-mod tests {
-	use super::*;
+/// Convert Octomind Message to octolib Message with proper error handling
+fn convert_message_to_octolib(
+	msg: &Message,
+) -> Result<octolib::llm::Message, octolib::MessageError> {
+	let mut builder = match msg.role.as_str() {
+		"user" => octolib::llm::MessageBuilder::user(&msg.content),
+		"assistant" => {
+			let mut builder = octolib::llm::MessageBuilder::assistant(&msg.content);
+			// CRITICAL: Convert tool_calls to unified GenericToolCall format
+			if let Some(ref tool_calls) = msg.tool_calls {
+				let generic_calls = convert_to_generic_tool_calls(tool_calls);
+				if !generic_calls.is_empty() {
+					builder = builder.with_tool_calls(generic_calls);
+				}
+			}
+			builder
+		}
+		"system" => octolib::llm::MessageBuilder::system(&msg.content),
+		"tool" => {
+			let tool_call_id = msg.tool_call_id.as_deref().ok_or_else(|| {
+				octolib::MessageError::MissingToolField {
+					field: "tool_call_id".to_string(),
+				}
+			})?;
+			let name =
+				msg.name
+					.as_deref()
+					.ok_or_else(|| octolib::MessageError::MissingToolField {
+						field: "name".to_string(),
+					})?;
+			octolib::llm::MessageBuilder::tool(
+				msg.content.clone(),
+				tool_call_id.to_string(),
+				name.to_string(),
+			)
+		}
+		_ => {
+			return Err(octolib::MessageError::InvalidRole {
+				role: msg.role.clone(),
+			})
+		}
+	};
 
-	#[test]
-	fn test_parse_model() {
-		// Test with provider prefix
-		let result = ProviderFactory::parse_model("openrouter:anthropic/claude-3.5-sonnet");
-		assert!(result.is_ok());
-		let (provider, model) = result.unwrap();
-		assert_eq!(provider, "openrouter");
-		assert_eq!(model, "anthropic/claude-3.5-sonnet");
+	// Set timestamp
+	builder = builder.timestamp(msg.timestamp);
 
-		// Test with different provider
-		let result = ProviderFactory::parse_model("openai:gpt-4o");
-		assert!(result.is_ok());
-		let (provider, model) = result.unwrap();
-		assert_eq!(provider, "openai");
-		assert_eq!(model, "gpt-4o");
-
-		// Test DeepSeek provider
-		let result = ProviderFactory::parse_model("deepseek:deepseek-chat");
-		assert!(result.is_ok());
-		let (provider, model) = result.unwrap();
-		assert_eq!(provider, "deepseek");
-		assert_eq!(model, "deepseek-chat");
-
-		let result = ProviderFactory::parse_model("deepseek:deepseek-reasoner");
-		assert!(result.is_ok());
-		let (provider, model) = result.unwrap();
-		assert_eq!(provider, "deepseek");
-		assert_eq!(model, "deepseek-reasoner");
-
-		// Test without provider prefix (should fail now)
-		let result = ProviderFactory::parse_model("anthropic/claude-3.5-sonnet");
-		assert!(result.is_err());
-
-		// Test empty provider
-		let result = ProviderFactory::parse_model(":gpt-4o");
-		assert!(result.is_err());
-
-		// Test empty model
-		let result = ProviderFactory::parse_model("openai:");
-		assert!(result.is_err());
+	// Set cache marker if needed
+	if msg.cached {
+		builder = builder.cached();
 	}
 
-	#[test]
-	fn test_create_provider() {
-		// Test valid providers
-		let provider = ProviderFactory::create_provider("openrouter");
-		assert!(provider.is_ok());
-
-		let provider = ProviderFactory::create_provider("openai");
-		assert!(provider.is_ok());
-
-		let provider = ProviderFactory::create_provider("anthropic");
-		assert!(provider.is_ok());
-
-		let provider = ProviderFactory::create_provider("google");
-		assert!(provider.is_ok());
-
-		let provider = ProviderFactory::create_provider("amazon");
-		assert!(provider.is_ok());
-
-		let provider = ProviderFactory::create_provider("cloudflare");
-		assert!(provider.is_ok());
-
-		let provider = ProviderFactory::create_provider("deepseek");
-		assert!(provider.is_ok());
-
-		// Test invalid provider
-		let provider = ProviderFactory::create_provider("invalid");
-		assert!(provider.is_err());
+	// Convert images if present
+	if let Some(images) = &msg.images {
+		let octolib_images: Vec<octolib::llm::ImageAttachment> =
+			images.iter().map(convert_image_to_octolib).collect();
+		builder = builder.with_images(octolib_images);
 	}
+
+	builder.build()
+}
+
+/// Convert Octomind ImageAttachment to octolib ImageAttachment
+fn convert_image_to_octolib(
+	img: &crate::session::image::ImageAttachment,
+) -> octolib::llm::ImageAttachment {
+	let data = match &img.data {
+		crate::session::image::ImageData::Base64(data) => {
+			octolib::llm::ImageData::Base64(data.clone())
+		}
+		crate::session::image::ImageData::Url(url) => octolib::llm::ImageData::Url(url.clone()),
+	};
+
+	let source_type = match &img.source_type {
+		crate::session::image::SourceType::File(path) => {
+			octolib::llm::SourceType::File(path.clone())
+		}
+		crate::session::image::SourceType::Clipboard => octolib::llm::SourceType::Clipboard,
+		crate::session::image::SourceType::Url => octolib::llm::SourceType::Url,
+	};
+
+	octolib::llm::ImageAttachment {
+		data,
+		media_type: img.media_type.clone(),
+		source_type,
+		dimensions: img.dimensions,
+		size_bytes: img.size_bytes,
+	}
+}
+
+/// Convert tool_calls from session format to unified GenericToolCall format
+///
+/// Session loading reconstructs tool_calls in OpenAI format. This function converts
+/// them to the unified GenericToolCall format that octolib requires.
+/// NO FALLBACKS - unified format is MANDATORY.
+fn convert_to_generic_tool_calls(
+	tool_calls: &serde_json::Value,
+) -> Vec<octolib::llm::GenericToolCall> {
+	// Check if it's already in unified GenericToolCall format
+	if let Ok(calls) =
+		serde_json::from_value::<Vec<octolib::llm::GenericToolCall>>(tool_calls.clone())
+	{
+		return calls;
+	}
+
+	// Handle OpenAI format (array with "type": "function") - from session loading
+	if let Some(calls_array) = tool_calls.as_array() {
+		let mut generic_calls = Vec::new();
+		for call in calls_array {
+			if let Some(function) = call.get("function") {
+				if let (Some(id), Some(name), Some(args_str)) = (
+					call.get("id").and_then(|v| v.as_str()),
+					function.get("name").and_then(|v| v.as_str()),
+					function.get("arguments").and_then(|v| v.as_str()),
+				) {
+					// Parse arguments string to JSON
+					let arguments = if args_str.trim().is_empty() {
+						serde_json::json!({})
+					} else {
+						match serde_json::from_str::<serde_json::Value>(args_str) {
+							Ok(json_args) => json_args,
+							Err(e) => {
+								panic!("Failed to parse tool call arguments '{}': {}", args_str, e);
+							}
+						}
+					};
+
+					generic_calls.push(octolib::llm::GenericToolCall {
+						id: id.to_string(),
+						name: name.to_string(),
+						arguments,
+					});
+				} else {
+					panic!("Invalid OpenAI tool call format - missing required fields");
+				}
+			} else {
+				panic!("Invalid tool call format - missing 'function' field");
+			}
+		}
+		return generic_calls;
+	}
+
+	panic!("Unsupported tool_calls format - must be Vec<GenericToolCall> or OpenAI format array");
+}
+
+/// Convert octolib ProviderResponse to Octomind ProviderResponse
+pub fn convert_response_from_octolib(response: octolib::llm::ProviderResponse) -> ProviderResponse {
+	// Convert tool calls if present
+	let tool_calls = response.tool_calls.map(|calls| {
+		calls
+			.into_iter()
+			.map(|call| crate::mcp::McpToolCall {
+				tool_name: call.name,
+				tool_id: call.id,
+				parameters: call.arguments,
+			})
+			.collect()
+	});
+
+	ProviderResponse {
+		content: response.content,
+		exchange: response.exchange,
+		tool_calls,
+		finish_reason: response.finish_reason,
+	}
+}
+
+// Keep the retry module for backward compatibility
+pub mod retry {
+	pub use octolib::llm::retry::*;
 }

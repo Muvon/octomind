@@ -9,7 +9,7 @@ This guide covers all installation methods for Octomind, from quick setup to dev
 - **Operating System**: Linux, macOS, or Windows
 
 ### For Developers
-- **Rust 1.87+** and Cargo
+- **Rust 1.82+** and Cargo
 - **Git** for version control
 - **API Key** from supported AI provider
 
@@ -310,7 +310,7 @@ octomind ask "Hello" --model "openrouter:anthropic/claude-haiku"
 # Update Rust toolchain
 rustup update
 
-# Check Rust version (need 1.87+)
+# Check Rust version (need 1.82+)
 rustc --version
 
 # Clean build cache

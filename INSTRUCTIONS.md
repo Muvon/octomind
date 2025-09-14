@@ -198,9 +198,9 @@ crate::log_debug!("Something happened");
 - ✅ Graceful handling of missing API keys, empty parameters, cancellation
 
 ### 🤖 AI PROVIDERS
-**Provider System:**
-- `src/providers/mod.rs` - Provider trait and factory
-- `src/providers/*/` - Individual provider implementations (OpenRouter, OpenAI, Anthropic, etc.)
+**Provider System (octolib-powered):**
+- `src/providers/mod.rs` - Provider adapter bridge to octolib library
+- All provider implementations now in octolib crate (OpenRouter, OpenAI, Anthropic, etc.)
 
 ### 📊 LAYERED PROCESSING & COMMANDS
 **Layer Architecture:**
@@ -239,9 +239,10 @@ crate::log_debug!("Something happened");
 3. **Command permissions**: Check role configuration
 
 ### Provider/Model Issues
-1. **Provider implementation**: `src/providers/*/` specific provider
+1. **Provider bridge**: `src/providers/mod.rs` - octolib adapter layer
 2. **API keys**: Check `*_API_KEY` environment variables
 3. **Model format**: Must be `provider:model` format
+4. **octolib dependency**: Check Cargo.toml for octolib version
 
 ### Layer Processing Issues
 1. **Layer execution**: `src/session/layers/types/generic.rs` → `process()`
@@ -864,9 +865,11 @@ pub fn get_list_files_function() -> McpFunction {
 ```
 
 ### Add New Provider
-1. **Implementation**: Create `src/providers/new_provider.rs`
-2. **Registration**: Add to `src/providers/mod.rs` factory
-3. **Config**: Add provider section to template
+**Note**: Providers are now managed through the octolib library. To add a new provider:
+1. **Contribute to octolib**: Add provider implementation to the octolib crate
+2. **Update Octomind**: Update octolib dependency version in Cargo.toml
+3. **Re-export**: Add provider to re-exports in `src/providers/mod.rs`
+4. **Config**: Add provider section to template if needed
 
 ### Add New Configuration
 1. **Template first**: Add to `config-templates/default.toml`
@@ -1075,15 +1078,8 @@ octomind/
 │   │   └── web/                   # Web tools
 │   │       ├── functions.rs       # Tool definitions
 │   │       └── core.rs            # web_search, read_html, etc.
-│   ├── providers/                 # AI provider implementations
-│   │   ├── mod.rs                 # Provider trait & factory
-│   │   ├── openrouter.rs          # OpenRouter implementation
-│   │   ├── openai.rs              # OpenAI implementation
-│   │   ├── anthropic.rs           # Anthropic implementation
-│   │   ├── google.rs              # Google Vertex AI
-│   │   ├── amazon.rs              # Amazon Bedrock
-│   │   ├── cloudflare.rs          # Cloudflare Workers AI
-│   │   └── deepseek.rs            # DeepSeek implementation
+│   ├── providers/                 # AI provider bridge to octolib
+│   │   └── mod.rs                 # Provider adapter & octolib integration
 │   └── utils/                     # Utility modules
 │       ├── mod.rs                 # Common utilities exports
 │       ├── file_parser.rs         # File reference parsing utilities
@@ -1113,7 +1109,7 @@ octomind/
 - **Tools**: `src/mcp/*/functions.rs` + `src/mcp/*/core.rs`
 - **Sessions**: `src/session/chat/` + `src/session/layers/`
 - **Continuation**: `src/session/chat/continuation/` (modular architecture)
-- **Providers**: `src/providers/*.rs`
+- **Providers**: `src/providers/mod.rs` (octolib bridge)
 - **Commands**: `src/commands/*.rs` + `src/session/chat/session/commands/*.rs`
 
 ### Environment Variables

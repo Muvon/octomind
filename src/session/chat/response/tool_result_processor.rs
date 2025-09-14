@@ -289,6 +289,9 @@ pub async fn process_tool_results(
 			// Handle cost tracking from follow-up API call
 			handle_follow_up_cost_tracking(chat_session, &response.exchange, config);
 
+			// Display rate limit information if available
+			display_rate_limit_info(&response.exchange);
+
 			if should_continue_conversation {
 				Ok(Some((
 					response.content,
@@ -311,11 +314,13 @@ pub async fn process_tool_results(
 			};
 
 			// IMPROVED: Show provider-aware context about the API error
+			let error_message =
+				crate::session::chat::session::format_provider_error(&provider_name, &e);
 			println!(
 				"\n{} {}: {}",
 				"✗".bright_red(),
 				format!("Error calling {}", provider_name).bright_red(),
-				e
+				error_message
 			);
 
 			// Additional context if error contains provider information
@@ -535,5 +540,83 @@ fn handle_follow_up_cost_tracking(
 			"{}",
 			"ERROR: No usage data for tool response API call".bright_red()
 		);
+	}
+}
+
+// Helper function to display rate limit information from provider response
+fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
+	if let Some(ref rate_limit_headers) = exchange.rate_limit_headers {
+		let mut rate_limit_info = Vec::new();
+
+		match exchange.provider.as_str() {
+			"anthropic" => {
+				// Anthropic rate limit format
+				if let (Some(tokens_remaining), Some(tokens_limit)) = (
+					rate_limit_headers.get("tokens_remaining"),
+					rate_limit_headers.get("tokens_limit"),
+				) {
+					rate_limit_info.push(format!("Tokens: {}/{}", tokens_remaining, tokens_limit));
+				}
+
+				if let (Some(input_remaining), Some(input_limit)) = (
+					rate_limit_headers.get("input_tokens_remaining"),
+					rate_limit_headers.get("input_tokens_limit"),
+				) {
+					rate_limit_info
+						.push(format!("Input tokens: {}/{}", input_remaining, input_limit));
+				}
+
+				if let (Some(output_remaining), Some(output_limit)) = (
+					rate_limit_headers.get("output_tokens_remaining"),
+					rate_limit_headers.get("output_tokens_limit"),
+				) {
+					rate_limit_info.push(format!(
+						"Output tokens: {}/{}",
+						output_remaining, output_limit
+					));
+				}
+
+				if !rate_limit_info.is_empty() {
+					crate::log_info!("📊 Anthropic rate limits: {}", rate_limit_info.join(" | "));
+				}
+			}
+			"openai" => {
+				// OpenAI rate limit format
+				if let (Some(requests_remaining), Some(requests_limit)) = (
+					rate_limit_headers.get("requests_remaining"),
+					rate_limit_headers.get("requests_limit"),
+				) {
+					rate_limit_info.push(format!(
+						"Requests: {}/{}",
+						requests_remaining, requests_limit
+					));
+				}
+
+				if let (Some(tokens_remaining), Some(tokens_limit)) = (
+					rate_limit_headers.get("tokens_remaining"),
+					rate_limit_headers.get("tokens_limit"),
+				) {
+					rate_limit_info.push(format!("Tokens: {}/{}", tokens_remaining, tokens_limit));
+				}
+
+				if let Some(request_reset) = rate_limit_headers.get("request_reset") {
+					rate_limit_info.push(format!("Request reset: {}", request_reset));
+				}
+
+				if !rate_limit_info.is_empty() {
+					crate::log_info!("📊 OpenAI rate limits: {}", rate_limit_info.join(" | "));
+				}
+			}
+			_ => {
+				// Generic rate limit display for other providers
+				if !rate_limit_headers.is_empty() {
+					let info: Vec<String> = rate_limit_headers
+						.iter()
+						.map(|(k, v)| format!("{}: {}", k, v))
+						.collect();
+					crate::log_info!("📊 {} rate limits: {}", exchange.provider, info.join(" | "));
+				}
+			}
+		}
 	}
 }

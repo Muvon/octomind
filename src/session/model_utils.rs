@@ -14,7 +14,7 @@
 
 // Utilities for model-specific features
 
-use crate::session::ProviderFactory;
+use crate::providers::ProviderFactory;
 
 // Function to check if a model supports caching
 pub fn model_supports_caching(model: &str) -> bool {

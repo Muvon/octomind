@@ -78,7 +78,7 @@ graph TB
 
 ### 3. Multi-Provider AI Support
 
-**Unified Interface** across 8 AI providers with consistent `provider:model` format:
+**Unified Interface** across 7 AI providers with consistent `provider:model` format:
 
 | Provider | Format | Key Features |
 |----------|--------|--------------|
@@ -246,4 +246,4 @@ export OCTOMIND_ROLES__DEVELOPER__MAX_TOKENS="16384"
 
 ---
 
-**Octomind v0.12.0** - Session-first AI development assistant with built-in MCP tools and multi-provider support.
+**Octomind v0.13.0** - Session-first AI development assistant with built-in MCP tools and multi-provider support.

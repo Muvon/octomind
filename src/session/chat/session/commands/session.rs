@@ -15,10 +15,10 @@
 // Session command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use anyhow::Result;
-use colored::Colorize;
 
-pub fn handle_session(session: &mut ChatSession, params: &[&str]) -> Result<bool> {
+pub fn handle_session(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	// Handle session switching
 	if params.is_empty() {
 		// If no session name provided, create a new session with a random name
@@ -29,17 +29,13 @@ pub fn handle_session(session: &mut ChatSession, params: &[&str]) -> Result<bool
 			.as_secs();
 		let new_session_name = format!("session_{}", timestamp);
 
-		println!(
-			"{}",
-			format!("Creating new session: {}", new_session_name).bright_green()
-		);
-
-		// Save current session before switching - no need to save here
-		// The main loop will handle saving before switching
-
 		// Set the session name to return
-		session.session.info.name = new_session_name;
-		Ok(true)
+		session.session.info.name = new_session_name.clone();
+
+		Ok(CommandResult::HandledWithOutput(CommandOutput::Session {
+			switched: true,
+			session_name: new_session_name,
+		}))
 	} else {
 		// Get the session name from the parameters
 		let new_session_name = params.join(" ");
@@ -53,14 +49,20 @@ pub fn handle_session(session: &mut ChatSession, params: &[&str]) -> Result<bool
 				.unwrap_or("")
 				== new_session_name
 			{
-				println!("{}", "You are already in this session.".blue());
-				return Ok(false);
+				return Ok(CommandResult::HandledWithOutput(CommandOutput::Session {
+					switched: false,
+					session_name: new_session_name,
+				}));
 			}
 		}
 
 		// Return a signal to the main loop with the session name to switch to
 		// We'll use a specific return code that tells the main loop to switch sessions
-		session.session.info.name = new_session_name;
-		Ok(true)
+		session.session.info.name = new_session_name.clone();
+
+		Ok(CommandResult::HandledWithOutput(CommandOutput::Session {
+			switched: true,
+			session_name: new_session_name,
+		}))
 	}
 }

@@ -15,37 +15,28 @@
 // Model command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
-pub fn handle_model(session: &mut ChatSession, config: &Config, params: &[&str]) -> Result<bool> {
+pub fn handle_model(
+	session: &mut ChatSession,
+	config: &Config,
+	params: &[&str],
+) -> Result<CommandResult> {
 	// Handle model command
 	if params.is_empty() {
 		// Show current model and system default
-		println!(
-			"{}",
-			format!("Current session model: {}", session.model).bright_cyan()
-		);
+		let _system_model = config.get_effective_model();
 
-		// Show the system default model
-		let system_model = config.get_effective_model();
-		println!(
-			"{}",
-			format!("System default model: {}", system_model).bright_blue()
-		);
-
-		println!();
-		println!(
-			"{}",
-			"Note: Use '/model <model-name>' to change the model for this session only."
-				.bright_yellow()
-		);
-		println!(
-			"{}",
-			"Model changes are runtime-only and won't be saved to config.".bright_yellow()
-		);
-		return Ok(false);
+		// Build JSON output
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Model {
+			old_model: None,
+			new_model: session.model.clone(),
+			changed: false,
+			saved: None,
+			save_error: None,
+		}));
 	}
 
 	// Change to a new model (runtime only)
@@ -64,24 +55,25 @@ pub fn handle_model(session: &mut ChatSession, config: &Config, params: &[&str])
 	session.model = new_model.clone();
 	session.session.info.model = new_model.clone();
 
-	println!(
-		"{}",
-		format!(
-			"Model changed from {} to {} (runtime only)",
-			old_model, new_model
-		)
-		.bright_green()
-	);
-	println!(
-		"{}",
-		"Note: This change only affects the current session and won't be saved to config."
-			.bright_yellow()
-	);
+	// Build JSON output
+	let saved = match session.save() {
+		Ok(_) => Some(true),
+		Err(e) => {
+			return Ok(CommandResult::HandledWithOutput(CommandOutput::Model {
+				old_model: Some(old_model),
+				new_model,
+				changed: true,
+				saved: Some(false),
+				save_error: Some(e.to_string()),
+			}));
+		}
+	};
 
-	// Save the session with the updated model info (but not config)
-	if let Err(e) = session.save() {
-		println!("{} {}", "Warning: Could not save session:".bright_red(), e);
-	}
-
-	Ok(false)
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Model {
+		old_model: Some(old_model),
+		new_model,
+		changed: true,
+		saved,
+		save_error: None,
+	}))
 }

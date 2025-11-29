@@ -270,6 +270,233 @@ impl ChatSession {
 		println!();
 	}
 
+	// Get session information as structured JSON (for WebSocket/API use)
+	pub fn get_session_info_json(&self) -> serde_json::Value {
+		// Group layer stats
+		let mut layer_stats_map: std::collections::HashMap<
+			String,
+			Vec<&crate::session::LayerStats>,
+		> = std::collections::HashMap::new();
+
+		for stat in &self.session.info.layer_stats {
+			layer_stats_map
+				.entry(stat.layer_type.clone())
+				.or_default()
+				.push(stat);
+		}
+
+		// Separate command layers from regular layers
+		let mut command_layers = Vec::new();
+		let mut regular_layers = Vec::new();
+
+		for (layer_type, stats) in layer_stats_map.iter() {
+			let mut total_input = 0;
+			let mut total_output = 0;
+			let mut total_cost = 0.0;
+			let mut total_api_time = 0;
+			let mut total_tool_time = 0;
+			let mut total_layer_time = 0;
+			let executions = stats.len();
+
+			for stat in stats.iter() {
+				total_input += stat.input_tokens;
+				total_output += stat.output_tokens;
+				total_cost += stat.cost;
+				total_api_time += stat.api_time_ms;
+				total_tool_time += stat.tool_time_ms;
+				total_layer_time += stat.total_time_ms;
+			}
+
+			let layer_data = serde_json::json!({
+				"layer_type": layer_type,
+				"model": stats[0].model,
+				"executions": executions,
+				"tokens": {
+					"input": total_input,
+					"output": total_output
+				},
+				"cost": total_cost,
+				"time": {
+					"api_ms": total_api_time,
+					"tool_ms": total_tool_time,
+					"total_ms": total_layer_time
+				}
+			});
+
+			if layer_type.starts_with("command:") {
+				command_layers.push(layer_data);
+			} else {
+				regular_layers.push(layer_data);
+			}
+		}
+
+		let total_tokens = self.session.info.input_tokens
+			+ self.session.info.output_tokens
+			+ self.session.info.cached_tokens;
+
+		let total_time_ms = self.session.info.total_api_time_ms
+			+ self.session.info.total_tool_time_ms
+			+ self.session.info.total_layer_time_ms;
+
+		serde_json::json!({
+			"session_name": self.session.info.name,
+			"model": self.session.info.model,
+			"tokens": {
+				"total": total_tokens,
+				"input": self.session.info.input_tokens,
+				"output": self.session.info.output_tokens,
+				"cached": self.session.info.cached_tokens
+			},
+			"cost": self.session.info.total_cost,
+			"time": {
+				"total_ms": total_time_ms,
+				"api_ms": self.session.info.total_api_time_ms,
+				"tool_ms": self.session.info.total_tool_time_ms,
+				"processing_ms": self.session.info.total_layer_time_ms
+			},
+			"messages": self.session.messages.len(),
+			"tool_calls": self.session.info.tool_calls,
+			"layers": {
+				"regular": regular_layers,
+				"commands": command_layers
+			}
+		})
+	}
+
+	// Get session information as a string (for WebSocket/API use)
+	pub fn get_session_info_string(&self) -> String {
+		let mut output = String::new();
+
+		// Session basics
+		output.push_str(&format!("Session name: {}\n", self.session.info.name));
+		output.push_str(&format!("Main model: {}\n", self.session.info.model));
+
+		// Total token usage
+		let total_tokens = self.session.info.input_tokens
+			+ self.session.info.output_tokens
+			+ self.session.info.cached_tokens;
+		output.push_str(&format!("Total tokens: {}\n", format_number(total_tokens)));
+		output.push_str(&format!(
+			"Breakdown: {} input, {} output, {} cached\n",
+			format_number(self.session.info.input_tokens),
+			format_number(self.session.info.output_tokens),
+			format_number(self.session.info.cached_tokens)
+		));
+
+		// Cost information
+		output.push_str(&format!(
+			"Total cost: ${:.5}\n",
+			self.session.info.total_cost
+		));
+
+		// Time information
+		let total_time_ms = self.session.info.total_api_time_ms
+			+ self.session.info.total_tool_time_ms
+			+ self.session.info.total_layer_time_ms;
+		if total_time_ms > 0 {
+			output.push_str(&format!(
+				"Total time: {} (API: {}, Tools: {}, Processing: {})\n",
+				format_duration(total_time_ms),
+				format_duration(self.session.info.total_api_time_ms),
+				format_duration(self.session.info.total_tool_time_ms),
+				format_duration(self.session.info.total_layer_time_ms)
+			));
+		}
+
+		// Messages count and tool calls
+		output.push_str(&format!("Messages: {}\n", self.session.messages.len()));
+
+		if self.session.info.tool_calls > 0 {
+			output.push_str(&format!("Tool calls: {}\n", self.session.info.tool_calls));
+		}
+
+		// Layer statistics if available
+		if !self.session.info.layer_stats.is_empty() {
+			output.push_str("\n─── Layer Statistics ───\n");
+
+			// Group by layer type
+			let mut layer_stats: std::collections::HashMap<
+				String,
+				Vec<&crate::session::LayerStats>,
+			> = std::collections::HashMap::new();
+
+			for stat in &self.session.info.layer_stats {
+				layer_stats
+					.entry(stat.layer_type.clone())
+					.or_default()
+					.push(stat);
+			}
+
+			// Separate command layers from regular layers
+			let mut command_layers = Vec::new();
+			let mut regular_layers = Vec::new();
+
+			for (layer_type, stats) in layer_stats.iter() {
+				if layer_type.starts_with("command:") {
+					command_layers.push((layer_type, stats));
+				} else {
+					regular_layers.push((layer_type, stats));
+				}
+			}
+
+			// Print regular layers first
+			for (layer_type, stats) in regular_layers.iter() {
+				output.push_str(&format!("\nLayer: {}\n", layer_type));
+
+				let mut total_input = 0;
+				let mut total_output = 0;
+				let mut total_cost = 0.0;
+				let executions = stats.len();
+
+				for stat in stats.iter() {
+					total_input += stat.input_tokens;
+					total_output += stat.output_tokens;
+					total_cost += stat.cost;
+				}
+
+				output.push_str(&format!("  Model: {}\n", stats[0].model));
+				output.push_str(&format!("  Executions: {}\n", executions));
+				output.push_str(&format!(
+					"  Tokens: {} input, {} output\n",
+					format_number(total_input),
+					format_number(total_output)
+				));
+				output.push_str(&format!("  Cost: ${:.5}\n", total_cost));
+			}
+
+			// Print command layers if any
+			if !command_layers.is_empty() {
+				output.push_str("\n─── Command Layers ───\n");
+				for (layer_type, stats) in command_layers.iter() {
+					let command_name = layer_type.strip_prefix("command:").unwrap_or(layer_type);
+					output.push_str(&format!("\nCommand: {}\n", command_name));
+
+					let mut total_input = 0;
+					let mut total_output = 0;
+					let mut total_cost = 0.0;
+					let executions = stats.len();
+
+					for stat in stats.iter() {
+						total_input += stat.input_tokens;
+						total_output += stat.output_tokens;
+						total_cost += stat.cost;
+					}
+
+					output.push_str(&format!("  Model: {}\n", stats[0].model));
+					output.push_str(&format!("  Executions: {}\n", executions));
+					output.push_str(&format!(
+						"  Tokens: {} input, {} output\n",
+						format_number(total_input),
+						format_number(total_output)
+					));
+					output.push_str(&format!("  Cost: ${:.5}\n", total_cost));
+				}
+			}
+		}
+
+		output
+	}
+
 	// Display current session context that would be sent to AI
 	pub fn display_session_context(&self, config: &crate::config::Config) {
 		// Use the filtered version with "all" filter for backward compatibility

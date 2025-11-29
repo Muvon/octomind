@@ -618,3 +618,39 @@ pub async fn get_current_plan_display() -> Result<String> {
 
 	Ok(response)
 }
+
+/// Get current plan as JSON for session commands
+pub async fn get_current_plan_json() -> Result<serde_json::Value> {
+	let storage = PLAN_STORAGE.lock().unwrap();
+
+	// Check if plan exists
+	if !storage.has_active_plan().unwrap_or(false) {
+		return Err(anyhow::anyhow!("No active plan"));
+	}
+
+	let plan_title = storage
+		.get_plan_title()
+		.unwrap_or_else(|_| "Unknown Plan".to_string());
+	let task_list = storage.get_task_list().unwrap_or_else(|_| Vec::new());
+	let (current, total, current_task_title, current_task_description) = storage
+		.get_current_task_info()
+		.unwrap_or((0, 0, "Unknown".to_string(), "No description".to_string()));
+
+	Ok(serde_json::json!({
+		"plan_title": plan_title,
+		"current_task": current,
+		"total_tasks": total,
+		"current_task_title": current_task_title,
+		"current_task_description": current_task_description,
+		"tasks": task_list.iter().map(|(title, desc, status)| {
+			serde_json::json!({
+				"title": title,
+				"description": desc,
+				"status": match status {
+					TaskStatus::Completed => "completed",
+					TaskStatus::InProgress => "in_progress"
+				}
+			})
+		}).collect::<Vec<_>>()
+	}))
+}

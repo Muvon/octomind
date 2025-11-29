@@ -15,28 +15,13 @@
 // Summarize command handler
 
 use super::super::core::ChatSession;
-use super::utils::format_number;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
-pub async fn handle_summarize(session: &mut ChatSession, config: &Config) -> Result<bool> {
-	// Perform smart full summarization using local processing
-	println!(
-		"{}",
-		"Performing smart conversation summarization...".bright_cyan()
-	);
-
+pub async fn handle_summarize(session: &mut ChatSession, config: &Config) -> Result<CommandResult> {
 	// Estimate current token usage
 	let current_tokens = crate::session::estimate_message_tokens(&session.session.messages);
-	println!(
-		"{}",
-		format!(
-			"Current context size: {} tokens",
-			format_number(current_tokens as u64)
-		)
-		.bright_blue()
-	);
 
 	// Use the smart full summarization logic
 	match crate::session::chat::perform_smart_full_summarization(session, config).await {
@@ -45,20 +30,19 @@ pub async fn handle_summarize(session: &mut ChatSession, config: &Config) -> Res
 			let new_tokens = crate::session::estimate_message_tokens(&session.session.messages);
 			let tokens_saved = current_tokens.saturating_sub(new_tokens);
 
-			println!(
-				"{}",
-				format!(
-					"Smart summarization completed: {} tokens saved, new context size: {} tokens",
-					format_number(tokens_saved as u64),
-					format_number(new_tokens as u64)
-				)
-				.bright_green()
-			);
+			Ok(CommandResult::HandledWithOutput(CommandOutput::Summarize {
+				success: true,
+				tokens_before: current_tokens,
+				tokens_after: new_tokens,
+				tokens_saved,
+				summary: true,
+			}))
 		}
-		Err(e) => {
-			println!("{}: {}", "Smart summarization failed".bright_red(), e);
-		}
+		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+			error: format!("Summarization failed: {}", e),
+			context: Some(serde_json::json!({
+				"tokens_before": current_tokens
+			})),
+		})),
 	}
-
-	Ok(false)
 }

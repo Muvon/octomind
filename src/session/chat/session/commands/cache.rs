@@ -15,50 +15,62 @@
 // Cache command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
 pub async fn handle_cache(
 	session: &mut ChatSession,
 	config: &Config,
 	params: &[&str],
-) -> Result<bool> {
+) -> Result<CommandResult> {
 	// Parse cache command arguments for advanced functionality
 	if params.is_empty() {
 		// Default behavior - set flag to cache the NEXT user message
 		let supports_caching = crate::session::model_supports_caching(&session.session.info.model);
 		if !supports_caching {
-			println!("{}", "This model does not support caching.".bright_yellow());
-		} else {
-			// Set the flag to cache the next user message
-			session.cache_next_user_message = true;
+			return Ok(CommandResult::HandledWithOutput(CommandOutput::Cache {
+				cache_command: "check_support".to_string(),
+				data: serde_json::json!({
+					"supports_caching": false,
+					"message": "This model does not support caching."
+				}),
+			}));
+		}
 
-			// Log the command execution
-			if let Some(session_file) = &session.session.session_file {
-				if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {
-					let command_line = "/cache".to_string();
-					let _ =
-						crate::session::logger::log_session_command(session_name, &command_line);
-				}
-			}
+		// Set the flag to cache the next user message
+		session.cache_next_user_message = true;
 
-			println!(
-				"{}",
-				"The next user message will be marked for caching.".bright_green()
-			);
-
-			// Show cache statistics
-			let cache_manager = crate::session::cache::CacheManager::new();
-			let stats =
-				cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
-			println!("{}", stats.format_for_display());
-
-			// Save the session with updated runtime state
-			if let Err(e) = session.save() {
-				println!("{} {}", "Warning: Could not save session:".bright_red(), e);
+		// Log the command execution
+		if let Some(session_file) = &session.session.session_file {
+			if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {
+				let command_line = "/cache".to_string();
+				let _ = crate::session::logger::log_session_command(session_name, &command_line);
 			}
 		}
+
+		// Show cache statistics
+		let cache_manager = crate::session::cache::CacheManager::new();
+		let stats = cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
+
+		// Save the session with updated runtime state
+		if let Err(e) = session.save() {
+			crate::log_debug!("Warning: Could not save session: {}", e);
+		}
+
+		Ok(CommandResult::HandledWithOutput(CommandOutput::Cache {
+			cache_command: "cache_next_message".to_string(),
+			data: serde_json::json!({
+				"cache_next_user_message": true,
+				"statistics": {
+					"system_markers": stats.system_markers,
+					"tool_markers": stats.tool_markers,
+					"content_markers": stats.content_markers,
+					"total_cached_tokens": stats.total_cached_tokens,
+					"current_non_cached_tokens": stats.current_non_cached_tokens
+				}
+			}),
+		}))
 	} else {
 		match params[0] {
 			"stats" => {
@@ -66,7 +78,19 @@ pub async fn handle_cache(
 				let cache_manager = crate::session::cache::CacheManager::new();
 				let stats =
 					cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
-				println!("{}", stats.format_for_display());
+
+				Ok(CommandResult::HandledWithOutput(CommandOutput::Cache {
+					cache_command: "stats".to_string(),
+					data: serde_json::json!({
+						"statistics": {
+							"system_markers": stats.system_markers,
+							"tool_markers": stats.tool_markers,
+							"content_markers": stats.content_markers,
+							"total_cached_tokens": stats.total_cached_tokens,
+							"current_non_cached_tokens": stats.current_non_cached_tokens
+						}
+					}),
+				}))
 			}
 			"clear" => {
 				// Clear content cache markers (but keep system markers)
@@ -74,82 +98,35 @@ pub async fn handle_cache(
 				let cleared = cache_manager.clear_content_cache_markers(&mut session.session);
 
 				if cleared > 0 {
-					println!(
-						"{}",
-						format!("Cleared {} content cache markers", cleared).bright_green()
-					);
 					let _ = session.save();
-				} else {
-					println!("{}", "No content cache markers to clear".bright_yellow());
-				}
-			}
-			"threshold" => {
-				// Show current threshold settings using the system-wide configuration getters
-				if config.cache_tokens_threshold > 0 {
-					println!(
-						"{}",
-						format!(
-							"Current auto-cache threshold: {} tokens",
-							config.cache_tokens_threshold
-						)
-						.bright_cyan()
-					);
-					println!(
-						"{}",
-						format!(
-							"Auto-cache will trigger when non-cached tokens reach {} tokens",
-							config.cache_tokens_threshold
-						)
-						.bright_blue()
-					);
-				} else {
-					println!(
-						"{}",
-						"Auto-cache is disabled (threshold set to 0)".bright_yellow()
-					);
 				}
 
-				// Show time-based threshold
-				let timeout_seconds = config.cache_timeout_seconds;
-				if timeout_seconds > 0 {
-					let timeout_minutes = timeout_seconds / 60;
-					println!(
-						"{}",
-						format!(
-							"Time-based auto-cache: {} seconds ({} minutes)",
-							timeout_seconds, timeout_minutes
-						)
-						.bright_green()
-					);
-					println!(
-						"{}",
-						format!(
-							"Auto-cache will trigger if {} minutes pass since last checkpoint",
-							timeout_minutes
-						)
-						.bright_blue()
-					);
-				} else {
-					println!("{}", "Time-based auto-cache is disabled".bright_yellow());
-				}
+				Ok(CommandResult::HandledWithOutput(CommandOutput::Cache {
+					cache_command: "clear".to_string(),
+					data: serde_json::json!({
+						"cleared_markers": cleared
+					}),
+				}))
 			}
-			_ => {
-				println!("{}", "Invalid cache command. Usage:".bright_red());
-				println!(
-					"{}",
-					"  /cache - Add cache checkpoint at last user message".cyan()
-				);
-				println!(
-					"{}",
-					"  /cache stats - Show detailed cache statistics".cyan()
-				);
-				println!("{}", "  /cache clear - Clear content cache markers".cyan());
-				println!(
-					"{}",
-					"  /cache threshold - Show auto-cache threshold settings".cyan()
-				);
-			}
+			"threshold" => Ok(CommandResult::HandledWithOutput(CommandOutput::Cache {
+				cache_command: "threshold".to_string(),
+				data: serde_json::json!({
+					"cache_tokens_threshold": config.cache_tokens_threshold,
+					"cache_timeout_seconds": config.cache_timeout_seconds
+				}),
+			})),
+			_ => Ok(CommandResult::HandledWithOutput(CommandOutput::Cache {
+				cache_command: "error".to_string(),
+				data: serde_json::json!({
+					"error": "Invalid cache subcommand",
+					"usage": [
+						"/cache - Add cache checkpoint at last user message",
+						"/cache stats - Show detailed cache statistics",
+						"/cache clear - Clear content cache markers",
+						"/cache threshold - Show auto-cache threshold settings"
+					]
+				}),
+			})),
 		}
 	}
-	Ok(false)
 }

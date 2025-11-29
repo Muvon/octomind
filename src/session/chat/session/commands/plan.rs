@@ -12,29 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{CommandOutput, CommandResult};
 use anyhow::Result;
-use colored::Colorize;
 
 /// Handle /plan command - display current plan stored in MCP plan tool
-pub async fn handle_plan() -> Result<bool> {
+pub async fn handle_plan() -> Result<CommandResult> {
 	// Access the plan storage directly from the MCP plan tool
 	match crate::mcp::dev::plan::core::get_current_plan_display().await {
 		Ok(plan_display) => {
-			println!("{}", plan_display);
-		}
-		Err(e) => {
-			println!(
-				"{}: {}",
-				"No active plan".bright_yellow(),
-				e.to_string().dimmed()
-			);
-			println!(
-				"💡 Use the {} MCP tool only for complex, multi-step tasks that require structured breakdown",
-				"plan".bright_cyan()
-			);
-			println!("For simple tasks, just execute them directly without creating a plan");
-		}
-	}
+			// Get structured plan data
+			let plan_json = crate::mcp::dev::plan::core::get_current_plan_json()
+				.await
+				.ok();
 
-	Ok(false) // Command handled, don't exit session
+			Ok(CommandResult::HandledWithOutput(CommandOutput::Plan {
+				has_plan: true,
+				plan: plan_json,
+				display: Some(plan_display),
+			}))
+		}
+		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Plan {
+			has_plan: false,
+			plan: None,
+			display: Some(e.to_string()),
+		})),
+	}
 }

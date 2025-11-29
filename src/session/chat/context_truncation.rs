@@ -246,7 +246,10 @@ pub async fn perform_simple_boundary_truncation(
 
 	let new_token_count = crate::session::estimate_message_tokens(&chat_session.session.messages);
 	let tokens_saved = current_tokens.saturating_sub(new_token_count);
-	let messages_removed = original_count - chat_session.session.messages.len();
+	let new_count = chat_session.session.messages.len();
+
+	// Calculate messages removed (can be negative if messages were added)
+	let messages_removed = original_count.saturating_sub(new_count);
 
 	println!(
 		"{}",

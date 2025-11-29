@@ -15,12 +15,7 @@
 // Exit command handler
 
 use anyhow::Result;
-use colored::Colorize;
 
 pub fn handle_exit() -> Result<bool> {
-	println!(
-		"{}",
-		"Ending session. Your conversation has been saved.".bright_green()
-	);
 	Ok(true)
 }

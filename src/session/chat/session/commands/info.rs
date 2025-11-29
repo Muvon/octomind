@@ -15,9 +15,24 @@
 // Info command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use anyhow::Result;
 
-pub fn handle_info(session: &ChatSession) -> Result<bool> {
-	session.display_session_info();
-	Ok(false)
+pub fn handle_info(session: &ChatSession) -> Result<CommandResult> {
+	// Get session info - for now, extract key fields
+	// The full JSON is available via to_json() for WebSocket
+	let info = &session.session.info;
+
+	let tokens_used = info.input_tokens + info.output_tokens;
+	let cache_savings = 0.0; // TODO: Calculate cache savings if needed
+
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Info {
+		session_name: info.name.clone(),
+		model: info.model.clone(),
+		role: session.role.clone(),
+		tokens_used,
+		tokens_cached: info.cached_tokens,
+		total_cost: info.total_cost,
+		cache_savings,
+	}))
 }

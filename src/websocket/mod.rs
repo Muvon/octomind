@@ -12,19 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Clear command handler
+// WebSocket module for server functionality
 
-use super::{CommandOutput, CommandResult};
-use anyhow::Result;
-use std::io::{self, Write};
+pub mod protocol;
+pub mod server;
 
-pub fn handle_clear() -> Result<CommandResult> {
-	// ANSI escape code to clear screen and move cursor to top-left
-	print!("\x1B[2J\x1B[1;1H");
-	io::stdout().flush()?;
-
-	Ok(CommandResult::HandledWithOutput(CommandOutput::Clear {
-		success: true,
-		message: "Screen cleared".to_string(),
-	}))
-}
+// Re-export main types
+pub use protocol::{ClientMessage, MessageType, ServerMessage};
+pub use server::WebSocketServer;

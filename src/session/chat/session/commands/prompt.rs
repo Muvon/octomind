@@ -15,54 +15,36 @@
 // Prompt command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
 pub async fn handle_prompt(
 	session: &mut ChatSession,
 	config: &Config,
-	role: &str,
+	_role: &str,
 	params: &[&str],
-) -> Result<bool> {
+) -> Result<CommandResult> {
 	// Handle /prompt command for sending predefined prompt templates
 	if params.is_empty() {
 		// Show available prompts
-		if config.prompts.is_empty() {
-			println!("{}", "No prompt templates configured.".bright_yellow());
-			println!(
-				"{}",
-				"Prompt templates can be defined in the [[prompts]] section of your configuration."
-					.bright_blue()
-			);
-			println!("{}", "Example configuration:".bright_cyan());
-			println!(
-				"{}",
-				r#"[[prompts]]
-name = "review"
-description = "Request code review"
-prompt = "Please review the code above focusing on best practices and security.""#
-					.bright_white()
-			);
-		} else {
-			println!("{}", "Available prompt templates:".bright_cyan());
-			for prompt in &config.prompts {
-				if let Some(description) = &prompt.description {
-					println!(
-						"  {} {} - {}",
-						"/prompt".cyan(),
-						prompt.name.bright_yellow(),
-						description.bright_white()
-					);
-				} else {
-					println!("  {} {}", "/prompt".cyan(), prompt.name.bright_yellow());
-				}
-			}
-			println!();
-			println!("{}", "Usage: /prompt <template_name>".bright_blue());
-			println!("{}", "Example: /prompt review".bright_green());
-		}
-		return Ok(false);
+		let prompts_data: Vec<serde_json::Value> = config
+			.prompts
+			.iter()
+			.map(|p| {
+				serde_json::json!({
+					"name": p.name,
+					"description": p.description
+				})
+			})
+			.collect();
+
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Prompt {
+			data: serde_json::json!({
+				"action": "list",
+				"prompts": prompts_data
+			}),
+		}));
 	}
 
 	let prompt_name = params[0];
@@ -72,37 +54,31 @@ prompt = "Please review the code above focusing on best practices and security."
 		p
 	} else {
 		let available_prompts: Vec<&str> = config.prompts.iter().map(|p| p.name.as_str()).collect();
-		if !available_prompts.is_empty() {
-			println!(
-				"{} {}",
-				"Prompt template not found:".bright_red(),
-				prompt_name.bright_yellow()
-			);
-			println!("{}", "Available templates:".bright_cyan());
-			for prompt in &available_prompts {
-				println!("  {}", prompt.bright_yellow());
-			}
-		} else {
-			println!("{}", "No prompt templates configured.".bright_yellow());
-		}
-		return Ok(false);
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Prompt {
+			data: serde_json::json!({
+				"action": "execute",
+				"success": false,
+				"error": format!("Prompt template not found: {}", prompt_name),
+				"available_prompts": available_prompts
+			}),
+		}));
 	};
 
 	// Process the prompt template (support variable substitution if needed)
-	let processed_prompt = process_prompt_template(&prompt_config.prompt, config, role)?;
+	let processed_prompt = process_prompt_template(&prompt_config.prompt, config, _role)?;
 
 	// CRITICAL FIX: Don't add the message here, just store it as pending
 	// The main loop will pick it up and process it as normal user input
-	session.pending_prompt = Some(processed_prompt);
+	session.pending_prompt = Some(processed_prompt.clone());
 
-	println!(
-		"{} {}",
-		"Prompt template applied:".bright_green(),
-		prompt_name.bright_yellow()
-	);
-
-	// Return false to continue session (don't exit)
-	Ok(false)
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Prompt {
+		data: serde_json::json!({
+			"action": "execute",
+			"success": true,
+			"prompt_name": prompt_name,
+			"prompt_content": processed_prompt
+		}),
+	}))
 }
 
 /// Process prompt template with variable substitution

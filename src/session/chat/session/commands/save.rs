@@ -15,14 +15,20 @@
 // Save command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use anyhow::Result;
-use colored::Colorize;
 
-pub fn handle_save(session: &mut ChatSession) -> Result<bool> {
-	if let Err(e) = session.save() {
-		println!("{}: {}", "Failed to save session".bright_red(), e);
-	} else {
-		println!("{}", "Session saved successfully.".bright_green());
+pub fn handle_save(session: &mut ChatSession) -> Result<CommandResult> {
+	match session.save() {
+		Ok(_) => Ok(CommandResult::HandledWithOutput(CommandOutput::Save {
+			success: true,
+			message: Some("Session saved successfully".to_string()),
+			session_id: Some(session.session.info.name.clone()),
+		})),
+		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Save {
+			success: false,
+			message: Some(format!("Failed to save session: {}", e)),
+			session_id: None,
+		})),
 	}
-	Ok(false)
 }

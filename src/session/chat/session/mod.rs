@@ -13,15 +13,17 @@
 // limitations under the License.
 
 // Session module implementation
-mod commands;
+pub mod commands;
 mod core;
 mod display;
 mod messages;
 mod runner;
-mod utils;
+pub mod utils;
 
 pub use core::ChatSession;
 pub use runner::{
-	format_provider_error, run_interactive_session, run_interactive_session_with_input,
+	execute_api_call_and_process_response, format_provider_error, prepare_for_api_call,
+	process_layers_if_enabled, run_interactive_session, run_interactive_session_with_input,
+	setup_and_initialize_session, setup_system_prompt_and_cache,
 };
 pub use utils::{format_number, get_initial_messages};

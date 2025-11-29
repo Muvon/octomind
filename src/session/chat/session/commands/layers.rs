@@ -15,15 +15,15 @@
 // Layers command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
 pub async fn handle_layers(
 	session: &mut ChatSession,
 	config: &mut Config,
 	role: &str,
-) -> Result<bool> {
+) -> Result<CommandResult> {
 	// Toggle layered processing (RUNTIME ONLY - no config file changes)
 	let current_role = role; // Use the passed role parameter
 
@@ -50,33 +50,16 @@ pub async fn handle_layers(
 		}
 	}
 
-	// Show the new state
-	if is_enabled {
-		println!(
-			"{}",
-			"Layered processing architecture is now ENABLED (runtime only).".bright_green()
-		);
-		println!(
-			"{}",
-			"Your queries will now be processed through multiple AI models.".bright_yellow()
-		);
-	} else {
-		println!(
-			"{}",
-			"Layered processing architecture is now DISABLED (runtime only).".bright_yellow()
-		);
-	}
-	println!(
-		"{}",
-		"Note: This change only affects the current session and won't be saved to config."
-			.bright_blue()
-	);
+	// Build output
+	let (saved, save_error) = match session.save() {
+		Ok(_) => (Some(true), None),
+		Err(e) => (Some(false), Some(e.to_string())),
+	};
 
-	// Save the session with updated runtime state
-	if let Err(e) = session.save() {
-		println!("{} {}", "Warning: Could not save session:".bright_red(), e);
-	}
-
-	// Return false since we don't need to reload config (runtime-only change)
-	Ok(false)
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Layers {
+		layers_enabled: is_enabled,
+		role: current_role.to_string(),
+		saved,
+		save_error,
+	}))
 }

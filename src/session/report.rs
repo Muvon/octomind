@@ -23,13 +23,13 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionReport {
 	pub entries: Vec<ReportEntry>,
 	pub totals: ReportTotals,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReportEntry {
 	pub user_request: String,
 	pub cost: String,
@@ -40,7 +40,7 @@ pub struct ReportEntry {
 	pub processing_time: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReportTotals {
 	pub total_cost: f64,
 	pub total_tool_calls: u32,
@@ -344,6 +344,29 @@ impl SessionReport {
 	/// Display the report with summary information using markdown rendering
 	pub fn display(&self, config: &crate::config::Config) {
 		// Generate the full markdown report
+		let markdown_report = self.to_markdown_string();
+
+		// Render using markdown renderer if enabled
+		if config.enable_markdown_rendering {
+			let theme = config.markdown_theme.parse().unwrap_or_default();
+			let renderer = MarkdownRenderer::with_theme(theme);
+			match renderer.render_and_print(&markdown_report) {
+				Ok(_) => {
+					// Successfully rendered as markdown
+				}
+				Err(_) => {
+					// Fallback to plain text if markdown rendering fails
+					self.display_plain(&markdown_report);
+				}
+			}
+		} else {
+			// Use plain text rendering
+			self.display_plain(&markdown_report);
+		}
+	}
+
+	/// Generate markdown report as string
+	pub fn to_markdown_string(&self) -> String {
 		let mut markdown_report = String::new();
 
 		// Header
@@ -364,23 +387,41 @@ impl SessionReport {
 			format_duration(self.totals.total_processing_time_ms)
 		));
 
-		// Render using markdown renderer if enabled
-		if config.enable_markdown_rendering {
-			let theme = config.markdown_theme.parse().unwrap_or_default();
-			let renderer = MarkdownRenderer::with_theme(theme);
-			match renderer.render_and_print(&markdown_report) {
-				Ok(_) => {
-					// Successfully rendered as markdown
-				}
-				Err(_) => {
-					// Fallback to plain text if markdown rendering fails
-					self.display_plain(&markdown_report);
-				}
+		markdown_report
+	}
+
+	/// Generate plain text report (for WebSocket/API)
+	pub fn to_plain_string(&self) -> String {
+		let markdown = self.to_markdown_string();
+		// Convert markdown to plain text
+		markdown
+			.replace("# ", "")
+			.replace("## ", "")
+			.replace("**", "")
+			.replace("|", " ")
+	}
+
+	/// Generate structured JSON report (for WebSocket/API)
+	pub fn to_json(&self) -> serde_json::Value {
+		serde_json::json!({
+			"entries": self.entries.iter().map(|e| serde_json::json!({
+				"user_request": e.user_request,
+				"cost": e.cost,
+				"tool_calls": e.tool_calls,
+				"tools_used": e.tools_used,
+				"human_time": e.human_time,
+				"ai_time": e.ai_time,
+				"processing_time": e.processing_time
+			})).collect::<Vec<_>>(),
+			"totals": {
+				"total_cost": self.totals.total_cost,
+				"total_tool_calls": self.totals.total_tool_calls,
+				"total_human_time_ms": self.totals.total_human_time_ms,
+				"total_ai_time_ms": self.totals.total_ai_time_ms,
+				"total_processing_time_ms": self.totals.total_processing_time_ms,
+				"total_requests": self.totals.total_requests
 			}
-		} else {
-			// Use plain text rendering
-			self.display_plain(&markdown_report);
-		}
+		})
 	}
 
 	/// Display report as plain text (fallback)

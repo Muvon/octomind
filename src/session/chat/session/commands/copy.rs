@@ -14,30 +14,32 @@
 
 // Copy command handler
 
+use super::{CommandOutput, CommandResult};
 use anyhow::Result;
 use arboard::Clipboard;
-use colored::Colorize;
 
-pub fn handle_copy(last_response: &str) -> Result<bool> {
+pub fn handle_copy(last_response: &str) -> Result<CommandResult> {
 	if last_response.is_empty() {
-		println!(
-			"{}",
-			"No response to copy. Send a message first.".bright_yellow()
-		);
-	} else {
-		match Clipboard::new() {
-			Ok(mut clipboard) => match clipboard.set_text(last_response) {
-				Ok(_) => {
-					println!("{}", "Last response copied to clipboard.".bright_green());
-				}
-				Err(e) => {
-					println!("{}: {}", "Failed to copy to clipboard".bright_red(), e);
-				}
-			},
-			Err(e) => {
-				println!("{}: {}", "Failed to access clipboard".bright_red(), e);
-			}
-		}
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Copy {
+			copied: false,
+			length: None,
+		}));
 	}
-	Ok(false)
+
+	match Clipboard::new() {
+		Ok(mut clipboard) => match clipboard.set_text(last_response) {
+			Ok(_) => Ok(CommandResult::HandledWithOutput(CommandOutput::Copy {
+				copied: true,
+				length: Some(last_response.len()),
+			})),
+			Err(_) => Ok(CommandResult::HandledWithOutput(CommandOutput::Copy {
+				copied: false,
+				length: None,
+			})),
+		},
+		Err(_) => Ok(CommandResult::HandledWithOutput(CommandOutput::Copy {
+			copied: false,
+			length: None,
+		})),
+	}
 }

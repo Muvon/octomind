@@ -15,35 +15,59 @@
 // Report command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
-pub fn handle_report(session: &ChatSession, config: &Config) -> Result<bool> {
+pub fn handle_report(session: &ChatSession, _config: &Config) -> Result<CommandResult> {
 	// Generate and display session usage report
 	if let Some(ref session_file) = session.session.session_file {
 		let session_file_str = session_file.to_string_lossy();
 		match crate::session::report::SessionReport::generate_from_log(&session_file_str) {
 			Ok(report) => {
-				report.display(config);
+				// Convert report entries to JSON
+				let entries: Vec<serde_json::Value> = report
+					.entries
+					.iter()
+					.map(|entry| {
+						serde_json::json!({
+							"user_request": entry.user_request,
+							"cost": entry.cost,
+							"tool_calls": entry.tool_calls,
+							"tools_used": entry.tools_used,
+							"human_time": entry.human_time,
+							"ai_time": entry.ai_time,
+							"processing_time": entry.processing_time
+						})
+					})
+					.collect();
+
+				let totals = serde_json::json!({
+					"total_cost": report.totals.total_cost,
+					"total_tool_calls": report.totals.total_tool_calls,
+					"total_human_time_ms": report.totals.total_human_time_ms,
+					"total_ai_time_ms": report.totals.total_ai_time_ms,
+					"total_processing_time_ms": report.totals.total_processing_time_ms
+				});
+
+				Ok(CommandResult::HandledWithOutput(CommandOutput::Report {
+					entries,
+					totals,
+				}))
 			}
-			Err(e) => {
-				println!("{}: Failed to generate report: {}", "Error".bright_red(), e);
-				println!(
-					"{}: Make sure the session log file exists and is readable.",
-					"Hint".bright_yellow()
-				);
-			}
+			Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+				error: format!("Failed to generate report: {}", e),
+				context: Some(serde_json::json!({
+					"hint": "Make sure the session log file exists and is readable."
+				})),
+			})),
 		}
 	} else {
-		println!(
-			"{}: No session file available for report generation.",
-			"Error".bright_red()
-		);
-		println!(
-			"{}: Save the session first with /save command.",
-			"Hint".bright_yellow()
-		);
+		Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+			error: "No session file available for report generation.".to_string(),
+			context: Some(serde_json::json!({
+				"hint": "Save the session first with /save command."
+			})),
+		}))
 	}
-	Ok(false)
 }

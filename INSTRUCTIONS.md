@@ -1222,6 +1222,8 @@ octomind session --max-retries 5                 # Set retry limit
 octomind ask "How does authentication work?"       # One-shot question
 octomind run <layer_name> "Task description"      # Execute specific layer
 octomind shell                                     # Interactive shell mode
+octomind server                                    # Start WebSocket server (default: localhost:8080)
+octomind server --host 0.0.0.0 --port 3000        # WebSocket server with custom host/port
 octomind vars                                      # Show environment variables
 octomind completion bash > ~/.bash_completion.d/octomind  # Shell completion
 ```

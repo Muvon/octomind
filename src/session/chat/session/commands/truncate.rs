@@ -15,32 +15,17 @@
 // Truncate command handler
 
 use super::super::core::ChatSession;
-use super::utils::format_number;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
 pub async fn handle_truncate(
 	session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-) -> Result<bool> {
-	// Perform smart truncation processing once
-	println!(
-		"{}",
-		"Performing simple boundary truncation...".bright_cyan()
-	);
-
+) -> Result<CommandResult> {
 	// Estimate current token usage
 	let current_tokens = crate::session::estimate_message_tokens(&session.session.messages);
-	println!(
-		"{}",
-		format!(
-			"Current context size: {} tokens",
-			format_number(current_tokens as u64)
-		)
-		.bright_blue()
-	);
 
 	// Use the simple boundary truncation logic for manual /truncate command
 	match crate::session::chat::perform_simple_boundary_truncation(
@@ -56,31 +41,18 @@ pub async fn handle_truncate(
 			let new_tokens = crate::session::estimate_message_tokens(&session.session.messages);
 			let tokens_saved = current_tokens.saturating_sub(new_tokens);
 
-			if tokens_saved > 0 {
-				println!(
-                    "{}",
-                    format!(
-                        "Simple boundary truncation completed: {} tokens removed, new context size: {} tokens",
-                        format_number(tokens_saved as u64),
-                        format_number(new_tokens as u64)
-                    )
-                    .bright_green()
-                );
-			} else {
-				println!(
-					"{}",
-					"No truncation needed - context size is within optimal range".bright_yellow()
-				);
-			}
+			Ok(CommandResult::HandledWithOutput(CommandOutput::Truncate {
+				success: true,
+				tokens_before: current_tokens,
+				tokens_after: new_tokens,
+				tokens_saved,
+			}))
 		}
-		Err(e) => {
-			println!(
-				"{}: {}",
-				"Simple boundary truncation failed".bright_red(),
-				e
-			);
-		}
+		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+			error: format!("Truncation failed: {}", e),
+			context: Some(serde_json::json!({
+				"tokens_before": current_tokens
+			})),
+		})),
 	}
-
-	Ok(false)
 }

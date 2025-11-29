@@ -37,6 +37,7 @@ pub struct ResponseProcessingParams<'a> {
 	pub config: &'a Config,
 	pub role: &'a str,
 	pub operation_cancelled: tokio::sync::watch::Receiver<bool>,
+	pub is_interactive: bool,
 }
 
 impl<'a> ResponseProcessingParams<'a> {
@@ -60,7 +61,14 @@ impl<'a> ResponseProcessingParams<'a> {
 			config,
 			role,
 			operation_cancelled,
+			is_interactive: true, // Default to true for backward compatibility
 		}
+	}
+
+	/// Set whether this is an interactive session (controls console output)
+	pub fn with_interactive(mut self, is_interactive: bool) -> Self {
+		self.is_interactive = is_interactive;
+		self
 	}
 }
 
@@ -84,13 +92,16 @@ fn handle_final_response(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
+	is_interactive: bool,
 ) -> Result<()> {
 	// CRITICAL: Add the assistant message to the session for continuation logic to work
 	// This was removed in the recent commit but is needed for proper session state
 	chat_session.add_assistant_message(content, None, config, role)?;
 
-	// Print assistant response with color
-	print_assistant_response(content, config, role);
+	// Print assistant response with color ONLY in interactive mode
+	if is_interactive {
+		print_assistant_response(content, config, role);
+	}
 
 	// Display cost line only for non-interactive mode or specific scenarios
 	// Skip for interactive mode to avoid duplication before user input prompt
@@ -309,11 +320,15 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
 			if !current_tool_calls.is_empty() {
-				// Display the content to the user FIRST (before adding to session)
-				print_assistant_response(&current_content, params.config, params.role);
+				// Display the content to the user FIRST (before adding to session) - ONLY in interactive mode
+				if params.is_interactive {
+					print_assistant_response(&current_content, params.config, params.role);
+				}
 
-				// Display tool parameters upfront (headers will be shown per-tool during execution)
-				display_tool_parameters_only(params.config, &current_tool_calls).await;
+				// Display tool parameters upfront (headers will be shown per-tool during execution) - ONLY in interactive mode
+				if params.is_interactive {
+					display_tool_parameters_only(params.config, &current_tool_calls).await;
+				}
 
 				// Clone operation_cancelled to avoid borrow issues
 				let operation_cancelled_clone = params.operation_cancelled.clone();
@@ -460,6 +475,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.chat_session,
 		params.config,
 		params.role,
+		params.is_interactive,
 	)?;
 
 	Ok(())
@@ -522,7 +538,8 @@ pub async fn process_continuation_message_immediately(
 				params.config,
 				params.role,
 				params.operation_cancelled.clone(),
-			);
+			)
+			.with_interactive(params.is_interactive); // Preserve interactive mode
 
 			// Use Box::pin to avoid recursion compilation issues
 			Box::pin(process_response(continuation_params)).await

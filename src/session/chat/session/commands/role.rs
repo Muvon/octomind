@@ -15,63 +15,56 @@
 // Role switching command implementation
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
 
 /// Handle /role command for runtime role switching
 pub async fn handle_role(
 	session: &mut ChatSession,
 	config: &Config,
 	params: &[&str],
-) -> Result<bool> {
+) -> Result<CommandResult> {
 	if params.is_empty() {
-		// Show current role
-		println!(
-			"{} {}",
-			"Current role:".bright_cyan(),
-			session.role.bright_yellow()
-		);
+		// Show current role and available roles
+		let available_roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
 
-		// Show available roles
-		println!("\n{}", "Available roles:".bright_cyan());
-		for role in &config.roles {
-			let indicator = if role.name == session.role {
-				"→".bright_green()
-			} else {
-				" ".normal()
-			};
-			println!("  {} {}", indicator, role.name.bright_white());
-		}
-
-		println!("\n💡 Usage: {} <role_name>", "/role".bright_green());
-		return Ok(false);
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Role {
+			old_role: None,
+			new_role: session.role.clone(),
+			current_role: Some(session.role.clone()),
+			available_roles: Some(available_roles),
+			changed: false,
+			saved: None,
+			save_error: None,
+		}));
 	}
 
 	let new_role = params[0];
 
 	// Validate role exists
 	if !config.roles.iter().any(|r| r.name == new_role) {
-		println!(
-			"{}: {}",
-			"Invalid role".bright_red(),
-			new_role.bright_yellow()
-		);
-		println!("\n{}", "Available roles:".bright_cyan());
-		for role in &config.roles {
-			println!("  {}", role.name.bright_white());
-		}
-		return Ok(false);
+		let available_roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
+
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+			error: format!("Invalid role: {}", new_role),
+			context: Some(serde_json::json!({
+				"available_roles": available_roles
+			})),
+		}));
 	}
 
 	// Don't switch if already using this role
 	if session.role == new_role {
-		println!(
-			"{} {}",
-			"Already using role:".bright_yellow(),
-			new_role.bright_green()
-		);
-		return Ok(false);
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Role {
+			old_role: None,
+			new_role: new_role.to_string(),
+			current_role: Some(new_role.to_string()),
+			available_roles: None,
+			changed: false,
+			saved: None,
+			save_error: None,
+		}));
 	}
 
 	// Get new role configuration
@@ -88,9 +81,12 @@ pub async fn handle_role(
 		session.role = old_role.clone();
 		session.temperature = config.get_role_config(&old_role).0.temperature;
 
-		println!("{}: {}", "Failed to switch role".bright_red(), e);
-		println!("{}", "Role change reverted".yellow());
-		return Ok(false);
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+			error: format!("Failed to switch role: {}", e),
+			context: Some(serde_json::json!({
+				"reverted": true
+			})),
+		}));
 	}
 
 	// Log the role change for session restoration
@@ -103,19 +99,19 @@ pub async fn handle_role(
 		}
 	}
 
-	println!(
-		"{} {} → {}",
-		"Role switched:".bright_green(),
-		old_role.bright_yellow(),
-		new_role.bright_green()
-	);
+	// Save session with updated role
+	let (saved, save_error) = match session.save() {
+		Ok(_) => (Some(true), None),
+		Err(e) => (Some(false), Some(e.to_string())),
+	};
 
-	// Show key changes
-	println!(
-		"{} {}",
-		"Temperature:".blue(),
-		session.temperature.to_string().bright_white()
-	);
-
-	Ok(false) // Command handled, don't exit session
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Role {
+		old_role: Some(old_role),
+		new_role: new_role.to_string(),
+		current_role: None,
+		available_roles: None,
+		changed: true,
+		saved,
+		save_error,
+	}))
 }

@@ -15,11 +15,11 @@
 // Run command handler
 
 use super::super::core::ChatSession;
+use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::command_executor;
 use anyhow::Result;
-use colored::Colorize;
 
 pub async fn handle_run(
 	session: &mut ChatSession,
@@ -27,39 +27,20 @@ pub async fn handle_run(
 	role: &str,
 	params: &[&str],
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
-) -> Result<bool> {
+) -> Result<CommandResult> {
 	// Handle /run command for executing command layers
 	if params.is_empty() {
 		// Show available commands for this role
 		let available_commands = command_executor::list_available_commands(config, role);
-		if available_commands.is_empty() {
-			println!("{}", "No command layers configured.".bright_yellow());
-			println!("{}", "Command layers can be defined in the global [[commands]] section of your configuration.".bright_blue());
-			println!("{}", "Example configuration:".bright_cyan());
-			println!(
-				"{}",
-				r#"[[commands]]
-name = "estimate"
-model = "openrouter:openai/gpt-4.1-mini"
-system_prompt = "You are a project estimation expert. Analyze the work done and provide estimates."
-temperature = 0.2
-input_mode = "Last"
 
-[commands.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = []"#
-					.bright_white()
-			);
-		} else {
-			println!("{}", "Available command layers:".bright_cyan());
-			for cmd in &available_commands {
-				println!("  {} {}", "/run".cyan(), cmd.bright_yellow());
-			}
-			println!();
-			println!("{}", "Usage: /run <command_name>".bright_blue());
-			println!("{}", "Example: /run estimate".bright_green());
-		}
-		return Ok(false);
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+			command_executed: String::new(),
+			data: serde_json::json!({
+				"action": "list",
+				"commands": available_commands,
+				"message": if available_commands.is_empty() { "No commands configured" } else { "Available commands" }
+			}),
+		}));
 	}
 
 	let command_name = params[0];
@@ -67,18 +48,15 @@ allowed_tools = []"#
 	// Check if command exists
 	if !command_executor::command_exists(config, role, command_name) {
 		let available_commands = command_executor::list_available_commands(config, role);
-		println!(
-			"{} {}",
-			"Command not found:".bright_red(),
-			command_name.bright_yellow()
-		);
-		if !available_commands.is_empty() {
-			println!("{}", "Available commands:".bright_cyan());
-			for cmd in &available_commands {
-				println!("  {}", cmd.bright_yellow());
-			}
-		}
-		return Ok(false);
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+			command_executed: command_name.to_string(),
+			data: serde_json::json!({
+				"action": "execute",
+				"success": false,
+				"error": format!("Command not found: {}", command_name),
+				"available_commands": available_commands
+			}),
+		}));
 	}
 
 	// Get the input for the command layer
@@ -105,25 +83,26 @@ allowed_tools = []"#
 		Ok(should_continue) => {
 			if !should_continue {
 				// Spending threshold reached - instant decline for /run commands
-				println!(
-					"{}",
-					"✗ Command execution cancelled due to spending threshold.".bright_red()
-				);
-				return Ok(false);
+				return Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+					command_executed: command_name.to_string(),
+					data: serde_json::json!({
+						"action": "execute",
+						"success": false,
+						"error": "Command execution cancelled due to spending threshold."
+					}),
+				}));
 			}
 		}
 		Err(e) => {
 			// Error checking threshold, log warning and stop execution
-			println!(
-				"{}: {}",
-				"Warning: Error checking spending threshold".bright_yellow(),
-				e
-			);
-			println!(
-				"{}",
-				"✗ Command execution cancelled due to threshold check error.".bright_red()
-			);
-			return Ok(false);
+			return Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+				command_executed: command_name.to_string(),
+				data: serde_json::json!({
+					"action": "execute",
+					"success": false,
+					"error": format!("Error checking spending threshold: {}", e)
+				}),
+			}));
 		}
 	}
 
@@ -132,25 +111,26 @@ allowed_tools = []"#
 		Ok(should_continue) => {
 			if !should_continue {
 				// Request spending threshold exceeded - stop execution
-				println!(
-					"{}",
-					"✗ Command execution cancelled due to request spending threshold.".bright_red()
-				);
-				return Ok(false);
+				return Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+					command_executed: command_name.to_string(),
+					data: serde_json::json!({
+						"action": "execute",
+						"success": false,
+						"error": "Command execution cancelled due to request spending threshold."
+					}),
+				}));
 			}
 		}
 		Err(e) => {
 			// Error checking request threshold, log warning and stop execution
-			println!(
-				"{}: {}",
-				"Warning: Error checking request spending threshold".bright_yellow(),
-				e
-			);
-			println!(
-				"{}",
-				"✗ Command execution cancelled due to request threshold check error.".bright_red()
-			);
-			return Ok(false);
+			return Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+				command_executed: command_name.to_string(),
+				data: serde_json::json!({
+					"action": "execute",
+					"success": false,
+					"error": format!("Error checking request spending threshold: {}", e)
+				}),
+			}));
 		}
 	}
 
@@ -168,15 +148,26 @@ allowed_tools = []"#
 	{
 		Ok(result) => {
 			println!();
-			println!("{}", "Command result:".bright_green());
 			// Use markdown-aware printing for command results
 			print_assistant_response(&result, config, role);
 			println!();
-		}
-		Err(e) => {
-			println!("{} {}", "Command execution failed:".bright_red(), e);
-		}
-	}
 
-	Ok(false)
+			Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+				command_executed: command_name.to_string(),
+				data: serde_json::json!({
+					"action": "execute",
+					"success": true,
+					"result": result
+				}),
+			}))
+		}
+		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+			command_executed: command_name.to_string(),
+			data: serde_json::json!({
+				"action": "execute",
+				"success": false,
+				"error": format!("Command execution failed: {}", e)
+			}),
+		})),
+	}
 }

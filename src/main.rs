@@ -47,6 +47,9 @@ enum Commands {
 	/// Execute shell commands through AI with confirmation
 	Shell(commands::ShellArgs),
 
+	/// Start WebSocket server for remote AI sessions
+	Server(commands::ServerArgs),
+
 	/// Show all available placeholder variables and their values
 	Vars(commands::VarsArgs),
 
@@ -104,6 +107,9 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		Commands::Run(run_args) => {
 			initialize_mcp_for_role(&run_args.role, &config).await?;
 		}
+		Commands::Server(server_args) => {
+			initialize_mcp_for_role(&server_args.role, &config).await?;
+		}
 		_ => {
 			// Other commands don't need MCP servers
 		}
@@ -125,6 +131,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		}
 		Commands::Ask(ask_args) => commands::ask::execute(ask_args, &config).await?,
 		Commands::Shell(shell_args) => commands::shell::execute(shell_args, &config).await?,
+		Commands::Server(server_args) => commands::server::execute(server_args, &config).await?,
 		Commands::Vars(vars_args) => commands::vars::execute(vars_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();

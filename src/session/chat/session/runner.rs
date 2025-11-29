@@ -127,8 +127,18 @@ fn extract_session_params<T: std::fmt::Debug>(args: &T, _config: &Config) -> Ses
 	)
 }
 
+// Helper function to print command output in CLI context
+// Uses the strongly-typed CommandOutput display method
+fn print_command_output(
+	output: &super::commands::CommandOutput,
+	session: &ChatSession,
+	config: &Config,
+) {
+	output.display_cli(session, config);
+}
+
 // Helper function to setup session parameters and initialize chat session
-async fn setup_and_initialize_session<T: std::fmt::Debug>(
+pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	args: &T,
 	config: &Config,
 ) -> Result<(ChatSession, Config, String, bool)> {
@@ -230,7 +240,7 @@ To fix this issue
 }
 
 // Helper function to setup system prompt and cache
-async fn setup_system_prompt_and_cache(
+pub async fn setup_system_prompt_and_cache(
 	chat_session: &mut ChatSession,
 	config_for_role: &Config,
 	role: &str,
@@ -379,7 +389,7 @@ async fn setup_system_prompt_and_cache(
 }
 
 // Helper function to process layers if enabled
-async fn process_layers_if_enabled(
+pub async fn process_layers_if_enabled(
 	input: &str,
 	chat_session: &mut ChatSession,
 	config: &Config,
@@ -478,7 +488,7 @@ async fn process_layers_if_enabled(
 }
 
 // Helper function to prepare for API call (context truncation and caching)
-async fn prepare_for_api_call(
+pub async fn prepare_for_api_call(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
@@ -522,7 +532,7 @@ async fn prepare_for_api_call(
 }
 
 // Helper function to execute API call and process response
-async fn execute_api_call_and_process_response(
+pub async fn execute_api_call_and_process_response(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
@@ -654,16 +664,19 @@ async fn execute_api_call_and_process_response(
 			// Process the response with tool calls
 			// CRITICAL FIX: Use operation_cancelled instead of creating a new token
 			// This ensures Ctrl+C cancellation works properly during tool execution
-			let process_result = process_response(ResponseProcessingParams::new(
-				response.content,
-				response.exchange,
-				response.tool_calls,
-				response.finish_reason,
-				chat_session,
-				config,
-				role,
-				operation_rx_for_response.clone(),
-			))
+			let process_result = process_response(
+				ResponseProcessingParams::new(
+					response.content,
+					response.exchange,
+					response.tool_calls,
+					response.finish_reason,
+					chat_session,
+					config,
+					role,
+					operation_rx_for_response.clone(),
+				)
+				.with_interactive(is_interactive),
+			) // Pass through interactive mode
 			.await;
 
 			if let Err(e) = process_result {
@@ -1312,6 +1325,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					// Command was handled successfully, continue with session
 					continue;
 				}
+				super::commands::CommandResult::HandledWithOutput(json_output) => {
+					// Command was handled with output
+					// Print it for CLI using existing display functions
+					print_command_output(&json_output, &chat_session, &current_config);
+					continue;
+				}
 			}
 		}
 
@@ -1603,6 +1622,16 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			}
 			crate::session::chat::session::commands::CommandResult::Handled => {
 				// Command was handled successfully
+				// Save session after command execution
+				let _ = chat_session.save();
+				return Ok(());
+			}
+			crate::session::chat::session::commands::CommandResult::HandledWithOutput(
+				json_output,
+			) => {
+				// Command was handled with output
+				// Print it for CLI run command using existing display functions
+				print_command_output(&json_output, &chat_session, &current_config);
 				// Save session after command execution
 				let _ = chat_session.save();
 				return Ok(());

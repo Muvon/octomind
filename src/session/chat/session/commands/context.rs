@@ -15,10 +15,10 @@
 // Context command handler
 
 use super::super::core::ChatSession;
-use crate::config::Config;
+use super::{CommandOutput, CommandResult};
 use anyhow::Result;
 
-pub fn handle_context(session: &ChatSession, config: &Config, params: &[&str]) -> Result<bool> {
+pub fn handle_context(session: &ChatSession, params: &[&str]) -> Result<CommandResult> {
 	// Parse filter parameter if provided
 	let filter = if params.is_empty() {
 		"all".to_string()
@@ -26,7 +26,34 @@ pub fn handle_context(session: &ChatSession, config: &Config, params: &[&str]) -
 		params[0].to_lowercase()
 	};
 
-	// Display current session context with filtering
-	session.display_session_context_filtered(config, &filter);
-	Ok(false)
+	// Build JSON output with actual messages
+	let filtered_messages: Vec<serde_json::Value> = session
+		.session
+		.messages
+		.iter()
+		.filter(|msg| match filter.as_str() {
+			"all" => true,
+			"assistant" => msg.role == "assistant",
+			"user" => msg.role == "user",
+			"tool" => msg.role == "tool",
+			"system" => msg.role == "system",
+			"large" => msg.content.len() > 1000,
+			_ => true,
+		})
+		.map(|msg| {
+			serde_json::json!({
+				"role": msg.role,
+				"content": msg.content,
+				"name": msg.name,
+				"tool_calls": msg.tool_calls,
+				"tool_call_id": msg.tool_call_id,
+			})
+		})
+		.collect();
+
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Context {
+		filter,
+		total_messages: session.session.messages.len(),
+		filtered_messages,
+	}))
 }

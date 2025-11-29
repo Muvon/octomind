@@ -14,11 +14,11 @@
 
 // Log level command handler
 
+use super::{CommandOutput, CommandResult};
 use crate::config::{Config, LogLevel};
 use anyhow::Result;
-use colored::Colorize;
 
-pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<bool> {
+pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandResult> {
 	// Handle log level command (runtime-only, does NOT save to disk)
 	if params.is_empty() {
 		// Show current log level - use system-wide getter
@@ -29,16 +29,14 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<bool> {
 			LogLevel::Info => "info",
 			LogLevel::Debug => "debug",
 		};
-		println!(
-			"{}",
-			format!("Current log level: {}", level_str).bright_cyan()
-		);
-		println!("{}", "Available levels: none, info, debug".bright_yellow());
-		println!(
-			"{}",
-			"Note: Changes are runtime-only and do not persist to config file.".bright_blue()
-		);
-		return Ok(false);
+
+		return Ok(CommandResult::HandledWithOutput(CommandOutput::Loglevel {
+			old_level: None,
+			new_level: None,
+			current_level: Some(level_str.to_string()),
+			available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+			changed: false,
+		}));
 	}
 
 	// Parse the requested log level
@@ -47,11 +45,12 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<bool> {
 		"info" => LogLevel::Info,
 		"debug" => LogLevel::Debug,
 		_ => {
-			println!(
-				"{}",
-				"Invalid log level. Use: none, info, or debug".bright_red()
-			);
-			return Ok(false);
+			return Ok(CommandResult::HandledWithOutput(CommandOutput::Error {
+				error: "Invalid log level. Use: none, info, or debug".to_string(),
+				context: Some(serde_json::json!({
+					"available_levels": ["none", "info", "debug"]
+				})),
+			}));
 		}
 	};
 
@@ -61,38 +60,17 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<bool> {
 	// Propagate the change to thread-local storage so logging macros use the new level
 	crate::config::set_thread_config(config);
 
-	// Show the new state
-	match new_level {
-		LogLevel::None => {
-			println!(
-				"{}",
-				"Log level set to NONE (runtime only).".bright_yellow()
-			);
-			println!(
-				"{}",
-				"Only essential information will be displayed.".bright_blue()
-			);
-		}
-		LogLevel::Info => {
-			println!("{}", "Log level set to INFO (runtime only).".bright_green());
-			println!("{}", "Moderate logging will be shown.".bright_yellow());
-		}
-		LogLevel::Debug => {
-			println!(
-				"{}",
-				"Log level set to DEBUG (runtime only).".bright_green()
-			);
-			println!(
-				"{}",
-				"Detailed logging will be shown for API calls and tool executions.".bright_yellow()
-			);
-		}
-	}
-	println!(
-		"{}",
-		"Note: This change is runtime-only and will not persist after session ends.".bright_blue()
-	);
+	let level_str = match new_level {
+		LogLevel::None => "none",
+		LogLevel::Info => "info",
+		LogLevel::Debug => "debug",
+	};
 
-	// Do NOT return Ok(true) - we don't want config reload
-	Ok(false)
+	Ok(CommandResult::HandledWithOutput(CommandOutput::Loglevel {
+		old_level: None,
+		new_level: Some(level_str.to_string()),
+		current_level: None,
+		available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+		changed: true,
+	}))
 }

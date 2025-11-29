@@ -15,6 +15,7 @@
 pub mod ask;
 pub mod config;
 pub mod run;
+pub mod server;
 pub mod session;
 pub mod shell;
 pub mod vars;
@@ -23,6 +24,7 @@ pub mod vars;
 pub use ask::AskArgs;
 pub use config::ConfigArgs;
 pub use run::RunArgs;
+pub use server::ServerArgs;
 pub use session::SessionArgs;
 pub use shell::ShellArgs;
 pub use vars::VarsArgs;

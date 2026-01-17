@@ -17,7 +17,8 @@
 use super::process;
 use super::{McpFunction, McpToolCall, McpToolResult};
 use crate::config::{Config, McpConnectionType, McpServerConfig};
-use anyhow::Result;
+use crate::mcp::oauth::{self, token_store};
+use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -39,6 +40,55 @@ pub fn create_tools_list_request() -> Value {
 		"method": "tools/list",
 		"params": {}
 	})
+}
+
+/// Parse Server-Sent Events (SSE) response format used by some MCP servers like GitHub
+/// SSE format: "event: <type>\ndata: <json>\n\n"
+fn parse_sse_response(body: &str) -> Option<Value> {
+	// Look for "data:" prefix and extract JSON
+	for line in body.lines() {
+		if line.starts_with("data:") {
+			let json_data = line.trim_start_matches("data:").trim();
+			if let Ok(value) = serde_json::from_str(json_data) {
+				return Some(value);
+			}
+		}
+	}
+	None
+}
+
+/// Check if response content-type indicates SSE format
+fn is_sse_response(response: &reqwest::Response) -> bool {
+	response
+		.headers()
+		.get(CONTENT_TYPE)
+		.and_then(|v| v.to_str().ok())
+		.map(|ct| ct.contains("text/event-stream"))
+		.unwrap_or(false)
+}
+
+/// Parse HTTP response body - handles both plain JSON and SSE format
+async fn parse_http_response_body(response: reqwest::Response) -> Result<Value> {
+	if is_sse_response(&response) {
+		// GitHub MCP uses SSE format: "event: message\ndata: {...}\n\n"
+		let body = response.text().await?;
+		crate::log_debug!(
+			"SSE response body (first 500 chars): {}",
+			body.chars().take(500).collect::<String>()
+		);
+
+		if let Some(json_value) = parse_sse_response(&body) {
+			return Ok(json_value);
+		}
+
+		return Err(anyhow!(
+			"Failed to parse SSE response - no valid JSON data found"
+		));
+	}
+
+	// Default: plain JSON response
+	let jsonrpc_response: Value = response.json().await?;
+	Ok(jsonrpc_response)
 }
 
 pub fn create_initialize_request() -> Value {
@@ -132,12 +182,120 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 			let mut headers = HeaderMap::new();
 			headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-			// Add auth token if present
-			if let Some(token) = server.auth_token() {
-				headers.insert(
-					AUTHORIZATION,
-					HeaderValue::from_str(&format!("Bearer {}", token))?,
-				);
+			// Add authentication - Try MCP Authorization discovery first, then manual OAuth, then static token
+			let mut oauth_attempted = false;
+
+			// Step 1: Try MCP Authorization Discovery (RFC 9728)
+			match oauth::discover_oauth_from_mcp_server(&server_url, server.name()).await {
+				Ok(discovered_oauth) => {
+					crate::log_debug!(
+						"MCP Authorization discovery succeeded for server '{}', attempting OAuth flow",
+						server.name()
+					);
+
+					match oauth::get_access_token(&discovered_oauth, server.name(), false).await {
+						Ok(Some(token)) => {
+							headers.insert(
+								AUTHORIZATION,
+								HeaderValue::from_str(&format!("Bearer {}", token))?,
+							);
+							crate::log_debug!(
+								"Using discovered OAuth access token for HTTP server '{}'",
+								server.name()
+							);
+							oauth_attempted = true;
+						}
+						Ok(None) => {
+							crate::log_error!(
+								"OAuth authentication was cancelled for server '{}'",
+								server.name()
+							);
+							oauth_attempted = true;
+						}
+						Err(e) => {
+							crate::log_error!(
+								"Failed to get OAuth access token for server '{}': {}",
+								server.name(),
+								e
+							);
+							oauth_attempted = true;
+						}
+					}
+				}
+				Err(e) => {
+					crate::log_debug!(
+						"MCP Authorization discovery failed for server '{}': {}",
+						server.name(),
+						e
+					);
+				}
+			}
+
+			// Step 2: Fallback to manual OAuth configuration if discovery failed
+			if !oauth_attempted && server.is_oauth_enabled() {
+				// OAuth authentication - get or refresh access token
+				if let Some(oauth_config) = server.oauth_config() {
+					crate::log_debug!(
+						"Using manual OAuth configuration for server '{}'",
+						server.name()
+					);
+
+					match oauth::get_access_token(oauth_config, server.name(), false).await {
+						Ok(Some(token)) => {
+							println!("🔍 HTTP: Got OAuth token for '{}', token_prefix='{}...', adding to headers", 
+							server.name(),
+							token.chars().take(10).collect::<String>()
+						);
+							headers.insert(
+								AUTHORIZATION,
+								HeaderValue::from_str(&format!("Bearer {}", token))?,
+							);
+							println!(
+								"✅ HTTP: Authorization header set for server '{}'",
+								server.name()
+							);
+							crate::log_debug!(
+								"Using manual OAuth access token for HTTP server '{}'",
+								server.name()
+							);
+						}
+						Ok(None) => {
+							println!(
+								"❌ HTTP: OAuth returned None for server '{}'",
+								server.name()
+							);
+							crate::log_error!(
+								"OAuth authentication was cancelled for server '{}'",
+								server.name()
+							);
+						}
+						Err(e) => {
+							println!(
+								"❌ HTTP: OAuth failed for server '{}': {}",
+								server.name(),
+								e
+							);
+							crate::log_error!(
+								"Failed to get OAuth access token for server '{}': {}",
+								server.name(),
+								e
+							);
+						}
+					}
+				}
+			} else if !oauth_attempted {
+				// Step 3: Fallback to static Bearer token if no OAuth
+				if let Some(token) = server.auth_token() {
+					// Static Bearer token authentication
+					headers.insert(
+						AUTHORIZATION,
+						HeaderValue::from_str(&format!("Bearer {}", token))?,
+					);
+					crate::log_debug!(
+						"Using static Bearer token for HTTP server '{}'",
+						server.name()
+					);
+				}
 			}
 
 			// MCP uses JSON-RPC over HTTP with POST requests
@@ -169,8 +327,8 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 				));
 			}
 
-			// Parse JSON-RPC response
-			let jsonrpc_response: Value = response.json().await?;
+			// Parse JSON-RPC response (handles both plain JSON and SSE format)
+			let jsonrpc_response = parse_http_response_body(response).await?;
 
 			crate::log_debug!(
 				"JSON-RPC response from server '{}': {}",
@@ -210,15 +368,47 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 		}
 	}
 
-	// Check if server is currently running
-	let is_running = is_server_running_for_cache_check(server);
+	// For HTTP servers with a URL, always try to get tools - they're endpoints we can reach
+	// For stdin servers, check if process is running first
+	let should_fetch = match server.connection_type() {
+		McpConnectionType::Http => server.url().is_some(), // Always try for HTTP servers
+		McpConnectionType::Stdin => is_server_running_for_cache_check(server),
+		McpConnectionType::Builtin => false, // Builtin servers handled separately
+	};
 
-	if is_running {
-		// Server is running - get fresh functions and cache them
-		crate::log_debug!(
-			"Server '{}' is running - fetching and caching function definitions",
-			server_id
-		);
+	if should_fetch {
+		// Check if we have a cached token for OAuth servers before attempting fetch
+		// This prevents triggering OAuth flow during tool map initialization
+		if server.is_oauth_enabled() {
+			if let Some(oauth_config) = server.oauth_config() {
+				match token_store::get_valid_token(server_id, oauth_config.refresh_buffer_seconds)
+					.await
+				{
+					Ok(None) => {
+						// No valid token - don't trigger OAuth, return empty
+						crate::log_debug!(
+							"Server '{}' requires OAuth but no token available - skipping cache fetch",
+							server_id
+						);
+						return Ok(Vec::new());
+					}
+					Err(e) => {
+						crate::log_debug!(
+							"Failed to check OAuth token for server '{}': {} - skipping cache fetch",
+							server_id,
+							e
+						);
+						return Ok(Vec::new());
+					}
+					Ok(Some(_)) => {
+						// Token exists, proceed with fetch
+					}
+				}
+			}
+		}
+
+		// Server should be available - get fresh functions and cache them
+		crate::log_debug!("Fetching function definitions from server '{}'", server_id);
 
 		match get_server_functions(server).await {
 			Ok(functions) => {
@@ -227,45 +417,26 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 					let mut cache = FUNCTION_CACHE.write().unwrap();
 					cache.insert(server_id.to_string(), functions.clone());
 				}
-				crate::log_debug!(
-					"Cached {} functions for server '{}'",
-					functions.len(),
-					server_id
-				);
+				crate::log_debug!("Server '{}' returned {} tools", server_id, functions.len());
 				Ok(functions)
 			}
 			Err(e) => {
-				// CRITICAL FIX: For remote HTTP servers, if tools/list fails,
-				// we should NOT include any tools from this server in the API request
-				// because they won't work anyway
-				if server.connection_type() == crate::config::McpConnectionType::Http
-					&& server.url().is_some()
-					&& server.command().is_none()
-				{
-					crate::log_debug!(
-						"Remote HTTP server '{}' failed tools/list - excluding from tools: {}",
-						server_id,
-						e
-					);
-					// Cache empty result to avoid repeated attempts
-					{
-						let mut cache = FUNCTION_CACHE.write().unwrap();
-						cache.insert(server_id.to_string(), Vec::new());
-					}
-					return Ok(Vec::new());
-				}
-
-				// For local servers, fall back to configured tools
+				// HTTP server failed - log error and return empty
 				crate::log_error!(
-					"Failed to get functions from running server '{}': {}",
+					"Failed to connect to HTTP server '{}': {}. Verify the server is running at the configured URL.",
 					server_id,
 					e
 				);
-				get_fallback_functions(server)
+				// Cache empty result to avoid repeated attempts
+				{
+					let mut cache = FUNCTION_CACHE.write().unwrap();
+					cache.insert(server_id.to_string(), Vec::new());
+				}
+				Ok(Vec::new())
 			}
 		}
 	} else {
-		// Server is not running - return configured tools or empty list
+		// Server is not running (stdin server without process)
 		crate::log_debug!(
 			"Server '{}' is not running - using fallback function definitions",
 			server_id
@@ -277,17 +448,6 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 // Helper function to get fallback functions when server is not running
 fn get_fallback_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
 	if !server.tools().is_empty() {
-		// For remote HTTP servers, don't show "server not started" since they're external
-		let description_suffix = if server.connection_type()
-			== crate::config::McpConnectionType::Http
-			&& server.url().is_some()
-			&& server.command().is_none()
-		{
-			"(remote server)"
-		} else {
-			"(server not started)"
-		};
-
 		// Return lightweight function entries based on configuration
 		Ok(server
 			.tools()
@@ -295,10 +455,9 @@ fn get_fallback_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> 
 			.map(|tool_name| McpFunction {
 				name: tool_name.clone(),
 				description: format!(
-					"External tool '{}' from server '{}' {}",
+					"External tool '{}' from server '{}' (server not running)",
 					tool_name,
-					server.name(),
-					description_suffix
+					server.name()
 				),
 				parameters: serde_json::json!({}),
 			})
@@ -310,21 +469,9 @@ fn get_fallback_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> 
 }
 
 // Optimized server running check that doesn't hold locks for long
-// This function now requires server config to properly handle remote HTTP servers
 fn is_server_running_for_cache_check(server: &McpServerConfig) -> bool {
-	// For remote HTTP servers (have URL but no command), consider them always available
-	if server.connection_type() == McpConnectionType::Http
-		&& server.url().is_some()
-		&& server.command().is_none()
-	{
-		crate::log_debug!(
-			"Remote HTTP server '{}' is considered always available",
-			server.name()
-		);
-		return true;
-	}
-
-	// For local servers (have command) or stdin servers, check the process registry
+	// For HTTP servers, we can't know if they're running without actually connecting
+	// Just check if there's a process running for local servers
 	let processes = process::SERVER_PROCESSES.read().unwrap();
 	if let Some(process_arc) = processes.get(server.name()) {
 		// Try to get a quick lock - if we can't, assume it's busy and running
@@ -393,28 +540,7 @@ pub fn is_server_already_running_with_config(server: &crate::config::McpServerCo
 			true
 		}
 		McpConnectionType::Http | McpConnectionType::Stdin => {
-			// For remote HTTP servers (have URL but no command), consider them always available
-			if server.connection_type() == McpConnectionType::Http
-				&& server.url().is_some()
-				&& server.command().is_none()
-			{
-				crate::log_debug!(
-					"Remote HTTP server '{}' is considered always available",
-					server.name()
-				);
-				// Update health status for remote servers
-				{
-					let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
-					let info = restart_info_guard
-						.entry(server.name().to_string())
-						.or_default();
-					info.health_status = process::ServerHealth::Running;
-					info.last_health_check = Some(std::time::SystemTime::now());
-				}
-				return true;
-			}
-
-			// External servers with local processes - check the process registry
+			// External servers - check the process registry
 			let is_process_running = {
 				let processes = process::SERVER_PROCESSES.read().unwrap();
 				if let Some(process_arc) = processes.get(server.name()) {
@@ -558,11 +684,30 @@ pub async fn execute_tool_call(
 			));
 		}
 		process::ServerHealth::Dead => {
-			return Err(anyhow::anyhow!(
-				"Server '{}' is not running. Cannot execute tool '{}'. Server will not be restarted automatically.",
-				server.name(),
-				call.tool_name
-			));
+			// For HTTP servers, "Dead" might just mean health check failed
+			// Allow execution to proceed - it has its own OAuth token loading
+			if server.connection_type() == McpConnectionType::Http {
+				crate::log_debug!(
+					"HTTP server '{}' health check failed, but allowing tool execution to proceed with fresh OAuth token",
+					server.name()
+				);
+			} else {
+				// For stdin servers, Dead means process is actually dead
+				return Err(anyhow::anyhow!(
+					"Server '{}' is not running. Cannot execute tool '{}'. Server will not be restarted automatically.",
+					server.name(),
+					call.tool_name
+				));
+			}
+		}
+		process::ServerHealth::Unreachable => {
+			// For HTTP servers with OAuth, "Unreachable" often means auth failed in health check
+			// But tool execution has its own OAuth flow that might succeed
+			// Allow execution to proceed and let it fail with proper error if needed
+			crate::log_debug!(
+				"Server '{}' marked as unreachable (likely auth issue in health check), but allowing tool execution to proceed with fresh OAuth token",
+				server.name()
+			);
 		}
 		process::ServerHealth::Running => {
 			// Server is running, proceed with execution
@@ -618,12 +763,94 @@ async fn execute_tool_call_internal(
 			let mut headers = HeaderMap::new();
 			headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-			// Add auth token if present
-			if let Some(token) = server.auth_token() {
-				headers.insert(
-					AUTHORIZATION,
-					HeaderValue::from_str(&format!("Bearer {}", token))?,
-				);
+			// Add authentication - Try MCP Authorization discovery first, then manual OAuth, then static token
+			let mut oauth_attempted = false;
+
+			// Step 1: Try MCP Authorization Discovery (RFC 9728)
+			match oauth::discover_oauth_from_mcp_server(&server_url, server.name()).await {
+				Ok(discovered_oauth) => {
+					crate::log_debug!(
+						"MCP Authorization discovery succeeded for server '{}' tool execution",
+						server.name()
+					);
+
+					match oauth::get_access_token(&discovered_oauth, server.name(), false).await {
+						Ok(Some(token)) => {
+							headers.insert(
+								AUTHORIZATION,
+								HeaderValue::from_str(&format!("Bearer {}", token))?,
+							);
+							crate::log_debug!(
+							"Using discovered OAuth access token for HTTP server '{}' tool execution",
+							server.name()
+						);
+							oauth_attempted = true;
+						}
+						Ok(None) => {
+							crate::log_error!(
+								"OAuth authentication was cancelled for server '{}'",
+								server.name()
+							);
+							oauth_attempted = true;
+						}
+						Err(e) => {
+							crate::log_error!(
+								"Failed to get OAuth access token for server '{}': {}",
+								server.name(),
+								e
+							);
+							oauth_attempted = true;
+						}
+					}
+				}
+				Err(e) => {
+					crate::log_debug!(
+						"MCP Authorization discovery failed for server '{}' tool execution: {}",
+						server.name(),
+						e
+					);
+				}
+			}
+
+			// Step 2: Fallback to manual OAuth configuration if discovery failed
+			if !oauth_attempted && server.is_oauth_enabled() {
+				// OAuth authentication - get or refresh access token
+				if let Some(oauth_config) = server.oauth_config() {
+					match oauth::get_access_token(oauth_config, server.name(), false).await {
+						Ok(Some(token)) => {
+							headers.insert(
+								AUTHORIZATION,
+								HeaderValue::from_str(&format!("Bearer {}", token))?,
+							);
+							crate::log_debug!(
+							"Using manual OAuth access token for HTTP server '{}' tool execution",
+							server.name()
+						);
+						}
+						Ok(None) => {
+							crate::log_error!(
+								"OAuth authentication was cancelled for server '{}'",
+								server.name()
+							);
+						}
+						Err(e) => {
+							crate::log_error!(
+								"Failed to get OAuth access token for server '{}': {}",
+								server.name(),
+								e
+							);
+						}
+					}
+				}
+			} else if !oauth_attempted {
+				// Step 3: Fallback to static Bearer token if no OAuth
+				if let Some(token) = server.auth_token() {
+					// Static Bearer token authentication
+					headers.insert(
+						AUTHORIZATION,
+						HeaderValue::from_str(&format!("Bearer {}", token))?,
+					);
+				}
 			}
 
 			// Use base URL for JSON-RPC tool execution
@@ -659,8 +886,8 @@ async fn execute_tool_call_internal(
 				));
 			}
 
-			// Parse JSON-RPC response
-			let result: Value = response.json().await?;
+			// Parse JSON-RPC response (handles both plain JSON and SSE format)
+			let result = parse_http_response_body(response).await?;
 
 			// Extract result or error from the JSON-RPC response
 			let output = if let Some(error) = result.get("error") {

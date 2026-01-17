@@ -139,6 +139,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 			crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
 			crate::mcp::process::ServerHealth::Restarting => "🔄 Restarting".yellow(),
 			crate::mcp::process::ServerHealth::Failed => "💥 Failed".bright_red(),
+			crate::mcp::process::ServerHealth::Unreachable => "🔒 Auth Failed".bright_red(),
 		};
 
 		println!();
@@ -266,6 +267,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 			crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
 			crate::mcp::process::ServerHealth::Restarting => "🔄 Restarting".yellow(),
 			crate::mcp::process::ServerHealth::Failed => "💥 Failed".bright_red(),
+			crate::mcp::process::ServerHealth::Unreachable => "🔒 Auth Failed".bright_red(),
 		};
 
 		println!();
@@ -492,6 +494,7 @@ async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult>
 				crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
 				crate::mcp::process::ServerHealth::Restarting => "🔄 Restarting".yellow(),
 				crate::mcp::process::ServerHealth::Failed => "💥 Failed".bright_red(),
+				crate::mcp::process::ServerHealth::Unreachable => "🔒 Auth Failed".bright_red(),
 			};
 
 			println!(

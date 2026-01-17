@@ -293,28 +293,17 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				}
 				McpConnectionType::Http => {
 					if let Some(url) = url {
-						// Remote HTTP server
-						McpServerConfig::remote_http(
+						// HTTP server - just needs a URL
+						McpServerConfig::http(
 							&name,
 							&url,
 							timeout_seconds,
 							Vec::new(),
 							auth_token,
-						)
-					} else if let Some(command) = command {
-						// Local HTTP server
-						McpServerConfig::local_http(
-							&name,
-							&command,
-							args,
-							timeout_seconds,
-							Vec::new(),
-							auth_token,
+							None, // OAuth config - not set via CLI
 						)
 					} else {
-						println!(
-							"Error: Either url or command must be specified for HTTP MCP server"
-						);
+						println!("Error: URL must be specified for HTTP MCP server");
 						return Ok(());
 					}
 				}

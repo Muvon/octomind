@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::oauth_config::OAuthConfig;
 use serde::{Deserialize, Serialize};
 
 // Type-specific MCP server configuration using tagged enums
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]
+#[allow(clippy::large_enum_variant)]
 pub enum McpServerConfig {
 	#[serde(rename = "builtin")]
 	Builtin {
@@ -27,8 +29,13 @@ pub enum McpServerConfig {
 	#[serde(rename = "http")]
 	Http {
 		name: String,
-		#[serde(flatten)]
-		connection: HttpConnection,
+		url: String,
+		#[serde(skip_serializing_if = "Option::is_none")]
+		auth_token: Option<String>,
+		/// OAuth 2.1 + PKCE configuration for this server.
+		/// When set, authentication will use OAuth instead of static auth_token.
+		#[serde(skip_serializing_if = "Option::is_none")]
+		oauth: Option<OAuthConfig>,
 		timeout_seconds: u64,
 		tools: Vec<String>,
 	},
@@ -39,24 +46,6 @@ pub enum McpServerConfig {
 		args: Vec<String>,
 		timeout_seconds: u64,
 		tools: Vec<String>,
-	},
-}
-
-// HTTP connection variants - remote vs local
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum HttpConnection {
-	Remote {
-		url: String,
-		#[serde(skip_serializing_if = "Option::is_none")]
-		auth_token: Option<String>,
-	},
-	Local {
-		command: String,
-		#[serde(default)]
-		args: Vec<String>,
-		#[serde(skip_serializing_if = "Option::is_none")]
-		auth_token: Option<String>,
 	},
 }
 
@@ -114,37 +103,58 @@ impl McpServerConfig {
 	/// Get URL for HTTP servers (if available)
 	pub fn url(&self) -> Option<&str> {
 		match self {
-			McpServerConfig::Http {
-				connection: HttpConnection::Remote { url, .. },
-				..
-			} => Some(url),
+			McpServerConfig::Http { url, .. } => Some(url),
 			_ => None,
 		}
 	}
 
 	/// Get auth token for HTTP servers (if available)
+	///
+	/// Returns the static auth_token if set, regardless of OAuth configuration.
+	/// For OAuth-based authentication, use `get_oauth_token()` instead.
 	pub fn auth_token(&self) -> Option<&str> {
 		match self {
-			McpServerConfig::Http {
-				connection: HttpConnection::Remote { auth_token, .. },
-				..
-			}
-			| McpServerConfig::Http {
-				connection: HttpConnection::Local { auth_token, .. },
-				..
-			} => auth_token.as_deref(),
+			McpServerConfig::Http { auth_token, .. } => auth_token.as_deref(),
 			_ => None,
 		}
+	}
+
+	/// Get OAuth configuration for HTTP servers (if available)
+	///
+	/// Returns `Some(OAuthConfig)` if OAuth is configured, `None` otherwise.
+	pub fn oauth_config(&self) -> Option<&OAuthConfig> {
+		match self {
+			McpServerConfig::Http { oauth, .. } => oauth.as_ref(),
+			_ => None,
+		}
+	}
+
+	/// Check if OAuth is configured for this server
+	///
+	/// Returns `true` if OAuth configuration exists (regardless of enabled status).
+	pub fn has_oauth_config(&self) -> bool {
+		self.oauth_config().is_some()
+	}
+
+	/// Check if OAuth is enabled for this server
+	///
+	/// Returns `true` if OAuth configuration exists.
+	/// The presence of an oauth section in config means OAuth is enabled.
+	pub fn is_oauth_enabled(&self) -> bool {
+		self.oauth_config().is_some()
+	}
+
+	/// Check if this server requires authentication
+	///
+	/// Returns `true` if either static auth_token or OAuth is configured.
+	pub fn requires_auth(&self) -> bool {
+		self.auth_token().is_some() || self.is_oauth_enabled()
 	}
 
 	/// Get command for command-based servers (if available)
 	pub fn command(&self) -> Option<&str> {
 		match self {
 			McpServerConfig::Stdin { command, .. } => Some(command),
-			McpServerConfig::Http {
-				connection: HttpConnection::Local { command, .. },
-				..
-			} => Some(command),
 			_ => None,
 		}
 	}
@@ -153,10 +163,6 @@ impl McpServerConfig {
 	pub fn args(&self) -> &[String] {
 		match self {
 			McpServerConfig::Stdin { args, .. } => args,
-			McpServerConfig::Http {
-				connection: HttpConnection::Local { args, .. },
-				..
-			} => args,
 			_ => &[],
 		}
 	}
@@ -170,41 +176,29 @@ impl McpServerConfig {
 		}
 	}
 
-	/// Create a remote HTTP server configuration
-	pub fn remote_http(
+	/// Create an HTTP server configuration
+	///
+	/// # Arguments
+	///
+	/// * `name` - Unique name for this server
+	/// * `url` - The MCP server URL (can be localhost or remote)
+	/// * `timeout_seconds` - Request timeout in seconds
+	/// * `tools` - List of allowed tools (empty = all tools)
+	/// * `auth_token` - Static Bearer token (optional, used if OAuth not configured)
+	/// * `oauth` - OAuth 2.1 + PKCE configuration (optional)
+	pub fn http(
 		name: &str,
 		url: &str,
 		timeout_seconds: u64,
 		tools: Vec<String>,
 		auth_token: Option<String>,
+		oauth: Option<OAuthConfig>,
 	) -> Self {
 		Self::Http {
 			name: name.to_string(),
-			connection: HttpConnection::Remote {
-				url: url.to_string(),
-				auth_token,
-			},
-			timeout_seconds,
-			tools,
-		}
-	}
-
-	/// Create a local HTTP server configuration
-	pub fn local_http(
-		name: &str,
-		command: &str,
-		args: Vec<String>,
-		timeout_seconds: u64,
-		tools: Vec<String>,
-		auth_token: Option<String>,
-	) -> Self {
-		Self::Http {
-			name: name.to_string(),
-			connection: HttpConnection::Local {
-				command: command.to_string(),
-				args,
-				auth_token,
-			},
+			url: url.to_string(),
+			auth_token,
+			oauth,
 			timeout_seconds,
 			tools,
 		}
@@ -228,6 +222,11 @@ impl McpServerConfig {
 	}
 
 	/// Validate the server configuration
+	///
+	/// Returns `Ok(())` if valid, or `Err(String)` with error message.
+	///
+	/// For HTTP servers with OAuth configuration:
+	/// - Validates OAuth config if present
 	pub fn validate(&self) -> Result<(), String> {
 		match self {
 			McpServerConfig::Builtin { name, .. } => {
@@ -236,22 +235,19 @@ impl McpServerConfig {
 				}
 			}
 			McpServerConfig::Http {
-				name, connection, ..
+				name, url, oauth, ..
 			} => {
 				if name.is_empty() {
 					return Err("HTTP server name cannot be empty".to_string());
 				}
-				match connection {
-					HttpConnection::Remote { url, .. } => {
-						if url.is_empty() {
-							return Err("Remote HTTP server URL cannot be empty".to_string());
-						}
-					}
-					HttpConnection::Local { command, .. } => {
-						if command.is_empty() {
-							return Err("Local HTTP server command cannot be empty".to_string());
-						}
-					}
+				if url.is_empty() {
+					return Err("HTTP server URL cannot be empty".to_string());
+				}
+				// Validate OAuth config if present
+				if let Some(oauth_config) = oauth {
+					oauth_config
+						.validate()
+						.map_err(|e| format!("OAuth configuration validation failed: {}", e))?;
 				}
 			}
 			McpServerConfig::Stdin { name, command, .. } => {
@@ -324,12 +320,16 @@ impl RoleMcpConfig {
 						},
 						McpServerConfig::Http {
 							name,
-							connection,
+							url,
+							auth_token,
+							oauth,
 							timeout_seconds,
-							..
+							tools: _,
 						} => McpServerConfig::Http {
 							name,
-							connection,
+							url,
+							auth_token,
+							oauth,
 							timeout_seconds,
 							tools: filtered_tools,
 						},

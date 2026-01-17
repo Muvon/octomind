@@ -15,7 +15,7 @@
 // MCP local server process manager
 
 use super::{McpFunction, McpToolCall, McpToolResult};
-use crate::config::{HttpConnection, McpConnectionType, McpServerConfig};
+use crate::config::{McpConnectionType, McpServerConfig};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -29,10 +29,11 @@ use tokio::time::sleep;
 // Server health status tracking
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ServerHealth {
-	Running,
-	Dead,
-	Restarting,
-	Failed,
+	Running,     // Server is healthy and responding correctly
+	Dead,        // Server process not running or unreachable (may restart)
+	Restarting,  // Server is in the process of restarting
+	Failed,      // Server has failed and cannot be restarted
+	Unreachable, // Server is reachable but authentication/config failed (e.g., 401/403)
 }
 
 // Server restart tracking information
@@ -346,19 +347,12 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 	// Get command and args from config based on server type
 	let (command, args) = match server {
 		McpServerConfig::Stdin { command, args, .. } => (command.as_str(), args.as_slice()),
-		McpServerConfig::Http {
-			connection: HttpConnection::Local { command, args, .. },
-			..
-		} => (command.as_str(), args.as_slice()),
-		McpServerConfig::Http {
-			connection: HttpConnection::Remote { url, .. },
-			..
-		} => {
+		McpServerConfig::Http { url, .. } => {
 			return Err(anyhow::anyhow!(
-				"Remote HTTP server '{}' should not be started as local process (URL: {})",
-				server.name(),
-				url
-			));
+					"HTTP server '{}' should not be started as a process (URL: {}) - use Stdin type for local processes",
+					server.name(),
+					url
+				));
 		}
 		McpServerConfig::Builtin { .. } => {
 			return Err(anyhow::anyhow!(

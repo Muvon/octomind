@@ -1,4 +1,4 @@
-// Copyright 2025 Muvon Un Limited
+// Copyright 2026 Muvon Un Limited
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@ pub mod layers;
 pub mod loading;
 pub mod mcp;
 pub mod migrations;
+// OAuth 2.1 + PKCE configuration
+pub mod oauth_config;
 pub mod providers;
 pub mod roles;
 pub mod validation;
@@ -42,6 +44,7 @@ pub mod validation;
 // Re-export commonly used types
 pub use layers::*;
 pub use mcp::*;
+pub use oauth_config::*; // OAuth 2.1 + PKCE configuration types
 pub use providers::*;
 pub use roles::*;
 
@@ -244,13 +247,17 @@ impl McpConfig {
 						tools,
 					},
 					McpServerConfig::Http {
-						connection,
+						name: _,
+						url,
+						auth_token,
+						oauth,
 						timeout_seconds,
 						tools,
-						..
 					} => McpServerConfig::Http {
 						name,
-						connection,
+						url,
+						auth_token,
+						oauth,
 						timeout_seconds,
 						tools,
 					},

@@ -32,6 +32,9 @@ lazy_static::lazy_static! {
 		Arc::new(RwLock::new(std::collections::HashMap::new()));
 }
 
+// OAuth 2.1 + PKCE authentication
+pub mod oauth;
+
 pub mod agent;
 pub mod dev;
 pub mod fs;
@@ -40,7 +43,6 @@ pub mod process;
 pub mod server;
 pub mod shared_utils;
 pub mod web;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCall {
 	pub tool_name: String,

@@ -213,7 +213,14 @@ async fn build_tool_server_map_internal(
 					Ok(functions) => {
 						crate::mcp::filter_tools_by_patterns(functions, server.tools())
 					}
-					Err(_) => Vec::new(), // Server not available, skip
+					Err(e) => {
+						crate::log_error!(
+							"Server '{}' is not available: {}. Verify the server is running at the configured URL.",
+							server.name(),
+							e
+						);
+						Vec::new()
+					}
 				}
 			}
 		};

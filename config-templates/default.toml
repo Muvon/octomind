@@ -404,24 +404,32 @@ args = ["mcp", "--path=."]
 timeout_seconds = 240
 tools = []
 
-# Example remote HTTP MCP server configuration:
-# [[mcp.servers]]
-# name = "my_remote_server"
-# type = "http"
-# url = "http://localhost:3000/mcp"
-# timeout_seconds = 30
-# auth_token = "optional-auth-token"
-# tools = []
-
-# Example local HTTP MCP server configuration:
-# [[mcp.servers]]
-# name = "my_local_server"
-# type = "http"
-# command = "python"
-# args = ["server.py", "--port", "8080"]
-# timeout_seconds = 30
-# auth_token = "optional-auth-token"
-# tools = []
+	# HTTP MCP server configuration:
+	# - Just provide a URL (localhost or remote - doesn't matter)
+	# - Use Stdin type for local processes instead
+	# [[mcp.servers]]
+	# name = "my_http_server"
+	# type = "http"
+	# url = "http://localhost:3000/mcp"  # URL to connect to
+	# timeout_seconds = 30
+	# auth_token = "optional-bearer-token"  # Static token (optional)
+	# tools = []
+	
+	# HTTP MCP server with OAuth 2.1 + PKCE authentication:
+	# [[mcp.servers]]
+	# name = "github_mcp"
+	# type = "http"
+	# url = "https://api.github.com/mcp"
+	# timeout_seconds = 30
+	# tools = []
+	#
+	# [mcp.servers.oauth]
+	# client_id = "your-oauth-client-id"
+	# client_secret = "your-oauth-client-secret"
+	# authorization_url = "https://github.com/login/oauth/authorize"
+	# token_url = "https://github.com/login/oauth/access_token"
+	# callback_url = "http://localhost:34567/oauth/callback"
+	# scopes = ["repo", "read:org"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LAYERS (AI PROCESSING PIPELINE)

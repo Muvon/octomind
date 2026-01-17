@@ -257,38 +257,34 @@ mod tests {
 
 	#[test]
 	fn test_oauth_config_validation_empty_client_secret() {
+		// Empty client_secret is valid for public OAuth clients (PKCE flow)
 		let config = OAuthConfig::new(
 			"client_id".to_string(),
-			String::new(), // empty client_secret
+			String::new(), // empty client_secret - valid for public clients
 			"https://example.com/authorize".to_string(),
 			"https://example.com/token".to_string(),
 			"http://localhost:34567/oauth/callback".to_string(),
 			vec!["repo".to_string()],
 		);
 
-		assert!(config.validate().is_err());
-		assert_eq!(
-			config.validate().unwrap_err(),
-			"OAuth client_secret cannot be empty"
-		);
+		// Public clients with PKCE don't require a client_secret
+		assert!(config.validate().is_ok());
 	}
 
 	#[test]
 	fn test_oauth_config_validation_empty_scopes() {
+		// Empty scopes are valid - some OAuth providers don't require specific scopes
 		let config = OAuthConfig::new(
 			"client_id".to_string(),
 			"secret".to_string(),
 			"https://example.com/authorize".to_string(),
 			"https://example.com/token".to_string(),
 			"http://localhost:34567/oauth/callback".to_string(),
-			vec![], // empty scopes
+			vec![], // empty scopes - valid for some providers
 		);
 
-		assert!(config.validate().is_err());
-		assert_eq!(
-			config.validate().unwrap_err(),
-			"OAuth scopes cannot be empty. At least one scope must be specified."
-		);
+		// Empty scopes are now valid (just can't contain empty strings)
+		assert!(config.validate().is_ok());
 	}
 
 	#[test]

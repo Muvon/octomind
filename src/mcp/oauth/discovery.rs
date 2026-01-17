@@ -370,31 +370,31 @@ mod tests {
 	#[test]
 	fn test_build_oauth_config() {
 		let auth_metadata = AuthServerMetadata {
-			issuer: "https://github.com".to_string(),
-			authorization_endpoint: "https://github.com/login/oauth/authorize".to_string(),
-			token_endpoint: "https://github.com/login/oauth/access_token".to_string(),
+			issuer: "https://api.example.com".to_string(), // Use non-GitHub issuer
+			authorization_endpoint: "https://api.example.com/oauth/authorize".to_string(),
+			token_endpoint: "https://api.example.com/oauth/token".to_string(),
 			scopes_supported: Some(vec!["read".to_string(), "write".to_string()]),
 			code_challenge_methods_supported: Some(vec!["S256".to_string()]),
 		};
 
 		let resource_metadata = ProtectedResourceMetadata {
 			resource: "https://api.example.com".to_string(),
-			authorization_servers: vec!["https://github.com".to_string()],
+			authorization_servers: vec!["https://api.example.com".to_string()],
 			scopes_supported: None,
 		};
 
 		let config =
 			build_oauth_config_from_metadata(&auth_metadata, &resource_metadata, "test-server");
 
+		// For non-GitHub issuers, client_id is generated from server name
 		assert_eq!(config.client_id, "octomind-mcp-test-server");
 		assert_eq!(
 			config.authorization_url,
-			"https://github.com/login/oauth/authorize"
+			"https://api.example.com/oauth/authorize"
 		);
-		assert_eq!(
-			config.token_url,
-			"https://github.com/login/oauth/access_token"
-		);
+		assert_eq!(config.token_url, "https://api.example.com/oauth/token");
 		assert_eq!(config.scopes, vec!["read", "write"]);
+		// Public client - no secret
+		assert!(config.client_secret.is_empty());
 	}
 }

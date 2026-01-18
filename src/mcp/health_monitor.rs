@@ -34,7 +34,7 @@ enum HttpHealthResult {
 static HEALTH_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // Health monitoring configuration
-const HEALTH_CHECK_INTERVAL_SECONDS: u64 = 30; // Check every 30 seconds
+const HEALTH_CHECK_INTERVAL_SECONDS: u64 = 120; // Check every 2 minutes (balanced for production)
 
 /// Parse Server-Sent Events (SSE) response format used by some MCP servers like GitHub
 /// SSE format: "event: <type>\ndata: <json>\n\n"

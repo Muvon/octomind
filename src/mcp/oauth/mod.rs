@@ -30,7 +30,9 @@ pub use callback_server::{start_callback_server, OAuthCallbackResult};
 pub use device_flow::{
 	execute_device_flow, start_device_flow, DeviceCodeResponse, DeviceTokenResponse,
 };
-pub use discovery::discover_oauth_from_mcp_server;
+pub use discovery::{
+	clear_all_discovered_oauth_cache, clear_discovered_oauth_cache, discover_oauth_from_mcp_server,
+};
 pub use flow::{
 	build_authorization_url, exchange_code_for_token, generate_pkce_pair, generate_state,
 	is_token_expired, refresh_access_token, OAuthTokenResponse, PkcePair,

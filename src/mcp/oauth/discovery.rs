@@ -16,9 +16,17 @@ use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use reqwest;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use super::OAuthConfig;
+
+// Cache for discovered OAuth configurations to avoid repeated discovery
+// Key: server_name, Value: discovered OAuthConfig
+lazy_static::lazy_static! {
+	static ref DISCOVERED_OAUTH_CACHE: RwLock<HashMap<String, OAuthConfig>> = RwLock::new(HashMap::new());
+}
 
 /// Protected Resource Metadata (RFC 9728)
 /// Describes the OAuth requirements for a protected resource (MCP server)
@@ -245,26 +253,41 @@ fn get_known_client_id(issuer: &str, server_name: &str) -> String {
 /// Discover OAuth configuration from MCP server using RFC 9728 flow
 ///
 /// This is the main entry point for MCP Authorization discovery.
+/// Results are cached per server to avoid repeated discovery attempts.
 ///
 /// # Flow
-/// 1. Make initial request to MCP server (expect 401)
-/// 2. Parse WWW-Authenticate header for resource_metadata URL
-/// 3. Fetch Protected Resource Metadata
-/// 4. Extract primary authorization server
-/// 5. Fetch Authorization Server Metadata
-/// 6. Build OAuthConfig from discovered endpoints
+/// 1. Check cache for previously discovered config
+/// 2. Make initial request to MCP server (expect 401)
+/// 3. Parse WWW-Authenticate header for resource_metadata URL
+/// 4. Fetch Protected Resource Metadata
+/// 5. Extract primary authorization server
+/// 6. Fetch Authorization Server Metadata
+/// 7. Build OAuthConfig from discovered endpoints
+/// 8. Cache the result for future use
 ///
 /// # Arguments
 /// * `server_url` - The MCP server URL (e.g., "https://api.githubcopilot.com/mcp/")
 /// * `server_name` - The server name for logging and client_id
 ///
 /// # Returns
-/// * `Ok(OAuthConfig)` - Discovered OAuth configuration
+/// * `Ok(OAuthConfig)` - Discovered OAuth configuration (from cache or fresh discovery)
 /// * `Err` - If discovery fails at any step
 pub async fn discover_oauth_from_mcp_server(
 	server_url: &str,
 	server_name: &str,
 ) -> Result<OAuthConfig> {
+	// Check cache first to avoid repeated discovery
+	{
+		let cache = DISCOVERED_OAUTH_CACHE.read().unwrap();
+		if let Some(cached_config) = cache.get(server_name) {
+			crate::log_debug!(
+				"Using cached OAuth config for server '{}' (skipping discovery)",
+				server_name
+			);
+			return Ok(cached_config.clone());
+		}
+	}
+
 	crate::log_debug!(
 		"Starting MCP Authorization discovery for server '{}' at {}",
 		server_name,
@@ -278,9 +301,21 @@ pub async fn discover_oauth_from_mcp_server(
 		.context("Failed to create HTTP client for MCP discovery")?;
 
 	// Step 2: Make initial request without authentication (expect 401)
-	crate::log_debug!("Making initial request to MCP server (expecting 401)...");
+	// MCP servers expect POST with JSON-RPC payload, not GET
+	crate::log_debug!("Making initial JSON-RPC request to MCP server (expecting 401)...");
+
+	// Create a tools/list JSON-RPC request (same as health check)
+	let jsonrpc_request = serde_json::json!({
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list",
+		"params": {}
+	});
+
 	let response = client
-		.get(server_url)
+		.post(server_url)
+		.header("Content-Type", "application/json")
+		.json(&jsonrpc_request)
 		.send()
 		.await
 		.context(format!("Failed to connect to MCP server at {}", server_url))?;
@@ -343,7 +378,40 @@ pub async fn discover_oauth_from_mcp_server(
 		server_name
 	);
 
+	// Cache the discovered config for future use
+	{
+		let mut cache = DISCOVERED_OAUTH_CACHE.write().unwrap();
+		cache.insert(server_name.to_string(), oauth_config.clone());
+		crate::log_debug!(
+			"Cached OAuth config for server '{}' to avoid repeated discovery",
+			server_name
+		);
+	}
+
 	Ok(oauth_config)
+}
+
+/// Clear cached OAuth discovery for a specific server
+///
+/// Useful when OAuth configuration changes or for manual reset
+///
+/// # Arguments
+/// * `server_name` - The server name to clear from cache
+pub fn clear_discovered_oauth_cache(server_name: &str) {
+	let mut cache = DISCOVERED_OAUTH_CACHE.write().unwrap();
+	if cache.remove(server_name).is_some() {
+		crate::log_debug!("Cleared cached OAuth config for server '{}'", server_name);
+	}
+}
+
+/// Clear all cached OAuth discoveries
+///
+/// Useful for cleanup or forcing fresh discovery for all servers
+pub fn clear_all_discovered_oauth_cache() {
+	let mut cache = DISCOVERED_OAUTH_CACHE.write().unwrap();
+	let count = cache.len();
+	cache.clear();
+	crate::log_debug!("Cleared all {} cached OAuth configs", count);
 }
 
 #[cfg(test)]

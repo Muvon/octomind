@@ -670,6 +670,7 @@ pub async fn execute_api_call_and_process_response(
 					response.exchange,
 					response.tool_calls,
 					response.finish_reason,
+					response.response_id,
 					chat_session,
 					config,
 					role,

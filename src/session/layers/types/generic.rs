@@ -177,6 +177,7 @@ impl GenericLayer {
 
 							let should_continue = crate::session::chat::response::tool_result_processor::check_should_continue(
 						&crate::providers::ProviderResponse {
+						response_id: None,
 								content: current_content.clone(),
 								exchange: current_exchange.clone(),
 								tool_calls: current_tool_calls_param.clone(),
@@ -214,6 +215,7 @@ impl GenericLayer {
 						let more_tools = crate::mcp::parse_tool_calls(&current_content);
 						let should_continue = crate::session::chat::response::tool_result_processor::check_should_continue(
 					&crate::providers::ProviderResponse {
+						response_id: None,
 							content: current_content.clone(),
 							exchange: current_exchange.clone(),
 							tool_calls: None, // No direct tool calls in this case
@@ -548,6 +550,7 @@ impl Layer for GenericLayer {
 			let should_continue =
 				crate::session::chat::response::tool_result_processor::check_should_continue(
 					&crate::providers::ProviderResponse {
+						response_id: None,
 						content: output.clone(),
 						exchange: exchange.clone(),
 						tool_calls: direct_tool_calls.clone(),

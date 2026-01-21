@@ -388,6 +388,7 @@ mod tests {
 			tool_calls,
 			images: None,
 			thinking: None,
+			id: None,
 		}
 	}
 

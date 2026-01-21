@@ -39,6 +39,7 @@ pub struct ProviderResponse {
 	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	pub thinking: Option<ThinkingBlock>,
 	pub finish_reason: Option<String>,
+	pub response_id: Option<String>,
 }
 
 // Keep the original ChatCompletionParams for backward compatibility
@@ -220,6 +221,11 @@ fn convert_message_to_octolib(
 	// Set timestamp
 	builder = builder.timestamp(msg.timestamp);
 
+	// Set message ID if present (for assistant messages with tool calls)
+	if let Some(ref id) = msg.id {
+		builder = builder.id(id);
+	}
+
 	// Set cache marker if needed
 	if msg.cached {
 		builder = builder.cached();
@@ -339,6 +345,7 @@ pub fn convert_response_from_octolib(response: octolib::llm::ProviderResponse) -
 		tool_calls,
 		thinking: response.thinking,
 		finish_reason: response.finish_reason,
+		response_id: response.response_id,
 	}
 }
 

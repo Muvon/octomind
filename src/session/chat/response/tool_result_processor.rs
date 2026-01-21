@@ -37,6 +37,7 @@ pub async fn process_tool_results(
 		String,
 		crate::session::ProviderExchange,
 		Option<Vec<crate::mcp::McpToolCall>>,
+		Option<String>, // response_id from follow-up API call
 	)>,
 > {
 	// Add the accumulated tool execution time to the session total
@@ -297,10 +298,16 @@ pub async fn process_tool_results(
 					response.content,
 					response.exchange,
 					response.tool_calls,
+					response.response_id, // Include response_id from follow-up response
 				)))
 			} else {
-				// If no more tools, return None to break out of the loop
-				Ok(Some((response.content, response.exchange, None)))
+				// If no more tools, return None to break out of loop
+				Ok(Some((
+					response.content,
+					response.exchange,
+					None,
+					response.response_id,
+				)))
 			}
 		}
 		Err(e) => {

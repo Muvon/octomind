@@ -90,6 +90,7 @@ pub async fn perform_context_reduction(
 					response.exchange,
 					response.tool_calls,
 					response.finish_reason,
+					response.response_id,
 					chat_session,
 					config,
 					role, // Use the current role instead of hardcoding "developer"

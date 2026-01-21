@@ -76,6 +76,9 @@ octomind session --model "openai:gpt-4o-mini"
 octomind session --model "openai:o1-preview"
 ```
 
+#### Responses API Behavior
+OpenAI direct uses the Responses API. Octomind tracks the provider response_id automatically and, after the first request, sends only new user/system messages or tool outputs instead of the full history.
+
 #### Vision Support
 ```bash
 # Use vision-capable model

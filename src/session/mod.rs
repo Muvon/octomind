@@ -162,6 +162,8 @@ pub struct Message {
 	pub images: Option<Vec<crate::session::image::ImageAttachment>>, // For messages with image attachments
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub thinking: Option<serde_json::Value>, // For assistant messages: thinking/reasoning content
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub id: Option<String>, // Provider's response ID (for assistant messages)
 }
 
 fn default_cache_marker() -> bool {
@@ -187,6 +189,7 @@ impl Default for Message {
 			tool_calls: None,
 			images: None,
 			thinking: None,
+			id: None,
 		}
 	}
 }
@@ -1464,6 +1467,7 @@ mod tests {
 			tool_calls,
 			images: None,
 			thinking: None,
+			id: None,
 		}
 	}
 	#[test]

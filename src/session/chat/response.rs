@@ -36,6 +36,7 @@ pub struct ResponseProcessingParams<'a> {
 	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 	pub thinking: Option<ThinkingBlock>,
 	pub finish_reason: Option<String>,
+	pub response_id: Option<String>,
 	pub chat_session: &'a mut ChatSession,
 	pub config: &'a Config,
 	pub role: &'a str,
@@ -50,6 +51,7 @@ impl<'a> ResponseProcessingParams<'a> {
 		exchange: ProviderExchange,
 		tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
 		finish_reason: Option<String>,
+		response_id: Option<String>,
 		chat_session: &'a mut ChatSession,
 		config: &'a Config,
 		role: &'a str,
@@ -61,6 +63,7 @@ impl<'a> ResponseProcessingParams<'a> {
 			tool_calls,
 			thinking: None,
 			finish_reason,
+			response_id,
 			chat_session,
 			config,
 			role,
@@ -100,27 +103,44 @@ fn log_response_debug(
 fn handle_final_response(
 	content: &str,
 	thinking: &Option<ThinkingBlock>,
+	response_id: Option<String>,
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
 	is_interactive: bool,
 ) -> Result<()> {
-	// Display thinking first if present
+	// Display thinking first if present (only in interactive mode to avoid clutter)
 	if is_interactive {
 		if let Some(ref thinking_block) = thinking {
 			display_thinking(thinking_block);
 		}
 	}
 
-	// CRITICAL: Add the assistant message to the session for continuation logic to work
-	// This was removed in the recent commit but is needed for proper session state
-	chat_session.add_assistant_message(content, None, config, role)?;
+	// CRITICAL FIX: Add the assistant message with response_id to maintain conversation continuity
+	// The response_id is essential for OpenAI Responses API to track conversation state
+	let assistant_message = crate::session::Message {
+		role: "assistant".to_string(),
+		content: content.to_string(),
+		timestamp: std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs(),
+		cached: false,
+		tool_call_id: None,
+		name: None,
+		tool_calls: None,
+		images: None,
+		thinking: None,
+		id: response_id, // CRITICAL: Set the response_id for conversation continuity
+	};
 
-	// Print assistant response with color ONLY in interactive mode
+	chat_session.session.messages.push(assistant_message);
+	chat_session.last_response = content.to_string();
+
+	// CRITICAL FIX: ALWAYS print assistant response (both interactive and non-interactive modes)
+	// The is_interactive flag controls animations/prompts, NOT whether to show the AI's response
 	// Pass thinking to skip content already shown in thinking block
-	if is_interactive {
-		print_assistant_response(content, config, role, thinking);
-	}
+	print_assistant_response(content, config, role, thinking);
 
 	// Display cost line only for non-interactive mode or specific scenarios
 	// Skip for interactive mode to avoid duplication before user input prompt
@@ -230,6 +250,7 @@ fn add_assistant_message_with_tool_calls(
 	chat_session: &mut ChatSession,
 	current_content: &str,
 	current_exchange: &ProviderExchange,
+	response_id: Option<String>,
 	_config: &Config,
 	_role: &str,
 ) -> Result<()> {
@@ -249,8 +270,12 @@ fn add_assistant_message_with_tool_calls(
 			.unwrap_or_default()
 			.as_secs(),
 		cached: false,
-		tool_calls: original_tool_calls, // Store the original tool_calls for proper reconstruction
-		..Default::default()
+		tool_call_id: None,
+		name: None,
+		tool_calls: original_tool_calls.clone(),
+		images: None,
+		thinking: None,
+		id: response_id.clone(),
 	};
 
 	// Add the assistant message to the session
@@ -326,9 +351,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 	// Process original content first, then any follow-up tool calls
 	let mut current_content = params.content.clone();
 	let mut current_exchange = params.exchange;
-	let mut current_tool_calls_param = params.tool_calls.clone(); // Track the tool_calls parameter
+	let mut current_tool_calls_param = params.tool_calls.clone(); // Track of tool_calls parameter
+	let mut current_response_id = params.response_id.clone(); // Track response_id through iterations
 	let operation_cancelled_ref = &params.operation_cancelled; // Create a reference to avoid moves
-
 	loop {
 		// Check for cancellation at the start of each loop iteration
 		check_cancellation(operation_cancelled_ref)?;
@@ -412,6 +437,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 					params.chat_session,
 					&current_content,
 					&current_exchange,
+					current_response_id.clone(), // CRITICAL FIX: Use current_response_id from loop, not params.response_id
 					params.config,
 					params.role,
 				)?;
@@ -419,7 +445,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				// Process tool results if any exist
 				if !tool_results.is_empty() {
 					// Process tool results and handle follow-up API calls using the new module
-					if let Some((new_content, new_exchange, new_tool_calls)) =
+					if let Some((new_content, new_exchange, new_tool_calls, new_response_id)) =
 						tool_result_processor::process_tool_results(
 							tool_results,
 							total_tool_time_ms,
@@ -434,8 +460,8 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						current_content = new_content;
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
-
-						// Check if there are more tools to process
+						current_response_id = new_response_id; // Update response_id from follow-up response
+											 // Check if there are more tools to process
 						if current_tool_calls_param.is_some()
 							&& !current_tool_calls_param.as_ref().unwrap().is_empty()
 						{
@@ -503,7 +529,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		return Ok(());
 	}
 
-	// Handle final response using helper function (only when no continuation is pending)
+	// Handle final response using the helper function (only when no continuation is pending and no tool calls)
+	// When tool calls are present, we already created an assistant message with add_assistant_message_with_tool_calls
+	// Calling handle_final_response would create a duplicate assistant message without id
 	// Pass thinking only if it hasn't been displayed yet (in tool call loop)
 	let thinking_for_final = if thinking_displayed {
 		None
@@ -513,12 +541,12 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 	handle_final_response(
 		&current_content,
 		&thinking_for_final,
+		current_response_id, // Use current_response_id (updated from follow-up responses)
 		params.chat_session,
 		params.config,
 		params.role,
 		params.is_interactive,
 	)?;
-
 	Ok(())
 }
 
@@ -575,6 +603,7 @@ pub async fn process_continuation_message_immediately(
 				response.exchange,
 				response.tool_calls,
 				response.finish_reason,
+				response.response_id,
 				params.chat_session,
 				params.config,
 				params.role,

@@ -400,6 +400,7 @@ mod tests {
 				tool_calls: None,
 				images: None,
 				thinking: None,
+				id: None,
 			},
 			Message {
 				role: "assistant".to_string(),
@@ -411,6 +412,7 @@ mod tests {
 				tool_calls: None,
 				images: None,
 				thinking: None,
+				id: None,
 			},
 		];
 

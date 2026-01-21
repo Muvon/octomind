@@ -45,6 +45,7 @@ impl MessageHandler {
 		chat_session: &mut ChatSession,
 		content: &str,
 		exchange: &ProviderExchange,
+		response_id: Option<String>,
 	) -> Result<()> {
 		// Extract the original tool_calls from the exchange response based on provider
 		let original_tool_calls = Self::extract_original_tool_calls(exchange);
@@ -58,8 +59,12 @@ impl MessageHandler {
 				.unwrap_or_default()
 				.as_secs(),
 			cached: false,
-			tool_calls: original_tool_calls, // Store the original tool_calls for proper reconstruction
-			..Default::default()
+			tool_call_id: None,
+			name: None,
+			tool_calls: original_tool_calls,
+			images: None,
+			thinking: None,
+			id: response_id,
 		};
 
 		// Add the assistant message to the session
@@ -67,6 +72,13 @@ impl MessageHandler {
 
 		// Update last response
 		chat_session.last_response = content.to_string();
+
+		// Save to session file to persist the message with id field
+		if let Some(session_file) = &chat_session.session.session_file {
+			let message_json =
+				serde_json::to_string(&chat_session.session.messages.last().unwrap())?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
 
 		Ok(())
 	}

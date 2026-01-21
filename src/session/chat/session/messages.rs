@@ -387,28 +387,43 @@ impl ChatSession {
 							self.session.info.total_cost
 						);
 					} else {
-						// ERROR - OpenRouter did not provide cost data
-						println!("{}", "ERROR: OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
+						// ERROR - Provider did not provide cost data
+						let provider_name = &ex.provider;
+						println!(
+							"{} {} {}",
+							"ERROR:".bright_red(),
+							provider_name.bright_yellow(),
+							"did not provide cost data.".bright_red()
+						);
 
 						// Dump the raw response JSON to debug
-						log_debug!("Raw OpenRouter response:");
+						log_debug!("Raw {} response:", provider_name);
 						if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
 							log_debug!("{}", resp_str);
 						}
 
-						// Check if usage tracking was explicitly requested
-						let has_usage_flag = ex
-							.request
-							.get("usage")
-							.and_then(|u| u.get("include"))
-							.and_then(|i| i.as_bool())
-							.unwrap_or(false);
+						// Check if usage tracking was explicitly requested (OpenRouter-specific)
+						if provider_name == "openrouter" {
+							let has_usage_flag = ex
+								.request
+								.get("usage")
+								.and_then(|u| u.get("include"))
+								.and_then(|i| i.as_bool())
+								.unwrap_or(false);
 
-						println!(
-							"{} {}",
-							"Request had usage.include flag:".bright_yellow(),
-							has_usage_flag
-						);
+							println!(
+								"{} {}",
+								"Request had usage.include flag:".bright_yellow(),
+								has_usage_flag
+							);
+							if !has_usage_flag {
+								println!(
+									"{}",
+									"Make sure usage.include=true is set for OpenRouter!"
+										.bright_yellow()
+								);
+							}
+						}
 					}
 				}
 

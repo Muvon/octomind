@@ -515,28 +515,38 @@ fn handle_follow_up_cost_tracking(
 				);
 			} else {
 				// Only show error if no cost data found
+				let provider_name = &exchange.provider;
 				println!(
-					"{}",
-					"ERROR: OpenRouter did not provide cost data for tool response API call"
-						.bright_red()
+					"{} {} {}",
+					"ERROR:".bright_red(),
+					provider_name.bright_yellow(),
+					"did not provide cost data for tool response API call".bright_red()
 				);
-				println!("{}", "Make sure usage.include=true is set!".bright_red());
 
-				// Check if usage tracking was explicitly requested
-				let has_usage_flag = exchange
-					.request
-					.get("usage")
-					.and_then(|u| u.get("include"))
-					.and_then(|i| i.as_bool())
-					.unwrap_or(false);
+				// Check if usage tracking was explicitly requested (OpenRouter-specific)
+				if provider_name == "openrouter" {
+					let has_usage_flag = exchange
+						.request
+						.get("usage")
+						.and_then(|u| u.get("include"))
+						.and_then(|i| i.as_bool())
+						.unwrap_or(false);
 
-				println!(
-					"{} {}",
-					"Request had usage.include flag:".bright_yellow(),
-					has_usage_flag
-				);
+					println!(
+						"{} {}",
+						"Request had usage.include flag:".bright_yellow(),
+						has_usage_flag
+					);
+					if !has_usage_flag {
+						println!(
+							"{}",
+							"Make sure usage.include=true is set for OpenRouter!".bright_yellow()
+						);
+					}
+				}
 
 				// Dump the raw response for debugging
+				log_debug!("Raw {} response for debugging:", provider_name);
 				if let Ok(resp_str) = serde_json::to_string_pretty(&exchange.response) {
 					log_debug!("Partial response JSON:\n{}", resp_str);
 				}

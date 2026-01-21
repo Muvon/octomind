@@ -270,13 +270,25 @@ impl LayeredOrchestrator {
 						total_output_tokens += usage.output_tokens;
 						total_cost += cost;
 					} else {
-						// ERROR - OpenRouter did not provide cost data
+						// ERROR - Provider did not provide cost data
+						let provider_name = &result.exchange.provider;
 						println!(
-							"{} {}",
+							"{} {} {} {} {}",
 							"ERROR: Layer".bright_red(),
-							layer_name.bright_yellow()
+							layer_name.bright_yellow(),
+							"-".bright_red(),
+							provider_name.bright_yellow(),
+							"did not provide cost data.".bright_red()
 						);
-						println!("{}", "OpenRouter did not provide cost data. Make sure usage.include=true is set!".bright_red());
+
+						// Show OpenRouter-specific hint if applicable
+						if provider_name == "openrouter" {
+							println!(
+								"{}",
+								"Make sure usage.include=true is set for OpenRouter!"
+									.bright_yellow()
+							);
+						}
 
 						// Still track tokens and time
 						total_input_tokens += usage.prompt_tokens;

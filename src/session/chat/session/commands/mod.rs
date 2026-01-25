@@ -25,7 +25,6 @@ mod exit;
 mod help;
 mod image;
 mod info;
-mod layers;
 mod list;
 mod loglevel;
 mod mcp;
@@ -40,6 +39,7 @@ mod session;
 mod summarize;
 mod truncate;
 mod utils;
+mod workflow;
 
 use super::super::commands::*;
 use super::core::ChatSession;
@@ -77,12 +77,6 @@ pub enum CommandOutput {
 		current_role: Option<String>,
 		available_roles: Option<Vec<String>>,
 		changed: bool,
-		saved: Option<bool>,
-		save_error: Option<String>,
-	},
-	Layers {
-		layers_enabled: bool,
-		role: String,
 		saved: Option<bool>,
 		save_error: Option<String>,
 	},
@@ -158,6 +152,10 @@ pub enum CommandOutput {
 		command_executed: String,
 		data: serde_json::Value,
 	},
+	Workflow {
+		workflow_executed: String,
+		data: serde_json::Value,
+	},
 	Mcp {
 		mcp_command: String,
 		data: serde_json::Value,
@@ -194,7 +192,6 @@ impl CommandOutput {
 			Self::Info { .. } => session.display_session_info(),
 			Self::Model { .. } => display::display_model(self),
 			Self::Role { .. } => display::display_role(self),
-			Self::Layers { .. } => display::display_layers(self),
 			Self::Loglevel { .. } => display::display_loglevel(self),
 			Self::Save {
 				success, message, ..
@@ -226,6 +223,7 @@ impl CommandOutput {
 			Self::List { .. } => display::display_list(self, config),
 
 			Self::Run { .. } => display::display_run(self),
+			Self::Workflow { .. } => display::display_workflow(self),
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),
 			Self::Session { .. } => display::display_session(self),
@@ -278,7 +276,6 @@ pub async fn process_command(
 		REPORT_COMMAND => report::handle_report(session, config),
 
 		CONTEXT_COMMAND => context::handle_context(session, params),
-		LAYERS_COMMAND => layers::handle_layers(session, config, &current_role).await,
 		LOGLEVEL_COMMAND => loglevel::handle_loglevel(config, params),
 		DONE_COMMAND => {
 			// /done is handled directly in runner.rs main loop for session lifecycle management
@@ -294,6 +291,9 @@ pub async fn process_command(
 		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,
 		RUN_COMMAND => {
 			run::handle_run(session, config, &current_role, params, operation_cancelled).await
+		}
+		WORKFLOW_COMMAND => {
+			workflow::handle_workflow(session, config, params, operation_cancelled).await
 		}
 		IMAGE_COMMAND => image::handle_image(session, params).await,
 		ROLE_COMMAND => role::handle_role(session, config, params).await,

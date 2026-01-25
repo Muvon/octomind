@@ -68,6 +68,11 @@ impl<'a> CommandCompleter<'a> {
 		self.config.roles.iter().map(|r| r.name.clone()).collect()
 	}
 
+	/// Get available workflows for /workflow command
+	fn get_available_workflows(&self) -> Vec<String> {
+		self.config.workflows.workflows.keys().cloned().collect()
+	}
+
 	/// Check if a context filter is valid
 	fn is_valid_context_filter(filter: &str) -> bool {
 		Self::get_context_filters().contains(&filter)
@@ -91,6 +96,11 @@ impl<'a> CommandCompleter<'a> {
 	/// Check if a role is valid
 	fn is_valid_role(&self, role: &str) -> bool {
 		self.config.roles.iter().any(|r| r.name == role)
+	}
+
+	/// Check if a workflow is valid
+	fn is_valid_workflow(&self, workflow: &str) -> bool {
+		self.config.workflows.workflows.contains_key(workflow)
 	}
 
 	/// Check if the given file extension is a supported image format
@@ -377,6 +387,30 @@ impl<'a> Completer for CommandCompleter<'a> {
 				.collect();
 
 			Ok((prefix_len, candidates))
+		} else if line.starts_with("/workflow ") {
+			// Handle /workflow command with workflow name completion
+			let workflow_prefix = "/workflow ";
+			let prefix_len = workflow_prefix.len();
+
+			// Extract the workflow name part up to cursor position
+			let workflow_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			// Get available workflows
+			let candidates: Vec<Pair> = self
+				.get_available_workflows()
+				.iter()
+				.filter(|workflow| workflow.starts_with(workflow_part))
+				.map(|workflow| Pair {
+					display: workflow.clone(),
+					replacement: workflow.clone(),
+				})
+				.collect();
+
+			Ok((prefix_len, candidates))
 		} else if line.starts_with("/context ") {
 			// Handle /context command with filter completion
 			let context_prefix = "/context ";
@@ -546,6 +580,11 @@ impl<'a> Hinter for CommandCompleter<'a> {
 			return Some(" <command_name>".to_string());
 		}
 
+		// Special hint for /workflow command
+		if line == "/workflow" {
+			return Some(" <workflow_name>".to_string());
+		}
+
 		// Special hint for /context command
 		if line == "/context" {
 			return Some(" [all|assistant|user|tool|large]".to_string());
@@ -598,6 +637,14 @@ impl<'a> Hinter for CommandCompleter<'a> {
 				return Some("Start typing command name...".to_string());
 			}
 			return None; // Let command completer handle this
+		}
+
+		if line.starts_with("/workflow ") && line.len() > 10 {
+			let workflow_part = &line[10..]; // "/workflow ".len() = 10
+			if workflow_part.is_empty() {
+				return Some("Start typing workflow name...".to_string());
+			}
+			return None; // Let workflow completer handle this
 		}
 
 		if line.starts_with("/context ") && line.len() > 9 {
@@ -746,7 +793,36 @@ impl<'a> Highlighter for CommandCompleter<'a> {
 				}
 			}
 
+			// Special handling for /workflow command with workflow name
+			if line.starts_with("/workflow ") && line.len() > 10 {
+				let workflow_cmd = "/workflow";
+				let workflow_part = &line[10..]; // "/workflow ".len() = 10
+
+				if !workflow_part.is_empty() {
+					// Check if workflow exists
+					if self.is_valid_workflow(workflow_part) {
+						// Highlight valid workflow name in bright green
+						return Owned(format!(
+							"{} {}",
+							workflow_cmd.green(),
+							workflow_part.bright_green()
+						));
+					} else {
+						// Highlight invalid workflow name in yellow
+						return Owned(format!(
+							"{} {}",
+							workflow_cmd.green(),
+							workflow_part.yellow()
+						));
+					}
+				} else {
+					// Just the command part is green
+					return Owned(format!("{} ", workflow_cmd.green()));
+				}
+			}
+
 			// Special handling for /context command with filter
+
 			if line.starts_with("/context ") && line.len() > 9 {
 				let context_cmd = "/context";
 				let filter_part = &line[9..]; // "/context ".len() = 9

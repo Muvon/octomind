@@ -25,7 +25,6 @@ pub const SAVE_COMMAND: &str = "/save";
 pub const CACHE_COMMAND: &str = "/cache";
 pub const LIST_COMMAND: &str = "/list";
 pub const SESSION_COMMAND: &str = "/session";
-pub const LAYERS_COMMAND: &str = "/layers";
 pub const INFO_COMMAND: &str = "/info";
 pub const DONE_COMMAND: &str = "/done";
 pub const LOGLEVEL_COMMAND: &str = "/loglevel";
@@ -40,6 +39,7 @@ pub const CONTEXT_COMMAND: &str = "/context";
 pub const ROLE_COMMAND: &str = "/role";
 pub const PROMPT_COMMAND: &str = "/prompt";
 pub const PLAN_COMMAND: &str = "/plan";
+pub const WORKFLOW_COMMAND: &str = "/workflow";
 // List of all available commands for autocomplete
 pub const COMMANDS: [&str; 25] = [
 	HELP_COMMAND,
@@ -52,7 +52,6 @@ pub const COMMANDS: [&str; 25] = [
 	CACHE_COMMAND,
 	LIST_COMMAND,
 	SESSION_COMMAND,
-	LAYERS_COMMAND,
 	INFO_COMMAND,
 	DONE_COMMAND,
 	LOGLEVEL_COMMAND,
@@ -67,4 +66,5 @@ pub const COMMANDS: [&str; 25] = [
 	ROLE_COMMAND,
 	PROMPT_COMMAND,
 	PLAN_COMMAND,
+	WORKFLOW_COMMAND,
 ];

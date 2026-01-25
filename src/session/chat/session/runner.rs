@@ -1322,7 +1322,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 						// Continue with the session
 						continue;
-					} else if input.starts_with(LAYERS_COMMAND) {
+					} else if input.starts_with(MODEL_COMMAND) || input.starts_with(ROLE_COMMAND) {
 						// This is a command that requires config reload
 						// Reload the configuration
 						match crate::config::Config::load() {

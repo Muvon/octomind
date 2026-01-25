@@ -50,10 +50,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			INFO_COMMAND.cyan()
 		);
 		println!(
-			"{} - Toggle layered processing architecture on/off",
-			LAYERS_COMMAND.cyan()
+			"{} - Finalize task with memorization, summarization, and auto-commit",
+			DONE_COMMAND.cyan()
 		);
-		println!("{} - Finalize task with memorization, summarization, and auto-commit (resets layered processing for next task)", DONE_COMMAND.cyan());
+
 		println!(
 			"{} [level] - Set logging level: none, info, or debug",
 			LOGLEVEL_COMMAND.cyan()
@@ -69,6 +69,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		println!(
 			"{} <command_name> - Execute a command layer",
 			RUN_COMMAND.cyan()
+		);
+		println!(
+			"{} <workflow_name> [input] - Execute a workflow",
+			WORKFLOW_COMMAND.cyan()
 		);
 		println!(
 			"{} [filter] - Display session context: all, assistant, user, tool, or large",
@@ -120,6 +124,19 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 						cmd.description
 					);
 				}
+			}
+		}
+
+		// Display workflows if any
+		if !config.workflows.workflows.is_empty() {
+			println!("\n{}", "Workflows:".bright_green());
+			for (name, workflow) in &config.workflows.workflows {
+				println!(
+					"  {} {} - {}",
+					"/workflow".cyan(),
+					name.bright_white(),
+					workflow.description
+				);
 			}
 		}
 
@@ -292,48 +309,6 @@ pub fn display_role(output: &CommandOutput) {
 					println!("  {} {}", indicator, role_name.bright_white());
 				}
 				println!("\n💡 Usage: {} <role_name>", "/role".bright_green());
-			}
-		}
-		println!();
-	}
-}
-
-pub fn display_layers(output: &CommandOutput) {
-	if let CommandOutput::Layers {
-		layers_enabled,
-		saved,
-		save_error,
-		..
-	} = output
-	{
-		if *layers_enabled {
-			println!(
-				"{}",
-				"Layered processing enabled for this session.".bright_green()
-			);
-			println!(
-				"{}",
-				"Your requests will be processed through configured layers.".bright_blue()
-			);
-		} else {
-			println!(
-				"{}",
-				"Layered processing disabled for this session.".bright_yellow()
-			);
-			println!(
-				"{}",
-				"Your requests will be sent directly to the AI model.".bright_blue()
-			);
-		}
-		println!("{}", "Use /layers to toggle this setting.".bright_cyan());
-
-		if let Some(false) = saved {
-			if let Some(err) = save_error {
-				println!(
-					"{} {}",
-					"Warning: Could not save session:".bright_red(),
-					err
-				);
 			}
 		}
 		println!();
@@ -786,6 +761,88 @@ allowed_tools = []"#
 						}
 					} else if let Some(true) = data.get("success").and_then(|v| v.as_bool()) {
 						// Result is already printed by the command executor (print_assistant_response in handle_run)
+						// No additional output needed here
+					}
+				}
+				_ => {}
+			}
+		}
+	}
+}
+
+pub fn display_workflow(output: &CommandOutput) {
+	if let CommandOutput::Workflow {
+		workflow_executed: _,
+		data,
+	} = output
+	{
+		if let Some(action) = data.get("action").and_then(|v| v.as_str()) {
+			match action {
+				"list" => {
+					if let Some(workflows) = data.get("workflows").and_then(|v| v.as_array()) {
+						if workflows.is_empty() {
+							println!("{}", "No workflows configured.".bright_yellow());
+							println!("{}", "Workflows can be defined in the [workflows] section of your configuration.".bright_blue());
+							println!("{}", "Example configuration:".bright_cyan());
+							println!(
+								"{}",
+								r#"[workflows.developer_workflow]
+description = "Two-stage workflow: refine task, then research context"
+
+[[workflows.developer_workflow.steps]]
+name = "refine"
+type = "once"
+layer = "task_refiner"
+
+[[workflows.developer_workflow.steps]]
+name = "research"
+type = "once"
+layer = "task_researcher""#
+									.bright_white()
+							);
+						} else {
+							println!("{}", "Available workflows:".bright_cyan());
+							for workflow in workflows {
+								if let (Some(name), Some(desc)) = (
+									workflow.get(0).and_then(|v| v.as_str()),
+									workflow.get(1).and_then(|v| v.as_str()),
+								) {
+									println!(
+										"  {} {} - {}",
+										"/workflow".cyan(),
+										name.bright_yellow(),
+										desc.bright_white()
+									);
+								}
+							}
+							println!();
+							println!(
+								"{}",
+								"Usage: /workflow <workflow_name> [input]".bright_blue()
+							);
+							println!("{}", "Example: /workflow developer_workflow Implement user authentication".bright_green());
+						}
+					}
+				}
+				"execute" => {
+					if let Some(false) = data.get("success").and_then(|v| v.as_bool()) {
+						if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+							println!("{}", error.bright_red());
+						}
+						if let Some(available) =
+							data.get("available_workflows").and_then(|v| v.as_array())
+						{
+							if !available.is_empty() {
+								println!("{}", "Available workflows:".bright_cyan());
+								for workflow in available {
+									if let Some(name) = workflow.as_str() {
+										println!("  {}", name.bright_yellow());
+									}
+								}
+							}
+						}
+					} else if let Some(true) = data.get("success").and_then(|v| v.as_bool()) {
+						// Result is already printed by the workflow orchestrator
 						// No additional output needed here
 					}
 				}

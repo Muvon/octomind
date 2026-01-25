@@ -18,7 +18,7 @@ use std::collections::HashMap;
 /// Global workflows configuration
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct WorkflowsConfig {
-	#[serde(default)]
+	#[serde(flatten)]
 	pub workflows: HashMap<String, WorkflowDefinition>,
 }
 

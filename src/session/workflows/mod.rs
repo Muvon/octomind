@@ -19,6 +19,6 @@ mod parser;
 #[cfg(test)]
 mod tests;
 
-pub use executor::StepExecutor;
+pub use executor::{StepExecutionResult, StepExecutor};
 pub use orchestrator::WorkflowOrchestrator;
 pub use parser::PatternParser;

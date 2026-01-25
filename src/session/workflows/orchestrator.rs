@@ -15,19 +15,40 @@
 use crate::config::{Config, WorkflowDefinition};
 use crate::session::Session;
 use anyhow::Result;
-use colored::*;
+use serde::{Deserialize, Serialize};
 
-use super::executor::StepExecutor;
+use super::executor::{StepExecutor, WorkflowContext};
+
+/// Workflow execution progress tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowProgress {
+	pub step_outputs: Vec<StepOutput>,
+	pub duration_secs: f64,
+}
+
+/// Individual step output with timing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepOutput {
+	pub step_name: String,
+	pub step_index: usize,
+	pub total_steps: usize,
+	pub content: String,
+	pub duration_ms: u64,
+}
 
 /// Orchestrates workflow execution
 pub struct WorkflowOrchestrator {
 	workflow: WorkflowDefinition,
+	workflow_name: String,
 }
 
 impl WorkflowOrchestrator {
 	/// Create new workflow orchestrator
-	pub fn new(workflow: WorkflowDefinition) -> Self {
-		Self { workflow }
+	pub fn new(workflow: WorkflowDefinition, workflow_name: String) -> Self {
+		Self {
+			workflow,
+			workflow_name,
+		}
 	}
 
 	/// Execute the complete workflow
@@ -37,30 +58,26 @@ impl WorkflowOrchestrator {
 		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
-	) -> Result<String> {
-		println!("\n{}", "═══ Workflow ═══".bright_cyan().bold());
-		println!("{}", self.workflow.description.bright_white());
-		println!();
-
-		let start = std::time::Instant::now();
+	) -> Result<(String, WorkflowProgress)> {
+		let workflow_start = std::time::Instant::now();
 		let mut current_input = input.to_string();
+		let mut step_outputs = Vec::new();
+		let total_steps = self.workflow.steps.len();
 
 		// Execute each top-level step
 		for (i, step) in self.workflow.steps.iter().enumerate() {
-			println!(
-				"{} Step {}/{}: {}",
-				"▶".bright_green(),
-				i + 1,
-				self.workflow.steps.len(),
-				step.name.bright_white()
-			);
-
-			current_input = StepExecutor::execute_step(
+			// Execute the step and get result with timing
+			let step_result = StepExecutor::execute_step(
 				step,
 				&current_input,
 				session,
 				config,
 				operation_cancelled.clone(),
+				WorkflowContext {
+					step_index: i + 1,
+					total_steps,
+					workflow_name: &self.workflow_name,
+				},
 			)
 			.await?;
 
@@ -68,15 +85,25 @@ impl WorkflowOrchestrator {
 				return Err(anyhow::anyhow!("Operation cancelled"));
 			}
 
-			println!();
+			// Update current input with step output
+			current_input = step_result.output;
+
+			// Capture step output for progress tracking
+			step_outputs.push(StepOutput {
+				step_name: step_result.step_name,
+				step_index: i + 1,
+				total_steps,
+				content: current_input.clone(),
+				duration_ms: step_result.duration_ms,
+			});
 		}
+		let duration_secs = workflow_start.elapsed().as_secs_f64();
 
-		println!(
-			"{} Workflow completed in {:.2}s",
-			"✓".bright_green(),
-			start.elapsed().as_secs_f64()
-		);
+		let progress = WorkflowProgress {
+			step_outputs,
+			duration_secs,
+		};
 
-		Ok(current_input)
+		Ok((current_input, progress))
 	}
 }

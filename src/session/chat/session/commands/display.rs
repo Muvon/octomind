@@ -770,7 +770,7 @@ allowed_tools = []"#
 	}
 }
 
-pub fn display_workflow(output: &CommandOutput) {
+pub fn display_workflow(output: &CommandOutput, _config: &Config) {
 	if let CommandOutput::Workflow {
 		workflow_executed: _,
 		data,
@@ -826,6 +826,7 @@ layer = "task_researcher""#
 				}
 				"execute" => {
 					if let Some(false) = data.get("success").and_then(|v| v.as_bool()) {
+						// Display errors only
 						if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
 							println!("{}", error.bright_red());
 						}
@@ -841,11 +842,10 @@ layer = "task_researcher""#
 								}
 							}
 						}
-					} else if let Some(true) = data.get("success").and_then(|v| v.as_bool()) {
-						// Result is already printed by the workflow orchestrator
-						// No additional output needed here
 					}
+					// Success case: all output already displayed in real-time, nothing to show
 				}
+
 				_ => {}
 			}
 		}

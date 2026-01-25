@@ -92,8 +92,10 @@ pub async fn process_layered_response(
 				.clone();
 
 			// Execute workflow
-			let workflow_orchestrator =
-				crate::session::workflows::WorkflowOrchestrator::new(workflow_def);
+			let workflow_orchestrator = crate::session::workflows::WorkflowOrchestrator::new(
+				workflow_def,
+				workflow_name.to_string(),
+			);
 			match workflow_orchestrator
 				.execute(
 					input,
@@ -103,7 +105,7 @@ pub async fn process_layered_response(
 				)
 				.await
 			{
-				Ok(output) => output,
+				Ok((output, _progress)) => output, // Ignore progress in layered response
 				Err(e) => {
 					// Stop the animation using the separate animation flag
 					animation_cancel.store(true, Ordering::SeqCst);

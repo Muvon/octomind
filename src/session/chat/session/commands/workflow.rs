@@ -23,6 +23,7 @@ use anyhow::Result;
 pub async fn handle_workflow(
 	session: &mut ChatSession,
 	config: &Config,
+	_role: &str,
 	params: &[&str],
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<CommandResult> {
@@ -145,9 +146,10 @@ pub async fn handle_workflow(
 		.ok_or_else(|| anyhow::anyhow!("Workflow not found: {}", workflow_name))?
 		.clone();
 
+	let workflow_description = workflow_def.description.clone();
+
 	// Execute the workflow
-	println!();
-	let orchestrator = WorkflowOrchestrator::new(workflow_def);
+	let orchestrator = WorkflowOrchestrator::new(workflow_def, workflow_name.to_string());
 	match orchestrator
 		.execute(
 			&workflow_input,
@@ -157,19 +159,16 @@ pub async fn handle_workflow(
 		)
 		.await
 	{
-		Ok(result) => {
-			println!();
-			// Workflow result is already printed by the orchestrator
-			// Just return success status
-			Ok(CommandResult::HandledWithOutput(CommandOutput::Workflow {
-				workflow_executed: workflow_name.to_string(),
-				data: serde_json::json!({
-					"action": "execute",
-					"success": true,
-					"result": result
-				}),
-			}))
-		}
+		Ok((result, progress)) => Ok(CommandResult::HandledWithOutput(CommandOutput::Workflow {
+			workflow_executed: workflow_name.to_string(),
+			data: serde_json::json!({
+				"action": "execute",
+				"success": true,
+				"result": result,
+				"progress": progress,
+				"workflow_description": workflow_description
+			}),
+		})),
 		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Workflow {
 			workflow_executed: workflow_name.to_string(),
 			data: serde_json::json!({

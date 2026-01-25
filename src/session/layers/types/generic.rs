@@ -22,11 +22,37 @@ use async_trait::async_trait;
 /// This replaces the need for specific layer type implementations
 pub struct GenericLayer {
 	config: LayerConfig,
+	workflow_context: Option<(usize, usize, String)>, // (step_index, total_steps, workflow_name)
 }
 
 impl GenericLayer {
 	pub fn new(config: LayerConfig) -> Self {
-		Self { config }
+		Self {
+			config,
+			workflow_context: None,
+		}
+	}
+
+	/// Set workflow context for display (step_index, total_steps, workflow_name)
+	pub fn set_workflow_context(
+		&mut self,
+		step_index: usize,
+		total_steps: usize,
+		workflow_name: String,
+	) {
+		self.workflow_context = Some((step_index, total_steps, workflow_name));
+	}
+
+	/// Get execution context string for tool display
+	fn get_execution_context(&self) -> String {
+		if let Some((step_index, total_steps, workflow_name)) = &self.workflow_context {
+			format!(
+				"{} | {} | Step {}/{}",
+				workflow_name, self.config.name, step_index, total_steps
+			)
+		} else {
+			self.config.name.clone()
+		}
 	}
 
 	/// Create messages for the API based on the layer configuration
@@ -129,7 +155,7 @@ impl GenericLayer {
 						current_tool_calls,
 						format!("layer_{}", self.config.name),
 						&self.config,
-						self.config.name.clone(),
+						self.get_execution_context(),
 						config,
 						Some(operation_cancelled.clone()),
 					).await?;

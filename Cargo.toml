@@ -37,21 +37,21 @@ tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "
 crossterm = "0.29.0"
 indicatif = "0.18.3"
 parking_lot = "0.12.5"
-chrono = { version = "0.4.42", features = ["serde"] }
+chrono = { version = "0.4.43", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
-uuid = { version = "1.19.0", features = ["v4"] }
+uuid = { version = "1.20.0", features = ["v4"] }
 tiktoken-rs = "0.9.1" # Token counter
 reqwest = { version = "0.13.1", features = ["json", "rustls", "gzip"], default-features = false }
 anyhow = "1.0.100"
 serde_json = "1.0.149"
 clap = { version = "4.5.54", features = ["derive"] }
-clap_complete = "4.5.64"
-toml = "0.9.10"
+clap_complete = "4.5.65"
+toml = "0.9.11"
 lazy_static = "1.5.0"
 tokio-util = { version = "0.7", features = ["rt"] }
 rustyline = { version = "17.0.2", features = ["custom-bindings"] }
 regex = "1.12.2"
-colored = "3.0.0"
+colored = "3.1.1"
 async-trait = "0.1.89"
 termimad = "0.34.1"
 syntect = "5.3.0"

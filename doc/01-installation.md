@@ -193,22 +193,74 @@ source ~/.bashrc
 
 ## Shell Completions
 
-Octomind provides built-in shell completion support:
+Octomind provides built-in shell completion support for all major shells:
 
+### Initial Setup
+
+**Bash:**
 ```bash
-# Generate completions for your shell
+# User installation
+mkdir -p ~/.bash_completion.d
 octomind completion bash > ~/.bash_completion.d/octomind
-octomind completion zsh > ~/.zsh/completions/_octomind
+echo 'source ~/.bash_completion.d/octomind' >> ~/.bashrc
 
-# Or install system-wide
+# System-wide installation
 sudo octomind completion bash > /etc/bash_completion.d/octomind
 ```
 
+**Zsh:**
+```bash
+# User installation
+mkdir -p ~/.zsh/completions
+octomind completion zsh > ~/.zsh/completions/_octomind
+echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
+echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
+
+# System-wide installation
+sudo octomind completion zsh > /usr/local/share/zsh/site-functions/_octomind
+```
+
+**Fish:**
+```bash
+# User installation
+mkdir -p ~/.config/fish/completions
+octomind completion fish > ~/.config/fish/completions/octomind.fish
+
+# System-wide installation
+sudo octomind completion fish > /usr/share/fish/vendor_completions.d/octomind.fish
+```
+
+**PowerShell (Windows):**
+```powershell
+# User installation
+octomind completion powershell | Out-File -FilePath $PROFILE -Append
+```
+
+### Updating Completions
+
+After updating Octomind, regenerate completions to get new commands:
+
+```bash
+# Bash
+octomind completion bash > ~/.bash_completion.d/octomind
+source ~/.bash_completion.d/octomind
+
+# Zsh
+octomind completion zsh > ~/.zsh/completions/_octomind
+rm -f ~/.zcompdump  # Clear completion cache
+exec zsh            # Reload shell
+
+# Fish
+octomind completion fish > ~/.config/fish/completions/octomind.fish
+# Fish auto-reloads completions
+```
+
 **Supported Shells:**
-- Bash
-- Zsh
-- Fish (coming soon)
-- PowerShell (Windows)
+- ✅ Bash
+- ✅ Zsh
+- ✅ Fish
+- ✅ PowerShell (Windows)
+- ✅ Elvish (via generic completion)
 
 ## Verification
 

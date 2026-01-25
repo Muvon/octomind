@@ -37,6 +37,7 @@ pub mod oauth_config;
 pub mod providers;
 pub mod roles;
 pub mod validation;
+pub mod workflows;
 
 // Tests removed - strict configuration mode doesn't support Default implementations
 // Tests should be rewritten to use complete config structures
@@ -47,6 +48,7 @@ pub use mcp::*;
 pub use oauth_config::*; // OAuth 2.1 + PKCE configuration types
 pub use providers::*;
 pub use roles::*;
+pub use workflows::*;
 
 // Agent configuration - removed, now uses LayerConfig directly
 
@@ -188,6 +190,10 @@ pub struct Config {
 	// Global layer configurations - array of layer definitions
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 
+	// Workflows configuration
+	#[serde(default)]
+	pub workflows: WorkflowsConfig,
+
 	// Ask command configuration
 	pub ask: AskConfig,
 
@@ -309,15 +315,6 @@ impl Config {
 			.cloned()
 	}
 
-	/// Get enabled layers for a role with layer references
-	/// This ensures layers are filtered by role layer_refs
-	pub fn get_enabled_layers_for_role(
-		&self,
-		role: &str,
-	) -> Vec<crate::session::layers::LayerConfig> {
-		self.get_enabled_layers(role)
-	}
-
 	/// Get enabled servers for a role with runtime core server injection
 	/// This ensures core servers are ALWAYS available regardless of config file state
 	pub fn get_enabled_servers_for_role(
@@ -330,13 +327,6 @@ impl Config {
 	/// Get the global log level (system-wide setting)
 	pub fn get_log_level(&self) -> LogLevel {
 		self.log_level.clone()
-	}
-
-	/// Role-based configuration getters - these delegate to role configs
-	/// Get enable layers setting for the specified role
-	pub fn get_enable_layers(&self, role: &str) -> bool {
-		let (role_config, _, _, _, _) = self.get_role_config(role);
-		role_config.enable_layers
 	}
 
 	/// Get the model for the specified role
@@ -399,7 +389,7 @@ impl Config {
 			allowed_tools: role_mcp_config.allowed_tools.clone(),
 		};
 
-		// Role-specific layers (only enabled via layer_refs) - NOT USED ANYWHERE
+		// Role-specific layers are now managed by workflows
 		// Keep merged.layers as original registry for agent tools
 		// let enabled_layers = self.get_enabled_layers_for_role(mode);
 
@@ -413,53 +403,6 @@ impl Config {
 	pub fn get_role_config_struct(&self, role: &str) -> &RoleConfig {
 		let (role_config, _, _, _, _) = self.get_role_config(role);
 		role_config
-	}
-
-	/// Get layer references for a specific role
-	pub fn get_layer_refs(&self, role: &str) -> &Vec<String> {
-		if let Some(role_config) = self.role_map.get(role) {
-			&role_config.layer_refs
-		} else {
-			// Return empty vec for unknown roles
-			static EMPTY_VEC: Vec<String> = Vec::new();
-			&EMPTY_VEC
-		}
-	}
-
-	/// Get enabled layers for a specific role (filters global layers by role layer_refs)
-	/// STRICT CONFIG: All referenced layers MUST exist in config - no fallbacks
-	pub fn get_enabled_layers(&self, role: &str) -> Vec<crate::session::layers::LayerConfig> {
-		let layer_refs = self.get_layer_refs(role);
-		if layer_refs.is_empty() {
-			return Vec::new();
-		}
-
-		// STRICT CONFIG CHECK: layers registry must exist
-		let all_layers = if let Some(layers) = &self.layers {
-			layers
-		} else {
-			panic!("CRITICAL CONFIG ERROR: No layers defined in config but role '{role}' references layers: {layer_refs:?}. All layers must be explicitly defined in config.");
-		};
-
-		let mut result = Vec::new();
-		for layer_name in layer_refs {
-			// STRICT CONFIG CHECK: referenced layer must exist
-			let layer_config = all_layers
-				.iter()
-				.find(|layer| layer.name == *layer_name)
-				.cloned();
-
-			if let Some(mut layer) = layer_config {
-				// Auto-set the name from the registry key
-				layer.name = layer_name.clone();
-				result.push(layer);
-			} else {
-				// STRICT CONFIG: Missing layer is CRITICAL error
-				panic!("CRITICAL CONFIG ERROR: Layer '{layer_name}' referenced by role '{role}' but not found in config layers registry. All referenced layers must be explicitly defined in config.");
-			}
-		}
-
-		result
 	}
 
 	/// Build the internal role map from the roles array for fast lookup

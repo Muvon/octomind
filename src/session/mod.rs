@@ -29,6 +29,7 @@ mod project_context; // Project context collection and management
 pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
+pub mod workflows; // Workflow orchestration system
 
 // Provider system exports
 pub use crate::providers::{
@@ -36,7 +37,7 @@ pub use crate::providers::{
 };
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
-pub use layers::{process_with_layers, InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
+pub use layers::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
 pub use model_utils::model_supports_caching;
 pub use project_context::ProjectContext;
 pub use smart_summarizer::SmartSummarizer;

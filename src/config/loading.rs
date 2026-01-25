@@ -384,11 +384,13 @@ tools = []
 
 		let tester_role = config.role_map.get("tester").unwrap();
 		assert_eq!(tester_role.mcp.server_refs, vec!["test_server", "clt"]);
-		assert!(!tester_role.config.enable_layers);
+		// Workflow is not configured for tester role
+		assert!(tester_role.workflow.is_none());
 
 		// Test get_role_config for custom role
 		let (role_config, mcp_config, _, _, _) = config.get_role_config("tester");
-		assert!(!role_config.enable_layers);
+		// Verify role config structure is valid
+		assert_eq!(role_config.temperature, 0.7);
 		assert_eq!(mcp_config.server_refs, vec!["test_server", "clt"]);
 
 		// Test get_merged_config_for_mode for custom role
@@ -439,8 +441,10 @@ tools = []
 
 		// Verify that RoleConfig no longer has max_tokens field by checking the role config struct
 		let (role_config, _, _, _, _) = config.get_role_config("tester");
-		// This test passes if the code compiles - if max_tokens was still in RoleConfig,
-		// we'd need to access role_config.max_tokens, but since it's removed, this verifies the refactoring
-		assert!(!role_config.enable_layers); // Just test something else to ensure role_config is valid
+		// This test verifies the refactoring where max_tokens was moved from RoleConfig to system-wide
+		// We verify role config is valid by checking its temperature field
+		assert_eq!(role_config.temperature, 0.7);
+		// Verify developer role exists in config
+		assert!(config.role_map.contains_key("developer"));
 	}
 }

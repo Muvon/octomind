@@ -284,17 +284,14 @@ pub async fn setup_system_prompt_and_cache(
 
 		// Process layer system prompts during session initialization
 		// This ensures layer system prompts are processed once and cached for the entire session
-		let (role_config, _, _, _, _) = config_for_role.get_role_config(role);
-		if role_config.enable_layers {
-			use crate::session::layers::LayeredOrchestrator;
-			// Create orchestrator with processed system prompts - use original config for layers
-			let _orchestrator = LayeredOrchestrator::from_config_with_processed_prompts(
-				config_for_role,
-				role,
-				&current_dir,
-			)
-			.await;
-			log_info!("Layer system prompts processed and cached for session");
+		let (_role_config, _, _, _, _) = config_for_role.get_role_config(role);
+
+		// Check if role uses workflow
+		if let Some(role_data) = config_for_role.role_map.get(role) {
+			if role_data.workflow.is_some() {
+				// Workflow system handles layer processing
+				log_info!("Role uses workflow system - layer prompts will be processed during workflow execution");
+			}
 		}
 
 		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions
@@ -425,13 +422,19 @@ pub async fn process_layers_if_enabled(
 	first_message_processed: bool,
 	operation_rx: watch::Receiver<bool>,
 ) -> Result<(String, bool, bool)> {
-	let layers_enabled = config.get_enable_layers(role);
-	if layers_enabled && !first_message_processed {
-		// Track session message count before layer processing
-		let messages_before_layers = chat_session.session.messages.len();
+	// Check if role uses workflow
+	let has_workflow = config
+		.role_map
+		.get(role)
+		.and_then(|r| r.workflow.as_ref())
+		.is_some();
 
-		// Process using layered architecture to get improved input
-		let layered_result = super::super::layered_response::process_layered_response(
+	if has_workflow && !first_message_processed {
+		// Track session message count before workflow processing
+		let messages_before_workflow = chat_session.session.messages.len();
+
+		// Process using workflow architecture to get improved input
+		let workflow_result = super::super::layered_response::process_layered_response(
 			input,
 			chat_session,
 			config,
@@ -440,24 +443,24 @@ pub async fn process_layers_if_enabled(
 		)
 		.await;
 
-		match layered_result {
+		match workflow_result {
 			Ok(processed_input) => {
-				// Check if layers modified the session
-				let messages_after_layers = chat_session.session.messages.len();
-				let layers_modified_session = messages_after_layers > messages_before_layers;
+				// Check if workflow modified the session
+				let messages_after_workflow = chat_session.session.messages.len();
+				let workflow_modified_session = messages_after_workflow > messages_before_workflow;
 
-				if layers_modified_session {
-					// Layers used output_mode append/replace and added messages to session
+				if workflow_modified_session {
+					// Workflow used output_mode append/replace and added messages to session
 					log_info!(
-						"Layers modified session ({} messages added).",
-						messages_after_layers - messages_before_layers
+						"Workflow modified session ({} messages added).",
+						messages_after_workflow - messages_before_workflow
 					);
-					// Return indication that layers modified session
+					// Return indication that workflow modified session
 					Ok((processed_input, true, false))
 				} else {
-					// Layers didn't modify session (all had output_mode = none)
-					// Use the processed input from layers instead of the original input
-					log_info!("Layers processing complete. Using enhanced input for main model.");
+					// Workflow didn't modify session (all had output_mode = none)
+					// Use the processed input from workflow instead of the original input
+					log_info!("Workflow processing complete. Using enhanced input for main model.");
 					Ok((processed_input, false, false))
 				}
 			}
@@ -472,14 +475,14 @@ pub async fn process_layers_if_enabled(
 					println!("{}", "\nOperation cancelled by user.".bright_yellow());
 					println!("{}", "Continuing with original input.".yellow());
 
-					// CRITICAL FIX: Clean up any partial layer modifications to session
-					// When layers are cancelled, they might have partially modified the session
-					// We need to restore the session to its state before layer processing
+					// CRITICAL FIX: Clean up any partial workflow modifications to session
+					// When workflow is cancelled, it might have partially modified the session
+					// We need to restore the session to its state before workflow processing
 					let messages_after_cancellation = chat_session.session.messages.len();
-					if messages_after_cancellation > messages_before_layers {
-						// Remove messages added by layers before cancellation
+					if messages_after_cancellation > messages_before_workflow {
+						// Remove messages added by workflow before cancellation
 						let messages_to_remove =
-							messages_after_cancellation - messages_before_layers;
+							messages_after_cancellation - messages_before_workflow;
 						for _ in 0..messages_to_remove {
 							chat_session.session.messages.pop();
 						}
@@ -1018,20 +1021,10 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		if let Some(session_file) = &chat_session.session.session_file {
 			if let Ok(runtime_state) = crate::session::extract_runtime_state_from_log(session_file)
 			{
-				// Apply restored layers_enabled state if available
-				if let Some(layers_enabled) = runtime_state.layers_enabled {
-					// Apply the layers_enabled state to the current role's config
-					if let Some(role_config) = current_config.role_map.get_mut(&role) {
-						role_config.config.enable_layers = layers_enabled;
-						log_info!(
-							"Applied runtime layers state: {}",
-							if layers_enabled {
-								"enabled"
-							} else {
-								"disabled"
-							}
-						);
-					}
+				// Workflow state is now stored in role config, not runtime state
+				// This section is kept for backward compatibility but does nothing
+				if let Some(_workflow_enabled) = runtime_state.layers_enabled {
+					log_info!("Legacy layers_enabled state ignored - using workflow configuration");
 				}
 			}
 		}
@@ -1374,7 +1367,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// 2. Use the processed input for the main model chat
 
 		// Process layers if enabled using helper function
-		let (processed_input, layers_modified_session, _layer_cancelled) =
+		let (processed_input, workflow_modified_session, _layer_cancelled) =
 			process_layers_if_enabled(
 				&input,
 				&mut chat_session,
@@ -1390,7 +1383,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			continue;
 		}
 
-		let final_input = if layers_modified_session {
+		let final_input = if workflow_modified_session {
 			// Layers used output_mode append/replace and added messages to session
 			// Skip adding user message to avoid duplicates and continue with the user message
 			// to guarantee that the output from layer next processed with the main loop
@@ -1440,9 +1433,9 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// CRITICAL FIX: Add user message unless continuation is pending or layers modified session
 		// Logic:
 		// - continuation_pending = true: Continuation message already added → Skip (avoid duplicates)
-		// - layers_modified_session = true: Layers added messages to session → Skip (avoid duplicates)
-		// - layers_modified_session = false: Layers didn't add messages → Add user message (needed for conversation)
-		if !chat_session.continuation_pending && !layers_modified_session {
+		// - workflow_modified_session = true: Layers added messages to session → Skip (avoid duplicates)
+		// - workflow_modified_session = false: Layers didn't add messages → Add user message (needed for conversation)
+		if !chat_session.continuation_pending && !workflow_modified_session {
 			// Append constraints if configured
 			let final_input_with_constraints =
 				crate::session::chat::session::utils::append_constraints_if_exists(
@@ -1574,38 +1567,26 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	// Set the thread-local config for logging macros
 	let mut current_config = config_for_role.clone();
 
+	// Use initial_input as the input for this session (convert to owned String for mutability)
+	let mut input = initial_input.to_string();
+	let current_dir = std::env::current_dir()?;
+
+	// Create operation receiver for cancellation
+	let mut operation_rx = cancellation.new_operation();
+
 	// Apply runtime state from session log if this is a resumed session
 	if chat_session.was_resumed {
 		if let Some(session_file) = &chat_session.session.session_file {
 			if let Ok(runtime_state) = crate::session::extract_runtime_state_from_log(session_file)
 			{
-				// Apply restored layers_enabled state if available
-				if let Some(layers_enabled) = runtime_state.layers_enabled {
-					// Apply the layers_enabled state to the current role's config
-					if let Some(role_config) = current_config.role_map.get_mut(&role) {
-						role_config.config.enable_layers = layers_enabled;
-						log_info!(
-							"Applied runtime layers state: {}",
-							if layers_enabled {
-								"enabled"
-							} else {
-								"disabled"
-							}
-						);
-					}
+				// Workflow state is now stored in role config, not runtime state
+				// This section is kept for backward compatibility but does nothing
+				if let Some(_workflow_enabled) = runtime_state.layers_enabled {
+					log_info!("Legacy layers_enabled state ignored - using workflow configuration");
 				}
 			}
 		}
 	}
-
-	crate::config::set_thread_config(&current_config);
-
-	// Get current directory for file operations
-	let current_dir = std::env::current_dir()?;
-
-	// Process the single input (same logic as interactive session)
-	let mut input = initial_input.to_string();
-	let mut operation_rx = cancellation.new_operation();
 
 	// Check if this is a command (same logic as interactive session)
 	if input.starts_with('/') {
@@ -1670,7 +1651,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	}
 
 	// Layer processing if enabled and first message using helper function
-	let (processed_input, layers_modified_session, layer_cancelled) = process_layers_if_enabled(
+	let (processed_input, workflow_modified_session, layer_cancelled) = process_layers_if_enabled(
 		&input,
 		&mut chat_session,
 		&current_config,
@@ -1696,7 +1677,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		operation_rx = cancellation.new_operation();
 	}
 
-	if layers_modified_session {
+	if workflow_modified_session {
 		// Layers used output_mode append/replace and added messages to session
 		// Continue processing to ensure main model gets called (same as interactive mode)
 		log_info!("Layers modified session. Continuing with main model processing.");
@@ -1705,13 +1686,17 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	} else {
 		// Use processed input from layers (or original if layers not enabled)
 		input = processed_input;
-		log_info!("Layers processing complete. Using enhanced input for main model.");
+		log_info!("Workflow processing complete. Using enhanced input for main model.");
 	}
 
 	// Add user message - same as interactive
 	let user_message_index = chat_session.session.messages.len();
-	let layers_enabled = current_config.get_enable_layers(&role);
-	if !layers_enabled {
+	let has_workflow = current_config
+		.role_map
+		.get(&role)
+		.and_then(|r| r.workflow.as_ref())
+		.is_some();
+	if !has_workflow {
 		// Append constraints if configured
 		let input_with_constraints =
 			crate::session::chat::session::utils::append_constraints_if_exists(

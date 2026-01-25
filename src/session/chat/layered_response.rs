@@ -70,42 +70,61 @@ pub async fn process_layered_response(
 
 	// Display status message BEFORE processing starts - cleaner flow
 	if config.get_log_level().is_debug_enabled() {
-		println!("{}", "Using layered processing with model-specific caching - only supported models will use caching".bright_cyan());
+		println!("{}", "Using workflow processing with model-specific caching - only supported models will use caching".bright_cyan());
 	} else {
-		println!("{}", "Using layered processing".bright_cyan());
+		println!("{}", "Using workflow processing".bright_cyan());
 	}
 
-	// Process through the layers using the modular layered architecture
-	// Each layer operates on its own session context and passes only the necessary output
-	// to the next layer, ensuring proper isolation
+	// Process through workflows if configured, otherwise pass through unchanged
+	// Each workflow step operates on its own session context and passes output to next step
 	//
-	// IMPORTANT: Each layer handles its own function calls internally with its own model
+	// IMPORTANT: Each layer within workflow handles its own function calls internally
 	// using the process method in processor.rs
 	//
-	// ANIMATION: We show the animation during layer processing, orchestrator shows minimal progress
-	let layer_output: String = match crate::session::layers::process_with_layers(
-		input,
-		&mut chat_session.session,
-		config,
-		role,
-		operation_cancelled.clone(),
-	)
-	.await
-	{
-		Ok(output) => output,
-		Err(e) => {
-			// Stop the animation using the separate animation flag
-			animation_cancel.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
-			return Err(e);
+	// ANIMATION: We show the animation during workflow processing
+	let workflow_output: String = if let Some(role_data) = config.role_map.get(role) {
+		if let Some(workflow_name) = &role_data.workflow {
+			// Get workflow definition
+			let workflow_def = config
+				.workflows
+				.get_workflow(workflow_name)
+				.ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", workflow_name))?
+				.clone();
+
+			// Execute workflow
+			let workflow_orchestrator =
+				crate::session::workflows::WorkflowOrchestrator::new(workflow_def);
+			match workflow_orchestrator
+				.execute(
+					input,
+					&mut chat_session.session,
+					config,
+					operation_cancelled.clone(),
+				)
+				.await
+			{
+				Ok(output) => output,
+				Err(e) => {
+					// Stop the animation using the separate animation flag
+					animation_cancel.store(true, Ordering::SeqCst);
+					let _ = animation_task.await;
+					return Err(e);
+				}
+			}
+		} else {
+			// No workflow configured - pass through unchanged
+			input.to_string()
 		}
+	} else {
+		// Role not found - pass through unchanged
+		input.to_string()
 	};
 
 	// Stop the animation using the separate animation flag
 	animation_cancel.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
 
-	// Return the processed output from layers for use in the main model conversation
+	// Return the processed output from workflow for use in the main model conversation
 	// This output already includes the results of any function calls handled by each layer
-	Ok(layer_output)
+	Ok(workflow_output)
 }

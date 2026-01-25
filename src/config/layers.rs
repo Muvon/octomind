@@ -23,14 +23,6 @@ pub struct LayersConfig {
 	pub layers: std::collections::HashMap<String, LayerConfig>,
 }
 
-/// Role-specific layers configuration with layer_refs (similar to MCP)
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct RoleLayersConfig {
-	/// Layer references - list of layer names from the global registry to use for this role
-	/// Empty list means layers are disabled for this role
-	pub layer_refs: Vec<String>,
-}
-
 impl LayersConfig {
 	/// Check if this config should be skipped during serialization
 	/// This helps avoid writing empty [layers] sections when only core layers exist
@@ -49,43 +41,6 @@ impl LayersConfig {
 			// Auto-set the name from the registry key
 			layer.name = layer_name.clone();
 			result.push(layer);
-		}
-
-		result
-	}
-}
-
-impl RoleLayersConfig {
-	/// Check if layers are enabled for this role (has any layer references)
-	pub fn is_enabled(&self) -> bool {
-		!self.layer_refs.is_empty()
-	}
-
-	/// Get enabled layers from the global registry for this role
-	/// Now relies entirely on config - no more runtime injection
-	pub fn get_enabled_layers(
-		&self,
-		global_layers: &std::collections::HashMap<String, LayerConfig>,
-	) -> Vec<LayerConfig> {
-		if self.layer_refs.is_empty() {
-			return Vec::new();
-		}
-
-		let mut result = Vec::new();
-		for layer_name in &self.layer_refs {
-			// Get from loaded registry
-			if let Some(layer_config) = global_layers.get(layer_name) {
-				let mut layer = layer_config.clone();
-				// Auto-set the name from the registry key
-				layer.name = layer_name.clone();
-				result.push(layer);
-			} else {
-				// Debug: Layer referenced but not found in global registry
-				crate::log_debug!(
-					"Layer '{}' referenced by role but not found in global registry",
-					layer_name
-				);
-			}
 		}
 
 		result

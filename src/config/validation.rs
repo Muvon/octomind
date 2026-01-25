@@ -31,6 +31,9 @@ impl Config {
 			self.validate_layers(layers)?;
 		}
 
+		// Validate workflows - STRICT
+		self.validate_workflows()?;
+
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
@@ -275,6 +278,31 @@ impl Config {
 			// Additional layer-specific validation can be added here if needed
 
 			// Additional layer-specific validation can be added here
+		}
+
+		Ok(())
+	}
+
+	/// Validate workflows configuration
+	fn validate_workflows(&self) -> Result<()> {
+		// Validate each workflow definition
+		for (name, workflow) in &self.workflows.workflows {
+			workflow
+				.validate(name)
+				.map_err(|e| anyhow!("Workflow '{}': {}", name, e))?;
+		}
+
+		// Validate role workflow references
+		for role in &self.roles {
+			if let Some(workflow_name) = &role.workflow {
+				if !self.workflows.workflows.contains_key(workflow_name) {
+					return Err(anyhow!(
+						"Role '{}' references undefined workflow '{}'",
+						role.name,
+						workflow_name
+					));
+				}
+			}
 		}
 
 		Ok(())

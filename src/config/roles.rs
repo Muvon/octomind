@@ -19,9 +19,6 @@ use super::mcp::RoleMcpConfig;
 // Role configuration - contains all behavior settings but NOT API keys or model (uses system-wide model)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RoleConfig {
-	// Layer configurations
-	#[serde(default)]
-	pub enable_layers: bool,
 	// Custom system prompt (REQUIRED - defined in config template)
 	pub system: String,
 	// Custom welcome message with variable support
@@ -51,9 +48,9 @@ pub struct Role {
 	#[serde(default)]
 	pub mcp: RoleMcpConfig,
 
-	// Layer references - list of layer names to use for this role
-	#[serde(default)]
-	pub layer_refs: Vec<String>,
+	// Workflow reference - name of workflow to use for this role
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub workflow: Option<String>,
 }
 
 // REMOVED: Default implementations - all config must be explicit

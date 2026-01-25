@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Layers command handler
+// Layers command handler - DEPRECATED: Use workflows instead
+// This command is kept for backward compatibility but does nothing
 
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
@@ -24,29 +25,23 @@ pub async fn handle_layers(
 	config: &mut Config,
 	role: &str,
 ) -> Result<CommandResult> {
-	// Toggle layered processing (RUNTIME ONLY - no config file changes)
-	let current_role = role; // Use the passed role parameter
+	// DEPRECATED: Layers are now replaced by workflows
+	// This command is kept for backward compatibility but returns a deprecation message
 
-	// Toggle the setting for the appropriate role in the runtime config
-	if let Some(role) = config.role_map.get_mut(current_role) {
-		role.config.enable_layers = !role.config.enable_layers;
-	}
+	let current_role = role;
 
-	// Get the current state from the updated config
-	let is_enabled = config
+	// Check if role has workflow configured
+	let has_workflow = config
 		.role_map
 		.get(current_role)
-		.map(|r| r.config.enable_layers)
-		.unwrap_or(false);
+		.and_then(|r| r.workflow.as_ref())
+		.is_some();
 
-	// Log the command execution with the actual resulting state
+	// Log the command execution
 	if let Some(session_file) = &session.session.session_file {
 		if let Some(session_name) = session_file.file_stem().and_then(|s| s.to_str()) {
-			let command_line = format!(
-				"/layers {}",
-				if is_enabled { "enabled" } else { "disabled" }
-			);
-			let _ = crate::session::logger::log_session_command(session_name, &command_line);
+			let command_line = "/layers (deprecated)";
+			let _ = crate::session::logger::log_session_command(session_name, command_line);
 		}
 	}
 
@@ -57,7 +52,7 @@ pub async fn handle_layers(
 	};
 
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Layers {
-		layers_enabled: is_enabled,
+		layers_enabled: has_workflow,
 		role: current_role.to_string(),
 		saved,
 		save_error,

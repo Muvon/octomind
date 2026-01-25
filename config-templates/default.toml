@@ -162,7 +162,6 @@ top_k = 20
 # Developer role - optimized for coding and development tasks
 [[roles]]
 name = "developer"
-enable_layers = false
 temperature = 0.3
 # Default top_p for developer role (0.0 to 1.0, nucleus sampling)
 top_p = 0.7
@@ -337,7 +336,8 @@ Core Behavior: Think → Verify → Act → Complete. Senior developer precision
 %{SYSTEM}
 """
 welcome = "Hello! Octomind ready to serve you. Working dir: %{CWD} (Role: %{ROLE})"
-layer_refs = ["task_refiner", "task_researcher"]
+# Optional workflow reference - uncomment to enable workflow-based processing
+# workflow = "developer_workflow"
 
 [roles.mcp]
 server_refs = ["developer", "filesystem", "web", "octocode", "agent"]
@@ -346,13 +346,11 @@ allowed_tools = ["developer:*", "filesystem:*", "web_search", "read_html", "octo
 # Assistant role - optimized for general assistance tasks
 [[roles]]
 name = "assistant"
-enable_layers = false
 temperature = 0.6
 # Default top_p for assistant role (0.0 to 1.0, nucleus sampling)
 top_p = 0.8
 # Default top_k for assistant role (1 to 200, limits token choices)
 top_k = 40
-layer_refs = []
 system = "You are a helpful assistant."
 
 # Welcome message for assistant role
@@ -414,7 +412,7 @@ tools = []
 	# timeout_seconds = 30
 	# auth_token = "optional-bearer-token"  # Static token (optional)
 	# tools = []
-	
+
 	# HTTP MCP server with OAuth 2.1 + PKCE authentication:
 	# [[mcp.servers]]
 	# name = "github_mcp"
@@ -432,9 +430,51 @@ tools = []
 	# scopes = ["repo", "read:org"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WORKFLOWS (BRAIN-INSPIRED PLANNING SYSTEM)
+# Configure multi-step AI processing workflows with validation and feedback loops
+# Workflows act as PLANNERS that enhance user requests before execution
+# See doc/10-workflows.md for comprehensive documentation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Example workflow: Developer workflow with task refinement and research
+# Uncomment and set workflow = "developer_workflow" in developer role to enable
+# [workflows.developer_workflow]
+# description = "Two-stage workflow: refine task, then research context"
+#
+# [[workflows.developer_workflow.steps]]
+# name = "refine"
+# type = "once"
+# layer = "task_refiner"
+#
+# [[workflows.developer_workflow.steps]]
+# name = "research"
+# type = "once"
+# layer = "task_researcher"
+
+# Example workflow: Feedback loop with validation
+# [workflows.validated_development]
+# description = "Development with validation feedback loop"
+#
+# [[workflows.validated_development.steps]]
+# name = "validation_loop"
+# type = "loop"
+# max_iterations = 3
+# exit_pattern = "APPROVED"
+#
+#   [[workflows.validated_development.steps.substeps]]
+#   name = "propose"
+#   type = "once"
+#   layer = "task_refiner"
+#
+#   [[workflows.validated_development.steps.substeps]]
+#   name = "validate"
+#   type = "once"
+#   layer = "task_researcher"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LAYERS (AI PROCESSING PIPELINE)
-# Configure AI processing layers and pipelines
-# Built-in layers are defined here for transparency and easy customization
+# Configure AI processing layers used by workflows, commands, and agents
+# Layers are the building blocks referenced by workflows
 # NOTE: 'description' field is now REQUIRED for all layers (used for agents, commands, and documentation)
 # ═══════════════════════════════════════════════════════════════════════════════
 

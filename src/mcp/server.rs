@@ -242,7 +242,7 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 
 					match oauth::get_access_token(oauth_config, server.name(), false).await {
 						Ok(Some(token)) => {
-							println!("🔍 HTTP: Got OAuth token for '{}', token_prefix='{}...', adding to headers", 
+							println!("🔍 HTTP: Got OAuth token for '{}', token_prefix='{}...', adding to headers",
 							server.name(),
 							token.chars().take(10).collect::<String>()
 						);

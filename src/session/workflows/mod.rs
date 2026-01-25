@@ -12,20 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![recursion_limit = "1024"]
+mod executor;
+mod orchestrator;
+mod parser;
 
-// Main lib.rs file that exports our modules
-pub mod config;
-pub mod directories;
-pub mod mcp;
-pub mod providers;
-pub mod session;
-pub mod state;
-pub mod utils;
-pub mod websocket;
+#[cfg(test)]
+mod tests;
 
-// Re-export commonly used items for convenience
-pub use config::Config;
-
-// Re-export workflow types
-pub use session::workflows::{PatternParser, StepExecutor, WorkflowOrchestrator};
+pub use executor::StepExecutor;
+pub use orchestrator::WorkflowOrchestrator;
+pub use parser::PatternParser;

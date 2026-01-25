@@ -13,6 +13,8 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - [06-advanced.md](./06-advanced.md) — MCP protocol, tools, multimodal vision, and extensibility
 - [07-command-layers.md](./07-command-layers.md) — Layered processing, custom commands, and agents
 - [08-mcp-server-development.md](./08-mcp-server-development.md) — MCP server development and protocol compliance
+- [09-websocket-server.md](./09-websocket-server.md) — WebSocket API for programmatic access
+- **[10-workflows.md](./10-workflows.md) — Brain-inspired planning system** ⭐ NEW
 
 ## Current Architecture Overview
 

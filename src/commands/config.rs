@@ -612,24 +612,22 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Developer role
 	println!("  Developer Role:");
-	let (dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
+	let (_dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
 		config.get_role_config("developer");
 	println!(
 		"    Model:           {} (system-wide)",
 		config.get_effective_model()
 	);
-	println!("    Layers enabled:  {}", dev_config.enable_layers);
 	println!("    System prompt:   {} chars", dev_system.len());
 
 	// Assistant role
 	println!("  Assistant Role:");
-	let (ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
+	let (_ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
 		config.get_role_config("assistant");
 	println!(
 		"    Model:           {} (system-wide)",
 		config.get_effective_model()
 	);
-	println!("    Layers enabled:  {}", ass_config.enable_layers);
 	println!("    System prompt:   {} chars", ass_system.len());
 	println!();
 
@@ -669,9 +667,10 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	);
 	println!();
 
-	// Layer configurations
-	if dev_config.enable_layers || ass_config.enable_layers {
-		println!("📚 Layer Configurations");
+	// Workflow configurations
+	let has_any_workflow = config.role_map.values().any(|r| r.workflow.is_some());
+	if has_any_workflow {
+		println!("📚 Workflow Configurations");
 
 		if let Some(layers) = dev_layers {
 			println!("  Developer Role Layers: {} configured", layers.len());

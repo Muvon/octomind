@@ -282,19 +282,8 @@ pub async fn setup_system_prompt_and_cache(
 		let system_prompt = create_system_prompt(&current_dir, config_for_role, role).await;
 		chat_session.add_system_message(&system_prompt)?;
 
-		// Process layer system prompts during session initialization
-		// This ensures layer system prompts are processed once and cached for the entire session
-		let (_role_config, _, _, _, _) = config_for_role.get_role_config(role);
-
-		// Check if role uses workflow
-		if let Some(role_data) = config_for_role.role_map.get(role) {
-			if role_data.workflow.is_some() {
-				// Workflow system handles layer processing
-				log_info!("Role uses workflow system - layer prompts will be processed during workflow execution");
-			}
-		}
-
 		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions
+
 		// This ensures consistent caching behavior across all supported models
 		let supports_caching = crate::session::model_supports_caching(&chat_session.model);
 		let has_tools = !config_for_role.mcp.servers.is_empty();

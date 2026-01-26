@@ -305,6 +305,91 @@ impl Config {
 			}
 		}
 
+		// Validate that all layer references in workflows exist in config.layers
+		if let Some(layers) = &self.layers {
+			use std::collections::HashSet;
+			let layer_names: HashSet<&str> = layers.iter().map(|l| l.name.as_str()).collect();
+
+			for (workflow_name, workflow) in &self.workflows.workflows {
+				// Recursive function to validate all steps including substeps
+				fn validate_step_layers(
+					step: &crate::config::WorkflowStep,
+					layer_names: &HashSet<&str>,
+					workflow_name: &str,
+				) -> Result<(), anyhow::Error> {
+					// Check step.layer
+					if let Some(layer) = &step.layer {
+						if !layer_names.contains(layer.as_str()) {
+							return Err(anyhow!(
+								"Workflow '{}' step '{}' references undefined layer '{}'",
+								workflow_name,
+								step.name,
+								layer
+							));
+						}
+					}
+
+					// Check conditional branches (on_match, on_no_match)
+					for layer in &step.on_match {
+						if !layer_names.contains(layer.as_str()) {
+							return Err(anyhow!(
+								"Workflow '{}' step '{}' on_match references undefined layer '{}'",
+								workflow_name,
+								step.name,
+								layer
+							));
+						}
+					}
+					for layer in &step.on_no_match {
+						if !layer_names.contains(layer.as_str()) {
+							return Err(anyhow!(
+								"Workflow '{}' step '{}' on_no_match references undefined layer '{}'",
+								workflow_name,
+								step.name,
+								layer
+							));
+						}
+					}
+
+					// Check parallel_layers
+					for layer in &step.parallel_layers {
+						if !layer_names.contains(layer.as_str()) {
+							return Err(anyhow!(
+								"Workflow '{}' step '{}' parallel_layers references undefined layer '{}'",
+								workflow_name,
+								step.name,
+								layer
+							));
+						}
+					}
+
+					// Check aggregator
+					if let Some(aggregator) = &step.aggregator {
+						if !layer_names.contains(aggregator.as_str()) {
+							return Err(anyhow!(
+								"Workflow '{}' step '{}' aggregator references undefined layer '{}'",
+								workflow_name,
+								step.name,
+								aggregator
+							));
+						}
+					}
+
+					// Recursively validate substeps
+					for substep in &step.substeps {
+						validate_step_layers(substep, layer_names, workflow_name)?;
+					}
+
+					Ok(())
+				}
+
+				// Validate all top-level steps
+				for step in &workflow.steps {
+					validate_step_layers(step, &layer_names, workflow_name)?;
+				}
+			}
+		}
+
 		Ok(())
 	}
 }

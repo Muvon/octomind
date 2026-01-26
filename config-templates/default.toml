@@ -437,8 +437,9 @@ tools = []
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Example workflow: Developer workflow with task refinement and research
-# Uncomment to enable this workflow
+# This workflow is active by default and serves as a working example
 [workflows.developer_workflow]
+
 description = "Two-stage workflow: refine task, then research context"
 
 [[workflows.developer_workflow.steps]]

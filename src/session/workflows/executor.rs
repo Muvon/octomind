@@ -75,7 +75,7 @@ impl StepExecutor {
 	pub fn execute_step<'a>(
 		step: &'a WorkflowStep,
 		input: &'a str,
-		session: &'a Session,
+		session: &'a mut Session,
 		config: &'a Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: WorkflowContext<'a>,
@@ -153,7 +153,7 @@ impl StepExecutor {
 	async fn execute_once(
 		step: &WorkflowStep,
 		input: &str,
-		session: &Session,
+		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: &WorkflowContext<'_>,
@@ -178,7 +178,7 @@ impl StepExecutor {
 	async fn execute_loop(
 		step: &WorkflowStep,
 		input: &str,
-		session: &Session,
+		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: &WorkflowContext<'_>,
@@ -229,7 +229,7 @@ impl StepExecutor {
 	async fn execute_foreach(
 		step: &WorkflowStep,
 		input: &str,
-		session: &Session,
+		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: &WorkflowContext<'_>,
@@ -279,7 +279,7 @@ impl StepExecutor {
 	async fn execute_conditional(
 		step: &WorkflowStep,
 		input: &str,
-		session: &Session,
+		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: &WorkflowContext<'_>,
@@ -341,7 +341,7 @@ impl StepExecutor {
 	async fn execute_parallel(
 		step: &WorkflowStep,
 		input: &str,
-		session: &Session,
+		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: &WorkflowContext<'_>,
@@ -351,7 +351,7 @@ impl StepExecutor {
 		for layer_name in &step.parallel_layers {
 			let layer_name = layer_name.clone();
 			let input = input.to_string();
-			let session = session.clone();
+			let mut session = session.clone();
 			let config = config.clone();
 			let operation_cancelled = operation_cancelled.clone();
 			let ctx = context.to_owned();
@@ -360,7 +360,7 @@ impl StepExecutor {
 				Self::execute_layer(
 					&layer_name,
 					&input,
-					&session,
+					&mut session,
 					&config,
 					operation_cancelled,
 					&ctx.as_ref(),
@@ -401,7 +401,7 @@ impl StepExecutor {
 	async fn execute_layer(
 		layer_name: &str,
 		input: &str,
-		session: &Session,
+		session: &mut Session,
 		config: &Config,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
 		context: &WorkflowContext<'_>,
@@ -409,7 +409,7 @@ impl StepExecutor {
 		use colored::Colorize;
 
 		// Get layer config from global registry
-		let layer_config = if let Some(layers) = &config.layers {
+		let mut layer_config = if let Some(layers) = &config.layers {
 			layers
 				.iter()
 				.find(|l| l.name == layer_name)
@@ -421,6 +421,13 @@ impl StepExecutor {
 				layer_name
 			));
 		};
+
+		// CRITICAL FIX: Process and cache layer system prompt before execution
+		// This ensures placeholders are expanded and prompt is cached
+		let current_dir = std::env::current_dir().unwrap_or_default();
+		layer_config
+			.process_and_cache_system_prompt(&current_dir)
+			.await;
 
 		// Create GenericLayer instance
 		let mut layer = GenericLayer::new(layer_config);
@@ -437,7 +444,94 @@ impl StepExecutor {
 			.process(input, session, config, operation_cancelled)
 			.await?;
 
+		// CRITICAL FIX: Apply output_mode to session (mirrors old LayeredOrchestrator behavior)
+		// This ensures layer outputs are properly integrated into the session based on configuration
+		use crate::session::layers::OutputMode;
+		match layer.config().output_mode {
+			OutputMode::None => {
+				// Intermediate layer - just pass output to next layer, don't modify session
+				crate::log_debug!(
+					"Layer '{}': output_mode=none (intermediate layer)",
+					layer_name
+				);
+			}
+			OutputMode::Append => {
+				// Add all layer outputs as messages to session
+				crate::log_debug!(
+					"Layer '{}': output_mode=append (adding {} outputs)",
+					layer_name,
+					result.outputs.len()
+				);
+				for output_text in &result.outputs {
+					session.add_message(layer.config().output_role.as_str(), output_text);
+				}
+			}
+			OutputMode::Replace => {
+				// Replace entire session with layer outputs
+				crate::log_debug!(
+					"Layer '{}': output_mode=replace (replacing session)",
+					layer_name
+				);
+
+				// Find system message to preserve
+				let system_message = session
+					.messages
+					.iter()
+					.find(|m| m.role == "system")
+					.cloned();
+
+				// Clear existing messages
+				session.messages.clear();
+
+				// Build final message list
+				let mut final_messages = Vec::new();
+
+				// Add system message first
+				if let Some(sys_msg) = system_message {
+					final_messages.push(sys_msg);
+				}
+
+				// Add all layer outputs with configured role
+				for output_text in &result.outputs {
+					let output_msg = crate::session::Message {
+						role: layer.config().output_role.as_str().to_string(),
+						content: output_text.clone(),
+						timestamp: std::time::SystemTime::now()
+							.duration_since(std::time::UNIX_EPOCH)
+							.unwrap_or_default()
+							.as_secs(),
+						cached: false,
+						..Default::default()
+					};
+					final_messages.push(output_msg);
+				}
+
+				// Update session with final messages
+				session.messages = final_messages;
+			}
+			OutputMode::Last => {
+				// Add only last output as message
+				crate::log_debug!(
+					"Layer '{}': output_mode=last (adding last output)",
+					layer_name
+				);
+				let last_message = result.outputs.last().unwrap_or(&String::new()).clone();
+				session.add_message(layer.config().output_role.as_str(), &last_message);
+			}
+			OutputMode::Restart => {
+				// Replace session with only last output (fresh start)
+				crate::log_debug!(
+					"Layer '{}': output_mode=restart (replacing with last output)",
+					layer_name
+				);
+				session.messages.clear();
+				let last_message = result.outputs.last().unwrap_or(&String::new()).clone();
+				session.add_message(layer.config().output_role.as_str(), &last_message);
+			}
+		}
+
 		// Check if layer had tool calls
+
 		let had_tool_calls =
 			result.tool_calls.is_some() && !result.tool_calls.as_ref().unwrap().is_empty();
 

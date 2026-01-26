@@ -612,8 +612,9 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// Developer role
 	println!("  Developer Role:");
-	let (_dev_config, dev_mcp, dev_layers, _dev_commands, dev_system) =
+	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) =
 		config.get_role_config("developer");
+
 	println!(
 		"    Model:           {} (system-wide)",
 		config.get_effective_model()
@@ -667,26 +668,27 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	);
 	println!();
 
-	// Workflow configurations
+	// Layer configurations (used by workflows)
 	let has_any_workflow = config.role_map.values().any(|r| r.workflow.is_some());
 	if has_any_workflow {
-		println!("📚 Workflow Configurations");
+		println!("📚 Layer Configurations (used by workflows)");
 
-		if let Some(layers) = dev_layers {
-			println!("  Developer Role Layers: {} configured", layers.len());
-			for layer in layers {
-				// All configured layers are considered enabled (no more 'enabled' field)
-				println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
-			}
-		}
-
+		// Show available layers from global registry
 		if let Some(layers) = &config.layers {
-			println!("  Global Layers: {} configured", layers.len());
+			println!("  Configured Layers: {} available", layers.len());
 			for layer in layers {
-				// All configured layers are considered enabled (no more 'enabled' field)
 				println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
 			}
 		}
+
+		// Show workflow assignments per role
+		println!("\n  Workflow Assignments:");
+		for (role_name, role_data) in &config.role_map {
+			if let Some(workflow) = &role_data.workflow {
+				println!("    {} → {}", role_name, workflow);
+			}
+		}
+
 		println!();
 	}
 

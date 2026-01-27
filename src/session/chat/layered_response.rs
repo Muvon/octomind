@@ -87,7 +87,8 @@ pub async fn process_layered_response(
 			// Get workflow definition
 			let workflow_def = config
 				.workflows
-				.get_workflow(workflow_name)
+				.iter()
+				.find(|w| &w.name == workflow_name)
 				.ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found", workflow_name))?
 				.clone();
 

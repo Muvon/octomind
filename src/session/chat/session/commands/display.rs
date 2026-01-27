@@ -128,13 +128,13 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		}
 
 		// Display workflows if any
-		if !config.workflows.workflows.is_empty() {
+		if !config.workflows.is_empty() {
 			println!("\n{}", "Workflows:".bright_green());
-			for (name, workflow) in &config.workflows.workflows {
+			for workflow in &config.workflows {
 				println!(
 					"  {} {} - {}",
 					"/workflow".cyan(),
-					name.bright_white(),
+					workflow.name.bright_white(),
 					workflow.description
 				);
 			}
@@ -786,15 +786,16 @@ pub fn display_workflow(output: &CommandOutput, _config: &Config) {
 							println!("{}", "Example configuration:".bright_cyan());
 							println!(
 								"{}",
-								r#"[workflows.developer_workflow]
+								r#"[[workflows]]
+name = "developer_workflow"
 description = "Two-stage workflow: refine task, then research context"
 
-[[workflows.developer_workflow.steps]]
+[[workflows.steps]]
 name = "refine"
 type = "once"
 layer = "task_refiner"
 
-[[workflows.developer_workflow.steps]]
+[[workflows.steps]]
 name = "research"
 type = "once"
 layer = "task_researcher""#

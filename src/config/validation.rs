@@ -286,16 +286,16 @@ impl Config {
 	/// Validate workflows configuration
 	fn validate_workflows(&self) -> Result<()> {
 		// Validate each workflow definition
-		for (name, workflow) in &self.workflows.workflows {
+		for workflow in &self.workflows {
 			workflow
-				.validate(name)
-				.map_err(|e| anyhow!("Workflow '{}': {}", name, e))?;
+				.validate()
+				.map_err(|e| anyhow!("Workflow validation failed: {}", e))?;
 		}
 
 		// Validate role workflow references
 		for role in &self.roles {
 			if let Some(workflow_name) = &role.workflow {
-				if !self.workflows.workflows.contains_key(workflow_name) {
+				if !self.workflows.iter().any(|w| &w.name == workflow_name) {
 					return Err(anyhow!(
 						"Role '{}' references undefined workflow '{}'",
 						role.name,
@@ -310,7 +310,7 @@ impl Config {
 			use std::collections::HashSet;
 			let layer_names: HashSet<&str> = layers.iter().map(|l| l.name.as_str()).collect();
 
-			for (workflow_name, workflow) in &self.workflows.workflows {
+			for workflow in &self.workflows {
 				// Recursive function to validate all steps including substeps
 				fn validate_step_layers(
 					step: &crate::config::WorkflowStep,
@@ -385,7 +385,7 @@ impl Config {
 
 				// Validate all top-level steps
 				for step in &workflow.steps {
-					validate_step_layers(step, &layer_names, workflow_name)?;
+					validate_step_layers(step, &layer_names, &workflow.name)?;
 				}
 			}
 		}

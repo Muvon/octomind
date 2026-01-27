@@ -20,6 +20,7 @@ mod workflow_tests {
 	#[test]
 	fn test_workflow_validation_once_step() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test".to_string(),
@@ -37,12 +38,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 
 	#[test]
 	fn test_workflow_validation_once_missing_layer() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test".to_string(),
@@ -60,12 +62,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_err());
+		assert!(workflow.validate().is_err());
 	}
 
 	#[test]
 	fn test_workflow_validation_loop_step() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test_loop".to_string(),
@@ -96,12 +99,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 
 	#[test]
 	fn test_workflow_validation_loop_missing_exit_pattern() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test_loop".to_string(),
@@ -132,12 +136,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_err());
+		assert!(workflow.validate().is_err());
 	}
 
 	#[test]
 	fn test_workflow_validation_loop_missing_substeps() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test_loop".to_string(),
@@ -155,12 +160,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_err());
+		assert!(workflow.validate().is_err());
 	}
 
 	#[test]
 	fn test_workflow_validation_foreach_step() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test_foreach".to_string(),
@@ -191,12 +197,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 
 	#[test]
 	fn test_workflow_validation_conditional_step() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test_conditional".to_string(),
@@ -214,12 +221,13 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 
 	#[test]
 	fn test_workflow_validation_parallel_step() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "test_parallel".to_string(),
@@ -237,7 +245,7 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 
 	#[test]
@@ -270,6 +278,7 @@ mod workflow_tests {
 	fn test_loop_max_iterations_prevents_infinite_loop() {
 		// This test verifies that max_iterations is enforced
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test infinite loop prevention".to_string(),
 			steps: vec![WorkflowStep {
 				name: "safe_loop".to_string(),
@@ -301,13 +310,14 @@ mod workflow_tests {
 		};
 
 		// Validation should pass - max_iterations provides safety
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 
 	#[test]
 	fn test_nested_workflow_validation() {
 		// Test deeply nested workflow structure
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Nested workflow".to_string(),
 			steps: vec![WorkflowStep {
 				name: "outer_loop".to_string(),
@@ -338,6 +348,6 @@ mod workflow_tests {
 			}],
 		};
 
-		assert!(workflow.validate("test").is_ok());
+		assert!(workflow.validate().is_ok());
 	}
 }

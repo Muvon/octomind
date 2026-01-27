@@ -32,9 +32,8 @@ pub async fn handle_workflow(
 		// Show available workflows
 		let available_workflows: Vec<(String, String)> = config
 			.workflows
-			.workflows
 			.iter()
-			.map(|(name, workflow)| (name.clone(), workflow.description.clone()))
+			.map(|workflow| (workflow.name.clone(), workflow.description.clone()))
 			.collect();
 
 		// Debug: print workflows count
@@ -54,8 +53,9 @@ pub async fn handle_workflow(
 	let workflow_name = params[0];
 
 	// Check if workflow exists
-	if !config.workflows.workflows.contains_key(workflow_name) {
-		let available_workflows: Vec<String> = config.workflows.workflows.keys().cloned().collect();
+	if !config.workflows.iter().any(|w| w.name == workflow_name) {
+		let available_workflows: Vec<String> =
+			config.workflows.iter().map(|w| w.name.clone()).collect();
 		return Ok(CommandResult::HandledWithOutput(CommandOutput::Workflow {
 			workflow_executed: workflow_name.to_string(),
 			data: serde_json::json!({
@@ -141,8 +141,8 @@ pub async fn handle_workflow(
 	// Get the workflow definition
 	let workflow_def = config
 		.workflows
-		.workflows
-		.get(workflow_name)
+		.iter()
+		.find(|w| w.name == workflow_name)
 		.ok_or_else(|| anyhow::anyhow!("Workflow not found: {}", workflow_name))?
 		.clone();
 

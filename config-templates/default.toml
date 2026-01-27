@@ -438,37 +438,38 @@ tools = []
 
 # Example workflow: Developer workflow with task refinement and research
 # This workflow is active by default and serves as a working example
-[workflows.developer_workflow]
-
+[[workflows]]
+name = "developer_workflow"
 description = "Two-stage workflow: refine task, then research context"
 
-[[workflows.developer_workflow.steps]]
+[[workflows.steps]]
 name = "refine"
 type = "once"
 layer = "task_refiner"
 
-[[workflows.developer_workflow.steps]]
+[[workflows.steps]]
 name = "research"
 type = "once"
 layer = "task_researcher"
 
 
 # Example workflow: Feedback loop with validation
-# [workflows.validated_development]
+# [[workflows]]
+# name = "validated_development"
 # description = "Development with validation feedback loop"
 #
-# [[workflows.validated_development.steps]]
+# [[workflows.steps]]
 # name = "validation_loop"
 # type = "loop"
 # max_iterations = 3
 # exit_pattern = "APPROVED"
 #
-#   [[workflows.validated_development.steps.substeps]]
+#   [[workflows.steps.substeps]]
 #   name = "propose"
 #   type = "once"
 #   layer = "task_refiner"
 #
-#   [[workflows.validated_development.steps.substeps]]
+#   [[workflows.steps.substeps]]
 #   name = "validate"
 #   type = "once"
 #   layer = "task_researcher"

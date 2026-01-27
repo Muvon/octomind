@@ -70,7 +70,11 @@ impl<'a> CommandCompleter<'a> {
 
 	/// Get available workflows for /workflow command
 	fn get_available_workflows(&self) -> Vec<String> {
-		self.config.workflows.workflows.keys().cloned().collect()
+		self.config
+			.workflows
+			.iter()
+			.map(|w| w.name.clone())
+			.collect()
 	}
 
 	/// Check if a context filter is valid
@@ -100,7 +104,7 @@ impl<'a> CommandCompleter<'a> {
 
 	/// Check if a workflow is valid
 	fn is_valid_workflow(&self, workflow: &str) -> bool {
-		self.config.workflows.workflows.contains_key(workflow)
+		self.config.workflows.iter().any(|w| w.name == workflow)
 	}
 
 	/// Check if the given file extension is a supported image format

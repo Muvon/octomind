@@ -190,9 +190,9 @@ pub struct Config {
 	// Global layer configurations - array of layer definitions
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 
-	// Workflows configuration
+	// Workflows configuration - array of workflow definitions
 	#[serde(default)]
-	pub workflows: WorkflowsConfig,
+	pub workflows: Vec<WorkflowDefinition>,
 
 	// Ask command configuration
 	pub ask: AskConfig,

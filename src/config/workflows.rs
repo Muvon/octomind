@@ -13,18 +13,11 @@
 // limitations under the License.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-/// Global workflows configuration
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
-pub struct WorkflowsConfig {
-	#[serde(flatten)]
-	pub workflows: HashMap<String, WorkflowDefinition>,
-}
 
 /// Complete workflow definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct WorkflowDefinition {
+	pub name: String,
 	pub description: String,
 	pub steps: Vec<WorkflowStep>,
 }
@@ -85,20 +78,18 @@ pub enum WorkflowStepType {
 	Parallel,    // Execute layers in parallel
 }
 
-impl WorkflowsConfig {
-	pub fn get_workflow(&self, name: &str) -> Option<&WorkflowDefinition> {
-		self.workflows.get(name)
-	}
-}
-
 impl WorkflowDefinition {
-	pub fn validate(&self, name: &str) -> Result<(), String> {
+	pub fn validate(&self) -> Result<(), String> {
+		if self.name.trim().is_empty() {
+			return Err("Workflow name cannot be empty".to_string());
+		}
+
 		if self.steps.is_empty() {
-			return Err(format!("Workflow '{}' has no steps", name));
+			return Err(format!("Workflow '{}' has no steps", self.name));
 		}
 
 		for (i, step) in self.steps.iter().enumerate() {
-			step.validate(&format!("{}[{}]", name, i))?;
+			step.validate(&format!("{}[{}]", self.name, i))?;
 		}
 
 		Ok(())
@@ -162,11 +153,36 @@ mod tests {
 	#[test]
 	fn test_workflow_validation_empty_steps() {
 		let workflow = WorkflowDefinition {
+			name: "test".to_string(),
 			description: "Test".to_string(),
 			steps: vec![],
 		};
 
-		assert!(workflow.validate("test").is_err());
+		assert!(workflow.validate().is_err());
+	}
+
+	#[test]
+	fn test_workflow_validation_empty_name() {
+		let workflow = WorkflowDefinition {
+			name: "".to_string(),
+			description: "Test".to_string(),
+			steps: vec![WorkflowStep {
+				name: "test".to_string(),
+				step_type: WorkflowStepType::Once,
+				layer: Some("test_layer".to_string()),
+				parse_pattern: None,
+				substeps: Vec::new(),
+				max_iterations: None,
+				exit_pattern: None,
+				condition_pattern: None,
+				on_match: Vec::new(),
+				on_no_match: Vec::new(),
+				parallel_layers: Vec::new(),
+				aggregator: None,
+			}],
+		};
+
+		assert!(workflow.validate().is_err());
 	}
 
 	#[test]

@@ -16,11 +16,14 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use reedline::{EditMode, Emacs, PromptEditMode, ReedlineEvent, ReedlineRawEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 pub struct EmacsWithShortcutHelp {
 	emacs: Emacs,
 	buffer_empty: Arc<AtomicBool>,
 	reverse_search_active: Arc<AtomicBool>,
+	hint_available: Arc<AtomicBool>,
+	line_state: Arc<Mutex<crate::session::chat::reedline_adapter::LineState>>,
 }
 
 impl EmacsWithShortcutHelp {
@@ -28,11 +31,15 @@ impl EmacsWithShortcutHelp {
 		emacs: Emacs,
 		buffer_empty: Arc<AtomicBool>,
 		reverse_search_active: Arc<AtomicBool>,
+		hint_available: Arc<AtomicBool>,
+		line_state: Arc<Mutex<crate::session::chat::reedline_adapter::LineState>>,
 	) -> Self {
 		Self {
 			emacs,
 			buffer_empty,
 			reverse_search_active,
+			hint_available,
+			line_state,
 		}
 	}
 }
@@ -44,6 +51,33 @@ impl EditMode for EmacsWithShortcutHelp {
 			code, modifiers, ..
 		}) = event
 		{
+			if code == KeyCode::Char('a') && modifiers == KeyModifiers::CONTROL {
+				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineStart {
+					select: false,
+				}]);
+			}
+			if code == KeyCode::Char('e') && modifiers == KeyModifiers::CONTROL {
+				if self.hint_available.load(Ordering::SeqCst) {
+					return ReedlineEvent::HistoryHintComplete;
+				}
+				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineEnd {
+					select: false,
+				}]);
+			}
+			if code == KeyCode::Char('u') && modifiers == KeyModifiers::CONTROL {
+				let state = self.line_state.lock().ok();
+				if let Some(state) = state {
+					let cursor = state.cursor.min(state.buffer.len());
+					let line_start = state.buffer[..cursor]
+						.rfind('\n')
+						.map(|idx| idx + 1)
+						.unwrap_or(0);
+					if cursor == line_start && line_start > 0 {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::Backspace]);
+					}
+				}
+				return ReedlineEvent::Edit(vec![reedline::EditCommand::CutFromLineStart]);
+			}
 			if code == KeyCode::Char('?') && modifiers == KeyModifiers::NONE {
 				if self.buffer_empty.load(Ordering::SeqCst) {
 					return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());

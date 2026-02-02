@@ -17,12 +17,13 @@
 use crate::config::Config;
 use crate::mcp::get_available_functions;
 use crate::session::estimate_full_context_tokens;
-use crate::session::history::append_to_session_history_file;
+use crate::session::history::{append_to_session_history_file, load_session_history_from_file};
 use anyhow::Result;
 use colored::*;
 use reedline::{
-	default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, FileBackedHistory, KeyCode,
-	KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent, ReedlineMenu, Signal,
+	default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, FileBackedHistory, History,
+	HistoryItem, KeyCode, KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent,
+	ReedlineMenu, Signal,
 };
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
@@ -179,21 +180,48 @@ pub fn read_user_input(
 ) -> Result<InputResult> {
 	const ADD_WITHOUT_SENDING_MARKER: &str = "__OCTOMIND_ADD__";
 
-	// Get history file path for this role
-	let history_path = crate::session::history::get_session_history_file_path(role)
-		.unwrap_or_else(|_| std::path::PathBuf::from("history.txt"));
-
-	// Create reedline with history support
-	let history = Box::new(
-		FileBackedHistory::with_file(1000, history_path)
-			.expect("Error configuring history with file"),
-	);
+	// Create reedline with in-memory history and preloaded role history
+	let mut history = FileBackedHistory::new(1000).expect("Error configuring history");
+	if let Ok(lines) = load_session_history_from_file(role) {
+		for line in lines {
+			let _ = history.save(HistoryItem {
+				id: None,
+				start_timestamp: None,
+				command_line: line,
+				session_id: None,
+				hostname: None,
+				cwd: None,
+				duration: None,
+				exit_status: None,
+				more_info: None,
+			});
+		}
+	}
+	let history = Box::new(history);
 
 	let mut keybindings = default_emacs_keybindings();
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
 		KeyCode::Char('j'),
 		ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+	);
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('u'),
+		ReedlineEvent::Edit(vec![
+			EditCommand::CutFromLineStart,
+			EditCommand::CutToLineEnd,
+		]),
+	);
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('a'),
+		ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]),
+	);
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('e'),
+		ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: false }]),
 	);
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
@@ -236,10 +264,16 @@ pub fn read_user_input(
 	let role_name = role.to_string();
 	let buffer_empty = Arc::new(AtomicBool::new(true));
 	let reverse_search_active = Arc::new(AtomicBool::new(false));
+	let hint_available = Arc::new(AtomicBool::new(false));
+	let line_state = Arc::new(std::sync::Mutex::new(
+		crate::session::chat::reedline_adapter::LineState::default(),
+	));
 	let edit_mode = Box::new(crate::session::chat::EmacsWithShortcutHelp::new(
 		Emacs::new(keybindings),
 		buffer_empty.clone(),
 		reverse_search_active.clone(),
+		hint_available.clone(),
+		line_state.clone(),
 	));
 
 	let completion_menu = Box::new(
@@ -256,6 +290,8 @@ pub fn read_user_input(
 				config.clone(),
 				role_name.clone(),
 				buffer_empty.clone(),
+				hint_available.clone(),
+				line_state.clone(),
 			),
 		))
 		.with_menu(ReedlineMenu::EngineCompleter(completion_menu))
@@ -264,6 +300,8 @@ pub fn read_user_input(
 				config.clone(),
 				role_name.clone(),
 				buffer_empty.clone(),
+				hint_available.clone(),
+				line_state.clone(),
 			),
 		))
 		.with_hinter(Box::new(
@@ -271,6 +309,8 @@ pub fn read_user_input(
 				config,
 				role_name.clone(),
 				buffer_empty,
+				hint_available,
+				line_state,
 			),
 		))
 		.with_quick_completions(true)

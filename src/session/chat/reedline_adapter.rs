@@ -22,6 +22,7 @@ use reedline::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Reedline adapter that reuses existing CommandCompleter logic
 pub struct ReedlineAdapter {
@@ -29,6 +30,8 @@ pub struct ReedlineAdapter {
 	role: String,
 	last_hint: String,
 	buffer_empty: Arc<AtomicBool>,
+	hint_available: Arc<AtomicBool>,
+	line_state: Arc<Mutex<LineState>>,
 }
 
 impl ReedlineAdapter {
@@ -36,12 +39,16 @@ impl ReedlineAdapter {
 		config: Arc<Config>,
 		role: impl Into<String>,
 		buffer_empty: Arc<AtomicBool>,
+		hint_available: Arc<AtomicBool>,
+		line_state: Arc<Mutex<LineState>>,
 	) -> Self {
 		Self {
 			config,
 			role: role.into(),
 			last_hint: String::new(),
 			buffer_empty,
+			hint_available,
+			line_state,
 		}
 	}
 }
@@ -117,7 +124,10 @@ impl Hinter for ReedlineAdapter {
 		use_ansi_coloring: bool,
 		cwd: &str,
 	) -> String {
-		std::hint::black_box(pos);
+		if let Ok(mut state) = self.line_state.lock() {
+			state.buffer = line.to_string();
+			state.cursor = pos;
+		}
 		std::hint::black_box(history);
 		std::hint::black_box(cwd);
 		let hint = if line.starts_with('/') {
@@ -131,6 +141,8 @@ impl Hinter for ReedlineAdapter {
 		};
 		self.last_hint = hint.clone();
 		self.buffer_empty.store(line.is_empty(), Ordering::SeqCst);
+		self.hint_available
+			.store(!hint.is_empty(), Ordering::SeqCst);
 		if use_ansi_coloring && !hint.is_empty() {
 			Style::new().dimmed().paint(hint).to_string()
 		} else {
@@ -149,6 +161,12 @@ impl Hinter for ReedlineAdapter {
 			.unwrap_or("")
 			.to_string()
 	}
+}
+
+#[derive(Debug, Default)]
+pub struct LineState {
+	pub buffer: String,
+	pub cursor: usize,
 }
 
 impl ReedlineAdapter {

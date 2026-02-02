@@ -14,19 +14,23 @@
 
 use reedline::{Prompt, PromptEditMode, PromptHistorySearch};
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 pub struct ChatPrompt {
 	left: String,
 	indicator: String,
 	multiline: String,
+	reverse_search_active: Arc<AtomicBool>,
 }
 
 impl ChatPrompt {
-	pub fn new(left: String, indicator: String) -> Self {
+	pub fn new(left: String, indicator: String, reverse_search_active: Arc<AtomicBool>) -> Self {
 		Self {
 			left,
 			indicator,
 			multiline: "  ".to_string(),
+			reverse_search_active,
 		}
 	}
 }
@@ -41,6 +45,7 @@ impl Prompt for ChatPrompt {
 	}
 
 	fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<'_, str> {
+		self.reverse_search_active.store(false, Ordering::SeqCst);
 		Cow::Owned(self.indicator.clone())
 	}
 
@@ -52,6 +57,7 @@ impl Prompt for ChatPrompt {
 		&self,
 		history_search: PromptHistorySearch,
 	) -> Cow<'_, str> {
+		self.reverse_search_active.store(true, Ordering::SeqCst);
 		Cow::Owned(format!("(search: {}) ", history_search.term))
 	}
 }

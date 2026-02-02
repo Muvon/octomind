@@ -288,7 +288,11 @@ fn get_interactive_input() -> Result<String> {
 		.with_history(history)
 		.with_edit_mode(edit_mode);
 
-	let prompt = octomind::session::chat::ChatPrompt::new(String::new(), "〉".to_string());
+	let prompt = octomind::session::chat::ChatPrompt::new(
+		String::new(),
+		"〉".to_string(),
+		std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+	);
 
 	match line_editor.read_line(&prompt) {
 		Ok(Signal::Success(line)) => {

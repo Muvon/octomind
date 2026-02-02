@@ -20,13 +20,19 @@ use std::sync::Arc;
 pub struct EmacsWithShortcutHelp {
 	emacs: Emacs,
 	buffer_empty: Arc<AtomicBool>,
+	reverse_search_active: Arc<AtomicBool>,
 }
 
 impl EmacsWithShortcutHelp {
-	pub fn new(emacs: Emacs, buffer_empty: Arc<AtomicBool>) -> Self {
+	pub fn new(
+		emacs: Emacs,
+		buffer_empty: Arc<AtomicBool>,
+		reverse_search_active: Arc<AtomicBool>,
+	) -> Self {
 		Self {
 			emacs,
 			buffer_empty,
+			reverse_search_active,
 		}
 	}
 }
@@ -35,13 +41,19 @@ impl EditMode for EmacsWithShortcutHelp {
 	fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
 		let event: Event = event.into();
 		if let Event::Key(KeyEvent {
-			code: KeyCode::Char('?'),
-			modifiers: KeyModifiers::NONE,
-			..
+			code, modifiers, ..
 		}) = event
 		{
-			if self.buffer_empty.load(Ordering::SeqCst) {
-				return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
+			if code == KeyCode::Char('?') && modifiers == KeyModifiers::NONE {
+				if self.buffer_empty.load(Ordering::SeqCst) {
+					return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
+				}
+			}
+			if code == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {
+				if self.reverse_search_active.load(Ordering::SeqCst) {
+					return ReedlineEvent::Esc;
+				}
+				return ReedlineEvent::CtrlC;
 			}
 		}
 

@@ -235,9 +235,11 @@ pub fn read_user_input(
 	let config = Arc::new(octomind_config.clone());
 	let role_name = role.to_string();
 	let buffer_empty = Arc::new(AtomicBool::new(true));
+	let reverse_search_active = Arc::new(AtomicBool::new(false));
 	let edit_mode = Box::new(crate::session::chat::EmacsWithShortcutHelp::new(
 		Emacs::new(keybindings),
 		buffer_empty.clone(),
+		reverse_search_active.clone(),
 	));
 
 	let completion_menu = Box::new(
@@ -297,7 +299,11 @@ pub fn read_user_input(
 	} else {
 		format!("{} ", prompt_text).bright_blue().to_string()
 	};
-	let prompt = crate::session::chat::ChatPrompt::new(prompt_left, "〉".bright_blue().to_string());
+	let prompt = crate::session::chat::ChatPrompt::new(
+		prompt_left,
+		"〉".bright_blue().to_string(),
+		reverse_search_active,
+	);
 
 	// Read line with reedline
 	loop {

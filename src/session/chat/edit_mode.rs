@@ -24,6 +24,7 @@ pub struct EmacsWithShortcutHelp {
 	reverse_search_active: Arc<AtomicBool>,
 	hint_available: Arc<AtomicBool>,
 	line_state: Arc<Mutex<crate::session::chat::reedline_adapter::LineState>>,
+	meta_pending: bool,
 }
 
 impl EmacsWithShortcutHelp {
@@ -40,6 +41,7 @@ impl EmacsWithShortcutHelp {
 			reverse_search_active,
 			hint_available,
 			line_state,
+			meta_pending: false,
 		}
 	}
 }
@@ -51,6 +53,53 @@ impl EditMode for EmacsWithShortcutHelp {
 			code, modifiers, ..
 		}) = event
 		{
+			if modifiers == KeyModifiers::NONE && code == KeyCode::Esc {
+				self.meta_pending = true;
+				return ReedlineEvent::None;
+			}
+			if self.meta_pending {
+				self.meta_pending = false;
+				match code {
+					KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Backspace => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::BackspaceWord]);
+					}
+					KeyCode::Char('d') | KeyCode::Char('D') => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::CutWordRight]);
+					}
+					KeyCode::Char('b') | KeyCode::Char('B') => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordLeft {
+							select: false,
+						}]);
+					}
+					KeyCode::Char('f') | KeyCode::Char('F') => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordRight {
+							select: false,
+						}]);
+					}
+					_ => {}
+				}
+			}
+			if modifiers.contains(KeyModifiers::ALT) && modifiers.contains(KeyModifiers::CONTROL) {
+				match code {
+					KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Backspace => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::BackspaceWord]);
+					}
+					KeyCode::Char('d') | KeyCode::Char('D') => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::CutWordRight]);
+					}
+					KeyCode::Char('b') | KeyCode::Char('B') => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordLeft {
+							select: false,
+						}]);
+					}
+					KeyCode::Char('f') | KeyCode::Char('F') => {
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordRight {
+							select: false,
+						}]);
+					}
+					_ => {}
+				}
+			}
 			if code == KeyCode::Char('a') && modifiers == KeyModifiers::CONTROL {
 				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineStart {
 					select: false,

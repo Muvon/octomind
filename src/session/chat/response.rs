@@ -239,7 +239,7 @@ fn resolve_tool_calls(
 // Helper function to check for cancellation
 fn check_cancellation(operation_cancelled: &tokio::sync::watch::Receiver<bool>) -> Result<()> {
 	if *operation_cancelled.borrow() {
-		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		crate::log_debug!("Operation cancelled by user.");
 		return Err(anyhow::anyhow!("Operation cancelled"));
 	}
 	Ok(())
@@ -394,7 +394,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 
 				// Early exit if cancellation was requested BEFORE adding message
 				if *operation_cancelled_clone.borrow() {
-					println!("{}", "\nOperation cancelled by user.".bright_yellow());
+					crate::log_debug!("Operation cancelled by user.");
 					// Do NOT add any message to the session since tools weren't executed
 					return Ok(());
 				}
@@ -416,7 +416,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 							if e.to_string().contains("cancelled")
 								|| *operation_cancelled_clone.borrow()
 							{
-								println!("{}", "\nOperation cancelled by user.".bright_yellow());
+								crate::log_debug!("Operation cancelled by user.");
 								// Don't add assistant message since tools weren't executed
 								return Ok(());
 							}

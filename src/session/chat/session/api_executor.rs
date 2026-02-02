@@ -150,7 +150,7 @@ pub async fn execute_api_call_and_process_response(
 	// This prevents the race condition where Ctrl+C is pressed after API completes
 	// but before response processing begins
 	if *operation_rx_for_response.borrow() {
-		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		crate::log_debug!("Operation cancelled by user.");
 		return Ok(()); // Return gracefully to main loop instead of force exit
 	}
 

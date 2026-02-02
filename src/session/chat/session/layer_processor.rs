@@ -74,7 +74,7 @@ pub async fn process_layers_if_enabled(
 					|| error_msg.contains("Request cancelled")
 				{
 					// This is a cancellation error - handle gracefully and continue session
-					println!("{}", "\nOperation cancelled by user.".bright_yellow());
+					crate::log_debug!("Operation cancelled by user.");
 					println!("{}", "Continuing with original input.".yellow());
 
 					// CRITICAL FIX: Clean up any partial workflow modifications to session

@@ -47,7 +47,7 @@ pub async fn process_tool_results(
 
 	// Check for cancellation before making another request
 	if *operation_cancelled.borrow() {
-		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		crate::log_debug!("Operation cancelled by user.");
 		// Do NOT add any confusing message to the session
 		return Ok(None);
 	}
@@ -270,7 +270,7 @@ pub async fn process_tool_results(
 		// Stop animation before returning
 		animation_cancel.store(true, Ordering::SeqCst);
 		let _ = animation_task.await;
-		println!("{}", "\nOperation cancelled by user.".bright_yellow());
+		crate::log_debug!("Operation cancelled by user.");
 		return Ok(None);
 	}
 

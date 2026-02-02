@@ -13,13 +13,22 @@
 // limitations under the License.
 
 // Implementation of a command completer for reedline
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
+use lazy_static::lazy_static;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct Pair {
 	pub display: String,
 	pub replacement: String,
+}
+
+lazy_static! {
+	static ref FILE_CACHE: Mutex<Option<Vec<String>>> = Mutex::new(None);
 }
 
 pub(crate) struct CommandCompleter<'a> {
@@ -101,6 +110,72 @@ impl<'a> CommandCompleter<'a> {
 		} else {
 			PathBuf::from(path)
 		}
+	}
+
+	fn find_at_query(line: &str, pos: usize) -> Option<(usize, &str)> {
+		let before_cursor = &line[..pos.min(line.len())];
+		let at_pos = before_cursor.rfind('@')?;
+		let before_at = before_cursor[..at_pos].chars().last();
+		if at_pos == 0 || before_at.map(char::is_whitespace).unwrap_or(true) {
+			let query = &before_cursor[at_pos + 1..];
+			if query.chars().any(char::is_whitespace) {
+				return None;
+			}
+			return Some((at_pos, query));
+		}
+		None
+	}
+
+	fn fuzzy_match_files(query: &str, max_results: usize) -> Vec<Pair> {
+		let files = Self::get_all_files();
+		if files.is_empty() {
+			return Vec::new();
+		}
+
+		let matcher = SkimMatcherV2::default();
+		let mut scored: Vec<(i64, &str)> = files
+			.iter()
+			.filter_map(|path| {
+				matcher
+					.fuzzy_match(path, query)
+					.map(|score| (score, path.as_str()))
+			})
+			.collect();
+
+		scored.sort_by(|a, b| b.0.cmp(&a.0));
+		scored.truncate(max_results);
+
+		scored
+			.into_iter()
+			.map(|(_, path)| Pair {
+				display: path.to_string(),
+				replacement: path.to_string(),
+			})
+			.collect()
+	}
+
+	fn get_all_files() -> Vec<String> {
+		let mut cache = FILE_CACHE.lock().expect("file cache lock");
+		if let Some(files) = cache.as_ref() {
+			return files.clone();
+		}
+
+		let output = Command::new("rg").args(["--files", "--hidden"]).output();
+
+		let files = match output {
+			Ok(output) if output.status.success() => {
+				let stdout = String::from_utf8_lossy(&output.stdout);
+				stdout
+					.lines()
+					.map(|line| line.trim().to_string())
+					.filter(|line| !line.is_empty())
+					.collect()
+			}
+			_ => Vec::new(),
+		};
+
+		*cache = Some(files.clone());
+		files
 	}
 
 	/// Custom file completion that handles absolute paths and tilde expansion
@@ -280,6 +355,11 @@ impl<'a> CommandCompleter<'a> {
 
 impl<'a> CommandCompleter<'a> {
 	pub(crate) fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Pair>) {
+		if let Some((start, query)) = Self::find_at_query(line, pos) {
+			let candidates = Self::fuzzy_match_files(query, 10);
+			return (start, candidates);
+		}
+
 		// Handle /image command with file completion
 		if line.starts_with("/image ") {
 			let image_prefix = "/image ";

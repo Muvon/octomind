@@ -73,6 +73,10 @@ fn display_shortcuts_help() {
 	);
 	println!(
 		"{}",
+		"│ @           - Fuzzy file completion (e.g., @src/ma)     │".bright_black()
+	);
+	println!(
+		"{}",
 		"│ Tab         - Complete command/file                     │".bright_black()
 	);
 	println!(
@@ -209,12 +213,23 @@ pub fn read_user_input(
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
 		KeyCode::Char('p'),
-		ReedlineEvent::PreviousHistory,
+		ReedlineEvent::UntilFound(vec![
+			ReedlineEvent::MenuPrevious,
+			ReedlineEvent::PreviousHistory,
+		]),
 	);
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
 		KeyCode::Char('n'),
-		ReedlineEvent::NextHistory,
+		ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuNext, ReedlineEvent::NextHistory]),
+	);
+	keybindings.add_binding(
+		KeyModifiers::NONE,
+		KeyCode::Char('@'),
+		ReedlineEvent::Multiple(vec![
+			ReedlineEvent::Edit(vec![EditCommand::InsertChar('@')]),
+			ReedlineEvent::Menu("completion_menu".to_string()),
+		]),
 	);
 	add_completion_menu_keybindings(&mut keybindings);
 	let config = Arc::new(octomind_config.clone());

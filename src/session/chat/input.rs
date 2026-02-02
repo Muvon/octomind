@@ -17,15 +17,15 @@
 use crate::config::Config;
 use crate::mcp::get_available_functions;
 use crate::session::estimate_full_context_tokens;
-use crate::session::history::{append_to_session_history_file, load_session_history_from_file};
+use crate::session::history::append_to_session_history_file;
 use anyhow::Result;
 use colored::*;
-use rustyline::error::ReadlineError;
-use rustyline::{
-	Cmd, ConditionalEventHandler, Event, EventHandler, KeyEvent, Modifiers, RepeatCount,
+use reedline::{
+	default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, FileBackedHistory, KeyCode,
+	KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent, ReedlineMenu, Signal,
 };
-use rustyline::{CompletionType, Config as RustylineConfig, EditMode, Editor};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::Write;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// Result of user input operation
@@ -39,72 +39,6 @@ pub enum InputResult {
 	Exit,
 	/// Add message to context without sending (Ctrl+G)
 	AddWithoutSending(String),
-}
-
-struct SmartCtrlEHandler;
-
-impl ConditionalEventHandler for SmartCtrlEHandler {
-	fn handle(
-		&self,
-		_evt: &Event,
-		_n: RepeatCount,
-		_positive: bool,
-		ctx: &rustyline::EventContext,
-	) -> Option<Cmd> {
-		if ctx.has_hint() {
-			Some(Cmd::CompleteHint)
-		} else {
-			None // Default Emacs behavior (move to end of line)
-		}
-	}
-}
-
-struct CtrlGHandler {
-	flag: Arc<AtomicBool>,
-}
-
-impl ConditionalEventHandler for CtrlGHandler {
-	fn handle(
-		&self,
-		_evt: &Event,
-		_n: RepeatCount,
-		_positive: bool,
-		_ctx: &rustyline::EventContext,
-	) -> Option<Cmd> {
-		self.flag.store(true, Ordering::SeqCst);
-		Some(Cmd::AcceptLine)
-	}
-}
-
-struct ShowHelpHandler;
-
-impl ConditionalEventHandler for ShowHelpHandler {
-	fn handle(
-		&self,
-		_evt: &Event,
-		_n: RepeatCount,
-		_positive: bool,
-		ctx: &rustyline::EventContext,
-	) -> Option<Cmd> {
-		if ctx.line().is_empty() {
-			use std::io::{self, Write};
-
-			// Clear current line
-			print!("\r\x1B[K");
-			let _ = io::stdout().flush();
-
-			// Print help
-			display_shortcuts_help();
-
-			// Manually print prompt to make it visible again
-			print!("> ");
-			let _ = io::stdout().flush();
-
-			Some(Cmd::Noop)
-		} else {
-			None
-		}
-	}
 }
 
 use crate::log_info;
@@ -127,23 +61,7 @@ pub fn display_status_line(current_context_tokens: u64, max_session_tokens_thres
 	println!("{}", status_parts.join(" • ").bright_black());
 }
 
-fn calculate_context_percentage(
-	current_context_tokens: u64,
-	max_session_tokens_threshold: usize,
-) -> Option<f64> {
-	if max_session_tokens_threshold > 0 {
-		Some(
-			(current_context_tokens as f64 / max_session_tokens_threshold as f64 * 100.0)
-				.min(100.0),
-		)
-	} else {
-		None
-	}
-}
-
 fn display_shortcuts_help() {
-	use std::io::{self, Write};
-
 	println!();
 	println!(
 		"{}",
@@ -199,8 +117,32 @@ fn display_shortcuts_help() {
 	);
 	println!();
 
-	// Force flush to ensure everything is displayed
-	let _ = io::stdout().flush();
+	let _ = std::io::stdout().flush();
+}
+
+fn calculate_context_percentage(
+	current_context_tokens: u64,
+	max_session_tokens_threshold: usize,
+) -> Option<f64> {
+	if max_session_tokens_threshold > 0 {
+		Some(
+			(current_context_tokens as f64 / max_session_tokens_threshold as f64 * 100.0)
+				.min(100.0),
+		)
+	} else {
+		None
+	}
+}
+
+fn add_completion_menu_keybindings(keybindings: &mut Keybindings) {
+	keybindings.add_binding(
+		KeyModifiers::NONE,
+		KeyCode::Tab,
+		ReedlineEvent::UntilFound(vec![
+			ReedlineEvent::Menu("completion_menu".to_string()),
+			ReedlineEvent::MenuNext,
+		]),
+	);
 }
 
 /// Calculate current context tokens for the session
@@ -231,94 +173,91 @@ pub fn read_user_input(
 	session_id: &str,
 	show_status_line: bool,
 ) -> Result<InputResult> {
-	let add_without_sending = Arc::new(AtomicBool::new(false));
+	const ADD_WITHOUT_SENDING_MARKER: &str = "__OCTOMIND_ADD__";
 
-	// Configure rustyline with proper completion behavior for file completion
-	let config = RustylineConfig::builder()
-		.completion_type(CompletionType::List) // Bash-like completion with partial matches
-		.edit_mode(EditMode::Emacs)
-		.auto_add_history(false) // Manual history control for whitespace-prefixed inputs
-		.bell_style(rustyline::config::BellStyle::None) // No bell
-		.max_history_size(1000)? // Limit history size
-		.color_mode(rustyline::ColorMode::Enabled) // Enable proper ANSI color handling
-		.build();
+	// Get history file path for this role
+	let history_path = crate::session::history::get_session_history_file_path(role)
+		.unwrap_or_else(|_| std::path::PathBuf::from("history.txt"));
 
-	// Create editor with our custom helper
-	let mut editor = Editor::with_config(config)?;
-
-	use crate::session::chat_helper::CommandHelper;
-	editor.set_helper(Some(CommandHelper::new(octomind_config, role)));
-
-	// Set up custom key bindings
-	// Ctrl+E: Smart behavior - ONLY accepts hints when available,
-	// otherwise falls back to default Emacs behavior (move to end of line)
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('e', Modifiers::CTRL)]),
-		EventHandler::Conditional(Box::new(SmartCtrlEHandler)),
+	// Create reedline with history support
+	let history = Box::new(
+		FileBackedHistory::with_file(1000, history_path)
+			.expect("Error configuring history with file"),
 	);
 
-	// Tab for completion - use Complete for proper file completion behavior
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::empty())]),
-		EventHandler::Simple(Cmd::Complete),
+	let mut keybindings = default_emacs_keybindings();
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('j'),
+		ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
 	);
-
-	// Shift+Tab for reverse completion (bash-like)
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::SHIFT)]),
-		EventHandler::Simple(Cmd::ReverseSearchHistory),
-	);
-
-	// Right arrow to accept hint when at end of line
-	editor.bind_sequence(
-		Event::KeySeq(vec![
-			KeyEvent::new('\x1b', Modifiers::empty()),
-			KeyEvent::new('[', Modifiers::empty()),
-			KeyEvent::new('C', Modifiers::empty()),
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('g'),
+		ReedlineEvent::Multiple(vec![
+			ReedlineEvent::Edit(vec![EditCommand::InsertString(
+				ADD_WITHOUT_SENDING_MARKER.to_string(),
+			)]),
+			ReedlineEvent::Submit,
 		]),
-		EventHandler::Simple(Cmd::CompleteHint),
+	);
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('e'),
+		ReedlineEvent::HistoryHintComplete,
+	);
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('p'),
+		ReedlineEvent::PreviousHistory,
+	);
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('n'),
+		ReedlineEvent::NextHistory,
+	);
+	add_completion_menu_keybindings(&mut keybindings);
+	let config = Arc::new(octomind_config.clone());
+	let role_name = role.to_string();
+	let buffer_empty = Arc::new(AtomicBool::new(true));
+	let edit_mode = Box::new(crate::session::chat::EmacsWithShortcutHelp::new(
+		Emacs::new(keybindings),
+		buffer_empty.clone(),
+	));
+
+	let completion_menu = Box::new(
+		ColumnarMenu::default()
+			.with_name("completion_menu")
+			.with_columns(4)
+			.with_column_padding(2),
 	);
 
-	// Right arrow to accept hint when at end of line
-	// Using escape sequence for right arrow key: \x1b[C
-	editor.bind_sequence(
-		Event::KeySeq(vec![
-			KeyEvent::new('\x1b', Modifiers::empty()),
-			KeyEvent::new('[', Modifiers::empty()),
-			KeyEvent::new('C', Modifiers::empty()),
-		]),
-		EventHandler::Simple(Cmd::CompleteHint),
-	);
-
-	// Ctrl+J to insert newline for multi-line input
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('j', Modifiers::CTRL)]),
-		EventHandler::Simple(Cmd::Newline),
-	);
-
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('g', Modifiers::CTRL)]),
-		EventHandler::Conditional(Box::new(CtrlGHandler {
-			flag: add_without_sending.clone(),
-		})),
-	);
-
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('?', Modifiers::empty())]),
-		EventHandler::Conditional(Box::new(ShowHelpHandler)),
-	);
-
-	// Load persistent history using role-based system
-	match load_session_history_from_file(role) {
-		Ok(history_lines) => {
-			for line in history_lines {
-				let _ = editor.add_history_entry(line);
-			}
-		}
-		Err(e) => {
-			log_info!("Could not load history for role '{}': {}", role, e);
-		}
-	}
+	let mut line_editor = Reedline::create()
+		.with_history(history)
+		.with_completer(Box::new(
+			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
+				config.clone(),
+				role_name.clone(),
+				buffer_empty.clone(),
+			),
+		))
+		.with_menu(ReedlineMenu::EngineCompleter(completion_menu))
+		.with_highlighter(Box::new(
+			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
+				config.clone(),
+				role_name.clone(),
+				buffer_empty.clone(),
+			),
+		))
+		.with_hinter(Box::new(
+			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
+				config,
+				role_name.clone(),
+				buffer_empty,
+			),
+		))
+		.with_quick_completions(true)
+		.with_edit_mode(edit_mode);
 
 	// Display status line for user feedback (only on first interaction)
 	if show_status_line {
@@ -326,81 +265,92 @@ pub fn read_user_input(
 	}
 
 	// Set prompt with cost and context percentage
-	let prompt = if estimated_cost > 0.0 {
+	let prompt_text = if estimated_cost > 0.0 {
 		let context_pct =
 			calculate_context_percentage(current_context_tokens, max_session_tokens_threshold);
 
 		if let Some(pct) = context_pct {
-			format!("[${:.2}|{:.1}%] > ", estimated_cost, pct)
-				.bright_blue()
-				.to_string()
+			format!("[{:.2}|{:.1}%]", estimated_cost, pct)
 		} else {
-			format!("[${:.2}|∞] > ", estimated_cost)
-				.bright_blue()
-				.to_string()
+			format!("[{:.2}|∞]", estimated_cost)
 		}
 	} else {
-		"> ".bright_blue().to_string()
+		String::new()
 	};
+	let prompt_left = if prompt_text.is_empty() {
+		String::new()
+	} else {
+		format!("{} ", prompt_text).bright_blue().to_string()
+	};
+	let prompt = crate::session::chat::ChatPrompt::new(prompt_left, "〉".bright_blue().to_string());
 
-	// Read line with command completion and history search (Ctrl+R)
-	match editor.readline(&prompt) {
-		Ok(line) => {
-			// Check if Ctrl+G was pressed
-			let is_add_without_sending = add_without_sending.load(Ordering::SeqCst);
-
-			// Check if line starts with whitespace (bash-like behavior)
-			// If it does, skip adding to history (both in-memory and persistent)
-			let starts_with_whitespace = line.starts_with(char::is_whitespace);
-
-			if !starts_with_whitespace {
-				// Add to in-memory history only if not starting with whitespace
-				let _ = editor.add_history_entry(line.clone());
-
-				// Append to persistent file using role-based thread-safe method
-				// This includes ALL inputs - both regular inputs and commands starting with '/'
-				if let Err(e) = append_to_session_history_file(role, &line) {
-					// Don't fail if history can't be saved, just log it
-					log_info!(
-						"Could not append to history file for role '{}': {}",
-						role,
-						e
-					);
+	// Read line with reedline
+	loop {
+		match line_editor.read_line(&prompt) {
+			Ok(Signal::Success(mut line)) => {
+				if line == "__show_shortcuts__" {
+					display_shortcuts_help();
+					continue;
 				}
-			}
+				if line.trim() == "?" {
+					display_shortcuts_help();
+					continue;
+				}
+				let is_add_without_sending = line.contains(ADD_WITHOUT_SENDING_MARKER);
+				if is_add_without_sending {
+					line = line.replace(ADD_WITHOUT_SENDING_MARKER, "");
+				}
 
-			// Log user input only if it's not a command (doesn't start with '/')
-			// Note: We still log even if it starts with whitespace, as logging is separate from history
-			if !line.trim().starts_with('/') {
-				let _ = crate::session::logger::log_user_request(&line);
-			}
+				// Check if line starts with whitespace (bash-like behavior)
+				// If it does, skip adding to history (both in-memory and persistent)
+				let starts_with_whitespace = line.starts_with(char::is_whitespace);
 
-			if is_add_without_sending {
-				Ok(InputResult::AddWithoutSending(line))
-			} else {
-				Ok(InputResult::Text(line))
-			}
-		}
-		Err(ReadlineError::Interrupted) => {
-			// Ctrl+C - Return cancellation result
-			Ok(InputResult::Cancelled)
-		}
-		Err(ReadlineError::Eof) => {
-			// Ctrl+D - Show resume command
-			let resume_cmd = format!("octomind session --resume {}", session_id).bright_cyan();
-			println!("\nTo continue this session, run: {}", resume_cmd);
+				if !starts_with_whitespace {
+					// Add to in-memory history (reedline handles this automatically)
+					// Append to persistent file using role-based thread-safe method
+					// This includes ALL inputs - both regular inputs and commands starting with '/'
+					if let Err(e) = append_to_session_history_file(&role_name, &line) {
+						// Don't fail if history can't be saved, just log it
+						log_info!(
+							"Could not append to history file for role '{}': {}",
+							role,
+							e
+						);
+					}
+				}
 
-			// Debug logging for session preservation
-			if let Ok(sessions_dir) = crate::session::get_sessions_dir() {
-				crate::log_debug!("Session files saved in: {}", sessions_dir.display());
-			}
-			crate::log_debug!("Session preserved for future reference.");
-			Ok(InputResult::Exit)
-		}
+				// Log user input only if it's not a command (doesn't start with '/')
+				// Note: We still log even if it starts with whitespace, as logging is separate from history
+				if !line.trim().starts_with('/') {
+					let _ = crate::session::logger::log_user_request(&line);
+				}
 
-		Err(err) => {
-			println!("Error: {:?}", err);
-			Ok(InputResult::Text(String::new()))
+				return if is_add_without_sending {
+					Ok(InputResult::AddWithoutSending(line))
+				} else {
+					Ok(InputResult::Text(line))
+				};
+			}
+			Ok(Signal::CtrlC) => {
+				// Ctrl+C - Return cancellation result
+				return Ok(InputResult::Cancelled);
+			}
+			Ok(Signal::CtrlD) => {
+				// Ctrl+D - Show resume command
+				let resume_cmd = format!("octomind session --resume {}", session_id).bright_cyan();
+				println!("\nTo continue this session, run: {}", resume_cmd);
+
+				// Debug logging for session preservation
+				if let Ok(sessions_dir) = crate::session::get_sessions_dir() {
+					crate::log_debug!("Session files saved in: {}", sessions_dir.display());
+				}
+				crate::log_debug!("Session preserved for future reference.");
+				return Ok(InputResult::Exit);
+			}
+			Err(err) => {
+				println!("Error: {:?}", err);
+				return Ok(InputResult::Text(String::new()));
+			}
 		}
 	}
 }

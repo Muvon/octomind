@@ -12,26 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Implementation of a command completer for rustyline
-use colored::*;
-use rustyline::completion::{Completer, Pair};
-use rustyline::error::ReadlineError;
-use rustyline::highlight::{CmdKind, Highlighter};
-use rustyline::hint::{Hinter, HistoryHinter};
-use rustyline::validate::Validator;
-use rustyline::Helper;
-use std::borrow::Cow::{self, Borrowed, Owned};
+// Implementation of a command completer for reedline
 use std::fs;
 use std::path::{Path, PathBuf};
 
-struct CommandCompleter<'a> {
+#[derive(Clone, Debug)]
+pub struct Pair {
+	pub display: String,
+	pub replacement: String,
+}
+
+pub(crate) struct CommandCompleter<'a> {
 	commands: Vec<String>,
 	config: &'a crate::config::Config,
 	role: &'a str,
 }
 
 impl<'a> CommandCompleter<'a> {
-	fn new(config: &'a crate::config::Config, role: &'a str) -> Self {
+	pub(crate) fn new(config: &'a crate::config::Config, role: &'a str) -> Self {
 		let commands = crate::session::chat::COMMANDS
 			.iter()
 			.map(|&s| s.to_string())
@@ -75,36 +73,6 @@ impl<'a> CommandCompleter<'a> {
 			.iter()
 			.map(|w| w.name.clone())
 			.collect()
-	}
-
-	/// Check if a context filter is valid
-	fn is_valid_context_filter(filter: &str) -> bool {
-		Self::get_context_filters().contains(&filter)
-	}
-
-	/// Check if an MCP subcommand is valid
-	fn is_valid_mcp_subcommand(subcommand: &str) -> bool {
-		Self::get_mcp_subcommands().contains(&subcommand)
-	}
-
-	/// Check if a cache subcommand is valid
-	fn is_valid_cache_subcommand(subcommand: &str) -> bool {
-		Self::get_cache_subcommands().contains(&subcommand)
-	}
-
-	/// Check if a log level is valid
-	fn is_valid_log_level(level: &str) -> bool {
-		Self::get_log_levels().contains(&level)
-	}
-
-	/// Check if a role is valid
-	fn is_valid_role(&self, role: &str) -> bool {
-		self.config.roles.iter().any(|r| r.name == role)
-	}
-
-	/// Check if a workflow is valid
-	fn is_valid_workflow(&self, workflow: &str) -> bool {
-		self.config.workflows.iter().any(|w| w.name == workflow)
 	}
 
 	/// Check if the given file extension is a supported image format
@@ -310,15 +278,8 @@ impl<'a> CommandCompleter<'a> {
 	}
 }
 
-impl<'a> Completer for CommandCompleter<'a> {
-	type Candidate = Pair;
-
-	fn complete(
-		&self,
-		line: &str,
-		pos: usize,
-		_ctx: &rustyline::Context<'_>,
-	) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
+impl<'a> CommandCompleter<'a> {
+	pub(crate) fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Pair>) {
 		// Handle /image command with file completion
 		if line.starts_with("/image ") {
 			let image_prefix = "/image ";
@@ -336,7 +297,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
 
 			// For file completion, we want to replace from the start of the file part
-			Ok((prefix_len, filtered_candidates))
+			(prefix_len, filtered_candidates)
 		} else if line.starts_with("/prompt ") {
 			// Handle /prompt command with template name completion
 			let prompt_prefix = "/prompt ";
@@ -365,7 +326,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/run ") {
 			// Handle /run command with command name completion
 			let run_prefix = "/run ";
@@ -390,7 +351,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/workflow ") {
 			// Handle /workflow command with workflow name completion
 			let workflow_prefix = "/workflow ";
@@ -414,7 +375,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/context ") {
 			// Handle /context command with filter completion
 			let context_prefix = "/context ";
@@ -436,7 +397,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/mcp ") {
 			// Handle /mcp command with subcommand completion
 			let mcp_prefix = "/mcp ";
@@ -458,7 +419,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/cache ") {
 			// Handle /cache command with subcommand completion
 			let cache_prefix = "/cache ";
@@ -480,7 +441,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/loglevel ") {
 			// Handle /loglevel command with level completion
 			let loglevel_prefix = "/loglevel ";
@@ -502,7 +463,7 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if line.starts_with("/role ") {
 			// Handle /role command with role name completion
 			let role_prefix = "/role ";
@@ -525,10 +486,10 @@ impl<'a> Completer for CommandCompleter<'a> {
 				})
 				.collect();
 
-			Ok((prefix_len, candidates))
+			(prefix_len, candidates)
 		} else if !line.starts_with('/') {
 			// No completion for non-commands
-			Ok((0, vec![]))
+			(0, vec![])
 		} else {
 			// Handle regular command completion with cursor position awareness
 			let command_part = &line[..pos.min(line.len())];
@@ -546,8 +507,8 @@ impl<'a> Completer for CommandCompleter<'a> {
 			let common_prefix = Self::find_common_prefix(&candidates);
 			let mut result = candidates;
 
-			// If there's a longer common prefix, add it as first option
-			if common_prefix.len() > command_part.len() {
+			// If there's a longer common prefix and multiple candidates, add it as first option
+			if common_prefix.len() > command_part.len() && result.len() > 1 {
 				let partial = Pair {
 					display: format!("{} (partial)", common_prefix),
 					replacement: common_prefix,
@@ -555,16 +516,13 @@ impl<'a> Completer for CommandCompleter<'a> {
 				result.insert(0, partial);
 			}
 
-			Ok((0, result))
+			(0, result)
 		}
 	}
 }
 
-// We need to implement these traits to make CommandHelper work with rustyline
-impl<'a> Hinter for CommandCompleter<'a> {
-	type Hint = String;
-
-	fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
+impl<'a> CommandCompleter<'a> {
+	pub(crate) fn hint(&self, line: &str) -> Option<String> {
 		if line.is_empty() || !line.starts_with('/') {
 			return None;
 		}
@@ -710,344 +668,3 @@ impl<'a> Hinter for CommandCompleter<'a> {
 			.map(|cmd| cmd[line.len()..].to_string())
 	}
 }
-
-impl<'a> Highlighter for CommandCompleter<'a> {
-	fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-		// Only apply highlighting to commands (lines starting with '/')
-		if line.starts_with('/') {
-			// Special handling for /image command with file path
-			if line.starts_with("/image ") && line.len() > 7 {
-				let image_cmd = "/image";
-				let file_part = &line[7..]; // "/image ".len() = 7
-
-				// Check if the file path points to a valid image
-				if !file_part.is_empty()
-					&& Path::new(file_part).exists()
-					&& Self::is_image_file(file_part)
-				{
-					// Highlight valid image path in bright green
-					return Owned(format!(
-						"{} {}",
-						image_cmd.green(),
-						file_part.bright_green()
-					));
-				} else if !file_part.is_empty() {
-					// Highlight invalid/non-existent path in yellow
-					return Owned(format!("{} {}", image_cmd.green(), file_part.yellow()));
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", image_cmd.green()));
-				}
-			}
-
-			// Special handling for /prompt command with template name
-			if line.starts_with("/prompt ") && line.len() > 8 {
-				let prompt_cmd = "/prompt";
-				let template_part = &line[8..]; // "/prompt ".len() = 8
-
-				if !template_part.is_empty() {
-					// Check if template exists
-					let template_exists = self
-						.config
-						.prompts
-						.iter()
-						.any(|prompt| prompt.name == template_part);
-
-					if template_exists {
-						// Highlight valid template name in bright green
-						return Owned(format!(
-							"{} {}",
-							prompt_cmd.green(),
-							template_part.bright_green()
-						));
-					} else {
-						// Highlight invalid template name in yellow
-						return Owned(format!("{} {}", prompt_cmd.green(), template_part.yellow()));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", prompt_cmd.green()));
-				}
-			}
-
-			// Special handling for /run command with command name
-			if line.starts_with("/run ") && line.len() > 5 {
-				let run_cmd = "/run";
-				let command_part = &line[5..]; // "/run ".len() = 5
-
-				if !command_part.is_empty() {
-					// Check if command exists for this role
-					let command_exists =
-						crate::session::chat::command_exists(self.config, self.role, command_part);
-
-					if command_exists {
-						// Highlight valid command name in bright green
-						return Owned(format!(
-							"{} {}",
-							run_cmd.green(),
-							command_part.bright_green()
-						));
-					} else {
-						// Highlight invalid command name in yellow
-						return Owned(format!("{} {}", run_cmd.green(), command_part.yellow()));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", run_cmd.green()));
-				}
-			}
-
-			// Special handling for /workflow command with workflow name
-			if line.starts_with("/workflow ") && line.len() > 10 {
-				let workflow_cmd = "/workflow";
-				let workflow_part = &line[10..]; // "/workflow ".len() = 10
-
-				if !workflow_part.is_empty() {
-					// Check if workflow exists
-					if self.is_valid_workflow(workflow_part) {
-						// Highlight valid workflow name in bright green
-						return Owned(format!(
-							"{} {}",
-							workflow_cmd.green(),
-							workflow_part.bright_green()
-						));
-					} else {
-						// Highlight invalid workflow name in yellow
-						return Owned(format!(
-							"{} {}",
-							workflow_cmd.green(),
-							workflow_part.yellow()
-						));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", workflow_cmd.green()));
-				}
-			}
-
-			// Special handling for /context command with filter
-
-			if line.starts_with("/context ") && line.len() > 9 {
-				let context_cmd = "/context";
-				let filter_part = &line[9..]; // "/context ".len() = 9
-
-				if !filter_part.is_empty() {
-					if Self::is_valid_context_filter(filter_part) {
-						// Highlight valid filter in bright green
-						return Owned(format!(
-							"{} {}",
-							context_cmd.green(),
-							filter_part.bright_green()
-						));
-					} else {
-						// Highlight invalid filter in yellow
-						return Owned(format!("{} {}", context_cmd.green(), filter_part.yellow()));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", context_cmd.green()));
-				}
-			}
-
-			// Special handling for /mcp command with subcommand
-			if line.starts_with("/mcp ") && line.len() > 5 {
-				let mcp_cmd = "/mcp";
-				let subcommand_part = &line[5..]; // "/mcp ".len() = 5
-
-				if !subcommand_part.is_empty() {
-					if Self::is_valid_mcp_subcommand(subcommand_part) {
-						// Highlight valid subcommand in bright green
-						return Owned(format!(
-							"{} {}",
-							mcp_cmd.green(),
-							subcommand_part.bright_green()
-						));
-					} else {
-						// Highlight invalid subcommand in yellow
-						return Owned(format!("{} {}", mcp_cmd.green(), subcommand_part.yellow()));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", mcp_cmd.green()));
-				}
-			}
-
-			// Special handling for /cache command with subcommand
-			if line.starts_with("/cache ") && line.len() > 7 {
-				let cache_cmd = "/cache";
-				let subcommand_part = &line[7..]; // "/cache ".len() = 7
-
-				if !subcommand_part.is_empty() {
-					if Self::is_valid_cache_subcommand(subcommand_part) {
-						// Highlight valid subcommand in bright green
-						return Owned(format!(
-							"{} {}",
-							cache_cmd.green(),
-							subcommand_part.bright_green()
-						));
-					} else {
-						// Highlight invalid subcommand in yellow
-						return Owned(format!(
-							"{} {}",
-							cache_cmd.green(),
-							subcommand_part.yellow()
-						));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", cache_cmd.green()));
-				}
-			}
-
-			// Special handling for /loglevel command with level
-			if line.starts_with("/loglevel ") && line.len() > 10 {
-				let loglevel_cmd = "/loglevel";
-				let level_part = &line[10..]; // "/loglevel ".len() = 10
-
-				if !level_part.is_empty() {
-					if Self::is_valid_log_level(level_part) {
-						// Highlight valid level in bright green
-						return Owned(format!(
-							"{} {}",
-							loglevel_cmd.green(),
-							level_part.bright_green()
-						));
-					} else {
-						// Highlight invalid level in yellow
-						return Owned(format!("{} {}", loglevel_cmd.green(), level_part.yellow()));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", loglevel_cmd.green()));
-				}
-			}
-
-			// Special handling for /role command with role name
-			if line.starts_with("/role ") && line.len() > 6 {
-				let role_cmd = "/role";
-				let role_part = &line[6..]; // "/role ".len() = 6
-
-				if !role_part.is_empty() {
-					if self.is_valid_role(role_part) {
-						// Highlight valid role in bright green
-						return Owned(format!("{} {}", role_cmd.green(), role_part.bright_green()));
-					} else {
-						// Highlight invalid role in yellow
-						return Owned(format!("{} {}", role_cmd.green(), role_part.yellow()));
-					}
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", role_cmd.green()));
-				}
-			}
-
-			// Special handling for /model command with model name
-			if line.starts_with("/model ") && line.len() > 7 {
-				let model_cmd = "/model";
-				let model_part = &line[7..]; // "/model ".len() = 7
-
-				if !model_part.is_empty() {
-					// For model names, we can't easily validate them, so just highlight in bright_green
-					// since any string could be a valid model name
-					return Owned(format!(
-						"{} {}",
-						model_cmd.green(),
-						model_part.bright_green()
-					));
-				} else {
-					// Just the command part is green
-					return Owned(format!("{} ", model_cmd.green()));
-				}
-			}
-
-			// Check if this is a valid command
-			let is_valid_command = self
-				.commands
-				.iter()
-				.any(|cmd| line == cmd || cmd.starts_with(line));
-
-			if is_valid_command {
-				// Highlight valid commands in green
-				Owned(line.green().to_string())
-			} else {
-				// Keep invalid commands normal colored
-				Borrowed(line)
-			}
-		} else {
-			Borrowed(line)
-		}
-	}
-
-	fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
-		false
-	}
-
-	fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-		// Make hints appear in dim gray color - like bash autocomplete
-		Owned(hint.bright_black().to_string())
-	}
-}
-
-impl<'a> Validator for CommandCompleter<'a> {}
-
-// Helper for rustyline
-pub struct CommandHelper<'a> {
-	completer: CommandCompleter<'a>,
-	hinter: Option<HistoryHinter>,
-}
-
-impl<'a> CommandHelper<'a> {
-	pub fn new(config: &'a crate::config::Config, role: &'a str) -> Self {
-		Self {
-			completer: CommandCompleter::new(config, role),
-			hinter: Some(HistoryHinter {}),
-		}
-	}
-}
-
-// Implement Helper trait
-impl<'a> Helper for CommandHelper<'a> {}
-
-// Implement the required traits for rustyline helper
-impl<'a> Completer for CommandHelper<'a> {
-	type Candidate = Pair;
-
-	fn complete(
-		&self,
-		line: &str,
-		pos: usize,
-		ctx: &rustyline::Context<'_>,
-	) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
-		self.completer.complete(line, pos, ctx)
-	}
-}
-
-impl<'a> Hinter for CommandHelper<'a> {
-	type Hint = String;
-
-	fn hint(&self, line: &str, pos: usize, ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
-		if line.starts_with('/') {
-			self.completer.hint(line, pos, ctx)
-		} else if let Some(hinter) = &self.hinter {
-			hinter.hint(line, pos, ctx)
-		} else {
-			None
-		}
-	}
-}
-
-impl<'a> Highlighter for CommandHelper<'a> {
-	fn highlight<'l>(&self, line: &'l str, pos: usize) -> Cow<'l, str> {
-		self.completer.highlight(line, pos)
-	}
-
-	fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
-		self.completer.highlight_char(line, pos, kind)
-	}
-
-	fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-		self.completer.highlight_hint(hint)
-	}
-}
-
-impl<'a> Validator for CommandHelper<'a> {}

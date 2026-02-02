@@ -21,12 +21,15 @@ mod context_reduction;
 mod context_truncation;
 pub mod continuation;
 mod cost_tracker;
+mod edit_mode;
 pub mod formatting;
 mod input;
 mod layered_response;
 pub mod markdown;
 mod message_handler;
-pub mod response;
+mod prompt;
+mod reedline_adapter;
+pub(crate) mod response;
 pub mod session;
 pub mod session_continuation;
 mod syntax;
@@ -34,7 +37,6 @@ mod thinking_display;
 mod tool_display;
 mod tool_error_tracker;
 mod tool_processor;
-
 // Re-export main structures and functions
 pub use animation::{
 	show_generation_message_static, show_loading_animation, show_no_animation, show_smart_animation,
@@ -53,11 +55,13 @@ pub use context_truncation::{
 	perform_simple_boundary_truncation, perform_smart_full_summarization, TruncationOptions,
 };
 pub use cost_tracker::CostTracker;
+pub use edit_mode::EmacsWithShortcutHelp;
 pub use formatting::format_duration;
 pub use input::{read_user_input, InputResult};
 pub use layered_response::process_layered_response;
 pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
 pub use message_handler::MessageHandler;
+pub use prompt::ChatPrompt;
 pub use response::process_response;
 pub use session::{
 	format_number, run_interactive_session, run_interactive_session_with_input, ChatSession,

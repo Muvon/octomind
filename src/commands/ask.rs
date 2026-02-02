@@ -21,14 +21,13 @@ use octomind::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
 use octomind::session::{
 	chat_completion_with_provider, ChatCompletionProviderParams, Message, ProviderResponse,
 };
-use rustyline::error::ReadlineError;
-use rustyline::{
-	Cmd, CompletionType, ConditionalEventHandler, Config as RustylineConfig, EditMode, Editor,
-	Event, EventHandler, KeyEvent, Modifiers, RepeatCount,
+use reedline::{
+	default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
+	Reedline, ReedlineEvent, Signal,
 };
 use std::fs::{self, OpenOptions};
 use std::io::IsTerminal;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -212,25 +211,6 @@ lazy_static::lazy_static! {
 	static ref ASK_HISTORY_MUTEX: Mutex<()> = Mutex::new(());
 }
 
-// Custom event handler for smart Ctrl+E behavior in ask mode
-struct AskSmartCtrlEHandler;
-
-impl ConditionalEventHandler for AskSmartCtrlEHandler {
-	fn handle(
-		&self,
-		_evt: &Event,
-		_n: RepeatCount,
-		_positive: bool,
-		ctx: &rustyline::EventContext,
-	) -> Option<Cmd> {
-		if ctx.has_hint() {
-			Some(Cmd::CompleteHint)
-		} else {
-			None
-		}
-	}
-}
-
 // Get the ask-specific history file path (in organized history directory)
 fn get_ask_history_file_path() -> Result<PathBuf> {
 	crate::session::history::get_ask_history_file_path()
@@ -245,30 +225,6 @@ fn encode_ask_history_line(line: &str) -> String {
 			c => c.to_string(),
 		})
 		.collect()
-}
-
-fn decode_ask_history_line(encoded: &str) -> String {
-	let mut result = String::new();
-	let mut chars = encoded.chars().peekable();
-
-	while let Some(c) = chars.next() {
-		if c == '\\' {
-			match chars.peek() {
-				Some('\\') => {
-					chars.next();
-					result.push('\\');
-				}
-				Some('n') => {
-					chars.next();
-					result.push('\n');
-				}
-				_ => result.push(c),
-			}
-		} else {
-			result.push(c);
-		}
-	}
-	result
 }
 
 // Thread-safe ask history file operations
@@ -296,30 +252,7 @@ fn append_to_ask_history_file(line: &str) -> Result<()> {
 	Ok(())
 }
 
-fn load_ask_history_from_file() -> Result<Vec<String>> {
-	let _lock = ASK_HISTORY_MUTEX.lock().unwrap();
-	let history_path = get_ask_history_file_path()?;
-
-	if !history_path.exists() {
-		return Ok(Vec::new());
-	}
-
-	let file = std::fs::File::open(&history_path)?;
-	let reader = BufReader::new(file);
-
-	let mut history = Vec::new();
-	for line in reader.lines() {
-		let line = line?;
-		if line.trim().is_empty() || line.starts_with("#") {
-			continue;
-		}
-		let decoded_line = decode_ask_history_line(&line);
-		history.push(decoded_line);
-	}
-	Ok(history)
-}
-
-// Helper function to get single-line input interactively using rustyline with ask-specific features
+// Helper function to get single-line input interactively using reedline with ask-specific features
 // Matches session behavior exactly but with separate history
 fn get_interactive_input() -> Result<String> {
 	println!("{}", "Enter your question:".bright_blue());
@@ -333,65 +266,32 @@ fn get_interactive_input() -> Result<String> {
 	);
 	println!();
 
-	// Configure rustyline with proper completion behavior for ask mode
-	let config = RustylineConfig::builder()
-		.completion_type(CompletionType::Circular)
-		.edit_mode(EditMode::Emacs)
-		.auto_add_history(true)
-		.bell_style(rustyline::config::BellStyle::None)
-		.max_history_size(500)?
-		.color_mode(rustyline::ColorMode::Enabled) // Enable proper ANSI color handling
-		.build();
+	// Get ask-specific history file path
+	let history_path =
+		get_ask_history_file_path().unwrap_or_else(|_| std::path::PathBuf::from("ask_history.txt"));
 
-	let mut editor: Editor<(), rustyline::history::FileHistory> = Editor::with_config(config)?;
-
-	// Note: CommandHelper is not publicly exported, so we use () for no helper
-	// This still provides basic Rustyline functionality without command completion
-
-	// Set up key bindings
-	// Ctrl+E for smart hint completion
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('e', Modifiers::CTRL)]),
-		EventHandler::Conditional(Box::new(AskSmartCtrlEHandler)),
+	// Create reedline with history support
+	let history = Box::new(
+		FileBackedHistory::with_file(500, history_path)
+			.expect("Error configuring history with file"),
 	);
-	// Tab for completion
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('\t', Modifiers::empty())]),
-		EventHandler::Simple(Cmd::Complete),
-	);
-	// Right arrow to accept hint
-	editor.bind_sequence(
-		Event::KeySeq(vec![
-			KeyEvent::new('\x1b', Modifiers::empty()),
-			KeyEvent::new('[', Modifiers::empty()),
-			KeyEvent::new('C', Modifiers::empty()),
-		]),
-		EventHandler::Simple(Cmd::CompleteHint),
-	);
-	// Ctrl+J to insert newline (for multiline input)
-	editor.bind_sequence(
-		Event::KeySeq(vec![KeyEvent::new('j', Modifiers::CTRL)]),
-		EventHandler::Simple(Cmd::Newline),
-	);
-	// Enter sends the request (default behavior - no override needed)
 
-	// Load persistent ask history
-	match load_ask_history_from_file() {
-		Ok(history_lines) => {
-			for line in history_lines {
-				let _ = editor.add_history_entry(line);
-			}
-		}
-		Err(e) => {
-			octomind::log_info!("Could not load ask history: {}", e);
-		}
-	}
+	let mut keybindings = default_emacs_keybindings();
+	keybindings.add_binding(
+		KeyModifiers::CONTROL,
+		KeyCode::Char('j'),
+		ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+	);
+	let edit_mode = Box::new(Emacs::new(keybindings));
 
-	// Set prompt (no cost display initially, matches session behavior)
-	let prompt = "> ".bright_blue().to_string();
+	let mut line_editor = Reedline::create()
+		.with_history(history)
+		.with_edit_mode(edit_mode);
 
-	match editor.readline(&prompt) {
-		Ok(line) => {
+	let prompt = octomind::session::chat::ChatPrompt::new(String::new(), "〉".to_string());
+
+	match line_editor.read_line(&prompt) {
+		Ok(Signal::Success(line)) => {
 			let trimmed = line.trim();
 			if trimmed == "/exit" || trimmed == "/quit" {
 				return Err(anyhow::anyhow!("User cancelled input"));
@@ -408,14 +308,14 @@ fn get_interactive_input() -> Result<String> {
 
 			Ok(line)
 		}
-		Err(ReadlineError::Interrupted) => Err(anyhow::anyhow!("User cancelled input")),
-		Err(ReadlineError::Eof) => Err(anyhow::anyhow!("User cancelled input")),
+		Ok(Signal::CtrlC) => Err(anyhow::anyhow!("User cancelled input")),
+		Ok(Signal::CtrlD) => Err(anyhow::anyhow!("User cancelled input")),
 		Err(err) => Err(anyhow::anyhow!("Error reading input: {}", err)),
 	}
 }
 
 pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
-	// Validate file patterns first, before any other processing
+	// Validate file patterns first
 	if let Err(e) = validate_file_patterns(&args.files) {
 		octomind::log_error!("{}", e);
 		std::process::exit(1);

@@ -328,7 +328,7 @@ pub fn read_user_input(
 			calculate_context_percentage(current_context_tokens, max_session_tokens_threshold);
 
 		if let Some(pct) = context_pct {
-			format!("[{:.2}|{:.1}%]", estimated_cost, pct)
+			format!("[${:.2}|{:.1}%]", estimated_cost, pct)
 		} else {
 			format!("[{:.2}|∞]", estimated_cost)
 		}

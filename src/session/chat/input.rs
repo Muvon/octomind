@@ -314,6 +314,7 @@ pub fn read_user_input(
 			),
 		))
 		.with_quick_completions(true)
+		.use_bracketed_paste(true)
 		.with_edit_mode(edit_mode);
 
 	// Display status line for user feedback (only on first interaction)

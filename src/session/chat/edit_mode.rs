@@ -127,11 +127,13 @@ impl EditMode for EmacsWithShortcutHelp {
 				}
 				return ReedlineEvent::Edit(vec![reedline::EditCommand::CutFromLineStart]);
 			}
-			if code == KeyCode::Char('?') && modifiers == KeyModifiers::NONE {
-				if self.buffer_empty.load(Ordering::SeqCst) {
-					return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
-				}
+			if code == KeyCode::Char('?')
+				&& modifiers == KeyModifiers::NONE
+				&& self.buffer_empty.load(Ordering::SeqCst)
+			{
+				return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
 			}
+
 			if code == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {
 				if self.reverse_search_active.load(Ordering::SeqCst) {
 					return ReedlineEvent::Esc;

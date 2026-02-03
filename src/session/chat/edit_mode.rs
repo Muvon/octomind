@@ -134,12 +134,23 @@ impl EditMode for EmacsWithShortcutHelp {
 				return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
 			}
 
+			// Ctrl+G: Add message to context without sending to API
+			// Set flag in line_state and submit - no buffer modification needed
+			if code == KeyCode::Char('g') && modifiers == KeyModifiers::CONTROL {
+				if let Ok(mut state) = self.line_state.lock() {
+					state.add_without_sending = true;
+				}
+				return ReedlineEvent::Submit;
+			}
+
 			if code == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {
 				if self.reverse_search_active.load(Ordering::SeqCst) {
 					return ReedlineEvent::Esc;
 				}
 				return ReedlineEvent::CtrlC;
 			}
+
+			// Pass through to default emacs handler
 		}
 
 		match ReedlineRawEvent::try_from(event) {

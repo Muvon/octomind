@@ -167,8 +167,9 @@ impl Hinter for ReedlineAdapter {
 pub struct LineState {
 	pub buffer: String,
 	pub cursor: usize,
+	/// When true, signals that the user pressed Ctrl+G to add message without sending
+	pub add_without_sending: bool,
 }
-
 impl ReedlineAdapter {
 	fn history_hint(&self, line: &str, history: &dyn History) -> String {
 		if line.is_empty() {

@@ -178,8 +178,6 @@ pub fn read_user_input(
 	session_id: &str,
 	show_status_line: bool,
 ) -> Result<InputResult> {
-	const ADD_WITHOUT_SENDING_MARKER: &str = "__OCTOMIND_ADD__";
-
 	// Create reedline with in-memory history and preloaded role history
 	let mut history = FileBackedHistory::new(1000).expect("Error configuring history");
 	if let Ok(lines) = load_session_history_from_file(role) {
@@ -223,16 +221,7 @@ pub fn read_user_input(
 		KeyCode::Char('e'),
 		ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: false }]),
 	);
-	keybindings.add_binding(
-		KeyModifiers::CONTROL,
-		KeyCode::Char('g'),
-		ReedlineEvent::Multiple(vec![
-			ReedlineEvent::Edit(vec![EditCommand::InsertString(
-				ADD_WITHOUT_SENDING_MARKER.to_string(),
-			)]),
-			ReedlineEvent::Submit,
-		]),
-	);
+	// Note: Ctrl+G is handled in edit_mode.rs via line_state flag (no buffer modification)
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
 		KeyCode::Char('e'),
@@ -310,7 +299,7 @@ pub fn read_user_input(
 				role_name.clone(),
 				buffer_empty,
 				hint_available,
-				line_state,
+				line_state.clone(),
 			),
 		))
 		.with_quick_completions(true)
@@ -346,10 +335,13 @@ pub fn read_user_input(
 		reverse_search_active,
 	);
 
+	// Clone line_state for use in the loop (original moved into edit_mode)
+	let line_state_for_check = line_state.clone();
+
 	// Read line with reedline
 	loop {
 		match line_editor.read_line(&prompt) {
-			Ok(Signal::Success(mut line)) => {
+			Ok(Signal::Success(line)) => {
 				if line == "__show_shortcuts__" {
 					display_shortcuts_help();
 					continue;
@@ -358,10 +350,16 @@ pub fn read_user_input(
 					display_shortcuts_help();
 					continue;
 				}
-				let is_add_without_sending = line.contains(ADD_WITHOUT_SENDING_MARKER);
-				if is_add_without_sending {
-					line = line.replace(ADD_WITHOUT_SENDING_MARKER, "");
-				}
+
+				// Check if this is an "add without sending" request (Ctrl+G)
+				// The flag is set in edit_mode.rs when user presses Ctrl+G
+				let add_without_sending = if let Ok(mut state) = line_state_for_check.lock() {
+					let flag = state.add_without_sending;
+					state.add_without_sending = false; // Clear the flag
+					flag
+				} else {
+					false
+				};
 
 				// Check if line starts with whitespace (bash-like behavior)
 				// If it does, skip adding to history (both in-memory and persistent)
@@ -387,7 +385,7 @@ pub fn read_user_input(
 					let _ = crate::session::logger::log_user_request(&line);
 				}
 
-				return if is_add_without_sending {
+				return if add_without_sending {
 					Ok(InputResult::AddWithoutSending(line))
 				} else {
 					Ok(InputResult::Text(line))

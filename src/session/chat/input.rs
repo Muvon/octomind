@@ -44,24 +44,6 @@ pub enum InputResult {
 
 use crate::log_info;
 
-/// Display the context/cost status line - shown only at session start
-pub fn display_status_line(current_context_tokens: u64, max_session_tokens_threshold: usize) {
-	let mut status_parts = Vec::new();
-
-	if max_session_tokens_threshold > 0 {
-		let percentage = (current_context_tokens as f64 / max_session_tokens_threshold as f64
-			* 100.0)
-			.min(100.0);
-		status_parts.push(format!("Context: {:.1}%", percentage));
-	} else {
-		status_parts.push("Context: unlimited".to_string());
-	}
-
-	status_parts.push("? for shortcuts".to_string());
-	status_parts.push("/help for commands".to_string());
-	println!("{}", status_parts.join(" • ").bright_black());
-}
-
 fn display_shortcuts_help() {
 	println!();
 	println!(
@@ -176,7 +158,7 @@ pub fn read_user_input(
 	current_context_tokens: u64,
 	max_session_tokens_threshold: usize,
 	session_id: &str,
-	show_status_line: bool,
+	_show_status_line: bool,
 ) -> Result<InputResult> {
 	// Create reedline with in-memory history and preloaded role history
 	let mut history = FileBackedHistory::new(1000).expect("Error configuring history");
@@ -305,11 +287,6 @@ pub fn read_user_input(
 		.with_quick_completions(true)
 		.use_bracketed_paste(true)
 		.with_edit_mode(edit_mode);
-
-	// Display status line for user feedback (only on first interaction)
-	if show_status_line {
-		display_status_line(current_context_tokens, max_session_tokens_threshold);
-	}
 
 	// Set prompt with cost and context percentage
 	let prompt_text = if estimated_cost > 0.0 {

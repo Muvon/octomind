@@ -42,38 +42,6 @@ fn print_command_output(
 	output.display_cli(session, config);
 }
 
-/// Display a random helpful tip for new sessions
-fn display_random_tip() -> String {
-	use std::time::{SystemTime, UNIX_EPOCH};
-
-	let tips = [
-		"Use ↑/↓ arrows or Ctrl+R for command history search",
-		"Press Ctrl+G to add a message to context without sending to AI",
-		"Press Tab for command or file completion",
-		"Type @ followed by a filename for fuzzy file search and insertion",
-		"Start a line with space to skip saving it to history",
-		"Press Ctrl+J for multi-line input",
-		"Press Ctrl+E to accept a hint when available",
-		"Use /context [filter] to view session messages",
-		"Use /model <name> to switch AI model mid-session",
-		"Use /role <name> to switch role configuration",
-		"Use /mcp list to see available MCP tools",
-		"Use /run [command] to run a command",
-		"Use /prompt [text] to send some predefined prompt",
-		"Use /info to see current session costs and token usage",
-		"Use /workflow to execute multi-step automation tasks",
-	];
-
-	// Generate deterministic but randomized tip based on session start time
-	let now = SystemTime::now()
-		.duration_since(UNIX_EPOCH)
-		.unwrap_or_default()
-		.as_secs();
-	let index = (now as usize) % tips.len();
-
-	format!("💡 Tip: {}", tips[index])
-}
-
 // Run an interactive session
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
 	// Setup and initialize session using helper function
@@ -85,11 +53,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 	// Setup system prompt and cache using helper function (BEFORE showing interactive prompts)
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
-
-	// Show helpful tip for new sessions only
-	if chat_session.session.messages.len() <= 2 {
-		println!("{}", display_random_tip().bright_yellow());
-	}
 
 	// Print the last few messages for context with colors if terminal supports them (for resumed sessions)
 	// Only show context for truly resumed sessions, not new sessions

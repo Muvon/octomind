@@ -193,6 +193,8 @@ pub fn get_text_editor_function() -> McpFunction {
 			- Multiple edits needed on UNMODIFIED file (2+ operations)
 			- File hasn't been edited yet in this session
 			- Need atomic operations (all succeed or all fail)
+			- Use 'insert' for adding lines, 'replace' ONLY for lines that change content
+			- NEVER retype unchanged lines in replace operations
 
 			CHOOSE insert when:
 			- Building new documents or adding new sections
@@ -343,23 +345,47 @@ pub fn get_batch_edit_function() -> McpFunction {
 			- For single operations - use text_editor instead
 			- On files that have been modified - get fresh line numbers first
 
-			**CRITICAL RULES:**
-			- ALL line numbers must reference the ORIGINAL file content (before ANY modifications)
-			- After ANY edit operation, line numbers change - don't use batch_edit on modified files
-			- Operations applied atomically in reverse order to maintain line stability
-			- Conflicts between operations are detected and rejected
+			**CRITICAL USAGE RULES:**
+			- NEVER retype unchanged lines in replace operations - only replace lines that actually change
+			- Use 'insert' to ADD new lines between existing ones
+			- Use 'replace' ONLY when changing existing line content
+			- Replace operation REMOVES lines [start, end] and INSERTS new content in their place
+			- If lines X and Y stay the same, DO NOT include them in replace range
+
+			**Operation Types:**
+			- `insert`: line_range is single number N = insert AFTER line N (0 = beginning)
+			- `replace`: line_range is [start, end] = REMOVE lines start-end, INSERT new content
+
+			**WRONG vs RIGHT Examples:**
+
+			❌ WRONG - Adding import by retyping all lines 1-5:
+			File has:
+			  1: use std::fs;
+			  2: use std::io;
+			  3: 
+			  4: fn main() {
+			Bad: {\"operation\": \"replace\", \"line_range\": [1, 3], \"content\": \"use std::fs;\\nuse std::io;\\nuse std::path::PathBuf;\"}
+			Problem: Retyped lines 1-2 that didn't change!
+
+			✅ RIGHT - Use insert to add new line:
+			{\"operation\": \"insert\", \"line_range\": 2, \"content\": \"use std::path::PathBuf;\"}
+			Result: New import added after line 2, lines 1-2 unchanged
+
+			❌ WRONG - Changing one line by replacing entire block:
+			File has:
+			  10: let x = 5;
+			  11: let y = 10;
+			  12: let z = 15;
+			Bad: {\"operation\": \"replace\", \"line_range\": [10, 12], \"content\": \"let x = 5;\\nlet y = 20;\\nlet z = 15;\"}
+			Problem: Retyped lines 10 and 12 that didn't change!
+
+			✅ RIGHT - Replace only the line that changes:
+			{\"operation\": \"replace\", \"line_range\": [11, 11], \"content\": \"let y = 20;\"}
+			Result: Only line 11 changed, lines 10 and 12 unchanged
 
 			**Parameters:**
 			- `path` (string): Path to the file to edit
 			- `operations` (array): Array of operations to perform
-
-			**Operation Structure:**
-			- `operation`: 'insert' (after line) or 'replace' (line range)
-			- `line_range`: Single number for insert, [start, end] array for replace (1-indexed)
-			- `content`: Raw text content (no escaping needed)
-
-			**Examples:**
-			- Multiple ops: `{\"path\": \"file.rs\", \"operations\": [{\"operation\": \"insert\", \"line_range\": 1, \"content\": \"header\"}, {\"operation\": \"replace\", \"line_range\": [3, 3], \"content\": \"replaced\"}]}`
 
 			**Maximum 50 operations per call for performance**".to_string(),
 		parameters: json!({

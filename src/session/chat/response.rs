@@ -401,12 +401,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 
 				// 🗜️ PLAN-DRIVEN COMPRESSION: Track message count before tool execution
 				// This start index will be used if a plan tool is executed
-				// Guard against parallel plan tool execution
-				if let Err(e) = crate::mcp::dev::plan::set_current_task_start_index(
+				crate::mcp::dev::plan::set_current_task_start_index(
 					params.chat_session.get_message_count(),
-				) {
-					crate::log_debug!("Plan compression tracking skipped: {}", e);
-				}
+				);
 
 				// Execute all tool calls in parallel using the new module
 				let (tool_results, total_tool_time_ms) =
@@ -526,10 +523,6 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 			break;
 		}
 	}
-
-	// ALWAYS clear plan tool execution guard after tool processing
-	// This must be outside all conditionals to ensure guard is always cleared
-	crate::mcp::dev::plan::clear_plan_tool_executing();
 
 	// CRITICAL FIX: Check for continuation after tool processing loop
 	// When continuation is triggered during tool execution, we broke out of the tool loop (line 430)

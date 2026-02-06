@@ -177,11 +177,16 @@ pub async fn process_tool_results(
 			if let Err(e) =
 				crate::mcp::dev::plan::set_pending_compression_range(start_index, end_index)
 			{
-				log_debug!(
+				log_info!(
 					"Failed to set compression range: {}. Compression will be skipped.",
 					e
 				);
 			}
+		} else {
+			log_info!(
+				"Plan tool executed but no start index found for compression. \
+					This may indicate the start index was not set before tool execution."
+			);
 		}
 	}
 
@@ -204,15 +209,14 @@ pub async fn process_tool_results(
 			// No pending compression - this is normal
 		}
 		Err(e) => {
-			// Compression failed - log at WARN level
-			log_debug!(
-				"❌ Plan compression failed: {}. Context was not compressed.",
+			// Compression failed - log at INFO level since this is unexpected
+			log_info!(
+				"❌ Task compression failed: {}. Context was not compressed.",
 				e
 			);
 			// Note: Session continues normally - compression is best-effort
 		}
 	}
-
 	// Process phase compression (automatic)
 	match crate::mcp::dev::plan::process_pending_phase_compression(chat_session).await {
 		Ok(Some(metrics)) => {
@@ -230,13 +234,12 @@ pub async fn process_tool_results(
 		}
 		Ok(None) => {}
 		Err(e) => {
-			log_debug!(
+			log_info!(
 				"❌ Phase compression failed: {}. Context was not compressed.",
 				e
 			);
 		}
 	}
-
 	// Process project compression (automatic)
 	match crate::mcp::dev::plan::process_pending_project_compression(chat_session).await {
 		Ok(Some(metrics)) => {
@@ -254,7 +257,7 @@ pub async fn process_tool_results(
 		}
 		Ok(None) => {}
 		Err(e) => {
-			log_debug!(
+			log_info!(
 				"❌ Project compression failed: {}. Context was not compressed.",
 				e
 			);

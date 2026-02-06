@@ -91,13 +91,16 @@ pub fn set_pending_compression_range(start_index: usize, end_index: usize) -> Re
 			end_index,
 		});
 		crate::log_debug!(
-			"Set message range for pending compression: {}-{}",
+			"Set message range for pending compression: {}-{} (task: {})",
 			start_index,
-			end_index
+			end_index,
+			task.title
 		);
 		Ok(())
 	} else {
-		Err(anyhow::anyhow!("No pending compression to set range on"))
+		Err(anyhow::anyhow!(
+            "No pending compression to set range on - compression was not requested or already processed"
+        ))
 	}
 }
 

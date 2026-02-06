@@ -35,38 +35,24 @@ use serde_json::Value;
 
 use std::sync::{Arc, Mutex};
 
-// Global storage instance - using memory storage for now
 lazy_static::lazy_static! {
 	static ref PLAN_STORAGE: Arc<Mutex<MemoryPlanStorage>> = Arc::new(Mutex::new(MemoryPlanStorage::new()));
 	// Track when the current task started (message index)
-	// This is set by the session when plan(start) or plan(next) is called
+	// This is set by the session before plan tool execution
 	static ref CURRENT_TASK_START_INDEX: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
-	// Guard against parallel plan tool execution
-	static ref PLAN_TOOL_EXECUTING: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 }
 
 /// Set the start index for the current task (called by session before plan tool execution)
-pub fn set_current_task_start_index(index: usize) -> Result<()> {
-	let mut executing = PLAN_TOOL_EXECUTING.lock().unwrap();
-	if *executing {
-		return Err(anyhow::anyhow!(
-			"Cannot set start index: another plan tool is currently executing. \
-			Plan tools must execute sequentially to ensure correct compression."
-		));
-	}
-	*executing = true;
-
+pub fn set_current_task_start_index(index: usize) {
 	let mut start_index = CURRENT_TASK_START_INDEX.lock().unwrap();
 	*start_index = Some(index);
 	crate::log_debug!("Plan task start index set to: {}", index);
-	Ok(())
 }
 
-/// Mark plan tool execution as complete (called after tool execution)
-pub fn clear_plan_tool_executing() {
-	let mut executing = PLAN_TOOL_EXECUTING.lock().unwrap();
-	*executing = false;
-	crate::log_debug!("Plan tool execution guard cleared");
+/// Get the current task start index without clearing (called when setting message range)
+pub fn get_current_task_start_index() -> Option<usize> {
+	let start_index = CURRENT_TASK_START_INDEX.lock().unwrap();
+	*start_index
 }
 
 /// Get and clear the current task start index (called when setting message range)

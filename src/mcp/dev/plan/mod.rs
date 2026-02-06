@@ -37,9 +37,10 @@ pub use compression::{
 	PhaseCompression, ProjectCompression,
 };
 pub use core::{
-	clear_plan_data, clear_plan_tool_executing, execute_plan, get_and_clear_start_index,
-	get_completed_task_count, get_current_plan_display, get_last_completed_task_for_compression,
-	has_active_plan, set_current_task_start_index, set_last_task_message_range,
+	clear_plan_data, execute_plan, get_and_clear_start_index, get_completed_task_count,
+	get_current_plan_display, get_current_task_start_index,
+	get_last_completed_task_for_compression, has_active_plan, set_current_task_start_index,
+	set_last_task_message_range,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};

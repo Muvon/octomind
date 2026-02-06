@@ -152,5 +152,18 @@ pub async fn setup_system_prompt_and_cache(
 		}
 	}
 
+	// Add compression hints to system prompt for resumed sessions
+	// This informs AI about compression state to improve reasoning
+	if !chat_session.session.messages.is_empty() {
+		if let Some(first_msg) = chat_session.session.messages.first_mut() {
+			if first_msg.role == "system" {
+				crate::session::add_compression_hints_to_prompt(
+					&mut first_msg.content,
+					&chat_session.session.info.compression_stats,
+				);
+			}
+		}
+	}
+
 	Ok(())
 }

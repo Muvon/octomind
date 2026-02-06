@@ -32,17 +32,50 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Check if we should ask AI about compression
-pub fn should_check_compression(session: &ChatSession, config: &Config) -> bool {
-	// Feature disabled
-	if config.compression.min_conversation_turns == 0 {
-		return false;
+/// Returns (should_compress, target_ratio) tuple
+pub fn should_check_compression(session: &ChatSession, config: &Config) -> (bool, f64) {
+	// Adaptive pressure-based compression (SOTA approach)
+	if config.compression.adaptive_threshold {
+		let max_tokens = config.max_session_tokens_threshold;
+		if max_tokens == 0 {
+			return (false, 2.0); // Threshold disabled
+		}
+
+		let current_tokens = session.session.current_total_tokens;
+		let pressure = current_tokens as f64 / max_tokens as f64;
+
+		// Find target compression ratio based on pressure
+		let target_ratio = config
+			.compression
+			.pressure_levels
+			.iter()
+			.rev() // Start from highest threshold
+			.find(|level| pressure >= level.threshold)
+			.map(|level| level.target_ratio)
+			.unwrap_or(2.0);
+
+		let should_compress = pressure >= config.compression.pressure_trigger;
+
+		if should_compress {
+			log_debug!(
+				"Context pressure: {:.1}% → target compression: {:.1}x",
+				pressure * 100.0,
+				target_ratio
+			);
+		}
+
+		return (should_compress, target_ratio);
 	}
 
-	// Count conversation turns (user + assistant pairs)
-	let turn_count = count_conversation_turns(&session.session.messages);
+	// Legacy turn-based compression
+	if config.compression.min_conversation_turns == 0 {
+		return (false, 2.0); // Feature disabled
+	}
 
-	// Need minimum turns before AI can decide
-	turn_count >= config.compression.min_conversation_turns
+	let turn_count = count_conversation_turns(&session.session.messages);
+	let should_compress = turn_count >= config.compression.min_conversation_turns;
+
+	(should_compress, 2.0) // Default 2x compression for turn-based
 }
 
 /// Count conversation turns (each turn = user + assistant message pair)
@@ -59,7 +92,8 @@ pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
 ) -> Result<()> {
-	if !should_check_compression(session, config) {
+	let (should_check, target_ratio) = should_check_compression(session, config);
+	if !should_check {
 		return Ok(());
 	}
 
@@ -80,7 +114,7 @@ pub async fn check_and_compress_conversation(
 		.await;
 	});
 
-	log_debug!("Conversation turn threshold reached - asking AI about compression");
+	log_debug!("Compression check triggered - asking AI about compression");
 
 	// Ask AI if compression is beneficial (mutable reference for cost tracking)
 	let should_compress = ask_ai_compression_decision(session, config).await?;
@@ -94,8 +128,8 @@ pub async fn check_and_compress_conversation(
 
 	log_info!("AI decided to compress older conversation exchanges");
 
-	// Perform compression (mutable reference for cost tracking)
-	compress_older_conversation(session, config).await?;
+	// Perform compression with target ratio (mutable reference for cost tracking)
+	compress_older_conversation(session, config, target_ratio).await?;
 
 	animation_cancel.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
@@ -176,7 +210,11 @@ async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config)
 }
 
 /// Compress older conversation exchanges (reuse plan compression logic)
-async fn compress_older_conversation(session: &mut ChatSession, config: &Config) -> Result<()> {
+async fn compress_older_conversation(
+	session: &mut ChatSession,
+	config: &Config,
+	_target_ratio: f64, // Will be used in Phase 5 for semantic chunking
+) -> Result<()> {
 	// Find range to compress (keep last 4 turns raw = 2 exchanges)
 	let (start_idx, end_idx) = find_compression_range(&session.session.messages)?;
 

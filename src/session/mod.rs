@@ -1306,6 +1306,29 @@ pub async fn create_system_prompt(
 	prompt
 }
 
+/// Add compression context hints to system prompt for resumed sessions
+/// This informs the AI about compression state to improve reasoning with compressed context
+pub fn add_compression_hints_to_prompt(
+	prompt: &mut String,
+	compression_stats: &crate::session::CompressionStats,
+) {
+	if compression_stats.total_compressions() == 0 {
+		return;
+	}
+
+	prompt.push_str(&format!(
+		"\n\n## CONTEXT COMPRESSION ACTIVE\n\
+		- {} compressions performed\n\
+		- {} tokens saved ({:.1}% reduction)\n\
+		- Compressed sections marked with [COMPRESSED: id]\n\
+		- Technical details preserved verbatim in TECHNICAL sections\n\
+		- Focus on recent uncompressed messages for current context",
+		compression_stats.total_compressions(),
+		compression_stats.total_tokens_saved,
+		compression_stats.avg_compression_ratio() * 100.0
+	));
+}
+
 /// High-level function to send a chat completion with input validation and context management
 /// This function checks input size and prompts user for handling when limits are exceeded
 pub async fn chat_completion_with_validation(

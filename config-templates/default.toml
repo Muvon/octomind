@@ -951,6 +951,29 @@ hints_min_interval = 5
 # Example: 6 = after 3 exchanges (6 turns), AI can compress older conversation
 min_conversation_turns = 0
 
+# Adaptive pressure-based compression (SOTA approach)
+# When enabled, compression triggers based on context usage instead of fixed turn count
+# Research shows compression at 25% context usage yields better results than 85%
+adaptive_threshold = false
+# Trigger compression when context reaches this percentage (0.0-1.0)
+# Recommended: 0.25 (compress at 25% context usage for proactive management)
+pressure_trigger = 0.25
+
+# Compression aggressiveness scales with context pressure
+# Each level defines: threshold (when to apply) and target_ratio (compression strength)
+# Example: At 50% context usage, compress to 1/4 size (4x compression)
+[[compression.pressure_levels]]
+threshold = 0.25
+target_ratio = 2.0  # Light: 50% reduction
+
+[[compression.pressure_levels]]
+threshold = 0.50
+target_ratio = 4.0  # Medium: 75% reduction
+
+[[compression.pressure_levels]]
+threshold = 0.75
+target_ratio = 8.0  # Aggressive: 87.5% reduction
+
 # Optional model for compression decisions and summary generation
 # Use a fast, cheap model for YES/NO decisions and summaries to reduce costs
 # If not set, uses the session's main model (more expensive)

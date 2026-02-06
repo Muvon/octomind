@@ -32,7 +32,7 @@ pub mod memory_storage;
 pub mod storage;
 
 pub use compression::{
-	process_pending_compression, process_pending_phase_compression,
+	has_pending_compression, process_pending_compression, process_pending_phase_compression,
 	process_pending_project_compression, set_pending_compression_range, CompressionMetrics,
 	PhaseCompression, ProjectCompression,
 };

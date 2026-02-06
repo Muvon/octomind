@@ -64,7 +64,7 @@ pub async fn check_and_truncate_context_with_cancellation(
 		return Ok(());
 	}
 
-	let current_tokens = crate::session::estimate_message_tokens(&chat_session.session.messages);
+	let current_tokens = crate::session::estimate_session_tokens(&chat_session.session.messages);
 
 	// ADAPTIVE THRESHOLD LOGIC: Calculate smart threshold based on recent continuation
 	let effective_threshold = calculate_effective_threshold(chat_session, config);
@@ -244,7 +244,7 @@ pub async fn perform_simple_boundary_truncation(
 	let original_count = chat_session.session.messages.len();
 	chat_session.session.messages = final_messages;
 
-	let new_token_count = crate::session::estimate_message_tokens(&chat_session.session.messages);
+	let new_token_count = crate::session::estimate_session_tokens(&chat_session.session.messages);
 	let tokens_saved = current_tokens.saturating_sub(new_token_count);
 	let new_count = chat_session.session.messages.len();
 

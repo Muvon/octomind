@@ -102,6 +102,45 @@ impl CostTracker {
 		Self::display_cost_breakdown(chat_session);
 	}
 
+	/// Display compression result with consistent formatting
+	///
+	/// Formats compression messages to match cost display style with separator lines.
+	/// Uses type-specific colors for visual distinction.
+	///
+	/// # Arguments
+	/// * `compression_type` - Type of compression: "Task", "Phase", "Project", "Conversation"
+	/// * `metrics` - Compression metrics (messages removed, tokens saved, ratio)
+	pub fn display_compression_result(
+		compression_type: &str,
+		metrics: &crate::mcp::dev::plan::compression::CompressionMetrics,
+	) {
+		use crate::log_info;
+		use colored::Colorize;
+
+		// Type-specific colors for visual distinction
+		let type_label = match compression_type {
+			"Task" => "task".bright_cyan(),
+			"Phase" => "phase".bright_magenta(),
+			"Project" => "project".bright_yellow(),
+			"Conversation" => "conversation".bright_green(),
+			_ => compression_type.bright_white(),
+		};
+
+		// Format numbers with proper styling
+		let msgs_removed = format!("{}", metrics.messages_removed).bright_white();
+		let tokens_saved = format!("{}", metrics.tokens_saved).bright_green();
+		let ratio_pct = format!("{:.1}%", metrics.compression_ratio * 100.0).bright_yellow();
+
+		// Display with consistent separator style matching cost display
+		log_info!(
+			" ── {} compression: {} msgs → {} tokens saved ({} reduction) ──",
+			type_label,
+			msgs_removed,
+			tokens_saved,
+			ratio_pct
+		);
+	}
+
 	/// Display session usage statistics
 	pub fn display_session_usage(chat_session: &ChatSession) {
 		use crate::log_info;

@@ -38,20 +38,68 @@ pub fn estimate_tokens(text: &str) -> usize {
 	tokens.len()
 }
 
-// Estimate tokens for a full message list
-pub fn estimate_message_tokens(messages: &[crate::session::Message]) -> usize {
-	let mut total = 0;
+/// Calculate tokens for a single message including ALL fields
+///
+/// Implements OpenAI's official token counting formula:
+/// - Base overhead: 3 tokens per message
+/// - role, content, tool_calls, thinking, name, images
+///
+/// Based on: https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb
+pub fn estimate_message_tokens(message: &crate::session::Message) -> usize {
+	let mut tokens = 0;
 
-	for msg in messages {
-		// Add ~4 tokens for role
-		total += 4;
+	// Per-message overhead (OpenAI formula: 3 tokens for message formatting)
+	tokens += 3;
 
-		// Add content tokens
-		total += estimate_tokens(&msg.content);
+	// Count role tokens
+	tokens += estimate_tokens(&message.role);
+
+	// Count content tokens
+	if !message.content.is_empty() {
+		tokens += estimate_tokens(&message.content);
 	}
 
-	// Add some overhead for message formatting
-	total += messages.len() * 2;
+	// Count tool_calls tokens if present (can be MASSIVE - 500-2000 tokens per call)
+	if let Some(tool_calls) = &message.tool_calls {
+		if let Ok(json_str) = serde_json::to_string(tool_calls) {
+			tokens += estimate_tokens(&json_str);
+		}
+	}
+
+	// Count thinking tokens if present
+	if let Some(thinking) = &message.thinking {
+		if let Ok(json_str) = serde_json::to_string(thinking) {
+			tokens += estimate_tokens(&json_str);
+		}
+	}
+
+	// Count name field tokens if present (with +1 overhead per OpenAI formula)
+	if let Some(name) = &message.name {
+		tokens += estimate_tokens(name);
+		tokens += 1;
+	}
+
+	// Count image tokens if present
+	if let Some(images) = &message.images {
+		tokens += images.len() * 85;
+	}
+
+	tokens
+}
+
+// Estimate tokens for multiple messages
+pub fn estimate_session_tokens(messages: &[crate::session::Message]) -> usize {
+	let mut total = 0;
+
+	// Count each message
+	for msg in messages {
+		total += estimate_message_tokens(msg);
+	}
+
+	// Add conversation priming overhead (OpenAI formula: +3 for <|start|>assistant<|message|>)
+	if !messages.is_empty() {
+		total += 3;
+	}
 
 	total
 }
@@ -63,8 +111,8 @@ pub fn estimate_full_context_tokens(
 	system_prompt: Option<&str>,
 	tools: Option<&[crate::mcp::McpFunction]>,
 ) -> usize {
-	// Start with basic message tokens
-	let mut total = estimate_message_tokens(messages);
+	// Start with session tokens
+	let mut total = estimate_session_tokens(messages);
 
 	// Add system prompt tokens if present
 	if let Some(prompt) = system_prompt {

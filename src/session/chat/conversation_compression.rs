@@ -332,17 +332,16 @@ fn apply_compression(
 
 	// Calculate metrics
 	let tokens_saved = tokens_before.saturating_sub(tokens_after);
-	let compression_ratio = if tokens_before > 0 {
-		tokens_saved as f64 / tokens_before as f64
-	} else {
-		0.0
-	};
 
-	log_info!(
-		"✅ Conversation compressed: {} messages → summary, {} tokens saved ({:.1}% reduction)",
+	let metrics = crate::mcp::dev::plan::compression::CompressionMetrics::new(
 		messages_removed,
 		tokens_saved,
-		compression_ratio * 100.0
+		tokens_before,
+	);
+
+	crate::session::chat::cost_tracker::CostTracker::display_compression_result(
+		"Conversation",
+		&metrics,
 	);
 
 	// Track stats
@@ -424,7 +423,8 @@ fn find_compression_range(messages: &[crate::session::Message]) -> Result<(usize
 	Ok((start_idx, end_idx))
 }
 
-/// Calculate tokens in message range
+/// Calculate tokens in message range using accurate token counting
+/// This now counts ALL message fields: content, tool_calls, thinking, images, etc.
 fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usize) -> Result<u64> {
 	let mut total_tokens = 0u64;
 
@@ -438,9 +438,10 @@ fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usiz
 	}
 
 	// Count tokens in range (start_idx+1 to end_idx inclusive, matching removal logic)
+	// Use accurate token counting that includes tool_calls, thinking, images, etc.
 	for i in (start_idx + 1)..=end_idx {
 		if let Some(message) = session.session.messages.get(i) {
-			let tokens = estimate_tokens(&message.content) as u64;
+			let tokens = crate::session::estimate_message_tokens(message) as u64;
 			total_tokens += tokens;
 		}
 	}

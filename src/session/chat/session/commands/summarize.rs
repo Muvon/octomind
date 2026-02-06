@@ -21,13 +21,13 @@ use anyhow::Result;
 
 pub async fn handle_summarize(session: &mut ChatSession, config: &Config) -> Result<CommandResult> {
 	// Estimate current token usage
-	let current_tokens = crate::session::estimate_message_tokens(&session.session.messages);
+	let current_tokens = crate::session::estimate_session_tokens(&session.session.messages);
 
 	// Use the smart full summarization logic
 	match crate::session::chat::perform_smart_full_summarization(session, config).await {
 		Ok(()) => {
 			// Calculate new token count after summarization
-			let new_tokens = crate::session::estimate_message_tokens(&session.session.messages);
+			let new_tokens = crate::session::estimate_session_tokens(&session.session.messages);
 			let tokens_saved = current_tokens.saturating_sub(new_tokens);
 
 			Ok(CommandResult::HandledWithOutput(CommandOutput::Summarize {

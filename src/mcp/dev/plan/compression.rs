@@ -332,7 +332,8 @@ fn format_compressed_summary(task: &PlanTask, summary: &str, compression_id: &st
 	)
 }
 
-/// Calculate total tokens in message range
+/// Calculate total tokens in message range using accurate token counting
+/// This now counts ALL message fields: content, tool_calls, thinking, images, etc.
 fn calculate_range_tokens(session: &ChatSession, range: &MessageRange) -> Result<u64> {
 	let mut total_tokens = 0u64;
 
@@ -346,9 +347,10 @@ fn calculate_range_tokens(session: &ChatSession, range: &MessageRange) -> Result
 	}
 
 	// Count tokens in range (start_index+1 to end_index inclusive, matching message removal)
+	// Use accurate token counting that includes tool_calls, thinking, images, etc.
 	for i in (range.start_index + 1)..=range.end_index {
 		if let Some(message) = session.session.messages.get(i) {
-			let tokens = estimate_tokens(&message.content) as u64;
+			let tokens = crate::session::estimate_message_tokens(message) as u64;
 			total_tokens += tokens;
 		}
 	}

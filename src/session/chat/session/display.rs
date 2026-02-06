@@ -872,8 +872,7 @@ impl ChatSession {
 			};
 
 			// Calculate tokens with estimated tool overhead
-			let mut total =
-				crate::session::token_counter::estimate_message_tokens(&self.session.messages);
+			let mut total = crate::session::estimate_session_tokens(&self.session.messages);
 
 			// Add system prompt tokens
 			total += crate::session::token_counter::estimate_tokens(system_prompt);

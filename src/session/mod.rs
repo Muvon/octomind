@@ -44,7 +44,7 @@ pub use project_context::ProjectContext;
 pub use smart_summarizer::SmartSummarizer;
 pub use token_counter::{
 	calculate_minimum_session_tokens, estimate_full_context_tokens, estimate_message_tokens,
-	estimate_tokens, validate_session_token_threshold,
+	estimate_session_tokens, estimate_tokens, validate_session_token_threshold,
 }; // Export token counting functions // Export cache management
 
 // Re-export constants
@@ -1363,7 +1363,7 @@ pub async fn chat_completion_with_validation(
 		)
 	} else {
 		// Fallback for cases without chat session - use basic counting
-		estimate_message_tokens(params.messages)
+		estimate_session_tokens(params.messages)
 	};
 
 	// Check if our total input exceeds what the provider can handle

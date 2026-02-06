@@ -25,7 +25,7 @@ pub async fn handle_truncate(
 	role: &str,
 ) -> Result<CommandResult> {
 	// Estimate current token usage
-	let current_tokens = crate::session::estimate_message_tokens(&session.session.messages);
+	let current_tokens = crate::session::estimate_session_tokens(&session.session.messages);
 
 	// Use the simple boundary truncation logic for manual /truncate command
 	match crate::session::chat::perform_simple_boundary_truncation(
@@ -38,7 +38,7 @@ pub async fn handle_truncate(
 	{
 		Ok(()) => {
 			// Calculate new token count after truncation
-			let new_tokens = crate::session::estimate_message_tokens(&session.session.messages);
+			let new_tokens = crate::session::estimate_session_tokens(&session.session.messages);
 			let tokens_saved = current_tokens.saturating_sub(new_tokens);
 
 			Ok(CommandResult::HandledWithOutput(CommandOutput::Truncate {

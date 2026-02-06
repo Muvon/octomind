@@ -201,11 +201,8 @@ pub async fn process_tool_results(
 				.info
 				.compression_stats
 				.add_task_compression(metrics.messages_removed, metrics.tokens_saved);
-			log_info!(
-				"✅ Task compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
-				metrics.messages_removed,
-				metrics.tokens_saved,
-				metrics.compression_ratio * 100.0
+			crate::session::chat::cost_tracker::CostTracker::display_compression_result(
+				"Task", &metrics,
 			);
 		}
 		Ok(None) => {
@@ -228,11 +225,8 @@ pub async fn process_tool_results(
 				.info
 				.compression_stats
 				.add_phase_compression(metrics.messages_removed, metrics.tokens_saved);
-			log_info!(
-				"✅ Phase compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
-				metrics.messages_removed,
-				metrics.tokens_saved,
-				metrics.compression_ratio * 100.0
+			crate::session::chat::cost_tracker::CostTracker::display_compression_result(
+				"Phase", &metrics,
 			);
 		}
 		Ok(None) => {}
@@ -251,11 +245,8 @@ pub async fn process_tool_results(
 				.info
 				.compression_stats
 				.add_project_compression(metrics.messages_removed, metrics.tokens_saved);
-			log_info!(
-				"✅ Project compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
-				metrics.messages_removed,
-				metrics.tokens_saved,
-				metrics.compression_ratio * 100.0
+			crate::session::chat::cost_tracker::CostTracker::display_compression_result(
+				"Project", &metrics,
 			);
 		}
 		Ok(None) => {}

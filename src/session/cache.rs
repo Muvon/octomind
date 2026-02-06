@@ -415,14 +415,14 @@ impl CacheManager {
 	}
 
 	/// Estimate current session tokens for threshold checking
-	/// This provides a rough estimate of tokens in the session messages that are not cached
+	/// Uses accurate token counting that includes all message fields
 	pub fn estimate_current_session_tokens(&self, session: &Session) -> (u64, u64) {
 		let mut total_tokens = 0;
 		let mut non_cached_tokens = 0;
 
 		for msg in &session.messages {
-			// Estimate tokens for this message (roughly 4 chars per token)
-			let message_tokens = (msg.content.len() / 4) as u64 + 4; // +4 for role overhead
+			// Use accurate token counting that includes tool_calls, thinking, images, etc.
+			let message_tokens = crate::session::estimate_message_tokens(msg) as u64;
 
 			total_tokens += message_tokens;
 

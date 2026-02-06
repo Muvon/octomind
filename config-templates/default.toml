@@ -931,3 +931,16 @@ prompt = """Please help debug the issue above:
 - Recommend logging or monitoring points
 - Provide step-by-step troubleshooting guide
 - Identify common pitfalls in this scenario"""
+
+# ═══════════════════════════════════════════════════════════════════════
+# PLAN-DRIVEN AUTONOMOUS COMPRESSION
+# Configure automatic context compression for plan-driven sessions
+# ═══════════════════════════════════════════════════════════════════════
+
+[compression]
+# Enable adaptive compression hints (suggests plan(next) when context pressure is high)
+hints_enabled = true
+# Context pressure threshold (0.0-1.0) at which to start showing hints
+hints_pressure_threshold = 0.7
+# Minimum tool executions between hints to avoid spamming
+hints_min_interval = 5

@@ -399,6 +399,15 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 					return Ok(());
 				}
 
+				// 🗜️ PLAN-DRIVEN COMPRESSION: Track message count before tool execution
+				// This start index will be used if a plan tool is executed
+				// Guard against parallel plan tool execution
+				if let Err(e) = crate::mcp::dev::plan::set_current_task_start_index(
+					params.chat_session.get_message_count(),
+				) {
+					crate::log_debug!("Plan compression tracking skipped: {}", e);
+				}
+
 				// Execute all tool calls in parallel using the new module
 				let (tool_results, total_tool_time_ms) =
 					match tool_execution::execute_tools_parallel(
@@ -518,6 +527,10 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		}
 	}
 
+	// ALWAYS clear plan tool execution guard after tool processing
+	// This must be outside all conditionals to ensure guard is always cleared
+	crate::mcp::dev::plan::clear_plan_tool_executing();
+
 	// CRITICAL FIX: Check for continuation after tool processing loop
 	// When continuation is triggered during tool execution, we broke out of the tool loop (line 430)
 	// The main session runner will detect continuation_pending and handle it automatically (runner.rs:984-988)
@@ -547,9 +560,15 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.role,
 		params.is_interactive,
 	)?;
+
+	// Inject compression hint if applicable (non-intrusive, appended to response)
+	if let Some(hint) = params.chat_session.get_compression_hint(params.config) {
+		println!("{}", hint);
+	}
 	Ok(())
 }
 
+/// Process continuation message immediately after session reset
 /// Process continuation message immediately after session reset
 /// This makes the continuation completely invisible to the user
 pub async fn process_continuation_message_immediately(

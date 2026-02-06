@@ -28,6 +28,12 @@ pub struct ExecutionPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageRange {
+	pub start_index: usize, // First message index when task started
+	pub end_index: usize,   // Last message index before compression
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanTask {
 	pub title: String,
 	pub description: String, // NEW: Detailed explanation of what needs to be done
@@ -35,6 +41,8 @@ pub struct PlanTask {
 	pub summary: Option<String>, // Final summary from `next` command
 	pub status: TaskStatus,
 	pub completed_at: Option<DateTime<Utc>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub message_range: Option<MessageRange>, // Message range for compression
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,4 +104,14 @@ pub trait PlanStorage {
 
 	/// Get plan title
 	fn get_plan_title(&self) -> Result<String>;
+
+	/// Set message range for current task (for compression tracking)
+	fn set_current_task_message_range(
+		&mut self,
+		start_index: usize,
+		end_index: usize,
+	) -> Result<()>;
+
+	/// Get the completed task with its message range (for compression)
+	fn get_last_completed_task(&self) -> Result<Option<PlanTask>>;
 }

@@ -38,6 +38,59 @@ use std::sync::{Arc, Mutex};
 // Global storage instance - using memory storage for now
 lazy_static::lazy_static! {
 	static ref PLAN_STORAGE: Arc<Mutex<MemoryPlanStorage>> = Arc::new(Mutex::new(MemoryPlanStorage::new()));
+	// Track when the current task started (message index)
+	// This is set by the session when plan(start) or plan(next) is called
+	static ref CURRENT_TASK_START_INDEX: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
+	// Guard against parallel plan tool execution
+	static ref PLAN_TOOL_EXECUTING: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+}
+
+/// Set the start index for the current task (called by session before plan tool execution)
+pub fn set_current_task_start_index(index: usize) -> Result<()> {
+	let mut executing = PLAN_TOOL_EXECUTING.lock().unwrap();
+	if *executing {
+		return Err(anyhow::anyhow!(
+			"Cannot set start index: another plan tool is currently executing. \
+			Plan tools must execute sequentially to ensure correct compression."
+		));
+	}
+	*executing = true;
+
+	let mut start_index = CURRENT_TASK_START_INDEX.lock().unwrap();
+	*start_index = Some(index);
+	crate::log_debug!("Plan task start index set to: {}", index);
+	Ok(())
+}
+
+/// Mark plan tool execution as complete (called after tool execution)
+pub fn clear_plan_tool_executing() {
+	let mut executing = PLAN_TOOL_EXECUTING.lock().unwrap();
+	*executing = false;
+	crate::log_debug!("Plan tool execution guard cleared");
+}
+
+/// Get and clear the current task start index (called when setting message range)
+pub fn get_and_clear_start_index() -> Option<usize> {
+	let mut start_index = CURRENT_TASK_START_INDEX.lock().unwrap();
+	start_index.take()
+}
+
+/// Check if there's an active plan (for compression hints)
+pub fn has_active_plan() -> bool {
+	let storage = PLAN_STORAGE.lock().unwrap();
+	storage.has_active_plan().unwrap_or(false)
+}
+
+/// Set message range for the last completed task (called from session after plan(next))
+pub fn set_last_task_message_range(start_index: usize, end_index: usize) -> Result<()> {
+	let mut storage = PLAN_STORAGE.lock().unwrap();
+	storage.set_current_task_message_range(start_index, end_index)
+}
+
+/// Get the last completed task for compression (called from session)
+pub fn get_last_completed_task_for_compression() -> Option<super::storage::PlanTask> {
+	let storage = PLAN_STORAGE.lock().unwrap();
+	storage.get_last_completed_task().ok().flatten()
 }
 
 /// Execute plan tool command
@@ -383,6 +436,9 @@ async fn handle_next_command(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	}
 
+	// Get the completed task for compression
+	let completed_task = storage.get_last_completed_task().ok().flatten();
+
 	// Check if more tasks remain
 	let has_more = storage.has_more_tasks().unwrap_or(false);
 	let plan_title = storage
@@ -397,6 +453,11 @@ async fn handle_next_command(call: &McpToolCall) -> Result<McpToolResult> {
 	} else {
 		format!("Final task completed: {content}\n\nAll tasks in plan '{plan_title}' are now complete. Use 'done' command to finalize.")
 	};
+
+	// Request compression if we have a completed task
+	if let Some(task) = completed_task {
+		super::compression::request_compression(task);
+	}
 
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),

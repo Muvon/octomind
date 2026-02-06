@@ -155,6 +155,59 @@ pub async fn process_tool_results(
 		}
 	}
 
+	// 🗜️ PLAN-DRIVEN COMPRESSION: Process any pending compression requests
+	// This happens after tool results are added but before continuation check
+	// Compression can significantly reduce context, potentially avoiding continuation
+
+	// Check if any plan tool was executed and set message range if needed
+	let mut plan_tool_executed = false;
+	for tool_result in &tool_results {
+		if tool_result.tool_name == "plan" {
+			plan_tool_executed = true;
+			break;
+		}
+	}
+
+	// If plan tool was executed, set the message range for compression
+	if plan_tool_executed {
+		// Get the start index from the global state (set by session before tool execution)
+		if let Some(start_index) = crate::mcp::dev::plan::core::get_and_clear_start_index() {
+			let end_index = chat_session.get_message_count();
+			// Set the message range on the pending compression task
+			if let Err(e) =
+				crate::mcp::dev::plan::set_pending_compression_range(start_index, end_index)
+			{
+				log_debug!(
+					"Failed to set compression range: {}. Compression will be skipped.",
+					e
+				);
+			}
+		}
+	}
+
+	// Process any pending compression with proper error handling
+	match crate::mcp::dev::plan::process_pending_compression(chat_session).await {
+		Ok(Some(metrics)) => {
+			log_info!(
+				"✅ Plan compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
+				metrics.messages_removed,
+				metrics.tokens_saved,
+				metrics.compression_ratio * 100.0
+			);
+		}
+		Ok(None) => {
+			// No pending compression - this is normal
+		}
+		Err(e) => {
+			// Compression failed - log at WARN level
+			log_debug!(
+				"❌ Plan compression failed: {}. Context was not compressed.",
+				e
+			);
+			// Note: Session continues normally - compression is best-effort
+		}
+	}
+
 	// BATCH TRUNCATION: Check once after all small tool results are processed
 	if needs_truncation_check {
 		let truncation_start = std::time::Instant::now();

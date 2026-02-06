@@ -26,13 +26,23 @@
 ///
 /// Parameters are strictly validated. All errors use MCP-compliant error responses.
 /// See core.rs for full logic and error handling.
+pub mod compression;
 pub mod core;
 pub mod memory_storage;
 pub mod storage;
 
-pub use core::{clear_plan_data, execute_plan};
+pub use compression::{
+	compress_completed_task, get_compression_id, has_pending_compression,
+	process_pending_compression, request_compression, set_pending_compression_range,
+	CompressionMetrics,
+};
+pub use core::{
+	clear_plan_data, clear_plan_tool_executing, execute_plan, get_and_clear_start_index,
+	get_last_completed_task_for_compression, has_active_plan, set_current_task_start_index,
+	set_last_task_message_range,
+};
 pub use memory_storage::MemoryPlanStorage;
-pub use storage::{ExecutionPlan, PlanStatus, PlanStorage, PlanTask, TaskStatus};
+pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};
 
 use crate::mcp::McpFunction;
 use serde_json::json;
@@ -135,10 +145,10 @@ Example: tasks=[{\"title\": \"Setup database\", \"description\": \"Install Postg
                 },
                 "content": {
                     "type": "string",
-                    "description": "Progress details for 'step' command (adds to current task without completing), completion summary for 'next' command (marks task as done), or final summary for 'done' command"
+                    "description": "Progress/completion details. REQUIRED for 'step' (adds progress), 'next' (marks task complete), and 'done' (final summary). NOT required for 'start', 'list', or 'reset'."
                 }
             },
-            "required": ["command"],
+            "required": ["command", "content"],
             "additionalProperties": false
         }),
     }

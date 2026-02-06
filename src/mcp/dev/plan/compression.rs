@@ -23,7 +23,7 @@
 use super::storage::{MessageRange, PlanTask};
 use crate::session::chat::session::ChatSession;
 use crate::session::estimate_tokens;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -64,7 +64,9 @@ pub fn set_pending_compression_range(start_index: usize, end_index: usize) -> Re
 
 /// Check if there's a pending compression request and execute it
 /// This is called from the session response processing after tool execution
-pub async fn process_pending_compression(session: &mut ChatSession) -> Result<Option<CompressionMetrics>> {
+pub async fn process_pending_compression(
+	session: &mut ChatSession,
+) -> Result<Option<CompressionMetrics>> {
 	let task = {
 		let mut pending = PENDING_COMPRESSION.lock().unwrap();
 		pending.take() // Take the task, leaving None
@@ -77,6 +79,25 @@ pub async fn process_pending_compression(session: &mut ChatSession) -> Result<Op
 	} else {
 		Ok(None)
 	}
+}
+
+/// Check if there's a pending compression request
+pub fn has_pending_compression() -> bool {
+	PENDING_COMPRESSION.lock().unwrap().is_some()
+}
+
+/// Get the current compression ID for logging/tracking
+/// Uses full nanosecond timestamp for uniqueness
+pub fn get_compression_id() -> Option<String> {
+	let now = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default();
+
+	Some(format!(
+		"comp_{}_{}",
+		now.as_millis(),
+		now.as_nanos() // Full nanoseconds for uniqueness
+	))
 }
 
 /// Metrics tracking compression effectiveness
@@ -122,16 +143,16 @@ pub async fn compress_completed_task(
 	session: &mut ChatSession,
 	task: &PlanTask,
 ) -> Result<CompressionMetrics> {
-	// Validate task has required data
-	let _summary = task
+	// Validate task has required data (fail fast with clear error)
+	let summary = task
 		.summary
 		.as_ref()
-		.ok_or_else(|| anyhow::anyhow!("Task has no summary - cannot compress"))?;
+		.ok_or_else(|| anyhow!("Task has no summary - cannot compress"))?;
 
 	let message_range = task
 		.message_range
 		.as_ref()
-		.ok_or_else(|| anyhow::anyhow!("Task has no message range - cannot compress"))?;
+		.ok_or_else(|| anyhow!("Task has no message range - cannot compress"))?;
 
 	crate::log_debug!(
 		"Compressing task '{}' (messages {}-{})",
@@ -143,17 +164,18 @@ pub async fn compress_completed_task(
 	// Calculate tokens before compression (for metrics)
 	let tokens_before = calculate_range_tokens(session, message_range)?;
 
-	// Create compressed knowledge entry
-	let compressed_entry = format_compressed_summary(task);
+	// Get compression ID for tracking
+	let compression_id = get_compression_id().unwrap_or_else(|| "unknown".to_string());
+
+	// Create compressed knowledge entry with validated summary
+	let compressed_entry = format_compressed_summary(task, summary, &compression_id);
 
 	// Calculate tokens in compressed entry
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
 	// Remove messages in range
-	let messages_removed = session.remove_messages_in_range(
-		message_range.start_index,
-		message_range.end_index,
-	)?;
+	let messages_removed =
+		session.remove_messages_in_range(message_range.start_index, message_range.end_index)?;
 
 	// Insert compressed summary
 	session.insert_compressed_knowledge(message_range.start_index, compressed_entry)?;
@@ -173,8 +195,8 @@ pub async fn compress_completed_task(
 }
 
 /// Format task summary as structured knowledge block
-fn format_compressed_summary(task: &PlanTask) -> String {
-	let summary = task.summary.as_ref().unwrap(); // Safe: validated in caller
+/// Uses validated summary to avoid unwrap panic
+fn format_compressed_summary(task: &PlanTask, summary: &str, compression_id: &str) -> String {
 	let completed_at = task
 		.completed_at
 		.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -186,19 +208,17 @@ fn format_compressed_summary(task: &PlanTask) -> String {
 		 **Summary**: {}\n\n\
 		 **Completed**: {}\n\n\
 		 ---\n\
-		 *This is a compressed summary. Detailed tool calls and intermediate work have been removed to optimize context.*",
+		 *Compressed (ID: {}) - Detailed tool calls and intermediate work have been removed to optimize context.*",
 		task.title,
 		task.description,
 		summary,
-		completed_at
+		completed_at,
+		compression_id
 	)
 }
 
 /// Calculate total tokens in message range
-fn calculate_range_tokens(
-	session: &ChatSession,
-	range: &MessageRange,
-) -> Result<u64> {
+fn calculate_range_tokens(session: &ChatSession, range: &MessageRange) -> Result<u64> {
 	let mut total_tokens = 0u64;
 
 	// Validate range
@@ -210,8 +230,8 @@ fn calculate_range_tokens(
 		return Err(anyhow::anyhow!("Invalid end_index in message range"));
 	}
 
-	// Count tokens in range (start_index+1 to end_index-1, the messages that will be removed)
-	for i in (range.start_index + 1)..range.end_index {
+	// Count tokens in range (start_index+1 to end_index inclusive, matching message removal)
+	for i in (range.start_index + 1)..=range.end_index {
 		if let Some(message) = session.session.messages.get(i) {
 			let tokens = estimate_tokens(&message.content) as u64;
 			total_tokens += tokens;
@@ -253,10 +273,11 @@ mod tests {
 			message_range: None,
 		};
 
-		let formatted = format_compressed_summary(&task);
+		let formatted = format_compressed_summary(&task, "Task completed successfully", "test_123");
 		assert!(formatted.contains("## Task Completed: Test Task"));
 		assert!(formatted.contains("**Description**: Test description"));
 		assert!(formatted.contains("**Summary**: Task completed successfully"));
-		assert!(formatted.contains("compressed summary"));
+		assert!(formatted.contains("Compressed"));
+		assert!(formatted.contains("test_123"));
 	}
 }

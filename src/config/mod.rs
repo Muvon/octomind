@@ -115,6 +115,16 @@ pub struct ShellConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CompressionHintConfig {
+	/// Enable adaptive compression hints
+	pub hints_enabled: bool,
+	/// Context pressure threshold (0.0-1.0) at which to start showing hints
+	pub hints_pressure_threshold: f64,
+	/// Minimum tool executions between hints
+	pub hints_min_interval: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {
 	/// Name of the prompt (used with /prompt command)
 	pub name: String,
@@ -202,6 +212,9 @@ pub struct Config {
 
 	// Prompt template configurations
 	pub prompts: Vec<PromptConfig>,
+
+	// Plan-driven compression configuration
+	pub compression: CompressionHintConfig,
 
 	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,

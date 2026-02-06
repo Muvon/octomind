@@ -383,6 +383,8 @@ impl GenericLayer {
 			was_resumed: false,               // Layers are never resumed sessions
 			pending_prompt: None,             // Initialize pending prompt
 			initial_status_shown: true,       // Layers don't show status
+			compression_hint_count: 0,        // Initialize compression hint counter
+			last_compression_hint_shown: 0,   // Initialize last hint timestamp
 		}
 	}
 

@@ -16,7 +16,8 @@
 
 use super::utils::format_number;
 use crate::config::Config;
-use crate::session::{get_sessions_dir, load_session, Session};
+use crate::mcp::dev::plan;
+use crate::session::{estimate_full_context_tokens, get_sessions_dir, load_session, Session};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
@@ -150,6 +151,9 @@ pub struct ChatSession {
 	pub was_resumed: bool, // Flag indicating if this session was resumed from an existing file
 	pub pending_prompt: Option<String>, // Pending prompt text to be processed as user input
 	pub initial_status_shown: bool, // Flag to track if initial status line was displayed
+	// Compression hint tracking
+	pub compression_hint_count: usize, // Counter for compression hints
+	pub last_compression_hint_shown: u64, // Timestamp of last compression hint
 }
 
 /// Parameters for creating a new ChatSession
@@ -244,6 +248,8 @@ impl ChatSession {
 			was_resumed: false,                 // This is a new session
 			pending_prompt: None,               // Initialize pending prompt
 			initial_status_shown: false,        // Initialize status display flag
+			compression_hint_count: 0,          // Initialize compression hint counter
+			last_compression_hint_shown: 0,     // Initialize last hint timestamp
 		}
 	}
 
@@ -412,6 +418,8 @@ impl ChatSession {
 						was_resumed: true,                  // This session was resumed from file
 						pending_prompt: None,               // Initialize pending prompt
 						initial_status_shown: true,         // Don't show status for resumed sessions
+						compression_hint_count: 0,          // Initialize compression hint counter
+						last_compression_hint_shown: 0,     // Initialize last hint timestamp
 					};
 
 					// Initialize spending threshold checkpoint for loaded sessions
@@ -665,6 +673,175 @@ impl ChatSession {
 	/// Check if continuation is currently disabled
 	pub fn is_continuation_disabled(&self) -> bool {
 		self.continuation_disabled
+	}
+
+	/// Get current message count (for plan compression tracking)
+	pub fn get_message_count(&self) -> usize {
+		self.session.messages.len()
+	}
+
+	/// Remove messages in specified range for compression
+	///
+	/// This method safely removes messages between start_index (exclusive) and end_index (inclusive).
+	/// It preserves the message at start_index and removes everything up to and including end_index.
+	/// The compressed summary will be inserted at start_index + 1.
+	///
+	/// # Arguments
+	/// * `start_index` - Start of range (this message is kept)
+	/// * `end_index` - End of range (messages up to and including this are removed)
+	///
+	/// # Returns
+	/// Number of messages actually removed
+	///
+	/// # Example
+	/// If start_index=5 and end_index=10:
+	/// - Message 5 is kept (e.g., "Let me investigate...")
+	/// - Messages 6, 7, 8, 9, 10 are removed (tool results, plan result)
+	/// - Compressed summary inserted after message 5
+	pub fn remove_messages_in_range(
+		&mut self,
+		start_index: usize,
+		end_index: usize,
+	) -> Result<usize> {
+		// Validate range
+		if start_index >= self.session.messages.len() {
+			return Err(anyhow::anyhow!(
+				"Invalid start_index: {} (total messages: {})",
+				start_index,
+				self.session.messages.len()
+			));
+		}
+
+		if end_index >= self.session.messages.len() {
+			return Err(anyhow::anyhow!(
+				"Invalid end_index: {} (total messages: {}). end_index must be less than total messages since removal uses inclusive range.",
+				end_index,
+				self.session.messages.len()
+			));
+		}
+
+		if start_index >= end_index {
+			return Err(anyhow::anyhow!(
+				"Invalid range: start_index ({}) must be less than end_index ({})",
+				start_index,
+				end_index
+			));
+		}
+
+		// Calculate how many messages to remove (inclusive end_index)
+		let messages_to_remove = end_index - start_index;
+
+		if messages_to_remove == 0 {
+			crate::log_debug!(
+				"No messages to remove in range {}-{}",
+				start_index,
+				end_index
+			);
+			return Ok(0);
+		}
+
+		// Remove messages from start_index+1 through end_index (inclusive)
+		// Using ..= for inclusive end index
+		self.session.messages.drain(start_index + 1..=end_index);
+
+		crate::log_debug!(
+			"Compressed {} messages (range {}-{})",
+			messages_to_remove,
+			start_index,
+			end_index
+		);
+
+		Ok(messages_to_remove)
+	}
+
+	/// Insert compressed knowledge entry as system message
+	///
+	/// This injects a structured summary of completed work into the session history,
+	/// replacing the detailed tool calls and intermediate steps.
+	///
+	/// # Arguments
+	/// * `index` - Position to insert (after this index)
+	/// * `content` - Formatted summary content
+	pub fn insert_compressed_knowledge(&mut self, index: usize, content: String) -> Result<()> {
+		use crate::session::Message;
+
+		if index >= self.session.messages.len() {
+			return Err(anyhow::anyhow!(
+				"Invalid index: {} (total messages: {})",
+				index,
+				self.session.messages.len()
+			));
+		}
+
+		let compressed_msg = Message {
+			role: "assistant".to_string(), // AI-generated summary content
+			content,
+			timestamp: std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			cached: false,
+			tool_call_id: None,
+			name: Some("plan_compression".to_string()),
+			tool_calls: None,
+			images: None,
+			thinking: None,
+			id: None,
+		};
+
+		self.session.messages.insert(index + 1, compressed_msg);
+
+		crate::log_debug!("Inserted compressed knowledge at index {}", index + 1);
+
+		Ok(())
+	}
+
+	/// Check if compression hint should be shown based on context pressure
+	pub fn should_show_compression_hint(&mut self, config: &Config) -> bool {
+		// Only suggest if there's an active plan
+		if !plan::has_active_plan() {
+			return false;
+		}
+
+		// Check if hints are enabled in config
+		if !config.compression.hints_enabled {
+			return false;
+		}
+
+		// Check if compression is not disabled
+		if self.continuation_disabled {
+			return false;
+		}
+
+		// Calculate context pressure
+		let current_tokens = estimate_full_context_tokens(&self.session.messages, None, None);
+		let max_tokens = config.max_session_tokens_threshold;
+
+		if max_tokens == 0 {
+			return false; // Threshold disabled
+		}
+
+		let pressure = current_tokens as f64 / max_tokens as f64;
+
+		// Only suggest at configured threshold
+		if pressure < config.compression.hints_pressure_threshold {
+			return false;
+		}
+
+		// Rate limit hints - only show every N tool executions
+		self.compression_hint_count += 1;
+		self.compression_hint_count % config.compression.hints_min_interval == 1
+	}
+
+	/// Get compression hint message if applicable
+	pub fn get_compression_hint(&mut self, config: &Config) -> Option<String> {
+		if self.should_show_compression_hint(config) {
+			Some(
+				"\n\n💡 Hint: Consider using `/plan next` to compress completed tasks and free up context space for remaining work.".to_string(),
+			)
+		} else {
+			None
+		}
 	}
 
 	/// Reinitialize session for new role - updates system prompt and MCP servers

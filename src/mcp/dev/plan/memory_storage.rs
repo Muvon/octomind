@@ -50,6 +50,7 @@ impl PlanStorage for MemoryPlanStorage {
 				summary: None,
 				status: TaskStatus::InProgress, // All tasks start as InProgress, managed by current_task_index
 				completed_at: None,
+				message_range: None, // Initialize as None, will be set during compression
 			})
 			.collect();
 
@@ -189,5 +190,52 @@ impl PlanStorage for MemoryPlanStorage {
 			.as_ref()
 			.ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.title.clone())
+	}
+
+	fn set_current_task_message_range(
+		&mut self,
+		start_index: usize,
+		end_index: usize,
+	) -> Result<()> {
+		let plan = self
+			.plan
+			.as_mut()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+
+		// Set message range for the task that was just completed (current_task_index - 1)
+		if plan.current_task_index == 0 {
+			return Err(anyhow!("No completed task to set message range for"));
+		}
+
+		let completed_task_index = plan.current_task_index - 1;
+		if completed_task_index >= plan.tasks.len() {
+			return Err(anyhow!("Invalid task index"));
+		}
+
+		plan.tasks[completed_task_index].message_range = Some(super::storage::MessageRange {
+			start_index,
+			end_index,
+		});
+
+		Ok(())
+	}
+
+	fn get_last_completed_task(&self) -> Result<Option<PlanTask>> {
+		let plan = self
+			.plan
+			.as_ref()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+
+		// Get the last completed task (current_task_index - 1)
+		if plan.current_task_index == 0 {
+			return Ok(None); // No completed tasks yet
+		}
+
+		let completed_task_index = plan.current_task_index - 1;
+		if completed_task_index >= plan.tasks.len() {
+			return Ok(None);
+		}
+
+		Ok(Some(plan.tasks[completed_task_index].clone()))
 	}
 }

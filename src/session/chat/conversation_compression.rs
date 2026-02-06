@@ -34,30 +34,32 @@ use std::sync::Arc;
 /// Check if we should ask AI about compression
 /// Returns (should_compress, target_ratio) tuple
 pub fn should_check_compression(session: &ChatSession, config: &Config) -> (bool, f64) {
-	let max_tokens = config.max_session_tokens_threshold;
-	if max_tokens == 0 {
-		return (false, 2.0); // Threshold disabled
+	// Check if compression is enabled
+	if !config.compression.adaptive_threshold {
+		return (false, 2.0);
 	}
 
-	let current_tokens = session.session.current_total_tokens;
-	let pressure = current_tokens as f64 / max_tokens as f64;
+	// CRITICAL FIX: Use full context tokens, not cumulative cache counter
+	// session.current_total_tokens tracks INPUT tokens since last cache checkpoint (resets to 0)
+	// We need the FULL conversation context size for compression threshold decisions
+	let current_tokens = estimate_full_context_tokens(&session.session.messages, None, None);
 
-	// Find target compression ratio based on pressure
+	// Find target compression ratio based on absolute token count
 	let target_ratio = config
 		.compression
 		.pressure_levels
 		.iter()
 		.rev() // Start from highest threshold
-		.find(|level| pressure >= level.threshold)
+		.find(|level| current_tokens >= level.threshold)
 		.map(|level| level.target_ratio)
 		.unwrap_or(2.0);
 
-	let should_compress = pressure >= config.compression.pressure_trigger;
+	let should_compress = current_tokens >= config.compression.pressure_trigger;
 
 	if should_compress {
 		log_debug!(
-			"Context pressure: {:.1}% → target compression: {:.1}x",
-			pressure * 100.0,
+			"Context tokens: {} → target compression: {:.1}x",
+			current_tokens,
 			target_ratio
 		);
 	}
@@ -128,8 +130,10 @@ async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config)
 	- Would compression help focus on current topics?\n\n\
 	Respond with ONLY 'YES' to compress or 'NO' to keep as-is.";
 
-	// Make lightweight API call for decision
-	let messages = vec![crate::session::Message {
+	// CRITICAL FIX: Include conversation history for AI to analyze
+	// Clone existing messages and append decision prompt
+	let mut messages = session.session.messages.clone();
+	messages.push(crate::session::Message {
 		role: "user".to_string(),
 		content: decision_prompt.to_string(),
 		timestamp: std::time::SystemTime::now()
@@ -143,7 +147,7 @@ async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config)
 		images: None,
 		thinking: None,
 		id: None,
-	}];
+	});
 
 	// Extract values before mutable borrow
 	let session_model = session.model.clone();

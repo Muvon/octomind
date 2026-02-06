@@ -945,32 +945,29 @@ hints_pressure_threshold = 0.7
 # Minimum tool executions between hints to avoid spamming
 hints_min_interval = 5
 
-# Conversation compression: AI-driven automatic compression for normal conversations
-# DEPRECATED: Use adaptive_threshold instead (legacy turn-based compression)
-# Set to 0 to disable legacy mode
-min_conversation_turns = 0
-
-# Adaptive pressure-based compression (SOTA approach) - ENABLED BY DEFAULT
-# When enabled, compression triggers based on context usage instead of fixed turn count
-# Research shows compression at 25% context usage yields better results than 85%
+# Adaptive token-based compression (SOTA approach) - ENABLED BY DEFAULT
+# When enabled, compression triggers based on absolute token count
+# Research shows proactive compression (at ~50k tokens) yields better results
 adaptive_threshold = true
-# Trigger compression when context reaches this percentage (0.0-1.0)
-# Recommended: 0.25 (compress at 25% context usage for proactive management)
-pressure_trigger = 0.25
 
-# Compression aggressiveness scales with context pressure
-# Each level defines: threshold (when to apply) and target_ratio (compression strength)
-# Example: At 50% context usage, compress to 1/4 size (4x compression)
+# Trigger compression when context reaches this many tokens
+# Recommended: 50000 (compress at 50k tokens for proactive management)
+# Set to 0 to disable compression
+pressure_trigger = 50000
+
+# Compression aggressiveness scales with absolute token count
+# Each level defines: threshold (token count) and target_ratio (compression strength)
+# Example: At 100k tokens, compress to 1/4 size (4x compression)
 [[compression.pressure_levels]]
-threshold = 0.25
+threshold = 50000
 target_ratio = 2.0  # Light: 50% reduction
 
 [[compression.pressure_levels]]
-threshold = 0.50
+threshold = 100000
 target_ratio = 4.0  # Medium: 75% reduction
 
 [[compression.pressure_levels]]
-threshold = 0.75
+threshold = 150000
 target_ratio = 8.0  # Aggressive: 87.5% reduction
 
 # Optional model for compression decisions and summary generation

@@ -116,8 +116,8 @@ pub struct ShellConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PressureLevel {
-	/// Context pressure threshold (0.0-1.0) at which this level applies
-	pub threshold: f64,
+	/// Absolute token threshold at which this level applies
+	pub threshold: usize,
 	/// Target compression ratio (e.g., 2.0 = compress to 1/2 size, 4.0 = compress to 1/4 size)
 	pub target_ratio: f64,
 }
@@ -130,21 +130,14 @@ pub struct CompressionHintConfig {
 	pub hints_pressure_threshold: f64,
 	/// Minimum tool executions between hints
 	pub hints_min_interval: usize,
-	/// Minimum conversation turns before AI can decide to compress (0 = disabled)
-	/// When set to N, after N turns (user+assistant pairs), AI will be asked if compression is beneficial
-	/// AI decides whether to compress older exchanges while preserving recent context
-	pub min_conversation_turns: usize,
 	/// Enable adaptive pressure-based compression (SOTA approach)
-	/// When true, compression triggers based on context usage instead of fixed turn count
-	#[serde(default)]
+	/// When true, compression triggers based on absolute token count
 	pub adaptive_threshold: bool,
-	/// Trigger compression when context reaches this percentage (0.0-1.0)
-	/// Research shows 0.25 (25%) yields better results than higher thresholds
-	#[serde(default = "default_pressure_trigger")]
-	pub pressure_trigger: f64,
-	/// Compression aggressiveness levels based on context pressure
-	/// Each level defines threshold and target compression ratio
-	#[serde(default = "default_pressure_levels")]
+	/// Trigger compression when context reaches this many tokens
+	/// Recommended: 50000 (compress at 50k tokens for proactive management)
+	pub pressure_trigger: usize,
+	/// Compression aggressiveness levels based on absolute token count
+	/// Each level defines threshold (token count) and target compression ratio
 	pub pressure_levels: Vec<PressureLevel>,
 	/// Optional model for compression decisions (YES/NO) and summary generation
 	/// Use a fast, cheap model like "openrouter:anthropic/claude-haiku" for cost savings
@@ -153,26 +146,6 @@ pub struct CompressionHintConfig {
 	pub decision_model: Option<String>,
 }
 
-fn default_pressure_trigger() -> f64 {
-	0.25
-}
-
-fn default_pressure_levels() -> Vec<PressureLevel> {
-	vec![
-		PressureLevel {
-			threshold: 0.25,
-			target_ratio: 2.0,
-		},
-		PressureLevel {
-			threshold: 0.50,
-			target_ratio: 4.0,
-		},
-		PressureLevel {
-			threshold: 0.75,
-			target_ratio: 8.0,
-		},
-	]
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {

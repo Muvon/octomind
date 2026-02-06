@@ -124,6 +124,15 @@ impl ChatSession {
 				);
 			}
 
+			if compression_stats.conversation_compressions > 0 {
+				println!(
+					"{} {}",
+					"Conversation compressions:".yellow(),
+					format_number(compression_stats.conversation_compressions as u64)
+						.bright_white()
+				);
+			}
+
 			println!(
 				"{} {}",
 				"Messages removed:".yellow(),

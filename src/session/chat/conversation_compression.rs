@@ -39,32 +39,40 @@ pub fn should_check_compression(session: &ChatSession, config: &Config) -> (bool
 		return (false, 2.0);
 	}
 
+	// Check if we have any pressure levels configured
+	if config.compression.pressure_levels.is_empty() {
+		return (false, 2.0);
+	}
+
 	// CRITICAL FIX: Use full context tokens, not cumulative cache counter
 	// session.current_total_tokens tracks INPUT tokens since last cache checkpoint (resets to 0)
 	// We need the FULL conversation context size for compression threshold decisions
 	let current_tokens = estimate_full_context_tokens(&session.session.messages, None, None);
 
-	// Find target compression ratio based on absolute token count
-	let target_ratio = config
+	// Find the highest threshold we've exceeded and its target ratio
+	// This determines both IF we should compress and HOW MUCH
+	let matching_level = config
 		.compression
 		.pressure_levels
 		.iter()
 		.rev() // Start from highest threshold
-		.find(|level| current_tokens >= level.threshold)
-		.map(|level| level.target_ratio)
-		.unwrap_or(2.0);
+		.find(|level| current_tokens >= level.threshold);
 
-	let should_compress = current_tokens >= config.compression.pressure_trigger;
-
-	if should_compress {
-		log_debug!(
-			"Context tokens: {} → target compression: {:.1}x",
-			current_tokens,
-			target_ratio
-		);
+	match matching_level {
+		Some(level) => {
+			log_debug!(
+				"Context tokens: {} → target compression: {:.1}x (threshold: {})",
+				current_tokens,
+				level.target_ratio,
+				level.threshold
+			);
+			(true, level.target_ratio)
+		}
+		None => {
+			// Haven't reached any threshold yet
+			(false, 2.0)
+		}
 	}
-
-	(should_compress, target_ratio)
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES

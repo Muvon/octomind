@@ -946,17 +946,13 @@ hints_pressure_threshold = 0.7
 hints_min_interval = 5
 
 # Adaptive token-based compression (SOTA approach) - ENABLED BY DEFAULT
-# When enabled, compression triggers based on absolute token count
+# When enabled, compression triggers based on absolute token count from pressure_levels
 # Research shows proactive compression (at ~50k tokens) yields better results
 adaptive_threshold = true
 
-# Trigger compression when context reaches this many tokens
-# Recommended: 50000 (compress at 50k tokens for proactive management)
-# Set to 0 to disable compression
-pressure_trigger = 50000
-
 # Compression aggressiveness scales with absolute token count
 # Each level defines: threshold (token count) and target_ratio (compression strength)
+# Compression triggers when context exceeds ANY threshold, using the highest matched ratio
 # Example: At 100k tokens, compress to 1/4 size (4x compression)
 [[compression.pressure_levels]]
 threshold = 50000

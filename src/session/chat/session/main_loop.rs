@@ -261,17 +261,40 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			if cancellation.is_cancelled() {
 				log_debug!("Cancellation detected during continuation - resetting continuation state and reading user input");
 				chat_session.continuation_pending = false;
+				read_user_input(
+					chat_session.estimated_cost,
+					&current_config,
+					&role,
+					current_context_tokens,
+					current_config.max_session_tokens_threshold,
+					&chat_session.session.info.name,
+					false, // Don't show status
+				)?
+			} else {
+				log_debug!(
+					"Continuation pending - processing injected summary request automatically"
+				);
+				// Get the last message which should be the injected summary request
+				chat_session
+					.session
+					.messages
+					.last()
+					.filter(|msg| msg.role == "user")
+					.map(|msg| InputResult::Text(msg.content.clone()))
+					.unwrap_or_else(|| {
+						log_debug!("Warning: Expected summary request message not found, falling back to user input");
+						read_user_input(
+							chat_session.estimated_cost,
+							&current_config,
+							&role,
+							current_context_tokens,
+							current_config.max_session_tokens_threshold,
+							&chat_session.session.info.name,
+							false,
+						)
+						.unwrap_or(InputResult::Text(String::new()))
+					})
 			}
-			// For continuation or cancellation, use the calculated context tokens
-			read_user_input(
-				chat_session.estimated_cost,
-				&current_config,
-				&role,
-				current_context_tokens,
-				current_config.max_session_tokens_threshold,
-				&chat_session.session.info.name,
-				false, // Don't show status line on continuation/cancellation
-			)?
 		} else if let Some(prompt_text) = chat_session.pending_prompt.take() {
 			// CRITICAL FIX: Process pending prompt from /prompt command
 			// This allows the prompt to be processed as normal user input

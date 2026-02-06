@@ -63,7 +63,7 @@ pub async fn check_and_compress_conversation(
 
 	log_debug!("Conversation turn threshold reached - asking AI about compression");
 
-	// Ask AI if compression is beneficial
+	// Ask AI if compression is beneficial (mutable reference for cost tracking)
 	let should_compress = ask_ai_compression_decision(session, config).await?;
 
 	if !should_compress {
@@ -73,14 +73,15 @@ pub async fn check_and_compress_conversation(
 
 	log_info!("AI decided to compress older conversation exchanges");
 
-	// Perform compression
+	// Perform compression (mutable reference for cost tracking)
 	compress_older_conversation(session, config).await?;
 
 	Ok(())
 }
 
 /// Ask AI: should we compress older conversation?
-async fn ask_ai_compression_decision(session: &ChatSession, config: &Config) -> Result<bool> {
+/// Uses decision_model if configured for cost savings
+async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config) -> Result<bool> {
 	// Create decision prompt
 	let decision_prompt = "Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information? Consider:\n\
 	- Are there repetitive or resolved topics that can be summarized?\n\
@@ -105,17 +106,37 @@ async fn ask_ai_compression_decision(session: &ChatSession, config: &Config) -> 
 		id: None,
 	}];
 
-	// Use existing chat completion infrastructure
+	// Extract values before mutable borrow
+	let session_model = session.model.clone();
+	let temperature = session.temperature;
+	let top_p = session.top_p;
+	let top_k = session.top_k;
+
+	// Use decision_model if configured, otherwise fall back to session model
+	let model_to_use = config
+		.compression
+		.decision_model
+		.as_ref()
+		.unwrap_or(&session_model);
+
+	crate::log_debug!(
+		"Using model '{}' for compression decision (session model: '{}')",
+		model_to_use,
+		session_model
+	);
+
+	// CRITICAL: Pass chat_session for cost tracking
 	let params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages,
-		&session.model,
-		session.temperature,
-		session.top_p,
-		session.top_k,
+		model_to_use,
+		temperature,
+		top_p,
+		top_k,
 		512, // Small max_tokens for decision
 		config,
 	)
-	.with_max_retries(1); // Single retry for decision
+	.with_max_retries(1) // Single retry for decision
+	.with_chat_session(session); // CRITICAL: Enable cost tracking
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 
@@ -123,7 +144,7 @@ async fn ask_ai_compression_decision(session: &ChatSession, config: &Config) -> 
 	let decision = response.content.to_uppercase().contains("YES");
 
 	log_debug!(
-		"AI compression decision: {}",
+		"AI compression decision: {} (cost tracked in session)",
 		if decision { "YES" } else { "NO" }
 	);
 
@@ -149,17 +170,46 @@ async fn compress_older_conversation(session: &mut ChatSession, config: &Config)
 	// Calculate tokens before compression
 	let tokens_before = calculate_range_tokens(session, start_idx, end_idx)?;
 
-	// Generate summary using AI
-	let summary = generate_conversation_summary(session, config, start_idx, end_idx).await?;
+	// Generate summary using AI with structured extraction
+	let summary_response =
+		generate_conversation_summary(session, config, start_idx, end_idx).await?;
 
-	// Format compressed entry
-	let compressed_entry = format!(
-		"## Conversation Summary\n\n\
-		{}\n\n\
-		---\n\
-		*Compressed - Older exchanges have been summarized to optimize context.*",
-		summary
-	);
+	// Parse structured response (KEY_FACTS + SUMMARY)
+	let (key_facts, summary) = parse_structured_summary(&summary_response);
+
+	// Format compressed entry with transparency metadata and preserved facts
+	let compression_id = crate::mcp::dev::plan::compression::get_compression_id()
+		.unwrap_or_else(|| "unknown".to_string());
+
+	let compressed_entry = if !key_facts.is_empty() {
+		format!(
+			"## Conversation Summary [COMPRESSED: {}]\n\n\
+			**KEY_FACTS** (preserved verbatim):\n\
+			{}\n\n\
+			**SUMMARY**:\n\
+			{}\n\n\
+			**Compression Info**:\n\
+			- ID: `{}`\n\
+			- Type: Conversation compression\n\
+			- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
+			---\n\
+			*Compressed - Older exchanges have been summarized to optimize context.*",
+			compression_id, key_facts, summary, compression_id, compression_id
+		)
+	} else {
+		// Fallback if no key facts extracted
+		format!(
+			"## Conversation Summary [COMPRESSED: {}]\n\n\
+			{}\n\n\
+			**Compression Info**:\n\
+			- ID: `{}`\n\
+			- Type: Conversation compression\n\
+			- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
+			---\n\
+			*Compressed - Older exchanges have been summarized to optimize context.*",
+			compression_id, summary, compression_id, compression_id
+		)
+	};
 
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
@@ -249,9 +299,50 @@ fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usiz
 	Ok(total_tokens)
 }
 
-/// Generate conversation summary using AI
+/// Parse structured summary response into key facts and summary
+/// Handles both structured format and fallback to plain text
+fn parse_structured_summary(response: &str) -> (String, String) {
+	// Try to extract KEY_FACTS section
+	let key_facts = if let Some(facts_start) = response.find("**KEY_FACTS**") {
+		if let Some(summary_start) = response.find("**SUMMARY**") {
+			// Extract everything between KEY_FACTS and SUMMARY
+			let facts_section = &response[facts_start..summary_start];
+			// Remove the header and clean up
+			facts_section
+				.replace("**KEY_FACTS**", "")
+				.replace("(preserve verbatim - exact technical details):", "")
+				.replace("(preserve verbatim):", "")
+				.trim()
+				.to_string()
+		} else {
+			String::new()
+		}
+	} else {
+		String::new()
+	};
+
+	// Try to extract SUMMARY section
+	let summary = if let Some(summary_start) = response.find("**SUMMARY**") {
+		// Extract everything after SUMMARY
+		let summary_section = &response[summary_start..];
+		// Remove the header and clean up
+		summary_section
+			.replace("**SUMMARY**", "")
+			.replace("(2-3 sentences):", "")
+			.trim()
+			.to_string()
+	} else {
+		// Fallback: use entire response as summary if no structure found
+		response.trim().to_string()
+	};
+
+	(key_facts, summary)
+}
+
+/// Generate conversation summary using AI with structured extraction
+/// Uses decision_model if configured for cost savings
 async fn generate_conversation_summary(
-	session: &ChatSession,
+	session: &mut ChatSession,
 	config: &Config,
 	start_idx: usize,
 	end_idx: usize,
@@ -267,16 +358,21 @@ async fn generate_conversation_summary(
 		.collect::<Vec<_>>()
 		.join("\n\n");
 
-	// Create summary prompt
+	// Create structured summary prompt with selective token preservation
 	let summary_prompt = format!(
-		"Summarize the following conversation exchanges concisely. Preserve:\n\
-		- Key topics and decisions\n\
-		- Important context for future conversation\n\
-		- Unresolved questions or pending actions\n\
-		- Critical information that should not be lost\n\n\
-		Provide a concise summary (2-4 sentences):\n\n\
+		"Analyze and compress the following conversation exchanges. Use this EXACT format:\n\n\
+		**KEY_FACTS** (preserve verbatim - exact technical details):\n\
+		- File paths: [list any file paths mentioned]\n\
+		- Commands: [list any commands executed]\n\
+		- Errors: [list any error messages]\n\
+		- Decisions: [list key decisions made]\n\
+		- Code changes: [list specific code modifications]\n\
+		- URLs/References: [list any URLs or external references]\n\n\
+		**SUMMARY** (2-3 sentences):\n\
+		[Concise narrative summary of what was discussed and accomplished]\n\n\
+		Conversation to compress:\n\
 		{}\n\n\
-		Summary:",
+		Output:",
 		conversation_text
 	);
 
@@ -297,16 +393,37 @@ async fn generate_conversation_summary(
 		id: None,
 	}];
 
+	// Extract values before mutable borrow
+	let session_model = session.model.clone();
+	let temperature = session.temperature;
+	let top_p = session.top_p;
+	let top_k = session.top_k;
+
+	// Use decision_model if configured, otherwise fall back to session model
+	let model_to_use = config
+		.compression
+		.decision_model
+		.as_ref()
+		.unwrap_or(&session_model);
+
+	crate::log_debug!(
+		"Using model '{}' for summary generation (session model: '{}')",
+		model_to_use,
+		session_model
+	);
+
+	// CRITICAL: Pass chat_session for cost tracking
 	let params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages,
-		&session.model,
-		session.temperature,
-		session.top_p,
-		session.top_k,
+		model_to_use,
+		temperature,
+		top_p,
+		top_k,
 		1024, // Reasonable max_tokens for summary
 		config,
 	)
-	.with_max_retries(1);
+	.with_max_retries(1)
+	.with_chat_session(session); // CRITICAL: Enable cost tracking
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 

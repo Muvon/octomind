@@ -126,6 +126,11 @@ pub struct CompressionHintConfig {
 	/// When set to N, after N turns (user+assistant pairs), AI will be asked if compression is beneficial
 	/// AI decides whether to compress older exchanges while preserving recent context
 	pub min_conversation_turns: usize,
+	/// Optional model for compression decisions (YES/NO) and summary generation
+	/// Use a fast, cheap model like "openrouter:anthropic/claude-haiku" for cost savings
+	/// If not set, uses the session's main model
+	/// Example: "openrouter:anthropic/claude-haiku" (10x cheaper than Sonnet)
+	pub decision_model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

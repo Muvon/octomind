@@ -286,7 +286,7 @@ pub async fn compress_completed_task(
 	Ok(metrics)
 }
 
-/// Format task summary as structured knowledge block
+/// Format task summary as structured knowledge block with transparency metadata
 /// Uses validated summary to avoid unwrap panic
 fn format_compressed_summary(task: &PlanTask, summary: &str, compression_id: &str) -> String {
 	let completed_at = task
@@ -295,16 +295,22 @@ fn format_compressed_summary(task: &PlanTask, summary: &str, compression_id: &st
 		.unwrap_or_else(|| "Unknown".to_string());
 
 	format!(
-		"## Task Completed: {}\n\n\
-		 **Description**: {}\n\n\
-		 **Summary**: {}\n\n\
-		 **Completed**: {}\n\n\
-		 ---\n\
-		 *Compressed (ID: {}) - Detailed tool calls and intermediate work have been removed to optimize context.*",
+		"## Task Completed: {} [COMPRESSED: {}]\n\n\
+		**Description**: {}\n\n\
+		**Summary**: {}\n\n\
+		**Completed**: {}\n\n\
+		**Compression Info**:\n\
+		- ID: `{}`\n\
+		- Type: Task-level compression\n\
+		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
+		---\n\
+		*Compressed - Detailed tool calls and intermediate work removed to optimize context.*",
 		task.title,
+		compression_id,
 		task.description,
 		summary,
 		completed_at,
+		compression_id,
 		compression_id
 	)
 }
@@ -420,13 +426,18 @@ async fn compress_phase(
 }
 
 fn format_phase_summary(phase_name: &str, summary: &str, task_count: usize) -> String {
+	let compression_id = get_compression_id().unwrap_or_else(|| "unknown".to_string());
 	format!(
-		"## Phase Completed: {}\n\n\
-		 **Tasks Completed**: {}\n\n\
-		 **Summary**: {}\n\n\
-		 ---\n\
-		 *Phase Compression - {} task summaries compressed into phase overview*",
-		phase_name, task_count, summary, task_count
+		"## Phase Completed: {} [COMPRESSED: {}]\n\n\
+		**Tasks Completed**: {}\n\n\
+		**Summary**: {}\n\n\
+		**Compression Info**:\n\
+		- ID: `{}`\n\
+		- Type: Phase-level compression\n\
+		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
+		---\n\
+		*Phase Compression - {} task summaries compressed into phase overview*",
+		phase_name, compression_id, task_count, summary, compression_id, compression_id, task_count
 	)
 }
 
@@ -519,13 +530,25 @@ fn format_project_summary(
 	total_phases: usize,
 	summaries_compressed: usize,
 ) -> String {
+	let compression_id = get_compression_id().unwrap_or_else(|| "unknown".to_string());
 	format!(
-		"## Project Completed: {}\n\n\
-		 **Scale**: {} tasks across {} phases\n\n\
-		 **Summary**: {}\n\n\
-		 ---\n\
-		 *Project Compression - {} summaries consolidated into final project overview*",
-		plan_title, total_tasks, total_phases, summary, summaries_compressed
+		"## Project Completed: {} [COMPRESSED: {}]\n\n\
+		**Scale**: {} tasks across {} phases\n\n\
+		**Summary**: {}\n\n\
+		**Compression Info**:\n\
+		- ID: `{}`\n\
+		- Type: Project-level compression\n\
+		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
+		---\n\
+		*Project Compression - {} summaries consolidated into final project overview*",
+		plan_title,
+		compression_id,
+		total_tasks,
+		total_phases,
+		summary,
+		compression_id,
+		compression_id,
+		summaries_compressed
 	)
 }
 

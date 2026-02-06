@@ -951,3 +951,10 @@ hints_min_interval = 5
 # Example: 6 = after 3 exchanges (6 turns), AI can compress older conversation
 min_conversation_turns = 0
 
+# Optional model for compression decisions and summary generation
+# Use a fast, cheap model for YES/NO decisions and summaries to reduce costs
+# If not set, uses the session's main model (more expensive)
+# Recommended: "openrouter:anthropic/claude-haiku" (10x cheaper, 3x faster)
+# Cost comparison: Haiku ~$0.0003 vs Sonnet ~$0.003 per compression decision
+# decision_model = "openrouter:anthropic/claude-haiku"
+

@@ -169,7 +169,8 @@ pub async fn process_tool_results(
 	}
 
 	// If plan tool was executed, set the message range for compression
-	if plan_tool_executed {
+	// Only attempt this when compression is actually pending
+	if plan_tool_executed && crate::mcp::dev::plan::has_pending_compression() {
 		// Get the start index from the global state (set by session before tool execution)
 		if let Some(start_index) = crate::mcp::dev::plan::core::get_and_clear_start_index() {
 			// Use last valid index (len - 1) since remove_messages_in_range uses inclusive end_index

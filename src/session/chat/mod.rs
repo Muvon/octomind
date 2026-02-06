@@ -31,6 +31,7 @@ mod message_handler;
 mod prompt;
 mod reedline_adapter;
 pub(crate) mod response;
+mod semantic_chunking;
 pub mod session;
 pub mod session_continuation;
 mod syntax;

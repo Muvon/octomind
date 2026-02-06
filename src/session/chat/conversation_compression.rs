@@ -34,57 +34,35 @@ use std::sync::Arc;
 /// Check if we should ask AI about compression
 /// Returns (should_compress, target_ratio) tuple
 pub fn should_check_compression(session: &ChatSession, config: &Config) -> (bool, f64) {
-	// Adaptive pressure-based compression (SOTA approach)
-	if config.compression.adaptive_threshold {
-		let max_tokens = config.max_session_tokens_threshold;
-		if max_tokens == 0 {
-			return (false, 2.0); // Threshold disabled
-		}
-
-		let current_tokens = session.session.current_total_tokens;
-		let pressure = current_tokens as f64 / max_tokens as f64;
-
-		// Find target compression ratio based on pressure
-		let target_ratio = config
-			.compression
-			.pressure_levels
-			.iter()
-			.rev() // Start from highest threshold
-			.find(|level| pressure >= level.threshold)
-			.map(|level| level.target_ratio)
-			.unwrap_or(2.0);
-
-		let should_compress = pressure >= config.compression.pressure_trigger;
-
-		if should_compress {
-			log_debug!(
-				"Context pressure: {:.1}% → target compression: {:.1}x",
-				pressure * 100.0,
-				target_ratio
-			);
-		}
-
-		return (should_compress, target_ratio);
+	let max_tokens = config.max_session_tokens_threshold;
+	if max_tokens == 0 {
+		return (false, 2.0); // Threshold disabled
 	}
 
-	// Legacy turn-based compression
-	if config.compression.min_conversation_turns == 0 {
-		return (false, 2.0); // Feature disabled
-	}
+	let current_tokens = session.session.current_total_tokens;
+	let pressure = current_tokens as f64 / max_tokens as f64;
 
-	let turn_count = count_conversation_turns(&session.session.messages);
-	let should_compress = turn_count >= config.compression.min_conversation_turns;
-
-	(should_compress, 2.0) // Default 2x compression for turn-based
-}
-
-/// Count conversation turns (each turn = user + assistant message pair)
-fn count_conversation_turns(messages: &[crate::session::Message]) -> usize {
-	messages
+	// Find target compression ratio based on pressure
+	let target_ratio = config
+		.compression
+		.pressure_levels
 		.iter()
-		.filter(|m| m.role == "user" || m.role == "assistant")
-		.count()
-		/ 2
+		.rev() // Start from highest threshold
+		.find(|level| pressure >= level.threshold)
+		.map(|level| level.target_ratio)
+		.unwrap_or(2.0);
+
+	let should_compress = pressure >= config.compression.pressure_trigger;
+
+	if should_compress {
+		log_debug!(
+			"Context pressure: {:.1}% → target compression: {:.1}x",
+			pressure * 100.0,
+			target_ratio
+		);
+	}
+
+	(should_compress, target_ratio)
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES
@@ -209,11 +187,11 @@ async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config)
 	Ok(decision)
 }
 
-/// Compress older conversation exchanges (reuse plan compression logic)
+/// Compress older conversation exchanges using semantic chunking
 async fn compress_older_conversation(
 	session: &mut ChatSession,
 	config: &Config,
-	_target_ratio: f64, // Will be used in Phase 5 for semantic chunking
+	target_ratio: f64,
 ) -> Result<()> {
 	// Find range to compress (keep last 4 turns raw = 2 exchanges)
 	let (start_idx, end_idx) = find_compression_range(&session.session.messages)?;
@@ -232,53 +210,63 @@ async fn compress_older_conversation(
 	// Calculate tokens before compression
 	let tokens_before = calculate_range_tokens(session, start_idx, end_idx)?;
 
-	// Generate summary using AI with structured extraction
-	let summary_response =
-		generate_conversation_summary(session, config, start_idx, end_idx).await?;
+	// Chunk messages semantically
+	let messages_to_compress = &session.session.messages[start_idx..=end_idx];
+	let chunks = super::semantic_chunking::chunk_messages(messages_to_compress);
 
-	// Parse structured response (KEY_FACTS + SUMMARY)
-	let (key_facts, summary) = parse_structured_summary(&summary_response);
+	// Calculate target tokens based on ratio
+	let target_tokens = (tokens_before as f64 / target_ratio) as usize;
 
-	// Format compressed entry with transparency metadata and preserved facts
+	// Select top chunks within budget
+	let selected = super::semantic_chunking::select_chunks_within_budget(&chunks, target_tokens);
+
+	// Separate by type
+	let critical: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Critical))
+		.collect();
+	let reference: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Reference))
+		.collect();
+	let context: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Context))
+		.collect();
+
+	// Format critical + reference verbatim (no AI summarization)
+	let critical_text = format_chunks_verbatim(&critical);
+	let reference_text = format_chunks_verbatim(&reference);
+
+	// Combine critical and reference
+	let preserved_text = if !critical_text.is_empty() && !reference_text.is_empty() {
+		format!("{}\n{}", critical_text, reference_text)
+	} else if !critical_text.is_empty() {
+		critical_text
+	} else {
+		reference_text
+	};
+
+	// Summarize context chunks using AI
+	let context_summary = if !context.is_empty() {
+		summarize_context_chunks(session, config, &context).await?
+	} else {
+		String::new()
+	};
+
+	// Format compressed entry
 	let compression_id = crate::mcp::dev::plan::compression::get_compression_id()
 		.unwrap_or_else(|| "unknown".to_string());
 
-	let compressed_entry = if !key_facts.is_empty() {
-		format!(
-			"## Conversation Summary [COMPRESSED: {}]\n\n\
-			**KEY_FACTS** (preserved verbatim):\n\
-			{}\n\n\
-			**SUMMARY**:\n\
-			{}\n\n\
-			**Compression Info**:\n\
-			- ID: `{}`\n\
-			- Type: Conversation compression\n\
-			- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
-			---\n\
-			*Compressed - Older exchanges have been summarized to optimize context.*",
-			compression_id, key_facts, summary, compression_id, compression_id
-		)
-	} else {
-		// Fallback if no key facts extracted
-		format!(
-			"## Conversation Summary [COMPRESSED: {}]\n\n\
-			{}\n\n\
-			**Compression Info**:\n\
-			- ID: `{}`\n\
-			- Type: Conversation compression\n\
-			- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
-			---\n\
-			*Compressed - Older exchanges have been summarized to optimize context.*",
-			compression_id, summary, compression_id, compression_id
-		)
-	};
+	let compressed_entry =
+		format_compressed_entry(&preserved_text, &context_summary, compression_id);
 
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
-	// Remove messages in range (reuse plan logic)
+	// Remove messages in range
 	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
 
-	// Insert compressed summary (reuse plan logic)
+	// Insert compressed summary
 	session.insert_compressed_knowledge(start_idx, compressed_entry)?;
 
 	// Calculate metrics
@@ -304,6 +292,109 @@ async fn compress_older_conversation(
 		.add_conversation_compression(messages_removed, tokens_saved);
 
 	Ok(())
+}
+
+/// Format chunks verbatim (no summarization)
+fn format_chunks_verbatim(chunks: &[&super::semantic_chunking::SemanticChunk]) -> String {
+	chunks
+		.iter()
+		.map(|c| c.content.trim())
+		.filter(|s| !s.is_empty())
+		.collect::<Vec<_>>()
+		.join("\n- ")
+}
+
+/// Summarize context chunks using AI
+async fn summarize_context_chunks(
+	session: &mut ChatSession,
+	config: &Config,
+	chunks: &[&super::semantic_chunking::SemanticChunk],
+) -> Result<String> {
+	let context_text = chunks
+		.iter()
+		.map(|c| c.content.as_str())
+		.collect::<Vec<_>>()
+		.join("\n\n");
+
+	let prompt = format!(
+		"Summarize this context in 2-3 sentences (focus on what's needed to continue the conversation):\n\n{}",
+		context_text
+	);
+
+	// Make API call for summary
+	let messages = vec![crate::session::Message {
+		role: "user".to_string(),
+		content: prompt,
+		timestamp: std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs(),
+		cached: false,
+		tool_call_id: None,
+		name: None,
+		tool_calls: None,
+		images: None,
+		thinking: None,
+		id: None,
+	}];
+
+	// Extract values before mutable borrow
+	let session_model = session.model.clone();
+	let temperature = session.temperature;
+	let top_p = session.top_p;
+	let top_k = session.top_k;
+
+	// Use decision_model if configured, otherwise fall back to session model
+	let model_to_use = config
+		.compression
+		.decision_model
+		.as_ref()
+		.unwrap_or(&session_model);
+
+	crate::log_debug!("Using model '{}' for context summarization", model_to_use);
+
+	let params = crate::session::ChatCompletionWithValidationParams::new(
+		&messages,
+		model_to_use,
+		temperature,
+		top_p,
+		top_k,
+		512,
+		config,
+	)
+	.with_max_retries(1)
+	.with_chat_session(session);
+
+	let response = crate::session::chat_completion_with_validation(params).await?;
+	Ok(response.content.trim().to_string())
+}
+
+/// Format final compressed entry
+fn format_compressed_entry(preserved: &str, context: &str, compression_id: String) -> String {
+	let mut sections = Vec::new();
+
+	if !preserved.is_empty() {
+		sections.push(format!(
+			"**CRITICAL** (preserved verbatim):\n- {}",
+			preserved
+		));
+	}
+
+	if !context.is_empty() {
+		sections.push(format!("**CONTEXT**: {}", context));
+	}
+
+	format!(
+		"## Conversation Summary [COMPRESSED: {}]\n\n{}\n\n\
+		**Compression Info**:\n\
+		- ID: `{}`\n\
+		- Type: Semantic compression\n\
+		---\n\
+		*Compressed using importance-based semantic chunking.*",
+		compression_id,
+		sections.join("\n\n"),
+		compression_id
+	)
 }
 
 /// Find which messages to compress (keep last 4 turns = 2 exchanges raw)
@@ -359,135 +450,4 @@ fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usiz
 	}
 
 	Ok(total_tokens)
-}
-
-/// Parse structured summary response into key facts and summary
-/// Handles both structured format and fallback to plain text
-fn parse_structured_summary(response: &str) -> (String, String) {
-	// Try to extract KEY_FACTS section
-	let key_facts = if let Some(facts_start) = response.find("**KEY_FACTS**") {
-		if let Some(summary_start) = response.find("**SUMMARY**") {
-			// Extract everything between KEY_FACTS and SUMMARY
-			let facts_section = &response[facts_start..summary_start];
-			// Remove the header and clean up
-			facts_section
-				.replace("**KEY_FACTS**", "")
-				.replace("(preserve verbatim - exact technical details):", "")
-				.replace("(preserve verbatim):", "")
-				.trim()
-				.to_string()
-		} else {
-			String::new()
-		}
-	} else {
-		String::new()
-	};
-
-	// Try to extract SUMMARY section
-	let summary = if let Some(summary_start) = response.find("**SUMMARY**") {
-		// Extract everything after SUMMARY
-		let summary_section = &response[summary_start..];
-		// Remove the header and clean up
-		summary_section
-			.replace("**SUMMARY**", "")
-			.replace("(2-3 sentences):", "")
-			.trim()
-			.to_string()
-	} else {
-		// Fallback: use entire response as summary if no structure found
-		response.trim().to_string()
-	};
-
-	(key_facts, summary)
-}
-
-/// Generate conversation summary using AI with structured extraction
-/// Uses decision_model if configured for cost savings
-async fn generate_conversation_summary(
-	session: &mut ChatSession,
-	config: &Config,
-	start_idx: usize,
-	end_idx: usize,
-) -> Result<String> {
-	// Extract messages to summarize
-	let messages_to_summarize = &session.session.messages[start_idx..=end_idx];
-
-	// Format messages for summary prompt
-	let conversation_text = messages_to_summarize
-		.iter()
-		.filter(|m| m.role == "user" || m.role == "assistant")
-		.map(|m| format!("{}: {}", m.role, m.content))
-		.collect::<Vec<_>>()
-		.join("\n\n");
-
-	// Create structured summary prompt with selective token preservation
-	let summary_prompt = format!(
-		"Analyze and compress the following conversation exchanges. Use this EXACT format:\n\n\
-		**KEY_FACTS** (preserve verbatim - exact technical details):\n\
-		- File paths: [list any file paths mentioned]\n\
-		- Commands: [list any commands executed]\n\
-		- Errors: [list any error messages]\n\
-		- Decisions: [list key decisions made]\n\
-		- Code changes: [list specific code modifications]\n\
-		- URLs/References: [list any URLs or external references]\n\n\
-		**SUMMARY** (2-3 sentences):\n\
-		[Concise narrative summary of what was discussed and accomplished]\n\n\
-		Conversation to compress:\n\
-		{}\n\n\
-		Output:",
-		conversation_text
-	);
-
-	// Make API call for summary
-	let messages = vec![crate::session::Message {
-		role: "user".to_string(),
-		content: summary_prompt,
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		cached: false,
-		tool_call_id: None,
-		name: None,
-		tool_calls: None,
-		images: None,
-		thinking: None,
-		id: None,
-	}];
-
-	// Extract values before mutable borrow
-	let session_model = session.model.clone();
-	let temperature = session.temperature;
-	let top_p = session.top_p;
-	let top_k = session.top_k;
-
-	// Use decision_model if configured, otherwise fall back to session model
-	let model_to_use = config
-		.compression
-		.decision_model
-		.as_ref()
-		.unwrap_or(&session_model);
-
-	crate::log_debug!(
-		"Using model '{}' for summary generation (session model: '{}')",
-		model_to_use,
-		session_model
-	);
-
-	// CRITICAL: Pass chat_session for cost tracking
-	let params = crate::session::ChatCompletionWithValidationParams::new(
-		&messages,
-		model_to_use,
-		temperature,
-		top_p,
-		top_k,
-		1024, // Reasonable max_tokens for summary
-		config,
-	)
-	.with_max_retries(1)
-	.with_chat_session(session); // CRITICAL: Enable cost tracking
-
-	let response = crate::session::chat_completion_with_validation(params).await?;
-
-	Ok(response.content.trim().to_string())
 }

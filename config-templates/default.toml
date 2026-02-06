@@ -946,15 +946,14 @@ hints_pressure_threshold = 0.7
 hints_min_interval = 5
 
 # Conversation compression: AI-driven automatic compression for normal conversations
-# Set to 0 to disable, or N to enable after N turns (user+assistant pairs)
-# When threshold reached, AI decides if compression is beneficial
-# Example: 6 = after 3 exchanges (6 turns), AI can compress older conversation
+# DEPRECATED: Use adaptive_threshold instead (legacy turn-based compression)
+# Set to 0 to disable legacy mode
 min_conversation_turns = 0
 
-# Adaptive pressure-based compression (SOTA approach)
+# Adaptive pressure-based compression (SOTA approach) - ENABLED BY DEFAULT
 # When enabled, compression triggers based on context usage instead of fixed turn count
 # Research shows compression at 25% context usage yields better results than 85%
-adaptive_threshold = false
+adaptive_threshold = true
 # Trigger compression when context reaches this percentage (0.0-1.0)
 # Recommended: 0.25 (compress at 25% context usage for proactive management)
 pressure_trigger = 0.25

@@ -938,9 +938,10 @@ prompt = """Please help debug the issue above:
 # ═══════════════════════════════════════════════════════════════════════
 
 [compression]
-# Enable adaptive compression hints (suggests plan(next) when context pressure is high)
+# Enable compression system (task → phase → project, all automatic)
 hints_enabled = true
 # Context pressure threshold (0.0-1.0) at which to start showing hints
 hints_pressure_threshold = 0.7
 # Minimum tool executions between hints to avoid spamming
 hints_min_interval = 5
+

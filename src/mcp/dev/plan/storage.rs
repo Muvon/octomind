@@ -25,6 +25,10 @@ pub struct ExecutionPlan {
 	pub current_task_index: usize,
 	pub created_at: DateTime<Utc>,
 	pub status: PlanStatus,
+	#[serde(default)]
+	pub phase_compressions: Vec<super::compression::PhaseCompression>,
+	#[serde(default)]
+	pub project_compression: Option<super::compression::ProjectCompression>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,15 +38,37 @@ pub struct MessageRange {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseCompression {
+	pub phase_name: String,
+	pub task_range: (usize, usize),
+	pub summary: String,
+	pub compressed_at: DateTime<Utc>,
+	pub message_range: MessageRange,
+	pub metrics: super::compression::CompressionMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectCompression {
+	pub summary: String,
+	pub compressed_at: DateTime<Utc>,
+	pub message_range: MessageRange,
+	pub metrics: super::compression::CompressionMetrics,
+	pub total_tasks: usize,
+	pub total_phases: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanTask {
 	pub title: String,
-	pub description: String, // NEW: Detailed explanation of what needs to be done
-	pub details: String,     // Progress details from `step` commands
+	pub description: String,     // Detailed explanation of what needs to be done
+	pub details: String,         // Progress details from `step` commands
 	pub summary: Option<String>, // Final summary from `next` command
 	pub status: TaskStatus,
 	pub completed_at: Option<DateTime<Utc>>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub message_range: Option<MessageRange>, // Message range for compression
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub phase: Option<String>, // Optional phase grouping
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,11 +88,16 @@ pub enum TaskStatus {
 pub struct TaskData {
 	pub title: String,
 	pub description: String,
+	pub phase: Option<String>,
 }
 
 impl TaskData {
-	pub fn new(title: String, description: String) -> Self {
-		Self { title, description }
+	pub fn new(title: String, description: String, phase: Option<String>) -> Self {
+		Self {
+			title,
+			description,
+			phase,
+		}
 	}
 }
 
@@ -114,4 +145,19 @@ pub trait PlanStorage {
 
 	/// Get the completed task with its message range (for compression)
 	fn get_last_completed_task(&self) -> Result<Option<PlanTask>>;
+
+	/// Get count of completed tasks
+	fn get_completed_task_count(&self) -> Result<usize>;
+
+	/// Get current task index
+	fn get_current_task_index(&self) -> Result<usize>;
+
+	/// Get total task count
+	fn get_total_task_count(&self) -> Result<usize>;
+
+	/// Get phase compression count
+	fn get_phase_count(&self) -> Result<usize>;
+
+	/// Get the execution plan (for phase detection)
+	fn get_plan(&self) -> Result<&ExecutionPlan>;
 }

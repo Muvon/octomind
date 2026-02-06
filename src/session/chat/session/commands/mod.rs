@@ -63,6 +63,7 @@ pub enum CommandOutput {
 		tokens_cached: u64,
 		total_cost: f64,
 		cache_savings: f64,
+		compression_stats: Option<crate::session::CompressionStats>,
 	},
 	Model {
 		old_model: Option<String>,

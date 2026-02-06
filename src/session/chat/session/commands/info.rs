@@ -26,6 +26,12 @@ pub fn handle_info(session: &ChatSession) -> Result<CommandResult> {
 	let tokens_used = info.input_tokens + info.output_tokens;
 	let cache_savings = 0.0; // TODO: Calculate cache savings if needed
 
+	let compression_stats = if info.compression_stats.total_compressions() > 0 {
+		Some(info.compression_stats.clone())
+	} else {
+		None
+	};
+
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Info {
 		session_name: info.name.clone(),
 		model: info.model.clone(),
@@ -34,5 +40,6 @@ pub fn handle_info(session: &ChatSession) -> Result<CommandResult> {
 		tokens_cached: info.cached_tokens,
 		total_cost: info.total_cost,
 		cache_savings,
+		compression_stats,
 	}))
 }

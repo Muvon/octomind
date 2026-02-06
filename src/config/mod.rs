@@ -116,7 +116,7 @@ pub struct ShellConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CompressionHintConfig {
-	/// Enable adaptive compression hints
+	/// Enable compression system (task → phase → project, all automatic)
 	pub hints_enabled: bool,
 	/// Context pressure threshold (0.0-1.0) at which to start showing hints
 	pub hints_pressure_threshold: f64,

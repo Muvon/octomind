@@ -17,7 +17,9 @@
 use super::utils::format_number;
 use crate::config::Config;
 use crate::mcp::dev::plan;
-use crate::session::{estimate_full_context_tokens, get_sessions_dir, load_session, Session};
+use crate::session::{
+	estimate_full_context_tokens, get_sessions_dir, load_session, CompressionStats, Session,
+};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
@@ -214,6 +216,7 @@ impl ChatSession {
 			total_api_time_ms: 0,
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
+			compression_stats: CompressionStats::default(),
 		};
 
 		let session = Session {

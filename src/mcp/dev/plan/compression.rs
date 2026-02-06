@@ -32,6 +32,45 @@ use std::sync::{Arc, Mutex};
 // without needing to pass ChatSession through the MCP execution chain
 lazy_static::lazy_static! {
 	static ref PENDING_COMPRESSION: Arc<Mutex<Option<PlanTask>>> = Arc::new(Mutex::new(None));
+	static ref PENDING_PHASE_COMPRESSION: Arc<Mutex<Option<PhaseCompressionRequest>>> = Arc::new(Mutex::new(None));
+	static ref PENDING_PROJECT_COMPRESSION: Arc<Mutex<Option<ProjectCompressionRequest>>> = Arc::new(Mutex::new(None));
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseCompression {
+	pub phase_name: String,
+	pub task_range: (usize, usize),
+	pub summary: String,
+	pub compressed_at: chrono::DateTime<chrono::Utc>,
+	pub message_range: MessageRange,
+	pub metrics: CompressionMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectCompression {
+	pub summary: String,
+	pub compressed_at: chrono::DateTime<chrono::Utc>,
+	pub message_range: MessageRange,
+	pub metrics: CompressionMetrics,
+	pub total_tasks: usize,
+	pub total_phases: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PhaseCompressionRequest {
+	pub phase_name: String,
+	pub task_range: (usize, usize),
+	pub summary: String,
+	pub message_range: Option<MessageRange>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectCompressionRequest {
+	pub plan_title: String,
+	pub summary: String,
+	pub total_tasks: usize,
+	pub total_phases: usize,
+	pub message_range: Option<MessageRange>,
 }
 
 /// Request compression for a completed task
@@ -84,6 +123,56 @@ pub async fn process_pending_compression(
 /// Check if there's a pending compression request
 pub fn has_pending_compression() -> bool {
 	PENDING_COMPRESSION.lock().unwrap().is_some()
+}
+
+/// Request phase compression
+pub fn request_phase_compression(phase_name: String, task_range: (usize, usize), summary: String) {
+	crate::log_debug!(
+		"Phase compression requested: {} (tasks {}-{})",
+		phase_name,
+		task_range.0 + 1,
+		task_range.1 + 1
+	);
+	let mut pending = PENDING_PHASE_COMPRESSION.lock().unwrap();
+	*pending = Some(PhaseCompressionRequest {
+		phase_name,
+		task_range,
+		summary,
+		message_range: None,
+	});
+}
+
+/// Request project compression
+pub fn request_project_compression(
+	plan_title: String,
+	summary: String,
+	total_tasks: usize,
+	total_phases: usize,
+) {
+	crate::log_debug!(
+		"Project compression requested: {} ({} tasks, {} phases)",
+		plan_title,
+		total_tasks,
+		total_phases
+	);
+	let mut pending = PENDING_PROJECT_COMPRESSION.lock().unwrap();
+	*pending = Some(ProjectCompressionRequest {
+		plan_title,
+		summary,
+		total_tasks,
+		total_phases,
+		message_range: None,
+	});
+}
+
+/// Check if there's a pending phase compression request
+pub fn has_pending_phase_compression() -> bool {
+	PENDING_PHASE_COMPRESSION.lock().unwrap().is_some()
+}
+
+/// Check if there's a pending project compression request
+pub fn has_pending_project_compression() -> bool {
+	PENDING_PROJECT_COMPRESSION.lock().unwrap().is_some()
 }
 
 /// Get the current compression ID for logging/tracking
@@ -241,6 +330,202 @@ fn calculate_range_tokens(session: &ChatSession, range: &MessageRange) -> Result
 	Ok(total_tokens)
 }
 
+/// Process pending phase compression
+pub async fn process_pending_phase_compression(
+	session: &mut ChatSession,
+) -> Result<Option<CompressionMetrics>> {
+	let request = {
+		let mut pending = PENDING_PHASE_COMPRESSION.lock().unwrap();
+		pending.take()
+	};
+
+	if let Some(req) = request {
+		crate::log_debug!("Processing pending phase compression: {}", req.phase_name);
+		let metrics = compress_phase(session, &req).await?;
+		Ok(Some(metrics))
+	} else {
+		Ok(None)
+	}
+}
+
+/// Compress multiple task compressions into single phase summary
+async fn compress_phase(
+	session: &mut ChatSession,
+	request: &PhaseCompressionRequest,
+) -> Result<CompressionMetrics> {
+	// Find all compressed task summaries for this phase
+	let mut task_summaries = Vec::new();
+	let mut start_index = None;
+	let mut end_index = None;
+
+	// Look for task compressions that belong to this phase
+	for (i, msg) in session.session.messages.iter().enumerate() {
+		if let Some(name) = &msg.name {
+			if name == "plan_compression" && msg.content.contains("## Task Completed:") {
+				// Check if this task belongs to the phase (by checking content or just take all recent ones)
+				task_summaries.push((i, msg.content.clone()));
+				if start_index.is_none() {
+					start_index = Some(i);
+				}
+				end_index = Some(i);
+			}
+		}
+	}
+
+	// If no phase specified (single-phase plan), compress all task summaries
+	// If phase specified, we already filtered above
+	if task_summaries.is_empty() {
+		return Err(anyhow!("No task compressions found for phase compression"));
+	}
+
+	let start_idx = start_index.unwrap();
+	let end_idx = end_index.unwrap();
+
+	// Calculate tokens before compression
+	let tokens_before = calculate_range_tokens(
+		session,
+		&MessageRange {
+			start_index: start_idx,
+			end_index: end_idx,
+		},
+	)?;
+
+	// Create phase summary
+	let phase_summary =
+		format_phase_summary(&request.phase_name, &request.summary, task_summaries.len());
+
+	let tokens_after = estimate_tokens(&phase_summary) as u64;
+
+	// Remove all task compression messages in range
+	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
+
+	// Insert phase summary
+	session.insert_compressed_knowledge(start_idx, phase_summary)?;
+
+	// Calculate metrics
+	let tokens_saved = tokens_before.saturating_sub(tokens_after);
+	let metrics = CompressionMetrics::new(messages_removed, tokens_saved, tokens_before);
+
+	crate::log_debug!(
+		"Phase compression '{}': {} task summaries → 1 phase summary, {} tokens saved",
+		request.phase_name,
+		task_summaries.len(),
+		metrics.tokens_saved
+	);
+
+	Ok(metrics)
+}
+
+fn format_phase_summary(phase_name: &str, summary: &str, task_count: usize) -> String {
+	format!(
+		"## Phase Completed: {}\n\n\
+		 **Tasks Completed**: {}\n\n\
+		 **Summary**: {}\n\n\
+		 ---\n\
+		 *Phase Compression - {} task summaries compressed into phase overview*",
+		phase_name, task_count, summary, task_count
+	)
+}
+
+/// Process pending project compression
+pub async fn process_pending_project_compression(
+	session: &mut ChatSession,
+) -> Result<Option<CompressionMetrics>> {
+	let request = {
+		let mut pending = PENDING_PROJECT_COMPRESSION.lock().unwrap();
+		pending.take()
+	};
+
+	if let Some(req) = request {
+		crate::log_debug!("Processing pending project compression: {}", req.plan_title);
+		let metrics = compress_project(session, &req).await?;
+		Ok(Some(metrics))
+	} else {
+		Ok(None)
+	}
+}
+
+/// Compress entire plan (all tasks + phases) into final project summary
+async fn compress_project(
+	session: &mut ChatSession,
+	request: &ProjectCompressionRequest,
+) -> Result<CompressionMetrics> {
+	// Find all plan-related compression messages (both task and phase compressions)
+	let mut compression_indices = Vec::new();
+
+	for (i, msg) in session.session.messages.iter().enumerate() {
+		if let Some(name) = &msg.name {
+			if name == "plan_compression" {
+				compression_indices.push(i);
+			}
+		}
+	}
+
+	if compression_indices.len() < 2 {
+		return Err(anyhow!(
+			"Project compression requires at least 2 compressions (found {})",
+			compression_indices.len()
+		));
+	}
+
+	let start_idx = *compression_indices.first().unwrap();
+	let end_idx = *compression_indices.last().unwrap();
+
+	// Calculate tokens before
+	let tokens_before = calculate_range_tokens(
+		session,
+		&MessageRange {
+			start_index: start_idx,
+			end_index: end_idx,
+		},
+	)?;
+
+	// Create project summary
+	let project_summary = format_project_summary(
+		&request.plan_title,
+		&request.summary,
+		request.total_tasks,
+		request.total_phases,
+		compression_indices.len(),
+	);
+
+	let tokens_after = estimate_tokens(&project_summary) as u64;
+
+	// Remove all compression messages
+	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
+
+	// Insert project summary
+	session.insert_compressed_knowledge(start_idx, project_summary)?;
+
+	let tokens_saved = tokens_before.saturating_sub(tokens_after);
+	let metrics = CompressionMetrics::new(messages_removed, tokens_saved, tokens_before);
+
+	crate::log_debug!(
+		"Project compression complete: {} summaries → 1 project summary, {} tokens saved",
+		compression_indices.len(),
+		metrics.tokens_saved
+	);
+
+	Ok(metrics)
+}
+
+fn format_project_summary(
+	plan_title: &str,
+	summary: &str,
+	total_tasks: usize,
+	total_phases: usize,
+	summaries_compressed: usize,
+) -> String {
+	format!(
+		"## Project Completed: {}\n\n\
+		 **Scale**: {} tasks across {} phases\n\n\
+		 **Summary**: {}\n\n\
+		 ---\n\
+		 *Project Compression - {} summaries consolidated into final project overview*",
+		plan_title, total_tasks, total_phases, summary, summaries_compressed
+	)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -271,6 +556,7 @@ mod tests {
 			status: super::super::storage::TaskStatus::Completed,
 			completed_at: Some(Utc::now()),
 			message_range: None,
+			phase: None,
 		};
 
 		let formatted = format_compressed_summary(&task, "Task completed successfully", "test_123");

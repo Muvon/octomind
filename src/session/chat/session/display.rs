@@ -91,6 +91,57 @@ impl ChatSession {
 			);
 		}
 
+		// Compression statistics
+		let compression_stats = &self.session.info.compression_stats;
+		if compression_stats.total_compressions() > 0 {
+			println!();
+			println!(
+				"{}",
+				"───────────── Compression Statistics ─────────────".bright_cyan()
+			);
+
+			if compression_stats.task_compressions > 0 {
+				println!(
+					"{} {}",
+					"Task compressions:".yellow(),
+					format_number(compression_stats.task_compressions as u64).bright_white()
+				);
+			}
+
+			if compression_stats.phase_compressions > 0 {
+				println!(
+					"{} {}",
+					"Phase compressions:".yellow(),
+					format_number(compression_stats.phase_compressions as u64).bright_white()
+				);
+			}
+
+			if compression_stats.project_compressions > 0 {
+				println!(
+					"{} {}",
+					"Project compressions:".yellow(),
+					format_number(compression_stats.project_compressions as u64).bright_white()
+				);
+			}
+
+			println!(
+				"{} {}",
+				"Messages removed:".yellow(),
+				format_number(compression_stats.total_messages_removed as u64).bright_green()
+			);
+
+			println!(
+				"{} {}",
+				"Tokens saved:".yellow(),
+				format_number(compression_stats.total_tokens_saved).bright_green()
+			);
+
+			let avg_ratio = compression_stats.avg_compression_ratio() * 100.0;
+			if avg_ratio > 0.0 {
+				println!("{} {:.1}%", "Avg compression:".yellow(), avg_ratio);
+			}
+		}
+
 		// Display layered stats if available
 		if !self.session.info.layer_stats.is_empty() {
 			println!();

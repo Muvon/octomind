@@ -233,7 +233,27 @@ async fn handle_start_command(call: &McpToolCall) -> Result<McpToolResult> {
 							}
 						};
 
-						tasks.push(TaskData::new(title, description));
+						// Optional phase field
+						let phase = match task_obj.get("phase") {
+							Some(Value::String(p)) => {
+								if p.trim().is_empty() {
+									None
+								} else {
+									Some(p.clone())
+								}
+							}
+							Some(Value::Null) => None,
+							Some(_) => {
+								return Ok(McpToolResult::error(
+									call.tool_name.clone(),
+									call.tool_id.clone(),
+									format!("Task {} phase must be a string", i + 1),
+								));
+							}
+							None => None,
+						};
+
+						tasks.push(TaskData::new(title, description, phase));
 					}
 					_ => {
 						return Ok(McpToolResult::error(
@@ -438,12 +458,37 @@ async fn handle_next_command(call: &McpToolCall) -> Result<McpToolResult> {
 
 	// Get the completed task for compression
 	let completed_task = storage.get_last_completed_task().ok().flatten();
+	let completed_task_phase = completed_task.as_ref().and_then(|t| t.phase.clone());
 
 	// Check if more tasks remain
 	let has_more = storage.has_more_tasks().unwrap_or(false);
 	let plan_title = storage
 		.get_plan_title()
 		.unwrap_or_else(|_| "Unknown Plan".to_string());
+
+	// Check if this completes a phase (last task of a phase)
+	let phase_completed = if let Some(ref phase_name) = completed_task_phase {
+		// Check if next task has different phase or no more tasks
+		if has_more {
+			let (_, _, _, _) = storage.get_current_task_info().unwrap_or((
+				0,
+				0,
+				"Unknown".to_string(),
+				"No description".to_string(),
+			));
+			// Get next task phase
+			let next_task_phase = storage.get_plan().ok().and_then(|plan| {
+				plan.tasks
+					.get(plan.current_task_index)
+					.and_then(|t| t.phase.clone())
+			});
+			next_task_phase.as_ref() != Some(phase_name)
+		} else {
+			true // Last task always completes its phase
+		}
+	} else {
+		false
+	};
 
 	let response = if has_more {
 		let (current, total, task_title, _task_description) = storage
@@ -454,9 +499,22 @@ async fn handle_next_command(call: &McpToolCall) -> Result<McpToolResult> {
 		format!("Final task completed: {content}\n\nAll tasks in plan '{plan_title}' are now complete. Use 'done' command to finalize.")
 	};
 
-	// Request compression if we have a completed task
+	drop(storage);
+
+	// Request task compression if we have a completed task
 	if let Some(task) = completed_task {
 		super::compression::request_compression(task);
+	}
+
+	// Automatic phase compression: trigger when phase completes
+	if phase_completed {
+		if let Some(phase_name) = completed_task_phase {
+			super::compression::request_phase_compression(
+				phase_name.clone(),
+				(0, 0), // Will be calculated in compression logic
+				format!("Phase '{}' completed", phase_name),
+			);
+		}
 	}
 
 	Ok(McpToolResult::success(
@@ -577,6 +635,8 @@ async fn handle_done_command(call: &McpToolCall) -> Result<McpToolResult> {
 	let plan_title = storage
 		.get_plan_title()
 		.unwrap_or_else(|_| "Unknown Plan".to_string());
+	let total_tasks = storage.get_total_task_count().unwrap_or(0);
+	let total_phases = storage.get_phase_count().unwrap_or(0);
 
 	// Complete plan
 	if let Err(e) = storage.complete_plan(content.clone()) {
@@ -587,7 +647,23 @@ async fn handle_done_command(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	}
 
-	let response = format!("PLAN COMPLETED: {plan_title}\n\nFINAL SUMMARY: {content}");
+	drop(storage);
+
+	// Automatically request project compression
+	super::compression::request_project_compression(
+		plan_title.clone(),
+		content.clone(),
+		total_tasks,
+		total_phases,
+	);
+
+	let response = format!(
+		"PLAN COMPLETED: {}\n\n\
+		 Total Tasks: {}\n\
+		 Total Phases: {}\n\n\
+		 FINAL SUMMARY: {}",
+		plan_title, total_tasks, total_phases, content
+	);
 
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),
@@ -619,6 +695,12 @@ async fn handle_reset_command(call: &McpToolCall) -> Result<McpToolResult> {
 pub async fn clear_plan_data() -> Result<()> {
 	let mut storage = PLAN_STORAGE.lock().unwrap();
 	storage.clear_plan()
+}
+
+/// Get completed task count for compression hints
+pub fn get_completed_task_count() -> Result<usize> {
+	let storage = PLAN_STORAGE.lock().unwrap();
+	storage.get_completed_task_count()
 }
 
 /// Get current plan display for session commands

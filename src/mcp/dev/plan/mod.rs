@@ -32,14 +32,14 @@ pub mod memory_storage;
 pub mod storage;
 
 pub use compression::{
-	compress_completed_task, get_compression_id, has_pending_compression,
-	process_pending_compression, request_compression, set_pending_compression_range,
-	CompressionMetrics,
+	process_pending_compression, process_pending_phase_compression,
+	process_pending_project_compression, set_pending_compression_range, CompressionMetrics,
+	PhaseCompression, ProjectCompression,
 };
 pub use core::{
 	clear_plan_data, clear_plan_tool_executing, execute_plan, get_and_clear_start_index,
-	get_last_completed_task_for_compression, has_active_plan, set_current_task_start_index,
-	set_last_task_message_range,
+	get_completed_task_count, get_current_plan_display, get_last_completed_task_for_compression,
+	has_active_plan, set_current_task_start_index, set_last_task_message_range,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};

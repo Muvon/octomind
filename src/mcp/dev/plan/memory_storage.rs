@@ -50,7 +50,8 @@ impl PlanStorage for MemoryPlanStorage {
 				summary: None,
 				status: TaskStatus::InProgress, // All tasks start as InProgress, managed by current_task_index
 				completed_at: None,
-				message_range: None, // Initialize as None, will be set during compression
+				message_range: None,    // Initialize as None, will be set during compression
+				phase: task_data.phase, // Optional phase grouping
 			})
 			.collect();
 
@@ -60,6 +61,8 @@ impl PlanStorage for MemoryPlanStorage {
 			current_task_index: 0,
 			created_at: Utc::now(),
 			status: PlanStatus::Active,
+			phase_compressions: Vec::new(),
+			project_compression: None,
 		});
 
 		Ok(())
@@ -237,5 +240,41 @@ impl PlanStorage for MemoryPlanStorage {
 		}
 
 		Ok(Some(plan.tasks[completed_task_index].clone()))
+	}
+
+	fn get_completed_task_count(&self) -> Result<usize> {
+		let plan = self
+			.plan
+			.as_ref()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+		Ok(plan.current_task_index)
+	}
+
+	fn get_current_task_index(&self) -> Result<usize> {
+		let plan = self
+			.plan
+			.as_ref()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+		Ok(plan.current_task_index)
+	}
+
+	fn get_total_task_count(&self) -> Result<usize> {
+		let plan = self
+			.plan
+			.as_ref()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+		Ok(plan.tasks.len())
+	}
+
+	fn get_phase_count(&self) -> Result<usize> {
+		let plan = self
+			.plan
+			.as_ref()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+		Ok(plan.phase_compressions.len())
+	}
+
+	fn get_plan(&self) -> Result<&ExecutionPlan> {
+		self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))
 	}
 }

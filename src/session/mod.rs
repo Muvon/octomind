@@ -217,6 +217,50 @@ pub struct SessionInfo {
 	pub total_tool_time_ms: u64, // Total time spent executing tools
 	#[serde(default)]
 	pub total_layer_time_ms: u64, // Total time spent in layer processing
+	// Compression tracking
+	#[serde(default)]
+	pub compression_stats: CompressionStats,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompressionStats {
+	pub task_compressions: usize,
+	pub phase_compressions: usize,
+	pub project_compressions: usize,
+	pub total_messages_removed: usize,
+	pub total_tokens_saved: u64,
+}
+
+impl CompressionStats {
+	pub fn add_task_compression(&mut self, messages: usize, tokens: u64) {
+		self.task_compressions += 1;
+		self.total_messages_removed += messages;
+		self.total_tokens_saved += tokens;
+	}
+
+	pub fn add_phase_compression(&mut self, messages: usize, tokens: u64) {
+		self.phase_compressions += 1;
+		self.total_messages_removed += messages;
+		self.total_tokens_saved += tokens;
+	}
+
+	pub fn add_project_compression(&mut self, messages: usize, tokens: u64) {
+		self.project_compressions += 1;
+		self.total_messages_removed += messages;
+		self.total_tokens_saved += tokens;
+	}
+
+	pub fn total_compressions(&self) -> usize {
+		self.task_compressions + self.phase_compressions + self.project_compressions
+	}
+
+	pub fn avg_compression_ratio(&self) -> f64 {
+		if self.total_compressions() == 0 {
+			0.0
+		} else {
+			self.total_tokens_saved as f64 / (self.total_tokens_saved as f64 + 10000.0)
+		}
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -288,6 +332,7 @@ impl Session {
 				total_api_time_ms: 0,
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
+				compression_stats: CompressionStats::default(),
 			},
 			messages: Vec::new(),
 			session_file: None,
@@ -1038,6 +1083,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			total_api_time_ms: 0,
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
+			compression_stats: CompressionStats::default(),
 		};
 
 		// Extract runtime state from log file

@@ -188,8 +188,13 @@ pub async fn process_tool_results(
 	// Process any pending compression with proper error handling
 	match crate::mcp::dev::plan::process_pending_compression(chat_session).await {
 		Ok(Some(metrics)) => {
+			chat_session
+				.session
+				.info
+				.compression_stats
+				.add_task_compression(metrics.messages_removed, metrics.tokens_saved);
 			log_info!(
-				"✅ Plan compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
+				"✅ Task compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
 				metrics.messages_removed,
 				metrics.tokens_saved,
 				metrics.compression_ratio * 100.0
@@ -205,6 +210,54 @@ pub async fn process_tool_results(
 				e
 			);
 			// Note: Session continues normally - compression is best-effort
+		}
+	}
+
+	// Process phase compression (automatic)
+	match crate::mcp::dev::plan::process_pending_phase_compression(chat_session).await {
+		Ok(Some(metrics)) => {
+			chat_session
+				.session
+				.info
+				.compression_stats
+				.add_phase_compression(metrics.messages_removed, metrics.tokens_saved);
+			log_info!(
+				"✅ Phase compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
+				metrics.messages_removed,
+				metrics.tokens_saved,
+				metrics.compression_ratio * 100.0
+			);
+		}
+		Ok(None) => {}
+		Err(e) => {
+			log_debug!(
+				"❌ Phase compression failed: {}. Context was not compressed.",
+				e
+			);
+		}
+	}
+
+	// Process project compression (automatic)
+	match crate::mcp::dev::plan::process_pending_project_compression(chat_session).await {
+		Ok(Some(metrics)) => {
+			chat_session
+				.session
+				.info
+				.compression_stats
+				.add_project_compression(metrics.messages_removed, metrics.tokens_saved);
+			log_info!(
+				"✅ Project compression: {} messages removed, {} tokens saved ({:.1}% reduction)",
+				metrics.messages_removed,
+				metrics.tokens_saved,
+				metrics.compression_ratio * 100.0
+			);
+		}
+		Ok(None) => {}
+		Err(e) => {
+			log_debug!(
+				"❌ Project compression failed: {}. Context was not compressed.",
+				e
+			);
 		}
 	}
 

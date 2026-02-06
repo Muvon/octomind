@@ -133,8 +133,7 @@ pub async fn process_pending_compression(
 
 	if let Some(task) = task {
 		crate::log_debug!("Processing pending compression for task: {}", task.title);
-		let metrics = compress_completed_task(session, &task).await?;
-		Ok(Some(metrics))
+		compress_completed_task(session, &task).await
 	} else {
 		Ok(None)
 	}
@@ -251,7 +250,7 @@ impl CompressionMetrics {
 pub async fn compress_completed_task(
 	session: &mut ChatSession,
 	task: &PlanTask,
-) -> Result<CompressionMetrics> {
+) -> Result<Option<CompressionMetrics>> {
 	// Validate task has required data (fail fast with clear error)
 	let summary = task
 		.summary
@@ -282,6 +281,16 @@ pub async fn compress_completed_task(
 	// Calculate tokens in compressed entry
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
+	// Skip compression if it doesn't reduce tokens
+	if tokens_after >= tokens_before {
+		crate::log_info!(
+			"Task compression skipped: {} tokens before, {} tokens after (no savings).",
+			tokens_before,
+			tokens_after
+		);
+		return Ok(None);
+	}
+
 	// Remove messages in range
 	let messages_removed =
 		session.remove_messages_in_range(message_range.start_index, message_range.end_index)?;
@@ -300,7 +309,7 @@ pub async fn compress_completed_task(
 		metrics.compression_ratio * 100.0
 	);
 
-	Ok(metrics)
+	Ok(Some(metrics))
 }
 
 /// Format task summary as structured knowledge block with transparency metadata
@@ -369,8 +378,7 @@ pub async fn process_pending_phase_compression(
 
 	if let Some(req) = request {
 		crate::log_debug!("Processing pending phase compression: {}", req.phase_name);
-		let metrics = compress_phase(session, &req).await?;
-		Ok(Some(metrics))
+		compress_phase(session, &req).await
 	} else {
 		Ok(None)
 	}
@@ -380,7 +388,7 @@ pub async fn process_pending_phase_compression(
 async fn compress_phase(
 	session: &mut ChatSession,
 	request: &PhaseCompressionRequest,
-) -> Result<CompressionMetrics> {
+) -> Result<Option<CompressionMetrics>> {
 	// Find all compressed task summaries for this phase
 	let mut task_summaries = Vec::new();
 	let mut start_index = None;
@@ -424,6 +432,16 @@ async fn compress_phase(
 
 	let tokens_after = estimate_tokens(&phase_summary) as u64;
 
+	// Skip compression if it doesn't reduce tokens
+	if tokens_after >= tokens_before {
+		crate::log_info!(
+			"Phase compression skipped: {} tokens before, {} tokens after (no savings).",
+			tokens_before,
+			tokens_after
+		);
+		return Ok(None);
+	}
+
 	// Remove all task compression messages in range
 	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
 
@@ -441,7 +459,7 @@ async fn compress_phase(
 		metrics.tokens_saved
 	);
 
-	Ok(metrics)
+	Ok(Some(metrics))
 }
 
 fn format_phase_summary(phase_name: &str, summary: &str, task_count: usize) -> String {
@@ -471,8 +489,7 @@ pub async fn process_pending_project_compression(
 
 	if let Some(req) = request {
 		crate::log_debug!("Processing pending project compression: {}", req.plan_title);
-		let metrics = compress_project(session, &req).await?;
-		Ok(Some(metrics))
+		compress_project(session, &req).await
 	} else {
 		Ok(None)
 	}
@@ -482,7 +499,7 @@ pub async fn process_pending_project_compression(
 async fn compress_project(
 	session: &mut ChatSession,
 	request: &ProjectCompressionRequest,
-) -> Result<CompressionMetrics> {
+) -> Result<Option<CompressionMetrics>> {
 	// Find all plan-related compression messages (both task and phase compressions)
 	let mut compression_indices = Vec::new();
 
@@ -524,6 +541,16 @@ async fn compress_project(
 
 	let tokens_after = estimate_tokens(&project_summary) as u64;
 
+	// Skip compression if it doesn't reduce tokens
+	if tokens_after >= tokens_before {
+		crate::log_info!(
+			"Project compression skipped: {} tokens before, {} tokens after (no savings).",
+			tokens_before,
+			tokens_after
+		);
+		return Ok(None);
+	}
+
 	// Remove all compression messages
 	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
 
@@ -539,7 +566,7 @@ async fn compress_project(
 		metrics.tokens_saved
 	);
 
-	Ok(metrics)
+	Ok(Some(metrics))
 }
 
 fn format_project_summary(

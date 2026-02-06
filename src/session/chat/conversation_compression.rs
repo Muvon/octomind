@@ -92,6 +92,9 @@ pub async fn check_and_compress_conversation(
 		.await;
 	});
 
+	// Give animation time to start (avoid race condition)
+	tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
 	log_debug!("Compression check triggered - asking AI about compression");
 
 	// Ask AI if compression is beneficial (mutable reference for cost tracking)

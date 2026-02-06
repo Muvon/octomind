@@ -98,6 +98,29 @@ impl ToolExecutionContext<'_> {
 		}
 		// For layers, we don't need to modify conversation history
 	}
+
+	/// Get current cost for animation display
+	pub fn get_current_cost(&self) -> f64 {
+		match self {
+			ToolExecutionContext::MainSession { chat_session, .. } => {
+				chat_session.session.info.total_cost
+			}
+			ToolExecutionContext::Layer { .. } => 0.0, // Layers don't track cost
+		}
+	}
+
+	/// Get current context tokens for animation display
+	pub fn get_current_context_tokens(&self) -> u64 {
+		match self {
+			ToolExecutionContext::MainSession { chat_session, .. } => {
+				// Estimate current context tokens from messages
+				crate::session::estimate_tokens(
+					&serde_json::to_string(&chat_session.session.messages).unwrap_or_default(),
+				) as u64
+			}
+			ToolExecutionContext::Layer { .. } => 0, // Layers don't track context
+		}
+	}
 }
 
 /// Execute all tool calls in parallel and collect results - unified interface
@@ -244,6 +267,23 @@ async fn execute_tools_parallel_internal(
 
 	// Extract just the tasks for parallel execution
 	let tasks: Vec<_> = tool_tasks.into_iter().map(|(_, task, _, _)| task).collect();
+
+	// Show "Executing tools..." animation during tool execution (interactive mode only)
+	let animation_cancel = Arc::new(AtomicBool::new(false));
+	let animation_cancel_clone = animation_cancel.clone();
+	let current_cost = context.get_current_cost();
+	let current_context_tokens = context.get_current_context_tokens();
+	let max_threshold = config.max_session_tokens_threshold;
+
+	let animation_task = tokio::spawn(async move {
+		let _ = crate::session::chat::animation::show_smart_animation(
+			animation_cancel_clone,
+			current_cost,
+			current_context_tokens,
+			max_threshold,
+		)
+		.await;
+	});
 
 	// Use tokio::select! for immediate cancellation response
 	tokio::select! {
@@ -453,6 +493,10 @@ async fn execute_tools_parallel_internal(
 				std::future::pending::<()>().await;
 			}
 		} => {
+			// Stop animation
+			animation_cancel.store(true, Ordering::SeqCst);
+			let _ = animation_task.await;
+
 			// Cancellation occurred - provide immediate feedback
 			use colored::*;
 			println!(
@@ -472,6 +516,10 @@ async fn execute_tools_parallel_internal(
 			return Ok((Vec::new(), total_tool_time_ms));
 		}
 	}
+
+	// Stop animation after all tools complete
+	animation_cancel.store(true, Ordering::SeqCst);
+	let _ = animation_task.await;
 
 	// Handle large outputs with batched confirmation
 	let processed_results = handle_large_tool_results(tool_results, config).await?;

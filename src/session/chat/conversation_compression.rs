@@ -25,9 +25,11 @@
 
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
-use crate::session::estimate_tokens;
+use crate::session::{estimate_full_context_tokens, estimate_tokens};
 use crate::{log_debug, log_info};
 use anyhow::Result;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Check if we should ask AI about compression
 pub fn should_check_compression(session: &ChatSession, config: &Config) -> bool {
@@ -61,6 +63,23 @@ pub async fn check_and_compress_conversation(
 		return Ok(());
 	}
 
+	// Show animation immediately to avoid perceived lag during decision/summary calls
+	let animation_cancel = Arc::new(AtomicBool::new(false));
+	let animation_cancel_clone = animation_cancel.clone();
+	let current_cost = session.session.info.total_cost;
+	let max_threshold = config.max_session_tokens_threshold;
+	let current_context_tokens =
+		estimate_full_context_tokens(&session.session.messages, None, None) as u64;
+	let animation_task = tokio::spawn(async move {
+		let _ = crate::session::chat::animation::show_smart_animation(
+			animation_cancel_clone,
+			current_cost,
+			current_context_tokens,
+			max_threshold,
+		)
+		.await;
+	});
+
 	log_debug!("Conversation turn threshold reached - asking AI about compression");
 
 	// Ask AI if compression is beneficial (mutable reference for cost tracking)
@@ -68,6 +87,8 @@ pub async fn check_and_compress_conversation(
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
+		animation_cancel.store(true, Ordering::SeqCst);
+		let _ = animation_task.await;
 		return Ok(());
 	}
 
@@ -75,6 +96,9 @@ pub async fn check_and_compress_conversation(
 
 	// Perform compression (mutable reference for cost tracking)
 	compress_older_conversation(session, config).await?;
+
+	animation_cancel.store(true, Ordering::SeqCst);
+	let _ = animation_task.await;
 
 	Ok(())
 }

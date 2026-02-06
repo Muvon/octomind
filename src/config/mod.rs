@@ -146,7 +146,6 @@ pub struct CompressionHintConfig {
 	pub decision_model: Option<String>,
 }
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {
 	/// Name of the prompt (used with /prompt command)

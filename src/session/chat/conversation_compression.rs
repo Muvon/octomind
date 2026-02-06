@@ -77,7 +77,7 @@ pub async fn check_and_compress_conversation(
 		return Ok(());
 	}
 
-	// Show animation immediately to avoid perceived lag during decision/summary calls
+	// Show animation immediately to avoid perceived lag during decision/summary call
 	let animation_cancel = Arc::new(AtomicBool::new(false));
 	let animation_cancel_clone = animation_cancel.clone();
 	let current_cost = session.session.info.total_cost;
@@ -97,10 +97,62 @@ pub async fn check_and_compress_conversation(
 	// Give animation time to start (avoid race condition)
 	tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-	log_debug!("Compression check triggered - asking AI about compression");
+	log_debug!("Compression check triggered - asking AI for decision and summary in one call");
 
-	// Ask AI if compression is beneficial (mutable reference for cost tracking)
-	let should_compress = ask_ai_compression_decision(session, config).await?;
+	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)
+	// This allows us to send context chunks to AI in the same call as decision
+	let (start_idx, end_idx) = find_compression_range(&session.session.messages)?;
+
+	if start_idx >= end_idx {
+		log_debug!("No messages to compress (range invalid)");
+		animation_cancel.store(true, Ordering::SeqCst);
+		let _ = animation_task.await;
+		return Ok(());
+	}
+
+	// Calculate tokens before compression
+	let tokens_before = calculate_range_tokens(session, start_idx, end_idx)?;
+
+	// Chunk messages semantically (LOCAL - no API call)
+	let messages_to_compress = &session.session.messages[start_idx..=end_idx];
+	let chunks = super::semantic_chunking::chunk_messages(messages_to_compress);
+
+	// Calculate target tokens based on ratio
+	let target_tokens = (tokens_before as f64 / target_ratio) as usize;
+
+	// Select top chunks within budget (LOCAL - no API call)
+	let selected = super::semantic_chunking::select_chunks_within_budget(&chunks, target_tokens);
+
+	// Separate by type (LOCAL - no API call)
+	let critical: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Critical))
+		.collect();
+	let reference: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Reference))
+		.collect();
+	let context: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Context))
+		.collect();
+
+	// Format critical + reference verbatim (LOCAL - no AI summarization needed)
+	let critical_text = format_chunks_verbatim(&critical);
+	let reference_text = format_chunks_verbatim(&reference);
+
+	// Combine critical and reference
+	let preserved_text = if !critical_text.is_empty() && !reference_text.is_empty() {
+		format!("{}\n{}", critical_text, reference_text)
+	} else if !critical_text.is_empty() {
+		critical_text
+	} else {
+		reference_text
+	};
+
+	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
+	let (should_compress, context_summary) =
+		ask_ai_decision_and_summary(session, config, &context).await?;
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
@@ -111,8 +163,15 @@ pub async fn check_and_compress_conversation(
 
 	log_info!("AI decided to compress older conversation exchanges");
 
-	// Perform compression with target ratio (mutable reference for cost tracking)
-	compress_older_conversation(session, config, target_ratio).await?;
+	// Apply compression with the summary we got from AI
+	apply_compression(
+		session,
+		start_idx,
+		end_idx,
+		&preserved_text,
+		&context_summary,
+		tokens_before,
+	)?;
 
 	animation_cancel.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
@@ -120,22 +179,48 @@ pub async fn check_and_compress_conversation(
 	Ok(())
 }
 
-/// Ask AI: should we compress older conversation?
-/// Uses decision_model if configured for cost savings
-async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config) -> Result<bool> {
-	// Create decision prompt
-	let decision_prompt = "Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information? Consider:\n\
-	- Are there repetitive or resolved topics that can be summarized?\n\
-	- Is there important context that must be preserved?\n\
-	- Would compression help focus on current topics?\n\n\
-	Respond with ONLY 'YES' to compress or 'NO' to keep as-is.";
+/// Ask AI: should we compress AND get summary in ONE call (1-hop optimization)
+/// This combines decision + summarization to reduce latency and cost by 50%
+async fn ask_ai_decision_and_summary(
+	session: &mut ChatSession,
+	config: &Config,
+	context_chunks: &[&super::semantic_chunking::SemanticChunk],
+) -> Result<(bool, String)> {
+	// Build prompt that asks for decision + summary in one response
+	let mut decision_prompt = String::from(
+		"Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information? Consider:\n\
+		- Are there repetitive or resolved topics that can be summarized?\n\
+		- Is there important context that must be preserved?\n\
+		- Would compression help focus on current topics?\n\n"
+	);
+
+	// If there are context chunks, include them for summarization
+	if !context_chunks.is_empty() {
+		decision_prompt.push_str(
+			"If YES, also provide a 2-3 sentence summary of these context chunks (focus on what's needed to continue the conversation):\n\n"
+		);
+
+		for chunk in context_chunks {
+			decision_prompt.push_str(&format!("- {}\n", chunk.content.trim()));
+		}
+
+		decision_prompt.push_str(
+			"\n\nRespond with:\n\
+			'YES' followed by the summary on the next line, OR\n\
+			'NO' if compression is not beneficial.\n\n\
+			Example format:\n\
+			YES\n\
+			[Your 2-3 sentence summary here]",
+		);
+	} else {
+		decision_prompt.push_str("Respond with ONLY 'YES' to compress or 'NO' to keep as-is.");
+	}
 
 	// CRITICAL FIX: Include conversation history for AI to analyze
-	// Clone existing messages and append decision prompt
 	let mut messages = session.session.messages.clone();
 	messages.push(crate::session::Message {
 		role: "user".to_string(),
-		content: decision_prompt.to_string(),
+		content: decision_prompt,
 		timestamp: std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
@@ -163,7 +248,7 @@ async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config)
 		.unwrap_or(&session_model);
 
 	crate::log_debug!(
-		"Using model '{}' for compression decision (session model: '{}')",
+		"Using model '{}' for 1-hop compression decision+summary (session model: '{}')",
 		model_to_use,
 		session_model
 	);
@@ -175,98 +260,59 @@ async fn ask_ai_compression_decision(session: &mut ChatSession, config: &Config)
 		temperature,
 		top_p,
 		top_k,
-		512, // Small max_tokens for decision
+		1024, // Increased from 512 to allow for summary text
 		config,
 	)
-	.with_max_retries(1) // Single retry for decision
-	.with_chat_session(session); // CRITICAL: Enable cost tracking
+	.with_max_retries(1)
+	.with_chat_session(session);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 
-	// Check if response contains YES
-	let decision = response.content.to_uppercase().contains("YES");
+	// Parse response: check if it starts with YES and extract summary
+	let content = response.content.trim();
+	let lines: Vec<&str> = content.lines().collect();
 
-	log_debug!(
-		"AI compression decision: {} (cost tracked in session)",
-		if decision { "YES" } else { "NO" }
-	);
-
-	Ok(decision)
-}
-
-/// Compress older conversation exchanges using semantic chunking
-async fn compress_older_conversation(
-	session: &mut ChatSession,
-	config: &Config,
-	target_ratio: f64,
-) -> Result<()> {
-	// Find range to compress (keep last 4 turns raw = 2 exchanges)
-	let (start_idx, end_idx) = find_compression_range(&session.session.messages)?;
-
-	if start_idx >= end_idx {
-		log_debug!("No messages to compress (range invalid)");
-		return Ok(());
+	if lines.is_empty() {
+		log_debug!("AI compression decision: NO (empty response)");
+		return Ok((false, String::new()));
 	}
 
-	log_debug!(
-		"Compressing conversation messages {}-{} (preserving recent context)",
-		start_idx,
-		end_idx
-	);
+	let first_line = lines[0].trim().to_uppercase();
+	let decision = first_line.contains("YES");
 
-	// Calculate tokens before compression
-	let tokens_before = calculate_range_tokens(session, start_idx, end_idx)?;
+	if decision {
+		// Extract summary from lines after "YES"
+		let summary = if lines.len() > 1 {
+			lines[1..].join("\n").trim().to_string()
+		} else {
+			String::new()
+		};
 
-	// Chunk messages semantically
-	let messages_to_compress = &session.session.messages[start_idx..=end_idx];
-	let chunks = super::semantic_chunking::chunk_messages(messages_to_compress);
-
-	// Calculate target tokens based on ratio
-	let target_tokens = (tokens_before as f64 / target_ratio) as usize;
-
-	// Select top chunks within budget
-	let selected = super::semantic_chunking::select_chunks_within_budget(&chunks, target_tokens);
-
-	// Separate by type
-	let critical: Vec<_> = selected
-		.iter()
-		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Critical))
-		.collect();
-	let reference: Vec<_> = selected
-		.iter()
-		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Reference))
-		.collect();
-	let context: Vec<_> = selected
-		.iter()
-		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Context))
-		.collect();
-
-	// Format critical + reference verbatim (no AI summarization)
-	let critical_text = format_chunks_verbatim(&critical);
-	let reference_text = format_chunks_verbatim(&reference);
-
-	// Combine critical and reference
-	let preserved_text = if !critical_text.is_empty() && !reference_text.is_empty() {
-		format!("{}\n{}", critical_text, reference_text)
-	} else if !critical_text.is_empty() {
-		critical_text
+		log_debug!(
+			"AI compression decision: YES with summary ({} chars, cost tracked in session)",
+			summary.len()
+		);
+		Ok((true, summary))
 	} else {
-		reference_text
-	};
+		log_debug!("AI compression decision: NO (cost tracked in session)");
+		Ok((false, String::new()))
+	}
+}
 
-	// Summarize context chunks using AI
-	let context_summary = if !context.is_empty() {
-		summarize_context_chunks(session, config, &context).await?
-	} else {
-		String::new()
-	};
-
+/// Apply compression by replacing message range with compressed summary
+fn apply_compression(
+	session: &mut ChatSession,
+	start_idx: usize,
+	end_idx: usize,
+	preserved_text: &str,
+	context_summary: &str,
+	tokens_before: u64,
+) -> Result<()> {
 	// Format compressed entry
 	let compression_id = crate::mcp::dev::plan::compression::get_compression_id()
 		.unwrap_or_else(|| "unknown".to_string());
 
-	let compressed_entry =
-		format_compressed_entry(&preserved_text, &context_summary, compression_id);
+	let compressed_entry = format_compressed_entry(preserved_text, context_summary, compression_id);
 
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
@@ -309,71 +355,6 @@ fn format_chunks_verbatim(chunks: &[&super::semantic_chunking::SemanticChunk]) -
 		.filter(|s| !s.is_empty())
 		.collect::<Vec<_>>()
 		.join("\n- ")
-}
-
-/// Summarize context chunks using AI
-async fn summarize_context_chunks(
-	session: &mut ChatSession,
-	config: &Config,
-	chunks: &[&super::semantic_chunking::SemanticChunk],
-) -> Result<String> {
-	let context_text = chunks
-		.iter()
-		.map(|c| c.content.as_str())
-		.collect::<Vec<_>>()
-		.join("\n\n");
-
-	let prompt = format!(
-		"Summarize this context in 2-3 sentences (focus on what's needed to continue the conversation):\n\n{}",
-		context_text
-	);
-
-	// Make API call for summary
-	let messages = vec![crate::session::Message {
-		role: "user".to_string(),
-		content: prompt,
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		cached: false,
-		tool_call_id: None,
-		name: None,
-		tool_calls: None,
-		images: None,
-		thinking: None,
-		id: None,
-	}];
-
-	// Extract values before mutable borrow
-	let session_model = session.model.clone();
-	let temperature = session.temperature;
-	let top_p = session.top_p;
-	let top_k = session.top_k;
-
-	// Use decision_model if configured, otherwise fall back to session model
-	let model_to_use = config
-		.compression
-		.decision_model
-		.as_ref()
-		.unwrap_or(&session_model);
-
-	crate::log_debug!("Using model '{}' for context summarization", model_to_use);
-
-	let params = crate::session::ChatCompletionWithValidationParams::new(
-		&messages,
-		model_to_use,
-		temperature,
-		top_p,
-		top_k,
-		512,
-		config,
-	)
-	.with_max_retries(1)
-	.with_chat_session(session);
-
-	let response = crate::session::chat_completion_with_validation(params).await?;
-	Ok(response.content.trim().to_string())
 }
 
 /// Format final compressed entry

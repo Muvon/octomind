@@ -118,6 +118,7 @@ impl Layer for LayerProcessor {
 				max_tokens: self.config.max_tokens,
 				config,
 				max_retries: 0, // Default max_retries for layer processor
+				cancellation_token: None,
 			},
 		)
 		.await?;
@@ -247,13 +248,13 @@ impl Layer for LayerProcessor {
 							top_k: self.config.top_k,
 							max_tokens: self.config.max_tokens,
 							config,
-							max_retries: 0, // Default max_retries for layer processor
+							max_retries: 0,
+							cancellation_token: None,
 						},
 					)
 					.await
 					{
 						Ok(response) => {
-							// Add tool result processing API time
 							api_time_ms += api_start_tool_processing.elapsed().as_millis() as u64;
 
 							// Extract token usage if available

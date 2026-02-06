@@ -945,3 +945,9 @@ hints_pressure_threshold = 0.7
 # Minimum tool executions between hints to avoid spamming
 hints_min_interval = 5
 
+# Conversation compression: AI-driven automatic compression for normal conversations
+# Set to 0 to disable, or N to enable after N turns (user+assistant pairs)
+# When threshold reached, AI decides if compression is beneficial
+# Example: 6 = after 3 exchanges (6 turns), AI can compress older conversation
+min_conversation_turns = 0
+

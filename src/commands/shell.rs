@@ -195,6 +195,7 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 			.unwrap_or_else(|| clean_config.get_effective_max_tokens()),
 		config: &clean_config,
 		max_retries: 0, // Default max_retries for shell command
+		cancellation_token: None,
 	})
 	.await?;
 

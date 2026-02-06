@@ -20,6 +20,7 @@ mod commands;
 mod context_reduction;
 mod context_truncation;
 pub mod continuation;
+pub mod conversation_compression;
 mod cost_tracker;
 mod edit_mode;
 pub mod formatting;

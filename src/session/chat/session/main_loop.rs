@@ -550,7 +550,25 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 		let user_message_index = chat_session.session.messages.len();
 
+		// CONVERSATION COMPRESSION: Check if AI should compress older exchanges
+		// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
+		// AI decides if compression is beneficial based on conversation history
+		if let Err(e) =
+			crate::session::chat::conversation_compression::check_and_compress_conversation(
+				&mut chat_session,
+				&current_config,
+			)
+			.await
+		{
+			// Best-effort: log error but continue session
+			log_debug!(
+				"Conversation compression failed: {}. Continuing session.",
+				e
+			);
+		}
+
 		// NEW FLOW: Check for continuation BEFORE processing new user request
+
 		// This is one of the two correct moments to trigger continuation:
 		// 1) On new user request (HERE)
 		// 2) After all tool results gathered, before sending to AI (in tool_result_processor)

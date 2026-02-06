@@ -91,6 +91,7 @@ pub async fn perform_context_reduction(
 			max_tokens: chat_session.max_tokens,
 			config,
 			max_retries: chat_session.max_retries, // Use max_retries from chat session
+			cancellation_token: None,
 		},
 	)
 	.await;

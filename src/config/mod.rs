@@ -122,6 +122,10 @@ pub struct CompressionHintConfig {
 	pub hints_pressure_threshold: f64,
 	/// Minimum tool executions between hints
 	pub hints_min_interval: usize,
+	/// Minimum conversation turns before AI can decide to compress (0 = disabled)
+	/// When set to N, after N turns (user+assistant pairs), AI will be asked if compression is beneficial
+	/// AI decides whether to compress older exchanges while preserving recent context
+	pub min_conversation_turns: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

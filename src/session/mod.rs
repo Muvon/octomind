@@ -227,6 +227,7 @@ pub struct CompressionStats {
 	pub task_compressions: usize,
 	pub phase_compressions: usize,
 	pub project_compressions: usize,
+	pub conversation_compressions: usize,
 	pub total_messages_removed: usize,
 	pub total_tokens_saved: u64,
 }
@@ -250,8 +251,17 @@ impl CompressionStats {
 		self.total_tokens_saved += tokens;
 	}
 
+	pub fn add_conversation_compression(&mut self, messages: usize, tokens: u64) {
+		self.conversation_compressions += 1;
+		self.total_messages_removed += messages;
+		self.total_tokens_saved += tokens;
+	}
+
 	pub fn total_compressions(&self) -> usize {
-		self.task_compressions + self.phase_compressions + self.project_compressions
+		self.task_compressions
+			+ self.phase_compressions
+			+ self.project_compressions
+			+ self.conversation_compressions
 	}
 
 	pub fn avg_compression_ratio(&self) -> f64 {
@@ -1460,6 +1470,7 @@ pub struct ChatCompletionProviderParams<'a> {
 	pub max_tokens: u32,
 	pub config: &'a Config,
 	pub max_retries: u32,
+	pub cancellation_token: Option<watch::Receiver<bool>>,
 }
 
 /// High-level function to send a chat completion using the provider abstraction

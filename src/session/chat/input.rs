@@ -76,7 +76,7 @@ fn display_shortcuts_help() {
 	);
 	println!(
 		"{}",
-		"│ Ctrl+E      - Accept hint (when available)              │".bright_black()
+		"│ Ctrl+E      - Accept hint / Exit reverse search         │".bright_black()
 	);
 	println!(
 		"{}",

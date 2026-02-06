@@ -106,6 +106,9 @@ impl EditMode for EmacsWithShortcutHelp {
 				}]);
 			}
 			if code == KeyCode::Char('e') && modifiers == KeyModifiers::CONTROL {
+				if self.reverse_search_active.load(Ordering::SeqCst) {
+					return ReedlineEvent::Enter;
+				}
 				if self.hint_available.load(Ordering::SeqCst) {
 					return ReedlineEvent::HistoryHintComplete;
 				}

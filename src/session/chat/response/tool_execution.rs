@@ -22,6 +22,8 @@ use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 use std::io::IsTerminal;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Context for tool execution - can be either main session or layer context
 pub enum ToolExecutionContext<'a> {

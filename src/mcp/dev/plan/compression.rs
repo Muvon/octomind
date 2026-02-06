@@ -83,6 +83,23 @@ pub fn request_compression(task: PlanTask) {
 
 /// Set message range on the pending compression task
 /// This is called by the session after detecting a plan tool execution
+///
+/// # Parameters
+///
+/// - `start_index`: Index of the message to preserve (exclusive - this message stays)
+/// - `end_index`: Last message index to remove (inclusive - this message is removed)
+///
+/// # Index Constraints (CRITICAL)
+///
+/// - `end_index` must be **< messages.len()** (use `get_message_count() - 1` for last message)
+/// - `end_index >= messages.len()` will cause compression to fail with "Invalid end_index"
+/// - Uses inclusive range removal, so valid indices are `0..messages.len()-1`
+///
+/// # Example
+///
+/// For 93 messages (indices 0-92):
+/// - CORRECT: `set_pending_compression_range(10, 92);` // Compress to last message
+/// - WRONG: `set_pending_compression_range(10, 93);` // Out of bounds!
 pub fn set_pending_compression_range(start_index: usize, end_index: usize) -> Result<()> {
 	let mut pending = PENDING_COMPRESSION.lock().unwrap();
 	if let Some(ref mut task) = *pending {
@@ -324,7 +341,7 @@ fn calculate_range_tokens(session: &ChatSession, range: &MessageRange) -> Result
 		return Err(anyhow::anyhow!("Invalid start_index in message range"));
 	}
 
-	if range.end_index > session.session.messages.len() {
+	if range.end_index >= session.session.messages.len() {
 		return Err(anyhow::anyhow!("Invalid end_index in message range"));
 	}
 

@@ -689,6 +689,12 @@ impl ChatSession {
 	/// It preserves the message at start_index and removes everything up to and including end_index.
 	/// The compressed summary will be inserted at start_index + 1.
 	///
+	/// # Index Semantics (CRITICAL)
+	///
+	/// - Uses **inclusive range** for removal: `drain(start_index + 1..=end_index)`
+	/// - `end_index` must be **< messages.len()** (last valid index is `len() - 1`)
+	/// - `end_index >= messages.len()` will return an error (out of bounds for inclusive range)
+	///
 	/// # Arguments
 	/// * `start_index` - Start of range (this message is kept)
 	/// * `end_index` - End of range (messages up to and including this are removed)
@@ -697,10 +703,17 @@ impl ChatSession {
 	/// Number of messages actually removed
 	///
 	/// # Example
+	///
 	/// If start_index=5 and end_index=10:
 	/// - Message 5 is kept (e.g., "Let me investigate...")
 	/// - Messages 6, 7, 8, 9, 10 are removed (tool results, plan result)
 	/// - Compressed summary inserted after message 5
+	///
+	/// # Common Pitfall
+	///
+	/// **DO NOT** use `messages.len()` as end_index - it will fail!
+	/// - WRONG: `session.remove_messages_in_range(start, session.get_message_count());`
+	/// - CORRECT: `session.remove_messages_in_range(start, session.get_message_count() - 1);`
 	pub fn remove_messages_in_range(
 		&mut self,
 		start_index: usize,

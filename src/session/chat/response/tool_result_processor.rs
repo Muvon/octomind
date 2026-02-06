@@ -172,7 +172,9 @@ pub async fn process_tool_results(
 	if plan_tool_executed {
 		// Get the start index from the global state (set by session before tool execution)
 		if let Some(start_index) = crate::mcp::dev::plan::core::get_and_clear_start_index() {
-			let end_index = chat_session.get_message_count();
+			// Use last valid index (len - 1) since remove_messages_in_range uses inclusive end_index
+			// If we used len(), it would be out of bounds for the inclusive range operation
+			let end_index = chat_session.get_message_count() - 1;
 			// Set the message range on the pending compression task
 			if let Err(e) =
 				crate::mcp::dev::plan::set_pending_compression_range(start_index, end_index)

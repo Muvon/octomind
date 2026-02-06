@@ -284,7 +284,7 @@ fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usiz
 		return Err(anyhow::anyhow!("Invalid start_index in range"));
 	}
 
-	if end_idx > session.session.messages.len() {
+	if end_idx >= session.session.messages.len() {
 		return Err(anyhow::anyhow!("Invalid end_index in range"));
 	}
 

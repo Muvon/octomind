@@ -290,6 +290,10 @@ async fn execute_tools_parallel_internal(
 	// Use tokio::select! for immediate cancellation response
 	tokio::select! {
 		task_results = futures::future::join_all(tasks) => {
+			// Stop animation before rendering any tool output
+			animation_cancel.store(true, Ordering::SeqCst);
+			let _ = animation_task.await;
+
 			// All tasks completed before cancellation
 			for ((tool_name, tool_id, tool_index), task_result) in task_info.into_iter().zip(task_results) {
 				// Store tool call info for consolidated display after execution
@@ -518,10 +522,6 @@ async fn execute_tools_parallel_internal(
 			return Ok((Vec::new(), total_tool_time_ms));
 		}
 	}
-
-	// Stop animation after all tools complete
-	animation_cancel.store(true, Ordering::SeqCst);
-	let _ = animation_task.await;
 
 	// Handle large outputs with batched confirmation
 	let processed_results = handle_large_tool_results(tool_results, config).await?;

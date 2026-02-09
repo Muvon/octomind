@@ -958,6 +958,223 @@ cache_tokens_pct_threshold = 40
 - `/cache` - Mark cache checkpoint for cost savings
 - `/info` - Display token usage and cost breakdown
 
+## Smart Adaptive Compression System
+
+Octomind features an intelligent compression system that automatically reduces conversation context when token usage grows, while maintaining cost-effectiveness through cache-aware decision making and discourse-aware semantic chunking.
+
+### Architecture
+
+The compression system is implemented in:
+- **`src/session/chat/conversation_compression.rs`**: Main compression logic with cache-aware decision making
+- **`src/mcp/dev/plan/compression.rs`**: Plan-specific compression for structured tasks
+- **`src/session/token_counter.rs`**: Unified token counting used by compression decisions
+- **`src/session/chat/session/core.rs`**: Integration with ChatSession for token estimation
+
+### How Compression Works
+
+Compression operates through three key mechanisms:
+
+#### 1. Token-Based Triggers
+
+Unlike pressure-ratio systems, Octomind uses **absolute token count thresholds**:
+
+```
+Token Count → Compression Trigger
+50,000 tokens → 2.0x compression (50% reduction)
+100,000 tokens → 4.0x compression (75% reduction)
+150,000 tokens → 8.0x compression (87.5% reduction)
+```
+
+The system monitors `session.get_full_context_tokens(config)` which includes:
+- All conversation messages
+- System prompt
+- Tool definitions
+- Safety margin for response generation
+
+#### 2. Cache-Aware Decision Making
+
+Before compressing, the system calculates if compression saves money:
+
+```rust
+// Pseudocode of cache-aware analysis
+net_benefit = calculate_compression_net_benefit(
+    current_tokens,
+    target_ratio,
+    estimated_remaining_turns
+)
+
+if net_benefit > 0.0 {
+    compress()  // Saves money
+} else {
+    skip()      // Would cost money
+}
+```
+
+**Cost Analysis Factors:**
+- Cache write cost: 1.25x base (Anthropic 5-minute TTL)
+- Cache read cost: 0.1x base (90% savings)
+- Compression invalidates cache, forcing rewrite
+- Smaller context = lower costs for future turns
+
+#### 3. Discourse-Aware Semantic Chunking
+
+Compression uses semantic chunking to preserve important information:
+
+- **Preserves last 4 turns uncompressed**: Maintains recent context continuity
+- **Semantic grouping**: Groups related messages for coherent compression
+- **Importance weighting**: Prioritizes recent and tool-related messages
+- **Discourse flow**: Maintains conversation structure and reasoning chains
+
+### Configuration
+
+```toml
+[compression]
+# Enable compression hints
+hints_enabled = true
+hints_pressure_threshold = 0.7
+hints_min_interval = 5
+
+# Enable adaptive token-based compression
+adaptive_threshold = true
+
+# Compression triggers at these token thresholds
+[[compression.pressure_levels]]
+threshold = 50000
+target_ratio = 2.0  # Light: 50% reduction
+
+[[compression.pressure_levels]]
+threshold = 100000
+target_ratio = 4.0  # Medium: 75% reduction
+
+[[compression.pressure_levels]]
+threshold = 150000
+target_ratio = 8.0  # Aggressive: 87.5% reduction
+
+# Optional: Use cheaper model for compression decisions
+# Recommended: "openrouter:anthropic/claude-haiku" (10x cheaper)
+# decision_model = "openrouter:anthropic/claude-haiku"
+```
+
+### Compression in Action
+
+#### Example 1: Profitable Compression
+
+```
+Session state: 95,000 tokens
+Threshold matched: 100,000 (target_ratio: 4.0x)
+
+Cache-aware analysis:
+  Current tokens: 95,000
+  Estimated remaining turns: 5
+  
+  Without compression:
+    5 turns × 95,000 tokens = 475,000 tokens
+    Cost: 475,000 × $0.003 = $1.425
+  
+  With compression:
+    Cache invalidation: 95,000 × 0.0025 = $0.2375
+    Compressed size: 95,000 ÷ 4 = 23,750 tokens
+    5 turns × 23,750 tokens = 118,750 tokens
+    Cost: 118,750 × $0.003 = $0.3563
+    Total: $0.2375 + $0.3563 = $0.5938
+  
+  Net benefit: $1.425 - $0.5938 = $0.8312 ✓ COMPRESS
+```
+
+#### Example 2: Skipped Compression
+
+```
+Session state: 55,000 tokens
+Threshold matched: 50,000 (target_ratio: 2.0x)
+
+Cache-aware analysis:
+  Current tokens: 55,000
+  Estimated remaining turns: 1
+  
+  Without compression:
+    1 turn × 55,000 tokens = 55,000 tokens
+    Cost: 55,000 × $0.003 = $0.165
+  
+  With compression:
+    Cache invalidation: 55,000 × 0.0025 = $0.1375
+    Compressed size: 55,000 ÷ 2 = 27,500 tokens
+    1 turn × 27,500 tokens = 27,500 tokens
+    Cost: 27,500 × $0.003 = $0.0825
+    Total: $0.1375 + $0.0825 = $0.22
+  
+  Net benefit: $0.165 - $0.22 = -$0.055 ✗ SKIP (would cost money)
+```
+
+### Monitoring Compression
+
+Use `/info` command to see compression statistics:
+
+```
+Compression Statistics:
+  Total compressions: 3
+  Average reduction: 72.5%
+  Total tokens saved: 45,000
+  Cost saved: $0.045
+  
+  Last compression:
+    Before: 98,500 tokens
+    After: 24,625 tokens (4.0x compression)
+    Cost saved: $0.0225
+```
+
+### Compression Statistics in /info
+
+The `/info` command displays:
+
+```
+Session Cost Report:
+  ...
+  Compression Statistics:
+    Total compressions: 2
+    Average reduction: 65%
+    Tokens saved: 18,000
+    Cost saved: $0.054
+```
+
+### Best Practices
+
+1. **Monitor effectiveness**: Use `/info` to verify compression is saving money
+2. **Use decision models**: Set `decision_model` to cheaper model for significant savings
+3. **Adjust thresholds**: Start conservative (50k), adjust based on your workflow
+4. **Preserve context**: Compression preserves last 4 turns for continuity
+5. **Combine with caching**: Use `/cache` alongside compression for maximum savings
+
+### Troubleshooting Compression
+
+**Compression not triggering:**
+- Verify `adaptive_threshold = true`
+- Check `pressure_levels` array is not empty
+- Use `/info` to see current token count vs. thresholds
+
+**Compression too aggressive:**
+- Lower `target_ratio` values (e.g., 2.0 instead of 4.0)
+- Increase `threshold` values (e.g., 75,000 instead of 50,000)
+
+**Compression not saving money:**
+- Enable `decision_model` for cheaper decisions
+- Increase thresholds to compress less frequently
+- Consider disabling if sessions are short
+
+### Integration with Session Continuation
+
+Compression and continuation work together:
+
+1. **Continuation** preserves context when token limits reached
+2. **Compression** reduces context size to prevent future continuations
+3. **Combined effect**: Longer sessions with lower costs
+
+Example flow:
+```
+Session grows → Compression triggers → Context reduced
+Session grows again → Compression triggers again → Context reduced further
+Session reaches limit → Continuation preserves summary + file context
+```
+
 ## Advanced Configuration Patterns
 
 ### Multi-Provider Setup

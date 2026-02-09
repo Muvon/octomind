@@ -880,6 +880,131 @@ Use session commands to manage tokens:
 - `/info` - Show token usage breakdown
 - `/done` - Optimize context
 
+## Smart Adaptive Compression
+
+Octomind features an intelligent compression system that automatically reduces conversation context when token usage grows, while maintaining cost-effectiveness through cache-aware decision making.
+
+**For detailed technical information about compression, see [Advanced Features - Smart Adaptive Compression System](./06-advanced.md#smart-adaptive-compression-system).**
+
+### How Compression Works
+
+The compression system operates on three principles:
+
+1. **Token-Based Triggers**: Compression activates when absolute token count exceeds configured thresholds (not pressure ratios)
+2. **Cache-Aware Economics**: Before compressing, the system calculates if compression saves money considering cache invalidation costs
+3. **Semantic Preservation**: Uses discourse-aware semantic chunking to preserve important information while reducing size
+
+### Configuration
+
+```toml
+[compression]
+# Enable compression hints (shows suggestions when context grows)
+hints_enabled = true
+# Show hints when context reaches this pressure level (0.0-1.0)
+hints_pressure_threshold = 0.7
+# Minimum tool executions between hints to avoid spamming
+hints_min_interval = 5
+
+# Enable adaptive token-based compression (RECOMMENDED)
+adaptive_threshold = true
+
+# Compression triggers at these token thresholds with corresponding compression ratios
+# Each level defines: threshold (absolute token count) and target_ratio (compression strength)
+# Compression triggers when context exceeds ANY threshold, using the highest matched ratio
+
+[[compression.pressure_levels]]
+threshold = 50000
+target_ratio = 2.0  # Light: 50% reduction (compress to 1/2 size)
+
+[[compression.pressure_levels]]
+threshold = 100000
+target_ratio = 4.0  # Medium: 75% reduction (compress to 1/4 size)
+
+[[compression.pressure_levels]]
+threshold = 150000
+target_ratio = 8.0  # Aggressive: 87.5% reduction (compress to 1/8 size)
+
+# Optional: Use a cheaper model for compression decisions
+# Recommended: "openrouter:anthropic/claude-haiku" (10x cheaper, 3x faster)
+# If not set, uses the session's main model (more expensive)
+# decision_model = "openrouter:anthropic/claude-haiku"
+```
+
+### Understanding Compression Ratios
+
+- **target_ratio = 2.0**: Compress conversation to 50% of original size
+- **target_ratio = 4.0**: Compress conversation to 25% of original size
+- **target_ratio = 8.0**: Compress conversation to 12.5% of original size
+
+Higher ratios = more aggressive compression = smaller context = lower future costs
+
+### Cache-Aware Economics
+
+Compression considers the cost of cache invalidation:
+
+- **Cache Write Cost**: 1.25x base token cost (Anthropic 5-minute TTL standard)
+- **Cache Read Cost**: 0.1x base token cost (90% savings)
+- **Compression Impact**: Invalidates cache, forcing rewrite at 1.25x cost
+- **Future Savings**: Smaller context = lower costs for all future turns
+
+The system only compresses if the net benefit (future savings minus cache invalidation cost) is positive.
+
+### Environment Variable Overrides
+
+Override compression settings via environment variables:
+
+```bash
+# Enable/disable compression
+export OCTOMIND_COMPRESSION__ADAPTIVE_THRESHOLD=true
+
+# Adjust pressure levels
+export OCTOMIND_COMPRESSION__PRESSURE_LEVELS__0__THRESHOLD=60000
+export OCTOMIND_COMPRESSION__PRESSURE_LEVELS__0__TARGET_RATIO=2.5
+
+# Use cheaper model for compression decisions
+export OCTOMIND_COMPRESSION__DECISION_MODEL="openrouter:anthropic/claude-haiku"
+
+# Adjust hints
+export OCTOMIND_COMPRESSION__HINTS_ENABLED=false
+export OCTOMIND_COMPRESSION__HINTS_PRESSURE_THRESHOLD=0.8
+```
+
+### Monitoring Compression
+
+Use the `/info` command to see compression statistics:
+
+```
+Compression Statistics:
+  Total compressions: 3
+  Average reduction: 72.5%
+  Total tokens saved: 45,000
+  Cost saved: $0.045
+```
+
+### Best Practices
+
+1. **Start Conservative**: Begin with 50k token threshold, adjust based on your workflow
+2. **Monitor Costs**: Use `/info` to track compression effectiveness
+3. **Use Decision Model**: Set `decision_model` to a cheaper model for significant cost savings
+4. **Preserve Context**: Compression preserves last 4 turns uncompressed for continuity
+5. **Disable if Needed**: Set `adaptive_threshold = false` to disable compression entirely
+
+### Troubleshooting Compression
+
+**Compression not triggering:**
+- Check `adaptive_threshold = true` is set
+- Verify `pressure_levels` array is not empty
+- Use `/info` to see current token count vs. thresholds
+
+**Compression too aggressive:**
+- Lower the `target_ratio` values (e.g., 2.0 instead of 4.0)
+- Increase the `threshold` values (e.g., 75000 instead of 50000)
+
+**Compression not saving money:**
+- Enable `decision_model` to use cheaper model for decisions
+- Increase thresholds to compress less frequently
+- Consider disabling compression if your sessions are short
+
 ## Command Layers
 
 Octomind supports command layers for specialized processing with improved input handling:

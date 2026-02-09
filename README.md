@@ -15,9 +15,12 @@ Octomind is a session-first AI development assistant that transforms how you int
 - 🌐 **Multi-Provider AI Support** - OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare, DeepSeek
 - 🖼️ **Multimodal Vision Support** - Analyze images, screenshots, diagrams with AI vision capabilities
 - 💰 **Cost Tracking & Optimization** - Real-time usage monitoring, caching, and detailed cost reporting
+- 🧠 **Smart Adaptive Compression** - Automatic context reduction with cache-aware economics when tokens grow
 - 🔧 **Role-Based Configuration** - Developer (full tools), Assistant (chat-only), and custom roles
 - 🧠 **Smart Session Continuation** - Automatic context management when token limits are reached
 - 🧠 **Brain-Inspired Workflows** - Multi-step planning system with validation, feedback loops, and conditional branching
+- ⚡ **Tool Execution Animation** - Visual feedback during tool execution with progress indicators
+- 🔍 **Reverse Search** - Ctrl+E to exit reverse search in interactive sessions
 
 
 ## 🚀 Quick Start
@@ -72,12 +75,14 @@ Octomind operates through interactive AI sessions with built-in development tool
 
 ### Session Commands
 - `/help` - Show available commands
-- `/info` - Display token usage and costs
+- `/info` - Display token usage, costs, and compression statistics
 - `/image <path>` - Attach images for AI analysis
 - `/mcp info` - Check MCP server status
 - `/model <model>` - Switch AI models
 - `/role <role>` - Change role (developer/assistant)
 - `/cache` - Add cache checkpoint for cost optimization
+- `/context [filter]` - Display session context with optional filtering
+- `/done` - Complete task with memorization and context preservation
 
 ## 🌐 Supported AI Providers
 

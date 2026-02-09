@@ -7,10 +7,10 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 ## Table of Contents
 - [01-installation.md](./01-installation.md) — Installation methods, prerequisites, and development setup
 - [02-overview.md](./02-overview.md) — Architecture, session-first design, roles, and core concepts
-- [03-configuration.md](./03-configuration.md) — Configuration system, templates, and customization
-- [04-providers.md](./04-providers.md) — AI providers, model formats, caching, and cost tracking
-- [05-sessions.md](./05-sessions.md) — Interactive sessions, commands, and workflow
-- [06-advanced.md](./06-advanced.md) — MCP protocol, tools, multimodal vision, and extensibility
+- [03-configuration.md](./03-configuration.md) — Configuration system, templates, compression, and customization
+- [04-providers.md](./04-providers.md) — AI providers, model formats, token counting, caching, and cost tracking
+- [05-sessions.md](./05-sessions.md) — Interactive sessions, commands, compression, and workflow
+- [06-advanced.md](./06-advanced.md) — MCP protocol, tools, compression system, multimodal vision, and extensibility
 - [07-command-layers.md](./07-command-layers.md) — Layered processing, custom commands, and agents
 - [08-mcp-server-development.md](./08-mcp-server-development.md) — MCP server development and protocol compliance
 - [09-websocket-server.md](./09-websocket-server.md) — WebSocket API for programmatic access
@@ -43,6 +43,31 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - **Layered Processing**: AI pipeline system for complex task decomposition
 - **Template-Based Configuration**: All defaults in `config-templates/default.toml`
 ## Recent Updates & Features
+
+### Smart Adaptive Compression System
+- **Token-Based Triggers**: Compression activates at absolute token count thresholds (50k, 100k, 150k)
+- **Cache-Aware Economics**: Calculates net benefit before compressing, considering cache invalidation costs
+- **Discourse-Aware Chunking**: Preserves important information while reducing context size
+- **Automatic Decision Making**: Skips compression if it would cost money, only compresses when profitable
+- **Compression Statistics**: `/info` command shows compression metrics, tokens saved, and cost savings
+- **Last 4 Turns Preservation**: Maintains recent context uncompressed for continuity
+
+### Unified Token Calculation System
+- **Single Source of Truth**: `estimate_full_context_tokens()` used by compression, continuation, and display
+- **Accurate Estimation**: Includes system prompt, tool definitions, and safety margins
+- **Consistent Reporting**: All systems use same token counting for reliable cost tracking
+- **Cost Breakdown**: `/info` shows detailed token usage and cost per request
+
+### Tool Execution Animation
+- **Visual Feedback**: Animated indicator during tool execution showing progress
+- **User Experience**: Clear indication that tools are running and system is responsive
+- **Parallel Tool Support**: Animation works correctly with parallel tool execution
+- **Race Condition Fixes**: Proper timing to avoid animation showing before execution completes
+
+### Reverse Search Enhancement
+- **Ctrl+E Support**: Exit reverse search mode with Ctrl+E keyboard shortcut
+- **Interactive Sessions**: Improved terminal interaction for better user experience
+- **Search Navigation**: Full reverse search functionality with proper exit handling
 
 ### Smart Session Continuation System
 - **Modular Architecture**: Refactored into focused modules in `src/session/chat/continuation/`

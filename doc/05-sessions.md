@@ -912,6 +912,89 @@ max_session_tokens_threshold = 50000  # Smart continuation threshold
 /done            # Complete task with memorization & commit
 ```
 
+### Smart Adaptive Compression
+
+Octomind automatically compresses conversation context when token usage grows, using cache-aware decision making to ensure compression saves money.
+
+**For comprehensive technical details, see [Advanced Features - Smart Adaptive Compression System](./06-advanced.md#smart-adaptive-compression-system) and [Configuration - Smart Adaptive Compression](./03-configuration.md#smart-adaptive-compression).**
+
+#### How Compression Works
+
+Compression is triggered based on absolute token count thresholds:
+
+```
+Token Count → Compression Trigger
+50,000 tokens → 2.0x compression (50% reduction)
+100,000 tokens → 4.0x compression (75% reduction)
+150,000 tokens → 8.0x compression (87.5% reduction)
+```
+
+Before compressing, the system calculates if compression saves money considering:
+- Cache invalidation costs (1.25x base)
+- Future token savings from smaller context
+- Estimated remaining conversation turns
+
+#### Monitoring Compression
+
+Use `/info` command to see compression statistics:
+
+```
+Compression Statistics:
+  Total compressions: 3
+  Average reduction: 72.5%
+  Total tokens saved: 45,000
+  Cost saved: $0.045
+  
+  Last compression:
+    Before: 98,500 tokens
+    After: 24,625 tokens (4.0x compression)
+    Cost saved: $0.0225
+```
+
+#### Configuration
+
+```toml
+[compression]
+# Enable compression hints
+hints_enabled = true
+hints_pressure_threshold = 0.7
+
+# Enable adaptive token-based compression
+adaptive_threshold = true
+
+# Compression triggers at these token thresholds
+[[compression.pressure_levels]]
+threshold = 50000
+target_ratio = 2.0
+
+[[compression.pressure_levels]]
+threshold = 100000
+target_ratio = 4.0
+
+# Optional: Use cheaper model for compression decisions
+# decision_model = "openrouter:anthropic/claude-haiku"
+```
+
+#### Best Practices
+
+1. **Monitor effectiveness**: Use `/info` to verify compression saves money
+2. **Use decision models**: Set cheaper model for compression decisions
+3. **Adjust thresholds**: Start conservative, adjust based on your workflow
+4. **Combine with caching**: Use `/cache` alongside compression for maximum savings
+5. **Preserve context**: Compression preserves last 4 turns for continuity
+
+#### Compression + Continuation Integration
+
+Compression and continuation work together for optimal cost management:
+
+```
+Session grows → Compression triggers → Context reduced
+Session grows again → Compression triggers again → Context reduced further
+Session reaches limit → Continuation preserves summary + file context
+```
+
+This combination allows very long sessions with minimal cost.
+
 ## Context Management Commands
 
 Octomind provides commands for managing session context:

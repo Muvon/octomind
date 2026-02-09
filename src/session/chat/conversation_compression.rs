@@ -237,7 +237,9 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)
 	// This allows us to send context chunks to AI in the same call as decision
-	let (start_idx, end_idx) = find_compression_range(&session.session.messages)?;
+	let (start_idx, mut end_idx) = find_compression_range(&session.session.messages)?;
+
+	// end_idx is already safe from find_compression_range
 
 	if start_idx >= end_idx {
 		log_debug!("No messages to compress (range invalid)");
@@ -578,9 +580,58 @@ fn find_compression_range(messages: &[crate::session::Message]) -> Result<(usize
 	let compress_count = conversation_indices.len() - preserve_count;
 
 	let start_idx = system_idx + 1; // Start after system message
-	let end_idx = conversation_indices[compress_count - 1]; // End before preserved turns
+	let mut end_idx = conversation_indices[compress_count - 1]; // End before preserved turns
+
+	// SAFETY: If end_idx lands on a tool-use boundary, extend through contiguous tool results
+	if end_idx < messages.len() {
+		let end_msg = &messages[end_idx];
+		let ends_on_tool_boundary =
+			(end_msg.role == "assistant" && end_msg.tool_calls.is_some()) || end_msg.role == "tool";
+		if ends_on_tool_boundary {
+			while end_idx + 1 < messages.len() && messages[end_idx + 1].role == "tool" {
+				end_idx += 1;
+			}
+		}
+	}
 
 	Ok((start_idx, end_idx))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::find_compression_range;
+	use crate::session::Message;
+	use serde_json::json;
+
+	fn msg(role: &str) -> Message {
+		Message {
+			role: role.to_string(),
+			content: String::new(),
+			..Default::default()
+		}
+	}
+
+	#[test]
+	fn extends_range_to_include_tool_results() {
+		let mut messages = Vec::new();
+		messages.push(msg("system")); // 0
+		messages.push(msg("user")); // 1
+		let mut assistant = msg("assistant"); // 2
+		assistant.tool_calls = Some(json!([
+			{"id": "call_123", "type": "function", "function": {"name": "tool1"}}
+		]));
+		messages.push(assistant);
+		let mut tool = msg("tool"); // 3
+		tool.tool_call_id = Some("call_123".to_string());
+		tool.name = Some("tool1".to_string());
+		messages.push(tool);
+		messages.push(msg("user")); // 4
+
+		let (start_idx, end_idx) = find_compression_range(&messages).unwrap();
+
+		assert_eq!(start_idx, 1);
+		assert_eq!(end_idx, 3);
+	}
 }
 
 /// Calculate tokens in message range using accurate token counting

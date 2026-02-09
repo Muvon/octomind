@@ -1040,22 +1040,48 @@ if net_benefit > 0.0 {
 
 **Future Turn Estimation:**
 
-The system estimates remaining conversation turns using `estimate_future_turns()`:
+The system estimates remaining conversation turns using `estimate_future_turns()` with velocity-based analysis:
 
 ```
-estimated_turns = (
-    // Base on historical API calls
-    current_api_calls * 0.5  // Assume 50% more turns ahead
-    
-    // Adjust for conversation length
-    + (message_count / 4)    // ~4 messages per turn
-    
-    // Cap at reasonable maximum
-    min(estimated, 20)       // Don't assume more than 20 turns
-)
+// Bootstrap phase (< 5 API calls)
+if current_api_calls < 5:
+    return 10.0  // Conservative baseline
+
+// Calculate session metrics
+session_duration_mins = (current_time - session_start) / 60
+call_velocity = current_api_calls / session_duration_mins  // calls per minute
+
+// Estimate remaining time based on session age
+continuation_factor = {
+    < 10 min:  0.8  // Early session: 80% more time likely
+    < 30 min:  0.6  // Mid session: 60% more time likely
+    >= 30 min: 0.4  // Long session: 40% more time (winding down)
+}
+estimated_remaining_mins = session_duration_mins * continuation_factor
+
+// Apply velocity decay (sessions slow down over time)
+velocity_decay = {
+    > 2.0 calls/min: 0.6   // High velocity: expect 40% slowdown
+    > 1.0 calls/min: 0.75  // Medium velocity: expect 25% slowdown
+    <= 1.0 calls/min: 0.85 // Low velocity: expect 15% slowdown
+}
+
+// Calculate future calls
+estimated_remaining = call_velocity * estimated_remaining_mins * velocity_decay
+
+// Apply data-driven bounds
+max_estimate = min(current_api_calls * 2.0, 100.0)
+final_estimate = clamp(estimated_remaining, 5.0, max_estimate)
 ```
 
-This ensures compression decisions account for the full cost-benefit over the session's expected lifetime.
+**Key characteristics:**
+- Uses actual session velocity (calls/minute) instead of arbitrary assumptions
+- Accounts for session lifecycle (early/mid/late phases)
+- Applies realistic decay factors (sessions slow down over time)
+- Bounded by historical data: minimum 5 calls, maximum 2x current calls or 100 calls
+- Bootstrap phase uses conservative 10-call estimate until sufficient data available
+
+This velocity-based approach ensures compression decisions reflect actual session behavior and account for the full cost-benefit over the session's expected lifetime.
 
 #### 3. Discourse-Aware Semantic Chunking
 

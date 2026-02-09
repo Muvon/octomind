@@ -29,7 +29,7 @@ pub use octolib::llm::{
 };
 
 // Re-export some octolib types directly
-pub use octolib::llm::{ProviderExchange, ThinkingBlock, TokenUsage};
+pub use octolib::llm::{ModelPricing, ProviderExchange, ThinkingBlock, TokenUsage};
 
 // Define Octomind-specific ProviderResponse that uses McpToolCall
 #[derive(Debug, Clone)]

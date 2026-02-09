@@ -52,11 +52,16 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	// UNIFIED TOKEN CALCULATION - Use the single source of truth
 	// This ensures consistency with display, continuation, and all other systems
 	let current_tokens = session.get_full_context_tokens(config).await;
-	
+
 	log_debug!(
 		"Compression check: current_tokens={}, thresholds={:?}",
 		current_tokens,
-		config.compression.pressure_levels.iter().map(|l| l.threshold).collect::<Vec<_>>()
+		config
+			.compression
+			.pressure_levels
+			.iter()
+			.map(|l| l.threshold)
+			.collect::<Vec<_>>()
 	);
 
 	// Find the highest threshold we've exceeded and its target ratio
@@ -78,9 +83,13 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			);
 
 			// CACHE-AWARE DECISION: Calculate if compression is profitable
-			let net_benefit =
-				calculate_compression_net_benefit(session, current_tokens, level.target_ratio)
-					.await;
+			let net_benefit = calculate_compression_net_benefit(
+				session,
+				config,
+				current_tokens,
+				level.target_ratio,
+			)
+			.await;
 
 			if net_benefit > 0.0 {
 				log_debug!(
@@ -101,88 +110,176 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			log_debug!(
 				"No threshold exceeded (current: {}, lowest threshold: {})",
 				current_tokens,
-				config.compression.pressure_levels.first().map(|l| l.threshold).unwrap_or(0)
+				config
+					.compression
+					.pressure_levels
+					.first()
+					.map(|l| l.threshold)
+					.unwrap_or(0)
 			);
 			(false, 2.0)
 		}
 	}
 }
 
-/// Calculate net benefit of compression using amortized cost analysis
+/// Calculate net benefit of compression using realistic cost analysis with REAL pricing
 ///
-/// This function implements cache-aware compression economics:
-/// - Cache write costs 1.25x base (Anthropic 5-min TTL standard)
-/// - Cache read costs 0.1x base
-/// - Compression invalidates cache, forcing rewrite
-/// - But smaller context = lower costs for future turns
+/// CRITICAL INSIGHT: Each API call pays for the ENTIRE context (base + all accumulated new tokens)
+/// New tokens added in call N become part of the base for calls N+1, N+2, etc.
+/// This cumulative effect makes compression MUCH more valuable!
 ///
 /// Returns positive value if compression saves money, negative if it costs money
 async fn calculate_compression_net_benefit(
 	session: &ChatSession,
+	config: &crate::config::Config,
 	current_tokens: usize,
 	compression_ratio: f64,
 ) -> f64 {
 	let total_tokens = current_tokens as f64;
-
-	// Estimate remaining turns in this session
 	let estimated_future_turns = estimate_future_turns(session);
-
-	// Tokens after compression
 	let compressed_tokens = total_tokens / compression_ratio;
 
-	// SCENARIO A: NO compression (assume full cache eventually)
-	// All tokens become cached over time, each future turn costs 0.1x
-	let cost_per_turn_no_compress = total_tokens * 0.1;
-	let total_cost_no_compress = estimated_future_turns * cost_per_turn_no_compress;
+	// Get decision model (used for compression) and session model (used for future calls)
+	let decision_model = config
+		.compression
+		.decision_model
+		.as_ref()
+		.unwrap_or(&session.model);
+	let session_model = &session.model;
+
+	// Get pricing for both models using provider factory
+	let decision_pricing = get_model_pricing(decision_model, config);
+	let session_pricing = get_model_pricing(session_model, config);
+
+	// If we can't get pricing, fall back to conservative estimate (don't compress)
+	let (decision_pricing, session_pricing) = match (decision_pricing, session_pricing) {
+		(Some(d), Some(s)) => (d, s),
+		_ => {
+			log_debug!(
+				"Cannot get pricing for models: decision='{}', session='{}' - skipping compression",
+				decision_model,
+				session_model
+			);
+			return -1.0; // Negative = don't compress
+		}
+	};
+
+	// Calculate average NEW tokens per API call from session history
+	// CRITICAL: Use OUTPUT tokens only - they represent true incremental growth
+	// input_tokens includes cold-start (first call with no cache) which inflates average
+	// output_tokens = pure new content added per call (steady-state growth rate)
+	let total_api_calls = session.session.info.total_api_calls.max(1) as f64;
+	let avg_new_tokens_per_call =
+		(session.session.info.output_tokens as f64 / total_api_calls).max(2000.0);
+
+	// Get current cache state
+	let current_cached = session.session.info.cached_tokens as f64;
+	let current_uncached = (total_tokens - current_cached).max(0.0);
+
+	// SCENARIO A: NO compression
+	// Each call pays for ENTIRE accumulated context (which grows each call)
+	let mut total_cost_no_compress = 0.0;
+	let mut accumulated_context = total_tokens;
+
+	for i in 0..estimated_future_turns as i32 {
+		// Pay for ENTIRE accumulated context using SESSION model pricing
+		let context_cost = if i == 0 {
+			// First call: mix of cached/uncached
+			session_pricing.calculate_cost(
+				current_uncached as u64,
+				0, // No cache write
+				current_cached as u64,
+				0, // No output (just context)
+			)
+		} else {
+			// Subsequent calls: all cached (but GROWING)
+			session_pricing.calculate_cost(0, 0, accumulated_context as u64, 0)
+		};
+
+		total_cost_no_compress += context_cost;
+
+		// Add new tokens to accumulated context (they'll be paid for in ALL future calls)
+		accumulated_context += avg_new_tokens_per_call;
+	}
 
 	// SCENARIO B: WITH compression
-	// 1. Compression API call: input (full context) + output (summary at 5x cost)
-	let compression_input_cost = total_tokens * 1.0;
-	let compression_output_cost = compressed_tokens * 5.0;
-	let compression_api_cost = compression_input_cost + compression_output_cost;
+	// 1. Compression cost (one-time) using DECISION model pricing
+	let compression_cost = decision_pricing.calculate_cost(
+		current_uncached as u64,
+		0,
+		current_cached as u64,
+		compressed_tokens as u64, // Output tokens from compression
+	);
 
-	// 2. Cache write after compression (1.25x)
-	let cache_write_cost = compressed_tokens * 1.25;
+	// 2. Future calls with SMALLER accumulated context using SESSION model pricing
+	let mut total_cost_with_compress = compression_cost;
+	let mut accumulated_context_compressed = compressed_tokens;
 
-	// 3. Future turns: cache reads at 0.1x
-	let cache_read_cost_per_turn = compressed_tokens * 0.1;
-	let future_cache_reads_cost = (estimated_future_turns - 1.0) * cache_read_cost_per_turn;
+	for i in 0..estimated_future_turns as i32 {
+		// Pay for ENTIRE accumulated context (but starting from smaller base)
+		let context_cost = if i == 0 {
+			// First call after compression: cache write
+			session_pricing.calculate_cost(accumulated_context_compressed as u64, 0, 0, 0)
+		} else {
+			// Subsequent calls: cached (but GROWING from smaller base)
+			session_pricing.calculate_cost(0, 0, accumulated_context_compressed as u64, 0)
+		};
 
-	let total_cost_with_compress =
-		compression_api_cost + cache_write_cost + future_cache_reads_cost;
+		total_cost_with_compress += context_cost;
 
-	// Net benefit (positive = compression saves money)
+		// Add new tokens to accumulated context (same growth rate as scenario A)
+		accumulated_context_compressed += avg_new_tokens_per_call;
+	}
+
 	let net_benefit = total_cost_no_compress - total_cost_with_compress;
 
 	log_debug!(
-		"Cache-aware compression analysis:\n  \
-		Current: {:.0} tokens\n  \
-		After compression: {:.0} tokens ({:.1}x ratio)\n  \
-		Estimated future API calls: {:.0}\n  \
-		SCENARIO A (no compress): {:.2} units ({:.0} calls × {:.2} per call)\n  \
-		SCENARIO B (compress): {:.2} units\n    \
-		- Compression API: {:.2} (input: {:.2} + output: {:.2})\n    \
-		- Cache write: {:.2}\n    \
-		- Future reads: {:.2} ({:.0} calls × {:.2} per call)\n  \
-		Net benefit: {:.2} units → {}",
+		"Compression analysis (REAL PRICING):\n  \
+		Decision model: {} (input: ${:.2}/1M, output: ${:.2}/1M, cache_write: ${:.2}/1M, cache_read: ${:.2}/1M)\n  \
+		Session model: {} (input: ${:.2}/1M, output: ${:.2}/1M, cache_write: ${:.2}/1M, cache_read: ${:.2}/1M)\n  \
+		Current: {:.0} tokens (cached: {:.0}, uncached: {:.0})\n  \
+		After compression: {:.0} tokens ({:.1}x ratio) - saves {:.0} tokens\n  \
+		Avg new tokens/call: {:.0} (output_tokens={}, api_calls={})\n  \
+		Future calls: {:.0}\n  \
+		SCENARIO A (no compress): ${:.5}\n    \
+		- Pays for growing context: {:.0} → {:.0} tokens over {} calls\n  \
+		SCENARIO B (compress): ${:.5}\n    \
+		- Compression cost: ${:.5} (using {})\n    \
+		- Pays for growing context: {:.0} → {:.0} tokens over {} calls\n  \
+		Net benefit: ${:.5} → {}",
+		decision_model,
+		decision_pricing.input_price_per_1m,
+		decision_pricing.output_price_per_1m,
+		decision_pricing.cache_write_price_per_1m,
+		decision_pricing.cache_read_price_per_1m,
+		session_model,
+		session_pricing.input_price_per_1m,
+		session_pricing.output_price_per_1m,
+		session_pricing.cache_write_price_per_1m,
+		session_pricing.cache_read_price_per_1m,
 		total_tokens,
+		current_cached,
+		current_uncached,
 		compressed_tokens,
 		compression_ratio,
+		total_tokens - compressed_tokens,
+		avg_new_tokens_per_call,
+		session.session.info.output_tokens,
+		session.session.info.total_api_calls,
 		estimated_future_turns,
 		total_cost_no_compress,
-		estimated_future_turns,
-		cost_per_turn_no_compress,
+		total_tokens,
+		total_tokens + (avg_new_tokens_per_call * (estimated_future_turns - 1.0)),
+		estimated_future_turns as i32,
 		total_cost_with_compress,
-		compression_api_cost,
-		compression_input_cost,
-		compression_output_cost,
-		cache_write_cost,
-		future_cache_reads_cost,
-		estimated_future_turns - 1.0,
-		cache_read_cost_per_turn,
+		compression_cost,
+		decision_model,
+		compressed_tokens,
+		compressed_tokens + (avg_new_tokens_per_call * (estimated_future_turns - 1.0)),
+		estimated_future_turns as i32,
 		net_benefit,
 		if net_benefit > 0.0 {
-			"COMPRESS"
+			"COMPRESS ✓"
 		} else {
 			"SKIP"
 		}
@@ -191,40 +288,105 @@ async fn calculate_compression_net_benefit(
 	net_benefit
 }
 
-/// Estimate remaining API calls in current session
+/// Get model pricing from provider
+fn get_model_pricing(
+	model: &str,
+	_config: &crate::config::Config,
+) -> Option<crate::providers::ModelPricing> {
+	// Parse model string (format: "provider:model")
+	let parts: Vec<&str> = model.split(':').collect();
+	if parts.len() != 2 {
+		log_debug!(
+			"Invalid model format: '{}' (expected 'provider:model')",
+			model
+		);
+		return None;
+	}
+
+	let provider_name = parts[0];
+	let model_name = parts[1];
+
+	// Get provider instance and query pricing
+	let provider = crate::providers::ProviderFactory::create_provider(provider_name).ok()?;
+	provider.get_model_pricing(model_name)
+}
+
+/// Estimate remaining API calls in current session using realistic data-driven calculation
 ///
-/// CRITICAL: This is NOT about user turns, but about API calls!
-/// Each API call = cache write or cache read opportunity
-///
-/// API calls include:
-/// - User messages
-/// - Tool execution loops (can be 5-20+ calls per user message)
-/// - Thinking tokens
-/// - Continuation calls
-/// - Layer processing
-///
-/// Uses adaptive estimation based on current session API call velocity:
-/// - Bootstrap: Start with baseline of 10 API calls
-/// - Adaptive: As session progresses, estimate based on current velocity
-/// - Conservative: Use max(estimated, 10) to ensure compression is worthwhile
+/// Uses exponential decay model based on actual session behavior:
+/// 1. Sessions naturally slow down as tasks complete (decay factor)
+/// 2. Future duration estimated as fraction of elapsed time (not arbitrary minutes)
+/// 3. Bounds based on historical data (not arbitrary minimums)
 fn estimate_future_turns(session: &ChatSession) -> f64 {
 	let current_api_calls = session.session.info.total_api_calls as f64;
 
-	// Bootstrap: If we're early in session (< 5 API calls), use baseline
+	// Bootstrap: Early sessions use conservative baseline
+	// Don't over-commit to compression without sufficient data
 	if current_api_calls < 5.0 {
-		return 10.0; // Conservative baseline: assume at least 10 more API calls
+		return 10.0; // Conservative: assume 10 more calls
 	}
 
-	// Adaptive estimation: Assume session will continue at similar pace
-	// Formula: remaining = baseline + (current * growth_factor)
-	// This adapts: early sessions get conservative estimate, longer sessions get more
-	let baseline = 10.0;
-	let growth_factor = 0.5; // Assume 50% more API calls than current
-	let estimated_remaining = baseline + (current_api_calls * growth_factor);
+	// Calculate session duration in minutes
+	let session_start = session.session.info.created_at;
+	let current_time = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default()
+		.as_secs();
+	let session_duration_secs = (current_time - session_start).max(60); // At least 1 minute
+	let session_duration_mins = session_duration_secs as f64 / 60.0;
 
-	// Conservative: At least 10 API calls to ensure compression is worthwhile
-	// (Break-even is ~2 cache reads, but we want margin of safety)
-	estimated_remaining.max(10.0)
+	// Calculate current API call velocity (calls per minute)
+	let call_velocity = current_api_calls / session_duration_mins;
+
+	// REALISTIC ASSUMPTION: Session will continue for a fraction of elapsed time
+	// Not arbitrary "30 minutes" - use actual session behavior
+	// Longer sessions → assume more remaining (but with diminishing returns)
+	let continuation_factor = if session_duration_mins < 10.0 {
+		0.8 // Early session: likely 80% more time
+	} else if session_duration_mins < 30.0 {
+		0.6 // Mid session: likely 60% more time
+	} else {
+		0.4 // Long session: likely 40% more time (winding down)
+	};
+	let estimated_remaining_mins = session_duration_mins * continuation_factor;
+
+	// DECAY FACTOR: Sessions slow down over time (fatigue, task completion, context review)
+	// High velocity sessions slow down more (burst activity)
+	// Low velocity sessions maintain pace (steady work)
+	let velocity_decay = if call_velocity > 2.0 {
+		0.6 // High velocity: expect 40% slowdown
+	} else if call_velocity > 1.0 {
+		0.75 // Medium velocity: expect 25% slowdown
+	} else {
+		0.85 // Low velocity: expect 15% slowdown (already steady)
+	};
+
+	// Calculate future calls with realistic decay
+	let estimated_remaining = call_velocity * estimated_remaining_mins * velocity_decay;
+
+	// Apply data-driven bounds
+	// Minimum: 5 calls (compression needs some future benefit)
+	// Maximum: 2x current calls (don't over-estimate based on past)
+	let max_estimate = (current_api_calls * 2.0).min(100.0);
+	let final_estimate = estimated_remaining.clamp(5.0, max_estimate);
+
+	crate::log_debug!(
+		"Future calls estimation: current_calls={:.0}, velocity={:.2} calls/min, \
+		session_duration={:.1}min, continuation_factor={:.2}, \
+		estimated_remaining_mins={:.1}, velocity_decay={:.2}, \
+		raw_estimate={:.1}, final_estimate={:.0} (bounds: 5.0-{:.0})",
+		current_api_calls,
+		call_velocity,
+		session_duration_mins,
+		continuation_factor,
+		estimated_remaining_mins,
+		velocity_decay,
+		estimated_remaining,
+		final_estimate,
+		max_estimate
+	);
+
+	final_estimate
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES

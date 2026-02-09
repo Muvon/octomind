@@ -406,7 +406,10 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				if crate::mcp::dev::plan::get_current_task_start_index().is_none() {
 					let start_index = params.chat_session.get_message_count().saturating_sub(1);
 					crate::mcp::dev::plan::set_current_task_start_index(start_index);
-					crate::log_debug!("Plan task start index set to: {} (first tool execution)", start_index);
+					crate::log_debug!(
+						"Plan task start index set to: {} (first tool execution)",
+						start_index
+					);
 				}
 
 				// Execute all tool calls in parallel using the new module

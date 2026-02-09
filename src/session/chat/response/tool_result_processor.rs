@@ -275,6 +275,24 @@ pub async fn process_tool_results(
 		truncation_time += truncation_start.elapsed().as_millis();
 	}
 
+	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed
+	// CRITICAL: This must happen DURING tool execution loops, not just on user requests
+	// Context can balloon from 50K → 200K+ tokens during multi-tool execution without this check
+	// This runs AFTER plan compression (which handles structured plan content)
+	// and BEFORE continuation (compression can prevent hitting continuation threshold)
+	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
+		chat_session,
+		config,
+	)
+	.await
+	{
+		// Best-effort: log error but continue session
+		log_debug!(
+			"Adaptive conversation compression failed during tool processing: {}. Continuing session.",
+			e
+		);
+	}
+
 	// NEW FLOW: Check for continuation AFTER all tool results are gathered
 	// This is one of the two correct moments to trigger continuation:
 	// 1) On new user request (handled in session runner)

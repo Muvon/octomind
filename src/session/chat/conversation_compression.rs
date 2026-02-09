@@ -144,23 +144,8 @@ pub async fn check_and_compress_conversation(
 	// Select top chunks within budget (LOCAL - no API call)
 	let selected = super::semantic_chunking::select_chunks_within_budget(&chunks, target_tokens);
 
-	// Separate by type (LOCAL - no API call)
-	let critical: Vec<_> = selected
-		.iter()
-		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Critical))
-		.collect();
-	let reference: Vec<_> = selected
-		.iter()
-		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Reference))
-		.collect();
-	let context: Vec<_> = selected
-		.iter()
-		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Context))
-		.collect();
-
-	// Format critical + reference verbatim (LOCAL - no AI summarization needed)
-	let critical_text = format_chunks_verbatim(&critical);
-	let reference_text = format_chunks_verbatim(&reference);
+	// Group by type and relation (LOCAL - no API call)
+	let (critical_text, reference_text, context_chunks) = group_chunks_by_type(&selected);
 
 	// Combine critical and reference
 	let preserved_text = if !critical_text.is_empty() && !reference_text.is_empty() {
@@ -173,7 +158,7 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
 	let (should_compress, context_summary) =
-		ask_ai_decision_and_summary(session, config, &context).await?;
+		ask_ai_decision_and_summary(session, config, &context_chunks).await?;
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
@@ -218,11 +203,25 @@ async fn ask_ai_decision_and_summary(
 	// If there are context chunks, include them for summarization
 	if !context_chunks.is_empty() {
 		decision_prompt.push_str(
-			"If YES, also provide a 2-3 sentence summary of these context chunks (focus on what's needed to continue the conversation):\n\n"
+			"If YES, also provide a 2-3 sentence summary preserving logical structure (focus on what's needed to continue the conversation):\n\n"
 		);
 
+		// Add chunks with discourse relation markers for better AI understanding
 		for chunk in context_chunks {
-			decision_prompt.push_str(&format!("- {}\n", chunk.content.trim()));
+			let relation_hint = match chunk.discourse_relation {
+				super::semantic_chunking::DiscourseRelation::Cause => "[REASONING]",
+				super::semantic_chunking::DiscourseRelation::Contrast => "[ALTERNATIVE]",
+				super::semantic_chunking::DiscourseRelation::Sequence => "[STEP]",
+				super::semantic_chunking::DiscourseRelation::Background => "[CONTEXT]",
+				super::semantic_chunking::DiscourseRelation::Elaboration => "[DETAIL]",
+				super::semantic_chunking::DiscourseRelation::None => "",
+			};
+
+			if relation_hint.is_empty() {
+				decision_prompt.push_str(&format!("- {}\n", chunk.content.trim()));
+			} else {
+				decision_prompt.push_str(&format!("{} {}\n", relation_hint, chunk.content.trim()));
+			}
 		}
 
 		decision_prompt.push_str(
@@ -375,6 +374,39 @@ fn format_chunks_verbatim(chunks: &[&super::semantic_chunking::SemanticChunk]) -
 		.filter(|s| !s.is_empty())
 		.collect::<Vec<_>>()
 		.join("\n- ")
+}
+
+/// Group chunks by type and format with discourse relation awareness
+/// Returns (critical_text, reference_text, context_chunks_for_ai)
+fn group_chunks_by_type(
+	selected: &[super::semantic_chunking::SemanticChunk],
+) -> (
+	String,
+	String,
+	Vec<&super::semantic_chunking::SemanticChunk>,
+) {
+	// Critical: Always preserve verbatim
+	let critical: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Critical))
+		.collect();
+
+	// Reference: Always preserve verbatim
+	let reference: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Reference))
+		.collect();
+
+	// Context: Pass to AI with relation markers
+	let context: Vec<_> = selected
+		.iter()
+		.filter(|c| matches!(c.chunk_type, super::semantic_chunking::ChunkType::Context))
+		.collect();
+
+	let critical_text = format_chunks_verbatim(&critical);
+	let reference_text = format_chunks_verbatim(&reference);
+
+	(critical_text, reference_text, context)
 }
 
 /// Format final compressed entry

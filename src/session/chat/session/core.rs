@@ -220,6 +220,7 @@ impl ChatSession {
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
 			compression_stats: CompressionStats::default(),
+			total_api_calls: 0,
 		};
 
 		let session = Session {

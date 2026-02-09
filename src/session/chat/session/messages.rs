@@ -322,6 +322,10 @@ impl ChatSession {
 					self.session.info.total_api_time_ms += api_time_ms;
 				}
 
+				// CACHE-AWARE COMPRESSION: Track API calls for amortized cost analysis
+				// Each API call = potential cache write/read, critical for compression economics
+				self.session.info.total_api_calls += 1;
+
 				// Update session token counts and use proper cache tracking
 				let cache_manager = crate::session::cache::CacheManager::new();
 				cache_manager.update_token_tracking(

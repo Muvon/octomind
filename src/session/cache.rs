@@ -777,6 +777,7 @@ mod tests {
 				total_layer_time_ms: 0,
 				total_tool_time_ms: 0,
 				compression_stats: crate::session::CompressionStats::default(),
+				total_api_calls: 0,
 			},
 			messages: Vec::new(),
 			session_file: None,

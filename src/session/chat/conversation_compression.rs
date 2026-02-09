@@ -33,6 +33,9 @@ use std::sync::Arc;
 
 /// Check if we should ask AI about compression
 /// Returns (should_compress, target_ratio) tuple
+///
+/// CACHE-AWARE: Uses amortized cost analysis to determine if compression is profitable
+/// considering cache invalidation costs vs. future savings over estimated remaining turns
 pub async fn should_check_compression(session: &mut ChatSession, config: &Config) -> (bool, f64) {
 	// Check if compression is enabled
 	if !config.compression.adaptive_threshold {
@@ -65,13 +68,138 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 				level.target_ratio,
 				level.threshold
 			);
-			(true, level.target_ratio)
+
+			// CACHE-AWARE DECISION: Calculate if compression is profitable
+			let net_benefit =
+				calculate_compression_net_benefit(session, current_tokens, level.target_ratio)
+					.await;
+
+			if net_benefit > 0.0 {
+				log_debug!(
+					"Cache-aware analysis: Net benefit ${:.5} → COMPRESS",
+					net_benefit
+				);
+				(true, level.target_ratio)
+			} else {
+				log_debug!(
+					"Cache-aware analysis: Net benefit ${:.5} → SKIP (would lose money)",
+					net_benefit
+				);
+				(false, 2.0)
+			}
 		}
 		None => {
 			// Haven't reached any threshold yet
 			(false, 2.0)
 		}
 	}
+}
+
+/// Calculate net benefit of compression using amortized cost analysis
+///
+/// This function implements cache-aware compression economics:
+/// - Cache write costs 1.25x base (Anthropic 5-min TTL standard)
+/// - Cache read costs 0.1x base
+/// - Compression invalidates cache, forcing rewrite
+/// - But smaller context = lower costs for future turns
+///
+/// Returns positive value if compression saves money, negative if it costs money
+async fn calculate_compression_net_benefit(
+	session: &ChatSession,
+	current_tokens: usize,
+	compression_ratio: f64,
+) -> f64 {
+	let cached_tokens = session.session.info.cached_tokens as f64;
+	let total_tokens = current_tokens as f64;
+	let non_cached_tokens = total_tokens - cached_tokens;
+
+	// Estimate remaining turns in this session
+	let estimated_future_turns = estimate_future_turns(session);
+
+	// Tokens after compression
+	let compressed_tokens = total_tokens / compression_ratio;
+
+	// SCENARIO A: NO compression (keep current cache)
+	// Each future turn: cached tokens cost 0.1x, non-cached cost 1x
+	let cost_per_turn_no_compress = (cached_tokens * 0.1) + (non_cached_tokens * 1.0);
+	let total_cost_no_compress = estimated_future_turns * cost_per_turn_no_compress;
+
+	// SCENARIO B: WITH compression (invalidate cache, rewrite smaller)
+	// Turn 1: Cache write at 1.25x (invalidation cost)
+	// Turns 2-N: Cache reads at 0.1x (benefit from smaller context)
+	let cache_write_cost = compressed_tokens * 1.25;
+	let cache_read_cost_per_turn = compressed_tokens * 0.1;
+	let total_cost_with_compress =
+		cache_write_cost + ((estimated_future_turns - 1.0) * cache_read_cost_per_turn);
+
+	// Net benefit (positive = compression saves money)
+	let net_benefit = total_cost_no_compress - total_cost_with_compress;
+
+	log_debug!(
+		"Cache-aware compression analysis:\n  \
+		Current: {:.0} tokens ({:.0} cached, {:.0} non-cached)\n  \
+		After compression: {:.0} tokens ({:.1}x ratio)\n  \
+		Estimated future API calls: {:.0}\n  \
+		Cost WITHOUT compression: {:.2} units over {:.0} API calls\n  \
+		Cost WITH compression: {:.2} units (write: {:.2} + {:.0} reads: {:.2})\n  \
+		Net benefit: {:.2} units → {}",
+		total_tokens,
+		cached_tokens,
+		non_cached_tokens,
+		compressed_tokens,
+		compression_ratio,
+		estimated_future_turns,
+		total_cost_no_compress,
+		estimated_future_turns,
+		total_cost_with_compress,
+		cache_write_cost,
+		estimated_future_turns - 1.0,
+		(estimated_future_turns - 1.0) * cache_read_cost_per_turn,
+		net_benefit,
+		if net_benefit > 0.0 {
+			"COMPRESS"
+		} else {
+			"SKIP"
+		}
+	);
+
+	net_benefit
+}
+
+/// Estimate remaining API calls in current session
+///
+/// CRITICAL: This is NOT about user turns, but about API calls!
+/// Each API call = cache write or cache read opportunity
+///
+/// API calls include:
+/// - User messages
+/// - Tool execution loops (can be 5-20+ calls per user message)
+/// - Thinking tokens
+/// - Continuation calls
+/// - Layer processing
+///
+/// Uses adaptive estimation based on current session API call velocity:
+/// - Bootstrap: Start with baseline of 10 API calls
+/// - Adaptive: As session progresses, estimate based on current velocity
+/// - Conservative: Use max(estimated, 10) to ensure compression is worthwhile
+fn estimate_future_turns(session: &ChatSession) -> f64 {
+	let current_api_calls = session.session.info.total_api_calls as f64;
+
+	// Bootstrap: If we're early in session (< 5 API calls), use baseline
+	if current_api_calls < 5.0 {
+		return 10.0; // Conservative baseline: assume at least 10 more API calls
+	}
+
+	// Adaptive estimation: Assume session will continue at similar pace
+	// Formula: remaining = baseline + (current * growth_factor)
+	// This adapts: early sessions get conservative estimate, longer sessions get more
+	let baseline = 10.0;
+	let growth_factor = 0.5; // Assume 50% more API calls than current
+	let estimated_remaining = baseline + (current_api_calls * growth_factor);
+
+	// Conservative: At least 10 API calls to ensure compression is worthwhile
+	// (Break-even is ~2 cache reads, but we want margin of safety)
+	estimated_remaining.max(10.0)
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES

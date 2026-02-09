@@ -220,6 +220,9 @@ pub struct SessionInfo {
 	// Compression tracking
 	#[serde(default)]
 	pub compression_stats: CompressionStats,
+	// API call tracking for cache-aware compression
+	#[serde(default)]
+	pub total_api_calls: usize, // Total API calls made in this session (for cache economics)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -343,7 +346,9 @@ impl Session {
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
 				compression_stats: CompressionStats::default(),
+				total_api_calls: 0,
 			},
+
 			messages: Vec::new(),
 			session_file: None,
 			current_non_cached_tokens: 0,
@@ -1091,12 +1096,15 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			layer_stats: Vec::new(),
 			tool_calls: 0,
 			total_api_time_ms: 0,
+
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
 			compression_stats: CompressionStats::default(),
+			total_api_calls: 0,
 		};
 
 		// Extract runtime state from log file
+
 		let runtime_state = extract_runtime_state_from_log(session_file)?;
 
 		// Apply runtime state to default session info

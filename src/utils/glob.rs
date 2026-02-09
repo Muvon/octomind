@@ -172,7 +172,10 @@ pub fn expand_glob_patterns_filtered(
 
 			// Apply pattern to all files
 			for file_path in &all_files {
-				if glob_pattern.matches(file_path) {
+				// Normalize path for matching: strip leading "./" if present
+				let normalized_path = file_path.strip_prefix("./").unwrap_or(file_path);
+
+				if glob_pattern.matches(normalized_path) {
 					expanded_paths.push(file_path.clone());
 					pattern_matches += 1;
 				}

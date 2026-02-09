@@ -140,11 +140,7 @@ async fn calculate_compression_net_benefit(
 	let compressed_tokens = total_tokens / compression_ratio;
 
 	// Get decision model (used for compression) and session model (used for future calls)
-	let decision_model = config
-		.compression
-		.decision_model
-		.as_ref()
-		.unwrap_or(&session.model);
+	let decision_model = &config.compression.decision.model;
 	let session_model = &session.model;
 
 	// Get pricing for both models using provider factory
@@ -189,6 +185,16 @@ async fn calculate_compression_net_benefit(
 	// Check if decision model can reuse session cache
 	let same_model = decision_model == session_model;
 
+	// Estimate actual output tokens from compression API call
+	// The AI generates a summary (not the full compressed_tokens size)
+	// Use compressed_tokens as estimate, but cap at max_tokens if set
+	let decision_max_tokens = config.compression.decision.max_tokens;
+	let estimated_output_tokens = if decision_max_tokens > 0 {
+		(compressed_tokens as u64).min(decision_max_tokens as u64)
+	} else {
+		compressed_tokens as u64
+	};
+
 	// SCENARIO A: NO compression
 	// Each call pays for ENTIRE accumulated context (which grows each call)
 	let mut total_cost_no_compress = 0.0;
@@ -215,18 +221,18 @@ async fn calculate_compression_net_benefit(
 	let compression_cost = if same_model {
 		// Same model: session context is already cached, only decision prompt is new
 		decision_pricing.calculate_cost(
-			decision_prompt_tokens as u64,  // Only new prompt is uncached
-			0,                               // No cache write
-			(total_tokens - decision_prompt_tokens) as u64,  // Rest is cached
-			compressed_tokens as u64,        // Output tokens from compression
+			decision_prompt_tokens as u64, // Only new prompt is uncached
+			0,                             // No cache write
+			(total_tokens - decision_prompt_tokens) as u64, // Rest is cached
+			estimated_output_tokens,       // Actual output tokens (capped by max_tokens)
 		)
 	} else {
 		// Different model: NO cache reuse, everything is uncached
 		decision_pricing.calculate_cost(
-			total_tokens as u64,             // ALL tokens uncached
-			0,                                // No cache write
-			0,                                // NO cache
-			compressed_tokens as u64,        // Output tokens from compression
+			total_tokens as u64,     // ALL tokens uncached
+			0,                       // No cache write
+			0,                       // NO cache
+			estimated_output_tokens, // Actual output tokens (capped by max_tokens)
 		)
 	};
 
@@ -581,36 +587,28 @@ async fn ask_ai_decision_and_summary(
 		id: None,
 	});
 
-	// Extract values before mutable borrow
-	let session_model = session.model.clone();
-	let temperature = session.temperature;
-	let top_p = session.top_p;
-	let top_k = session.top_k;
-
-	// Use decision_model if configured, otherwise fall back to session model
-	let model_to_use = config
-		.compression
-		.decision_model
-		.as_ref()
-		.unwrap_or(&session_model);
+	// Use decision model configuration from CompressionDecisionConfig
+	let decision_config = &config.compression.decision;
 
 	crate::log_debug!(
-		"Using model '{}' for 1-hop compression decision+summary (session model: '{}')",
-		model_to_use,
-		session_model
+		"Using compression decision model '{}' (max_tokens={}, temp={}, session model: '{}')",
+		decision_config.model,
+		decision_config.max_tokens,
+		decision_config.temperature,
+		session.model
 	);
 
 	// CRITICAL: Pass chat_session for cost tracking
 	let params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages,
-		model_to_use,
-		temperature,
-		top_p,
-		top_k,
-		1024, // Increased from 512 to allow for summary text
+		&decision_config.model,
+		decision_config.temperature,
+		decision_config.top_p,
+		decision_config.top_k,
+		decision_config.max_tokens,
 		config,
 	)
-	.with_max_retries(1)
+	.with_max_retries(decision_config.max_retries)
 	.with_chat_session(session);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;

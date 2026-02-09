@@ -122,6 +122,27 @@ pub struct PressureLevel {
 	pub target_ratio: f64,
 }
 
+/// Compression decision model configuration
+/// All standard model parameters for the compression decision API call
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CompressionDecisionConfig {
+	/// Model to use for compression decisions (provider:model format)
+	/// Example: "openrouter:anthropic/claude-haiku-4" (cost-efficient for decisions)
+	pub model: String,
+	/// Maximum tokens to generate (0 = no limit, let AI decide based on prompt)
+	pub max_tokens: u32,
+	/// Sampling temperature (0.0 to 2.0)
+	pub temperature: f32,
+	/// Top-p nucleus sampling (0.0 to 1.0)
+	pub top_p: f32,
+	/// Top-k sampling (1 to infinity)
+	pub top_k: u32,
+	/// Maximum retry attempts on failure
+	pub max_retries: u32,
+	/// Base timeout for exponential backoff retry logic (seconds)
+	pub retry_timeout: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CompressionHintConfig {
 	/// Enable compression system (task → phase → project, all automatic)
@@ -138,11 +159,9 @@ pub struct CompressionHintConfig {
 	/// Compression triggers when context exceeds ANY threshold, using the highest matched ratio
 	/// Example: At 100k tokens, uses 4.0x compression (75% reduction)
 	pub pressure_levels: Vec<PressureLevel>,
-	/// Optional model for compression decisions (YES/NO) and summary generation
-	/// Use a fast, cheap model like "openrouter:anthropic/claude-haiku" for cost savings
-	/// If not set, uses the session's main model
-	/// Example: "openrouter:anthropic/claude-haiku" (10x cheaper than Sonnet)
-	pub decision_model: Option<String>,
+	/// Decision model configuration for compression decisions and summary generation
+	/// Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
+	pub decision: CompressionDecisionConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

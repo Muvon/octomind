@@ -966,10 +966,15 @@ target_ratio = 4.0  # Medium: 75% reduction
 threshold = 150000
 target_ratio = 8.0  # Aggressive: 87.5% reduction
 
-# Optional model for compression decisions and summary generation
-# Use a fast, cheap model for YES/NO decisions and summaries to reduce costs
-# If not set, uses the session's main model (more expensive)
-# Recommended: "openrouter:anthropic/claude-haiku" (10x cheaper, 3x faster)
+# Decision model configuration for compression decisions and summary generation
+# Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
 # Cost comparison: Haiku ~$0.0003 vs Sonnet ~$0.003 per compression decision
-# decision_model = "openrouter:anthropic/claude-haiku"
+[compression.decision]
+model = "anthropic:claude-haiku-4-5"
+max_tokens = 16000  # Enough for decision + summary
+temperature = 0.3  # Lower temperature for consistent decisions
+top_p = 1.0
+top_k = 0
+max_retries = 1
+retry_timeout = 30
 

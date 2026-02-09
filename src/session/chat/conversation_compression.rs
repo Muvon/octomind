@@ -109,9 +109,7 @@ async fn calculate_compression_net_benefit(
 	current_tokens: usize,
 	compression_ratio: f64,
 ) -> f64 {
-	let cached_tokens = session.session.info.cached_tokens as f64;
 	let total_tokens = current_tokens as f64;
-	let non_cached_tokens = total_tokens - cached_tokens;
 
 	// Estimate remaining turns in this session
 	let estimated_future_turns = estimate_future_turns(session);
@@ -119,42 +117,56 @@ async fn calculate_compression_net_benefit(
 	// Tokens after compression
 	let compressed_tokens = total_tokens / compression_ratio;
 
-	// SCENARIO A: NO compression (keep current cache)
-	// Each future turn: cached tokens cost 0.1x, non-cached cost 1x
-	let cost_per_turn_no_compress = (cached_tokens * 0.1) + (non_cached_tokens * 1.0);
+	// SCENARIO A: NO compression (assume full cache eventually)
+	// All tokens become cached over time, each future turn costs 0.1x
+	let cost_per_turn_no_compress = total_tokens * 0.1;
 	let total_cost_no_compress = estimated_future_turns * cost_per_turn_no_compress;
 
-	// SCENARIO B: WITH compression (invalidate cache, rewrite smaller)
-	// Turn 1: Cache write at 1.25x (invalidation cost)
-	// Turns 2-N: Cache reads at 0.1x (benefit from smaller context)
+	// SCENARIO B: WITH compression
+	// 1. Compression API call: input (full context) + output (summary at 5x cost)
+	let compression_input_cost = total_tokens * 1.0;
+	let compression_output_cost = compressed_tokens * 5.0;
+	let compression_api_cost = compression_input_cost + compression_output_cost;
+
+	// 2. Cache write after compression (1.25x)
 	let cache_write_cost = compressed_tokens * 1.25;
+
+	// 3. Future turns: cache reads at 0.1x
 	let cache_read_cost_per_turn = compressed_tokens * 0.1;
+	let future_cache_reads_cost = (estimated_future_turns - 1.0) * cache_read_cost_per_turn;
+
 	let total_cost_with_compress =
-		cache_write_cost + ((estimated_future_turns - 1.0) * cache_read_cost_per_turn);
+		compression_api_cost + cache_write_cost + future_cache_reads_cost;
 
 	// Net benefit (positive = compression saves money)
 	let net_benefit = total_cost_no_compress - total_cost_with_compress;
 
 	log_debug!(
 		"Cache-aware compression analysis:\n  \
-		Current: {:.0} tokens ({:.0} cached, {:.0} non-cached)\n  \
+		Current: {:.0} tokens\n  \
 		After compression: {:.0} tokens ({:.1}x ratio)\n  \
 		Estimated future API calls: {:.0}\n  \
-		Cost WITHOUT compression: {:.2} units over {:.0} API calls\n  \
-		Cost WITH compression: {:.2} units (write: {:.2} + {:.0} reads: {:.2})\n  \
+		SCENARIO A (no compress): {:.2} units ({:.0} calls × {:.2} per call)\n  \
+		SCENARIO B (compress): {:.2} units\n    \
+		- Compression API: {:.2} (input: {:.2} + output: {:.2})\n    \
+		- Cache write: {:.2}\n    \
+		- Future reads: {:.2} ({:.0} calls × {:.2} per call)\n  \
 		Net benefit: {:.2} units → {}",
 		total_tokens,
-		cached_tokens,
-		non_cached_tokens,
 		compressed_tokens,
 		compression_ratio,
 		estimated_future_turns,
 		total_cost_no_compress,
 		estimated_future_turns,
+		cost_per_turn_no_compress,
 		total_cost_with_compress,
+		compression_api_cost,
+		compression_input_cost,
+		compression_output_cost,
 		cache_write_cost,
+		future_cache_reads_cost,
 		estimated_future_turns - 1.0,
-		(estimated_future_turns - 1.0) * cache_read_cost_per_turn,
+		cache_read_cost_per_turn,
 		net_benefit,
 		if net_benefit > 0.0 {
 			"COMPRESS"
@@ -237,7 +249,7 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)
 	// This allows us to send context chunks to AI in the same call as decision
-	let (start_idx, mut end_idx) = find_compression_range(&session.session.messages)?;
+	let (start_idx, end_idx) = find_compression_range(&session.session.messages)?;
 
 	// end_idx is already safe from find_compression_range
 
@@ -597,6 +609,32 @@ fn find_compression_range(messages: &[crate::session::Message]) -> Result<(usize
 	Ok((start_idx, end_idx))
 }
 
+/// Calculate tokens in message range using accurate token counting
+/// This now counts ALL message fields: content, tool_calls, thinking, images, etc.
+fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usize) -> Result<u64> {
+	let mut total_tokens = 0u64;
+
+	// Validate range
+	if start_idx >= session.session.messages.len() {
+		return Err(anyhow::anyhow!("Invalid start_index in range"));
+	}
+
+	if end_idx >= session.session.messages.len() {
+		return Err(anyhow::anyhow!("Invalid end_index in range"));
+	}
+
+	// Count tokens in range (start_idx+1 to end_idx inclusive, matching removal logic)
+	// Use accurate token counting that includes tool_calls, thinking, images, etc.
+	for i in (start_idx + 1)..=end_idx {
+		if let Some(message) = session.session.messages.get(i) {
+			let tokens = crate::session::estimate_message_tokens(message) as u64;
+			total_tokens += tokens;
+		}
+	}
+
+	Ok(total_tokens)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::find_compression_range;
@@ -634,28 +672,4 @@ mod tests {
 	}
 }
 
-/// Calculate tokens in message range using accurate token counting
-/// This now counts ALL message fields: content, tool_calls, thinking, images, etc.
-fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usize) -> Result<u64> {
-	let mut total_tokens = 0u64;
 
-	// Validate range
-	if start_idx >= session.session.messages.len() {
-		return Err(anyhow::anyhow!("Invalid start_index in range"));
-	}
-
-	if end_idx >= session.session.messages.len() {
-		return Err(anyhow::anyhow!("Invalid end_index in range"));
-	}
-
-	// Count tokens in range (start_idx+1 to end_idx inclusive, matching removal logic)
-	// Use accurate token counting that includes tool_calls, thinking, images, etc.
-	for i in (start_idx + 1)..=end_idx {
-		if let Some(message) = session.session.messages.get(i) {
-			let tokens = crate::session::estimate_message_tokens(message) as u64;
-			total_tokens += tokens;
-		}
-	}
-
-	Ok(total_tokens)
-}

@@ -25,7 +25,7 @@
 
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
-use crate::session::{estimate_full_context_tokens, estimate_tokens};
+use crate::session::estimate_tokens;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 /// Check if we should ask AI about compression
 /// Returns (should_compress, target_ratio) tuple
-pub async fn should_check_compression(session: &ChatSession, config: &Config) -> (bool, f64) {
+pub async fn should_check_compression(session: &mut ChatSession, config: &Config) -> (bool, f64) {
 	// Check if compression is enabled
 	if !config.compression.adaptive_threshold {
 		return (false, 2.0);
@@ -44,18 +44,9 @@ pub async fn should_check_compression(session: &ChatSession, config: &Config) ->
 		return (false, 2.0);
 	}
 
-	// CRITICAL FIX: Use full context tokens including system prompt and tools
-	// session.current_total_tokens tracks INPUT tokens since last cache checkpoint (resets to 0)
-	// We need the FULL conversation context size for compression threshold decisions
-
-	// Get system prompt for the role
-	let (_, _, _, _, system_prompt) = config.get_role_config(&session.role);
-
-	// Get available tools
-	let tools = crate::mcp::get_available_functions(config).await;
-
-	let current_tokens =
-		estimate_full_context_tokens(&session.session.messages, Some(system_prompt), Some(&tools));
+	// UNIFIED TOKEN CALCULATION - Use the single source of truth
+	// This ensures consistency with display, continuation, and all other systems
+	let current_tokens = session.get_full_context_tokens(config).await;
 
 	// Find the highest threshold we've exceeded and its target ratio
 	// This determines both IF we should compress and HOW MUCH
@@ -99,12 +90,8 @@ pub async fn check_and_compress_conversation(
 	let current_cost = session.session.info.total_cost;
 	let max_threshold = config.max_session_tokens_threshold;
 
-	// Get system prompt and tools for accurate token counting
-	let (_, _, _, _, system_prompt) = config.get_role_config(&session.role);
-	let tools = crate::mcp::get_available_functions(config).await;
-	let current_context_tokens =
-		estimate_full_context_tokens(&session.session.messages, Some(system_prompt), Some(&tools))
-			as u64;
+	// UNIFIED TOKEN CALCULATION - Use the single source of truth
+	let current_context_tokens = session.get_full_context_tokens(config).await as u64;
 	let animation_task = tokio::spawn(async move {
 		let _ = crate::session::chat::animation::show_smart_animation(
 			animation_cancel_clone,

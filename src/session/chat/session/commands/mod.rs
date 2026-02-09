@@ -187,7 +187,7 @@ impl CommandOutput {
 	}
 
 	/// Display output in CLI mode
-	pub fn display_cli(&self, session: &ChatSession, config: &Config) {
+	pub async fn display_cli(&mut self, session: &mut ChatSession, config: &Config) {
 		match self {
 			Self::Help { .. } => display::display_help(self, config),
 			Self::Info { .. } => session.display_session_info(),
@@ -217,7 +217,7 @@ impl CommandOutput {
 			Self::Truncate { .. } => display::display_truncate(self),
 			Self::Summarize { .. } => display::display_summarize(self),
 			Self::Cache { .. } => display::display_cache(self),
-			Self::Context { .. } => display::display_context(self, session, config),
+			Self::Context { .. } => display::display_context(self, session, config).await,
 			Self::Image { .. } => display::display_image(self),
 			Self::Prompt { .. } => display::display_prompt(self),
 			Self::Done { .. } => display::display_done(self),

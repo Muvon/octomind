@@ -558,13 +558,17 @@ impl ChatSession {
 	}
 
 	// Display current session context that would be sent to AI
-	pub fn display_session_context(&self, config: &crate::config::Config) {
+	pub async fn display_session_context(&mut self, config: &crate::config::Config) {
 		// Use the filtered version with "all" filter for backward compatibility
-		self.display_session_context_filtered(config, "all");
+		self.display_session_context_filtered(config, "all").await;
 	}
 
 	// Display current session context with filtering options
-	pub fn display_session_context_filtered(&self, config: &crate::config::Config, filter: &str) {
+	pub async fn display_session_context_filtered(
+		&mut self,
+		config: &crate::config::Config,
+		filter: &str,
+	) {
 		// Check if debug mode is enabled
 		let is_debug = config.log_level.is_debug_enabled();
 
@@ -846,47 +850,9 @@ impl ChatSession {
 			filtered_messages.len()
 		));
 
-		// Calculate current session context tokens including system prompt and tools
-		let current_context_tokens = {
-			// Get system prompt for accurate token counting
-			// Try to get the actual system prompt used by the session
-			let system_prompt = if !self.session.messages.is_empty() {
-				// Look for system message in the session
-				self.session
-					.messages
-					.iter()
-					.find(|m| m.role == "system")
-					.map(|m| m.content.as_str())
-					.unwrap_or("You are a helpful assistant.")
-			} else {
-				"You are a helpful assistant."
-			};
-
-			// Estimate tool count based on MCP configuration
-			// For accurate display, we estimate tool overhead based on configured servers
-			let estimated_tool_count = if !config.mcp.servers.is_empty() {
-				// Estimate ~10-15 tools per MCP server on average
-				config.mcp.servers.len() * 12
-			} else {
-				0
-			};
-
-			// Calculate tokens with estimated tool overhead
-			let mut total = crate::session::estimate_session_tokens(&self.session.messages);
-
-			// Add system prompt tokens
-			total += crate::session::token_counter::estimate_tokens(system_prompt);
-			total += 10; // API formatting overhead
-
-			// Add estimated tool definition overhead
-			if estimated_tool_count > 0 {
-				// Estimate ~50 tokens per tool definition on average
-				total += estimated_tool_count * 50;
-				total += 10; // Tools array overhead
-			}
-
-			total
-		};
+		// Calculate current session context tokens using UNIFIED calculation
+		// This ensures consistency with compression, continuation, and all other systems
+		let current_context_tokens = self.get_full_context_tokens(config).await;
 
 		markdown_content.push_str(&format!(
 			"- **Current Context Tokens:** {} (includes system prompt + tools)\n",

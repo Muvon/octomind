@@ -156,6 +156,9 @@ pub struct ChatSession {
 	// Compression hint tracking
 	pub compression_hint_count: usize, // Counter for compression hints
 	pub last_compression_hint_shown: u64, // Timestamp of last compression hint
+	// Token calculation cache - SINGLE SOURCE OF TRUTH for context token counting
+	// This cache ensures all systems (display, compression, continuation) use identical calculations
+	pub cached_tools: Option<Vec<crate::mcp::McpFunction>>, // Cached tool definitions for consistent token counting
 }
 
 /// Parameters for creating a new ChatSession
@@ -253,6 +256,7 @@ impl ChatSession {
 			initial_status_shown: false,        // Initialize status display flag
 			compression_hint_count: 0,          // Initialize compression hint counter
 			last_compression_hint_shown: 0,     // Initialize last hint timestamp
+			cached_tools: None,                 // Initialize tool cache (populated on first use)
 		}
 	}
 
@@ -423,6 +427,7 @@ impl ChatSession {
 						initial_status_shown: true,         // Don't show status for resumed sessions
 						compression_hint_count: 0,          // Initialize compression hint counter
 						last_compression_hint_shown: 0,     // Initialize last hint timestamp
+						cached_tools: None,                 // Initialize tool cache (populated on first use)
 					};
 
 					// Initialize spending threshold checkpoint for loaded sessions
@@ -941,5 +946,43 @@ impl ChatSession {
 		self.save()?;
 
 		Ok(())
+	}
+
+	/// UNIFIED TOKEN CALCULATION - SINGLE SOURCE OF TRUTH
+	///
+	/// This method ensures ALL systems (display, compression, continuation, etc.) use
+	/// IDENTICAL token calculations by:
+	/// 1. Caching tool definitions to avoid repeated async fetches
+	/// 2. Using the exact same estimate_full_context_tokens() function
+	/// 3. Including system prompt + tools for accurate context size
+	///
+	/// **CRITICAL**: This is the ONLY method that should be used for context token counting.
+	/// Direct calls to estimate_full_context_tokens() should be replaced with this method.
+	///
+	/// # Arguments
+	/// * `config` - Configuration to get system prompt and fetch tools if not cached
+	///
+	/// # Returns
+	/// Total context tokens including messages + system prompt + tool definitions
+	pub async fn get_full_context_tokens(&mut self, config: &Config) -> usize {
+		// Fetch and cache tools if not already cached
+		if self.cached_tools.is_none() {
+			self.cached_tools = Some(crate::mcp::get_available_functions(config).await);
+		}
+
+		// Get system prompt for the role
+		let (_, _, _, _, system_prompt) = config.get_role_config(&self.role);
+
+		// Use the unified calculation with cached tools
+		estimate_full_context_tokens(
+			&self.session.messages,
+			Some(system_prompt),
+			self.cached_tools.as_deref(),
+		)
+	}
+
+	/// Invalidate tool cache (call when MCP configuration changes)
+	pub fn invalidate_tool_cache(&mut self) {
+		self.cached_tools = None;
 	}
 }

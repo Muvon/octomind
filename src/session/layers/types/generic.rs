@@ -385,6 +385,7 @@ impl GenericLayer {
 			initial_status_shown: true,       // Layers don't show status
 			compression_hint_count: 0,        // Initialize compression hint counter
 			last_compression_hint_shown: 0,   // Initialize last hint timestamp
+			cached_tools: None,               // Initialize tool cache (populated on first use)
 		}
 	}
 

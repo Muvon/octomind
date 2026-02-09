@@ -34,12 +34,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 // Helper function to print command output in CLI context
-fn print_command_output(
-	output: &super::commands::CommandOutput,
-	session: &ChatSession,
+async fn print_command_output(
+	output: &mut super::commands::CommandOutput,
+	session: &mut ChatSession,
 	config: &Config,
 ) {
-	output.display_cli(session, config);
+	output.display_cli(session, config).await;
 }
 
 // Run an interactive session
@@ -495,10 +495,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					// Command was handled successfully, continue with session
 					continue;
 				}
-				CommandResult::HandledWithOutput(json_output) => {
+				CommandResult::HandledWithOutput(mut json_output) => {
 					// Command was handled with output
 					// Print it for CLI using existing display functions
-					print_command_output(&json_output, &chat_session, &current_config);
+					print_command_output(&mut json_output, &mut chat_session, &current_config)
+						.await;
 					continue;
 				}
 			}
@@ -807,11 +808,11 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 				return Ok(());
 			}
 			crate::session::chat::session::commands::CommandResult::HandledWithOutput(
-				json_output,
+				mut json_output,
 			) => {
 				// Command was handled with output
 				// Print it for CLI run command using existing display functions
-				print_command_output(&json_output, &chat_session, &current_config);
+				print_command_output(&mut json_output, &mut chat_session, &current_config).await;
 				// Save session after command execution
 				let _ = chat_session.save();
 				return Ok(());

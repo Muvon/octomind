@@ -545,14 +545,16 @@ pub fn display_cache(output: &CommandOutput) {
 	}
 }
 
-pub fn display_context(
+pub async fn display_context(
 	output: &CommandOutput,
-	session: &super::super::core::ChatSession,
+	session: &mut super::super::core::ChatSession,
 	config: &Config,
 ) {
 	if let CommandOutput::Context { filter, .. } = output {
 		// Display current session context with filtering (CLI output only)
-		session.display_session_context_filtered(config, filter);
+		session
+			.display_session_context_filtered(config, filter)
+			.await;
 	}
 }
 

@@ -400,11 +400,14 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				}
 
 				// 🗜️ PLAN-DRIVEN COMPRESSION: Track message count before tool execution
-				// This start index will be used if a plan tool is executed
-				// Use last existing message index so compression removes tool_calls + tool_results
-				// start_index is preserved; compression removes (start_index+1..=end_index)
-				let start_index = params.chat_session.get_message_count().saturating_sub(1);
-				crate::mcp::dev::plan::set_current_task_start_index(start_index);
+				// CRITICAL FIX: Only set start_index if NOT already set (task in progress)
+				// This prevents resetting start_index on every tool execution loop
+				// start_index should only be set ONCE when a task begins, not on every tool call
+				if crate::mcp::dev::plan::get_current_task_start_index().is_none() {
+					let start_index = params.chat_session.get_message_count().saturating_sub(1);
+					crate::mcp::dev::plan::set_current_task_start_index(start_index);
+					crate::log_debug!("Plan task start index set to: {} (first tool execution)", start_index);
+				}
 
 				// Execute all tool calls in parallel using the new module
 				let (tool_results, total_tool_time_ms) =

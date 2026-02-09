@@ -39,17 +39,25 @@ use std::sync::Arc;
 pub async fn should_check_compression(session: &mut ChatSession, config: &Config) -> (bool, f64) {
 	// Check if compression is enabled
 	if !config.compression.adaptive_threshold {
+		log_debug!("Adaptive compression disabled (adaptive_threshold=false)");
 		return (false, 2.0);
 	}
 
 	// Check if we have any pressure levels configured
 	if config.compression.pressure_levels.is_empty() {
+		log_debug!("No pressure levels configured - compression disabled");
 		return (false, 2.0);
 	}
 
 	// UNIFIED TOKEN CALCULATION - Use the single source of truth
 	// This ensures consistency with display, continuation, and all other systems
 	let current_tokens = session.get_full_context_tokens(config).await;
+	
+	log_debug!(
+		"Compression check: current_tokens={}, thresholds={:?}",
+		current_tokens,
+		config.compression.pressure_levels.iter().map(|l| l.threshold).collect::<Vec<_>>()
+	);
 
 	// Find the highest threshold we've exceeded and its target ratio
 	// This determines both IF we should compress and HOW MUCH
@@ -63,7 +71,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	match matching_level {
 		Some(level) => {
 			log_debug!(
-				"Context tokens: {} → target compression: {:.1}x (threshold: {})",
+				"✓ Threshold exceeded! Context tokens: {} → target compression: {:.1}x (threshold: {})",
 				current_tokens,
 				level.target_ratio,
 				level.threshold
@@ -90,6 +98,11 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		}
 		None => {
 			// Haven't reached any threshold yet
+			log_debug!(
+				"No threshold exceeded (current: {}, lowest threshold: {})",
+				current_tokens,
+				config.compression.pressure_levels.first().map(|l| l.threshold).unwrap_or(0)
+			);
 			(false, 2.0)
 		}
 	}
@@ -671,5 +684,3 @@ mod tests {
 		assert_eq!(end_idx, 3);
 	}
 }
-
-

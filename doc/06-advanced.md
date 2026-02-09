@@ -964,11 +964,17 @@ Octomind features an intelligent compression system that automatically reduces c
 
 ### Architecture
 
-The compression system is implemented in:
-- **`src/session/chat/conversation_compression.rs`**: Main compression logic with cache-aware decision making
-- **`src/mcp/dev/plan/compression.rs`**: Plan-specific compression for structured tasks
-- **`src/session/token_counter.rs`**: Unified token counting used by compression decisions
-- **`src/session/chat/session/core.rs`**: Integration with ChatSession for token estimation
+The compression system is implemented across multiple modules:
+
+**Core Compression:**
+- **`src/session/chat/conversation_compression.rs`**: Main compression engine with cache-aware economics, semantic chunking, and AI-driven decision making
+- **`src/session/cache.rs`**: Cache marker management system (2-marker system for cost optimization)
+- **`src/mcp/dev/plan/compression.rs`**: Plan-specific compression for structured task workflows
+
+**Supporting Systems:**
+- **`src/session/chat/semantic_chunking.rs`**: Discourse-aware semantic chunking for preserving conversation structure
+- **`src/session/chat/session/commands/cache.rs`**: `/cache` command implementation for manual cache checkpoints
+- **`src/session/chat/token_counter.rs`**: Unified token counting for all message fields (content, tool_calls, thinking, images)
 
 ### How Compression Works
 
@@ -993,14 +999,28 @@ The system monitors `session.get_full_context_tokens(config)` which includes:
 
 #### 2. Cache-Aware Decision Making
 
-Before compressing, the system calculates if compression saves money:
+Before compressing, the system calculates if compression saves money by analyzing the net benefit:
 
 ```rust
-// Pseudocode of cache-aware analysis
-net_benefit = calculate_compression_net_benefit(
-    current_tokens,
-    target_ratio,
-    estimated_remaining_turns
+// Actual calculation from calculate_compression_net_benefit()
+net_benefit = (
+    // Cost of current turn with full context
+    current_tokens * current_model_cost
+    
+    // Plus: cost of remaining turns with full context
+    + estimated_remaining_turns * current_tokens * current_model_cost
+    
+    // Minus: cost of compression (AI decision + summary)
+    - compression_cost
+    
+    // Minus: cost of cache invalidation (forced rewrite at 1.25x)
+    - (compressed_tokens * 1.25 * current_model_cost)
+    
+    // Plus: savings from smaller context in future turns
+    + estimated_remaining_turns * (current_tokens - compressed_tokens) * current_model_cost
+    
+    // Plus: cache read savings (0.1x cost for cached content)
+    + estimated_remaining_turns * compressed_tokens * 0.1 * current_model_cost
 )
 
 if net_benefit > 0.0 {
@@ -1011,10 +1031,31 @@ if net_benefit > 0.0 {
 ```
 
 **Cost Analysis Factors:**
-- Cache write cost: 1.25x base (Anthropic 5-minute TTL)
-- Cache read cost: 0.1x base (90% savings)
-- Compression invalidates cache, forcing rewrite
-- Smaller context = lower costs for future turns
+
+- **Cache Write Cost**: 1.25x base token cost (Anthropic 5-minute TTL standard)
+- **Cache Read Cost**: 0.1x base token cost (90% savings on cached content)
+- **Compression Cost**: AI decision + summarization (typically 2-3k tokens)
+- **Cache Invalidation**: Compression invalidates existing cache, forcing rewrite at 1.25x cost
+- **Future Savings**: Smaller context = lower costs for all remaining conversation turns
+
+**Future Turn Estimation:**
+
+The system estimates remaining conversation turns using `estimate_future_turns()`:
+
+```
+estimated_turns = (
+    // Base on historical API calls
+    current_api_calls * 0.5  // Assume 50% more turns ahead
+    
+    // Adjust for conversation length
+    + (message_count / 4)    // ~4 messages per turn
+    
+    // Cap at reasonable maximum
+    min(estimated, 20)       // Don't assume more than 20 turns
+)
+```
+
+This ensures compression decisions account for the full cost-benefit over the session's expected lifetime.
 
 #### 3. Discourse-Aware Semantic Chunking
 

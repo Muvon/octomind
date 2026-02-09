@@ -865,6 +865,66 @@ Continuing with preserved context...
 - **Performance Limits**: Maximum 10 file contexts, 10k lines per file
 - **Backward Compatible**: All existing functionality preserved via re-exports
 
+## Visual Feedback and Animation
+
+Octomind provides real-time visual feedback during interactive sessions to keep you informed about what's happening behind the scenes.
+
+### Tool Execution Animation
+
+When executing MCP tools (shell commands, file operations, etc.), Octomind displays an animated status indicator:
+
+```
+Executing tools...  ⠋ (0.5s, $0.0012)
+```
+
+The animation shows:
+- **Status message**: "Executing tools..." indicates tool processing is underway
+- **Spinner animation**: Visual indicator that work is in progress
+- **Elapsed time**: How long the current operation has been running
+- **Cost estimate**: Real-time cost of the current operation
+
+This feedback is only shown in interactive mode (when running in a terminal). Non-interactive mode (pipes, scripts) displays a static cost line instead.
+
+### Compression Animation
+
+When the system automatically compresses conversation context to manage token usage, you'll see:
+
+```
+Compressing context...  ⠙ (1.2s, $0.0045)
+```
+
+This indicates:
+- **Compression in progress**: The system is optimizing your conversation history
+- **Processing time**: How long compression is taking
+- **Cost**: The cost of the compression operation
+
+After compression completes, you'll see a summary:
+```
+Compression complete: 95,000 → 24,625 tokens (4.0x reduction, saved $0.0225)
+```
+
+### Interactive vs Non-Interactive Mode
+
+**Interactive Mode** (terminal):
+- Shows animated spinners with real-time updates
+- Displays elapsed time and cost estimates
+- Provides visual feedback for all operations
+- Automatically detects terminal environment
+
+**Non-Interactive Mode** (pipes, scripts, CI/CD):
+- Shows static cost lines without animation
+- Displays final results only
+- Optimized for log files and automation
+- Automatically detected when stdin is not a terminal
+
+### Disabling Animation
+
+If you prefer to disable animation feedback, you can:
+
+1. **Redirect output**: Pipe to a file or another command
+2. **Use non-interactive mode**: Run in a script or CI/CD pipeline
+3. **Check logs**: Use `/loglevel debug` to see detailed operation logs
+
 ## Performance and Cost Optimization
 
 ### Model Selection by Use Case

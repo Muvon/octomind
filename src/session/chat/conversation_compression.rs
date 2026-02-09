@@ -172,9 +172,22 @@ async fn calculate_compression_net_benefit(
 	let avg_new_tokens_per_call =
 		(session.session.info.output_tokens as f64 / total_api_calls).max(2000.0);
 
-	// Get current cache state
-	let current_cached = session.session.info.cached_tokens as f64;
-	let current_uncached = (total_tokens - current_cached).max(0.0);
+	// CRITICAL FIX: Estimate decision prompt size (the NEW content for compression API call)
+	// This is the only uncached part when using same model
+	let decision_prompt_tokens = estimate_tokens(
+		"Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information? Consider:\n\
+		- Are there repetitive or resolved topics that can be summarized?\n\
+		- Is there important context that must be preserved?\n\
+		- Would compression help focus on current topics?\n\n\
+		If YES, also provide a 2-3 sentence summary preserving logical structure (focus on what's needed to continue the conversation):\n\n\
+		[context chunks placeholder - ~500 tokens average]\n\n\
+		Respond with:\n\
+		'YES' followed by the summary on the next line, OR\n\
+		'NO' if compression is not beneficial."
+	) as f64;
+
+	// Check if decision model can reuse session cache
+	let same_model = decision_model == session_model;
 
 	// SCENARIO A: NO compression
 	// Each call pays for ENTIRE accumulated context (which grows each call)
@@ -184,13 +197,8 @@ async fn calculate_compression_net_benefit(
 	for i in 0..estimated_future_turns as i32 {
 		// Pay for ENTIRE accumulated context using SESSION model pricing
 		let context_cost = if i == 0 {
-			// First call: mix of cached/uncached
-			session_pricing.calculate_cost(
-				current_uncached as u64,
-				0, // No cache write
-				current_cached as u64,
-				0, // No output (just context)
-			)
+			// First call: everything is already cached from previous session calls
+			session_pricing.calculate_cost(0, 0, accumulated_context as u64, 0)
 		} else {
 			// Subsequent calls: all cached (but GROWING)
 			session_pricing.calculate_cost(0, 0, accumulated_context as u64, 0)
@@ -204,12 +212,23 @@ async fn calculate_compression_net_benefit(
 
 	// SCENARIO B: WITH compression
 	// 1. Compression cost (one-time) using DECISION model pricing
-	let compression_cost = decision_pricing.calculate_cost(
-		current_uncached as u64,
-		0,
-		current_cached as u64,
-		compressed_tokens as u64, // Output tokens from compression
-	);
+	let compression_cost = if same_model {
+		// Same model: session context is already cached, only decision prompt is new
+		decision_pricing.calculate_cost(
+			decision_prompt_tokens as u64,  // Only new prompt is uncached
+			0,                               // No cache write
+			(total_tokens - decision_prompt_tokens) as u64,  // Rest is cached
+			compressed_tokens as u64,        // Output tokens from compression
+		)
+	} else {
+		// Different model: NO cache reuse, everything is uncached
+		decision_pricing.calculate_cost(
+			total_tokens as u64,             // ALL tokens uncached
+			0,                                // No cache write
+			0,                                // NO cache
+			compressed_tokens as u64,        // Output tokens from compression
+		)
+	};
 
 	// 2. Future calls with SMALLER accumulated context using SESSION model pricing
 	let mut total_cost_with_compress = compression_cost;
@@ -237,14 +256,15 @@ async fn calculate_compression_net_benefit(
 		"Compression analysis (REAL PRICING):\n  \
 		Decision model: {} (input: ${:.2}/1M, output: ${:.2}/1M, cache_write: ${:.2}/1M, cache_read: ${:.2}/1M)\n  \
 		Session model: {} (input: ${:.2}/1M, output: ${:.2}/1M, cache_write: ${:.2}/1M, cache_read: ${:.2}/1M)\n  \
-		Current: {:.0} tokens (cached: {:.0}, uncached: {:.0})\n  \
+		Models match: {} (cache reuse: {})\n  \
+		Current: {:.0} tokens (decision prompt: ~{:.0} tokens)\n  \
 		After compression: {:.0} tokens ({:.1}x ratio) - saves {:.0} tokens\n  \
 		Avg new tokens/call: {:.0} (output_tokens={}, api_calls={})\n  \
 		Future calls: {:.0}\n  \
 		SCENARIO A (no compress): ${:.5}\n    \
-		- Pays for growing context: {:.0} → {:.0} tokens over {} calls\n  \
+		- Pays for growing context: {:.0} → {:.0} tokens over {} calls (all cached)\n  \
 		SCENARIO B (compress): ${:.5}\n    \
-		- Compression cost: ${:.5} (using {})\n    \
+		- Compression cost: ${:.5} (using {}, {} uncached, {} cached)\n    \
 		- Pays for growing context: {:.0} → {:.0} tokens over {} calls\n  \
 		Net benefit: ${:.5} → {}",
 		decision_model,
@@ -257,9 +277,10 @@ async fn calculate_compression_net_benefit(
 		session_pricing.output_price_per_1m,
 		session_pricing.cache_write_price_per_1m,
 		session_pricing.cache_read_price_per_1m,
+		if same_model { "YES" } else { "NO" },
+		if same_model { "YES" } else { "NO" },
 		total_tokens,
-		current_cached,
-		current_uncached,
+		decision_prompt_tokens,
 		compressed_tokens,
 		compression_ratio,
 		total_tokens - compressed_tokens,
@@ -274,6 +295,8 @@ async fn calculate_compression_net_benefit(
 		total_cost_with_compress,
 		compression_cost,
 		decision_model,
+		if same_model { decision_prompt_tokens as u64 } else { total_tokens as u64 },
+		if same_model { (total_tokens - decision_prompt_tokens) as u64 } else { 0 },
 		compressed_tokens,
 		compressed_tokens + (avg_new_tokens_per_call * (estimated_future_turns - 1.0)),
 		estimated_future_turns as i32,

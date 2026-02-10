@@ -622,11 +622,11 @@ async fn ask_ai_decision_and_summary(
 	let decision_config = &config.compression.decision;
 
 	crate::log_debug!(
-		"Using compression decision model '{}' (max_tokens={}, temp={}, session model: '{}')",
+		"Using compression decision model '{}' (max_tokens={}, temp={}, ignore_cost={})",
 		decision_config.model,
 		decision_config.max_tokens,
 		decision_config.temperature,
-		session.model
+		decision_config.ignore_cost
 	);
 
 	// CRITICAL: Pass chat_session for cost tracking
@@ -643,6 +643,27 @@ async fn ask_ai_decision_and_summary(
 	.with_chat_session(session);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
+
+	// Extract usage for cost tracking
+	let usage = response.usage;
+
+	// Track cost based on ignore_cost setting
+	let ignore_cost = decision_config.ignore_cost;
+	if !ignore_cost {
+		if let Some(ref u) = usage {
+			if let Some(cost) = u.cost {
+				session.session.info.total_cost += cost;
+				session.estimated_cost = session.session.info.total_cost;
+				log_debug!(
+					"Compression decision cost: ${:.5} (total: ${:.5})",
+					cost,
+					session.session.info.total_cost
+				);
+			}
+		}
+	} else {
+		log_debug!("Compression decision cost ignored (ignore_cost=true)");
+	}
 
 	// Parse response: check if it starts with YES and extract summary
 	let content = response.content.trim();
@@ -665,12 +686,12 @@ async fn ask_ai_decision_and_summary(
 		};
 
 		log_debug!(
-			"AI compression decision: YES with summary ({} chars, cost tracked in session)",
+			"AI compression decision: YES with summary ({} chars)",
 			summary.len()
 		);
 		Ok((true, summary))
 	} else {
-		log_debug!("AI compression decision: NO (cost tracked in session)");
+		log_debug!("AI compression decision: NO");
 		Ok((false, String::new()))
 	}
 }

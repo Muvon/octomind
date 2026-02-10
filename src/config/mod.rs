@@ -141,6 +141,9 @@ pub struct CompressionDecisionConfig {
 	pub max_retries: u32,
 	/// Base timeout for exponential backoff retry logic (seconds)
 	pub retry_timeout: u64,
+	/// Ignore compression decision cost in session tracking (useful for subscription models)
+	/// When true, the compression decision API call is treated as free and not added to total cost
+	pub ignore_cost: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

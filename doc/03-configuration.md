@@ -928,6 +928,11 @@ target_ratio = 8.0  # Aggressive: 87.5% reduction (compress to 1/8 size)
 # Recommended: "openrouter:anthropic/claude-haiku" (10x cheaper, 3x faster)
 # If not set, uses the session's main model (more expensive)
 # decision_model = "openrouter:anthropic/claude-haiku"
+
+# Ignore compression decision API cost in session tracking
+# Useful when using subscription models with different pricing
+# When true, the compression decision call is treated as free
+# ignore_cost = false
 ```
 
 ### Understanding Compression Ratios

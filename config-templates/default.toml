@@ -977,4 +977,5 @@ top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
+ignore_cost = false  # When true, compression decision API cost is not tracked (free)
 

@@ -73,6 +73,31 @@ impl MessageHandler {
 		// Update last response
 		chat_session.last_response = content.to_string();
 
+		// CRITICAL FIX: Track API call and tokens (same logic as add_assistant_message)
+		// This was missing, causing api_calls=0 in compression analysis
+		if let Some(usage) = &exchange.usage {
+			let cached_tokens = usage.cached_tokens;
+			let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
+
+			// Track API time if available
+			if let Some(api_time_ms) = usage.request_time_ms {
+				chat_session.session.info.total_api_time_ms += api_time_ms;
+			}
+
+			// CACHE-AWARE COMPRESSION: Track API calls for amortized cost analysis
+			chat_session.session.info.total_api_calls += 1;
+
+			// Update token counts
+			chat_session.session.info.input_tokens += regular_prompt_tokens;
+			chat_session.session.info.output_tokens += usage.output_tokens;
+			chat_session.session.info.cached_tokens += cached_tokens;
+
+			// Track cost if available
+			if let Some(cost) = usage.cost {
+				chat_session.session.info.total_cost += cost;
+			}
+		}
+
 		// Save to session file to persist the message with id field
 		if let Some(session_file) = &chat_session.session.session_file {
 			let message_json =

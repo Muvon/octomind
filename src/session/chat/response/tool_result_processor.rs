@@ -39,7 +39,8 @@ pub async fn process_tool_results(
 		String,
 		crate::session::ProviderExchange,
 		Option<Vec<crate::mcp::McpToolCall>>,
-		Option<String>, // response_id from follow-up API call
+		Option<String>,                          // response_id from follow-up API call
+		Option<crate::providers::ThinkingBlock>, // thinking from follow-up API call
 	)>,
 > {
 	// Add the accumulated tool execution time to the session total
@@ -439,6 +440,7 @@ pub async fn process_tool_results(
 					response.exchange,
 					response.tool_calls,
 					response.response_id, // Include response_id from follow-up response
+					response.thinking,    // CRITICAL FIX: Include thinking from follow-up response for Moonshot
 				)))
 			} else {
 				// If no more tools, return None to break out of loop
@@ -447,6 +449,7 @@ pub async fn process_tool_results(
 					response.exchange,
 					None,
 					response.response_id,
+					response.thinking, // CRITICAL FIX: Include thinking even when stopping
 				)))
 			}
 		}

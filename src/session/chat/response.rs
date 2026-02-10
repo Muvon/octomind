@@ -516,24 +516,31 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				// Process tool results if any exist
 				if !tool_results.is_empty() {
 					// Process tool results and handle follow-up API calls using the new module
-					if let Some((new_content, new_exchange, new_tool_calls, new_response_id)) =
-						tool_result_processor::process_tool_results(
-							tool_results,
-							total_tool_time_ms,
-							params.chat_session,
-							params.config,
-							params.role,
-							operation_cancelled_clone.clone(),
-						)
-						.await?
+					if let Some((
+						new_content,
+						new_exchange,
+						new_tool_calls,
+						new_response_id,
+						new_thinking,
+					)) = tool_result_processor::process_tool_results(
+						tool_results,
+						total_tool_time_ms,
+						params.chat_session,
+						params.config,
+						params.role,
+						operation_cancelled_clone.clone(),
+					)
+					.await?
 					{
 						// Update current content for next iteration
 						current_content = new_content;
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 						current_response_id = new_response_id; // Update response_id from follow-up response
-											 // Thinking is only available for the initial response currently
-						current_thinking = None;
+											 // CRITICAL FIX: Preserve thinking from follow-up response for Moonshot
+											 // Moonshot requires reasoning_content for ALL assistant messages with tool calls
+						current_thinking = new_thinking;
+
 						// Check if there are more tools to process
 						if current_tool_calls_param.is_some()
 							&& !current_tool_calls_param.as_ref().unwrap().is_empty()

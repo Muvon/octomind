@@ -244,6 +244,11 @@ fn convert_message_to_octolib(
 	if let Some(ref thinking_value) = msg.thinking {
 		match serde_json::from_value::<octolib::ThinkingBlock>(thinking_value.clone()) {
 			Ok(thinking_block) => {
+				crate::log_debug!(
+					"Successfully converted thinking for {} message: {} chars",
+					msg.role,
+					thinking_block.content.len()
+				);
 				builder = builder.thinking(thinking_block);
 			}
 			Err(e) => {
@@ -256,6 +261,11 @@ fn convert_message_to_octolib(
 				);
 			}
 		}
+	} else if msg.role == "assistant" && msg.tool_calls.is_some() {
+		// CRITICAL: Log when assistant message with tool calls has no thinking field
+		crate::log_debug!(
+			"WARNING: Assistant message with tool calls has no thinking field! This will cause Moonshot API error."
+		);
 	}
 
 	builder.build()
@@ -372,4 +382,30 @@ pub fn convert_response_from_octolib(response: octolib::llm::ProviderResponse) -
 // Keep the retry module for backward compatibility
 pub mod retry {
 	pub use octolib::llm::retry::*;
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_thinking_block_conversion() {
+		// Test that ThinkingBlock can be serialized to JSON and back
+		let thinking_block = ThinkingBlock {
+			content: "Test thinking content".to_string(),
+			tokens: 42,
+		};
+
+		// Serialize to JSON (simulating storage in session)
+		let json_value = serde_json::to_value(&thinking_block).expect("Failed to serialize");
+		println!("Serialized: {}", json_value);
+
+		// Deserialize back (simulating loading from session)
+		let deserialized: ThinkingBlock =
+			serde_json::from_value(json_value).expect("Failed to deserialize");
+		println!("Deserialized: {:?}", deserialized);
+
+		assert_eq!(deserialized.content, "Test thinking content");
+		assert_eq!(deserialized.tokens, 42);
+	}
 }

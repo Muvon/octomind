@@ -42,8 +42,25 @@ pub async fn execute_read_html(call: &McpToolCall) -> Result<McpToolResult> {
 	// Support either a single source string or an array of sources
 	match sources_value {
 		Value::String(source) => {
-			// Single source conversion
-			convert_single_html_to_md(call, source).await
+			// Check if this is a stringified JSON array (workaround for AI misunderstanding)
+			// Example: sources: "[\"url1\", \"url2\"]" instead of sources: ["url1", "url2"]
+			let trimmed = source.trim();
+			if trimmed.starts_with('[') && trimmed.ends_with(']') {
+				// Try to parse as JSON array
+				match serde_json::from_str::<Vec<String>>(trimmed) {
+					Ok(parsed_sources) => {
+						// Successfully parsed stringified array - convert multiple sources
+						convert_multiple_html_to_md(call, &parsed_sources).await
+					}
+					Err(_) => {
+						// Not a valid JSON array, treat as single URL/path
+						convert_single_html_to_md(call, source).await
+					}
+				}
+			} else {
+				// Regular single source conversion
+				convert_single_html_to_md(call, source).await
+			}
 		}
 		Value::Array(sources) => {
 			// Multiple sources conversion

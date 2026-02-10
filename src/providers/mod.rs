@@ -242,10 +242,19 @@ fn convert_message_to_octolib(
 	// Moonshot requires reasoning_content for assistant messages with tool_calls
 	// The thinking field is stored as serde_json::Value, convert to ThinkingBlock
 	if let Some(ref thinking_value) = msg.thinking {
-		if let Ok(thinking_block) =
-			serde_json::from_value::<octolib::ThinkingBlock>(thinking_value.clone())
-		{
-			builder = builder.thinking(thinking_block);
+		match serde_json::from_value::<octolib::ThinkingBlock>(thinking_value.clone()) {
+			Ok(thinking_block) => {
+				builder = builder.thinking(thinking_block);
+			}
+			Err(e) => {
+				// Log deserialization failure for debugging
+				crate::log_debug!(
+					"Failed to deserialize thinking field for {} message: {}. Value: {:?}",
+					msg.role,
+					e,
+					thinking_value
+				);
+			}
 		}
 	}
 

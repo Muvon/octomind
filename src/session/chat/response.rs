@@ -532,9 +532,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 						current_response_id = new_response_id; // Update response_id from follow-up response
-						// Thinking is only available for the initial response currently
+											 // Thinking is only available for the initial response currently
 						current_thinking = None;
-											 // Check if there are more tools to process
+						// Check if there are more tools to process
 						if current_tool_calls_param.is_some()
 							&& !current_tool_calls_param.as_ref().unwrap().is_empty()
 						{

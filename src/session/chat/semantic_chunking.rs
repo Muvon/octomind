@@ -180,6 +180,12 @@ fn classify_chunk(text: &str, msg: &Message) -> ChunkType {
 		|| lower.contains("phase:")
 		|| lower.contains("todo")
 		|| lower.contains("next:")
+		|| lower.contains("task completed")
+		|| lower.contains("completed:")
+		|| lower.contains("next task")
+		|| (lower.contains("task") && lower.contains('/')) // Task X/Y patterns
+		|| lower.contains("step completed")
+		|| lower.contains("phase completed")
 	{
 		return ChunkType::Critical;
 	}
@@ -506,6 +512,49 @@ mod tests {
 		let msg = create_test_message("user", "We decided to use Rust");
 		assert_eq!(
 			classify_chunk("We decided to use Rust", &msg),
+			ChunkType::Critical
+		);
+	}
+
+	#[test]
+	fn test_classify_plan_progress_as_critical() {
+		// Task completed patterns
+		let msg = create_test_message("assistant", "Task completed: extend chunk classification");
+		assert_eq!(
+			classify_chunk("Task completed: extend chunk classification", &msg),
+			ChunkType::Critical
+		);
+
+		let msg = create_test_message("assistant", "completed: semantic chunking fix");
+		assert_eq!(
+			classify_chunk("completed: semantic chunking fix", &msg),
+			ChunkType::Critical
+		);
+
+		// NEXT TASK patterns
+		let msg = create_test_message("assistant", "NEXT TASK (2/7): Add video support");
+		assert_eq!(
+			classify_chunk("NEXT TASK (2/7): Add video support", &msg),
+			ChunkType::Critical
+		);
+
+		// Task numbering X/Y
+		let msg = create_test_message("assistant", "Working on task 3/7");
+		assert_eq!(
+			classify_chunk("Working on task 3/7", &msg),
+			ChunkType::Critical
+		);
+
+		// Step/phase completed
+		let msg = create_test_message("assistant", "Step completed: analysis");
+		assert_eq!(
+			classify_chunk("Step completed: analysis", &msg),
+			ChunkType::Critical
+		);
+
+		let msg = create_test_message("assistant", "Phase completed: planning");
+		assert_eq!(
+			classify_chunk("Phase completed: planning", &msg),
 			ChunkType::Critical
 		);
 	}

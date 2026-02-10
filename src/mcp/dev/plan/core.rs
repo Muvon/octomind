@@ -79,6 +79,20 @@ pub fn get_last_completed_task_for_compression() -> Option<super::storage::PlanT
 	storage.get_last_completed_task().ok().flatten()
 }
 
+/// Get current plan context for compression (plan title, progress, current task)
+pub fn get_plan_context() -> Option<(String, usize, usize, String)> {
+	let storage = PLAN_STORAGE.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return None;
+	}
+
+	let plan_title = storage.get_plan_title().ok()?;
+	let completed_count = storage.get_completed_task_count().ok()?;
+	let (_current_idx, total, current_title, _) = storage.get_current_task_info().ok()?;
+
+	Some((plan_title, completed_count, total, current_title))
+}
+
 /// Execute plan tool command
 pub async fn execute_plan(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract command parameter

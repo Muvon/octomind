@@ -275,8 +275,12 @@ pub async fn compress_completed_task(
 	// Get compression ID for tracking
 	let compression_id = get_compression_id().unwrap_or_else(|| "unknown".to_string());
 
+	// Get active plan context to preserve state after compression
+	let plan_context = super::core::get_plan_context();
+
 	// Create compressed knowledge entry with validated summary
-	let compressed_entry = format_compressed_summary(task, summary, &compression_id);
+	let compressed_entry =
+		format_compressed_summary(task, summary, &compression_id, plan_context.as_ref());
 
 	// Calculate tokens in compressed entry
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
@@ -314,31 +318,48 @@ pub async fn compress_completed_task(
 
 /// Format task summary as structured knowledge block with transparency metadata
 /// Uses validated summary to avoid unwrap panic
-fn format_compressed_summary(task: &PlanTask, summary: &str, compression_id: &str) -> String {
+/// CRITICAL: Includes active plan state to preserve context after compression
+fn format_compressed_summary(
+	task: &PlanTask,
+	summary: &str,
+	compression_id: &str,
+	plan_context: Option<&(String, usize, usize, String)>,
+) -> String {
 	let completed_at = task
 		.completed_at
 		.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
 		.unwrap_or_else(|| "Unknown".to_string());
 
-	format!(
+	let mut output = format!(
 		"## Task Completed: {} [COMPRESSED: {}]\n\n\
 		**Description**: {}\n\n\
 		**Summary**: {}\n\n\
-		**Completed**: {}\n\n\
-		**Compression Info**:\n\
+		**Completed**: {}\n\n",
+		task.title, compression_id, task.description, summary, completed_at
+	);
+
+	// CRITICAL: Preserve active plan state so LLM knows plan is still active
+	if let Some((plan_title, completed_count, total_tasks, current_task_title)) = plan_context {
+		output.push_str(&format!(
+			"🎯 **ACTIVE PLAN**: {}\n\
+			- Progress: {}/{} tasks completed\n\
+			- Current Task: {}\n\
+			- Status: IN PROGRESS (use plan commands to continue)\n\n",
+			plan_title, completed_count, total_tasks, current_task_title
+		));
+	}
+
+	output.push_str(&format!(
+		"**Compression Info**:\n\
 		- ID: `{}`\n\
 		- Type: Task-level compression\n\
 		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
 		---\n\
 		*Compressed - Detailed tool calls and intermediate work removed to optimize context.*",
-		task.title,
-		compression_id,
-		task.description,
-		summary,
-		completed_at,
-		compression_id,
-		compression_id
-	)
+		compression_id, compression_id
+	));
+
+	output
 }
 
 /// Calculate total tokens in message range using accurate token counting
@@ -631,7 +652,8 @@ mod tests {
 			phase: None,
 		};
 
-		let formatted = format_compressed_summary(&task, "Task completed successfully", "test_123");
+		let formatted =
+			format_compressed_summary(&task, "Task completed successfully", "test_123", None);
 		assert!(formatted.contains("## Task Completed: Test Task"));
 		assert!(formatted.contains("**Description**: Test description"));
 		assert!(formatted.contains("**Summary**: Task completed successfully"));

@@ -943,21 +943,27 @@ mod tests {
 	fn extends_range_to_include_tool_results() {
 		let mut messages = Vec::new();
 		messages.push(msg("system")); // 0
-		messages.push(msg("user")); // 1
-		let mut assistant = msg("assistant"); // 2
-		assistant.tool_calls = Some(json!([
-			{"id": "call_123", "type": "function", "function": {"name": "tool1"}}
-		]));
-		messages.push(assistant);
-		let mut tool = msg("tool"); // 3
-		tool.tool_call_id = Some("call_123".to_string());
-		tool.name = Some("tool1".to_string());
-		messages.push(tool);
-		messages.push(msg("user")); // 4
+
+		// Create 6 conversation turns (need > 4 to trigger compression)
+		for i in 0..3 {
+			messages.push(msg("user")); // 1, 4, 7
+			let mut assistant = msg("assistant"); // 2, 5, 8
+			assistant.tool_calls = Some(json!([
+				{"id": format!("call_{}", i), "type": "function", "function": {"name": format!("tool{}", i)}}
+			]));
+			messages.push(assistant);
+			let mut tool = msg("tool"); // 3, 6, 9
+			tool.tool_call_id = Some(format!("call_{}", i));
+			tool.name = Some(format!("tool{}", i));
+			messages.push(tool);
+		}
+		messages.push(msg("user")); // 10
 
 		let (start_idx, end_idx) = find_compression_range(&messages).unwrap();
 
+		// Compress first 2 conversation turns, keeping last 4
+		// Extends through tool results at boundary
 		assert_eq!(start_idx, 1);
-		assert_eq!(end_idx, 3);
+		assert_eq!(end_idx, 4);
 	}
 }

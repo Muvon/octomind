@@ -554,18 +554,40 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// CONVERSATION COMPRESSION: Check if AI should compress older exchanges
 		// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
 		// AI decides if compression is beneficial based on conversation history
-		if let Err(e) =
-			crate::session::chat::conversation_compression::check_and_compress_conversation(
+		let compression_occurred =
+			match crate::session::chat::conversation_compression::check_and_compress_conversation(
 				&mut chat_session,
 				&current_config,
 			)
 			.await
-		{
-			// Best-effort: log error but continue session
-			log_debug!(
-				"Conversation compression failed: {}. Continuing session.",
-				e
-			);
+			{
+				Ok(compressed) => compressed,
+				Err(e) => {
+					// Best-effort: log error but continue session
+					log_debug!(
+						"Conversation compression failed: {}. Continuing session.",
+						e
+					);
+					false
+				}
+			};
+
+		// CRITICAL FIX: After compression, check if continuation should trigger
+		// Compression freed up space, so we should check if we can continue with pending work
+		if compression_occurred && crate::mcp::dev::plan::core::has_active_plan() {
+			log_debug!("Compression completed with active plan - checking if continuation needed");
+			use crate::session::chat::session_continuation;
+			if session_continuation::check_and_handle_continuation(
+				&mut chat_session,
+				&current_config,
+			)
+			.await?
+			{
+				log_debug!("Continuation triggered after compression - skipping to next iteration");
+				// The summary request message has already been injected by check_and_handle_continuation
+				// Just continue the loop to process it immediately without waiting for user input
+				continue;
+			}
 		}
 
 		// NEW FLOW: Check for continuation BEFORE processing new user request

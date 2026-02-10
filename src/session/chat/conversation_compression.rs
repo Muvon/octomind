@@ -433,16 +433,18 @@ fn estimate_future_turns(session: &ChatSession) -> f64 {
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES
+/// Returns true if compression was performed, false otherwise
 pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
-) -> Result<()> {
+) -> Result<bool> {
 	let (should_check, target_ratio) = should_check_compression(session, config).await;
 	if !should_check {
-		return Ok(());
+		return Ok(false);
 	}
 
 	// Show animation immediately to avoid perceived lag during decision/summary call
+
 	let animation_cancel = Arc::new(AtomicBool::new(false));
 	let animation_cancel_clone = animation_cancel.clone();
 	let current_cost = session.session.info.total_cost;
@@ -475,10 +477,11 @@ pub async fn check_and_compress_conversation(
 		log_debug!("No messages to compress (range invalid)");
 		animation_cancel.store(true, Ordering::SeqCst);
 		let _ = animation_task.await;
-		return Ok(());
+		return Ok(false);
 	}
 
 	// Calculate tokens before compression
+
 	let tokens_before = calculate_range_tokens(session, start_idx, end_idx)?;
 
 	// Chunk messages semantically (LOCAL - no API call)
@@ -511,7 +514,7 @@ pub async fn check_and_compress_conversation(
 		log_debug!("AI decided compression not beneficial at this point");
 		animation_cancel.store(true, Ordering::SeqCst);
 		let _ = animation_task.await;
-		return Ok(());
+		return Ok(false);
 	}
 
 	log_info!("AI decided to compress older conversation exchanges");
@@ -529,7 +532,7 @@ pub async fn check_and_compress_conversation(
 	animation_cancel.store(true, Ordering::SeqCst);
 	let _ = animation_task.await;
 
-	Ok(())
+	Ok(true)
 }
 
 /// Ask AI: should we compress AND get summary in ONE call (1-hop optimization)
@@ -539,9 +542,10 @@ async fn ask_ai_decision_and_summary(
 	config: &Config,
 	context_chunks: &[&super::semantic_chunking::SemanticChunk],
 ) -> Result<(bool, String)> {
-	// Build prompt that asks for decision + summary in one response
+	// Build enhanced prompt with file context support (similar to continuation)
 	let mut decision_prompt = String::from(
-		"Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information? Consider:\n\
+		"Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information?\n\n\
+		Consider:\n\
 		- Are there repetitive or resolved topics that can be summarized?\n\
 		- Is there important context that must be preserved?\n\
 		- Would compression help focus on current topics?\n\n"
@@ -550,7 +554,10 @@ async fn ask_ai_decision_and_summary(
 	// If there are context chunks, include them for summarization
 	if !context_chunks.is_empty() {
 		decision_prompt.push_str(
-			"If YES, also provide a 2-3 sentence summary preserving logical structure (focus on what's needed to continue the conversation):\n\n"
+			"If YES, provide:\n\
+			1. A 2-3 sentence summary preserving logical structure\n\
+			2. CRITICAL file contexts needed to continue work (if any)\n\n\
+			**Context chunks to analyze:**\n\n",
 		);
 
 		// Add chunks with discourse relation markers for better AI understanding
@@ -572,12 +579,22 @@ async fn ask_ai_decision_and_summary(
 		}
 
 		decision_prompt.push_str(
-			"\n\nRespond with:\n\
-			'YES' followed by the summary on the next line, OR\n\
-			'NO' if compression is not beneficial.\n\n\
-			Example format:\n\
+			"\n\n**Response format:**\n\
 			YES\n\
-			[Your 2-3 sentence summary here]",
+			[Your 2-3 sentence summary here]\n\n\
+			**OPTIONAL: If specific file contexts are needed to continue work, include them:**\n\
+			<context>\n\
+			filename:startline:endline\n\
+			filename:startline:endline\n\
+			</context>\n\n\
+			**Format requirements for file contexts:**\n\
+			- Use <context> tags around file references\n\
+			- Each line: filepath:number:number (no spaces)\n\
+			- Use paths from project root (src/main.rs not ./src/main.rs)\n\
+			- Line numbers must be positive, start ≤ end ≤ 10000\n\
+			- Maximum 5 file ranges\n\
+			- Only include files CRITICAL for continuing the work\n\n\
+			OR respond with 'NO' if compression is not beneficial.",
 		);
 	} else {
 		decision_prompt.push_str("Respond with ONLY 'YES' to compress or 'NO' to keep as-is.");
@@ -659,6 +676,7 @@ async fn ask_ai_decision_and_summary(
 }
 
 /// Apply compression by replacing message range with compressed summary
+/// Also parses and injects file contexts if provided by AI
 fn apply_compression(
 	session: &mut ChatSession,
 	start_idx: usize,
@@ -667,11 +685,33 @@ fn apply_compression(
 	context_summary: &str,
 	tokens_before: u64,
 ) -> Result<()> {
+	// Parse file contexts from AI summary (reuse continuation logic)
+	let file_contexts = super::continuation::file_context::parse_file_contexts(context_summary);
+
+	// Generate file context content if any contexts found
+	let file_context_content = if !file_contexts.is_empty() {
+		crate::log_debug!(
+			"Compression: AI requested {} file context(s) for continuation",
+			file_contexts.len()
+		);
+		for (filepath, start, end) in &file_contexts {
+			crate::log_debug!("  - {} (lines {}-{})", filepath, start, end);
+		}
+		super::continuation::file_context::generate_file_context_content(&file_contexts)
+	} else {
+		String::new()
+	};
+
 	// Format compressed entry
 	let compression_id = crate::mcp::dev::plan::compression::get_compression_id()
 		.unwrap_or_else(|| "unknown".to_string());
 
-	let compressed_entry = format_compressed_entry(preserved_text, context_summary, compression_id);
+	let compressed_entry = format_compressed_entry_with_context(
+		preserved_text,
+		context_summary,
+		&file_context_content,
+		compression_id,
+	);
 
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
@@ -748,8 +788,13 @@ fn group_chunks_by_type(
 	(critical_text, reference_text, context)
 }
 
-/// Format final compressed entry
-fn format_compressed_entry(preserved: &str, context: &str, compression_id: String) -> String {
+/// Format final compressed entry with optional file context
+fn format_compressed_entry_with_context(
+	preserved: &str,
+	context: &str,
+	file_context: &str,
+	compression_id: String,
+) -> String {
 	let mut sections = Vec::new();
 
 	if !preserved.is_empty() {
@@ -763,17 +808,31 @@ fn format_compressed_entry(preserved: &str, context: &str, compression_id: Strin
 		sections.push(format!("**CONTEXT**: {}", context));
 	}
 
+	// Add file context if provided (automatically expanded from AI's <context> tags)
+	if !file_context.is_empty() {
+		sections.push(format!(
+			"**FILE CONTEXT** (auto-expanded):\n{}",
+			file_context
+		));
+	}
+
 	format!(
 		"## Conversation Summary [COMPRESSED: {}]\n\n{}\n\n\
 		**Compression Info**:\n\
 		- ID: `{}`\n\
-		- Type: Semantic compression\n\
+		- Type: Semantic compression with file context\n\
 		---\n\
-		*Compressed using importance-based semantic chunking.*",
+		*Compressed using importance-based semantic chunking with automatic file context expansion.*",
 		compression_id,
 		sections.join("\n\n"),
 		compression_id
 	)
+}
+
+/// Format final compressed entry (legacy, without file context)
+#[allow(dead_code)]
+fn format_compressed_entry(preserved: &str, context: &str, compression_id: String) -> String {
+	format_compressed_entry_with_context(preserved, context, "", compression_id)
 }
 
 /// Find which messages to compress (keep last 4 turns = 2 exchanges raw)

@@ -50,7 +50,7 @@ impl ChatSession {
 			format_number(total_tokens).bright_white()
 		);
 		println!(
-			"{} {} input, {} output, {} cached",
+			"{} {} processed, {} output, {} cached",
 			"Breakdown:".yellow(),
 			format_number(self.session.info.input_tokens).bright_blue(),
 			format_number(self.session.info.output_tokens).bright_green(),
@@ -437,7 +437,7 @@ impl ChatSession {
 			+ self.session.info.cached_tokens;
 		output.push_str(&format!("Total tokens: {}\n", format_number(total_tokens)));
 		output.push_str(&format!(
-			"Breakdown: {} input, {} output, {} cached\n",
+			"Breakdown: {} processed, {} output, {} cached\n",
 			format_number(self.session.info.input_tokens),
 			format_number(self.session.info.output_tokens),
 			format_number(self.session.info.cached_tokens)

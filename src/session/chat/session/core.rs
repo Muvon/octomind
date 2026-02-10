@@ -817,7 +817,7 @@ impl ChatSession {
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs(),
-			cached: preserve_cache, // CRITICAL: Preserve cache state to maintain 2-marker system
+			cached: preserve_cache, // Preserve cache marker if any removed message was cached (maintains 2-marker system)
 			tool_call_id: None,
 			name: Some("plan_compression".to_string()),
 			tool_calls: None,

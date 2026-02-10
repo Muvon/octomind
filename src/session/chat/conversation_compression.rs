@@ -393,16 +393,28 @@ fn estimate_future_turns(session: &ChatSession) -> f64 {
 	// Calculate future calls with realistic decay
 	let estimated_remaining = call_velocity * estimated_remaining_mins * velocity_decay;
 
-	// Apply data-driven bounds
+	// Apply data-driven bounds with context awareness
+	// Check for active plan or high tool usage patterns
+	let tool_density = session.session.info.tool_calls as f64 / current_api_calls.max(1.0);
+	let has_plan = crate::mcp::dev::plan::core::has_active_plan();
+
+	// Adaptive bounds based on session patterns:
+	// - Normal sessions: 2x current calls, max 100 (conservative)
+	// - Active plan or high tool density (>3.0): 3x current calls, max 200 (realistic for workflows)
+	let max_estimate = if has_plan || tool_density > 3.0 {
+		(current_api_calls * 3.0).min(200.0) // High activity workflows
+	} else {
+		(current_api_calls * 2.0).min(100.0) // Normal sessions
+	};
+
 	// Minimum: 5 calls (compression needs some future benefit)
-	// Maximum: 2x current calls (don't over-estimate based on past)
-	let max_estimate = (current_api_calls * 2.0).min(100.0);
 	let final_estimate = estimated_remaining.clamp(5.0, max_estimate);
 
 	crate::log_debug!(
 		"Future calls estimation: current_calls={:.0}, velocity={:.2} calls/min, \
 		session_duration={:.1}min, continuation_factor={:.2}, \
 		estimated_remaining_mins={:.1}, velocity_decay={:.2}, \
+		tool_density={:.2}, has_plan={}, \
 		raw_estimate={:.1}, final_estimate={:.0} (bounds: 5.0-{:.0})",
 		current_api_calls,
 		call_velocity,
@@ -410,6 +422,8 @@ fn estimate_future_turns(session: &ChatSession) -> f64 {
 		continuation_factor,
 		estimated_remaining_mins,
 		velocity_decay,
+		tool_density,
+		has_plan,
 		estimated_remaining,
 		final_estimate,
 		max_estimate

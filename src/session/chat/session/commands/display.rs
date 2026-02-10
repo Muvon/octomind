@@ -430,6 +430,7 @@ pub fn display_cache(output: &CommandOutput) {
 					println!("  Content markers: {}", content_markers);
 					println!("  Total cached tokens: {}", total_cached);
 					println!("  Current non-cached tokens: {}", current_non_cached);
+
 				}
 			}
 			"stats" => {
@@ -461,6 +462,8 @@ pub fn display_cache(output: &CommandOutput) {
 					println!("  Content markers: {}", content_markers);
 					println!("  Total cached tokens: {}", total_cached);
 					println!("  Current non-cached tokens: {}", current_non_cached);
+
+
 				}
 			}
 			"clear" => {

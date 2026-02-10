@@ -238,6 +238,17 @@ fn convert_message_to_octolib(
 		builder = builder.with_images(octolib_images);
 	}
 
+	// CRITICAL FIX: Convert thinking field for Moonshot and other thinking models
+	// Moonshot requires reasoning_content for assistant messages with tool_calls
+	// The thinking field is stored as serde_json::Value, convert to ThinkingBlock
+	if let Some(ref thinking_value) = msg.thinking {
+		if let Ok(thinking_block) =
+			serde_json::from_value::<octolib::ThinkingBlock>(thinking_value.clone())
+		{
+			builder = builder.thinking(thinking_block);
+		}
+	}
+
 	builder.build()
 }
 

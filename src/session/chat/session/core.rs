@@ -706,7 +706,9 @@ impl ChatSession {
 	/// * `end_index` - End of range (messages up to and including this are removed)
 	///
 	/// # Returns
-	/// Number of messages actually removed
+	/// Tuple of (messages_removed, had_cached_messages)
+	/// - messages_removed: Number of messages actually removed
+	/// - had_cached_messages: True if any removed message had cached=true (for cache preservation)
 	///
 	/// # Example
 	///
@@ -724,7 +726,7 @@ impl ChatSession {
 		&mut self,
 		start_index: usize,
 		end_index: usize,
-	) -> Result<usize> {
+	) -> Result<(usize, bool)> {
 		// Validate range
 		if start_index >= self.session.messages.len() {
 			return Err(anyhow::anyhow!(
@@ -759,21 +761,28 @@ impl ChatSession {
 				start_index,
 				end_index
 			);
-			return Ok(0);
+			return Ok((0, false));
 		}
+
+		// CRITICAL: Check if any messages being removed have cached=true
+		// This preserves the 2-marker cache system during compression
+		let had_cached = self.session.messages[start_index + 1..=end_index]
+			.iter()
+			.any(|msg| msg.cached);
 
 		// Remove messages from start_index+1 through end_index (inclusive)
 		// Using ..= for inclusive end index
 		self.session.messages.drain(start_index + 1..=end_index);
 
 		crate::log_debug!(
-			"Compressed {} messages (range {}-{})",
+			"Compressed {} messages (range {}-{}), had_cached={}",
 			messages_to_remove,
 			start_index,
-			end_index
+			end_index,
+			had_cached
 		);
 
-		Ok(messages_to_remove)
+		Ok((messages_to_remove, had_cached))
 	}
 
 	/// Insert compressed knowledge entry as system message
@@ -784,7 +793,13 @@ impl ChatSession {
 	/// # Arguments
 	/// * `index` - Position to insert (after this index)
 	/// * `content` - Formatted summary content
-	pub fn insert_compressed_knowledge(&mut self, index: usize, content: String) -> Result<()> {
+	/// * `preserve_cache` - If true, mark compressed message as cached (preserves 2-marker system)
+	pub fn insert_compressed_knowledge(
+		&mut self,
+		index: usize,
+		content: String,
+		preserve_cache: bool,
+	) -> Result<()> {
 		use crate::session::Message;
 
 		if index >= self.session.messages.len() {
@@ -802,7 +817,7 @@ impl ChatSession {
 				.duration_since(std::time::UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_secs(),
-			cached: false,
+			cached: preserve_cache, // CRITICAL: Preserve cache state to maintain 2-marker system
 			tool_call_id: None,
 			name: Some("plan_compression".to_string()),
 			tool_calls: None,
@@ -813,7 +828,11 @@ impl ChatSession {
 
 		self.session.messages.insert(index + 1, compressed_msg);
 
-		crate::log_debug!("Inserted compressed knowledge at index {}", index + 1);
+		crate::log_debug!(
+			"Inserted compressed knowledge at index {} (cached={})",
+			index + 1,
+			preserve_cache
+		);
 
 		Ok(())
 	}

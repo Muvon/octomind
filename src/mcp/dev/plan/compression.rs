@@ -292,11 +292,11 @@ pub async fn compress_completed_task(
 	}
 
 	// Remove messages in range
-	let messages_removed =
+	let (messages_removed, had_cached) =
 		session.remove_messages_in_range(message_range.start_index, message_range.end_index)?;
 
-	// Insert compressed summary
-	session.insert_compressed_knowledge(message_range.start_index, compressed_entry)?;
+	// Insert compressed summary (preserve cache if any removed message was cached)
+	session.insert_compressed_knowledge(message_range.start_index, compressed_entry, had_cached)?;
 
 	// Calculate metrics
 	let tokens_saved = tokens_before.saturating_sub(tokens_after);
@@ -443,10 +443,10 @@ async fn compress_phase(
 	}
 
 	// Remove all task compression messages in range
-	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
+	let (messages_removed, had_cached) = session.remove_messages_in_range(start_idx, end_idx)?;
 
-	// Insert phase summary
-	session.insert_compressed_knowledge(start_idx, phase_summary)?;
+	// Insert phase summary (preserve cache if any removed message was cached)
+	session.insert_compressed_knowledge(start_idx, phase_summary, had_cached)?;
 
 	// Calculate metrics
 	let tokens_saved = tokens_before.saturating_sub(tokens_after);
@@ -552,10 +552,10 @@ async fn compress_project(
 	}
 
 	// Remove all compression messages
-	let messages_removed = session.remove_messages_in_range(start_idx, end_idx)?;
+	let (messages_removed, had_cached) = session.remove_messages_in_range(start_idx, end_idx)?;
 
-	// Insert project summary
-	session.insert_compressed_knowledge(start_idx, project_summary)?;
+	// Insert project summary (preserve cache if any removed message was cached)
+	session.insert_compressed_knowledge(start_idx, project_summary, had_cached)?;
 
 	let tokens_saved = tokens_before.saturating_sub(tokens_after);
 	let metrics = CompressionMetrics::new(messages_removed, tokens_saved, tokens_before);

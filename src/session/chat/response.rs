@@ -277,6 +277,7 @@ fn add_assistant_message_with_tool_calls(
 	current_content: &str,
 	current_exchange: &ProviderExchange,
 	response_id: Option<String>,
+	thinking: &Option<ThinkingBlock>,
 	_config: &Config,
 	_role: &str,
 ) -> Result<()> {
@@ -288,6 +289,10 @@ fn add_assistant_message_with_tool_calls(
 	let original_tool_calls = MessageHandler::extract_original_tool_calls(current_exchange);
 
 	// Create the assistant message directly with tool_calls preserved from the exchange
+	let thinking_value = thinking
+		.as_ref()
+		.and_then(|block| serde_json::to_value(block).ok());
+
 	let assistant_message = crate::session::Message {
 		role: "assistant".to_string(),
 		content: current_content.to_string(),
@@ -300,7 +305,7 @@ fn add_assistant_message_with_tool_calls(
 		name: None,
 		tool_calls: original_tool_calls.clone(),
 		images: None,
-		thinking: None,
+		thinking: thinking_value,
 		id: response_id.clone(),
 	};
 
@@ -404,6 +409,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 	let mut current_exchange = params.exchange;
 	let mut current_tool_calls_param = params.tool_calls.clone(); // Track of tool_calls parameter
 	let mut current_response_id = params.response_id.clone(); // Track response_id through iterations
+	let mut current_thinking = params.thinking.clone(); // Track thinking only for the current response
 	let operation_cancelled_ref = &params.operation_cancelled; // Create a reference to avoid moves
 	loop {
 		// Check for cancellation at the start of each loop iteration
@@ -418,7 +424,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 			if !current_tool_calls.is_empty() {
 				// Display thinking first if present and not yet displayed - ONLY in interactive mode
 				if params.is_interactive && !thinking_displayed {
-					if let Some(ref thinking_block) = params.thinking {
+					if let Some(ref thinking_block) = current_thinking {
 						display_thinking(thinking_block);
 						thinking_displayed = true;
 					}
@@ -431,7 +437,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						&current_content,
 						params.config,
 						params.role,
-						&params.thinking,
+						&current_thinking,
 					);
 				}
 
@@ -502,6 +508,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 					&current_content,
 					&current_exchange,
 					current_response_id.clone(), // CRITICAL FIX: Use current_response_id from loop, not params.response_id
+					&current_thinking,
 					params.config,
 					params.role,
 				)?;
@@ -525,6 +532,8 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 						current_response_id = new_response_id; // Update response_id from follow-up response
+						// Thinking is only available for the initial response currently
+						current_thinking = None;
 											 // Check if there are more tools to process
 						if current_tool_calls_param.is_some()
 							&& !current_tool_calls_param.as_ref().unwrap().is_empty()

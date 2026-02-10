@@ -645,7 +645,7 @@ async fn ask_ai_decision_and_summary(
 	let response = crate::session::chat_completion_with_validation(params).await?;
 
 	// Extract usage for cost tracking
-	let usage = response.usage;
+	let usage = response.exchange.usage;
 
 	// Track cost based on ignore_cost setting
 	let ignore_cost = decision_config.ignore_cost;

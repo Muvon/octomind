@@ -25,6 +25,7 @@ pub mod layers; // Layered architecture implementation
 pub mod logger; // Request/response logging utilities
 pub mod modal; // Terminal modal overlay system
 mod model_utils; // Model-specific utility functions
+pub mod output; // Output abstraction for streaming messages
 mod project_context; // Project context collection and management
 					 // Provider abstraction layer moved to src/providers
 pub mod report; // Session usage reporting
@@ -40,6 +41,9 @@ pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
 pub use layers::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
 pub use model_utils::model_supports_caching;
+pub use output::{
+	detect_output_mode, JsonlSink, OutputMode, OutputSink, SilentSink, WebSocketSink,
+};
 pub use project_context::ProjectContext;
 pub use smart_summarizer::SmartSummarizer;
 pub use token_counter::{

@@ -27,7 +27,7 @@ use super::prompt_setup::setup_system_prompt_and_cache;
 use super::setup::setup_and_initialize_session;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
-use crate::websocket::ServerMessage;
+use crate::session::output::{JsonlSink, OutputMode, SilentSink};
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::*;
@@ -717,8 +717,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			&current_config,
 			&role,
 			operation_rx.clone(),
-			true, // is_interactive
-			None, // output_callback - not used in interactive mode
+			OutputMode::Interactive,
+			SilentSink,
 		)
 		.await
 		{
@@ -953,17 +953,6 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		);
 		chat_session.add_user_message(&input_with_constraints)?;
 	}
-	// Create output callback for JSONL mode if needed
-	// Note: We use a move closure that doesn't capture anything - just prints the message
-	let output_callback: Option<Box<dyn Fn(ServerMessage) + Send>> =
-		if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
-			Some(Box::new(|msg: ServerMessage| {
-				println!("{}", serde_json::to_string(&msg).unwrap_or_default());
-			}))
-		} else {
-			None
-		};
-
 	// Prepare for API call using helper function
 	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
@@ -971,16 +960,28 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	let user_message_index_for_error = user_message_index;
 	let operation_rx_clone = operation_rx.clone();
 	let model_for_error = chat_session.model.clone();
-	match execute_api_call_and_process_response(
-		&mut chat_session,
-		&current_config,
-		&role,
-		operation_rx_clone,
-		false, // is_interactive = false
-		output_callback,
-	)
-	.await
-	{
+	let api_result = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+		execute_api_call_and_process_response(
+			&mut chat_session,
+			&current_config,
+			&role,
+			operation_rx_clone,
+			OutputMode::Jsonl,
+			JsonlSink,
+		)
+		.await
+	} else {
+		execute_api_call_and_process_response(
+			&mut chat_session,
+			&current_config,
+			&role,
+			operation_rx_clone,
+			OutputMode::NonInteractive,
+			SilentSink,
+		)
+		.await
+	};
+	match api_result {
 		Ok(_) => {
 			// JSONL output is now streamed via callback - no need for batch output
 		}

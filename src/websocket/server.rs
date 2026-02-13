@@ -21,6 +21,7 @@ use crate::session::chat::session::{
 	execute_api_call_and_process_response, prepare_for_api_call, process_layers_if_enabled,
 	setup_and_initialize_session, setup_system_prompt_and_cache, ChatSession,
 };
+use crate::session::output::{OutputMode, WebSocketSink};
 use crate::{log_debug, log_error, log_info};
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
@@ -432,21 +433,32 @@ async fn process_client_message(
 	// Prepare for API call
 	prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await?;
 
+	// Create channel for WebSocket sink to stream messages
+	let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel();
+	let ws_sink = WebSocketSink::new(ws_tx);
+
 	// Track message count before API call to identify new messages
 	let messages_before = chat_session.session.messages.len();
 	log_debug!("Executing API call: messages_before={}", messages_before);
 
-	// Execute API call and process response
-	match execute_api_call_and_process_response(
+	// Execute API call and then flush streamed sink messages.
+	// SplitSink is not cloneable, so we cannot forward from a detached task.
+	let api_result = execute_api_call_and_process_response(
 		&mut chat_session,
 		&config_for_role,
 		role,
 		operation_rx.clone(),
-		false, // is_interactive = false (like run command)
-		None,  // output_callback - WebSocket has its own message handling
+		OutputMode::WebSocket,
+		ws_sink,
 	)
-	.await
-	{
+	.await;
+
+	// Drain any remaining queued stream messages after API completion.
+	while let Ok(msg) = ws_rx.try_recv() {
+		send_message(ws_sender, &msg).await?;
+	}
+
+	match api_result {
 		Ok(_) => {
 			let current_message_count = chat_session.session.messages.len();
 			let new_message_count = current_message_count.saturating_sub(messages_before);

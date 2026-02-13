@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::mcp::get_available_functions;
 use crate::session::chat::session::ChatSession;
 use crate::session::estimate_full_context_tokens;
+use crate::session::output::{OutputMode, SilentSink};
 use anyhow::Result;
 use colored::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -104,8 +105,8 @@ pub async fn perform_context_reduction(
 	let response_result = match api_result {
 		Ok(response) => {
 			// Use the normal process_response flow which handles tool calls automatically
-			let process_result =
-				super::response::process_response(super::response::ResponseProcessingParams::new(
+			let process_result = super::response::process_response(
+				super::response::ResponseProcessingParams::new(
 					response.content.clone(),
 					response.exchange,
 					response.tool_calls,
@@ -115,8 +116,11 @@ pub async fn perform_context_reduction(
 					config,
 					role, // Use the current role instead of hardcoding "developer"
 					operation_cancelled.clone(),
-				))
-				.await;
+					SilentSink, // Use silent sink for context reduction
+				)
+				.with_mode(OutputMode::NonInteractive),
+			) // Non-interactive mode for context reduction
+			.await;
 
 			match process_result {
 				Ok(()) => Ok(response.content),

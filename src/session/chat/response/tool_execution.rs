@@ -145,12 +145,14 @@ pub async fn execute_tools_parallel_unified(
 			if context.is_tool_allowed(&tool_call.tool_name) {
 				true
 			} else {
-				println!(
-					"{} {} {}",
-					"Tool".red(),
-					tool_call.tool_name,
-					"not allowed in this context".red()
-				);
+				if config.runtime_output_mode.as_deref() != Some("jsonl") {
+					println!(
+						"{} {} {}",
+						"Tool".red(),
+						tool_call.tool_name,
+						"not allowed in this context".red()
+					);
+				}
 				false
 			}
 		})
@@ -346,7 +348,14 @@ async fn execute_tools_parallel_internal(
 						let error = anyhow::anyhow!("{}", error_content);
 
 						// Display as error, not success
-						display_tool_error(&stored_tool_call, &tool_name, &error, tool_index, is_single_tool);
+							display_tool_error(
+								&stored_tool_call,
+								&tool_name,
+								&error,
+								tool_index,
+								is_single_tool,
+								config,
+							);
 
 						// Still push the result for conversation continuity (AI needs to see the error)
 						tool_results.push(res.clone());
@@ -405,7 +414,14 @@ async fn execute_tools_parallel_internal(
 					}
 
 					// Display error in consolidated format for other errors
-					display_tool_error(&stored_tool_call, &tool_name, &e, tool_index, is_single_tool);
+						display_tool_error(
+							&stored_tool_call,
+							&tool_name,
+							&e,
+							tool_index,
+							is_single_tool,
+							config,
+						);
 
 					// Track errors for this tool (if error tracking is available)
 					let loop_detected = if let Some(error_tracker) = context.error_tracker() {
@@ -417,8 +433,10 @@ async fn execute_tools_parallel_internal(
 					if loop_detected {
 						// Always show loop detection warning since it's critical
 						if let Some(error_tracker) = context.error_tracker() {
-							println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
-								tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
+								if config.runtime_output_mode.as_deref() != Some("jsonl") {
+									println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
+										tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
+								}
 
 							// Add a detailed error result for loop detection
 							let loop_error_result = crate::mcp::McpToolResult {
@@ -481,10 +499,19 @@ async fn execute_tools_parallel_internal(
 				}
 
 				// Display task error in consolidated format for other errors
-				display_tool_error(&stored_tool_call, &tool_name, &anyhow::anyhow!("{}", e), tool_index, is_single_tool);
+					display_tool_error(
+						&stored_tool_call,
+						&tool_name,
+						&anyhow::anyhow!("{}", e),
+						tool_index,
+						is_single_tool,
+						config,
+					);
 
-				// Show task error status
-				println!("✗ Task error for '{}': {}", tool_name, e);
+					// Show task error status
+					if config.runtime_output_mode.as_deref() != Some("jsonl") {
+						println!("✗ Task error for '{}': {}", tool_name, e);
+					}
 
 				// ALWAYS add error result for task failures too (unless it was a user decline)
 				let error_result = crate::mcp::McpToolResult {
@@ -801,7 +828,12 @@ fn display_tool_error(
 	error: &anyhow::Error,
 	tool_index: usize,
 	is_single_tool: bool,
+	config: &Config,
 ) {
+	if config.runtime_output_mode.as_deref() == Some("jsonl") {
+		return;
+	}
+
 	// For multiple tools: show header again with index
 	// For single tool: skip header (already shown upfront)
 	if !is_single_tool {

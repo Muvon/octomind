@@ -30,16 +30,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 
-use crate::websocket::ServerMessage;
+use crate::session::output::{OutputMode, OutputSink};
 
 // Helper function to execute API call and process response
-pub async fn execute_api_call_and_process_response(
+pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
 	operation_rx: watch::Receiver<bool>,
-	is_interactive: bool,
-	output_callback: Option<Box<dyn Fn(ServerMessage) + Send>>,
+	mode: OutputMode,
+	sink: S,
 ) -> Result<()> {
 	let model = chat_session.model.clone();
 	let temperature = chat_session.temperature;
@@ -75,7 +75,7 @@ pub async fn execute_api_call_and_process_response(
 	});
 
 	// Check if we're in JSONL mode before spawning animation
-	let suppress_animation = output_callback.is_some();
+	let suppress_animation = mode.should_suppress_cli_output();
 
 	let animation_task = tokio::spawn(async move {
 		// Skip animation entirely when in JSONL mode
@@ -87,7 +87,7 @@ pub async fn execute_api_call_and_process_response(
 			return;
 		}
 
-		if is_interactive {
+		if mode.is_interactive() {
 			let _ = show_loading_animation(
 				animation_cancel_clone,
 				current_cost,
@@ -101,7 +101,7 @@ pub async fn execute_api_call_and_process_response(
 	});
 
 	// Check spending threshold for interactive mode
-	if is_interactive {
+	if mode.is_interactive() {
 		match chat_session.check_spending_threshold(config) {
 			Ok(should_continue) => {
 				if !should_continue {
@@ -201,11 +201,11 @@ pub async fn execute_api_call_and_process_response(
 					config,
 					role,
 					operation_rx_for_response.clone(),
+					sink,
 				)
 				.with_thinking(response.thinking)
-				.with_interactive(is_interactive)
-				.with_output_callback(output_callback),
-			) // Pass through interactive mode, thinking, and output callback
+				.with_mode(mode),
+			) // Pass through mode, thinking, and sink
 			.await;
 
 			if let Err(e) = process_result {

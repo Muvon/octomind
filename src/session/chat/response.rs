@@ -29,10 +29,11 @@ use crate::session::ProviderExchange;
 use anyhow::Result;
 use colored::Colorize;
 
+use crate::session::output::{OutputMode, OutputSink};
 use crate::websocket::{MessageType, ServerMessage};
 
 // Response processing parameters struct
-pub struct ResponseProcessingParams<'a> {
+pub struct ResponseProcessingParams<'a, S: OutputSink> {
 	pub content: String,
 	pub exchange: ProviderExchange,
 	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
@@ -43,12 +44,11 @@ pub struct ResponseProcessingParams<'a> {
 	pub config: &'a Config,
 	pub role: &'a str,
 	pub operation_cancelled: tokio::sync::watch::Receiver<bool>,
-	pub is_interactive: bool,
-	/// Callback for streaming output - emits ServerMessage as JSON (used by WebSocket and JSONL mode)
-	pub output_callback: Option<Box<dyn Fn(ServerMessage) + Send>>,
+	pub sink: S,
+	pub mode: OutputMode,
 }
 
-impl<'a> ResponseProcessingParams<'a> {
+impl<'a, S: OutputSink> ResponseProcessingParams<'a, S> {
 	#[allow(clippy::too_many_arguments)]
 	pub fn new(
 		content: String,
@@ -60,6 +60,7 @@ impl<'a> ResponseProcessingParams<'a> {
 		config: &'a Config,
 		role: &'a str,
 		operation_cancelled: tokio::sync::watch::Receiver<bool>,
+		sink: S,
 	) -> Self {
 		Self {
 			content,
@@ -72,8 +73,8 @@ impl<'a> ResponseProcessingParams<'a> {
 			config,
 			role,
 			operation_cancelled,
-			is_interactive: true,  // Default to true for backward compatibility
-			output_callback: None, // No output callback by default
+			sink,
+			mode: OutputMode::Interactive, // Default
 		}
 	}
 
@@ -83,27 +84,16 @@ impl<'a> ResponseProcessingParams<'a> {
 		self
 	}
 
-	/// Set whether this is an interactive session (controls console output)
-	pub fn with_interactive(mut self, is_interactive: bool) -> Self {
-		self.is_interactive = is_interactive;
+	/// Set output mode (preferred over with_interactive)
+	pub fn with_mode(mut self, mode: OutputMode) -> Self {
+		self.mode = mode;
 		self
 	}
 
-	/// Set output callback for streaming messages (used by WebSocket and JSONL mode)
-	pub fn with_output_callback(
-		mut self,
-		callback: Option<Box<dyn Fn(ServerMessage) + Send>>,
-	) -> Self {
-		self.output_callback = callback;
-		self
-	}
-
-	/// Emit a message through the output callback if set
+	/// Emit a message through the output sink
 	/// This is used for streaming JSON output (WebSocket/JSONL)
-	pub fn emit_message(&self, msg: ServerMessage) {
-		if let Some(ref callback) = self.output_callback {
-			callback(msg);
-		}
+	pub fn emit(&self, msg: ServerMessage) {
+		self.sink.emit(msg);
 	}
 }
 
@@ -130,11 +120,10 @@ fn handle_final_response(
 	chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
-	is_interactive: bool,
-	output_callback: &Option<Box<dyn Fn(ServerMessage) + Send>>,
+	mode: OutputMode,
 ) -> Result<()> {
 	// Display thinking first if present (only in interactive mode to avoid clutter)
-	if is_interactive {
+	if mode.is_interactive() {
 		if let Some(ref thinking_block) = thinking {
 			display_thinking(thinking_block);
 		}
@@ -166,17 +155,17 @@ fn handle_final_response(
 	// Only log the exchange for debugging purposes.
 
 	// CRITICAL FIX: ALWAYS print assistant response (both interactive and non-interactive modes)
-	// The is_interactive flag controls animations/prompts, NOT whether to show the AI's response
-	// Skip if output_callback is set (JSONL mode - we emit via callback instead)
-	if output_callback.is_none() {
+	// The mode controls animations/prompts, NOT whether to show the AI's response
+	// Skip if using structured output (JSONL/WebSocket - handled by sink)
+	if mode.is_terminal_mode() {
 		print_assistant_response(content, config, role, thinking);
 	}
 
 	// Display cost line only for non-interactive mode or specific scenarios
 	// Skip for interactive mode to avoid duplication before user input prompt
-	// Skip if output_callback is set (JSONL mode - we handle cost differently)
+	// Skip if using structured output (JSONL/WebSocket - handled by sink)
 	use std::io::IsTerminal;
-	if !std::io::stdin().is_terminal() && output_callback.is_none() {
+	if !std::io::stdin().is_terminal() && mode.is_terminal_mode() {
 		// Non-interactive mode - always show cost line
 		CostTracker::display_cost_line(chat_session);
 	}
@@ -334,7 +323,9 @@ fn add_assistant_message_with_tool_calls(
 }
 
 // Function to process response, handling tool calls recursively
-pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()> {
+pub async fn process_response<S: OutputSink>(
+	params: ResponseProcessingParams<'_, S>,
+) -> Result<()> {
 	// Check if operation has been cancelled at the very start
 	check_cancellation(&params.operation_cancelled)?;
 
@@ -389,11 +380,12 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 
 	// Process original content first, then any follow-up tool calls
 	let mut current_content = params.content.clone();
-	let mut current_exchange = params.exchange;
+	let mut current_exchange = params.exchange.clone(); // Clone to avoid moving params
 	let mut current_tool_calls_param = params.tool_calls.clone(); // Track of tool_calls parameter
 	let mut current_response_id = params.response_id.clone(); // Track response_id through iterations
 	let mut current_thinking = params.thinking.clone(); // Track thinking only for the current response
 	let operation_cancelled_ref = &params.operation_cancelled; // Create a reference to avoid moves
+
 	loop {
 		// Check for cancellation at the start of each loop iteration
 		check_cancellation(operation_cancelled_ref)?;
@@ -406,7 +398,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 
 			if !current_tool_calls.is_empty() {
 				// Display thinking first if present and not yet displayed - ONLY in interactive mode
-				if params.is_interactive && !thinking_displayed {
+				if params.mode.is_interactive() && !thinking_displayed {
 					if let Some(ref thinking_block) = current_thinking {
 						display_thinking(thinking_block);
 						thinking_displayed = true;
@@ -414,8 +406,8 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				}
 
 				// Display the content to the user FIRST (before adding to session) - ONLY in interactive mode
-				// Skip if output_callback is set (JSONL mode - we emit via callback instead)
-				if params.is_interactive && params.output_callback.is_none() {
+				// Skip if using structured output (JSONL/WebSocket - handled by sink)
+				if params.mode.is_interactive() {
 					print_assistant_response(
 						&current_content,
 						params.config,
@@ -425,7 +417,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				}
 
 				// Display tool parameters upfront (headers will be shown per-tool during execution) - ONLY in interactive mode
-				if params.is_interactive {
+				if params.mode.is_interactive() {
 					display_tool_parameters_only(params.config, &current_tool_calls).await;
 				}
 
@@ -465,7 +457,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						}
 					};
 
-				// Emit tool results through callback if set (WebSocket/JSONL)
+				// Emit tool results through sink (WebSocket/JSONL)
 				let session_id = params.chat_session.session.info.name.clone();
 				for tool_result in &tool_results {
 					let actual_content = crate::mcp::extract_mcp_content(&tool_result.result);
@@ -486,9 +478,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						}),
 						Some(session_id.clone()),
 					);
-					if let Some(ref callback) = params.output_callback {
-						callback(tool_msg);
-					}
+					params.emit(tool_msg);
 				}
 
 				// Check for cancellation BEFORE adding assistant message
@@ -615,15 +605,13 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.thinking.clone()
 	};
 
-	// Emit assistant message through callback if set (WebSocket/JSONL)
+	// Emit assistant message through sink (WebSocket/JSONL)
 	let session_id = params.chat_session.session.info.name.clone();
-	if let Some(ref callback) = params.output_callback {
-		callback(ServerMessage::new(
-			MessageType::Assistant,
-			current_content.clone(),
-			Some(session_id),
-		));
-	}
+	params.emit(ServerMessage::new(
+		MessageType::Assistant,
+		current_content.clone(),
+		Some(session_id.clone()),
+	));
 
 	handle_final_response(
 		&current_content,
@@ -632,11 +620,10 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.chat_session,
 		params.config,
 		params.role,
-		params.is_interactive,
-		&params.output_callback,
+		params.mode,
 	)?;
 
-	// Emit cost message through callback if set (WebSocket/JSONL)
+	// Emit cost message through sink (WebSocket/JSONL)
 	let total_tokens = params.chat_session.session.info.input_tokens
 		+ params.chat_session.session.info.output_tokens
 		+ params.chat_session.session.info.cache_read_tokens
@@ -657,16 +644,14 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 			"cache_write_tokens": params.chat_session.session.info.cache_write_tokens,
 			"reasoning_tokens": params.chat_session.session.info.reasoning_tokens,
 		}),
-		Some(params.chat_session.session.info.name.clone()),
+		Some(session_id),
 	);
 
-	if let Some(ref callback) = params.output_callback {
-		callback(cost_msg);
-	}
+	params.emit(cost_msg);
 
 	// Inject compression hint if applicable (non-intrusive, appended to response)
-	// Skip if output_callback is set (for JSONL mode - we don't want CLI output)
-	if params.output_callback.is_none() {
+	// Skip if using structured output (JSONL/WebSocket - handled by sink)
+	if params.mode.is_terminal_mode() {
 		if let Some(hint) = params.chat_session.get_compression_hint(params.config) {
 			println!("{}", hint);
 		}
@@ -675,10 +660,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 }
 
 /// Process continuation message immediately after session reset
-/// Process continuation message immediately after session reset
 /// This makes the continuation completely invisible to the user
-pub async fn process_continuation_message_immediately(
-	params: ResponseProcessingParams<'_>,
+pub async fn process_continuation_message_immediately<S: OutputSink>(
+	params: ResponseProcessingParams<'_, S>,
 ) -> Result<()> {
 	use crate::session::ChatCompletionWithValidationParams;
 	use crate::{log_debug, log_info};
@@ -733,8 +717,9 @@ pub async fn process_continuation_message_immediately(
 				params.config,
 				params.role,
 				params.operation_cancelled.clone(),
+				params.sink.clone(), // Clone the sink
 			)
-			.with_interactive(params.is_interactive); // Preserve interactive mode
+			.with_mode(params.mode); // Preserve output mode
 
 			// Use Box::pin to avoid recursion compilation issues
 			Box::pin(process_response(continuation_params)).await

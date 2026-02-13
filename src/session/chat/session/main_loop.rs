@@ -27,12 +27,13 @@ use super::prompt_setup::setup_system_prompt_and_cache;
 use super::setup::setup_and_initialize_session;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
+use crate::websocket::{MessageType, ServerMessage};
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::*;
+use serde_json::json;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-
 // Helper function to print command output in CLI context
 async fn print_command_output(
 	output: &mut super::commands::CommandOutput,
@@ -943,14 +944,17 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		);
 		chat_session.add_user_message(&input_with_constraints)?;
 	}
-
 	// Prepare for API call using helper function
 	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
+
+	// Track message count before API call for JSONL output
+	let messages_before = chat_session.session.messages.len();
 
 	// Execute API call and process response using helper function (non-interactive mode)
 	let user_message_index_for_error = user_message_index;
 	let operation_rx_clone = operation_rx.clone();
 	let model_for_error = chat_session.model.clone();
+	let config_for_output = current_config.clone();
 	match execute_api_call_and_process_response(
 		&mut chat_session,
 		&current_config,
@@ -961,7 +965,10 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	.await
 	{
 		Ok(_) => {
-			// Success - session will be saved below
+			// Output JSONL if mode is jsonl
+			if config_for_output.runtime_output_mode.as_deref() == Some("jsonl") {
+				output_jsonl_messages(&chat_session, &config_for_output, messages_before).await;
+			}
 		}
 		Err(e) => {
 			// Handle API error using helper function
@@ -977,4 +984,106 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	// Save session before exit
 	let _ = chat_session.save();
 	Ok(())
+}
+
+/// Output messages in JSONL format (like WebSocket) to stdout
+async fn output_jsonl_messages(
+	chat_session: &ChatSession,
+	config: &Config,
+	messages_before: usize,
+) {
+	let current_message_count = chat_session.session.messages.len();
+	if current_message_count <= messages_before {
+		return;
+	}
+
+	let new_messages = &chat_session.session.messages[messages_before..];
+	let session_id = chat_session.session.info.name.clone();
+
+	for msg in new_messages {
+		match msg.role.as_str() {
+			"tool" => {
+				let content = &msg.content;
+				let actual_content =
+					if let Ok(mcp_result) = serde_json::from_str::<serde_json::Value>(content) {
+						crate::mcp::extract_mcp_content(&mcp_result)
+					} else {
+						content.clone()
+					};
+
+				let tool_name = msg
+					.name
+					.as_ref()
+					.map(|n| n.to_string())
+					.unwrap_or_else(|| "unknown".to_string());
+				let tool_id = msg
+					.tool_call_id
+					.as_ref()
+					.map(|id| id.to_string())
+					.unwrap_or_else(|| "unknown".to_string());
+
+				let success =
+					if let Ok(mcp_result) = serde_json::from_str::<serde_json::Value>(content) {
+						!mcp_result
+							.get("isError")
+							.and_then(|v| v.as_bool())
+							.unwrap_or(false)
+					} else {
+						true
+					};
+
+				let server_name =
+					crate::session::chat::response::get_tool_server_name_async(&tool_name, config)
+						.await;
+
+				let tool_msg = ServerMessage::with_metadata(
+					MessageType::ToolResult,
+					actual_content,
+					json!({
+						"tool": tool_name,
+						"tool_id": tool_id,
+						"server": server_name,
+						"success": success,
+						"duration_ms": 0
+					}),
+					Some(session_id.clone()),
+				);
+				println!("{}", serde_json::to_string(&tool_msg).unwrap_or_default());
+			}
+			"assistant" => {
+				if !msg.content.trim().is_empty() {
+					let assistant_msg = ServerMessage::new(
+						MessageType::Assistant,
+						msg.content.clone(),
+						Some(session_id.clone()),
+					);
+					println!(
+						"{}",
+						serde_json::to_string(&assistant_msg).unwrap_or_default()
+					);
+				}
+			}
+			_ => {}
+		}
+	}
+
+	// Output cost message
+	let total_tokens =
+		chat_session.session.info.input_tokens + chat_session.session.info.output_tokens;
+	let cost_msg = ServerMessage::with_metadata(
+		MessageType::Cost,
+		format!(
+			"Session: {} tokens ($ {:.4})",
+			total_tokens, chat_session.session.info.total_cost
+		),
+		json!({
+			"session_tokens": total_tokens,
+			"session_cost": chat_session.session.info.total_cost,
+			"input_tokens": chat_session.session.info.input_tokens,
+			"output_tokens": chat_session.session.info.output_tokens,
+			"cached_tokens": chat_session.session.info.cached_tokens,
+		}),
+		Some(session_id.clone()),
+	);
+	println!("{}", serde_json::to_string(&cost_msg).unwrap_or_default());
 }

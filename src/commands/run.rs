@@ -40,6 +40,7 @@ pub struct RunArgs {
 	/// Maximum tokens for the AI response (runtime only, not saved)
 	#[arg(long)]
 	pub max_tokens: Option<u32>,
+
 	/// Temperature for the AI response (0.0 to 1.0, runtime only, not saved)
 	#[arg(long)]
 	pub temperature: Option<f32>,
@@ -51,6 +52,10 @@ pub struct RunArgs {
 	/// Maximum number of retries for provider errors (runtime only, not saved)
 	#[arg(long)]
 	pub max_retries: Option<u32>,
+
+	/// Output mode: plain (default) or jsonl (JSON Lines format like WebSocket)
+	#[arg(long, default_value = "plain")]
+	pub mode: String,
 }
 
 impl RunArgs {
@@ -65,6 +70,7 @@ impl RunArgs {
 			max_tokens: self.max_tokens,
 			role: self.role.clone(),
 			max_retries: self.max_retries,
+			mode: self.mode.clone(),
 		}
 	}
 

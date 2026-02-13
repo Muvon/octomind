@@ -79,8 +79,17 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	};
 
 	// Extract session parameters
-	let (name, resume, resume_recent, model, max_tokens, temperature, role, max_retries) =
-		extract_session_params(args, config);
+	let (
+		name,
+		resume,
+		resume_recent,
+		model,
+		max_tokens,
+		temperature,
+		role,
+		max_retries,
+		output_mode,
+	) = extract_session_params(args, config);
 
 	// Get role config for defaults
 	let (role_config, _, _, _, _) = config.get_role_config(&role);
@@ -89,9 +98,10 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	let current_dir = std::env::current_dir()?;
 
 	// Get the merged configuration for the specified role
-	let config_for_role = config.get_merged_config_for_role(&role);
+	let mut config_for_role = config.get_merged_config_for_role(&role);
 
-	// Validate session token threshold if enabled (before initializing session)
+	// Store output_mode in config for later use in main loop
+	config_for_role.runtime_output_mode = Some(output_mode);
 	if config_for_role.max_session_tokens_threshold > 0 {
 		if let Err(e) =
 			crate::session::validate_session_token_threshold(&config_for_role, &role, &current_dir)

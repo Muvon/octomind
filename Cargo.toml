@@ -31,7 +31,7 @@ strip = true      # Strip symbols from binary
 
 [dependencies]
 # octolib = { path = "../octolib", default-features = false }
-octolib = { version = "0.8.1", default-features = false }
+octolib = { version = "0.8.2", default-features = false }
 
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal"] }
 crossterm = "0.29.0"

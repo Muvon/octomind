@@ -26,6 +26,7 @@ pub type SessionParams = (
 	Option<f32>,    // temperature (None = use role config)
 	String,         // role
 	Option<u32>,    // max_retries (None = use role config)
+	String,         // output_mode (plain or jsonl)
 );
 
 // Extract session parameters from Debug format with proper fallbacks
@@ -98,6 +99,20 @@ pub fn extract_session_params<T: std::fmt::Debug>(args: &T, _config: &Config) ->
 		None // No max_retries specified, use role config
 	};
 
+	// Get output_mode - default to plain
+	let output_mode = if args_str.contains("mode: \"") {
+		let start = args_str.find("mode: \"").unwrap() + 7;
+		let end = args_str[start..].find('"').unwrap() + start;
+		let mode = args_str[start..end].to_string();
+		if mode == "jsonl" {
+			"jsonl".to_string()
+		} else {
+			"plain".to_string()
+		}
+	} else {
+		"plain".to_string()
+	};
+
 	(
 		name,
 		resume,
@@ -107,5 +122,6 @@ pub fn extract_session_params<T: std::fmt::Debug>(args: &T, _config: &Config) ->
 		temperature,
 		role,
 		max_retries,
+		output_mode,
 	)
 }

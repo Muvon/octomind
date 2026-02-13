@@ -262,6 +262,10 @@ pub struct Config {
 	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,
 
+	// Runtime output mode set by CLI (plain or jsonl)
+	#[serde(skip)]
+	pub runtime_output_mode: Option<String>,
+
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
 }

@@ -47,6 +47,10 @@ pub struct SessionArgs {
 	/// Maximum number of retries for provider errors (runtime only, not saved)
 	#[arg(long)]
 	pub max_retries: Option<u32>,
+
+	/// Output mode: plain (default) or jsonl (JSON Lines format like WebSocket)
+	#[arg(long, default_value = "plain")]
+	pub mode: String,
 }
 
 // No execute function here since it's handled directly by the session::chat module

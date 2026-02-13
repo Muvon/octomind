@@ -221,7 +221,8 @@ impl ChatSession {
 			provider: "openrouter".to_string(),
 			input_tokens: 0,
 			output_tokens: 0,
-			cached_tokens: 0,
+			cache_read_tokens: 0,
+			cache_write_tokens: 0,
 			reasoning_tokens: 0,
 			total_cost: 0.0,
 			duration_seconds: 0,
@@ -400,7 +401,8 @@ impl ChatSession {
 					// Calculate total tokens
 					let total_tokens = session.info.input_tokens
 						+ session.info.output_tokens
-						+ session.info.cached_tokens;
+						+ session.info.cache_read_tokens
+						+ session.info.cache_write_tokens;
 
 					println!("{} {}", "Created:".blue(), created_time.white());
 					println!("{} {}", "Model:".blue(), model_name.yellow());

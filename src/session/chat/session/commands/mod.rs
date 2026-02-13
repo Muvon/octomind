@@ -61,6 +61,7 @@ pub enum CommandOutput {
 		role: String,
 		tokens_used: u64,
 		tokens_cached: u64,
+		tokens_cache_write: u64,
 		total_cost: f64,
 		cache_savings: f64,
 		compression_stats: Option<crate::session::CompressionStats>,

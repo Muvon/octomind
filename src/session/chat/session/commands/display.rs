@@ -415,10 +415,15 @@ pub fn display_cache(output: &CommandOutput) {
 						.get("content_markers")
 						.and_then(|v| v.as_u64())
 						.unwrap_or(0);
-					let total_cached = stats
-						.get("total_cached_tokens")
+					let total_cache_read = stats
+						.get("total_cache_read_tokens")
 						.and_then(|v| v.as_u64())
 						.unwrap_or(0);
+					let total_cache_write = stats
+						.get("total_cache_write_tokens")
+						.and_then(|v| v.as_u64())
+						.unwrap_or(0);
+
 					let current_non_cached = stats
 						.get("current_non_cached_tokens")
 						.and_then(|v| v.as_u64())
@@ -428,7 +433,8 @@ pub fn display_cache(output: &CommandOutput) {
 					println!("  System markers: {}", system_markers);
 					println!("  Tool markers: {}", tool_markers);
 					println!("  Content markers: {}", content_markers);
-					println!("  Total cached tokens: {}", total_cached);
+					println!("  Total cache read tokens: {}", total_cache_read);
+					println!("  Total cache write tokens: {}", total_cache_write);
 					println!("  Current non-cached tokens: {}", current_non_cached);
 				}
 			}
@@ -446,10 +452,15 @@ pub fn display_cache(output: &CommandOutput) {
 						.get("content_markers")
 						.and_then(|v| v.as_u64())
 						.unwrap_or(0);
-					let total_cached = stats
-						.get("total_cached_tokens")
+					let total_cache_read = stats
+						.get("total_cache_read_tokens")
 						.and_then(|v| v.as_u64())
 						.unwrap_or(0);
+					let total_cache_write = stats
+						.get("total_cache_write_tokens")
+						.and_then(|v| v.as_u64())
+						.unwrap_or(0);
+
 					let current_non_cached = stats
 						.get("current_non_cached_tokens")
 						.and_then(|v| v.as_u64())
@@ -459,7 +470,8 @@ pub fn display_cache(output: &CommandOutput) {
 					println!("  System markers: {}", system_markers);
 					println!("  Tool markers: {}", tool_markers);
 					println!("  Content markers: {}", content_markers);
-					println!("  Total cached tokens: {}", total_cached);
+					println!("  Total cache read tokens: {}", total_cache_read);
+					println!("  Total cache write tokens: {}", total_cache_write);
 					println!("  Current non-cached tokens: {}", current_non_cached);
 				}
 			}

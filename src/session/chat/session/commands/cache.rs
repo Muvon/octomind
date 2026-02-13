@@ -66,7 +66,8 @@ pub async fn handle_cache(
 					"system_markers": stats.system_markers,
 					"tool_markers": stats.tool_markers,
 					"content_markers": stats.content_markers,
-					"total_cached_tokens": stats.total_cached_tokens,
+				"total_cache_read_tokens": stats.total_cache_read_tokens,
+				"total_cache_write_tokens": stats.total_cache_write_tokens,
 					"current_non_cached_tokens": stats.current_non_cached_tokens
 				}
 			}),
@@ -85,8 +86,8 @@ pub async fn handle_cache(
 						"statistics": {
 							"system_markers": stats.system_markers,
 							"tool_markers": stats.tool_markers,
-							"content_markers": stats.content_markers,
-							"total_cached_tokens": stats.total_cached_tokens,
+						"total_cache_read_tokens": stats.total_cache_read_tokens,
+						"total_cache_write_tokens": stats.total_cache_write_tokens,
 							"current_non_cached_tokens": stats.current_non_cached_tokens
 						}
 					}),

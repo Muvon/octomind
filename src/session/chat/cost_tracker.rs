@@ -31,7 +31,8 @@ impl CostTracker {
 	) -> Result<()> {
 		if let Some(usage) = &exchange.usage {
 			// Simple token extraction with clean provider interface
-			let cached_tokens = usage.cached_tokens;
+			let cache_read_tokens = usage.cache_read_tokens;
+			let cache_write_tokens = usage.cache_write_tokens;
 
 			// Track API time if available
 			if let Some(api_time_ms) = usage.request_time_ms {
@@ -42,12 +43,12 @@ impl CostTracker {
 			let cache_manager = crate::session::cache::CacheManager::new();
 			cache_manager.update_token_tracking(
 				&mut chat_session.session,
-				usage.prompt_tokens, // Pass TOTAL input tokens (includes cached)
+				usage.input_tokens, // Non-cached input tokens
 				usage.output_tokens,
-				cached_tokens,
+				cache_read_tokens,
+				cache_write_tokens,
 				usage.reasoning_tokens,
 			);
-
 			// Update cost
 			if let Some(cost) = usage.cost {
 				chat_session.session.info.total_cost += cost;
@@ -154,21 +155,27 @@ impl CostTracker {
 		);
 
 		// Format token usage with cached tokens
-		let cached = chat_session.session.info.cached_tokens;
+		let cache_read = chat_session.session.info.cache_read_tokens;
+		let cache_write = chat_session.session.info.cache_write_tokens;
 		let non_cached_prompt = chat_session.session.info.input_tokens;
 		let completion = chat_session.session.info.output_tokens;
 		let reasoning = chat_session.session.info.reasoning_tokens;
 
 		// FIXED: Show total prompt tokens (cached + non-cached) as "prompt"
 		// This matches user expectation that prompt tokens should show the actual tokens processed
-		let total_prompt = non_cached_prompt + cached;
+		let total_prompt = non_cached_prompt + cache_read;
 		let total = total_prompt + completion + reasoning;
 
 		// Build token display string
 		let mut token_parts = vec![
-			format!("{} prompt ({} cached)", total_prompt, cached),
+			format!("{} prompt ({} cache read)", total_prompt, cache_read),
 			format!("{} completion", completion),
 		];
+
+		// Add cache write tokens if present (Anthropic-style cache creation)
+		if cache_write > 0 {
+			token_parts.push(format!("{} cache write", cache_write));
+		}
 
 		// Add reasoning tokens if present
 		if reasoning > 0 {
@@ -182,13 +189,13 @@ impl CostTracker {
 			chat_session.session.info.total_cost
 		);
 
-		// If we have cached tokens, show the savings percentage
-		if cached > 0 {
-			let saving_pct = (cached as f64 / total_prompt as f64) * 100.0;
+		// If we have cache read tokens, show the savings percentage
+		if cache_read > 0 {
+			let saving_pct = (cache_read as f64 / total_prompt as f64) * 100.0;
 			log_info!(
-				"cached: {:.1}% of prompt tokens ({} tokens saved)",
+				"cache read: {:.1}% of prompt tokens ({} tokens saved)",
 				saving_pct,
-				cached
+				cache_read
 			);
 		}
 
@@ -217,14 +224,10 @@ impl CostTracker {
 		use crate::log_info;
 
 		let total_cost = chat_session.session.info.total_cost;
-		if total_cost <= 0.0 {
-			return; // No cost to break down
-		}
-
-		let cached = chat_session.session.info.cached_tokens;
+		let cache_read = chat_session.session.info.cache_read_tokens;
 		let non_cached_prompt = chat_session.session.info.input_tokens;
 		let completion = chat_session.session.info.output_tokens;
-		let total_tokens = non_cached_prompt + cached + completion;
+		let total_tokens = non_cached_prompt + cache_read + completion;
 
 		if total_tokens == 0 {
 			return; // Avoid division by zero
@@ -232,7 +235,7 @@ impl CostTracker {
 
 		// Estimate cost breakdown based on typical pricing patterns
 		// Most providers charge more for output tokens than input tokens
-		// Cached tokens are typically free or heavily discounted
+		// Cache read tokens are typically free or heavily discounted
 		let estimated_input_cost = if non_cached_prompt > 0 {
 			// Estimate input cost as proportional to tokens, assuming typical 1:3 input:output ratio
 			let input_weight = 1.0;
@@ -249,15 +252,15 @@ impl CostTracker {
 		};
 
 		let estimated_output_cost = total_cost - estimated_input_cost;
-		let cached_savings = if cached > 0 {
-			// Estimate savings from cached tokens (assuming they would cost same as input tokens)
+		let cache_savings = if cache_read > 0 {
+			// Estimate savings from cache read tokens (assuming they would cost same as input tokens)
 			let input_weight = 1.0;
 			let output_weight = 3.0;
 			let total_weighted =
 				(non_cached_prompt as f64 * input_weight) + (completion as f64 * output_weight);
 			if total_weighted > 0.0 && non_cached_prompt > 0 {
 				let estimated_input_rate = estimated_input_cost / non_cached_prompt as f64;
-				cached as f64 * estimated_input_rate
+				cache_read as f64 * estimated_input_rate
 			} else {
 				0.0
 			}
@@ -272,8 +275,8 @@ impl CostTracker {
 				total_cost,
 				estimated_input_cost,
 				estimated_output_cost,
-				if cached_savings > 0.0 {
-					format!(", saved: ${:.5}", cached_savings)
+				if cache_savings > 0.0 {
+					format!(", saved: ${:.5}", cache_savings)
 				} else {
 					String::new()
 				}
@@ -283,8 +286,8 @@ impl CostTracker {
 				"cost: ${:.5} total (input: ${:.5}{})",
 				total_cost,
 				total_cost,
-				if cached_savings > 0.0 {
-					format!(", saved: ${:.5}", cached_savings)
+				if cache_savings > 0.0 {
+					format!(", saved: ${:.5}", cache_savings)
 				} else {
 					String::new()
 				}

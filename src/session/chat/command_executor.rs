@@ -158,7 +158,7 @@ pub async fn execute_command_layer(
 		chat_session.session.add_layer_stats(
 			&format!("command:{command_name}"),
 			&effective_model,
-			usage.prompt_tokens,
+			usage.input_tokens,
 			usage.output_tokens,
 			cost,
 		);
@@ -166,11 +166,14 @@ pub async fn execute_command_layer(
 		// Save the session to persist the statistics
 		let _ = chat_session.save();
 
+		// Save the session to persist the statistics
+		let _ = chat_session.save();
+
 		// Display information about the command execution
 		println!(
-			"{} {} prompt, {} completion tokens",
+			"{} {} input, {} completion tokens",
 			"Command usage:".bright_blue(),
-			format_number(usage.prompt_tokens).bright_green(),
+			format_number(usage.input_tokens).bright_green(),
 			format_number(usage.output_tokens).bright_green()
 		);
 

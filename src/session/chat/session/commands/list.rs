@@ -95,7 +95,10 @@ pub fn handle_list(
 						.as_ref()
 						.map(|s| s == name)
 						.unwrap_or(false);
-					let total_tokens = info.input_tokens + info.output_tokens + info.cached_tokens;
+					let total_tokens = info.input_tokens
+						+ info.output_tokens
+						+ info.cache_read_tokens
+						+ info.cache_write_tokens;
 
 					serde_json::json!({
 						"name": name,
@@ -155,7 +158,11 @@ pub fn handle_list(
 				};
 
 				// Calculate total tokens
-				let total_tokens = info.input_tokens + info.output_tokens + info.cached_tokens;
+				// Calculate total tokens
+				let total_tokens = info.input_tokens
+					+ info.output_tokens
+					+ info.cache_read_tokens
+					+ info.cache_write_tokens;
 
 				markdown_content.push_str(&format!(
 					"| {} | {} | {} | {} | ${:.5} |\n",

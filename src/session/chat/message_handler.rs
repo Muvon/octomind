@@ -85,12 +85,14 @@ impl MessageHandler {
 			chat_session.session.info.total_api_calls += 1;
 
 			// Update token counts using cache manager with octolib data directly
+			// Update token counts using cache manager with octolib data directly
 			let cache_manager = crate::session::cache::CacheManager::new();
 			cache_manager.update_token_tracking(
 				&mut chat_session.session,
-				usage.prompt_tokens, // TOTAL input tokens from API
+				usage.input_tokens, // Non-cached input tokens from API
 				usage.output_tokens,
-				usage.cached_tokens,
+				usage.cache_read_tokens,
+				usage.cache_write_tokens,
 				usage.reasoning_tokens,
 			);
 

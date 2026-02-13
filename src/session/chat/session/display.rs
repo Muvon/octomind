@@ -43,7 +43,8 @@ impl ChatSession {
 		// Total token usage
 		let total_tokens = self.session.info.input_tokens
 			+ self.session.info.output_tokens
-			+ self.session.info.cached_tokens
+			+ self.session.info.cache_read_tokens
+			+ self.session.info.cache_write_tokens
 			+ self.session.info.reasoning_tokens;
 		println!(
 			"{} {}",
@@ -51,12 +52,13 @@ impl ChatSession {
 			format_number(total_tokens).bright_white()
 		);
 		println!(
-			"{} {} input, {} output, {} cached, {} reasoning",
+			"{} {} input, {} output, {} cache read, {} cache write, {} reasoning",
 			"Breakdown:".yellow(),
 			format_number(self.session.info.input_tokens).bright_blue(),
 			format_number(self.session.info.output_tokens).bright_green(),
-			format_number(self.session.info.cached_tokens).bright_magenta(),
-			format_number(self.session.info.reasoning_tokens).bright_cyan()
+			format_number(self.session.info.cache_read_tokens).bright_magenta(),
+			format_number(self.session.info.cache_write_tokens).bright_cyan(),
+			format_number(self.session.info.reasoning_tokens).white()
 		);
 
 		// Cost information
@@ -394,7 +396,8 @@ impl ChatSession {
 
 		let total_tokens = self.session.info.input_tokens
 			+ self.session.info.output_tokens
-			+ self.session.info.cached_tokens
+			+ self.session.info.cache_read_tokens
+			+ self.session.info.cache_write_tokens
 			+ self.session.info.reasoning_tokens;
 
 		let total_time_ms = self.session.info.total_api_time_ms
@@ -408,7 +411,8 @@ impl ChatSession {
 				"total": total_tokens,
 				"input": self.session.info.input_tokens,
 				"output": self.session.info.output_tokens,
-				"cached": self.session.info.cached_tokens,
+				"cache_read": self.session.info.cache_read_tokens,
+				"cache_write": self.session.info.cache_write_tokens,
 				"reasoning": self.session.info.reasoning_tokens
 			},
 			"cost": self.session.info.total_cost,
@@ -435,16 +439,17 @@ impl ChatSession {
 		output.push_str(&format!("Session name: {}\n", self.session.info.name));
 		output.push_str(&format!("Main model: {}\n", self.session.info.model));
 
-		// Total token usage
 		let total_tokens = self.session.info.input_tokens
 			+ self.session.info.output_tokens
-			+ self.session.info.cached_tokens;
+			+ self.session.info.cache_read_tokens
+			+ self.session.info.cache_write_tokens;
 		output.push_str(&format!("Total tokens: {}\n", format_number(total_tokens)));
 		output.push_str(&format!(
-			"Breakdown: {} processed, {} output, {} cached\n",
+			"Breakdown: {} input, {} output, {} cache read, {} cache write\n",
 			format_number(self.session.info.input_tokens),
 			format_number(self.session.info.output_tokens),
-			format_number(self.session.info.cached_tokens)
+			format_number(self.session.info.cache_read_tokens),
+			format_number(self.session.info.cache_write_tokens)
 		));
 
 		// Cost information
@@ -708,12 +713,11 @@ impl ChatSession {
 
 		// Content length limits
 		let content_limit = if is_debug { None } else { Some(200) };
-
 		// Calculate total session tokens for percentage calculation
 		let total_session_tokens = self.session.info.input_tokens
 			+ self.session.info.output_tokens
-			+ self.session.info.cached_tokens;
-
+			+ self.session.info.cache_read_tokens
+			+ self.session.info.cache_write_tokens;
 		// Add median and std dev info for large filter
 		if filter == "large" && !self.session.messages.is_empty() {
 			let mut token_counts: Vec<f64> = self
@@ -868,14 +872,14 @@ impl ChatSession {
 			crate::session::chat::format_number(
 				self.session.info.input_tokens
 					+ self.session.info.output_tokens
-					+ self.session.info.cached_tokens
+					+ self.session.info.cache_read_tokens
+					+ self.session.info.cache_write_tokens
 			)
 		));
 		markdown_content.push_str(&format!(
 			"- **Total Cost:** ${:.5}\n",
 			self.session.info.total_cost
 		));
-
 		if is_debug {
 			markdown_content.push_str("\n*Debug mode: Showing full content*\n");
 		} else {

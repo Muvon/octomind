@@ -337,9 +337,10 @@ impl ChatSession {
 				let cache_manager = crate::session::cache::CacheManager::new();
 				cache_manager.update_token_tracking(
 					&mut self.session,
-					usage.prompt_tokens, // TOTAL input tokens from API
+					usage.input_tokens, // Non-cached input tokens from API
 					usage.output_tokens,
-					usage.cached_tokens,
+					usage.cache_read_tokens,
+					usage.cache_write_tokens,
 					usage.reasoning_tokens,
 				);
 

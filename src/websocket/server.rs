@@ -615,7 +615,8 @@ async fn process_client_message(
 
 			let total_tokens = chat_session.session.info.input_tokens
 				+ chat_session.session.info.output_tokens
-				+ chat_session.session.info.cached_tokens
+				+ chat_session.session.info.cache_read_tokens
+				+ chat_session.session.info.cache_write_tokens
 				+ chat_session.session.info.reasoning_tokens;
 
 			log_debug!(
@@ -635,11 +636,13 @@ async fn process_client_message(
 					"session_cost": chat_session.session.info.total_cost,
 					"input_tokens": chat_session.session.info.input_tokens,
 					"output_tokens": chat_session.session.info.output_tokens,
-					"cached_tokens": chat_session.session.info.cached_tokens,
+					"cache_read_tokens": chat_session.session.info.cache_read_tokens,
+					"cache_write_tokens": chat_session.session.info.cache_write_tokens,
 					"reasoning_tokens": chat_session.session.info.reasoning_tokens,
 				}),
 				Some(session_id.clone()),
 			);
+
 			send_message(ws_sender, &cost_msg).await?;
 		}
 		Err(e) => {

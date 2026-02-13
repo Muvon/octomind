@@ -639,7 +639,8 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 	// Emit cost message through callback if set (WebSocket/JSONL)
 	let total_tokens = params.chat_session.session.info.input_tokens
 		+ params.chat_session.session.info.output_tokens
-		+ params.chat_session.session.info.cached_tokens
+		+ params.chat_session.session.info.cache_read_tokens
+		+ params.chat_session.session.info.cache_write_tokens
 		+ params.chat_session.session.info.reasoning_tokens;
 	let cost_msg = ServerMessage::with_metadata(
 		MessageType::Cost,
@@ -652,11 +653,13 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 			"session_cost": params.chat_session.session.info.total_cost,
 			"input_tokens": params.chat_session.session.info.input_tokens,
 			"output_tokens": params.chat_session.session.info.output_tokens,
-			"cached_tokens": params.chat_session.session.info.cached_tokens,
+			"cache_read_tokens": params.chat_session.session.info.cache_read_tokens,
+			"cache_write_tokens": params.chat_session.session.info.cache_write_tokens,
 			"reasoning_tokens": params.chat_session.session.info.reasoning_tokens,
 		}),
 		Some(params.chat_session.session.info.name.clone()),
 	);
+
 	if let Some(ref callback) = params.output_callback {
 		callback(cost_msg);
 	}

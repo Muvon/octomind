@@ -383,33 +383,37 @@ impl CacheManager {
 	}
 
 	/// Update token tracking after API response
+	/// Update token tracking after API response
 	/// This should be called after EVERY API request to accumulate token usage
 	/// for proper cache threshold calculations
 	///
 	/// Parameters:
 	/// - input_tokens: Non-cached input tokens from API
 	/// - output_tokens: Generated completion tokens
-	/// - cached_tokens: Cached input tokens served from cache
+	/// - cache_read_tokens: Cached input tokens served from cache
+	/// - cache_write_tokens: Cache write tokens (Anthropic-style cache creation)
 	/// - reasoning_tokens: Reasoning/thinking tokens
 	pub fn update_token_tracking(
 		&self,
 		session: &mut Session,
 		input_tokens: u64,
 		output_tokens: u64,
-		cached_tokens: u64,
+		cache_read_tokens: u64,
+		cache_write_tokens: u64,
 		reasoning_tokens: u64,
 	) {
 		// Update session totals (lifetime statistics)
 		// Use values directly from API - no calculations needed
 		session.info.input_tokens += input_tokens;
 		session.info.output_tokens += output_tokens;
-		session.info.cached_tokens += cached_tokens;
+		session.info.cache_read_tokens += cache_read_tokens;
+		session.info.cache_write_tokens += cache_write_tokens;
 		session.info.reasoning_tokens += reasoning_tokens;
 
 		// For threshold checking:
 		// - current_total_tokens tracks all input tokens (cached + non-cached)
 		// - current_non_cached_tokens tracks only non-cached input tokens
-		let total_input = input_tokens + cached_tokens;
+		let total_input = input_tokens + cache_read_tokens;
 		session.info.current_total_tokens += total_input;
 		session.info.current_non_cached_tokens += input_tokens;
 	}
@@ -487,7 +491,8 @@ impl CacheManager {
 				session.info.tool_calls > 0 ||
 				(session.info.input_tokens > 0 && has_cached_system) ||
 				// For brand new sessions with cacheable models and cached system, assume tools are available
-				(session.info.input_tokens == 0 && session.info.cached_tokens == 0 && has_cached_system)
+				// For brand new sessions with cacheable models and cached system, assume tools are available
+				(session.info.input_tokens == 0 && session.info.cache_read_tokens == 0 && has_cached_system)
 			};
 
 			if has_tools && tool_markers == 0 {
@@ -501,16 +506,17 @@ impl CacheManager {
 			content_markers,
 			system_markers,
 			tool_markers,
-			total_cached_tokens: session.info.cached_tokens,
-			total_input_tokens: session.info.input_tokens + session.info.cached_tokens,
+			total_cache_read_tokens: session.info.cache_read_tokens,
+			total_cache_write_tokens: session.info.cache_write_tokens,
+			total_input_tokens: session.info.input_tokens + session.info.cache_read_tokens,
 			total_output_tokens: session.info.output_tokens,
 			current_non_cached_tokens: session.info.current_non_cached_tokens,
 			current_total_tokens: session.info.current_total_tokens,
-			cache_efficiency: if session.info.input_tokens + session.info.cached_tokens > 0 {
+			cache_efficiency: if session.info.input_tokens + session.info.cache_read_tokens > 0 {
 				// Cache efficiency = percentage of total input tokens that came from cache
 				// This shows the overall session cache efficiency (lifetime)
-				(session.info.cached_tokens as f64
-					/ (session.info.input_tokens + session.info.cached_tokens) as f64)
+				(session.info.cache_read_tokens as f64
+					/ (session.info.input_tokens + session.info.cache_read_tokens) as f64)
 					* 100.0
 			} else {
 				0.0
@@ -686,12 +692,13 @@ pub struct CacheStatistics {
 	pub content_markers: usize,
 	pub system_markers: usize,
 	pub tool_markers: usize,
-	pub total_cached_tokens: u64,
+	pub total_cache_read_tokens: u64,
+	pub total_cache_write_tokens: u64,
 	pub total_input_tokens: u64,  // Total input tokens (cacheable)
 	pub total_output_tokens: u64, // Total output tokens (not cacheable)
 	pub current_non_cached_tokens: u64,
 	pub current_total_tokens: u64,
-	pub cache_efficiency: f64, // Percentage of INPUT tokens that were cached
+	pub cache_efficiency: f64, // Percentage of INPUT tokens that were cached (read)
 }
 
 impl CacheStatistics {
@@ -714,12 +721,13 @@ impl CacheStatistics {
 			output.push_str(&format!("{}\n", "No active cache markers".bright_black()));
 		}
 
-		if self.total_cached_tokens > 0 {
+		if self.total_cache_read_tokens > 0 || self.total_cache_write_tokens > 0 {
 			output.push_str(&format!(
-				"Total input tokens: {} ({} cached, {} processed)\n",
+				"Total input tokens: {} ({} cache read, {} cache write, {} processed)\n",
 				format_number(self.total_input_tokens).bright_blue(),
-				format_number(self.total_cached_tokens).bright_magenta(),
-				format_number(self.total_input_tokens - self.total_cached_tokens).bright_yellow()
+				format_number(self.total_cache_read_tokens).bright_magenta(),
+				format_number(self.total_cache_write_tokens).bright_yellow(),
+				format_number(self.total_input_tokens - self.total_cache_read_tokens).bright_cyan()
 			));
 			output.push_str(&format!(
 				"Total output tokens: {} (not cacheable)\n",
@@ -737,19 +745,19 @@ impl CacheStatistics {
 		}
 
 		// Show session-wide cache efficiency in a clearer way
+		// Show session-wide cache efficiency in a clearer way
 		if self.total_input_tokens > 0 {
 			let session_cached_pct =
-				(self.total_cached_tokens as f64 / self.total_input_tokens as f64) * 100.0;
+				(self.total_cache_read_tokens as f64 / self.total_input_tokens as f64) * 100.0;
 			let session_processed_pct = 100.0 - session_cached_pct;
 			output.push_str(&format!(
-				"Session totals: {:.1}% cached, {:.1}% processed ({}/{} total input tokens)\n",
+				"Session totals: {:.1}% cache read, {:.1}% processed ({}/{} total input tokens)\n",
 				session_cached_pct.to_string().bright_green(),
 				session_processed_pct.to_string().bright_yellow(),
-				format_number(self.total_cached_tokens).bright_magenta(),
+				format_number(self.total_cache_read_tokens).bright_magenta(),
 				format_number(self.total_input_tokens).bright_blue()
 			));
 		}
-
 		output
 	}
 }
@@ -768,7 +776,8 @@ mod tests {
 				provider: "openrouter".to_string(),
 				input_tokens: 0,
 				output_tokens: 0,
-				cached_tokens: 0,
+				cache_read_tokens: 0,
+				cache_write_tokens: 0,
 				reasoning_tokens: 0,
 				total_cost: 0.0,
 				duration_seconds: 0,

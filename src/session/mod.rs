@@ -204,7 +204,8 @@ pub struct SessionInfo {
 	pub provider: String,
 	pub input_tokens: u64,
 	pub output_tokens: u64,
-	pub cached_tokens: u64, // Added to track cached tokens separately
+	pub cache_read_tokens: u64,
+	pub cache_write_tokens: u64, // Cache write tokens (Anthropic-style cache creation)
 	#[serde(default)]
 	pub reasoning_tokens: u64, // Tokens used for thinking/reasoning (OpenAI, MiniMax)
 	pub total_cost: f64,
@@ -322,7 +323,8 @@ pub struct AgentCostData {
 	pub model: String,
 	pub input_tokens: u64,
 	pub output_tokens: u64,
-	pub cached_tokens: u64,
+	pub cache_read_tokens: u64,
+	pub cache_write_tokens: u64,
 	pub cost: f64,
 	pub api_time_ms: u64,
 	pub tool_time_ms: u64,
@@ -352,7 +354,8 @@ impl Session {
 				provider,
 				input_tokens: 0,
 				output_tokens: 0,
-				cached_tokens: 0,
+				cache_read_tokens: 0,
+				cache_write_tokens: 0,
 				reasoning_tokens: 0,
 				total_cost: 0.0,
 				duration_seconds: 0,
@@ -506,15 +509,18 @@ impl Session {
 		);
 
 		// Also update cached tokens (not included in layer stats)
-		self.info.cached_tokens += agent_costs.cached_tokens;
+		// Also update cached tokens (not included in layer stats)
+		self.info.cache_read_tokens += agent_costs.cache_read_tokens;
+		self.info.cache_write_tokens += agent_costs.cache_write_tokens;
 
 		crate::log_debug!(
-			"Added agent '{}' costs to session: ${:.5} ({} input, {} output, {} cached tokens)",
+			"Added agent '{}' costs to session: ${:.5} ({} input, {} output, {} cache read, {} cache write tokens)",
 			agent_costs.agent_name,
 			agent_costs.cost,
 			agent_costs.input_tokens,
 			agent_costs.output_tokens,
-			agent_costs.cached_tokens
+			agent_costs.cache_read_tokens,
+			agent_costs.cache_write_tokens
 		);
 	}
 
@@ -932,13 +938,22 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 										info.output_tokens = output_tokens;
 									}
 								}
-								if let Some(cached_tokens) =
-									json_value.get("cached_tokens").and_then(|t| t.as_u64())
+								if let Some(cache_read_tokens) =
+									json_value.get("cache_read_tokens").and_then(|t| t.as_u64())
 								{
-									if cached_tokens > info.cached_tokens {
-										info.cached_tokens = cached_tokens;
+									if cache_read_tokens > info.cache_read_tokens {
+										info.cache_read_tokens = cache_read_tokens;
 									}
 								}
+								if let Some(cache_write_tokens) = json_value
+									.get("cache_write_tokens")
+									.and_then(|t| t.as_u64())
+								{
+									if cache_write_tokens > info.cache_write_tokens {
+										info.cache_write_tokens = cache_write_tokens;
+									}
+								}
+
 								if let Some(tool_calls) =
 									json_value.get("tool_calls").and_then(|t| t.as_u64())
 								{
@@ -1058,7 +1073,8 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 					let mut old_info: SessionInfo = serde_json::from_str(content)?;
 					old_info.input_tokens = 0;
 					old_info.output_tokens = 0;
-					old_info.cached_tokens = 0;
+					old_info.cache_read_tokens = 0;
+					old_info.cache_write_tokens = 0;
 					old_info.total_cost = 0.0;
 					old_info.duration_seconds = 0;
 					old_info.layer_stats = Vec::new();
@@ -1207,7 +1223,8 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			},
 			input_tokens: 0,
 			output_tokens: 0,
-			cached_tokens: 0,
+			cache_read_tokens: 0,
+			cache_write_tokens: 0,
 			reasoning_tokens: 0,
 			total_cost: 0.0,
 			duration_seconds: 0,
@@ -1265,10 +1282,16 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 						{
 							info.output_tokens = output_tokens;
 						}
-						if let Some(cached_tokens) =
-							json_value.get("cached_tokens").and_then(|t| t.as_u64())
+						if let Some(cache_read_tokens) =
+							json_value.get("cache_read_tokens").and_then(|t| t.as_u64())
 						{
-							info.cached_tokens = cached_tokens;
+							info.cache_read_tokens = cache_read_tokens;
+						}
+						if let Some(cache_write_tokens) = json_value
+							.get("cache_write_tokens")
+							.and_then(|t| t.as_u64())
+						{
+							info.cache_write_tokens = cache_write_tokens;
 						}
 						if let Some(tool_calls) =
 							json_value.get("tool_calls").and_then(|t| t.as_u64())
@@ -1852,7 +1875,8 @@ mod tests {
 					"provider": "openrouter",
 					"input_tokens": 100,
 					"output_tokens": 50,
-					"cached_tokens": 20,
+					"cache_read_tokens": 20,
+					"cache_write_tokens": 5,
 					"total_cost": 0.001,
 					"duration_seconds": 10,
 					"layer_stats": [
@@ -1907,7 +1931,8 @@ mod tests {
 				"total_cost": 0.0,
 				"input_tokens": 0,
 				"output_tokens": 0,
-				"cached_tokens": 0,
+				"cache_read_tokens": 0,
+				"cache_write_tokens": 0,
 				"tool_calls": 0,
 				"total_api_time_ms": 0,
 				"total_tool_time_ms": 0,
@@ -1947,7 +1972,8 @@ mod tests {
 					"provider": "openrouter",
 					"input_tokens": 200, // Updated values
 					"output_tokens": 100,
-					"cached_tokens": 40,
+					"cache_read_tokens": 40,
+					"cache_write_tokens": 10,
 					"total_cost": 0.002,
 					"duration_seconds": 20,
 					"layer_stats": [
@@ -2008,8 +2034,8 @@ mod tests {
 			"Output tokens should be from final SUMMARY"
 		);
 		assert_eq!(
-			session.info.cached_tokens, 40,
-			"Cached tokens should be from final SUMMARY"
+			session.info.cache_read_tokens, 40,
+			"Cache read tokens should be from final SUMMARY"
 		);
 		assert_eq!(
 			session.info.total_cost, 0.002,
@@ -2087,7 +2113,8 @@ mod tests {
 					"provider": "openrouter",
 					"input_tokens": 100,
 					"output_tokens": 50,
-					"cached_tokens": 20,
+					"cache_read_tokens": 20,
+					"cache_write_tokens": 5,
 					"total_cost": 0.001,
 					"duration_seconds": 10,
 					"layer_stats": [],
@@ -2160,7 +2187,8 @@ mod tests {
 					"provider": "openrouter",
 					"input_tokens": 200,
 					"output_tokens": 100,
-					"cached_tokens": 40,
+					"cache_read_tokens": 40,
+					"cache_write_tokens": 10,
 					"total_cost": 0.002,
 					"duration_seconds": 20,
 					"layer_stats": [],
@@ -2232,7 +2260,8 @@ mod tests {
 					"provider": "openrouter",
 					"input_tokens": 100,
 					"output_tokens": 50,
-					"cached_tokens": 20,
+					"cache_read_tokens": 20,
+					"cache_write_tokens": 5,
 					"total_cost": 0.001,
 					"duration_seconds": 10,
 					"layer_stats": [],

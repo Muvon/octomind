@@ -498,23 +498,28 @@ where
 
 /// Info logging macro with automatic cyan coloring
 /// Shows info messages when log level is Info OR Debug
+/// Suppressed in JSONL mode to avoid mixing plain text with JSON output
 #[macro_export]
 macro_rules! log_info {
 	($fmt:expr) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
-		if should_log {
-		use colored::Colorize;
-		println!("{}", $fmt.cyan());
-		}
+		if let Some(should_log) = $crate::config::with_thread_config(|config| {
+			config.get_log_level().is_info_enabled() && config.runtime_output_mode.as_deref() != Some("jsonl")
+		}) {
+			if should_log {
+				use colored::Colorize;
+				println!("{}", $fmt.cyan());
+			}
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled()) {
-		if should_log {
-		use colored::Colorize;
-	println!("{}", format!($fmt, $($arg),*).cyan());
-	}
-	}
+		if let Some(should_log) = $crate::config::with_thread_config(|config| {
+			config.get_log_level().is_info_enabled() && config.runtime_output_mode.as_deref() != Some("jsonl")
+		}) {
+			if should_log {
+				use colored::Colorize;
+				println!("{}", format!($fmt, $($arg),*).cyan());
+			}
+		}
 	};
 }
 

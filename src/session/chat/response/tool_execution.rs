@@ -751,7 +751,10 @@ async fn display_tool_success(
 	}
 
 	// Show the actual tool output based on log level using MCP protocol
-	if config.get_log_level().is_info_enabled() || config.get_log_level().is_debug_enabled() {
+	// Skip in JSONL mode (output goes through callback instead)
+	if config.runtime_output_mode.as_deref() != Some("jsonl")
+		&& (config.get_log_level().is_info_enabled() || config.get_log_level().is_debug_enabled())
+	{
 		// Extract content using MCP protocol
 		let content = crate::mcp::extract_mcp_content(&res.result);
 
@@ -765,18 +768,22 @@ async fn display_tool_success(
 			}
 		}
 	}
+
 	// None mode: No output shown (as requested)
 
 	// Always show completion status with timing and token count
-	let content = crate::mcp::extract_mcp_content(&res.result);
-	let token_count = crate::session::token_counter::estimate_tokens(&content);
-	let formatted_tokens = crate::session::chat::format_number(token_count as u64);
+	// Skip in JSONL mode (output goes through callback instead)
+	if config.runtime_output_mode.as_deref() != Some("jsonl") {
+		let content = crate::mcp::extract_mcp_content(&res.result);
+		let token_count = crate::session::token_counter::estimate_tokens(&content);
+		let formatted_tokens = crate::session::chat::format_number(token_count as u64);
 
-	println!(
-		"✓ Tool '{}' completed in {}ms [{}]",
-		params.tool_name, tool_time_ms, formatted_tokens
-	);
-	println!("──────────────────");
+		println!(
+			"✓ Tool '{}' completed in {}ms [{}]",
+			params.tool_name, tool_time_ms, formatted_tokens
+		);
+		println!("──────────────────");
+	}
 
 	// Log the tool response with session name and timing
 	let _ = crate::session::logger::log_tool_result(

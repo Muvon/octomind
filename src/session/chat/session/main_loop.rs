@@ -140,7 +140,10 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 			// CRITICAL FIX: Display cost information before cleanup
 			// This ensures users see the cost spent before cancellation
-			CostTracker::display_cost_line(&chat_session);
+			// Skip in JSONL mode
+			if current_config.runtime_output_mode.as_deref() != Some("jsonl") {
+				CostTracker::display_cost_line(&chat_session);
+			}
 
 			let current_state = processing_state.lock().unwrap().clone();
 			let operation = current_operation.lock().unwrap().clone();
@@ -812,6 +815,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 	// Set the thread-local config for logging macros
 	let mut current_config = config_for_role.clone();
+	crate::config::set_thread_config(&current_config);
 
 	// Use initial_input as the input for this session (convert to owned String for mutability)
 	let mut input = initial_input.to_string();

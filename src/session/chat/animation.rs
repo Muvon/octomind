@@ -127,11 +127,19 @@ pub async fn show_loading_animation(
 // Show static pricing line for non-interactive mode
 pub async fn show_no_animation(cancel_flag: Arc<AtomicBool>, cost: f64) -> Result<()> {
 	// Display static pricing line for non-interactive mode
+	// Skip in JSONL mode to avoid mixing plain text with JSON output
 	if !std::io::stdin().is_terminal() {
-		println!(
-			" ── cost: ${:.5} ────────────────────────────────────────",
-			cost
-		);
+		use crate::config::with_thread_config;
+		let should_print =
+			with_thread_config(|config| config.runtime_output_mode.as_deref() != Some("jsonl"))
+				.unwrap_or(true);
+
+		if should_print {
+			println!(
+				" ── cost: ${:.5} ────────────────────────────────────────",
+				cost
+			);
+		}
 	}
 
 	// Wait for cancellation without showing any visual animation (faster polling)
@@ -167,10 +175,18 @@ pub async fn show_smart_animation(
 pub fn show_generation_message_static(cost: f64) {
 	if !std::io::stdin().is_terminal() {
 		// Non-interactive mode - show static pricing line
-		println!(
-			" ── cost: ${:.5} ────────────────────────────────────────",
-			cost
-		);
+		// Skip in JSONL mode to avoid mixing plain text with JSON output
+		use crate::config::with_thread_config;
+		let should_print =
+			with_thread_config(|config| config.runtime_output_mode.as_deref() != Some("jsonl"))
+				.unwrap_or(true);
+
+		if should_print {
+			println!(
+				" ── cost: ${:.5} ────────────────────────────────────────",
+				cost
+			);
+		}
 	}
 	// Interactive mode - do nothing (animation will handle it)
 }

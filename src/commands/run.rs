@@ -53,8 +53,8 @@ pub struct RunArgs {
 	#[arg(long)]
 	pub max_retries: Option<u32>,
 
-	/// Output mode: plain (default) or jsonl (JSON Lines format like WebSocket)
-	#[arg(long, default_value = "plain")]
+	/// Output format: plain (default) or jsonl (JSON Lines format like WebSocket)
+	#[arg(long = "format", default_value = "plain")]
 	pub mode: String,
 }
 

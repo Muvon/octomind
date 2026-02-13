@@ -101,7 +101,7 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	let mut config_for_role = config.get_merged_config_for_role(&role);
 
 	// Store output_mode in config for later use in main loop
-	config_for_role.runtime_output_mode = Some(output_mode);
+	config_for_role.runtime_output_mode = Some(output_mode.clone());
 	if config_for_role.max_session_tokens_threshold > 0 {
 		if let Err(e) =
 			crate::session::validate_session_token_threshold(&config_for_role, &role, &current_dir)
@@ -143,6 +143,11 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	let effective_max_retries = max_retries.unwrap_or(config_for_role.max_retries);
 	session_params = session_params.with_max_retries(effective_max_retries);
 
+	// Set output mode for CLI output suppression in JSONL mode
+	let output_mode_for_check = output_mode.clone();
+	let output_mode_clone = output_mode.clone();
+	session_params = session_params.with_output_mode(output_mode_clone);
+
 	// Clean up spinner BEFORE initializing session (which prints messages)
 	if let Some(sp) = spinner {
 		sp.finish_and_clear();
@@ -153,8 +158,8 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 
 	let mut chat_session = ChatSession::initialize(session_params).await?;
 
-	// Display initial status line for new sessions (not resumed)
-	if !chat_session.was_resumed {
+	// Display initial status line for new sessions (not resumed) - skip in JSONL mode
+	if !chat_session.was_resumed && output_mode_for_check != "jsonl" {
 		// Show tip first, then shortcut help
 		println!("{}", display_random_tip().bright_yellow());
 		println!("{}", "? for shortcuts • /help for commands".bright_black());

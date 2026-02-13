@@ -613,8 +613,11 @@ async fn process_client_message(
 
 			// Send cost information
 
-			let total_tokens =
-				chat_session.session.info.input_tokens + chat_session.session.info.output_tokens;
+			let total_tokens = chat_session.session.info.input_tokens
+				+ chat_session.session.info.output_tokens
+				+ chat_session.session.info.cached_tokens
+				+ chat_session.session.info.reasoning_tokens;
+
 			log_debug!(
 				"Session stats: tokens={}, cost=${:.4}",
 				total_tokens,
@@ -633,6 +636,7 @@ async fn process_client_message(
 					"input_tokens": chat_session.session.info.input_tokens,
 					"output_tokens": chat_session.session.info.output_tokens,
 					"cached_tokens": chat_session.session.info.cached_tokens,
+					"reasoning_tokens": chat_session.session.info.reasoning_tokens,
 				}),
 				Some(session_id.clone()),
 			);

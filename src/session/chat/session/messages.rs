@@ -324,10 +324,6 @@ impl ChatSession {
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
 			if let Some(usage) = &ex.usage {
-				// Simple token extraction with clean provider interface
-				let cached_tokens = usage.cached_tokens;
-				let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-
 				// Track API time if available
 				if let Some(api_time_ms) = usage.request_time_ms {
 					self.session.info.total_api_time_ms += api_time_ms;
@@ -337,13 +333,13 @@ impl ChatSession {
 				// Each API call = potential cache write/read, critical for compression economics
 				self.session.info.total_api_calls += 1;
 
-				// Update session token counts and use proper cache tracking
+				// Update session token counts using octolib data directly
 				let cache_manager = crate::session::cache::CacheManager::new();
 				cache_manager.update_token_tracking(
 					&mut self.session,
-					regular_prompt_tokens,
+					usage.prompt_tokens, // TOTAL input tokens from API
 					usage.output_tokens,
-					cached_tokens,
+					usage.cached_tokens,
 					usage.reasoning_tokens,
 				);
 

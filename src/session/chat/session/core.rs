@@ -46,6 +46,8 @@ pub struct SessionInitParams<'a> {
 	pub max_tokens: Option<u32>,
 	/// Optional max retries override
 	pub max_retries: Option<u32>,
+	/// Output mode: plain or jsonl (for CLI suppression)
+	pub output_mode: Option<String>,
 	/// Configuration object
 	pub config: &'a Config,
 	/// Role for the session
@@ -63,6 +65,7 @@ impl<'a> SessionInitParams<'a> {
 			temperature: None,
 			max_tokens: None,
 			max_retries: None,
+			output_mode: None,
 			config,
 			role,
 		}
@@ -107,6 +110,12 @@ impl<'a> SessionInitParams<'a> {
 	/// Set max retries override
 	pub fn with_max_retries(mut self, max_retries: u32) -> Self {
 		self.max_retries = Some(max_retries);
+		self
+	}
+
+	/// Set output mode (plain or jsonl)
+	pub fn with_output_mode(mut self, output_mode: String) -> Self {
+		self.output_mode = Some(output_mode);
 		self
 	}
 }
@@ -514,10 +523,13 @@ impl ChatSession {
 					let new_session_name = generate_session_name();
 					let new_session_file = sessions_dir.join(format!("{}.jsonl", new_session_name));
 
-					println!(
-						"{}",
-						format!("Starting new session: {}", new_session_name).bright_green()
-					);
+					// Skip CLI output in JSONL mode
+					if params.output_mode.as_deref() != Some("jsonl") {
+						println!(
+							"{}",
+							format!("Starting new session: {}", new_session_name).bright_green()
+						);
+					}
 
 					// Create file if it doesn't exist
 					if !new_session_file.exists() {
@@ -556,12 +568,14 @@ impl ChatSession {
 				}
 			}
 		} else {
-			// Create new session
-			use colored::*;
-			println!(
-				"{}",
-				format!("Starting new session: {}", session_name).bright_green()
-			);
+			// Create new session - skip CLI output in JSONL mode
+			if params.output_mode.as_deref() != Some("jsonl") {
+				use colored::*;
+				println!(
+					"{}",
+					format!("Starting new session: {}", session_name).bright_green()
+				);
+			}
 
 			// Create session file if it doesn't exist
 			if !session_file.exists() {

@@ -76,9 +76,6 @@ impl MessageHandler {
 		// CRITICAL FIX: Track API call and tokens (same logic as add_assistant_message)
 		// This was missing, causing api_calls=0 in compression analysis
 		if let Some(usage) = &exchange.usage {
-			let cached_tokens = usage.cached_tokens;
-			let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-
 			// Track API time if available
 			if let Some(api_time_ms) = usage.request_time_ms {
 				chat_session.session.info.total_api_time_ms += api_time_ms;
@@ -87,11 +84,15 @@ impl MessageHandler {
 			// CACHE-AWARE COMPRESSION: Track API calls for amortized cost analysis
 			chat_session.session.info.total_api_calls += 1;
 
-			// Update token counts
-			chat_session.session.info.input_tokens += regular_prompt_tokens;
-			chat_session.session.info.output_tokens += usage.output_tokens;
-			chat_session.session.info.cached_tokens += cached_tokens;
-			chat_session.session.info.reasoning_tokens += usage.reasoning_tokens;
+			// Update token counts using cache manager with octolib data directly
+			let cache_manager = crate::session::cache::CacheManager::new();
+			cache_manager.update_token_tracking(
+				&mut chat_session.session,
+				usage.prompt_tokens, // TOTAL input tokens from API
+				usage.output_tokens,
+				usage.cached_tokens,
+				usage.reasoning_tokens,
+			);
 
 			// Track cost if available
 			if let Some(cost) = usage.cost {

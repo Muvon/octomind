@@ -32,7 +32,6 @@ impl CostTracker {
 		if let Some(usage) = &exchange.usage {
 			// Simple token extraction with clean provider interface
 			let cached_tokens = usage.cached_tokens;
-			let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
 
 			// Track API time if available
 			if let Some(api_time_ms) = usage.request_time_ms {
@@ -43,7 +42,7 @@ impl CostTracker {
 			let cache_manager = crate::session::cache::CacheManager::new();
 			cache_manager.update_token_tracking(
 				&mut chat_session.session,
-				regular_prompt_tokens,
+				usage.prompt_tokens, // Pass TOTAL input tokens (includes cached)
 				usage.output_tokens,
 				cached_tokens,
 				usage.reasoning_tokens,

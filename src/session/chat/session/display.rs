@@ -394,7 +394,8 @@ impl ChatSession {
 
 		let total_tokens = self.session.info.input_tokens
 			+ self.session.info.output_tokens
-			+ self.session.info.cached_tokens;
+			+ self.session.info.cached_tokens
+			+ self.session.info.reasoning_tokens;
 
 		let total_time_ms = self.session.info.total_api_time_ms
 			+ self.session.info.total_tool_time_ms
@@ -407,7 +408,8 @@ impl ChatSession {
 				"total": total_tokens,
 				"input": self.session.info.input_tokens,
 				"output": self.session.info.output_tokens,
-				"cached": self.session.info.cached_tokens
+				"cached": self.session.info.cached_tokens,
+				"reasoning": self.session.info.reasoning_tokens
 			},
 			"cost": self.session.info.total_cost,
 			"time": {

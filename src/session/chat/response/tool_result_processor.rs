@@ -665,17 +665,13 @@ fn handle_follow_up_cost_tracking(
 	_config: &Config,
 ) {
 	if let Some(usage) = &exchange.usage {
-		// Simple token extraction with clean provider interface
-		let cached_tokens = usage.cached_tokens;
-		let regular_prompt_tokens = usage.prompt_tokens.saturating_sub(cached_tokens);
-
-		// Update session token counts using the cache manager
+		// Update session token counts using cache manager with octolib data directly
 		let cache_manager = crate::session::cache::CacheManager::new();
 		cache_manager.update_token_tracking(
 			&mut chat_session.session,
-			regular_prompt_tokens,
+			usage.prompt_tokens, // TOTAL input tokens from API
 			usage.output_tokens,
-			cached_tokens,
+			usage.cached_tokens,
 			usage.reasoning_tokens,
 		);
 

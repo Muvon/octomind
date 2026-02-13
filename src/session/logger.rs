@@ -42,6 +42,7 @@ pub fn log_session_stats(
 		"input_tokens": session_info.input_tokens,
 		"output_tokens": session_info.output_tokens,
 		"cached_tokens": session_info.cached_tokens,
+		"reasoning_tokens": session_info.reasoning_tokens,
 		"tool_calls": session_info.tool_calls,
 		"total_api_time_ms": session_info.total_api_time_ms,
 		"total_tool_time_ms": session_info.total_tool_time_ms,

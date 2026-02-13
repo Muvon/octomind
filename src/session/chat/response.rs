@@ -122,6 +122,7 @@ fn log_response_debug(
 }
 
 // Helper function to handle final response when no tool calls are present
+#[allow(clippy::too_many_arguments)]
 fn handle_final_response(
 	content: &str,
 	thinking: &Option<ThinkingBlock>,
@@ -637,7 +638,9 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 
 	// Emit cost message through callback if set (WebSocket/JSONL)
 	let total_tokens = params.chat_session.session.info.input_tokens
-		+ params.chat_session.session.info.output_tokens;
+		+ params.chat_session.session.info.output_tokens
+		+ params.chat_session.session.info.cached_tokens
+		+ params.chat_session.session.info.reasoning_tokens;
 	let cost_msg = ServerMessage::with_metadata(
 		MessageType::Cost,
 		format!(
@@ -650,6 +653,7 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 			"input_tokens": params.chat_session.session.info.input_tokens,
 			"output_tokens": params.chat_session.session.info.output_tokens,
 			"cached_tokens": params.chat_session.session.info.cached_tokens,
+			"reasoning_tokens": params.chat_session.session.info.reasoning_tokens,
 		}),
 		Some(params.chat_session.session.info.name.clone()),
 	);

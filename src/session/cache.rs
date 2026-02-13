@@ -385,8 +385,12 @@ impl CacheManager {
 	/// Update token tracking after API response
 	/// This should be called after EVERY API request to accumulate token usage
 	/// for proper cache threshold calculations
-	/// CRITICAL FIX: Ensure this properly tracks both cached and non-cached tokens
-	/// for accurate threshold calculations
+	///
+	/// Parameters:
+	/// - input_tokens: Non-cached input tokens from API
+	/// - output_tokens: Generated completion tokens
+	/// - cached_tokens: Cached input tokens served from cache
+	/// - reasoning_tokens: Reasoning/thinking tokens
 	pub fn update_token_tracking(
 		&self,
 		session: &mut Session,
@@ -396,26 +400,18 @@ impl CacheManager {
 		reasoning_tokens: u64,
 	) {
 		// Update session totals (lifetime statistics)
+		// Use values directly from API - no calculations needed
 		session.info.input_tokens += input_tokens;
 		session.info.output_tokens += output_tokens;
 		session.info.cached_tokens += cached_tokens;
 		session.info.reasoning_tokens += reasoning_tokens;
 
-		// CRITICAL FIX: For threshold checking, we need to track tokens correctly:
-		// - input_tokens here are the NON-CACHED input tokens processed by the API
-		// - cached_tokens are the input tokens that were served from cache
-		// - output_tokens are generated tokens (never cached)
-
-		// Total input tokens include both processed and cached
-		let total_input_tokens = input_tokens + cached_tokens;
-
 		// For threshold checking:
-		// - Add ALL input tokens (cached + non-cached) to total tracking
-		// - Add ONLY non-cached input tokens to non-cached tracking
-		// - Output tokens don't count toward cache thresholds (they can't be cached)
-
-		session.info.current_total_tokens += total_input_tokens;
-		session.info.current_non_cached_tokens += input_tokens; // Only non-cached input tokens
+		// - current_total_tokens tracks all input tokens (cached + non-cached)
+		// - current_non_cached_tokens tracks only non-cached input tokens
+		let total_input = input_tokens + cached_tokens;
+		session.info.current_total_tokens += total_input;
+		session.info.current_non_cached_tokens += input_tokens;
 	}
 
 	/// Estimate current session tokens for threshold checking

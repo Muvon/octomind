@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// API execution and response processing utilities
+use std::time::Duration;
 
 use super::super::animation::{show_loading_animation, show_no_animation};
 use super::super::response::{process_response, ResponseProcessingParams};
@@ -30,6 +30,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 
+use crate::websocket::ServerMessage;
+
 // Helper function to execute API call and process response
 pub async fn execute_api_call_and_process_response(
 	chat_session: &mut ChatSession,
@@ -37,6 +39,7 @@ pub async fn execute_api_call_and_process_response(
 	role: &str,
 	operation_rx: watch::Receiver<bool>,
 	is_interactive: bool,
+	output_callback: Option<Box<dyn Fn(ServerMessage) + Send>>,
 ) -> Result<()> {
 	let model = chat_session.model.clone();
 	let temperature = chat_session.temperature;
@@ -71,7 +74,19 @@ pub async fn execute_api_call_and_process_response(
 		}
 	});
 
+	// Check if we're in JSONL mode before spawning animation
+	let suppress_animation = output_callback.is_some();
+
 	let animation_task = tokio::spawn(async move {
+		// Skip animation entirely when in JSONL mode
+		if suppress_animation {
+			// Just wait for cancellation without any output
+			while !animation_cancel_clone.load(Ordering::SeqCst) {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+			return;
+		}
+
 		if is_interactive {
 			let _ = show_loading_animation(
 				animation_cancel_clone,
@@ -188,8 +203,9 @@ pub async fn execute_api_call_and_process_response(
 					operation_rx_for_response.clone(),
 				)
 				.with_thinking(response.thinking)
-				.with_interactive(is_interactive),
-			) // Pass through interactive mode and thinking
+				.with_interactive(is_interactive)
+				.with_output_callback(output_callback),
+			) // Pass through interactive mode, thinking, and output callback
 			.await;
 
 			if let Err(e) = process_result {

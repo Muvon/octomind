@@ -443,6 +443,7 @@ async fn process_client_message(
 		role,
 		operation_rx.clone(),
 		false, // is_interactive = false (like run command)
+		None,  // output_callback - WebSocket has its own message handling
 	)
 	.await
 	{

@@ -29,6 +29,8 @@ use crate::session::ProviderExchange;
 use anyhow::Result;
 use colored::Colorize;
 
+use crate::websocket::{MessageType, ServerMessage};
+
 // Response processing parameters struct
 pub struct ResponseProcessingParams<'a> {
 	pub content: String,
@@ -42,6 +44,8 @@ pub struct ResponseProcessingParams<'a> {
 	pub role: &'a str,
 	pub operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	pub is_interactive: bool,
+	/// Callback for streaming output - emits ServerMessage as JSON (used by WebSocket and JSONL mode)
+	pub output_callback: Option<Box<dyn Fn(ServerMessage) + Send>>,
 }
 
 impl<'a> ResponseProcessingParams<'a> {
@@ -68,7 +72,8 @@ impl<'a> ResponseProcessingParams<'a> {
 			config,
 			role,
 			operation_cancelled,
-			is_interactive: true, // Default to true for backward compatibility
+			is_interactive: true,  // Default to true for backward compatibility
+			output_callback: None, // No output callback by default
 		}
 	}
 
@@ -82,6 +87,23 @@ impl<'a> ResponseProcessingParams<'a> {
 	pub fn with_interactive(mut self, is_interactive: bool) -> Self {
 		self.is_interactive = is_interactive;
 		self
+	}
+
+	/// Set output callback for streaming messages (used by WebSocket and JSONL mode)
+	pub fn with_output_callback(
+		mut self,
+		callback: Option<Box<dyn Fn(ServerMessage) + Send>>,
+	) -> Self {
+		self.output_callback = callback;
+		self
+	}
+
+	/// Emit a message through the output callback if set
+	/// This is used for streaming JSON output (WebSocket/JSONL)
+	pub fn emit_message(&self, msg: ServerMessage) {
+		if let Some(ref callback) = self.output_callback {
+			callback(msg);
+		}
 	}
 }
 
@@ -108,6 +130,7 @@ fn handle_final_response(
 	config: &Config,
 	role: &str,
 	is_interactive: bool,
+	output_callback: &Option<Box<dyn Fn(ServerMessage) + Send>>,
 ) -> Result<()> {
 	// Display thinking first if present (only in interactive mode to avoid clutter)
 	if is_interactive {
@@ -143,13 +166,16 @@ fn handle_final_response(
 
 	// CRITICAL FIX: ALWAYS print assistant response (both interactive and non-interactive modes)
 	// The is_interactive flag controls animations/prompts, NOT whether to show the AI's response
-	// Pass thinking to skip content already shown in thinking block
-	print_assistant_response(content, config, role, thinking);
+	// Skip if output_callback is set (JSONL mode - we emit via callback instead)
+	if output_callback.is_none() {
+		print_assistant_response(content, config, role, thinking);
+	}
 
 	// Display cost line only for non-interactive mode or specific scenarios
 	// Skip for interactive mode to avoid duplication before user input prompt
+	// Skip if output_callback is set (JSONL mode - we handle cost differently)
 	use std::io::IsTerminal;
-	if !std::io::stdin().is_terminal() {
+	if !std::io::stdin().is_terminal() && output_callback.is_none() {
 		// Non-interactive mode - always show cost line
 		CostTracker::display_cost_line(chat_session);
 	}
@@ -387,8 +413,8 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 				}
 
 				// Display the content to the user FIRST (before adding to session) - ONLY in interactive mode
-				// Pass thinking to skip content already shown in thinking block
-				if params.is_interactive {
+				// Skip if output_callback is set (JSONL mode - we emit via callback instead)
+				if params.is_interactive && params.output_callback.is_none() {
 					print_assistant_response(
 						&current_content,
 						params.config,
@@ -438,8 +464,33 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 						}
 					};
 
+				// Emit tool results through callback if set (WebSocket/JSONL)
+				let session_id = params.chat_session.session.info.name.clone();
+				for tool_result in &tool_results {
+					let actual_content = crate::mcp::extract_mcp_content(&tool_result.result);
+					let success = !tool_result
+						.result
+						.get("isError")
+						.and_then(|v| v.as_bool())
+						.unwrap_or(false);
+					let tool_msg = ServerMessage::with_metadata(
+						MessageType::ToolResult,
+						actual_content,
+						serde_json::json!({
+							"tool": tool_result.tool_name,
+							"tool_id": tool_result.tool_id,
+							"server": crate::session::chat::response::get_tool_server_name_async(&tool_result.tool_name, params.config).await,
+							"success": success,
+							"duration_ms": total_tool_time_ms
+						}),
+						Some(session_id.clone()),
+					);
+					if let Some(ref callback) = params.output_callback {
+						callback(tool_msg);
+					}
+				}
+
 				// Check for cancellation BEFORE adding assistant message
-				// This prevents adding tool_use blocks without corresponding tool_result blocks
 				if *operation_cancelled_clone.borrow() {
 					println!("{}", "\nTool execution cancelled.".bright_yellow());
 					// Don't add assistant message since tools were cancelled
@@ -562,6 +613,17 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 	} else {
 		params.thinking.clone()
 	};
+
+	// Emit assistant message through callback if set (WebSocket/JSONL)
+	let session_id = params.chat_session.session.info.name.clone();
+	if let Some(ref callback) = params.output_callback {
+		callback(ServerMessage::new(
+			MessageType::Assistant,
+			current_content.clone(),
+			Some(session_id),
+		));
+	}
+
 	handle_final_response(
 		&current_content,
 		&thinking_for_final,
@@ -570,11 +632,37 @@ pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()
 		params.config,
 		params.role,
 		params.is_interactive,
+		&params.output_callback,
 	)?;
 
+	// Emit cost message through callback if set (WebSocket/JSONL)
+	let total_tokens = params.chat_session.session.info.input_tokens
+		+ params.chat_session.session.info.output_tokens;
+	let cost_msg = ServerMessage::with_metadata(
+		MessageType::Cost,
+		format!(
+			"Session: {} tokens ($ {:.4})",
+			total_tokens, params.chat_session.session.info.total_cost
+		),
+		serde_json::json!({
+			"session_tokens": total_tokens,
+			"session_cost": params.chat_session.session.info.total_cost,
+			"input_tokens": params.chat_session.session.info.input_tokens,
+			"output_tokens": params.chat_session.session.info.output_tokens,
+			"cached_tokens": params.chat_session.session.info.cached_tokens,
+		}),
+		Some(params.chat_session.session.info.name.clone()),
+	);
+	if let Some(ref callback) = params.output_callback {
+		callback(cost_msg);
+	}
+
 	// Inject compression hint if applicable (non-intrusive, appended to response)
-	if let Some(hint) = params.chat_session.get_compression_hint(params.config) {
-		println!("{}", hint);
+	// Skip if output_callback is set (for JSONL mode - we don't want CLI output)
+	if params.output_callback.is_none() {
+		if let Some(hint) = params.chat_session.get_compression_hint(params.config) {
+			println!("{}", hint);
+		}
 	}
 	Ok(())
 }

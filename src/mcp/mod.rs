@@ -992,48 +992,55 @@ async fn execute_tool_without_cancellation(
 pub async fn handle_large_response(
 	result: McpToolResult,
 	config: &crate::config::Config,
+	mode: crate::session::output::OutputMode,
 ) -> Result<McpToolResult> {
 	// Check if result is large - warn user if it exceeds threshold
 	let estimated_tokens = crate::session::estimate_tokens(&format!("{}", result.result));
 	if estimated_tokens > config.mcp_response_warning_threshold {
 		// Create a modified result that warns about the size
 		use colored::Colorize;
+		let suppress_cli_output = mode.should_suppress_cli_output();
+		let non_interactive = !mode.is_interactive() || !std::io::stdin().is_terminal();
 
 		// Get server name for better identification
 		let server_name =
 			crate::session::chat::response::get_tool_server_name_async(&result.tool_name, config)
 				.await;
 
-		println!(
-			"{}",
-			format!(
-				"! WARNING: Tool '{}' ({}){} produced a large output ({} tokens)",
-				result.tool_name,
-				server_name,
-				if !result.tool_id.is_empty() {
-					format!(" [ID: {}]", result.tool_id)
-				} else {
-					String::new()
-				},
-				estimated_tokens
-			)
-			.bright_yellow()
-		);
-		println!(
-			"{}",
-			"This may consume significant tokens and impact your usage limits.".bright_yellow()
-		);
-
-		// Auto-decline in non-interactive mode (run command, piped input, etc.)
-		if !std::io::stdin().is_terminal() {
+		if !suppress_cli_output {
 			println!(
 				"{}",
 				format!(
-					"Large output from '{}' ({}) automatically declined in non-interactive mode. Continuing...",
-					result.tool_name, server_name
+					"! WARNING: Tool '{}' ({}){} produced a large output ({} tokens)",
+					result.tool_name,
+					server_name,
+					if !result.tool_id.is_empty() {
+						format!(" [ID: {}]", result.tool_id)
+					} else {
+						String::new()
+					},
+					estimated_tokens
 				)
-				.bright_red()
+				.bright_yellow()
 			);
+			println!(
+				"{}",
+				"This may consume significant tokens and impact your usage limits.".bright_yellow()
+			);
+		}
+
+		// Auto-decline in structured output or non-interactive mode.
+		if suppress_cli_output || non_interactive {
+			if !suppress_cli_output {
+				println!(
+					"{}",
+					format!(
+						"Large output from '{}' ({}) automatically declined in non-interactive mode. Continuing...",
+						result.tool_name, server_name
+					)
+					.bright_red()
+				);
+			}
 			return Ok(McpToolResult::error(
 				result.tool_name.clone(),
 				result.tool_id.clone(),
@@ -1041,7 +1048,7 @@ pub async fn handle_large_response(
 			));
 		}
 
-		// Interactive mode - ask user for confirmation before proceeding
+		// Interactive terminal mode - ask user for confirmation before proceeding
 		print!(
 			"{}",
 			"Do you want to continue with this large output? [y/N]: ".bright_cyan()

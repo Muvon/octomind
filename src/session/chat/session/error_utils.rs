@@ -15,6 +15,7 @@
 // Error utilities for session handling
 
 use crate::session::chat::session::core::ChatSession;
+use crate::session::output::OutputMode;
 use crate::{log_debug, log_info};
 use colored::*;
 
@@ -155,6 +156,7 @@ pub fn handle_api_error(
 	user_message_index: usize,
 	model: &str,
 	error: &anyhow::Error,
+	mode: OutputMode,
 ) {
 	// Remove user message on API failure
 	if user_message_index < chat_session.session.messages.len() {
@@ -180,6 +182,11 @@ pub fn handle_api_error(
 
 	// Format error message with better context
 	let error_message = format_provider_error(&provider_name, error);
+	if mode.should_suppress_cli_output() {
+		log_info!("Error calling {}: {}", provider_name, error_message);
+		return;
+	}
+
 	println!(
 		"\n{}: {}",
 		format!("Error calling {}", provider_name).bright_red(),

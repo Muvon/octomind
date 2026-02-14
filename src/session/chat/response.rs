@@ -363,7 +363,7 @@ pub async fn process_response<S: OutputSink>(
 
 	// First, add the user message before processing response
 	let last_message = params.chat_session.session.messages.last();
-	if last_message.is_none_or(|msg| msg.role != "user") {
+	if params.mode.is_terminal_mode() && last_message.is_none_or(|msg| msg.role != "user") {
 		// This is an edge case - the content variable here is the AI response, not user input
 		// We should have added the user message earlier in the main run_interactive_session
 		println!(
@@ -440,6 +440,7 @@ pub async fn process_response<S: OutputSink>(
 						&mut tool_processor,
 						operation_cancelled_clone.clone(),
 						params.role,
+						params.mode,
 					)
 					.await
 					{
@@ -483,7 +484,9 @@ pub async fn process_response<S: OutputSink>(
 
 				// Check for cancellation BEFORE adding assistant message
 				if *operation_cancelled_clone.borrow() {
-					println!("{}", "\nTool execution cancelled.".bright_yellow());
+					if params.mode.is_terminal_mode() {
+						println!("{}", "\nTool execution cancelled.".bright_yellow());
+					}
 					// Don't add assistant message since tools were cancelled
 					return Ok(());
 				}

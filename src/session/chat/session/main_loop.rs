@@ -783,6 +783,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					user_message_index_for_error,
 					&model_for_error,
 					&e,
+					OutputMode::Interactive,
 				);
 			}
 		}
@@ -987,11 +988,17 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		}
 		Err(e) => {
 			// Handle API error using helper function
+			let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+				OutputMode::Jsonl
+			} else {
+				OutputMode::NonInteractive
+			};
 			handle_api_error(
 				&mut chat_session,
 				user_message_index_for_error,
 				&model_for_error,
 				&e,
+				output_mode,
 			);
 		}
 	}

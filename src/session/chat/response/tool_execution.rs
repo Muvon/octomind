@@ -18,6 +18,7 @@
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::ToolProcessor;
+use crate::session::output::OutputMode;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
@@ -137,6 +138,7 @@ pub async fn execute_tools_parallel_unified(
 	config: &Config,
 	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 	role: &str,
+	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	// Filter tools based on context permissions
 	let allowed_tool_calls: Vec<_> = current_tool_calls
@@ -145,7 +147,7 @@ pub async fn execute_tools_parallel_unified(
 			if context.is_tool_allowed(&tool_call.tool_name) {
 				true
 			} else {
-				if config.runtime_output_mode.as_deref() != Some("jsonl") {
+				if !mode.should_suppress_cli_output() {
 					println!(
 						"{} {} {}",
 						"Tool".red(),
@@ -168,6 +170,7 @@ pub async fn execute_tools_parallel_unified(
 		config,
 		operation_cancelled,
 		role,
+		mode,
 	)
 	.await
 }
@@ -180,6 +183,7 @@ pub async fn execute_tools_parallel(
 	tool_processor: &mut ToolProcessor,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	role: &str,
+	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::MainSession {
 		chat_session,
@@ -192,6 +196,7 @@ pub async fn execute_tools_parallel(
 		config,
 		Some(operation_cancelled),
 		role,
+		mode,
 	)
 	.await;
 
@@ -205,6 +210,7 @@ async fn execute_tools_parallel_internal(
 	config: &Config,
 	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 	role: &str,
+	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
 	let is_single_tool = current_tool_calls.len() == 1;
@@ -291,18 +297,37 @@ async fn execute_tools_parallel_internal(
 	// Show "Executing tools..." animation during tool execution (interactive mode only)
 	let animation_cancel = Arc::new(AtomicBool::new(false));
 	let animation_cancel_clone = animation_cancel.clone();
-	let current_cost = context.get_current_cost();
-	let current_context_tokens = context.get_current_context_tokens(config, role).await;
-	let max_threshold = config.max_session_tokens_threshold;
+	let should_show_animations = mode.should_show_animations();
+	let current_cost = if should_show_animations {
+		context.get_current_cost()
+	} else {
+		0.0
+	};
+	let current_context_tokens = if should_show_animations {
+		context.get_current_context_tokens(config, role).await
+	} else {
+		0
+	};
+	let max_threshold = if should_show_animations {
+		config.max_session_tokens_threshold
+	} else {
+		0
+	};
 
 	let animation_task = tokio::spawn(async move {
-		let _ = crate::session::chat::animation::show_smart_animation(
-			animation_cancel_clone,
-			current_cost,
-			current_context_tokens,
-			max_threshold,
-		)
-		.await;
+		if should_show_animations {
+			let _ = crate::session::chat::animation::show_smart_animation(
+				animation_cancel_clone,
+				current_cost,
+				current_context_tokens,
+				max_threshold,
+			)
+			.await;
+		} else {
+			while !animation_cancel_clone.load(Ordering::SeqCst) {
+				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+			}
+		}
 	});
 
 	// Use tokio::select! for immediate cancellation response
@@ -354,7 +379,7 @@ async fn execute_tools_parallel_internal(
 								&error,
 								tool_index,
 								is_single_tool,
-								config,
+								mode,
 							);
 
 						// Still push the result for conversation continuity (AI needs to see the error)
@@ -377,14 +402,15 @@ async fn execute_tools_parallel_internal(
 							tool_index,
 							is_single_tool,
 						};
-						display_tool_success(
-							display_params,
-							&res,
-							tool_time_ms,
-							config,
-							context.session_name(),
-							context.execution_context(), // Pass the execution context
-						)
+							display_tool_success(
+								display_params,
+								&res,
+								tool_time_ms,
+								config,
+								mode,
+								context.session_name(),
+								context.execution_context(), // Pass the execution context
+							)
 						.await;
 
 						tool_results.push(res.clone());
@@ -420,7 +446,7 @@ async fn execute_tools_parallel_internal(
 							&e,
 							tool_index,
 							is_single_tool,
-							config,
+							mode,
 						);
 
 					// Track errors for this tool (if error tracking is available)
@@ -433,7 +459,7 @@ async fn execute_tools_parallel_internal(
 					if loop_detected {
 						// Always show loop detection warning since it's critical
 						if let Some(error_tracker) = context.error_tracker() {
-								if config.runtime_output_mode.as_deref() != Some("jsonl") {
+								if !mode.should_suppress_cli_output() {
 									println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
 										tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
 								}
@@ -505,11 +531,11 @@ async fn execute_tools_parallel_internal(
 						&anyhow::anyhow!("{}", e),
 						tool_index,
 						is_single_tool,
-						config,
+						mode,
 					);
 
 					// Show task error status
-					if config.runtime_output_mode.as_deref() != Some("jsonl") {
+					if !mode.should_suppress_cli_output() {
 						println!("✗ Task error for '{}': {}", tool_name, e);
 					}
 
@@ -548,17 +574,21 @@ async fn execute_tools_parallel_internal(
 
 			// Cancellation occurred - provide immediate feedback
 			use colored::*;
-			println!(
-				"{}",
-				"🛑 All tool execution cancelled - returning to input".bright_yellow()
-			);
-
-			// Show cancellation message for each tool
-			for (tool_name, _, _) in task_info {
+			if !mode.should_suppress_cli_output() {
 				println!(
 					"{}",
-					format!("🛑 Tool '{}' cancelled - server preserved", tool_name).bright_yellow()
+					"🛑 All tool execution cancelled - returning to input".bright_yellow()
 				);
+			}
+
+			// Show cancellation message for each tool
+			if !mode.should_suppress_cli_output() {
+				for (tool_name, _, _) in task_info {
+					println!(
+						"{}",
+						format!("🛑 Tool '{}' cancelled - server preserved", tool_name).bright_yellow()
+					);
+				}
 			}
 
 			// Return empty results for cancelled execution
@@ -567,7 +597,7 @@ async fn execute_tools_parallel_internal(
 	}
 
 	// Handle large outputs with batched confirmation
-	let processed_results = handle_large_tool_results(tool_results, config).await?;
+	let processed_results = handle_large_tool_results(tool_results, config, mode).await?;
 
 	Ok((processed_results, total_tool_time_ms))
 }
@@ -576,6 +606,7 @@ async fn execute_tools_parallel_internal(
 async fn handle_large_tool_results(
 	results: Vec<crate::mcp::McpToolResult>,
 	config: &Config,
+	mode: OutputMode,
 ) -> Result<Vec<crate::mcp::McpToolResult>> {
 	use colored::Colorize;
 	use std::io::{stdin, stdout, Write};
@@ -601,7 +632,7 @@ async fn handle_large_tool_results(
 	if large_indices.len() == 1 {
 		let (index, _) = large_indices[0];
 		let result = &results[index];
-		let processed = crate::mcp::handle_large_response(result.clone(), config).await?;
+		let processed = crate::mcp::handle_large_response(result.clone(), config, mode).await?;
 		let mut new_results = results;
 		new_results[index] = processed;
 		return Ok(new_results);
@@ -609,15 +640,17 @@ async fn handle_large_tool_results(
 
 	// Multiple large results - batch handling
 	// Auto-decline in non-interactive mode
-	if !std::io::stdin().is_terminal() {
-		println!(
-			"{}",
-			format!(
-				"Large outputs from {} tools ({} total tokens) automatically declined in non-interactive mode.",
-				large_indices.len(), total_tokens
-			)
-			.bright_red()
-		);
+	if mode.should_suppress_cli_output() || !std::io::stdin().is_terminal() {
+		if !mode.should_suppress_cli_output() {
+			println!(
+				"{}",
+				format!(
+					"Large outputs from {} tools ({} total tokens) automatically declined in non-interactive mode.",
+					large_indices.len(), total_tokens
+				)
+				.bright_red()
+			);
+		}
 		let mut processed_results = results;
 		for (index, tokens) in large_indices {
 			processed_results[index] = crate::mcp::McpToolResult::error(
@@ -760,13 +793,15 @@ async fn display_tool_success(
 	res: &crate::mcp::McpToolResult,
 	tool_time_ms: u64,
 	config: &Config,
+	mode: OutputMode,
 	session_name: &str,
 	execution_context: Option<String>, // New parameter for context display
 ) {
 	// For multiple tools: show header again with index
 	// For single tool in main session: skip header (already shown upfront)
 	// For layer/agent contexts: always show header (no upfront display in isolated contexts)
-	if !params.is_single_tool || execution_context.is_some() {
+	if !mode.should_suppress_cli_output() && (!params.is_single_tool || execution_context.is_some())
+	{
 		crate::session::chat::tool_display::display_individual_tool_header_with_context(
 			params.tool_name,
 			params.stored_tool_call,
@@ -779,7 +814,7 @@ async fn display_tool_success(
 
 	// Show the actual tool output based on log level using MCP protocol
 	// Skip in JSONL mode (output goes through callback instead)
-	if config.runtime_output_mode.as_deref() != Some("jsonl")
+	if !mode.should_suppress_cli_output()
 		&& (config.get_log_level().is_info_enabled() || config.get_log_level().is_debug_enabled())
 	{
 		// Extract content using MCP protocol
@@ -800,7 +835,7 @@ async fn display_tool_success(
 
 	// Always show completion status with timing and token count
 	// Skip in JSONL mode (output goes through callback instead)
-	if config.runtime_output_mode.as_deref() != Some("jsonl") {
+	if !mode.should_suppress_cli_output() {
 		let content = crate::mcp::extract_mcp_content(&res.result);
 		let token_count = crate::session::token_counter::estimate_tokens(&content);
 		let formatted_tokens = crate::session::chat::format_number(token_count as u64);
@@ -828,9 +863,9 @@ fn display_tool_error(
 	error: &anyhow::Error,
 	tool_index: usize,
 	is_single_tool: bool,
-	config: &Config,
+	mode: OutputMode,
 ) {
-	if config.runtime_output_mode.as_deref() == Some("jsonl") {
+	if mode.should_suppress_cli_output() {
 		return;
 	}
 
@@ -893,22 +928,35 @@ fn handle_declined_output_internal(tool_id: &str, chat_session: &mut ChatSession
 	}
 }
 
+/// Parameters for layer tool execution using the unified parallel logic.
+pub struct LayerToolExecutionParams<'a> {
+	pub tool_calls: Vec<crate::mcp::McpToolCall>,
+	pub session_name: String,
+	pub layer_config: &'a crate::session::layers::LayerConfig,
+	pub layer_name: String,
+	pub operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
+	pub role: &'a str,
+	pub mode: OutputMode,
+}
+
 /// Execute tool calls for layers using the unified parallel execution logic
 pub async fn execute_layer_tool_calls_parallel(
-	tool_calls: Vec<crate::mcp::McpToolCall>,
-	session_name: String,
-	layer_config: &crate::session::layers::LayerConfig,
-	layer_name: String,
 	config: &Config,
-	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
-	role: &str,
+	params: LayerToolExecutionParams<'_>,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::Layer {
-		session_name,
-		layer_config,
-		layer_name,
+		session_name: params.session_name,
+		layer_config: params.layer_config,
+		layer_name: params.layer_name,
 	};
 
-	execute_tools_parallel_unified(tool_calls, &mut context, config, operation_cancelled, role)
-		.await
+	execute_tools_parallel_unified(
+		params.tool_calls,
+		&mut context,
+		config,
+		params.operation_cancelled,
+		params.role,
+		params.mode,
+	)
+	.await
 }

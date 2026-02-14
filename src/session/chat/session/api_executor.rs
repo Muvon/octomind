@@ -177,11 +177,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			if let Err(e) =
 				CostTracker::track_exchange_cost(chat_session, &response.exchange, config)
 			{
-				println!(
-					"{}: Failed to track exchange cost: {}",
-					"Warning".bright_yellow(),
-					e
-				);
+				if mode.is_terminal_mode() {
+					println!(
+						"{}: Failed to track exchange cost: {}",
+						"Warning".bright_yellow(),
+						e
+					);
+				}
 			}
 
 			// Display rate limit information if available
@@ -209,7 +211,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.await;
 
 			if let Err(e) = process_result {
-				println!("\n{}: {}", "Error processing response".bright_red(), e);
+				if mode.is_terminal_mode() {
+					println!("\n{}: {}", "Error processing response".bright_red(), e);
+				}
 			}
 		}
 		Err(e) => {

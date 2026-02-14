@@ -97,6 +97,20 @@ impl<'a, S: OutputSink> ResponseProcessingParams<'a, S> {
 	}
 }
 
+fn emit_thinking_event<S: OutputSink>(
+	params: &ResponseProcessingParams<'_, S>,
+	thinking: &ThinkingBlock,
+	session_id: &str,
+) {
+	let meta = serde_json::to_value(thinking).unwrap_or_else(|_| serde_json::json!({}));
+	params.emit(ServerMessage::with_metadata(
+		MessageType::Thinking,
+		thinking.content.clone(),
+		meta,
+		Some(session_id.to_string()),
+	));
+}
+
 // Helper function to log debug information about the response
 fn log_response_debug(
 	_config: &Config,
@@ -384,6 +398,7 @@ pub async fn process_response<S: OutputSink>(
 	let mut current_tool_calls_param = params.tool_calls.clone(); // Track of tool_calls parameter
 	let mut current_response_id = params.response_id.clone(); // Track response_id through iterations
 	let mut current_thinking = params.thinking.clone(); // Track thinking only for the current response
+	let mut last_emitted_thinking: Option<String> = None;
 	let operation_cancelled_ref = &params.operation_cancelled; // Create a reference to avoid moves
 
 	loop {
@@ -397,6 +412,17 @@ pub async fn process_response<S: OutputSink>(
 				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
 			if !current_tool_calls.is_empty() {
+				let session_id = params.chat_session.session.info.name.clone();
+				if params.mode.should_suppress_cli_output() {
+					if let Some(ref thinking_block) = current_thinking {
+						if last_emitted_thinking.as_deref() != Some(thinking_block.content.as_str())
+						{
+							emit_thinking_event(&params, thinking_block, &session_id);
+							last_emitted_thinking = Some(thinking_block.content.clone());
+						}
+					}
+				}
+
 				// Display thinking first if present and not yet displayed - ONLY in interactive mode
 				if params.mode.is_interactive() && !thinking_displayed {
 					if let Some(ref thinking_block) = current_thinking {
@@ -602,14 +628,21 @@ pub async fn process_response<S: OutputSink>(
 	// When tool calls are present, we already created an assistant message with add_assistant_message_with_tool_calls
 	// Calling handle_final_response would create a duplicate assistant message without id
 	// Pass thinking only if it hasn't been displayed yet (in tool call loop)
+	let session_id = params.chat_session.session.info.name.clone();
 	let thinking_for_final = if thinking_displayed {
 		None
 	} else {
-		params.thinking.clone()
+		current_thinking.clone()
 	};
+	if params.mode.should_suppress_cli_output() {
+		if let Some(ref thinking_block) = thinking_for_final {
+			if last_emitted_thinking.as_deref() != Some(thinking_block.content.as_str()) {
+				emit_thinking_event(&params, thinking_block, &session_id);
+			}
+		}
+	}
 
 	// Emit assistant message through sink (WebSocket/JSONL)
-	let session_id = params.chat_session.session.info.name.clone();
 	params.emit(ServerMessage::new(
 		MessageType::Assistant,
 		current_content.clone(),

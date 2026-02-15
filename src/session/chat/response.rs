@@ -465,7 +465,6 @@ pub async fn process_response<S: OutputSink>(
 						params.config,
 						&mut tool_processor,
 						operation_cancelled_clone.clone(),
-						params.role,
 						params.mode,
 					)
 					.await

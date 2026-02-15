@@ -15,16 +15,11 @@
 // Tool result processor module - handles tool result processing, caching, and follow-up API calls
 
 use crate::config::Config;
-use crate::mcp::get_available_functions;
-use crate::session::chat::animation::show_smart_animation;
 use crate::session::chat::session::ChatSession;
-use crate::session::estimate_full_context_tokens;
 use crate::session::ChatCompletionWithValidationParams;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 // Process tool results and handle follow-up API calls
 pub async fn process_tool_results(
@@ -53,46 +48,21 @@ pub async fn process_tool_results(
 		return Ok(None);
 	}
 
-	// Create separate animation flag but monitor global cancellation
-	let animation_cancel = Arc::new(AtomicBool::new(false));
-
-	// Set up monitor task to propagate global cancellation to animation
-	let animation_cancel_monitor = animation_cancel.clone();
-	let operation_cancelled_monitor = operation_cancelled.clone();
-	let _cancel_monitor = tokio::spawn(async move {
-		while !animation_cancel_monitor.load(Ordering::SeqCst) {
-			if *operation_cancelled_monitor.borrow() {
-				animation_cancel_monitor.store(true, Ordering::SeqCst);
-				break;
-			}
-			tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
-		}
-	});
-
-	// 🎯 SENIOR FIX: Show "Generating response..." IMMEDIATELY after tools complete
-	// This provides instant feedback while tool results are being processed
-	let animation_cancel_flag = animation_cancel.clone();
+	// Calculate animation parameters
 	let current_cost = chat_session.session.info.total_cost;
 	let max_threshold = config.max_session_tokens_threshold;
+	let current_context_tokens = chat_session.get_full_context_tokens(config).await as u64;
 
-	// Calculate actual current context tokens for percentage display
-	let (_, _, _, _, system_prompt) = config.get_role_config(role);
-	let tools = get_available_functions(config).await;
-	let current_context_tokens = estimate_full_context_tokens(
-		&chat_session.session.messages,
-		Some(system_prompt),
-		Some(&tools),
-	) as u64;
-
-	let animation_task = tokio::spawn(async move {
-		let _ = show_smart_animation(
-			animation_cancel_flag,
-			current_cost,
-			current_context_tokens,
-			max_threshold,
-		)
+	// Update animation state and start animation
+	use crate::session::chat::get_animation_manager;
+	let animation_manager = get_animation_manager();
+	let anim_state = animation_manager.get_state();
+	anim_state.update_cost(current_cost);
+	anim_state.update_context_tokens(current_context_tokens);
+	anim_state.update_max_threshold(max_threshold);
+	animation_manager
+		.start_animation(&crate::session::output::OutputMode::Interactive)
 		.await;
-	});
 
 	// 🔍 PERFORMANCE DEBUG: Track where time is spent during tool result processing
 	let processing_start = std::time::Instant::now();
@@ -262,9 +232,8 @@ pub async fn process_tool_results(
 		log_debug!("Task compression completed with active plan - checking if continuation needed");
 		use crate::session::chat::session_continuation;
 		if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-			// Stop animation before returning
-			animation_cancel.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
+			// Stop global animation before returning
+			animation_manager.stop_current().await;
 
 			log_info!("Continuation triggered after task compression - returning to main loop");
 			return Ok(None);
@@ -303,9 +272,8 @@ pub async fn process_tool_results(
 		);
 		use crate::session::chat::session_continuation;
 		if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-			// Stop animation before returning
-			animation_cancel.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
+			// Stop global animation before returning
+			animation_manager.stop_current().await;
 
 			log_info!("Continuation triggered after phase compression - returning to main loop");
 			return Ok(None);
@@ -344,9 +312,8 @@ pub async fn process_tool_results(
 		);
 		use crate::session::chat::session_continuation;
 		if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-			// Stop animation before returning
-			animation_cancel.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
+			// Stop global animation before returning
+			animation_manager.stop_current().await;
 
 			log_info!("Continuation triggered after project compression - returning to main loop");
 			// Return None to signal main loop to continue with the injected continuation request
@@ -395,9 +362,8 @@ pub async fn process_tool_results(
 	// 2) After all tool results gathered, before sending to AI (HERE)
 	use crate::session::chat::session_continuation;
 	if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-		// Stop animation before returning
-		animation_cancel.store(true, Ordering::SeqCst);
-		let _ = animation_task.await;
+		// Stop global animation before returning
+		animation_manager.stop_current().await;
 
 		log_info!("Token limit reached after processing all tool results - continuation triggered");
 		return Ok(None); // Return None to stop tool processing and let continuation be handled by main loop
@@ -437,8 +403,8 @@ pub async fn process_tool_results(
 		Ok(should_continue) => {
 			if !should_continue {
 				// User chose not to continue due to spending threshold
-				animation_cancel.store(true, Ordering::SeqCst);
-				let _ = animation_task.await;
+				// Stop global animation before returning
+				animation_manager.stop_current().await;
 				println!(
 					"{}",
 					"✗ Tool follow-up cancelled due to spending threshold.".bright_red()
@@ -462,8 +428,8 @@ pub async fn process_tool_results(
 		Ok(should_continue) => {
 			if !should_continue {
 				// Request spending threshold exceeded - stop execution
-				animation_cancel.store(true, Ordering::SeqCst);
-				let _ = animation_task.await;
+				// Stop global animation before returning
+				animation_manager.stop_current().await;
 				println!(
 					"{}",
 					"✗ Tool follow-up cancelled due to request spending threshold.".bright_red()
@@ -484,9 +450,8 @@ pub async fn process_tool_results(
 
 	// CRITICAL FIX: Check for cancellation before making follow-up API call
 	if *operation_cancelled.borrow() {
-		// Stop animation before returning
-		animation_cancel.store(true, Ordering::SeqCst);
-		let _ = animation_task.await;
+		// Stop global animation before returning
+		animation_manager.stop_current().await;
 		crate::log_debug!("Operation cancelled by user.");
 		return Ok(None);
 	}
@@ -495,9 +460,8 @@ pub async fn process_tool_results(
 	let follow_up_result =
 		make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
 
-	// Stop the animation and wait for completion
-	animation_cancel.store(true, Ordering::SeqCst);
-	let _ = animation_task.await;
+	// Stop global animation and wait for completion
+	animation_manager.stop_current().await;
 
 	// Show cost breakdown for intermediate results (after tool calls, before follow-up AI call)
 	// Always show simple cost line, detailed breakdown only at info log level

@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // Format elapsed time in human-readable format
-fn format_elapsed_time(elapsed: Duration) -> String {
+pub fn format_elapsed_time(elapsed: Duration) -> String {
 	let total_secs = elapsed.as_secs();
 
 	if total_secs < 60 {

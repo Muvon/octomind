@@ -23,8 +23,6 @@ use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 use std::io::IsTerminal;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 /// Context for tool execution - can be either main session or layer context
 pub enum ToolExecutionContext<'a> {
@@ -101,34 +99,6 @@ impl ToolExecutionContext<'_> {
 		}
 		// For layers, we don't need to modify conversation history
 	}
-
-	/// Get current cost for animation display
-	pub fn get_current_cost(&self) -> f64 {
-		match self {
-			ToolExecutionContext::MainSession { chat_session, .. } => {
-				chat_session.session.info.total_cost
-			}
-			ToolExecutionContext::Layer { .. } => 0.0, // Layers don't track cost
-		}
-	}
-
-	/// Get current context tokens for animation display
-	/// CRITICAL: Must use same calculation as api_executor.rs and tool_result_processor.rs
-	pub async fn get_current_context_tokens(&self, config: &Config, role: &str) -> u64 {
-		match self {
-			ToolExecutionContext::MainSession { chat_session, .. } => {
-				// Use SAME calculation as everywhere else: full context including system + tools
-				let (_, _, _, _, system_prompt) = config.get_role_config(role);
-				let tools = crate::mcp::get_available_functions(config).await;
-				crate::session::estimate_full_context_tokens(
-					&chat_session.session.messages,
-					Some(system_prompt),
-					Some(&tools),
-				) as u64
-			}
-			ToolExecutionContext::Layer { .. } => 0, // Layers don't track context
-		}
-	}
 }
 
 /// Execute all tool calls in parallel and collect results - unified interface
@@ -137,7 +107,6 @@ pub async fn execute_tools_parallel_unified(
 	context: &mut ToolExecutionContext<'_>,
 	config: &Config,
 	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
-	role: &str,
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	// Filter tools based on context permissions
@@ -169,7 +138,6 @@ pub async fn execute_tools_parallel_unified(
 		context,
 		config,
 		operation_cancelled,
-		role,
 		mode,
 	)
 	.await
@@ -182,7 +150,6 @@ pub async fn execute_tools_parallel(
 	config: &Config,
 	tool_processor: &mut ToolProcessor,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
-	role: &str,
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::MainSession {
@@ -195,7 +162,6 @@ pub async fn execute_tools_parallel(
 		&mut context,
 		config,
 		Some(operation_cancelled),
-		role,
 		mode,
 	)
 	.await;
@@ -209,7 +175,6 @@ async fn execute_tools_parallel_internal(
 	context: &mut ToolExecutionContext<'_>,
 	config: &Config,
 	operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
-	role: &str,
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
@@ -294,48 +259,31 @@ async fn execute_tools_parallel_internal(
 	// Extract just the tasks for parallel execution
 	let tasks: Vec<_> = tool_tasks.into_iter().map(|(_, task, _, _)| task).collect();
 
-	// Show "Executing tools..." animation during tool execution (interactive mode only)
-	let animation_cancel = Arc::new(AtomicBool::new(false));
-	let animation_cancel_clone = animation_cancel.clone();
-	let should_show_animations = mode.should_show_animations();
-	let current_cost = if should_show_animations {
-		context.get_current_cost()
-	} else {
-		0.0
-	};
-	let current_context_tokens = if should_show_animations {
-		context.get_current_context_tokens(config, role).await
-	} else {
-		0
-	};
-	let max_threshold = if should_show_animations {
-		config.max_session_tokens_threshold
-	} else {
-		0
+	// Calculate animation parameters
+	let (current_cost, current_context_tokens, max_threshold) = match context {
+		ToolExecutionContext::MainSession { chat_session, .. } => {
+			let cost = chat_session.session.info.total_cost;
+			let max = config.max_session_tokens_threshold;
+			let context = chat_session.get_full_context_tokens(config).await as u64;
+			(cost, context, max)
+		}
+		ToolExecutionContext::Layer { .. } => (0.0, 0, config.max_session_tokens_threshold),
 	};
 
-	let animation_task = tokio::spawn(async move {
-		if should_show_animations {
-			let _ = crate::session::chat::animation::show_smart_animation(
-				animation_cancel_clone,
-				current_cost,
-				current_context_tokens,
-				max_threshold,
-			)
-			.await;
-		} else {
-			while !animation_cancel_clone.load(Ordering::SeqCst) {
-				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-			}
-		}
-	});
+	// Update animation state and start animation
+	use crate::session::chat::get_animation_manager;
+	let animation_manager = get_animation_manager();
+	let anim_state = animation_manager.get_state();
+	anim_state.update_cost(current_cost);
+	anim_state.update_context_tokens(current_context_tokens);
+	anim_state.update_max_threshold(max_threshold);
+	animation_manager.start_animation(&mode).await;
 
 	// Use tokio::select! for immediate cancellation response
 	tokio::select! {
 		task_results = futures::future::join_all(tasks) => {
-			// Stop animation before rendering any tool output
-			animation_cancel.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
+			// Stop global animation
+			animation_manager.stop_current().await;
 
 			// All tasks completed before cancellation
 			for ((tool_name, tool_id, tool_index), task_result) in task_info.into_iter().zip(task_results) {
@@ -568,9 +516,8 @@ async fn execute_tools_parallel_internal(
 				std::future::pending::<()>().await;
 			}
 		} => {
-			// Stop animation
-			animation_cancel.store(true, Ordering::SeqCst);
-			let _ = animation_task.await;
+			// Stop global animation
+			animation_manager.stop_current().await;
 
 			// Cancellation occurred - provide immediate feedback
 			use colored::*;
@@ -935,7 +882,6 @@ pub struct LayerToolExecutionParams<'a> {
 	pub layer_config: &'a crate::session::layers::LayerConfig,
 	pub layer_name: String,
 	pub operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
-	pub role: &'a str,
 	pub mode: OutputMode,
 }
 
@@ -955,7 +901,6 @@ pub async fn execute_layer_tool_calls_parallel(
 		&mut context,
 		config,
 		params.operation_cancelled,
-		params.role,
 		params.mode,
 	)
 	.await

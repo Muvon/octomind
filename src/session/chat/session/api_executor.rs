@@ -12,22 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
-
-use super::super::animation::{show_loading_animation, show_no_animation};
 use super::super::response::{process_response, ResponseProcessingParams};
 use super::super::CostTracker;
 use super::core::ChatSession;
 use super::error_utils::display_rate_limit_info;
 use crate::config::Config;
-use crate::mcp::get_available_functions;
 use crate::session::chat_completion_with_validation;
-use crate::session::estimate_full_context_tokens;
 use crate::session::ChatCompletionWithValidationParams;
 use anyhow::Result;
 use colored::*;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tokio::sync::watch;
 
 use crate::session::output::{OutputMode, OutputSink};
@@ -45,60 +38,22 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	let temperature = chat_session.temperature;
 	let config_clone = config.clone();
 
-	// Create animation task
-	let animation_cancel = Arc::new(AtomicBool::new(false));
-	let animation_cancel_clone = animation_cancel.clone();
+	// Calculate animation parameters
 	let current_cost = chat_session.session.info.total_cost;
 	let max_threshold = config.max_session_tokens_threshold;
+	let current_context_tokens = chat_session.get_full_context_tokens(config).await as u64;
 
-	// Calculate actual current context tokens for percentage display
-	let (_, _, _, _, system_prompt) = config.get_role_config(role);
-	let tools = get_available_functions(config).await;
-	let current_context_tokens = estimate_full_context_tokens(
-		&chat_session.session.messages,
-		Some(system_prompt),
-		Some(&tools),
-	) as u64;
+	// Update animation state and start animation
+	use crate::session::chat::get_animation_manager;
+	let animation_manager = get_animation_manager();
+	let anim_state = animation_manager.get_state();
+	anim_state.update_cost(current_cost);
+	anim_state.update_context_tokens(current_context_tokens);
+	anim_state.update_max_threshold(max_threshold);
+	animation_manager.start_animation(&mode).await;
 
-	// Set up monitor task to propagate global cancellation to animation
-	let animation_cancel_monitor = animation_cancel.clone();
-	let operation_cancelled_monitor = operation_rx.clone();
+	// Clone operation_rx for response processing
 	let operation_rx_for_response = operation_rx.clone();
-	let _cancel_monitor = tokio::spawn(async move {
-		while !animation_cancel_monitor.load(Ordering::SeqCst) {
-			if *operation_cancelled_monitor.borrow() {
-				animation_cancel_monitor.store(true, Ordering::SeqCst);
-				break;
-			}
-			tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-		}
-	});
-
-	// Check if we're in JSONL mode before spawning animation
-	let suppress_animation = mode.should_suppress_cli_output();
-
-	let animation_task = tokio::spawn(async move {
-		// Skip animation entirely when in JSONL mode
-		if suppress_animation {
-			// Just wait for cancellation without any output
-			while !animation_cancel_clone.load(Ordering::SeqCst) {
-				tokio::time::sleep(Duration::from_millis(10)).await;
-			}
-			return;
-		}
-
-		if mode.is_interactive() {
-			let _ = show_loading_animation(
-				animation_cancel_clone,
-				current_cost,
-				current_context_tokens,
-				max_threshold,
-			)
-			.await;
-		} else {
-			let _ = show_no_animation(animation_cancel_clone, current_cost).await;
-		}
-	});
 
 	// Check spending threshold for interactive mode
 	if mode.is_interactive() {
@@ -106,7 +61,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			Ok(should_continue) => {
 				if !should_continue {
 					// User chose not to continue due to spending threshold
-					let _ = animation_task.await;
+					animation_manager.stop_current().await;
 					return Ok(());
 				}
 			}
@@ -125,7 +80,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			Ok(should_continue) => {
 				if !should_continue {
 					// Request spending threshold exceeded - stop execution
-					let _ = animation_task.await;
+					animation_manager.stop_current().await;
 					return Ok(());
 				}
 			}
@@ -157,9 +112,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	.with_cancellation_token(operation_rx);
 	let api_result = chat_completion_with_validation(validation_params).await;
 
-	// Stop animation
-	animation_cancel.store(true, Ordering::SeqCst);
-	let _ = animation_task.await;
+	// Stop global animation
+	animation_manager.stop_current().await;
 
 	// CRITICAL FIX: Check for cancellation after API call completion
 	// This prevents the race condition where Ctrl+C is pressed after API completes

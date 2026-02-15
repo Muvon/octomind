@@ -161,7 +161,6 @@ impl GenericLayer {
 							layer_config: &self.config,
 							layer_name: self.get_execution_context(),
 							operation_cancelled: Some(operation_cancelled.clone()),
-							role: "layer", // Layers use "layer" as role
 							mode: output_mode,
 						};
 					let (tool_results, tool_time) =

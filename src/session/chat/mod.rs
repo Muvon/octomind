@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // Chat session module
+// Chat session module
 mod animation;
+mod animation_manager;
 pub mod assistant_output;
 mod command_executor;
 mod commands;
@@ -43,6 +45,7 @@ mod tool_processor;
 pub use animation::{
 	show_generation_message_static, show_loading_animation, show_no_animation, show_smart_animation,
 };
+pub use animation_manager::{get_animation_manager, AnimationManager};
 pub use assistant_output::print_assistant_response;
 pub use command_executor::{
 	command_exists, execute_command_layer, get_command_help, list_available_commands,

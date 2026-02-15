@@ -63,6 +63,7 @@ impl MessageHandler {
 			name: None,
 			tool_calls: original_tool_calls,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: response_id,
 		};

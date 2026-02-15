@@ -26,8 +26,9 @@ pub mod logger; // Request/response logging utilities
 pub mod modal; // Terminal modal overlay system
 mod model_utils; // Model-specific utility functions
 pub mod output; // Output abstraction for streaming messages
-mod project_context; // Project context collection and management
-					 // Provider abstraction layer moved to src/providers
+mod project_context;
+pub mod video; // Video processing and attachment utilities // Project context collection and management
+			   // Provider abstraction layer moved to src/providers
 pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
@@ -166,6 +167,8 @@ pub struct Message {
 	pub tool_calls: Option<serde_json::Value>, // For assistant messages: original tool calls from API response
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<crate::session::image::ImageAttachment>>, // For messages with image attachments
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub videos: Option<Vec<crate::session::video::VideoAttachment>>, // For messages with video attachments
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub thinking: Option<serde_json::Value>, // For assistant messages: thinking/reasoning content
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -194,6 +197,7 @@ impl Default for Message {
 			name: None,
 			tool_calls: None,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		}
@@ -1708,6 +1712,7 @@ mod tests {
 			name: None,
 			tool_calls,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		}

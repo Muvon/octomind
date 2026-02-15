@@ -385,6 +385,7 @@ impl GenericLayer {
 			estimated_cost: 0.0,
 			cache_next_user_message: false,
 			pending_image: None,
+			pending_video: None,
 			spending_threshold_checkpoint: 0.0,
 			request_spending_checkpoint: 0.0, // Initialize request spending checkpoint
 			max_retries: 0,                   // Default max_retries for layers

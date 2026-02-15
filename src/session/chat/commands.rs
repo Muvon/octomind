@@ -35,13 +35,14 @@ pub const RUN_COMMAND: &str = "/run";
 pub const MCP_COMMAND: &str = "/mcp";
 pub const REPORT_COMMAND: &str = "/report";
 pub const IMAGE_COMMAND: &str = "/image";
+pub const VIDEO_COMMAND: &str = "/video";
 pub const CONTEXT_COMMAND: &str = "/context";
 pub const ROLE_COMMAND: &str = "/role";
 pub const PROMPT_COMMAND: &str = "/prompt";
 pub const PLAN_COMMAND: &str = "/plan";
 pub const WORKFLOW_COMMAND: &str = "/workflow";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 25] = [
+pub const COMMANDS: [&str; 26] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -62,6 +63,7 @@ pub const COMMANDS: [&str; 25] = [
 	MCP_COMMAND,
 	REPORT_COMMAND,
 	IMAGE_COMMAND,
+	VIDEO_COMMAND,
 	CONTEXT_COMMAND,
 	ROLE_COMMAND,
 	PROMPT_COMMAND,

@@ -157,6 +157,7 @@ fn handle_final_response(
 		name: None,
 		tool_calls: None,
 		images: None,
+		videos: None,
 		thinking: None,
 		id: response_id, // CRITICAL: Set the response_id for conversation continuity
 	};
@@ -313,6 +314,7 @@ fn add_assistant_message_with_tool_calls(
 		name: None,
 		tool_calls: original_tool_calls.clone(),
 		images: None,
+		videos: None,
 		thinking: thinking_value,
 		id: response_id.clone(),
 	};

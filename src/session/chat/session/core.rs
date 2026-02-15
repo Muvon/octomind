@@ -156,6 +156,7 @@ pub struct ChatSession {
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
 	pub request_spending_checkpoint: f64, // Track spending at start of current request
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
+	pub pending_video: Option<crate::session::video::VideoAttachment>, // Pending video attachment
 	pub max_retries: u32,              // Maximum number of retries for provider errors
 	pub continuation_pending: bool,    // Flag for session continuation state
 	pub continuation_disabled: bool,   // Flag to temporarily disable continuation triggers
@@ -267,6 +268,7 @@ impl ChatSession {
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 			request_spending_checkpoint: 0.0,   // Initialize request spending checkpoint
 			pending_image: None,                // Initialize pending image
+			pending_video: None,                // Initialize pending video
 			max_retries: max_retries_value,     // Set max retries value
 			continuation_pending: false,        // Initialize continuation state
 			continuation_disabled: false,       // Initialize continuation control flag
@@ -448,6 +450,7 @@ impl ChatSession {
 						spending_threshold_checkpoint: spending_checkpoint, // Restore from session.info
 						request_spending_checkpoint: 0.0,    // Initialize request spending checkpoint
 						pending_image: None,                 // Initialize pending image
+						pending_video: None,                 // Initialize pending video
 						max_retries: params.max_retries.unwrap_or(0), // Use provided max_retries or default to 0
 						continuation_pending,                // Restore from session.info
 						continuation_disabled,               // Restore from session.info
@@ -707,6 +710,70 @@ impl ChatSession {
 		self.pending_image.take()
 	}
 
+	/// Attach video from file path
+	pub async fn attach_video_from_path(&mut self, path: &str) -> Result<()> {
+		use crate::session::video::VideoProcessor;
+		use std::path::Path;
+
+		// Check if input is a URL
+		if VideoProcessor::is_url(path) {
+			println!("{}", "🌐 Downloading video from URL...".bright_cyan());
+
+			let video_attachment = VideoProcessor::load_from_url(path).await?;
+
+			// Show preview
+			println!("{}", "🎬 Video preview:".bright_cyan());
+			VideoProcessor::show_preview(&video_attachment)?;
+
+			// Store for next message
+			self.pending_video = Some(video_attachment);
+
+			println!(
+				"{}",
+				"✅ Video downloaded and ready to attach!".bright_green()
+			);
+			return Ok(());
+		}
+
+		// Handle as file path
+		let video_path = Path::new(path);
+
+		// Check if file exists
+		if !video_path.exists() {
+			return Err(anyhow::anyhow!("Video file not found: {}", path));
+		}
+
+		// Check if it's a supported video format
+		if !VideoProcessor::is_supported_video(video_path) {
+			return Err(anyhow::anyhow!(
+				"Unsupported video format. Supported: {}",
+				VideoProcessor::supported_extensions().join(", ")
+			));
+		}
+
+		// Load and process the video
+		let video_attachment = VideoProcessor::load_from_path(video_path)?;
+
+		// Show preview
+		println!("{}", "🎬 Video preview:".bright_cyan());
+		VideoProcessor::show_preview(&video_attachment)?;
+
+		// Store for next message
+		self.pending_video = Some(video_attachment);
+
+		Ok(())
+	}
+
+	/// Check if there's a pending video attachment
+	pub fn has_pending_video(&self) -> bool {
+		self.pending_video.is_some()
+	}
+
+	/// Take the pending video (consumes it)
+	pub fn take_pending_video(&mut self) -> Option<crate::session::video::VideoAttachment> {
+		self.pending_video.take()
+	}
+
 	/// Process user commands
 	pub async fn process_command(
 		&mut self,
@@ -871,6 +938,7 @@ impl ChatSession {
 			name: Some("plan_compression".to_string()),
 			tool_calls: None,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		};

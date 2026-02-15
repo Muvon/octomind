@@ -48,6 +48,7 @@ mod compression_tests {
 			name: None,
 			tool_calls: None,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		}];
@@ -63,6 +64,7 @@ mod compression_tests {
 				name: None,
 				tool_calls: None,
 				images: None,
+				videos: None,
 				thinking: None,
 				id: None,
 			});
@@ -75,6 +77,7 @@ mod compression_tests {
 				name: None,
 				tool_calls: None,
 				images: None,
+				videos: None,
 				thinking: None,
 				id: None,
 			});
@@ -290,6 +293,7 @@ mod adaptive_compression_tests {
 			name: None,
 			tool_calls: None,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		}];
@@ -305,6 +309,7 @@ mod adaptive_compression_tests {
 				name: None,
 				tool_calls: None,
 				images: None,
+				videos: None,
 				thinking: None,
 				id: None,
 			});
@@ -317,6 +322,7 @@ mod adaptive_compression_tests {
 				name: None,
 				tool_calls: None,
 				images: None,
+				videos: None,
 				thinking: None,
 				id: None,
 			});

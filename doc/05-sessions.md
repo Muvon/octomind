@@ -407,10 +407,10 @@ Octomind provides comprehensive session management through built-in commands:
 
 ### File and Image Operations
 - `/image <path>` - Attach image to next message (PNG, JPEG, GIF, WebP, BMP)
+- `/video <path>` - Attach video to next message (MP4, MOV, AVI, WebM, MKV)
 - `/save` - Save current session
 - `/clear` - Clear terminal screen
 - `/copy` - Copy last assistant response to clipboard
-
 ### Context and Memory Management
 - `/cache` - Mark cache checkpoint for cost savings
 - `/summarize` - Generate session summary
@@ -498,13 +498,19 @@ For comprehensive workflow documentation, see [doc/10-workflows.md](./10-workflo
 
 ## Multimodal Vision Support
 
-Octomind supports image analysis across all AI providers through the `/image` command.
+Octomind supports image and video analysis across all AI providers through the `/image` and `/video` commands.
 
-### Supported Formats
+### Supported Image Formats
 
 - **Image Types**: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, SVG, AVIF, HEIC, HEIF
 - **Path Types**: Relative paths, absolute paths, tilde expansion (`~/images/`)
 - **Intelligent Completion**: Tab completion with image file filtering
+
+### Supported Video Formats
+
+- **Video Types**: MP4, MOV, AVI, WebM, MKV, FLV, WMV, MPEG, 3GP
+- **Path Types**: Relative paths, absolute paths, tilde expansion (`~/videos/`)
+- **Metadata Preview**: Shows dimensions, duration, and file size when attached
 
 ### Usage Examples
 
@@ -526,6 +532,24 @@ Octomind supports image analysis across all AI providers through the `/image` co
 > Review this design mockup
 ```
 
+```bash
+# Attach local video
+> /video demo.mp4
+> Analyze this screen recording
+
+# Absolute path
+> /video /path/to/tutorial.mov
+> Summarize what happens in this video
+
+# Tilde expansion
+> /video ~/Downloads/presentation.mp4
+> Extract key points from this presentation
+
+# Relative path with directory
+> /video ./assets/demo.webm
+> Review this product demo
+```
+
 ### Vision-Capable Models by Provider
 
 | Provider | Vision Models |
@@ -541,15 +565,17 @@ Octomind supports image analysis across all AI providers through the `/image` co
 
 - **Model Detection**: Automatic vision support detection for current model
 - **Terminal Preview**: Small image preview in terminal when attached
-- **Path Completion**: Smart autocomplete for image files with filtering
+- **Video Metadata**: Shows resolution, duration, and file size for videos
+- **Path Completion**: Smart autocomplete for media files with filtering
 - **Error Handling**: Clear feedback for unsupported formats or missing files
 
 ### Tips
 
 - Copy an image to clipboard and run `/image` to auto-attach (when available)
+- Videos are automatically transcoded to provider-compatible formats when needed
 - Use `/model` to switch to a vision-capable model if needed
-- Images are attached to your next message - send text after attaching
-
+- Images and videos are attached to your next message - send text after attaching
+- Large videos may take longer to process depending on the provider
 ### Session Storage
 
 Sessions are stored in `.octomind/sessions/`:

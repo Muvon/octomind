@@ -44,6 +44,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(ROLE_COMMAND.to_string());
 	commands.push(MCP_COMMAND.to_string());
 	commands.push(IMAGE_COMMAND.to_string());
+	commands.push(VIDEO_COMMAND.to_string());
 	commands.push(PROMPT_COMMAND.to_string());
 	commands.push(PLAN_COMMAND.to_string());
 	commands.push(REPORT_COMMAND.to_string());

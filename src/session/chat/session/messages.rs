@@ -204,6 +204,16 @@ impl ChatSession {
 			println!("{}", "📎 Image attached to message".bright_green());
 		}
 
+		// Attach pending video if available
+		if let Some(video_attachment) = self.take_pending_video() {
+			message.videos = Some(vec![video_attachment]);
+			// Update the message in the session
+			if let Some(last_msg) = self.session.messages.last_mut() {
+				last_msg.videos = message.videos.clone();
+			}
+			println!("{}", "🎬 Video attached to message".bright_green());
+		}
+
 		// Check if we should cache this user message
 		if self.cache_next_user_message {
 			let supports_caching = crate::session::model_supports_caching(&self.session.info.model);

@@ -39,6 +39,7 @@ mod session;
 mod summarize;
 mod truncate;
 mod utils;
+mod video;
 mod workflow;
 
 use super::super::commands::*;
@@ -134,6 +135,11 @@ pub enum CommandOutput {
 		path: Option<String>,
 		error: Option<String>,
 	},
+	Video {
+		video_attached: bool,
+		path: Option<String>,
+		error: Option<String>,
+	},
 	Prompt {
 		data: serde_json::Value,
 	},
@@ -220,6 +226,7 @@ impl CommandOutput {
 			Self::Cache { .. } => display::display_cache(self),
 			Self::Context { .. } => display::display_context(self, session, config).await,
 			Self::Image { .. } => display::display_image(self),
+			Self::Video { .. } => display::display_video(self),
 			Self::Prompt { .. } => display::display_prompt(self),
 			Self::Done { .. } => display::display_done(self),
 			Self::List { .. } => display::display_list(self, config),
@@ -300,6 +307,7 @@ pub async fn process_command(
 		}
 
 		IMAGE_COMMAND => image::handle_image(session, params).await,
+		VIDEO_COMMAND => video::handle_video(session, params).await,
 		ROLE_COMMAND => role::handle_role(session, config, params).await,
 		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
 		PLAN_COMMAND => plan::handle_plan().await,

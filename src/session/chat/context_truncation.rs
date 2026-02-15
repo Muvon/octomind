@@ -387,6 +387,7 @@ mod tests {
 			name,
 			tool_calls,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		}

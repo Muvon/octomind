@@ -95,6 +95,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			IMAGE_COMMAND.cyan()
 		);
 		println!(
+			"{} <path> - Attach video to next message (MP4, MOV, AVI, WebM, MKV, M4V, 3GP)",
+			VIDEO_COMMAND.cyan()
+		);
+		println!(
 			"{} [template_name] - Manage prompt templates",
 			PROMPT_COMMAND.cyan()
 		);
@@ -608,6 +612,44 @@ pub fn display_image(output: &CommandOutput) {
 				"{}",
 				"💡 Tip: Copy an image to clipboard and run /image to auto-attach it".bright_blue()
 			);
+		}
+		println!();
+	}
+}
+
+pub fn display_video(output: &CommandOutput) {
+	if let CommandOutput::Video {
+		video_attached,
+		path,
+		error,
+	} = output
+	{
+		if *video_attached {
+			println!("{}", "✅ Video attached successfully!".bright_green());
+			if let Some(p) = path {
+				println!("{} {}", "Path:".bright_cyan(), p.bright_white());
+			}
+			println!(
+				"{}",
+				"Your next message will include this video.".bright_cyan()
+			);
+		} else if let Some(err) = error {
+			println!("{}: {}", "❌ Failed to attach video".bright_red(), err);
+		} else {
+			// Show usage
+			println!("{}", "Usage: /video <path_to_video_or_url>".bright_yellow());
+			println!("{}", "Examples:".bright_blue());
+			println!("{}", "  /video recording.mp4".bright_white());
+			println!("{}", "  /video /path/to/video.mov".bright_white());
+			println!(
+				"{}",
+				"  /video https://example.com/video.mp4".bright_white()
+			);
+			println!(
+				"{}",
+				"Supported formats: MP4, MOV, AVI, WebM, MKV, M4V, 3GP".bright_blue()
+			);
+			println!("{}", "💡 Tip: Max file size is 100MB".bright_blue());
 		}
 		println!();
 	}

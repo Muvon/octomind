@@ -238,6 +238,13 @@ fn convert_message_to_octolib(
 		builder = builder.with_images(octolib_images);
 	}
 
+	// Convert videos if present
+	if let Some(videos) = &msg.videos {
+		let octolib_videos: Vec<octolib::llm::VideoAttachment> =
+			videos.iter().map(convert_video_to_octolib).collect();
+		builder = builder.with_videos(octolib_videos);
+	}
+
 	// CRITICAL FIX: Convert thinking field for Moonshot and other thinking models
 	// Moonshot requires reasoning_content for assistant messages with tool_calls
 	// The thinking field is stored as serde_json::Value, convert to ThinkingBlock
@@ -286,6 +293,35 @@ fn convert_image_to_octolib(
 		source_type,
 		dimensions: img.dimensions,
 		size_bytes: img.size_bytes,
+	}
+}
+
+/// Convert Octomind VideoAttachment to octolib VideoAttachment
+fn convert_video_to_octolib(
+	video: &crate::session::video::VideoAttachment,
+) -> octolib::llm::VideoAttachment {
+	let data = match &video.data {
+		crate::session::video::VideoData::Base64(data) => {
+			octolib::llm::VideoData::Base64(data.clone())
+		}
+		crate::session::video::VideoData::Url(url) => octolib::llm::VideoData::Url(url.clone()),
+	};
+
+	let source_type = match &video.source_type {
+		crate::session::video::SourceType::File(path) => {
+			octolib::llm::SourceType::File(path.clone())
+		}
+		crate::session::video::SourceType::Clipboard => octolib::llm::SourceType::Clipboard,
+		crate::session::video::SourceType::Url => octolib::llm::SourceType::Url,
+	};
+
+	octolib::llm::VideoAttachment {
+		data,
+		media_type: video.media_type.clone(),
+		source_type,
+		dimensions: video.dimensions,
+		size_bytes: video.size_bytes,
+		duration_secs: video.duration_secs,
 	}
 }
 

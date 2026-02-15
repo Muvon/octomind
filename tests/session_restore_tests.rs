@@ -49,6 +49,7 @@ mod session_restore_tests {
 			name: None,
 			tool_calls: None,
 			images: None,
+			videos: None,
 			thinking: None,
 			id: None,
 		}

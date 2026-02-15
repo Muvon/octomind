@@ -629,6 +629,7 @@ async fn ask_ai_decision_and_summary(
 		name: None,
 		tool_calls: None,
 		images: None,
+		videos: None,
 		thinking: None,
 		id: None,
 	});

@@ -140,6 +140,16 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				}
 			}
 
+			// CRITICAL FIX: Update animation state after cost tracking
+			// This ensures the animation shows updated cost/tokens after EACH response
+			// We update AFTER receiving response and tracking cost, not before making requests
+			let current_cost = chat_session.session.info.total_cost;
+			let current_context_tokens = chat_session.get_full_context_tokens(config).await as u64;
+			animation_manager.get_state().update_cost(current_cost);
+			animation_manager
+				.get_state()
+				.update_context_tokens(current_context_tokens);
+
 			// Display rate limit information if available
 			display_rate_limit_info(&response.exchange);
 

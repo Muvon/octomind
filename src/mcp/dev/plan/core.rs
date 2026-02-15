@@ -61,6 +61,14 @@ pub fn get_and_clear_start_index() -> Option<usize> {
 	start_index.take()
 }
 
+/// Clear the current task start index (called after successful compression)
+/// This allows the next task to set a new start_index
+pub fn clear_task_start_index() {
+	let mut start_index = CURRENT_TASK_START_INDEX.lock().unwrap();
+	*start_index = None;
+	crate::log_debug!("Cleared task start_index after successful compression");
+}
+
 /// Check if there's an active plan (for compression hints)
 pub fn has_active_plan() -> bool {
 	let storage = PLAN_STORAGE.lock().unwrap();
@@ -512,17 +520,10 @@ async fn handle_next_command(call: &McpToolCall) -> Result<McpToolResult> {
 		super::compression::request_compression(task);
 	}
 
-	// CRITICAL FIX: Clear start_index after requesting compression
-	// This signals that the NEXT task should set a new start_index
-	// The new start_index will be set in response.rs after plan(next) returns
-	// This ensures each task gets its own compression range
-	{
-		let mut start_index = CURRENT_TASK_START_INDEX.lock().unwrap();
-		*start_index = None;
-		crate::log_debug!(
-			"Cleared start_index after plan(next) - next task will set new start_index"
-		);
-	}
+	// NOTE: start_index is NOT cleared here anymore!
+	// It will only be cleared in compression.rs AFTER successful compression
+	// This allows multiple tasks to accumulate if compression keeps getting skipped
+	// (e.g., when tasks have minimal work and compression would add tokens instead of saving)
 
 	// Automatic phase compression: trigger when phase completes
 	if phase_completed {

@@ -333,6 +333,15 @@ pub async fn compress_completed_task(
 		.unwrap_or_default()
 		.as_secs();
 
+	// CRITICAL: Clear start_index ONLY after successful compression
+	// This allows multiple tasks to accumulate if compression keeps getting skipped
+	// When compression is skipped (would add tokens), start_index stays the same,
+	// so the next task will include all accumulated work in its compression range
+	super::core::clear_task_start_index();
+	crate::log_debug!(
+		"Cleared start_index after successful compression - next task will set new start_index"
+	);
+
 	Ok(Some(metrics))
 }
 
@@ -524,6 +533,13 @@ async fn compress_phase(
 		.unwrap_or_default()
 		.as_secs();
 
+	// CRITICAL: Clear start_index after successful phase compression
+	// Phase compression consolidates multiple task compressions, so we reset the range
+	super::core::clear_task_start_index();
+	crate::log_debug!(
+		"Cleared start_index after successful phase compression - next task will set new start_index"
+	);
+
 	Ok(Some(metrics))
 }
 
@@ -654,6 +670,11 @@ async fn compress_project(
 		.duration_since(std::time::UNIX_EPOCH)
 		.unwrap_or_default()
 		.as_secs();
+
+	// CRITICAL: Clear start_index after successful project compression
+	// Project compression is the final compression, so we reset the range
+	super::core::clear_task_start_index();
+	crate::log_debug!("Cleared start_index after successful project compression - plan complete");
 
 	Ok(Some(metrics))
 }

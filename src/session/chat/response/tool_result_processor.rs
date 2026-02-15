@@ -48,18 +48,11 @@ pub async fn process_tool_results(
 		return Ok(None);
 	}
 
-	// Calculate animation parameters
-	let current_cost = chat_session.session.info.total_cost;
-	let max_threshold = config.max_session_tokens_threshold;
-	let current_context_tokens = chat_session.get_full_context_tokens(config).await as u64;
-
-	// Update animation state and start animation
+	// Start animation (uses state already set by api_executor.rs)
+	// CRITICAL FIX: Don't recalculate animation parameters here to avoid flickering
+	// Animation state is set once at request start in api_executor.rs and remains stable
 	use crate::session::chat::get_animation_manager;
 	let animation_manager = get_animation_manager();
-	let anim_state = animation_manager.get_state();
-	anim_state.update_cost(current_cost);
-	anim_state.update_context_tokens(current_context_tokens);
-	anim_state.update_max_threshold(max_threshold);
 	animation_manager
 		.start_animation(&crate::session::output::OutputMode::Interactive)
 		.await;

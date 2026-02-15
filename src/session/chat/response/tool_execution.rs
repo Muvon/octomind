@@ -259,24 +259,11 @@ async fn execute_tools_with_context(
 	// Extract just the tasks for parallel execution
 	let tasks: Vec<_> = tool_tasks.into_iter().map(|(_, task, _, _)| task).collect();
 
-	// Calculate animation parameters
-	let (current_cost, current_context_tokens, max_threshold) = match context {
-		ToolExecutionContext::MainSession { chat_session, .. } => {
-			let cost = chat_session.session.info.total_cost;
-			let max = config.max_session_tokens_threshold;
-			let context = chat_session.get_full_context_tokens(config).await as u64;
-			(cost, context, max)
-		}
-		ToolExecutionContext::Layer { .. } => (0.0, 0, config.max_session_tokens_threshold),
-	};
-
-	// Update animation state and start animation
+	// Start animation (uses state already set by api_executor.rs)
+	// CRITICAL FIX: Don't recalculate animation parameters here to avoid flickering
+	// Animation state is set once at request start in api_executor.rs and remains stable
 	use crate::session::chat::get_animation_manager;
 	let animation_manager = get_animation_manager();
-	let anim_state = animation_manager.get_state();
-	anim_state.update_cost(current_cost);
-	anim_state.update_context_tokens(current_context_tokens);
-	anim_state.update_max_threshold(max_threshold);
 	animation_manager.start_animation(&mode).await;
 
 	// Use tokio::select! for immediate cancellation response

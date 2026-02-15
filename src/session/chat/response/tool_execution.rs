@@ -95,14 +95,14 @@ impl ToolExecutionContext<'_> {
 	/// Handle declined output by removing tool call from conversation
 	pub fn handle_declined_output(&mut self, tool_id: &str) {
 		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
-			handle_declined_output_internal(tool_id, chat_session);
+			handle_declined_in_session(tool_id, chat_session);
 		}
 		// For layers, we don't need to modify conversation history
 	}
 }
 
-/// Execute all tool calls in parallel and collect results - unified interface
-pub async fn execute_tools_parallel_unified(
+/// Execute all tool calls in parallel for given execution context
+pub async fn execute_tools_in_context(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	context: &mut ToolExecutionContext<'_>,
 	config: &Config,
@@ -133,7 +133,7 @@ pub async fn execute_tools_parallel_unified(
 		return Ok((Vec::new(), 0));
 	}
 
-	execute_tools_parallel_internal(
+	execute_tools_with_context(
 		allowed_tool_calls,
 		context,
 		config,
@@ -157,7 +157,7 @@ pub async fn execute_tools_parallel(
 		tool_processor,
 	};
 
-	let result = execute_tools_parallel_unified(
+	let result = execute_tools_in_context(
 		current_tool_calls.clone(),
 		&mut context,
 		config,
@@ -169,8 +169,8 @@ pub async fn execute_tools_parallel(
 	result
 }
 
-// Internal implementation that works with the unified context
-async fn execute_tools_parallel_internal(
+// Implementation that works with execution context
+async fn execute_tools_with_context(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	context: &mut ToolExecutionContext<'_>,
 	config: &Config,
@@ -838,8 +838,8 @@ fn display_tool_error(
 	println!("✗ Tool '{}' failed: {}", tool_name, error);
 }
 
-// Handle user-declined large output (internal implementation)
-fn handle_declined_output_internal(tool_id: &str, chat_session: &mut ChatSession) {
+// Handle user-declined large output in chat session
+fn handle_declined_in_session(tool_id: &str, chat_session: &mut ChatSession) {
 	println!("⚠ Tool output declined by user - removing tool call from conversation");
 
 	// CRITICAL FIX: Remove the tool_use block from the assistant message
@@ -896,7 +896,7 @@ pub async fn execute_layer_tool_calls_parallel(
 		layer_name: params.layer_name,
 	};
 
-	execute_tools_parallel_unified(
+	execute_tools_in_context(
 		params.tool_calls,
 		&mut context,
 		config,

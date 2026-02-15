@@ -223,7 +223,7 @@ pub fn read_file_lines(filepath: &str, range: &LineRange) -> FileContent {
 		};
 	}
 
-	match read_file_lines_internal(&normalized_path, range) {
+	match read_file_lines_with_range(&normalized_path, range) {
 		Ok(lines) => FileContent {
 			path: filepath.to_string(),
 			lines,
@@ -239,8 +239,8 @@ pub fn read_file_lines(filepath: &str, range: &LineRange) -> FileContent {
 	}
 }
 
-/// Internal function to read file lines with proper error handling
-fn read_file_lines_internal(filepath: &str, range: &LineRange) -> Result<Vec<String>> {
+/// Read file lines for a specific range
+fn read_file_lines_with_range(filepath: &str, range: &LineRange) -> Result<Vec<String>> {
 	let file =
 		fs::File::open(filepath).with_context(|| format!("Failed to open file: {}", filepath))?;
 

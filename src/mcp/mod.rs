@@ -393,14 +393,14 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 				match server.name() {
 					"developer" => {
 						let server_functions =
-							get_cached_internal_functions("developer", server.tools(), || {
+							get_filtered_server_functions("developer", server.tools(), || {
 								dev::get_all_functions()
 							});
 						functions.extend(server_functions);
 					}
 					"filesystem" => {
 						let server_functions =
-							get_cached_internal_functions("filesystem", server.tools(), || {
+							get_filtered_server_functions("filesystem", server.tools(), || {
 								fs::get_all_functions()
 							});
 						functions.extend(server_functions);
@@ -415,7 +415,7 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 					}
 					"web" => {
 						let server_functions =
-							get_cached_internal_functions("web", server.tools(), || {
+							get_filtered_server_functions("web", server.tools(), || {
 								web::get_all_functions()
 							});
 						functions.extend(server_functions);
@@ -487,8 +487,8 @@ pub fn is_tool_allowed_by_patterns(tool_name: &str, allowed_tools: &[String]) ->
 	false
 }
 
-// Helper function to get cached internal functions with filtering
-pub fn get_cached_internal_functions<F>(
+// Get functions from server with optional filtering and caching
+pub fn get_filtered_server_functions<F>(
 	server_type: &str,
 	allowed_tools: &[String],
 	get_functions: F,
@@ -531,8 +531,8 @@ where
 	filtered_functions
 }
 
-// Clear internal function cache (useful for testing or when tools configuration changes)
-pub fn clear_internal_function_cache() {
+// Clear function cache (useful for testing or when tools configuration changes)
+pub fn clear_function_cache() {
 	let mut cache = INTERNAL_FUNCTION_CACHE.write().unwrap();
 	let count = cache.len();
 	cache.clear();
@@ -602,12 +602,12 @@ pub async fn build_tool_server_map(
 				match server.name() {
 					"developer" => {
 						// Developer server only has shell and other dev tools (agent moved to separate server)
-						get_cached_internal_functions("developer", server.tools(), || {
+						get_filtered_server_functions("developer", server.tools(), || {
 							dev::get_all_functions()
 						})
 					}
 					"filesystem" => {
-						get_cached_internal_functions("filesystem", server.tools(), || {
+						get_filtered_server_functions("filesystem", server.tools(), || {
 							fs::get_all_functions()
 						})
 					}
@@ -617,7 +617,7 @@ pub async fn build_tool_server_map(
 						let server_functions = agent::get_all_functions(config);
 						filter_tools_by_patterns(server_functions, server.tools())
 					}
-					"web" => get_cached_internal_functions("web", server.tools(), || {
+					"web" => get_filtered_server_functions("web", server.tools(), || {
 						web::get_all_functions()
 					}),
 					_ => {

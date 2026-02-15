@@ -714,12 +714,12 @@ pub async fn execute_tool_call(
 		}
 	}
 
-	// Execute the tool call directly (no restart logic)
-	execute_tool_call_internal(call, server, cancellation_token).await
+	// Execute the tool call with cancellation support
+	execute_tool_with_cancellation(call, server, cancellation_token).await
 }
 
-// Internal function to execute tool call without restart logic
-async fn execute_tool_call_internal(
+// Execute tool call with cancellation support
+async fn execute_tool_with_cancellation(
 	call: &McpToolCall,
 	server: &McpServerConfig,
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,

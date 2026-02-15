@@ -73,8 +73,8 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 
 	crate::log_debug!("Building tool-to-server map...");
 
-	// Build the tool map using the same logic as the original build_tool_server_map
-	let tool_to_server = build_tool_server_map_internal(config).await?;
+	// Build the tool map
+	let tool_to_server = build_tool_server_map_impl(config).await?;
 
 	// Update the state
 	{
@@ -162,13 +162,10 @@ pub fn get_all_tool_names() -> Vec<String> {
 	state.tool_to_server.keys().cloned().collect()
 }
 
-/// Internal function to build the tool-to-server mapping
+/// Build the tool-to-server mapping
 ///
-/// This is the same logic as the original `build_tool_server_map()` function,
-/// extracted to avoid duplication.
-async fn build_tool_server_map_internal(
-	config: &Config,
-) -> Result<HashMap<String, McpServerConfig>> {
+/// Creates a mapping from tool names to their server configurations.
+async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, McpServerConfig>> {
 	let mut tool_map = HashMap::new();
 	let enabled_servers: Vec<McpServerConfig> = config.mcp.servers.to_vec();
 
@@ -179,13 +176,13 @@ async fn build_tool_server_map_internal(
 				match server.name() {
 					"developer" => {
 						// Developer server only has shell and other dev tools
-						crate::mcp::get_cached_internal_functions(
+						crate::mcp::get_filtered_server_functions(
 							"developer",
 							server.tools(),
 							crate::mcp::dev::get_all_functions,
 						)
 					}
-					"filesystem" => crate::mcp::get_cached_internal_functions(
+					"filesystem" => crate::mcp::get_filtered_server_functions(
 						"filesystem",
 						server.tools(),
 						crate::mcp::fs::get_all_functions,
@@ -197,7 +194,7 @@ async fn build_tool_server_map_internal(
 						crate::mcp::filter_tools_by_patterns(server_functions, server.tools())
 					}
 					"web" => {
-						crate::mcp::get_cached_internal_functions("web", server.tools(), || {
+						crate::mcp::get_filtered_server_functions("web", server.tools(), || {
 							crate::mcp::web::get_all_functions()
 						})
 					}

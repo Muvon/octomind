@@ -55,7 +55,7 @@ mod tests {
 		let call = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Test Plan",
+				"content": "Test Plan",
 				"tasks": [
 					{"title": "Task 1", "description": "First task description"},
 					{"title": "Task 2", "description": "Second task description"}
@@ -83,23 +83,11 @@ mod tests {
 		// Clear any existing plan data
 		let _ = clear_plan_data().await;
 
-		// Test missing title
-		let call = create_plan_call(
-			"start",
-			Some(json!({
-				"tasks": [{"title": "Task 1", "description": "First task description"}]
-			})),
-		);
-		let result = execute_plan(&call).await.unwrap();
-		let output = result.result.as_object().unwrap();
-		assert_eq!(output["isError"], json!(true));
-		assert!(extract_mcp_content(&result.result).contains("Missing required parameter 'title'"));
-
 		// Test missing tasks
 		let call = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Test Plan"
+				"content": "Test Plan"
 			})),
 		);
 		let result = execute_plan(&call).await.unwrap();
@@ -111,7 +99,7 @@ mod tests {
 		let call = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Test Plan",
+				"content": "Test Plan",
 				"tasks": []
 			})),
 		);
@@ -120,18 +108,33 @@ mod tests {
 		assert_eq!(output["isError"], json!(true));
 		assert!(extract_mcp_content(&result.result).contains("Tasks array cannot be empty"));
 
-		// Test empty title
+		// Test task missing title field
 		let call = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "",
-				"tasks": [{"title": "Task 1", "description": "First task description"}]
+				"content": "Test Plan",
+				"tasks": [{"description": "No title here"}]
 			})),
 		);
 		let result = execute_plan(&call).await.unwrap();
 		let output = result.result.as_object().unwrap();
 		assert_eq!(output["isError"], json!(true));
-		assert!(extract_mcp_content(&result.result).contains("Title parameter cannot be empty"));
+		assert!(extract_mcp_content(&result.result).contains("missing required 'title' field"));
+
+		// Test task missing description field
+		let call = create_plan_call(
+			"start",
+			Some(json!({
+				"content": "Test Plan",
+				"tasks": [{"title": "Task 1"}]
+			})),
+		);
+		let result = execute_plan(&call).await.unwrap();
+		let output = result.result.as_object().unwrap();
+		assert_eq!(output["isError"], json!(true));
+		assert!(
+			extract_mcp_content(&result.result).contains("missing required 'description' field")
+		);
 	}
 
 	#[serial]
@@ -196,7 +199,7 @@ mod tests {
 		let start_call = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Development Tasks",
+				"content": "Development Tasks",
 				"tasks": [
 					{"title": "Design", "description": "Design the system"},
 					{"title": "Implement", "description": "Implement the features"},
@@ -241,7 +244,7 @@ mod tests {
 		let start_call = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Simple Task",
+				"content": "Simple Task",
 				"tasks": [{"title": "Complete project", "description": "Finish all remaining work"}]
 			})),
 		);
@@ -370,7 +373,7 @@ mod tests {
 		let start_call1 = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "First Plan",
+				"content": "First Plan",
 				"tasks": [
 					{"title": "Task A", "description": "Task A description"},
 					{"title": "Task B", "description": "Task B description"}
@@ -397,7 +400,7 @@ mod tests {
 		let start_call2 = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Second Plan",
+				"content": "Second Plan",
 				"tasks": [
 					{"title": "Task X", "description": "Task X description"},
 					{"title": "Task Y", "description": "Task Y description"},
@@ -437,7 +440,7 @@ mod tests {
 		let start_call1 = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "First Plan",
+				"content": "First Plan",
 				"tasks": [{"title": "Task A", "description": "Task A description"}]
 			})),
 		);
@@ -455,7 +458,7 @@ mod tests {
 		let start_call2 = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Second Plan",
+				"content": "Second Plan",
 				"tasks": [
 					{"title": "Task X", "description": "Task X description"},
 					{"title": "Task Y", "description": "Task Y description"}
@@ -483,7 +486,7 @@ mod tests {
 		let start_call1 = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "First Plan",
+				"content": "First Plan",
 				"tasks": [
 					{"title": "Task A", "description": "Task A description"},
 					{"title": "Task B", "description": "Task B description"}
@@ -508,7 +511,7 @@ mod tests {
 		let start_call2 = create_plan_call(
 			"start",
 			Some(json!({
-				"title": "Second Plan",
+				"content": "Second Plan",
 				"tasks": [
 					{"title": "Task X", "description": "Task X description"},
 					{"title": "Task Y", "description": "Task Y description"}

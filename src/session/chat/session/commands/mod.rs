@@ -231,7 +231,7 @@ impl CommandOutput {
 			Self::Done { .. } => display::display_done(self),
 			Self::List { .. } => display::display_list(self, config),
 
-			Self::Run { .. } => display::display_run(self),
+			Self::Run { .. } => display::display_run(self, config, &session.role),
 			Self::Workflow { .. } => display::display_workflow(self, config),
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),

@@ -757,7 +757,9 @@ pub fn display_done(output: &CommandOutput) {
 	}
 }
 
-pub fn display_run(output: &CommandOutput) {
+pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
+	use crate::session::chat::assistant_output::print_assistant_response;
+
 	if let CommandOutput::Run {
 		command_executed: _,
 		data,
@@ -816,8 +818,12 @@ allowed_tools = []"#
 							}
 						}
 					} else if let Some(true) = data.get("success").and_then(|v| v.as_bool()) {
-						// Result is already printed by the command executor (print_assistant_response in handle_run)
-						// No additional output needed here
+						// Print the result using markdown-aware formatting
+						if let Some(result) = data.get("result").and_then(|v| v.as_str()) {
+							println!();
+							print_assistant_response(result, config, role, &None);
+							println!();
+						}
 					}
 				}
 				_ => {}

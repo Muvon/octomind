@@ -17,7 +17,6 @@
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
 use crate::config::Config;
-use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::command_executor;
 use anyhow::Result;
 
@@ -134,7 +133,6 @@ pub async fn handle_run(
 	}
 
 	// Execute the command layer
-	println!();
 	match command_executor::execute_command_layer(
 		command_name,
 		&command_input,
@@ -145,22 +143,14 @@ pub async fn handle_run(
 	)
 	.await
 	{
-		Ok(result) => {
-			println!();
-			// Use markdown-aware printing for command results
-			// Command results don't have thinking blocks
-			print_assistant_response(&result, config, role, &None);
-			println!();
-
-			Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
-				command_executed: command_name.to_string(),
-				data: serde_json::json!({
-					"action": "execute",
-					"success": true,
-					"result": result
-				}),
-			}))
-		}
+		Ok(result) => Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
+			command_executed: command_name.to_string(),
+			data: serde_json::json!({
+				"action": "execute",
+				"success": true,
+				"result": result
+			}),
+		})),
 		Err(e) => Ok(CommandResult::HandledWithOutput(CommandOutput::Run {
 			command_executed: command_name.to_string(),
 			data: serde_json::json!({

@@ -42,36 +42,63 @@ ws.onmessage = (event) => {
 
 ### Message Format
 
-All messages are JSON-encoded and follow a simple, CLI-aligned protocol.
+All messages are JSON-encoded.
 
 ### Client → Server (Input)
 
-**Simple text-based input, just like terminal:**
+Every message **must** include a `type` field.
+
+#### `session` — Create or resume a session
+
+```json
+{ "type": "session" }
+{ "type": "session", "session_id": "my-feature-x" }
+```
+
+- `session_id` absent → create new auto-named session
+- `session_id` present → resume if exists on disk, otherwise create with that name
+- No AI call is made. Server responds with `status` containing the `session_id`.
+
+#### `message` — Send user input to an existing session
 
 ```json
 {
-  "content": "Fix the authentication bug",
-  "session_id": "sess_abc123"  // Optional: resume existing session
+  "type": "message",
+  "session_id": "my-feature-x",
+  "content": "Fix the authentication bug"
 }
 ```
 
-**Fields:**
-- `content` (string, required): The actual input text (user message, command, anything)
-  - Examples: `"Fix the bug"`, `"/help"`, `"/run analyze"`
-- `session_id` (string, optional): Session ID for resuming existing sessions
-  - If omitted, creates new session
-  - If provided, resumes existing session
+- `session_id` **required** — must refer to an established session
+- `content` **required** — the user input sent to the AI
 
-**Note:** Communication is sequential within a session, so `session_id` is sufficient for correlation. No separate message IDs needed.
+#### `command` — Execute a session command
 
-**Commands:**
-All CLI commands work via WebSocket. Just send them as content:
-- `"/help"` - Show available commands
-- `"/info"` - Display session info
-- `"/model"` - Show current model
-- `"/workflow <name>"` - Execute workflows
-- `"/run <command>"` - Execute custom commands
-- Any other `/command` from the CLI
+```json
+{ "type": "command", "session_id": "my-feature-x", "command": "info" }
+{ "type": "command", "session_id": "my-feature-x", "command": "mcp", "args": ["list"] }
+{ "type": "command", "session_id": "my-feature-x", "command": "model", "args": ["openrouter:anthropic/claude-sonnet-4"] }
+{ "type": "command", "session_id": "my-feature-x", "command": "role", "args": ["assistant"] }
+```
+
+- `session_id` **required**
+- `command` **required** — command name without the leading `/`
+- `args` optional — array of string arguments
+- Equivalent to typing `/command [args...]` in the CLI
+- Server responds with `status` (or `status` + `meta` for structured output)
+
+**Available commands** (same as CLI `/commands`):
+`help`, `info`, `model`, `role`, `mcp`, `context`, `truncate`, `clear`, `loglevel`, `workflow`, `run`, `prompt`, `save`, `done`, `report`, `summarize`, `plan`, `list`
+
+**Fields summary:**
+
+| Field | Type | `session` | `message` | `command` |
+|-------|------|-----------|-----------|-----------|
+| `type` | string | required | required | required |
+| `session_id` | string | optional | required | required |
+| `content` | string | ignored | required | ignored |
+| `command` | string | ignored | ignored | required |
+| `args` | string[] | ignored | ignored | optional |
 
 
 ### Server → Client (Output)
@@ -113,108 +140,81 @@ All CLI commands work via WebSocket. Just send them as content:
 
 ## 📊 Message Flow Examples
 
-### Example 1: Simple User Message
+### Example 1: Create a session
 
 **Client sends:**
 ```json
-{
-  "content": "What files are in the src directory?"
-}
+{ "type": "session" }
+```
+
+**Server responds:**
+```json
+{ "id": "srv_001", "type": "status", "content": "Session created: dev-20260218-120000-octomind", "session_id": "dev-20260218-120000-octomind" }
+```
+
+### Example 2: Create a named session (or resume if it exists)
+
+**Client sends:**
+```json
+{ "type": "session", "session_id": "my-feature-x" }
+```
+
+**Server responds:**
+```json
+{ "id": "srv_001", "type": "status", "content": "Session created: my-feature-x", "session_id": "my-feature-x" }
+```
+or if it already existed on disk:
+```json
+{ "id": "srv_001", "type": "status", "content": "Session resumed: my-feature-x", "session_id": "my-feature-x" }
+```
+
+### Example 3: Send a user message
+
+**Client sends:**
+```json
+{ "type": "message", "session_id": "my-feature-x", "content": "What files are in the src directory?" }
 ```
 
 **Server responds (multiple messages):**
-
 ```json
-// 1. Tool execution notification
-{
-  "id": "srv_001",
-  "type": "tool_use",
-  "content": "Executing: list_files(...)",
-  "meta": {
-    "tool": "list_files",
-    "tool_id": "call_abc123",
-    "server": "filesystem",
-    "params": {"directory": "src"}
-  },
-  "session_id": "sess_abc123"
-}
-
-// 2. Tool result
-{
-  "id": "srv_002",
-  "type": "tool_result",
-  "content": "src/main.rs\nsrc/lib.rs\nsrc/config/\n...",
-  "meta": {
-    "tool": "list_files",
-    "tool_id": "call_abc123",
-    "server": "filesystem",
-    "success": true,
-    "duration_ms": 45
-  },
-  "session_id": "sess_abc123"
-}
-
-// 3. Assistant response
-{
-  "id": "srv_003",
-  "type": "assistant",
-  "content": "The src directory contains:\n- main.rs (entry point)\n- lib.rs (library root)\n...",
-  "session_id": "sess_abc123"
-}
-
-// 4. Cost information
-{
-  "id": "srv_004",
-  "type": "cost",
-  "content": "Session: 1,234 tokens ($0.0025)",
-  "meta": {
-    "session_tokens": 1234,
-    "session_cost": 0.0025,
-    "input_tokens": 800,
-    "output_tokens": 434,
-    "cached_tokens": 500
-  },
-  "session_id": "sess_abc123"
-}
+{ "id": "srv_002", "type": "tool_use",    "content": "Executing: list_files(...)", "meta": { "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "params": {"directory": "src"} }, "session_id": "my-feature-x" }
+{ "id": "srv_003", "type": "tool_result", "content": "src/main.rs\nsrc/lib.rs\n...", "meta": { "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "success": true, "duration_ms": 45 }, "session_id": "my-feature-x" }
+{ "id": "srv_004", "type": "assistant",   "content": "The src directory contains...", "session_id": "my-feature-x" }
+{ "id": "srv_005", "type": "cost",        "content": "Session: 1,234 tokens ($0.0025)", "meta": { "session_tokens": 1234, "session_cost": 0.0025, ... }, "session_id": "my-feature-x" }
 ```
 
-### Example 2: Command Execution
+### Example 4: Execute a command
 
 **Client sends:**
 ```json
-{
-  "content": "/help",
-  "session_id": "sess_abc123"
-}
+{ "type": "command", "session_id": "my-feature-x", "command": "info" }
 ```
 
 **Server responds:**
 ```json
-{
-  "id": "srv_005",
-  "type": "status",
-  "content": "Available commands:\n/help - Show this help\n/info - Display session info\n...",
-  "session_id": "sess_abc123"
-}
+{ "id": "srv_006", "type": "status", "content": "Command '/info' executed successfully", "meta": { ... session info ... }, "session_id": "my-feature-x" }
 ```
-
-### Example 3: Error Handling
 
 **Client sends:**
 ```json
-{
-  "content": "Analyze the code",
-  "session_id": "invalid_session"
-}
+{ "type": "command", "session_id": "my-feature-x", "command": "model", "args": ["openrouter:anthropic/claude-sonnet-4"] }
 ```
 
 **Server responds:**
 ```json
-{
-  "id": "srv_006",
-  "type": "error",
-  "content": "Session not found: invalid_session. Please start a new session by omitting session_id."
-}
+{ "id": "srv_007", "type": "status", "content": "Command '/model openrouter:anthropic/claude-sonnet-4' executed successfully", "session_id": "my-feature-x" }
+```
+
+### Example 5: Error — session not found
+
+**Client sends:**
+```json
+{ "type": "message", "session_id": "nonexistent", "content": "Hello" }
+```
+
+**Server responds:**
+```json
+{ "id": "srv_008", "type": "error", "content": "Session not found: nonexistent. Send a \"session\" message first to create or resume a session." }
 ```
 
 

@@ -25,8 +25,12 @@ pub enum ClientMessageType {
 	/// No AI call is made. Server responds with session_id.
 	Session,
 
-	/// Send a message to an existing session. Requires session_id and content.
+	/// Send a user message to an existing session. Requires session_id and content.
 	Message,
+
+	/// Execute a session command (equivalent to /command in CLI).
+	/// Requires session_id and command. Args are optional.
+	Command,
 }
 
 /// Message from client to server
@@ -38,13 +42,23 @@ pub struct ClientMessage {
 
 	/// Session name / ID.
 	/// - For "session" type: absent = create auto-named, present = create-or-resume
-	/// - For "message" type: required
+	/// - For "message" and "command" types: required
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
 
-	/// Message content. Required for "message" type, ignored for "session" type.
+	/// Message content. Required for "message" type, ignored for others.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub content: Option<String>,
+
+	/// Command name (without leading slash). Required for "command" type.
+	/// Examples: "info", "model", "mcp", "help", "role"
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub command: Option<String>,
+
+	/// Command arguments. Optional for "command" type.
+	/// Examples: ["list"] for /mcp list, ["openrouter:claude-sonnet-4"] for /model
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub args: Option<Vec<String>>,
 }
 
 /// Message from server to client
@@ -102,7 +116,6 @@ impl ClientMessage {
 		match self.message_type {
 			ClientMessageType::Session => {
 				// session_id is optional (absent = auto-name, present = create-or-resume)
-				// content is ignored
 				Ok(())
 			}
 			ClientMessageType::Message => {
@@ -123,6 +136,27 @@ impl ClientMessage {
 					}
 					Some(c) if c.len() > 10 * 1024 * 1024 => {
 						return Err("content exceeds maximum size (10MB)".to_string())
+					}
+					_ => {}
+				}
+
+				Ok(())
+			}
+			ClientMessageType::Command => {
+				// session_id is required
+				match &self.session_id {
+					None => return Err("session_id is required for command type".to_string()),
+					Some(id) if id.trim().is_empty() => {
+						return Err("session_id cannot be empty".to_string())
+					}
+					_ => {}
+				}
+
+				// command name is required and must not be empty
+				match &self.command {
+					None => return Err("command is required for command type".to_string()),
+					Some(c) if c.trim().is_empty() => {
+						return Err("command cannot be empty".to_string())
 					}
 					_ => {}
 				}
@@ -182,6 +216,8 @@ mod tests {
 			message_type: ClientMessageType::Session,
 			session_id: None,
 			content: None,
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_ok());
 	}
@@ -192,6 +228,8 @@ mod tests {
 			message_type: ClientMessageType::Session,
 			session_id: Some("my-feature-x".to_string()),
 			content: None,
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_ok());
 	}
@@ -203,6 +241,8 @@ mod tests {
 			message_type: ClientMessageType::Session,
 			session_id: None,
 			content: Some("ignored".to_string()),
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_ok());
 	}
@@ -213,6 +253,8 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: Some("sess_123".to_string()),
 			content: Some("Fix the bug".to_string()),
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_ok());
 	}
@@ -223,6 +265,8 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: None,
 			content: Some("Fix the bug".to_string()),
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_err());
 	}
@@ -233,6 +277,8 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: Some("  ".to_string()),
 			content: Some("Fix the bug".to_string()),
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_err());
 	}
@@ -243,6 +289,8 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: Some("sess_123".to_string()),
 			content: None,
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_err());
 	}
@@ -253,6 +301,8 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: Some("sess_123".to_string()),
 			content: Some("  ".to_string()),
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_err());
 	}
@@ -263,8 +313,96 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: Some("sess_123".to_string()),
 			content: Some("x".repeat(11 * 1024 * 1024)),
+			command: None,
+			args: None,
 		};
 		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_command_type_valid() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Command,
+			session_id: Some("sess_123".to_string()),
+			content: None,
+			command: Some("info".to_string()),
+			args: None,
+		};
+		assert!(msg.validate().is_ok());
+	}
+
+	#[test]
+	fn test_command_type_with_args() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Command,
+			session_id: Some("sess_123".to_string()),
+			content: None,
+			command: Some("mcp".to_string()),
+			args: Some(vec!["list".to_string()]),
+		};
+		assert!(msg.validate().is_ok());
+	}
+
+	#[test]
+	fn test_command_type_missing_session_id() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Command,
+			session_id: None,
+			content: None,
+			command: Some("info".to_string()),
+			args: None,
+		};
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_command_type_missing_command() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Command,
+			session_id: Some("sess_123".to_string()),
+			content: None,
+			command: None,
+			args: None,
+		};
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_command_type_empty_command() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Command,
+			session_id: Some("sess_123".to_string()),
+			content: None,
+			command: Some("  ".to_string()),
+			args: None,
+		};
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_serialization_command_type() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Command,
+			session_id: Some("sess_123".to_string()),
+			content: None,
+			command: Some("model".to_string()),
+			args: Some(vec!["openrouter:anthropic/claude-sonnet-4".to_string()]),
+		};
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"command\""));
+		assert!(json.contains("model"));
+		assert!(json.contains("sess_123"));
+		assert!(!json.contains("\"content\"")); // skipped when None
+	}
+
+	#[test]
+	fn test_deserialization_command() {
+		let json = r#"{"type":"command","session_id":"sess_123","command":"mcp","args":["list"]}"#;
+		let msg: ClientMessage = serde_json::from_str(json).unwrap();
+		assert_eq!(msg.message_type, ClientMessageType::Command);
+		assert_eq!(msg.session_id, Some("sess_123".to_string()));
+		assert_eq!(msg.command, Some("mcp".to_string()));
+		assert_eq!(msg.args, Some(vec!["list".to_string()]));
 	}
 
 	#[test]
@@ -273,11 +411,13 @@ mod tests {
 			message_type: ClientMessageType::Session,
 			session_id: Some("my-session".to_string()),
 			content: None,
+			command: None,
+			args: None,
 		};
 		let json = serde_json::to_string(&msg).unwrap();
 		assert!(json.contains("\"type\":\"session\""));
 		assert!(json.contains("my-session"));
-		assert!(!json.contains("content")); // skipped when None
+		assert!(!json.contains("\"content\"")); // skipped when None
 	}
 
 	#[test]
@@ -286,6 +426,8 @@ mod tests {
 			message_type: ClientMessageType::Message,
 			session_id: Some("sess_123".to_string()),
 			content: Some("Hello".to_string()),
+			command: None,
+			args: None,
 		};
 		let json = serde_json::to_string(&msg).unwrap();
 		assert!(json.contains("\"type\":\"message\""));

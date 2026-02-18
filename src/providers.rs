@@ -117,7 +117,31 @@ impl<'a> ChatCompletionParams<'a> {
 			.map(convert_message_to_octolib)
 			.collect();
 
-		let octolib_messages = octolib_messages?;
+		let mut octolib_messages = octolib_messages?;
+
+		// Some providers (e.g. Gemini, Mistral) require the last message to be from the user.
+		// After conversation compression the last message can be an assistant summary, which
+		// causes those providers to return an error.  Appending a lightweight "Please continue."
+		// user message is the safest fix: it satisfies the constraint without altering session
+		// state and is semantically neutral (the model simply continues from where it left off).
+		let last_non_system_is_assistant = octolib_messages
+			.iter()
+			.rev()
+			.find(|m| m.role != "system")
+			.map(|m| m.role == "assistant")
+			.unwrap_or(false);
+
+		if last_non_system_is_assistant {
+			crate::log_debug!(
+				"Last message is assistant after compression - appending synthetic user message to satisfy provider requirements"
+			);
+			let synthetic = octolib::llm::MessageBuilder::user("Please continue.")
+				.build()
+				.map_err(|_| octolib::MessageError::InvalidRole {
+					role: "synthetic_user".to_string(),
+				})?;
+			octolib_messages.push(synthetic);
+		}
 
 		let mut params = octolib::llm::ChatCompletionParams::new(
 			&octolib_messages,

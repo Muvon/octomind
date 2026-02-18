@@ -909,8 +909,239 @@ layer = "task_researcher""#
 	}
 }
 
-pub fn display_mcp(_output: &CommandOutput) {
-	// MCP commands have complex output, handled by mcp.rs
+pub fn display_mcp(output: &CommandOutput) {
+	if let CommandOutput::Mcp { data, .. } = output {
+		let subcommand = data
+			.get("subcommand")
+			.and_then(|v| v.as_str())
+			.unwrap_or("");
+
+		match subcommand {
+			"list" => display_mcp_list(data),
+			"info" => display_mcp_info(data),
+			"full" => display_mcp_full(data),
+			"health" => display_mcp_health(data),
+			"dump" => display_mcp_dump(data),
+			"validate" => display_mcp_validate(data),
+			"invalid" => display_mcp_invalid(data),
+			_ => {
+				// Fallback for unknown subcommands
+				if let Some(message) = data.get("message").and_then(|v| v.as_str()) {
+					println!("{}", message);
+				}
+			}
+		}
+	}
+}
+
+fn display_mcp_list(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
+	println!("{}", "Available Tools".bright_cyan().bold());
+	println!("{}", "─".repeat(30).dimmed());
+
+	if let Some(servers) = data.get("servers").and_then(|v| v.as_object()) {
+		if servers.is_empty() {
+			println!("{}", "No tools available.".yellow());
+		} else {
+			for (server_name, tools) in servers {
+				println!();
+				println!("  {}", server_name.bright_blue().bold());
+				if let Some(tool_array) = tools.as_array() {
+					for tool in tool_array {
+						if let Some(tool_name) = tool.as_str() {
+							println!("    {}", tool_name.bright_white());
+						}
+					}
+				}
+			}
+		}
+	}
+
+	println!();
+	println!(
+		"{}",
+		"Use '/mcp info' for descriptions or '/mcp full' for detailed parameters.".dimmed()
+	);
+}
+
+fn display_mcp_info(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
+	println!("{}", "MCP Server Status".bright_cyan().bold());
+	println!("{}", "─".repeat(50).dimmed());
+
+	// Check for "No servers" message
+	if let Some(message) = data.get("message").and_then(|v| v.as_str()) {
+		println!("{}", message.yellow());
+		return;
+	}
+
+	// Display server status
+	if let Some(servers) = data.get("servers").and_then(|v| v.as_array()) {
+		for server in servers {
+			let name = server
+				.get("name")
+				.and_then(|v| v.as_str())
+				.unwrap_or("unknown");
+			let health = server
+				.get("health")
+				.and_then(|v| v.as_str())
+				.unwrap_or("unknown");
+			let conn_type = server
+				.get("connection_type")
+				.and_then(|v| v.as_str())
+				.unwrap_or("unknown");
+			let restart_count = server
+				.get("restart_count")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			let consecutive_failures = server
+				.get("consecutive_failures")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+
+			let health_display = match health {
+				"running" => "✅ Running".green(),
+				"dead" => "❌ Dead".red(),
+				"restarting" => "🔄 Restarting".yellow(),
+				"failed" => "💥 Failed".bright_red(),
+				"unreachable" => "🔒 Auth Failed".bright_red(),
+				_ => health.normal(),
+			};
+
+			println!();
+			println!("{}: {}", name.bright_white().bold(), health_display);
+			println!("  Type: {}", conn_type);
+
+			if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
+				if !tools.is_empty() {
+					let tool_names: Vec<String> = tools
+						.iter()
+						.filter_map(|t| t.as_str())
+						.map(|s| s.to_string())
+						.collect();
+					println!("  Configured tools: {}", tool_names.join(", ").dimmed());
+				}
+			}
+
+			if restart_count > 0 {
+				println!("  Restart count: {}", restart_count);
+				if consecutive_failures > 0 {
+					println!("  Consecutive failures: {}", consecutive_failures);
+				}
+			}
+		}
+	}
+
+	// Display tools
+	println!();
+	println!("{}", "Available Tools".bright_cyan().bold());
+	println!("{}", "─".repeat(50).dimmed());
+
+	if let Some(tools) = data.get("tools").and_then(|v| v.as_object()) {
+		if tools.is_empty() {
+			println!("{}", "No tools available.".yellow());
+		} else {
+			for (server_name, tool_list) in tools {
+				println!();
+				println!("  {}", server_name.bright_blue().bold());
+
+				if let Some(tool_array) = tool_list.as_array() {
+					for tool in tool_array {
+						let name = tool
+							.get("name")
+							.and_then(|v| v.as_str())
+							.unwrap_or("unknown");
+						let desc = tool
+							.get("description")
+							.and_then(|v| v.as_str())
+							.unwrap_or("");
+
+						if desc.is_empty() {
+							println!("    {}", name.bright_white());
+						} else {
+							println!("    {} - {}", name.bright_white(), desc.dimmed());
+						}
+					}
+				}
+			}
+		}
+	}
+
+	println!();
+	println!(
+		"{}",
+		"Use '/mcp list' for names only or '/mcp full' for detailed parameters.".dimmed()
+	);
+}
+
+// Placeholder implementations for remaining subcommands
+// These will be implemented once the corresponding handlers are refactored
+fn display_mcp_full(_data: &serde_json::Value) {
+	println!(
+		"{}",
+		"MCP full view not yet implemented in display layer".yellow()
+	);
+}
+
+fn display_mcp_health(_data: &serde_json::Value) {
+	println!(
+		"{}",
+		"MCP health view not yet implemented in display layer".yellow()
+	);
+}
+
+fn display_mcp_dump(_data: &serde_json::Value) {
+	println!(
+		"{}",
+		"MCP dump view not yet implemented in display layer".yellow()
+	);
+}
+
+fn display_mcp_validate(_data: &serde_json::Value) {
+	println!(
+		"{}",
+		"MCP validate view not yet implemented in display layer".yellow()
+	);
+}
+
+fn display_mcp_invalid(_data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
+	println!("{}", "Invalid MCP subcommand.".bright_red());
+	println!();
+	println!("{}", "Available subcommands:".bright_cyan());
+	println!("  {} - Show tool names only", "/mcp list".cyan());
+	println!(
+		"  {} - Show server status and tools with descriptions (default)",
+		"/mcp info".cyan()
+	);
+	println!(
+		"  {} - Show full details including parameters",
+		"/mcp full".cyan()
+	);
+	println!(
+		"  {} - Check server health and attempt restart if needed",
+		"/mcp health".cyan()
+	);
+	println!(
+		"  {} - Dump raw tool definitions in JSON format",
+		"/mcp dump".cyan()
+	);
+	println!();
+	println!(
+		"  {} - Validate tool schema definitions",
+		"/mcp validate".cyan()
+	);
+	println!();
+	println!(
+		"{}",
+		"Usage: /mcp [list|info|full|health|dump|validate]".bright_blue()
+	);
 }
 
 pub fn display_report(output: &CommandOutput, config: &Config) {

@@ -151,32 +151,10 @@ pub async fn execute_plan(call: &McpToolCall) -> Result<McpToolResult> {
 
 /// Handle start command - create new plan
 async fn handle_start_command(call: &McpToolCall) -> Result<McpToolResult> {
-	// Extract title parameter
-	let title = match call.parameters.get("title") {
-		Some(Value::String(t)) => {
-			if t.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Title parameter cannot be empty".to_string(),
-				));
-			}
-			t.clone()
-		}
-		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Title parameter must be a string".to_string(),
-			));
-		}
-		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required parameter 'title'".to_string(),
-			));
-		}
+	// Use content as the plan title/goal
+	let title = match call.parameters.get("content") {
+		Some(Value::String(t)) if !t.trim().is_empty() => t.clone(),
+		_ => "Active Plan".to_string(),
 	};
 
 	// Extract tasks parameter - ONLY detailed objects supported

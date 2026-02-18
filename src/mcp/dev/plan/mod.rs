@@ -122,10 +122,6 @@ Example: tasks=[{\"title\": \"Setup database\", \"description\": \"Install Postg
                     "description": "The operation to perform",
                     "enum": ["start", "step", "next", "list", "done", "reset"]
                 },
-                "title": {
-                    "type": "string",
-                    "description": "Plan title (required for 'start' command)"
-                },
                 "tasks": {
                     "type": "array",
                     "items": {
@@ -146,10 +142,10 @@ Example: tasks=[{\"title\": \"Setup database\", \"description\": \"Install Postg
                 },
                 "content": {
                     "type": "string",
-                    "description": "Progress/completion details. REQUIRED for 'step' (adds progress), 'next' (marks task complete), and 'done' (final summary). NOT required for 'start', 'list', or 'reset'."
+                    "description": "REQUIRED for 'start' (plan goal/title), 'step' (progress details), 'next' (task completion summary), and 'done' (final summary). NOT required for 'list' or 'reset'."
                 }
             },
-            "required": ["command", "content"],
+            "required": ["command"],
             "additionalProperties": false
         }),
     }

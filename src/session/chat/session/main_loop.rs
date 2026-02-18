@@ -705,32 +705,69 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		let user_message_index_for_error = user_message_index;
 		let model_for_error = chat_session.model.clone();
 
-		let api_result = tokio::select! {
-			// API call branch
-			result = execute_api_call_and_process_response(
-				&mut chat_session,
-				&current_config,
-				&role,
-				operation_rx.clone(),
-				OutputMode::Interactive,
-				SilentSink,
-			) => result,
-			// Cancellation branch - INSTANT response
-			_ = async {
-				let mut cancel_rx = cancellation.operation_receiver();
-				while !*cancel_rx.borrow() {
-					if cancel_rx.changed().await.is_err() {
-						break;
+		let api_result = {
+			// Set up notification forwarding for interactive terminal mode.
+			// Notifications (e.g. MCP server warnings) are printed to stderr so they
+			// don't interfere with the readline prompt on stdout.
+			let (notif_tx, mut notif_rx) =
+				tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+			crate::mcp::process::set_notification_sender(notif_tx);
+
+			// Drain notifications to stderr in a background task
+			let notif_drain = tokio::spawn(async move {
+				while let Some(msg) = notif_rx.recv().await {
+					if let crate::websocket::ServerMessage::McpNotification(n) = msg {
+						use colored::Colorize;
+						eprintln!(
+							"{}",
+							format!(
+								"⚠ [{}] {}",
+								n.server,
+								n.params
+									.get("message")
+									.and_then(|m| m.as_str())
+									.unwrap_or(&n.method)
+							)
+							.yellow()
+						);
 					}
 				}
-			} => {
-				// Ctrl+C pressed - stop animation and return to prompt immediately
-				use crate::session::chat::get_animation_manager;
-				get_animation_manager().stop_current().await;
-				log_debug!("API call cancelled by user - returning to prompt");
-				continue;
-			}
-		};
+			});
+
+			let result = tokio::select! {
+				// API call branch
+				result = execute_api_call_and_process_response(
+					&mut chat_session,
+					&current_config,
+					&role,
+					operation_rx.clone(),
+					OutputMode::Interactive,
+					SilentSink,
+				) => result,
+				// Cancellation branch - INSTANT response
+				_ = async {
+					let mut cancel_rx = cancellation.operation_receiver();
+					while !*cancel_rx.borrow() {
+						if cancel_rx.changed().await.is_err() {
+							break;
+						}
+					}
+				} => {
+					// Ctrl+C pressed - stop animation and return to prompt immediately
+					use crate::session::chat::get_animation_manager;
+					get_animation_manager().stop_current().await;
+					log_debug!("API call cancelled by user - returning to prompt");
+					crate::mcp::process::clear_notification_sender();
+					notif_drain.abort();
+					continue;
+				}
+			}; // end tokio::select!
+
+			crate::mcp::process::clear_notification_sender();
+			let _ = notif_drain.await;
+
+			result
+		}; // end notification wrapper block
 
 		match api_result {
 			Ok(_) => {
@@ -946,7 +983,6 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	} else {
 		// Use processed input from layers (or original if layers not enabled)
 		input = processed_input;
-		log_info!("Workflow processing complete. Using enhanced input for main model.");
 	}
 
 	// Add user message - same as interactive
@@ -1004,7 +1040,32 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 		result
 	} else {
-		execute_api_call_and_process_response(
+		// Non-interactive run mode: set up notification sender so warnings print to stderr
+		let (notif_tx, mut notif_rx) =
+			tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+		crate::mcp::process::set_notification_sender(notif_tx);
+
+		let notif_drain = tokio::spawn(async move {
+			while let Some(msg) = notif_rx.recv().await {
+				if let crate::websocket::ServerMessage::McpNotification(n) = msg {
+					use colored::Colorize;
+					eprintln!(
+						"{}",
+						format!(
+							"⚠ [{}] {}",
+							n.server,
+							n.params
+								.get("message")
+								.and_then(|m| m.as_str())
+								.unwrap_or(&n.method)
+						)
+						.yellow()
+					);
+				}
+			}
+		});
+
+		let result = execute_api_call_and_process_response(
 			&mut chat_session,
 			&current_config,
 			&role,
@@ -1012,7 +1073,12 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			OutputMode::NonInteractive,
 			SilentSink,
 		)
-		.await
+		.await;
+
+		crate::mcp::process::clear_notification_sender();
+		let _ = notif_drain.await;
+
+		result
 	};
 	match api_result {
 		Ok(_) => {

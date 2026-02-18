@@ -76,17 +76,31 @@ lazy_static::lazy_static! {
 
 // Global notification sender — set by the session when WebSocket or JSONL output is active.
 // When set, MCP server notifications are forwarded as structured ServerMessage::McpNotification.
-// When not set, notifications are rendered via log_info! for terminal modes.
+// When not set, notifications are buffered and flushed when a sender is registered.
 lazy_static::lazy_static! {
 	static ref NOTIFICATION_SENDER: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>>> =
 		RwLock::new(None);
+
+	// Notifications that arrived before any sender was registered (e.g. during MCP server init).
+	// Flushed to the sender as soon as one is registered via set_notification_sender().
+	static ref PENDING_NOTIFICATIONS: RwLock<Vec<crate::websocket::ServerMessage>> =
+		RwLock::new(Vec::new());
 }
 
 /// Register a channel sender so MCP notifications are forwarded as structured messages.
+/// Flushes any notifications that arrived before this call (e.g. during server initialization).
 /// Call this when starting a WebSocket or JSONL session.
 pub fn set_notification_sender(
 	tx: tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>,
 ) {
+	// Flush buffered notifications first, then register the sender
+	let pending = {
+		let mut guard = PENDING_NOTIFICATIONS.write().unwrap();
+		std::mem::take(&mut *guard)
+	};
+	for msg in pending {
+		let _ = tx.send(msg);
+	}
 	let mut guard = NOTIFICATION_SENDER.write().unwrap();
 	*guard = Some(tx);
 }
@@ -97,22 +111,25 @@ pub fn clear_notification_sender() {
 	*guard = None;
 }
 
-/// Emit a notification — structured if a sender is registered, plain log otherwise.
+/// Emit a notification — structured if a sender is registered, buffered otherwise.
+/// Buffered notifications are flushed when set_notification_sender() is called.
 fn emit_notification(server_name: &str, method: &str, params: &serde_json::Value) {
+	let msg = crate::websocket::ServerMessage::McpNotification(
+		crate::websocket::McpNotificationPayload {
+			server: server_name.to_string(),
+			method: method.to_string(),
+			params: params.clone(),
+		},
+	);
 	let sender = NOTIFICATION_SENDER.read().unwrap();
 	if let Some(tx) = sender.as_ref() {
-		let msg = crate::websocket::ServerMessage::McpNotification(
-			crate::websocket::McpNotificationPayload {
-				server: server_name.to_string(),
-				method: method.to_string(),
-				params: params.clone(),
-			},
-		);
-		// Ignore send errors — client may have disconnected
+		// Sender active — forward immediately
 		let _ = tx.send(msg);
 	} else {
-		// Terminal mode: render inline
-		crate::log_info!("[MCP:{}] {}: {}", server_name, method, params);
+		// No sender yet (e.g. notification arrived during server init before session started).
+		// Buffer it so it gets flushed when set_notification_sender() is called.
+		drop(sender); // release read lock before taking write lock on PENDING
+		PENDING_NOTIFICATIONS.write().unwrap().push(msg);
 	}
 }
 

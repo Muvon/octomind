@@ -101,86 +101,96 @@ impl ClientMessage {
 
 // ── Server → Client ──────────────────────────────────────────────────────────
 
-/// Types of messages the server can send
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum MessageType {
-	/// AI assistant response text
-	Assistant,
-
-	/// Tool execution notification (AI intends to use tool)
-	ToolUse,
-
-	/// Tool execution result (after execution)
-	ToolResult,
-
-	/// Cost and token usage information
-	Cost,
-
-	/// Error message
-	Error,
-
-	/// Status/info message (non-critical)
-	Status,
-
-	/// AI thinking/reasoning content (separate from assistant response)
-	Thinking,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantPayload {
+	pub content: String,
+	pub session_id: String,
 }
 
-/// Outgoing message from server to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerMessage {
-	/// Unique message ID (server-generated UUID)
-	pub id: String,
-
-	/// Message type determines how to interpret `content`
-	#[serde(rename = "type")]
-	pub message_type: MessageType,
-
-	/// The actual content (format depends on type)
+pub struct ThinkingPayload {
 	pub content: String,
+	pub session_id: String,
+}
 
-	/// Optional structured metadata (varies by type)
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub meta: Option<Value>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolUsePayload {
+	pub tool: String,
+	pub tool_id: String,
+	pub server: String,
+	pub params: Value,
+	pub session_id: String,
+}
 
-	/// Session ID — always present after a session is established
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultPayload {
+	pub tool: String,
+	pub tool_id: String,
+	pub server: String,
+	pub content: String,
+	pub success: bool,
+	pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostPayload {
+	pub session_tokens: u64,
+	pub session_cost: f64,
+	pub input_tokens: u64,
+	pub output_tokens: u64,
+	pub cache_read_tokens: u64,
+	pub cache_write_tokens: u64,
+	pub reasoning_tokens: u64,
+	pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusPayload {
+	pub message: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
+	/// Optional structured data for command results
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub data: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorPayload {
+	pub message: String,
+}
+
+/// Outgoing message from server to client.
+/// Tagged by `"type"` — each variant carries only its own typed fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMessage {
+	/// AI assistant response text
+	Assistant(AssistantPayload),
+	/// AI thinking/reasoning content (separate from assistant response)
+	Thinking(ThinkingPayload),
+	/// Tool execution notification (AI intends to use tool)
+	ToolUse(ToolUsePayload),
+	/// Tool execution result (after execution)
+	ToolResult(ToolResultPayload),
+	/// Cost and token usage information
+	Cost(CostPayload),
+	/// Status/info message (non-critical)
+	Status(StatusPayload),
+	/// Error message
+	Error(ErrorPayload),
 }
 
 impl ServerMessage {
-	pub fn new(message_type: MessageType, content: String, session_id: Option<String>) -> Self {
-		Self {
-			id: uuid::Uuid::new_v4().to_string(),
-			message_type,
-			content,
-			meta: None,
-			session_id,
-		}
-	}
-
-	pub fn with_metadata(
-		message_type: MessageType,
-		content: String,
-		meta: Value,
-		session_id: Option<String>,
-	) -> Self {
-		Self {
-			id: uuid::Uuid::new_v4().to_string(),
-			message_type,
-			content,
-			meta: Some(meta),
-			session_id,
-		}
-	}
-
 	pub fn error(message: String) -> Self {
-		Self::new(MessageType::Error, message, None)
+		ServerMessage::Error(ErrorPayload { message })
 	}
 
 	pub fn status(message: String, session_id: Option<String>) -> Self {
-		Self::new(MessageType::Status, message, session_id)
+		ServerMessage::Status(StatusPayload {
+			message,
+			session_id,
+			data: None,
+		})
 	}
 }
 
@@ -370,12 +380,11 @@ mod tests {
 	// ServerMessage
 
 	#[test]
-	fn test_server_message_serialization() {
-		let msg = ServerMessage::new(
-			MessageType::Assistant,
-			"Response".to_string(),
-			Some("sess_123".to_string()),
-		);
+	fn test_server_message_assistant_serialization() {
+		let msg = ServerMessage::Assistant(AssistantPayload {
+			content: "Response".to_string(),
+			session_id: "sess_123".to_string(),
+		});
 		let json = serde_json::to_string(&msg).unwrap();
 		assert!(json.contains("\"type\":\"assistant\""));
 		assert!(json.contains("Response"));
@@ -383,19 +392,76 @@ mod tests {
 	}
 
 	#[test]
-	fn test_server_message_type_serialization() {
-		assert_eq!(
-			serde_json::to_string(&MessageType::Assistant).unwrap(),
-			"\"assistant\""
-		);
-		assert_eq!(
-			serde_json::to_string(&MessageType::ToolUse).unwrap(),
-			"\"tool_use\""
-		);
-		assert_eq!(
-			serde_json::to_string(&MessageType::Error).unwrap(),
-			"\"error\""
-		);
+	fn test_server_message_error_serialization() {
+		let msg = ServerMessage::error("something went wrong".to_string());
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"error\""));
+		assert!(json.contains("something went wrong"));
+	}
+
+	#[test]
+	fn test_server_message_status_serialization() {
+		let msg =
+			ServerMessage::status("Session created: foo".to_string(), Some("foo".to_string()));
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"status\""));
+		assert!(json.contains("Session created: foo"));
+		assert!(json.contains("\"session_id\":\"foo\""));
+	}
+
+	#[test]
+	fn test_server_message_status_no_session_id() {
+		let msg = ServerMessage::status("Connected".to_string(), None);
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"status\""));
+		assert!(!json.contains("session_id"));
+	}
+
+	#[test]
+	fn test_server_message_tool_use_serialization() {
+		let msg = ServerMessage::ToolUse(ToolUsePayload {
+			tool: "list_files".to_string(),
+			tool_id: "call_abc".to_string(),
+			server: "filesystem".to_string(),
+			params: serde_json::json!({"directory": "src"}),
+			session_id: "sess_123".to_string(),
+		});
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"tool_use\""));
+		assert!(json.contains("\"tool\":\"list_files\""));
+		assert!(json.contains("\"server\":\"filesystem\""));
+	}
+
+	#[test]
+	fn test_server_message_tool_result_serialization() {
+		let msg = ServerMessage::ToolResult(ToolResultPayload {
+			tool: "list_files".to_string(),
+			tool_id: "call_abc".to_string(),
+			server: "filesystem".to_string(),
+			content: "src/main.rs\nsrc/lib.rs".to_string(),
+			success: true,
+			session_id: "sess_123".to_string(),
+		});
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"tool_result\""));
+		assert!(json.contains("\"success\":true"));
+	}
+
+	#[test]
+	fn test_server_message_cost_serialization() {
+		let msg = ServerMessage::Cost(CostPayload {
+			session_tokens: 1234,
+			session_cost: 0.0025,
+			input_tokens: 1000,
+			output_tokens: 200,
+			cache_read_tokens: 30,
+			cache_write_tokens: 4,
+			reasoning_tokens: 0,
+			session_id: "sess_123".to_string(),
+		});
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"cost\""));
+		assert!(json.contains("\"session_tokens\":1234"));
 	}
 
 	#[test]

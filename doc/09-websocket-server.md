@@ -25,16 +25,21 @@ octomind server --role assistant
 const ws = new WebSocket('ws://localhost:8080');
 
 ws.onopen = () => {
-  // Send a message
-  ws.send(JSON.stringify({
-    id: 'msg_001',
-    content: 'List files in the src directory'
-  }));
+  // First create a session
+  ws.send(JSON.stringify({ type: 'session' }));
 };
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  console.log(`[${msg.type}]`, msg.content);
+  if (msg.type === 'status' && msg.session_id) {
+    // Session ready — send a message
+    ws.send(JSON.stringify({
+      type: 'message',
+      session_id: msg.session_id,
+      content: 'List files in the src directory'
+    }));
+  }
+  console.log(`[${msg.type}]`, msg);
 };
 ```
 
@@ -103,38 +108,32 @@ Every message **must** include a `type` field.
 
 ### Server → Client (Output)
 
-**Typed messages for different kinds of output:**
-
-```json
-{
-  "id": "srv_001",
-  "type": "assistant",
-  "content": "I'll help you fix the authentication bug...",
-  "meta": null,
-  "session_id": "sess_abc123"
-}
-```
-
-**Fields:**
-- `id` (string): Unique message ID (server-generated, UUID)
-- `type` (string): Message type (see below)
-- `content` (string): The actual content (format depends on type)
-- `meta` (object, optional): Structured metadata (varies by type)
-- `session_id` (string, optional): Session ID (always present after first message)
-
-**Note:** Since communication is sequential within a session, `session_id` is sufficient for correlation.
+All server messages are JSON objects tagged by `"type"`. Each variant carries only its own typed fields — no generic `content`/`meta` bag.
 
 **Message Types:**
 
-| Type | Description | Content | Metadata |
-|------|-------------|---------|----------|
-| `assistant` | AI assistant response | Response text | None |
-| `thinking` | AI thinking/reasoning content | Thinking text | None |
-| `tool_use` | Tool execution notification (AI intends to use tool) | Human-readable description | `{"tool": "name", "tool_id": "id", "server": "server_name", "params": {...}}` |
-| `tool_result` | Tool execution completed | Tool output text | `{"tool": "name", "tool_id": "id", "server": "server_name", "success": bool, "duration_ms": number}` |
-| `cost` | Cost and token usage | Human-readable summary | `{"session_tokens": number, "session_cost": number, ...}` |
-| `error` | Error message | Error description | `{"error_type": "string", "recoverable": bool}` (optional) |
-| `status` | Status/info message | Status text | Optional context |
+| Type | Description | Fields |
+|------|-------------|--------|
+| `assistant` | AI assistant response | `content`, `session_id` |
+| `thinking` | AI thinking/reasoning content | `content`, `session_id` |
+| `tool_use` | Tool execution intent (AI about to call a tool) | `tool`, `tool_id`, `server`, `params`, `session_id` |
+| `tool_result` | Tool execution completed | `tool`, `tool_id`, `server`, `content`, `success`, `session_id` |
+| `cost` | Token usage and cost summary | `session_tokens`, `session_cost`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `session_id` |
+| `status` | Status/info message | `message`, `session_id` (optional), `data` (optional, structured command output) |
+| `error` | Error message | `message` |
+
+**Examples:**
+
+```json
+{ "type": "assistant",   "content": "I'll help you fix that...", "session_id": "my-feature-x" }
+{ "type": "thinking",    "content": "Let me reason through this...", "session_id": "my-feature-x" }
+{ "type": "tool_use",    "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "params": {"directory": "src"}, "session_id": "my-feature-x" }
+{ "type": "tool_result", "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "content": "src/main.rs\nsrc/lib.rs", "success": true, "session_id": "my-feature-x" }
+{ "type": "cost",        "session_tokens": 1234, "session_cost": 0.0025, "input_tokens": 1000, "output_tokens": 200, "cache_read_tokens": 30, "cache_write_tokens": 4, "reasoning_tokens": 0, "session_id": "my-feature-x" }
+{ "type": "status",      "message": "Session created: my-feature-x", "session_id": "my-feature-x" }
+{ "type": "status",      "message": "Command '/info' executed successfully", "session_id": "my-feature-x", "data": { ... } }
+{ "type": "error",       "message": "Session not found: nonexistent." }
+```
 
 
 
@@ -149,7 +148,7 @@ Every message **must** include a `type` field.
 
 **Server responds:**
 ```json
-{ "id": "srv_001", "type": "status", "content": "Session created: dev-20260218-120000-octomind", "session_id": "dev-20260218-120000-octomind" }
+{ "type": "status", "message": "Session created: dev-20260218-120000-octomind", "session_id": "dev-20260218-120000-octomind" }
 ```
 
 ### Example 2: Create a named session (or resume if it exists)
@@ -161,11 +160,11 @@ Every message **must** include a `type` field.
 
 **Server responds:**
 ```json
-{ "id": "srv_001", "type": "status", "content": "Session created: my-feature-x", "session_id": "my-feature-x" }
+{ "type": "status", "message": "Session created: my-feature-x", "session_id": "my-feature-x" }
 ```
 or if it already existed on disk:
 ```json
-{ "id": "srv_001", "type": "status", "content": "Session resumed: my-feature-x", "session_id": "my-feature-x" }
+{ "type": "status", "message": "Session resumed: my-feature-x", "session_id": "my-feature-x" }
 ```
 
 ### Example 3: Send a user message
@@ -177,10 +176,10 @@ or if it already existed on disk:
 
 **Server responds (multiple messages):**
 ```json
-{ "id": "srv_002", "type": "tool_use",    "content": "Executing: list_files(...)", "meta": { "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "params": {"directory": "src"} }, "session_id": "my-feature-x" }
-{ "id": "srv_003", "type": "tool_result", "content": "src/main.rs\nsrc/lib.rs\n...", "meta": { "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "success": true, "duration_ms": 45 }, "session_id": "my-feature-x" }
-{ "id": "srv_004", "type": "assistant",   "content": "The src directory contains...", "session_id": "my-feature-x" }
-{ "id": "srv_005", "type": "cost",        "content": "Session: 1,234 tokens ($0.0025)", "meta": { "session_tokens": 1234, "session_cost": 0.0025, ... }, "session_id": "my-feature-x" }
+{ "type": "tool_use",    "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "params": {"directory": "src"}, "session_id": "my-feature-x" }
+{ "type": "tool_result", "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "content": "src/main.rs\nsrc/lib.rs\n...", "success": true, "session_id": "my-feature-x" }
+{ "type": "assistant",   "content": "The src directory contains...", "session_id": "my-feature-x" }
+{ "type": "cost",        "session_tokens": 1234, "session_cost": 0.0025, "input_tokens": 1000, "output_tokens": 200, "cache_read_tokens": 30, "cache_write_tokens": 4, "reasoning_tokens": 0, "session_id": "my-feature-x" }
 ```
 
 ### Example 4: Execute a command
@@ -192,7 +191,7 @@ or if it already existed on disk:
 
 **Server responds:**
 ```json
-{ "id": "srv_006", "type": "status", "content": "Command '/info' executed successfully", "meta": { ... session info ... }, "session_id": "my-feature-x" }
+{ "type": "status", "message": "Command '/info' executed successfully", "session_id": "my-feature-x", "data": { ... } }
 ```
 
 **Client sends:**
@@ -202,7 +201,7 @@ or if it already existed on disk:
 
 **Server responds:**
 ```json
-{ "id": "srv_007", "type": "status", "content": "Command '/model openrouter:anthropic/claude-sonnet-4' executed successfully", "session_id": "my-feature-x" }
+{ "type": "status", "message": "Command '/model openrouter:anthropic/claude-sonnet-4' executed successfully", "session_id": "my-feature-x" }
 ```
 
 ### Example 5: Error — session not found
@@ -214,7 +213,7 @@ or if it already existed on disk:
 
 **Server responds:**
 ```json
-{ "id": "srv_008", "type": "error", "content": "Session not found: nonexistent. Send a \"session\" message first to create or resume a session." }
+{ "type": "error", "message": "Session not found: nonexistent. Send a \"session\" message first to create or resume a session." }
 ```
 
 
@@ -234,22 +233,36 @@ class OctomindClient {
     this.ws.onclose = () => console.log('Disconnected from Octomind');
   }
 
+  createSession(sessionId = null) {
+    const msg = { type: 'session' };
+    if (sessionId) msg.session_id = sessionId;
+    this.ws.send(JSON.stringify(msg));
+  }
+
   send(content) {
-    const message = {
+    this.ws.send(JSON.stringify({
+      type: 'message',
+      session_id: this.sessionId,
       content,
-      ...(this.sessionId && { session_id: this.sessionId })
-    };
-    this.ws.send(JSON.stringify(message));
+    }));
+  }
+
+  command(cmd, ...args) {
+    this.ws.send(JSON.stringify({
+      type: 'command',
+      session_id: this.sessionId,
+      command: cmd,
+      ...(args.length && { args }),
+    }));
   }
 
   handleMessage(msg) {
-    // Store session ID from first message
+    // Store session ID from status messages
     if (msg.session_id && !this.sessionId) {
       this.sessionId = msg.session_id;
       console.log('Session ID:', this.sessionId);
     }
 
-    // Handle different message types
     switch (msg.type) {
       case 'assistant':
         console.log('\x1b[32m%s\x1b[0m', msg.content); // Green
@@ -258,21 +271,20 @@ class OctomindClient {
         console.log('\x1b[35m🤔 %s\x1b[0m', msg.content); // Magenta
         break;
       case 'tool_use':
-        const toolInfo = msg.meta ? `${msg.meta.tool} | ${msg.meta.server}` : '';
-        console.log('\x1b[36m🔧 %s [%s]\x1b[0m', msg.content, toolInfo); // Cyan
+        console.log('\x1b[36m🔧 %s | %s(%s)\x1b[0m', msg.server, msg.tool, JSON.stringify(msg.params)); // Cyan
         break;
       case 'tool_result':
-        const icon = msg.meta?.success ? '✓' : '✗';
-        console.log('\x1b[90m%s %s\x1b[0m', icon, msg.content); // Gray
+        const icon = msg.success ? '✓' : '✗';
+        console.log('\x1b[90m%s [%s] %s\x1b[0m', icon, msg.tool, msg.content); // Gray
         break;
       case 'cost':
-        console.log('\x1b[33m💰 %s\x1b[0m', msg.content); // Yellow
+        console.log('\x1b[33m💰 %d tokens ($%s)\x1b[0m', msg.session_tokens, msg.session_cost.toFixed(4)); // Yellow
         break;
       case 'error':
-        console.log('\x1b[31m❌ %s\x1b[0m', msg.content); // Red
+        console.log('\x1b[31m❌ %s\x1b[0m', msg.message); // Red
         break;
       case 'status':
-        console.log('\x1b[34mℹ️  %s\x1b[0m', msg.content); // Blue
+        console.log('\x1b[34mℹ️  %s\x1b[0m', msg.message); // Blue
         break;
     }
   }
@@ -284,8 +296,10 @@ class OctomindClient {
 
 // Usage
 const client = new OctomindClient();
-client.send('List files in src directory');
-client.send('/help');
+client.createSession();
+// After receiving status with session_id:
+// client.send('List files in src directory');
+// client.command('info');
 ```
 
 
@@ -305,9 +319,12 @@ class OctomindClient:
         async with websockets.connect(self.url) as ws:
             self.ws = ws
 
-            # Receive welcome message
-            welcome = await ws.recv()
-            self.handle_message(json.loads(welcome))
+            # Create a new session
+            await ws.send(json.dumps({'type': 'session'}))
+
+            # Wait for session confirmation
+            welcome = json.loads(await ws.recv())
+            self.handle_message(welcome)
 
             # Interactive loop
             while True:
@@ -316,24 +333,25 @@ class OctomindClient:
                     break
                 await self.send(content)
 
-                # Receive all responses for this message
+                # Receive all responses until cost message (last in sequence)
                 while True:
-                    response = await ws.recv()
-                    msg = json.loads(response)
-                    self.handle_message(msg)
-
-                    # Stop after cost message (last message)
-                    if msg['type'] == 'cost':
+                    response = json.loads(await ws.recv())
+                    self.handle_message(response)
+                    if response['type'] == 'cost':
                         break
 
     async def send(self, content):
-        message = {
-            'content': content
-        }
-        if self.session_id:
-            message['session_id'] = self.session_id
+        await self.ws.send(json.dumps({
+            'type': 'message',
+            'session_id': self.session_id,
+            'content': content,
+        }))
 
-        await self.ws.send(json.dumps(message))
+    async def command(self, cmd, *args):
+        msg = {'type': 'command', 'session_id': self.session_id, 'command': cmd}
+        if args:
+            msg['args'] = list(args)
+        await self.ws.send(json.dumps(msg))
 
     def handle_message(self, msg):
         # Store session ID
@@ -341,27 +359,23 @@ class OctomindClient:
             self.session_id = msg['session_id']
             print(f'Session ID: {self.session_id}')
 
-        # Display message
         msg_type = msg['type']
-        content = msg['content']
 
         if msg_type == 'assistant':
-            print(f'\033[32m{content}\033[0m')  # Green
+            print(f'\033[32m{msg["content"]}\033[0m')  # Green
         elif msg_type == 'thinking':
-            print(f'\033[35m🤔 {content}\033[0m')  # Magenta
+            print(f'\033[35m🤔 {msg["content"]}\033[0m')  # Magenta
         elif msg_type == 'tool_use':
-            meta = msg.get('meta', {})
-            tool_info = f"{meta.get('tool', '')} | {meta.get('server', '')}"
-            print(f'\033[36m🔧 {content} [{tool_info}]\033[0m')  # Cyan
+            print(f'\033[36m🔧 {msg["server"]} | {msg["tool"]}({msg["params"]})\033[0m')  # Cyan
         elif msg_type == 'tool_result':
-            icon = '✓' if msg.get('meta', {}).get('success') else '✗'
-            print(f'\033[90m{icon} {content}\033[0m')  # Gray
+            icon = '✓' if msg.get('success') else '✗'
+            print(f'\033[90m{icon} [{msg["tool"]}] {msg["content"]}\033[0m')  # Gray
         elif msg_type == 'cost':
-            print(f'\033[33m💰 {content}\033[0m')  # Yellow
+            print(f'\033[33m💰 {msg["session_tokens"]} tokens (${msg["session_cost"]:.4f})\033[0m')  # Yellow
         elif msg_type == 'error':
-            print(f'\033[31m❌ {content}\033[0m')  # Red
+            print(f'\033[31m❌ {msg["message"]}\033[0m')  # Red
         elif msg_type == 'status':
-            print(f'\033[34mℹ️  {content}\033[0m')  # Blue
+            print(f'\033[34mℹ️  {msg["message"]}\033[0m')  # Blue
 
 # Usage
 client = OctomindClient()

@@ -31,7 +31,9 @@ use anyhow::Result;
 use colored::Colorize;
 
 use crate::session::output::{OutputMode, OutputSink};
-use crate::websocket::{MessageType, ServerMessage};
+use crate::websocket::{
+	AssistantPayload, CostPayload, ServerMessage, ThinkingPayload, ToolResultPayload,
+};
 
 // Response processing parameters struct
 pub struct ResponseProcessingParams<'a, S: OutputSink> {
@@ -103,13 +105,10 @@ fn emit_thinking_event<S: OutputSink>(
 	thinking: &ThinkingBlock,
 	session_id: &str,
 ) {
-	let meta = serde_json::to_value(thinking).unwrap_or_else(|_| serde_json::json!({}));
-	params.emit(ServerMessage::with_metadata(
-		MessageType::Thinking,
-		thinking.content.clone(),
-		meta,
-		Some(session_id.to_string()),
-	));
+	params.emit(ServerMessage::Thinking(ThinkingPayload {
+		content: thinking.content.clone(),
+		session_id: session_id.to_string(),
+	}));
 }
 
 // Helper function to log debug information about the response
@@ -500,18 +499,18 @@ pub async fn process_response<S: OutputSink>(
 						.get("isError")
 						.and_then(|v| v.as_bool())
 						.unwrap_or(false);
-					let tool_msg = ServerMessage::with_metadata(
-						MessageType::ToolResult,
-						actual_content,
-						serde_json::json!({
-							"tool": tool_result.tool_name,
-							"tool_id": tool_result.tool_id,
-							"server": crate::session::chat::response::get_tool_server_name_async(&tool_result.tool_name, params.config).await,
-							"success": success,
-							"duration_ms": total_tool_time_ms
-						}),
-						Some(session_id.clone()),
-					);
+					let tool_msg = ServerMessage::ToolResult(ToolResultPayload {
+						tool: tool_result.tool_name.clone(),
+						tool_id: tool_result.tool_id.clone(),
+						server: crate::session::chat::response::get_tool_server_name_async(
+							&tool_result.tool_name,
+							params.config,
+						)
+						.await,
+						content: actual_content,
+						success,
+						session_id: session_id.clone(),
+					});
 					params.emit(tool_msg);
 				}
 
@@ -650,11 +649,10 @@ pub async fn process_response<S: OutputSink>(
 	}
 
 	// Emit assistant message through sink (WebSocket/JSONL)
-	params.emit(ServerMessage::new(
-		MessageType::Assistant,
-		current_content.clone(),
-		Some(session_id.clone()),
-	));
+	params.emit(ServerMessage::Assistant(AssistantPayload {
+		content: current_content.clone(),
+		session_id: session_id.clone(),
+	}));
 
 	handle_final_response(
 		&current_content,
@@ -672,23 +670,16 @@ pub async fn process_response<S: OutputSink>(
 		+ params.chat_session.session.info.cache_read_tokens
 		+ params.chat_session.session.info.cache_write_tokens
 		+ params.chat_session.session.info.reasoning_tokens;
-	let cost_msg = ServerMessage::with_metadata(
-		MessageType::Cost,
-		format!(
-			"Session: {} tokens ($ {:.4})",
-			total_tokens, params.chat_session.session.info.total_cost
-		),
-		serde_json::json!({
-			"session_tokens": total_tokens,
-			"session_cost": params.chat_session.session.info.total_cost,
-			"input_tokens": params.chat_session.session.info.input_tokens,
-			"output_tokens": params.chat_session.session.info.output_tokens,
-			"cache_read_tokens": params.chat_session.session.info.cache_read_tokens,
-			"cache_write_tokens": params.chat_session.session.info.cache_write_tokens,
-			"reasoning_tokens": params.chat_session.session.info.reasoning_tokens,
-		}),
-		Some(session_id),
-	);
+	let cost_msg = ServerMessage::Cost(CostPayload {
+		session_tokens: total_tokens,
+		session_cost: params.chat_session.session.info.total_cost,
+		input_tokens: params.chat_session.session.info.input_tokens,
+		output_tokens: params.chat_session.session.info.output_tokens,
+		cache_read_tokens: params.chat_session.session.info.cache_read_tokens,
+		cache_write_tokens: params.chat_session.session.info.cache_write_tokens,
+		reasoning_tokens: params.chat_session.session.info.reasoning_tokens,
+		session_id,
+	});
 
 	params.emit(cost_msg);
 

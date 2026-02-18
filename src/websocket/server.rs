@@ -15,7 +15,8 @@
 // WebSocket server implementation
 
 use super::protocol::{
-	ClientMessage, CommandMessage, MessageType, ServerMessage, SessionMessage, UserMessage,
+	AssistantPayload, ClientMessage, CommandMessage, CostPayload, ServerMessage, SessionMessage,
+	StatusPayload, ToolResultPayload, ToolUsePayload, UserMessage,
 };
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
@@ -392,12 +393,11 @@ async fn handle_command_message(
 				"Command '{}' executed with structured output",
 				slash_command
 			);
-			let response = ServerMessage::with_metadata(
-				MessageType::Status,
-				format!("Command '{}' executed successfully", slash_command),
-				command_output.to_json(),
-				Some(session_id.clone()),
-			);
+			let response = ServerMessage::Status(StatusPayload {
+				message: format!("Command '{}' executed successfully", slash_command),
+				session_id: Some(session_id.clone()),
+				data: Some(command_output.to_json()),
+			});
 			send_message(ws_sender, &response).await?;
 		}
 		CommandResult::Exit => {
@@ -604,18 +604,15 @@ async fn handle_user_message(
 							};
 
 							// Send tool result with clean content
-							let tool_msg = ServerMessage::with_metadata(
-								MessageType::ToolResult,
-								actual_content,
-								json!({
-									"tool": tool_name,
-									"tool_id": tool_id,
-									"server": server_name,
-									"success": success,
-									"duration_ms": 0, // We don't track this currently
-								}),
-								Some(session_id.clone()),
-							);
+							// Send tool result with clean content
+							let tool_msg = ServerMessage::ToolResult(ToolResultPayload {
+								tool: tool_name.to_string(),
+								tool_id: tool_id.to_string(),
+								server: server_name,
+								content: actual_content,
+								success,
+								session_id: session_id.clone(),
+							});
 							send_message(ws_sender, &tool_msg).await?;
 						}
 
@@ -668,17 +665,14 @@ async fn handle_user_message(
 											.unwrap_or_else(|| json!({}));
 
 										// Send tool_use message
-										let tool_use_msg = ServerMessage::with_metadata(
-											MessageType::ToolUse,
-											format!("Executing: {}(...)", tool_name),
-											json!({
-												"tool": tool_name,
-												"tool_id": tool_id,
-												"server": server_name,
-												"params": tool_params,
-											}),
-											Some(session_id.clone()),
-										);
+										// Send tool_use message
+										let tool_use_msg = ServerMessage::ToolUse(ToolUsePayload {
+											tool: tool_name.to_string(),
+											tool_id: tool_id.to_string(),
+											server: server_name,
+											params: tool_params,
+											session_id: session_id.clone(),
+										});
 										send_message(ws_sender, &tool_use_msg).await?;
 									}
 								}
@@ -693,11 +687,11 @@ async fn handle_user_message(
 							}
 
 							// Send assistant response
-							let assistant_msg = ServerMessage::new(
-								MessageType::Assistant,
-								msg.content.clone(),
-								Some(session_id.clone()),
-							);
+							// Send assistant response
+							let assistant_msg = ServerMessage::Assistant(AssistantPayload {
+								content: msg.content.clone(),
+								session_id: session_id.clone(),
+							});
 							send_message(ws_sender, &assistant_msg).await?;
 						}
 
@@ -722,23 +716,16 @@ async fn handle_user_message(
 				chat_session.session.info.total_cost
 			);
 
-			let cost_msg = ServerMessage::with_metadata(
-				MessageType::Cost,
-				format!(
-					"Session: {} tokens (${:.4})",
-					total_tokens, chat_session.session.info.total_cost
-				),
-				json!({
-					"session_tokens": total_tokens,
-					"session_cost": chat_session.session.info.total_cost,
-					"input_tokens": chat_session.session.info.input_tokens,
-					"output_tokens": chat_session.session.info.output_tokens,
-					"cache_read_tokens": chat_session.session.info.cache_read_tokens,
-					"cache_write_tokens": chat_session.session.info.cache_write_tokens,
-					"reasoning_tokens": chat_session.session.info.reasoning_tokens,
-				}),
-				Some(session_id.clone()),
-			);
+			let cost_msg = ServerMessage::Cost(CostPayload {
+				session_tokens: total_tokens,
+				session_cost: chat_session.session.info.total_cost,
+				input_tokens: chat_session.session.info.input_tokens,
+				output_tokens: chat_session.session.info.output_tokens,
+				cache_read_tokens: chat_session.session.info.cache_read_tokens,
+				cache_write_tokens: chat_session.session.info.cache_write_tokens,
+				reasoning_tokens: chat_session.session.info.reasoning_tokens,
+				session_id: session_id.clone(),
+			});
 
 			send_message(ws_sender, &cost_msg).await?;
 		}
@@ -775,7 +762,7 @@ async fn send_message(
 	let json = serde_json::to_string(msg)?;
 	log_debug!(
 		"Sending message: type={:?}, size={} bytes",
-		msg.message_type,
+		std::mem::discriminant(msg),
 		json.len()
 	);
 	ws_sender.send(Message::text(json)).await?;

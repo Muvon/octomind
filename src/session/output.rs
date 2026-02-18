@@ -147,8 +147,7 @@ pub fn detect_output_mode(cli_mode: &str) -> OutputMode {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::websocket::MessageType;
-
+	use crate::websocket::AssistantPayload;
 	#[test]
 	fn test_output_mode_from_cli_arg() {
 		// JSONL mode always returns Jsonl
@@ -211,11 +210,10 @@ mod tests {
 	#[test]
 	fn test_silent_sink_discards_messages() {
 		let sink = SilentSink;
-		let msg = ServerMessage::new(
-			MessageType::Assistant,
-			"test".to_string(),
-			Some("session_123".to_string()),
-		);
+		let msg = ServerMessage::Assistant(AssistantPayload {
+			content: "test".to_string(),
+			session_id: "session_123".to_string(),
+		});
 
 		// Should not panic, should not output anything
 		sink.emit(msg);
@@ -224,11 +222,10 @@ mod tests {
 	#[test]
 	fn test_jsonl_sink_emits_valid_json() {
 		let sink = JsonlSink;
-		let msg = ServerMessage::new(
-			MessageType::Assistant,
-			"test content".to_string(),
-			Some("session_123".to_string()),
-		);
+		let msg = ServerMessage::Assistant(AssistantPayload {
+			content: "test content".to_string(),
+			session_id: "session_123".to_string(),
+		});
 
 		// Note: In real test, you'd capture stdout
 		// For now, just verify it doesn't panic
@@ -240,18 +237,18 @@ mod tests {
 		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 		let sink = WebSocketSink::new(tx);
 
-		let msg = ServerMessage::new(
-			MessageType::Assistant,
-			"test".to_string(),
-			Some("session_123".to_string()),
-		);
+		let msg = ServerMessage::Assistant(AssistantPayload {
+			content: "test".to_string(),
+			session_id: "session_123".to_string(),
+		});
 
-		sink.emit(msg.clone());
+		sink.emit(msg);
 
-		// Verify message was sent
+		// Verify message was sent and is the correct variant
 		let received = rx.try_recv().unwrap();
-		assert_eq!(received.content, "test");
-		assert_eq!(received.message_type, MessageType::Assistant);
+		assert!(
+			matches!(received, ServerMessage::Assistant(AssistantPayload { content, .. }) if content == "test")
+		);
 	}
 
 	#[test]
@@ -262,11 +259,10 @@ mod tests {
 		// Close receiver
 		drop(rx);
 
-		let msg = ServerMessage::new(
-			MessageType::Assistant,
-			"test".to_string(),
-			Some("session_123".to_string()),
-		);
+		let msg = ServerMessage::Assistant(AssistantPayload {
+			content: "test".to_string(),
+			session_id: "session_123".to_string(),
+		});
 
 		// Should not panic when channel is closed
 		sink.emit(msg);

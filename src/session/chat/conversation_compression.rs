@@ -609,18 +609,19 @@ fn estimate_future_turns(session: &ChatSession) -> f64 {
 		call_velocity * session_duration_mins * phase_factor * output_variance_factor;
 
 	// === BOUNDS ===
-	// Adaptive max based on session activity
-	let max_estimate = if has_plan || tool_density > 2.5 {
-		(current_api_calls * 2.5).min(150.0) // High activity
-	} else {
-		(current_api_calls * 2.0).min(100.0) // Normal
-	};
+	// CRITICAL FIX: Define min_estimate BEFORE max_estimate to avoid clamp panic
 	let min_estimate = 5.0;
+	// Adaptive max based on session activity
+	// CRITICAL FIX: Ensure max_estimate >= min_estimate to avoid clamp panic
+	let max_estimate = if has_plan || tool_density > 2.5 {
+		(current_api_calls * 2.5).max(min_estimate).min(150.0) // High activity
+	} else {
+		(current_api_calls * 2.0).max(min_estimate).min(100.0) // Normal
+	};
 
 	// === FINAL: Blend confidence-weighted ===
 	let base_estimate = confidence * data_estimate + (1.0 - confidence) * conservative_estimate;
 	let final_estimate = base_estimate.clamp(min_estimate, max_estimate);
-
 	// === PREDICTION ACCURACY TRACKING (for self-tuning) ===
 	let prediction_accuracy = calculate_self_tuning_accuracy(info);
 
@@ -1832,5 +1833,75 @@ mod tests {
 		// Verify cooldown scales with estimate
 		assert!(next_short < next_medium, "Short cooldown < medium cooldown");
 		assert!(next_medium < next_long, "Medium cooldown < long cooldown");
+	}
+
+	#[test]
+	fn test_clamp_no_panic_with_zero_api_calls() {
+		// REGRESSION TEST: Ensure clamp doesn't panic when current_api_calls is 0
+		// BUG: When current_api_calls=0, max_estimate=0.0 < min_estimate=5.0 → panic!
+		// FIX: max_estimate must be at least min_estimate
+
+		// Simulate the calculation from estimate_future_turns
+		let current_api_calls: f64 = 0.0;
+		let min_estimate: f64 = 5.0;
+
+		// OLD BUG: max_estimate = 0.0, which is < min_estimate
+		let max_estimate_buggy: f64 = (current_api_calls * 2.0).min(100.0);
+		assert_eq!(max_estimate_buggy, 0.0, "Bug: max would be 0");
+		assert!(
+			max_estimate_buggy < min_estimate,
+			"Bug: max < min would panic"
+		);
+
+		// FIX: max_estimate must be at least min_estimate
+		let max_estimate_fixed: f64 = (current_api_calls * 2.0).max(min_estimate).min(100.0);
+		assert_eq!(max_estimate_fixed, 5.0, "Fixed: max >= min");
+		assert!(max_estimate_fixed >= min_estimate, "Fixed: max >= min");
+
+		// Test with small values
+		for calls in [0.0_f64, 1.0, 2.0, 3.0, 4.0, 5.0] {
+			let max_normal: f64 = (calls * 2.0).max(min_estimate).min(100.0);
+			let max_high: f64 = (calls * 2.5).max(min_estimate).min(150.0);
+			assert!(
+				max_normal >= min_estimate,
+				"Normal: max >= min for calls={}",
+				calls
+			);
+			assert!(
+				max_high >= min_estimate,
+				"High: max >= min for calls={}",
+				calls
+			);
+		}
+	}
+
+	#[test]
+	fn test_clamp_no_panic_with_small_api_calls() {
+		// Test edge cases where current_api_calls is small but non-zero
+		let min_estimate: f64 = 5.0;
+
+		// Test case 1: current_api_calls = 1, normal activity
+		let calls_1: f64 = 1.0;
+		let max_1_normal: f64 = (calls_1 * 2.0).max(min_estimate).min(100.0);
+		assert_eq!(
+			max_1_normal, 5.0,
+			"Should use min_estimate when calculated max is smaller"
+		);
+
+		// Test case 2: current_api_calls = 2, high activity
+		let calls_2: f64 = 2.0;
+		let max_2_high: f64 = (calls_2 * 2.5).max(min_estimate).min(150.0);
+		assert_eq!(
+			max_2_high, 5.0,
+			"Should use min_estimate when calculated max is smaller"
+		);
+
+		// Test case 3: current_api_calls = 3, normal activity
+		let calls_3: f64 = 3.0;
+		let max_3_normal: f64 = (calls_3 * 2.0).max(min_estimate).min(100.0);
+		assert_eq!(
+			max_3_normal, 6.0,
+			"Should use calculated max when larger than min"
+		);
 	}
 }

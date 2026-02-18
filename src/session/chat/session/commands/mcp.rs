@@ -351,10 +351,9 @@ async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResul
 					}
 				}
 			}
-		} else if has_type {
-			if func.parameters.get("type").and_then(|t| t.as_str()) == Some("object") {
-				issues.push("Object type schema missing 'properties' field".to_string());
-			}
+		} else if has_type && func.parameters.get("type").and_then(|t| t.as_str()) == Some("object")
+		{
+			issues.push("Object type schema missing 'properties' field".to_string());
 		}
 
 		if !issues.is_empty() {

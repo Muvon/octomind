@@ -1086,32 +1086,337 @@ fn display_mcp_info(data: &serde_json::Value) {
 
 // Placeholder implementations for remaining subcommands
 // These will be implemented once the corresponding handlers are refactored
-fn display_mcp_full(_data: &serde_json::Value) {
+fn display_mcp_full(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
 	println!(
 		"{}",
-		"MCP full view not yet implemented in display layer".yellow()
+		"MCP Server Status & Tools (Full Details)"
+			.bright_cyan()
+			.bold()
+	);
+	println!("{}", "─".repeat(60).dimmed());
+
+	if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
+		println!("{}", msg.yellow());
+		return;
+	}
+
+	// Server status
+	if let Some(servers) = data.get("servers").and_then(|v| v.as_array()) {
+		for server in servers {
+			let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("");
+			let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("");
+			let conn_type = server
+				.get("connection_type")
+				.and_then(|v| v.as_str())
+				.unwrap_or("");
+			let health_display = match health {
+				"running" => "✅ Running".green(),
+				"dead" => "❌ Dead".red(),
+				"restarting" => "🔄 Restarting".yellow(),
+				"failed" => "💥 Failed".bright_red(),
+				"unreachable" => "🔒 Auth Failed".bright_red(),
+				_ => health.normal(),
+			};
+			println!();
+			println!("{}: {}", name.bright_white().bold(), health_display);
+			println!("  Type: {}", conn_type);
+
+			if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
+				let tool_names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
+				if !tool_names.is_empty() {
+					println!("  Configured tools: {}", tool_names.join(", ").dimmed());
+				}
+			}
+
+			let restart_count = server
+				.get("restart_count")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			if restart_count > 0 {
+				println!("  Restart count: {}", restart_count);
+				let failures = server
+					.get("consecutive_failures")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
+				if failures > 0 {
+					println!("  Consecutive failures: {}", failures);
+				}
+			}
+		}
+	}
+
+	// Tools with full details
+	println!();
+	println!("{}", "Available Tools (Full Details)".bright_cyan().bold());
+	println!("{}", "─".repeat(60).dimmed());
+
+	if let Some(tools_by_server) = data.get("tools").and_then(|v| v.as_object()) {
+		if tools_by_server.is_empty() {
+			println!("{}", "No tools available.".yellow());
+		} else {
+			for (server_name, tools) in tools_by_server {
+				println!();
+				println!("  {}", server_name.bright_blue().bold());
+
+				if let Some(tools_arr) = tools.as_array() {
+					for tool in tools_arr {
+						let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+						let desc = tool
+							.get("description")
+							.and_then(|v| v.as_str())
+							.unwrap_or("");
+						println!("    {}", name.bright_white().bold());
+						if !desc.is_empty() {
+							println!("      {}", desc.dimmed());
+						}
+
+						// Parameters
+						if let Some(params) = tool.get("parameters") {
+							if let Some(props) =
+								params.get("properties").and_then(|v| v.as_object())
+							{
+								if !props.is_empty() {
+									println!("      {}", "Parameters:".bright_green());
+									let required: std::collections::HashSet<String> = params
+										.get("required")
+										.and_then(|r| r.as_array())
+										.map(|arr| {
+											arr.iter()
+												.filter_map(|v| v.as_str())
+												.map(|s| s.to_string())
+												.collect()
+										})
+										.unwrap_or_default();
+
+									for (param_name, param_info) in props {
+										let marker = if required.contains(param_name) {
+											"*".bright_red()
+										} else {
+											" ".normal()
+										};
+										let ptype = param_info
+											.get("type")
+											.and_then(|v| v.as_str())
+											.unwrap_or("any");
+										let pdesc = param_info
+											.get("description")
+											.and_then(|v| v.as_str())
+											.unwrap_or("");
+										println!(
+											"        {}{}: {} {}",
+											marker,
+											param_name.bright_cyan(),
+											ptype.yellow(),
+											if !pdesc.is_empty() {
+												format!("- {}", pdesc).dimmed()
+											} else {
+												"".normal()
+											}
+										);
+										if let Some(enum_vals) =
+											param_info.get("enum").and_then(|v| v.as_array())
+										{
+											let vals: Vec<&str> = enum_vals
+												.iter()
+												.filter_map(|v| v.as_str())
+												.collect();
+											if !vals.is_empty() {
+												println!(
+													"          {}: {}",
+													"options".bright_black(),
+													vals.join(", ").bright_black()
+												);
+											}
+										}
+										if let Some(default_val) = param_info.get("default") {
+											println!(
+												"          {}: {}",
+												"default".bright_black(),
+												default_val.to_string().bright_black()
+											);
+										}
+									}
+								}
+							} else if *params != serde_json::json!({}) {
+								println!(
+									"      {}: {}",
+									"Schema".bright_green(),
+									params.to_string().dimmed()
+								);
+							}
+						}
+						println!();
+					}
+				}
+			}
+		}
+	}
+
+	println!();
+	println!("{}", "Legend: ".bright_yellow());
+	println!("  {} Required parameter", "*".bright_red());
+	println!(
+		"  {}",
+		"Use '/mcp list' for names only or '/mcp info' for overview.".dimmed()
 	);
 }
 
-fn display_mcp_health(_data: &serde_json::Value) {
+fn display_mcp_health(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
+	println!("{}", "MCP Server Health Check".bright_cyan().bold());
+	println!("{}", "─".repeat(50).dimmed());
+
+	if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
+		println!("{}", msg.yellow());
+		return;
+	}
+
+	let monitor_running = data
+		.get("monitor_running")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false);
+	if monitor_running {
+		println!("{}", "🔍 Health monitor: RUNNING".bright_green());
+	} else {
+		println!("{}", "🔍 Health monitor: STOPPED".bright_red());
+	}
+	println!();
+
+	if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+		println!("{}: {}", "Health check failed".bright_red(), error);
+		return;
+	}
+
 	println!(
 		"{}",
-		"MCP health view not yet implemented in display layer".yellow()
+		"Performing health check on all external servers...".bright_blue()
+	);
+
+	if let Some(servers) = data.get("servers").and_then(|v| v.as_array()) {
+		for server in servers {
+			let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("");
+			let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("");
+			let health_display = match health {
+				"running" => "✅ Running".green(),
+				"dead" => "❌ Dead".red(),
+				"restarting" => "🔄 Restarting".yellow(),
+				"failed" => "💥 Failed".bright_red(),
+				"unreachable" => "🔒 Auth Failed".bright_red(),
+				_ => health.normal(),
+			};
+			println!("{}: {}", name.bright_white().bold(), health_display);
+
+			let restart_count = server
+				.get("restart_count")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
+			if restart_count > 0 {
+				println!("  Restart count: {}", restart_count);
+				let failures = server
+					.get("consecutive_failures")
+					.and_then(|v| v.as_u64())
+					.unwrap_or(0);
+				if failures > 0 {
+					println!("  Consecutive failures: {}", failures);
+				}
+			}
+
+			if let Some(secs) = server.get("last_checked_secs_ago").and_then(|v| v.as_u64()) {
+				println!("  Last checked: {}s ago", secs);
+			}
+		}
+	}
+
+	println!();
+	println!(
+		"{}",
+		"Health check completed. Dead servers will be automatically restarted by the health monitor.".bright_blue()
 	);
 }
 
-fn display_mcp_dump(_data: &serde_json::Value) {
+fn display_mcp_dump(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
+	println!("{}", "Raw MCP Tool Definitions (JSON)".bright_cyan().bold());
+	println!("{}", "─".repeat(50).dimmed());
+
+	if let Some(tools) = data.get("tools").and_then(|v| v.as_array()) {
+		if tools.is_empty() {
+			println!("{}", "No tools available.".yellow());
+		} else {
+			for (i, tool) in tools.iter().enumerate() {
+				let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+				println!();
+				println!("{}. {}", i + 1, name.bright_white().bold());
+				println!("{}", serde_json::to_string_pretty(tool).unwrap_or_default());
+			}
+		}
+	}
+
+	println!();
 	println!(
 		"{}",
-		"MCP dump view not yet implemented in display layer".yellow()
+		"Use this output to debug tool schema validation issues.".dimmed()
 	);
 }
 
-fn display_mcp_validate(_data: &serde_json::Value) {
-	println!(
-		"{}",
-		"MCP validate view not yet implemented in display layer".yellow()
-	);
+fn display_mcp_validate(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	println!();
+	println!("{}", "MCP Tool Schema Validation".bright_cyan().bold());
+	println!("{}", "─".repeat(50).dimmed());
+
+	if let Some(tools) = data.get("tools").and_then(|v| v.as_array()) {
+		if tools.is_empty() {
+			println!("{}", "No tools available to validate.".yellow());
+			return;
+		}
+
+		for (i, tool) in tools.iter().enumerate() {
+			let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+			let valid = tool.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+			println!();
+			println!("{}. Validating {}", i + 1, name.bright_white().bold());
+
+			if valid {
+				println!("  {}", "✅ Valid schema".bright_green());
+			} else {
+				println!("  {}", "❌ Schema issues found:".bright_red());
+				if let Some(issues) = tool.get("issues").and_then(|v| v.as_array()) {
+					for issue in issues {
+						if let Some(s) = issue.as_str() {
+							println!("    - {}", s.yellow());
+						}
+					}
+				}
+			}
+		}
+
+		println!();
+		let all_valid = data
+			.get("all_valid")
+			.and_then(|v| v.as_bool())
+			.unwrap_or(false);
+		if all_valid {
+			println!("{}", "✅ All tool schemas are valid!".bright_green());
+		} else {
+			println!(
+				"{}",
+				"❌ Some tool schemas have validation issues.".bright_red()
+			);
+			println!(
+				"{}",
+				"These issues may cause API errors with providers like Anthropic.".yellow()
+			);
+		}
+	}
 }
 
 fn display_mcp_invalid(_data: &serde_json::Value) {

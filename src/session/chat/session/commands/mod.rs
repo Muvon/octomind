@@ -218,6 +218,8 @@ impl CommandOutput {
 				}
 			}
 			Self::Clear { message, .. } => {
+				print!("\x1B[2J\x1B[1;1H");
+				std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 				println!("{}", message);
 			}
 			Self::Plan { .. } => display::display_plan(self),

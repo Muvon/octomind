@@ -18,7 +18,6 @@ use super::utils::get_tool_server_name_async;
 use super::{CommandOutput, CommandResult};
 use crate::config::{Config, McpConnectionType};
 use anyhow::Result;
-use colored::Colorize;
 
 pub async fn handle_mcp(config: &Config, role: &str, params: &[&str]) -> Result<CommandResult> {
 	// Handle /mcp command for showing MCP server status and tools
@@ -155,437 +154,228 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 }
 
 async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
-	// Full detailed view with parameters
-	println!();
-	println!(
-		"{}",
-		"MCP Server Status & Tools (Full Details)"
-			.bright_cyan()
-			.bold()
-	);
-	println!("{}", "─".repeat(60).dimmed());
-
-	// Get the merged config for this role
 	let config_for_role = config.get_merged_config_for_role(role);
 
 	if config_for_role.mcp.servers.is_empty() {
-		println!("{}", "No MCP servers configured for this role.".yellow());
-		let json_output = serde_json::json!({"subcommand": "info", "servers": [], "message": "No MCP servers configured"});
 		return Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-			mcp_command: String::new(),
-			data: json_output,
+			mcp_command: "full".to_string(),
+			data: serde_json::json!({"subcommand": "full", "servers": [], "tools": {}, "message": "No MCP servers configured"}),
 		}));
 	}
 
-	// Show server status (same as info)
+	// Collect server status data
 	let server_report = crate::mcp::server::get_server_status_report();
+	let mut servers_data = Vec::new();
 
 	for server in &config_for_role.mcp.servers {
-		let server_name = server.name();
 		let (health, restart_info) = match server.connection_type() {
 			McpConnectionType::Builtin => (
 				crate::mcp::process::ServerHealth::Running,
 				Default::default(),
 			),
 			McpConnectionType::Http | McpConnectionType::Stdin => {
-				if let Some((h, r)) = server_report.get(server_name) {
+				if let Some((h, r)) = server_report.get(server.name()) {
 					(*h, r.clone())
 				} else {
-					// Server not in status report yet - perform on-demand health check
 					let health = check_server_health_on_demand(server).await;
 					(health, Default::default())
 				}
 			}
 		};
 
-		let health_display = match health {
-			crate::mcp::process::ServerHealth::Running => "✅ Running".green(),
-			crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
-			crate::mcp::process::ServerHealth::Restarting => "🔄 Restarting".yellow(),
-			crate::mcp::process::ServerHealth::Failed => "💥 Failed".bright_red(),
-			crate::mcp::process::ServerHealth::Unreachable => "🔒 Auth Failed".bright_red(),
+		let health_str = match health {
+			crate::mcp::process::ServerHealth::Running => "running",
+			crate::mcp::process::ServerHealth::Dead => "dead",
+			crate::mcp::process::ServerHealth::Restarting => "restarting",
+			crate::mcp::process::ServerHealth::Failed => "failed",
+			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
 		};
 
-		println!();
-		println!(
-			"{}: {}",
-			server.name().bright_white().bold(),
-			health_display
-		);
-		println!("  Type: {:?}", server.connection_type());
-		// Connection type field was removed
-
-		if !server.tools().is_empty() {
-			println!("  Configured tools: {}", server.tools().join(", ").dimmed());
-		}
-
-		if restart_info.restart_count > 0 {
-			println!("  Restart count: {}", restart_info.restart_count);
-			if restart_info.consecutive_failures > 0 {
-				println!(
-					"  Consecutive failures: {}",
-					restart_info.consecutive_failures
-				);
-			}
-		}
+		servers_data.push(serde_json::json!({
+			"name": server.name(),
+			"health": health_str,
+			"connection_type": format!("{:?}", server.connection_type()),
+			"tools": server.tools(),
+			"restart_count": restart_info.restart_count,
+			"consecutive_failures": restart_info.consecutive_failures,
+		}));
 	}
 
-	// Show available tools with full details
-	println!();
-	println!("{}", "Available Tools (Full Details)".bright_cyan().bold());
-	println!("{}", "─".repeat(60).dimmed());
-
+	// Collect full tool details grouped by server
 	let available_functions = crate::mcp::get_available_functions(&config_for_role).await;
-	if available_functions.is_empty() {
-		println!("{}", "No tools available.".yellow());
-	} else {
-		// Group tools by server name
-		let mut servers: std::collections::HashMap<String, Vec<&crate::mcp::McpFunction>> =
-			std::collections::HashMap::new();
+	let mut tools_by_server: std::collections::HashMap<String, Vec<serde_json::Value>> =
+		std::collections::HashMap::new();
 
-		for func in &available_functions {
-			let server_name = get_tool_server_name_async(&func.name, &config_for_role).await;
-			servers.entry(server_name).or_default().push(func);
-		}
-
-		for (server_name, tools) in servers {
-			println!();
-			println!("  {}", server_name.bright_blue().bold());
-
-			for tool in tools {
-				// Full detailed view with parameters
-				println!("    {}", tool.name.bright_white().bold());
-
-				// Show full description
-				if !tool.description.is_empty() {
-					println!("      {}", tool.description.dimmed());
-				}
-
-				// Show parameters if available
-				if let Some(properties) = tool.parameters.get("properties") {
-					if let Some(props_obj) = properties.as_object() {
-						if !props_obj.is_empty() {
-							println!("      {}", "Parameters:".bright_green());
-
-							// Get required parameters
-							let required_params: std::collections::HashSet<String> = tool
-								.parameters
-								.get("required")
-								.and_then(|r| r.as_array())
-								.map(|arr| {
-									arr.iter()
-										.filter_map(|v| v.as_str())
-										.map(|s| s.to_string())
-										.collect()
-								})
-								.unwrap_or_default();
-
-							for (param_name, param_info) in props_obj {
-								let is_required = required_params.contains(param_name);
-								let required_marker = if is_required {
-									"*".bright_red()
-								} else {
-									" ".normal()
-								};
-
-								let param_type = param_info
-									.get("type")
-									.and_then(|t| t.as_str())
-									.unwrap_or("any");
-
-								let param_desc = param_info
-									.get("description")
-									.and_then(|d| d.as_str())
-									.unwrap_or("");
-
-								println!(
-									"        {}{}: {} {}",
-									required_marker,
-									param_name.bright_cyan(),
-									param_type.yellow(),
-									if !param_desc.is_empty() {
-										format!("- {}", param_desc).dimmed()
-									} else {
-										"".normal()
-									}
-								);
-
-								// Show enum values if available
-								if let Some(enum_values) = param_info.get("enum") {
-									if let Some(enum_array) = enum_values.as_array() {
-										let values: Vec<String> = enum_array
-											.iter()
-											.filter_map(|v| v.as_str())
-											.map(|s| s.to_string())
-											.collect();
-										if !values.is_empty() {
-											println!(
-												"          {}: {}",
-												"options".bright_black(),
-												values.join(", ").bright_black()
-											);
-										}
-									}
-								}
-
-								// Show default value if available
-								if let Some(default_val) = param_info.get("default") {
-									println!(
-										"          {}: {}",
-										"default".bright_black(),
-										default_val.to_string().bright_black()
-									);
-								}
-							}
-						}
-					}
-				} else if tool.parameters != serde_json::json!({}) {
-					// Show raw parameters if not in standard format
-					println!(
-						"      {}: {}",
-						"Schema".bright_green(),
-						tool.parameters.to_string().dimmed()
-					);
-				}
-
-				println!(); // Add spacing between tools
-			}
-		}
+	for func in &available_functions {
+		let server_name = get_tool_server_name_async(&func.name, &config_for_role).await;
+		tools_by_server
+			.entry(server_name)
+			.or_default()
+			.push(serde_json::json!({
+				"name": func.name,
+				"description": func.description,
+				"parameters": func.parameters,
+			}));
 	}
 
-	println!();
-	println!("{}", "Legend: ".bright_yellow());
-	println!("  {} Required parameter", "*".bright_red());
-	println!(
-		"  {}",
-		"Use '/mcp list' for names only or '/mcp info' for overview.".dimmed()
-	);
-	let json_output = serde_json::json!({"success": true});
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-		mcp_command: String::new(),
-		data: json_output,
+		mcp_command: "full".to_string(),
+		data: serde_json::json!({
+			"subcommand": "full",
+			"servers": servers_data,
+			"tools": tools_by_server,
+			"total_tools": available_functions.len(),
+		}),
 	}))
 }
 
 async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult> {
-	// Health check and restart subcommand
-	println!();
-	println!("{}", "MCP Server Health Check".bright_cyan().bold());
-	println!("{}", "─".repeat(50).dimmed());
-
 	let config_for_role = config.get_merged_config_for_role(role);
 
 	if config_for_role.mcp.servers.is_empty() {
-		println!("{}", "No MCP servers configured for this role.".yellow());
-		let json_output = serde_json::json!({"subcommand": "info", "servers": [], "message": "No MCP servers configured"});
 		return Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-			mcp_command: String::new(),
-			data: json_output,
+			mcp_command: "health".to_string(),
+			data: serde_json::json!({"subcommand": "health", "servers": [], "message": "No MCP servers configured"}),
 		}));
 	}
 
-	// Show current health monitor status
-	if crate::mcp::health_monitor::is_health_monitor_running() {
-		println!("{}", "🔍 Health monitor: RUNNING".bright_green());
-	} else {
-		println!("{}", "🔍 Health monitor: STOPPED".bright_red());
-	}
-	println!();
-
-	// Force a health check on all servers
-	println!(
-		"{}",
-		"Performing health check on all external servers...".bright_blue()
-	);
+	let monitor_running = crate::mcp::health_monitor::is_health_monitor_running();
 
 	if let Err(e) = crate::mcp::health_monitor::force_health_check(&config_for_role).await {
-		println!("{}: {}", "Health check failed".bright_red(), e);
-		let json_output = serde_json::json!({
-			"subcommand": "health",
-			"error": format!("Health check failed: {}", e)
-		});
 		return Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-			mcp_command: String::new(),
-			data: json_output,
+			mcp_command: "health".to_string(),
+			data: serde_json::json!({
+				"subcommand": "health",
+				"monitor_running": monitor_running,
+				"error": format!("Health check failed: {}", e),
+			}),
 		}));
 	}
 
-	// Remove the duplicate return that was added
-	// Show updated server status
-
 	let server_report = crate::mcp::server::get_server_status_report();
+	let mut servers_data = Vec::new();
 
 	for server in &config_for_role.mcp.servers {
 		if let McpConnectionType::Http | McpConnectionType::Stdin = server.connection_type() {
 			let (health, restart_info) = if let Some((h, r)) = server_report.get(server.name()) {
 				(*h, r.clone())
 			} else {
-				// Server not in status report yet - perform on-demand health check
 				let health = check_server_health_on_demand(server).await;
 				(health, Default::default())
 			};
 
-			let health_display = match health {
-				crate::mcp::process::ServerHealth::Running => "✅ Running".green(),
-				crate::mcp::process::ServerHealth::Dead => "❌ Dead".red(),
-				crate::mcp::process::ServerHealth::Restarting => "🔄 Restarting".yellow(),
-				crate::mcp::process::ServerHealth::Failed => "💥 Failed".bright_red(),
-				crate::mcp::process::ServerHealth::Unreachable => "🔒 Auth Failed".bright_red(),
+			let health_str = match health {
+				crate::mcp::process::ServerHealth::Running => "running",
+				crate::mcp::process::ServerHealth::Dead => "dead",
+				crate::mcp::process::ServerHealth::Restarting => "restarting",
+				crate::mcp::process::ServerHealth::Failed => "failed",
+				crate::mcp::process::ServerHealth::Unreachable => "unreachable",
 			};
 
-			println!(
-				"{}: {}",
-				server.name().bright_white().bold(),
-				health_display
-			);
+			let last_checked_secs = restart_info.last_health_check.and_then(|t| {
+				std::time::SystemTime::now()
+					.duration_since(t)
+					.ok()
+					.map(|d| d.as_secs())
+			});
 
-			if restart_info.restart_count > 0 {
-				println!("  Restart count: {}", restart_info.restart_count);
-				if restart_info.consecutive_failures > 0 {
-					println!(
-						"  Consecutive failures: {}",
-						restart_info.consecutive_failures
-					);
-				}
-			}
-
-			// Show last health check time
-			if let Some(last_check) = restart_info.last_health_check {
-				if let Ok(duration) = std::time::SystemTime::now().duration_since(last_check) {
-					println!("  Last checked: {}s ago", duration.as_secs());
-				}
-			}
+			servers_data.push(serde_json::json!({
+				"name": server.name(),
+				"health": health_str,
+				"restart_count": restart_info.restart_count,
+				"consecutive_failures": restart_info.consecutive_failures,
+				"last_checked_secs_ago": last_checked_secs,
+			}));
 		}
 	}
 
-	println!();
-	println!("{}", "Health check completed. Dead servers will be automatically restarted by the health monitor.".bright_blue());
-	let json_output = serde_json::json!({"success": true});
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-		mcp_command: String::new(),
-		data: json_output,
+		mcp_command: "health".to_string(),
+		data: serde_json::json!({
+			"subcommand": "health",
+			"monitor_running": monitor_running,
+			"servers": servers_data,
+		}),
 	}))
 }
 
 async fn handle_mcp_dump(config: &Config, role: &str) -> Result<CommandResult> {
-	// Dump raw tool definitions in JSON format for debugging
-	println!();
-	println!("{}", "Raw MCP Tool Definitions (JSON)".bright_cyan().bold());
-	println!("{}", "─".repeat(50).dimmed());
-
 	let config_for_role = config.get_merged_config_for_role(role);
 	let available_functions = crate::mcp::get_available_functions(&config_for_role).await;
 
-	if available_functions.is_empty() {
-		println!("{}", "No tools available.".yellow());
-	} else {
-		for (i, func) in available_functions.iter().enumerate() {
-			println!();
-			println!("{}. {}", i + 1, func.name.bright_white().bold());
-			println!(
-				"{}",
-				serde_json::to_string_pretty(&serde_json::json!({
-					"name": func.name,
-					"description": func.description,
-					"parameters": func.parameters
-				}))
-				.unwrap_or_default()
-			);
-		}
-	}
+	let tools: Vec<serde_json::Value> = available_functions
+		.iter()
+		.map(|func| {
+			serde_json::json!({
+				"name": func.name,
+				"description": func.description,
+				"parameters": func.parameters,
+			})
+		})
+		.collect();
 
-	println!();
-	println!(
-		"{}",
-		"Use this output to debug tool schema validation issues.".dimmed()
-	);
-	let json_output = serde_json::json!({"success": true});
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-		mcp_command: String::new(),
-		data: json_output,
+		mcp_command: "dump".to_string(),
+		data: serde_json::json!({
+			"subcommand": "dump",
+			"tools": tools,
+			"total_tools": available_functions.len(),
+		}),
 	}))
 }
 
 async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResult> {
-	// Validate tool schema definitions
-	println!();
-	println!("{}", "MCP Tool Schema Validation".bright_cyan().bold());
-	println!("{}", "─".repeat(50).dimmed());
-
 	let config_for_role = config.get_merged_config_for_role(role);
 	let available_functions = crate::mcp::get_available_functions(&config_for_role).await;
 
-	if available_functions.is_empty() {
-		println!("{}", "No tools available to validate.".yellow());
-	} else {
-		let mut all_valid = true;
+	let mut all_valid = true;
+	let mut tools_validation: Vec<serde_json::Value> = Vec::new();
 
-		for (i, func) in available_functions.iter().enumerate() {
-			println!();
-			println!("{}. Validating {}", i + 1, func.name.bright_white().bold());
+	for func in &available_functions {
+		let mut issues = Vec::new();
 
-			let mut issues = Vec::new();
+		let has_type = func.parameters.get("type").is_some();
+		let has_one_of = func.parameters.get("oneOf").is_some();
+		if !has_type && !has_one_of {
+			issues.push("Missing 'type' or 'oneOf' field in root schema".to_string());
+		}
 
-			// Check if parameters has "type" field OR "oneOf" field (MCP schema requirement)
-			let has_type = func.parameters.get("type").is_some();
-			let has_one_of = func.parameters.get("oneOf").is_some();
-
-			if !has_type && !has_one_of {
-				issues.push("Missing 'type' or 'oneOf' field in root schema".to_string());
-			}
-
-			// Check if properties exist and have proper type definitions
-			if let Some(properties) = func.parameters.get("properties") {
-				if let Some(props_obj) = properties.as_object() {
-					for (prop_name, prop_def) in props_obj {
-						let prop_has_type = prop_def.get("type").is_some();
-						let prop_has_one_of = prop_def.get("oneOf").is_some();
-
-						if !prop_has_type && !prop_has_one_of {
-							issues.push(format!(
-								"Property '{}' missing 'type' or 'oneOf' field",
-								prop_name
-							));
-						}
+		if let Some(properties) = func.parameters.get("properties") {
+			if let Some(props_obj) = properties.as_object() {
+				for (prop_name, prop_def) in props_obj {
+					if prop_def.get("type").is_none() && prop_def.get("oneOf").is_none() {
+						issues.push(format!(
+							"Property '{}' missing 'type' or 'oneOf' field",
+							prop_name
+						));
 					}
 				}
-			} else if has_type {
-				// Only require properties if we have a type field (not for oneOf schemas)
-				let schema_type = func.parameters.get("type").and_then(|t| t.as_str());
-				if schema_type == Some("object") {
-					issues.push("Object type schema missing 'properties' field".to_string());
-				}
 			}
-
-			if issues.is_empty() {
-				println!("  {}", "✅ Valid schema".bright_green());
-			} else {
-				all_valid = false;
-				println!("  {}", "❌ Schema issues found:".bright_red());
-				for issue in issues {
-					println!("    - {}", issue.yellow());
-				}
+		} else if has_type {
+			if func.parameters.get("type").and_then(|t| t.as_str()) == Some("object") {
+				issues.push("Object type schema missing 'properties' field".to_string());
 			}
 		}
 
-		println!();
-		if all_valid {
-			println!("{}", "✅ All tool schemas are valid!".bright_green());
-		} else {
-			println!(
-				"{}",
-				"❌ Some tool schemas have validation issues.".bright_red()
-			);
-			println!(
-				"{}",
-				"These issues may cause API errors with providers like Anthropic.".yellow()
-			);
+		if !issues.is_empty() {
+			all_valid = false;
 		}
+
+		tools_validation.push(serde_json::json!({
+			"name": func.name,
+			"valid": issues.is_empty(),
+			"issues": issues,
+		}));
 	}
-	let json_output = serde_json::json!({"success": true});
+
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-		mcp_command: String::new(),
-		data: json_output,
+		mcp_command: "validate".to_string(),
+		data: serde_json::json!({
+			"subcommand": "validate",
+			"all_valid": all_valid,
+			"tools": tools_validation,
+			"total_tools": available_functions.len(),
+		}),
 	}))
 }
 
@@ -596,7 +386,7 @@ fn handle_mcp_invalid() -> Result<CommandResult> {
 		"message": "Invalid MCP subcommand"
 	});
 	Ok(CommandResult::HandledWithOutput(CommandOutput::Mcp {
-		mcp_command: String::new(),
+		mcp_command: "invalid".to_string(),
 		data: json_output,
 	}))
 }

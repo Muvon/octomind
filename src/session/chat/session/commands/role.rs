@@ -95,7 +95,7 @@ pub async fn handle_role(
 		if let Err(e) =
 			crate::session::logger::log_session_command(&session.session.info.name, &command_line)
 		{
-			eprintln!("Warning: Failed to log role change: {}", e);
+			crate::log_debug!("Warning: Failed to log role change: {}", e);
 		}
 	}
 

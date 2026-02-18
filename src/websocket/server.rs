@@ -14,7 +14,9 @@
 
 // WebSocket server implementation
 
-use super::protocol::{ClientMessage, ClientMessageType, MessageType, ServerMessage};
+use super::protocol::{
+	ClientMessage, CommandMessage, MessageType, ServerMessage, SessionMessage, UserMessage,
+};
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
@@ -125,11 +127,7 @@ async fn handle_connection(
 				// Parse client message
 				let client_msg = match serde_json::from_str::<ClientMessage>(&text) {
 					Ok(msg) => {
-						log_debug!(
-							"Parsed message: type={:?}, session_id={:?}",
-							msg.message_type,
-							msg.session_id
-						);
+						log_debug!("Parsed message: {:?}", msg);
 						msg
 					}
 					Err(e) => {
@@ -195,15 +193,15 @@ async fn process_client_message(
 	role: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
 ) -> Result<()> {
-	match client_msg.message_type {
-		ClientMessageType::Session => {
-			handle_session_message(client_msg, ws_sender, config, role, sessions).await
+	match client_msg {
+		ClientMessage::Session(msg) => {
+			handle_session_message(msg, ws_sender, config, role, sessions).await
 		}
-		ClientMessageType::Message => {
-			handle_user_message(client_msg, ws_sender, config, role, sessions).await
+		ClientMessage::Message(msg) => {
+			handle_user_message(msg, ws_sender, config, role, sessions).await
 		}
-		ClientMessageType::Command => {
-			handle_command_message(client_msg, ws_sender, config, role, sessions).await
+		ClientMessage::Command(msg) => {
+			handle_command_message(msg, ws_sender, config, role, sessions).await
 		}
 	}
 }
@@ -211,7 +209,7 @@ async fn process_client_message(
 /// Handle a "session" type message: create new or resume existing session.
 /// No AI call is made — just session setup. Responds with session_id.
 async fn handle_session_message(
-	client_msg: ClientMessage,
+	msg: SessionMessage,
 	ws_sender: &mut futures_util::stream::SplitSink<
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
@@ -220,12 +218,9 @@ async fn handle_session_message(
 	role: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
 ) -> Result<()> {
-	log_debug!(
-		"Handling session message: session_id={:?}",
-		client_msg.session_id
-	);
+	log_debug!("Handling session message: session_id={:?}", msg.session_id);
 
-	let (mut chat_session, config_for_role, session_role, is_new) = match &client_msg.session_id {
+	let (mut chat_session, config_for_role, session_role, is_new) = match &msg.session_id {
 		Some(session_id) => {
 			// session_id present: create-or-resume
 			// Check memory first
@@ -309,7 +304,7 @@ async fn handle_session_message(
 /// Requires session_id and command. Args are optional.
 /// The command is assembled into the CLI slash-command format and routed through process_command.
 async fn handle_command_message(
-	client_msg: ClientMessage,
+	msg: CommandMessage,
 	ws_sender: &mut futures_util::stream::SplitSink<
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
@@ -318,10 +313,9 @@ async fn handle_command_message(
 	role: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
 ) -> Result<()> {
-	// Both session_id and command are guaranteed non-empty by validate()
-	let session_id = client_msg.session_id.as_deref().unwrap();
-	let command_name = client_msg.command.as_deref().unwrap().trim();
-	let args = client_msg.args.as_deref().unwrap_or(&[]);
+	let session_id = msg.session_id.as_str();
+	let command_name = msg.command.trim();
+	let args = msg.args.as_slice();
 
 	// Build the slash-command string exactly as the CLI would receive it
 	let slash_command = if args.is_empty() {
@@ -432,7 +426,7 @@ async fn handle_command_message(
 /// Handle a "message" type message: send content to an existing session and get AI response.
 /// session_id must refer to an already-established session (from a prior "session" message).
 async fn handle_user_message(
-	client_msg: ClientMessage,
+	msg: UserMessage,
 	ws_sender: &mut futures_util::stream::SplitSink<
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
@@ -441,9 +435,8 @@ async fn handle_user_message(
 	role: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
 ) -> Result<()> {
-	// Both session_id and content are guaranteed non-empty by validate()
-	let session_id = client_msg.session_id.as_deref().unwrap();
-	let input = client_msg.content.clone().unwrap();
+	let session_id = msg.session_id.as_str();
+	let input = msg.content.clone();
 
 	log_debug!(
 		"Handling user message: session_id={}, content_len={}",

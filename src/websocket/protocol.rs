@@ -159,6 +159,16 @@ pub struct ErrorPayload {
 	pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpNotificationPayload {
+	/// MCP server name that sent the notification
+	pub server: String,
+	/// JSON-RPC notification method (e.g. "notifications/message", "notifications/progress")
+	pub method: String,
+	/// Notification params as-is from the server
+	pub params: Value,
+}
+
 /// Outgoing message from server to client.
 /// Tagged by `"type"` — each variant carries only its own typed fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +188,8 @@ pub enum ServerMessage {
 	Status(StatusPayload),
 	/// Error message
 	Error(ErrorPayload),
+	/// Notification received from an MCP server (e.g. progress, log messages)
+	McpNotification(McpNotificationPayload),
 }
 
 impl ServerMessage {

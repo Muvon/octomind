@@ -973,7 +973,22 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	let operation_rx_clone = operation_rx.clone();
 	let model_for_error = chat_session.model.clone();
 	let api_result = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
-		execute_api_call_and_process_response(
+		// For JSONL mode, set up a notification channel so MCP server notifications
+		// are forwarded as structured JSON lines alongside the regular output.
+		let (notif_tx, mut notif_rx) =
+			tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+		crate::mcp::process::set_notification_sender(notif_tx);
+
+		// Drain notifications to stdout in a background task
+		let drain_handle = tokio::spawn(async move {
+			while let Some(msg) = notif_rx.recv().await {
+				if let Ok(json) = serde_json::to_string(&msg) {
+					println!("{}", json);
+				}
+			}
+		});
+
+		let result = execute_api_call_and_process_response(
 			&mut chat_session,
 			&current_config,
 			&role,
@@ -981,7 +996,13 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			OutputMode::Jsonl,
 			JsonlSink,
 		)
-		.await
+		.await;
+
+		// Stop forwarding notifications and wait for drain to finish
+		crate::mcp::process::clear_notification_sender();
+		let _ = drain_handle.await;
+
+		result
 	} else {
 		execute_api_call_and_process_response(
 			&mut chat_session,

@@ -74,6 +74,48 @@ lazy_static::lazy_static! {
 	Arc::new(RwLock::new(HashMap::new()));
 }
 
+// Global notification sender — set by the session when WebSocket or JSONL output is active.
+// When set, MCP server notifications are forwarded as structured ServerMessage::McpNotification.
+// When not set, notifications are rendered via log_info! for terminal modes.
+lazy_static::lazy_static! {
+	static ref NOTIFICATION_SENDER: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>>> =
+		RwLock::new(None);
+}
+
+/// Register a channel sender so MCP notifications are forwarded as structured messages.
+/// Call this when starting a WebSocket or JSONL session.
+pub fn set_notification_sender(
+	tx: tokio::sync::mpsc::UnboundedSender<crate::websocket::ServerMessage>,
+) {
+	let mut guard = NOTIFICATION_SENDER.write().unwrap();
+	*guard = Some(tx);
+}
+
+/// Remove the notification sender (e.g. when a session ends).
+pub fn clear_notification_sender() {
+	let mut guard = NOTIFICATION_SENDER.write().unwrap();
+	*guard = None;
+}
+
+/// Emit a notification — structured if a sender is registered, plain log otherwise.
+fn emit_notification(server_name: &str, method: &str, params: &serde_json::Value) {
+	let sender = NOTIFICATION_SENDER.read().unwrap();
+	if let Some(tx) = sender.as_ref() {
+		let msg = crate::websocket::ServerMessage::McpNotification(
+			crate::websocket::McpNotificationPayload {
+				server: server_name.to_string(),
+				method: method.to_string(),
+				params: params.clone(),
+			},
+		);
+		// Ignore send errors — client may have disconnected
+		let _ = tx.send(msg);
+	} else {
+		// Terminal mode: render inline
+		crate::log_info!("[MCP:{}] {}: {}", server_name, method, params);
+	}
+}
+
 // Structure to hold either an HTTP or stdin-based server process
 pub enum ServerProcess {
 	Http(Child),
@@ -800,26 +842,47 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 						}
 					}
 
-					// Read the response from stdout
-					let mut response_str = String::new();
-					let read_result = reader
-						.read_line(&mut response_str)
-						.map_err(|e| anyhow::anyhow!("Failed to read from stdout: {}", e))?;
+					// Read lines from stdout, skipping any JSON-RPC notifications
+					// (messages with a "method" field but no "id") until we get
+					// the actual response for our request.
+					let response = loop {
+						let mut response_str = String::new();
+						let read_result = reader
+							.read_line(&mut response_str)
+							.map_err(|e| anyhow::anyhow!("Failed to read from stdout: {}", e))?;
 
-					if read_result == 0 {
-						return Err(anyhow::anyhow!(
-							"Server closed connection while reading response"
-						));
-					}
+						if read_result == 0 {
+							return Err(anyhow::anyhow!(
+								"Server closed connection while reading response"
+							));
+						}
 
-					// Parse the response JSON
-					let response: Value = serde_json::from_str(&response_str).map_err(|e| {
-						anyhow::anyhow!(
-							"Failed to parse JSON response: {} (raw: {})",
-							e,
-							response_str
-						)
-					})?;
+						// Parse the line as JSON
+						let msg: Value = serde_json::from_str(&response_str).map_err(|e| {
+							anyhow::anyhow!(
+								"Failed to parse JSON response: {} (raw: {})",
+								e,
+								response_str
+							)
+						})?;
+
+						// JSON-RPC notifications have a "method" field but no "id".
+						// Forward them and keep reading for the real response.
+						if msg.get("method").is_some() && msg.get("id").is_none() {
+							let method = msg
+								.get("method")
+								.and_then(|m| m.as_str())
+								.unwrap_or("unknown");
+							let params = msg
+								.get("params")
+								.cloned()
+								.unwrap_or(serde_json::Value::Null);
+							emit_notification(&server_name_for_closure, method, &params);
+							continue;
+						}
+
+						break msg;
+					};
 
 					// Verify the response ID matches the request ID
 					let response_id = response.get("id").and_then(|id| id.as_u64()).unwrap_or(0);

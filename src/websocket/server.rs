@@ -520,7 +520,10 @@ async fn handle_user_message(
 
 	// Create channel for WebSocket sink to stream messages
 	let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel();
-	let ws_sink = WebSocketSink::new(ws_tx);
+	let ws_sink = WebSocketSink::new(ws_tx.clone());
+
+	// Forward MCP server notifications through the WebSocket channel
+	crate::mcp::process::set_notification_sender(ws_tx);
 
 	// Track message count before API call to identify new messages
 	let messages_before = chat_session.session.messages.len();
@@ -740,6 +743,9 @@ async fn handle_user_message(
 	// Save session
 	log_debug!("Saving session: {}", session_id);
 	chat_session.save()?;
+
+	// Clear the notification sender now that this request is done
+	crate::mcp::process::clear_notification_sender();
 
 	// Store session back
 	sessions

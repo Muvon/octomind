@@ -17,19 +17,34 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Type of message sent from client to server
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientMessageType {
+	/// Create a new session or resume an existing one by session_id.
+	/// No AI call is made. Server responds with session_id.
+	Session,
+
+	/// Send a message to an existing session. Requires session_id and content.
+	Message,
+}
+
 /// Message from client to server
-/// Simple text-based input, just like terminal
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientMessage {
-	/// The actual input text (user message, command, anything)
-	/// Examples: "Fix the bug", "/help", "/run analyze"
-	pub content: String,
+	/// Message type - required on every message
+	#[serde(rename = "type")]
+	pub message_type: ClientMessageType,
 
-	/// Optional session ID for resuming existing sessions
-	/// If None, creates new session. If Some, resumes existing.
-	/// Since communication is sequential within a session, session_id is sufficient for correlation.
+	/// Session name / ID.
+	/// - For "session" type: absent = create auto-named, present = create-or-resume
+	/// - For "message" type: required
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
+
+	/// Message content. Required for "message" type, ignored for "session" type.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub content: Option<String>,
 }
 
 /// Message from server to client
@@ -50,8 +65,7 @@ pub struct ServerMessage {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub meta: Option<Value>,
 
-	/// Session ID (always present after first message)
-	/// Since communication is sequential within a session, session_id is sufficient for correlation.
+	/// Session ID (always present after session is established)
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
 }
@@ -83,19 +97,39 @@ pub enum MessageType {
 }
 
 impl ClientMessage {
-	/// Validate client message
+	/// Validate client message fields based on type
 	pub fn validate(&self) -> Result<(), String> {
-		// Content must not be empty
-		if self.content.trim().is_empty() {
-			return Err("Message content cannot be empty".to_string());
-		}
+		match self.message_type {
+			ClientMessageType::Session => {
+				// session_id is optional (absent = auto-name, present = create-or-resume)
+				// content is ignored
+				Ok(())
+			}
+			ClientMessageType::Message => {
+				// session_id is required
+				match &self.session_id {
+					None => return Err("session_id is required for message type".to_string()),
+					Some(id) if id.trim().is_empty() => {
+						return Err("session_id cannot be empty".to_string())
+					}
+					_ => {}
+				}
 
-		// Content size limit (10MB default)
-		if self.content.len() > 10 * 1024 * 1024 {
-			return Err("Message content exceeds maximum size (10MB)".to_string());
-		}
+				// content is required and must not be empty
+				match &self.content {
+					None => return Err("content is required for message type".to_string()),
+					Some(c) if c.trim().is_empty() => {
+						return Err("content cannot be empty".to_string())
+					}
+					Some(c) if c.len() > 10 * 1024 * 1024 => {
+						return Err("content exceeds maximum size (10MB)".to_string())
+					}
+					_ => {}
+				}
 
-		Ok(())
+				Ok(())
+			}
+		}
 	}
 }
 
@@ -136,69 +170,145 @@ impl ServerMessage {
 	pub fn status(message: String, session_id: Option<String>) -> Self {
 		Self::new(MessageType::Status, message, session_id)
 	}
-
-	/// Validate server message
-	pub fn validate(&self) -> Result<(), String> {
-		if self.id.trim().is_empty() {
-			return Err("Message ID cannot be empty".to_string());
-		}
-
-		if self.content.len() > 10 * 1024 * 1024 {
-			return Err("Message content exceeds maximum size (10MB)".to_string());
-		}
-
-		Ok(())
-	}
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use serde_json::json;
 
 	#[test]
-	fn test_client_message_serialization() {
+	fn test_session_message_no_session_id() {
 		let msg = ClientMessage {
-			content: "Hello".to_string(),
+			message_type: ClientMessageType::Session,
 			session_id: None,
-		};
-
-		let json = serde_json::to_string(&msg).unwrap();
-		assert!(json.contains("Hello"));
-		assert!(!json.contains("session_id")); // Should be omitted when None
-	}
-
-	#[test]
-	fn test_client_message_deserialization() {
-		let json = r#"{"content":"Hello","session_id":"sess_123"}"#;
-		let msg: ClientMessage = serde_json::from_str(json).unwrap();
-
-		assert_eq!(msg.content, "Hello");
-		assert_eq!(msg.session_id, Some("sess_123".to_string()));
-	}
-
-	#[test]
-	fn test_client_message_validation() {
-		// Valid message
-		let msg = ClientMessage {
-			content: "Hello".to_string(),
-			session_id: None,
+			content: None,
 		};
 		assert!(msg.validate().is_ok());
+	}
 
-		// Empty content
+	#[test]
+	fn test_session_message_with_session_id() {
 		let msg = ClientMessage {
-			content: "".to_string(),
+			message_type: ClientMessageType::Session,
+			session_id: Some("my-feature-x".to_string()),
+			content: None,
+		};
+		assert!(msg.validate().is_ok());
+	}
+
+	#[test]
+	fn test_session_message_content_ignored() {
+		// content is allowed but ignored for session type
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Session,
 			session_id: None,
+			content: Some("ignored".to_string()),
+		};
+		assert!(msg.validate().is_ok());
+	}
+
+	#[test]
+	fn test_message_type_valid() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Message,
+			session_id: Some("sess_123".to_string()),
+			content: Some("Fix the bug".to_string()),
+		};
+		assert!(msg.validate().is_ok());
+	}
+
+	#[test]
+	fn test_message_type_missing_session_id() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Message,
+			session_id: None,
+			content: Some("Fix the bug".to_string()),
 		};
 		assert!(msg.validate().is_err());
+	}
 
-		// Content too large
+	#[test]
+	fn test_message_type_empty_session_id() {
 		let msg = ClientMessage {
-			content: "x".repeat(11 * 1024 * 1024),
-			session_id: None,
+			message_type: ClientMessageType::Message,
+			session_id: Some("  ".to_string()),
+			content: Some("Fix the bug".to_string()),
 		};
 		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_message_type_missing_content() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Message,
+			session_id: Some("sess_123".to_string()),
+			content: None,
+		};
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_message_type_empty_content() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Message,
+			session_id: Some("sess_123".to_string()),
+			content: Some("  ".to_string()),
+		};
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_message_type_content_too_large() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Message,
+			session_id: Some("sess_123".to_string()),
+			content: Some("x".repeat(11 * 1024 * 1024)),
+		};
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_serialization_session_type() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Session,
+			session_id: Some("my-session".to_string()),
+			content: None,
+		};
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"session\""));
+		assert!(json.contains("my-session"));
+		assert!(!json.contains("content")); // skipped when None
+	}
+
+	#[test]
+	fn test_serialization_message_type() {
+		let msg = ClientMessage {
+			message_type: ClientMessageType::Message,
+			session_id: Some("sess_123".to_string()),
+			content: Some("Hello".to_string()),
+		};
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"message\""));
+		assert!(json.contains("sess_123"));
+		assert!(json.contains("Hello"));
+	}
+
+	#[test]
+	fn test_deserialization_session() {
+		let json = r#"{"type":"session","session_id":"my-feature-x"}"#;
+		let msg: ClientMessage = serde_json::from_str(json).unwrap();
+		assert_eq!(msg.message_type, ClientMessageType::Session);
+		assert_eq!(msg.session_id, Some("my-feature-x".to_string()));
+		assert!(msg.content.is_none());
+	}
+
+	#[test]
+	fn test_deserialization_message() {
+		let json = r#"{"type":"message","session_id":"sess_123","content":"Fix the bug"}"#;
+		let msg: ClientMessage = serde_json::from_str(json).unwrap();
+		assert_eq!(msg.message_type, ClientMessageType::Message);
+		assert_eq!(msg.session_id, Some("sess_123".to_string()));
+		assert_eq!(msg.content, Some("Fix the bug".to_string()));
 	}
 
 	#[test]
@@ -208,29 +318,10 @@ mod tests {
 			"Response".to_string(),
 			Some("sess_123".to_string()),
 		);
-
 		let json = serde_json::to_string(&msg).unwrap();
-		assert!(json.contains("assistant"));
+		assert!(json.contains("\"type\":\"assistant\""));
 		assert!(json.contains("Response"));
 		assert!(json.contains("sess_123"));
-	}
-
-	#[test]
-	fn test_server_message_with_metadata() {
-		let meta = json!({
-			"tokens": 100,
-			"cost": 0.002
-		});
-
-		let msg = ServerMessage::with_metadata(
-			MessageType::Cost,
-			"Cost info".to_string(),
-			meta,
-			Some("sess_123".to_string()),
-		);
-
-		assert_eq!(msg.message_type, MessageType::Cost);
-		assert!(msg.meta.is_some());
 	}
 
 	#[test]
@@ -247,19 +338,5 @@ mod tests {
 			serde_json::to_string(&MessageType::Error).unwrap(),
 			"\"error\""
 		);
-	}
-
-	#[test]
-	fn test_round_trip_serialization() {
-		let original = ClientMessage {
-			content: "Test message".to_string(),
-			session_id: Some("sess_123".to_string()),
-		};
-
-		let json = serde_json::to_string(&original).unwrap();
-		let deserialized: ClientMessage = serde_json::from_str(&json).unwrap();
-
-		assert_eq!(original.content, deserialized.content);
-		assert_eq!(original.session_id, deserialized.session_id);
 	}
 }

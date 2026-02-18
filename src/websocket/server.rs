@@ -14,7 +14,7 @@
 
 // WebSocket server implementation
 
-use super::protocol::{ClientMessage, MessageType, ServerMessage};
+use super::protocol::{ClientMessage, ClientMessageType, MessageType, ServerMessage};
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
@@ -125,11 +125,11 @@ async fn handle_connection(
 				// Parse client message
 				let client_msg = match serde_json::from_str::<ClientMessage>(&text) {
 					Ok(msg) => {
-						log_debug!(
-							"Parsed message: session_id={:?}, content_len={}",
-							msg.session_id,
-							msg.content.len()
-						);
+					log_debug!(
+						"Parsed message: type={:?}, session_id={:?}",
+						msg.message_type,
+						msg.session_id
+					);
 						msg
 					}
 					Err(e) => {
@@ -195,49 +195,139 @@ async fn process_client_message(
 	role: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
 ) -> Result<()> {
-	log_debug!(
-		"Processing message: session_id={:?}, content_len={}",
-		client_msg.session_id,
-		client_msg.content.len()
-	);
+	match client_msg.message_type {
+		ClientMessageType::Session => {
+			handle_session_message(client_msg, ws_sender, config, role, sessions).await
+		}
+		ClientMessageType::Message => {
+			handle_user_message(client_msg, ws_sender, config, role, sessions).await
+		}
+	}
+}
 
-	// Get or create session
-	let mut sessions_lock = sessions.lock().await;
+/// Handle a "session" type message: create new or resume existing session.
+/// No AI call is made — just session setup. Responds with session_id.
+async fn handle_session_message(
+	client_msg: ClientMessage,
+	ws_sender: &mut futures_util::stream::SplitSink<
+		WebSocketStream<TcpStream>,
+		tokio_tungstenite::tungstenite::Message,
+	>,
+	config: &Config,
+	role: &str,
+	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
+) -> Result<()> {
+	log_debug!("Handling session message: session_id={:?}", client_msg.session_id);
 
-	let (mut chat_session, session_id, is_new_session) = if let Some(session_id) =
-		&client_msg.session_id
-	{
-		// Try to resume existing session from memory first
-		if let Some(session) = sessions_lock.remove(session_id) {
-			drop(sessions_lock); // CRITICAL: Release lock immediately after removing session
+	let (mut chat_session, config_for_role, session_role, is_new) =
+		match &client_msg.session_id {
+			Some(session_id) => {
+				// session_id present: create-or-resume
+				// Check memory first
+				let existing = sessions.lock().await.remove(session_id);
+				if let Some(session) = existing {
+					log_debug!("Resumed session from memory: {}", session_id);
+					let cfg = config.get_merged_config_for_role(role);
+					let role_name = role.to_string();
+					(session, cfg, role_name, false)
+				} else {
+					// Try disk: resume if exists, create with this name if not
+					let args = if crate::session::get_sessions_dir()
+						.map(|d| d.join(format!("{}.jsonl", session_id)).exists())
+						.unwrap_or(false)
+					{
+						log_debug!("Resuming session from disk: {}", session_id);
+						GenericSessionArgs::resume(session_id.clone(), role.to_string())
+					} else {
+						log_debug!("Creating named session: {}", session_id);
+						let mut args = GenericSessionArgs::new(role.to_string());
+						args.name = Some(session_id.clone());
+						args
+					};
+
+					match setup_and_initialize_session(&args, config).await {
+						Ok((session, cfg, role_name, _)) => {
+							let is_new = !session.was_resumed;
+							(session, cfg, role_name, is_new)
+						}
+						Err(e) => {
+							let error = ServerMessage::error(format!("Failed to initialize session: {}", e));
+							send_message(ws_sender, &error).await?;
+							return Ok(());
+						}
+					}
+				}
+			}
+			None => {
+				// No session_id: create new auto-named session
+				log_debug!("Creating new auto-named session with role: {}", role);
+				let args = GenericSessionArgs::new(role.to_string());
+				match setup_and_initialize_session(&args, config).await {
+					Ok((session, cfg, role_name, _)) => (session, cfg, role_name, true),
+					Err(e) => {
+						let error = ServerMessage::error(format!("Failed to create session: {}", e));
+						send_message(ws_sender, &error).await?;
+						return Ok(());
+					}
+				}
+			}
+		};
+
+	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false).await?;
+
+	let session_id = chat_session.session.info.name.clone();
+	let status_msg = if is_new {
+		format!("Session created: {}", session_id)
+	} else {
+		format!("Session resumed: {}", session_id)
+	};
+
+	log_info!("{}", status_msg);
+
+	chat_session.save()?;
+	sessions.lock().await.insert(session_id.clone(), chat_session);
+
+	send_message(ws_sender, &ServerMessage::status(status_msg, Some(session_id))).await?;
+	Ok(())
+}
+
+/// Handle a "message" type message: send content to an existing session and get AI response.
+/// session_id must refer to an already-established session (from a prior "session" message).
+async fn handle_user_message(
+	client_msg: ClientMessage,
+	ws_sender: &mut futures_util::stream::SplitSink<
+		WebSocketStream<TcpStream>,
+		tokio_tungstenite::tungstenite::Message,
+	>,
+	config: &Config,
+	role: &str,
+	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
+) -> Result<()> {
+	// Both session_id and content are guaranteed non-empty by validate()
+	let session_id = client_msg.session_id.as_deref().unwrap();
+	let input = client_msg.content.clone().unwrap();
+
+	log_debug!("Handling user message: session_id={}, content_len={}", session_id, input.len());
+
+	// Look up session: memory first, then disk. Never auto-create.
+	let mut chat_session = {
+		let existing = sessions.lock().await.remove(session_id);
+		if let Some(session) = existing {
 			log_debug!("Resumed session from memory: {}", session_id);
-			(session, session_id.clone(), false)
+			session
 		} else {
-			// Try to load from disk
-			drop(sessions_lock);
+			// Try disk
 			log_debug!("Loading session from disk: {}", session_id);
-
-			let args = GenericSessionArgs::resume(session_id.clone(), role.to_string());
-
+			let args = GenericSessionArgs::resume(session_id.to_string(), role.to_string());
 			match setup_and_initialize_session(&args, config).await {
-				Ok((session, config_for_role, session_role, _first_message_processed)) => {
-					// Setup system prompt and cache
-					let mut session = session;
-					setup_system_prompt_and_cache(
-						&mut session,
-						&config_for_role,
-						&session_role,
-						false,
-					)
-					.await?;
-
+				Ok((mut session, config_for_role, session_role, _)) => {
+					setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await?;
 					log_info!("Session loaded from disk: {}", session_id);
-					(session, session_id.clone(), false)
+					session
 				}
 				Err(_) => {
-					// Session not found on disk either
 					let error = ServerMessage::error(format!(
-						"Session not found: {}. Please start a new session by omitting session_id.",
+						"Session not found: {}. Send a \"session\" message first to create or resume a session.",
 						session_id
 					));
 					send_message(ws_sender, &error).await?;
@@ -245,41 +335,12 @@ async fn process_client_message(
 				}
 			}
 		}
-	} else {
-		// Create new session
-		drop(sessions_lock); // Release lock before creating session
-		log_debug!("Creating new session with role: {}", role);
-
-		let args = GenericSessionArgs::new(role.to_string());
-
-		let (session, config_for_role, session_role, _first_message_processed) =
-			setup_and_initialize_session(&args, config).await?;
-
-		// Setup system prompt and cache (non-interactive mode)
-		let mut session = session;
-		setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await?;
-
-		let session_id = session.session.info.name.clone();
-		log_info!("Session created: {}", session_id);
-
-		(session, session_id, true)
 	};
 
-	// Lock is already released in both branches above
-	// Send session info if new
-	if is_new_session {
-		let status = ServerMessage::status(
-			format!("Session created: {}", session_id),
-			Some(session_id.clone()),
-		);
-		send_message(ws_sender, &status).await?;
-	}
+	let session_id = session_id.to_string();
 
 	// Get current directory for file operations
 	let current_dir = std::env::current_dir()?;
-
-	// Check if this is a command
-	let input = client_msg.content.clone();
 	if input.starts_with('/') {
 		log_debug!(
 			"Processing command: {}",

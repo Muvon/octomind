@@ -95,7 +95,10 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	/// Cancellation token for request abortion
 	pub cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 	/// Flag to prevent infinite continuation loops during recursive calls
+	/// Flag to prevent infinite continuation loops during recursive calls
 	pub is_continuation_call: bool,
+	/// Optional JSON schema for structured output
+	pub schema: Option<serde_json::Value>,
 }
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
@@ -121,6 +124,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			chat_session: None,
 			cancellation_token: None,
 			is_continuation_call: false,
+			schema: None,
 		}
 	}
 
@@ -148,6 +152,12 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 	/// Mark this as a continuation call to prevent infinite loops
 	pub fn as_continuation_call(mut self) -> Self {
 		self.is_continuation_call = true;
+		self
+	}
+
+	/// Set JSON schema for structured output
+	pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
+		self.schema = Some(schema);
 		self
 	}
 }
@@ -1584,6 +1594,12 @@ pub async fn chat_completion_with_validation(
 					.with_chat_session(session)
 					.as_continuation_call(); // CRITICAL: Mark as continuation call to prevent infinite loops
 
+					let continuation_params = if let Some(ref schema) = params.schema {
+						continuation_params.with_schema(schema.clone())
+					} else {
+						continuation_params
+					};
+
 					let continuation_params = if let Some(token) = params.cancellation_token {
 						continuation_params.with_cancellation_token(token)
 					} else {
@@ -1642,6 +1658,12 @@ pub async fn chat_completion_with_validation(
 	)
 	.with_max_retries(params.max_retries);
 
+	let chat_params = if let Some(schema) = params.schema {
+		chat_params.with_schema(schema)
+	} else {
+		chat_params
+	};
+
 	let chat_params = if let Some(token) = params.cancellation_token {
 		chat_params.with_cancellation_token(token)
 	} else {
@@ -1672,6 +1694,8 @@ pub struct ChatCompletionProviderParams<'a> {
 	pub config: &'a Config,
 	pub max_retries: u32,
 	pub cancellation_token: Option<watch::Receiver<bool>>,
+	/// Optional JSON schema for structured output
+	pub schema: Option<serde_json::Value>,
 }
 
 /// High-level function to send a chat completion using the provider abstraction
@@ -1681,7 +1705,16 @@ pub async fn chat_completion_with_provider(
 ) -> Result<ProviderResponse> {
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(params.model)?;
-	// Call the provider's chat completion method
+
+	// Fail fast if schema requested but provider doesn't support structured output
+	if params.schema.is_some() && !provider.supports_structured_output(&actual_model) {
+		return Err(anyhow::anyhow!(
+			"Provider '{}' does not support structured output for model '{}'. Remove --schema or use a compatible provider.",
+			provider.name(),
+			actual_model
+		));
+	}
+
 	let chat_params = ChatCompletionParams::new(
 		params.messages,
 		&actual_model,
@@ -1692,6 +1725,12 @@ pub async fn chat_completion_with_provider(
 		params.config,
 	)
 	.with_max_retries(params.max_retries);
+
+	let chat_params = if let Some(schema) = params.schema {
+		chat_params.with_schema(schema)
+	} else {
+		chat_params
+	};
 
 	// Convert to octolib params and call provider
 	let octolib_params = chat_params

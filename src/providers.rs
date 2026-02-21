@@ -25,7 +25,7 @@ use tokio::sync::watch;
 pub use octolib::llm::{
 	AiProvider, AmazonBedrockProvider, AnthropicProvider, CloudflareWorkersAiProvider,
 	DeepSeekProvider, GenericToolCall, GoogleVertexProvider, OpenAiProvider, OpenRouterProvider,
-	ProviderFactory,
+	ProviderFactory, StructuredOutputRequest,
 };
 
 // Re-export some octolib types directly
@@ -40,6 +40,7 @@ pub struct ProviderResponse {
 	pub thinking: Option<ThinkingBlock>,
 	pub finish_reason: Option<String>,
 	pub response_id: Option<String>,
+	pub structured_output: Option<serde_json::Value>,
 }
 
 // Keep the original ChatCompletionParams for backward compatibility
@@ -68,6 +69,8 @@ pub struct ChatCompletionParams<'a> {
 	pub config: &'a Config,
 	/// Cancellation token for request abortion
 	pub cancellation_token: Option<watch::Receiver<bool>>,
+	/// Optional JSON schema for structured output
+	pub schema: Option<serde_json::Value>,
 }
 
 impl<'a> ChatCompletionParams<'a> {
@@ -92,6 +95,7 @@ impl<'a> ChatCompletionParams<'a> {
 			retry_timeout: std::time::Duration::from_secs(config.retry_timeout as u64),
 			config,
 			cancellation_token: None,
+			schema: None,
 		}
 	}
 
@@ -104,6 +108,12 @@ impl<'a> ChatCompletionParams<'a> {
 	/// Set cancellation token
 	pub fn with_cancellation_token(mut self, token: watch::Receiver<bool>) -> Self {
 		self.cancellation_token = Some(token);
+		self
+	}
+
+	/// Set JSON schema for structured output
+	pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
+		self.schema = Some(schema);
 		self
 	}
 
@@ -193,6 +203,13 @@ impl<'a> ChatCompletionParams<'a> {
 
 				params = params.with_tools(octolib_tools);
 			}
+		}
+
+		// Apply structured output schema if provided
+		if let Some(ref schema) = self.schema {
+			params = params.with_structured_output(
+				StructuredOutputRequest::json_schema(schema.clone()).with_strict_mode(),
+			);
 		}
 
 		Ok(params)
@@ -426,6 +443,7 @@ pub fn convert_response_from_octolib(response: octolib::llm::ProviderResponse) -
 		thinking: response.thinking,
 		finish_reason: response.finish_reason,
 		response_id: response.id,
+		structured_output: response.structured_output,
 	}
 }
 

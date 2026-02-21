@@ -59,6 +59,10 @@ pub struct SessionArgs {
 	/// Override instructions with content from this file (runtime only, not saved)
 	#[arg(long)]
 	pub instructions: Option<String>,
+
+	/// Path to JSON schema file for structured output (runtime only)
+	#[arg(long)]
+	pub schema: Option<String>,
 }
 
 // No execute function here since it's handled directly by the session::chat module

@@ -79,7 +79,6 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	};
 
 	// Extract session parameters
-	// Extract session parameters
 	let (
 		name,
 		resume,
@@ -92,6 +91,7 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 		output_mode,
 		system_file,
 		instructions_file,
+		schema_file,
 	) = extract_session_params(args, config);
 
 	// Get role config for defaults
@@ -217,7 +217,28 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 		);
 	}
 
+	// Load and apply schema for structured output if provided via --schema
+	if let Some(ref path) = schema_file {
+		match std::fs::read_to_string(path) {
+			Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+				Ok(schema) => {
+					log_info!("Using structured output schema from: {}", path);
+					chat_session.schema = Some(schema);
+				}
+				Err(e) => return Err(anyhow::anyhow!("Invalid JSON schema file {}: {}", path, e)),
+			},
+			Err(e) => {
+				return Err(anyhow::anyhow!(
+					"Failed to read --schema file {}: {}",
+					path,
+					e
+				))
+			}
+		}
+	}
+
 	// Track if the first message has been processed through layers
+
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
 	Ok((chat_session, config_for_role, role, first_message_processed))

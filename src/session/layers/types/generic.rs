@@ -218,11 +218,12 @@ impl GenericLayer {
 								exchange: current_exchange.clone(),
 								tool_calls: current_tool_calls_param.clone(),
 								thinking: None,
-								finish_reason: current_exchange.response.get("choices")
-										.and_then(|choice| choice.get("finish_reason"))
-										.and_then(|fr| fr.as_str())
-										.map(|s| s.to_string()),
-								},
+						finish_reason: current_exchange.response.get("choices")
+								.and_then(|choice| choice.get("finish_reason"))
+								.and_then(|fr| fr.as_str())
+								.map(|s| s.to_string()),
+								structured_output: None,
+							},
 								&layer_config,
 								has_tool_calls,
 							);
@@ -254,13 +255,14 @@ impl GenericLayer {
 						response_id: None,
 							content: current_content.clone(),
 							exchange: current_exchange.clone(),
-							tool_calls: None, // No direct tool calls in this case
-							thinking: None,
-							finish_reason: current_exchange.response.get("choices")
-									.and_then(|choice| choice.get("finish_reason"))
-									.and_then(|fr| fr.as_str())
-									.map(|s| s.to_string()),
-							},
+						tool_calls: None, // No direct tool calls in this case
+						thinking: None,
+						finish_reason: current_exchange.response.get("choices")
+								.and_then(|choice| choice.get("finish_reason"))
+								.and_then(|fr| fr.as_str())
+								.map(|s| s.to_string()),
+						structured_output: None,
+					},
 							&layer_config,
 							!more_tools.is_empty(),
 						);
@@ -399,6 +401,7 @@ impl GenericLayer {
 			last_compression_hint_shown: 0,   // Initialize last hint timestamp
 			cached_tools: None,               // Initialize tool cache (populated on first use)
 			first_prompt_idx: Some(first_prompt_idx), // Protect layer's first prompt from compression
+			schema: None,                     // Layers don't use structured output
 		}
 	}
 
@@ -620,6 +623,7 @@ impl Layer for GenericLayer {
 						tool_calls: direct_tool_calls.clone(),
 						thinking: None,
 						finish_reason: finish_reason.clone(),
+						structured_output: None,
 					},
 					config,
 					has_tool_calls,

@@ -117,8 +117,9 @@ impl Layer for LayerProcessor {
 				top_k: self.config.top_k,
 				max_tokens: self.config.max_tokens,
 				config,
-				max_retries: 0, // Default max_retries for layer processor
+				max_retries: 0,
 				cancellation_token: None,
+				schema: None,
 			},
 		)
 		.await?;
@@ -250,6 +251,7 @@ impl Layer for LayerProcessor {
 							config,
 							max_retries: 0,
 							cancellation_token: None,
+							schema: None,
 						},
 					)
 					.await

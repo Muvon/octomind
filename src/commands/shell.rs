@@ -196,6 +196,7 @@ pub async fn execute(args: &ShellArgs, config: &Config) -> Result<()> {
 		config: &clean_config,
 		max_retries: 0, // Default max_retries for shell command
 		cancellation_token: None,
+		schema: None,
 	})
 	.await?;
 

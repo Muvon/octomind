@@ -56,6 +56,10 @@ pub struct AskArgs {
 	/// Output raw text without markdown rendering
 	#[arg(long)]
 	pub raw: bool,
+
+	/// Path to JSON schema file for structured output
+	#[arg(long)]
+	pub schema: Option<String>,
 }
 
 // Helper function to print content with optional markdown rendering for ask command
@@ -352,9 +356,19 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 	// ask is stateless — instructions file is a session-only concept, must not bleed in
 	clean_config.custom_instructions_file_name = String::new();
 
+	// Load schema for structured output if --schema provided
+	let schema = if let Some(ref path) = args.schema {
+		let content = std::fs::read_to_string(path)
+			.map_err(|e| anyhow::anyhow!("Failed to read --schema file {}: {}", path, e))?;
+		let value = serde_json::from_str::<serde_json::Value>(&content)
+			.map_err(|e| anyhow::anyhow!("Invalid JSON schema file {}: {}", path, e))?;
+		Some(value)
+	} else {
+		None
+	};
+
 	// Read file context once (validation already done)
 	let file_context = read_files_as_context(&args.files)?;
-
 	// Get input from argument, stdin, or interactive mode
 	if let Some(input) = &args.input {
 		// Single execution mode - input provided via argument
@@ -376,9 +390,19 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 				.unwrap_or_else(|| clean_config.get_effective_max_tokens()),
 			system_prompt: &system_prompt,
 			config: &clean_config,
+			schema: schema.clone(),
 		})
 		.await?;
-		print_response(&response.content, args.raw, config);
+		print_response(
+			response
+				.structured_output
+				.as_ref()
+				.map(|v| v.to_string())
+				.as_deref()
+				.unwrap_or(&response.content),
+			args.raw || response.structured_output.is_some(),
+			config,
+		);
 		Ok(())
 	} else if !std::io::stdin().is_terminal() {
 		// Read from stdin if it's being piped
@@ -409,9 +433,19 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 				.unwrap_or_else(|| clean_config.get_effective_max_tokens()),
 			system_prompt: &system_prompt,
 			config: &clean_config,
+			schema: schema.clone(),
 		})
 		.await?;
-		print_response(&response.content, args.raw, config);
+		print_response(
+			response
+				.structured_output
+				.as_ref()
+				.map(|v| v.to_string())
+				.as_deref()
+				.unwrap_or(&response.content),
+			args.raw || response.structured_output.is_some(),
+			config,
+		);
 		Ok(())
 	} else {
 		// Interactive multimode - no argument provided and stdin is a terminal
@@ -452,6 +486,7 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 							.unwrap_or_else(|| clean_config.get_effective_max_tokens()),
 						system_prompt: &system_prompt,
 						config: &clean_config,
+						schema: schema.clone(),
 					})
 					.await;
 
@@ -460,7 +495,16 @@ pub async fn execute(args: &AskArgs, config: &Config) -> Result<()> {
 
 					match query_result {
 						Ok(response) => {
-							print_response(&response.content, args.raw, config);
+							print_response(
+								response
+									.structured_output
+									.as_ref()
+									.map(|v| v.to_string())
+									.as_deref()
+									.unwrap_or(&response.content),
+								args.raw || response.structured_output.is_some(),
+								config,
+							);
 							println!(); // Add spacing between responses
 						}
 						Err(e) => {
@@ -494,6 +538,7 @@ struct SingleQueryParams<'a> {
 	max_tokens: u32,
 	system_prompt: &'a str,
 	config: &'a Config,
+	schema: Option<serde_json::Value>,
 }
 
 // Helper function to execute a single query
@@ -533,6 +578,7 @@ async fn execute_single_query(params: SingleQueryParams<'_>) -> Result<ProviderR
 		config: params.config,
 		max_retries: 0,
 		cancellation_token: None,
+		schema: params.schema,
 	})
 	.await
 }

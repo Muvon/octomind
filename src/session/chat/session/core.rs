@@ -47,11 +47,14 @@ pub struct SessionInitParams<'a> {
 	/// Optional max retries override
 	pub max_retries: Option<u32>,
 	/// Output mode: plain or jsonl (for CLI suppression)
+	/// Output mode: plain or jsonl (for CLI suppression)
 	pub output_mode: Option<String>,
 	/// Configuration object
 	pub config: &'a Config,
 	/// Role for the session
 	pub role: &'a str,
+	/// Optional JSON schema for structured output
+	pub schema: Option<serde_json::Value>,
 }
 
 impl<'a> SessionInitParams<'a> {
@@ -68,6 +71,7 @@ impl<'a> SessionInitParams<'a> {
 			output_mode: None,
 			config,
 			role,
+			schema: None,
 		}
 	}
 
@@ -116,6 +120,12 @@ impl<'a> SessionInitParams<'a> {
 	/// Set output mode (plain or jsonl)
 	pub fn with_output_mode(mut self, output_mode: String) -> Self {
 		self.output_mode = Some(output_mode);
+		self
+	}
+
+	/// Set JSON schema for structured output
+	pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
+		self.schema = Some(schema);
 		self
 	}
 }
@@ -167,11 +177,14 @@ pub struct ChatSession {
 	pub compression_hint_count: usize, // Counter for compression hints
 	pub last_compression_hint_shown: u64, // Timestamp of last compression hint
 	// Token calculation cache - SINGLE SOURCE OF TRUTH for context token counting
+
 	// This cache ensures all systems (display, compression, continuation) use identical calculations
 	pub cached_tools: Option<Vec<crate::mcp::McpFunction>>, // Cached tool definitions for consistent token counting
 	// First user prompt index - compression NEVER goes below this (INCLUSIVE boundary)
 	// Set once when first user message is added, protects bootstrap/instructions forever
 	pub first_prompt_idx: Option<usize>,
+	/// Optional JSON schema for structured output (set via --schema CLI flag)
+	pub schema: Option<serde_json::Value>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -287,6 +300,7 @@ impl ChatSession {
 			last_compression_hint_shown: 0,     // Initialize last hint timestamp
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
 			first_prompt_idx: None,             // Initialize first prompt index (set on first user message)
+			schema: None,                       // Schema set later via CLI override
 		}
 	}
 
@@ -470,6 +484,7 @@ impl ChatSession {
 						last_compression_hint_shown: last_compression_hint, // Restore from session.info
 						cached_tools: None,                  // Initialize tool cache (populated on first use)
 						first_prompt_idx: None,              // Will be detected from existing messages
+						schema: None,                        // Schema applied after init via CLI override
 					};
 
 					// Apply runtime state from session log (legacy support)
@@ -1193,6 +1208,7 @@ mod tests {
 			last_compression_hint_shown: 0,
 			cached_tools: None,
 			first_prompt_idx: None,
+			schema: None,
 		}
 	}
 

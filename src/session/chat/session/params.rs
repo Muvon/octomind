@@ -29,6 +29,7 @@ pub type SessionParams = (
 	String,         // output_mode (plain or jsonl)
 	Option<String>, // system file path override
 	Option<String>, // instructions file path override
+	Option<String>, // schema file path override
 );
 
 /// Generic session arguments that can be used by any caller (CLI, WebSocket, etc.)
@@ -178,6 +179,16 @@ pub fn extract_session_params<T: std::fmt::Debug>(args: &T, _config: &Config) ->
 		None
 	};
 
+	// Get schema file path override
+
+	let schema_file = if args_str.contains("schema: Some(\"") {
+		let start = args_str.find("schema: Some(\"").unwrap() + 14;
+		let end = args_str[start..].find('"').unwrap() + start;
+		Some(args_str[start..end].to_string())
+	} else {
+		None
+	};
+
 	(
 		name,
 		resume,
@@ -190,5 +201,6 @@ pub fn extract_session_params<T: std::fmt::Debug>(args: &T, _config: &Config) ->
 		output_mode,
 		system_file,
 		instructions_file,
+		schema_file,
 	)
 }

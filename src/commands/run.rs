@@ -64,6 +64,10 @@ pub struct RunArgs {
 	/// Override instructions with content from this file (runtime only, not saved)
 	#[arg(long)]
 	pub instructions: Option<String>,
+
+	/// Path to JSON schema file for structured output (runtime only)
+	#[arg(long)]
+	pub schema: Option<String>,
 }
 
 impl RunArgs {
@@ -81,6 +85,7 @@ impl RunArgs {
 			mode: self.mode.clone(),
 			system: self.system.clone(),
 			instructions: self.instructions.clone(),
+			schema: self.schema.clone(),
 		}
 	}
 

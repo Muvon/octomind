@@ -100,6 +100,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// Make API call
 	let messages = chat_session.session.messages.clone();
 	let max_retries = chat_session.max_retries;
+	let schema = chat_session.schema.clone();
 	let validation_params = ChatCompletionWithValidationParams::new(
 		&messages,
 		&model,
@@ -112,6 +113,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	.with_max_retries(max_retries)
 	.with_chat_session(chat_session)
 	.with_cancellation_token(operation_rx);
+	let validation_params = if let Some(schema) = schema {
+		validation_params.with_schema(schema)
+	} else {
+		validation_params
+	};
 	let api_result = chat_completion_with_validation(validation_params).await;
 
 	// DON'T stop animation here - let it continue through response processing

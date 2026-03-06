@@ -162,6 +162,17 @@ pub struct PromptConfig {
 	pub description: Option<String>,
 }
 
+/// Configuration for background job execution and lifecycle management.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BackgroundJobsConfig {
+	/// How long (seconds) completed/failed jobs are retained before cleanup. Default: 86400 (24h)
+	pub ttl_seconds: u64,
+	/// Maximum number of concurrently active (Pending + Running) jobs. Default: 100
+	pub max_concurrent_jobs: usize,
+	/// How often (seconds) the periodic cleanup task runs. Default: 3600 (1h)
+	pub cleanup_interval_seconds: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
 	// Config version for future migrations (always first field)
@@ -237,6 +248,9 @@ pub struct Config {
 
 	// Plan-driven compression configuration
 	pub compression: CompressionHintConfig,
+
+	// Background job execution configuration
+	pub background_jobs: BackgroundJobsConfig,
 
 	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,

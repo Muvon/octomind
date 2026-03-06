@@ -29,15 +29,17 @@ pub mod output; // Output abstraction for streaming messages
 mod project_context;
 pub mod video; // Video processing and attachment utilities // Project context collection and management
 			   // Provider abstraction layer moved to src/providers
+pub mod background_jobs;
 pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
-pub mod workflows; // Workflow orchestration system
+pub mod workflows; // Workflow orchestration system // Background job tracking for async agent execution
 
 // Provider system exports
 pub use crate::providers::{
 	AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage,
 };
+pub use background_jobs::{BackgroundJob, BackgroundJobManager, BackgroundJobStatus};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
 pub use layers::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};

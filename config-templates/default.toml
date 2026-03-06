@@ -856,3 +856,12 @@ top_k = 0
 max_retries = 1
 retry_timeout = 30
 ignore_cost = false  # When true, compression decision API cost is not tracked (free)
+
+# Background agent job execution settings
+[background_jobs]
+# How long (seconds) completed/failed jobs are retained before cleanup. Default: 86400 (24h)
+ttl_seconds = 86400
+# Maximum number of concurrently active (Pending + Running) jobs. Default: 100
+max_concurrent_jobs = 100
+# How often (seconds) the periodic cleanup task runs. Default: 3600 (1h)
+cleanup_interval_seconds = 3600

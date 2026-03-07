@@ -163,12 +163,15 @@ pub async fn create_file_spec(
 	path: &Path,
 	content: &str,
 ) -> Result<McpToolResult> {
-	// Check if file already exists
+	// Check if file already exists — guide the AI toward the right edit tool instead of retrying create
 	if path.exists() {
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"File already exists".to_string(),
+			format!(
+				"File already exists: {}. Do NOT retry `create` — use `str_replace` to replace specific content, `line_replace` to replace specific lines, or `insert` to add new content at a position.",
+				path.display()
+			),
 		));
 	}
 

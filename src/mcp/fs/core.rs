@@ -220,121 +220,6 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 
 	// Execute the appropriate command with cancellation checks
 	match command.as_str() {
-		"view" => {
-			// Extract path parameter for view command
-			let path = match call.parameters.get("path") {
-				Some(Value::String(p)) => p.clone(),
-				_ => return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Missing or invalid 'path' parameter for view command".to_string(),
-				)),
-			};
-
-			// Check if lines is specified with negative indexing support
-			let lines = match call.parameters.get("lines") {
-				Some(Value::Array(arr)) if arr.len() == 2 => {
-					match (arr[0].as_i64(), arr[1].as_i64()) {
-						(Some(start), Some(end)) => {
-							// We need to read the file first to get total lines for negative indexing
-							let file_path = resolve_path(&path);
-							if file_path.exists() && file_path.is_file() {
-								match tokio_fs::read_to_string(&file_path).await {
-									Ok(content) => {
-										let total_lines = content.lines().count();
-										match resolve_line_range(start, end, total_lines) {
-											Ok((resolved_start, resolved_end)) => {
-												Some((resolved_start, resolved_end as i64))
-											}
-											Err(err) => {
-												return Ok(McpToolResult::error(
-													call.tool_name.clone(),
-													call.tool_id.clone(),
-													format!("Invalid lines parameter: {err}"),
-												));
-											}
-										}
-									}
-									Err(_) => {
-										// If we can't read the file, let view_file_spec handle the error
-										Some((start as usize, end))
-									}
-								}
-							} else {
-								// If file doesn't exist, let view_file_spec handle the error
-								Some((start as usize, end))
-							}
-						}
-						_ => {
-							return Ok(McpToolResult::error(
-								call.tool_name.clone(),
-								call.tool_id.clone(),
-								"lines array elements must be integers".to_string(),
-							));
-						}
-					}
-				}
-				Some(Value::Array(_)) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"lines must be an array with exactly 2 elements".to_string(),
-					));
-				}
-				Some(_) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"lines must be an array".to_string(),
-					));
-				}
-				None => None,
-			};
-
-
-			let result = file_ops::view_file_spec(call, &resolve_path(&path), lines).await?;
-
-			// RESET: Clear line modification tracking after successful view
-			if !result.result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false) {
-				if let Err(e) = crate::mcp::fs::text_editing::reset_line_count_tracking(&resolve_path(&path)).await {
-					crate::log_debug!("Failed to reset line tracking for {}: {}", path, e);
-				}
-			}
-
-			Ok(result)
-		},
-		"view_many" => {
-			// Extract paths parameter for view_many command
-			let paths = match call.parameters.get("paths") {
-				Some(Value::Array(arr)) => {
-					let path_strings: Result<Vec<String>, _> = arr.iter()
-						.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
-						.map(|r| r.map(|s| s.to_string()))
-						.collect();
-
-					match path_strings {
-						Ok(paths) => {
-							if paths.len() > 50 {
-								return Ok(McpToolResult::error(
-									call.tool_name.clone(),
-									call.tool_id.clone(),
-									"Too many files requested. Maximum 50 files per request.".to_string(),
-								));
-							}
-							paths
-						},
-						Err(e) => return Err(e),
-					}
-				},
-				_ => return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Missing or invalid 'paths' parameter for view_many command - must be an array of strings".to_string(),
-				)),
-			};
-
-			file_ops::view_many_files_spec(call, &paths).await
-		},
 		"create" => {
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
@@ -484,14 +369,113 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Invalid command: {command}. Allowed commands are: view, view_many, create, str_replace, insert, line_replace, undo_edit"),
+		format!("Invalid command: {command}. Allowed commands are: create, str_replace, insert, line_replace, undo_edit"),
 		)),
 	}
 }
 
-// Execute list_files command
-pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
-	directory::execute_list_files(call).await
+// Execute view command - unified read-only tool for files, directories, and content search
+pub async fn execute_view(call: &McpToolCall) -> Result<McpToolResult> {
+	// Multi-file view: paths array takes priority
+	if let Some(Value::Array(arr)) = call.parameters.get("paths") {
+		let path_strings: Result<Vec<String>, _> = arr
+			.iter()
+			.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
+			.map(|r| r.map(|s| s.to_string()))
+			.collect();
+		let paths = path_strings?;
+		if paths.len() > 50 {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Too many files requested. Maximum 50 files per request.".to_string(),
+			));
+		}
+		return file_ops::view_many_files_spec(call, &paths).await;
+	}
+
+	// Single path required
+	let path = match call.parameters.get("path") {
+		Some(Value::String(p)) => p.clone(),
+		_ => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing or invalid 'path' parameter. Provide 'path' for a file/directory or 'paths' for multiple files.".to_string(),
+			));
+		}
+	};
+
+	let resolved = resolve_path(&path);
+
+	// Directory: dispatch directly with the resolved path string
+	if resolved.is_dir() {
+		return directory::list_directory(call, &path).await;
+	}
+
+	// File: resolve optional line range with negative-index support
+	let lines = match call.parameters.get("lines") {
+		Some(Value::Array(arr)) if arr.len() == 2 => match (arr[0].as_i64(), arr[1].as_i64()) {
+			(Some(start), Some(end)) => {
+				let total_lines = match tokio_fs::read_to_string(&resolved).await {
+					Ok(c) => c.lines().count(),
+					Err(_) => 0,
+				};
+				if total_lines > 0 {
+					match resolve_line_range(start, end, total_lines) {
+						Ok((s, e)) => Some((s, e as i64)),
+						Err(err) => {
+							return Ok(McpToolResult::error(
+								call.tool_name.clone(),
+								call.tool_id.clone(),
+								format!("Invalid lines parameter: {err}"),
+							));
+						}
+					}
+				} else {
+					Some((start as usize, end))
+				}
+			}
+			_ => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"lines array elements must be integers".to_string(),
+				));
+			}
+		},
+		Some(Value::Array(_)) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"lines must be an array with exactly 2 elements".to_string(),
+			));
+		}
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"lines must be an array".to_string(),
+			));
+		}
+		None => None,
+	};
+
+	let result = file_ops::view_file_spec(call, &resolved, lines).await?;
+
+	// Reset line modification tracking after successful view
+	if !result
+		.result
+		.get("isError")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false)
+	{
+		if let Err(e) = crate::mcp::fs::text_editing::reset_line_count_tracking(&resolved).await {
+			crate::log_debug!("Failed to reset line tracking for {}: {}", path, e);
+		}
+	}
+
+	Ok(result)
 }
 
 // Execute extract_lines command - MCP compliant implementation

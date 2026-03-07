@@ -207,7 +207,7 @@ pub fn guess_tool_category(tool_name: &str) -> &'static str {
 	match tool_name {
 		"core" => "system",
 		"text_editor" => "developer",
-		"list_files" => "filesystem",
+		"list_files" | "view" => "filesystem",
 		"web_search" | "read_html" => "web",
 		"shell" | "ast_grep" | "plan" => "developer",
 		name if name.contains("file") || name.contains("editor") => "developer",
@@ -858,14 +858,24 @@ async fn execute_tool_without_cancellation(
 								}
 							}
 						}
-						"list_files" => {
+						"view" => {
 							crate::log_debug!(
-								"Executing list_files via filesystem server '{}'",
+								"Executing view via filesystem server '{}'",
 								target_server.name()
 							);
-							let mut result = fs::execute_list_files(call).await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
+							match fs::execute_view(call).await {
+								Ok(mut result) => {
+									result.tool_id = call.tool_id.clone();
+									return Ok(result);
+								}
+								Err(e) => {
+									return Ok(McpToolResult::error(
+										call.tool_name.clone(),
+										call.tool_id.clone(),
+										format!("View execution failed: {}", e),
+									));
+								}
+							}
 						}
 						"extract_lines" => {
 							crate::log_debug!(

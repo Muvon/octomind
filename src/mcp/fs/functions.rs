@@ -17,113 +17,103 @@
 use super::super::McpFunction;
 use serde_json::json;
 
-// Define the list_files function - optimized
-pub fn get_list_files_function() -> McpFunction {
+// Define the view function - unified read-only tool for files, directories, and content search
+pub fn get_view_function() -> McpFunction {
 	McpFunction {
-		name: "list_files".to_string(),
-		description: "List files in a directory, with optional pattern matching.
+		name: "view".to_string(),
+		description:
+			"Read files, view directories, and search file content. Unified read-only tool.
 
-			This tool uses ripgrep for efficient searching that respects .gitignore files.
-			You can use it to find files by name pattern or search for files containing specific content.
+			**File viewing** (path is a file):
+			- View entire file: `{\"path\": \"src/main.rs\"}`
+			- View line range: `{\"path\": \"src/main.rs\", \"lines\": [10, 20]}`
+			- Supports negative indexing: -1 = last line
+			- Returns plain text with 1-indexed line numbers
+			- Smart elision: shows [...X lines more] indicators when using line range
 
-			PERFORMANCE WARNING: Use filtering to avoid large outputs that consume excessive tokens
+			**Multi-file viewing** (provide paths array):
+			- View multiple files: `{\"paths\": [\"src/main.rs\", \"src/lib.rs\"]}`
+			- Maximum 50 files per request
 
-			Parameters:
-			- `directory`: Target directory to search
-			- `pattern`: Optional filename pattern (uses ripgrep syntax)
-			- `content`: Optional content search within files
-			- `max_depth`: Optional depth limit for directory traversal
-			- `include_hidden`: Include hidden files/directories starting with '.' (default: false)
-			- `line_numbers`: Show line numbers for content search (default: true)
-			- `context`: Number of context lines to show around matches (default: 0)
+			**Directory listing** (path is a directory):
+			- List files: `{\"path\": \"src/\"}`
+			- Filter by name pattern: `{\"path\": \"src\", \"pattern\": \"*.rs\"}`
+			- Search file content: `{\"path\": \"src\", \"content\": \"fn main\"}`
+			- Limit depth: `{\"path\": \".\", \"max_depth\": 2}`
+			- Include hidden: `{\"path\": \".\", \"include_hidden\": true}`
 
-			Note: Response size is controlled by global mcp_response_tokens_threshold setting.
-			Use specific patterns and filters to reduce output size if responses are truncated.
-
-			Best Practices:
-			- Always use specific patterns - avoid listing entire large directories
-			- Use max_depth to limit scope and reduce token usage
-			- Combine with content search when looking for specific functionality
-			- Filter by file type using patterns like '*.rs' or '*.toml'
-			- Use include_hidden=false (default) to exclude dotfiles for cleaner results
-
-			Examples:
-			- Find Rust files: `{\"directory\": \"src\", \"pattern\": \"*.rs\"}`
-			- Find config files: `{\"directory\": \".\", \"pattern\": \"*.toml|*.yaml|*.json\"}`
-			- Search for function: `{\"directory\": \"src\", \"content\": \"fn main\"}`
-			- Limited depth: `{\"directory\": \".\", \"max_depth\": 2, \"pattern\": \"*.rs\"}`
-			- Include dotfiles: `{\"directory\": \".\", \"pattern\": \".*rc\", \"include_hidden\": true}`
-			- Find hidden configs: `{\"directory\": \".\", \"include_hidden\": true, \"pattern\": \"*.json|*.yaml\"}`
-
-			Token-Efficient Usage:
-			- Use patterns to target specific file types
-			- Set max_depth to avoid deep directory traversals
-			- Combine with content search for targeted results
-			- Prefer multiple specific calls over one broad search"
-			.to_string(),
+			PERFORMANCE: Use patterns and max_depth to avoid large outputs.
+			Response size is controlled by global mcp_response_tokens_threshold setting."
+				.to_string(),
 		parameters: json!({
 			"type": "object",
-			"required": ["directory"],
 			"properties": {
-				"directory": {
+				"path": {
 					"type": "string",
-					"description": "The directory to list files from. Must be a string path, e.g. \".\" for current directory or \"src/\" for a subdirectory"
+					"description": "File path, directory path, or glob pattern. Required unless `paths` is provided."
+				},
+				"paths": {
+					"type": "array",
+					"items": {"type": "string"},
+					"maxItems": 50,
+					"description": "Array of file paths for multi-file viewing (replaces view_many). Max 50 files."
+				},
+				"lines": {
+					"type": "array",
+					"items": {"type": "integer"},
+					"minItems": 2,
+					"maxItems": 2,
+					"description": "Line range [start, end] for single file viewing (1-indexed, inclusive). Supports negative indexing: -1 for last line."
 				},
 				"pattern": {
 					"type": "string",
-					"description": "Optional pattern to match filenames (uses ripgrep)"
+					"description": "Filename glob filter for directory listing (e.g. '*.rs', '*.toml|*.yaml'). Only used when path is a directory."
 				},
 				"content": {
 					"type": "string",
-					"description": "Optional content to search for in files (uses ripgrep)"
+					"description": "Content search string (ripgrep). Only used when path is a directory."
 				},
 				"max_depth": {
 					"type": "integer",
-					"description": "Maximum depth of directories to descend (default: no limit)"
+					"description": "Maximum directory traversal depth (default: no limit). Only used when path is a directory."
 				},
 				"include_hidden": {
 					"type": "boolean",
 					"default": false,
-					"description": "Include hidden files and directories starting with '.' (default: false)"
+					"description": "Include hidden files/directories starting with '.' (default: false). Only used when path is a directory."
 				},
 				"line_numbers": {
 					"type": "boolean",
 					"default": true,
-					"description": "Show line numbers for content search (default: true)"
+					"description": "Show line numbers in content search results (default: true)."
 				},
 				"context": {
 					"type": "integer",
 					"default": 0,
-					"description": "Number of context lines to show around matches (default: 0)"
+					"description": "Context lines around content search matches (default: 0)."
 				}
 			}
 		}),
 	}
 }
 
-// Define the text editor function - DRAMATICALLY OPTIMIZED
+// Define the text editor function - edit-only commands
 pub fn get_text_editor_function() -> McpFunction {
 	McpFunction {
 		name: "text_editor".to_string(),
-		description: "Perform text editing operations on files with comprehensive file manipulation capabilities.
+		description: "Perform text editing operations on files.
 
 			The `command` parameter specifies the operation to perform.
+			For READ operations (view, view_many, directory listing) use the `view` tool instead.
 
 			CRITICAL: LINE NUMBERS CHANGE AFTER EVERY EDIT OPERATION!
 			- After ANY edit (str_replace, insert, line_replace), line numbers become invalid
-			- ALWAYS use 'view' command first to get current line numbers before line_replace
+			- ALWAYS use `view` tool first to get current line numbers before line_replace
 			- PREFER line_replace when you know exact lines (fastest), str_replace when you know content
 			- content parameter contains RAW FILE CONTENT - use actual whitespace characters, not escape sequences (tabs=actual tabs, NOT \\t)!
 			- FOR MULTIPLE EDITS: Use batch_edit tool instead if file hasn't been modified yet
 
 			Available commands:
-
-			`view`: Examine file content or list directory contents
-			- View entire file: `{\"command\": \"view\", \"path\": \"src/main.rs\"}`
-			- View specific lines: `{\"command\": \"view\", \"path\": \"src/main.rs\", \"lines\": [10, 20]}`
-			- List directory: `{\"command\": \"view\", \"path\": \"src/\"}`
-			- Returns content as plain text with line numbers (1-indexed) for editing reference
-			- Smart elision: when using lines parameter, shows context with [...X lines more] indicators
 
 			`create`: Create new file with specified content
 			- `{\"command\": \"create\", \"path\": \"src/new_module.rs\", \"content\": \"pub fn hello() {\\n    println!(\\\"Hello!\\\");\\n}\"}`
@@ -153,12 +143,7 @@ pub fn get_text_editor_function() -> McpFunction {
 		- **USEFUL FOR REFACTORING**: Extract code with `extract_lines`, then remove original with `line_replace` + empty content
 		- Line numbers change after ANY edit operation
 		- NEVER use line_replace twice without viewing file between operations
-		- ALWAYS use 'view' first to get current line numbers before line_replace
-
-			`view_many`: View multiple files simultaneously
-			- `{\"command\": \"view_many\", \"paths\": [\"src/main.rs\", \"src/lib.rs\", \"tests/test.rs\"]}`
-			- Returns content with line numbers for all files in a single operation
-			- Maximum 50 files per request to maintain performance
+		- ALWAYS use `view` tool first to get current line numbers before line_replace
 
 			`undo_edit`: Revert most recent edit to specified file
 			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`
@@ -172,11 +157,11 @@ pub fn get_text_editor_function() -> McpFunction {
 			- Line range errors: Validates line numbers exist in file
 
 			Best Practices:
-			- ALWAYS use 'view' first to get current line numbers before any edit
+			- ALWAYS use `view` tool first to get current line numbers before any edit
 			- Never assume line numbers from previous operations - they change after every edit
 
 			OPTIMAL WORKFLOW:
-			- Use `view` to see file structure and get line numbers
+			- Use `view` tool to see file structure and get line numbers
 			- For single changes: use `line_replace` ONCE per file
 			- If more edits needed: `view` again to get fresh line numbers, then `line_replace` again
 
@@ -208,7 +193,7 @@ pub fn get_text_editor_function() -> McpFunction {
 			- Line numbers become INVALID after ANY edit operation
 			- NEVER use line_replace twice without viewing file between operations
 			- After str_replace, insert, or line_replace: line numbers change
-			- Always view file again to get fresh line numbers before next line_replace
+			- Always use `view` tool again to get fresh line numbers before next line_replace
 			- ONE line_replace per file per editing session - then re-view if more edits needed
 
 			General Guidelines:
@@ -222,25 +207,19 @@ pub fn get_text_editor_function() -> McpFunction {
 			"properties": {
 				"command": {
 					"type": "string",
-					"enum": ["view", "view_many", "create", "str_replace", "insert", "line_replace", "undo_edit"],
-					"description": "The operation to perform: view, view_many, create, str_replace, insert, line_replace, undo_edit"
+					"enum": ["create", "str_replace", "insert", "line_replace", "undo_edit"],
+					"description": "The operation to perform: create, str_replace, insert, line_replace, undo_edit"
 				},
 				"path": {
 					"type": "string",
-					"description": "REQUIRED. Path to the file or directory to operate on. Must be provided for every command except view_many."
-				},
-				"paths": {
-					"type": "array",
-					"items": {"type": "string"},
-					"maxItems": 50,
-					"description": "Array of absolute file paths for view_many command"
+					"description": "REQUIRED. Path to the file to operate on."
 				},
 				"lines": {
 					"type": "array",
 					"items": {"type": "integer"},
 					"minItems": 2,
 					"maxItems": 2,
-					"description": "Line range [start_line, end_line] for viewing or replacing (1-indexed, inclusive). Supports negative indexing: -1 for last line"
+					"description": "Line range [start_line, end_line] for line_replace (1-indexed, inclusive). Supports negative indexing: -1 for last line"
 				},
 				"content": {
 					"type": "string",
@@ -444,9 +423,9 @@ pub fn get_batch_edit_function() -> McpFunction {
 // Get all available filesystem functions
 pub fn get_all_functions() -> Vec<McpFunction> {
 	vec![
+		get_view_function(),
 		get_text_editor_function(),
 		get_batch_edit_function(),
-		get_list_files_function(),
 		get_extract_lines_function(),
 	]
 }

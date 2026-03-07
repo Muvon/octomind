@@ -2,7 +2,7 @@
 
 use super::super::{get_thread_working_directory, McpToolCall, McpToolResult};
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::process::Command;
 // Parse a ripgrep output line to extract filename and rest, handling Windows paths correctly
 // UTF-8 safe version that uses character boundaries instead of byte indices
@@ -222,232 +222,160 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 }
 
 // Execute list_files command with PROPER content search vs file listing handling
-pub async fn execute_list_files(call: &McpToolCall) -> Result<McpToolResult> {
-	// Extract directory parameter
-	let directory = match call.parameters.get("directory") {
-		Some(Value::String(dir)) => dir.clone(),
-		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required 'directory' parameter. Use \".\" for the current directory.".to_string(),
-			))
-		}
-		Some(other) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Invalid 'directory' parameter: expected a string path (e.g. \".\" or \"src/\"), got {other}"),
-			))
-		}
-	};
-
-	// Extract optional parameters
+pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<McpToolResult> {
 	let pattern = call
 		.parameters
 		.get("pattern")
 		.and_then(|v| v.as_str())
 		.map(|s| s.to_string());
-
 	let content = call
 		.parameters
 		.get("content")
 		.and_then(|v| v.as_str())
 		.map(|s| s.to_string());
-
 	let max_depth = call
 		.parameters
 		.get("max_depth")
 		.and_then(|v| v.as_u64())
 		.map(|n| n as usize);
-
 	let include_hidden = call
 		.parameters
 		.get("include_hidden")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
-
 	let line_numbers = call
 		.parameters
 		.get("line_numbers")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(true);
-
 	let context_lines = call
 		.parameters
 		.get("context")
 		.and_then(|v| v.as_i64())
 		.unwrap_or(0) as usize;
 
-	// Build the ripgrep command using proper argument passing
 	let mut cmd = Command::new("rg");
 
-	// Add depth limit if specified
 	if let Some(depth) = max_depth {
 		cmd.arg("--max-depth").arg(depth.to_string());
 	}
-
-	// Add hidden files flag if requested
 	if include_hidden {
 		cmd.arg("--hidden");
 	}
 
-	// Configure the command based on the operation type
-	// Only do content search if content is actually provided and non-empty (not just whitespace)
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
 	let (output_type, is_content_search) = if has_content {
-		// Content search: search for content within files
 		let content_pattern = content.as_ref().unwrap();
 		if line_numbers {
 			cmd.arg("--line-number");
 		}
-
-		// Add context if specified
 		if context_lines > 0 {
 			cmd.arg("--context").arg(context_lines.to_string());
 		}
-
-		// Use -F flag to treat the pattern as a fixed string (literal) rather than regex
-		// This avoids regex parsing errors with special characters
 		cmd.arg("-F").arg(content_pattern);
-		// Add the directory as the search path
-		cmd.arg(&directory);
-
+		cmd.arg(directory);
 		("content search", true)
 	} else {
-		// File listing: list files (optionally filtered by pattern)
 		cmd.arg("--files");
-
-		// Add the directory as the search path
-		cmd.arg(&directory);
-
+		cmd.arg(directory);
 		("file listing", false)
 	};
 
-	// Set working directory from thread-local storage
 	let working_dir = get_thread_working_directory();
 	cmd.current_dir(&working_dir);
 
-	// Debug: Log the actual command being executed
 	crate::log_debug!(
-		"Executing list_files ({}): rg {:?}",
+		"Executing list_directory ({}): rg {:?}",
 		output_type,
 		cmd.get_args().collect::<Vec<_>>()
 	);
 
-	// Execute the command
-	let output = tokio::task::spawn_blocking(move || {
-		let output = cmd.output();
+	let directory = directory.to_string();
+	let output = tokio::task::spawn_blocking(move || match cmd.output() {
+		Ok(output) => {
+			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-		match output {
-			Ok(output) => {
-				let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-				let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-				if is_content_search {
-					// For content search, preserve the original ripgrep output format
-					// which includes filenames, line numbers, and matched content
-					let lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-
-					// Group FIRST to preserve match + context relationships
-					let grouped_output = group_ripgrep_output(&lines);
-
-					// Global truncation will be applied by MCP response handler
-					let final_output = grouped_output;
-
-					let output_str = if stdout.is_empty() && !stderr.is_empty() {
-						stderr
-					} else {
-						final_output
-					};
-
-					// For content search, we return the formatted output with matches
-					let result = json!({
-							"success": output.status.success(),
-							"output": output_str,
-							"lines": lines,
-							"total_lines": lines.len(),
-							"displayed_lines": lines.len(),
-							"type": output_type,
-							"parameters": {
-							"directory": directory,
-							"pattern": pattern,
-							"content": content,
-							"max_depth": max_depth,
-							"include_hidden": include_hidden,
-
-							"line_numbers": line_numbers,
-							"context": context_lines
-						}
-					});
-
-					result
+			if is_content_search {
+				let lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+				let grouped_output = group_ripgrep_output(&lines);
+				let output_str = if stdout.is_empty() && !stderr.is_empty() {
+					stderr
 				} else {
-					// For file listing, parse as files and apply pattern filtering
-					let mut files: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-
-					// Filter by pattern if we're doing filename pattern matching
-					if let Some(ref name_pattern) = pattern {
-						let regex_pattern = convert_glob_to_regex(name_pattern);
-						if let Ok(regex) = regex::Regex::new(&regex_pattern) {
-							files.retain(|file| regex.is_match(file));
-						}
-					}
-					// Global truncation will be applied by MCP response handler
-					let files_count = files.len();
-					let final_files = files;
-
-					let output_str = if stdout.is_empty() && !stderr.is_empty() {
-						stderr
-					} else {
-						final_files.join("\n")
-					};
-
-					let result = json!({
-							"success": output.status.success(),
-							"output": output_str,
-							"files": final_files,
-							"count": files_count,
-							"displayed_count": final_files.len(),
-							"type": output_type,
-							"parameters": {
-							"directory": directory,
-							"pattern": pattern,
-							"content": content,
-							"max_depth": max_depth,
-							"include_hidden": include_hidden,
-
-							"line_numbers": line_numbers,
-							"context": context_lines
-						}
-					});
-
-					result
-				}
-			}
-			Err(e) => json!({
-					"success": false,
-					"output": format!("Failed to list files: {}", e),
-					"files": [],
-					"count": 0,
-					"displayed_count": 0,
+					grouped_output
+				};
+				json!({
+					"success": output.status.success(),
+					"output": output_str,
+					"lines": lines,
+					"total_lines": lines.len(),
+					"displayed_lines": lines.len(),
+					"type": output_type,
 					"parameters": {
-					"directory": directory,
-					"pattern": pattern,
-					"content": content,
-					"max_depth": max_depth,
-					"include_hidden": include_hidden,
-					"line_numbers": line_numbers,
-					"context": context_lines
+						"directory": directory,
+						"pattern": pattern,
+						"content": content,
+						"max_depth": max_depth,
+						"include_hidden": include_hidden,
+						"line_numbers": line_numbers,
+						"context": context_lines
+					}
+				})
+			} else {
+				let mut files: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+				if let Some(ref name_pattern) = pattern {
+					let regex_pattern = convert_glob_to_regex(name_pattern);
+					if let Ok(regex) = regex::Regex::new(&regex_pattern) {
+						files.retain(|file| regex.is_match(file));
+					}
 				}
-			}),
+				let files_count = files.len();
+				let output_str = if stdout.is_empty() && !stderr.is_empty() {
+					stderr
+				} else {
+					files.join("\n")
+				};
+				json!({
+					"success": output.status.success(),
+					"output": output_str,
+					"files": files,
+					"count": files_count,
+					"displayed_count": files_count,
+					"type": output_type,
+					"parameters": {
+						"directory": directory,
+						"pattern": pattern,
+						"content": content,
+						"max_depth": max_depth,
+						"include_hidden": include_hidden,
+						"line_numbers": line_numbers,
+						"context": context_lines
+					}
+				})
+			}
 		}
+		Err(e) => json!({
+			"success": false,
+			"output": format!("Failed to list directory: {}", e),
+			"files": [],
+			"count": 0,
+			"displayed_count": 0,
+			"parameters": {
+				"directory": directory,
+				"pattern": pattern,
+				"content": content,
+				"max_depth": max_depth,
+				"include_hidden": include_hidden,
+				"line_numbers": line_numbers,
+				"context": context_lines
+			}
+		}),
 	})
 	.await
-	.map_err(|e| anyhow!("Failed to execute file listing command: {}", e))?;
+	.map_err(|e| anyhow!("Failed to execute directory listing: {}", e))?;
 
 	Ok(McpToolResult {
-		tool_name: "list_files".to_string(),
+		tool_name: call.tool_name.clone(),
 		tool_id: call.tool_id.clone(),
 		result: output,
 	})
@@ -539,7 +467,7 @@ mod tests {
 	fn test_content_search_with_special_chars() {
 		// Create a mock tool call with content parameter containing special regex characters
 		let _call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			tool_id: "test_id".to_string(),
 			parameters: json!({
 				"directory": "src",
@@ -580,7 +508,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_list_files_empty_content_should_list_files() {
 		// CRITICAL TEST: When content is empty string "", should do file listing, NOT content search
-		use crate::mcp::fs::directory::execute_list_files;
+		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
@@ -600,7 +528,7 @@ mod tests {
 
 		// Test with EMPTY content string - should do file listing, not content search
 		let call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.json",
@@ -609,7 +537,15 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = execute_list_files(&call).await.unwrap();
+		let result = list_directory(
+			&call,
+			call.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output = result.result.as_object().unwrap();
 
 		// Should be file listing (not content search)
@@ -632,7 +568,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_list_files_no_content_parameter_should_list_files() {
 		// CRITICAL TEST: When content parameter is not provided at all, should do file listing
-		use crate::mcp::fs::directory::execute_list_files;
+		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
@@ -652,7 +588,7 @@ mod tests {
 
 		// Test WITHOUT content parameter - should do file listing, not content search
 		let call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.json"
@@ -661,7 +597,15 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = execute_list_files(&call).await.unwrap();
+		let result = list_directory(
+			&call,
+			call.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output = result.result.as_object().unwrap();
 
 		// Should be file listing (not content search)
@@ -684,7 +628,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_list_files_whitespace_content_should_list_files() {
 		// CRITICAL TEST: When content is only whitespace, should do file listing, NOT content search
-		use crate::mcp::fs::directory::execute_list_files;
+		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
@@ -704,7 +648,7 @@ mod tests {
 
 		// Test with whitespace-only content - should do file listing, not content search
 		let call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.json",
@@ -713,7 +657,15 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = execute_list_files(&call).await.unwrap();
+		let result = list_directory(
+			&call,
+			call.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output = result.result.as_object().unwrap();
 
 		// Should be file listing (not content search)

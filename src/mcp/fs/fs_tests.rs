@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_text_editor};
+	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view};
 	use crate::mcp::fs::text_editing::line_replace_spec;
 	use crate::mcp::McpToolCall;
 	use serde_json::json;
@@ -765,7 +765,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_list_files_basic_functionality() {
-		use crate::mcp::fs::directory::execute_list_files;
+		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
@@ -781,7 +781,7 @@ mod tests {
 
 		// Test basic file listing functionality
 		let call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.txt"
@@ -789,7 +789,15 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = execute_list_files(&call).await.unwrap();
+		let result = list_directory(
+			&call,
+			call.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output = result.result.as_object().unwrap();
 
 		// Should have basic file listing info (no tool-level truncation)
@@ -805,7 +813,7 @@ mod tests {
 
 		// Test with different pattern
 		let call_limited = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*_01.txt"
@@ -813,7 +821,16 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result_limited = execute_list_files(&call_limited).await.unwrap();
+		let result_limited = list_directory(
+			&call_limited,
+			call_limited
+				.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output_limited = result_limited.result.as_object().unwrap();
 
 		// Should find only one file matching the pattern
@@ -830,7 +847,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_list_files_content_search_preserves_format() {
-		use crate::mcp::fs::directory::execute_list_files;
+		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
@@ -851,7 +868,7 @@ mod tests {
 
 		// Test content search with line numbers
 		let call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"content": "println!",
@@ -861,7 +878,15 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = execute_list_files(&call).await.unwrap();
+		let result = list_directory(
+			&call,
+			call.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output = result.result.as_object().unwrap();
 
 		// Should be content search
@@ -882,7 +907,7 @@ mod tests {
 
 		// Test content search with context
 		let call_with_context = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"content": "println!",
@@ -893,7 +918,16 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result_with_context = execute_list_files(&call_with_context).await.unwrap();
+		let result_with_context = list_directory(
+			&call_with_context,
+			call_with_context
+				.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let output_with_context = result_with_context.result.as_object().unwrap();
 
 		let output_str_with_context = output_with_context["output"].as_str().unwrap();
@@ -912,7 +946,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_list_files_vs_content_search_different_output() {
-		use crate::mcp::fs::directory::execute_list_files;
+		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
@@ -932,7 +966,7 @@ mod tests {
 
 		// Test 1: File listing (should return just filenames)
 		let file_list_call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.rs"
@@ -940,7 +974,16 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let file_list_result = execute_list_files(&file_list_call).await.unwrap();
+		let file_list_result = list_directory(
+			&file_list_call,
+			file_list_call
+				.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let file_list_output = file_list_result.result.as_object().unwrap();
 
 		// Should be file listing
@@ -950,7 +993,7 @@ mod tests {
 
 		// Test 2: Content search (should return formatted matches)
 		let content_search_call = McpToolCall {
-			tool_name: "list_files".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"content": "println!"
@@ -958,7 +1001,16 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let content_search_result = execute_list_files(&content_search_call).await.unwrap();
+		let content_search_result = list_directory(
+			&content_search_call,
+			content_search_call
+				.parameters
+				.get("directory")
+				.and_then(|v| v.as_str())
+				.unwrap_or("."),
+		)
+		.await
+		.unwrap();
 		let content_search_output = content_search_result.result.as_object().unwrap();
 
 		// Should be content search
@@ -1753,15 +1805,14 @@ mod tests {
 		// Test -1 (last line)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [-1, -1]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1773,15 +1824,14 @@ mod tests {
 		// Test -2 (second-to-last line)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [-2, -2]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1793,15 +1843,14 @@ mod tests {
 		// Test range with negative indices
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [-3, -1]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1823,15 +1872,14 @@ mod tests {
 		// Test mixed positive and negative indices
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [2, -2]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -1864,15 +1912,14 @@ mod tests {
 		// Test negative index beyond file length
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [-5, -1]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(true)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -2168,15 +2215,14 @@ mod tests {
 		// Test -1 on single line file
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [-1, -1]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(false)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -2188,15 +2234,14 @@ mod tests {
 		// Test -2 on single line file (should fail)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "view".to_string(),
 			parameters: json!({
-				"command": "view",
 				"path": file_path.to_string_lossy(),
 				"lines": [-2, -1]
 			}),
 		};
 
-		let result = execute_text_editor(&call).await.unwrap();
+		let result = execute_view(&call).await.unwrap();
 		assert_eq!(result.result.get("isError"), Some(&json!(true)));
 		let content = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
@@ -2204,6 +2249,156 @@ mod tests {
 			"Should show error: {}",
 			content
 		);
+	}
+
+	// ===== VIEW TOOL: DIRECTORY DISPATCH TESTS =====
+
+	#[tokio::test]
+	async fn test_view_directory_lists_files() {
+		// view with a directory path must list files (not error with "missing directory param")
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		fs::write(temp_dir.path().join("alpha.rs"), "fn a() {}")
+			.await
+			.unwrap();
+		fs::write(temp_dir.path().join("beta.rs"), "fn b() {}")
+			.await
+			.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": temp_dir.path().to_string_lossy() }),
+		};
+
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			!result
+				.result
+				.get("isError")
+				.and_then(|v| v.as_bool())
+				.unwrap_or(false),
+			"Should not error: {:?}",
+			result.result
+		);
+		// result must contain file listing output
+		let output = result.result["output"].as_str().unwrap_or("");
+		assert!(
+			output.contains("alpha.rs") || output.contains("beta.rs"),
+			"Should list files: {output}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_directory_content_search() {
+		// view with path=dir + content= must search file contents, not error
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		fs::write(temp_dir.path().join("foo.rs"), "fn hello_world() {}")
+			.await
+			.unwrap();
+		fs::write(temp_dir.path().join("bar.rs"), "fn unrelated() {}")
+			.await
+			.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": temp_dir.path().to_string_lossy(),
+				"content": "hello_world"
+			}),
+		};
+
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			!result
+				.result
+				.get("isError")
+				.and_then(|v| v.as_bool())
+				.unwrap_or(false),
+			"Should not error: {:?}",
+			result.result
+		);
+		let output = result.result["output"].as_str().unwrap_or("");
+		assert!(
+			output.contains("hello_world"),
+			"Should find match: {output}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_directory_pattern_filter() {
+		// view with path=dir + pattern= must filter by filename glob
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		fs::write(temp_dir.path().join("main.rs"), "fn main() {}")
+			.await
+			.unwrap();
+		fs::write(temp_dir.path().join("config.toml"), "[package]")
+			.await
+			.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": temp_dir.path().to_string_lossy(),
+				"pattern": "*.toml"
+			}),
+		};
+
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			!result
+				.result
+				.get("isError")
+				.and_then(|v| v.as_bool())
+				.unwrap_or(false),
+			"Should not error: {:?}",
+			result.result
+		);
+		let files = result.result["files"].as_array().unwrap();
+		assert_eq!(files.len(), 1, "Should find exactly one .toml file");
+		assert!(files[0].as_str().unwrap().contains("config.toml"));
+	}
+
+	#[tokio::test]
+	async fn test_view_file_path_reads_content() {
+		// view with a file path must return file content, not try directory listing
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_path = temp_dir.path().join("hello.txt");
+		fs::write(&file_path, "line one\nline two\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": file_path.to_string_lossy() }),
+		};
+
+		let result = execute_view(&call).await.unwrap();
+		assert_eq!(result.result.get("isError"), Some(&json!(false)));
+		let content = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(
+			content.contains("1: line one"),
+			"Should show line 1: {content}"
+		);
+		assert!(
+			content.contains("2: line two"),
+			"Should show line 2: {content}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_missing_path_errors() {
+		// view with no path and no paths must return a clear error, not panic
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({}),
+		};
+
+		let result = execute_view(&call).await.unwrap();
+		assert_eq!(result.result.get("isError"), Some(&json!(true)));
+		let msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(msg.contains("path"), "Error should mention 'path': {msg}");
 	}
 
 	#[tokio::test]

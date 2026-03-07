@@ -79,18 +79,18 @@ Examples:
 static SHELL_MISUSE_HINTS: &[(&[&str], &str, &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"text_editor",
-		"⚠️ Prefer `text_editor` view for reading files (line-numbered, supports ranges). Use shell only when piping output.",
+		"view",
+		"⚠️ Prefer `view` for reading files (line-numbered, supports ranges). Use shell only when piping output.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
 		"ast_grep",
-		"⚠️ Prefer `ast_grep` for code search or `list_files` with content= for text search (.gitignore-aware). Use shell grep only for unsupported raw flags.",
+		"⚠️ Prefer `ast_grep` for code search or `view` with content= for text search (.gitignore-aware). Use shell grep only for unsupported raw flags.",
 	),
 	(
 		&["find", "ls"],
-		"list_files",
-		"⚠️ Prefer `list_files` for directory listing (.gitignore-aware, pattern/content filtering). Use shell only for system paths outside the project.",
+		"view",
+		"⚠️ Prefer `view` for directory listing (.gitignore-aware, pattern/content filtering). Use shell only for system paths outside the project.",
 	),
 	(
 		&["sed", "awk"],

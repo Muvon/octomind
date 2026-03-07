@@ -35,7 +35,7 @@ pub async fn view_file_spec(
 ) -> Result<McpToolResult> {
 	if !path.exists() {
 		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
+			tool_name: call.tool_name.clone(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"content": [{
@@ -73,7 +73,7 @@ pub async fn view_file_spec(
 		let content = entries.join("\n");
 
 		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
+			tool_name: call.tool_name.clone(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"content": [{
@@ -87,7 +87,7 @@ pub async fn view_file_spec(
 
 	if !path.is_file() {
 		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
+			tool_name: call.tool_name.clone(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"content": [{
@@ -106,7 +106,7 @@ pub async fn view_file_spec(
 	if metadata.len() > 1024 * 1024 * 5 {
 		// 5MB limit
 		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
+			tool_name: call.tool_name.clone(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"content": [{
@@ -131,7 +131,7 @@ pub async fn view_file_spec(
 		|| content_with_numbers.starts_with("Start line")
 	{
 		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
+			tool_name: call.tool_name.clone(),
 			tool_id: call.tool_id.clone(),
 			result: json!({
 				"content": [{
@@ -145,7 +145,7 @@ pub async fn view_file_spec(
 
 	// Return plain text content with proper MCP format
 	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
+		tool_name: call.tool_name.clone(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
 			"content": [{
@@ -187,7 +187,7 @@ pub async fn create_file_spec(
 		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
 	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
+		tool_name: call.tool_name.clone(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
 			"content": format!("File created successfully with {} bytes", content.len()),
@@ -304,7 +304,7 @@ pub async fn view_many_files_spec(call: &McpToolCall, paths: &[String]) -> Resul
 
 	// Return plain text content with proper MCP format
 	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
+		tool_name: call.tool_name.clone(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
 			"content": [{

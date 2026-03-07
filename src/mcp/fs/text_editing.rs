@@ -822,29 +822,40 @@ fn parse_line_range(
 	match value {
 		Value::Number(n) => {
 			let line = n.as_i64().ok_or("Line number must be an integer")?;
-			if line == 0 {
-				return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
-			}
 			match operation_type {
+				// 0 is valid for insert: means "insert at beginning of file"
 				OperationType::Insert => Ok(UnresolvedLineRange::Single(line)),
-				OperationType::Replace => Ok(UnresolvedLineRange::Range(line, line)), // Single line replace
+				OperationType::Replace => {
+					if line == 0 {
+						return Err(
+							"Replace line numbers are 1-indexed, use 1 for first line".to_string()
+						);
+					}
+					Ok(UnresolvedLineRange::Range(line, line)) // Single line replace
+				}
 			}
 		}
 		Value::Array(arr) => {
 			if arr.len() == 1 {
 				let line = arr[0].as_i64().ok_or("Line number must be an integer")?;
-				if line == 0 {
-					return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
-				}
 				match operation_type {
+					// 0 is valid for insert: means "insert at beginning of file"
 					OperationType::Insert => Ok(UnresolvedLineRange::Single(line)),
-					OperationType::Replace => Ok(UnresolvedLineRange::Range(line, line)),
+					OperationType::Replace => {
+						if line == 0 {
+							return Err("Replace line numbers are 1-indexed, use 1 for first line"
+								.to_string());
+						}
+						Ok(UnresolvedLineRange::Range(line, line))
+					}
 				}
 			} else if arr.len() == 2 {
 				let start = arr[0].as_i64().ok_or("Start line must be an integer")?;
 				let end = arr[1].as_i64().ok_or("End line must be an integer")?;
 				if start == 0 || end == 0 {
-					return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
+					return Err(
+						"Replace line numbers are 1-indexed, use 1 for first line".to_string()
+					);
 				}
 				match operation_type {
 					OperationType::Insert => Err(

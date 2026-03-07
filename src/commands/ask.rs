@@ -576,7 +576,7 @@ async fn execute_single_query(params: SingleQueryParams<'_>) -> Result<ProviderR
 		top_k: params.top_k,
 		max_tokens: params.max_tokens,
 		config: params.config,
-		max_retries: 0,
+		max_retries: params.config.max_retries,
 		cancellation_token: None,
 		schema: params.schema,
 	})

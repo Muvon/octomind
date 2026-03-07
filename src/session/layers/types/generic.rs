@@ -365,7 +365,7 @@ impl GenericLayer {
 		&self,
 		messages: Vec<Message>,
 		model: &str,
-		_layer_config: &Config,
+		layer_config: &Config,
 	) -> crate::session::chat::session::ChatSession {
 		// Create a minimal session for the layer
 		let mut session = crate::session::Session::new(
@@ -391,17 +391,17 @@ impl GenericLayer {
 			pending_video: None,
 			spending_threshold_checkpoint: 0.0,
 			request_spending_checkpoint: 0.0, // Initialize request spending checkpoint
-			max_retries: 0,                   // Default max_retries for layers
-			continuation_pending: false,      // Initialize continuation state
-			continuation_disabled: false,     // Initialize continuation control flag
-			was_resumed: false,               // Layers are never resumed sessions
-			pending_prompt: None,             // Initialize pending prompt
-			initial_status_shown: true,       // Layers don't show status
-			compression_hint_count: 0,        // Initialize compression hint counter
-			last_compression_hint_shown: 0,   // Initialize last hint timestamp
-			cached_tools: None,               // Initialize tool cache (populated on first use)
+			max_retries: layer_config.max_retries,
+			continuation_pending: false,    // Initialize continuation state
+			continuation_disabled: false,   // Initialize continuation control flag
+			was_resumed: false,             // Layers are never resumed sessions
+			pending_prompt: None,           // Initialize pending prompt
+			initial_status_shown: true,     // Layers don't show status
+			compression_hint_count: 0,      // Initialize compression hint counter
+			last_compression_hint_shown: 0, // Initialize last hint timestamp
+			cached_tools: None,             // Initialize tool cache (populated on first use)
 			first_prompt_idx: Some(first_prompt_idx), // Protect layer's first prompt from compression
-			schema: None,                     // Layers don't use structured output
+			schema: None,                   // Layers don't use structured output
 		}
 	}
 
@@ -477,7 +477,7 @@ impl GenericLayer {
 			self.config.max_tokens,
 			layer_config,
 		)
-		.with_max_retries(0)
+		.with_max_retries(layer_config.max_retries)
 		.with_cancellation_token(operation_cancelled.clone());
 
 		let api_result = crate::session::chat_completion_with_validation(validation_params).await;
@@ -581,7 +581,7 @@ impl Layer for GenericLayer {
 			self.config.max_tokens,
 			&layer_config,
 		)
-		.with_max_retries(0)
+		.with_max_retries(layer_config.max_retries)
 		.with_cancellation_token(operation_cancelled.clone());
 		let response = crate::session::chat_completion_with_validation(validation_params).await?;
 

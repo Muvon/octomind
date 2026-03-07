@@ -222,8 +222,8 @@ impl ChatSession {
 		let max_tokens_value = params
 			.max_tokens
 			.expect("Max tokens must be provided from role config");
-		// max_retries defaults to 0 if not provided (runtime-only parameter)
-		let max_retries_value = params.max_retries.unwrap_or(0);
+		// max_retries falls back to config value if not explicitly overridden via CLI
+		let max_retries_value = params.max_retries.unwrap_or(params.config.max_retries);
 
 		// Create a new session with initial info
 		let timestamp = SystemTime::now()
@@ -483,17 +483,17 @@ impl ChatSession {
 						request_spending_checkpoint: 0.0,    // Initialize request spending checkpoint
 						pending_image: None,                 // Initialize pending image
 						pending_video: None,                 // Initialize pending video
-						max_retries: params.max_retries.unwrap_or(0), // Use provided max_retries or default to 0
-						continuation_pending,                // Restore from session.info
-						continuation_disabled,               // Restore from session.info
-						was_resumed: true,                   // This session was resumed from file
-						pending_prompt: None,                // Initialize pending prompt
-						initial_status_shown: true,          // Don't show status for resumed sessions
-						compression_hint_count,              // Restore from session.info
+						max_retries: params.max_retries.unwrap_or(params.config.max_retries), // Use provided max_retries or fall back to config
+						continuation_pending,       // Restore from session.info
+						continuation_disabled,      // Restore from session.info
+						was_resumed: true,          // This session was resumed from file
+						pending_prompt: None,       // Initialize pending prompt
+						initial_status_shown: true, // Don't show status for resumed sessions
+						compression_hint_count,     // Restore from session.info
 						last_compression_hint_shown: last_compression_hint, // Restore from session.info
-						cached_tools: None,                  // Initialize tool cache (populated on first use)
-						first_prompt_idx: None,              // Will be detected from existing messages
-						schema: None,                        // Schema applied after init via CLI override
+						cached_tools: None,         // Initialize tool cache (populated on first use)
+						first_prompt_idx: None,     // Will be detected from existing messages
+						schema: None,               // Schema applied after init via CLI override
 					};
 
 					// Apply runtime state from session log (legacy support)

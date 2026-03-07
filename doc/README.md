@@ -15,6 +15,7 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - [08-mcp-server-development.md](./08-mcp-server-development.md) — MCP server development and protocol compliance
 - [09-websocket-server.md](./09-websocket-server.md) — WebSocket API for programmatic access
 - [10-workflows.md](./10-workflows.md) — Brain-inspired MAP planning system for complex multi-step tasks
+- [11-acp-editor-integration.md](./11-acp-editor-integration.md) — ACP editor integration: Neovim, Zed, JetBrains setup
 
 ## Current Architecture Overview
 
@@ -214,6 +215,7 @@ Default values
 - **[MCP Development](./08-mcp-server-development.md)** - Tool development and protocol compliance
 - **[WebSocket API](./09-websocket-server.md)** - Programmatic access and HTTP API
 - **[MAP Workflows](./10-workflows.md)** — Brain-inspired MAP planning system for complex multi-step tasks
+- **[ACP Editor Integration](./11-acp-editor-integration.md)** — Use Octomind inside Neovim, Zed, and JetBrains via ACP
 ### Support Resources
 - **GitHub Issues**: [Report bugs and request features](https://github.com/muvon/octomind/issues)
 - **GitHub Discussions**: [Community support and questions](https://github.com/muvon/octomind/discussions)

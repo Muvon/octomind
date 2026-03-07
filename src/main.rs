@@ -47,6 +47,9 @@ enum Commands {
 	/// Start WebSocket server for remote AI sessions
 	Server(commands::ServerArgs),
 
+	/// Run as an ACP (Agent Client Protocol) agent over stdio
+	Acp(commands::AcpArgs),
+
 	/// Show all available placeholder variables and their values
 	Vars(commands::VarsArgs),
 
@@ -150,6 +153,10 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 			// Server is interactive - show progress
 			initialize_mcp_for_role_with_progress(&server_args.role, &config, true).await?;
 		}
+		Commands::Acp(acp_args) => {
+			// ACP runs over stdio - no spinner (stdout is reserved for JSON-RPC)
+			initialize_mcp_for_role_with_progress(&acp_args.role, &config, false).await?;
+		}
 		_ => {
 			// Other commands don't need MCP servers
 		}
@@ -170,7 +177,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 				.await?
 		}
 		Commands::Server(server_args) => commands::server::execute(server_args, &config).await?,
-
+		Commands::Acp(acp_args) => commands::acp::execute(acp_args, &config).await?,
 		Commands::Vars(vars_args) => commands::vars::execute(vars_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();

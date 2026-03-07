@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod acp;
-pub mod config;
-pub mod run;
-pub mod server;
-pub mod session;
-pub mod vars;
+use clap::Args;
 
-// Re-export all the command structs and enums
-pub use acp::AcpArgs;
-pub use config::ConfigArgs;
-pub use run::RunArgs;
-pub use server::ServerArgs;
-pub use session::SessionArgs;
-pub use vars::VarsArgs;
+#[derive(Args, Debug)]
+pub struct AcpArgs {
+	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
+	#[arg(long, default_value = "developer")]
+	pub role: String,
+}
+
+/// Execute the acp command — runs Octomind as an ACP agent over stdio
+
+pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
+	octomind::acp::run(config.clone(), args.role.clone()).await
+}

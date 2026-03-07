@@ -22,7 +22,6 @@ pub struct AcpArgs {
 }
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
-
 pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
 	octomind::acp::run(config.clone(), args.role.clone()).await
 }

@@ -16,17 +16,18 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
-
 
 use agent_client_protocol::{
 	AgentCapabilities, AgentSideConnection, AuthenticateRequest, AuthenticateResponse,
 	CancelNotification, Client, ContentBlock, ContentChunk, Implementation, InitializeRequest,
-	InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-	ProtocolVersion, SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallUpdate,
-	ToolCallUpdateFields,
+	InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest,
+	NewSessionResponse, PromptRequest, PromptResponse, ProtocolVersion, SessionNotification,
+	SessionUpdate, StopReason, ToolCall, ToolCallUpdate, ToolCallUpdateFields,
 };
 
+use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
@@ -35,7 +36,7 @@ use crate::session::chat::session::{
 };
 use crate::session::output::{OutputMode, WebSocketSink};
 use crate::websocket::ServerMessage;
-use crate::{log_debug, log_error};
+use crate::{log_debug, log_error, log_info};
 
 /// ACP agent implementation wrapping Octomind's session infrastructure.
 ///
@@ -43,8 +44,8 @@ use crate::{log_debug, log_error};
 pub struct OctomindAgent {
 	config: Config,
 	role: String,
-	/// Active sessions keyed by ACP session_id
-	sessions: Rc<RefCell<HashMap<String, ChatSession>>>,
+	/// Active sessions keyed by ACP session_id, paired with their working directory
+	sessions: Rc<RefCell<HashMap<String, (ChatSession, PathBuf)>>>,
 	/// Active cancellation handles keyed by ACP session_id
 	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
 	/// Connection back to the client — used to send session/update notifications
@@ -66,7 +67,48 @@ impl OctomindAgent {
 	pub fn set_connection(&self, conn: Rc<AgentSideConnection>) {
 		*self.conn.borrow_mut() = Some(conn);
 	}
+}
 
+/// Convert ACP MCP server list into McpServerConfig entries and inject them into the config.
+///
+/// Servers are added to the global registry (`config.mcp.servers`) and referenced by the role
+/// so that `get_enabled_servers()` picks them up during tool routing.
+fn inject_acp_mcp_servers(config: &mut Config, role: &str, servers: &[McpServer]) {
+	for server in servers {
+		let server_config = match server {
+			McpServer::Stdio(s) => {
+				let args: Vec<String> = s.args.iter().map(|a| a.to_string()).collect();
+				McpServerConfig::stdin(
+					&s.name,
+					s.command.to_string_lossy().as_ref(),
+					args,
+					30,
+					vec![],
+				)
+			}
+			McpServer::Http(s) => McpServerConfig::http(&s.name, &s.url, 30, vec![], None, None),
+			McpServer::Sse(s) => {
+				// SSE is not a supported transport in our MCP stack — skip
+				log_info!("ACP: skipping SSE MCP server '{}' (not supported)", s.name);
+				continue;
+			}
+			_ => {
+				log_info!("ACP: skipping unknown MCP server transport (not supported)");
+				continue;
+			}
+		};
+		let name = server_config.name().to_string();
+		// Add to global registry (dedup by name)
+		if !config.mcp.servers.iter().any(|s| s.name() == name) {
+			config.mcp.servers.push(server_config);
+		}
+		// Reference from the role so get_enabled_servers() includes it
+		if let Some(role_entry) = config.role_map.get_mut(role) {
+			if !role_entry.mcp.server_refs.contains(&name) {
+				role_entry.mcp.server_refs.push(name);
+			}
+		}
+	}
 }
 
 #[async_trait::async_trait(?Send)]
@@ -77,7 +119,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 	) -> agent_client_protocol::Result<InitializeResponse> {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
 		let response = InitializeResponse::new(ProtocolVersion::LATEST)
-			.agent_capabilities(AgentCapabilities::default())
+			.agent_capabilities(AgentCapabilities::default().load_session(true))
 			.agent_info(Implementation::new("octomind", env!("CARGO_PKG_VERSION")));
 		Ok(response)
 	}
@@ -93,14 +135,16 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		&self,
 		args: NewSessionRequest,
 	) -> agent_client_protocol::Result<NewSessionResponse> {
-		// Change working directory to the client's cwd
-		if let Err(e) = std::env::set_current_dir(&args.cwd) {
-			log_error!("ACP: failed to set cwd to {:?}: {}", args.cwd, e);
-		}
+		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
+		crate::mcp::set_thread_working_directory(Some(args.cwd.clone()));
+		let session_cwd = args.cwd.clone();
+
+		let mut config_for_session = self.config.clone();
+		inject_acp_mcp_servers(&mut config_for_session, &self.role, &args.mcp_servers);
 
 		let session_args = GenericSessionArgs::new(self.role.clone());
 		let (mut chat_session, config_for_role, session_role, _) =
-			setup_and_initialize_session(&session_args, &self.config)
+			setup_and_initialize_session(&session_args, &config_for_session)
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
@@ -113,7 +157,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 
 		self.sessions
 			.borrow_mut()
-			.insert(session_id.clone(), chat_session);
+			.insert(session_id.clone(), (chat_session, session_cwd));
 		self.cancellations
 			.borrow_mut()
 			.insert(session_id.clone(), SessionCancellation::new());
@@ -143,7 +187,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		}
 
 		// Take session out of map for exclusive access
-		let mut chat_session = match self.sessions.borrow_mut().remove(&session_id) {
+		let (mut chat_session, session_cwd) = match self.sessions.borrow_mut().remove(&session_id) {
 			Some(s) => s,
 			None => {
 				return Err(agent_client_protocol::Error::invalid_params()
@@ -151,8 +195,11 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			}
 		};
 
+		// Restore this session's working directory for tool calls
+		crate::mcp::set_thread_working_directory(Some(session_cwd.clone()));
+
 		let config_for_role = self.config.get_merged_config_for_role(&self.role);
-		let current_dir = std::env::current_dir().unwrap_or_default();
+		let current_dir = session_cwd.clone();
 
 		// Get or create cancellation for this session
 		let mut cancellation = self
@@ -180,7 +227,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		if layer_cancelled {
 			self.sessions
 				.borrow_mut()
-				.insert(session_id.clone(), chat_session);
+				.insert(session_id.clone(), (chat_session, session_cwd.clone()));
 			self.cancellations
 				.borrow_mut()
 				.insert(session_id.clone(), cancellation);
@@ -225,8 +272,8 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						ContentChunk::new(p.content.into()),
 					)),
 					ServerMessage::ToolUse(p) => {
-						let tool_call =
-							ToolCall::new(p.tool_id.clone(), p.tool.clone()).raw_input(p.params.clone());
+						let tool_call = ToolCall::new(p.tool_id.clone(), p.tool.clone())
+							.raw_input(p.params.clone());
 						Some(SessionUpdate::ToolCall(tool_call))
 					}
 					ServerMessage::ToolResult(p) => {
@@ -265,7 +312,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		// Put session back
 		self.sessions
 			.borrow_mut()
-			.insert(session_id.clone(), chat_session);
+			.insert(session_id.clone(), (chat_session, session_cwd));
 		self.cancellations
 			.borrow_mut()
 			.insert(session_id.clone(), cancellation);
@@ -292,5 +339,40 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			cancellation.shutdown();
 		}
 		Ok(())
+	}
+
+	async fn load_session(
+		&self,
+		args: LoadSessionRequest,
+	) -> agent_client_protocol::Result<LoadSessionResponse> {
+		let session_id = args.session_id.to_string();
+		log_debug!("ACP: load_session requested: {}", session_id);
+
+		// Set per-session working directory via thread-local
+		crate::mcp::set_thread_working_directory(Some(args.cwd.clone()));
+		let session_cwd = args.cwd.clone();
+
+		let mut config_for_session = self.config.clone();
+		inject_acp_mcp_servers(&mut config_for_session, &self.role, &args.mcp_servers);
+
+		// Resume the existing session from disk by its ID
+		let session_args = GenericSessionArgs::resume(session_id.clone(), self.role.clone());
+		let (mut chat_session, config_for_role, session_role, _) =
+			setup_and_initialize_session(&session_args, &config_for_session)
+				.await
+				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+
+		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)
+			.await
+			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+
+		self.sessions
+			.borrow_mut()
+			.insert(session_id.clone(), (chat_session, session_cwd));
+		self.cancellations
+			.borrow_mut()
+			.insert(session_id, SessionCancellation::new());
+
+		Ok(LoadSessionResponse::new())
 	}
 }

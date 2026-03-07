@@ -62,12 +62,14 @@ graph TB
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
 - `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
+- `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
 
 **Filesystem Server** (`src/mcp/fs/`):
-- `text_editor(command="view|create|str_replace|insert|line_replace|undo_edit|view_many", path="...", ...)` - File operations
-- `list_files(directory="...", pattern="...", content="...", ...)` - Directory listing with filtering and content search
-- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
+- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
+- `text_editor(command=\"create|str_replace|insert|line_replace|undo_edit\", path=\"...\", ...)` - Edit files
+- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
+- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
+
 
 **Web Server** (`src/mcp/web/`):
 - `web_search(query="...", count=20, ...)` - Search the web using Brave Search API
@@ -305,4 +307,4 @@ export OCTOMIND_ROLES__DEVELOPER__MAX_TOKENS="16384"
 
 ---
 
-**Octomind v0.17.0** - Session-first AI development assistant with built-in MCP tools and multi-provider support.
+**Octomind v0.18.0** - Session-first AI development assistant with built-in MCP tools and multi-provider support.

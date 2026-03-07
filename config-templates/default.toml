@@ -228,9 +228,9 @@ OPERATIONAL WORKFLOW
 Execute ALL discovery operations simultaneously, never sequentially unless output A is required for input B.
 CRITICAL INSTRUCTION: For maximum efficiency, whenever you perform multiple operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. When running multiple read-only comman always run all of the commands in parallel.
 
-Standard Pattern: remember(['relevant patterns']) + semantic_search(['concept A', 'pattern B']) + list_files() → ALL IN SAME TOOL CALL BLOCK
+Standard Pattern: remember(['relevant patterns']) + semantic_search(['concept A', 'pattern B']) + view() → ALL IN SAME TOOL CALL BLOCK
 
-NEVER do sequential calls like: remember() → wait → semantic_search() → wait → list_files()
+NEVER do sequential calls like: remember() → wait → semantic_search() → wait → view()
 
 4. VERIFICATION-FIRST
 - ALWAYS view file contents before editing
@@ -251,7 +251,7 @@ Discovery Phase
 - remember: Multi-term queries ['pattern A', 'solution B', 'approach C'] for existing knowledge
 - semantic_search: Multi-term queries ['main concept', 'related pattern', 'implementation'] for code discovery
 - view_signatures: Code structure overview when needed
-- list_files: Exact symbols search and file locations
+- view: File and directory browsing with pattern matching and content search
 - ast_grep: structural code search/replace using AST patterns
 - ALWAYS EXECUTE THESE IN PARALLEL when gathering information
 
@@ -357,7 +357,7 @@ system = "You are a helpful assistant."
 welcome = "Hello! Octomind ready to assist you. Working dir: %{CWD} (Role: %{ROLE})"
 
 # MCP configuration for assistant role
-mcp = { server_refs = ["filesystem"], allowed_tools = ["list_files"] }
+mcp = { server_refs = ["filesystem"], allowed_tools = ["view"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MCP (MODEL CONTEXT PROTOCOL) SERVERS
@@ -543,14 +543,14 @@ Your role: Gather the most important information and starting points needed for 
 CRITICAL: Use parallel tool execution whenever possible - call multiple tools simultaneously in the same block for maximum efficiency.
 
 Research Process:
-1. **Parallel Discovery**: Execute remember() + semantic_search() + list_files() simultaneously when gathering initial information
+1. **Parallel Discovery**: Execute remember() + semantic_search() + view() simultaneously when gathering initial information
 2. **Focused Examination**: Use text_editor with specific line ranges or view_signatures instead of reading entire files
 3. **Smart Reading**: Only read full files when absolutely necessary - prefer signatures, key sections, or targeted ranges
 
 Research Strategy:
 - **Check past knowledge**: remember() for similar tasks and patterns
 - **Find code semantically**: semantic_search() for related functions, patterns, documentation
-- **Discover file structure**: list_files() to understand project layout
+- **Discover file structure**: view() to understand project layout
 - **Examine selectively**: text_editor with ranges, or view_signatures for overview
 - **Stay focused**: Get starting points and context, don't dive deep into implementations
 
@@ -587,7 +587,7 @@ output_role = "assistant"  # Default role for session messages
 
 [layers.mcp]
 server_refs = ["filesystem", "octocode"]
-allowed_tools = ["list_files", "semantic_search", "remember", "view_signatures"]
+allowed_tools = ["view", "semantic_search", "remember", "view_signatures"]
 
 [layers.parameters]
 
@@ -718,7 +718,7 @@ allowed_tools = []
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = ["text_editor", "batch_edit", "list_files"]
+# allowed_tools = ["text_editor", "batch_edit", "view"]
 #
 # [[layers]]
 # name = "debugger"
@@ -733,7 +733,7 @@ allowed_tools = []
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = ["text_editor", "shell", "list_files"]
+# allowed_tools = ["text_editor", "shell", "view"]
 #
 # [[layers]]
 # name = "architect"
@@ -748,7 +748,7 @@ allowed_tools = []
 #
 # [layers.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = ["text_editor", "list_files"]
+# allowed_tools = ["text_editor", "view"]
 #
 # Usage examples (requires agents config above):
 # - agent_code_reviewer(task="Review this function for performance issues")
@@ -801,7 +801,7 @@ allowed_tools = []
 #
 # [agents.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = ["text_editor", "list_files"]
+# allowed_tools = ["text_editor", "view"]
 
 # [[agents]]
 # name = "debugger"
@@ -815,7 +815,7 @@ allowed_tools = []
 #
 # [agents.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = ["text_editor", "shell", "list_files"]
+# allowed_tools = ["text_editor", "shell", "view"]
 
 # [[agents]]
 # name = "architect"
@@ -829,7 +829,7 @@ allowed_tools = []
 #
 # [agents.mcp]
 # server_refs = ["developer", "filesystem"]
-# allowed_tools = ["text_editor", "list_files"]
+# allowed_tools = ["text_editor", "view"]
 
 # Built-in context gatherer agent
 [[agents]]
@@ -856,7 +856,7 @@ Tools Strategy:
 - Use semantic_search() for finding related code patterns and functionality
 - Use text_editor to read and examine specific files in detail
 - Use view_signatures to understand code structure and interfaces
-- Use list_files to discover relevant files and understand project structure
+- Use view to discover relevant files and understand project structure
 - Execute tools in parallel whenever possible for efficiency
 
 Always provide comprehensive, detailed analysis that helps developers understand the codebase and make informed decisions.
@@ -875,7 +875,7 @@ output_role = "assistant"
 
 [agents.mcp]
 server_refs = ["filesystem", "octocode"]
-allowed_tools = ["text_editor", "batch_edit", "list_files", "semantic_search", "view_signatures"]
+allowed_tools = ["text_editor", "batch_edit", "view", "semantic_search", "view_signatures"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROMPT TEMPLATES

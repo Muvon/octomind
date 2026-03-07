@@ -597,10 +597,11 @@ Workflows are inspired by cognitive neuroscience research on planning in the hum
 
 ## See Also
 
-- [Configuration Guide](03-configuration.md) - General configuration
-- [Command Layers](07-command-layers.md) - Layer system basics
+- [Configuration Guide](./03-configuration.md) - General configuration
+- [Command Layers](./07-command-layers.md) - Layer system basics
 - [MAP Testing Guide](../config-examples/MAP_TESTING_GUIDE.md) - Detailed MAP testing
 - [Workflow Examples](../config-examples/) - Example configurations
+
 
 ## References
 

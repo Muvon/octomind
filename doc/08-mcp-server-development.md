@@ -14,10 +14,11 @@ Octomind provides **four** built-in MCP servers with comprehensive development c
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
 
 **Filesystem Server** (`src/mcp/fs/`):
-- `text_editor(command="view|create|str_replace|insert|line_replace|undo_edit|view_many", path="...", ...)` - Comprehensive file operations
-- `list_files(directory="...", pattern="...", content="...", ...)` - Directory listing with filtering and content search
-- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
+- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
+- `text_editor(command=\"create|str_replace|insert|line_replace|undo_edit\", path=\"...\", ...)` - Edit files
+- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
+- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
+
 
 **Web Server** (`src/mcp/web/`):
 - `web_search(query="...", count=20, ...)` - Search the web using Brave Search API

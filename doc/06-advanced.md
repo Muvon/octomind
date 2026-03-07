@@ -30,10 +30,11 @@ Octomind provides four built-in MCP servers with comprehensive development capab
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
 
 **Filesystem Server** (`src/mcp/fs/`):
-- `text_editor(command="view|create|str_replace|insert|line_replace|undo_edit|view_many", path="...", ...)` - Comprehensive file operations
-- `list_files(directory="...", pattern="...", content="...", ...)` - Directory listing with filtering and content search
-- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
+- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
+- `text_editor(command=\"create|str_replace|insert|line_replace|undo_edit\", path=\"...\", ...)` - Edit files
+- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
+- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
+
 
 **Web Server** (`src/mcp/web/`):
 - `web_search(query="...", count=20, ...)` - Search the web using Brave Search API
@@ -130,6 +131,46 @@ Execute shell commands with output capture, foreground/background execution:
 - Background mode: Returns process PID for later termination with `kill <pid>`
 - Output control: Large outputs are controlled by `mcp_response_tokens_threshold` setting
 
+#### workdir — Manage Working Directory
+
+Get or set the working directory for file and shell operations:
+
+```json
+// Get current working directory
+{}
+
+// Set new working directory
+{"path": "/path/to/directory"}
+
+// Reset to original project directory
+{"reset": true}
+```
+
+**Parameters:**
+- `path` (string, optional): Path to set as new working directory. Can be absolute or relative to current working directory.
+- `reset` (boolean, default: false): If true, reset to original project directory (ignores `path` parameter).
+
+**Key Features:**
+- Parallel execution: Each actor can work in its own isolated git worktree
+- Testing: Switch to a test directory before running tests
+- Multi-project workflows: Work across multiple related projects
+- Thread-local: Changes only affect the current thread/session
+
+**Use Cases:**
+```json
+// Get current directory
+{}
+
+// Switch to test directory
+{"path": "tests/"}
+
+// Work in a git worktree
+{"path": "/path/to/worktree"}
+
+// Reset to project root
+{"reset": true}
+```
+
 **ast_grep** - Search and refactor code using AST patterns with ast-grep (sg)
 - **Structural search**: Use AST patterns instead of regex for precise code matching
 - **Code refactoring**: Apply transformations using rewrite patterns
@@ -159,10 +200,11 @@ Execute shell commands with output capture, foreground/background execution:
 
 
 #### Filesystem Tools (type: "builtin")
-- **text_editor**: Read, write, edit files with multiple operations (view, create, str_replace, insert, line_replace, undo_edit, view_many, batch_edit)
+- **view**: Read files, view directories, and search file content with pattern matching
+- **text_editor**: Edit files with multiple operations (create, str_replace, insert, line_replace, undo_edit)
 - **extract_lines**: Extract lines from source file and append to target file without modifying source (perfect for refactoring)
-- **list_files**: Browse directory structures with pattern matching and content search
 - **batch_edit**: Multiple file operations atomically
+
 
 #### Web Tools (type: "builtin")
 - **web_search**: Search the web using Brave Search API with configurable parameters
@@ -589,13 +631,14 @@ allowed_tools = ["text_editor", "shell"]
   - `ast_grep`: AST-based code search and refactoring using ast-grep (sg)
   - `agent`: Task routing to specialized AI layers
 - **filesystem**: Built-in file operations
+  - `view`: Read files, view directories, and search file content
   - `text_editor`: Comprehensive file editing with batch operations
-  - `list_files`: Directory browsing with pattern matching and content search
 - **web**: Built-in web tools
   - `web_search`: Web search using Brave Search API
   - `image_search`, `video_search`, `news_search`: Specialized search tools
   - `read_html`: HTML to Markdown conversion
 - **external**: External MCP servers (HTTP or command-based)
+
 
 ### External MCP Servers
 
@@ -1288,9 +1331,10 @@ Through natural conversation:
 3. **Powerful models** for complex development tasks (Developer)
 
 ### Tool Usage Optimization
-- **Batch operations**: Use `view_many` for reading multiple files, `batch_edit` for modifying multiple files
-- **Specific patterns**: Use `list_files` with patterns to filter results
+- **Batch operations**: Use `view` for reading multiple files, `batch_edit` for modifying multiple files
+- **Specific patterns**: Use `view` with patterns to filter results
 - **Smart caching**: Use `/cache` before large context operations
+
 
 ### Context Management
 - **Auto-truncation**: Enable for long sessions

@@ -775,8 +775,9 @@ Layers can affect the session in different ways:
 #### Core Tools
 - **shell**: Execute shell commands
 - **text_editor**: Edit files
-- **list_files**: Browse directories
+- **view**: Browse files and directories
 - **read_html**: Convert HTML to Markdown
+
 
 #### Development Tools
 - **Project analysis**: Built-in code understanding
@@ -787,8 +788,8 @@ Layers can affect the session in different ways:
 # In session, AI can use tools automatically:
 > "List all Python files in the src directory"
 
-AI uses: list_files
-Parameters: {"directory": "src", "pattern": "*.py"}
+AI uses: view
+Parameters: {"path": "src", "pattern": "*.py"}
 
 > "Show me the authentication function"
 
@@ -797,6 +798,7 @@ AI analyzes files and finds relevant code automatically
 > "Edit the config file to add a new setting"
 
 AI uses: text_editor
+
 Parameters: {"command": "str_replace", "path": "config.toml", ...}
 ```
 

@@ -219,7 +219,7 @@ system_prompt = """You are a task decomposition specialist (anterior prefrontal 
 Your job is to DECOMPOSE tasks into subgoals — NOT to implement them.
 
 1. Use READ-ONLY tools to understand the codebase structure:
-   - semantic_search, ast_grep, list_files, view_signatures — for code discovery
+   - semantic_search, ast_grep, view, view_signatures — for code discovery
    - text_editor (view only) — to read specific files and line ranges
 2. Break down the development task into 3-7 clear, sequential subgoals
 
@@ -254,7 +254,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["semantic_search", "ast_grep", "list_files", "view_signatures", "text_editor"]
+allowed_tools = ["semantic_search", "ast_grep", "view", "view_signatures", "text_editor"]
 
 # ── Actor A (dlPFC) — EXECUTOR with worktree isolation ────────────────────────────
 [[layers]]
@@ -285,7 +285,7 @@ STEP 2 — Create isolated worktree (run shell commands):
   workdir: switch to the worktree path printed above
 
 STEP 3 — Explore and implement (use tools to read then write):
-  - Read: semantic_search, ast_grep, list_files, view_signatures, text_editor (view)
+  - Read: semantic_search, ast_grep, view, view_signatures, text_editor (view)
   - Write: text_editor (create/str_replace/line_replace), batch_edit, extract_lines
   - Verify: shell (cargo check, cargo clippy, tests)
 
@@ -310,7 +310,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["shell", "ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor", "batch_edit", "extract_lines", "workdir"]
+allowed_tools = ["shell", "ast_grep", "view", "semantic_search", "view_signatures", "text_editor", "batch_edit", "extract_lines", "workdir"]
 
 # ── Actor B (dlPFC) — EXECUTOR with worktree isolation ────────────────────────────
 [[layers]]
@@ -341,7 +341,7 @@ STEP 2 — Create isolated worktree (run shell commands):
   workdir: switch to the worktree path printed above
 
 STEP 3 — Explore and implement (use tools to read then write):
-  - Read: semantic_search, ast_grep, list_files, view_signatures, text_editor (view)
+  - Read: semantic_search, ast_grep, view, view_signatures, text_editor (view)
   - Write: text_editor (create/str_replace/line_replace), batch_edit, extract_lines
   - Verify: shell (cargo check, cargo clippy, tests)
 
@@ -366,7 +366,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["shell", "ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor", "batch_edit", "extract_lines", "workdir"]
+allowed_tools = ["shell", "ast_grep", "view", "semantic_search", "view_signatures", "text_editor", "batch_edit", "extract_lines", "workdir"]
 
 # ── Actor C (dlPFC) — EXECUTOR with worktree isolation ────────────────────────────
 [[layers]]
@@ -397,7 +397,7 @@ STEP 2 — Create isolated worktree (run shell commands):
   workdir: switch to the worktree path printed above
 
 STEP 3 — Explore and implement (use tools to read then write):
-  - Read: semantic_search, ast_grep, list_files, view_signatures, text_editor (view)
+  - Read: semantic_search, ast_grep, view, view_signatures, text_editor (view)
   - Write: text_editor (create/str_replace/line_replace), batch_edit, extract_lines
   - Verify: shell (cargo check, cargo clippy, tests)
 
@@ -422,7 +422,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["shell", "ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor", "batch_edit", "extract_lines", "workdir"]
+allowed_tools = ["shell", "ast_grep", "view", "semantic_search", "view_signatures", "text_editor", "batch_edit", "extract_lines", "workdir"]
 # ── Selector (tree search aggregator) — compares worktrees ───────────────────────
 [[layers]]
 name = "map_selector"
@@ -521,7 +521,7 @@ Validation checklist:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["shell", "ast_grep", "list_files", "view_signatures", "text_editor", "workdir"]
+allowed_tools = ["shell", "ast_grep", "view", "view_signatures", "text_editor", "workdir"]
 
 # ── Predictor (OFC) ───────────────────────────────────────────────────────────
 [[layers]]

@@ -218,7 +218,7 @@ Your job is to DECOMPOSE tasks into subgoals — NOT to implement them.
 You are in the PLANNING phase. No files will be changed here.
 The MAP executor workflow will implement everything after planning is complete.
 
-1. Use READ-ONLY tools to understand the codebase structure (ast_grep, list_files, semantic_search, view_signatures, text_editor for reading)
+1. Use READ-ONLY tools to understand the codebase structure (ast_grep, view, semantic_search, view_signatures, text_editor for reading)
 2. Break down the development task into 3-7 clear, sequential subgoals
 
 You are a PLANNER — NEVER write or modify any files. NEVER use write tools.
@@ -253,7 +253,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor"]
+allowed_tools = ["ast_grep", "view", "semantic_search", "view_signatures", "text_editor"]
 
 # ── Actor A (dlPFC) — independent explorer ───────────────────────────────────
 [[layers]]
@@ -274,7 +274,7 @@ Your job is to PROPOSE ONE implementation approach for the current subgoal — N
 You are in the PLANNING phase. No files will be changed here.
 The MAP executor workflow runs separately and implements the chosen plan.
 
-1. Use READ-ONLY tools to inspect the codebase (ast_grep, list_files, semantic_search, view_signatures, text_editor for reading)
+1. Use READ-ONLY tools to inspect the codebase (ast_grep, view, semantic_search, view_signatures, text_editor for reading)
 2. Gather context and understand the current state
 3. Propose ONE specific, actionable implementation approach
 
@@ -298,7 +298,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor"]
+allowed_tools = ["ast_grep", "view", "semantic_search", "view_signatures", "text_editor"]
 
 # ── Actor B (dlPFC) — independent explorer ───────────────────────────────────
 [[layers]]
@@ -319,7 +319,7 @@ Your job is to PROPOSE ONE implementation approach for the current subgoal — N
 You are in the PLANNING phase. No files will be changed here.
 The MAP executor workflow runs separately and implements the chosen plan.
 
-1. Use READ-ONLY tools to inspect the codebase (ast_grep, list_files, semantic_search, view_signatures, text_editor for reading)
+1. Use READ-ONLY tools to inspect the codebase (ast_grep, view, semantic_search, view_signatures, text_editor for reading)
 2. Gather context and understand the current state
 3. Propose ONE specific, actionable implementation approach
 
@@ -345,7 +345,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor"]
+allowed_tools = ["ast_grep", "view", "semantic_search", "view_signatures", "text_editor"]
 
 # ── Actor C (dlPFC) — independent explorer ───────────────────────────────────
 [[layers]]
@@ -366,7 +366,7 @@ Your job is to PROPOSE ONE implementation approach for the current subgoal — N
 You are in the PLANNING phase. No files will be changed here.
 The MAP executor workflow runs separately and implements the chosen plan.
 
-1. Use READ-ONLY tools to inspect the codebase (ast_grep, list_files, semantic_search, view_signatures, text_editor for reading)
+1. Use READ-ONLY tools to inspect the codebase (ast_grep, view, semantic_search, view_signatures, text_editor for reading)
 2. Gather context and understand the current state
 3. Propose ONE specific, actionable implementation approach
 
@@ -392,7 +392,7 @@ Rules:
 
 [layers.mcp]
 server_refs = ["developer", "filesystem"]
-allowed_tools = ["ast_grep", "list_files", "semantic_search", "view_signatures", "text_editor"]
+allowed_tools = ["ast_grep", "view", "semantic_search", "view_signatures", "text_editor"]
 
 # ── Selector (tree search aggregator) ────────────────────────────────────────
 [[layers]]

@@ -27,9 +27,10 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ### Built-in MCP Tools
 - **Developer Server**: `shell()`, `ast_grep()` - Execute commands and search code patterns
-- **Filesystem Server**: `text_editor()`, `list_files()`, `batch_edit()` - File operations
+- **Filesystem Server**: `view()`, `text_editor()`, `batch_edit()` - File operations
 - **Web Server**: `web_search()`, `read_html()` - Web research and content analysis
 - **Agent Server**: `agent_*()` - Route tasks to specialized AI processing layers
+
 
 ### Multi-Provider AI Support
 - **7 Providers**: OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare, DeepSeek
@@ -140,9 +141,10 @@ Everything happens within interactive AI conversations. No separate indexing, co
 #### **MCP Tool Integration**
 Built-in servers provide development tools:
 - **Developer**: `shell()`, `ast_grep()` - Command execution and code analysis
-- **Filesystem**: `text_editor()`, `batch_edit()`, `list_files()` - File operations
+- **Filesystem**: `view()`, `text_editor()`, `batch_edit()` - File operations
 - **Web**: `web_search()`, `read_html()` - Web research
 - **Agent**: `agent_*()` - Specialized AI task routing
+
 
 #### **Role-Based Configuration**
 - **Developer Role**: Full tool access, optimized for development tasks

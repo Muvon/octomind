@@ -413,6 +413,13 @@ pub async fn execute_view(call: &McpToolCall) -> Result<McpToolResult> {
 		return directory::list_directory(call, &path).await;
 	}
 
+	// File + content: grep the file with ripgrep instead of reading it whole
+	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {
+		if !content_pattern.trim().is_empty() {
+			return directory::list_directory(call, &path).await;
+		}
+	}
+
 	// File: resolve optional line range with negative-index support
 	let lines = match call.parameters.get("lines") {
 		Some(Value::Array(arr)) if arr.len() == 2 => match (arr[0].as_i64(), arr[1].as_i64()) {

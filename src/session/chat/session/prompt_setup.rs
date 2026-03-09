@@ -120,28 +120,35 @@ pub async fn setup_system_prompt_and_cache(
 				if instructions_path.exists() {
 					match std::fs::read_to_string(&instructions_path) {
 						Ok(instructions_content) => {
-							let processed_instructions = process_placeholders_async_with_role(
-								&instructions_content,
-								&current_dir,
-								Some(role),
-							)
-							.await;
+							if instructions_content.trim().is_empty() {
+								log_debug!(
+									"Skipping empty instructions file {}",
+									instructions_filename
+								);
+							} else {
+								let processed_instructions = process_placeholders_async_with_role(
+									&instructions_content,
+									&current_dir,
+									Some(role),
+								)
+								.await;
 
-							chat_session.add_user_message(&processed_instructions)?;
+								chat_session.add_user_message(&processed_instructions)?;
 
-							if supports_caching {
-								let cache_manager = CacheManager::new();
-								cache_manager.add_automatic_cache_markers(
-									&mut chat_session.session.messages,
-									has_tools,
-									supports_caching,
+								if supports_caching {
+									let cache_manager = CacheManager::new();
+									cache_manager.add_automatic_cache_markers(
+										&mut chat_session.session.messages,
+										has_tools,
+										supports_caching,
+									);
+								}
+
+								log_info!(
+									"Added {} content as user message with variable processing",
+									instructions_filename
 								);
 							}
-
-							log_info!(
-								"Added {} content as user message with variable processing",
-								instructions_filename
-							);
 						}
 						Err(e) => {
 							log_debug!("Failed to read {}: {}", instructions_filename, e);

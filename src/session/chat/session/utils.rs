@@ -95,30 +95,34 @@ pub async fn get_initial_messages(
 		let instructions_path = current_dir.join(instructions_filename);
 		if instructions_path.exists() {
 			if let Ok(instructions_content) = std::fs::read_to_string(&instructions_path) {
-				let processed_instructions =
-					crate::session::helper_functions::process_placeholders_async_with_role(
-						&instructions_content,
-						current_dir,
-						Some(role),
-					)
-					.await;
+				if instructions_content.trim().is_empty() {
+					log_debug!("Skipping empty instructions file {}", instructions_filename);
+				} else {
+					let processed_instructions =
+						crate::session::helper_functions::process_placeholders_async_with_role(
+							&instructions_content,
+							current_dir,
+							Some(role),
+						)
+						.await;
 
-				let instructions_msg = crate::session::Message {
-					role: "user".to_string(),
-					content: processed_instructions,
-					timestamp: std::time::SystemTime::now()
-						.duration_since(std::time::UNIX_EPOCH)
-						.unwrap_or_default()
-						.as_secs(),
-					cached: false,
-					..Default::default()
-				};
-				initial_messages.push(instructions_msg);
+					let instructions_msg = crate::session::Message {
+						role: "user".to_string(),
+						content: processed_instructions,
+						timestamp: std::time::SystemTime::now()
+							.duration_since(std::time::UNIX_EPOCH)
+							.unwrap_or_default()
+							.as_secs(),
+						cached: false,
+						..Default::default()
+					};
+					initial_messages.push(instructions_msg);
 
-				log_info!(
-					"Added {} content as user message with variable processing",
-					instructions_filename
-				);
+					log_info!(
+						"Added {} content as user message with variable processing",
+						instructions_filename
+					);
+				}
 			} else {
 				log_debug!("Failed to read {}", instructions_filename);
 			}

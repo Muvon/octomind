@@ -30,9 +30,6 @@ passthrough = [
 ]
 
 # Build configuration for static binaries
-[build.default-target]
-sources = []
+# Use cross tool for cross-compilation with Docker
 
-# Docker build settings
-[build.dockerfile]
-context = "."
+

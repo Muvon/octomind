@@ -83,7 +83,8 @@ thiserror = "2.0"
 open = "5"
 tracing = { version = "0.1", default-features = false }
 
-# OpenSSL - use vendored for static builds
+# OpenSSL - vendored static build for Linux only (Windows uses rustls exclusively)
+[target.'cfg(target_os = "linux")'.dependencies]
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [dev-dependencies]

@@ -168,17 +168,16 @@ pub struct ChatSession {
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
 	pub pending_video: Option<crate::session::video::VideoAttachment>, // Pending video attachment
 	pub max_retries: u32,              // Maximum number of retries for provider errors
-	pub continuation_pending: bool,    // Flag for session continuation state
-	pub continuation_disabled: bool,   // Flag to temporarily disable continuation triggers
 	pub was_resumed: bool, // Flag indicating if this session was resumed from an existing file
+
 	pub pending_prompt: Option<String>, // Pending prompt text to be processed as user input
-	pub initial_status_shown: bool, // Flag to track if initial status line was displayed
+	pub initial_status_shown: bool,     // Flag to track if initial status line was displayed
 	// Compression hint tracking
 	pub compression_hint_count: usize, // Counter for compression hints
 	pub last_compression_hint_shown: u64, // Timestamp of last compression hint
 	// Token calculation cache - SINGLE SOURCE OF TRUTH for context token counting
 
-	// This cache ensures all systems (display, compression, continuation) use identical calculations
+	// This cache ensures all systems (display, compression) use identical calculations
 	pub cached_tools: Option<Vec<crate::mcp::McpFunction>>, // Cached tool definitions for consistent token counting
 	// First user prompt index - compression NEVER goes below this (INCLUSIVE boundary)
 	// Set once when first user message is added, protects bootstrap/instructions forever
@@ -258,8 +257,7 @@ impl ChatSession {
 			// Initialize runtime state
 			cache_next_user_message: false,
 			spending_threshold_checkpoint: 0.0,
-			continuation_pending: false,
-			continuation_disabled: false,
+
 			compression_hint_count: 0,
 			last_compression_hint_shown: 0,
 
@@ -291,8 +289,6 @@ impl ChatSession {
 			pending_image: None,                // Initialize pending image
 			pending_video: None,                // Initialize pending video
 			max_retries: max_retries_value,     // Set max retries value
-			continuation_pending: false,        // Initialize continuation state
-			continuation_disabled: false,       // Initialize continuation control flag
 			was_resumed: false,                 // This is a new session
 			pending_prompt: None,               // Initialize pending prompt
 			initial_status_shown: false,        // Initialize status display flag
@@ -463,8 +459,6 @@ impl ChatSession {
 					// Restore runtime state from session.info
 					let cache_next = session.info.cache_next_user_message;
 					let spending_checkpoint = session.info.spending_threshold_checkpoint;
-					let continuation_pending = session.info.continuation_pending;
-					let continuation_disabled = session.info.continuation_disabled;
 					let compression_hint_count = session.info.compression_hint_count;
 					let last_compression_hint = session.info.last_compression_hint_shown;
 
@@ -484,8 +478,6 @@ impl ChatSession {
 						pending_image: None,                 // Initialize pending image
 						pending_video: None,                 // Initialize pending video
 						max_retries: params.max_retries.unwrap_or(params.config.max_retries), // Use provided max_retries or fall back to config
-						continuation_pending,       // Restore from session.info
-						continuation_disabled,      // Restore from session.info
 						was_resumed: true,          // This session was resumed from file
 						pending_prompt: None,       // Initialize pending prompt
 						initial_status_shown: true, // Don't show status for resumed sessions
@@ -827,21 +819,6 @@ impl ChatSession {
 		super::commands::process_command(self, input, config, role, operation_cancelled).await
 	}
 
-	/// Disable continuation triggers temporarily
-	pub fn disable_continuation(&mut self) {
-		self.continuation_disabled = true;
-	}
-
-	/// Re-enable continuation triggers
-	pub fn enable_continuation(&mut self) {
-		self.continuation_disabled = false;
-	}
-
-	/// Check if continuation is currently disabled
-	pub fn is_continuation_disabled(&self) -> bool {
-		self.continuation_disabled
-	}
-
 	/// Get current message count (for plan compression tracking)
 	pub fn get_message_count(&self) -> usize {
 		self.session.messages.len()
@@ -1031,10 +1008,7 @@ impl ChatSession {
 			return false;
 		}
 
-		// Check if compression is not disabled
-		if self.continuation_disabled {
-			return false;
-		}
+		// Check if compression is not disabled (no continuation_disabled check needed)
 
 		// Calculate context pressure
 		let current_tokens = estimate_full_context_tokens(&self.session.messages, None);
@@ -1216,8 +1190,7 @@ mod tests {
 			pending_image: None,
 			pending_video: None,
 			max_retries: 0,
-			continuation_pending: false,
-			continuation_disabled: false,
+
 			was_resumed: false,
 			pending_prompt: None,
 			initial_status_shown: false,

@@ -27,8 +27,6 @@ impl ChatSession {
 	fn sync_runtime_state(&mut self) {
 		self.session.info.cache_next_user_message = self.cache_next_user_message;
 		self.session.info.spending_threshold_checkpoint = self.spending_threshold_checkpoint;
-		self.session.info.continuation_pending = self.continuation_pending;
-		self.session.info.continuation_disabled = self.continuation_disabled;
 		self.session.info.compression_hint_count = self.compression_hint_count;
 		self.session.info.last_compression_hint_shown = self.last_compression_hint_shown;
 	}

@@ -129,7 +129,7 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 				.await
 		{
 			return Err(anyhow::anyhow!(
-				"Session initialization failed: {}\nTo fix this issue\n1. Increase max_session_tokens_threshold in your config\n2. Or disable session continuation by setting max_session_tokens_threshold = 0\n3. Or reduce the number of MCP servers to lower tool overhead",
+				"Session initialization failed: {}\nTo fix this issue\n1. Increase max_session_tokens_threshold in your config\n2. Or disable compression by setting max_session_tokens_threshold = 0\n3. Or reduce the number of MCP servers to lower tool overhead",
 				e
 			));
 		}

@@ -28,7 +28,7 @@ pub async fn handle_truncate(
 	let current_tokens = crate::session::estimate_session_tokens(&session.session.messages);
 
 	// Use the simple boundary truncation logic for manual /truncate command
-	match crate::session::chat::perform_simple_boundary_truncation(
+	match crate::session::chat::context_truncation::perform_simple_boundary_truncation(
 		session,
 		config,
 		current_tokens,

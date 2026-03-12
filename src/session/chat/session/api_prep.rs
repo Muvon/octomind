@@ -14,15 +14,11 @@
 
 // API preparation utilities
 
-use super::super::context_truncation::{
-	check_and_truncate_context_with_cancellation, TruncationOptions,
-};
 use super::core::ChatSession;
 use crate::config::Config;
 use crate::log_info;
 use crate::session::model_supports_caching;
 use anyhow::Result;
-use std::sync::Arc;
 
 // Helper function to prepare for API call (context truncation and caching)
 pub async fn prepare_for_api_call(
@@ -30,16 +26,20 @@ pub async fn prepare_for_api_call(
 	config: &Config,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-	// Check if we need to truncate the context to stay within token limits
-	check_and_truncate_context_with_cancellation(
+	// Check for cancellation before compression
+	if *operation_rx.borrow() {
+		return Err(anyhow::anyhow!("Operation cancelled"));
+	}
+
+	// Run compression if max_session_tokens_threshold is exceeded
+	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,
 		config,
-		TruncationOptions::default(), // Normal truncation, no defer
-		Some(Arc::new(std::sync::atomic::AtomicBool::new(
-			*operation_rx.borrow(),
-		))),
 	)
-	.await?;
+	.await
+	{
+		crate::log_debug!("Compression failed before API call: {}. Continuing.", e);
+	}
 
 	// Ensure system message is cached before making API calls
 	let mut system_message_cached = false;

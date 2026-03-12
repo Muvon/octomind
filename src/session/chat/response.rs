@@ -25,7 +25,6 @@ use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::display_thinking;
 use crate::session::chat::get_animation_manager;
 use crate::session::chat::session::ChatSession;
-use crate::session::chat::session_continuation;
 use crate::session::ProviderExchange;
 use anyhow::Result;
 use colored::Colorize;
@@ -353,35 +352,6 @@ pub async fn process_response<S: OutputSink>(
 	// Debug logging for finish_reason and tool calls
 	log_response_debug(params.config, &params.finish_reason, &params.tool_calls);
 
-	// CONTINUATION FIX: Removed early continuation check that was causing tool_calls/tool_result mismatch
-	// Continuation is now handled AFTER tool processing completes to ensure conversation integrity
-
-	// CRITICAL FIX: Check for continuation BEFORE any tool processing
-	// LOGIC: If continuation_pending=true, skip ALL tool processing and handle continuation immediately
-	// FLOW: Token limit → inject_summary_request() → continuation_pending=true → AI responds with summary
-	//       → Check continuation_pending FIRST → If true: skip tools, process continuation immediately
-	//       → If false: continue normal tool processing
-	// IMPORTANT: This prevents tool calls in summary responses from interfering with continuation
-	let has_tool_calls = params
-		.tool_calls
-		.as_ref()
-		.is_some_and(|calls| !calls.is_empty());
-
-	// Check if continuation is pending - if so, handle it immediately and skip tools
-	if params.chat_session.continuation_pending
-		&& session_continuation::process_continuation_response(
-			params.chat_session,
-			&params.content,
-			has_tool_calls,
-			params.config,
-			params.role,
-		)
-		.await?
-	{
-		// Continuation was processed - handle it immediately with the summary response
-		return process_continuation_message_immediately(params).await;
-	}
-
 	// First, add the user message before processing response
 	let last_message = params.chat_session.session.messages.last();
 	if params.mode.is_terminal_mode() && last_message.is_none_or(|msg| msg.role != "user") {
@@ -584,12 +554,6 @@ pub async fn process_response<S: OutputSink>(
 							}
 						}
 					} else {
-						// No follow-up response - check if this was due to continuation being triggered
-						if params.chat_session.continuation_pending {
-							log_debug!("Tool processing stopped due to continuation trigger - breaking out of tool loop to handle continuation");
-							// Break out of tool processing loop to let the main continuation check handle it
-							break;
-						}
 						// No follow-up response (cancelled or error), exit
 						return Ok(());
 					}
@@ -619,18 +583,7 @@ pub async fn process_response<S: OutputSink>(
 		}
 	}
 
-	// CRITICAL FIX: Check for continuation after tool processing loop
-	// When continuation is triggered during tool execution, we broke out of the tool loop (line 430)
-	// The main session runner will detect continuation_pending and handle it automatically (runner.rs:984-988)
-	// We just need to skip final response processing and return cleanly
-	if params.chat_session.continuation_pending {
-		log_debug!("Continuation pending after tool processing - skipping final response, main session loop will handle continuation");
-		// DO NOT process final response when continuation is pending
-		// The main session loop will detect continuation_pending and continue to process the summary request
-		return Ok(());
-	}
-
-	// Handle final response using the helper function (only when no continuation is pending and no tool calls)
+	// Handle final response using the helper function (only when no tool calls are pending)
 	// When tool calls are present, we already created an assistant message with add_assistant_message_with_tool_calls
 	// Calling handle_final_response would create a duplicate assistant message without id
 	// Pass thinking only if it hasn't been displayed yet (in tool call loop)
@@ -691,88 +644,4 @@ pub async fn process_response<S: OutputSink>(
 		}
 	}
 	Ok(())
-}
-
-/// Process continuation message immediately after session reset
-/// This makes the continuation completely invisible to the user
-pub async fn process_continuation_message_immediately<S: OutputSink>(
-	params: ResponseProcessingParams<'_, S>,
-) -> Result<()> {
-	use crate::session::ChatCompletionWithValidationParams;
-	use crate::{log_debug, log_info};
-
-	log_info!("Processing continuation message automatically...");
-
-	// Get the last message which should be our continuation message
-	let continuation_message = params
-		.chat_session
-		.session
-		.messages
-		.last()
-		.ok_or_else(|| anyhow::anyhow!("No continuation message found"))?;
-
-	if continuation_message.role != "user" {
-		return Err(anyhow::anyhow!(
-			"Expected user continuation message, found: {}",
-			continuation_message.role
-		));
-	}
-
-	// Clone messages to avoid borrowing conflicts
-	let messages = params.chat_session.session.messages.clone();
-
-	// Prepare API call parameters for continuation using the session's current settings
-	let chat_params = ChatCompletionWithValidationParams::new(
-		&messages,
-		&params.chat_session.model,
-		params.chat_session.temperature,
-		params.chat_session.top_p,
-		params.chat_session.top_k,
-		params.chat_session.max_tokens,
-		params.config,
-	)
-	.with_max_retries(params.chat_session.max_retries)
-	.with_cancellation_token(params.operation_cancelled.clone())
-	.as_continuation_call(); // CRITICAL FIX: Mark as continuation call to prevent infinite retry loops
-
-	// Make API call with continuation message
-	match crate::session::chat_completion_with_validation(chat_params).await {
-		Ok(response) => {
-			log_debug!("Continuation API call successful");
-
-			// Process the continuation response recursively using Box::pin to avoid stack overflow
-			let continuation_params = ResponseProcessingParams::new(
-				response.content,
-				response.exchange,
-				response.tool_calls,
-				response.finish_reason,
-				response.response_id,
-				params.chat_session,
-				params.config,
-				params.role,
-				params.operation_cancelled.clone(),
-				params.sink.clone(), // Clone the sink
-			)
-			.with_mode(params.mode); // Preserve output mode
-
-			// Use Box::pin to avoid recursion compilation issues
-			Box::pin(process_response(continuation_params)).await
-		}
-		Err(e) => {
-			// CRITICAL FIX: Reset continuation state when API call fails after exhausting retries
-			// This prevents infinite retry loops when rate limits are hit
-			log_info!(
-				"Continuation API call failed after exhausting retries: {}",
-				e
-			);
-
-			// Reset continuation state to prevent infinite loop
-			params.chat_session.continuation_pending = false;
-			log_debug!("Continuation state reset due to API failure - breaking continuation loop");
-
-			// Return the error to properly propagate it up the chain
-			// This will cause the session runner to handle the error appropriately
-			Err(e)
-		}
-	}
 }

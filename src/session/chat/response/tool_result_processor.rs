@@ -74,13 +74,7 @@ pub async fn process_tool_results(
 	let supports_caching = crate::session::model_supports_caching(&chat_session.model);
 
 	let mut cache_check_time = 0u128;
-	let mut truncation_time = 0u128;
-
-	// PERFORMANCE OPTIMIZATION: Batch process tool results with smart truncation
-	// Instead of checking truncation after EVERY tool result (expensive),
-	// we batch process and only truncate when necessary or at the end
-	let mut accumulated_content_size = 0;
-	let mut needs_truncation_check = false;
+	let mut accumulated_content_size = 0usize;
 
 	for tool_result in &tool_results {
 		// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
@@ -106,12 +100,7 @@ pub async fn process_tool_results(
 		// PERFORMANCE OPTIMIZATION: Check size before moving content
 		let content_size = tool_content.len();
 		accumulated_content_size += content_size;
-		let is_large_output = content_size > 10000; // 10KB+ outputs
 		let accumulated_is_large = accumulated_content_size > 50000; // 50KB+ total
-
-		if is_large_output || accumulated_is_large {
-			needs_truncation_check = true;
-		}
 
 		// Use the new add_tool_message method which handles token tracking properly
 		chat_session.add_tool_message(
@@ -121,31 +110,27 @@ pub async fn process_tool_results(
 			config,
 		)?;
 
-		// Check truncation only for large individual tool outputs (file contents, search results, etc.)
-		if is_large_output {
-			let truncation_start = std::time::Instant::now();
-			if let Err(e) = crate::session::chat::context_truncation::check_and_truncate_context(
-				chat_session,
-				config,
-				crate::session::chat::TruncationOptions {
-					defer_continuation: true, // Defer during tool processing
-				},
-			)
-			.await
+		if accumulated_is_large {
+			// Run conversation compression when accumulated output is large
+			if let Err(e) =
+				crate::session::chat::conversation_compression::check_and_compress_conversation(
+					chat_session,
+					config,
+				)
+				.await
 			{
-				log_info!("Warning: Error during tool result truncation check: {}", e);
+				log_debug!(
+					"Conversation compression failed during large tool output: {}. Continuing.",
+					e
+				);
 			}
-			truncation_time += truncation_start.elapsed().as_millis();
-
-			// Reset flags after truncation
-			needs_truncation_check = false;
 			accumulated_content_size = 0;
 		}
 	}
 
 	// 🗜️ PLAN-DRIVEN COMPRESSION: Process any pending compression requests
-	// This happens after tool results are added but before continuation check
-	// Compression can significantly reduce context, potentially avoiding continuation
+	// This happens after tool results are added but before the follow-up API call
+	// Compression can significantly reduce context before the next request
 
 	// CRITICAL FIX: Set start_index for next task AFTER plan tool execution
 	// This ensures start_index points to the BEGINNING of task work, not the last message
@@ -215,7 +200,7 @@ pub async fn process_tool_results(
 	}
 
 	// Process any pending compression with proper error handling
-	let task_compression_occurred =
+	let _task_compression_occurred =
 		match crate::mcp::dev::plan::process_pending_compression(chat_session).await {
 			Ok(Some(metrics)) => {
 				chat_session
@@ -243,22 +228,8 @@ pub async fn process_tool_results(
 			}
 		};
 
-	// CRITICAL FIX: After task compression, check if continuation should trigger
-	// This allows automatic continuation after single-task compression
-	if task_compression_occurred && crate::mcp::dev::plan::core::has_active_plan() {
-		log_debug!("Task compression completed with active plan - checking if continuation needed");
-		use crate::session::chat::session_continuation;
-		if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-			// Stop global animation before returning
-			animation_manager.stop_current().await;
-
-			log_info!("Continuation triggered after task compression - returning to main loop");
-			return Ok(None);
-		}
-	}
-
 	// Process phase compression (automatic)
-	let phase_compression_occurred =
+	let _phase_compression_occurred =
 		match crate::mcp::dev::plan::process_pending_phase_compression(chat_session).await {
 			Ok(Some(metrics)) => {
 				chat_session
@@ -281,23 +252,8 @@ pub async fn process_tool_results(
 			}
 		};
 
-	// CRITICAL FIX: After phase compression, check if continuation should trigger
-	// Phase compression can free significant space, allowing plan to continue automatically
-	if phase_compression_occurred && crate::mcp::dev::plan::core::has_active_plan() {
-		log_debug!(
-			"Phase compression completed with active plan - checking if continuation needed"
-		);
-		use crate::session::chat::session_continuation;
-		if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-			// Stop global animation before returning
-			animation_manager.stop_current().await;
-
-			log_info!("Continuation triggered after phase compression - returning to main loop");
-			return Ok(None);
-		}
-	}
 	// Process project compression (automatic)
-	let project_compression_occurred =
+	let _project_compression_occurred =
 		match crate::mcp::dev::plan::process_pending_project_compression(chat_session).await {
 			Ok(Some(metrics)) => {
 				chat_session
@@ -320,70 +276,18 @@ pub async fn process_tool_results(
 			}
 		};
 
-	// CRITICAL FIX: After project compression, check if continuation should trigger
-	// Project compression can free significant space, allowing plan to continue automatically
-	// This matches the behavior in main_loop.rs for conversation compression (lines 603-617)
-	if project_compression_occurred && crate::mcp::dev::plan::core::has_active_plan() {
-		log_debug!(
-			"Project compression completed with active plan - checking if continuation needed"
-		);
-		use crate::session::chat::session_continuation;
-		if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-			// Stop global animation before returning
-			animation_manager.stop_current().await;
-
-			log_info!("Continuation triggered after project compression - returning to main loop");
-			// Return None to signal main loop to continue with the injected continuation request
-			return Ok(None);
-		}
-	}
-
-	// BATCH TRUNCATION: Check once after all small tool results are processed
-	if needs_truncation_check {
-		let truncation_start = std::time::Instant::now();
-		if let Err(e) = crate::session::chat::context_truncation::check_and_truncate_context(
-			chat_session,
-			config,
-			crate::session::chat::TruncationOptions {
-				defer_continuation: true, // Defer during tool processing
-			},
-		)
-		.await
-		{
-			log_info!("Warning: Error during batch truncation check: {}", e);
-		}
-		truncation_time += truncation_start.elapsed().as_millis();
-	}
-
 	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed
-	// CRITICAL: This must happen DURING tool execution loops, not just on user requests
-	// Context can balloon from 50K → 200K+ tokens during multi-tool execution without this check
 	// This runs AFTER plan compression (which handles structured plan content)
-	// and BEFORE continuation (compression can prevent hitting continuation threshold)
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,
 		config,
 	)
 	.await
 	{
-		// Best-effort: log error but continue session
 		log_debug!(
 			"Adaptive conversation compression failed during tool processing: {}. Continuing session.",
 			e
 		);
-	}
-
-	// NEW FLOW: Check for continuation AFTER all tool results are gathered
-	// This is one of the two correct moments to trigger continuation:
-	// 1) On new user request (handled in session runner)
-	// 2) After all tool results gathered, before sending to AI (HERE)
-	use crate::session::chat::session_continuation;
-	if session_continuation::check_and_handle_continuation(chat_session, config).await? {
-		// Stop global animation before returning
-		animation_manager.stop_current().await;
-
-		log_info!("Token limit reached after processing all tool results - continuation triggered");
-		return Ok(None); // Return None to stop tool processing and let continuation be handled by main loop
 	}
 
 	// CRITICAL FIX: Check cache threshold AFTER all tool results are processed
@@ -408,10 +312,9 @@ pub async fn process_tool_results(
 
 	if total_processing_time > 100 {
 		log_debug!(
-			"🔍 Tool result processing took {}ms (cache: {}ms, truncation: {}ms)",
+			"🔍 Tool result processing took {}ms (cache: {}ms)",
 			total_processing_time,
-			cache_check_time,
-			truncation_time
+			cache_check_time
 		);
 	}
 

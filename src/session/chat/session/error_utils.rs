@@ -164,12 +164,7 @@ pub fn handle_api_error(
 		log_debug!("Removed user message due to API call failure");
 	}
 
-	// CRITICAL FIX: Reset continuation state if API error occurs during continuation
-	// This prevents infinite retry loops when rate limits are hit during continuation
-	if chat_session.continuation_pending {
-		chat_session.continuation_pending = false;
-		log_debug!("Continuation state reset due to API error - breaking continuation loop");
-	}
+	// Print error with provider context
 
 	// Print error with provider context
 	// Extract provider name from the model string

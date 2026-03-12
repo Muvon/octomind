@@ -44,9 +44,6 @@ pub async fn handle_done(
 		crate::log_debug!("Failed to clear plan data: {}", e);
 	}
 
-	// Disable continuation triggers during /done processing
-	session.disable_continuation();
-
 	// Apply reducer functionality to optimize context
 	let result = crate::session::chat::context_reduction::perform_context_reduction(
 		session,
@@ -55,9 +52,6 @@ pub async fn handle_done(
 		operation_cancelled,
 	)
 	.await;
-
-	// Re-enable continuation triggers after /done processing
-	session.enable_continuation();
 
 	if let Err(e) = result {
 		println!(

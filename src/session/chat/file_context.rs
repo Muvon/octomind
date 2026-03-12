@@ -12,81 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// File context parsing and generation for session continuation
+// File context parsing and generation for compression summaries
 
 use crate::utils::file_parser::parse_file_references;
 use crate::utils::file_renderer::render_files_as_xml;
-
-/// Collect meaningful user requests from session history for continuation context
-/// Filters out system-generated messages and keeps last 5-7 user requests
-pub fn collect_user_request_history(messages: &[crate::session::Message]) -> String {
-	let mut user_requests = Vec::new();
-	let mut last_was_user = false;
-
-	for message in messages {
-		// Only collect user messages
-		if message.role != "user" {
-			last_was_user = false;
-			continue;
-		}
-
-		// Skip system-generated continuation requests
-		if message
-			.content
-			.contains("CRITICAL: Session approaching token limits")
-		{
-			last_was_user = false;
-			continue;
-		}
-
-		// Skip empty or very short messages
-		let content = message.content.trim();
-		if content.is_empty() || content.len() < 10 {
-			last_was_user = false;
-			continue;
-		}
-
-		// Skip session commands (starting with /)
-		if content.starts_with('/') {
-			last_was_user = false;
-			continue;
-		}
-
-		// SMART DETECTION: If we have two user messages in a row, the first one is likely
-		// the initial instructions (INSTRUCTIONS.md content). Skip it and keep only the second.
-		if last_was_user && !user_requests.is_empty() {
-			// Remove the previous message (initial instructions) and add current one
-			user_requests.pop();
-		}
-
-		// Truncate very long requests for readability
-		let truncated_content = if content.len() > 200 {
-			format!("{}...", content.chars().take(200).collect::<String>())
-		} else {
-			content.to_string()
-		};
-
-		user_requests.push(truncated_content);
-		last_was_user = true;
-	}
-
-	// Keep only the last 5-7 requests to avoid overwhelming context
-	if user_requests.len() > 7 {
-		user_requests = user_requests[user_requests.len() - 7..].to_vec();
-	}
-
-	if user_requests.is_empty() {
-		return "No specific user requests found in session history.".to_string();
-	}
-
-	// Format as numbered list with proactive language
-	let mut result = String::new();
-	for (i, request) in user_requests.iter().enumerate() {
-		result.push_str(&format!("{}. {}\n", i + 1, request));
-	}
-
-	result
-}
 
 /// Parse file context requirements from AI summary response
 /// Expected format: filename:startline:endline (in code blocks or specific sections)

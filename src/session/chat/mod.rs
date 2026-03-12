@@ -13,18 +13,17 @@
 // limitations under the License.
 
 // Chat session module
-// Chat session module
 mod animation;
 pub mod animation_manager;
 pub mod assistant_output;
 mod command_executor;
 mod commands;
 mod context_reduction;
-mod context_truncation;
-pub mod continuation;
-pub mod conversation_compression;
+pub(crate) mod context_truncation;
+pub(crate) mod conversation_compression;
 mod cost_tracker;
 mod edit_mode;
+mod file_context;
 pub mod formatting;
 mod input;
 mod layered_response;
@@ -35,7 +34,6 @@ mod reedline_adapter;
 pub(crate) mod response;
 mod semantic_chunking;
 pub mod session;
-pub mod session_continuation;
 mod syntax;
 mod thinking_display;
 mod tool_display;
@@ -53,10 +51,6 @@ pub use commands::{
 	QUIT_COMMAND, RUN_COMMAND, SAVE_COMMAND,
 };
 pub use context_reduction::perform_context_reduction;
-pub use context_truncation::{
-	check_and_truncate_context, check_and_truncate_context_with_cancellation,
-	perform_simple_boundary_truncation, perform_smart_full_summarization, TruncationOptions,
-};
 pub use cost_tracker::CostTracker;
 pub use edit_mode::EmacsWithShortcutHelp;
 pub use formatting::format_duration;

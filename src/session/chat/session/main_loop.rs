@@ -249,15 +249,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			// Clear operation context
 			*current_operation.lock().unwrap() = None;
 
-			// CRITICAL FIX: Reset continuation state when cancelled
-			// This prevents infinite loop where continuation_pending remains true after Ctrl+C
-			if chat_session.continuation_pending {
-				chat_session.continuation_pending = false;
-				log_debug!(
-					"Continuation state reset due to cancellation - breaking continuation loop"
-				);
-			}
-
 			// CRITICAL FIX: Reset cancellation state BEFORE continuing
 			// This prevents infinite loop where cancellation is always true
 			cancellation.reset();
@@ -276,9 +267,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Get a new operation token for this iteration
 		let operation_rx = cancellation.new_operation();
 
-		// CRITICAL FIX: Check if continuation is pending from previous iteration
-		// If so, skip reading user input and process the injected summary request immediately
-		// BUT FIRST: Check if operation was cancelled to prevent infinite loops
 		// Calculate current context tokens for display
 		let current_context_tokens = calculate_current_context_tokens(
 			&chat_session.session.messages,
@@ -287,48 +275,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		)
 		.await;
 
-		let input_result = if chat_session.continuation_pending {
-			// Safety check: If cancellation occurred, reset continuation state and read user input normally
-			if cancellation.is_cancelled() {
-				log_debug!("Cancellation detected during continuation - resetting continuation state and reading user input");
-				chat_session.continuation_pending = false;
-				read_user_input(
-					chat_session.estimated_cost,
-					&current_config,
-					&role,
-					current_context_tokens,
-					current_config.max_session_tokens_threshold,
-					&chat_session.session.info.name,
-					false, // Don't show status
-				)?
-			} else {
-				log_debug!(
-					"Continuation pending - processing injected summary request automatically"
-				);
-				// Get the last message which should be the injected summary request
-				chat_session
-					.session
-					.messages
-					.last()
-					.filter(|msg| msg.role == "user")
-					.map(|msg| InputResult::Text(msg.content.clone()))
-					.unwrap_or_else(|| {
-						log_debug!("Warning: Expected summary request message not found, falling back to user input");
-						read_user_input(
-							chat_session.estimated_cost,
-							&current_config,
-							&role,
-							current_context_tokens,
-							current_config.max_session_tokens_threshold,
-							&chat_session.session.info.name,
-							false,
-						)
-						.unwrap_or(InputResult::Text(String::new()))
-					})
-			}
-		} else if let Some(prompt_text) = chat_session.pending_prompt.take() {
-			// CRITICAL FIX: Process pending prompt from /prompt command
-			// This allows the prompt to be processed as normal user input
+		let input_result = if let Some(prompt_text) = chat_session.pending_prompt.take() {
+			// Process pending prompt from /prompt command
 			log_debug!("Processing pending prompt template as user input");
 			InputResult::Text(prompt_text)
 		} else {
@@ -583,7 +531,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// CONVERSATION COMPRESSION: Check if AI should compress older exchanges
 		// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
 		// AI decides if compression is beneficial based on conversation history
-		let compression_occurred =
+		let _compression_occurred =
 			match crate::session::chat::conversation_compression::check_and_compress_conversation(
 				&mut chat_session,
 				&current_config,
@@ -601,66 +549,20 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				}
 			};
 
-		// CRITICAL FIX: After compression, check if continuation should trigger
-		// Compression freed up space, so we should check if we can continue with pending work
-		if compression_occurred && crate::mcp::dev::plan::core::has_active_plan() {
-			log_debug!("Compression completed with active plan - checking if continuation needed");
-			use crate::session::chat::session_continuation;
-			if session_continuation::check_and_handle_continuation(
-				&mut chat_session,
-				&current_config,
-			)
-			.await?
-			{
-				log_debug!("Continuation triggered after compression - skipping to next iteration");
-				// The summary request message has already been injected by check_and_handle_continuation
-				// Just continue the loop to process it immediately without waiting for user input
-				continue;
-			}
-		}
-
-		// NEW FLOW: Check for continuation BEFORE processing new user request
-
-		// CRITICAL: Skip continuation check immediately after compression
-		// Compression already evaluated token pressure with CURRENT state and modified the session.
-		// Checking continuation here would use STALE token counts (pre-compression) causing false triggers.
-		// The next user request will check continuation with accurate post-compression state.
-		//
-		// This is one of the two correct moments to trigger continuation:
-		// 1) On new user request (HERE) - but NOT immediately after compression
-		// 2) After all tool results gathered, before sending to AI (in tool_result_processor)
-		if !chat_session.continuation_pending && !compression_occurred {
-			use crate::session::chat::session_continuation;
-			if session_continuation::check_and_handle_continuation(
-				&mut chat_session,
-				&current_config,
-			)
-			.await?
-			{
-				log_debug!("Token limit reached on new user request - continuation triggered, skipping to next iteration");
-				// The summary request message has already been injected by check_and_handle_continuation
-				// Just continue the loop to process it immediately without waiting for user input
-				continue;
-			}
-		}
-
 		// CRITICAL FIX: Set processing state BEFORE adding user message
 		// This ensures cancellation cleanup works correctly if Ctrl+C is pressed
 		// between adding the message and starting the API call
 		*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
 
-		// CRITICAL: Capture user message insertion index AFTER compression/continuation mutations.
+		// CRITICAL: Capture user message insertion index AFTER compression mutations.
 		// This keeps error rollback truncation aligned with current session layout.
+
 		let user_message_index = chat_session.session.messages.len();
 
 		// Add user message for standard processing flow
-		// CRITICAL FIX: Add user message unless continuation is pending or layers modified session
-		// Logic:
-		// - continuation_pending = true: Continuation message already added → Skip (avoid duplicates)
-		// - workflow_modified_session = true: Layers added messages to session → Skip (avoid duplicates)
-		// - workflow_modified_session = false: Layers didn't add messages → Add user message (needed for conversation)
-		if !chat_session.continuation_pending && !workflow_modified_session {
-			// CRITICAL: Set first_prompt_idx if not already set (INCLUSIVE boundary for compression)
+		// Skip if layers already modified the session (to avoid duplicates)
+		if !workflow_modified_session {
+			// Set first_prompt_idx if not already set (INCLUSIVE boundary for compression)
 			// This protects bootstrap/instructions forever - compression NEVER goes below this index
 			if chat_session.first_prompt_idx.is_none() {
 				chat_session.first_prompt_idx = Some(user_message_index);
@@ -806,23 +708,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 						log_debug!("Assistant message added at index {}", messages_before_api);
 					}
 				}
-
-				// CRITICAL FIX: Check if continuation was triggered during tool processing
-				// If continuation_pending is true, it means a summary request was injected
-				// and we need to skip waiting for user input and process it immediately
-				if chat_session.continuation_pending {
-					log_debug!("Continuation triggered during tool processing - skipping to next iteration to process summary request automatically");
-					// The summary request message has already been injected by check_and_handle_continuation
-					// Just continue the loop to process it immediately without waiting for user input
-					continue;
-				}
-
-				// SAFETY CHECK: Ensure continuation state is properly cleared after successful processing
-				// This provides additional protection against continuation state getting stuck
-				if chat_session.continuation_pending {
-					log_debug!("Warning: Continuation state still pending after successful processing - clearing it");
-					chat_session.continuation_pending = false;
-				}
 			}
 			Err(e) => {
 				// Handle API error using helper function
@@ -891,16 +776,10 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	if input.starts_with('/') {
 		// Handle special /done command separately
 		if input.trim() == "/done" {
-			// Disable continuation triggers during /done processing
-			chat_session.disable_continuation();
-
 			// Clear plan data
 			if let Err(e) = crate::mcp::dev::plan::clear_plan_data().await {
 				log_debug!("Failed to clear plan data: {}", e);
 			}
-
-			// Re-enable continuation triggers after /done processing
-			chat_session.enable_continuation();
 
 			println!(
 				"{}",

@@ -36,8 +36,30 @@ use anyhow::Result;
 /// CACHE-AWARE: Uses amortized cost analysis to determine if compression is profitable
 /// considering cache invalidation costs vs. future savings over estimated remaining turns
 pub async fn should_check_compression(session: &mut ChatSession, config: &Config) -> (bool, f64) {
-	// Check if compression is enabled
+	// UNIFIED TOKEN CALCULATION - Use the single source of truth
+	// This ensures consistency with display and all other systems
+	let current_tokens = session.get_full_context_tokens(config).await;
+
+	// When adaptive compression is disabled, fall back to max_session_tokens_threshold as trigger.
+	// This replaces the old continuation system: if threshold is set and exceeded, compress.
 	if !config.compression.adaptive_threshold {
+		if config.max_session_tokens_threshold > 0
+			&& current_tokens >= config.max_session_tokens_threshold
+		{
+			let ratio = config
+				.compression
+				.pressure_levels
+				.iter()
+				.map(|l| l.target_ratio)
+				.fold(2.0_f64, f64::max);
+			log_debug!(
+				"Max session token threshold exceeded ({} >= {}) - triggering compression with ratio {:.1}x",
+				current_tokens,
+				config.max_session_tokens_threshold,
+				ratio
+			);
+			return (true, ratio);
+		}
 		log_debug!("Adaptive compression disabled (adaptive_threshold=false)");
 		return (false, 2.0);
 	}
@@ -47,10 +69,6 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		log_debug!("No pressure levels configured - compression disabled");
 		return (false, 2.0);
 	}
-
-	// UNIFIED TOKEN CALCULATION - Use the single source of truth
-	// This ensures consistency with display, continuation, and all other systems
-	let current_tokens = session.get_full_context_tokens(config).await;
 
 	log_debug!(
 		"Compression check: current_tokens={}, thresholds={:?}",
@@ -936,8 +954,8 @@ async fn apply_compression(
 	tokens_before: u64,
 	compression_ratio: f64,
 ) -> Result<()> {
-	// Parse file contexts from AI summary (reuse continuation logic)
-	let file_contexts = super::continuation::file_context::parse_file_contexts(context_summary);
+	// Parse file contexts from AI summary (AI may request specific file ranges to re-inject)
+	let file_contexts = super::file_context::parse_file_contexts(context_summary);
 
 	// Generate file context content if any contexts found
 	let file_context_content = if !file_contexts.is_empty() {
@@ -948,7 +966,7 @@ async fn apply_compression(
 		for (filepath, start, end) in &file_contexts {
 			crate::log_debug!("  - {} (lines {}-{})", filepath, start, end);
 		}
-		super::continuation::file_context::generate_file_context_content(&file_contexts)
+		super::file_context::generate_file_context_content(&file_contexts)
 	} else {
 		String::new()
 	};
@@ -1694,7 +1712,7 @@ mod tests {
 		// if (non_compressible + (compressible / ratio)) < threshold {
 		//     compress
 		// } else {
-		//     skip compression, trigger continuation instead
+		//     skip compression — non-compressible portion already exceeds threshold
 		// }
 	}
 

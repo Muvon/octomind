@@ -94,8 +94,6 @@ mod session_restore_tests {
 			last_cache_checkpoint_time: timestamp,
 			cache_next_user_message: false,
 			spending_threshold_checkpoint: 0.0,
-			continuation_pending: false,
-			continuation_disabled: false,
 			compression_hint_count: 0,
 			last_compression_hint_shown: 0,
 			next_conversation_compression_at_api_call: 0,

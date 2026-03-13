@@ -44,12 +44,6 @@ enum Commands {
 	/// Execute a single AI request using session infrastructure (non-interactive)
 	Run(commands::RunArgs),
 
-	/// Ask a question and get an AI response without session management
-	Ask(commands::AskArgs),
-
-	/// Execute shell commands through AI with confirmation
-	Shell(commands::ShellArgs),
-
 	/// Start WebSocket server for remote AI sessions
 	Server(commands::ServerArgs),
 
@@ -175,9 +169,8 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 			session::chat::run_interactive_session_with_input(&session_args, &config, &input)
 				.await?
 		}
-		Commands::Ask(ask_args) => commands::ask::execute(ask_args, &config).await?,
-		Commands::Shell(shell_args) => commands::shell::execute(shell_args, &config).await?,
 		Commands::Server(server_args) => commands::server::execute(server_args, &config).await?,
+
 		Commands::Vars(vars_args) => commands::vars::execute(vars_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();

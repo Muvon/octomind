@@ -36,8 +36,6 @@ custom_instructions_file_name = "INSTRUCTIONS.md"
 
 # Custom constraints file name (relative to project root)
 # This file content will be automatically appended to EACH user request in <constraints>...</constraints> tags
-# Works in both interactive sessions and non-interactive commands (ask/run)
-# If the file doesn't exist, user requests are sent unchanged (no error)
 # Set to empty string to disable: custom_constraints_file_name = ""
 custom_constraints_file_name = "CONSTRAINTS.md"
 
@@ -90,55 +88,6 @@ max_session_spending_threshold = 0.0
 # When exceeded during a single request processing, Octomind will stop execution
 # This tracks cost from user input until next user input or session end
 max_request_spending_threshold = 0.0
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# COMMAND CONFIGURATIONS
-# Configure behavior for built-in commands like ask and shell
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Ask command configuration
-[ask]
-# System prompt for ask command (supports %{SYSTEM} placeholder)
-system = "You are a helpful assistant.\n\n%{SYSTEM}"
-# Default temperature for ask command (0.0 to 2.0, can be overridden by --temperature CLI flag)
-temperature = 0.6
-# Default top_p for ask command (0.0 to 1.0, nucleus sampling)
-# Default top_p for ask command (0.0 to 1.0, nucleus sampling)
-top_p = 0.8
-# Default top_k for ask command (1 to 200, limits token choices)
-top_k = 40
-
-# Shell command configuration
-[shell]
-# System prompt for shell command (supports %{SYSTEM} placeholder and current directory)
-system = """You are a shell command generator. Your task is to convert natural language descriptions into appropriate shell commands.
-
-INSTRUCTIONS:
-1. Generate safe, correct shell commands for the given description
-2. Prefer commonly available tools and standard Unix commands
-3. Always respond with properly formatted JSON
-4. Include safety warnings for potentially dangerous commands
-5. Make commands as specific as possible while being safe
-6. Consider the current working directory: %{CWD}
-
-SAFETY GUIDELINES:
-- Avoid destructive operations without explicit user request
-- Warn about commands that modify system files
-- Prefer read-only operations when possible
-- Include safety flags where appropriate (e.g., -i for interactive)
-
-RESPONSE FORMAT:
-Always respond with a JSON object containing exactly these fields:
-- "command": string with the exact shell command
-- "explanation": string explaining what the command does
-- "safety_notes": optional string with warnings (null if no warnings needed)"""
-# Default temperature for shell command (0.0 to 2.0, can be overridden by --temperature CLI flag)
-temperature = 0.3
-# Default top_p for shell command (0.0 to 1.0, nucleus sampling)
-# Default top_p for shell command (0.0 to 1.0, nucleus sampling)
-top_p = 0.7
-# Default top_k for shell command (1 to 200, limits token choices)
-top_k = 20
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # API KEYS AND AUTHENTICATION

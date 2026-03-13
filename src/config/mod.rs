@@ -91,30 +91,6 @@ impl LogLevel {
 // REMOVED: All default functions - config must be complete and explicit
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AskConfig {
-	/// System prompt for ask command
-	pub system: String,
-	/// Default temperature for ask command (0.0 to 1.0)
-	pub temperature: f32,
-	/// Default top_p for ask command (0.0 to 1.0)
-	pub top_p: f32,
-	/// Default top_k for ask command (1 to infinity)
-	pub top_k: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ShellConfig {
-	/// System prompt for shell command
-	pub system: String,
-	/// Default temperature for shell command (0.0 to 1.0)
-	pub temperature: f32,
-	/// Default top_p for shell command (0.0 to 1.0)
-	pub top_p: f32,
-	/// Default top_k for shell command (1 to infinity)
-	pub top_k: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PressureLevel {
 	/// Absolute token threshold at which this level applies
 	pub threshold: usize,
@@ -246,12 +222,6 @@ pub struct Config {
 	// Workflows configuration - array of workflow definitions
 	#[serde(default)]
 	pub workflows: Vec<WorkflowDefinition>,
-
-	// Ask command configuration
-	pub ask: AskConfig,
-
-	// Shell command configuration
-	pub shell: ShellConfig,
 
 	// Prompt template configurations
 	pub prompts: Vec<PromptConfig>,

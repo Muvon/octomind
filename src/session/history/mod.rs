@@ -65,12 +65,6 @@ pub fn get_session_history_file_path(role: &str) -> Result<PathBuf> {
 	Ok(history_dir.join(format!("session_{}.history", role)))
 }
 
-/// Get the ask command history file path
-pub fn get_ask_history_file_path() -> Result<PathBuf> {
-	let history_dir = get_history_dir()?;
-	Ok(history_dir.join("ask.history"))
-}
-
 /// Get or create a mutex for a specific role's history file
 fn get_role_mutex(role: &str) -> std::sync::MutexGuard<'static, ()> {
 	let mut mutexes = HISTORY_MUTEXES.lock().unwrap();

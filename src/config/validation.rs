@@ -50,65 +50,6 @@ impl Config {
 			return Err(anyhow!("Markdown theme field cannot be empty"));
 		}
 
-		// Validate ask configuration - STRICT MODE: system field is required
-		if self.ask.system.is_empty() {
-			return Err(anyhow!("Ask configuration 'system' field cannot be empty"));
-		}
-
-		// Validate shell configuration - STRICT MODE: system field is required
-		if self.shell.system.is_empty() {
-			return Err(anyhow!(
-				"Shell configuration 'system' field cannot be empty"
-			));
-		}
-
-		// Validate temperature ranges for ask and shell
-		if self.ask.temperature < 0.0 || self.ask.temperature > 2.0 {
-			return Err(anyhow!(
-				"Ask configuration temperature must be between 0.0 and 2.0, got: {}",
-				self.ask.temperature
-			));
-		}
-
-		// Validate top_p ranges for ask
-		if self.ask.top_p < 0.0 || self.ask.top_p > 1.0 {
-			return Err(anyhow!(
-				"Ask configuration top_p must be between 0.0 and 1.0, got: {}",
-				self.ask.top_p
-			));
-		}
-
-		// Validate top_k ranges for ask
-		if self.ask.top_k < 1 || self.ask.top_k > 1000 {
-			return Err(anyhow!(
-				"Ask configuration top_k must be between 1 and 1000, got: {}",
-				self.ask.top_k
-			));
-		}
-
-		if self.shell.temperature < 0.0 || self.shell.temperature > 2.0 {
-			return Err(anyhow!(
-				"Shell configuration temperature must be between 0.0 and 2.0, got: {}",
-				self.shell.temperature
-			));
-		}
-
-		// Validate top_p ranges for shell
-		if self.shell.top_p < 0.0 || self.shell.top_p > 1.0 {
-			return Err(anyhow!(
-				"Shell configuration top_p must be between 0.0 and 1.0, got: {}",
-				self.shell.top_p
-			));
-		}
-
-		// Validate top_k ranges for shell
-		if self.shell.top_k < 1 || self.shell.top_k > 1000 {
-			return Err(anyhow!(
-				"Shell configuration top_k must be between 1 and 1000, got: {}",
-				self.shell.top_k
-			));
-		}
-
 		// Validate role configurations
 		for role in &self.roles {
 			// Validate temperature

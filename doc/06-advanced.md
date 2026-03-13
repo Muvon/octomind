@@ -252,9 +252,30 @@ agent_code_reviewer(task="Review this function for performance issues and sugges
 
 #### Tool Parameters
 
-Each agent tool accepts a single parameter:
+Each agent tool accepts two parameters:
 
 - `task` (string, required): Task description in human language for the agent to process
+- `background` (boolean, optional, default: false): Run asynchronously and return immediately
+
+#### Background Execution
+
+**background: false** (default) — Blocks until complete. Use when you need the result immediately.
+
+**background: true** — Returns immediately, runs asynchronously. Result appears as a user message when complete.
+
+**When to use background:**
+- Task takes 30+ seconds (large codebase analysis, multi-file refactoring)
+- You can continue other work while waiting
+- You don't need the result for your next immediate action
+
+**When NOT to use background:**
+- You need the result to make your next decision
+- Quick tasks (under 30 seconds)
+- Multi-step tasks where each step depends on the previous result
+
+**Result format:** `[Background agent 'name' completed]` or `[Background agent 'name' failed]`
+
+**Limits:** Max concurrent background jobs configurable via `background_jobs.max_concurrent_jobs`. Jobs are cancelled on session exit/interrupt (Ctrl+C, /exit). Non-interactive sessions wait for all background jobs before exiting.
 
 #### Key Features
 

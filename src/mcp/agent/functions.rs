@@ -52,8 +52,22 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 		.map(|agent_config| McpFunction {
 			name: format!("agent_{}", agent_config.name),
 			description: format!(
-				"{}\n\nSet `background: true` to run asynchronously — the result will be injected into the conversation automatically when ready.",
-				agent_config.description
+				"{}\n\n\
+				## Background Execution\n\n\
+				**background: false** (default) — Blocks until complete. Use when you need the result immediately.\n\n\
+				**background: true** — Returns immediately, runs asynchronously. Result appears as a user message when complete.\n\n\
+				**When to use background:**\n\
+				- Task takes 30+ seconds (large codebase analysis, multi-file refactoring)\n\
+				- You can continue other work while waiting\n\
+				- You don't need the result for your next immediate action\n\n\
+				**When NOT to use background:**\n\
+				- You need the result to make your next decision\n\
+				- Quick tasks (under 30 seconds)\n\
+				- Multi-step tasks where each step depends on the previous result\n\n\
+				**Result format:** `[Background agent 'name' completed]` or `[Background agent 'name' failed]`\n\n\
+				**Limits:** Max {} concurrent background jobs. Jobs are cancelled on session exit/interrupt.",
+				agent_config.description,
+				config.background_jobs.max_concurrent_jobs
 			),
 			parameters: json!({
 				"type": "object",
@@ -64,7 +78,7 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 					},
 					"background": {
 						"type": "boolean",
-						"description": "Run in background and return immediately. Result is pushed back into the session automatically. Default: false.",
+						"description": "Run asynchronously. Result injected as user message when complete. Use for long-running tasks where you can continue other work. Default: false.",
 						"default": false
 					}
 				},

@@ -667,10 +667,16 @@ fn calculate_self_tuning_accuracy(info: &crate::session::SessionInfo) -> f64 {
 pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<bool> {
 	let (should_check, target_ratio) = should_check_compression(session, config).await;
 	if !should_check {
 		return Ok(false);
+	}
+
+	// Check for cancellation before starting compression (which involves an API call)
+	if *operation_rx.borrow() {
+		return Err(anyhow::anyhow!("Operation cancelled"));
 	}
 
 	// Show animation immediately to avoid perceived lag during decision/summary call
@@ -727,7 +733,7 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
 	let (should_compress, context_summary) =
-		ask_ai_decision_and_summary(session, config, &context_chunks).await?;
+		ask_ai_decision_and_summary(session, config, &context_chunks, operation_rx).await?;
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
@@ -759,6 +765,7 @@ async fn ask_ai_decision_and_summary(
 	session: &mut ChatSession,
 	config: &Config,
 	context_chunks: &[&super::semantic_chunking::SemanticChunk],
+	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(bool, String)> {
 	// Build enhanced prompt with file context support (similar to continuation)
 	let mut decision_prompt = String::from(
@@ -887,7 +894,8 @@ async fn ask_ai_decision_and_summary(
 		config,
 	)
 	.with_max_retries(decision_config.max_retries)
-	.with_chat_session(session);
+	.with_chat_session(session)
+	.with_cancellation_token(operation_rx);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 

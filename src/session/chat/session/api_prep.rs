@@ -35,6 +35,7 @@ pub async fn prepare_for_api_call(
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,
 		config,
+		operation_rx.clone(),
 	)
 	.await
 	{

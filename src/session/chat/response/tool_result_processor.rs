@@ -116,6 +116,7 @@ pub async fn process_tool_results(
 				crate::session::chat::conversation_compression::check_and_compress_conversation(
 					chat_session,
 					config,
+					operation_cancelled.clone(),
 				)
 				.await
 			{
@@ -281,6 +282,7 @@ pub async fn process_tool_results(
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,
 		config,
+		operation_cancelled.clone(),
 	)
 	.await
 	{

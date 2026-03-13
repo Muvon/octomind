@@ -175,6 +175,8 @@ ACP support is available in IntelliJ IDEA, PyCharm, WebStorm, GoLand, and all ot
 
 ACP clients can inject their own MCP servers into Octomind sessions. Octomind merges them with its own configured servers — the editor's servers become available as tools for that session.
 
+**Supported transports:** `stdio` and `http`. SSE servers are silently skipped (not supported by Octomind's MCP stack).
+
 This is handled automatically by editors that support MCP server forwarding (e.g. CodeCompanion with `mcpServers = "inherit_from_config"`):
 
 ```lua
@@ -224,6 +226,10 @@ Switch roles by changing the `--role` argument in your editor config.
 **Tools not available**
 - Confirm the role has MCP servers enabled in your config (`config-templates/default.toml` or `~/.config/octomind/config.toml`).
 - Use `--role developer` explicitly.
+
+**Editor-injected MCP server not working**
+- Only `stdio` and `http` transports are supported. SSE servers are skipped automatically.
+- Check the Octomind log for `ACP: skipping SSE MCP server` messages to confirm.
 
 **JetBrains: agent not shown after editing acp.json**
 - Save the file — agents appear immediately without restart.

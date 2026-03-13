@@ -22,9 +22,9 @@ use std::rc::Rc;
 use agent_client_protocol::{
 	AgentCapabilities, AgentSideConnection, AuthenticateRequest, AuthenticateResponse,
 	CancelNotification, Client, ContentBlock, ContentChunk, Implementation, InitializeRequest,
-	InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest,
-	NewSessionResponse, PromptRequest, PromptResponse, ProtocolVersion, SessionNotification,
-	SessionUpdate, StopReason, ToolCall, ToolCallUpdate, ToolCallUpdateFields,
+	InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer,
+	NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, ProtocolVersion,
+	SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallUpdate, ToolCallUpdateFields,
 };
 
 use crate::config::mcp::McpServerConfig;
@@ -120,7 +120,13 @@ impl agent_client_protocol::Agent for OctomindAgent {
 	) -> agent_client_protocol::Result<InitializeResponse> {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
 		let response = InitializeResponse::new(ProtocolVersion::LATEST)
-			.agent_capabilities(AgentCapabilities::default().load_session(true))
+			.agent_capabilities(
+				AgentCapabilities::default()
+					.load_session(true)
+					// Advertise HTTP MCP transport support so clients offer us HTTP servers.
+					// SSE is not supported — we skip those servers silently in inject_acp_mcp_servers.
+					.mcp_capabilities(McpCapabilities::new().http(true)),
+			)
 			.agent_info(Implementation::new("octomind", env!("CARGO_PKG_VERSION")));
 		Ok(response)
 	}

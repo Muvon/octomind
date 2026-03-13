@@ -22,32 +22,23 @@ MCP enables AI models to use external tools and services through a standardized 
 
 ### Built-in MCP Tools
 
-Octomind provides four built-in MCP servers with comprehensive development capabilities:
+Octomind provides three built-in MCP servers with comprehensive development capabilities:
 
 **Developer Server** (`src/mcp/dev/`):
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
 - `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
-- `ask(question="...")` - Pause execution and ask the user a clarification question; halts until answered. Use ONLY when genuinely blocked — question must be fully self-contained with all context, options, and references
+- `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
 
 **Filesystem Server** (`src/mcp/fs/`):
-- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
-- `text_editor(command=\"create|str_replace|insert|line_replace|undo_edit\", path=\"...\", ...)` - Edit files
-- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
-
-
-**Web Server** (`src/mcp/web/`):
-- `web_search(query="...", count=20, ...)` - Search the web using Brave Search API
-- `image_search(query="...", count=50, ...)` - Search for images with metadata
-- `video_search(query="...", count=20, ...)` - Search for videos with duration info
-- `news_search(query="...", count=20, ...)` - Search for news articles
-- `read_html(sources=[...])` - Convert HTML content to Markdown format
+- `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
+- `text_editor(command="create|str_replace|insert|line_replace|undo_edit", path="...", ...)` - Edit files
+- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
+- `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
 
 **Agent Server** (`src/mcp/agent/`):
 - `agent_*()` tools - Route tasks to configured AI layers for specialized processing
 - `call_llm(prompt="...", model="...", system="...", temperature=0.7)` - Direct LLM call with runtime parameters
-
 **Tool Invocation:**
 
 ---
@@ -205,131 +196,6 @@ Get or set the working directory for file and shell operations:
 - **text_editor**: Edit files with multiple operations (create, str_replace, insert, line_replace, undo_edit)
 - **extract_lines**: Extract lines from source file and append to target file without modifying source (perfect for refactoring)
 - **batch_edit**: Multiple file operations atomically
-
-
-#### Web Tools (type: "builtin")
-- **web_search**: Search the web using Brave Search API with configurable parameters
-- **image_search**: Search for images using Brave Search API with metadata and thumbnails
-- **video_search**: Search for videos using Brave Search API with duration, views, and creator info
-- **news_search**: Search for news articles using Brave Search API with publication dates and breaking news flags
-- **read_html**: Convert HTML content to Markdown format from URLs or local files
-
-#### Web Search Tools Configuration
-
-All web search tools require the `BRAVE_API_KEY` environment variable to be set with your Brave Search API key.
-
-**Setup:**
-```bash
-export BRAVE_API_KEY="your_brave_api_key_here"
-```
-
-**Web Search (`web_search`)**
-Search the web with comprehensive filtering options:
-
-```json
-{
-  "query": "rust web framework",
-  "count": 10,
-  "country": "US",
-  "search_lang": "en",
-  "ui_lang": "en-US",
-  "safesearch": "moderate",
-  "freshness": "pw"
-}
-```
-
-Parameters:
-- `query` (required): Search query (max 400 chars, 50 words)
-- `count`: Results to return (1-20, default: 20)
-- `offset`: Results to skip for pagination (0-9, default: 0)
-- `country`: Country code (e.g., "US", "GB", "DE")
-- `search_lang`: Language code (e.g., "en", "es", "fr")
-- `ui_lang`: UI language (e.g., "en-US", "es-ES")
-- `safesearch`: "strict", "moderate", or "off"
-- `freshness`: "pd" (day), "pw" (week), "pm" (month), "py" (year)
-
-**Image Search (`image_search`)**
-Find images with metadata and thumbnails:
-
-```json
-{
-  "query": "golden retriever puppy",
-  "count": 20,
-  "country": "US",
-  "search_lang": "en",
-  "safesearch": "strict"
-}
-```
-
-Parameters:
-- `query` (required): Image search query
-- `count`: Results to return (1-100, default: 50)
-- `country`: Country code for localized results
-- `search_lang`: Language for search results
-- `safesearch`: "strict" or "off" (default: "strict")
-- `spellcheck`: Enable spellcheck (default: true)
-
-**Video Search (`video_search`)**
-Search for videos with duration, views, and creator information:
-
-```json
-{
-  "query": "rust programming tutorial",
-  "count": 15,
-  "offset": 0,
-  "country": "US",
-  "search_lang": "en",
-  "ui_lang": "en-US",
-  "safesearch": "moderate",
-  "freshness": "pm"
-}
-```
-
-Parameters:
-- `query` (required): Video search query
-- `count`: Results to return (1-50, default: 20)
-- `offset`: Results to skip for pagination (0-9, default: 0)
-- `country`: Country code for localized results
-- `search_lang`: Language for search results
-- `ui_lang`: UI language preference
-- `safesearch`: "strict", "moderate", or "off"
-- `freshness`: Time filter for recent videos
-- `spellcheck`: Enable spellcheck (default: true)
-
-**News Search (`news_search`)**
-Find news articles with publication dates and breaking news flags:
-
-```json
-{
-  "query": "artificial intelligence breakthrough",
-  "count": 10,
-  "country": "US",
-  "search_lang": "en",
-  "freshness": "pd",
-  "extra_snippets": true
-}
-```
-
-Parameters:
-- `query` (required): News search query
-- `count`: Results to return (1-50, default: 20)
-- `offset`: Results to skip for pagination (0-9, default: 0)
-- `country`: Country code for localized results
-- `search_lang`: Language for search results
-- `ui_lang`: UI language preference
-- `safesearch`: "strict", "moderate", or "off"
-- `freshness`: Time filter for recent news
-- `spellcheck`: Enable spellcheck (default: true)
-- `extra_snippets`: Get additional excerpts (default: false)
-
-**Best Practices:**
-- Use specific, targeted queries for better results
-- Use quotes for exact phrase matching: `"machine learning"`
-- Use site: operator for specific domains: `site:github.com`
-- Use - operator to exclude terms: `python -django`
-- For images: Use descriptive visual terms
-- For videos: Include keywords like "tutorial", "review", "how to"
-- For news: Include current event keywords and locations
 
 ### Agent Tools Reference
 
@@ -587,9 +453,9 @@ tools = []  # Empty means all tools enabled
 
 # External HTTP server example
 [[mcp.servers]]
-name = "web_search"
+name = "external_tools"
 type = "http"
-url = "https://mcp.so/server/webSearch-Tools"
+url = "https://mcp.so/server/custom-tools"
 auth_token = "optional_token"
 timeout_seconds = 30
 tools = []
@@ -621,9 +487,8 @@ allowed_tools = ["text_editor", "list_files"]  # Only specific tools
 
 # Custom role with external tools
 [code-reviewer.mcp]
-server_refs = ["developer", "web_search"]
+server_refs = ["developer", "external_tools"]
 allowed_tools = ["text_editor", "shell"]
-```
 
 ### Server Types
 
@@ -634,10 +499,6 @@ allowed_tools = ["text_editor", "shell"]
 - **filesystem**: Built-in file operations
   - `view`: Read files, view directories, and search file content
   - `text_editor`: Comprehensive file editing with batch operations
-- **web**: Built-in web tools
-  - `web_search`: Web search using Brave Search API
-  - `image_search`, `video_search`, `news_search`: Specialized search tools
-  - `read_html`: HTML to Markdown conversion
 - **external**: External MCP servers (HTTP or command-based)
 
 
@@ -801,97 +662,73 @@ input_mode = "all"
 
 ## Token Management
 
-### Smart Session Continuation System
+### Conversation Compression System
 
-Octomind features an advanced session continuation system that automatically preserves context when token limits are reached, using AI-driven file context selection.
+Octomind features an intelligent conversation compression system that automatically manages token limits by compressing older conversation exchanges while preserving recent context.
 
 #### Architecture
 
-The continuation system uses a **modular architecture** with focused components:
-
-- **`src/session/chat/continuation/`**: Core continuation system modules
-  - `mod.rs`: Main module coordinator with public API re-exports
-  - `detection.rs`: Continuation trigger logic and state checks
-  - `injection.rs`: Summary request injection when limits reached
-  - `processing.rs`: Response processing with user visibility
-  - `file_context.rs`: File parsing, context generation, and tests
-  - `constants.rs`: All prompts and message templates
-- **`src/session/chat/session_continuation.rs`**: Compatibility layer - re-exports continuation API
-- **`src/session/chat/response.rs`**: Integration point for continuation checks
-- **`src/session/chat/context_truncation.rs`**: Continuation-aware context management
-- **`src/session/chat/session/core.rs`**: Session state management with continuation tracking
+The compression system is located in:
+- **`src/session/chat/conversation_compression.rs`**: Core compression logic
+- **`src/session/chat/session/core.rs`**: Session state management
+- **`src/session/chat/response.rs`**: Integration point for compression checks
 
 #### How It Works
 
-1. **Token Monitoring**: Every response processing checks against `max_session_tokens_threshold`
-2. **Structured Summary**: AI receives a detailed prompt requesting:
-   - Task objective and progress summary
-   - Current state and next actions
-   - Required file contexts in exact format: `filename:startline:endline`
-3. **File Context Processing**: System parses AI response using regex `([^\s:]+):(\d+):(\d+)`
-4. **Context Preservation**: Reads specified files with 1-indexed line numbers
-5. **Session Reset**: Continues with preserved summary and file context
+1. **Token Monitoring**: Every response processing checks against configured pressure levels (50k, 100k, 150k tokens)
+2. **AI Decision**: AI decides whether compression is beneficial (self-reflection)
+3. **Context Preservation**: Last 4 turns (2 exchanges) remain uncompressed for continuity
+4. **Cache-Aware**: Calculates net benefit considering cache invalidation costs
+5. **Compression**: Older exchanges are summarized using plan compression infrastructure
 
 #### Configuration
 
 ```toml
-# Smart continuation threshold (0 = disabled, >0 = enabled)
-max_session_tokens_threshold = 20000
+[compression]
+# Enable adaptive compression (default: true)
+adaptive_threshold = true
 
-# The system automatically handles:
-# - Summary request injection
-# - File context parsing and reading
-# - Session reset with preserved context
-# - Visual feedback and error handling
+# Pressure levels - compress when threshold exceeded
+[[compression.pressure_levels]]
+threshold = 50000
+name = "light"
+target_ratio = 2.0
+
+[[compression.pressure_levels]]
+threshold = 100000
+name = "medium"
+target_ratio = 4.0
+
+[[compression.pressure_levels]]
+threshold = 150000
+name = "heavy"
+target_ratio = 8.0
+
+# Fallback: compress when this limit is reached (0 = disabled)
+max_session_tokens_threshold = 50000
 ```
 
-#### File Context Format
+#### Features
 
-The AI must specify required files using this exact format:
-```
-src/config/mod.rs:95:105
-src/session/chat/response.rs:264:280
-src/session/chat/session_continuation.rs:1:50
-```
+**AI-Driven Decision:**
+- AI self-reflects on whether compression is beneficial
+- Considers cache invalidation costs vs future savings
+- Only compresses when it saves money
 
-The system automatically:
-- Parses these specifications using regex pattern matching
-- Reads the specified line ranges (1-indexed)
-- Includes formatted file content with line numbers
-- Handles missing files gracefully with error messages
-
-#### Advanced Features
-
-**Error Resilience:**
-- Graceful handling of missing or unreadable files
-- Regex parsing with comprehensive error checking
-- Fallback to original truncation if continuation fails
+**Context Preservation:**
+- Last 4 turns (2 exchanges) always remain uncompressed
+- Maintains conversation continuity
+- Preserves recent context for ongoing work
 
 **Performance Optimization:**
-- Maximum 10 file contexts per continuation
-- Line limits to prevent excessive content (10k lines per file)
-- Efficient file reading with range specification
+- Cache-aware economics calculation
+- Efficient compression using plan infrastructure
+- Visual feedback when compression occurs
 
 **Integration Points:**
-- Works during any token-consuming operation (user input, tool calls, etc.)
+- Works during any token-consuming operation
 - Integrates with existing cache and cost tracking systems
-- Maintains session state consistency across continuations
-
-### Automatic Token Management
-
-```toml
-[developer]
-# Warn when tool outputs exceed threshold
-mcp_response_warning_threshold = 20000
-
-# Smart session continuation when limit reached (0 = disabled)
-max_session_tokens_threshold = 50000
-
-# Cache management
-cache_tokens_pct_threshold = 40
-```
-
-### Session Token Commands
+- Maintains session state consistency
 
 - `/cache` - Mark cache checkpoint for cost savings
 - `/info` - Display token usage and cost breakdown
@@ -1165,22 +1002,20 @@ Session Cost Report:
 - Increase thresholds to compress less frequently
 - Consider disabling if sessions are short
 
-### Integration with Session Continuation
+### Integration with Token Management
 
-Compression and continuation work together:
+Compression works with other token management features:
 
-1. **Continuation** preserves context when token limits reached
-2. **Compression** reduces context size to prevent future continuations
+1. **Caching** reduces costs for repeated context
+2. **Compression** reduces context size at pressure thresholds
 3. **Combined effect**: Longer sessions with lower costs
 
 Example flow:
 ```
 Session grows → Compression triggers → Context reduced
 Session grows again → Compression triggers again → Context reduced further
-Session reaches limit → Continuation preserves summary + file context
+Session reaches limit → Compression at highest ratio
 ```
-
-## Advanced Configuration Patterns
 
 ### Multi-Provider Setup
 ```toml
@@ -1214,12 +1049,10 @@ enable_layers = false
 [docs-writer.mcp]
 enabled = true
 server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "read_html"]  # Only doc-related tools
+allowed_tools = ["text_editor"]  # Only doc-related tools
 ```
 
 ### External Tool Integration
-```toml
-# Web development setup
 [web-dev]
 model = "openrouter:anthropic/claude-sonnet-4"
 
@@ -1472,10 +1305,8 @@ Strict mode is always enabled: the provider will reject responses that don't con
 
 | Command | Flag | Notes |
 |---------|------|-------|
-| `octomind ask` | `--schema <path>` | Stateless single query |
 | `octomind run` | `--schema <path>` | Non-interactive session run |
 | `octomind session` | `--schema <path>` | Interactive session (all responses structured) |
-
 ### Provider Compatibility
 
 Not all providers support structured output. Octomind fails fast with a clear error if the selected provider/model does not support it:
@@ -1511,22 +1342,9 @@ Providers with known structured output support:
 
 **Single query with structured output:**
 ```bash
-octomind ask "Review this code for security issues" \
-  --files src/auth.rs \
-  --schema schema.json \
-  --model openai:gpt-4o
-```
-
-**Output** (raw JSON, no markdown):
-```json
-{
-  "summary": "The auth module has two potential vulnerabilities.",
-  "issues": ["SQL injection in login query", "Missing rate limiting"],
-  "severity": "high"
-}
-```
-
 **Non-interactive run with structured output:**
+```bash
+octomind run developer "Analyze the codebase and list all TODO items" \
 ```bash
 octomind run developer "Analyze the codebase and list all TODO items" \
   --schema todos_schema.json \
@@ -1544,7 +1362,7 @@ Structured output is ideal for CI/CD pipelines:
 
 ```bash
 # Extract structured analysis and pipe to jq
-result=$(octomind ask "Summarize recent changes" \
+result=$(octomind run developer "Summarize recent changes" \
   --schema analysis_schema.json \
   --model openai:gpt-4o)
 
@@ -1560,5 +1378,4 @@ fi
 - Schema is loaded once at startup and validated as JSON before use
 - `structured_output` field in `ProviderResponse` carries the parsed JSON value
 - When structured output is present, it takes precedence over `content` for display
-- Layers and context reduction calls always use `schema: None` — only the top-level session/ask uses the schema
-- Continuation calls propagate the schema so multi-turn structured sessions work correctly
+- Layers and context reduction calls always use `schema: None` — only the top-level session uses the schema

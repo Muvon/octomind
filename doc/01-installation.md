@@ -395,8 +395,9 @@ export PATH="$PATH:~/.local/bin"
 # Verify API key is set
 echo $OPENROUTER_API_KEY
 
+```bash
 # Test API key validity
-octomind ask "Hello" --model "openrouter:anthropic/claude-haiku"
+octomind run developer "Hello" --model "openrouter:anthropic/claude-haiku"
 ```
 
 ### Development Issues

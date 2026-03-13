@@ -27,20 +27,18 @@ graph TB
     C --> H[Assistant Role<br/>Chat Only]
     C --> I[Custom Roles<br/>Configurable]
 
-    D --> J[Developer Server<br/>shell, ast_grep, plan, ask]
+    D --> J[Developer Server<br/>shell, ast_grep, plan]
     D --> K[Filesystem Server<br/>text_editor, batch_edit, extract_lines]
-    D --> L[Web Server<br/>web_search, read_html]
-    D --> M[Agent Server<br/>Specialized AI routing]
+    D --> L[Agent Server<br/>Specialized AI routing]
 
-    E --> N[OpenRouter<br/>Multi-provider]
-    E --> O[OpenAI<br/>Direct API]
-    E --> P[Anthropic<br/>Claude models]
-    E --> Q[Google/Amazon<br/>Cloudflare/DeepSeek]
+    E --> M[OpenRouter<br/>Multi-provider]
+    E --> N[OpenAI<br/>Direct API]
+    E --> O[Anthropic<br/>Claude models]
+    E --> P[Google/Amazon<br/>Cloudflare/DeepSeek]
 
-    F --> R[Context Management<br/>Smart continuation]
-    F --> S[Cost Tracking<br/>Real-time monitoring]
-    F --> T[Caching System<br/>Automatic optimization]
-```
+    F --> Q[Context Management<br/>Conversation compression]
+    F --> R[Cost Tracking<br/>Real-time monitoring]
+    F --> S[Caching System<br/>Automatic optimization]
 
 ## Core Components
 
@@ -50,10 +48,9 @@ graph TB
 
 **Key Features:**
 - **Persistent Context**: Sessions maintain conversation history with smart truncation
-- **Smart Continuation**: Automatic context preservation when token limits are reached
+- **Conversation Compression**: Automatic context compression when token limits approached
 - **Cost Tracking**: Real-time monitoring of usage and costs across sessions
 - **Session Management**: Save, resume, and organize conversations by name
-
 ### 2. MCP Tool System
 
 **Built-in MCP Servers** provide comprehensive development capabilities:
@@ -62,23 +59,7 @@ graph TB
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
 - `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
-- `ask(question="...")` - Pause execution and ask the user a clarification question; halts until answered. Use ONLY when genuinely blocked — question must be fully self-contained with all context, options, and references
 - `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
-
-**Filesystem Server** (`src/mcp/fs/`):
-- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
-- `text_editor(command=\"create|str_replace|insert|line_replace|undo_edit\", path=\"...\", ...)` - Edit files
-- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
-
-
-**Web Server** (`src/mcp/web/`):
-- `web_search(query="...", count=20, ...)` - Search the web using Brave Search API
-- `image_search(query="...", count=50, ...)` - Search for images with metadata and thumbnails
-- `video_search(query="...", count=20, ...)` - Search for videos with duration and creator info
-- `news_search(query="...", count=20, ...)` - Search for news articles with publication dates
-- `read_html(sources=[...])` - Convert HTML content to Markdown format
-
 **Agent Server** (`src/mcp/agent/`):
 - `agent_*()` tools - Route tasks to configured AI layers for specialized processing
 - `call_llm(prompt="...", model="...", system="...", temperature=0.7)` - Direct LLM call with runtime parameters
@@ -88,7 +69,6 @@ graph TB
 - Command-based (stdin) MCP servers
 - Health monitoring and automatic recovery
 - Server registry for centralized configuration
-
 
 ### 3. Multi-Provider AI Support
 
@@ -145,9 +125,8 @@ graph TB
 
 **Context Management**:
 - Smart truncation when limits approached
-- AI-driven context preservation during continuation
+- Conversation compression for efficient token usage
 - Efficient token usage optimization
-## Key Features
 
 ### Multimodal Vision Support
 
@@ -157,16 +136,14 @@ graph TB
 - Intelligent file completion and path resolution
 - Use cases: UI analysis, diagram interpretation, code screenshots
 
-### Smart Session Continuation
+### Conversation Compression
 
-**Adaptive Context Management** (`src/session/chat/continuation/`):
-- AI-driven context preservation when token limits reached
-- File context parsing with `filename:startline:endline` format
-- Automatic conversation compression at configurable thresholds
+**Adaptive Context Management** (`src/session/chat/conversation_compression.rs`):
+- AI-driven context compression when token limits approached
+- Token-based compression triggers at configurable thresholds (50k, 100k, 150k)
 - Hierarchical compression: task → phase → project levels
-- Visual feedback showing continuation status
+- Visual feedback showing compression status
 - Zero configuration required
-
 ### Layered Processing System
 
 **AI Pipeline Architecture** (`src/session/layers/`):

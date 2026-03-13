@@ -22,15 +22,12 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ### Session-First Design
 - **Interactive AI Conversations**: All functionality accessed through natural language sessions
-- **Persistent Context**: Smart context management with automatic continuation when limits reached
+- **Persistent Context**: Smart context management with automatic compression when limits reached
 - **Role-Based Access**: Developer (full tools), Assistant (chat-only), and custom role configurations
-
 ### Built-in MCP Tools
 - **Developer Server**: `shell()`, `ast_grep()` - Execute commands and search code patterns
 - **Filesystem Server**: `view()`, `text_editor()`, `batch_edit()` - File operations
-- **Web Server**: `web_search()`, `read_html()` - Web research and content analysis
 - **Agent Server**: `agent_*()` - Route tasks to specialized AI processing layers
-
 
 ### Multi-Provider AI Support
 - **7 Providers**: OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare, DeepSeek
@@ -39,13 +36,12 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - **Vision Support**: Multimodal capabilities across all supported providers
 
 ### Advanced Features
-- **Smart Session Continuation**: Automatic context preservation when token limits reached
+- **Conversation Compression**: Automatic context compression when token limits approached
 - **Cost Tracking**: Real-time usage monitoring with detailed reporting
 - **Layered Processing**: AI pipeline system for complex task decomposition
 - **MAP Planning**: Brain-inspired Modular Agentic Planner architecture for multi-step tasks
 - **Template-Based Configuration**: All defaults in `config-templates/default.toml`, including MAP planning template at `config-templates/map-planner.toml`
 - **Structured Output**: `--schema` flag enforces JSON Schema-validated responses for pipelines and automation
-## Core Features
 
 ### Smart Adaptive Compression System
 - **Token-Based Triggers**: Compression activates at absolute token count thresholds (50k, 100k, 150k)
@@ -56,31 +52,28 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - **Last 4 Turns Preservation**: Maintains recent context uncompressed for continuity
 
 ### Unified Token Calculation System
-- **Single Source of Truth**: `estimate_full_context_tokens()` used by compression, continuation, and display
+- **Single Source of Truth**: `estimate_full_context_tokens()` used by compression and display
 - **Accurate Estimation**: Includes system prompt, tool definitions, and safety margins
 - **Consistent Reporting**: All systems use same token counting for reliable cost tracking
 - **Cost Breakdown**: `/info` shows detailed token usage and cost per request
-
 ### Tool Execution Animation
 - **Visual Feedback**: Animated indicator during tool execution showing progress
 - **User Experience**: Clear indication that tools are running and system is responsive
 - **Parallel Tool Support**: Animation works correctly with parallel tool execution
 
-### Smart Session Continuation System
-- **Modular Architecture**: Refactored into focused modules in `src/session/chat/continuation/`
-- **Automatic Context Management**: AI-driven context preservation when token limits reached
-- **File Context Parsing**: AI specifies files using format `filename:startline:endline`
-- **Visual Feedback**: Professional colored output showing continuation status
-- **Zero Configuration**: Built-in prompts and logic for seamless operation
-- **Error Resilience**: Graceful handling of missing files and parsing errors
-
+### Conversation Compression System
+- **Token-Based Triggers**: Compression activates at absolute token count thresholds (50k, 100k, 150k)
+- **Cache-Aware Economics**: Calculates net benefit before compressing, considering cache invalidation costs
+- **Discourse-Aware Chunking**: Preserves important information while reducing context size
+- **Automatic Decision Making**: Skips compression if it would cost money, only compresses when profitable
+- **Compression Statistics**: `/info` command shows compression metrics, tokens saved, and cost savings
+- **Last 4 Turns Preservation**: Maintains recent context uncompressed for continuity
 ### MCP Tool System
-- **Built-in Servers**: Developer, Filesystem, Web, and Agent servers with comprehensive tool sets
+- **Built-in Servers**: Developer, Filesystem, and Agent servers with comprehensive tool sets
 - **Protocol Compliance**: Full MCP standard implementation with proper error handling
 - **Tool Routing**: Efficient tool-to-server mapping for instant execution
 - **Health Monitoring**: Server health checks and automatic recovery
 - **External Server Support**: HTTP and stdin-based external MCP servers
-
 ### Multi-Provider AI Integration
 - **7 Providers Supported**: OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare, DeepSeek
 - **Unified Model Format**: Consistent `provider:model` syntax across all providers
@@ -142,7 +135,6 @@ Everything happens within interactive AI conversations. No separate indexing, co
 Built-in servers provide development tools:
 - **Developer**: `shell()`, `ast_grep()` - Command execution and code analysis
 - **Filesystem**: `view()`, `text_editor()`, `batch_edit()` - File operations
-- **Web**: `web_search()`, `read_html()` - Web research
 - **Agent**: `agent_*()` - Specialized AI task routing
 
 

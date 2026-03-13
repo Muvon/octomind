@@ -21,13 +21,6 @@ Octomind provides **four** built-in MCP servers with comprehensive development c
 - `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
 
 
-**Web Server** (`src/mcp/web/`):
-- `web_search(query="...", count=20, ...)` - Search the web using Brave Search API
-- `image_search(query="...", count=50, ...)` - Search for images with metadata
-- `video_search(query="...", count=20, ...)` - Search for videos with duration info
-- `news_search(query="...", count=20, ...)` - Search for news articles
-- `read_html(sources=[...])` - Convert HTML content to Markdown format
-
 **Agent Server** (`src/mcp/agent/`):
 - `agent_*()` tools - Route tasks to configured AI layers for specialized processing
 - `call_llm(prompt="...", model="...", system="...", temperature=0.7)` - Direct LLM call with runtime parameters

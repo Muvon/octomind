@@ -2,11 +2,10 @@
 
 ## Overview
 - Sessions are always interactive (no batch mode)
-- Session continuation: automatic when token limits are reached (modular, user-visible)
+- **Conversation compression**: automatic when token limits are reached
 - **Cache/cost tracking**: All sessions track token usage and cost in real time
 - **Role selection**: Use `--role` or config to pick developer/assistant/custom
 - **/run**: run command layers (no history impact); **agent_<name>**: call agent tools as needed
-
 ## Session Roles Comparison
 
 | Feature | Developer Role | Assistant Role | Custom Roles |
@@ -776,12 +775,9 @@ Layers can affect the session in different ways:
 - **shell**: Execute shell commands
 - **text_editor**: Edit files
 - **view**: Browse files and directories
-- **read_html**: Convert HTML to Markdown
-
 
 #### Development Tools
 - **Project analysis**: Built-in code understanding
-
 ### Tool Usage Examples
 
 ```bash
@@ -819,79 +815,57 @@ providers = ["core", "filesystem", "development"]
 enabled = false  # No tools in chat mode
 ```
 
-## Smart Session Continuation
+## Conversation Compression
 
-### Automatic Context Preservation
+### Automatic Context Management
 
-Octomind features an intelligent session continuation system that automatically manages token limits while preserving essential context through AI-driven file analysis.
+Octomind features an intelligent conversation compression system that automatically manages token limits by compressing older conversation exchanges while preserving recent context.
 
 #### How It Works
 
-When your session approaches the configured token threshold during any operation:
+When your session approaches configured token thresholds:
 
-1. **Automatic Detection**: System monitors tokens against `max_session_tokens_threshold`
-2. **Deferred Processing**: During parallel tool execution, continuation is deferred until all tools complete
-3. **Structured Summary Request**: AI receives a detailed prompt to summarize the session
-4. **File Context Parsing**: AI specifies needed files using format `filename:startline:endline`
-5. **Context Preservation**: System reads specified files with line numbers
-6. **Seamless Continuation**: Session resets with summary and file context intact
-7. **Cancellation Support**: CTRL-C can interrupt long-running continuation operations
+1. **Token Threshold Detection**: System monitors tokens against pressure levels (50k, 100k, 150k)
+2. **AI Decision**: AI decides whether compression is beneficial (self-reflection)
+3. **Context Preservation**: Last 4 turns (2 exchanges) remain uncompressed for continuity
+4. **Cache-Aware**: Calculates net benefit considering cache invalidation costs
+5. **Compression**: Older exchanges are summarized using plan compression infrastructure
 
 #### Configuration
 
 ```toml
-# Enable smart continuation (0 = disabled, >0 = enabled)
-max_session_tokens_threshold = 20000
-```
+[compression]
+# Enable adaptive compression (default: true)
+adaptive_threshold = true
 
-#### Technical Implementation
+# Pressure levels - compress when threshold exceeded
+[[compression.pressure_levels]]
+threshold = 50000
+name = "light"
+target_ratio = 2.0
 
-- **Parallel Tool Safety**: Continuation defers during parallel tool execution to prevent "tool_call_ids did not have response messages" errors
-- **CTRL-C Cancellation**: Operations can be interrupted with proper cancellation handling
-- **Clean API Design**: Uses `TruncationOptions` struct following Rust best practices
-- **Code Quality**: Eliminated duplicate functions and parameter pollution
+[[compression.pressure_levels]]
+threshold = 100000
+name = "medium"
+target_ratio = 4.0
 
-#### Example Continuation Flow
+[[compression.pressure_levels]]
+threshold = 150000
+name = "heavy"
+target_ratio = 8.0
 
-```
-[Session approaching token limit during tool execution]
-
-System: Token threshold exceeded during tool processing - deferring continuation until all tools complete
-[All parallel tools complete successfully]
-
-System: Injecting continuation request...
-AI: Provides structured summary with file requirements:
-```
-src/config/mod.rs:95:105
-src/session/chat/response.rs:264:280
-```
-
-System: Loading file contexts...
-=== src/config/mod.rs (lines 95-105) ===
-95: pub struct Config {
-96:     // Configuration fields
-...
-
-=== src/session/chat/response.rs (lines 264-280) ===
-264: pub async fn process_response(params: ResponseProcessingParams<'_>) -> Result<()> {
-...
-
-Continuing with preserved context...
+# Fallback: compress when this limit is reached (0 = disabled)
+max_session_tokens_threshold = 50000
 ```
 
 #### Features
 
-- **Modular Architecture**: Refactored into focused modules with improved maintainability
-- **User Experience**: Assistant summaries displayed to users during continuation
-- **Professional Display**: Colored headers and organized status information during continuation
-- **Parallel Tool Safety**: Prevents continuation during parallel tool execution to avoid API errors
-- **Cancellation Support**: CTRL-C interruption support for long-running operations
-- **Zero Configuration**: All prompts and logic are built-in
-- **AI-Driven Selection**: AI chooses exactly which files and lines to preserve
-- **Visual Feedback**: Clear indication when continuation occurs with file context details
-- **Error Resilience**: Graceful handling of missing files or parsing errors
-- **Performance Limits**: Maximum 10 file contexts, 10k lines per file
-
+- **AI-Driven Decision**: AI decides when compression is beneficial
+- **Cache-Aware Economics**: Only compresses when profitable (considers cache invalidation costs)
+- **Context Preservation**: Last 4 turns always remain uncompressed
+- **Visual Feedback**: Clear indication when compression occurs
+- **Zero Configuration**: Works automatically with sensible defaults
+- **Error Resilience**: Graceful handling of compression failures
 ## Visual Feedback and Animation
 
 Octomind provides real-time visual feedback during interactive sessions to keep you informed about what's happening behind the scenes.
@@ -988,9 +962,8 @@ model = "openrouter:anthropic/claude-sonnet-4"  # Expensive for complex work
 ```toml
 [openrouter]
 cache_tokens_pct_threshold = 40  # Auto-cache at 40%
-max_session_tokens_threshold = 50000  # Smart continuation threshold
+max_session_tokens_threshold = 50000  # Compression fallback threshold
 ```
-
 #### Manual Management
 ```bash
 # In session:
@@ -1069,17 +1042,6 @@ target_ratio = 4.0
 3. **Adjust thresholds**: Start conservative, adjust based on your workflow
 4. **Combine with caching**: Use `/cache` alongside compression for maximum savings
 5. **Preserve context**: Compression preserves last 4 turns for continuity
-
-#### Compression + Continuation Integration
-
-Compression and continuation work together for optimal cost management:
-
-```
-Session grows → Compression triggers → Context reduced
-Session grows again → Compression triggers again → Context reduced further
-Session reaches limit → Continuation preserves summary + file context
-```
-
 This combination allows very long sessions with minimal cost.
 
 ## Context Management Commands
@@ -1196,15 +1158,11 @@ octomind session -n security_audit --role=security-analyst
 The `--schema` flag enforces structured JSON output from the AI by passing a JSON Schema file. All three run modes support it:
 
 ```bash
-# Single stateless query → structured JSON
-octomind ask "Review src/auth.rs for security issues" \
+# Non-interactive session run → structured JSON
+octomind run developer "Review src/auth.rs for security issues" \
   --files src/auth.rs \
   --schema review_schema.json \
   --model openai:gpt-4o
-
-# Non-interactive session run → structured JSON
-octomind run developer "List all TODO items in the codebase" \
-  --schema todos_schema.json
 
 # Interactive session → every response is structured JSON
 octomind session --schema schema.json --role assistant

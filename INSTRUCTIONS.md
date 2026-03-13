@@ -13,12 +13,10 @@ CLI / WebSocket
       ├── Roles       ← src/config/roles.rs         (model, system prompt, MCP servers per role)
       ├── Layers      ← src/session/layers/          (chained AI sub-agents, run after each response)
       ├── Workflows   ← src/session/workflows/       (multi-step orchestrated task runners)
-      ├── Continuation← src/session/chat/continuation/ (auto-reset when token limit hit)
       │
       └── MCP servers ← src/mcp/
             ├── dev/      shell, ast_grep, plan
             ├── fs/       text_editor, list_files, batch_edit, extract_lines
-            ├── web/      web_search, read_html, image/video/news search
             └── agent/    agent_* tools → route tasks to configured layers
 ```
 
@@ -36,8 +34,7 @@ CLI / WebSocket
 | Session init & state | `src/session/chat/session/core.rs` |
 | Session main loop | `src/session/chat/session/main_loop.rs` |
 | Session commands (`/role`, `/model` …) | `src/session/chat/session/commands/` |
-| Continuation (token-limit auto-reset) | `src/session/chat/continuation/` |
-| Response processing | `src/session/chat/response/` |
+| Conversation compression | `src/session/chat/conversation_compression.rs` |
 | Layers runtime | `src/session/layers/layer_trait.rs`, `processor.rs` |
 | Workflows | `src/session/workflows/orchestrator.rs` |
 | MCP tool routing | `src/mcp/mod.rs` → `try_execute_tool_call()` |
@@ -115,5 +112,5 @@ Reference: `src/mcp/dev/shell.rs` (`SHELL_MISUSE_HINTS`), `src/mcp/fs/text_editi
 | Config not loading | `src/config/loading.rs` → `load()` |
 | Session command broken | `src/session/chat/session/commands/mod.rs` |
 | Layer not running | `src/session/layers/processor.rs` |
-| Continuation not triggering | `src/session/chat/continuation/detection.rs` |
+| Compression not working | `src/session/chat/conversation_compression.rs` |
 | Structured output not working | `src/session/mod.rs` → `chat_completion_with_provider()` (provider capability check), `src/providers.rs` → `to_octolib_params()` (schema application) |

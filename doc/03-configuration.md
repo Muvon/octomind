@@ -166,25 +166,17 @@ args = []
 tools = []
 
 [[mcp.servers]]
-name = "web"
-type = "builtin"
-timeout_seconds = 30
-args = []
-tools = []
-
-[[mcp.servers]]
 name = "octocode"
 type = "stdin"
 command = "octocode"
 args = ["mcp", "--path=."]
 timeout_seconds = 240
 tools = []
-
 # Example external MCP server configuration:
 # [[mcp.servers]]
-# name = "web_search"
+# name = "external_tools"
 # type = "http"
-# url = "https://mcp.so/server/webSearch-Tools"
+# url = "https://mcp.so/server/custom-tools"
 # timeout_seconds = 30
 # tools = []
 ```
@@ -193,8 +185,7 @@ tools = []
 - **API Keys**: Set via environment variables only (e.g., `OPENROUTER_API_KEY`)
 - **Server References**: Roles use `server_refs` to reference servers by name
 - **Tool Filtering**: Use `allowed_tools` to limit available tools per role
-- **Builtin Servers**: Developer, filesystem, web, and octocode are always available
-
+- **Builtin Servers**: Developer, filesystem, and octocode are always available
 ## Custom Instructions File
 
 Octomind supports automatic loading of custom instructions from a project-specific file. This feature allows you to provide context, guidelines, or project-specific information that will be automatically included in every new session.
@@ -653,9 +644,9 @@ tools = []  # Empty means all tools enabled
 
 # External HTTP server
 [[mcp.servers]]
-name = "web_search"
+name = "external_tools"
 type = "http"
-url = "https://mcp.so/server/webSearch-Tools"
+url = "https://mcp.so/server/custom-tools"
 auth_token = "optional_token"
 timeout_seconds = 30
 tools = []  # Empty means all tools enabled
@@ -827,63 +818,60 @@ text_model = "jina-embeddings-v3"
 
 ## Token Management
 
-### Smart Session Continuation System
+### Conversation Compression System
 
-Octomind features an intelligent session continuation system that automatically manages token limits while preserving essential context through AI-driven file analysis.
+Octomind features an intelligent conversation compression system that automatically manages token limits by compressing older conversation exchanges while preserving recent context.
 
 #### How It Works
 
-When your session approaches token limits during any operation (user input, tool execution, long conversations), the system:
+When your session approaches token thresholds, the system:
 
-1. **Detects Token Threshold**: Monitors session tokens against `max_session_tokens_threshold`
-2. **Requests Summary**: Automatically injects a structured summary request to the AI
-3. **Parses File Requirements**: AI specifies needed files in format `filename:startline:endline`
-4. **Reads File Context**: Automatically includes file contents with line numbers
-5. **Resets Session**: Continues with preserved summary and full file context
+1. **Detects Token Threshold**: Monitors session tokens against configured pressure levels (50k, 100k, 150k tokens)
+2. **AI Decision**: AI decides whether compression is beneficial (self-reflection)
+3. **Preserves Recent Context**: Last 4 turns (2 exchanges) remain uncompressed for continuity
+4. **Compresses Older Exchanges**: Uses plan compression infrastructure to summarize older content
+5. **Cache-Aware**: Calculates net benefit considering cache invalidation costs
 
 #### Configuration
 
 ```toml
-# Token threshold for smart continuation (0 = disabled, >0 = enabled)
-max_session_tokens_threshold = 20000
+[compression]
+# Enable adaptive compression (default: true)
+adaptive_threshold = true
 
-# When threshold exceeded, system automatically:
-# - Requests structured summary from AI
-# - Parses required file contexts
-# - Resets session with preserved context
+# Pressure levels - compress when threshold exceeded
+[[compression.pressure_levels]]
+threshold = 50000
+name = "light"
+target_ratio = 2.0
+
+[[compression.pressure_levels]]
+threshold = 100000
+name = "medium"
+target_ratio = 4.0
+
+[[compression.pressure_levels]]
+threshold = 150000
+name = "heavy"
+target_ratio = 8.0
 ```
 
 #### Features
 
-- **Zero Configuration**: No prompts to configure - all built-in
-- **AI-Driven Context**: AI selects exactly which files and line ranges to preserve
-- **Seamless Continuation**: No interruption to your workflow
-- **Visual Feedback**: Clear indication when continuation occurs
-- **Error Resilience**: Graceful handling of missing files or parsing errors
-- **Performance Limits**: Maximum 10 file contexts, reasonable line limits
+- **AI-Driven Decision**: AI decides when compression is beneficial
+- **Cache-Aware Economics**: Only compresses when profitable (considers cache invalidation costs)
+- **Context Preservation**: Last 4 turns always remain uncompressed
+- **Visual Feedback**: Clear indication when compression occurs
+- **Zero Configuration**: Works automatically with sensible defaults
 
-#### File Context Format
+#### Fallback Mode
 
-The AI specifies required files using this exact format:
-```
-src/config/mod.rs:95:105
-src/session/chat/response.rs:264:280
-```
-
-The system automatically reads these files and includes them with 1-indexed line numbers in the continuation.
-
-### Automatic Token Management
+When adaptive compression is disabled (`adaptive_threshold = false`), the system uses `max_session_tokens_threshold` as a simple trigger:
 
 ```toml
-[openrouter]
-# Warn when MCP tools generate large outputs (in tokens)
-mcp_response_warning_threshold = 20000
-
-# Smart session continuation when this limit is reached (0 = disabled)
+# Fallback: compress when this limit is reached (0 = disabled)
 max_session_tokens_threshold = 50000
-
-# Automatically move cache markers when context reaches this percentage
-cache_tokens_pct_threshold = 40
+```
 ```
 
 ### Manual Token Management
@@ -892,7 +880,6 @@ Use session commands to manage tokens:
 - `/cache` - Mark cache checkpoint
 - `/info` - Show token usage breakdown
 - `/done` - Optimize context
-
 ## Smart Adaptive Compression
 
 Octomind features an intelligent compression system that automatically reduces conversation context when token usage grows, while maintaining cost-effectiveness through cache-aware decision making.
@@ -1158,13 +1145,7 @@ Octomind automatically migrates legacy configurations on load, but it's recommen
   Solution: Use lowercase input modes: 'last', 'all'
   ```
 
-5. **Session continuation not working**
-  ```
-  Session continues growing without continuation
-  Solution: Check max_session_tokens_threshold > 0 (0 = disabled)
-  ```
-
-6. **Legacy configuration fields**
+5. **Legacy configuration fields**
   ```
   Unknown configuration field: enable_auto_truncation
   Unknown configuration field: max_request_tokens_threshold

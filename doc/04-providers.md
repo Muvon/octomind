@@ -350,10 +350,9 @@ cache_tokens_pct_threshold = 40  # Auto-cache at 40% context
 
 ### Unified Token Calculation System
 
-Octomind uses a unified token counting system that provides accurate estimates matching what's actually sent to API providers. This single source of truth ensures consistency across all systems: display, continuation, compression, and cost tracking.
+Octomind uses a unified token counting system that provides accurate estimates matching what's actually sent to API providers. This single source of truth ensures consistency across all systems: display, compression, and cost tracking.
 
 **For detailed information about compression and cost optimization, see [Advanced Features - Smart Adaptive Compression System](./06-advanced.md#smart-adaptive-compression-system) and [Configuration - Smart Adaptive Compression](./03-configuration.md#smart-adaptive-compression).**
-
 #### Token Counting Functions
 
 **`estimate_tokens(text: &str) -> usize`**
@@ -377,10 +376,7 @@ Octomind uses a unified token counting system that provides accurate estimates m
   - System prompt
   - Tool definitions (MCP tools)
   - Safety margin for response generation
-- This is the "single source of truth" used by compression, continuation, and display
-
-#### What's Included in Full Context Tokens
-
+- This is the "single source of truth" used by compression and display
 ```
 Full Context = Messages + System Prompt + Tool Definitions + Safety Margin
 
@@ -509,16 +505,13 @@ But if 0 turns remain:
 
 ```bash
 # Warn when MCP tools generate large outputs
+```bash
+# Warn when MCP tools generate large outputs
 export OCTOMIND_OPENROUTER__MCP_RESPONSE_WARNING_THRESHOLD=20000
-
-# Enable smart session continuation at token threshold
-export OCTOMIND_MAX_SESSION_TOKENS_THRESHOLD=50000
 
 # Auto-cache when context reaches this percentage
 export OCTOMIND_OPENROUTER__CACHE_TOKENS_PCT_THRESHOLD=40
 ```
-
-### Best Practices for Cost Optimization
 
 1. **Monitor `/info` regularly**: Track costs and identify expensive operations
 2. **Use compression**: Enable adaptive compression to reduce context size

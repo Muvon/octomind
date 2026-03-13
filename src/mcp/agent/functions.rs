@@ -194,7 +194,8 @@ async fn process_layer_as_agent(
 
 	// Process placeholders in agent system prompt before creating layer
 	if let Some(ref system_prompt) = agent_layer_config.system_prompt {
-		let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+		// Use thread-local if set (ACP/WebSocket), otherwise process cwd
+		let current_dir = crate::mcp::get_thread_working_directory();
 		let processed_prompt = crate::session::helper_functions::process_placeholders_async(
 			system_prompt,
 			&current_dir,
@@ -322,9 +323,9 @@ async fn execute_call_llm(
 		.get("max_tokens")
 		.and_then(|v| v.as_u64())
 		.unwrap_or(4096) as u32;
-
 	// Process placeholders in the provided system prompt
-	let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+	// Use thread-local if set (ACP/WebSocket), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 	let processed_system_prompt =
 		crate::session::helper_functions::process_placeholders_async(system_prompt, &current_dir)
 			.await;

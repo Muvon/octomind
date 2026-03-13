@@ -32,6 +32,7 @@ use colored::Colorize;
 use crate::session::output::{OutputMode, OutputSink};
 use crate::websocket::{
 	AssistantPayload, CostPayload, ServerMessage, ThinkingPayload, ToolResultPayload,
+	ToolUsePayload,
 };
 
 // Response processing parameters struct
@@ -435,6 +436,22 @@ pub async fn process_response<S: OutputSink>(
 				}
 
 				// Execute all tool calls in parallel using the new module
+
+				// Emit ToolUse notifications before execution so ACP/WebSocket clients
+				// can register the tool call ID before the result arrives.
+				if params.mode.should_suppress_cli_output() {
+					for call in &current_tool_calls {
+						let server =
+							get_tool_server_name_async(&call.tool_name, params.config).await;
+						params.emit(ServerMessage::ToolUse(ToolUsePayload {
+							tool: call.tool_name.clone(),
+							tool_id: call.tool_id.clone(),
+							server,
+							params: call.parameters.clone(),
+							session_id: session_id.clone(),
+						}));
+					}
+				}
 				let (tool_results, total_tool_time_ms) =
 					match tool_execution::execute_tools_parallel(
 						current_tool_calls.clone(),

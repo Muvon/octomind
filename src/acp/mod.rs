@@ -18,6 +18,7 @@
 //! like Zed editor and JetBrains IDEs.
 
 mod agent;
+pub mod commands;
 
 use agent::OctomindAgent;
 use anyhow::Result;

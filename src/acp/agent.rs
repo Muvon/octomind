@@ -21,10 +21,11 @@ use std::rc::Rc;
 
 use agent_client_protocol::{
 	AgentCapabilities, AgentSideConnection, AuthenticateRequest, AuthenticateResponse,
-	CancelNotification, Client, ContentBlock, ContentChunk, Implementation, InitializeRequest,
-	InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer,
-	NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, ProtocolVersion,
-	SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallUpdate, ToolCallUpdateFields,
+	CancelNotification, Client, ContentBlock, ContentChunk, ExtRequest, ExtResponse,
+	Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+	McpCapabilities, McpServer, NewSessionRequest, NewSessionResponse, PromptRequest,
+	PromptResponse, ProtocolVersion, SessionNotification, SessionUpdate, StopReason, ToolCall,
+	ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 
 use crate::config::mcp::McpServerConfig;
@@ -119,13 +120,24 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		args: InitializeRequest,
 	) -> agent_client_protocol::Result<InitializeResponse> {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
+
+		// Advertise extension capabilities in _meta per ACP spec
+		let mut meta = agent_client_protocol::Meta::new();
+		meta.insert(
+			"octomind.dev".to_string(),
+			serde_json::json!({
+				"commands": true
+			}),
+		);
+
 		let response = InitializeResponse::new(ProtocolVersion::LATEST)
 			.agent_capabilities(
 				AgentCapabilities::default()
 					.load_session(true)
 					// Advertise HTTP MCP transport support so clients offer us HTTP servers.
 					// SSE is not supported — we skip those servers silently in inject_acp_mcp_servers.
-					.mcp_capabilities(McpCapabilities::new().http(true)),
+					.mcp_capabilities(McpCapabilities::new().http(true))
+					.meta(meta),
 			)
 			.agent_info(Implementation::new("octomind", env!("CARGO_PKG_VERSION")));
 		Ok(response)
@@ -144,6 +156,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 	) -> agent_client_protocol::Result<NewSessionResponse> {
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_thread_working_directory(Some(args.cwd.clone()));
+		crate::mcp::set_thread_original_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
 
 		inject_acp_mcp_servers(&mut self.config.borrow_mut(), &self.role, &args.mcp_servers);
@@ -304,14 +317,22 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					)),
 					ServerMessage::ToolUse(p) => {
 						let tool_call = ToolCall::new(p.tool_id.clone(), p.tool.clone())
+							.status(ToolCallStatus::InProgress)
 							.raw_input(p.params.clone());
 						Some(SessionUpdate::ToolCall(tool_call))
 					}
 					ServerMessage::ToolResult(p) => {
+						let status = if p.success {
+							ToolCallStatus::Completed
+						} else {
+							ToolCallStatus::Failed
+						};
 						let update = ToolCallUpdate::new(
 							p.tool_id.clone(),
-							ToolCallUpdateFields::new()
-								.raw_output(serde_json::Value::String(p.content)),
+							ToolCallUpdateFields::new().status(status).raw_output(
+								serde_json::from_str::<serde_json::Value>(&p.content)
+									.unwrap_or(serde_json::Value::String(p.content)),
+							),
 						);
 						Some(SessionUpdate::ToolCallUpdate(update))
 					}
@@ -389,6 +410,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 
 		// Set per-session working directory via thread-local
 		crate::mcp::set_thread_working_directory(Some(args.cwd.clone()));
+		crate::mcp::set_thread_original_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
 
 		inject_acp_mcp_servers(&mut self.config.borrow_mut(), &self.role, &args.mcp_servers);
@@ -423,5 +445,15 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			.insert(session_id, SessionCancellation::new());
 
 		Ok(LoadSessionResponse::new())
+	}
+	async fn ext_method(&self, args: ExtRequest) -> agent_client_protocol::Result<ExtResponse> {
+		super::commands::handle_ext_method(
+			args,
+			&self.sessions,
+			&self.config,
+			&self.role,
+			&self.cancellations,
+		)
+		.await
 	}
 }

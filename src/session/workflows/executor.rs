@@ -424,7 +424,8 @@ impl StepExecutor {
 
 		// CRITICAL FIX: Process and cache layer system prompt before execution
 		// This ensures placeholders are expanded and prompt is cached
-		let current_dir = std::env::current_dir().unwrap_or_default();
+		// Use thread-local if set (ACP/WebSocket), otherwise process cwd
+		let current_dir = crate::mcp::get_thread_working_directory();
 		layer_config
 			.process_and_cache_system_prompt(&current_dir)
 			.await;

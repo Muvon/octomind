@@ -66,12 +66,11 @@ pub async fn handle_done(
 		);
 
 		// CRITICAL FIX: Re-add initial messages (welcome + custom instructions)
-		// Same pattern as /truncate command
-		let current_dir = std::env::current_dir().unwrap_or_default();
+		// Get current directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
+		let current_dir = crate::mcp::get_thread_working_directory();
 		match crate::session::chat::session::get_initial_messages(config, role, &current_dir).await
 		{
 			Ok(initial_messages) => {
-				// Find system message position
 				let system_msg_count = session
 					.session
 					.messages

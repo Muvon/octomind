@@ -38,6 +38,8 @@ lazy_static::lazy_static! {
 // Each thread can have its own working directory for isolated git worktrees
 thread_local! {
 	static THREAD_WORKING_DIRECTORY: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+	// The original session cwd set at session creation — used by workdir reset
+	static THREAD_ORIGINAL_WORKING_DIRECTORY: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Set the working directory for the current thread
@@ -45,6 +47,23 @@ pub fn set_thread_working_directory(path: Option<PathBuf>) {
 	THREAD_WORKING_DIRECTORY.with(|wd| {
 		*wd.borrow_mut() = path;
 	});
+}
+
+/// Set the original (session) working directory — called once at session creation.
+/// Used by the workdir tool's reset operation.
+pub fn set_thread_original_working_directory(path: PathBuf) {
+	THREAD_ORIGINAL_WORKING_DIRECTORY.with(|wd| {
+		*wd.borrow_mut() = Some(path);
+	});
+}
+
+/// Get the original session working directory, falling back to current_dir.
+pub fn get_thread_original_working_directory() -> PathBuf {
+	THREAD_ORIGINAL_WORKING_DIRECTORY.with(|wd| {
+		wd.borrow()
+			.clone()
+			.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+	})
 }
 
 /// Get the working directory for the current thread

@@ -93,7 +93,8 @@ pub async fn perform_simple_boundary_truncation(
 	}
 
 	// Add initial messages (welcome + instructions) using centralized function
-	let current_dir = std::env::current_dir().unwrap_or_default();
+	// Use thread-local if set (ACP/WebSocket), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 	if let Ok(initial_messages) =
 		crate::session::chat::session::get_initial_messages(_config, role, &current_dir).await
 	{

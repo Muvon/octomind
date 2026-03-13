@@ -136,8 +136,8 @@ fn generate_session_name() -> String {
 	let date_str = now.format("%y%m%d").to_string();
 	let time_str = now.format("%H%M%S").to_string();
 
-	// Get current directory basename
-	let current_dir = std::env::current_dir().unwrap_or_default();
+	// Get current directory basename - use thread-local if set (ACP/WebSocket sessions), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 	let basename = current_dir
 		.file_name()
 		.unwrap_or_default()
@@ -306,9 +306,8 @@ impl ChatSession {
 
 		// Handle resume_recent flag
 		let effective_resume = if params.resume_recent {
-			// Get current working directory
-			let current_dir = std::env::current_dir()?;
-
+			// Get current working directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
+			let current_dir = crate::mcp::get_thread_working_directory();
 			// Find the most recent session for this project
 			match crate::session::find_most_recent_session_for_project(&current_dir)? {
 				Some(session_name) => {
@@ -1051,9 +1050,8 @@ impl ChatSession {
 		use colored::Colorize;
 
 		// Get current directory for system prompt processing
-		let current_dir = std::env::current_dir()?;
-
-		// Get merged configuration for the new role
+		// Get current directory for system prompt processing - use thread-local if set (ACP/WebSocket), otherwise process cwd
+		let current_dir = crate::mcp::get_thread_working_directory();
 		let config_for_role = config.get_merged_config_for_role(new_role);
 
 		// Shutdown existing MCP servers first

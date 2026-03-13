@@ -177,6 +177,32 @@ else
   fail "MCP tool execution — session/new timeout"
 fi
 
+# ── 8. Tool call ID wire dump (diagnose tool_call_id mismatch) ────────────────
+info "Test 8: tool call ID wire dump (developer role only)"
+send "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"session/new\",\"params\":{\"cwd\":\"$CWD\",\"mcpServers\":[]}}"
+if wait_for_id 10 15; then
+  SID_DUMP=$(get_response 10 | jq -r '.result.sessionId // empty' 2>/dev/null)
+  if [ -n "$SID_DUMP" ]; then
+    BEFORE=$(wc -l < "$TMPOUT" | tr -d ' ')
+    send "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"$SID_DUMP\",\"prompt\":[{\"type\":\"text\",\"text\":\"Run: echo hello\"}]}}"
+    if wait_for_id 11 45; then
+      echo ""
+      echo "--- raw session/update notifications for this prompt ---"
+      tail -n +"$BEFORE" "$TMPOUT" | grep '"session/update"' | while IFS= read -r line; do echo "$line" | jq '.' 2>/dev/null || echo "$line"; done
+      echo "--- end raw dump ---"
+      echo "--- end raw dump ---"
+      echo ""
+      ok "wire dump complete"
+    else
+      fail "wire dump — timeout"
+    fi
+  else
+    fail "wire dump — no sessionId"
+  fi
+else
+  fail "wire dump — session/new timeout"
+fi
+
 # ── Shutdown ──────────────────────────────────────────────────────────────────
 exec 3>&-
 wait $ACP_PID 2>/dev/null || true

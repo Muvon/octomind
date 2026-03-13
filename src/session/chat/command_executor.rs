@@ -70,8 +70,9 @@ pub async fn execute_command_layer(
 	// Create a generic layer with processed system prompt
 	let mut processed_config = command_config.clone();
 	// Process system prompt placeholders before creating layer
+	// Use thread-local if set (ACP/WebSocket), otherwise process cwd
 	if let Some(ref system_prompt) = processed_config.system_prompt {
-		let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+		let current_dir = crate::mcp::get_thread_working_directory();
 		let processed = crate::session::helper_functions::process_placeholders_async(
 			system_prompt,
 			&current_dir,
@@ -272,9 +273,9 @@ pub async fn execute_command_layer(
 			if let Some(sys_msg) = system_message {
 				final_messages.push(sys_msg);
 			}
-
 			// Add initial messages (welcome + instructions) using centralized function
-			let current_dir = std::env::current_dir().unwrap_or_default();
+			// Use thread-local if set (ACP/WebSocket), otherwise process cwd
+			let current_dir = crate::mcp::get_thread_working_directory();
 			if let Ok(initial_messages) =
 				crate::session::chat::session::get_initial_messages(config, role, &current_dir)
 					.await

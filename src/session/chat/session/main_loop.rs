@@ -47,9 +47,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 	// Setup and initialize session using helper function
 	let (mut chat_session, config_for_role, role, mut first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
-
-	// Get current directory for file operations
-	let current_dir = std::env::current_dir()?;
+	// Get current directory for file operations - use thread-local if set (ACP/WebSocket), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 
 	// Setup system prompt and cache using helper function (BEFORE showing interactive prompts)
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
@@ -753,10 +752,10 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	crate::config::set_thread_config(&current_config);
 
 	// Use initial_input as the input for this session (convert to owned String for mutability)
+	// Use initial_input as the input for this session (convert to owned String for mutability)
 	let mut input = initial_input.to_string();
-	let current_dir = std::env::current_dir()?;
-
-	// Create operation receiver for cancellation
+	// Get current directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 	let mut operation_rx = cancellation.new_operation();
 
 	// Apply runtime state from session log if this is a resumed session

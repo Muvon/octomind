@@ -243,10 +243,10 @@ impl<'a> CommandCompleter<'a> {
 			} else if file_part.starts_with('/') {
 				// Keep absolute path
 				// candidate.replacement is already correct
-			} else {
 				// For relative paths, make sure we maintain the relative nature
+				// Use thread-local if set (ACP/WebSocket), otherwise process cwd
 				if let Ok(relative) = PathBuf::from(&candidate.replacement)
-					.strip_prefix(std::env::current_dir().unwrap_or_default())
+					.strip_prefix(crate::mcp::get_thread_working_directory())
 				{
 					candidate.replacement = relative.to_string_lossy().to_string();
 				}

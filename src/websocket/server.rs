@@ -504,9 +504,8 @@ async fn handle_user_message(
 
 	let session_id = session_id.to_string();
 
-	// Get current directory for file operations
-	let current_dir = std::env::current_dir()?;
-
+	// Get current directory for file operations - use thread-local if set (ACP/WebSocket), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 	// Process through layers if enabled (first message)
 	let config_for_role = config.get_merged_config_for_role(role);
 	let mut cancellation = SessionCancellation::new();

@@ -97,8 +97,8 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	// Get role config for defaults
 	let (role_config, _, _, _, _) = config.get_role_config(&role);
 
-	// Get current directory
-	let current_dir = std::env::current_dir()?;
+	// Get current directory - use thread-local if set (ACP sessions), otherwise process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 
 	// Get the merged configuration for the specified role
 	let mut config_for_role = config.get_merged_config_for_role(&role);

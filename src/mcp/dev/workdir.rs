@@ -15,8 +15,8 @@
 // Working directory management for parallel execution isolation
 
 use super::super::{
-	get_thread_working_directory, set_thread_working_directory, McpFunction, McpToolCall,
-	McpToolResult,
+	get_thread_original_working_directory, get_thread_working_directory,
+	set_thread_working_directory, McpFunction, McpToolCall, McpToolResult,
 };
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -70,10 +70,9 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<McpToolResult
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
 
-	// Reset to original directory
+	// Reset to original session directory (set at session creation, not process cwd)
 	if reset {
-		let original_dir =
-			std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+		let original_dir = get_thread_original_working_directory();
 		set_thread_working_directory(Some(original_dir.clone()));
 
 		return Ok(McpToolResult::success(

@@ -227,6 +227,10 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			.unwrap_or_default();
 		cancellation.reset();
 		let operation_rx = cancellation.new_operation();
+		// Re-insert cancellation so cancel() can find it during prompt execution
+		self.cancellations
+			.borrow_mut()
+			.insert(session_id.clone(), cancellation);
 
 		// Process through layers (pre-processing step)
 		let first_message_processed = !chat_session.session.messages.is_empty();
@@ -246,9 +250,6 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			self.sessions
 				.borrow_mut()
 				.insert(session_id.clone(), (chat_session, session_cwd.clone()));
-			self.cancellations
-				.borrow_mut()
-				.insert(session_id.clone(), cancellation);
 			return Ok(PromptResponse::new(StopReason::Cancelled));
 		}
 
@@ -263,9 +264,6 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				self.sessions
 					.borrow_mut()
 					.insert(session_id.clone(), (chat_session, session_cwd));
-				self.cancellations
-					.borrow_mut()
-					.insert(session_id, cancellation);
 				return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
 			}
 		}
@@ -277,9 +275,6 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			self.sessions
 				.borrow_mut()
 				.insert(session_id.clone(), (chat_session, session_cwd));
-			self.cancellations
-				.borrow_mut()
-				.insert(session_id, cancellation);
 			return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
 		}
 
@@ -344,6 +339,11 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		)
 		.await;
 
+		// Clear the global notification sender so the channel can close.
+		// Without this, forward_task.await hangs forever because NOTIFICATION_SENDER
+		// holds a clone of ws_tx, preventing the channel from closing.
+		crate::mcp::process::clear_notification_sender();
+
 		// Wait for the forwarding task to drain any remaining messages
 		let _ = forward_task.await;
 
@@ -351,9 +351,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		self.sessions
 			.borrow_mut()
 			.insert(session_id.clone(), (chat_session, session_cwd));
-		self.cancellations
-			.borrow_mut()
-			.insert(session_id.clone(), cancellation);
+		// Note: cancellation was already inserted at the start of prompt() so cancel() can find it
 
 		match api_result {
 			Ok(_) => {

@@ -73,7 +73,7 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<McpToolResult
 	// Reset to original session directory (set at session creation, not process cwd)
 	if reset {
 		let original_dir = get_thread_original_working_directory();
-		set_thread_working_directory(Some(original_dir.clone()));
+		set_thread_working_directory(original_dir.clone());
 
 		return Ok(McpToolResult::success(
 			"workdir".to_string(),
@@ -128,7 +128,7 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<McpToolResult
 			}
 
 			let old_dir = get_thread_working_directory();
-			set_thread_working_directory(Some(canonical_path.clone()));
+			set_thread_working_directory(canonical_path.clone());
 
 			Ok(McpToolResult::success(
 				"workdir".to_string(),

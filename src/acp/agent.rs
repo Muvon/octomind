@@ -155,8 +155,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		args: NewSessionRequest,
 	) -> agent_client_protocol::Result<NewSessionResponse> {
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
-		crate::mcp::set_thread_working_directory(Some(args.cwd.clone()));
-		crate::mcp::set_thread_original_working_directory(args.cwd.clone());
+		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
 
 		inject_acp_mcp_servers(&mut self.config.borrow_mut(), &self.role, &args.mcp_servers);
@@ -227,7 +226,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		};
 
 		// Restore this session's working directory for tool calls
-		crate::mcp::set_thread_working_directory(Some(session_cwd.clone()));
+		crate::mcp::set_session_working_directory(session_cwd.clone());
 
 		let config_for_role = self.config.borrow().get_merged_config_for_role(&self.role);
 		let current_dir = session_cwd.clone();
@@ -409,8 +408,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		log_debug!("ACP: load_session requested: {}", session_id);
 
 		// Set per-session working directory via thread-local
-		crate::mcp::set_thread_working_directory(Some(args.cwd.clone()));
-		crate::mcp::set_thread_original_working_directory(args.cwd.clone());
+		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
 
 		inject_acp_mcp_servers(&mut self.config.borrow_mut(), &self.role, &args.mcp_servers);

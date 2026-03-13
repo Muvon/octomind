@@ -75,7 +75,7 @@ pub async fn execute_command(
 	};
 
 	// Restore working directory for this session
-	crate::mcp::set_thread_working_directory(Some(session_cwd.clone()));
+	crate::mcp::set_session_working_directory(session_cwd.clone());
 
 	// Get cancellation handle
 	let operation_rx = {

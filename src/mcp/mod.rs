@@ -34,44 +34,55 @@ lazy_static::lazy_static! {
 		Arc::new(RwLock::new(std::collections::HashMap::new()));
 }
 
-// Thread-local working directory for parallel execution isolation
-// Each thread can have its own working directory for isolated git worktrees
+// Thread-local working directory for parallel execution isolation.
+// `session` is the anchor set at session start (used by workdir reset).
+// `current` tracks mid-session changes via the workdir tool.
+struct WorkDir {
+	session: PathBuf,
+	current: PathBuf,
+}
+
 thread_local! {
-	static THREAD_WORKING_DIRECTORY: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
-	// The original session cwd set at session creation — used by workdir reset
-	static THREAD_ORIGINAL_WORKING_DIRECTORY: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+	static WORKDIR: std::cell::RefCell<Option<WorkDir>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Set the working directory for the current thread
-pub fn set_thread_working_directory(path: Option<PathBuf>) {
-	THREAD_WORKING_DIRECTORY.with(|wd| {
-		*wd.borrow_mut() = path;
+/// Set the session working directory. Call at every session boundary.
+/// Resets both the active directory and the reset anchor to `path`.
+pub fn set_session_working_directory(path: PathBuf) {
+	WORKDIR.with(|w| {
+		*w.borrow_mut() = Some(WorkDir {
+			session: path.clone(),
+			current: path,
+		});
 	});
 }
 
-/// Set the original (session) working directory — called once at session creation.
-/// Used by the workdir tool's reset operation.
-pub fn set_thread_original_working_directory(path: PathBuf) {
-	THREAD_ORIGINAL_WORKING_DIRECTORY.with(|wd| {
-		*wd.borrow_mut() = Some(path);
+/// Override the active directory mid-session (workdir tool). Does not move the reset anchor.
+pub fn set_thread_working_directory(path: PathBuf) {
+	WORKDIR.with(|w| {
+		let mut w = w.borrow_mut();
+		if let Some(ref mut wd) = *w {
+			wd.current = path;
+		}
 	});
 }
 
-/// Get the original session working directory, falling back to current_dir.
-pub fn get_thread_original_working_directory() -> PathBuf {
-	THREAD_ORIGINAL_WORKING_DIRECTORY.with(|wd| {
-		wd.borrow()
-			.clone()
+/// Active working directory for the current thread.
+pub fn get_thread_working_directory() -> PathBuf {
+	WORKDIR.with(|w| {
+		w.borrow()
+			.as_ref()
+			.map(|wd| wd.current.clone())
 			.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 	})
 }
 
-/// Get the working directory for the current thread
-/// Returns the thread-local directory if set, otherwise falls back to current_dir
-pub fn get_thread_working_directory() -> PathBuf {
-	THREAD_WORKING_DIRECTORY.with(|wd| {
-		wd.borrow()
-			.clone()
+/// Session anchor — the directory to return to on workdir reset.
+pub fn get_thread_original_working_directory() -> PathBuf {
+	WORKDIR.with(|w| {
+		w.borrow()
+			.as_ref()
+			.map(|wd| wd.session.clone())
 			.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 	})
 }

@@ -30,7 +30,8 @@ pub async fn setup_system_prompt_and_cache(
 	role: &str,
 	is_interactive: bool,
 ) -> Result<()> {
-	let current_dir = std::env::current_dir()?;
+	// Use thread-local working directory if set (ACP sessions), otherwise fall back to process cwd
+	let current_dir = crate::mcp::get_thread_working_directory();
 
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {

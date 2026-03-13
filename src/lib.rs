@@ -92,6 +92,7 @@ pub mod directories;
 pub mod logging;
 pub mod mcp;
 pub mod providers;
+pub mod sandbox;
 pub mod session;
 pub mod state;
 pub mod utils;

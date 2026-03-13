@@ -85,6 +85,9 @@ tracing = { version = "0.1", default-features = false }
 agent-client-protocol = "0.10.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
 [dev-dependencies]
 tempfile = "3.24.0"
 serial_test = "3.3.1"

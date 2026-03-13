@@ -63,6 +63,10 @@ pub struct SessionArgs {
 	/// Path to JSON schema file for structured output (runtime only)
 	#[arg(long)]
 	pub schema: Option<String>,
+
+	/// Restrict all filesystem writes to the current working directory
+	#[arg(long)]
+	pub sandbox: bool,
 }
 
 // No execute function here since it's handled directly by the session::chat module

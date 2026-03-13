@@ -27,6 +27,10 @@ pub struct ServerArgs {
 	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
 	#[arg(long, default_value = "developer")]
 	pub role: String,
+
+	/// Restrict all filesystem writes to the current working directory
+	#[arg(long)]
+	pub sandbox: bool,
 }
 
 /// Execute the server command

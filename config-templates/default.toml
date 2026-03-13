@@ -39,6 +39,13 @@ custom_instructions_file_name = "INSTRUCTIONS.md"
 # Set to empty string to disable: custom_constraints_file_name = ""
 custom_constraints_file_name = "CONSTRAINTS.md"
 
+# Sandbox mode: restrict all filesystem writes to the current working directory
+# When enabled, the process and all child processes (shell, MCP servers) cannot
+# write outside the directory where octomind was launched.
+# Supported on Linux (Landlock, kernel 5.13+) and macOS (Seatbelt).
+# Can also be enabled at runtime with --sandbox CLI flag.
+sandbox = false
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERFORMANCE & LIMITS
 # Configure thresholds and performance-related settings

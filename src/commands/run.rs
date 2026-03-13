@@ -68,6 +68,10 @@ pub struct RunArgs {
 	/// Path to JSON schema file for structured output (runtime only)
 	#[arg(long)]
 	pub schema: Option<String>,
+
+	/// Restrict all filesystem writes to the current working directory
+	#[arg(long)]
+	pub sandbox: bool,
 }
 
 impl RunArgs {
@@ -86,6 +90,7 @@ impl RunArgs {
 			system: self.system.clone(),
 			instructions: self.instructions.clone(),
 			schema: self.schema.clone(),
+			sandbox: self.sandbox,
 		}
 	}
 

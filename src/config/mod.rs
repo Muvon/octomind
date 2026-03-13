@@ -258,6 +258,10 @@ pub struct Config {
 	#[serde(skip)]
 	pub working_directory: Option<PathBuf>,
 
+	// Sandbox mode: restrict all filesystem writes to the current working directory
+	// Can also be enabled at runtime with --sandbox CLI flag
+	pub sandbox: bool,
+
 	#[serde(skip)]
 	config_path: Option<PathBuf>,
 }

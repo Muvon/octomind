@@ -143,7 +143,6 @@ async fn initialize_mcp_for_role_with_progress(
 	}
 }
 
-async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
 	// Initialize tracing based on the command being run.
 	// ACP initializes its own tracing in acp/mod.rs (must happen before LocalSet).
 	// Server initializes in commands/server.rs (needs WebSocket mode).
@@ -159,6 +158,20 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 			}
 		}
 		_ => {}
+	}
+
+	// Apply filesystem sandbox before anything else (including MCP server spawning)
+	// so the restriction is inherited by all child processes.
+	let sandbox_enabled = match &args.command {
+		Commands::Session(a) => config.sandbox || a.sandbox,
+		Commands::Run(a) => config.sandbox || a.sandbox,
+		Commands::Server(a) => config.sandbox || a.sandbox,
+		Commands::Acp(a) => config.sandbox || a.sandbox,
+		_ => false,
+	};
+	if sandbox_enabled {
+		let cwd = std::env::current_dir()?;
+		octomind::sandbox::apply(&cwd)?;
 	}
 
 	// Initialize MCP servers and tool map once at startup for commands that need them

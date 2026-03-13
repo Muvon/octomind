@@ -82,11 +82,7 @@ type = "builtin"
 timeout_seconds = 30
 tools = []
 
-[[mcp.servers]]
-name = "web"
-type = "builtin"
-timeout_seconds = 30
-tools = []
+
 
 #############################################
 # Roles
@@ -121,8 +117,8 @@ Your job:
 You have full MCP tools available. Focus on clean, pragmatic review."""
 
 [roles.mcp]
-server_refs = ["developer", "filesystem", "web"]
-allowed_tools = ["developer:*", "filesystem:*", "web_search"]
+server_refs = ["developer", "filesystem"]
+allowed_tools = ["developer:*", "filesystem:*"]
 [[roles]]
 name = "assistant"
 temperature = 0.7

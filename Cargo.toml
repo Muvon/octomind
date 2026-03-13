@@ -30,7 +30,7 @@ panic = "abort"  # Abort on panic for smaller binary size
 strip = true      # Strip symbols from binary
 
 [dependencies]
-octolib = { version = "0.10.3", default-features = false }
+octolib = { version = "0.10.4", default-features = false }
 # octolib = { path = "../octolib", default-features = false }
 
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal"] }
@@ -57,7 +57,7 @@ colored = "3.1.1"
 async-trait = "0.1.89"
 termimad = "0.34.1"
 syntect = "5.3.0"
-html2text = "0.16"
+
 url = "2.5.8"
 dirs = "6.0.0"
 glob = "0.3.3"

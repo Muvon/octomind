@@ -100,7 +100,7 @@ max_request_spending_threshold = 0.0
 #   • GOOGLE_APPLICATION_CREDENTIALS - path to Google Cloud credentials JSON
 #   • AWS_ACCESS_KEY_ID - for Amazon Bedrock
 #   • CLOUDFLARE_API_TOKEN - for Cloudflare Workers AI
-#   • BRAVE_API_KEY - for Brave Search API (https://api.search.brave.com/)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -289,8 +289,8 @@ welcome = "Hello! Octomind ready to serve you. Working dir: %{CWD} (Role: %{ROLE
 # workflow = "developer_workflow"
 
 [roles.mcp]
-server_refs = ["developer", "filesystem", "web", "octocode", "agent"]
-allowed_tools = ["developer:*", "filesystem:*", "web_search", "read_html", "octocode:*", "agent_*"]
+server_refs = ["developer", "filesystem", "octocode", "agent"]
+allowed_tools = ["developer:*", "filesystem:*", "octocode:*", "agent_*"]
 
 # Assistant role - optimized for general assistance tasks
 [[roles]]
@@ -337,11 +337,7 @@ type = "builtin"
 timeout_seconds = 30
 tools = []
 
-[[mcp.servers]]
-name = "web"
-type = "builtin"
-timeout_seconds = 30
-tools = []
+
 
 [[mcp.servers]]
 name = "octocode"

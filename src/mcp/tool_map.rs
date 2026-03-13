@@ -193,11 +193,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 						let server_functions = crate::mcp::agent::get_all_functions(config);
 						crate::mcp::filter_tools_by_patterns(server_functions, server.tools())
 					}
-					"web" => {
-						crate::mcp::get_filtered_server_functions("web", server.tools(), || {
-							crate::mcp::web::get_all_functions()
-						})
-					}
+
 					_ => {
 						crate::log_debug!("Unknown builtin server: {}", server.name());
 						Vec::new()

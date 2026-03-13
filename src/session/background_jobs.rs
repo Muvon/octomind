@@ -18,8 +18,8 @@
 // message so the AI sees the result without any polling.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::{mpsc, watch};
 
 /// Outcome of a completed background agent run.
 #[derive(Debug, Clone)]
@@ -29,12 +29,23 @@ pub struct CompletedJob {
 	pub output: String,
 }
 
+/// Handle for a spawned background job that can be cancelled.
+#[derive(Debug)]
+pub struct JobHandle {
+	/// Cancellation sender - sending true signals the job to abort.
+	pub cancel_tx: watch::Sender<bool>,
+	/// Task handle for awaiting completion.
+	pub task_handle: tokio::task::JoinHandle<()>,
+}
+
 /// Tracks active job count and holds the sender for pushing completions to the session.
 #[derive(Clone)]
 pub struct BackgroundJobManager {
 	active: Arc<AtomicUsize>,
 	max_concurrent: usize,
 	tx: mpsc::Sender<CompletedJob>,
+	/// Running jobs that can be cancelled on session exit.
+	jobs: Arc<Mutex<Vec<JobHandle>>>,
 }
 
 impl BackgroundJobManager {
@@ -44,6 +55,7 @@ impl BackgroundJobManager {
 			active: Arc::new(AtomicUsize::new(0)),
 			max_concurrent,
 			tx,
+			jobs: Arc::new(Mutex::new(Vec::new())),
 		};
 		(mgr, rx)
 	}
@@ -65,8 +77,54 @@ impl BackgroundJobManager {
 		let _ = self.tx.try_send(job);
 	}
 
+	/// Register a spawned job handle for later cancellation.
+	pub fn register_job(&self, handle: JobHandle) {
+		let mut jobs = self.jobs.lock().unwrap();
+		jobs.push(handle);
+	}
+
+	/// Remove a completed job handle.
+	pub fn remove_job(&self, task_id: tokio::task::Id) {
+		let mut jobs = self.jobs.lock().unwrap();
+		jobs.retain(|j| j.task_handle.id() != task_id);
+	}
+
 	pub fn active_count(&self) -> usize {
 		self.active.load(Ordering::SeqCst)
+	}
+
+	/// Wait for all background jobs to complete, draining results into the channel.
+	/// Returns the number of jobs that completed.
+	pub async fn wait_all(&self) -> usize {
+		let handles: Vec<_> = {
+			let mut jobs = self.jobs.lock().unwrap();
+			std::mem::take(&mut *jobs)
+		};
+
+		let count = handles.len();
+		for handle in handles {
+			// Wait for each job to complete (ignoring errors)
+			let _ = handle.task_handle.await;
+		}
+		count
+	}
+
+	/// Kill all running background jobs immediately.
+	/// Sends cancellation signal and waits briefly for cleanup.
+	pub fn kill_all(&self) {
+		let handles: Vec<_> = {
+			let mut jobs = self.jobs.lock().unwrap();
+			std::mem::take(&mut *jobs)
+		};
+
+		for handle in handles {
+			// Send cancellation signal
+			let _ = handle.cancel_tx.send(true);
+		}
+
+		// Note: We don't await the tasks here - they'll be dropped and cleaned up
+		// when the tokio runtime shuts down. The cancellation signal ensures
+		// child processes are killed.
 	}
 }
 

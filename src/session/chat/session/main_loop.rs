@@ -266,7 +266,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Drain any completed background jobs before reading user input.
 		// Each completed job is injected as a user message so the AI sees it
 		// on the very next turn without any polling.
-		while let Ok(job) = chat_session.job_rx.try_recv() {
+		if let Ok(job) = chat_session.job_rx.try_recv() {
 			let msg = if job.output.starts_with("ERROR: ") {
 				format!(
 					"[Background agent '{}' failed]\n\n{}",
@@ -281,7 +281,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			};
 			chat_session.pending_prompt = Some(msg);
 			// Only inject one at a time; the loop picks up the rest next iteration.
-			break;
 		}
 
 		// Get a new operation token for this iteration
@@ -344,6 +343,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				// Ctrl+C pressed during input
 				log_debug!("Input cancelled by user - cleaning up");
 
+				// Kill any running background jobs
+				if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
+					manager.kill_all();
+				}
+
 				// Ensure session is saved
 				if let Err(e) = chat_session.save() {
 					log_debug!("Warning: Failed to save session after cancellation: {}", e);
@@ -352,6 +356,10 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			}
 			InputResult::Exit => {
 				// Ctrl+D pressed - graceful exit handled in input.rs
+				// Kill any running background jobs
+				if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
+					manager.kill_all();
+				}
 				// Ensure session is saved
 				if let Err(e) = chat_session.save() {
 					log_debug!("Warning: Failed to save session: {}", e);
@@ -362,6 +370,10 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 		// Check if the input is an exit command
 		if input == "/exit" || input == "/quit" {
+			// Kill any running background jobs before exiting
+			if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
+				manager.kill_all();
+			}
 			// Show resume command with session ID
 			let resume_cmd = format!(
 				"octomind session --resume {}",
@@ -985,6 +997,11 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			// JSONL output is now streamed via callback - no need for batch output
 		}
 		Err(e) => {
+			// Kill any running background jobs on error/cancellation
+			if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
+				manager.kill_all();
+			}
+
 			// Handle API error using helper function
 			let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
 				OutputMode::Jsonl
@@ -998,6 +1015,26 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 				&e,
 				output_mode,
 			);
+		}
+	}
+
+	// Wait for any background jobs to complete before exiting
+	// This ensures non-interactive sessions don't exit prematurely
+	if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
+		let active = manager.active_count();
+		if active > 0 {
+			use colored::Colorize;
+			eprintln!(
+				"{}",
+				format!("Waiting for {active} background job(s) to complete...").yellow()
+			);
+			let completed = manager.wait_all().await;
+			if completed > 0 {
+				eprintln!(
+					"{}",
+					format!("✓ {completed} background job(s) completed").green()
+				);
+			}
 		}
 	}
 

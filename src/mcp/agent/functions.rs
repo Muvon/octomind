@@ -15,12 +15,13 @@
 // Agent functions - spawns ACP subprocess and drives the protocol to completion.
 
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
-use crate::session::background_jobs::{BackgroundJobManager, CompletedJob};
+use crate::session::background_jobs::{BackgroundJobManager, CompletedJob, JobHandle};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::watch;
 
 /// Global singleton — created once when the first background agent call arrives.
 static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
@@ -37,7 +38,7 @@ pub fn init_job_manager(max_concurrent: usize) -> tokio::sync::mpsc::Receiver<Co
 	rx
 }
 
-fn get_job_manager() -> Option<Arc<BackgroundJobManager>> {
+pub fn get_job_manager() -> Option<Arc<BackgroundJobManager>> {
 	JOB_MANAGER.get().cloned()
 }
 
@@ -142,20 +143,32 @@ pub async fn execute_agent_command(
 			));
 		}
 
+		// Create cancellation channel for this job
+		let (cancel_tx, cancel_rx) = watch::channel(false);
+
 		let mgr = Arc::clone(&manager);
 		let command = agent_config.command.clone();
 		let agent_name_owned = agent_config.name.clone();
 		let task_owned = task.to_string();
+		let workdir_owned = workdir.to_path_buf();
 
-		tokio::spawn(async move {
-			let output = match run_acp_command(&command, &task_owned, &workdir).await {
-				Ok(text) => text,
-				Err(e) => format!("ERROR: {e:#}"),
-			};
+		// Spawn the background task
+		let handle = tokio::spawn(async move {
+			let output =
+				match run_acp_command(&command, &task_owned, &workdir_owned, cancel_rx).await {
+					Ok(text) => text,
+					Err(e) => format!("ERROR: {e:#}"),
+				};
 			mgr.release(CompletedJob {
 				agent_name: agent_name_owned,
 				output,
 			});
+		});
+
+		// Register the job for potential cancellation
+		manager.register_job(JobHandle {
+			cancel_tx,
+			task_handle: handle,
 		});
 
 		return Ok(McpToolResult::success(
@@ -166,7 +179,14 @@ pub async fn execute_agent_command(
 	}
 
 	// Synchronous path (default)
-	match run_acp_command(&agent_config.command, task, &workdir).await {
+	match run_acp_command(
+		&agent_config.command,
+		task,
+		&workdir,
+		watch::channel(false).1,
+	)
+	.await
+	{
 		Ok(output) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -179,9 +199,16 @@ pub async fn execute_agent_command(
 		)),
 	}
 }
+
 /// Spawn the ACP command, drive initialize → session/new → session/prompt,
 /// collect all agent_message_chunk text, return the assembled response.
-async fn run_acp_command(command: &str, task: &str, workdir: &std::path::Path) -> Result<String> {
+/// Accepts a cancellation receiver - when true, aborts the child process.
+async fn run_acp_command(
+	command: &str,
+	task: &str,
+	workdir: &std::path::Path,
+	mut cancel_rx: watch::Receiver<bool>,
+) -> Result<String> {
 	let mut parts = command.split_whitespace();
 	let program = parts
 		.next()
@@ -267,10 +294,28 @@ async fn run_acp_command(command: &str, task: &str, workdir: &std::path::Path) -
 	let mut output = String::new();
 
 	loop {
-		let line = match lines.next_line().await? {
-			Some(l) => l,
-			None => break,
+		// Check for cancellation before each line read
+		if *cancel_rx.borrow() {
+			// Kill the child process on cancellation
+			let _ = child.kill().await;
+			return Err(anyhow::anyhow!("Agent task cancelled"));
+		}
+
+		// Use tokio::select to handle both cancellation and line reading
+		let line = tokio::select! {
+			line = lines.next_line() => {
+				match line? {
+					Some(l) => l,
+					None => break,
+				}
+			}
+			_ = cancel_rx.changed() => {
+				// Cancellation received - kill child and return
+				let _ = child.kill().await;
+				return Err(anyhow::anyhow!("Agent task cancelled"));
+			}
 		};
+
 		if line.trim().is_empty() {
 			continue;
 		}

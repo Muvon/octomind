@@ -299,9 +299,7 @@ impl ChatSession {
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
 			first_prompt_idx: None,             // Initialize first prompt index (set on first user message)
 			schema: None,                       // Schema set later via CLI override
-			job_rx: crate::mcp::agent::functions::init_job_manager(
-				params.config.background_jobs.max_concurrent_jobs,
-			),
+			job_rx: crate::mcp::agent::functions::init_job_manager(),
 		}
 	}
 
@@ -490,9 +488,7 @@ impl ChatSession {
 						cached_tools: None,         // Initialize tool cache (populated on first use)
 						first_prompt_idx: None,     // Will be detected from existing messages
 						schema: None,               // Schema applied after init via CLI override
-						job_rx: crate::mcp::agent::functions::init_job_manager(
-							params.config.background_jobs.max_concurrent_jobs,
-						),
+						job_rx: crate::mcp::agent::functions::init_job_manager(),
 					};
 
 					// Apply runtime state from session log (legacy support)

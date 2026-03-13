@@ -162,13 +162,6 @@ pub struct PromptConfig {
 	pub description: Option<String>,
 }
 
-/// Configuration for background agent job execution.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BackgroundJobsConfig {
-	/// Maximum number of concurrently active background jobs. Default: 100
-	pub max_concurrent_jobs: usize,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
 	// Config version for future migrations (always first field)
@@ -245,12 +238,8 @@ pub struct Config {
 	// Plan-driven compression configuration
 	pub compression: CompressionHintConfig,
 
-	// Background job execution configuration
-	pub background_jobs: BackgroundJobsConfig,
-
 	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,
-
 	// Runtime output mode set by CLI (plain or jsonl)
 	#[serde(skip)]
 	pub runtime_output_mode: Option<String>,

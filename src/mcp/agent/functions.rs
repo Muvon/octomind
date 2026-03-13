@@ -26,9 +26,16 @@ use tokio::sync::watch;
 /// Global singleton — created once when the first async agent call arrives.
 static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
 
+/// Get reasonable max concurrent jobs based on CPU cores (minimum 4)
+fn get_max_concurrent_jobs() -> usize {
+	std::thread::available_parallelism()
+		.map(|p| p.get())
+		.unwrap_or(4)
+}
+
 /// Initialize the job manager at session start. Returns the receiver for completed jobs.
-pub fn init_job_manager(max_concurrent: usize) -> tokio::sync::mpsc::Receiver<CompletedJob> {
-	let (manager, rx) = BackgroundJobManager::new(max_concurrent);
+pub fn init_job_manager() -> tokio::sync::mpsc::Receiver<CompletedJob> {
+	let (manager, rx) = BackgroundJobManager::new(get_max_concurrent_jobs());
 	JOB_MANAGER
 		.set(Arc::new(manager))
 		.expect("job manager already initialized");
@@ -48,8 +55,8 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 			.iter()
 			.map(|agent_config| McpFunction {
 				name: format!("agent_{}", agent_config.name),
-				description: format!(
-					"{}\n\n\
+			description: format!(
+				"{}\n\n\
 				## Async Execution\n\n\
 				**async: false** (default) — Blocks until complete. Use when you need the result immediately.\n\n\
 				**async: true** — Returns immediately, runs asynchronously. Result appears as a user message when complete.\n\n\
@@ -63,9 +70,9 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 				- Multi-step tasks where each step depends on the previous result\n\n\
 				**Result format:** `[Async agent 'name' completed]` or `[Async agent 'name' failed]`\n\n\
 				**Limits:** Max {} concurrent async jobs. Jobs are cancelled on session exit/interrupt.",
-					agent_config.description,
-					config.background_jobs.max_concurrent_jobs
-				),
+				agent_config.description,
+				get_max_concurrent_jobs()
+			),
 				parameters: json!({
 					"type": "object",
 					"properties": {
@@ -146,11 +153,10 @@ pub async fn execute_agent_command(
 		};
 
 		if let Err(active) = manager.try_acquire() {
-			let max = config.background_jobs.max_concurrent_jobs;
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Async job limit reached ({active}/{max} active). Wait for existing jobs to complete."),
+				format!("Async job limit reached ({active}/{} active). Wait for existing jobs to complete.", get_max_concurrent_jobs()),
 			));
 		}
 

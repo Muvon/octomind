@@ -143,6 +143,13 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		inject_acp_mcp_servers(&mut self.config.borrow_mut(), &self.role, &args.mcp_servers);
 		let config_snapshot = self.config.borrow().clone();
 
+		// Start any newly injected servers and register their tools in the tool map.
+		// initialize_mcp_for_role is idempotent: already-running servers and already-registered
+		// tools are skipped via config-hash and is_server_already_running checks.
+		crate::mcp::initialize_mcp_for_role(&self.role, &config_snapshot)
+			.await
+			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+
 		let session_args = GenericSessionArgs::new(self.role.clone());
 		let (mut chat_session, config_for_role, session_role, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
@@ -270,12 +277,16 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
 		let ws_sink = WebSocketSink::new(ws_tx.clone());
 
-		// Forward MCP server notifications through the same channel
+		// Forward MCP server notifications through the same channel.
+		// Safe: prompt() holds exclusive access to the session (removed from map above),
+		// so no two prompts for the same session can race on this global sender.
 		crate::mcp::process::set_notification_sender(ws_tx);
 
 		// Spawn a local task to stream notifications to the client in real-time
 		// while the API call runs concurrently. The channel closes when ws_sink drops.
-		let session_id_for_task = session_id.clone();
+		// Use Arc<str> so each SessionNotification::new() call clones the Arc pointer
+		// rather than allocating a new String per notification.
+		let session_id_for_task: std::sync::Arc<str> = session_id.as_str().into();
 		let conn_for_task = self.conn.borrow().as_ref().cloned();
 		let forward_task = tokio::task::spawn_local(async move {
 			while let Some(msg) = ws_rx.recv().await {
@@ -316,6 +327,8 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			&config_for_role,
 			&self.role,
 			operation_rx.clone(),
+			// Reuse WebSocket output mode — ACP and WebSocket both use the same
+			// channel-based ServerMessage sink; the transport layer differs, not the pipeline.
 			OutputMode::WebSocket,
 			ws_sink,
 		)
@@ -350,6 +363,9 @@ impl agent_client_protocol::Agent for OctomindAgent {
 	async fn cancel(&self, args: CancelNotification) -> agent_client_protocol::Result<()> {
 		let session_id = args.session_id.to_string();
 		log_debug!("ACP: cancel requested for session: {}", session_id);
+		// Safe to borrow while prompt() may be awaiting: we run inside a LocalSet
+		// (single-threaded), so cancel() only executes when prompt() yields at an await
+		// point — the RefCell is never doubly borrowed on the same call stack.
 		if let Some(cancellation) = self.cancellations.borrow().get(&session_id) {
 			cancellation.shutdown();
 		}
@@ -369,9 +385,14 @@ impl agent_client_protocol::Agent for OctomindAgent {
 
 		inject_acp_mcp_servers(&mut self.config.borrow_mut(), &self.role, &args.mcp_servers);
 
+		// Start any newly injected servers and register their tools — idempotent, see new_session.
+		let config_snapshot = self.config.borrow().clone();
+		crate::mcp::initialize_mcp_for_role(&self.role, &config_snapshot)
+			.await
+			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+
 		// Resume the existing session from disk by its ID
 		let session_args = GenericSessionArgs::resume(session_id.clone(), self.role.clone());
-		let config_snapshot = self.config.borrow().clone();
 		let (mut chat_session, config_for_role, session_role, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await

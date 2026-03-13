@@ -458,6 +458,10 @@ async fn perform_http_health_check(
 		// Use the same header setup as the main server implementation
 		let mut headers = reqwest::header::HeaderMap::new();
 		headers.insert(
+			reqwest::header::ACCEPT,
+			reqwest::header::HeaderValue::from_static("application/json, text/event-stream"),
+		);
+		headers.insert(
 			reqwest::header::CONTENT_TYPE,
 			reqwest::header::HeaderValue::from_static("application/json"),
 		);

@@ -156,7 +156,11 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			.await
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
-		let session_args = GenericSessionArgs::new(self.role.clone());
+		let session_args = GenericSessionArgs {
+			role: self.role.clone(),
+			mode: "websocket".into(),
+			..Default::default()
+		};
 		let (mut chat_session, config_for_role, session_role, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await
@@ -398,7 +402,12 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
 		// Resume the existing session from disk by its ID
-		let session_args = GenericSessionArgs::resume(session_id.clone(), self.role.clone());
+		let session_args = GenericSessionArgs {
+			resume: Some(session_id.clone()),
+			role: self.role.clone(),
+			mode: "websocket".into(),
+			..Default::default()
+		};
 		let (mut chat_session, config_for_role, session_role, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await

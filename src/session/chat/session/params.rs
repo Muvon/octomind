@@ -33,7 +33,7 @@ pub type SessionParams = (
 );
 
 /// Generic session arguments that can be used by any caller (CLI, WebSocket, etc.)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GenericSessionArgs {
 	pub name: Option<String>,
 	pub resume: Option<String>,
@@ -50,30 +50,19 @@ impl GenericSessionArgs {
 	/// Create new session args with defaults
 	pub fn new(role: String) -> Self {
 		Self {
-			name: None,
-			resume: None,
-			resume_recent: false,
-			model: None,
-			max_tokens: None,
-			temperature: None,
 			role,
-			max_retries: None,
 			mode: "plain".to_string(),
+			..Default::default()
 		}
 	}
 
 	/// Create args for resuming a session
 	pub fn resume(session_id: String, role: String) -> Self {
 		Self {
-			name: None,
 			resume: Some(session_id),
-			resume_recent: false,
-			model: None,
-			max_tokens: None,
-			temperature: None,
 			role,
-			max_retries: None,
 			mode: "plain".to_string(),
+			..Default::default()
 		}
 	}
 }

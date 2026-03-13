@@ -243,15 +243,20 @@ async fn handle_session_message(
 					.unwrap_or(false)
 				{
 					log_debug!("Resuming session from disk: {}", session_id);
-					let mut args = GenericSessionArgs::resume(session_id.clone(), role.to_string());
-					args.mode = "websocket".to_string();
-					args
+					GenericSessionArgs {
+						resume: Some(session_id.clone()),
+						role: role.to_string(),
+						mode: "websocket".into(),
+						..Default::default()
+					}
 				} else {
 					log_debug!("Creating named session: {}", session_id);
-					let mut args = GenericSessionArgs::new(role.to_string());
-					args.name = Some(session_id.clone());
-					args.mode = "websocket".to_string();
-					args
+					GenericSessionArgs {
+						name: Some(session_id.clone()),
+						role: role.to_string(),
+						mode: "websocket".into(),
+						..Default::default()
+					}
 				};
 
 				match setup_and_initialize_session(&args, config).await {
@@ -271,8 +276,11 @@ async fn handle_session_message(
 		None => {
 			// No session_id: create new auto-named session
 			log_debug!("Creating new auto-named session with role: {}", role);
-			let mut args = GenericSessionArgs::new(role.to_string());
-			args.mode = "websocket".to_string();
+			let args = GenericSessionArgs {
+				role: role.to_string(),
+				mode: "websocket".into(),
+				..Default::default()
+			};
 			match setup_and_initialize_session(&args, config).await {
 				Ok((session, cfg, role_name, _)) => (session, cfg, role_name, true),
 				Err(e) => {
@@ -464,8 +472,12 @@ async fn handle_user_message(
 		} else {
 			// Try disk
 			log_debug!("Loading session from disk: {}", session_id);
-			let mut args = GenericSessionArgs::resume(session_id.to_string(), role.to_string());
-			args.mode = "websocket".to_string();
+			let args = GenericSessionArgs {
+				resume: Some(session_id.to_string()),
+				role: role.to_string(),
+				mode: "websocket".into(),
+				..Default::default()
+			};
 			match setup_and_initialize_session(&args, config).await {
 				Ok((mut session, config_for_role, session_role, _)) => {
 					setup_system_prompt_and_cache(

@@ -761,10 +761,31 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 	};
 
 	// Await the previous in-flight task if any, so its mutex hold is released before we proceed.
+	// Use a short timeout: if the previous spawn_blocking thread is stuck on read_line() (e.g.
+	// because Ctrl+C fired mid-response and the MCP server is now idle waiting for the next
+	// request), waiting forever here causes the session to hang. On timeout we mark the server
+	// dead so ensure_server_running() restarts it with a fresh process and mutex — the stuck
+	// OS thread will eventually exit when the old server process is killed during cleanup.
 	let previous_handle = in_flight_arc.lock().unwrap().take();
 	if let Some(handle) = previous_handle {
-		// Ignore the result — we only care that the thread has finished and released the lock.
-		let _ = handle.await;
+		let wait_secs = std::time::Duration::from_secs(5);
+		if tokio::time::timeout(wait_secs, handle).await.is_err() {
+			// Timed out — the OS thread is stuck on read_line(). Mark the server dead so the
+			// next call triggers a restart instead of trying to lock the same frozen mutex.
+			crate::log_debug!(
+				"Previous in-flight task for server '{}' did not finish in time — marking dead for restart",
+				server_name
+			);
+			let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+			let info = restart_info_guard
+				.entry(server_name.to_string())
+				.or_default();
+			info.health_status = ServerHealth::Dead;
+			return Err(anyhow::anyhow!(
+				"Server '{}' previous operation timed out — will restart on next call",
+				server_name
+			));
+		}
 	}
 
 	// Get the request ID atomically and prepare the message

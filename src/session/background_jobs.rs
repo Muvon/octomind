@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Background agent job tracking — push model.
-// When a background agent finishes, it sends a CompletedJob on the channel
+// Async agent job tracking — push model.
+// When an async agent finishes, it sends a CompletedJob on the channel
 // registered by the active session. The session loop injects it as a user
 // message so the AI sees the result without any polling.
 
@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, watch};
 
-/// Outcome of a completed background agent run.
+/// Outcome of a completed async agent run.
 #[derive(Debug, Clone)]
 pub struct CompletedJob {
 	pub agent_name: String,
@@ -29,7 +29,7 @@ pub struct CompletedJob {
 	pub output: String,
 }
 
-/// Handle for a spawned background job that can be cancelled.
+/// Handle for a spawned async job that can be cancelled.
 #[derive(Debug)]
 pub struct JobHandle {
 	/// Cancellation sender - sending true signals the job to abort.
@@ -39,7 +39,7 @@ pub struct JobHandle {
 }
 
 /// Tracks active job count and holds the sender for pushing completions to the session.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BackgroundJobManager {
 	active: Arc<AtomicUsize>,
 	max_concurrent: usize,
@@ -70,7 +70,7 @@ impl BackgroundJobManager {
 		Ok(())
 	}
 
-	/// Call when a background job finishes (success or failure).
+	/// Call when an async job finishes (success or failure).
 	pub fn release(&self, job: CompletedJob) {
 		self.active.fetch_sub(1, Ordering::SeqCst);
 		// Best-effort send — if the session is gone the result is simply dropped.
@@ -93,7 +93,7 @@ impl BackgroundJobManager {
 		self.active.load(Ordering::SeqCst)
 	}
 
-	/// Wait for all background jobs to complete, draining results into the channel.
+	/// Wait for all async jobs to complete, draining results into the channel.
 	/// Returns the number of jobs that completed.
 	pub async fn wait_all(&self) -> usize {
 		let handles: Vec<_> = {
@@ -109,7 +109,7 @@ impl BackgroundJobManager {
 		count
 	}
 
-	/// Kill all running background jobs immediately.
+	/// Kill all running async jobs immediately.
 	/// Sends cancellation signal and waits briefly for cleanup.
 	pub fn kill_all(&self) {
 		let handles: Vec<_> = {

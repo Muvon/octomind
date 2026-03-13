@@ -23,18 +23,15 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::watch;
 
-/// Global singleton — created once when the first background agent call arrives.
+/// Global singleton — created once when the first async agent call arrives.
 static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
 
-/// Register (or return) the global BackgroundJobManager.
-/// Called by the session on startup so the channel receiver is wired before any agent runs.
+/// Initialize the job manager at session start. Returns the receiver for completed jobs.
 pub fn init_job_manager(max_concurrent: usize) -> tokio::sync::mpsc::Receiver<CompletedJob> {
-	let (mgr, rx) = BackgroundJobManager::new(max_concurrent);
-	// If already initialised (e.g. two sessions in same process) just return a dummy receiver.
-	if JOB_MANAGER.set(Arc::new(mgr)).is_err() {
-		let (_tx, rx2) = tokio::sync::mpsc::channel(1);
-		return rx2;
-	}
+	let (manager, rx) = BackgroundJobManager::new(max_concurrent);
+	JOB_MANAGER
+		.set(Arc::new(manager))
+		.expect("job manager already initialized");
 	rx
 }
 
@@ -47,45 +44,45 @@ pub fn get_job_manager() -> Option<Arc<BackgroundJobManager>> {
 /// Each agent becomes a separate MCP tool (e.g., `agent_context_gatherer`).
 pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 	config
-		.agents
-		.iter()
-		.map(|agent_config| McpFunction {
-			name: format!("agent_{}", agent_config.name),
-			description: format!(
-				"{}\n\n\
-				## Background Execution\n\n\
-				**background: false** (default) — Blocks until complete. Use when you need the result immediately.\n\n\
-				**background: true** — Returns immediately, runs asynchronously. Result appears as a user message when complete.\n\n\
-				**When to use background:**\n\
+			.agents
+			.iter()
+			.map(|agent_config| McpFunction {
+				name: format!("agent_{}", agent_config.name),
+				description: format!(
+					"{}\n\n\
+				## Async Execution\n\n\
+				**async: false** (default) — Blocks until complete. Use when you need the result immediately.\n\n\
+				**async: true** — Returns immediately, runs asynchronously. Result appears as a user message when complete.\n\n\
+				**When to use async:**\n\
 				- Task takes 30+ seconds (large codebase analysis, multi-file refactoring)\n\
 				- You can continue other work while waiting\n\
 				- You don't need the result for your next immediate action\n\n\
-				**When NOT to use background:**\n\
+				**When NOT to use async:**\n\
 				- You need the result to make your next decision\n\
 				- Quick tasks (under 30 seconds)\n\
 				- Multi-step tasks where each step depends on the previous result\n\n\
-				**Result format:** `[Background agent 'name' completed]` or `[Background agent 'name' failed]`\n\n\
-				**Limits:** Max {} concurrent background jobs. Jobs are cancelled on session exit/interrupt.",
-				agent_config.description,
-				config.background_jobs.max_concurrent_jobs
-			),
-			parameters: json!({
-				"type": "object",
-				"properties": {
-					"task": {
-						"type": "string",
-						"description": "Task description in human language for the agent to process"
+				**Result format:** `[Async agent 'name' completed]` or `[Async agent 'name' failed]`\n\n\
+				**Limits:** Max {} concurrent async jobs. Jobs are cancelled on session exit/interrupt.",
+					agent_config.description,
+					config.background_jobs.max_concurrent_jobs
+				),
+				parameters: json!({
+					"type": "object",
+					"properties": {
+						"task": {
+							"type": "string",
+							"description": "Task description in human language for the agent to process"
+						},
+						"async": {
+							"type": "boolean",
+							"description": "Run asynchronously. Result injected as user message when complete. Use for long-running tasks where you can continue other work. Default: false.",
+							"default": false
+						}
 					},
-					"background": {
-						"type": "boolean",
-						"description": "Run asynchronously. Result injected as user message when complete. Use for long-running tasks where you can continue other work. Default: false.",
-						"default": false
-					}
-				},
-				"required": ["task"]
-			}),
-		})
-		.collect()
+					"required": ["task"]
+				}),
+			})
+			.collect()
 }
 
 /// Execute an agent tool call by spawning the configured ACP command as a subprocess
@@ -127,23 +124,23 @@ pub async fn execute_agent_command(
 		}
 	};
 
-	let background = call
+	let run_async = call
 		.parameters
-		.get("background")
+		.get("async")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
 
 	let session_workdir = crate::mcp::get_thread_working_directory();
 	let workdir = agent_config.get_resolved_workdir(&session_workdir);
 
-	if background {
+	if run_async {
 		let manager = match get_job_manager() {
 			Some(m) => m,
 			None => {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					"Background job manager not initialised (no active session)".to_string(),
+					"Async job manager not initialised (no active session)".to_string(),
 				));
 			}
 		};
@@ -153,7 +150,7 @@ pub async fn execute_agent_command(
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Background job limit reached ({active}/{max} active). Wait for existing jobs to complete."),
+				format!("Async job limit reached ({active}/{max} active). Wait for existing jobs to complete."),
 			));
 		}
 
@@ -166,7 +163,7 @@ pub async fn execute_agent_command(
 		let task_owned = task.to_string();
 		let workdir_owned = workdir.to_path_buf();
 
-		// Spawn the background task
+		// Spawn the async task
 		let handle = tokio::spawn(async move {
 			let output =
 				match run_acp_command(&command, &task_owned, &workdir_owned, cancel_rx).await {
@@ -188,7 +185,7 @@ pub async fn execute_agent_command(
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"Agent task started in background. The result will be injected into this conversation automatically when ready.".to_string(),
+			"Agent task started asynchronously. The result will be injected into this conversation automatically when ready.".to_string(),
 		));
 	}
 

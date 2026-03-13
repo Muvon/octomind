@@ -263,19 +263,19 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Set state to reading input
 		*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
 
-		// Drain any completed background jobs before reading user input.
+		// Drain any completed async jobs before reading user input.
 		// Each completed job is injected as a user message so the AI sees it
 		// on the very next turn without any polling.
 		if let Ok(job) = chat_session.job_rx.try_recv() {
 			let msg = if job.output.starts_with("ERROR: ") {
 				format!(
-					"[Background agent '{}' failed]\n\n{}",
+					"[Async agent '{}' failed]\n\n{}",
 					job.agent_name,
 					job.output.trim_start_matches("ERROR: ")
 				)
 			} else {
 				format!(
-					"[Background agent '{}' completed]\n\n{}",
+					"[Async agent '{}' completed]\n\n{}",
 					job.agent_name, job.output
 				)
 			};
@@ -343,7 +343,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				// Ctrl+C pressed during input
 				log_debug!("Input cancelled by user - cleaning up");
 
-				// Kill any running background jobs
+				// Kill any running async jobs
 				if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
 					manager.kill_all();
 				}
@@ -356,7 +356,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			}
 			InputResult::Exit => {
 				// Ctrl+D pressed - graceful exit handled in input.rs
-				// Kill any running background jobs
+				// Kill any running async jobs
 				if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
 					manager.kill_all();
 				}
@@ -370,7 +370,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 		// Check if the input is an exit command
 		if input == "/exit" || input == "/quit" {
-			// Kill any running background jobs before exiting
+			// Kill any running async jobs before exiting
 			if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
 				manager.kill_all();
 			}
@@ -997,7 +997,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			// JSONL output is now streamed via callback - no need for batch output
 		}
 		Err(e) => {
-			// Kill any running background jobs on error/cancellation
+			// Kill any running async jobs on error/cancellation
 			if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
 				manager.kill_all();
 			}
@@ -1018,7 +1018,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		}
 	}
 
-	// Wait for any background jobs to complete before exiting
+	// Wait for any async jobs to complete before exiting
 	// This ensures non-interactive sessions don't exit prematurely
 	if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
 		let active = manager.active_count();
@@ -1026,13 +1026,13 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			use colored::Colorize;
 			eprintln!(
 				"{}",
-				format!("Waiting for {active} background job(s) to complete...").yellow()
+				format!("Waiting for {active} async job(s) to complete...").yellow()
 			);
 			let completed = manager.wait_all().await;
 			if completed > 0 {
 				eprintln!(
 					"{}",
-					format!("✓ {completed} background job(s) completed").green()
+					format!("✓ {completed} async job(s) completed").green()
 				);
 			}
 		}

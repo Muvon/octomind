@@ -184,6 +184,8 @@ pub struct ChatSession {
 	pub first_prompt_idx: Option<usize>,
 	/// Optional JSON schema for structured output (set via --schema CLI flag)
 	pub schema: Option<serde_json::Value>,
+	/// Receiver for completed background agent jobs — injected into the session loop.
+	pub job_rx: tokio::sync::mpsc::Receiver<crate::session::background_jobs::CompletedJob>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -297,6 +299,9 @@ impl ChatSession {
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
 			first_prompt_idx: None,             // Initialize first prompt index (set on first user message)
 			schema: None,                       // Schema set later via CLI override
+			job_rx: crate::mcp::agent::functions::init_job_manager(
+				params.config.background_jobs.max_concurrent_jobs,
+			),
 		}
 	}
 
@@ -485,6 +490,9 @@ impl ChatSession {
 						cached_tools: None,         // Initialize tool cache (populated on first use)
 						first_prompt_idx: None,     // Will be detected from existing messages
 						schema: None,               // Schema applied after init via CLI override
+						job_rx: crate::mcp::agent::functions::init_job_manager(
+							params.config.background_jobs.max_concurrent_jobs,
+						),
 					};
 
 					// Apply runtime state from session log (legacy support)
@@ -1197,6 +1205,10 @@ mod tests {
 			cached_tools: None,
 			first_prompt_idx: None,
 			schema: None,
+			job_rx: {
+				let (_tx, rx) = tokio::sync::mpsc::channel(1);
+				rx
+			},
 		}
 	}
 

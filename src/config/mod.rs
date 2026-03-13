@@ -162,15 +162,11 @@ pub struct PromptConfig {
 	pub description: Option<String>,
 }
 
-/// Configuration for background job execution and lifecycle management.
+/// Configuration for background agent job execution.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BackgroundJobsConfig {
-	/// How long (seconds) completed/failed jobs are retained before cleanup. Default: 86400 (24h)
-	pub ttl_seconds: u64,
-	/// Maximum number of concurrently active (Pending + Running) jobs. Default: 100
+	/// Maximum number of concurrently active background jobs. Default: 100
 	pub max_concurrent_jobs: usize,
-	/// How often (seconds) the periodic cleanup task runs. Default: 3600 (1h)
-	pub cleanup_interval_seconds: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

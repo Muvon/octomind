@@ -15,51 +15,29 @@
 // Agent functions - spawns ACP subprocess and drives the protocol to completion.
 
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
-use crate::session::background_jobs::BackgroundJobManager;
+use crate::session::background_jobs::{BackgroundJobManager, CompletedJob};
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-/// Global singleton for background job tracking.
-/// Initialized on first agent call using the config's background_jobs settings.
+/// Global singleton — created once when the first background agent call arrives.
 static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
 
-/// Guard to ensure the periodic cleanup task is spawned only once.
-static CLEANUP_SPAWNED: AtomicBool = AtomicBool::new(false);
-
-/// Return the global BackgroundJobManager, initializing it from config on first call.
-fn get_or_init_job_manager(config: &crate::config::Config) -> Arc<BackgroundJobManager> {
-	let manager = JOB_MANAGER.get_or_init(|| {
-		Arc::new(BackgroundJobManager::new(
-			config.background_jobs.ttl_seconds,
-		))
-	});
-
-	// Spawn the periodic cleanup task exactly once
-	if !CLEANUP_SPAWNED.swap(true, Ordering::SeqCst) {
-		let mgr = Arc::clone(manager);
-		let interval_secs = config.background_jobs.cleanup_interval_seconds;
-		tokio::spawn(async move {
-			let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-			ticker.tick().await; // skip the immediate first tick
-			loop {
-				ticker.tick().await;
-				let removed = mgr.cleanup_expired_jobs();
-				if removed > 0 {
-					crate::log_debug!("Background job cleanup: removed {} expired jobs", removed);
-				}
-			}
-		});
+/// Register (or return) the global BackgroundJobManager.
+/// Called by the session on startup so the channel receiver is wired before any agent runs.
+pub fn init_job_manager(max_concurrent: usize) -> tokio::sync::mpsc::Receiver<CompletedJob> {
+	let (mgr, rx) = BackgroundJobManager::new(max_concurrent);
+	// If already initialised (e.g. two sessions in same process) just return a dummy receiver.
+	if JOB_MANAGER.set(Arc::new(mgr)).is_err() {
+		let (_tx, rx2) = tokio::sync::mpsc::channel(1);
+		return rx2;
 	}
-
-	Arc::clone(manager)
+	rx
 }
 
-/// Expose the job manager for the /jobs command (returns None if never initialized).
-pub fn try_get_job_manager() -> Option<Arc<BackgroundJobManager>> {
+fn get_job_manager() -> Option<Arc<BackgroundJobManager>> {
 	JOB_MANAGER.get().cloned()
 }
 
@@ -67,13 +45,13 @@ pub fn try_get_job_manager() -> Option<Arc<BackgroundJobManager>> {
 ///
 /// Each agent becomes a separate MCP tool (e.g., `agent_context_gatherer`).
 pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
-	let mut functions = Vec::new();
-
-	for agent_config in &config.agents {
-		functions.push(McpFunction {
+	config
+		.agents
+		.iter()
+		.map(|agent_config| McpFunction {
 			name: format!("agent_{}", agent_config.name),
 			description: format!(
-				"{}\n\nSupports background execution: set `background: true` to return a job_id immediately instead of waiting.",
+				"{}\n\nSet `background: true` to run asynchronously — the result will be injected into the conversation automatically when ready.",
 				agent_config.description
 			),
 			parameters: json!({
@@ -85,63 +63,22 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 					},
 					"background": {
 						"type": "boolean",
-						"description": "Run agent task in background and return immediately with a job_id for polling. Default false (synchronous).",
+						"description": "Run in background and return immediately. Result is pushed back into the session automatically. Default: false.",
 						"default": false
 					}
 				},
 				"required": ["task"]
 			}),
-		});
-	}
-
-	// Job status/result query tools — always present when agent server is enabled
-	functions.push(McpFunction {
-		name: "get_agent_job_status".to_string(),
-		description: "Get the current status of a background agent job. Returns status (pending/running/completed/failed), timestamps, and agent name.".to_string(),
-		parameters: json!({
-			"type": "object",
-			"properties": {
-				"job_id": {
-					"type": "string",
-					"description": "The job ID returned by a background agent call"
-				}
-			},
-			"required": ["job_id"]
-		}),
-	});
-	functions.push(McpFunction {
-		name: "get_agent_job_result".to_string(),
-		description: "Retrieve the result or error of a completed/failed background agent job.".to_string(),
-		parameters: json!({
-			"type": "object",
-			"properties": {
-				"job_id": {
-					"type": "string",
-					"description": "The job ID returned by a background agent call"
-				}
-			},
-			"required": ["job_id"]
-		}),
-	});
-
-	functions
+		})
+		.collect()
 }
 
 /// Execute an agent tool call by spawning the configured ACP command as a subprocess
-/// and driving the ACP protocol (initialize → session/new → session/prompt) over stdio.
 pub async fn execute_agent_command(
 	call: &McpToolCall,
 	config: &crate::config::Config,
 	_cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<McpToolResult> {
-	// Handle job query tools first
-	if call.tool_name == "get_agent_job_status" {
-		return execute_get_job_status(call, config);
-	}
-	if call.tool_name == "get_agent_job_result" {
-		return execute_get_job_result(call, config);
-	}
-
 	let agent_name = match call.tool_name.strip_prefix("agent_") {
 		Some(name) => name,
 		None => {
@@ -185,40 +122,46 @@ pub async fn execute_agent_command(
 	let workdir = agent_config.get_resolved_workdir(&session_workdir);
 
 	if background {
-		let manager = get_or_init_job_manager(config);
+		let manager = match get_job_manager() {
+			Some(m) => m,
+			None => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Background job manager not initialised (no active session)".to_string(),
+				));
+			}
+		};
 
-		let max_jobs = config.background_jobs.max_concurrent_jobs;
-		if manager.active_job_count() >= max_jobs {
+		if let Err(active) = manager.try_acquire() {
+			let max = config.background_jobs.max_concurrent_jobs;
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Background job limit reached ({max_jobs} active jobs). Wait for existing jobs to complete."),
+				format!("Background job limit reached ({active}/{max} active). Wait for existing jobs to complete."),
 			));
 		}
 
-		let job_id = manager.submit_job(agent_config.name.clone(), task);
-		let job_id_clone = job_id.clone();
 		let mgr = Arc::clone(&manager);
 		let command = agent_config.command.clone();
+		let agent_name_owned = agent_config.name.clone();
 		let task_owned = task.to_string();
 
 		tokio::spawn(async move {
-			mgr.update_job_running(&job_id_clone);
-			match run_acp_command(&command, &task_owned, &workdir).await {
-				Ok(result) => mgr.complete_job(&job_id_clone, result),
-				Err(e) => mgr.fail_job(&job_id_clone, format!("{e:#}")),
-			}
+			let output = match run_acp_command(&command, &task_owned, &workdir).await {
+				Ok(text) => text,
+				Err(e) => format!("ERROR: {e:#}"),
+			};
+			mgr.release(CompletedJob {
+				agent_name: agent_name_owned,
+				output,
+			});
 		});
 
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			serde_json::to_string(&json!({
-				"job_id": job_id,
-				"status": "pending",
-				"message": "Agent task submitted. Use get_agent_job_status / get_agent_job_result to poll."
-			}))
-			.unwrap_or_default(),
+			"Agent task started in background. The result will be injected into this conversation automatically when ready.".to_string(),
 		));
 	}
 
@@ -236,86 +179,9 @@ pub async fn execute_agent_command(
 		)),
 	}
 }
-
-/// Return current status of a background job.
-fn execute_get_job_status(
-	call: &McpToolCall,
-	config: &crate::config::Config,
-) -> Result<McpToolResult> {
-	let job_id = match call.parameters.get("job_id").and_then(|v| v.as_str()) {
-		Some(id) if !id.trim().is_empty() => id,
-		_ => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing or empty 'job_id' parameter".to_string(),
-			));
-		}
-	};
-	let manager = get_or_init_job_manager(config);
-	match manager.get_job(job_id) {
-		None => Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Job '{job_id}' not found (may have expired or never existed)"),
-		)),
-		Some(job) => Ok(McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			serde_json::to_string(&json!({
-				"job_id": job.job_id,
-				"agent_name": job.agent_name,
-				"status": job.status,
-				"task_preview": job.task_preview,
-				"created_at": job.created_at,
-				"updated_at": job.updated_at,
-				"expires_at": job.expires_at,
-			}))
-			.unwrap_or_default(),
-		)),
-	}
-}
-
-/// Return result or error of a completed/failed background job.
-fn execute_get_job_result(
-	call: &McpToolCall,
-	config: &crate::config::Config,
-) -> Result<McpToolResult> {
-	let job_id = match call.parameters.get("job_id").and_then(|v| v.as_str()) {
-		Some(id) if !id.trim().is_empty() => id,
-		_ => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing or empty 'job_id' parameter".to_string(),
-			));
-		}
-	};
-	let manager = get_or_init_job_manager(config);
-	match manager.get_job(job_id) {
-		None => Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Job '{job_id}' not found (may have expired or never existed)"),
-		)),
-		Some(job) => Ok(McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			serde_json::to_string(&json!({
-				"job_id": job.job_id,
-				"status": job.status,
-				"result": job.result,
-				"error": job.error,
-			}))
-			.unwrap_or_default(),
-		)),
-	}
-}
-
 /// Spawn the ACP command, drive initialize → session/new → session/prompt,
 /// collect all agent_message_chunk text, return the assembled response.
 async fn run_acp_command(command: &str, task: &str, workdir: &std::path::Path) -> Result<String> {
-	// Split command into program + args
 	let mut parts = command.split_whitespace();
 	let program = parts
 		.next()

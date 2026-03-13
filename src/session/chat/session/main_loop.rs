@@ -263,6 +263,27 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Set state to reading input
 		*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
 
+		// Drain any completed background jobs before reading user input.
+		// Each completed job is injected as a user message so the AI sees it
+		// on the very next turn without any polling.
+		while let Ok(job) = chat_session.job_rx.try_recv() {
+			let msg = if job.output.starts_with("ERROR: ") {
+				format!(
+					"[Background agent '{}' failed]\n\n{}",
+					job.agent_name,
+					job.output.trim_start_matches("ERROR: ")
+				)
+			} else {
+				format!(
+					"[Background agent '{}' completed]\n\n{}",
+					job.agent_name, job.output
+				)
+			};
+			chat_session.pending_prompt = Some(msg);
+			// Only inject one at a time; the loop picks up the rest next iteration.
+			break;
+		}
+
 		// Get a new operation token for this iteration
 		let operation_rx = cancellation.new_operation();
 

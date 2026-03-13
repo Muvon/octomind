@@ -400,6 +400,10 @@ impl GenericLayer {
 			cached_tools: None,                       // Initialize tool cache (populated on first use)
 			first_prompt_idx: Some(first_prompt_idx), // Protect layer's first prompt from compression
 			schema: None,                             // Layers don't use structured output
+			job_rx: {
+				let (_tx, rx) = tokio::sync::mpsc::channel(1);
+				rx
+			},
 		}
 	}
 

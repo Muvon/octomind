@@ -39,7 +39,7 @@ pub mod workflows; // Workflow orchestration system // Background job tracking f
 pub use crate::providers::{
 	AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage,
 };
-pub use background_jobs::{BackgroundJob, BackgroundJobManager, BackgroundJobStatus};
+pub use background_jobs::{BackgroundJobManager, CompletedJob};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
 pub use layers::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};

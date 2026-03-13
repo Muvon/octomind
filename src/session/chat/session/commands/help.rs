@@ -48,7 +48,6 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(PROMPT_COMMAND.to_string());
 	commands.push(PLAN_COMMAND.to_string());
 	commands.push(REPORT_COMMAND.to_string());
-	commands.push(JOBS_COMMAND.to_string());
 	commands.push(format!("{} | {}", EXIT_COMMAND, QUIT_COMMAND));
 
 	// Add custom commands from config

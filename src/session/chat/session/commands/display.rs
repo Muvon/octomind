@@ -111,10 +111,6 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			REPORT_COMMAND.cyan()
 		);
 		println!(
-			"{} [cursor] - List background agent jobs and their status",
-			JOBS_COMMAND.cyan()
-		);
-		println!(
 			"{} | {} - Exit the session",
 			EXIT_COMMAND.cyan(),
 			QUIT_COMMAND.cyan()
@@ -1564,63 +1560,4 @@ fn display_plain_list(markdown_content: &str) {
 		.replace("**", "")
 		.replace("*", "");
 	println!("{}", plain_text);
-}
-
-pub fn display_jobs(output: &CommandOutput) {
-	if let CommandOutput::Jobs {
-		jobs,
-		next_cursor,
-		total_shown,
-	} = output
-	{
-		if jobs.is_empty() {
-			println!("{}", "No background jobs found.".bright_yellow());
-			return;
-		}
-
-		println!(
-			"{}",
-			format!("\nBackground Jobs ({total_shown} shown):\n").bright_cyan()
-		);
-
-		for job in jobs {
-			let job_id = job["job_id"].as_str().unwrap_or("?");
-			let agent = job["agent_name"].as_str().unwrap_or("?");
-			let status = job["status"].as_str().unwrap_or("?");
-			let preview = job["task_preview"].as_str().unwrap_or("");
-
-			let status_colored = match status {
-				"pending" => status.bright_yellow().to_string(),
-				"running" => status.bright_blue().to_string(),
-				"completed" => status.bright_green().to_string(),
-				"failed" => status.bright_red().to_string(),
-				_ => status.normal().to_string(),
-			};
-
-			// Truncate preview for display
-			let preview_short = if preview.len() > 60 {
-				format!("{}…", &preview[..60])
-			} else {
-				preview.to_string()
-			};
-
-			println!(
-				"  {} {} [{}] {}",
-				job_id[..8].bright_white(), // first 8 chars of UUID
-				format!("({agent})").cyan(),
-				status_colored,
-				preview_short.dimmed(),
-			);
-		}
-
-		if let Some(cursor) = next_cursor {
-			println!(
-				"\n{} {}",
-				"More jobs available. Use:".bright_yellow(),
-				format!("/jobs {cursor}").cyan(),
-			);
-		}
-
-		println!();
-	}
 }

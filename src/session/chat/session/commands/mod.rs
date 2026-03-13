@@ -25,7 +25,6 @@ mod exit;
 mod help;
 mod image;
 mod info;
-mod jobs;
 mod list;
 mod loglevel;
 mod mcp;
@@ -177,11 +176,6 @@ pub enum CommandOutput {
 		switched: bool,
 		session_name: String,
 	},
-	Jobs {
-		jobs: Vec<serde_json::Value>,
-		next_cursor: Option<String>,
-		total_shown: usize,
-	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -247,7 +241,6 @@ impl CommandOutput {
 			Self::Error { error, .. } => {
 				println!("{}", error.bright_red());
 			}
-			Self::Jobs { .. } => display::display_jobs(self),
 		}
 	}
 }
@@ -319,7 +312,6 @@ pub async fn process_command(
 		VIDEO_COMMAND => video::handle_video(session, params).await,
 		ROLE_COMMAND => role::handle_role(session, config, params).await,
 		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
-		JOBS_COMMAND => jobs::handle_jobs(params),
 		PLAN_COMMAND => plan::handle_plan().await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error

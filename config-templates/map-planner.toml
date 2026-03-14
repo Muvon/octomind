@@ -49,7 +49,7 @@ retry_timeout = 30
 #############################################
 
 [ask]
-system = "You are a helpful assistant.\n\n%{SYSTEM}"
+system = "You are a helpful assistant.\n\n{{SYSTEM}}"
 temperature = 0.6
 top_p = 0.8
 top_k = 40
@@ -92,7 +92,7 @@ temperature = 0.1
 top_p = 1.0
 top_k = 20
 workflow = "map_planner"
-welcome = "Hello! MAP-enhanced developer ready. Working dir: %{CWD} (Role: %{ROLE})"
+welcome = "Hello! MAP-enhanced developer ready. Working dir: {{CWD}} (Role: {{ROLE}})"
 system = """You are an elite senior developer.
 
 You receive a comprehensive, validated plan from the MAP planning workflow.
@@ -121,7 +121,7 @@ name = "assistant"
 temperature = 0.7
 top_p = 1.0
 top_k = 40
-welcome = "Hello! How can I help? Working dir: %{CWD}"
+welcome = "Hello! How can I help? Working dir: {{CWD}}"
 system = "You are a helpful AI assistant for general conversation."
 
 [roles.mcp]

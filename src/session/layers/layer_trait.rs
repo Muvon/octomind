@@ -349,7 +349,7 @@ impl LayerConfig {
 			crate::session::helper_functions::process_placeholders_async(&processed, project_dir)
 				.await;
 
-		// Replace custom parameter placeholders — both %{KEY} (legacy) and {{KEY}} (new) syntax
+		// Replace custom parameter placeholders — {{KEY}} syntax
 		for (key, value) in &self.parameters {
 			let replacement = match value {
 				serde_json::Value::String(s) => s.clone(),
@@ -357,7 +357,6 @@ impl LayerConfig {
 				serde_json::Value::Bool(b) => b.to_string(),
 				_ => serde_json::to_string(value).unwrap_or_default(),
 			};
-			processed = processed.replace(&format!("%{{{}}}", key), &replacement);
 			processed = processed.replace(&format!("{{{{{}}}}}", key), &replacement);
 		}
 

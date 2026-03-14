@@ -291,9 +291,9 @@ If any □ is unchecked → Correct approach before proceeding
 
 Core Behavior: Think → Verify → Act → Complete. Senior developer precision through parallel multi-term information gathering, efficient tool usage, and complete problem resolution with professional code quality standards.
 
-%{SYSTEM}
+{{SYSTEM}}
 """
-welcome = "Hello! Octomind ready to serve you. Working dir: %{CWD} (Role: %{ROLE})"
+welcome = "Hello! Octomind ready to serve you. Working dir: {{CWD}} (Role: {{ROLE}})"
 # Optional workflow reference - uncomment to enable workflow-based processing
 # workflow = "developer_workflow"
 
@@ -312,7 +312,7 @@ top_k = 40
 system = "You are a helpful assistant."
 
 # Welcome message for assistant role
-welcome = "Hello! Octomind ready to assist you. Working dir: %{CWD} (Role: %{ROLE})"
+welcome = "Hello! Octomind ready to assist you. Working dir: {{CWD}} (Role: {{ROLE}})"
 
 # MCP configuration for assistant role
 [roles.mcp]
@@ -461,7 +461,7 @@ Example:
 User: "fix the login bug"
 You: "Fix the login bug. Likely files to check first: src/auth/, src/login.rs, or authentication-related modules."
 
-%{CONTEXT}
+{{CONTEXT}}
 
 RESPOND ONLY WITH REFIEND ORIGINAL TASK
 
@@ -527,9 +527,9 @@ IMPORTANT:
 - You're providing reconnaissance, NOT doing the actual development work
 - Focus on "where to look" rather than "how to implement"
 
-%{SYSTEM}
+{{SYSTEM}}
 
-%{CONTEXT}"""
+{{CONTEXT}}"""
 temperature = 0.3
 # Default top_p for task_researcher layer (0.0 to 1.0, nucleus sampling)
 top_p = 0.7
@@ -615,7 +615,7 @@ Create a compressed history that captures ESSENTIAL architectural knowledge and 
 
 This architectural history will be essential for future development sessions.
 
-%{CONTEXT}"""
+{{CONTEXT}}"""
 model = "openrouter:openai/o4-mini"  # Use cheaper model for cost optimization
 max_tokens = 0
 temperature = 0.3

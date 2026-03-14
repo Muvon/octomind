@@ -289,18 +289,17 @@ pub async fn process_placeholders_async_with_role(
 	let mut processed_prompt = prompt.to_string();
 
 	// Check which placeholders are actually in the prompt to avoid unnecessary work
-	// Both %{VAR} (legacy) and {{VAR}} (new) syntax are supported
-	let needs_date = prompt.contains("%{DATE}") || prompt.contains("{{DATE}}");
-	let needs_shell = prompt.contains("%{SHELL}") || prompt.contains("{{SHELL}}");
-	let needs_os = prompt.contains("%{OS}") || prompt.contains("{{OS}}");
-	let needs_binaries = prompt.contains("%{BINARIES}") || prompt.contains("{{BINARIES}}");
-	let needs_cwd = prompt.contains("%{CWD}") || prompt.contains("{{CWD}}");
-	let needs_role = prompt.contains("%{ROLE}") || prompt.contains("{{ROLE}}");
-	let needs_system = prompt.contains("%{SYSTEM}") || prompt.contains("{{SYSTEM}}");
-	let needs_context = prompt.contains("%{CONTEXT}") || prompt.contains("{{CONTEXT}}");
-	let needs_git_status = prompt.contains("%{GIT_STATUS}") || prompt.contains("{{GIT_STATUS}}");
-	let needs_git_tree = prompt.contains("%{GIT_TREE}") || prompt.contains("{{GIT_TREE}}");
-	let needs_readme = prompt.contains("%{README}") || prompt.contains("{{README}}");
+	let needs_date = prompt.contains("{{DATE}}");
+	let needs_shell = prompt.contains("{{SHELL}}");
+	let needs_os = prompt.contains("{{OS}}");
+	let needs_binaries = prompt.contains("{{BINARIES}}");
+	let needs_cwd = prompt.contains("{{CWD}}");
+	let needs_role = prompt.contains("{{ROLE}}");
+	let needs_system = prompt.contains("{{SYSTEM}}");
+	let needs_context = prompt.contains("{{CONTEXT}}");
+	let needs_git_status = prompt.contains("{{GIT_STATUS}}");
+	let needs_git_tree = prompt.contains("{{GIT_TREE}}");
+	let needs_readme = prompt.contains("{{README}}");
 
 	// Early return if no placeholders are found
 	if !needs_date
@@ -338,16 +337,16 @@ pub async fn process_placeholders_async_with_role(
 	// Add system info placeholders only if needed
 	if let Some(ref info) = system_info {
 		if needs_date {
-			placeholders.insert("%{DATE}", info.date_with_timezone.clone());
+			placeholders.insert("{{DATE}}", info.date_with_timezone.clone());
 		}
 		if needs_shell {
-			placeholders.insert("%{SHELL}", info.shell_info.clone());
+			placeholders.insert("{{SHELL}}", info.shell_info.clone());
 		}
 		if needs_os {
-			placeholders.insert("%{OS}", info.os_info.clone());
+			placeholders.insert("{{OS}}", info.os_info.clone());
 		}
 		if needs_binaries {
-			placeholders.insert("%{BINARIES}", info.binaries.clone());
+			placeholders.insert("{{BINARIES}}", info.binaries.clone());
 		}
 		if needs_system {
 			// Build comprehensive system information
@@ -366,21 +365,21 @@ pub async fn process_placeholders_async_with_role(
 				"\n\n==== SYSTEM INFORMATION ====\n\n{}\n\n==== END SYSTEM INFORMATION ====\n",
 				system_context
 			);
-			placeholders.insert("%{SYSTEM}", system_section);
+			placeholders.insert("{{SYSTEM}}", system_section);
 		}
 	}
 
 	// Add CWD if needed
 	if needs_cwd {
-		placeholders.insert("%{CWD}", project_dir.to_string_lossy().to_string());
+		placeholders.insert("{{CWD}}", project_dir.to_string_lossy().to_string());
 	}
 
 	// Add role if needed and provided
 	if needs_role {
 		if let Some(role_name) = role {
-			placeholders.insert("%{ROLE}", role_name.to_string());
+			placeholders.insert("{{ROLE}}", role_name.to_string());
 		} else {
-			placeholders.insert("%{ROLE}", "unknown".to_string());
+			placeholders.insert("{{ROLE}}", "unknown".to_string());
 		}
 	}
 
@@ -398,7 +397,7 @@ pub async fn process_placeholders_async_with_role(
 			} else {
 				String::new()
 			};
-			placeholders.insert("%{CONTEXT}", context_section);
+			placeholders.insert("{{CONTEXT}}", context_section);
 		}
 
 		if needs_git_status {
@@ -410,7 +409,7 @@ pub async fn process_placeholders_async_with_role(
 			} else {
 				String::new()
 			};
-			placeholders.insert("%{GIT_STATUS}", git_status);
+			placeholders.insert("{{GIT_STATUS}}", git_status);
 		}
 
 		if needs_git_tree {
@@ -422,7 +421,7 @@ pub async fn process_placeholders_async_with_role(
 			} else {
 				String::new()
 			};
-			placeholders.insert("%{GIT_TREE}", git_tree);
+			placeholders.insert("{{GIT_TREE}}", git_tree);
 		}
 
 		if needs_readme {
@@ -434,21 +433,13 @@ pub async fn process_placeholders_async_with_role(
 			} else {
 				String::new()
 			};
-			placeholders.insert("%{README}", readme);
+			placeholders.insert("{{README}}", readme);
 		}
 	}
 
-	// Replace all placeholders — both %{VAR} (legacy) and {{VAR}} (new) syntax
+	// Replace all {{VAR}} placeholders
 	for (placeholder, value) in placeholders.iter() {
 		processed_prompt = processed_prompt.replace(placeholder, value);
-		// Also replace {{VAR}} form: %{DATE} -> {{DATE}}, %{CWD} -> {{CWD}}, etc.
-		if let Some(inner) = placeholder
-			.strip_prefix("%{")
-			.and_then(|s| s.strip_suffix('}'))
-		{
-			let new_form = format!("{{{{{}}}}}", inner);
-			processed_prompt = processed_prompt.replace(&new_form, value);
-		}
 	}
 
 	processed_prompt
@@ -494,20 +485,20 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	};
 
 	// Add all placeholders
-	placeholders.insert("%{SYSTEM}".to_string(), system_section); // System info: date, shell, OS, binaries, CWD
-	placeholders.insert("%{CONTEXT}".to_string(), context_section); // Project info: README, git status, git tree
+	placeholders.insert("{{SYSTEM}}".to_string(), system_section); // System info: date, shell, OS, binaries, CWD
+	placeholders.insert("{{CONTEXT}}".to_string(), context_section); // Project info: README, git status, git tree
 	placeholders.insert(
-		"%{CWD}".to_string(),
+		"{{CWD}}".to_string(),
 		project_dir.to_string_lossy().to_string(),
 	);
-	placeholders.insert("%{DATE}".to_string(), system_info.date_with_timezone);
-	placeholders.insert("%{SHELL}".to_string(), system_info.shell_info);
-	placeholders.insert("%{OS}".to_string(), system_info.os_info);
-	placeholders.insert("%{BINARIES}".to_string(), system_info.binaries);
+	placeholders.insert("{{DATE}}".to_string(), system_info.date_with_timezone);
+	placeholders.insert("{{SHELL}}".to_string(), system_info.shell_info);
+	placeholders.insert("{{OS}}".to_string(), system_info.os_info);
+	placeholders.insert("{{BINARIES}}".to_string(), system_info.binaries);
 
 	// Add specific parts of the context as individual placeholders
 	placeholders.insert(
-		"%{GIT_STATUS}".to_string(),
+		"{{GIT_STATUS}}".to_string(),
 		if let Some(git_status) = &project_context.git_status {
 			format!(
 				"\n\n==== GIT STATUS ====\n\n{}\n\n==== END GIT STATUS ====\n",
@@ -519,7 +510,7 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	);
 
 	placeholders.insert(
-		"%{GIT_TREE}".to_string(),
+		"{{GIT_TREE}}".to_string(),
 		if let Some(file_tree) = &project_context.file_tree {
 			format!(
 				"\n\n==== FILE TREE ====\n\n{}\n\n==== END FILE TREE ====\n",
@@ -531,7 +522,7 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 	);
 
 	placeholders.insert(
-		"%{README}".to_string(),
+		"{{README}}".to_string(),
 		if let Some(readme) = &project_context.readme_content {
 			format!(
 				"\n\n==== README ====\n\n{}\n\n==== END README ====\n",

@@ -99,17 +99,17 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 		} else {
 			// Show just a brief description
 			let description = match placeholder.as_str() {
-				"%{DATE}" => "Current date and time with timezone",
-				"%{SHELL}" => "Current shell name and version",
-				"%{OS}" => "Operating system information",
-				"%{BINARIES}" => "Available development tools and their versions",
-				"%{CWD}" => "Current working directory",
-				"%{ROLE}" => "Current session role (developer, assistant, etc.)",
-				"%{SYSTEM}" => "Complete system information (date, shell, OS, binaries, CWD)",
-				"%{CONTEXT}" => "Project context information (README, git status, git tree)",
-				"%{GIT_STATUS}" => "Git repository status",
-				"%{GIT_TREE}" => "Git file tree",
-				"%{README}" => "Project README content",
+				"{{DATE}}" => "Current date and time with timezone",
+				"{{SHELL}}" => "Current shell name and version",
+				"{{OS}}" => "Operating system information",
+				"{{BINARIES}}" => "Available development tools and their versions",
+				"{{CWD}}" => "Current working directory",
+				"{{ROLE}}" => "Current session role (developer, assistant, etc.)",
+				"{{SYSTEM}}" => "Complete system information (date, shell, OS, binaries, CWD)",
+				"{{CONTEXT}}" => "Project context information (README, git status, git tree)",
+				"{{GIT_STATUS}}" => "Git repository status",
+				"{{GIT_TREE}}" => "Git file tree",
+				"{{README}}" => "Project README content",
 				_ => "Project context variable",
 			};
 			println!(" - {}", description.dimmed());

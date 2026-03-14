@@ -16,9 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use super::mcp::RoleMcpConfig;
 
-// Role configuration - contains all behavior settings but NOT API keys or model (uses system-wide model)
+// Role configuration - contains all behavior settings but NOT API keys
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RoleConfig {
+	// Optional model override — if set, replaces the global model when this role is active
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub model: Option<String>,
 	// Custom system prompt (REQUIRED - defined in config template)
 	pub system: String,
 	// Custom welcome message with variable support
@@ -32,7 +35,6 @@ pub struct RoleConfig {
 }
 
 // REMOVED: Default implementations - all config must be explicit
-// REMOVED: Model-related methods - roles now use system-wide model only
 
 // Unified role configuration for all roles (developer, assistant, custom)
 #[derive(Debug, Serialize, Deserialize, Clone)]

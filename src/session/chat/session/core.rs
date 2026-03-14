@@ -350,17 +350,24 @@ impl ChatSession {
 
 		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
 
+		// Get role config once — used for temperature, top_p, top_k, and optional model override
+		let (role_config, _, _, _, _) = params.config.get_role_config(params.role);
+
+		// Role model overrides CLI model which overrides global config model
+		// Priority: role.model > CLI --model > config.model
+		let effective_model = role_config
+			.model
+			.clone()
+			.or_else(|| params.model.clone())
+			.unwrap_or_else(|| params.config.get_effective_model());
+
 		// Get temperature from role config if not provided via command line
 		let effective_temperature = if let Some(temp) = params.temperature {
 			temp // Use command line override
 		} else {
-			// Read from role configuration - STRICT: assume it exists
-			let (role_config, _, _, _, _) = params.config.get_role_config(params.role);
 			role_config.temperature
 		};
 
-		// Get top_p and top_k from role config - STRICT: always from config, no command line override
-		let (role_config, _, _, _, _) = params.config.get_role_config(params.role);
 		let effective_top_p = role_config.top_p;
 		let effective_top_k = role_config.top_k;
 
@@ -570,7 +577,7 @@ impl ChatSession {
 
 					let mut chat_session = ChatSession::new(ChatSessionParams {
 						name: new_session_name.clone(),
-						model: params.model.clone(),
+						model: Some(effective_model.clone()),
 						temperature: Some(effective_temperature), // Use config-based temperature
 						top_p: Some(effective_top_p),             // Use config-based top_p
 						top_k: Some(effective_top_k),             // Use config-based top_k
@@ -600,7 +607,7 @@ impl ChatSession {
 
 			let mut chat_session = ChatSession::new(ChatSessionParams {
 				name: session_name.clone(),
-				model: params.model,
+				model: Some(effective_model),
 				temperature: Some(effective_temperature),
 				top_p: Some(effective_top_p),
 				top_k: Some(effective_top_k),

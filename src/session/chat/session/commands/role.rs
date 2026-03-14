@@ -72,13 +72,19 @@ pub async fn handle_role(
 
 	// Update session role and related settings
 	let old_role = session.role.clone();
+	let old_model = session.model.clone();
 	session.role = new_role.to_string();
 	session.temperature = role_config.temperature;
+	// Apply role model override if set, otherwise keep current session model
+	if let Some(role_model) = &role_config.model {
+		session.model = role_model.clone();
+	}
 
 	// Reinitialize the session for the new role (system prompt + MCP servers)
 	if let Err(e) = session.reinitialize_for_role(new_role, config).await {
 		// If reinitialization fails, revert the role change
 		session.role = old_role.clone();
+		session.model = old_model;
 		session.temperature = config.get_role_config(&old_role).0.temperature;
 
 		return Ok(CommandResult::HandledWithOutput(CommandOutput::Error {

@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | 
 export OPENROUTER_API_KEY="your_key"
 
 # Start session
-octomind session
+octomind run
 ```
 
 ---
@@ -77,10 +77,11 @@ octomind session
 ## 🔌 Run Modes
 
 | Mode | Command | Use For |
-|------|---------|---------|
-| Interactive | `octomind session` | Daily development |
+|------|---------|------|
+| Interactive | `octomind run` | Daily development |
+| Registry agent | `octomind run developer:rust` | Specialised agent from registry |
 | WebSocket | `octomind server --port 8080` | Automation, IDE plugins |
-| JSONL | `octomind run developer "task" --format=jsonl` | CI/CD pipelines |
+| JSONL | `echo "task" \| octomind run --format jsonl` | CI/CD pipelines |
 
 ---
 

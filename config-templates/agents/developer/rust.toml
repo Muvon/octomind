@@ -1,6 +1,6 @@
 # Agent manifest: developer:rust
 #
-# Fetched by `octomind agent developer:rust`.
+# Fetched by `octomind run developer:rust`.
 # Merged additively into the user's base config:
 #   - [[roles]]       → appended (new role "developer:rust")
 #   - [[mcp.servers]] → appended (new servers, duplicates skipped by name)

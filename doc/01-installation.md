@@ -277,7 +277,7 @@ octomind vars
 octomind config --show
 
 # Start a test session
-octomind session --role assistant
+octomind run assistant
 ```
 
 ### First Run
@@ -287,7 +287,7 @@ octomind session --role assistant
 octomind config
 
 # Start your first session
-octomind session
+octomind run
 
 # Within the session, try:
 /help                    # Show available commands

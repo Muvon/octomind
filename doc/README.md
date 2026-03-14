@@ -106,7 +106,7 @@ curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | 
 export OPENROUTER_API_KEY="your_key"
 
 # Start session
-octomind session
+octomind run
 ```
 
 ### Essential Commands
@@ -116,9 +116,9 @@ octomind config                    # Generate default config
 octomind config --show            # View current settings
 
 # Sessions
-octomind session                   # Developer session (full tools)
-octomind session --role assistant # Chat-only session
-octomind session --resume name    # Resume existing session
+octomind run                       # Developer session (full tools)
+octomind run assistant             # Chat-only session
+octomind run developer:rust        # Registry agent (fetches manifest)
 
 # Within sessions
 /help                             # Show available commands

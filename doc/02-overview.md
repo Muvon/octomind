@@ -63,7 +63,7 @@ graph TB
 
 **Filesystem Server** (`src/mcp/fs/`):
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
-- `text_editor(command="create|str_replace|insert|line_replace|undo_edit", path="...", ...)` - Edit files
+- `text_editor(command="create|str_replace|undo_edit", path="...", ...)` - Create files or make targeted string replacements
 - `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
 - `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
@@ -206,7 +206,7 @@ For comprehensive workflow documentation, see [doc/10-workflows.md](./10-workflo
 
 ```bash
 # Start development session
-octomind session
+octomind run
 
 # Natural language interactions
 > "How does authentication work in this project?"
@@ -272,7 +272,7 @@ export OCTOMIND_ROLES__DEVELOPER__MAX_TOKENS="16384"
 
 1. **Install**: `curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash`
 2. **Set API Key**: `export OPENROUTER_API_KEY="your_key"`
-3. **Start Session**: `octomind session`
+3. **Start Session**: `octomind run`
 4. **Try Commands**: `/help`, `/info`, `/mcp info`
 
 ### Next Steps

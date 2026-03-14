@@ -30,7 +30,7 @@ Octomind provides three built-in MCP servers with comprehensive development capa
 
 **Filesystem Server** (`src/mcp/fs/`):
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
-- `text_editor(command="create|str_replace|insert|line_replace|undo_edit", path="...", ...)` - Edit files
+- `text_editor(command="create|str_replace|undo_edit", path="...", ...)` - Create files or make targeted string replacements
 - `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
 - `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution

@@ -45,11 +45,15 @@ pub struct RunArgs {
 	#[arg(long = "format")]
 	pub format: Option<String>,
 
+	/// Override the model for this session (e.g. `openrouter:anthropic/claude-sonnet-4`).
+	/// Takes precedence over the global config model but is overridden by a role's model setting.
+	#[arg(long, short = 'm', value_name = "MODEL")]
+	pub model: Option<String>,
+
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
 }
-
 pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	let is_interactive = args.format.is_none() && std::io::stdin().is_terminal();
 
@@ -65,6 +69,7 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		name: args.name.clone(),
 		resume: args.resume.clone(),
 		resume_recent: args.resume_recent,
+		model: args.model.clone(),
 		..Default::default()
 	};
 

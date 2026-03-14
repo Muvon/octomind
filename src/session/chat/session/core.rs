@@ -507,10 +507,13 @@ impl ChatSession {
 						// Validate that the restored role still exists in config
 						if params.config.roles.iter().any(|r| r.name == restored_role) {
 							chat_session.role = restored_role;
-							// Update temperature from the restored role config
+							// Update temperature and model from the restored role config
 							let (role_config, _, _, _, _) =
 								params.config.get_role_config(&chat_session.role);
 							chat_session.temperature = role_config.temperature;
+							if let Some(role_model) = role_config.model.clone() {
+								chat_session.model = role_model;
+							}
 						}
 					}
 

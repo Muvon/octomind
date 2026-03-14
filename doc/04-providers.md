@@ -47,17 +47,18 @@ api_key = "your_key"  # Optional, can use env var
 #### Caching & Cost Tracking
 - All providers supporting Claude (Anthropic, OpenRouter) enable caching and cost tracking
 - Vision models supported via OpenRouter: Claude 3+, GPT-4o, Gemini, Llama 3.2 vision, Pixtral
-- Use `octomind session --model <provider:model>` everywhere
+- Use `octomind run --model <provider:model>` to override the model at runtime
+
+```bash
 # Anthropic models via OpenRouter
-octomind session --model "openrouter:anthropic/claude-sonnet-4"
-octomind session --model "openrouter:anthropic/claude-sonnet-4"
+octomind run --model "openrouter:anthropic/claude-sonnet-4"
 
 # OpenAI models via OpenRouter
-octomind session --model "openrouter:openai/gpt-4o"
-octomind session --model "openrouter:openai/o1-preview"
+octomind run --model "openrouter:openai/gpt-4o"
+octomind run --model "openrouter:openai/o1-preview"
 
 # Google models via OpenRouter
-octomind session --model "openrouter:google/gemini-1.5-pro"
+octomind run --model "openrouter:google/gemini-1.5-pro"
 ```
 
 ### OpenAI (Direct)
@@ -75,9 +76,9 @@ export OPENAI_API_KEY="your_openai_key"
 
 #### Usage
 ```bash
-octomind session --model "openai:gpt-4o"
-octomind session --model "openai:gpt-4o-mini"
-octomind session --model "openai:o1-preview"
+octomind run --model "openai:gpt-4o"
+octomind run --model "openai:gpt-4o-mini"
+octomind run --model "openai:o1-preview"
 ```
 
 #### Responses API Behavior
@@ -86,7 +87,7 @@ OpenAI direct uses the Responses API. Octomind tracks the provider response_id a
 #### Vision Support
 ```bash
 # Use vision-capable model
-octomind session --model "openai:gpt-4o"
+octomind run --model "openai:gpt-4o"
 
 # Analyze images
 > /image diagram.png
@@ -115,15 +116,15 @@ export ANTHROPIC_API_KEY="your_anthropic_key"
 
 #### Usage
 ```bash
-octomind session --model "anthropic:claude-sonnet-4"
-octomind session --model "anthropic:claude-3-5-haiku"
-octomind session --model "anthropic:claude-3-opus"
+octomind run --model "anthropic:claude-sonnet-4"
+octomind run --model "anthropic:claude-3-5-haiku"
+octomind run --model "anthropic:claude-3-opus"
 ```
 
 #### Vision Support
 ```bash
 # Start session with vision-capable model
-octomind session --model "anthropic:claude-sonnet-4"
+octomind run --model "anthropic:claude-sonnet-4"
 
 # Attach image and analyze
 > /image screenshot.png
@@ -162,8 +163,8 @@ export GOOGLE_REGION="us-central1"  # Optional
 
 #### Usage
 ```bash
-octomind session --model "google:gemini-1.5-pro"
-octomind session --model "google:gemini-1.5-flash"
+octomind run --model "google:gemini-1.5-pro"
+octomind run --model "google:gemini-1.5-flash"
 ```
 
 #### Pricing (per 1M tokens)
@@ -199,8 +200,8 @@ secret_access_key = "your_secret_key"  # Optional, can use env var
 
 #### Usage
 ```bash
-octomind session --model "amazon:anthropic.claude-3-sonnet"
-octomind session --model "amazon:amazon.titan-text-express"
+octomind run --model "amazon:anthropic.claude-3-sonnet"
+octomind run --model "amazon:amazon.titan-text-express"
 ```
 
 ### Cloudflare Workers AI
@@ -227,8 +228,8 @@ api_token = "your_api_token"  # Optional, can use env var
 
 #### Usage
 ```bash
-octomind session --model "cloudflare:@cf/meta/llama-2-7b-chat-int8"
-octomind session --model "cloudflare:@cf/mistral/mistral-7b-instruct-v0.1"
+octomind run --model "cloudflare:@cf/meta/llama-2-7b-chat-int8"
+octomind run --model "cloudflare:@cf/mistral/mistral-7b-instruct-v0.1"
 ```
 
 ### DeepSeek
@@ -252,8 +253,8 @@ api_key = "your_key"  # Optional, can use env var
 
 #### Usage
 ```bash
-octomind session --model "deepseek:deepseek-chat"
-octomind session --model "deepseek:deepseek-coder"
+octomind run --model "deepseek:deepseek-chat"
+octomind run --model "deepseek:deepseek-coder"
 ```
 
 ## Model Selection Strategy
@@ -578,9 +579,9 @@ gcloud auth application-default login
 Check provider status:
 ```bash
 # Test different providers
-octomind session --model "openrouter:anthropic/claude-sonnet-4"
-octomind session --model "openai:gpt-4o-mini"
-octomind session --model "anthropic:claude-3-5-haiku"
+octomind run --model "openrouter:anthropic/claude-sonnet-4"
+octomind run --model "openai:gpt-4o-mini"
+octomind run --model "anthropic:claude-3-5-haiku"
 ```
 
 ### Debug Mode

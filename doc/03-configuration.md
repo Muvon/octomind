@@ -325,8 +325,7 @@ export OCTOMIND_CONFIG_PATH="/path/to/custom-config.toml"
 export OCTOMIND_CONFIG_PATH="/path/to/config-directory"
 
 # Works with all commands
-octomind session    # Uses custom config
-octomind run "task" # Uses custom config
+octomind run    # Uses custom config
 ```
 
 **Default locations (when OCTOMIND_CONFIG_PATH not set):**

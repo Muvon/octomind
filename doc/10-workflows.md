@@ -347,10 +347,10 @@ allowed_tools = ["view"]
 
 ```bash
 # Use role with workflow
-octomind session --role developer
+octomind run developer
 
-# Or specify config
-octomind session --config ../config-templates/map-planner.toml
+# Or copy the template to your config directory and set OCTOMIND_CONFIG_PATH
+cp config-templates/map-planner.toml ~/.config/octomind/
 ```
 
 ### Using the MAP Planner Template
@@ -362,8 +362,11 @@ Octomind includes a ready-to-use MAP (Mindful Autonomous Planner) configuration 
 cp config-templates/map-planner.toml ./my-map-workflow.toml
 
 # Edit the configuration as needed
-# Then start a session with your customized workflow
-octomind session --config ./my-map-workflow.toml
+# Copy the template to your config directory
+cp config-templates/map-planner.toml ~/.config/octomind/
+
+# Then start a session — it will pick up the config automatically
+octomind run developer
 ```
 
 The MAP planner template provides brain-inspired task decomposition and goal management out of the box.
@@ -408,8 +411,8 @@ A ready-to-use MAP workflow template is available at `config-templates/map-plann
 # Copy the template to your config directory
 cp config-templates/map-planner.toml your-config-dir/
 
-# Then start a session with the template
-octomind session --config your-config-dir/map-planner.toml
+# Then start a session with the config directory
+octomind run developer
 ```
 
 The template includes:

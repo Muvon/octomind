@@ -26,16 +26,13 @@ Developer role is the default and provides comprehensive development assistance.
 
 ```bash
 # Default role (developer)
-octomind session
+octomind run
 
 # Explicitly specify developer role
-octomind session --role=developer
-
-# Developer role with specific model
-octomind session --role=developer --model="openrouter:anthropic/claude-sonnet-4"
+octomind run developer
 
 # Named developer session
-octomind session --role=developer -n development_session
+octomind run developer -n development_session
 ```
 
 ### Developer Role Features
@@ -99,13 +96,10 @@ Assistant role is optimized for lightweight conversations without the overhead o
 
 ```bash
 # Assistant role
-octomind session --role=assistant
-
-# Assistant role with specific model
-octomind session --role=assistant --model="openai:gpt-4o-mini"
+octomind run assistant
 
 # Named assistant session
-octomind session --role=assistant -n quick_chat
+octomind run assistant -n quick_chat
 ```
 
 ### Assistant Role Features
@@ -145,9 +139,9 @@ Custom roles inherit from the assistant role as a base, then apply their own ove
 
 ```bash
 # Use a custom role
-octomind session --role=code-reviewer
-octomind session --role=security-analyst
-octomind session --role=documentation-writer
+octomind run code-reviewer
+octomind run security-analyst
+octomind run documentation-writer
 ```
 
 ### Custom Role Configuration
@@ -386,16 +380,13 @@ Custom instructions are automatically cached like system prompts, making them to
 
 ```bash
 # Create new named session
-octomind session -n project_review
+octomind run -n project_review
 
 # Resume existing session
-octomind session -r project_review
+octomind run -r project_review
 
-# List all sessions
-octomind session --list
-
-# Session with custom model
-octomind session --model="anthropic:claude-sonnet-4" -n analysis
+# Session with specific name and role
+octomind run developer -n analysis
 ```
 
 ### Session Commands
@@ -1143,10 +1134,10 @@ Octomind provides commands for managing session context:
 
 ```bash
 # Organize sessions by purpose
-octomind session -n bug_fixing --role=developer
-octomind session -n code_review --role=code-reviewer
-octomind session -n quick_help --role=assistant
-octomind session -n security_audit --role=security-analyst
+octomind run developer -n bug_fixing
+octomind run code-reviewer -n code_review
+octomind run assistant -n quick_help
+octomind run security-analyst -n security_audit
 ```
 
 ### Cost Control
@@ -1176,7 +1167,7 @@ octomind run developer "Review src/auth.rs for security issues" \
   --model openai:gpt-4o
 
 # Interactive session → every response is structured JSON
-octomind session --schema schema.json --role assistant
+octomind run assistant --schema schema.json
 ```
 
 When `--schema` is active:

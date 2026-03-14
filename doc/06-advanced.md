@@ -1091,12 +1091,12 @@ scopes = ["repo", "read:org"]
 ### Session Organization
 ```bash
 # Start named sessions for different purposes
-octomind session --name "feature-auth"
-octomind session --name "bugfix-login"
-octomind session --name "refactor-api"
+octomind run --name "feature-auth"
+octomind run --name "bugfix-login"
+octomind run --name "refactor-api"
 
 # Resume specific sessions
-octomind session --resume "feature-auth"
+octomind run --resume "feature-auth"
 ```
 
 ## Development Workflow Integration
@@ -1270,8 +1270,7 @@ Strict mode is always enabled: the provider will reject responses that don't con
 
 | Command | Flag | Notes |
 |---------|------|-------|
-| `octomind run` | `--schema <path>` | Non-interactive session run |
-| `octomind session` | `--schema <path>` | Interactive session (all responses structured) |
+| `octomind run` | `--schema <path>` | Non-interactive or interactive session |
 ### Provider Compatibility
 
 Not all providers support structured output. Octomind fails fast with a clear error if the selected provider/model does not support it:
@@ -1318,7 +1317,7 @@ octomind run developer "Analyze the codebase and list all TODO items" \
 
 **Interactive session with structured output:**
 ```bash
-octomind session --schema schema.json --role assistant
+octomind run assistant --schema schema.json
 ```
 
 ### Pipeline Integration

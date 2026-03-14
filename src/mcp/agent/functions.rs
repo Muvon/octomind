@@ -118,7 +118,19 @@ pub async fn execute_agent_command(
 		}
 	};
 
-	let agent_config = match config.agents.iter().find(|a| a.name == agent_name) {
+	let agent_config = config
+		.agents
+		.iter()
+		.find(|a| a.name == agent_name)
+		.cloned()
+		// Fall back to dynamic agents if not found in config
+		.or_else(|| {
+			crate::mcp::core::dynamic_agents::list_agents()
+				.into_iter()
+				.find(|a| a.name == agent_name)
+		});
+
+	let agent_config = match agent_config {
 		Some(c) => c,
 		None => {
 			return Ok(McpToolResult::error(

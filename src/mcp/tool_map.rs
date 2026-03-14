@@ -239,6 +239,17 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 		}
 	}
 
+	// Also include dynamically added agents
+	for agent_config in crate::mcp::core::dynamic_agents::get_all_configs() {
+		let tool_name = format!("agent_{}", agent_config.name);
+		// Use "agent" as server name so it routes through existing agent server logic
+		let agent_server = McpServerConfig::Builtin {
+			name: "agent".to_string(),
+			timeout_seconds: 300,
+			tools: vec![tool_name.clone()],
+		};
+		tool_map.entry(tool_name).or_insert_with(|| agent_server);
+	}
 	Ok(tool_map)
 }
 

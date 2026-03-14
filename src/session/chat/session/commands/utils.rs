@@ -28,6 +28,11 @@ pub async fn get_tool_server_name_async(tool_name: &str, _config: &Config) -> St
 		return name;
 	}
 
+	// Then check dynamic agents - they use "agent" namespace
+	if crate::mcp::core::dynamic_agents::is_dynamic_by_tool(tool_name) {
+		return "agent".to_string();
+	}
+
 	// Fallback to category guess if no server found
 	crate::mcp::guess_tool_category(tool_name).to_string()
 }

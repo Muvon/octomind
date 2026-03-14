@@ -424,11 +424,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				manager.kill_all();
 			}
 			// Show resume command with session ID
-			let resume_cmd = format!(
-				"octomind session --resume {}",
-				chat_session.session.info.name
-			)
-			.bright_cyan();
+			let resume_cmd =
+				format!("octomind run --resume {}", chat_session.session.info.name).bright_cyan();
 			println!("\nTo continue this session, run: {}", resume_cmd);
 			break;
 		}
@@ -884,7 +881,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			crate::session::chat::session::commands::CommandResult::Exit => {
 				// Check if it's a session switch command
 				if input.starts_with(crate::session::chat::commands::SESSION_COMMAND) {
-					println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind session' for interactive session management.".yellow());
+					println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind run' for interactive session management.".yellow())
 				}
 				// Save session after command execution
 				let _ = chat_session.save();

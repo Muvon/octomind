@@ -28,8 +28,20 @@ pub struct RunArgs {
 	#[arg(value_name = "TAG")]
 	pub tag: Option<String>,
 
+	/// Session name — creates a named session or resumes it if it already exists.
+	#[arg(long, short = 'n', value_name = "NAME")]
+	pub name: Option<String>,
+
+	/// Resume a specific session by name.
+	#[arg(long, short = 'r', value_name = "SESSION")]
+	pub resume: Option<String>,
+
+	/// Resume the most recent session for the current working directory.
+	#[arg(long)]
+	pub resume_recent: bool,
+
 	/// Output format: plain or jsonl. When set, runs non-interactively
-	/// (reads input from stdin or the TAG positional if no tag given).
+	/// (reads input from stdin).
 	#[arg(long = "format")]
 	pub format: Option<String>,
 
@@ -50,6 +62,9 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	let session_args = octomind::session::chat::session::GenericSessionArgs {
 		role: role.clone(),
 		mode: args.format.clone().unwrap_or_else(|| "plain".to_string()),
+		name: args.name.clone(),
+		resume: args.resume.clone(),
+		resume_recent: args.resume_recent,
 		..Default::default()
 	};
 

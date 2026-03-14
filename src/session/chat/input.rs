@@ -377,7 +377,7 @@ pub fn read_user_input(
 			}
 			Ok(Signal::CtrlD) => {
 				// Ctrl+D - Show resume command
-				let resume_cmd = format!("octomind session --resume {}", session_id).bright_cyan();
+				let resume_cmd = format!("octomind run --resume {}", session_id).bright_cyan();
 				println!("\nTo continue this session, run: {}", resume_cmd);
 
 				// Debug logging for session preservation

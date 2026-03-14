@@ -442,7 +442,10 @@ pub async fn process_placeholders_async_with_role(
 	for (placeholder, value) in placeholders.iter() {
 		processed_prompt = processed_prompt.replace(placeholder, value);
 		// Also replace {{VAR}} form: %{DATE} -> {{DATE}}, %{CWD} -> {{CWD}}, etc.
-		if let Some(inner) = placeholder.strip_prefix("%{").and_then(|s| s.strip_suffix('}')) {
+		if let Some(inner) = placeholder
+			.strip_prefix("%{")
+			.and_then(|s| s.strip_suffix('}'))
+		{
 			let new_form = format!("{{{{{}}}}}", inner);
 			processed_prompt = processed_prompt.replace(&new_form, value);
 		}

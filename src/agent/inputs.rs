@@ -61,18 +61,16 @@ fn load_inputs() -> Result<HashMap<String, String>> {
 	let content = fs::read_to_string(&path)
 		.context(format!("Failed to read inputs file: {}", path.display()))?;
 	let table: toml::Table = toml::from_str(&content).context("Failed to parse inputs.toml")?;
-	Ok(
-		table
-			.into_iter()
-			.filter_map(|(k, v)| {
-				if let toml::Value::String(s) = v {
-					Some((k, s))
-				} else {
-					None
-				}
-			})
-			.collect(),
-	)
+	Ok(table
+		.into_iter()
+		.filter_map(|(k, v)| {
+			if let toml::Value::String(s) = v {
+				Some((k, s))
+			} else {
+				None
+			}
+		})
+		.collect())
 }
 
 /// Persist a single key=value to the inputs store (upsert).
@@ -85,8 +83,8 @@ fn save_input(key: &str, value: &str) -> Result<()> {
 	for (k, v) in &inputs {
 		table.insert(k.clone(), toml::Value::String(v.clone()));
 	}
-	let content = toml::to_string_pretty(&toml::Value::Table(table))
-		.context("Failed to serialize inputs")?;
+	let content =
+		toml::to_string_pretty(&toml::Value::Table(table)).context("Failed to serialize inputs")?;
 	fs::write(&path, content)
 		.context(format!("Failed to write inputs file: {}", path.display()))?;
 	Ok(())

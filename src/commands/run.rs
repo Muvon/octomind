@@ -12,109 +12,121 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use anyhow::{Context, Result};
 use clap::Args;
+use indicatif::{ProgressBar, ProgressStyle};
+use octomind::agent::{inputs, registry};
+use octomind::config::{loading::merge_agent_toml, Config};
+use octomind::session;
 use std::io::{self, IsTerminal, Read};
+use std::time::Duration;
 
 #[derive(Args, Debug)]
 pub struct RunArgs {
-	/// Input to process with AI (optional if reading from stdin)
-	#[arg(value_name = "INPUT")]
-	pub input: Option<String>,
+	/// Agent tag (e.g. `developer:rust`) or role name (e.g. `developer`).
+	/// Omit to use the default role from config.
+	#[arg(value_name = "TAG")]
+	pub tag: Option<String>,
 
-	/// Name of the session to start or resume
-	#[arg(long, short)]
-	pub name: Option<String>,
-
-	/// Resume an existing session
-	#[arg(long, short)]
-	pub resume: Option<String>,
-
-	/// Resume the most recent session for the current project directory
-	#[arg(long)]
-	pub resume_recent: bool,
-
-	/// Use a specific model instead of the one configured in config (runtime only, not saved)
-	#[arg(long)]
-	pub model: Option<String>,
-
-	/// Maximum tokens for the AI response (runtime only, not saved)
-	#[arg(long)]
-	pub max_tokens: Option<u32>,
-
-	/// Temperature for the AI response (0.0 to 1.0, runtime only, not saved)
-	#[arg(long)]
-	pub temperature: Option<f32>,
-
-	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
-	#[arg(long, default_value = "developer")]
-	pub role: String,
-
-	/// Maximum number of retries for provider errors (runtime only, not saved)
-	#[arg(long)]
-	pub max_retries: Option<u32>,
-
-	/// Output format: plain (default) or jsonl (JSON Lines format like WebSocket)
-	#[arg(long = "format", default_value = "plain")]
-	pub mode: String,
-
-	/// Override system prompt with content from this file (runtime only, not saved)
-	#[arg(long)]
-	pub system: Option<String>,
-
-	/// Override instructions with content from this file (runtime only, not saved)
-	#[arg(long)]
-	pub instructions: Option<String>,
-
-	/// Path to JSON schema file for structured output (runtime only)
-	#[arg(long)]
-	pub schema: Option<String>,
+	/// Output format: plain or jsonl. When set, runs non-interactively
+	/// (reads input from stdin or the TAG positional if no tag given).
+	#[arg(long = "format")]
+	pub format: Option<String>,
 
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
 }
 
-impl RunArgs {
-	/// Convert RunArgs to SessionArgs for reusing session infrastructure
-	pub fn to_session_args(&self) -> super::SessionArgs {
-		super::SessionArgs {
-			name: self.name.clone(),
-			resume: self.resume.clone(),
-			resume_recent: self.resume_recent,
-			model: self.model.clone(),
-			temperature: self.temperature,
-			max_tokens: self.max_tokens,
-			role: self.role.clone(),
-			max_retries: self.max_retries,
-			mode: self.mode.clone(),
-			system: self.system.clone(),
-			instructions: self.instructions.clone(),
-			schema: self.schema.clone(),
-			sandbox: self.sandbox,
-		}
+pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
+	let is_interactive = args.format.is_none() && std::io::stdin().is_terminal();
+
+	// Resolve config + role: registry agent vs plain role name
+	let (run_config, role) = resolve_config_and_role(args, config).await?;
+
+	// Initialize MCP servers (spinner only in interactive mode)
+	init_mcp(&role, &run_config, is_interactive).await?;
+
+	let session_args = octomind::session::chat::session::GenericSessionArgs {
+		role: role.clone(),
+		mode: args.format.clone().unwrap_or_else(|| "plain".to_string()),
+		..Default::default()
+	};
+
+	if is_interactive {
+		session::chat::run_interactive_session(&session_args, &run_config).await
+	} else {
+		let input = read_input()?;
+		session::chat::run_interactive_session_with_input(&session_args, &run_config, &input).await
 	}
+}
 
-	/// Get the actual input, either from parameter or stdin
-	pub fn get_input(&self) -> Result<String, anyhow::Error> {
-		if let Some(input) = &self.input {
-			// Input provided as parameter
-			Ok(input.clone())
-		} else if !std::io::stdin().is_terminal() {
-			// Read from stdin if it's being piped
-			let mut buffer = String::new();
-			io::stdin().read_to_string(&mut buffer)?;
-			let input = buffer.trim().to_string();
+/// Returns (merged_config, role_name). If tag contains `:` it's a registry agent;
+/// otherwise it's treated as a plain role name (default: "developer").
+async fn resolve_config_and_role(args: &RunArgs, config: &Config) -> Result<(Config, String)> {
+	let tag = args.tag.as_deref().unwrap_or("developer");
 
-			if input.is_empty() {
-				return Err(anyhow::anyhow!("No input provided via stdin"));
-			}
+	if tag.contains(':') {
+		// Registry agent: fetch manifest, resolve inputs, merge config
+		let raw_toml = registry::fetch_manifest(tag, &config.registry)
+			.await
+			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
+		let resolved_toml = inputs::resolve_inputs(&raw_toml).await?;
+		let merged = merge_agent_toml(config, &resolved_toml)
+			.context("Failed to merge agent manifest into config")?;
 
-			Ok(input)
-		} else {
-			// No input provided and stdin is a terminal
-			Err(anyhow::anyhow!(
-				"No input provided. Please provide input as a parameter or pipe it via stdin."
-			))
+		// First role in merged config that isn't in the base config
+		let base_names: std::collections::HashSet<&str> =
+			config.roles.iter().map(|r| r.name.as_str()).collect();
+		let role = merged
+			.roles
+			.iter()
+			.find(|r| !base_names.contains(r.name.as_str()))
+			.map(|r| r.name.clone())
+			.context(format!(
+				"Agent manifest for '{tag}' must define at least one new [[roles]] entry"
+			))?;
+		Ok((merged, role))
+	} else {
+		// Plain role name — use config as-is
+		Ok((config.clone(), tag.to_string()))
+	}
+}
+
+/// Read input from stdin (piped or interactive prompt is not our job here).
+fn read_input() -> Result<String> {
+	if !std::io::stdin().is_terminal() {
+		let mut buf = String::new();
+		io::stdin().read_to_string(&mut buf)?;
+		let input = buf.trim().to_string();
+		if input.is_empty() {
+			anyhow::bail!("No input provided via stdin");
 		}
+		Ok(input)
+	} else {
+		anyhow::bail!("--format requires input via stdin or piped data")
+	}
+}
+
+async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Result<()> {
+	if is_interactive {
+		let spinner = ProgressBar::new_spinner();
+		spinner.set_style(
+			ProgressStyle::default_spinner()
+				.template(" {spinner:.cyan} {msg:.cyan}")
+				.unwrap()
+				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
+		);
+		spinner.set_message("Initializing MCP servers...");
+		spinner.enable_steady_tick(Duration::from_millis(80));
+		let cb = |name: &str| spinner.set_message(format!("Starting MCP server: {name}"));
+		let result =
+			octomind::mcp::initialize_mcp_for_role_with_callback(role, config, Some(&cb)).await;
+		spinner.finish_and_clear();
+		print!("\x1B[2K\r");
+		std::io::Write::flush(&mut std::io::stdout()).ok();
+		result
+	} else {
+		octomind::mcp::initialize_mcp_for_role(role, config).await
 	}
 }

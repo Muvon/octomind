@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::session::helper_functions::get_all_placeholders;
 use anyhow::Result;
 use clap::Args;
 use colored::*;
 use octomind::config::Config;
+use octomind::session::helper_functions::get_all_placeholders;
 use std::env;
 
 #[derive(Args)]
@@ -54,7 +54,7 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 			} else {
 				// Show preview (current behavior)
 				let lines: Vec<&str> = value.lines().collect();
-				let tokens = crate::session::estimate_tokens(value);
+				let tokens = octomind::session::estimate_tokens(value);
 				if lines.len() <= 5 && tokens <= 200 {
 					// Short value, show inline
 					println!("  {}", value.trim());

@@ -13,18 +13,13 @@
 // limitations under the License.
 
 pub mod acp;
-pub mod agent;
 pub mod config;
 pub mod run;
 pub mod server;
-pub mod session;
 pub mod vars;
 
-// Re-export all the command structs and enums
 pub use acp::AcpArgs;
-pub use agent::AgentArgs;
 pub use config::ConfigArgs;
 pub use run::RunArgs;
 pub use server::ServerArgs;
-pub use session::SessionArgs;
 pub use vars::VarsArgs;

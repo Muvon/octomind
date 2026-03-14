@@ -39,9 +39,9 @@ pub fn parse_tag(tag: &str) -> Result<(String, String, Option<String>)> {
 		(tag, None)
 	};
 
-	let (category, variant) = name_part
-		.split_once(':')
-		.context(format!("Invalid agent tag '{tag}': expected 'category:variant'"))?;
+	let (category, variant) = name_part.split_once(':').context(format!(
+		"Invalid agent tag '{tag}': expected 'category:variant'"
+	))?;
 
 	if category.is_empty() || variant.is_empty() {
 		anyhow::bail!("Invalid agent tag '{tag}': category and variant must be non-empty");
@@ -52,9 +52,13 @@ pub fn parse_tag(tag: &str) -> Result<(String, String, Option<String>)> {
 
 /// Local cache path for a manifest.
 fn cache_path(category: &str, variant: &str) -> Result<PathBuf> {
-	let dir = crate::directories::get_octomind_data_dir()?.join("agents").join(category);
-	fs::create_dir_all(&dir)
-		.context(format!("Failed to create agent cache dir: {}", dir.display()))?;
+	let dir = crate::directories::get_octomind_data_dir()?
+		.join("agents")
+		.join(category);
+	fs::create_dir_all(&dir).context(format!(
+		"Failed to create agent cache dir: {}",
+		dir.display()
+	))?;
 	Ok(dir.join(format!("{variant}.toml")))
 }
 
@@ -82,9 +86,14 @@ async fn fetch_from_source(source: &str, category: &str, variant: &str) -> Resul
 		} else {
 			PathBuf::from(local_path)
 		};
-		let manifest_path = expanded.join("agents").join(category).join(format!("{variant}.toml"));
-		return fs::read_to_string(&manifest_path)
-			.context(format!("Failed to read local manifest: {}", manifest_path.display()));
+		let manifest_path = expanded
+			.join("agents")
+			.join(category)
+			.join(format!("{variant}.toml"));
+		return fs::read_to_string(&manifest_path).context(format!(
+			"Failed to read local manifest: {}",
+			manifest_path.display()
+		));
 	}
 
 	// HTTP(S) source
@@ -97,7 +106,10 @@ async fn fetch_from_source(source: &str, category: &str, variant: &str) -> Resul
 		anyhow::bail!("Registry returned {} for {url}", response.status());
 	}
 
-	response.text().await.context("Failed to read manifest response body")
+	response
+		.text()
+		.await
+		.context("Failed to read manifest response body")
 }
 
 /// Fetch a manifest for `tag` from the registry, using cache when fresh.
@@ -109,14 +121,18 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<Stri
 
 	// Return cached copy if fresh
 	if cache.exists() && !is_stale(&cache, registry.cache_ttl_hours) {
-		return fs::read_to_string(&cache)
-			.context(format!("Failed to read cached manifest: {}", cache.display()));
+		return fs::read_to_string(&cache).context(format!(
+			"Failed to read cached manifest: {}",
+			cache.display()
+		));
 	}
 
 	// If stale but exists, return cached and refresh in background
 	if cache.exists() {
-		let cached = fs::read_to_string(&cache)
-			.context(format!("Failed to read cached manifest: {}", cache.display()))?;
+		let cached = fs::read_to_string(&cache).context(format!(
+			"Failed to read cached manifest: {}",
+			cache.display()
+		))?;
 
 		let sources = registry.sources.clone();
 		let cat = category.clone();
@@ -149,5 +165,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<Stri
 		}
 	}
 
-	Err(last_err).context(format!("Failed to fetch agent manifest for '{tag}' from all sources"))
+	Err(last_err).context(format!(
+		"Failed to fetch agent manifest for '{tag}' from all sources"
+	))
 }

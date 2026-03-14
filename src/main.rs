@@ -20,7 +20,6 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
 use octomind::config::Config;
-use octomind::session;
 
 mod commands;
 
@@ -38,10 +37,9 @@ enum Commands {
 	/// Generate a default configuration file
 	Config(commands::ConfigArgs),
 
-	/// Start an interactive coding session
-	Session(commands::SessionArgs),
-
-	/// Execute a single AI request using session infrastructure (non-interactive)
+	/// Run an agent or start an interactive session.
+	/// TAG can be a registry agent (e.g. `developer:rust`) or a role name (e.g. `developer`).
+	/// Use --format to run non-interactively.
 	Run(commands::RunArgs),
 
 	/// Start WebSocket server for remote AI sessions
@@ -52,9 +50,6 @@ enum Commands {
 
 	/// Show all available placeholder variables and their values
 	Vars(commands::VarsArgs),
-
-	/// Bootstrap and run a pre-built agent from the registry (e.g. `developer:rust`)
-	Agent(commands::AgentArgs),
 
 	/// Generate shell completion scripts
 	Completion {
@@ -147,31 +142,20 @@ async fn initialize_mcp_for_role_with_progress(
 }
 
 async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
-	// Initialize tracing based on the command being run.
-	// ACP initializes its own tracing in acp/mod.rs (must happen before LocalSet).
-	// Server initializes in commands/server.rs (needs WebSocket mode).
-	// CLI commands (Session/Run) initialize here so the first log_debug! in main() is covered.
 	let log_level = config.log_level.as_str();
-	match &args.command {
-		Commands::Session(_) | Commands::Run(_) | Commands::Agent(_) => {
-			if let Err(e) = octomind::logging::tracing_setup::init_tracing(
-				octomind::logging::tracing_setup::LoggingMode::Cli,
-				log_level,
-			) {
-				eprintln!("Warning: Failed to initialize tracing: {e}");
-			}
+	if let Commands::Run(_) = &args.command {
+		if let Err(e) = octomind::logging::tracing_setup::init_tracing(
+			octomind::logging::tracing_setup::LoggingMode::Cli,
+			log_level,
+		) {
+			eprintln!("Warning: Failed to initialize tracing: {e}");
 		}
-		_ => {}
 	}
 
-	// Apply filesystem sandbox before anything else (including MCP server spawning)
-	// so the restriction is inherited by all child processes.
 	let sandbox_enabled = match &args.command {
-		Commands::Session(a) => config.sandbox || a.sandbox,
 		Commands::Run(a) => config.sandbox || a.sandbox,
 		Commands::Server(a) => config.sandbox || a.sandbox,
 		Commands::Acp(a) => config.sandbox || a.sandbox,
-		Commands::Agent(a) => config.sandbox || a.sandbox,
 		_ => false,
 	};
 	if sandbox_enabled {
@@ -179,51 +163,28 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		octomind::sandbox::apply(&cwd)?;
 	}
 
-	// Initialize MCP servers and tool map once at startup for commands that need them
+	// MCP init is handled inside commands::run::execute (needs merged config for agents).
+	// Server and ACP init their own MCP here.
 	match &args.command {
-		Commands::Session(session_args) => {
-			// Session is interactive - show progress
-			initialize_mcp_for_role_with_progress(&session_args.role, &config, true).await?;
-		}
-		Commands::Run(run_args) => {
-			// Run is non-interactive - no progress spinner
-			initialize_mcp_for_role_with_progress(&run_args.role, &config, false).await?;
-		}
 		Commands::Server(server_args) => {
-			// Server is interactive - show progress
 			initialize_mcp_for_role_with_progress(&server_args.role, &config, true).await?;
 		}
 		Commands::Acp(acp_args) => {
-			// ACP runs over stdio - no spinner (stdout is reserved for JSON-RPC)
 			initialize_mcp_for_role_with_progress(&acp_args.role, &config, false).await?;
 		}
-		_ => {
-			// Other commands don't need MCP servers
-		}
+		_ => {}
 	}
 
-	// Execute the appropriate command
-	match &args.command {
-		Commands::Config(config_args) => commands::config::execute(config_args, config)?,
-		Commands::Session(session_args) => {
-			session::chat::run_interactive_session(session_args, &config).await?
-		}
-		Commands::Run(run_args) => {
-			// Get input from parameter or stdin
-			let input = run_args.get_input()?;
-			// Convert RunArgs to SessionArgs and run non-interactively
-			let session_args = run_args.to_session_args();
-			session::chat::run_interactive_session_with_input(&session_args, &config, &input)
-				.await?
-		}
-		Commands::Server(server_args) => commands::server::execute(server_args, &config).await?,
-		Commands::Acp(acp_args) => commands::acp::execute(acp_args, &config).await?,
-		Commands::Vars(vars_args) => commands::vars::execute(vars_args, &config).await?,
-		Commands::Agent(agent_args) => commands::agent::execute(agent_args, &config).await?,
+	match args.command {
+		Commands::Config(config_args) => commands::config::execute(&config_args, config)?,
+		Commands::Run(run_args) => commands::run::execute(&run_args, &config).await?,
+		Commands::Server(server_args) => commands::server::execute(&server_args, &config).await?,
+		Commands::Acp(acp_args) => commands::acp::execute(&acp_args, &config).await?,
+		Commands::Vars(vars_args) => commands::vars::execute(&vars_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();
 			let name = app.get_name().to_string();
-			generate(*shell, &mut app, name, &mut std::io::stdout());
+			generate(shell, &mut app, name, &mut std::io::stdout());
 		}
 	}
 

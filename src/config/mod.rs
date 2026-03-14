@@ -528,7 +528,9 @@ macro_rules! log_info {
 			if should_log {
 				if $crate::logging::tracing_setup::is_tracing_initialized() {
 					tracing::info!("{}", $fmt);
-				} else {
+				} else if $crate::config::with_thread_config(|config| {
+					!config.output_mode().should_suppress_cli_output()
+				}).unwrap_or(true) {
 					use colored::Colorize;
 					$crate::println!("{}", $fmt.cyan());
 				}
@@ -542,7 +544,9 @@ macro_rules! log_info {
 			if should_log {
 				if $crate::logging::tracing_setup::is_tracing_initialized() {
 					tracing::info!($fmt, $($arg),*);
-				} else {
+				} else if $crate::config::with_thread_config(|config| {
+					!config.output_mode().should_suppress_cli_output()
+				}).unwrap_or(true) {
 					use colored::Colorize;
 					$crate::println!("{}", format!($fmt, $($arg),*).cyan());
 				}
@@ -561,7 +565,9 @@ macro_rules! log_debug {
 			if should_log {
 				if $crate::logging::tracing_setup::is_tracing_initialized() {
 					tracing::debug!("{}", $fmt);
-				} else {
+				} else if $crate::config::with_thread_config(|config| {
+					!config.output_mode().should_suppress_cli_output()
+				}).unwrap_or(true) {
 					use colored::Colorize;
 					$crate::println!("{}", $fmt.bright_blue());
 				}
@@ -575,7 +581,9 @@ macro_rules! log_debug {
 			if should_log {
 				if $crate::logging::tracing_setup::is_tracing_initialized() {
 					tracing::debug!($fmt, $($arg),*);
-				} else {
+				} else if $crate::config::with_thread_config(|config| {
+					!config.output_mode().should_suppress_cli_output()
+				}).unwrap_or(true) {
 					use colored::Colorize;
 					$crate::println!("{}", format!($fmt, $($arg),*).bright_blue());
 				}

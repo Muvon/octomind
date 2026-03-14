@@ -86,10 +86,8 @@ async fn fetch_from_source(source: &str, category: &str, variant: &str) -> Resul
 		} else {
 			PathBuf::from(local_path)
 		};
-		let manifest_path = expanded
-			.join("agents")
-			.join(category)
-			.join(format!("{variant}.toml"));
+		// Source path IS the agents root — look for <category>/<variant>.toml directly
+		let manifest_path = expanded.join(category).join(format!("{variant}.toml"));
 		return fs::read_to_string(&manifest_path).context(format!(
 			"Failed to read local manifest: {}",
 			manifest_path.display()

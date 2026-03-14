@@ -90,7 +90,7 @@ output_mode = "none"  # none, append, replace, last, restart
 system_prompt = "Layer-specific system prompt"
 
 [layers.layer_name.mcp]
-server_refs = ["filesystem", "developer"]
+server_refs = ["filesystem", "core"]
 allowed_tools = ["text_editor", "shell"]
 ```
 
@@ -152,7 +152,7 @@ Commands can have their own tool configurations using the new server registry sy
 
 ```toml
 [developer.commands.review.mcp]
-server_refs = ["developer", "filesystem"]  # Reference servers by name
+server_refs = ["core", "filesystem"]  # Reference servers by name
 allowed_tools = ["text_editor", "shell"]   # Limit to specific tools
 ```
 
@@ -200,11 +200,12 @@ temperature = 0.1
 input_mode = "all"  # Gets full conversation context
 
 [developer.commands.review.mcp]
-server_refs = ["developer", "filesystem"]  # Access to code files and shell
-allowed_tools = ["text_editor", "list_files", "shell"]
+server_refs = ["core", "filesystem"]  # Access to code files and shell
+allowed_tools = ["text_editor", "view", "shell"]
 ```
 
 Usage: `/run review`
+
 
 ### 3. Quick Summary
 
@@ -286,7 +287,7 @@ Command 'estimate' not found in configuration
 
 ### Tool Execution Errors
 ```
-Tool execution failed: Unknown tool 'list_files'. Available tools: text_editor, batch_edit, list_files, extract_lines
+Tool execution failed: Unknown tool 'view'. Available tools: text_editor, batch_edit, view, extract_lines
 ```
 - **Tool routing issue**: The tool is being sent to the wrong server
 - **Solution**: Check your MCP server configuration and ensure proper server references

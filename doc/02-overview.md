@@ -39,8 +39,10 @@ graph TB
     F --> Q[Context Management<br/>Conversation compression]
     F --> R[Cost Tracking<br/>Real-time monitoring]
     F --> S[Caching System<br/>Automatic optimization]
+```
 
 ## Core Components
+
 
 ### 1. Session-First Design
 
@@ -68,14 +70,10 @@ graph TB
 - `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
 - `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
 
-**External Server Support**:
-- HTTP MCP servers with OAuth 2.1 + PKCE authentication
-- Command-based (stdin) MCP servers
-- Health monitoring and automatic recovery
-- Server registry for centralized configuration
+**Agent Server** (`src/mcp/agent/`):
+- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess via the configured `command`)
 
 ### 3. Multi-Provider AI Support
-
 **Unified Interface** across 7 AI providers with consistent `provider:model` format:
 
 | Provider | Format | Key Features |
@@ -90,11 +88,11 @@ graph TB
 
 ### 4. Role-Based Configuration
 
-**Developer Role** (`config-templates/default.toml` lines 156-337):
+**Developer Role** (`config-templates/default.toml` lines 119-301):
 - Full access to all MCP tools
 - Optimized system prompts for development tasks
 - Layer processing enabled for complex workflows
-- Server references: developer, filesystem, web, agent
+- Server references: core, filesystem, octocode, agent
 
 **Assistant Role** (lines 340-355):
 - Chat-only mode with limited tool access

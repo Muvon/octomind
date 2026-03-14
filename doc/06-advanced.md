@@ -398,7 +398,7 @@ allowed_tools = []
 
 # Built-in server definitions
 [[mcp.servers]]
-name = "developer"
+name = "core"
 type = "builtin"
 timeout_seconds = 30
 args = []
@@ -444,17 +444,16 @@ Roles reference servers from the main MCP configuration and can limit tool acces
 ```toml
 # Developer role with full access
 [developer.mcp]
-server_refs = ["developer", "filesystem", "web"]
+server_refs = ["core", "filesystem", "web"]
 allowed_tools = []  # Empty means all tools from referenced servers
 
 # Assistant role with limited access
 [assistant.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "list_files"]  # Only specific tools
-
+allowed_tools = ["text_editor", "view"]  # Only specific tools
 # Custom role with external tools
 [code-reviewer.mcp]
-server_refs = ["developer", "external_tools"]
+server_refs = ["core", "external_tools"]
 allowed_tools = ["text_editor", "shell"]
 
 ### Server Types
@@ -573,9 +572,8 @@ output_mode = "replace"  # Replaces input with processed context
 builtin = true
 
 [layers.mcp]
-server_refs = ["developer", "filesystem", "octocode"]
-allowed_tools = ["list_files"]
-
+server_refs = ["core", "filesystem", "octocode"]
+allowed_tools = ["view"]
 [[layers]]
 name = "reducer"
 model = "openrouter:openai/o4-mini"
@@ -604,12 +602,12 @@ output_mode = "append"  # Add review results to session
 builtin = false
 
 [layers.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = ["text_editor", "list_files"]
+server_refs = ["core", "filesystem"]
+allowed_tools = ["text_editor", "view"]
 ```
-allowed_tools = ["core", "text_editor"]
-input_mode = "last"
 
+
+```toml
 [[layers]]
 name = "developer"
 enabled = true
@@ -1005,7 +1003,7 @@ enable_layers = true
 
 [security-reviewer.mcp]
 enabled = true
-server_refs = ["developer", "filesystem"]
+server_refs = ["core", "filesystem"]
 allowed_tools = ["text_editor", "shell"]  # Limited tools for security focus
 
 # Documentation role
@@ -1025,7 +1023,7 @@ model = "openrouter:anthropic/claude-sonnet-4"
 
 [web-dev.mcp]
 enabled = true
-server_refs = ["developer", "filesystem", "web_tools"]
+server_refs = ["core", "filesystem", "web_tools"]
 
 # Add web-specific MCP server
 [[mcp.servers]]
@@ -1234,14 +1232,14 @@ providers = ["core"]
 **Current format:**
 ```toml
 [[mcp.servers]]
-name = "developer"
+name = "core"
 type = "builtin"
 timeout_seconds = 30
 args = []
 tools = []
 
 [developer.mcp]
-server_refs = ["developer"]
+server_refs = ["core"]
 allowed_tools = []
 ```
 

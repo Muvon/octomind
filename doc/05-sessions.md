@@ -69,7 +69,7 @@ system = "You are an Octomind AI developer assistant with full access to develop
 
 # MCP configuration using current server structure
 [developer.mcp]
-server_refs = ["developer", "filesystem", "octocode"]
+server_refs = ["core", "filesystem", "octocode"]
 allowed_tools = []  # Empty means all tools from referenced servers
 
 # Server definitions in main MCP section
@@ -77,7 +77,7 @@ allowed_tools = []  # Empty means all tools from referenced servers
 allowed_tools = []
 
 [[mcp.servers]]
-name = "developer"
+name = "core"
 type = "builtin"
 timeout_seconds = 30
 args = []
@@ -121,10 +121,11 @@ octomind session --role=assistant -n quick_chat
 [assistant.mcp]
 enabled = true  # Can enable tools if needed
 server_refs = ["filesystem"]  # Specific servers only
-allowed_tools = ["text_editor", "list_files"]  # Limited tools
+allowed_tools = ["text_editor", "view"]  # Limited tools
 ```
 
 ### Assistant Role Configuration
+
 
 ```toml
 [assistant]
@@ -160,10 +161,13 @@ system = "You are a code review expert focused on security and best practices."
 
 [code-reviewer.mcp]
 enabled = true
-server_refs = ["developer", "filesystem"]
-allowed_tools = ["text_editor", "list_files"]
+server_refs = ["core", "filesystem"]
+allowed_tools = ["text_editor", "view"]
+```
 
+```toml
 # Security analyst role
+
 [security-analyst]
 model = "openrouter:anthropic/claude-sonnet-4"
 enable_layers = true
@@ -171,10 +175,13 @@ system = "You are a security expert focused on finding vulnerabilities and secur
 
 [security-analyst.mcp]
 enabled = true
-server_refs = ["developer"]
+server_refs = ["core"]
 allowed_tools = ["shell"]  # Limited to analysis tools
+```
 
 # Documentation writer role
+
+```toml
 [documentation-writer]
 model = "openrouter:openai/gpt-4o"
 enable_layers = false
@@ -183,10 +190,11 @@ system = "You are a technical writer focused on creating clear, comprehensive do
 [documentation-writer.mcp]
 enabled = true
 server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "list_files"]  # Only file operations
+allowed_tools = ["text_editor", "view"]  # Only file operations
 ```
 
 ### Role Inheritance
+
 
 Custom roles follow this inheritance pattern:
 1. **Start with assistant role** as the base configuration
@@ -720,10 +728,12 @@ output_mode = "replace"  # Replaces input with context
 builtin = true
 
 [layers.mcp]
-server_refs = ["developer", "filesystem", "web"]
-allowed_tools = ["list_files"]
+server_refs = ["core", "filesystem", "web"]
+allowed_tools = ["view"]
+```
 
 [[layers]]
+
 name = "reducer"
 model = "openrouter:openai/o4-mini"
 temperature = 0.2
@@ -747,11 +757,12 @@ output_mode = "append"  # Add analysis to session
 builtin = false
 
 [layers.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = ["text_editor", "list_files"]
+server_refs = ["core", "filesystem"]
+allowed_tools = ["text_editor", "view"]
 ```
 
 ### Input and Output Modes
+
 
 #### Input Modes
 Layers can process input in different modes:

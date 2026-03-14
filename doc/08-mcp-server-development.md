@@ -125,7 +125,7 @@ Add your server to the `from_name` method:
 ```rust
 pub fn from_name(name: &str) -> Self {
     let connection_type = match name {
-        "developer" => McpConnectionType::Builtin,
+        "core" => McpConnectionType::Builtin,
         "filesystem" => McpConnectionType::Builtin,
         "agent" => McpConnectionType::Builtin,
         "database" => McpConnectionType::Builtin,  // <- Add here
@@ -292,7 +292,6 @@ pub mod fs;
 ### 5. Update MCP Function Discovery
 
 **File: `src/mcp/mod.rs`**
-
 Add your server to the `get_available_functions` method:
 
 ```rust
@@ -301,7 +300,7 @@ for server in enabled_servers {
         crate::config::McpConnectionType::Builtin => {
             // Handle builtin servers by name
             match server.name.as_str() {
-                "developer" => {
+                "core" => {
                     // existing code...
                 }
                 "database" => {
@@ -313,41 +312,24 @@ for server in enabled_servers {
         // existing code...
     }
 }
-        crate::config::McpServerType::Filesystem => {
-            // existing code...
-        }
-        crate::config::McpServerType::Agent => {
-            // existing code...
-        }
-        crate::config::McpServerType::Database => {  // <- Add this
-            let server_functions =
-                get_cached_internal_functions("database", &server.tools, || {
-                    database::get_all_functions()
-                });
-            functions.extend(server_functions);
-        }
-        // ...
-    }
+```
+
+### 6. Add Server Type Enum (if needed)
+
+If your server needs a dedicated enum variant (rare for builtin servers):
+
+```rust
+// In src/config/mcp.rs
+pub enum McpServerType {
+    Core,
+    Filesystem,
+    Agent,
+    Database,  // <- Add this
+    Http,
 }
 ```
 
-Add to the `build_tool_server_map` function:
-
-```rust
-let server_functions = match server.connection_type {
-    crate::config::McpConnectionType::Builtin => {
-        // Handle builtin servers by name
-        match server.name.as_str() {
-            "database" => {
-                get_cached_internal_functions("database", &server.tools, || {
-            database::get_all_functions()
-        })
-    }
-    // ...
-};
-```
-
-### 6. Update Tool Execution
+### 7. Update Tool Execution
 
 **File: `src/mcp/mod.rs`**
 
@@ -359,36 +341,40 @@ match target_server.connection_type {
         // Handle builtin servers by name
         match target_server.name.as_str() {
             "database" => match call.tool_name.as_str() {
-        "db_query" | "db_schema" => {
-            crate::log_debug!(
-                "Executing database command via database server '{}'",
-                target_server.name
-            );
-            let mut result = match database::execute_database_command(call, config, cancellation_token.clone()).await {
-                Ok(res) => res,
-                Err(e) => {
+                "db_query" | "db_schema" => {
+                    crate::log_debug!(
+                        "Executing database command via database server '{}'",
+                        target_server.name
+                    );
+                    let mut result = match database::execute_database_command(call, config, cancellation_token.clone()).await {
+                        Ok(res) => res,
+                        Err(e) => {
+                            return Ok(McpToolResult::error(
+                                call.tool_name.clone(),
+                                call.tool_id.clone(),
+                                format!("Database execution failed: {}", e),
+                            ));
+                        }
+                    };
+                    result.tool_id = call.tool_id.clone();
+                    return Ok(result);
+                }
+                _ => {
                     return Ok(McpToolResult::error(
                         call.tool_name.clone(),
                         call.tool_id.clone(),
-                        format!("Database execution failed: {}", e),
+                        format!("Tool '{}' not implemented in database server", call.tool_name),
                     ));
                 }
-            };
-            result.tool_id = call.tool_id.clone();
-            return Ok(result);
+            },
+            // ... other servers
         }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Tool '{}' not implemented in database server",
-                call.tool_name
-            ));
-        }
-    },
-    // ...
+    }
+    // ... other connection types
 }
 ```
 
-### 7. Update Server Health Monitoring
+### 8. Update Server Health Monitoring
 
 **File: `src/mcp/server.rs`**
 
@@ -398,15 +384,12 @@ Add your server type to the builtin server check:
 match server.connection_type {
     crate::config::McpConnectionType::Builtin => {
         // All builtin servers are always available
-    | crate::config::McpServerType::Database => {  // <- Add here
-        // Internal servers are always considered running
-        // ...
     }
     // ...
 }
 ```
 
-### 8. Update Session Commands
+### 9. Update Session Commands
 
 **File: `src/session/chat/session/commands.rs`**
 
@@ -416,15 +399,12 @@ Add to server health status checks (2 locations):
 let (health, restart_info) = match server.connection_type {
     crate::config::McpConnectionType::Builtin => {
         // All builtin servers are always healthy
-    | crate::config::McpServerType::Database => {  // <- Add here
-        // Internal servers are always running
-        // ...
     }
     // ...
 };
 ```
 
-### 9. Update Response Processing
+### 10. Update Response Processing
 
 **File: `src/session/chat/response.rs`**
 
@@ -437,14 +417,17 @@ let server_functions = match server.connection_type {
         match server.name.as_str() {
             "database" => {
                 crate::mcp::get_cached_internal_functions("database", &server.tools, || {
-            crate::mcp::database::get_all_functions()
-        })
+                    crate::mcp::database::get_all_functions()
+                })
+            }
+            // ...
+        }
     }
     // ...
 };
 ```
 
-### 10. Update Config Commands
+### 11. Update Config Commands
 
 **File: `src/commands/config.rs`**
 
@@ -452,7 +435,7 @@ Add to server type detection (2 locations):
 
 ```rust
 let effective_type = match name.as_str() {
-    "developer" => McpServerType::Developer,
+    "core" => McpServerType::Core,
     "filesystem" => McpServerType::Filesystem,
     "agent" => McpServerType::Agent,
     "database" => McpServerType::Database,  // <- Add here
@@ -498,7 +481,7 @@ Add to role configurations where appropriate:
 
 ```toml
 # Developer role - add database server
-mcp = { server_refs = ["developer", "filesystem", "agent", "database"], allowed_tools = [] }
+mcp = { server_refs = ["core", "filesystem", "agent", "database"], allowed_tools = [] }
 ```
 
 ### 12. Update Documentation

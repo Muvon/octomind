@@ -129,7 +129,7 @@ system = """You are an Octomind – top notch fully autonomous AI developer...""
 
 # MCP configuration for developer role
 [developer.mcp]
-server_refs = ["developer", "filesystem", "web", "octocode"]
+server_refs = ["core", "filesystem", "octocode", "agent"]
 allowed_tools = []
 
 # Assistant role - optimized for general assistance
@@ -152,7 +152,14 @@ allowed_tools = []
 
 # Built-in MCP servers
 [[mcp.servers]]
-name = "developer"
+name = "core"
+type = "builtin"
+timeout_seconds = 30
+args = []
+tools = []
+
+[[mcp.servers]]
+name = "agent"
 type = "builtin"
 timeout_seconds = 30
 args = []
@@ -380,7 +387,7 @@ enabled = true
 
 [[mcp.servers]]
 enabled = true
-name = "developer"
+name = "core"
 type = "builtin"
 
 [[mcp.servers]]
@@ -429,7 +436,7 @@ enabled = true
 
 [[code-reviewer.mcp.servers]]
 enabled = true
-name = "developer"
+name = "core"
 type = "builtin"
 tools = ["text_editor", "shell"]  # Limited tool set
 ```
@@ -524,8 +531,7 @@ output_mode = "append"  # Adds research findings to session
 
 [layers.mcp]
 server_refs = ["filesystem", "octocode"]
-allowed_tools = ["list_files"]
-```
+allowed_tools = ["view"]
 
 ### Custom Layer Configuration
 
@@ -542,8 +548,7 @@ output_mode = "append"
 
 [layers.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "list_files"]
-
+allowed_tools = ["text_editor", "view"]
 [[layers]]
 name = "code_optimizer"
 description = "Optimizes code for performance and maintainability"
@@ -553,7 +558,7 @@ input_mode = "all"
 output_mode = "append"
 
 [layers.mcp]
-server_refs = ["developer", "filesystem"]
+server_refs = ["core", "filesystem"]
 allowed_tools = ["text_editor", "shell"]
 ```
 
@@ -621,7 +626,7 @@ allowed_tools = []
 
 # Built-in servers (always available)
 [[mcp.servers]]
-name = "developer"
+name = "core"
 type = "builtin"
 timeout_seconds = 30
 args = []
@@ -655,24 +660,23 @@ tools = []
 # Role configurations reference servers by name
 [developer.mcp]
 enabled = true
-server_refs = ["developer", "filesystem"]  # Reference servers by name
+server_refs = ["core", "filesystem"]  # Reference servers by name
 allowed_tools = []  # Empty means all tools from referenced servers
 
 # Role-specific override with limited servers
 [assistant.mcp]
 enabled = true
 server_refs = ["filesystem"]  # Only filesystem tools
-allowed_tools = ["text_editor", "list_files"]  # Limit to specific tools
-
+allowed_tools = ["text_editor", "view"]  # Limit to specific tools
 # Global MCP fallback
 [mcp]
 enabled = true
-server_refs = ["developer", "filesystem"]  # Default servers
+server_refs = ["core", "filesystem"]  # Default servers
 ```
 
 ### Server Types
 
-- **developer**: Built-in developer tools (shell, code search, file operations)
+- **core**: Built-in developer tools (shell, code search, file operations)
 - **filesystem**: Built-in filesystem tools (file reading, writing, listing)
 - **web**: Built-in web tools (web search, HTML conversion)
 - **external**: External MCP servers (HTTP or command-based)
@@ -695,7 +699,7 @@ enabled = true
 
 [[mcp.servers]]
 enabled = true
-name = "developer"
+name = "core"
 type = "builtin"
 
 [[mcp.servers]]
@@ -708,7 +712,7 @@ type = "builtin"
 ```toml
 # Define servers in main MCP section
 [[mcp.servers]]
-name = "developer"
+name = "core"
 type = "builtin"
 timeout_seconds = 30
 args = []
@@ -731,7 +735,7 @@ tools = []
 # Reference from roles
 [developer.mcp]
 enabled = true
-server_refs = ["developer", "filesystem", "web"]
+server_refs = ["core", "filesystem", "web"]
 ```
 
 **Migration benefits:**
@@ -1026,7 +1030,7 @@ temperature = 0.1
 input_mode = "all"  # Gets full conversation context
 
 [developer.commands.review.mcp]
-server_refs = ["developer", "filesystem"]  # Access to development tools
+server_refs = ["core", "filesystem"]  # Access to development tools
 allowed_tools = ["text_editor", "shell"]  # Limit to specific tools
 ```
 
@@ -1098,7 +1102,7 @@ enabled = true
 
 [[developer.mcp.servers]]
 enabled = true
-name = "developer"
+name = "core"
 type = "builtin"
 
 [developer.config]
@@ -1127,7 +1131,7 @@ Octomind automatically migrates legacy configurations on load, but it's recommen
 
 3. **Tool execution failures**
   ```
-  Tool execution failed: Unknown tool 'list_files'
+  Tool execution failed: Unknown tool 'view'
   Solution: Check MCP server configuration and tool routing
   ```
 

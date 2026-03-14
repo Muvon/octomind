@@ -309,8 +309,8 @@ workflow = "map_development"  # Use MAP workflow
 system = "You are an elite developer using brain-inspired planning."
 
 [roles.developer.mcp]
-server_refs = ["developer", "filesystem"]
-allowed_tools = ["developer:*", "filesystem:*"]
+server_refs = ["core", "filesystem"]
+allowed_tools = ["core:*", "filesystem:*"]
 ```
 
 ### Layer Configuration
@@ -337,10 +337,11 @@ Success Criteria: <verification>"""
 
 [layers.task_decomposer.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["list_files"]
+allowed_tools = ["view"]
 ```
 
 ## Usage
+
 
 ### Starting a Session with Workflow
 

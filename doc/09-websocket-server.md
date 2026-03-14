@@ -143,9 +143,8 @@ All server messages are JSON objects tagged by `"type"`. Each variant carries on
 ```json
 { "type": "assistant",   "content": "I'll help you fix that...", "session_id": "my-feature-x" }
 { "type": "thinking",    "content": "Let me reason through this...", "session_id": "my-feature-x" }
-{ "type": "tool_use",    "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "params": {"directory": "src"}, "session_id": "my-feature-x" }
-{ "type": "tool_result", "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "content": "src/main.rs\nsrc/lib.rs", "success": true, "session_id": "my-feature-x" }
-{ "type": "cost",        "session_tokens": 1234, "session_cost": 0.0025, "input_tokens": 1000, "output_tokens": 200, "cache_read_tokens": 30, "cache_write_tokens": 4, "reasoning_tokens": 0, "session_id": "my-feature-x" }
+{ "type": "tool_use",    "tool": "view", "tool_id": "call_abc", "server": "filesystem", "params": {"path": "src"}, "session_id": "my-feature-x" }
+{ "type": "tool_result", "tool": "view", "tool_id": "call_abc", "server": "filesystem", "content": "src/main.rs\nsrc/lib.rs", "success": true, "session_id": "my-feature-x" }
 { "type": "status",      "message": "Session created: my-feature-x", "session_id": "my-feature-x" }
 { "type": "status",      "message": "Command '/info' executed successfully", "session_id": "my-feature-x", "data": { ... } }
 { "type": "error",         "message": "Session not found: nonexistent." }
@@ -193,9 +192,8 @@ or if it already existed on disk:
 
 **Server responds (multiple messages):**
 ```json
-{ "type": "tool_use",    "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "params": {"directory": "src"}, "session_id": "my-feature-x" }
-{ "type": "tool_result", "tool": "list_files", "tool_id": "call_abc", "server": "filesystem", "content": "src/main.rs\nsrc/lib.rs\n...", "success": true, "session_id": "my-feature-x" }
-{ "type": "assistant",   "content": "The src directory contains...", "session_id": "my-feature-x" }
+{ "type": "tool_use",    "tool": "view", "tool_id": "call_abc", "server": "filesystem", "params": {"path": "src"}, "session_id": "my-feature-x" }
+{ "type": "tool_result", "tool": "view", "tool_id": "call_abc", "server": "filesystem", "content": "src/main.rs\nsrc/lib.rs\n...", "success": true, "session_id": "my-feature-x" }
 { "type": "cost",        "session_tokens": 1234, "session_cost": 0.0025, "input_tokens": 1000, "output_tokens": 200, "cache_read_tokens": 30, "cache_write_tokens": 4, "reasoning_tokens": 0, "session_id": "my-feature-x" }
 ```
 
@@ -250,7 +248,7 @@ The AI calls the `ask` tool mid-execution. The server halts tool processing and 
 
 **Server continues** (execution resumes, AI receives the answer as the tool result):
 ```json
-{ "type": "tool_result", "tool": "ask", "tool_id": "call_xyz", "server": "developer", "content": "Use sqlx — we want async-native.", "success": true, "session_id": "my-feature-x" }
+{ "type": "tool_result", "tool": "ask", "tool_id": "call_xyz", "server": "core", "content": "Use sqlx — we want async-native.", "success": true, "session_id": "my-feature-x" }
 { "type": "assistant", "content": "Got it — I'll use sqlx for the database layer.", "session_id": "my-feature-x" }
 ```
 

@@ -289,17 +289,18 @@ pub async fn process_placeholders_async_with_role(
 	let mut processed_prompt = prompt.to_string();
 
 	// Check which placeholders are actually in the prompt to avoid unnecessary work
-	let needs_date = prompt.contains("%{DATE}");
-	let needs_shell = prompt.contains("%{SHELL}");
-	let needs_os = prompt.contains("%{OS}");
-	let needs_binaries = prompt.contains("%{BINARIES}");
-	let needs_cwd = prompt.contains("%{CWD}");
-	let needs_role = prompt.contains("%{ROLE}");
-	let needs_system = prompt.contains("%{SYSTEM}"); // System info: date, shell, OS, binaries, CWD
-	let needs_context = prompt.contains("%{CONTEXT}"); // Project info: README, git status, git tree
-	let needs_git_status = prompt.contains("%{GIT_STATUS}");
-	let needs_git_tree = prompt.contains("%{GIT_TREE}");
-	let needs_readme = prompt.contains("%{README}");
+	// Both %{VAR} (legacy) and {{VAR}} (new) syntax are supported
+	let needs_date = prompt.contains("%{DATE}") || prompt.contains("{{DATE}}");
+	let needs_shell = prompt.contains("%{SHELL}") || prompt.contains("{{SHELL}}");
+	let needs_os = prompt.contains("%{OS}") || prompt.contains("{{OS}}");
+	let needs_binaries = prompt.contains("%{BINARIES}") || prompt.contains("{{BINARIES}}");
+	let needs_cwd = prompt.contains("%{CWD}") || prompt.contains("{{CWD}}");
+	let needs_role = prompt.contains("%{ROLE}") || prompt.contains("{{ROLE}}");
+	let needs_system = prompt.contains("%{SYSTEM}") || prompt.contains("{{SYSTEM}}");
+	let needs_context = prompt.contains("%{CONTEXT}") || prompt.contains("{{CONTEXT}}");
+	let needs_git_status = prompt.contains("%{GIT_STATUS}") || prompt.contains("{{GIT_STATUS}}");
+	let needs_git_tree = prompt.contains("%{GIT_TREE}") || prompt.contains("{{GIT_TREE}}");
+	let needs_readme = prompt.contains("%{README}") || prompt.contains("{{README}}");
 
 	// Early return if no placeholders are found
 	if !needs_date
@@ -437,9 +438,14 @@ pub async fn process_placeholders_async_with_role(
 		}
 	}
 
-	// Replace all placeholders
+	// Replace all placeholders — both %{VAR} (legacy) and {{VAR}} (new) syntax
 	for (placeholder, value) in placeholders.iter() {
 		processed_prompt = processed_prompt.replace(placeholder, value);
+		// Also replace {{VAR}} form: %{DATE} -> {{DATE}}, %{CWD} -> {{CWD}}, etc.
+		if let Some(inner) = placeholder.strip_prefix("%{").and_then(|s| s.strip_suffix('}')) {
+			let new_form = format!("{{{{{}}}}}", inner);
+			processed_prompt = processed_prompt.replace(&new_form, value);
+		}
 	}
 
 	processed_prompt

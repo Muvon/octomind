@@ -53,6 +53,9 @@ enum Commands {
 	/// Show all available placeholder variables and their values
 	Vars(commands::VarsArgs),
 
+	/// Bootstrap and run a pre-built agent from the registry (e.g. `developer:rust`)
+	Agent(commands::AgentArgs),
+
 	/// Generate shell completion scripts
 	Completion {
 		/// The shell to generate completion for
@@ -150,7 +153,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 	// CLI commands (Session/Run) initialize here so the first log_debug! in main() is covered.
 	let log_level = config.log_level.as_str();
 	match &args.command {
-		Commands::Session(_) | Commands::Run(_) => {
+		Commands::Session(_) | Commands::Run(_) | Commands::Agent(_) => {
 			if let Err(e) = octomind::logging::tracing_setup::init_tracing(
 				octomind::logging::tracing_setup::LoggingMode::Cli,
 				log_level,
@@ -168,6 +171,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		Commands::Run(a) => config.sandbox || a.sandbox,
 		Commands::Server(a) => config.sandbox || a.sandbox,
 		Commands::Acp(a) => config.sandbox || a.sandbox,
+		Commands::Agent(a) => config.sandbox || a.sandbox,
 		_ => false,
 	};
 	if sandbox_enabled {
@@ -215,6 +219,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		Commands::Server(server_args) => commands::server::execute(server_args, &config).await?,
 		Commands::Acp(acp_args) => commands::acp::execute(acp_args, &config).await?,
 		Commands::Vars(vars_args) => commands::vars::execute(vars_args, &config).await?,
+		Commands::Agent(agent_args) => commands::agent::execute(agent_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();
 			let name = app.get_name().to_string();

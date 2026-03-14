@@ -87,6 +87,7 @@ macro_rules! eprint {
 
 // Main lib.rs file that exports our modules
 pub mod acp;
+pub mod agent;
 pub mod config;
 pub mod directories;
 pub mod logging;

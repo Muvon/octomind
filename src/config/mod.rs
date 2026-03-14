@@ -46,6 +46,8 @@ pub mod roles;
 
 pub mod validation;
 
+pub mod registry;
+
 pub mod workflows;
 
 // Tests removed - strict configuration mode doesn't support Default implementations
@@ -56,6 +58,7 @@ pub use layers::*;
 pub use mcp::*;
 pub use oauth_config::*; // OAuth 2.1 + PKCE configuration types
 pub use providers::*;
+pub use registry::*;
 pub use roles::*;
 pub use workflows::*;
 
@@ -261,6 +264,10 @@ pub struct Config {
 	// Sandbox mode: restrict all filesystem writes to the current working directory
 	// Can also be enabled at runtime with --sandbox CLI flag
 	pub sandbox: bool,
+
+	// Agent registry configuration
+	#[serde(default)]
+	pub registry: crate::config::registry::RegistryConfig,
 
 	#[serde(skip)]
 	config_path: Option<PathBuf>,

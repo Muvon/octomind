@@ -420,6 +420,82 @@ impl Config {
 	}
 }
 
+/// Merge an agent manifest TOML string into an existing Config.
+///
+/// Unlike regular multi-file merging (where arrays replace), this function
+/// **concatenates** `mcp.servers` and `roles` arrays so the agent's additions
+/// stack on top of the user's base config. All other keys use override semantics.
+pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
+	let agent_value: toml::Value =
+		toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
+
+	// Serialize base config to toml::Value so we can manipulate it
+	let base_str = toml::to_string(base).context("Failed to serialize base config")?;
+	let mut base_value: toml::Value =
+		toml::from_str(&base_str).context("Failed to re-parse base config")?;
+
+	// Concatenate mcp.servers (additive, skip duplicates by name)
+	if let (Some(toml::Value::Table(base_mcp)), Some(toml::Value::Table(agent_mcp))) = (
+		base_value.get_mut("mcp"),
+		agent_value.get("mcp"),
+	) {
+		if let (Some(toml::Value::Array(base_servers)), Some(toml::Value::Array(agent_servers))) =
+			(base_mcp.get_mut("servers"), agent_mcp.get("servers"))
+		{
+			let existing_names: std::collections::HashSet<String> = base_servers
+				.iter()
+				.filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(|n| n.to_string()))
+				.collect();
+			for server in agent_servers {
+				let name = server.get("name").and_then(|n| n.as_str()).unwrap_or("");
+				if !existing_names.contains(name) {
+					base_servers.push(server.clone());
+				}
+			}
+		}
+	}
+
+	// Concatenate roles (additive, skip duplicates by name)
+	if let (Some(toml::Value::Array(base_roles)), Some(toml::Value::Array(agent_roles))) =
+		(base_value.get_mut("roles"), agent_value.get("roles"))
+	{
+		let existing_names: std::collections::HashSet<String> = base_roles
+			.iter()
+			.filter_map(|r| r.get("name").and_then(|n| n.as_str()).map(|n| n.to_string()))
+			.collect();
+		for role in agent_roles {
+			let name = role.get("name").and_then(|n| n.as_str()).unwrap_or("");
+			if !existing_names.contains(name) {
+				base_roles.push(role.clone());
+			}
+		}
+	}
+
+	// Merge remaining keys with override semantics (tables deep-merge, scalars replace).
+	// mcp and roles are already handled above — skip them here.
+	if let toml::Value::Table(agent_table) = &agent_value {
+		if let toml::Value::Table(base_table) = &mut base_value {
+			for (key, value) in agent_table {
+				if key == "mcp" || key == "roles" {
+					continue;
+				}
+				if let Some(base_val) = base_table.get(key) {
+					let merged = merge_toml_values(base_val, value);
+					base_table.insert(key.clone(), merged);
+				} else {
+					base_table.insert(key.clone(), value.clone());
+				}
+			}
+		}
+	}
+
+	let mut merged: Config = base_value
+		.try_into()
+		.context("Failed to deserialize merged agent config")?;
+	merged.build_role_map();
+	Ok(merged)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -536,7 +612,6 @@ tools = []
 		assert_eq!(config.get_max_tokens("assistant"), 16384);
 		assert_eq!(config.get_max_tokens("tester"), 16384);
 		assert_eq!(config.get_max_tokens("nonexistent_role"), 16384); // Should still return root level
-
 		// Test get_effective_max_tokens directly
 		assert_eq!(config.get_effective_max_tokens(), 16384);
 

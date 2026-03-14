@@ -1,0 +1,59 @@
+# Agent manifest: developer:rust
+#
+# Fetched by `octomind agent developer:rust`.
+# Merged additively into the user's base config:
+#   - [[roles]]       → appended (new role "developer:rust")
+#   - [[mcp.servers]] → appended (new servers, duplicates skipped by name)
+#   - everything else → override semantics
+#
+# Placeholder syntax:
+#   {{CWD}}          — current working directory (resolved at runtime)
+#   {{INPUT:KEY}}    — prompts user once, stored in ~/.local/share/octomind/inputs.toml
+
+# ---------------------------------------------------------------------------
+# Role definition
+# ---------------------------------------------------------------------------
+[[roles]]
+name = "developer:rust"
+system = """
+You are an expert Rust developer assistant.
+Working directory: {{CWD}}
+
+You write idiomatic, safe, performant Rust. You prefer:
+- Explicit error handling with anyhow/thiserror over unwrap
+- Descriptive names over abbreviations
+- cargo clippy clean code
+- Tests for non-trivial logic
+
+When asked to implement something, always run `cargo check` and `cargo clippy` after.
+"""
+welcome = "🦀 Rust developer agent ready. Working in {{CWD}}"
+temperature = 0.2
+top_p = 0.9
+top_k = 0
+
+[roles.mcp]
+# Inherit all servers from the base config plus any added below
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent_*"]
+
+# ---------------------------------------------------------------------------
+# Additional MCP servers (optional — uncomment to enable)
+# ---------------------------------------------------------------------------
+
+# Example: run a Rust-specific MCP tool via Docker (zero local install)
+# Requires Docker. {{INPUT:GITHUB_TOKEN}} is prompted once and cached.
+#
+# [[mcp.servers]]
+# name = "rust-analyzer-mcp"
+# type = "stdin"
+# command = "docker"
+# args = [
+#   "run", "--rm", "-i",
+#   "--volume", "{{CWD}}:/workspace",
+#   "--workdir", "/workspace",
+#   "--env", "GITHUB_TOKEN={{INPUT:GITHUB_TOKEN}}",
+#   "ghcr.io/muvon/rust-analyzer-mcp:latest"
+# ]
+# timeout_seconds = 60
+# tools = []

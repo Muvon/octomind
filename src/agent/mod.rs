@@ -1,4 +1,4 @@
-// Copyright 2025 Muvon Un Limited
+// Copyright 2026 Muvon Un Limited
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod acp;
-pub mod agent;
-pub mod config;
-pub mod run;
-pub mod server;
-pub mod session;
-pub mod vars;
+//! Agent bootstrap: fetch manifests, resolve inputs, merge config, run session.
 
-// Re-export all the command structs and enums
-pub use acp::AcpArgs;
-pub use agent::AgentArgs;
-pub use config::ConfigArgs;
-pub use run::RunArgs;
-pub use server::ServerArgs;
-pub use session::SessionArgs;
-pub use vars::VarsArgs;
+pub mod inputs;
+pub mod registry;

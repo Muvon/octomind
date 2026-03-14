@@ -203,7 +203,14 @@ pub fn get_batch_edit_function() -> McpFunction {
 			❌ Bad: replace [1,3] with \"use std::fs;\\nuse std::io;\\nuse std::path::PathBuf;\" (retyped lines 1-2)
 			✅ Good: replace [3,3] with \"use std::path::PathBuf;\" (only the line actually changing)
 
-			Max 50 operations per call.".to_string(),
+			Max 50 operations per call.
+
+			Returns a diff of all changes made:
+			- Context lines: `NNN: <text>` (3 lines before/after each change)
+			- Removed lines: `-NNN: <text>`
+			- Added lines:   `+NNN: <text>`
+			- Multiple ops separated by `---`
+			Read the diff to verify edits landed correctly — no need for a follow-up `view` call.".to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {

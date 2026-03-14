@@ -1084,24 +1084,21 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let successful_operations = batch_operations.len();
 	let total_operations = operations.len();
 
+	// The diff IS the result — plain text, same style as `view` output.
+	// LLM reads it to verify edits landed correctly without needing a separate view call.
+	let diff_output = diffs.join("\n---\n");
+
 	Ok(McpToolResult::success_with_metadata(
 		call.tool_name.clone(),
 		call.tool_id.clone(),
-		format!(
-			"Successfully applied {} operations to '{}'. All operations used ORIGINAL line numbers from the file content before any modifications.",
-			successful_operations, path_str
-		),
+		diff_output,
 		json!({
-			"path": path_str,
 			"batch_summary": {
 				"total_operations": total_operations,
 				"successful_operations": successful_operations,
 				"failed_operations": failed_operations,
 				"overall_success": failed_operations == 0
-			},
-			"operation_details": operation_details,
-			"diff": diffs.join("\n---\n"),
-			"total_lines": new_lines.len()
+			}
 		}),
 	))
 }

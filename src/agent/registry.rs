@@ -20,6 +20,8 @@
 //! Manifests are cached at `~/.local/share/octomind/agents/<category>/<variant>.toml`.
 //! If the cached file is older than `cache_ttl_hours`, it is refreshed in the background
 //! while the cached copy is returned immediately.
+//!
+//! Sources are resolved from user taps (see `agent::taps`) — user taps first, built-in last.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -76,46 +78,56 @@ fn is_stale(path: &PathBuf, ttl_hours: u64) -> bool {
 	age > Duration::from_secs(ttl_hours * 3600)
 }
 
-/// Fetch raw TOML from a single source URL for the given category/variant.
-async fn fetch_from_source(source: &str, category: &str, variant: &str) -> Result<String> {
-	if let Some(local_path) = source.strip_prefix("file://") {
-		// Local file source — expand ~ manually
-		let expanded = if local_path.starts_with('~') {
-			let home = dirs::home_dir().context("Cannot determine home directory")?;
-			home.join(&local_path[2..])
-		} else {
-			PathBuf::from(local_path)
-		};
-		// Source path IS the agents root — look for <category>/<variant>.toml directly
-		let manifest_path = expanded.join(category).join(format!("{variant}.toml"));
-		return fs::read_to_string(&manifest_path).context(format!(
-			"Failed to read local manifest: {}",
-			manifest_path.display()
-		));
-	}
-
-	// HTTP(S) source
-	let url = format!("{source}/agents/{category}/{variant}.toml");
-	let response = reqwest::get(&url)
-		.await
-		.context(format!("Failed to fetch manifest from {url}"))?;
-
-	if !response.status().is_success() {
-		anyhow::bail!("Registry returned {} for {url}", response.status());
-	}
-
-	response
-		.text()
-		.await
-		.context("Failed to read manifest response body")
+/// Fetch raw TOML from a tap for the given category/variant.
+///
+/// For GitHub taps: reads from cloned repo at `~/.local/share/octomind/taps/user/octomind-repo/`
+/// For local taps: reads from the specified local path
+async fn fetch_from_tap(
+	tap: &crate::agent::taps::Tap,
+	category: &str,
+	variant: &str,
+) -> Result<String> {
+	let agents_dir = tap.agents_dir()?;
+	let manifest_path = agents_dir.join(category).join(format!("{variant}.toml"));
+	fs::read_to_string(&manifest_path).context(format!(
+		"Failed to read manifest from tap '{}': {}",
+		tap.name,
+		manifest_path.display()
+	))
 }
 
 /// Fetch a manifest for `tag` from the registry, using cache when fresh.
+///
+/// Sources are loaded from user taps (user taps first, built-in default last).
+/// If the same manifest is found in multiple taps, the first one wins and a
+/// warning is printed.
 ///
 /// Returns the raw TOML string of the manifest.
 pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<String> {
 	let (category, variant, _version) = parse_tag(tag)?;
 	let cache = cache_path(&category, &variant)?;
+
+	let taps = crate::agent::taps::load_taps().unwrap_or_else(|_| {
+		vec![crate::agent::taps::Tap {
+			name: crate::agent::taps::DEFAULT_TAP.to_string(),
+			local_path: None,
+		}]
+	});
+
+	// Warn if multiple taps provide this manifest (first wins, like Homebrew)
+	let mut providing_taps: Vec<&str> = Vec::new();
+	for tap in &taps {
+		if can_provide(tap, &category, &variant).await {
+			providing_taps.push(&tap.name);
+		}
+	}
+	if providing_taps.len() > 1 {
+		eprintln!(
+			"⚠️  Warning: '{}' found in multiple taps — using first match: {}",
+			tag, providing_taps[0]
+		);
+		eprintln!("   Also available in: {}", providing_taps[1..].join(", "));
+	}
 
 	// Return cached copy if fresh
 	if cache.exists() && !is_stale(&cache, registry.cache_ttl_hours) {
@@ -132,13 +144,13 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<Stri
 			cache.display()
 		))?;
 
-		let sources = registry.sources.clone();
 		let cat = category.clone();
 		let var = variant.clone();
 		let cache_path_bg = cache.clone();
+		let taps_bg = taps.clone();
 		tokio::spawn(async move {
-			for source in &sources {
-				if let Ok(content) = fetch_from_source(source, &cat, &var).await {
+			for tap in &taps_bg {
+				if let Ok(content) = fetch_from_tap(tap, &cat, &var).await {
 					let _ = fs::write(&cache_path_bg, content);
 					return;
 				}
@@ -148,12 +160,11 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<Stri
 		return Ok(cached);
 	}
 
-	// No cache — fetch synchronously from sources in order
-	let mut last_err = anyhow::anyhow!("No registry sources configured");
-	for source in &registry.sources {
-		match fetch_from_source(source, &category, &variant).await {
+	// No cache — fetch synchronously from taps in order
+	let mut last_err = anyhow::anyhow!("No taps configured");
+	for tap in &taps {
+		match fetch_from_tap(tap, &category, &variant).await {
 			Ok(content) => {
-				// Save to cache
 				let _ = fs::write(&cache, &content);
 				return Ok(content);
 			}
@@ -164,6 +175,19 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<Stri
 	}
 
 	Err(last_err).context(format!(
-		"Failed to fetch agent manifest for '{tag}' from all sources"
+		"Failed to fetch agent manifest for '{}' from all taps",
+		tag
 	))
+}
+
+/// Check whether a tap can provide a manifest for the given category/variant.
+/// Checks if the manifest file exists in the tap's agents directory.
+async fn can_provide(tap: &crate::agent::taps::Tap, category: &str, variant: &str) -> bool {
+	match tap.agents_dir() {
+		Ok(agents_dir) => agents_dir
+			.join(category)
+			.join(format!("{variant}.toml"))
+			.exists(),
+		Err(_) => false,
+	}
 }

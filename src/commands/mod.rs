@@ -16,10 +16,14 @@ pub mod acp;
 pub mod config;
 pub mod run;
 pub mod server;
+pub mod tap;
+pub mod untap;
 pub mod vars;
 
 pub use acp::AcpArgs;
 pub use config::ConfigArgs;
 pub use run::RunArgs;
 pub use server::ServerArgs;
+pub use tap::TapArgs;
+pub use untap::UntapArgs;
 pub use vars::VarsArgs;

@@ -48,6 +48,13 @@ enum Commands {
 	/// Run as an ACP (Agent Client Protocol) agent over stdio
 	Acp(commands::AcpArgs),
 
+	/// Add a registry tap (agent source URL).
+	/// Omit URL to list all active taps.
+	Tap(commands::TapArgs),
+
+	/// Remove a previously added registry tap.
+	Untap(commands::UntapArgs),
+
 	/// Show all available placeholder variables and their values
 	Vars(commands::VarsArgs),
 
@@ -180,6 +187,8 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		Commands::Run(run_args) => commands::run::execute(&run_args, &config).await?,
 		Commands::Server(server_args) => commands::server::execute(&server_args, &config).await?,
 		Commands::Acp(acp_args) => commands::acp::execute(&acp_args, &config).await?,
+		Commands::Tap(tap_args) => commands::tap::execute(&tap_args)?,
+		Commands::Untap(untap_args) => commands::untap::execute(&untap_args)?,
 		Commands::Vars(vars_args) => commands::vars::execute(&vars_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();

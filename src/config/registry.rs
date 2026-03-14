@@ -14,23 +14,14 @@
 
 use serde::{Deserialize, Serialize};
 
-fn default_sources() -> Vec<String> {
-	vec!["https://raw.githubusercontent.com/muvon/octomind-agents/main".to_string()]
-}
-
 fn default_cache_ttl_hours() -> u64 {
 	24
 }
 
 /// Registry configuration for fetching agent manifests.
-/// Sources are checked in order — first hit wins.
-/// Supports https:// URLs and file:// local paths.
+/// Registry sources are managed via `octomind tap` / `octomind untap`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryConfig {
-	/// Ordered list of registry sources (https:// or file://)
-	#[serde(default = "default_sources")]
-	pub sources: Vec<String>,
-
 	/// How long to cache fetched manifests before re-checking (hours)
 	#[serde(default = "default_cache_ttl_hours")]
 	pub cache_ttl_hours: u64,
@@ -39,7 +30,6 @@ pub struct RegistryConfig {
 impl Default for RegistryConfig {
 	fn default() -> Self {
 		Self {
-			sources: default_sources(),
 			cache_ttl_hours: default_cache_ttl_hours(),
 		}
 	}

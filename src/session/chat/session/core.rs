@@ -353,12 +353,12 @@ impl ChatSession {
 		// Get role config once — used for temperature, top_p, top_k, and optional model override
 		let (role_config, _, _, _, _) = params.config.get_role_config(params.role);
 
-		// Role model overrides CLI model which overrides global config model
-		// Priority: role.model > CLI --model > config.model
-		let effective_model = role_config
+		// CLI model overrides role model which overrides global config model
+		// Priority: CLI --model > role.model > config.model
+		let effective_model = params
 			.model
 			.clone()
-			.or_else(|| params.model.clone())
+			.or_else(|| role_config.model.clone())
 			.unwrap_or_else(|| params.config.get_effective_model());
 
 		// Get temperature from role config if not provided via command line

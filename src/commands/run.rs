@@ -46,7 +46,7 @@ pub struct RunArgs {
 	pub format: Option<String>,
 
 	/// Override the model for this session (e.g. `openrouter:anthropic/claude-sonnet-4`).
-	/// Takes precedence over the global config model but is overridden by a role's model setting.
+	/// Priority: CLI --model > role.model > config.model
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 

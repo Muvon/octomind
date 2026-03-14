@@ -12,8 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Agent bootstrap: fetch manifests, resolve inputs, merge config, run session.
+use anyhow::Result;
+use clap::Args;
+use octomind::agent::taps;
 
-pub mod inputs;
-pub mod registry;
-pub mod taps;
+#[derive(Args, Debug)]
+pub struct UntapArgs {
+	/// Tap name to remove in `user/repo` format.
+	#[arg(value_name = "TAP")]
+	pub name: String,
+}
+
+pub fn execute(args: &UntapArgs) -> Result<()> {
+	taps::remove_tap(&args.name)?;
+	println!("✓ Untapped: {}", args.name);
+	Ok(())
+}

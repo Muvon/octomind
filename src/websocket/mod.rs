@@ -19,8 +19,7 @@ pub mod server;
 
 // Re-export main types
 pub use protocol::{
-	AssistantPayload, ClientMessage, CostPayload, ErrorPayload, InputRequestPayload,
-	McpNotificationPayload, ServerMessage, StatusPayload, ThinkingPayload, ToolResultPayload,
-	ToolUsePayload,
+	AssistantPayload, ClientMessage, CostPayload, ErrorPayload, McpNotificationPayload,
+	ServerMessage, StatusPayload, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
 pub use server::WebSocketServer;

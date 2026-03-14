@@ -45,15 +45,8 @@ max_retries = 1
 retry_timeout = 30
 
 #############################################
-# Ask / Shell command defaults
+# Shell command defaults
 #############################################
-
-[ask]
-system = "You are a helpful assistant.\n\n{{SYSTEM}}"
-temperature = 0.6
-top_p = 0.8
-top_k = 40
-
 [shell]
 system = """You are a shell command generator. Convert natural language to shell commands.
 Respond with JSON: {"command": "...", "explanation": "...", "safety_notes": null}"""

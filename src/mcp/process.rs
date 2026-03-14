@@ -154,14 +154,12 @@ pub fn clear_notification_sender() {
 }
 
 /// Send any ServerMessage directly through the notification channel.
-/// Used by the ask tool to send InputRequest messages to the WS client.
 pub fn send_notification_message(msg: crate::websocket::ServerMessage) {
 	let sender = NOTIFICATION_SENDER.read().unwrap();
 	if let Some(tx) = sender.as_ref() {
 		let _ = tx.send(msg);
 	}
-	// If no sender is registered (CLI mode), the message is intentionally dropped —
-	// CLI ask handling is done directly via stdin, not through this channel.
+	// If no sender is registered (CLI mode), the message is intentionally dropped.
 }
 
 /// Emit a notification — structured if a sender is registered, buffered otherwise.

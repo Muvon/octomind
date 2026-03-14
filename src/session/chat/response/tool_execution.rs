@@ -266,74 +266,45 @@ async fn execute_tools_with_context(
 	// - Tool execution should NOT restart animation (output already displaying)
 	// Restarting here causes ghost spinner that continues after output
 
-	// Take the global ask receiver once for this execution batch.
-	// If another batch already took it, ask_rx will be None and ask calls will
-	// return an error to the AI (handled in ask.rs).
-	let mut ask_rx = crate::mcp::core::ask::take_ask_receiver();
-
-	// Pin join_all so it can be polled across multiple select! iterations
-	// (needed when ask requests arrive mid-execution).
+	// Use tokio::select! to run tasks with cancellation support.
 	let all_tasks = futures::future::join_all(tasks);
 	tokio::pin!(all_tasks);
-
-	// Use tokio::select! for immediate cancellation response.
-	// Wrapped in a loop so ask requests can be serviced without dropping tasks.
-	let task_results = loop {
-		tokio::select! {
-			results = &mut all_tasks => {
-				// All tool tasks completed — return receiver so next batch can use ask.
-				if let Some(rx) = ask_rx.take() {
-					crate::mcp::core::ask::return_ask_receiver(rx);
-				}
-				break results;
-			}
-			ask_req = async {
-				if let Some(rx) = ask_rx.as_mut() { rx.recv().await } else { std::future::pending().await }
-			} => {
-				if let Some(req) = ask_req {
-					service_ask_request(req, config, mode).await;
-				}
-				// Loop back and keep waiting for tasks to finish.
-			}
-			_ = async {
-				if let Some(ref cancel_rx) = operation_cancelled {
-					let mut cancel_rx_clone = cancel_rx.clone();
-					while !*cancel_rx_clone.borrow() {
-						if cancel_rx_clone.changed().await.is_err() {
-							break;
-						}
+	let task_results: Vec<_> = tokio::select! {
+		results = &mut all_tasks => results,
+		_ = async {
+			if let Some(ref cancel_rx) = operation_cancelled {
+				let mut cancel_rx_clone = cancel_rx.clone();
+				while !*cancel_rx_clone.borrow() {
+					if cancel_rx_clone.changed().await.is_err() {
+						break;
 					}
-				} else {
-					std::future::pending::<()>().await;
 				}
-			} => {
-				// Animation already stopped by process_response - no action needed
+			} else {
+				std::future::pending::<()>().await;
+			}
+		} => {
+			// Animation already stopped by process_response - no action needed
 
-				// Cancellation occurred - provide immediate feedback
-				use colored::*;
-				if !mode.should_suppress_cli_output() {
+			// Cancellation occurred - provide immediate feedback
+			use colored::*;
+			if !mode.should_suppress_cli_output() {
+				println!(
+					"{}",
+					"🛑 All tool execution cancelled - returning to input".bright_yellow()
+				);
+			}
+
+			// Show cancellation message for each tool
+			if !mode.should_suppress_cli_output() {
+				for (tool_name, _, _) in task_info {
 					println!(
 						"{}",
-						"🛑 All tool execution cancelled - returning to input".bright_yellow()
+						format!("🛑 Tool '{}' cancelled - server preserved", tool_name).bright_yellow()
 					);
 				}
-
-				// Show cancellation message for each tool
-				if !mode.should_suppress_cli_output() {
-					for (tool_name, _, _) in task_info {
-						println!(
-							"{}",
-							format!("🛑 Tool '{}' cancelled - server preserved", tool_name).bright_yellow()
-						);
-					}
-				}
-
-				// Return receiver so next batch can use ask, then return empty results.
-				if let Some(rx) = ask_rx.take() {
-					crate::mcp::core::ask::return_ask_receiver(rx);
-				}
-				return Ok((Vec::new(), total_tool_time_ms));
 			}
+
+			return Ok((Vec::new(), total_tool_time_ms));
 		}
 	};
 
@@ -553,51 +524,6 @@ async fn execute_tools_with_context(
 	// Handle large outputs with batched confirmation
 	let processed_results = handle_large_tool_results(tool_results, config, mode).await?;
 	Ok((processed_results, total_tool_time_ms))
-}
-
-/// Service a single ask request from the ask tool.
-/// For terminal modes: stops the spinner, prints the question, reads stdin.
-/// For WebSocket mode: sends an InputRequest via the notification channel and awaits the oneshot.
-async fn service_ask_request(
-	req: crate::mcp::core::ask::AskRequest,
-	config: &Config,
-	mode: OutputMode,
-) {
-	if mode.is_terminal_mode() {
-		// Stop spinner so the prompt is clean
-		crate::session::chat::get_animation_manager()
-			.stop_current()
-			.await;
-
-		// Render the question using the same markdown path as AI responses
-		crate::session::chat::assistant_output::print_assistant_response(
-			&req.question,
-			config,
-			"assistant",
-			&None,
-		);
-
-		eprint!("{}", "> ".bright_cyan());
-		// Flush so the prompt appears before we block
-		use std::io::Write;
-		let _ = std::io::stderr().flush();
-
-		// Read answer in a blocking task so we don't block the async runtime
-		let answer = tokio::task::spawn_blocking(|| {
-			let mut buf = String::new();
-			let _ = std::io::stdin().read_line(&mut buf);
-			buf.trim().to_string()
-		})
-		.await
-		.unwrap_or_default();
-
-		let _ = req.answer_tx.send(answer);
-	} else {
-		// WebSocket / JSONL mode: send InputRequest via the notification sender.
-		// The WS server will forward it to the client and route the InputResponse
-		// back via the global pending-answer slot in ask.rs.
-		crate::mcp::core::ask::send_ws_input_request(req);
-	}
 }
 
 // Handle large tool results with batched confirmation

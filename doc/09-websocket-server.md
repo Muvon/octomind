@@ -95,30 +95,16 @@ Every message **must** include a `type` field.
 **Available commands** (same as CLI `/commands`):
 `help`, `info`, `model`, `role`, `mcp`, `context`, `truncate`, `clear`, `loglevel`, `workflow`, `run`, `prompt`, `save`, `done`, `report`, `summarize`, `plan`, `list`
 
-#### `input_response` — Reply to a server-issued `input_request` (ask tool)
-
-```json
-{
-  "type": "input_response",
-  "session_id": "my-feature-x",
-  "answer": "Use the existing database connection pool"
-}
-```
-
-- `session_id` **required** — must match the session that issued the `input_request`
-- `answer` **required** — the user's answer to the AI's question; must be non-empty
-- Send this only after receiving an `input_request` from the server; the blocked AI tool resumes immediately upon receipt
 
 **Fields summary:**
 
-| Field | Type | `session` | `message` | `command` | `input_response` |
-|-------|------|-----------|-----------|-----------|------------------|
-| `type` | string | required | required | required | required |
-| `session_id` | string | optional | required | required | required |
-| `content` | string | ignored | required | ignored | ignored |
-| `command` | string | ignored | ignored | required | ignored |
-| `args` | string[] | ignored | ignored | optional | ignored |
-| `answer` | string | ignored | ignored | ignored | required |
+| Field | Type | `session` | `message` | `command` |
+|-------|------|-----------|-----------|----------|
+| `type` | string | required | required | required |
+| `session_id` | string | optional | required | required |
+| `content` | string | ignored | required | ignored |
+| `command` | string | ignored | ignored | required |
+| `args` | string[] | ignored | ignored | optional |
 
 
 ### Server → Client (Output)
@@ -136,7 +122,6 @@ All server messages are JSON objects tagged by `"type"`. Each variant carries on
 | `cost` | Token usage and cost summary | `session_tokens`, `session_cost`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `session_id` |
 | `status` | Status/info message | `message`, `session_id` (optional), `data` (optional, structured command output) |
 | `error` | Error message | `message` |
-| `input_request` | AI needs user input (ask tool) — client must reply with `input_response` | `question`, `session_id` |
 
 **Examples:**
 
@@ -148,10 +133,7 @@ All server messages are JSON objects tagged by `"type"`. Each variant carries on
 { "type": "status",      "message": "Session created: my-feature-x", "session_id": "my-feature-x" }
 { "type": "status",      "message": "Command '/info' executed successfully", "session_id": "my-feature-x", "data": { ... } }
 { "type": "error",         "message": "Session not found: nonexistent." }
-{ "type": "input_request", "question": "Which database driver should I use: sqlx or diesel?", "session_id": "my-feature-x" }
 ```
-
-
 
 ## 📊 Message Flow Examples
 
@@ -231,26 +213,6 @@ or if it already existed on disk:
 { "type": "error", "message": "Session not found: nonexistent. Send a \"session\" message first to create or resume a session." }
 ```
 
-
-### Example 6: Ask tool — AI requests user input
-
-The AI calls the `ask` tool mid-execution. The server halts tool processing and sends an `input_request`. The client must reply with `input_response` before execution resumes.
-
-**Server sends** (AI called `ask`):
-```json
-{ "type": "input_request", "question": "Should I use sqlx or diesel for the database layer? The project currently has no ORM dependency. sqlx is async-native; diesel is more mature with a richer query DSL.", "session_id": "my-feature-x" }
-```
-
-**Client replies:**
-```json
-{ "type": "input_response", "session_id": "my-feature-x", "answer": "Use sqlx — we want async-native." }
-```
-
-**Server continues** (execution resumes, AI receives the answer as the tool result):
-```json
-{ "type": "tool_result", "tool": "ask", "tool_id": "call_xyz", "server": "core", "content": "Use sqlx — we want async-native.", "success": true, "session_id": "my-feature-x" }
-{ "type": "assistant", "content": "Got it — I'll use sqlx for the database layer.", "session_id": "my-feature-x" }
-```
 
 ## 🔧 Client Implementation Examples
 

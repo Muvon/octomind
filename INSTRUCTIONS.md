@@ -15,7 +15,7 @@ CLI / WebSocket
       ├── Workflows   ← src/session/workflows/       (multi-step orchestrated task runners)
       │
       └── MCP servers ← src/mcp/
-            ├── core/     plan, ask
+            ├── core/     plan
             ├── fs/       view, text_editor, batch_edit, extract_lines, shell, workdir, ast_grep
             └── agent/    agent_* tools → route tasks to configured layers
 ```

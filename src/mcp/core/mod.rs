@@ -13,9 +13,8 @@
 // limitations under the License.
 
 // Core MCP provider - modular structure
-// Handles core tools: plan and ask
+// Handles core tools: plan
 
-pub mod ask;
 pub mod functions;
 pub mod plan;
 
@@ -26,6 +25,5 @@ mod core_tests;
 mod plan_tests;
 
 // Re-export main functionality
-pub use ask::execute_ask;
 pub use functions::get_all_functions;
 pub use plan::{clear_plan_data, execute_plan};

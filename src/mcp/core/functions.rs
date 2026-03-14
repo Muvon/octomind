@@ -17,10 +17,9 @@
 // Function definitions for the Core MCP provider
 
 use super::super::McpFunction;
-use super::ask::get_ask_function;
 use super::plan::get_plan_function;
 
 // Get all available core functions
 pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![get_plan_function(), get_ask_function()]
+	vec![get_plan_function()]
 }

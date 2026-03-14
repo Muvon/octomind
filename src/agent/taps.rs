@@ -263,7 +263,7 @@ pub fn remove_tap(name: &str) -> Result<()> {
 }
 
 /// Clone a Git repository.
-fn git_clone(url: &str, dir: &PathBuf) -> Result<()> {
+fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
 	let status = std::process::Command::new("git")
 		.args(["clone", "--depth", "1", url, &dir.to_string_lossy()])
 		.status()

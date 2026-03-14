@@ -10,7 +10,6 @@ Octomind provides **three** built-in MCP servers with comprehensive development 
 
 **Core Server** (`src/mcp/core/`):
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
-- `ask(question="...")` - Pause execution and ask the user a clarification question; halts until answered. Use ONLY when genuinely blocked (missing requirement, ambiguous instruction, decision only the user can make) — question must be fully self-contained with all context, file paths, options, and references so the user can answer without looking anything up
 
 **Filesystem Server** (`src/mcp/fs/`):
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content

@@ -204,11 +204,6 @@ async fn process_client_message(
 		ClientMessage::Command(msg) => {
 			handle_command_message(msg, ws_sender, config, role, sessions).await
 		}
-		ClientMessage::InputResponse(msg) => {
-			// Route the user's answer to the blocked ask tool task
-			crate::mcp::core::ask::deliver_ws_answer(msg.answer);
-			Ok(())
-		}
 	}
 }
 

@@ -237,7 +237,7 @@ pub fn guess_tool_category(tool_name: &str) -> &'static str {
 		"core" => "system",
 		"text_editor" | "batch_edit" | "extract_lines" => "filesystem",
 		"shell" | "ast_grep" | "workdir" | "view" | "list_files" => "filesystem",
-		"plan" | "ask" => "core",
+		"plan" => "core",
 		name if name.contains("file") || name.contains("editor") => "core",
 		name if name.contains("search") || name.contains("find") => "search",
 		name if name.contains("image") || name.contains("photo") => "media",
@@ -663,7 +663,7 @@ pub async fn build_tool_server_map(
 			McpConnectionType::Builtin => {
 				match server.name() {
 					"core" => {
-						// Core server only has plan and ask tools
+						// Core server only has the plan tool
 						get_filtered_server_functions("core", server.tools(), || {
 							core::get_all_functions()
 						})
@@ -802,25 +802,6 @@ async fn execute_tool_without_cancellation(
 										call.tool_name.clone(),
 										call.tool_id.clone(),
 										format!("Plan execution failed: {}", e),
-									));
-								}
-							}
-						}
-						"ask" => {
-							crate::log_debug!(
-								"Executing ask via core server '{}'",
-								target_server.name()
-							);
-							match core::execute_ask(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("Ask execution failed: {}", e),
 									));
 								}
 							}

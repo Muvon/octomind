@@ -57,16 +57,6 @@ pub struct CommandMessage {
 	pub args: Vec<String>,
 }
 
-/// Answer to a pending `input_request` from the server (client → server).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputResponseMessage {
-	/// Session name / ID — must match the session that issued the input_request.
-	pub session_id: String,
-
-	/// The user's answer to the question.
-	pub answer: String,
-}
-
 /// Incoming message from client to server.
 /// Internally tagged by `"type"` so each variant carries only its own fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,8 +65,6 @@ pub enum ClientMessage {
 	Session(SessionMessage),
 	Message(UserMessage),
 	Command(CommandMessage),
-	/// Reply to a server-issued `input_request` (ask tool).
-	InputResponse(InputResponseMessage),
 }
 
 impl ClientMessage {
@@ -104,16 +92,6 @@ impl ClientMessage {
 				}
 				if c.command.trim().is_empty() {
 					return Err("command cannot be empty".to_string());
-				}
-				Ok(())
-			}
-
-			ClientMessage::InputResponse(r) => {
-				if r.session_id.trim().is_empty() {
-					return Err("session_id cannot be empty".to_string());
-				}
-				if r.answer.trim().is_empty() {
-					return Err("answer cannot be empty".to_string());
 				}
 				Ok(())
 			}
@@ -191,14 +169,6 @@ pub struct McpNotificationPayload {
 	pub params: Value,
 }
 
-/// Server is asking the user a question (ask tool). Client must reply with `input_response`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputRequestPayload {
-	/// The question the AI wants answered.
-	pub question: String,
-	pub session_id: String,
-}
-
 /// Outgoing message from server to client.
 /// Tagged by `"type"` — each variant carries only its own typed fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,8 +190,6 @@ pub enum ServerMessage {
 	Error(ErrorPayload),
 	/// Notification received from an MCP server (e.g. progress, log messages)
 	McpNotification(McpNotificationPayload),
-	/// Ask tool: server needs user input before execution can continue
-	InputRequest(InputRequestPayload),
 }
 
 impl ServerMessage {

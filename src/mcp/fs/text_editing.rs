@@ -315,12 +315,12 @@ pub async fn line_replace_spec(
 
 	let (start_line, end_line) = lines;
 
-	// Validate content for escaped characters
-	if content.starts_with("\\t") && content.contains("\\n") {
+	// Validate content for escaped characters — catch both \t and \n independently
+	if content.contains("\\t") || content.contains("\\n") {
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"content should CONTAIN RAW content not escaped characters".to_string(),
+			"content must be RAW text — do not escape whitespace (use real tabs/newlines, not \\t or \\n)".to_string(),
 		));
 	}
 
@@ -387,30 +387,40 @@ pub async fn line_replace_spec(
 		.map(|&line| line.to_string())
 		.collect();
 
-	// DUPLICATE DETECTION: Check if replacement content duplicates adjacent lines
-	let mut duplicate_warnings = Vec::new();
+	// DUPLICATE DETECTION: block writes where content duplicates an adjacent line —
+	// this is the #1 cause of AI-introduced line duplication.
 	let content_lines: Vec<&str> = content.lines().collect();
 
 	if !content_lines.is_empty() {
-		// Check if first line of content matches line BEFORE replacement range
+		// First line of new content matches the line immediately before the range → AI included a surrounding line it shouldn't have
 		if start_line > 1 {
 			let line_before = lines[start_line - 2];
 			if content_lines[0].trim() == line_before.trim() && !line_before.trim().is_empty() {
-				duplicate_warnings.push(format!(
-					"⚠️  Line {} (before replacement range) matches first line of your content. Did you mean to include it in your range?",
-					start_line - 1
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!(
+						"Duplicate line detected: your content's first line matches line {} (just before the replacement range). \
+						Do NOT include surrounding unchanged lines in content — only provide the lines that replace [{}-{}].",
+						start_line - 1, start_line, end_line
+					),
 				));
 			}
 		}
 
-		// Check if last line of content matches line AFTER replacement range
+		// Last line of new content matches the line immediately after the range → same problem on the other side
 		if end_line < lines.len() {
 			let line_after = lines[end_line];
 			let last_content_line = content_lines[content_lines.len() - 1];
 			if last_content_line.trim() == line_after.trim() && !line_after.trim().is_empty() {
-				duplicate_warnings.push(format!(
-					"⚠️  Line {} (after replacement range) matches last line of your content. Did you mean to include it in your range?",
-					end_line + 1
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!(
+						"Duplicate line detected: your content's last line matches line {} (just after the replacement range). \
+						Do NOT include surrounding unchanged lines in content — only provide the lines that replace [{}-{}].",
+						end_line + 1, start_line, end_line
+					),
 				));
 			}
 		}
@@ -458,70 +468,56 @@ pub async fn line_replace_spec(
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
-	// Create a snippet showing the replaced lines with smart highlighting
-	let replaced_snippet = if original_lines.is_empty() {
-		"(empty range)".to_string()
-	} else if original_lines.len() == 1 {
-		// For single line replacement, show exactly what was replaced
-		format!("{}: {}", start_line, original_lines[0])
-	} else if original_lines.len() <= 3 {
-		// For 2-3 lines, show all lines with line numbers
-		original_lines
-			.iter()
-			.enumerate()
-			.map(|(i, line)| format!("{}: {}", start_line + i, line))
-			.collect::<Vec<_>>()
-			.join("\n")
-	} else {
-		// For more than 3 lines, show first and last with summary
-		format!(
-			"{}: {}\n... [{} more lines]\n{}: {}",
-			start_line,
-			original_lines[0],
-			original_lines.len() - 2,
-			start_line + original_lines.len() - 1,
-			original_lines[original_lines.len() - 1]
-		)
-	};
+	// Build an annotated diff view so the AI can verify the edit landed correctly.
+	// Format:
+	//   context lines:  "  NNN: <line>"
+	//   removed lines:  "- NNN: <line>"
+	//   added lines:    "+ NNN: <line>"  (NNN = new line number after edit)
+	//   skipped gap:    "  ..."
+	const CONTEXT: usize = 3;
 
-	let lines_replaced_count = end_line - start_line + 1;
-	let new_lines_count = content.lines().count();
+	let new_lines: Vec<&str> = final_content.lines().collect();
+	let new_lines_count = content_lines.len();
 
-	let mut content_message = if lines_replaced_count == 1 && new_lines_count == 1 {
-		format!("Successfully replaced line {} with new content", start_line)
-	} else if lines_replaced_count == 1 {
-		format!(
-			"Successfully replaced line {} with {} lines",
-			start_line, new_lines_count
-		)
-	} else if new_lines_count == 1 {
-		format!(
-			"Successfully replaced {} lines ({}-{}) with 1 line",
-			lines_replaced_count, start_line, end_line
-		)
-	} else {
-		format!(
-			"Successfully replaced {} lines ({}-{}) with {} lines",
-			lines_replaced_count, start_line, end_line, new_lines_count
-		)
-	};
+	let mut diff: Vec<String> = Vec::new();
 
-	// Append duplicate warnings if any
-	if !duplicate_warnings.is_empty() {
-		content_message.push_str("\n\n");
-		content_message.push_str(&duplicate_warnings.join("\n"));
+	// --- context before ---
+	let ctx_before_start = start_line.saturating_sub(CONTEXT); // 1-indexed, inclusive
+	if ctx_before_start > 1 {
+		diff.push("...".to_string());
 	}
+	for i in ctx_before_start..start_line {
+		diff.push(format!("{}: {}", i, lines[i - 1]));
+	}
+
+	// --- removed lines (what was there before) ---
+	for (i, old_line) in original_lines.iter().enumerate() {
+		diff.push(format!("-{}: {}", start_line + i, old_line));
+	}
+
+	// --- added lines (what is there now) ---
+	// New line numbers start at start_line in the post-edit file
+	for (i, new_line) in content_lines.iter().enumerate() {
+		diff.push(format!("+{}: {}", start_line + i, new_line));
+	}
+
+	// --- context after ---
+	// In the new file, lines after the edit start at: start_line + new_lines_count
+	let new_after_start = start_line + new_lines_count; // 1-indexed in new file
+	let new_after_end = (new_after_start + CONTEXT - 1).min(new_lines.len());
+	for new_i in new_after_start..=new_after_end {
+		diff.push(format!("{}: {}", new_i, new_lines[new_i - 1]));
+	}
+	if new_after_end < new_lines.len() {
+		diff.push("...".to_string());
+	}
+	diff.push(format!("[{} lines total]", new_lines.len()));
 
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
 		tool_id: call.tool_id.clone(),
 		result: json!({
-			"content": content_message,
-			"path": path.to_string_lossy(),
-			"lines_replaced": lines_replaced_count,
-			"new_lines": new_lines_count,
-			"replaced_snippet": replaced_snippet,
-			"range": format!("{}-{}", start_line, end_line)
+			"diff": diff.join("\n"),
 		}),
 	})
 }

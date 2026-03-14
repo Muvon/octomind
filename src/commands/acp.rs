@@ -16,9 +16,10 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct AcpArgs {
-	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
-	#[arg(long, default_value = "developer")]
-	pub role: String,
+	/// Agent tag (e.g. `developer:rust`) or role name (e.g. `developer`).
+	/// Omit to use the default role from config.
+	#[arg(value_name = "TAG")]
+	pub tag: Option<String>,
 
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
@@ -27,5 +28,8 @@ pub struct AcpArgs {
 
 /// Execute the acp command — runs Octomind as an ACP agent over stdio
 pub async fn execute(args: &AcpArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
-	octomind::acp::run(config.clone(), args.role.clone()).await
+	let (resolved_config, role) =
+		super::common::resolve_config_and_role(args.tag.as_deref(), config).await?;
+	super::common::init_mcp(&role, &resolved_config, false).await?;
+	octomind::acp::run(resolved_config, role).await
 }

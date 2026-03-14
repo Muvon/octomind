@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod acp;
+pub mod common;
 pub mod config;
 pub mod run;
 pub mod server;

@@ -16,6 +16,11 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct ServerArgs {
+	/// Agent tag (e.g. `developer:rust`) or role name (e.g. `developer`).
+	/// Omit to use the default role from config.
+	#[arg(value_name = "TAG")]
+	pub tag: Option<String>,
+
 	/// Host address to bind to
 	#[arg(long, default_value = "127.0.0.1")]
 	pub host: String,
@@ -23,10 +28,6 @@ pub struct ServerArgs {
 	/// Port to listen on
 	#[arg(long, short, default_value = "8080")]
 	pub port: u16,
-
-	/// Session role: developer (default with layers and tools) or assistant (simple chat without tools)
-	#[arg(long, default_value = "developer")]
-	pub role: String,
 
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
@@ -37,9 +38,12 @@ pub struct ServerArgs {
 pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
 	use octomind::websocket::WebSocketServer;
 
+	let (resolved_config, role) =
+		super::common::resolve_config_and_role(args.tag.as_deref(), config).await?;
+
 	// Initialize tracing for WebSocket mode - logs to file
 	// stdout/stderr are used for server status messages
-	let log_level = config.log_level.as_str();
+	let log_level = resolved_config.log_level.as_str();
 	if let Err(e) = octomind::logging::tracing_setup::init_tracing(
 		octomind::logging::tracing_setup::LoggingMode::WebSocket,
 		log_level,
@@ -47,8 +51,10 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 		eprintln!("Warning: Failed to initialize tracing: {}", e);
 	}
 
+	super::common::init_mcp(&role, &resolved_config, true).await?;
+
 	// Create and start WebSocket server
-	let server = WebSocketServer::new(&args.host, args.port, config.clone(), args.role.clone())?;
+	let server = WebSocketServer::new(&args.host, args.port, resolved_config, role)?;
 	server.start().await?;
 
 	Ok(())

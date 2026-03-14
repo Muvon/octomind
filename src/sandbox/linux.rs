@@ -22,9 +22,9 @@
 //!   revoked for a subpath. This means read-blocking specific dirs (e.g. ~/.ssh)
 //!   while allowing reads everywhere else is not possible with Landlock v1-v3.
 //! - We therefore apply the practical safe default:
-//!   - Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
-//!   - Read+write on cwd and ~/.local/share (MCP server state/logs)
-//!   - All writes outside those two paths are denied
+//!   • Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
+//!   • Read+write on cwd and ~/.local/share (MCP server state/logs)
+//!   • All writes outside those two paths are denied
 //! - Sensitive credential dirs (~/.ssh, ~/.aws, etc.) are protected from
 //!   *writes* but remain readable. This matches the macOS write-only baseline.
 //!   True read isolation on Linux requires namespaces/seccomp — out of scope here.

@@ -143,6 +143,7 @@ async fn initialize_mcp_for_role_with_progress(
 	}
 }
 
+async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
 	// Initialize tracing based on the command being run.
 	// ACP initializes its own tracing in acp/mod.rs (must happen before LocalSet).
 	// Server initializes in commands/server.rs (needs WebSocket mode).

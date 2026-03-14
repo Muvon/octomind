@@ -141,6 +141,28 @@ pub fn is_dynamic(name: &str) -> bool {
 	state.servers.contains_key(name)
 }
 
+/// Check if a tool belongs to any dynamic server (by tool name)
+pub fn is_dynamic_by_tool(tool_name: &str) -> bool {
+	let manager = get_manager();
+	let state = manager.read().unwrap();
+	state
+		.functions
+		.values()
+		.any(|funcs| funcs.iter().any(|f| f.name == tool_name))
+}
+
+/// Get the dynamic server name for a specific tool (by tool name)
+pub fn get_dynamic_server_name_by_tool(tool_name: &str) -> Option<String> {
+	let manager = get_manager();
+	let state = manager.read().unwrap();
+	for (server_name, funcs) in &state.functions {
+		if funcs.iter().any(|f| f.name == tool_name) {
+			return Some(server_name.clone());
+		}
+	}
+	None
+}
+
 /// Clear all dynamic servers (useful for testing)
 #[cfg(test)]
 pub fn clear_all() {

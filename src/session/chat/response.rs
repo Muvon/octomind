@@ -191,8 +191,17 @@ fn handle_final_response(
 
 // Get the actual server name for a tool (async version that matches execution)
 pub async fn get_tool_server_name_async(tool_name: &str, _config: &Config) -> String {
-	// STATIC ONLY: Use pre-built static tool map
-	crate::mcp::tool_map::get_tool_server_name(tool_name).unwrap_or_else(|| "unknown".to_string())
+	// First check static tool map
+	if let Some(name) = crate::mcp::tool_map::get_tool_server_name(tool_name) {
+		return name;
+	}
+
+	// Then check dynamic servers - returns actual server name
+	if let Some(name) = crate::mcp::core::dynamic::get_dynamic_server_name_by_tool(tool_name) {
+		return name;
+	}
+
+	"unknown".to_string()
 }
 
 // Display execution intent with headers upfront (before execution)

@@ -36,6 +36,7 @@ pub async fn prepare_for_api_call(
 		chat_session,
 		config,
 		operation_rx.clone(),
+		false,
 	)
 	.await
 	{

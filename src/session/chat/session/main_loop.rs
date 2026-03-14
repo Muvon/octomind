@@ -616,6 +616,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				&mut chat_session,
 				&current_config,
 				operation_rx.clone(),
+				false,
 			)
 			.await
 			{

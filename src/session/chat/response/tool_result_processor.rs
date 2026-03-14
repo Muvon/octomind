@@ -117,6 +117,7 @@ pub async fn process_tool_results(
 					chat_session,
 					config,
 					operation_cancelled.clone(),
+					false,
 				)
 				.await
 			{
@@ -278,11 +279,11 @@ pub async fn process_tool_results(
 		};
 
 	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed
-	// This runs AFTER plan compression (which handles structured plan content)
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,
 		config,
 		operation_cancelled.clone(),
+		false,
 	)
 	.await
 	{

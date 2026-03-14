@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// /done command handler - compress conversation context (same as automatic session compression)
+// /done command handler - force-compress conversation context regardless of thresholds
 
 use super::super::core::ChatSession;
 use crate::config::Config;
 use anyhow::Result;
 use colored::Colorize;
 
-/// Compress conversation context, identical to the automatic pressure-based compression.
-///
-/// Runs `check_and_compress_conversation` directly — the AI decides whether compression
-/// is beneficial and produces a summary, preserving recent turns and all instructions.
+/// Force-compress conversation context, bypassing all automatic threshold/cooldown/cost guards.
+/// The user explicitly requested compression, so we always run it.
 pub async fn handle_done(
 	session: &mut ChatSession,
 	config: &Config,
@@ -33,6 +31,7 @@ pub async fn handle_done(
 			session,
 			config,
 			operation_cancelled,
+			true,
 		)
 		.await
 		{
@@ -41,10 +40,7 @@ pub async fn handle_done(
 				true
 			}
 			Ok(false) => {
-				println!(
-					"{}",
-					"ℹ️  No compression needed at this point.".bright_cyan()
-				);
+				println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
 				false
 			}
 			Err(e) => {

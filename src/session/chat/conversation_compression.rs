@@ -668,11 +668,23 @@ pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
+	force: bool,
 ) -> Result<bool> {
 	let (should_check, target_ratio) = should_check_compression(session, config).await;
-	if !should_check {
+
+	if !force && !should_check {
 		return Ok(false);
 	}
+	let target_ratio = if force {
+		config
+			.compression
+			.pressure_levels
+			.iter()
+			.map(|l| l.target_ratio)
+			.fold(2.0_f64, f64::max)
+	} else {
+		target_ratio
+	};
 
 	// Check for cancellation before starting compression (which involves an API call)
 	if *operation_rx.borrow() {
@@ -743,7 +755,7 @@ pub async fn check_and_compress_conversation(
 	)
 	.await?;
 
-	if !should_compress {
+	if !force && !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
 		animation_manager.stop_current().await;
 		return Ok(false);

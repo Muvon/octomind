@@ -95,6 +95,15 @@ impl LogLevel {
 	pub fn is_debug_enabled(&self) -> bool {
 		matches!(self, LogLevel::Debug)
 	}
+
+	/// Get string representation for tracing
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			LogLevel::None => "off",
+			LogLevel::Info => "info",
+			LogLevel::Debug => "debug",
+		}
+	}
 }
 
 // REMOVED: All default functions - config must be complete and explicit
@@ -498,82 +507,148 @@ where
 {
 	CURRENT_CONFIG.with(|c| (*c.borrow()).as_ref().map(f))
 }
+// ============================================================================
+// LOGGING MACROS
+// ============================================================================
+// These macros route log output based on whether tracing is initialized:
+// - Tracing initialized (CLI/ACP/WebSocket): use tracing (stderr or file)
+// - No tracing: use colored println/eprintln for CLI
+//
+// IMPORTANT: In ACP/WebSocket mode, tracing writes to file only.
+// stdout/stderr are reserved for JSON-RPC protocol communication.
 
-/// Info logging macro with automatic cyan coloring
-/// Shows info messages when log level is Info OR Debug
-/// Suppressed in JSONL mode to avoid mixing plain text with JSON output
+/// Info logging macro with automatic cyan coloring (CLI) or tracing (ACP/WebSocket).
+/// Shows info messages when log level is Info OR Debug.
 #[macro_export]
 macro_rules! log_info {
 	($fmt:expr) => {
 		if let Some(should_log) = $crate::config::with_thread_config(|config| {
-			config.get_log_level().is_info_enabled() && !config.output_mode().should_suppress_cli_output()
+			config.get_log_level().is_info_enabled()
 		}) {
 			if should_log {
-				use colored::Colorize;
-				println!("{}", $fmt.cyan());
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::info!("{}", $fmt);
+				} else {
+					use colored::Colorize;
+					$crate::println!("{}", $fmt.cyan());
+				}
 			}
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
 		if let Some(should_log) = $crate::config::with_thread_config(|config| {
-			config.get_log_level().is_info_enabled() && !config.output_mode().should_suppress_cli_output()
+			config.get_log_level().is_info_enabled()
 		}) {
 			if should_log {
-				use colored::Colorize;
-				println!("{}", format!($fmt, $($arg),*).cyan());
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::info!($fmt, $($arg),*);
+				} else {
+					use colored::Colorize;
+					$crate::println!("{}", format!($fmt, $($arg),*).cyan());
+				}
 			}
 		}
 	};
 }
 
-/// Debug logging macro with automatic bright blue coloring
+/// Debug logging macro with automatic bright blue coloring (CLI) or tracing (ACP/WebSocket).
 #[macro_export]
 macro_rules! log_debug {
 	($fmt:expr) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
-		if should_log {
-		use colored::Colorize;
-		println!("{}", $fmt.bright_blue());
-		}
+		if let Some(should_log) = $crate::config::with_thread_config(|config| {
+			config.get_log_level().is_debug_enabled()
+		}) {
+			if should_log {
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::debug!("{}", $fmt);
+				} else {
+					use colored::Colorize;
+					$crate::println!("{}", $fmt.bright_blue());
+				}
+			}
 		}
 	};
 	($fmt:expr, $($arg:expr),*) => {
-		if let Some(should_log) = $crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled()) {
-		if should_log {
-		use colored::Colorize;
-	println!("{}", format!($fmt, $($arg),*).bright_blue());
-	}
-	}
+		if let Some(should_log) = $crate::config::with_thread_config(|config| {
+			config.get_log_level().is_debug_enabled()
+		}) {
+			if should_log {
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::debug!($fmt, $($arg),*);
+				} else {
+					use colored::Colorize;
+					$crate::println!("{}", format!($fmt, $($arg),*).bright_blue());
+				}
+			}
+		}
 	};
 }
 
-/// Error logging macro with automatic bright red coloring
-/// Always visible regardless of log level (errors should always be shown)
+/// Error logging macro with automatic bright red coloring (CLI) or tracing + file (ACP/WebSocket).
+/// Always visible regardless of log level.
+/// In ACP mode, also writes to the dedicated error sink for structured JSONL error tracking.
 #[macro_export]
 macro_rules! log_error {
 	($fmt:expr) => {{
-		use colored::Colorize;
-		eprintln!("{}", $fmt.bright_red());
-		}};
+		if $crate::logging::tracing_setup::is_tracing_initialized() {
+			tracing::error!("{}", $fmt);
+			// In ACP mode, also write to the structured error sink
+			if $crate::logging::tracing_setup::is_structured_output_mode() {
+				if let Some(sink) = $crate::logging::AcpErrorSink::get_global() {
+					let _ = sink.log_error_simple($fmt);
+				}
+			}
+		} else {
+			use colored::Colorize;
+			$crate::eprintln!("{}", $fmt.bright_red());
+		}
+	}};
 	($fmt:expr, $($arg:expr),*) => {{
-		use colored::Colorize;
-		eprintln!("{}", format!($fmt, $($arg),*).bright_red());
-		}};
+		if $crate::logging::tracing_setup::is_tracing_initialized() {
+			tracing::error!($fmt, $($arg),*);
+			if $crate::logging::tracing_setup::is_structured_output_mode() {
+				if let Some(sink) = $crate::logging::AcpErrorSink::get_global() {
+					let _ = sink.log_error_simple(&format!($fmt, $($arg),*));
+				}
+			}
+		} else {
+			use colored::Colorize;
+			$crate::eprintln!("{}", format!($fmt, $($arg),*).bright_red());
+		}
+	}};
 }
 
-/// Conditional logging - prints different messages based on log level
+/// Conditional logging - prints different messages based on log level.
 #[macro_export]
 macro_rules! log_conditional {
 	(debug: $debug_msg:expr, info: $info_msg:expr, none: $none_msg:expr) => {
 		if let Some(level) = $crate::config::with_thread_config(|config| config.get_log_level()) {
 			match level {
-				$crate::config::LogLevel::Debug => println!("{}", $debug_msg),
-				$crate::config::LogLevel::Info => println!("{}", $info_msg),
-				$crate::config::LogLevel::None => println!("{}", $none_msg),
+				$crate::config::LogLevel::Debug => {
+					if $crate::logging::tracing_setup::is_tracing_initialized() {
+						tracing::debug!("{}", $debug_msg);
+					} else {
+						$crate::println!("{}", $debug_msg);
+					}
+				}
+				$crate::config::LogLevel::Info => {
+					if $crate::logging::tracing_setup::is_tracing_initialized() {
+						tracing::info!("{}", $info_msg);
+					} else {
+						$crate::println!("{}", $info_msg);
+					}
+				}
+				$crate::config::LogLevel::None => {
+					if $crate::logging::tracing_setup::is_tracing_initialized() {
+						tracing::info!("{}", $none_msg);
+					} else {
+						$crate::println!("{}", $none_msg);
+					}
+				}
 			}
 		} else {
 			// Fallback if no config is set
-			println!("{}", $none_msg);
+			$crate::println!("{}", $none_msg);
 		}
 	};
 	(debug: $debug_msg:expr, default: $default_msg:expr) => {
@@ -581,13 +656,21 @@ macro_rules! log_conditional {
 			$crate::config::with_thread_config(|config| config.get_log_level().is_debug_enabled())
 		{
 			if should_debug {
-				println!("{}", $debug_msg);
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::debug!("{}", $debug_msg);
+				} else {
+					$crate::println!("{}", $debug_msg);
+				}
 			} else {
-				println!("{}", $default_msg);
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::info!("{}", $default_msg);
+				} else {
+					$crate::println!("{}", $default_msg);
+				}
 			}
 		} else {
 			// Fallback if no config is set
-			println!("{}", $default_msg);
+			$crate::println!("{}", $default_msg);
 		}
 	};
 	(info: $info_msg:expr, default: $default_msg:expr) => {
@@ -595,13 +678,21 @@ macro_rules! log_conditional {
 			$crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled())
 		{
 			if should_info {
-				println!("{}", $info_msg);
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::info!("{}", $info_msg);
+				} else {
+					$crate::println!("{}", $info_msg);
+				}
 			} else {
-				println!("{}", $default_msg);
+				if $crate::logging::tracing_setup::is_tracing_initialized() {
+					tracing::info!("{}", $default_msg);
+				} else {
+					$crate::println!("{}", $default_msg);
+				}
 			}
 		} else {
 			// Fallback if no config is set
-			println!("{}", $default_msg);
+			$crate::println!("{}", $default_msg);
 		}
 	};
 }

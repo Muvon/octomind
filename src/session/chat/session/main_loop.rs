@@ -45,6 +45,7 @@ async fn print_command_output(
 // Run an interactive session
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
 	// Setup and initialize session using helper function
+
 	let (mut chat_session, config_for_role, role, mut first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
 	// Get current directory for file operations - use thread-local if set (ACP/WebSocket), otherwise process cwd
@@ -815,6 +816,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	initial_input: &str,
 ) -> Result<()> {
 	// Setup and initialize session using helper function
+
 	let (mut chat_session, config_for_role, role, first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
 

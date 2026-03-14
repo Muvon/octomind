@@ -33,6 +33,16 @@ pub struct ServerArgs {
 pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(), anyhow::Error> {
 	use octomind::websocket::WebSocketServer;
 
+	// Initialize tracing for WebSocket mode - logs to file
+	// stdout/stderr are used for server status messages
+	let log_level = config.log_level.as_str();
+	if let Err(e) = octomind::logging::tracing_setup::init_tracing(
+		octomind::logging::tracing_setup::LoggingMode::WebSocket,
+		log_level,
+	) {
+		eprintln!("Warning: Failed to initialize tracing: {}", e);
+	}
+
 	// Create and start WebSocket server
 	let server = WebSocketServer::new(&args.host, args.port, config.clone(), args.role.clone())?;
 	server.start().await?;

@@ -144,6 +144,23 @@ async fn initialize_mcp_for_role_with_progress(
 }
 
 async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
+	// Initialize tracing based on the command being run.
+	// ACP initializes its own tracing in acp/mod.rs (must happen before LocalSet).
+	// Server initializes in commands/server.rs (needs WebSocket mode).
+	// CLI commands (Session/Run) initialize here so the first log_debug! in main() is covered.
+	let log_level = config.log_level.as_str();
+	match &args.command {
+		Commands::Session(_) | Commands::Run(_) => {
+			if let Err(e) = octomind::logging::tracing_setup::init_tracing(
+				octomind::logging::tracing_setup::LoggingMode::Cli,
+				log_level,
+			) {
+				eprintln!("Warning: Failed to initialize tracing: {e}");
+			}
+		}
+		_ => {}
+	}
+
 	// Initialize MCP servers and tool map once at startup for commands that need them
 	match &args.command {
 		Commands::Session(session_args) => {

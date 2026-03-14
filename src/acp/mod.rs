@@ -30,6 +30,36 @@ use crate::config::Config;
 
 /// Run the ACP agent over stdio until the client disconnects.
 pub async fn run(config: Config, role: String) -> Result<()> {
+	// In ACP mode stdout/stderr are reserved for JSON-RPC, so init failures
+	// are written to a fallback file instead of eprintln.
+	let write_init_error = |msg: String| {
+		if let Ok(logs_dir) = crate::directories::get_logs_dir() {
+			let log_file = logs_dir.join("acp-init-errors.log");
+			if let Ok(mut file) = std::fs::OpenOptions::new()
+				.create(true)
+				.append(true)
+				.open(&log_file)
+			{
+				use std::io::Write;
+				let _ = writeln!(file, "{msg}");
+			}
+		}
+	};
+
+	// Initialize tracing for ACP mode - logs to file, not stdout/stderr
+	let log_level = config.log_level.as_str();
+	if let Err(e) = crate::logging::tracing_setup::init_tracing(
+		crate::logging::tracing_setup::LoggingMode::Acp,
+		log_level,
+	) {
+		write_init_error(format!("Failed to initialize tracing: {e}"));
+	}
+
+	// Initialize ACP error sink for structured error logging
+	if let Err(e) = crate::logging::AcpErrorSink::initialize() {
+		write_init_error(format!("Failed to initialize ACP error sink: {e}"));
+	}
+
 	let local = tokio::task::LocalSet::new();
 
 	local

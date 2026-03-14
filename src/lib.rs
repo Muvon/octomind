@@ -89,6 +89,7 @@ macro_rules! eprint {
 pub mod acp;
 pub mod config;
 pub mod directories;
+pub mod logging;
 pub mod mcp;
 pub mod providers;
 pub mod session;
@@ -98,6 +99,9 @@ pub mod websocket;
 
 // Re-export commonly used items for convenience
 pub use config::Config;
+
+// Re-export logging types
+pub use logging::AcpErrorSink;
 
 // Re-export workflow types
 pub use session::workflows::{PatternParser, StepExecutor, WorkflowOrchestrator};

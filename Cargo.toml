@@ -83,6 +83,7 @@ thiserror = "2.0"
 open = "5"
 tracing = { version = "0.1", default-features = false }
 agent-client-protocol = "0.10.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3.24.0"

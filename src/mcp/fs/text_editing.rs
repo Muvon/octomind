@@ -482,7 +482,7 @@ pub async fn line_replace_spec(
 	let mut diff: Vec<String> = Vec::new();
 
 	// --- context before ---
-	let ctx_before_start = start_line.saturating_sub(CONTEXT); // 1-indexed, inclusive
+	let ctx_before_start = start_line.saturating_sub(CONTEXT).max(1); // 1-indexed, inclusive, never 0
 	if ctx_before_start > 1 {
 		diff.push("...".to_string());
 	}

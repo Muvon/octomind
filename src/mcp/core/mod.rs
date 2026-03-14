@@ -13,8 +13,9 @@
 // limitations under the License.
 
 // Core MCP provider - modular structure
-// Handles core tools: plan
+// Handles core tools: plan, mcp
 
+pub mod dynamic;
 pub mod functions;
 pub mod plan;
 
@@ -25,5 +26,6 @@ mod core_tests;
 mod plan_tests;
 
 // Re-export main functionality
+pub use dynamic::execute_mcp_command;
 pub use functions::get_all_functions;
 pub use plan::{clear_plan_data, execute_plan};

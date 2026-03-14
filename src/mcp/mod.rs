@@ -510,6 +510,9 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 		}
 	}
 
+	// Include functions from dynamically added servers
+	functions.extend(crate::mcp::core::dynamic::get_all_functions());
+
 	functions
 }
 
@@ -802,6 +805,22 @@ async fn execute_tool_without_cancellation(
 										call.tool_name.clone(),
 										call.tool_id.clone(),
 										format!("Plan execution failed: {}", e),
+									));
+								}
+							}
+						}
+						"mcp" => {
+							crate::log_debug!(
+								"Executing mcp command via core server '{}'",
+								target_server.name()
+							);
+							match core::execute_mcp_command(call).await {
+								Ok(result) => return Ok(result),
+								Err(e) => {
+									return Ok(McpToolResult::error(
+										call.tool_name.clone(),
+										call.tool_id.clone(),
+										format!("MCP management failed: {}", e),
 									));
 								}
 							}

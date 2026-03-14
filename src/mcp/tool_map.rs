@@ -227,6 +227,18 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 		}
 	}
 
+	// Also include dynamically added servers
+	for server in crate::mcp::core::dynamic::get_all_configs() {
+		if let Some(functions) = crate::mcp::core::dynamic::get_functions(server.name()) {
+			for function in functions {
+				// Dynamic servers have lower priority than config servers
+				tool_map
+					.entry(function.name)
+					.or_insert_with(|| server.clone());
+			}
+		}
+	}
+
 	Ok(tool_map)
 }
 

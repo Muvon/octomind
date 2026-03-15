@@ -34,7 +34,7 @@ pub enum ToolExecutionContext<'a> {
 	/// Layer context with layer-specific configuration
 	Layer {
 		session_name: String,
-		layer_config: &'a crate::session::layers::LayerConfig,
+		layer_config: Box<crate::session::layers::LayerConfig>,
 		layer_name: String,
 	},
 }
@@ -224,7 +224,7 @@ async fn execute_tools_with_context(
 				})
 			}
 			ToolExecutionContext::Layer { layer_config, .. } => {
-				let layer_config_clone = layer_config.clone();
+				let layer_config_clone = (**layer_config).clone();
 				tokio::spawn(async move {
 					let mut call_with_id = tool_call_clone.clone();
 					// CRITICAL: Use the original tool_id, don't change it
@@ -877,10 +877,10 @@ fn handle_declined_in_session(tool_id: &str, chat_session: &mut ChatSession) {
 }
 
 /// Parameters for layer tool execution using the unified parallel logic.
-pub struct LayerToolExecutionParams<'a> {
+pub struct LayerToolExecutionParams {
 	pub tool_calls: Vec<crate::mcp::McpToolCall>,
 	pub session_name: String,
-	pub layer_config: &'a crate::session::layers::LayerConfig,
+	pub layer_config: crate::session::layers::LayerConfig,
 	pub layer_name: String,
 	pub operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 	pub mode: OutputMode,
@@ -889,11 +889,11 @@ pub struct LayerToolExecutionParams<'a> {
 /// Execute tool calls for layers using the unified parallel execution logic
 pub async fn execute_layer_tool_calls_parallel(
 	config: &Config,
-	params: LayerToolExecutionParams<'_>,
+	params: LayerToolExecutionParams,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::Layer {
 		session_name: params.session_name,
-		layer_config: params.layer_config,
+		layer_config: Box::new(params.layer_config),
 		layer_name: params.layer_name,
 	};
 

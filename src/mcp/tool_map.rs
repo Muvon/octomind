@@ -162,6 +162,101 @@ pub fn get_all_tool_names() -> Vec<String> {
 	state.tool_to_server.keys().cloned().collect()
 }
 
+/// Register a dynamic agent tool in the tool map
+///
+/// Call this when an agent is enabled to make its tool available.
+pub fn register_dynamic_agent_tool(agent_name: &str) {
+	let tool_map_state = match TOOL_MAP.get() {
+		Some(state) => state,
+		None => {
+			crate::log_debug!("Tool map not initialized, cannot register dynamic agent");
+			return;
+		}
+	};
+
+	let tool_name = format!("agent_{}", agent_name);
+	let agent_server = McpServerConfig::Builtin {
+		name: "agent".to_string(),
+		timeout_seconds: 300,
+		tools: vec![tool_name.clone()],
+	};
+
+	let mut state = tool_map_state.write().unwrap();
+	state.tool_to_server.insert(tool_name.clone(), agent_server);
+	crate::log_debug!("Registered dynamic agent tool: {}", tool_name);
+}
+
+/// Unregister a dynamic agent tool from the tool map
+///
+/// Call this when an agent is disabled or removed.
+pub fn unregister_dynamic_agent_tool(agent_name: &str) {
+	let tool_map_state = match TOOL_MAP.get() {
+		Some(state) => state,
+		None => {
+			crate::log_debug!("Tool map not initialized, cannot unregister dynamic agent");
+			return;
+		}
+	};
+
+	let tool_name = format!("agent_{}", agent_name);
+	let mut state = tool_map_state.write().unwrap();
+	state.tool_to_server.remove(&tool_name);
+	crate::log_debug!("Unregistered dynamic agent tool: {}", tool_name);
+}
+
+/// Register all tools from a dynamic MCP server in the tool map
+///
+/// Call this when a server is enabled to make its tools available.
+pub fn register_dynamic_server_tools(
+	server_name: &str,
+	server_config: &McpServerConfig,
+	tool_names: &[String],
+) {
+	let tool_map_state = match TOOL_MAP.get() {
+		Some(state) => state,
+		None => {
+			crate::log_debug!("Tool map not initialized, cannot register dynamic server");
+			return;
+		}
+	};
+
+	let mut state = tool_map_state.write().unwrap();
+	for tool_name in tool_names {
+		state
+			.tool_to_server
+			.insert(tool_name.clone(), server_config.clone());
+		crate::log_debug!("Registered dynamic server tool: {}", tool_name);
+	}
+	crate::log_debug!(
+		"Registered {} tools from dynamic server '{}'",
+		tool_names.len(),
+		server_name
+	);
+}
+
+/// Unregister all tools from a dynamic MCP server from the tool map
+///
+/// Call this when a server is disabled or removed.
+pub fn unregister_dynamic_server_tools(server_name: &str, tool_names: &[String]) {
+	let tool_map_state = match TOOL_MAP.get() {
+		Some(state) => state,
+		None => {
+			crate::log_debug!("Tool map not initialized, cannot unregister dynamic server");
+			return;
+		}
+	};
+
+	let mut state = tool_map_state.write().unwrap();
+	for tool_name in tool_names {
+		state.tool_to_server.remove(tool_name);
+		crate::log_debug!("Unregistered dynamic server tool: {}", tool_name);
+	}
+	crate::log_debug!(
+		"Unregistered {} tools from dynamic server '{}'",
+		tool_names.len(),
+		server_name
+	);
+}
 /// Build the tool-to-server mapping
 ///
 /// Creates a mapping from tool names to their server configurations.

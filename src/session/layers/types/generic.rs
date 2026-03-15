@@ -158,7 +158,7 @@ impl GenericLayer {
 						crate::session::chat::response::tool_execution::LayerToolExecutionParams {
 							tool_calls: current_tool_calls,
 							session_name: format!("layer_{}", self.config.name),
-							layer_config: &self.config,
+							layer_config: self.config.clone(),
 							layer_name: self.get_execution_context(),
 							operation_cancelled: Some(operation_cancelled.clone()),
 							mode: output_mode,

@@ -18,26 +18,31 @@ use octomind::agent::taps;
 
 #[derive(Args, Debug)]
 pub struct TapArgs {
-	/// Tap to add in `user/repo` format, or `user/repo /path/to/local` for local tap.
-	/// Omit to list all active taps.
+	/// Tap to add in `user/repo` format. Omit to list all active taps.
 	///
 	/// Examples:
-	///   octomind tap myorg/repo          # clones https://github.com/myorg/octomind-repo
-	///   octomind tap myorg/repo ./local # uses local directory
+	///   octomind tap myorg/repo           # clones https://github.com/myorg/octomind-repo
+	///   octomind tap myorg/repo ./local   # uses local directory
 	#[arg(value_name = "TAP")]
 	pub tap: Option<String>,
+
+	/// Local directory path for the tap (skips git clone).
+	#[arg(value_name = "PATH")]
+	pub local_path: Option<String>,
 }
 
 pub fn execute(args: &TapArgs) -> Result<()> {
 	match &args.tap {
 		Some(tap_arg) => {
-			taps::add_tap(tap_arg)?;
-			// Parse to show nice output
-			let parts: Vec<&str> = tap_arg.split_whitespace().collect();
-			if parts.len() > 1 {
-				println!("✓ Tapped: {} (local: {})", parts[0], parts[1]);
+			let full_arg = match &args.local_path {
+				Some(path) => format!("{} {}", tap_arg, path),
+				None => tap_arg.clone(),
+			};
+			taps::add_tap(&full_arg)?;
+			if let Some(ref path) = args.local_path {
+				println!("✓ Tapped: {} (local: {})", tap_arg, path);
 			} else {
-				println!("✓ Tapped: {}", parts[0]);
+				println!("✓ Tapped: {}", tap_arg);
 			}
 		}
 		None => {

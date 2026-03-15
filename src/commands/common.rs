@@ -39,7 +39,10 @@ pub async fn resolve_config_and_role(
 			.await
 			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
 		let resolved_toml = inputs::resolve_inputs(&raw_toml).await?;
-		let merged = merge_agent_toml(config, &resolved_toml)
+		// Always inject the tag as the role name — manifests never need to declare it.
+		let tagged_toml = inject_role_name(&resolved_toml, tag)
+			.context("Failed to inject role name into agent manifest")?;
+		let merged = merge_agent_toml(config, &tagged_toml)
 			.context("Failed to merge agent manifest into config")?;
 
 		// First role in merged config that isn't in the base config
@@ -121,4 +124,26 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 	} else {
 		octomind::mcp::initialize_mcp_for_role(role, config).await
 	}
+}
+
+/// Inject the tag (e.g. `"octomind:tap"`) as the `name` field of the first
+/// `[[roles]]` entry in the manifest TOML.  This means manifests never need
+/// to declare their own name — the tag IS the identity.
+fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
+	// The role name is the part after the colon: "domain:spec" → "spec"
+	let role_name = tag.split(':').nth(1).unwrap_or(tag);
+
+	let mut value: toml::Value =
+		toml::from_str(toml_str).context("Failed to parse agent manifest TOML")?;
+
+	if let Some(toml::Value::Array(roles)) = value.get_mut("roles") {
+		if let Some(toml::Value::Table(table)) = roles.first_mut() {
+			table.insert(
+				"name".to_string(),
+				toml::Value::String(role_name.to_string()),
+			);
+		}
+	}
+
+	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
 }

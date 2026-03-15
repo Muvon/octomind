@@ -35,7 +35,7 @@
 		<link rel="stylesheet" href="styles.css">
 		<link rel="preconnect" href="https://fonts.googleapis.com">
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 	</head>
 	<body>
 		<!-- Navigation -->
@@ -77,7 +77,7 @@
 					<span class="hero-highlight">for Any Domain</span>
 				</h1>
 				<p class="hero-subtitle">
-					Zero Setup • Any Domain • Self-Extending
+					Zero Setup • Self-Extending • Open Source
 				</p>
 				<p class="hero-description">
 					Run <code>octomind run doctor:blood</code> and get a fully configured medical AI in 5 seconds.<br>
@@ -106,101 +106,92 @@
 		<!-- Problem/Solution Section -->
 		<section class="problem-solution">
 			<div class="container">
+				<h2>Why Octomind?</h2>
+				<p class="section-subtitle">The AI agent platform that actually works out of the box</p>
 				<div class="comparison">
 					<div class="problem">
-						<h3>Every AI Tool in 2026</h3>
+						<h3>Every AI Tool</h3>
 						<ul>
-							<li>❌ 45 minutes of setup — MCP servers, prompts, configs</li>
-							<li>❌ Rate limit walls mid-task — throttled, burned budget</li>
-							<li>❌ Context rot — agent forgets decisions from an hour ago</li>
-							<li>❌ One-size-fits-all — same generic assistant for everything</li>
-							<li>❌ Coding-only — nothing for doctors, lawyers, analysts</li>
+							<li><span class="icon">⟨</span> 45 minutes of setup — MCP, prompts, configs</li>
+							<li><span class="icon">⟨</span> Rate limits mid-task — restart, lose context</li>
+							<li><span class="icon">⟨</span> Context rot — agent forgets hour-old decisions</li>
+							<li><span class="icon">⟨</span> One-size-fits-all — same tool for every task</li>
+							<li><span class="icon">⟨</span> Coding only — useless for doctors, lawyers, analysts</li>
 						</ul>
 					</div>
 					<div class="solution">
 						<h3>Octomind</h3>
 						<ul>
-							<li>✅ Zero setup — run <code>octomind run doctor:blood</code></li>
-							<li>✅ Switch providers mid-session — no restart</li>
-							<li>✅ Adaptive compression — 4-hour sessions stay coherent</li>
-							<li>✅ Tap registry — community-built specialists for any domain</li>
-							<li>✅ Dynamic MCP — agents extend themselves at runtime</li>
+							<li><span class="icon">⟩</span> Zero config — <code>octomind run doctor:blood</code></li>
+							<li><span class="icon">⟩</span> Switch providers mid-session — no restart</li>
+							<li><span class="icon">⟩</span> Adaptive compression — 4-hour sessions work</li>
+							<li><span class="icon">⟩</span> Tap registry — specialists for any domain</li>
+							<li><span class="icon">⟩</span> Dynamic MCP — agents extend themselves</li>
 						</ul>
 					</div>
-			</div>
+				</div>
 		</section>
 
 		<!-- How It Works -->
 		<section class="how-it-works">
 			<div class="container">
-				<h2>How It Works</h2>
-				<p class="section-subtitle">Instead of learning complex commands, just have a conversation:</p>
+				<h2>One Command. Any Specialist.</h2>
+				<p class="section-subtitle">Run a specialist agent — no config, no setup, no MCP servers to manage</p>
 
 				<div class="conversation-examples">
 					<div class="example">
 						<div class="user-message">
 							<span class="message-label">You:</span>
-							"How does authentication work in this project?"
+							<code>octomind run doctor:blood</code>
 						</div>
 						<div class="ai-response">
-							<span class="message-label">AI:</span>
-							[AI analyzes project structure, finds auth-related files, explains implementation]
+							<span class="message-label">Octomind:</span>
+							Installed medical specialist. Paste your lab results...
 						</div>
 					</div>
 
 					<div class="example">
 						<div class="user-message">
 							<span class="message-label">You:</span>
-							"Add error handling to the login function"
+							"Interpret these blood test results for a 45-year-old male"
 						</div>
 						<div class="ai-response">
 							<span class="message-label">AI:</span>
-							[AI examines login code, implements error handling, shows changes]
+							WBC slightly elevated — likely infection. LDL/HDL ratio normal...
 						</div>
 					</div>
 
 					<div class="example">
 						<div class="user-message">
 							<span class="message-label">You:</span>
-							"Rename 'processData' to 'processUserData' across all files"
+							<code>octomind run devops:kubernetes</code>
 						</div>
 						<div class="ai-response">
 							<span class="message-label">AI:</span>
-							[AI finds all occurrences, performs batch edit across multiple files]
+							Installed Kubernetes specialist with kubectl, helm, kustomize...
 						</div>
 					</div>
 
 					<div class="example">
 						<div class="user-message">
 							<span class="message-label">You:</span>
-							"/image screenshot.png<br>What's wrong with this UI layout?"
+							"Why is my pod stuck in CrashLoopBackOff?"
 						</div>
 						<div class="ai-response">
 							<span class="message-label">AI:</span>
-							[AI analyzes the image, identifies layout issues, suggests CSS fixes]
+							Checking logs... Found OOMKilled. Memory limit too low...
 						</div>
 					</div>
 
-					<div class="example">
-						<div class="user-message">
-							<span class="message-label">You:</span>
-							"agent_context_gatherer(task=\"Analyze the authentication system architecture\")"
-						</div>
-						<div class="ai-response">
-							<span class="message-label">AI:</span>
-							[Routes task to specialized context gathering AI agent with development tools]
-						</div>
-					</div>
+				</div>
 
-					<div class="example">
-						<div class="user-message">
-							<span class="message-label">You:</span>
-							"/done"
-						</div>
-						<div class="ai-response">
-							<span class="message-label">AI:</span>
-							[Finalizes task with memorization, summarization, and auto-commit. Shows: $0.02 spent, 3 requests, 5 tool calls]
-						</div>
+				<div class="tap-showcase">
+					<p>Community builds specialists. You just run them.</p>
+					<div class="tap-examples">
+						<code>octomind run developer:rust</code>
+						<code>octomind run lawyer:contracts</code>
+						<code>octomind run finance:analyst</code>
+						<code>octomind run security:owasp</code>
 					</div>
 				</div>
 			</div>
@@ -209,37 +200,35 @@
 		<!-- Core Features -->
 		<section id="features" class="features">
 			<div class="container">
-				<h2>Core Features</h2>
 				<div class="features-grid">
 					<div class="feature">
-						<div class="feature-icon">🐙</div>
-						<h3>The Tap Registry</h3>
-						<p>Community-built specialist agents. One command: <code>octomind run doctor:blood</code>. The right model, MCP servers, system prompt — all pre-configured. Ready in ~5 seconds.</p>
+						<div class="feature-icon">⟨/⟩</div>
+						<h3>Tap Registry</h3>
+						<p>Community-built specialists. One command: <code>octomind run doctor:blood</code>. All pre-configured.</p>
 					</div>
 					<div class="feature">
-						<div class="feature-icon">⚡</div>
+						<div class="feature-icon">⩗</div>
 						<h3>Dynamic MCP</h3>
-						<p>Agents register new MCP servers and spawn sub-agents mid-session. No restart. No config change. The agent extends itself at runtime.</p>
+						<p>Agents register MCP servers mid-session. No restart. The agent extends itself.</p>
 					</div>
 					<div class="feature">
-						<div class="feature-icon">🔄</div>
+						<div class="feature-icon">⧉</div>
 						<h3>Adaptive Compression</h3>
-						<p>Infinite sessions. Cache-aware cost analysis. Pressure-level system. Work for 4 hours — the agent still knows what it decided in hour one.</p>
+						<p>4-hour sessions stay coherent. Cache-aware cost analysis.</p>
 					</div>
 					<div class="feature">
-						<div class="feature-icon">🌐</div>
-						<h3>7 Providers. Zero Lock-in.</h3>
-						<p>OpenRouter, OpenAI, Anthropic, Google, Bedrock, Cloudflare, DeepSeek. Hit a rate limit? Switch mid-session with <code>/model</code>. No restart.</p>
+						<div class="feature-icon">⊚</div>
+						<h3>13 Providers</h3>
 					</div>
 					<div class="feature">
-						<div class="feature-icon">⚙️</div>
-						<h3>Zero Config. Infinitely Configurable.</h3>
-						<p>Install and run — no config needed. Power users: per-role models, multi-step workflows, spending limits, sandbox mode. Pure TOML, no code.</p>
+						<div class="feature-icon">⚙</div>
+						<h3>Zero Config</h3>
+						<p>Install and run. Or customize with TOML. Your choice.</p>
 					</div>
 					<div class="feature">
-						<div class="feature-icon">🔌</div>
-						<h3>Works Everywhere</h3>
-						<p>Interactive CLI, non-interactive pipe, WebSocket server, ACP protocol. One binary. Every workflow.</p>
+						<div class="feature-icon">⬡</div>
+						<h3>Rust Binary</h3>
+						<p>Single binary. macOS + Linux. No dependencies.</p>
 					</div>
 				</div>
 			</div>
@@ -288,7 +277,7 @@
 
 				<div class="commands-grid">
 					<div class="command-group">
-						<h4>🔄 Provider Switching</h4>
+						<h4>⧉ Provider Switching</h4>
 						<div class="command-list">
 							<div class="command">
 								<code>/model deepseek:v3</code>
@@ -302,7 +291,7 @@
 					</div>
 
 					<div class="command-group">
-						<h4>📊 Cost & Monitoring</h4>
+						<h4>⩔ Cost & Monitoring</h4>
 						<div class="command-list">
 							<div class="command">
 								<code>/report</code>
@@ -316,7 +305,7 @@
 					</div>
 
 					<div class="command-group">
-						<h4>🐙 Tap & Agents</h4>
+						<h4>⟨/⟩ Tap & Agents</h4>
 						<div class="command-list">
 							<div class="command">
 								<code>octomind run &lt;agent&gt;</code>
@@ -373,7 +362,7 @@
 		<!-- AI Providers -->
 		<section class="providers">
 			<div class="container">
-				<h2>7 Providers. Zero Lock-in.</h2>
+				<h2>13 Providers. Zero Lock-in.</h2>
 				<p class="section-subtitle">Hit a rate limit? Switch mid-session with <code>/model</code>. No restart. No lost context.</p>
 				<div class="providers-table-container">
 					<table class="providers-table">
@@ -388,37 +377,67 @@
 							<tr>
 								<td><strong>OpenRouter</strong></td>
 								<td><code>openrouter:provider/model</code></td>
-								<td>Multi-provider access, caching, vision models</td>
+								<td>Multi-provider access, 100+ models, caching, vision</td>
 							</tr>
 							<tr>
 								<td><strong>OpenAI</strong></td>
 								<td><code>openai:model-name</code></td>
-								<td>Direct API, cost calculation, GPT-4o vision</td>
+								<td>Direct API, GPT-4o, O1, vision, tools</td>
 							</tr>
 							<tr>
 								<td><strong>Anthropic</strong></td>
 								<td><code>anthropic:model-name</code></td>
-								<td>Claude models, caching, Claude 3+ vision</td>
-							</tr>
-							<tr>
-								<td><strong>Google</strong></td>
-								<td><code>google:model-name</code></td>
-								<td>Vertex AI, Gemini 1.5+ vision support</td>
-							</tr>
-							<tr>
-								<td><strong>Amazon</strong></td>
-								<td><code>amazon:model-name</code></td>
-								<td>Bedrock models, AWS integration, Claude vision</td>
-							</tr>
-							<tr>
-								<td><strong>Cloudflare</strong></td>
-								<td><code>cloudflare:model-name</code></td>
-								<td>Edge AI, fast inference, Llama 3.2 vision</td>
+								<td>Claude 4, vision, tools, caching</td>
 							</tr>
 							<tr>
 								<td><strong>DeepSeek</strong></td>
-								<td><code>deepseek:model-name</code></td>
-								<td>Direct API, cost-effective reasoning models</td>
+							<td><code>deepseek:model-name</code></td>
+								<td>Cost-effective, reasoning models, V3</td>
+							</tr>
+							<tr>
+								<td><strong>Moonshot AI</strong></td>
+								<td><code>moonshot:model-name</code></td>
+								<td>Kimi K2 series, vision, tools</td>
+							</tr>
+							<tr>
+								<td><strong>MiniMax</strong></td>
+								<td><code>minimax:model-name</code></td>
+								<td>Anthropic-compatible, thinking, tools</td>
+							</tr>
+						<tr>
+								<td><strong>Z.ai</strong></td>
+								<td><code>z:model-name</code></td>
+								<td>GLM models, cost-effective</td>
+							</tr>
+						<tr>
+								<td><strong>Google</strong></td>
+								<td><code>google:model-name</code></td>
+								<td>Vertex AI, Gemini 2.0, vision</td>
+							</tr>
+						<tr>
+								<td><strong>Amazon</strong></td>
+								<td><code>amazon:model-name</code></td>
+								<td>Bedrock, Claude on AWS</td>
+							</tr>
+						<tr>
+								<td><strong>Cloudflare</strong></td>
+								<td><code>cloudflare:model-name</code></td>
+								<td>Edge AI, fast inference, Llama</td>
+							</tr>
+						<tr>
+								<td><strong>Ollama</strong></td>
+								<td><code>ollama:model-name</code></td>
+								<td>Local models, Llama, Mistral, Qwen</td>
+							</tr>
+						<tr>
+								<td><strong>Local</strong></td>
+								<td><code>local:model-name</code></td>
+								<td>Any OpenAI-compatible endpoint</td>
+							</tr>
+						<tr>
+								<td><strong>Cerebras</strong></td>
+								<td><code>cerebras:model-name</code></td>
+								<td>Fastest inference, Llama variants</td>
 							</tr>
 						</tbody>
 					</table>
@@ -432,32 +451,32 @@
 				<h2>Built for Real Work</h2>
 				<div class="effectiveness-grid">
 					<div class="highlight">
-						<div class="highlight-icon">🐙</div>
+						<div class="highlight-icon">⟨/⟩</div>
 						<h4>Tap Registry</h4>
 						<p>Community-built specialists. One command: <code>octomind run doctor:blood</code>. The right model, tools, prompt — all pre-configured.</p>
 					</div>
 					<div class="highlight">
-						<div class="highlight-icon">⚡</div>
+						<div class="highlight-icon">⩗</div>
 						<h4>Dynamic MCP</h4>
 						<p>Agents register new MCP servers at runtime. No restart. No config edit. Self-extending capabilities.</p>
 					</div>
 					<div class="highlight">
-						<div class="highlight-icon">🔄</div>
+						<div class="highlight-icon">⧉</div>
 						<h4>Adaptive Compression</h4>
 						<p>Work for 4 hours. Agent still knows what it decided in hour one. Cache-aware cost analysis.</p>
 					</div>
 					<div class="highlight">
-						<div class="highlight-icon">🌐</div>
+						<div class="highlight-icon">⊚</div>
 						<h4>Provider Freedom</h4>
 						<p>7 providers. Switch mid-session. Hit a rate limit? Type <code>/model deepseek:v3</code> and keep going.</p>
 					</div>
 					<div class="highlight">
-						<div class="highlight-icon">⚙️</div>
+						<div class="highlight-icon">⚙</div>
 						<h4>Zero Config</h4>
 						<p>Install and run. No setup required. Power users: per-role models, workflows, spending limits, sandbox mode.</p>
 					</div>
 					<div class="highlight">
-						<div class="highlight-icon">🔒</div>
+						<div class="highlight-icon">⬡</div>
 						<h4>Sandbox Mode</h4>
 						<p>Landlock (Linux) / Seatbelt (macOS). Lock writes to working directory. Safe execution.</p>
 					</div>

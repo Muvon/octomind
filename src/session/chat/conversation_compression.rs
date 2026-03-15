@@ -790,72 +790,100 @@ async fn ask_ai_decision_and_summary(
 ) -> Result<(bool, String)> {
 	// SYSTEM: role identity + instructions (what the model must do and how to respond).
 	// Kept separate from the data so the model acts as a compressor, not a session participant.
-	let system_content = if !context_chunks.is_empty() {
-		"You are a conversation compressor. Your job is to analyze a conversation transcript \
-and decide whether it should be compressed to save context space.\n\n\
-Consider:\n\
-- Are there repetitive or resolved topics that can be summarized?\n\
-- Is there important context that must be preserved?\n\
-- Would compression help focus on current topics?\n\n\
-If YES, provide a structured summary that PRESERVES ALL CRITICAL CONTEXT for continuing:\n\n\
+	//
+	// SINGLE PATH: always produce a full summary when compressing — no silent YES/NO-only fallback.
+	// The prompt encodes two non-negotiable priorities:
+	//   1. RECENCY — messages marked [RECENT] are the most important; compress older ones harder.
+	//   2. USER/ASSISTANT PAIRS — every user question and assistant answer must survive in some form;
+	//      tool calls are secondary context that can be reduced to one-liners.
+	let system_content = "You are a conversation compressor. \
+Your job is to produce a lossless summary of a conversation transcript so the session can continue \
+without losing any important context.\n\n\
+## CRITICAL PRIORITIES (read carefully before summarizing)\n\n\
+**Priority 1 — RECENCY**: Messages marked [RECENT] are the most important part of the transcript. \
+They represent the current state of work. Preserve them with the highest fidelity — quote or \
+paraphrase them closely. Older messages (no [RECENT] marker) can be compressed more aggressively.\n\n\
+**Priority 2 — USER/ASSISTANT PAIRS**: Every [USER] question and every [ASSISTANT] answer is \
+primary signal. You MUST capture every user request and every assistant response in your summary — \
+never silently drop one. Paraphrase if needed, but nothing can be omitted.\n\n\
+**Priority 3 — TOOL CALLS are secondary**: [TOOL CALL] and [TOOL RESULT] lines are supporting \
+context. Summarize what was done (e.g. 'read file X', 'ran shell command Y, got Z') in one line \
+each. Do not reproduce full tool output.\n\n\
+## WHEN TO ANSWER YES vs NO\n\n\
+Answer YES if there are older exchanges that can be compressed without losing information needed \
+to continue. Answer NO only if the transcript is already minimal and nothing can be safely reduced.\n\n\
+## SUMMARY FORMAT (use when answering YES)\n\n\
 **USER INTENT** (1-2 sentences):\n\
-What did the user ask for? What is the goal or objective?\n\n\
-**PROGRESS** (2-3 sentences):\n\
+What did the user ask for overall? What is the goal or objective?\n\n\
+**PROGRESS** (2-4 sentences):\n\
 What was completed? What is currently in progress? Include counts if applicable (e.g., 'Step 2 of 5 done').\n\n\
-**CURRENT WORK** (2-3 sentences):\n\
-What is being worked on RIGHT NOW? What was just being investigated or discussed?\n\n\
-**KEY ENTITIES** (preserve exactly):\n\
-- Resources: files, documents, URLs, or references being used\n\
-- Names: specific terms, identifiers, or labels involved\n\
-- Issues: any problems encountered and their status\n\
-- Decisions: choices made with reasoning\n\n\
+**RECENT EXCHANGES** (preserve with high fidelity — these are the most recent [RECENT] messages):\n\
+For each recent user/assistant pair: quote or closely paraphrase the user question and the \
+assistant answer. Do not compress these — they are the current working context.\n\n\
+**KEY ENTITIES** (preserve exactly — copy values verbatim):\n\
+- Files/paths: exact file paths, line numbers, or code locations being worked on\n\
+- Names: specific identifiers, function names, variable names, config keys\n\
+- Issues: any errors, bugs, or problems encountered and their current status\n\
+- Decisions: choices made with the reasoning behind them\n\
+- URLs/references: any links or external references\n\n\
 **NEXT STEPS** (1-2 sentences):\n\
-What needs to happen next to continue?\n\n\
-**Response format:**\n\
+What needs to happen next to continue the work?\n\n\
+## RESPONSE FORMAT\n\n\
+Start with YES or NO on the first line.\n\
+If YES, follow immediately with the summary using the sections above:\n\n\
 YES\n\
-**USER INTENT**: [What the user asked for - 1-2 sentences]\n\
-**PROGRESS**: [What was completed, what's in progress - include counts if applicable]\n\
-**CURRENT WORK**: [What is being worked on RIGHT NOW]\n\
+**USER INTENT**: ...\n\
+**PROGRESS**: ...\n\
+**RECENT EXCHANGES**:\n\
+- User: [question] → Assistant: [answer]\n\
+- User: [question] → Assistant: [answer]\n\
 **KEY ENTITIES**:\n\
-- Resources: [files, documents, URLs, or references being used]\n\
-- Names: [specific terms, identifiers, or labels involved]\n\
-- Issues: [any problems encountered and their status]\n\
-- Decisions: [choices made with reasoning]\n\
-**NEXT STEPS**: [What needs to happen next]\n\n\
-**OPTIONAL: If specific file contexts are needed to continue, include them:**\n\
+- Files/paths: ...\n\
+- Names: ...\n\
+- Issues: ...\n\
+- Decisions: ...\n\
+**NEXT STEPS**: ...\n\n\
+**OPTIONAL — file contexts needed to continue:**\n\
+If specific file ranges are critical for the next step, include them:\n\
 <context>\n\
-filename:startline:endline\n\
-filename:startline:endline\n\
-</context>\n\n\
-**Format requirements for file contexts:**\n\
-- Use <context> tags around file references\n\
-- Each line: filepath:number:number (no spaces)\n\
-- Use paths from project root (src/main.rs not ./src/main.rs)\n\
-- Line numbers must be positive, start ≤ end ≤ 10000\n\
-- Maximum 5 file ranges\n\
-- Only include files CRITICAL for continuing\n\n\
-OR respond with 'NO' if compression is not beneficial."
-	} else {
-		"You are a conversation compressor. Analyze the conversation transcript and respond \
-with ONLY 'YES' to compress or 'NO' to keep as-is."
-	};
+filepath:startline:endline\n\
+</context>\n\
+Rules: <context> tags required; one entry per line as filepath:N:N (no spaces); \
+paths from project root; line numbers 1–10000; max 5 ranges; only truly critical files.\n\n\
+If NO, respond with just: NO";
 
 	// USER: plain-text transcript of the range being compressed + semantic chunk hints.
 	// Building a transcript (not raw messages) prevents the model from continuing the
 	// tool-calling loop — it sees text to analyze, not a live conversation to participate in.
-	let mut user_content = String::from("**Conversation transcript to compress:**\n\n");
+	//
+	// RECENCY MARKER: the last 25% of messages (min 4) are tagged [RECENT] so the AI
+	// knows to preserve them with the highest fidelity.
+	let total_msgs = messages_to_compress.len();
+	let recent_start = total_msgs.saturating_sub((total_msgs / 4).max(4));
+
+	let mut user_content = String::from(
+		"**Conversation transcript to compress:**\n\
+		NOTE: Messages marked [RECENT] are the most recent and most important — preserve them with \
+highest fidelity. [USER]/[ASSISTANT] pairs are primary signal; [TOOL CALL]/[TOOL RESULT] are \
+secondary context.\n\n",
+	);
 
 	// Collect file references from tool calls for context preservation
 	// These can be re-read on demand after compression
 	let mut file_refs: Vec<String> = Vec::new();
 
-	for msg in messages_to_compress {
+	for (idx, msg) in messages_to_compress.iter().enumerate() {
+		let recent = if idx >= recent_start { "[RECENT] " } else { "" };
 		match msg.role.as_str() {
 			"system" => {} // skip system — already in our system message
 			"assistant" => {
-				// Include text content; summarize tool calls as one-liners
+				// Include text content; summarize tool calls as one-liners with key arg
 				if !msg.content.trim().is_empty() {
-					user_content.push_str(&format!("[ASSISTANT]: {}\n", msg.content.trim()));
+					user_content.push_str(&format!(
+						"{}[ASSISTANT]: {}\n",
+						recent,
+						msg.content.trim()
+					));
 				}
 				if let Some(calls) = msg.tool_calls.as_ref().and_then(|v| v.as_array()) {
 					for call in calls {
@@ -864,7 +892,64 @@ with ONLY 'YES' to compress or 'NO' to keep as-is."
 							.and_then(|f| f.get("name"))
 							.and_then(|n| n.as_str())
 							.unwrap_or("unknown");
-						user_content.push_str(&format!("[TOOL CALL]: {}\n", name));
+
+						// Extract a short key-arg hint (first path/query/command arg) so the
+						// AI understands what the tool was operating on, not just its name.
+						let key_arg = call
+							.get("function")
+							.and_then(|f| f.get("arguments"))
+							.and_then(|a| {
+								let obj = if let Some(s) = a.as_str() {
+									serde_json::from_str::<serde_json::Value>(s).ok()
+								} else {
+									Some(a.clone())
+								};
+								obj.and_then(|o| {
+									// Try common key-arg field names in priority order
+									for key in &[
+										"path", "paths", "query", "command", "pattern", "content",
+										"task",
+									] {
+										if let Some(v) = o.get(key) {
+											let s = match v {
+												serde_json::Value::String(s) => s.clone(),
+												serde_json::Value::Array(arr) => arr
+													.iter()
+													.filter_map(|x| x.as_str())
+													.take(2)
+													.collect::<Vec<_>>()
+													.join(", "),
+												_ => continue,
+											};
+											if !s.is_empty() {
+												let hint = if s.len() > 80 {
+													let end = s
+														.char_indices()
+														.map(|(i, _)| i)
+														.take_while(|&i| i <= 80)
+														.last()
+														.unwrap_or(0);
+													format!("{}\u{2026}", &s[..end])
+												} else {
+													s
+												};
+												return Some(hint);
+											}
+										}
+									}
+									None
+								})
+							})
+							.unwrap_or_default();
+
+						if key_arg.is_empty() {
+							user_content.push_str(&format!("{}[TOOL CALL]: {}\n", recent, name));
+						} else {
+							user_content.push_str(&format!(
+								"{}[TOOL CALL]: {}({})\n",
+								recent, name, key_arg
+							));
+						}
 
 						// Extract file references from tool arguments
 						// These allow the model to re-read files after compression
@@ -889,16 +974,19 @@ with ONLY 'YES' to compress or 'NO' to keep as-is."
 						.take_while(|&i| i <= 500)
 						.last()
 						.unwrap_or(0);
-					format!("{}… [truncated]", &content[..boundary])
+					format!("{}\u{2026} [truncated]", &content[..boundary])
 				} else {
 					content.to_string()
 				};
-				user_content.push_str(&format!("[TOOL RESULT: {}]: {}\n", name, truncated));
+				user_content.push_str(&format!(
+					"{}[TOOL RESULT: {}]: {}\n",
+					recent, name, truncated
+				));
 			}
 			_ => {
-				// user messages
+				// user messages — always include, never drop
 				if !msg.content.trim().is_empty() {
-					user_content.push_str(&format!("[USER]: {}\n", msg.content.trim()));
+					user_content.push_str(&format!("{}[USER]: {}\n", recent, msg.content.trim()));
 				}
 			}
 		}

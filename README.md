@@ -5,10 +5,6 @@
 > **Plug and play AI agents for any domain.**
 > Community-built specialists that self-configure, self-extend, and just work — no setup, no code, no vendor lock-in.
 
-[![asciicast](https://asciinema.org/a/wpZmOSOgFXp8HRzTltncgN7e3.svg)](https://asciinema.org/a/wpZmOSOgFXp8HRzTltncgN7e3)
-
----
-
 ## The Problem Every Developer Knows
 
 You want an AI that actually knows your domain. Instead you get:
@@ -83,7 +79,7 @@ octomind run legal:contracts
 
 Each tap is a Git repo. Each agent is one TOML file. Pull requests are contributions.
 
-> Want to add your expertise? A `developer:golang` agent, a `doctor:ecg` agent, a `lawyer:gdpr` agent — one file, and everyone benefits. [How to write a tap agent →](doc/tap-guide.md)
+> Want to add your expertise? A `developer:golang` agent, a `doctor:ecg` agent, a `lawyer:gdpr` agent — one file, and everyone benefits. [How to write a tap agent →](https://github.com/muvon/octomind-tap)
 
 ---
 

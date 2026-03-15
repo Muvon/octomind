@@ -125,7 +125,7 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 	}
 
 	let mut stored = load_inputs()?;
-	let mut result = raw.to_string();
+	let mut result = protect_escaped_braces(raw);
 
 	for key in &keys {
 		let value = if let Some(v) = stored.get(key) {
@@ -140,7 +140,21 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 		result = result.replace(&placeholder, &value);
 	}
 
-	Ok(result)
+	Ok(restore_escaped_braces(&result))
+}
+
+/// Protect escaped `{{{{...}}}}` sequences before substitution by replacing them
+/// with a sentinel that contains no `{{` so the substitution engine ignores them.
+/// Call `restore_escaped_braces` after all substitutions to get the final `{{...}}`.
+pub fn protect_escaped_braces(s: &str) -> String {
+	s.replace("{{{{", "\x00LBRACE\x00")
+		.replace("}}}}", "\x00RBRACE\x00")
+}
+
+/// Restore sentinels inserted by `protect_escaped_braces` back to literal `{{` / `}}`.
+pub fn restore_escaped_braces(s: &str) -> String {
+	s.replace("\x00LBRACE\x00", "{{")
+		.replace("\x00RBRACE\x00", "}}")
 }
 
 /// Extract all unique `{{ENV:KEY}}` keys from a raw string.
@@ -194,7 +208,7 @@ pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 		return Ok(raw.to_string());
 	}
 
-	let mut result = raw.to_string();
+	let mut result = protect_escaped_braces(raw);
 
 	for key in &keys {
 		let value = match std::env::var(key) {
@@ -212,5 +226,84 @@ pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 		result = result.replace(&placeholder, &value);
 	}
 
-	Ok(result)
+	Ok(restore_escaped_braces(&result))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// --- protect/restore escaped braces ---
+
+	#[test]
+	fn test_protect_restore_roundtrip() {
+		// protect then restore converts {{{{...}}}} → {{...}} (that's the intended transformation)
+		let input = "Use {{{{INPUT:KEY}}}} or {{{{ENV:URL}}}} as examples";
+		assert_eq!(
+			restore_escaped_braces(&protect_escaped_braces(input)),
+			"Use {{INPUT:KEY}} or {{ENV:URL}} as examples"
+		);
+	}
+
+	#[test]
+	fn test_restore_basic() {
+		// After protect+restore the escaped form becomes literal {{...}}
+		let protected = protect_escaped_braces("{{{{INPUT:KEY}}}}");
+		assert_eq!(restore_escaped_braces(&protected), "{{INPUT:KEY}}");
+		let protected = protect_escaped_braces("{{{{ENV:KEY}}}}");
+		assert_eq!(restore_escaped_braces(&protected), "{{ENV:KEY}}");
+		let protected = protect_escaped_braces("{{{{CWD}}}}");
+		assert_eq!(restore_escaped_braces(&protected), "{{CWD}}");
+	}
+
+	#[test]
+	fn test_protect_hides_from_substitution() {
+		// protect must replace {{ so a naive str.replace("{{CWD}}") won't match
+		let protected = protect_escaped_braces("{{{{CWD}}}}");
+		assert!(
+			!protected.contains("{{"),
+			"sentinel must not contain {{: {protected}"
+		);
+	}
+
+	#[test]
+	fn test_no_escaped_braces_unchanged() {
+		// Strings without escape sequences pass through unchanged
+		let plain = "no placeholders here";
+		assert_eq!(protect_escaped_braces(plain), plain);
+		assert_eq!(restore_escaped_braces(plain), plain);
+	}
+
+	#[test]
+	fn test_multiple_escaped_occurrences() {
+		let input = "Use {{{{INPUT:TOKEN}}}} or {{{{ENV:URL}}}} as examples";
+		let result = restore_escaped_braces(&protect_escaped_braces(input));
+		assert_eq!(result, "Use {{INPUT:TOKEN}} or {{ENV:URL}} as examples");
+	}
+
+	// --- process_placeholders_async_with_role (escaped syntax survives substitution) ---
+
+	#[tokio::test]
+	async fn test_escaped_placeholder_survives_substitution() {
+		// {{{{CWD}}}} must not be replaced by the real CWD — it should become {{CWD}}
+		let prompt = "Example: {{{{CWD}}}}";
+		let dir = std::path::Path::new("/tmp");
+		let result = crate::session::helper_functions::process_placeholders_async_with_role(
+			prompt, dir, None,
+		)
+		.await;
+		assert_eq!(result, "Example: {{CWD}}");
+	}
+
+	#[tokio::test]
+	async fn test_real_and_escaped_placeholder_together() {
+		// {{CWD}} gets replaced, {{{{CWD}}}} becomes literal {{CWD}}
+		let prompt = "Real: {{CWD}}, Escaped: {{{{CWD}}}}";
+		let dir = std::path::Path::new("/tmp");
+		let result = crate::session::helper_functions::process_placeholders_async_with_role(
+			prompt, dir, None,
+		)
+		.await;
+		assert_eq!(result, "Real: /tmp, Escaped: {{CWD}}");
+	}
 }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::agent::inputs::{protect_escaped_braces, restore_escaped_braces};
 use crate::session::project_context::ProjectContext;
 use crate::session::Session;
 use chrono::{DateTime, Local};
@@ -286,7 +287,7 @@ pub async fn process_placeholders_async_with_role(
 	project_dir: &Path,
 	role: Option<&str>,
 ) -> String {
-	let mut processed_prompt = prompt.to_string();
+	let mut processed_prompt = protect_escaped_braces(prompt);
 
 	// Check which placeholders are actually in the prompt to avoid unnecessary work
 	let needs_date = prompt.contains("{{DATE}}");
@@ -442,7 +443,7 @@ pub async fn process_placeholders_async_with_role(
 		processed_prompt = processed_prompt.replace(placeholder, value);
 	}
 
-	processed_prompt
+	restore_escaped_braces(&processed_prompt)
 }
 
 // Function to get all available placeholders with their current values

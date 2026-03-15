@@ -162,6 +162,29 @@ pub fn get_all_tool_names() -> Vec<String> {
 	state.tool_to_server.keys().cloned().collect()
 }
 
+/// Get all unique server names from the initialized tool map
+///
+/// # Returns
+/// * Set of server names if initialized
+/// * Empty set if not initialized
+pub fn get_all_server_names() -> std::collections::HashSet<String> {
+	let tool_map_state = match TOOL_MAP.get() {
+		Some(state) => state,
+		None => return std::collections::HashSet::new(),
+	};
+
+	let state = tool_map_state.read().unwrap();
+	if !state.initialized {
+		return std::collections::HashSet::new();
+	}
+
+	state
+		.tool_to_server
+		.values()
+		.map(|server| server.name().to_string())
+		.collect()
+}
+
 /// Register a dynamic agent tool in the tool map
 ///
 /// Call this when an agent is enabled to make its tool available.

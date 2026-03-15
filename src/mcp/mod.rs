@@ -422,6 +422,7 @@ pub async fn initialize_servers_for_role_with_callback(
 		.collect();
 
 	let results = futures::future::join_all(init_futures).await;
+
 	// Log results
 	for (server_name, result) in results {
 		match result {

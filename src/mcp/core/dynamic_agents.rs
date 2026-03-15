@@ -298,7 +298,7 @@ pub fn get_agent_tool_function() -> McpFunction {
 				"server_refs": {
 					"type": "array",
 					"items": { "type": "string" },
-					"description": "MCP server references (names of dynamic MCP servers)"
+					"description": "MCP server references (names of config-defined OR dynamic MCP servers)"
 				},
 				"allowed_tools": {
 					"type": "array",
@@ -452,7 +452,7 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		.and_then(|v| v.as_u64())
 		.map(|t| t as u32);
 
-	let server_refs: Vec<String> = params
+	let mut server_refs: Vec<String> = params
 		.get("server_refs")
 		.and_then(|v| v.as_array())
 		.map(|arr| {
@@ -462,27 +462,37 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		})
 		.unwrap_or_default();
 
-	// Validate server_refs - check if referenced servers exist
+	// Validate server_refs — accept both config-defined and dynamic servers
 	if !server_refs.is_empty() {
-		let available_servers = crate::mcp::core::dynamic::list_servers();
-		let available_names: std::collections::HashSet<_> = available_servers
+		let dynamic_names: std::collections::HashSet<String> =
+			crate::mcp::core::dynamic::list_servers()
+				.into_iter()
+				.map(|(name, _, _)| name)
+				.collect();
+
+		// Config servers are available via the global tool map
+		let config_names: std::collections::HashSet<String> =
+			crate::mcp::tool_map::get_all_server_names();
+
+		let all_names: std::collections::HashSet<&str> = dynamic_names
 			.iter()
-			.map(|(name, _, _)| name.as_str())
+			.chain(config_names.iter())
+			.map(String::as_str)
 			.collect();
 
 		for server_ref in &server_refs {
-			if !available_names.contains(server_ref.as_str()) {
+			if !all_names.contains(server_ref.as_str()) {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
 					format!(
 						"Server '{}' not found. Available servers: {}",
 						server_ref,
-						available_names
-							.iter()
-							.cloned()
-							.collect::<Vec<_>>()
-							.join(", ")
+						{
+							let mut names: Vec<&str> = all_names.iter().copied().collect();
+							names.sort();
+							names.join(", ")
+						}
 					),
 				));
 			}
@@ -504,6 +514,22 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		.and_then(|v| v.as_str())
 		.unwrap_or(".")
 		.to_string();
+	// Auto-populate server_refs from allowed_tools if not specified
+	if server_refs.is_empty() && !allowed_tools.is_empty() {
+		let mut inferred_servers = std::collections::HashSet::new();
+		for tool_name in &allowed_tools {
+			if let Some(server_name) = crate::mcp::tool_map::get_tool_server_name(tool_name) {
+				inferred_servers.insert(server_name);
+			}
+		}
+		if !inferred_servers.is_empty() {
+			server_refs = inferred_servers.into_iter().collect();
+			crate::log_debug!(
+				"Auto-populated server_refs from allowed_tools: {:?}",
+				server_refs
+			);
+		}
+	}
 
 	let agent = DynamicAgentConfig {
 		name: name.clone(),

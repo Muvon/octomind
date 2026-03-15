@@ -185,6 +185,10 @@ pub struct Config {
 	// Root-level model setting (used by all commands if specified)
 	pub model: String,
 
+	// Default tag used when no TAG is passed to `octomind run/acp/server`.
+	// Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").
+	pub default: String,
+
 	// Root-level max_tokens setting (used by all commands if specified)
 	pub max_tokens: u32,
 

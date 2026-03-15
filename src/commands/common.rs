@@ -31,7 +31,7 @@ pub async fn resolve_config_and_role(
 	tag: Option<&str>,
 	config: &Config,
 ) -> Result<(Config, String)> {
-	let tag = tag.unwrap_or("developer");
+	let tag = tag.unwrap_or(config.default.as_str());
 
 	if tag.contains(':') {
 		// Registry agent: fetch manifest, resolve inputs, merge config

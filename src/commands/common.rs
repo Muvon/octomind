@@ -76,8 +76,8 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 		);
 		spinner.enable_steady_tick(Duration::from_millis(80));
 
-		// Track completed servers for progress display
-		let completed = Arc::new(Mutex::new(0usize));
+		// Track pending servers — remove each one as it completes
+		let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 		let total = Arc::new(Mutex::new(0usize));
 
 		let cb = |progress: McpInitProgress| match &progress {
@@ -86,28 +86,27 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 				if servers.is_empty() {
 					spinner.set_message("No MCP servers to initialize".to_string());
 				} else {
-					spinner.set_message(format!("Starting MCP: {}", servers.join(", ")));
+					*pending.lock().unwrap() = servers.clone();
+					spinner.set_message(format!(
+						"Starting MCP: {} [0/{}]",
+						servers.join(", "),
+						servers.len()
+					));
 				}
 			}
-			McpInitProgress::Completed {
-				server,
-				success,
-				function_count: _,
-			} => {
-				let mut completed_guard = completed.lock().unwrap();
-				*completed_guard += 1;
-				let completed_count = *completed_guard;
+			McpInitProgress::Completed { server, .. } => {
+				let mut pending_guard = pending.lock().unwrap();
+				pending_guard.retain(|s| s != server);
+				let done = *total.lock().unwrap() - pending_guard.len();
 				let total_count = *total.lock().unwrap();
-
-				if *success {
-					spinner.set_message(format!(
-						"✓ Started MCP: {} [{}/{}]",
-						server, completed_count, total_count
-					));
+				if pending_guard.is_empty() {
+					spinner.set_message(format!("Starting MCP: done [{}/{}]", done, total_count));
 				} else {
 					spinner.set_message(format!(
-						"✗ Failed MCP: {} [{}/{}]",
-						server, completed_count, total_count
+						"Starting MCP: {} [{}/{}]",
+						pending_guard.join(", "),
+						done,
+						total_count
 					));
 				}
 			}

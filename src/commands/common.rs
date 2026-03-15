@@ -64,6 +64,9 @@ pub async fn resolve_config_and_role(
 /// Shows a spinner in interactive mode, silent otherwise.
 pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Result<()> {
 	if is_interactive {
+		use octomind::mcp::McpInitProgress;
+		use std::sync::{Arc, Mutex};
+
 		let spinner = ProgressBar::new_spinner();
 		spinner.set_style(
 			ProgressStyle::default_spinner()
@@ -71,9 +74,45 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 				.unwrap()
 				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
 		);
-		spinner.set_message("Initializing MCP servers...");
 		spinner.enable_steady_tick(Duration::from_millis(80));
-		let cb = |name: &str| spinner.set_message(format!("Starting MCP server: {name}"));
+
+		// Track completed servers for progress display
+		let completed = Arc::new(Mutex::new(0usize));
+		let total = Arc::new(Mutex::new(0usize));
+
+		let cb = |progress: McpInitProgress| match &progress {
+			McpInitProgress::Starting { servers } => {
+				*total.lock().unwrap() = servers.len();
+				if servers.is_empty() {
+					spinner.set_message("No MCP servers to initialize".to_string());
+				} else {
+					spinner.set_message(format!("Starting MCP servers: {}", servers.join(", ")));
+				}
+			}
+			McpInitProgress::Completed {
+				server,
+				success,
+				function_count,
+			} => {
+				let mut completed_guard = completed.lock().unwrap();
+				*completed_guard += 1;
+				let completed_count = *completed_guard;
+				let total_count = *total.lock().unwrap();
+
+				if *success {
+					spinner.set_message(format!(
+						"Started {} ({}) [{}/{}]",
+						server, function_count, completed_count, total_count
+					));
+				} else {
+					spinner.set_message(format!(
+						"Failed {} [{}/{}]",
+						server, completed_count, total_count
+					));
+				}
+			}
+		};
+
 		let result =
 			octomind::mcp::initialize_mcp_for_role_with_callback(role, config, Some(&cb)).await;
 		spinner.finish_and_clear();

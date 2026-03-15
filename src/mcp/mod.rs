@@ -24,6 +24,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use uuid;
 
+/// Progress events for MCP server initialization
+#[derive(Debug, Clone)]
+pub enum McpInitProgress {
+	/// Starting initialization for these servers
+	Starting { servers: Vec<String> },
+	/// A server finished initializing
+	Completed {
+		server: String,
+		success: bool,
+		function_count: usize,
+	},
+}
 // Modules
 pub mod hint_accumulator;
 pub mod tool_map;
@@ -332,7 +344,7 @@ pub async fn initialize_servers_for_role(config: &crate::config::Config) -> Resu
 // Initialize servers with optional progress callback for UI updates
 pub async fn initialize_servers_for_role_with_callback(
 	config: &crate::config::Config,
-	progress_callback: Option<&dyn Fn(&str)>,
+	progress_callback: Option<&dyn Fn(McpInitProgress)>,
 ) -> Result<()> {
 	// The config passed here should be the merged config for the role
 	// config.mcp.servers already contains only the role's enabled servers
@@ -346,53 +358,90 @@ pub async fn initialize_servers_for_role_with_callback(
 		config.mcp.servers.len()
 	);
 
-	for server in &config.mcp.servers {
-		// Only initialize external servers that need to be started
-		if let McpConnectionType::Http | McpConnectionType::Stdin = server.connection_type() {
-			crate::log_debug!("Initializing external server: {}", server.name());
+	// Collect external servers that need initialization (parallel-safe)
+	let external_servers: Vec<_> = config
+		.mcp
+		.servers
+		.iter()
+		.filter(|server| {
+			matches!(
+				server.connection_type(),
+				McpConnectionType::Http | McpConnectionType::Stdin
+			)
+		})
+		.filter(|server| !server::is_server_already_running_with_config(server))
+		.collect();
 
-			// Notify progress callback
-			if let Some(callback) = progress_callback {
-				callback(server.name());
+	// Log internal servers (no initialization needed)
+	for server in config.mcp.servers.iter().filter(|s| {
+		!matches!(
+			s.connection_type(),
+			McpConnectionType::Http | McpConnectionType::Stdin
+		)
+	}) {
+		crate::log_debug!(
+			"Skipping initialization for internal server: {} ({:?})",
+			server.name(),
+			server.connection_type()
+		);
+	}
+
+	// Notify progress callback that we're starting
+	if let Some(callback) = &progress_callback {
+		callback(McpInitProgress::Starting {
+			servers: external_servers
+				.iter()
+				.map(|s| s.name().to_string())
+				.collect(),
+		});
+	}
+
+	// Initialize all external servers in parallel
+	let init_futures: Vec<_> = external_servers
+		.into_iter()
+		.map(|server| {
+			let name = server.name().to_string();
+			let callback = progress_callback;
+			async move {
+				crate::log_debug!("Initializing external server: {}", name);
+				let result = server::get_server_functions(server).await;
+				let (success, function_count) = match &result {
+					Ok(functions) => (true, functions.len()),
+					Err(_) => (false, 0),
+				};
+				if let Some(cb) = callback {
+					cb(McpInitProgress::Completed {
+						server: name.clone(),
+						success,
+						function_count,
+					});
+				}
+				(name, result)
 			}
+		})
+		.collect();
 
-			// Check if server is already running to avoid double initialization
-			if server::is_server_already_running_with_config(server) {
+	let results = futures::future::join_all(init_futures).await;
+	// Log results
+	for (server_name, result) in results {
+		match result {
+			Ok(functions) => {
 				crate::log_debug!(
-					"Server '{}' is already running - skipping initialization",
-					server.name()
+					"Successfully initialized server '{}' with {} functions",
+					server_name,
+					functions.len()
 				);
-				continue;
-			}
-
-			// Start the server and cache its functions
-			match server::get_server_functions(server).await {
-				Ok(functions) => {
-					crate::log_debug!(
-						"Successfully initialized server '{}' with {} functions",
-						server.name(),
-						functions.len()
-					);
-					for func in &functions {
-						crate::log_debug!("  - Available: {}", func.name);
-					}
-				}
-				Err(e) => {
-					crate::log_debug!(
-						"Failed to initialize server '{}': {} (will retry on first use)",
-						server.name(),
-						e
-					);
-					// Don't fail startup - just log and continue
+				for func in &functions {
+					crate::log_debug!("  - Available: {}", func.name);
 				}
 			}
-		} else {
-			// Internal servers (Core/Filesystem) don't need initialization
-			crate::log_debug!(
-				"Skipping initialization for internal server: {} ({:?})",
-				server.name(),
-				server.connection_type()
-			);
+			Err(e) => {
+				crate::log_debug!(
+					"Failed to initialize server '{}': {} (will retry on first use)",
+					server_name,
+					e
+				);
+			}
 		}
 	}
 
@@ -417,10 +466,9 @@ pub async fn initialize_mcp_for_role(role: &str, config: &crate::config::Config)
 pub async fn initialize_mcp_for_role_with_callback(
 	role: &str,
 	config: &crate::config::Config,
-	progress_callback: Option<&dyn Fn(&str)>,
+	progress_callback: Option<&dyn Fn(McpInitProgress)>,
 ) -> Result<()> {
 	let config_for_role = config.get_merged_config_for_role(role);
-
 	// Set session context (role + project) so MCP servers receive it during initialization
 	process::init_session_context(role);
 

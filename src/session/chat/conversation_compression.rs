@@ -752,10 +752,11 @@ pub async fn check_and_compress_conversation(
 		&messages_to_compress,
 		&context_chunks,
 		operation_rx,
+		force,
 	)
 	.await?;
 
-	if !force && !should_compress {
+	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
 		animation_manager.stop_current().await;
 		return Ok(false);
@@ -781,12 +782,16 @@ pub async fn check_and_compress_conversation(
 
 /// Ask AI: should we compress AND get summary in ONE call (1-hop optimization)
 /// This combines decision + summarization to reduce latency and cost by 50%
+/// Ask AI: should we compress AND get summary in ONE call (1-hop optimization)
+/// This combines decision + summarization to reduce latency and cost by 50%.
+/// When `force=true` the AI is only asked to summarize — it has no right to say NO.
 async fn ask_ai_decision_and_summary(
 	session: &mut ChatSession,
 	config: &Config,
 	messages_to_compress: &[crate::session::Message],
 	context_chunks: &[&super::semantic_chunking::SemanticChunk],
 	operation_rx: tokio::sync::watch::Receiver<bool>,
+	force: bool,
 ) -> Result<(bool, String)> {
 	// SYSTEM: role identity + instructions (what the model must do and how to respond).
 	// Kept separate from the data so the model acts as a compressor, not a session participant.
@@ -796,7 +801,40 @@ async fn ask_ai_decision_and_summary(
 	//   1. RECENCY — messages marked [RECENT] are the most important; compress older ones harder.
 	//   2. USER/ASSISTANT PAIRS — every user question and assistant answer must survive in some form;
 	//      tool calls are secondary context that can be reduced to one-liners.
-	let system_content = "You are a conversation compressor. \
+	let system_content = if force {
+		"You are a conversation compressor. \
+The user has explicitly requested compression. You MUST produce a summary — do NOT refuse. \
+Do not start with YES or NO. Just write the summary directly using the format below.\n\n\
+## CRITICAL PRIORITIES\n\n\
+**Priority 1 — RECENCY**: Messages marked [RECENT] are the most important part of the transcript. \
+Preserve them with the highest fidelity — quote or paraphrase them closely. Older messages can be compressed more aggressively.\n\n\
+**Priority 2 — USER/ASSISTANT PAIRS**: Every [USER] question and every [ASSISTANT] answer is \
+primary signal. Capture every user request and every assistant response — never drop one.\n\n\
+**Priority 3 — TOOL CALLS are secondary**: Summarize what was done in one line each.\n\n\
+## SUMMARY FORMAT\n\n\
+**USER INTENT** (1-2 sentences):\n\
+What did the user ask for overall?\n\n\
+**PROGRESS** (2-4 sentences):\n\
+What was completed? What is currently in progress?\n\n\
+**RECENT EXCHANGES** (preserve with high fidelity — these are the most recent [RECENT] messages):\n\
+For each recent user/assistant pair: quote or closely paraphrase the user question and the assistant answer.\n\n\
+**KEY ENTITIES** (preserve exactly — copy values verbatim):\n\
+- Files/paths: exact file paths, line numbers, or code locations being worked on\n\
+- Names: specific identifiers, function names, variable names, config keys\n\
+- Issues: any errors, bugs, or problems encountered and their current status\n\
+- Decisions: choices made with the reasoning behind them\n\
+- URLs/references: any links or external references\n\n\
+**NEXT STEPS** (1-2 sentences):\n\
+What needs to happen next to continue the work?\n\n\
+**OPTIONAL — file contexts needed to continue:**\n\
+If specific file ranges are critical for the next step, include them:\n\
+<context>\n\
+filepath:startline:endline\n\
+</context>\n\
+Rules: <context> tags required; one entry per line as filepath:N:N (no spaces); \
+paths from project root; line numbers 1–10000; max 5 ranges; only truly critical files."
+	} else {
+		"You are a conversation compressor. \
 Your job is to produce a lossless summary of a conversation transcript so the session can continue \
 without losing any important context.\n\n\
 ## CRITICAL PRIORITIES (read carefully before summarizing)\n\n\
@@ -850,7 +888,8 @@ filepath:startline:endline\n\
 </context>\n\
 Rules: <context> tags required; one entry per line as filepath:N:N (no spaces); \
 paths from project root; line numbers 1–10000; max 5 ranges; only truly critical files.\n\n\
-If NO, respond with just: NO";
+If NO, respond with just: NO"
+	};
 
 	// USER: plain-text transcript of the range being compressed + semantic chunk hints.
 	// Building a transcript (not raw messages) prevents the model from continuing the
@@ -1108,13 +1147,27 @@ secondary context.\n\n",
 		log_debug!("Compression decision cost ignored (ignore_cost=true)");
 	}
 
-	// Parse response: check if it starts with YES and extract summary
+	// Parse response.
+	// force=true: the AI was told to produce a summary directly (no YES/NO gate) — treat
+	//             the entire response as the summary and always compress.
+	// force=false: normal path — first line must be YES to proceed.
 	let content = response.content.trim();
 	let lines: Vec<&str> = content.lines().collect();
 
 	if lines.is_empty() {
+		if force {
+			return Err(anyhow::anyhow!(
+				"AI returned empty summary during forced compression"
+			));
+		}
 		log_debug!("AI compression decision: NO (empty response)");
 		return Ok((false, String::new()));
+	}
+
+	if force {
+		// Entire response is the summary — no YES/NO prefix expected.
+		log_debug!("AI forced compression summary ({} chars)", content.len());
+		return Ok((true, content.to_string()));
 	}
 
 	let first_line = lines[0].trim().to_uppercase();

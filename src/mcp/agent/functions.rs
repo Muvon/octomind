@@ -546,7 +546,7 @@ fn run_dynamic_agent_in_process(
 						tool_calls: current_tool_calls,
 						session_name: format!("agent_{}", agent.name),
 						layer_config: layer_cfg.clone(),
-						layer_name: agent.name.clone(),
+						layer_name: format!("agent_{}", agent.name),
 						operation_cancelled: Some(operation_cancelled.clone()),
 						mode: output_mode,
 					};

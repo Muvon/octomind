@@ -515,18 +515,34 @@ mod tests {
 		// Add a custom "tester" role to the template for testing
 		let mut config = template_content.to_string();
 
-		// Add the tester role configuration
+		// Add test roles (developer, assistant, tester) — self-contained, not relying on template
 		config.push_str(
 			r#"
 
-# Test role for unit testing
+# Test roles for unit testing
+[[roles]]
+name = "developer"
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+system = "You are a developer assistant."
+welcome = "Hello! Developer role."
+mcp = { server_refs = [], allowed_tools = [] }
+
+[[roles]]
+name = "assistant"
+temperature = 0.5
+top_p = 0.9
+top_k = 40
+system = "You are a general assistant."
+welcome = "Hello! Assistant role."
+mcp = { server_refs = [], allowed_tools = [] }
+
 [[roles]]
 name = "tester"
-enable_layers = false
 temperature = 0.7
 top_p = 0.9
 top_k = 50
-layer_refs = []
 system = "You are a test assistant."
 welcome = "Hello! Test tester role."
 mcp = { server_refs = ["test_server", "clt"], allowed_tools = [] }

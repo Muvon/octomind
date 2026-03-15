@@ -88,7 +88,9 @@ timeout_seconds = 30
 
 [[mcp.servers]]
 name = "filesystem"
-type = "builtin"
+type = "stdio"
+command = "octofs"
+args = []
 timeout_seconds = 30
 ```
 

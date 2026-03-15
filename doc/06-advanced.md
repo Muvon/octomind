@@ -22,14 +22,15 @@ MCP enables AI models to use external tools and services through a standardized 
 
 ### Built-in MCP Tools
 
-Octomind provides three built-in MCP servers with comprehensive development capabilities:
+Octomind provides two built-in MCP servers with core functionality:
 
 **Core Server** (`src/mcp/core/`):
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
 - `mcp(action="list|add|enable|disable|remove", ...)` - Dynamic MCP server management
 - `agent(action="list|add|enable|disable|remove", ...)` - Dynamic agent tool management
 
-**Filesystem Server** (`src/mcp/fs/`):
+**External Filesystem Server** (octofs stdio):
+Filesystem tools are provided by the external `octofs` MCP server:
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
 - `text_editor(command="create|str_replace|undo_edit", path="...", ...)` - Create files or make targeted string replacements
 - `batch_edit(path="...", operations=[...])` - Multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL line numbers. Returns a detailed diff with line numbers and context.

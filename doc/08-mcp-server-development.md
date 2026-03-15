@@ -6,24 +6,34 @@ This guide explains how to add new built-in MCP servers to Octomind. Use this wh
 
 ## Built-in MCP Servers
 
-Octomind provides **three** built-in MCP servers with comprehensive development capabilities:
+Octomind provides **two** built-in MCP servers with core functionality:
 
 **Core Server** (`src/mcp/core/`):
 - `plan(command=\"start|step|next|list|done|reset\", ...)` - Structured task management with progress tracking
 - `mcp(action=\"list|add|enable|disable|remove\", ...)` - Dynamic MCP server management
 - `agent(action=\"list|add|enable|disable|remove\", ...)` - Dynamic agent tool management
 
-**Filesystem Server** (`src/mcp/fs/`):
-- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
-- `text_editor(command=\"create|str_replace|undo_edit\", path=\"...\", ...)` - Edit files
-- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
-- `shell(command=\"...\", background=false)` - Execute shell commands with output capture, foreground/background execution
-- `workdir(path=\"...\", reset=false)` - Get or set working directory for parallel execution isolation
-- `ast_grep(pattern=\"...\", language=\"...\", rewrite=\"...\", ...)` - Search and refactor code using AST patterns
-
 **Agent Server** (`src/mcp/agent/`):
 - `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess or executes in-process for dynamic agents)
+
+## External Filesystem Tools
+
+Filesystem tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `workdir`, `ast_grep`) are provided by the **octofs** external MCP server, not as a built-in server. This allows for:
+- Independent updates and versioning
+- Optional filesystem access (can be disabled)
+- Cleaner separation of concerns
+
+To enable filesystem tools, configure the octofs server in your config:
+
+```toml
+[[mcp.servers]]
+name = \"filesystem\"
+type = \"stdio\"
+command = \"octofs\"
+args = [\"mcp\", \"--path=.\"]
+timeout_seconds = 240
+tools = []
+```
 
 ## When to Add a New MCP Server
 
@@ -125,8 +135,8 @@ let hint = if crate::mcp::tool_map::get_server_for_tool("better_tool").is_some()
 ```
 
 **Existing hints (reference implementations):**
-- `src/mcp/fs/shell.rs` — `SHELL_MISUSE_HINTS` table: warns on `cat/grep/find/sed` when dedicated tools are enabled
-- `src/mcp/fs/text_editing.rs` — `str_replace` hints `line_replace` when match spans multiple lines
+- Octofs (external stdio server) provides filesystem tools with misuse hints
+- See `src/mcp/core/` and `src/mcp/agent/` for examples of hint implementation patterns
 
 ## Step-by-Step Implementation
 

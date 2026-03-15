@@ -28,7 +28,7 @@ graph TB
     C --> I[Custom Roles<br/>Configurable]
 
     D --> J[Core Server<br/>plan, mcp, agent]
-    D --> K[Filesystem Server<br/>view, text_editor, batch_edit, extract_lines, shell, workdir, ast_grep]
+    D --> K[External Servers<br/>octofs, custom MCP]
     D --> L[Agent Server<br/>agent_* tools]
 
     E --> M[OpenRouter<br/>Multi-provider]
@@ -55,14 +55,15 @@ graph TB
 - **Session Management**: Save, resume, and organize conversations by name
 ### 2. MCP Tool System
 
-**Built-in MCP Servers** provide comprehensive development capabilities with parallel initialization for faster startup:
+**Built-in MCP Servers** provide core functionality with parallel initialization for faster startup:
 
 **Core Server** (`src/mcp/core/`):
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
 - `mcp(action="list|add|enable|disable|remove", ...)` - Dynamic MCP server management
 - `agent(action="list|add|enable|disable|remove", ...)` - Dynamic agent tool management
 
-**Filesystem Server** (`src/mcp/fs/`):
+**External Filesystem Server** (octofs stdio):
+Filesystem tools are provided by the external `octofs` MCP server, which must be configured in your MCP servers list:
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
 - `text_editor(command="create|str_replace|undo_edit", path="...", ...)` - Create files or make targeted string replacements
 - `batch_edit(path="...", operations=[...])` - Multiple file operations atomically. Returns a detailed diff with line numbers and context.
@@ -73,7 +74,6 @@ graph TB
 
 **Agent Server** (`src/mcp/agent/`):
 - `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess or executes in-process for dynamic agents)
-
 ### 3. Multi-Provider AI Support
 **Unified Interface** across 7 AI providers with consistent `provider:model` format:
 
@@ -89,13 +89,13 @@ graph TB
 
 ### 4. Role-Based Configuration
 
-**Developer Role** (`config-templates/default.toml` lines 119-301):
-- Full access to all MCP tools
+**Developer Role** (`config-templates/default.toml`):
+- Full access to all MCP tools (core, filesystem via octofs, agent)
 - Optimized system prompts for development tasks
 - Layer processing enabled for complex workflows
-- Server references: core, filesystem, octocode, agent
+- Server references: core, filesystem, agent
 
-**Assistant Role** (lines 340-355):
+**Assistant Role**:
 - Chat-only mode with limited tool access
 - General assistance system prompts
 - Minimal tool permissions for safety
@@ -191,12 +191,12 @@ For comprehensive workflow documentation, see [doc/10-workflows.md](./10-workflo
 
 ### Advanced Development Tools
 
-**AST-Based Code Operations**:
+**AST-Based Code Operations** (via octofs):
 - `ast_grep()` for structural code search and refactoring
 - Pattern-based transformations using AST understanding
 - Language-aware code analysis
 
-**Batch File Operations**:
+**Batch File Operations** (via octofs):
 - `batch_edit()` for atomic multi-line changes
 - Original line number preservation
 - Conflict detection and rollback

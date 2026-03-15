@@ -91,13 +91,12 @@ octomind vars --expand
 Octomind uses role-based configuration with built-in roles and custom role support:
 
 **Built-in Roles:**
-- **Developer Role**: Full MCP tool access, optimized for development tasks
-- **Assistant Role**: Chat-only mode with limited tool access for general assistance
+- **Developer Role**: Full MCP tool access (core, filesystem, agent), optimized for development tasks
+- **Assistant Role**: Limited tool access (core, agent only) for general assistance
 
 **Custom Roles**: Define specific tool permissions, models, and configurations in the template
 
 **Environment Overrides**: Use `OCTOMIND_ROLES__ROLENAME__SETTING` format for role-specific overrides
-
 
 ### Layer Configuration
 
@@ -201,8 +200,8 @@ system = "You are a helpful assistant."
 welcome = "Hello! Octomind ready to assist you. Working dir: {{CWD}} (Role: {{ROLE}})"
 
 [roles.mcp]
-server_refs = ["filesystem"]
-allowed_tools = ["filesystem:*"]
+server_refs = ["core", "agent"]
+allowed_tools = ["core:*", "agent:*"]
 # ═══════════════════════════════════════════════════════════════════════════════
 # MCP (MODEL CONTEXT PROTOCOL) SERVERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -221,16 +220,14 @@ name = "agent"
 type = "builtin"
 timeout_seconds = 30
 
+# External filesystem server (octofs)
+# Provides: view, text_editor, batch_edit, extract_lines, shell, workdir, ast_grep
 [[mcp.servers]]
 name = "filesystem"
-type = "builtin"
+type = "stdio"
+command = "octofs"
+args = []
 timeout_seconds = 30
-[[mcp.servers]]
-name = "octocode"
-type = "stdin"
-command = "octocode"
-args = ["mcp", "--path=."]
-timeout_seconds = 240
 tools = []
 # Example external MCP server configuration:
 # [[mcp.servers]]
@@ -244,8 +241,8 @@ tools = []
 **Important Notes:**
 - **API Keys**: Set via environment variables only (e.g., `OPENROUTER_API_KEY`)
 - **Server References**: Roles use `server_refs` to reference servers by name
-- **Builtin Servers**: Core, filesystem, and agent are always available
-
+- **Builtin Servers**: Core and agent are always available
+- **Filesystem Server**: The `filesystem` server is now external (octofs stdio) and must be configured in the MCP servers list
 ### Custom Instructions and Constraints
 
 Octomind supports automatic loading of custom instructions and constraints:

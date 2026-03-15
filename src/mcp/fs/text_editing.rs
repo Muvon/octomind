@@ -718,16 +718,6 @@ fn parse_line_range(
 }
 
 // NEW REVOLUTIONARY BATCH_EDIT: Single file, multiple operations, original line numbers
-// Returns true when a line contains something beyond structural punctuation/whitespace.
-// Used by duplicate-line detection to skip lines like `}`, `);`, `],` that appear
-// constantly in code and would cause false positives.
-fn has_meaningful_content(line: &str) -> bool {
-	let noise: &[char] = &[
-		'}', ')', ']', '{', '(', '[', ',', ';', ':', '.', '/', '*', '-', '+', '|', '&', '!', '\t',
-		' ',
-	];
-	!line.trim_matches(noise).trim().is_empty()
-}
 pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result<McpToolResult> {
 	// Extract path from the call parameters - NEW: single file only
 	let path_str = match call.parameters.get("path").and_then(|v| v.as_str()) {
@@ -931,9 +921,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Duplicate-line detection: validate Replace operations against original content
 	// before applying anything. Catches the #1 AI mistake of including surrounding lines.
 	//
-	// We only flag a match when the line has meaningful content after stripping structural
-	// noise characters (brackets, braces, punctuation, whitespace). Lines that reduce to
-	// nothing — }, ), ], );, },  etc. — are skipped to avoid false positives in code.
+	// Uses exact (non-trimmed) comparison so that lines differing only in indentation
+	// (e.g. "\t\t]," vs "\t\t\t],") are correctly treated as distinct and not flagged.
+	// This also catches noise-only lines like "]," or "})" that share identical content.
 	let original_lines: Vec<&str> = original_content.lines().collect();
 	for op in &batch_operations {
 		if op.operation_type != OperationType::Replace {
@@ -947,11 +937,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		if content_lines.is_empty() {
 			continue;
 		}
-		// First content line matches the line immediately before the range
+		// First content line exactly matches the line immediately before the range
 		if start > 1 {
 			let line_before = original_lines[start - 2];
-			if has_meaningful_content(line_before) && content_lines[0].trim() == line_before.trim()
-			{
+			if content_lines[0] == line_before {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
@@ -963,11 +952,11 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				));
 			}
 		}
-		// Last content line matches the line immediately after the range
+		// Last content line exactly matches the line immediately after the range
 		if end < original_lines.len() {
 			let line_after = original_lines[end];
 			let last = content_lines[content_lines.len() - 1];
-			if has_meaningful_content(line_after) && last.trim() == line_after.trim() {
+			if last == line_after {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),

@@ -128,7 +128,7 @@ pub async fn start_health_monitor(config: Arc<Config>) -> Result<(), anyhow::Err
 			.iter()
 			.map(|s| {
 				let server_type = match s.connection_type() {
-					McpConnectionType::Stdin => "stdin",
+					McpConnectionType::Stdin => "stdio",
 					McpConnectionType::Http => "http",
 					McpConnectionType::Builtin => "builtin",
 				};

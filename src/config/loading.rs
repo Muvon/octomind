@@ -534,7 +534,7 @@ mcp = { server_refs = ["test_server", "clt"], allowed_tools = [] }
 # Additional test MCP servers for tester role
 [[mcp.servers]]
 name = "test_server"
-type = "stdin"
+type = "stdio"
 command = "test_command"
 args = ["mcp"]
 timeout_seconds = 30
@@ -542,7 +542,7 @@ tools = []
 
 [[mcp.servers]]
 name = "clt"
-type = "stdin"
+type = "stdio"
 command = "clt"
 args = ["mcp"]
 timeout_seconds = 30

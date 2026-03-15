@@ -39,7 +39,7 @@ pub enum McpServerConfig {
 		timeout_seconds: u64,
 		tools: Vec<String>,
 	},
-	#[serde(rename = "stdin")]
+	#[serde(rename = "stdio")]
 	Stdin {
 		name: String,
 		command: String,

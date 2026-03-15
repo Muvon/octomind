@@ -268,7 +268,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 						}
 						"type" => match value.to_lowercase().as_str() {
 							"http" => connection_type = McpConnectionType::Http,
-							"stdin" => connection_type = McpConnectionType::Stdin,
+							"stdio" => connection_type = McpConnectionType::Stdin,
 							"builtin" => connection_type = McpConnectionType::Builtin,
 							_ => println!("Unknown server type: {}, defaulting to HTTP", value),
 						},

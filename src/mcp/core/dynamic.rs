@@ -282,16 +282,16 @@ pub fn get_mcp_tool_function() -> McpFunction {
 				"server_type": {
 					"type": "string",
 					"description": "How to connect to the server",
-					"enum": ["stdin", "http"]
+					"enum": ["stdio", "http"]
 				},
 				"command": {
 					"type": "string",
-					"description": "Executable to run (e.g., 'npx', 'uvx', './server'). Required for stdin type."
+					"description": "Executable to run (e.g., 'npx', 'uvx', './server'). Required for stdio type."
 				},
 				"args": {
 					"type": "array",
 					"items": { "type": "string" },
-					"description": "Arguments passed to command (e.g., ['-m', 'mcp-server-github']). Required for stdin type."
+					"description": "Arguments passed to command (e.g., ['-m', 'mcp-server-github']). Required for stdio type."
 				},
 				"url": {
 					"type": "string",
@@ -402,7 +402,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				"Missing required parameter 'server_type' (stdin or http)".to_string(),
+				"Missing required parameter 'server_type' (stdio or http)".to_string(),
 			));
 		}
 	};
@@ -425,14 +425,14 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 
 	// Build server config based on type
 	let server_config = match server_type {
-		"stdin" => {
+		"stdio" => {
 			let command = match params.get("command").and_then(|v| v.as_str()) {
 				Some(c) if !c.trim().is_empty() => c.trim().to_string(),
 				_ => {
 					return Ok(McpToolResult::error(
 						call.tool_name.clone(),
 						call.tool_id.clone(),
-						"stdin server requires 'command' parameter".to_string(),
+						"stdio server requires 'command' parameter".to_string(),
 					));
 				}
 			};
@@ -485,7 +485,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				"Invalid server_type. Use: stdin or http".to_string(),
+				"Invalid server_type. Use: stdio or http".to_string(),
 			));
 		}
 	};

@@ -38,7 +38,9 @@ pub async fn resolve_config_and_role(
 		let raw_toml = registry::fetch_manifest(tag, &config.registry)
 			.await
 			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
+		// INPUT first (persistent credential store), then ENV (environment / .env fallback)
 		let resolved_toml = inputs::resolve_inputs(&raw_toml).await?;
+		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
 		// Always inject the tag as the role name — manifests never need to declare it.
 		let tagged_toml = inject_role_name(&resolved_toml, tag)
 			.context("Failed to inject role name into agent manifest")?;

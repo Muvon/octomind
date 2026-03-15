@@ -12,13 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Handles {{INPUT:KEY}} placeholders in agent manifests.
+//! Handles `{{INPUT:KEY}}` and `{{ENV:KEY}}` placeholders in agent manifests.
 //!
-//! When an agent manifest contains `{{INPUT:GITHUB_TOKEN}}`, this module:
-//! 1. Detects all such keys
-//! 2. Loads previously stored values from `~/.local/share/octomind/inputs.toml`
-//! 3. Prompts the user for any missing values (once, then saves them)
-//! 4. Substitutes all placeholders and returns the resolved string
+//! **`{{INPUT:KEY}}`** — persistent credential store:
+//! 1. Loads previously stored values from `~/.local/share/octomind/inputs.toml`
+//! 2. Prompts the user for any missing values (once, then saves them)
+//! 3. Substitutes all placeholders and returns the resolved string
+//!
+//! **`{{ENV:KEY}}`** — environment variable with `.env` fallback:
+//! 1. If `KEY` is set in the environment (and non-empty), use it directly
+//! 2. Otherwise prompt the user, then persist to `./.env` in the current directory
+//!    (the tool already loads `.env` automatically on next run)
+//!
+//! ENV resolution always runs after INPUT resolution.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -27,6 +33,9 @@ use std::io::{self, Write};
 
 const INPUT_PLACEHOLDER_PREFIX: &str = "{{INPUT:";
 const INPUT_PLACEHOLDER_SUFFIX: &str = "}}";
+
+const ENV_PLACEHOLDER_PREFIX: &str = "{{ENV:";
+const ENV_PLACEHOLDER_SUFFIX: &str = "}}";
 
 /// Extract all unique `{{INPUT:KEY}}` keys from a raw string.
 fn extract_input_keys(raw: &str) -> Vec<String> {
@@ -128,6 +137,78 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 			v
 		};
 		let placeholder = format!("{INPUT_PLACEHOLDER_PREFIX}{key}{INPUT_PLACEHOLDER_SUFFIX}");
+		result = result.replace(&placeholder, &value);
+	}
+
+	Ok(result)
+}
+
+/// Extract all unique `{{ENV:KEY}}` keys from a raw string.
+fn extract_env_keys(raw: &str) -> Vec<String> {
+	let mut keys = Vec::new();
+	let mut search = raw;
+	while let Some(start) = search.find(ENV_PLACEHOLDER_PREFIX) {
+		let after_prefix = &search[start + ENV_PLACEHOLDER_PREFIX.len()..];
+		if let Some(end) = after_prefix.find(ENV_PLACEHOLDER_SUFFIX) {
+			let key = after_prefix[..end].to_string();
+			if !key.is_empty() && !keys.contains(&key) {
+				keys.push(key);
+			}
+			search = &after_prefix[end + ENV_PLACEHOLDER_SUFFIX.len()..];
+		} else {
+			break;
+		}
+	}
+	keys
+}
+
+/// Append `KEY=VALUE` to `./.env` in the current working directory.
+///
+/// Creates the file if it doesn't exist. Appends so existing entries are preserved.
+fn save_env_to_dotenv(key: &str, value: &str) -> Result<()> {
+	let dotenv_path = std::path::Path::new(".env");
+	let line = format!("{}={}\n", key, value);
+	let mut file = fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(dotenv_path)
+		.context(format!(
+			"Failed to open .env for writing: {}",
+			dotenv_path.display()
+		))?;
+	file.write_all(line.as_bytes())
+		.context(format!("Failed to write {key} to .env"))?;
+	Ok(())
+}
+
+/// Resolve all `{{ENV:KEY}}` placeholders in `raw`.
+///
+/// For each key:
+/// - If already set in the environment (and non-empty), use it directly.
+/// - Otherwise prompt the user, persist to `./.env`, then substitute.
+///
+/// Call this **after** `resolve_inputs()` so INPUT prompts come first.
+pub async fn resolve_env_vars(raw: &str) -> Result<String> {
+	let keys = extract_env_keys(raw);
+	if keys.is_empty() {
+		return Ok(raw.to_string());
+	}
+
+	let mut result = raw.to_string();
+
+	for key in &keys {
+		let value = match std::env::var(key) {
+			Ok(v) if !v.trim().is_empty() => v,
+			_ => {
+				// Not in env — prompt and persist to .env so next run picks it up automatically
+				let v = prompt_user(key)?;
+				save_env_to_dotenv(key, &v)?;
+				// Also set in current process so the session can use it immediately
+				std::env::set_var(key, &v);
+				v
+			}
+		};
+		let placeholder = format!("{ENV_PLACEHOLDER_PREFIX}{key}{ENV_PLACEHOLDER_SUFFIX}");
 		result = result.replace(&placeholder, &value);
 	}
 

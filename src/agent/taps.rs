@@ -239,7 +239,14 @@ pub fn add_tap(arg: &str) -> Result<()> {
 				tap_dir.display()
 			))?;
 		}
+		#[cfg(unix)]
 		std::os::unix::fs::symlink(&target, &tap_dir).context(format!(
+			"Failed to create symlink {} -> {}",
+			tap_dir.display(),
+			target.display()
+		))?;
+		#[cfg(windows)]
+		std::os::windows::fs::symlink_dir(&target, &tap_dir).context(format!(
 			"Failed to create symlink {} -> {}",
 			tap_dir.display(),
 			target.display()

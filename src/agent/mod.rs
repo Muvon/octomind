@@ -14,6 +14,7 @@
 
 //! Agent bootstrap: fetch manifests, resolve inputs, merge config, run session.
 
+pub mod deps;
 pub mod inputs;
 pub mod registry;
 pub mod taps;

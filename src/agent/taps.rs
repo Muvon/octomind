@@ -83,6 +83,11 @@ impl Tap {
 	pub fn agents_dir(&self) -> Result<PathBuf> {
 		Ok(self.local_dir()?.join("agents"))
 	}
+
+	/// Returns the deps directory path for this tap.
+	pub fn deps_dir(&self) -> Result<PathBuf> {
+		Ok(self.local_dir()?.join("deps"))
+	}
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -513,6 +513,21 @@ pub async fn line_replace_spec(
 	})
 }
 
+// Returns true for lines that are pure structural punctuation (e.g. `}`, `]`, `);`).
+// These are exempt from duplicate-line detection because they legitimately appear
+// at range boundaries without indicating the AI included surrounding context.
+fn is_structural_noise(line: &str) -> bool {
+	let trimmed = line.trim();
+	// Empty or only whitespace
+	if trimmed.is_empty() {
+		return true;
+	}
+	// Lines consisting entirely of closing brackets/braces/parens with optional trailing punctuation
+	trimmed
+		.chars()
+		.all(|c| matches!(c, '}' | '{' | ']' | '[' | ')' | '(' | ';' | ',' | '.'))
+}
+
 // Check for conflicting operations on the same lines
 fn detect_conflicts(operations: &[BatchOperation]) -> Result<(), String> {
 	for i in 0..operations.len() {
@@ -923,7 +938,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	//
 	// Uses exact (non-trimmed) comparison so that lines differing only in indentation
 	// (e.g. "\t\t]," vs "\t\t\t],") are correctly treated as distinct and not flagged.
-	// This also catches noise-only lines like "]," or "})" that share identical content.
+	// Structural noise lines (}, ], );, etc.) are exempt — they legitimately appear at boundaries.
 	let original_lines: Vec<&str> = original_content.lines().collect();
 	for op in &batch_operations {
 		if op.operation_type != OperationType::Replace {
@@ -940,7 +955,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		// First content line exactly matches the line immediately before the range
 		if start > 1 {
 			let line_before = original_lines[start - 2];
-			if content_lines[0] == line_before {
+			if content_lines[0] == line_before && !is_structural_noise(line_before) {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
@@ -956,7 +971,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		if end < original_lines.len() {
 			let line_after = original_lines[end];
 			let last = content_lines[content_lines.len() - 1];
-			if last == line_after {
+			if last == line_after && !is_structural_noise(line_after) {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),

@@ -320,8 +320,8 @@ mod tests {
 			"Expected success: {:?}",
 			result.result
 		);
-		// Diff must be present in metadata
-		assert!(result.result["metadata"]["diff"].as_str().is_some());
+		// Diff is returned as the text content of the result
+		assert!(result.result["content"][0]["text"].as_str().is_some());
 	}
 
 	#[tokio::test]
@@ -347,9 +347,9 @@ mod tests {
 			"Expected success: {:?}",
 			result.result
 		);
-		let diff = result.result["metadata"]["diff"]
+		let diff = result.result["content"][0]["text"]
 			.as_str()
-			.expect("diff field must be present");
+			.expect("diff must be present in content text");
 		assert!(diff.contains("-2:"), "diff must show removed line");
 		assert!(diff.contains("+2:"), "diff must show added line");
 	}

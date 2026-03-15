@@ -350,7 +350,7 @@ tools = []
 
 [[mcp.servers]]
 name = "octocode"
-type = "stdin"
+type = "stdio"
 command = "octocode"
 args = ["mcp", "--path=."]
 timeout_seconds = 240

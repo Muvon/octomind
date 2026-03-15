@@ -18,6 +18,7 @@ use super::core::{ChatSession, SessionInitParams};
 use super::params::extract_session_params;
 use crate::config::Config;
 use crate::log_info;
+use crate::providers::ProviderFactory;
 use anyhow::Result;
 use colored::*;
 use std::io::IsTerminal;
@@ -106,6 +107,21 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 
 	// Get role config for defaults
 	let (role_config, _, _, _, _) = config.get_role_config(&role);
+
+	// Validate provider credentials before starting — fail fast with a clear error
+	// Priority: CLI --model > role.model > config.model
+	let effective_model = model
+		.as_deref()
+		.or(role_config.model.as_deref())
+		.unwrap_or(&config.model);
+	if let Err(e) = validate_provider_credentials(effective_model) {
+		if let Some(sp) = spinner {
+			sp.finish_and_clear();
+			print!("\x1B[2K\r");
+			std::io::Write::flush(&mut std::io::stdout()).ok();
+		}
+		return Err(e);
+	}
 
 	// Get current directory - use thread-local if set (ACP sessions), otherwise process cwd
 	let current_dir = crate::mcp::get_thread_working_directory();
@@ -254,4 +270,17 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
 	Ok((chat_session, config_for_role, role, first_message_processed))
+}
+
+/// Check that the provider for the given model string has its credentials set.
+/// Fails fast before the session starts — avoids the confusing "first message fails" UX.
+fn validate_provider_credentials(model: &str) -> Result<()> {
+	let (provider, _) = ProviderFactory::parse_model(model)
+		.map_err(|e| anyhow::anyhow!("Invalid model '{}': {}", model, e))?;
+	let provider_instance = ProviderFactory::create_provider(&provider)
+		.map_err(|e| anyhow::anyhow!("Unknown provider '{}': {}", provider, e))?;
+	provider_instance
+		.get_api_key()
+		.map(|_| ())
+		.map_err(|e| anyhow::anyhow!("Provider '{}' credentials missing: {}", provider, e))
 }

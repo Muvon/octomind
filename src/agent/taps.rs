@@ -18,12 +18,13 @@
 //!
 //! ## Usage
 //! - `octomind tap user/repo` — clones https://github.com/user/octomind-repo
-//! - `octomind tap user/repo /path/to/local` — uses local directory (no clone)
+//! - `octomind tap user/repo /path/to/local` — symlinks local directory into taps dir
 //! - `octomind tap` — lists all taps
 //! - `octomind untap user/repo` — removes a tap
 //!
 //! ## Directory structure
-//! - Taps cloned to: `~/.local/share/octomind/taps/user/octomind-repo/`
+//! - GitHub taps cloned to: `~/.local/share/octomind/taps/user/octomind-repo/`
+//! - Local taps symlinked to: `~/.local/share/octomind/taps/user/octomind-repo/ -> /your/path`
 //! - Manifests expected at: `<tap>/agents/<category>/<variant>.toml`
 //!
 //! ## Priority
@@ -42,7 +43,8 @@ pub const DEFAULT_TAP: &str = "muvon/tap";
 pub struct Tap {
 	/// Tap name in `user/repo` format.
 	pub name: String,
-	/// Local path if using a local directory (None for GitHub taps).
+	/// Original local path for local taps (None for GitHub taps). Stored for display only —
+	/// the actual tap directory is always the standard symlink path under the taps dir.
 	pub local_path: Option<String>,
 }
 
@@ -59,23 +61,19 @@ impl Tap {
 		}
 	}
 
-	/// Returns the local directory path for this tap.
-	/// For GitHub taps: `~/.local/share/octomind/taps/user/octomind-repo/`
-	/// For local taps: the specified local_path.
+	/// Returns the standard directory path for this tap.
+	/// GitHub taps: `~/.local/share/octomind/taps/user/octomind-repo/` (git clone)
+	/// Local taps:  `~/.local/share/octomind/taps/user/octomind-repo/` (symlink → local path)
 	pub fn local_dir(&self) -> Result<PathBuf> {
-		if let Some(ref path) = self.local_path {
-			expand_path(path)
+		let parts: Vec<&str> = self.name.split('/').collect();
+		if parts.len() == 2 {
+			let tap_dir = crate::directories::get_octomind_data_dir()?
+				.join("taps")
+				.join(parts[0])
+				.join(format!("octomind-{}", parts[1]));
+			Ok(tap_dir)
 		} else {
-			let parts: Vec<&str> = self.name.split('/').collect();
-			if parts.len() == 2 {
-				let tap_dir = crate::directories::get_octomind_data_dir()?
-					.join("taps")
-					.join(parts[0])
-					.join(format!("octomind-{}", parts[1]));
-				Ok(tap_dir)
-			} else {
-				anyhow::bail!("Invalid tap name format: {}", self.name);
-			}
+			anyhow::bail!("Invalid tap name format: {}", self.name);
 		}
 	}
 
@@ -158,7 +156,7 @@ pub fn load_taps() -> Result<Vec<Tap>> {
 	// Ensure default tap is cloned (seamless first-time setup)
 	ensure_default_tap()?;
 
-	// Auto-update GitHub taps (seamless, like Homebrew)
+	// Auto-update GitHub taps only (local taps are symlinks — always live)
 	for tap in &file.taps {
 		if tap.local_path.is_none() {
 			if let Ok(tap_dir) = tap.local_dir() {
@@ -201,7 +199,7 @@ pub fn list_taps() -> Result<Vec<Tap>> {
 	Ok(read_taps_file()?.taps)
 }
 
-/// Add a tap. Clones from GitHub if not a local tap.
+/// Add a tap. Clones from GitHub or creates a symlink for local taps.
 ///
 /// Format: `user/repo` or `user/repo /path/to/local`
 pub fn add_tap(arg: &str) -> Result<()> {
@@ -219,9 +217,36 @@ pub fn add_tap(arg: &str) -> Result<()> {
 		anyhow::bail!("Tap '{}' is already added", tap.name);
 	}
 
-	// Clone from GitHub if not a local tap
-	if tap.local_path.is_none() {
-		let tap_dir = tap.local_dir()?;
+	let tap_dir = tap.local_dir()?;
+
+	if let Some(ref local_path) = tap.local_path {
+		// Local tap: create a symlink so the tap dir always reflects the live local directory.
+		let target = expand_path(local_path)?;
+		if !target.exists() {
+			anyhow::bail!("Local tap directory does not exist: {}", target.display());
+		}
+		// Create parent dirs (e.g. ~/.local/share/octomind/taps/user/)
+		if let Some(parent) = tap_dir.parent() {
+			fs::create_dir_all(parent).context(format!(
+				"Failed to create tap parent dir: {}",
+				parent.display()
+			))?;
+		}
+		// Remove stale symlink/dir if it already exists at the target path
+		if tap_dir.exists() || tap_dir.symlink_metadata().is_ok() {
+			fs::remove_file(&tap_dir).context(format!(
+				"Failed to remove existing tap path: {}",
+				tap_dir.display()
+			))?;
+		}
+		std::os::unix::fs::symlink(&target, &tap_dir).context(format!(
+			"Failed to create symlink {} -> {}",
+			tap_dir.display(),
+			target.display()
+		))?;
+		crate::log_info!("Symlinked tap {} -> {}", tap.name, target.display());
+	} else {
+		// GitHub tap: clone or update
 		if !tap_dir.exists() {
 			let url = tap.github_url();
 			crate::log_info!("Cloning tap {}...", tap.name);
@@ -230,15 +255,6 @@ pub fn add_tap(arg: &str) -> Result<()> {
 			crate::log_info!("Tap {} already cloned, updating...", tap.name);
 			git_pull(&tap_dir)?;
 		}
-	} else {
-		// Verify local path exists
-		let local_dir = tap.local_dir()?;
-		if !local_dir.exists() {
-			anyhow::bail!(
-				"Local tap directory does not exist: {}",
-				local_dir.display()
-			);
-		}
 	}
 
 	file.taps.push(tap);
@@ -246,7 +262,7 @@ pub fn add_tap(arg: &str) -> Result<()> {
 	Ok(())
 }
 
-/// Remove a tap by name.
+/// Remove a tap by name. Also removes the symlink for local taps.
 pub fn remove_tap(name: &str) -> Result<()> {
 	let name = name.trim().to_string();
 
@@ -259,10 +275,28 @@ pub fn remove_tap(name: &str) -> Result<()> {
 
 	let mut file = read_taps_file()?;
 	let before = file.taps.len();
+	let removed: Vec<Tap> = file
+		.taps
+		.iter()
+		.filter(|t| t.name == name)
+		.cloned()
+		.collect();
 	file.taps.retain(|t| t.name != name);
 	if file.taps.len() == before {
 		anyhow::bail!("Tap '{}' is not in your tap list", name);
 	}
+
+	// Remove the symlink for local taps (GitHub clones are left on disk intentionally)
+	for tap in &removed {
+		if tap.local_path.is_some() {
+			if let Ok(tap_dir) = tap.local_dir() {
+				if tap_dir.symlink_metadata().is_ok() {
+					let _ = fs::remove_file(&tap_dir);
+				}
+			}
+		}
+	}
+
 	write_taps_file(&file)?;
 	Ok(())
 }

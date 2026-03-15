@@ -432,7 +432,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 				// Auto-detect server type for display
 				let effective_type = match name {
-					"core" | "filesystem" | "agent" => McpConnectionType::Builtin,
+					"core" | "agent" => McpConnectionType::Builtin,
 					_ => server.connection_type(),
 				};
 
@@ -440,9 +440,6 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					McpConnectionType::Builtin => match name {
 						"core" => {
 							println!("  - {} (built-in core tools) - available", name)
-						}
-						"filesystem" => {
-							println!("  - {} (built-in filesystem tools) - available", name)
 						}
 						"agent" => println!("  - {} (built-in agent tool) - available", name),
 						_ => println!("  - {} (built-in tools) - available", name),
@@ -728,14 +725,13 @@ fn show_mcp_servers(servers: &[McpServerConfig]) {
 
 		// Auto-detect server type for display
 		let effective_type = match name {
-			"core" | "filesystem" | "agent" => McpConnectionType::Builtin,
+			"core" | "agent" => McpConnectionType::Builtin,
 			_ => server.connection_type(),
 		};
 
 		match effective_type {
 			McpConnectionType::Builtin => match name {
 				"core" => println!("      📦 {} (built-in core tools)", name),
-				"filesystem" => println!("      📂 {} (built-in filesystem tools)", name),
 				"agent" => println!("      🤖 {} (built-in agent tool)", name),
 				_ => println!("      📦 {} (built-in tools)", name),
 			},

@@ -71,7 +71,9 @@ tools = []
 
 [[mcp.servers]]
 name = "filesystem"
-type = "builtin"
+type = "stdio"
+command = "octofs"
+args = ["mcp", "--path={{CWD}}"]
 timeout_seconds = 30
 tools = []
 

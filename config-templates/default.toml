@@ -165,12 +165,6 @@ type = "builtin"
 timeout_seconds = 30
 tools = []
 
-[[mcp.servers]]
-name = "filesystem"
-type = "builtin"
-timeout_seconds = 30
-tools = []
-
 # HTTP MCP server configuration:
 # - Just provide a URL (localhost or remote - doesn't matter)
 # - Use Stdin type for local processes instead

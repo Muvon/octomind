@@ -104,7 +104,6 @@ pub mod oauth;
 
 pub mod agent;
 pub mod core;
-pub mod fs;
 pub mod health_monitor;
 pub mod process;
 pub mod server;
@@ -515,13 +514,6 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 							});
 						functions.extend(server_functions);
 					}
-					"filesystem" => {
-						let server_functions =
-							get_filtered_server_functions("filesystem", server.tools(), || {
-								fs::get_all_functions()
-							});
-						functions.extend(server_functions);
-					}
 					"agent" => {
 						// For agent server, get all agent functions based on config
 						// Don't cache agent functions since they depend on config
@@ -723,11 +715,6 @@ pub async fn build_tool_server_map(
 							core::get_all_functions()
 						})
 					}
-					"filesystem" => {
-						get_filtered_server_functions("filesystem", server.tools(), || {
-							fs::get_all_functions()
-						})
-					}
 					"agent" => {
 						// For agent server, get all agent functions based on config
 						// Don't cache agent functions since they depend on config
@@ -896,138 +883,6 @@ async fn execute_tool_without_cancellation(
 						_ => {
 							return Err(anyhow::anyhow!(
 								"Tool '{}' not implemented in core server",
-								call.tool_name
-							));
-						}
-					},
-					"filesystem" => match call.tool_name.as_str() {
-						"shell" => {
-							crate::log_debug!(
-								"Executing shell command via filesystem server '{}'",
-								target_server.name()
-							);
-							let mut result = fs::execute_shell_command(call).await?;
-							result.tool_id = call.tool_id.clone();
-							return Ok(result);
-						}
-						"ast_grep" => {
-							crate::log_debug!(
-								"Executing ast_grep command via filesystem server '{}'",
-								target_server.name()
-							);
-							match fs::execute_ast_grep_command(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									// Convert execution errors to proper MCP error results
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("AST-grep execution failed: {}", e),
-									));
-								}
-							}
-						}
-						"workdir" => {
-							crate::log_debug!(
-								"Executing workdir command via filesystem server '{}'",
-								target_server.name()
-							);
-							match fs::execute_workdir_command(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("Workdir execution failed: {}", e),
-									));
-								}
-							}
-						}
-						"text_editor" => {
-							crate::log_debug!(
-								"Executing text_editor via filesystem server '{}'",
-								target_server.name()
-							);
-							match fs::execute_text_editor(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("Text editor execution failed: {}", e),
-									));
-								}
-							}
-						}
-						"view" => {
-							crate::log_debug!(
-								"Executing view via filesystem server '{}'",
-								target_server.name()
-							);
-							match fs::execute_view(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("View execution failed: {}", e),
-									));
-								}
-							}
-						}
-						"extract_lines" => {
-							crate::log_debug!(
-								"Executing extract_lines via filesystem server '{}'",
-								target_server.name()
-							);
-							match fs::execute_extract_lines(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("Extract lines execution failed: {}", e),
-									));
-								}
-							}
-						}
-						"batch_edit" => {
-							crate::log_debug!(
-								"Executing batch_edit via filesystem server '{}'",
-								target_server.name()
-							);
-							match fs::execute_batch_edit(call).await {
-								Ok(mut result) => {
-									result.tool_id = call.tool_id.clone();
-									return Ok(result);
-								}
-								Err(e) => {
-									return Ok(McpToolResult::error(
-										call.tool_name.clone(),
-										call.tool_id.clone(),
-										format!("Batch edit execution failed: {}", e),
-									));
-								}
-							}
-						}
-						_ => {
-							return Err(anyhow::anyhow!(
-								"Tool '{}' not implemented in filesystem server",
 								call.tool_name
 							));
 						}

@@ -21,9 +21,6 @@ pub mod functions;
 pub mod plan;
 
 #[cfg(test)]
-mod core_tests;
-
-#[cfg(test)]
 mod plan_tests;
 
 // Re-export main functionality

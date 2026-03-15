@@ -165,8 +165,6 @@ export AMAZON_SECRET_ACCESS_KEY="..."
 export CLOUDFLARE_API_TOKEN="..."
 export DEEPSEEK_API_KEY="sk-..."
 
-# Optional: Web search capability
-export BRAVE_API_KEY="BSA..."
 ```
 
 ### Provider Details
@@ -262,7 +260,7 @@ octomind completion fish > ~/.config/fish/completions/octomind.fish
 - ✅ PowerShell (Windows)
 - ✅ Elvish (via generic completion)
 
-## Verification
+# Verification
 
 After installation, verify Octomind is working correctly:
 
@@ -272,6 +270,9 @@ octomind --version
 
 # Verify API key is set
 octomind vars
+
+# List active taps (registry sources)
+octomind tap
 
 # Test basic functionality
 octomind config --show
@@ -362,7 +363,12 @@ target_ratio = 8.0  # Compress to 12.5% at 150k tokens
 [compression.decision]
 model = "anthropic:claude-haiku-4-5"    # Model for compression decisions
 max_tokens = 16000
-```
+temperature = 0.3
+top_p = 1.0
+top_k = 0
+max_retries = 1
+retry_timeout = 30
+ignore_cost = false
 
 Compression preserves architectural information, file references, and key technical details while reducing token usage. See [Advanced Configuration](./06-advanced.md) for details.
 

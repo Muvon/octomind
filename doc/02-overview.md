@@ -6,14 +6,14 @@ Octomind is a session-first AI development assistant that transforms how you int
 
 **Key Principles:**
 - **Session-First**: Everything happens in interactive AI conversations
-- **Tool Integration**: Built-in MCP tools for development, filesystem, web, and agent operations
+- **Tool Integration**: Built-in MCP tools for development, filesystem, and agent operations
 - **Multi-Provider**: Unified interface across 7 AI providers
 - **Cost Optimization**: Smart caching and real-time usage tracking
 - **Role-Based**: Developer (full tools) and Assistant (chat-only) configurations
 
 ## Architecture Overview
 
-Octomind implements a clean, session-first architecture:
+**Octomind** implements a session-first architecture with the following core components:
 
 ```mermaid
 graph TB
@@ -27,9 +27,9 @@ graph TB
     C --> H[Assistant Role<br/>Chat Only]
     C --> I[Custom Roles<br/>Configurable]
 
-    D --> J[Core Server<br/>plan]
-    D --> K[Filesystem Server<br/>text_editor, batch_edit, extract_lines]
-    D --> L[Agent Server<br/>Specialized AI routing]
+    D --> J[Core Server<br/>plan, mcp, agent]
+    D --> K[Filesystem Server<br/>view, text_editor, batch_edit, extract_lines, shell, workdir, ast_grep]
+    D --> L[Agent Server<br/>agent_* tools]
 
     E --> M[OpenRouter<br/>Multi-provider]
     E --> N[OpenAI<br/>Direct API]
@@ -55,22 +55,24 @@ graph TB
 - **Session Management**: Save, resume, and organize conversations by name
 ### 2. MCP Tool System
 
-**Built-in MCP Servers** provide comprehensive development capabilities:
+**Built-in MCP Servers** provide comprehensive development capabilities with parallel initialization for faster startup:
 
 **Core Server** (`src/mcp/core/`):
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
+- `mcp(action="list|add|enable|disable|remove", ...)` - Dynamic MCP server management
+- `agent(action="list|add|enable|disable|remove", ...)` - Dynamic agent tool management
 
 **Filesystem Server** (`src/mcp/fs/`):
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
 - `text_editor(command="create|str_replace|undo_edit", path="...", ...)` - Create files or make targeted string replacements
-- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
+- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically. Returns a detailed diff with line numbers and context.
 - `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
 - `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
 - `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
 
 **Agent Server** (`src/mcp/agent/`):
-- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess via the configured `command`)
+- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess or executes in-process for dynamic agents)
 
 ### 3. Multi-Provider AI Support
 **Unified Interface** across 7 AI providers with consistent `provider:model` format:
@@ -214,7 +216,7 @@ octomind run
 
 # Use built-in tools
 > shell(command="cargo test")
-> text_editor(command="view", path="src/main.rs", view_range=[1, 50])
+> view(path="src/main.rs", lines=[1, 50])
 > ast_grep(pattern="fn $NAME($ARGS)", language="rust")
 ```
 
@@ -286,4 +288,4 @@ export OCTOMIND_ROLES__DEVELOPER__MAX_TOKENS="16384"
 
 ---
 
-**Octomind v0.20.0** - Session-first AI development assistant with built-in MCP tools and multi-provider support.
+**Octomind** - Session-first AI development assistant with built-in MCP tools and multi-provider support.

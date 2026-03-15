@@ -19,16 +19,16 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 
 ## Current Architecture Overview
 
-**Octomind v0.20.0** implements a session-first architecture with the following core components:
+**Octomind** implements a session-first architecture with the following core components:
 
 ### Session-First Design
 - **Interactive AI Conversations**: All functionality accessed through natural language sessions
 - **Persistent Context**: Smart context management with automatic compression when limits reached
 - **Role-Based Access**: Developer (full tools), Assistant (chat-only), and custom role configurations
 ### Built-in MCP Tools
-- **Core Server**: `plan()`, `ask()` - Structured task management and user interaction
+- **Core Server**: `plan()`, `mcp()`, `agent()` - Structured task management, dynamic server and agent management
 - **Filesystem Server**: `view()`, `text_editor()`, `batch_edit()`, `extract_lines()`, `shell()`, `workdir()`, `ast_grep()` - File operations, command execution, and code analysis
-- **Agent Server**: `agent_*()` - Specialized AI task routing
+- **Agent Server**: `agent_*()` - Specialized AI task routing (delegates to configured ACP sub-agents or in-process dynamic agents)
 
 ### Multi-Provider AI Support
 - **7 Providers**: OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare, DeepSeek
@@ -124,7 +124,8 @@ octomind run developer:rust        # Registry agent (fetches manifest)
 /help                             # Show available commands
 /info                             # Token usage and costs
 /image <path>                     # Attach images for AI analysis
-/mcp info                         # Check MCP server status
+/mcp list                         # List active MCP servers
+/plan                             # View current task plan
 ```
 
 ### Key Architecture Concepts
@@ -134,7 +135,7 @@ Everything happens within interactive AI conversations. No separate indexing, co
 
 #### **MCP Tool Integration**
 Built-in servers provide development tools:
-- **Core**: `plan()`, `ask()` - Structured task management and user interaction
+- **Core**: `plan()`, `mcp()`, `agent()` - Structured task management, dynamic server and agent management
 - **Filesystem**: `view()`, `text_editor()`, `batch_edit()`, `extract_lines()`, `shell()`, `workdir()`, `ast_grep()` - File operations, command execution, and code analysis
 - **Agent**: `agent_*()` - Specialized AI task routing
 
@@ -221,6 +222,6 @@ Default values
 
 ---
 
-**Octomind v0.20.0** - Session-first AI development assistant with built-in MCP tools and multi-provider support.
+**Octomind** - Session-first AI development assistant with built-in MCP tools and multi-provider support.
 
 **© 2026 Muvon Un Limited** | Apache License 2.0

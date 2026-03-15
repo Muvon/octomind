@@ -26,18 +26,20 @@ Octomind provides three built-in MCP servers with comprehensive development capa
 
 **Core Server** (`src/mcp/core/`):
 - `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
+- `mcp(action="list|add|enable|disable|remove", ...)` - Dynamic MCP server management
+- `agent(action="list|add|enable|disable|remove", ...)` - Dynamic agent tool management
 
 **Filesystem Server** (`src/mcp/fs/`):
 - `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
 - `text_editor(command="create|str_replace|undo_edit", path="...", ...)` - Create files or make targeted string replacements
-- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
+- `batch_edit(path="...", operations=[...])` - Multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL line numbers. Returns a detailed diff with line numbers and context.
 - `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
 - `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
 - `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
 - `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
 
 **Agent Server** (`src/mcp/agent/`):
-- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess via the configured `command`)
+- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess or executes in-process for dynamic agents)
 ---
 
 ### plan — Structured Task Management Tool
@@ -87,6 +89,52 @@ The `plan` tool enables interactive, step-by-step task management inside Octomin
 - Visual progress feedback within session
 - Clean error handling and robust MCP protocol support
 
+### mcp — Dynamic MCP Server Management
+
+The `mcp` tool allows you to manage MCP servers at runtime without editing the configuration file. This is useful for testing new servers or adding specialized tools temporarily.
+
+**Actions:**
+- **`list`**: Show all currently loaded dynamic servers and their tools.
+- **`add`**: Register a new MCP server configuration (does NOT connect yet).
+- **`enable`**: Connect to a registered server and activate its tools.
+- **`disable`**: Deactivate a server's tools (configuration stays registered).
+- **`remove`**: Unregister a server entirely.
+
+**Parameters:**
+- `action` (string, required): `add`, `remove`, `enable`, `disable`, `list`
+- `name` (string, optional): Unique name for the server
+- `server_type` (string, optional): `stdin` or `http`
+- `command` (string, optional): Executable to run (for `stdin`)
+- `args` (array, optional): Arguments for the command (for `stdin`)
+- `url` (string, optional): Server endpoint (for `http`)
+- `auth_token` (string, optional): Bearer token for authentication (for `http`)
+- `timeout_seconds` (number, optional): Server response timeout (default: 60)
+- `tools` (array, optional): Which tools to expose (empty = all)
+
+### agent — Dynamic Agent Management
+
+The `agent` tool allows you to manage specialized AI agents at runtime. These agents can be used as tools (prefixed with `agent_`) to delegate complex tasks.
+
+**Actions:**
+- **`list`**: Show all currently registered dynamic agents and their status.
+- **`add`**: Register a new agent configuration (does NOT enable it yet).
+- **`enable`**: Enable a registered agent (makes it available for execution).
+- **`disable`**: Disable an agent (config stays registered).
+- **`remove`**: Unregister an agent entirely.
+
+**Parameters:**
+- `action` (string, required): `add`, `remove`, `enable`, `disable`, `list`
+- `name` (string, optional): Unique agent name (becomes tool: `agent_<name>`)
+- `description` (string, optional): Human-readable description for the agent tool
+- `system` (string, optional): System prompt for the agent (required for `add`)
+- `welcome` (string, optional): Optional welcome message
+- `model` (string, optional): Model override (e.g., 'openai:gpt-4')
+- `temperature` (number, optional): Optional temperature override
+- `top_p` (number, optional): Optional top_p override
+- `top_k` (integer, optional): Optional top_k override
+- `server_refs` (array, optional): MCP server references (config-defined or dynamic)
+- `allowed_tools` (array, optional): Allowed tools filter (supports wildcards)
+- `workdir` (string, optional): Working directory (default: '.')
 See `src/mcp/core/plan/` for code, and test integration in `src/session/chat/session/main_loop.rs`.
 - Single tool: clean header, no index
 - Multiple tools: indexed headers
@@ -190,13 +238,13 @@ Get or set the working directory for file and shell operations:
 
 #### Filesystem Tools (type: "builtin")
 - **view**: Read files, view directories, and search file content with pattern matching
-- **text_editor**: Edit files with multiple operations (create, str_replace, insert, line_replace, undo_edit)
+- **text_editor**: Edit files with multiple operations (create, str_replace, undo_edit)
 - **extract_lines**: Extract lines from source file and append to target file without modifying source (perfect for refactoring)
 - **batch_edit**: Multiple file operations atomically
 
 ### Agent Tools Reference
 
-The agent system enables task delegation to specialized AI agents configured in your system. Each configured agent becomes a separate MCP tool that spawns an ACP subprocess and drives the full `initialize → session/new → session/prompt` protocol.
+The agent system enables task delegation to specialized AI agents. Agents can be configured in the configuration file or managed dynamically at runtime. Each agent becomes a separate MCP tool (prefixed with `agent_`) that either spawns an ACP subprocess or executes in-process for dynamic agents.
 
 #### How It Works
 
@@ -343,38 +391,41 @@ The `text_editor` tool provides comprehensive file manipulation capabilities thr
 
 **batch_edit** - Perform multiple editing operations in a single call
 ```json
+### batch_edit — Atomic Multi-Line Editing
+
+The `batch_edit` tool allows performing multiple insert or replace operations on a single file atomically. It uses original line numbers, meaning all operations refer to the file state before any changes were applied.
+
+**Parameters:**
+- `path` (string, required): Path to the file to edit
+- `operations` (array, required): List of operations to perform:
+  - `operation` (string): `insert` (after line) or `replace` (line range)
+  - `line_range` (integer or array): Single line number for `insert`, or `[start, end]` for `replace`
+  - `content` (string): Raw content to insert or replace with
+
+**Usage Example:**
+```json
 {
-  "command": "batch_edit",
+  "path": "src/main.rs",
   "operations": [
     {
-      "operation": "str_replace",
-      "path": "src/main.rs",
-      "old_str": "old_function_name",
-      "new_str": "new_function_name"
+      "operation": "replace",
+      "line_range": [10, 12],
+      "content": "fn new_function() {\n    println!(\"Updated\");\n}"
     },
     {
       "operation": "insert",
-      "path": "src/lib.rs",
-      "insert_line": 5,
-      "new_str": "// New comment\nuse new_module;"
-    },
-    {
-      "operation": "line_replace",
-      "path": "src/config.rs",
-      "view_range": [10, 15],
-      "new_str": "// Updated configuration\nconst NEW_CONFIG: &str = \"value\";"
+      "line_range": 20,
+      "content": "// New comment after line 20"
     }
   ]
 }
 ```
 
-**Batch Edit Features:**
-- **Maximum 50 operations** per batch for performance
-- **Supported operations**: str_replace, insert, line_replace
-- **Cross-file editing**: Make changes across multiple files simultaneously
-- **Detailed reporting**: Success/failure status for each operation
-- **Error isolation**: Failed operations don't affect successful ones
-- **File history preservation**: Each operation saves file history for undo
+**Key Features:**
+- **Atomic execution**: All changes are applied together or not at all
+- **Original line numbers**: No need to track line shifts between operations
+- **Diff output**: Returns a standard diff showing exactly what changed
+- **Safety**: Validates line ranges and content before applying
 
 **Note**: `extract_lines` is not supported in batch operations as it's a standalone tool for file-to-file extraction.
 
@@ -400,23 +451,16 @@ allowed_tools = []
 name = "core"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []  # Empty means all tools enabled
+
+[[mcp.servers]]
+name = "agent"
+type = "builtin"
+timeout_seconds = 30
 
 [[mcp.servers]]
 name = "filesystem"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []  # Empty means all tools enabled
-
-[[mcp.servers]]
-name = "web"
-type = "builtin"
-timeout_seconds = 30
-args = []
-tools = []  # Empty means all tools enabled
-
 # External HTTP server example
 [[mcp.servers]]
 name = "external_tools"
@@ -442,19 +486,19 @@ Roles reference servers from the main MCP configuration and can limit tool acces
 
 ```toml
 # Developer role with full access
-[developer.mcp]
-server_refs = ["core", "filesystem", "web"]
-allowed_tools = []  # Empty means all tools from referenced servers
+[[roles]]
+name = "developer"
+[roles.mcp]
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]
 
 # Assistant role with limited access
-[assistant.mcp]
+[[roles]]
+name = "assistant"
+[roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "view"]  # Only specific tools
-# Custom role with external tools
-[code-reviewer.mcp]
-server_refs = ["core", "external_tools"]
-allowed_tools = ["text_editor", "shell"]
-
+allowed_tools = ["filesystem:view"]
+```
 ### Server Types
 
 - **developer**: Built-in development tools
@@ -472,7 +516,7 @@ allowed_tools = ["text_editor", "shell"]
 #### HTTP-based Servers
 ```toml
 [[mcp.servers]]
-name = "web_tools"
+name = "custom_api"
 type = "http"
 url = "https://api.example.com/mcp"
 auth_token = "your_token"
@@ -1017,21 +1061,20 @@ allowed_tools = ["text_editor"]  # Only doc-related tools
 ```
 
 ### External Tool Integration
-[web-dev]
+[custom-dev]
 model = "openrouter:anthropic/claude-sonnet-4"
 
-[web-dev.mcp]
+[custom-dev.mcp]
 enabled = true
-server_refs = ["core", "filesystem", "web_tools"]
+server_refs = ["core", "filesystem", "custom_tools"]
 
-# Add web-specific MCP server
+# Add custom MCP server
 [[mcp.servers]]
-name = "web_tools"
+name = "custom_tools"
 type = "http"
-url = "https://mcp.so/server/web-dev-tools"
+url = "https://mcp.so/server/custom-tools"
 timeout_seconds = 30
 tools = []
-```
 ### OAuth 2.1 + PKCE Authentication for External Servers
 
 HTTP MCP servers can be secured with OAuth 2.1 + PKCE (Proof Key for Code Exchange) authentication:

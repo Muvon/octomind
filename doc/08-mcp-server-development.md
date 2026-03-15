@@ -9,19 +9,21 @@ This guide explains how to add new built-in MCP servers to Octomind. Use this wh
 Octomind provides **three** built-in MCP servers with comprehensive development capabilities:
 
 **Core Server** (`src/mcp/core/`):
-- `plan(command="start|step|next|list|done|reset", ...)` - Structured task management with progress tracking
+- `plan(command=\"start|step|next|list|done|reset\", ...)` - Structured task management with progress tracking
+- `mcp(action=\"list|add|enable|disable|remove\", ...)` - Dynamic MCP server management
+- `agent(action=\"list|add|enable|disable|remove\", ...)` - Dynamic agent tool management
 
 **Filesystem Server** (`src/mcp/fs/`):
-- `view(path="...", lines=[start, end], pattern="...", content="...", ...)` - Read files, view directories, and search file content
-- `text_editor(command="create|str_replace|insert|line_replace|undo_edit", path="...", ...)` - Edit files
-- `batch_edit(path="...", operations=[...])` - Multiple file operations atomically
-- `extract_lines(from_path="...", from_range=[start, end], append_path="...", append_line=N)` - Extract and move code blocks
-- `shell(command="...", background=false)` - Execute shell commands with output capture, foreground/background execution
-- `workdir(path="...", reset=false)` - Get or set working directory for parallel execution isolation
-- `ast_grep(pattern="...", language="...", rewrite="...", ...)` - Search and refactor code using AST patterns
+- `view(path=\"...\", lines=[start, end], pattern=\"...\", content=\"...\", ...)` - Read files, view directories, and search file content
+- `text_editor(command=\"create|str_replace|undo_edit\", path=\"...\", ...)` - Edit files
+- `batch_edit(path=\"...\", operations=[...])` - Multiple file operations atomically
+- `extract_lines(from_path=\"...\", from_range=[start, end], append_path=\"...\", append_line=N)` - Extract and move code blocks
+- `shell(command=\"...\", background=false)` - Execute shell commands with output capture, foreground/background execution
+- `workdir(path=\"...\", reset=false)` - Get or set working directory for parallel execution isolation
+- `ast_grep(pattern=\"...\", language=\"...\", rewrite=\"...\", ...)` - Search and refactor code using AST patterns
 
 **Agent Server** (`src/mcp/agent/`):
-- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess via the configured `command`)
+- `agent_*()` tools - Delegate tasks to configured ACP sub-agents (each spawns an ACP subprocess or executes in-process for dynamic agents)
 
 ## When to Add a New MCP Server
 
@@ -30,6 +32,29 @@ Add a new built-in MCP server when you have:
 - Tools that should be independently configurable from existing servers
 - Functionality that doesn't fit well in existing servers
 
+## MCP Server Initialization
+
+Octomind uses a parallel initialization system for MCP servers to ensure fast startup. The initialization process includes:
+
+1. **Parallel Connection**: All external servers (HTTP, Stdin) are connected simultaneously.
+2. **Progress Tracking**: Detailed progress is shown via the `McpInitProgress` enum, displaying server names, success status, and function counts.
+3. **Timeout Handling**: Each server has a configurable `timeout_seconds` to prevent startup hangs.
+4. **Error Recovery**: Failed servers are logged but don't prevent the session from starting if other servers are available.
+
+## Dynamic MCP Servers and Agents
+
+In addition to config-defined servers, Octomind supports dynamic management of MCP servers and agents at runtime.
+
+### Dynamic MCP Servers
+- **Registration**: Add a server configuration to the dynamic manager.
+- **Activation**: Connect and fetch tools from a registered server.
+- **Control**: Temporarily deactivate a server's tools.
+- **Lifecycle**: Dynamic servers persist for the duration of the session.
+
+### Dynamic Agents
+- **Registration**: Define specialized AI agents with their own system prompts and tools.
+- **Tool Integration**: Each dynamic agent becomes an MCP tool prefixed with `agent_`.
+- **Execution**: Agents can run in-process or as separate ACP subprocesses.
 ## External HTTP Servers with OAuth 2.1 + PKCE
 
 Octomind supports OAuth 2.1 + PKCE authentication for external HTTP MCP servers. This allows secure authentication without storing credentials.
@@ -124,10 +149,10 @@ Add your server to the `from_name` method:
 ```rust
 pub fn from_name(name: &str) -> Self {
     let connection_type = match name {
-        "core" => McpConnectionType::Builtin,
-        "filesystem" => McpConnectionType::Builtin,
-        "agent" => McpConnectionType::Builtin,
-        "database" => McpConnectionType::Builtin,  // <- Add here
+        \"core\" => McpConnectionType::Builtin,
+        \"filesystem\" => McpConnectionType::Builtin,
+        \"agent\" => McpConnectionType::Builtin,
+        \"database\" => McpConnectionType::Builtin,  // <- Add here
         _ => McpConnectionType::Http,
     };
     // ...
@@ -139,13 +164,8 @@ Add a helper constructor method:
 ```rust
 /// Create a database server configuration
 pub fn database(name: &str, tools: Vec<String>) -> Self {
-    Self {
+    Self::Builtin {
         name: name.to_string(),
-        connection_type: McpConnectionType::Builtin,
-        url: None,
-        auth_token: None,
-        command: None,
-        args: Vec::new(),
         timeout_seconds: 30,
         tools,
     }
@@ -290,29 +310,22 @@ pub mod fs;
 
 ### 5. Update MCP Function Discovery
 
-**File: `src/mcp/mod.rs`**
-Add your server to the `get_available_functions` method:
+**File: `src/mcp/tool_map.rs`**
+Add your server to the `build_tool_server_map_impl` method:
 
 ```rust
-for server in enabled_servers {
-    match server.connection_type {
-        crate::config::McpConnectionType::Builtin => {
-            // Handle builtin servers by name
-            match server.name.as_str() {
-                "core" => {
-                    // existing code...
-                }
-                "database" => {
-                    // Add database handling here
-                }
-                _ => {}
-            }
-        }
-        // existing code...
+match server.name() {
+    \"core\" => {
+        // ...
     }
+    \"database\" => crate::mcp::get_filtered_server_functions(
+        \"database\",
+        server.tools(),
+        crate::mcp::database::get_all_functions,
+    ),
+    // ...
 }
 ```
-
 ### 6. Add Server Type Enum (if needed)
 
 If your server needs a dedicated enum variant (rare for builtin servers):

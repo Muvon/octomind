@@ -38,10 +38,13 @@ Octomind supports seven AI providers:
 export OPENROUTER_API_KEY="your_openrouter_key"
 ```
 
-```toml
-[openrouter]
+#### Usage
+```bash
+# Set global model in config.toml
 model = "openrouter:anthropic/claude-sonnet-4"
-api_key = "your_key"  # Optional, can use env var
+
+# Or override at runtime
+octomind run --model "openrouter:anthropic/claude-sonnet-4"
 ```
 
 #### Caching & Cost Tracking
@@ -181,21 +184,13 @@ octomind run --model "google:gemini-1.5-flash"
 - **Features**: Tool support, cost calculation, **vision support**
 - **Models**: Claude, Titan, Jurassic, and other AWS Bedrock models
 - **Vision Models**: Claude 3+ models on Bedrock support image analysis
-- **Note**: Requires AWS credentials
+- **Note**: Requires AWS credentials in environment variables
 
 #### Setup
 ```bash
 export AWS_ACCESS_KEY_ID="your_access_key"
 export AWS_SECRET_ACCESS_KEY="your_secret_key"
 export AWS_REGION="us-east-1"
-```
-
-#### Configuration
-```toml
-[providers.amazon]
-region = "us-east-1"
-access_key_id = "your_access_key"  # Optional, can use env var
-secret_access_key = "your_secret_key"  # Optional, can use env var
 ```
 
 #### Usage
@@ -211,19 +206,12 @@ octomind run --model "amazon:amazon.titan-text-express"
 - **Features**: Tool support, edge computing, **vision support**
 - **Models**: Various models available through Cloudflare Workers AI
 - **Vision Models**: Llama 3.2 vision models support image analysis
-- **Note**: Requires Cloudflare account and API token
+- **Note**: Requires Cloudflare account and API token in environment variables
 
 #### Setup
 ```bash
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 export CLOUDFLARE_API_TOKEN="your_api_token"
-```
-
-#### Configuration
-```toml
-[providers.cloudflare]
-account_id = "your_account_id"
-api_token = "your_api_token"  # Optional, can use env var
 ```
 
 #### Usage
@@ -238,17 +226,11 @@ octomind run --model "cloudflare:@cf/mistral/mistral-7b-instruct-v0.1"
 - **Format**: `deepseek:model-name`
 - **Features**: Tool support, cost-effective pricing, competitive performance
 - **Models**: DeepSeek Chat and other models
-- **Note**: Requires DeepSeek API key
+- **Note**: Requires DeepSeek API key in environment variables
 
 #### Setup
 ```bash
 export DEEPSEEK_API_KEY="your_deepseek_key"
-```
-
-#### Configuration
-```toml
-[providers.deepseek]
-api_key = "your_key"  # Optional, can use env var
 ```
 
 #### Usage
@@ -261,15 +243,17 @@ octomind run --model "deepseek:deepseek-coder"
 
 ### For Different Use Cases
 
-#### Development Work (Agent Mode)
+#### Development Work (Developer Role)
 ```toml
-[agent.openrouter]
+[[roles]]
+name = "developer"
 model = "openrouter:anthropic/claude-sonnet-4"  # Best reasoning
 ```
 
-#### Quick Chat (Chat Mode)
+#### Quick Chat (Assistant Role)
 ```toml
-[chat.openrouter]
+[[roles]]
+name = "assistant"
 model = "openai:gpt-4o-mini"  # Fast and cost-effective
 ```
 
@@ -311,13 +295,14 @@ model = "openrouter:anthropic/claude-sonnet-4"
 
 ```toml
 # Use expensive models only for complex reasoning
-[agent.openrouter]
+[[roles]]
+name = "developer"
 model = "openrouter:anthropic/claude-sonnet-4"
 
 # Use cheap models for simple tasks
-[chat.openrouter]
+[[roles]]
+name = "assistant"
 model = "google:gemini-1.5-flash"
-
 # Layer-specific cost optimization is done in [[layers]] sections
 # Each layer has its own model configuration
 # See doc/05-sessions.md for complete layer configuration examples
@@ -330,16 +315,15 @@ model = "google:gemini-1.5-flash"
 - **OpenRouter** with Claude models
 
 ### Enabling Caching
-```bash
-# During session, mark cache points
-/cache
 
-# Automatic caching threshold
-```
+Caching is automatically enabled for supported models. You can configure the compression system to optimize token usage:
 
 ```toml
-[openrouter]
-cache_tokens_pct_threshold = 40  # Auto-cache at 40% context
+[compression]
+adaptive_threshold = true
+pressure_levels = [
+    { threshold = 60000, target_ratio = 2.5 }
+]
 ```
 
 ### Benefits
@@ -354,6 +338,7 @@ cache_tokens_pct_threshold = 40  # Auto-cache at 40% context
 Octomind uses a unified token counting system that provides accurate estimates matching what's actually sent to API providers. This single source of truth ensures consistency across all systems: display, compression, and cost tracking.
 
 **For detailed information about compression and cost optimization, see [Advanced Features - Smart Adaptive Compression System](./06-advanced.md#smart-adaptive-compression-system) and [Configuration - Smart Adaptive Compression](./03-configuration.md#smart-adaptive-compression).**
+
 #### Token Counting Functions
 
 **`estimate_tokens(text: &str) -> usize`**
@@ -371,7 +356,10 @@ Octomind uses a unified token counting system that provides accurate estimates m
 - Includes inter-message overhead
 - Used for conversation history estimation
 
-**`estimate_full_context_tokens(messages: &[Message], config: &Config) -> usize`**
+**`estimate_full_context_tokens(messages: &[Message], config: &Config)`**
+- Calculates total tokens for an API request
+- Includes system prompt, tool definitions, and conversation history
+- Used for compression triggers and cost estimation
 - Comprehensive token count including:
   - All conversation messages
   - System prompt

@@ -1,6 +1,6 @@
 # Octomind Developer Guide
 
-Octomind is a session-based AI development assistant written in Rust. Users run interactive chat sessions with MCP tools attached; the AI can call those tools to read/write files, search code, run shell commands, browse the web, and delegate to sub-agents (layers). Multiple AI providers are supported via [octolib](https://github.com/muvon/octolib).
+Octomind is a session-based AI development assistant written in Rust. Users run interactive chat sessions with MCP tools attached; the AI can call those tools to read/write files, search code, run shell commands, and delegate to sub-agents (layers). Multiple AI providers are supported via [octolib](https://github.com/muvon/octolib).
 
 ## Architecture Overview
 
@@ -15,7 +15,7 @@ CLI / WebSocket
       ├── Workflows   ← src/session/workflows/       (multi-step orchestrated task runners)
       │
       └── MCP servers ← src/mcp/
-            ├── core/     plan
+            ├── core/     plan, mcp, agent
             ├── fs/       view, text_editor, batch_edit, extract_lines, shell, workdir, ast_grep
             └── agent/    agent_* tools → route tasks to configured layers
 ```

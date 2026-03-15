@@ -13,14 +13,73 @@ Octomind supports loading multiple configuration files from the config directory
 
 ## Configuration Hierarchy
 
-The configuration system follows a template-based approach with environment variable overrides:
+The configuration system follows a template-based approach:
 
 1. **Template Defaults** (`config-templates/default.toml`) - All default values and structure
 2. **Multi-File Configuration** - All `.toml` files in config directory are merged
-3. **Environment Variables** - Override any setting with `OCTOMIND_*` prefix
-4. **User Configuration** - Optional user config file for persistent customization
+3. **User Configuration** - Optional user config file for persistent customization
 
-### Configuration Principles
+**Note**: The environment variable `OCTOMIND_CONFIG_PATH` can be used to specify a custom configuration path.
+
+## Registry Taps
+
+Octomind uses a Homebrew-style tap system to manage agent manifests from multiple sources. Taps are Git repositories or local directories containing agent definitions.
+
+### Tap Management
+
+```bash
+# Add a GitHub tap (clones https://github.com/user/octomind-repo)
+octomind tap user/repo
+
+# Add a local tap
+octomind tap user/repo /path/to/local
+
+# List all active taps
+octomind tap
+
+# Remove a tap
+octomind untap user/repo
+```
+
+### How Taps Work
+
+1. **Priority**: User-added taps are searched in the order they were added, with the built-in default tap (`muvon/tap`) as the last fallback.
+2. **Auto-Update**: GitHub taps are automatically updated (via `git pull`) when the session starts, ensuring you always have the latest agent manifests.
+3. **Storage**: Cloned taps are stored in `~/.local/share/octomind/taps/`.
+4. **Manifests**: Taps are expected to have an `agents/` directory containing category subdirectories and `.toml` manifest files (e.g., `agents/coding/rust-expert.toml`).
+
+## Placeholders and Inputs
+
+Octomind supports dynamic placeholders in agent manifests and configuration files.
+
+### Template Variables
+Standard variables available in system prompts and instructions:
+- `{{ROLE}}` - Current role name
+- `{{CWD}}` - Current working directory
+- `{{DATE}}` - Current date and time
+- `{{SYSTEM}}` - Complete system information
+- `{{CONTEXT}}` - Project context (README, git status, etc.)
+
+### Persistent Inputs (`{{INPUT:KEY}}`)
+Used for persistent credentials or settings:
+1. Loads values from `~/.local/share/octomind/inputs.toml`
+2. Prompts the user for missing values once, then saves them
+3. Substitutes placeholders in manifests
+
+### Environment Variables (`{{ENV:KEY}}`)
+Used for environment-specific settings with `.env` fallback:
+1. Uses existing environment variable if set
+2. Otherwise prompts the user and persists to `./.env` in the current directory
+3. Automatically loaded on subsequent runs
+
+### Viewing Variables
+```bash
+# List all available variables
+octomind vars
+
+# Show expanded values
+octomind vars --expand
+```
 
 - **Template-Based**: All defaults defined in `config-templates/default.toml`
 - **Environment Override**: Any setting can be overridden with `OCTOMIND_*` variables
@@ -39,6 +98,10 @@ Octomind uses role-based configuration with built-in roles and custom role suppo
 
 **Environment Overrides**: Use `OCTOMIND_ROLES__ROLENAME__SETTING` format for role-specific overrides
 
+
+### Layer Configuration
+
+Layers are chained AI sub-agents that run after each response. When a layer is used as an agent tool, its name is automatically prefixed with `agent_` (e.g., a layer named `researcher` becomes the tool `agent_researcher`).
 ## Configuration System
 
 ### Template-Based Configuration
@@ -52,23 +115,16 @@ Octomind uses a template-based configuration system where all defaults are defin
 
 ### Environment Variable Overrides
 
-Any setting in the template can be overridden using environment variables with the `OCTOMIND_` prefix:
+API keys and other sensitive information are read from environment variables:
 
 ```bash
-# System-wide settings
-export OCTOMIND_LOG_LEVEL="debug"
-export OCTOMIND_MODEL="openrouter:anthropic/claude-sonnet-4"
-export OCTOMIND_MAX_TOKENS="8192"
+# API Keys
+export OPENROUTER_API_KEY="your_key"
+export OPENAI_API_KEY="your_key"
+export ANTHROPIC_API_KEY="your_key"
 
-# Role-specific overrides (use double underscores for nested settings)
-export OCTOMIND_ROLES__DEVELOPER__MODEL="openai:gpt-4o"
-export OCTOMIND_ROLES__DEVELOPER__TEMPERATURE="0.1"
-
-# Layer overrides
-export OCTOMIND_LAYERS__TASK_REFINER__MODEL="openrouter:anthropic/claude-haiku"
-
-# MCP server overrides
-export OCTOMIND_MCP__SERVERS__OCTOCODE__TIMEOUT_SECONDS="300"
+# Configuration Path
+export OCTOMIND_CONFIG_PATH="/path/to/your/config.toml"
 ```
 
 ### Configuration Management
@@ -111,8 +167,8 @@ model = "openrouter:anthropic/claude-sonnet-4"
 custom_instructions_file_name = "INSTRUCTIONS.md"
 
 # Performance & Limits
-mcp_response_warning_threshold = 20000
-max_session_tokens_threshold = 20000
+mcp_response_warning_threshold = 10000
+max_session_tokens_threshold = 0
 cache_tokens_threshold = 2048
 cache_timeout_seconds = 240
 use_long_system_cache = true
@@ -122,27 +178,31 @@ use_long_system_cache = true
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Developer role - full development environment
-[developer]
-enable_layers = true
-layer_refs = []
+[[roles]]
+name = "developer"
+model = "openrouter:anthropic/claude-sonnet-4"  # Optional model override
+temperature = 0.3
+top_p = 0.7
+top_k = 20
 system = """You are an Octomind – top notch fully autonomous AI developer..."""
+welcome = "Hello! Octomind ready to serve you. Working dir: {{CWD}} (Role: {{ROLE}})"
 
-# MCP configuration for developer role
-[developer.mcp]
-server_refs = ["core", "filesystem", "octocode", "agent"]
-allowed_tools = []
+[roles.mcp]
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]
 
 # Assistant role - optimized for general assistance
-[assistant]
-enable_layers = false
-layer_refs = []
+[[roles]]
+name = "assistant"
+temperature = 0.6
+top_p = 0.8
+top_k = 40
 system = "You are a helpful assistant."
+welcome = "Hello! Octomind ready to assist you. Working dir: {{CWD}} (Role: {{ROLE}})"
 
-# MCP configuration for assistant role
-[assistant.mcp]
+[roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = []
-
+allowed_tools = ["filesystem:*"]
 # ═══════════════════════════════════════════════════════════════════════════════
 # MCP (MODEL CONTEXT PROTOCOL) SERVERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -155,23 +215,16 @@ allowed_tools = []
 name = "core"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []
 
 [[mcp.servers]]
 name = "agent"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []
 
 [[mcp.servers]]
 name = "filesystem"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []
-
 [[mcp.servers]]
 name = "octocode"
 type = "stdin"
@@ -191,25 +244,21 @@ tools = []
 **Important Notes:**
 - **API Keys**: Set via environment variables only (e.g., `OPENROUTER_API_KEY`)
 - **Server References**: Roles use `server_refs` to reference servers by name
-- **Tool Filtering**: Use `allowed_tools` to limit available tools per role
 - **Builtin Servers**: Core, filesystem, and agent are always available
-## Custom Instructions File
 
-Octomind supports automatic loading of custom instructions from a project-specific file. This feature allows you to provide context, guidelines, or project-specific information that will be automatically included in every new session.
+### Custom Instructions and Constraints
 
-### Configuration
+Octomind supports automatic loading of custom instructions and constraints:
 
-```toml
-# Custom instructions file name (relative to project root)
-# This file will be automatically loaded as a user message in new sessions
-# Set to empty string to disable: custom_instructions_file_name = ""
-custom_instructions_file_name = "INSTRUCTIONS.md"
-```
+- **`custom_instructions_file_name`** (default: `"INSTRUCTIONS.md"`): Content loaded as a user message in new sessions
+- **`custom_constraints_file_name`** (default: `"CONSTRAINTS.md"`): Content appended to each user request in `<constraints>...</constraints>` tags
+
+Set to empty string to disable: `custom_constraints_file_name = ""`
 
 ### How It Works
 
 1. **Automatic Loading**: When starting a new session, Octomind checks for the configured file in the current working directory
-2. **Template Variables**: The file content supports all template variables (e.g., `%{ROLE}`, `%{CWD}`, `%{DATE}`)
+2. **Template Variables**: The file content supports all template variables (e.g., `{{ROLE}}`, `{{CWD}}`, `{{DATE}}`)
 3. **Session Integration**: Content is added as a user message after the welcome message
 4. **Caching**: Instructions are automatically cached for token efficiency
 5. **Optional**: Can be disabled by setting the filename to an empty string
@@ -217,10 +266,10 @@ custom_instructions_file_name = "INSTRUCTIONS.md"
 ### Example INSTRUCTIONS.md
 
 ```markdown
-# Project: %{PROJECT_NAME}
-Working Directory: %{CWD}
-Current Role: %{ROLE}
-Date: %{DATE}
+# Project: {{PROJECT_NAME}}
+Working Directory: {{CWD}}
+Current Role: {{ROLE}}
+Date: {{DATE}}
 
 ## Project Guidelines
 - Follow the existing code patterns in this codebase
@@ -241,16 +290,16 @@ Date: %{DATE}
 ### Template Variables Available
 
 All standard template variables are supported in custom instructions:
-- `%{ROLE}` - Current role (developer, assistant, etc.)
-- `%{CWD}` - Current working directory
-- `%{DATE}` - Current date and time
-- `%{SYSTEM}` - System information
-- `%{CONTEXT}` - Additional context if available
+- `{{ROLE}}` - Current role (developer, assistant, etc.)
+- `{{CWD}}` - Current working directory
+- `{{DATE}}` - Current date and time
+- `{{SYSTEM}}` - System information
+- `{{CONTEXT}}` - Additional context if available
 
 ### Best Practices
 
 1. **Project-Specific**: Include information specific to your project's architecture and conventions
-2. **Role-Aware**: Use `%{ROLE}` to provide role-specific guidance
+2. **Role-Aware**: Use `{{ROLE}}` to provide role-specific guidance
 3. **Concise**: Keep instructions focused and actionable
 4. **Version Control**: Include the instructions file in your repository for team consistency
 5. **Regular Updates**: Keep instructions current as your project evolves
@@ -272,20 +321,19 @@ Or simply remove/rename the instructions file from your project directory.
 All models must use the `provider:model` format:
 
 ```toml
-[developer.config]
+### Role-Specific Model Overrides
+
+Roles can specify their own models, which take precedence over the global model:
+
+```toml
+[[roles]]
+name = "developer"
 model = "openrouter:anthropic/claude-sonnet-4"
 
-[assistant.config]
+[[roles]]
+name = "assistant"
 model = "openai:gpt-4o-mini"
-
-[my-custom-role.config]
-model = "amazon:claude-sonnet-4"  # Using Amazon Bedrock
-# or
-model = "cloudflare:llama-3.1-8b-instruct"  # Using Cloudflare Workers AI
 ```
-
-### Supported Providers
-
 - **OpenRouter**: `openrouter:provider/model` - Multi-provider access through OpenRouter
 - **OpenAI**: `openai:model-name` - Direct OpenAI API access
 - **Anthropic**: `anthropic:model-name` - Direct Anthropic API access
@@ -310,8 +358,7 @@ export AWS_SECRET_ACCESS_KEY="your_aws_secret_key"
 export CLOUDFLARE_API_TOKEN="your_cloudflare_token"
 
 # 📊 Optional Embedding Provider Keys
-export JINA_API_KEY="your_jina_key"
-```
+# (Embeddings are now handled by external MCP servers like octocode)
 
 ### Configuration Path Override
 
@@ -341,12 +388,10 @@ Environment variables are the PRIMARY method of configuration:
 export OCTOMIND_LOG_LEVEL="debug"
 export OCTOMIND_MODEL="openrouter:anthropic/claude-sonnet-4"
 export OCTOMIND_CUSTOM_INSTRUCTIONS_FILE_NAME="PROJECT_GUIDE.md"
-export OCTOMIND_EMBEDDING_PROVIDER="jina"
 
-# 🛠️ Role-Specific Overrides
-export OCTOMIND_DEVELOPER_ENABLE_LAYERS="true"
-export OCTOMIND_ASSISTANT_ENABLE_LAYERS="false"
-```
+# 🛠️ Role-Specific Overrides (using array index)
+export OCTOMIND_ROLES__0__MODEL="openai:gpt-4o"
+export OCTOMIND_ROLES__0__TEMPERATURE="0.1"
 
 ### Security Best Practices
 
@@ -375,70 +420,50 @@ octomind config --show-defaults
 
 ## Role-Specific Configuration
 
+Octomind uses a `[[roles]]` array for role definitions. Each role can have its own model, system prompt, and MCP tool configuration.
+
 ### Developer Role
 
-Developer role is designed for full development assistance and inherits from global MCP configuration:
-
 ```toml
-# Global MCP configuration
-[mcp]
-enabled = true
-
-[[mcp.servers]]
-enabled = true
-name = "core"
-type = "builtin"
-
-[[mcp.servers]]
-enabled = true
-name = "filesystem"
-type = "builtin"
-
-[[mcp.servers]]
-enabled = true
-name = "web"
-type = "builtin"
-
-# Developer role (inherits global MCP automatically)
-[developer]
+[[roles]]
+name = "developer"
 model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
+temperature = 0.3
 system = "You are an Octomind AI developer assistant with full access to development tools."
+
+[roles.mcp]
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]
 ```
 
 ### Assistant Role
 
-Assistant role is optimized for simple conversations with tools disabled:
-
 ```toml
-[assistant]
+[[roles]]
+name = "assistant"
 model = "openrouter:anthropic/claude-3.5-haiku"
-enable_layers = false
 system = "You are a helpful assistant."
 
-[assistant.mcp]
-enabled = false  # Override global MCP to disable tools
+[roles.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["filesystem:view"] # Only allow viewing files
 ```
 
 ### Custom Roles
 
-Create specialized roles for specific use cases. Custom roles inherit from assistant role first, then apply their own overrides:
+Create specialized roles for specific use cases.
 
 ```toml
-[code-reviewer]
+[[roles]]
+name = "code-reviewer"
 model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
 system = "You are a code review expert focused on security and best practices."
 
-[code-reviewer.mcp]
-enabled = true
-
-[[code-reviewer.mcp.servers]]
-enabled = true
-name = "core"
-type = "builtin"
-tools = ["text_editor", "shell"]  # Limited tool set
+[roles.mcp]
+server_refs = ["core", "filesystem"]
+allowed_tools = ["core:*", "filesystem:view"]
 ```
+
 
 ## Workflow Configuration
 
@@ -677,7 +702,6 @@ server_refs = ["core", "filesystem"]  # Default servers
 
 - **core**: Built-in developer tools (shell, code search, file operations)
 - **filesystem**: Built-in filesystem tools (file reading, writing, listing)
-- **web**: Built-in web tools (web search, HTML conversion)
 - **external**: External MCP servers (HTTP or command-based)
 
 ### Migration from Legacy Configuration
@@ -724,17 +748,10 @@ timeout_seconds = 30
 args = []
 tools = []
 
-[[mcp.servers]]
-name = "web"
-type = "builtin"
-timeout_seconds = 30
-args = []
-tools = []
-
 # Reference from roles
 [developer.mcp]
 enabled = true
-server_refs = ["core", "filesystem", "web"]
+server_refs = ["core", "filesystem"]
 ```
 
 **Migration benefits:**
@@ -779,37 +796,6 @@ scopes = ["repo", "read:org"]
 2. User is directed to authorization URL in browser
 3. After authorization, token is exchanged and stored
 4. Subsequent requests use the OAuth token automatically
-
-## Embedding Configuration
-
-### FastEmbed (Offline)
-
-```toml
-embedding_provider = "fastembed"
-
-[fastembed]
-code_model = "all-MiniLM-L6-v2"
-text_model = "all-MiniLM-L6-v2"
-```
-
-Available FastEmbed models:
-- `all-MiniLM-L6-v2` (default, lightweight)
-- `all-MiniLM-L12-v2` (better quality)
-- `multilingual-e5-small` (multilingual support)
-- `multilingual-e5-base`
-- `multilingual-e5-large`
-
-### Jina (Cloud)
-
-```toml
-embedding_provider = "jina"
-
-[jina]
-code_model = "jina-embeddings-v2-base-code"
-text_model = "jina-embeddings-v3"
-```
-
-
 
 ## Token Management
 
@@ -863,11 +849,8 @@ target_ratio = 8.0
 
 When adaptive compression is disabled (`adaptive_threshold = false`), the system uses `max_session_tokens_threshold` as a simple trigger:
 
-```toml
-# Fallback: compress when this limit is reached (0 = disabled)
-max_session_tokens_threshold = 50000
-```
-```
+When adaptive compression is disabled (`adaptive_threshold = false`), the system uses `max_session_tokens_threshold` as a simple trigger (0 = disabled):
+max_session_tokens_threshold = 0
 
 ### Manual Token Management
 

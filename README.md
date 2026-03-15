@@ -29,6 +29,7 @@
 - **[Octocode](https://github.com/muvon/octocode)** — Semantic code search, knowledge graph, GraphRAG
 - **[Octobrain](https://github.com/muvon/octobrain)** — Persistent memory, knowledge base, memory graphs
 - **Plan-first** — Multi-step planning with validation gates
+- **Adaptive Compression** — Smart context management for long sessions
 
 ### 🌐 Provider Freedom
 - **7 providers**: OpenRouter, OpenAI, Anthropic, Google, Amazon, Cloudflare, DeepSeek
@@ -68,9 +69,10 @@ octomind run
 ### Built-in Tools
 
 - **Shell**: Execute commands
-- **Editor**: Edit files, batch changes
-- **Search**: ast_grep
-- **Web**: Search, read HTML
+- **Editor**: Edit files, batch changes (`batch_edit`), extract lines
+- **Search**: `ast_grep`, `view` (content search)
+- **Management**: `mcp` (dynamic servers), `agent` (dynamic agents)
+- **Planning**: `plan` (structured task management)
 
 ---
 
@@ -81,8 +83,9 @@ octomind run
 | Interactive | `octomind run` | Daily development |
 | Registry agent | `octomind run developer:rust` | Specialised agent from registry |
 | WebSocket | `octomind server --port 8080` | Automation, IDE plugins |
-| JSONL | `echo "task" \| octomind run --format jsonl` | CI/CD pipelines |
-
+| JSONL | `echo "task" | octomind run --format jsonl` | CI/CD pipelines |
+| Registry | `octomind tap muvon/tap` | Manage agent manifests |
+| Variables | `octomind vars` | View active environment variables |
 ---
 
 ## 🛠️ Installation

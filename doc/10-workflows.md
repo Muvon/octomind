@@ -309,8 +309,8 @@ workflow = "map_development"  # Use MAP workflow
 system = "You are an elite developer using brain-inspired planning."
 
 [roles.developer.mcp]
-server_refs = ["core", "filesystem"]
-allowed_tools = ["core:*", "filesystem:*"]
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]
 ```
 
 ### Layer Configuration

@@ -89,23 +89,28 @@ input_mode = "last"   # last, all, summary
 output_mode = "none"  # none, append, replace, last, restart
 system_prompt = "Layer-specific system prompt"
 
-[layers.layer_name.mcp]
+[layers.mcp]
 server_refs = ["filesystem", "core"]
-allowed_tools = ["text_editor", "shell"]
+allowed_tools = ["filesystem:*", "core:*"]
 ```
 
 ### Custom Commands
 
 Commands use the same layer infrastructure but operate as standalone utilities:
 
-```bash
-# Execute custom commands without affecting session history
-/run estimate
-/run task_refiner
-/run review
+```toml
+[[commands]]
+name = "estimate"
+description = "Provides project estimation"
+model = "provider:model"
+system_prompt = "You are an estimation expert..."
+
+[commands.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["filesystem:view"]
 ```
 
-Commands are configured similarly to layers but with additional command-specific settings.
+Commands are configured similarly to layers but in the `[[commands]]` array.
 
 ### Available Input Modes
 
@@ -152,8 +157,8 @@ Commands can have their own tool configurations using the new server registry sy
 
 ```toml
 [developer.commands.review.mcp]
-server_refs = ["core", "filesystem"]  # Reference servers by name
-allowed_tools = ["text_editor", "shell"]   # Limit to specific tools
+server_refs = ["core", "filesystem", "agent"]  # Reference servers by name
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]   # Limit to specific tools
 ```
 
 ## Example Commands
@@ -185,7 +190,7 @@ Usage: `/run estimate`
 ### 2. Code Review
 
 ```toml
-[developer.commands.review]
+[[commands]]
 name = "review"
 model = "openrouter:anthropic/claude-sonnet-4"
 system_prompt = """You are a code review expert. Analyze recent work and provide:
@@ -199,9 +204,9 @@ Focus on constructive feedback."""
 temperature = 0.1
 input_mode = "all"  # Gets full conversation context
 
-[developer.commands.review.mcp]
+[commands.mcp]
 server_refs = ["core", "filesystem"]  # Access to code files and shell
-allowed_tools = ["text_editor", "view", "shell"]
+allowed_tools = ["filesystem:text_editor", "filesystem:view", "filesystem:shell"]
 ```
 
 Usage: `/run review`
@@ -210,14 +215,14 @@ Usage: `/run review`
 ### 3. Quick Summary
 
 ```toml
-[developer.commands.summarize]
+[[commands]]
 name = "summarize"
-model = "openrouter:openai/gpt-4.1-nano"  # Fast, cheap model
+model = "openrouter:openai/gpt-4o-mini"  # Fast, cheap model
 system_prompt = "Provide a concise summary of the conversation and key points."
 temperature = 0.2
 input_mode = "summary"  # Uses pre-summarized content to save tokens
 
-[developer.commands.summarize.mcp]
+[commands.mcp]
 server_refs = []  # No tools needed
 ```
 
@@ -227,14 +232,14 @@ Usage: `/run summarize`
 
 ### Parameters and Placeholders
 
-Command layers support custom parameters that can be used in system prompts:
+Command layers support custom parameters that can be used in system prompts using `{{var}}` syntax:
 
 ```toml
-[developer.commands.estimate]
+[[commands]]
 name = "estimate"
-system_prompt = "You estimate projects for %{team_size} person team with %{project_type} focus."
+system_prompt = "You estimate projects for {{team_size}} person team with {{project_type}} focus."
 
-[developer.commands.estimate.parameters]
+[commands.parameters]
 team_size = "3"
 project_type = "web development"
 ```
@@ -244,10 +249,12 @@ project_type = "web development"
 Different commands can use different models optimized for their specific tasks:
 
 ```toml
-[developer.commands.quick_check]
-model = "openrouter:openai/gpt-4.1-nano"  # Fast, cheap model
+[[commands]]
+name = "quick_check"
+model = "openrouter:openai/gpt-4o-mini"  # Fast, cheap model
 
-[developer.commands.deep_analysis]
+[[commands]]
+name = "deep_analysis"
 model = "openrouter:anthropic/claude-sonnet-4"  # Powerful model
 ```
 
@@ -265,7 +272,7 @@ model = "openrouter:anthropic/claude-sonnet-4"  # Powerful model
 | **History** | Affects session context | Isolated execution |
 | **Cost** | Part of main flow | Separate, tracked |
 | **Usage** | Pipeline processing | On-demand helpers |
-| **Configuration** | `[[layers]]` section | `[commands]` section |
+| **Configuration** | `[[layers]]` section | `[[commands]]` section |
 
 ## Best Practices
 
@@ -275,19 +282,17 @@ model = "openrouter:anthropic/claude-sonnet-4"  # Powerful model
 4. **Enable tools selectively**: Only give commands the tools they need
 5. **Document your commands**: Use clear names and system prompts
 
-## Troubleshooting
-
 ### Command Not Found
 ```
 Command 'estimate' not found in configuration
 ```
-- Check that the command is defined in your role's commands section
+- Check that the command is defined in your `[[commands]]` section
 - Verify proper TOML syntax in your configuration
 - Use `/run` without parameters to see available commands
 
 ### Tool Execution Errors
 ```
-Tool execution failed: Unknown tool 'view'. Available tools: text_editor, batch_edit, view, extract_lines
+Tool execution failed: Unknown tool 'view'. Available tools: view, text_editor, batch_edit, extract_lines, shell, workdir, ast_grep, plan, mcp, agent
 ```
 - **Tool routing issue**: The tool is being sent to the wrong server
 - **Solution**: Check your MCP server configuration and ensure proper server references
@@ -298,16 +303,16 @@ Tool execution failed: Unknown tool 'view'. Available tools: text_editor, batch_
 Unknown input mode: 'Last'. Valid options: last, all, summary
 ```
 - **Case sensitivity**: Input modes are now case-insensitive but should use lowercase
-- **Solution**: Use `input_mode = "last"` instead of `input_mode = "Last"`
-- **Valid values**: `"last"`, `"all"`, `"summary"` (any case)
+- **Solution**: Use `input_mode = \"last\"` instead of `input_mode = \"Last\"`
+- **Valid values**: `\"last\"`, `\"all\"`, `\"summary\"` (any case)
 
 ### No Commands Available
 ```
-No command layers configured for this role.
+No command layers configured.
 ```
 - Add command definitions to your configuration file
 - Use `/run` without parameters to see configuration examples
-- Check role-specific command sections (e.g., `[developer.commands.estimate]`)
+- Check `[[commands]]` section in your config
 
 ### MCP Server Configuration Issues
 ```
@@ -327,7 +332,7 @@ No previous messages found
 
 ## Migration from /done
 
-The existing `/done` command continues to work as before. Command layers provide additional functionality without replacing the context reduction system.
+The existing `/done` command continues to work as before, but now uses the intelligent compression system instead of simple context reduction. Command layers provide additional functionality without replacing the core session finalization flow.
 
 ## Complete Example
 

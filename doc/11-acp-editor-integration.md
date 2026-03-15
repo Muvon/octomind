@@ -1,7 +1,14 @@
 # ACP Editor Integration
 
-Octomind implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) — an open standard for connecting AI agents to code editors over JSON-RPC via stdio. This lets you use Octomind directly inside your editor with full session management, tool streaming, and MCP server injection.
+Octomind implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) — an open standard for connecting AI agents to code editors over JSON-RPC via stdio. This lets you use Octomind directly inside your editor with full session management, tool streaming, slash commands, and MCP server injection.
 
+## Features
+
+- **Full Session Management**: Create, load, and persist sessions across editor restarts.
+- **Tool Streaming**: Real-time feedback for tool execution (shell, file edits, etc.).
+- **Slash Commands**: Access all Octomind commands (`/help`, `/info`, `/model`, etc.) directly from the editor chat.
+- **MCP Server Injection**: Editors can inject their own MCP servers into the Octomind session.
+- **Thread-Local Working Directory**: Each session maintains its own isolated working directory.
 ## How It Works
 
 When launched as an ACP agent, Octomind reads JSON-RPC messages from stdin and writes responses to stdout. Your editor manages the process lifecycle — it starts Octomind, sends prompts, receives streamed tool calls and assistant responses, and stops the process when done.
@@ -15,11 +22,14 @@ The editor passes its working directory and optionally its own MCP servers to Oc
 ## Starting Octomind as an ACP Agent
 
 ```bash
-octomind acp
-# or with a specific role:
-octomind acp --role developer
-octomind acp --role assistant
+octomind acp [TAG]
+# or with a specific role/tag:
+octomind acp developer
+octomind acp assistant
+octomind acp developer:rust
 ```
+
+The `TAG` can be a plain role name (e.g., `developer`) or a registry agent tag (e.g., `developer:rust`). If omitted, the default role from your configuration is used.
 
 The `developer` role includes all MCP tools (shell, file editing, search, etc.). The `assistant` role is a simpler chat without tools — useful for editors that want to manage tools themselves.
 
@@ -56,7 +66,7 @@ require("codecompanion").setup({
         return require("codecompanion.adapters").extend("acp", {
           name = "octomind",
           commands = {
-            default = { "octomind", "acp", "--role", "developer" },
+            default = { "octomind", "acp", "developer" },
           },
         })
       end,
@@ -105,7 +115,7 @@ Or use the action palette: `:CodeCompanionActions` → select **New Chat**.
     acp_providers = {
       ["octomind"] = {
         command = "octomind",
-        args = { "acp", "--role", "developer" },
+        args = { "acp", "developer" },
       },
     },
   },
@@ -130,7 +140,7 @@ Zed has native ACP support built in.
     "Octomind": {
       "type": "custom",
       "command": "octomind",
-      "args": ["acp", "--role", "developer"]
+      "args": ["acp", "developer"]
     }
   }
 }
@@ -159,7 +169,7 @@ ACP support is available in IntelliJ IDEA, PyCharm, WebStorm, GoLand, and all ot
   "agent_servers": {
     "Octomind": {
       "command": "octomind",
-      "args": ["acp", "--role", "developer"]
+      "args": ["acp", "developer"]
     }
   }
 }
@@ -202,15 +212,44 @@ require("codecompanion").setup({
 
 ---
 
+## Slash Commands
+
+Octomind advertises its available slash commands to the editor. You can use them by typing `/` followed by the command name:
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/role <name>` | View or change current role |
+| `/model <provider:model>` | View or change current AI model |
+| `/done` | Finalize task with memorization and summarization |
+| `/save` | Save the current session |
+| `/info` | Display token and cost breakdown |
+| `/report` | Display detailed cost report |
+| `/context [all|assistant|user|tool|large]` | Display session context |
+| `/truncate` | Smart context truncation |
+| `/summarize` | Summarize entire conversation |
+| `/run <command>` | Execute a command layer |
+| `/workflow <name>` | Execute a workflow |
+| `/mcp [info|list|health|validate]` | MCP server management |
+| `/plan` | Display current plan |
+| `/image <path>` | Attach image to next message |
+| `/video <path>` | Attach video to next message |
+| `/copy` | Copy last response to clipboard |
+| `/clear` | Clear terminal screen |
+| `/loglevel <level>` | Change logging level |
+| `/cache [info|clear]` | Manage session cache |
+| `/list` | List saved sessions |
+| `/session <name>` | Switch to another session |
+| `/prompt <name>` | Execute a predefined prompt |
+> **Note:** Command names are sent without the leading `/` per ACP spec; the client prepends it for display.
 ## Roles
 
 | Role | Tools | Use case |
 |------|-------|----------|
-| `developer` | Shell, file editing, search, web, agents | Default — full coding assistant |
+| `developer` | Shell, file editing, search, agents | Default — full coding assistant |
 | `assistant` | None | Simple chat, editor manages tools |
 
-Switch roles by changing the `--role` argument in your editor config.
-
+Switch roles by changing the role/tag argument in your editor config (e.g., `octomind acp assistant`).
 ---
 
 ## Troubleshooting
@@ -225,8 +264,7 @@ Switch roles by changing the `--role` argument in your editor config.
 
 **Tools not available**
 - Confirm the role has MCP servers enabled in your config (`config-templates/default.toml` or `~/.config/octomind/config.toml`).
-- Use `--role developer` explicitly.
-
+- Use `octomind acp developer` explicitly.
 **Editor-injected MCP server not working**
 - Only `stdio` and `http` transports are supported. SSE servers are skipped automatically.
 - Check the Octomind log for `ACP: skipping SSE MCP server` messages to confirm.

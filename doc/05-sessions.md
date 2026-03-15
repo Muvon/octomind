@@ -5,7 +5,9 @@
 - **Conversation compression**: automatic when token limits are reached
 - **Cache/cost tracking**: All sessions track token usage and cost in real time
 - **Role selection**: Use `--role` or config to pick developer/assistant/custom
-- **/run**: run command layers (no history impact); **agent_<name>**: call agent tools as needed
+- **/run**: run command layers (no history impact); **agent_<name>**: call agent tools as needed (delegates to configured ACP sub-agents or in-process dynamic agents)
+- **/mcp**: manage MCP servers and tools dynamically
+- **/plan**: view or manage the current task plan
 ## Session Roles Comparison
 
 | Feature | Developer Role | Assistant Role | Custom Roles |
@@ -51,7 +53,7 @@ octomind run developer -n development_session
 - Project metadata
 
 #### Layered Architecture
-Three-layer processing for complex tasks:
+Three-layer processing for complex tasks. When a layer is used as an agent tool, its name is automatically prefixed with `agent_` (e.g., `agent_researcher`).
 1. **Query Processor**: Analyzes user requests
 2. **Context Generator**: Gathers relevant information
 3. **Developer**: Executes development tasks
@@ -59,15 +61,16 @@ Three-layer processing for complex tasks:
 ### Developer Role Configuration
 
 ```toml
-[developer]
-enable_layers = true
-layer_refs = []
+[[roles]]
+name = "developer"
+temperature = 0.3
 system = "You are an Octomind AI developer assistant with full access to development tools."
+welcome = "Hello! Octomind ready to serve you. Working dir: {{CWD}} (Role: {{ROLE}})"
 
-# MCP configuration using current server structure
-[developer.mcp]
-server_refs = ["core", "filesystem", "octocode"]
-allowed_tools = []  # Empty means all tools from referenced servers
+[roles.mcp]
+server_refs = ["core", "filesystem", "agent"]
+allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+```
 
 # Server definitions in main MCP section
 [mcp]
@@ -77,15 +80,16 @@ allowed_tools = []
 name = "core"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []
+
+[[mcp.servers]]
+name = "agent"
+type = "builtin"
+timeout_seconds = 30
 
 [[mcp.servers]]
 name = "filesystem"
 type = "builtin"
 timeout_seconds = 30
-args = []
-tools = []
 ```
 
 ## Assistant Role
@@ -112,23 +116,23 @@ octomind run assistant -n quick_chat
 
 #### Optional Tool Access
 ```toml
-[assistant.mcp]
-enabled = true  # Can enable tools if needed
-server_refs = ["filesystem"]  # Specific servers only
-allowed_tools = ["text_editor", "view"]  # Limited tools
+[roles.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["filesystem:view", "filesystem:text_editor"]
 ```
 
 ### Assistant Role Configuration
 
-
 ```toml
-[assistant]
+[[roles]]
+name = "assistant"
 model = "openrouter:anthropic/claude-3.5-haiku"
-enable_layers = false
 system = "You are a helpful assistant."
+welcome = "Hello! Octomind ready to assist you. Working dir: {{CWD}} (Role: {{ROLE}})"
 
-[assistant.mcp]
-enabled = false  # Tools disabled by default
+[roles.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["filesystem:view"]
 ```
 
 ## Custom Roles
@@ -148,47 +152,42 @@ octomind run documentation-writer
 
 ```toml
 # Code reviewer role
-[code-reviewer]
+[[roles]]
+name = "code-reviewer"
 model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
 system = "You are a code review expert focused on security and best practices."
 
-[code-reviewer.mcp]
-enabled = true
+[roles.mcp]
 server_refs = ["core", "filesystem"]
-allowed_tools = ["text_editor", "view"]
+allowed_tools = ["core:*", "filesystem:view"]
 ```
 
 ```toml
 # Security analyst role
-
-[security-analyst]
+[[roles]]
+name = "security-analyst"
 model = "openrouter:anthropic/claude-sonnet-4"
-enable_layers = true
 system = "You are a security expert focused on finding vulnerabilities and security issues."
 
-[security-analyst.mcp]
-enabled = true
+[roles.mcp]
 server_refs = ["core"]
-allowed_tools = ["shell"]  # Limited to analysis tools
+allowed_tools = ["core:shell"]
 ```
 
 # Documentation writer role
 
 ```toml
-[documentation-writer]
+[[roles]]
+name = "documentation-writer"
 model = "openrouter:openai/gpt-4o"
-enable_layers = false
 system = "You are a technical writer focused on creating clear, comprehensive documentation."
 
-[documentation-writer.mcp]
-enabled = true
+[roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["text_editor", "view"]  # Only file operations
+allowed_tools = ["filesystem:view", "filesystem:text_editor"]
 ```
 
 ### Role Inheritance
-
 
 Custom roles follow this inheritance pattern:
 1. **Start with assistant role** as the base configuration
@@ -197,23 +196,24 @@ Custom roles follow this inheritance pattern:
 
 ```toml
 # Assistant base (inherited by all custom roles)
-[assistant]
+[[roles]]
+name = "assistant"
 model = "openrouter:anthropic/claude-3.5-haiku"
-enable_layers = false
 system = "You are a helpful assistant."
 
-[assistant.mcp]
-enabled = false
+[roles.mcp]
+server_refs = ["filesystem"]
+allowed_tools = ["filesystem:view"]
 
 # Custom role inherits from assistant, then applies overrides
-[my-custom-role]
+[[roles]]
+name = "my-custom-role"
 model = "openrouter:openai/gpt-4o"  # Override model
-enable_layers = true                # Override layers
 system = "Custom system prompt"     # Override system prompt
 
-[my-custom-role.mcp]
-enabled = true                      # Override MCP enabled
-server_refs = ["filesystem"]        # Add specific servers
+[roles.mcp]
+server_refs = ["core", "filesystem"] # Add specific servers
+allowed_tools = ["core:*", "filesystem:*"]
 ```
 
 ## System Variables and Placeholders
@@ -223,19 +223,19 @@ Octomind supports dynamic system variables that can be used in prompts and syste
 ### Available Variables
 
 **Individual Variables:**
-- **`%{DATE}`** - Current date and time with timezone
-- **`%{SHELL}`** - Current shell name and version
-- **`%{OS}`** - Operating system information with architecture and platform details
-- **`%{BINARIES}`** - List of available development tools and their versions (one per line)
-- **`%{CWD}`** - Current working directory
-- **`%{ROLE}`** - Current session role (developer, assistant, etc.)
-- **`%{GIT_STATUS}`** - Git repository status
-- **`%{GIT_TREE}`** - Git file tree
-- **`%{README}`** - Project README content
+- **`{{DATE}}`** - Current date and time with timezone
+- **`{{SHELL}}`** - Current shell name and version
+- **`{{OS}}`** - Operating system information with architecture and platform details
+- **`{{BINARIES}}`** - List of available development tools and their versions (one per line)
+- **`{{CWD}}`** - Current working directory
+- **`{{ROLE}}`** - Current session role (developer, assistant, etc.)
+- **`{{GIT_STATUS}}`** - Git repository status
+- **`{{GIT_TREE}}`** - Git file tree
+- **`{{README}}`** - Project README content
 
 **Comprehensive Variables:**
-- **`%{SYSTEM}`** - Complete system information (date, shell, OS, binaries, CWD)
-- **`%{CONTEXT}`** - Project context information (README, git status, git tree)
+- **`{{SYSTEM}}`** - Complete system information (date, shell, OS, binaries, CWD)
+- **`{{CONTEXT}}`** - Project context information (README, git status, git tree)
 
 ### Viewing Variables
 
@@ -252,7 +252,7 @@ octomind vars -e
 
 ### Development Tool Detection
 
-The `%{BINARIES}` variable automatically detects and reports versions of common development tools:
+The `{{BINARIES}}` variable automatically detects and reports versions of common development tools:
 
 - **Build tools**: `rustc`, `gcc`, `clang`, `make`
 - **Languages**: `node`, `npm`, `python`, `python3`, `go`, `java`, `php`
@@ -320,9 +320,9 @@ Custom instructions files support all the same template variables as system prom
 
 ```markdown
 # Project: My Awesome Project
-Working Directory: %{CWD}
-Current Role: %{ROLE}
-Date: %{DATE}
+Working Directory: {{CWD}}
+Current Role: {{ROLE}}
+Date: {{DATE}}
 
 ## Project Guidelines
 - Follow the existing code patterns in this codebase
@@ -330,26 +330,25 @@ Date: %{DATE}
 - All API changes require documentation updates
 
 ## Architecture Notes
-%{SYSTEM}
+{{SYSTEM}}
 
 ## Current Project Status
-%{GIT_STATUS}
-```
+{{GIT_STATUS}}
 
 ### Best Practices
 
 1. **Keep it concise**: Focus on essential project information
-2. **Use template variables**: Make instructions dynamic with `%{ROLE}`, `%{CWD}`, etc.
+2. **Use template variables**: Make instructions dynamic with `{{ROLE}}`, `{{CWD}}`, etc.
 3. **Project-specific**: Include information unique to your project
 4. **Version control**: Include the instructions file in your repository
-5. **Role-aware**: Use `%{ROLE}` to provide different guidance for different roles
+5. **Role-aware**: Use `{{ROLE}}` to provide different guidance for different roles
 
 ### Example INSTRUCTIONS.md
 
 ```markdown
-# %{PROJECT_NAME} Development Guide
+# {{PROJECT_NAME}} Development Guide
 
-**Role**: %{ROLE} | **Directory**: %{CWD} | **Date**: %{DATE}
+**Role**: {{ROLE}} | **Directory**: {{CWD}} | **Date**: {{DATE}}
 
 ## Project Overview
 This is a Rust-based AI development assistant using the MCP protocol.
@@ -367,8 +366,7 @@ This is a Rust-based AI development assistant using the MCP protocol.
 - `src/mcp/` - MCP protocol implementation
 
 ## Current Architecture
-%{CONTEXT}
-```
+{{CONTEXT}}
 
 ### Caching and Performance
 
@@ -402,6 +400,19 @@ Octomind provides comprehensive session management through built-in commands:
 - `/context [filter]` - Display session context (all, assistant, user, tool, large)
 - `/model [model]` - View or change current AI model
 - `/role [role]` - View or switch session role
+- `/mcp [command]` - Manage MCP servers and tools
+- `/plan` - View current task plan
+- `/list` - List saved sessions
+- `/save [name]` - Save current session
+- `/done` - Complete task and clean up
+- `/clear` - Clear terminal screen
+- `/loglevel [level]` - Change system log level
+- `/summarize` - Generate conversation summary
+- `/truncate` - Truncate conversation history
+- `/cache` - Manage context caching
+- `/run <layer>` - Run a specific command layer
+- `/workflow <name>` - Execute a workflow
+- `/prompt <name>` - Use a prompt template
 
 ### File and Image Operations
 - `/image <path>` - Attach image to next message (PNG, JPEG, GIF, WebP, BMP)
@@ -719,7 +730,7 @@ output_mode = "replace"  # Replaces input with context
 builtin = true
 
 [layers.mcp]
-server_refs = ["core", "filesystem", "web"]
+server_refs = ["core", "filesystem"]
 allowed_tools = ["view"]
 ```
 

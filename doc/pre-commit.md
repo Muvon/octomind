@@ -20,15 +20,15 @@ pre-commit install
 
 The pre-commit hooks run the following checks on every commit:
 
-### Rust-specific checks:
-- **cargo fmt** - Formats Rust code according to rustfmt.toml
+- **cargo fmt** - Formats Rust code according to `rustfmt.toml`
 - **cargo clippy** - Runs linting with clippy (treats warnings as errors)
 - **cargo check** - Ensures code compiles successfully
-
-### General checks:
 - **check-merge-conflict** - Prevents committing merge conflict markers
 - **check-toml** - Validates TOML syntax
+- **check-yaml** - Validates YAML syntax
 - **check-added-large-files** - Prevents large files (>1MB) from being committed
+- **trailing-whitespace** - Removes trailing whitespace
+- **end-of-file-fixer** - Ensures files end with a newline
 
 ## Manual Execution
 

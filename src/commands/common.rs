@@ -26,15 +26,22 @@ use std::time::Duration;
 /// - `"some_role"` (no `:`) → plain role name, config unchanged
 /// - `"domain:spec"` (contains `:`) → fetch registry manifest, merge into config
 ///
+/// `status_cb` is called with human-readable status strings during resolution
+/// (tap fetch, dep checks) so callers can update a spinner.
+///
 /// Returns `(resolved_config, role_name)`.
 pub async fn resolve_config_and_role(
 	tag: Option<&str>,
 	config: &Config,
+	status_cb: Option<&dyn Fn(&str)>,
 ) -> Result<(Config, String)> {
 	let tag = tag.unwrap_or(config.default.as_str());
 
 	if tag.contains(':') {
 		// Registry agent: fetch manifest, resolve inputs, merge config
+		if let Some(cb) = status_cb {
+			cb(&format!("Fetching agent: {tag}"));
+		}
 		let (raw_toml, tap_root) = registry::fetch_manifest(tag, &config.registry)
 			.await
 			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
@@ -42,7 +49,7 @@ pub async fn resolve_config_and_role(
 		let resolved_toml = inputs::resolve_inputs(&raw_toml).await?;
 		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
 		// Run dep scripts before MCP init — idempotent, exit 0 if already installed
-		deps::resolve_deps(&resolved_toml, &tap_root).await?;
+		deps::resolve_deps(&resolved_toml, &tap_root, status_cb).await?;
 		// Always inject the tag as the role name — manifests never need to declare it.
 		let tagged_toml = inject_role_name(&resolved_toml, tag)
 			.context("Failed to inject role name into agent manifest")?;
@@ -67,60 +74,58 @@ pub async fn resolve_config_and_role(
 	}
 }
 
-/// Initialize MCP servers for the given role.
-/// Shows a spinner in interactive mode, silent otherwise.
-pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Result<()> {
+/// Run the full startup sequence (tap/dep resolution + MCP init) under a single spinner.
+///
+/// Interactive mode: shows an animated spinner with live status messages.
+/// Non-interactive mode: silent (errors still propagate).
+pub async fn startup(
+	tag: Option<&str>,
+	config: &Config,
+	is_interactive: bool,
+) -> Result<(Config, String)> {
 	if is_interactive {
-		use octomind::mcp::McpInitProgress;
-		use std::sync::{Arc, Mutex};
+		let spinner = make_spinner();
 
-		let spinner = ProgressBar::new_spinner();
-		spinner.set_style(
-			ProgressStyle::default_spinner()
-				.template(" {spinner:.cyan} {msg:.cyan}")
-				.unwrap()
-				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
-		);
-		spinner.enable_steady_tick(Duration::from_millis(80));
-
-		// Track pending servers — remove each one as it completes
-		let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-		let total = Arc::new(Mutex::new(0usize));
-
-		let cb = |progress: McpInitProgress| match &progress {
-			McpInitProgress::Starting { servers } => {
-				*total.lock().unwrap() = servers.len();
-				if servers.is_empty() {
-					spinner.set_message("No MCP servers to initialize".to_string());
-				} else {
-					*pending.lock().unwrap() = servers.clone();
-					spinner.set_message(format!(
-						"Starting MCP: {} [0/{}]",
-						servers.join(", "),
-						servers.len()
-					));
-				}
-			}
-			McpInitProgress::Completed { server, .. } => {
-				let mut pending_guard = pending.lock().unwrap();
-				pending_guard.retain(|s| s != server);
-				let done = *total.lock().unwrap() - pending_guard.len();
-				let total_count = *total.lock().unwrap();
-				if pending_guard.is_empty() {
-					spinner.set_message(format!("Starting MCP: done [{}/{}]", done, total_count));
-				} else {
-					spinner.set_message(format!(
-						"Starting MCP: {} [{}/{}]",
-						pending_guard.join(", "),
-						done,
-						total_count
-					));
-				}
+		// Phase 1: resolve config + deps (spinner shows tap/dep status)
+		let spinner_ref = &spinner;
+		let status_cb = |msg: &str| spinner_ref.set_message(msg.to_string());
+		let resolve_result = resolve_config_and_role(tag, config, Some(&status_cb)).await;
+		let (run_config, role) = match resolve_result {
+			Ok(v) => v,
+			Err(e) => {
+				spinner.finish_and_clear();
+				print!("\x1B[2K\r");
+				std::io::Write::flush(&mut std::io::stdout()).ok();
+				return Err(e);
 			}
 		};
 
-		let result =
-			octomind::mcp::initialize_mcp_for_role_with_callback(role, config, Some(&cb)).await;
+		// Phase 2: MCP init under the same spinner
+		if let Err(e) = mcp_init_with_spinner(&role, &run_config, &spinner).await {
+			spinner.finish_and_clear();
+			print!("\x1B[2K\r");
+			std::io::Write::flush(&mut std::io::stdout()).ok();
+			return Err(e);
+		}
+		spinner.finish_and_clear();
+		print!("\x1B[2K\r");
+		std::io::Write::flush(&mut std::io::stdout()).ok();
+		Ok((run_config, role))
+	} else {
+		// Non-interactive: silent
+		let (run_config, role) = resolve_config_and_role(tag, config, None).await?;
+		octomind::mcp::initialize_mcp_for_role(&role, &run_config).await?;
+		Ok((run_config, role))
+	}
+}
+
+/// Initialize MCP servers only (no tap/dep resolution). Used by the server command,
+/// which sets up tracing between config resolution and MCP init.
+/// Shows a spinner in interactive mode, silent otherwise.
+pub async fn startup_mcp_only(role: &str, config: &Config, is_interactive: bool) -> Result<()> {
+	if is_interactive {
+		let spinner = make_spinner();
+		let result = mcp_init_with_spinner(role, config, &spinner).await;
 		spinner.finish_and_clear();
 		print!("\x1B[2K\r");
 		std::io::Write::flush(&mut std::io::stdout()).ok();
@@ -128,6 +133,60 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 	} else {
 		octomind::mcp::initialize_mcp_for_role(role, config).await
 	}
+}
+
+fn make_spinner() -> ProgressBar {
+	let spinner = ProgressBar::new_spinner();
+	spinner.set_style(
+		ProgressStyle::default_spinner()
+			.template(" {spinner:.cyan} {msg:.cyan}")
+			.unwrap()
+			.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
+	);
+	spinner.enable_steady_tick(Duration::from_millis(80));
+	spinner
+}
+
+async fn mcp_init_with_spinner(role: &str, config: &Config, spinner: &ProgressBar) -> Result<()> {
+	use octomind::mcp::McpInitProgress;
+	use std::sync::{Arc, Mutex};
+
+	let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+	let total = Arc::new(Mutex::new(0usize));
+
+	let cb = |progress: McpInitProgress| match &progress {
+		McpInitProgress::Starting { servers } => {
+			*total.lock().unwrap() = servers.len();
+			if servers.is_empty() {
+				spinner.set_message("Starting MCP...".to_string());
+			} else {
+				*pending.lock().unwrap() = servers.clone();
+				spinner.set_message(format!(
+					"Starting MCP: {} [0/{}]",
+					servers.join(", "),
+					servers.len()
+				));
+			}
+		}
+		McpInitProgress::Completed { server, .. } => {
+			let mut pending_guard = pending.lock().unwrap();
+			pending_guard.retain(|s| s != server);
+			let done = *total.lock().unwrap() - pending_guard.len();
+			let total_count = *total.lock().unwrap();
+			if pending_guard.is_empty() {
+				spinner.set_message(format!("Starting MCP: done [{}/{}]", done, total_count));
+			} else {
+				spinner.set_message(format!(
+					"Starting MCP: {} [{}/{}]",
+					pending_guard.join(", "),
+					done,
+					total_count
+				));
+			}
+		}
+	};
+
+	octomind::mcp::initialize_mcp_for_role_with_callback(role, config, Some(&cb)).await
 }
 
 /// Inject the tag (e.g. `"octomind:tap"`) as the `name` field of the first

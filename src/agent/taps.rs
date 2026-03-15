@@ -34,6 +34,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Stdio;
 
 /// The built-in default tap — always present as the last fallback.
 pub const DEFAULT_TAP: &str = "muvon/tap";
@@ -309,28 +310,42 @@ pub fn remove_tap(name: &str) -> Result<()> {
 }
 
 /// Clone a Git repository.
+/// Clone a Git repository. Output is suppressed; only shown in debug mode.
 fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
-	let status = std::process::Command::new("git")
+	let output = std::process::Command::new("git")
 		.args(["clone", "--depth", "1", url, &dir.to_string_lossy()])
-		.status()
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
+		.output()
 		.context("Failed to run git clone")?;
 
-	if !status.success() {
+	if !output.status.success() {
+		crate::log_debug!(
+			"git clone failed for {}: {}",
+			url,
+			String::from_utf8_lossy(&output.stderr).trim()
+		);
 		anyhow::bail!("Failed to clone tap from {}", url);
 	}
 	Ok(())
 }
 
-/// Pull latest changes for a tap.
+/// Pull latest changes for a tap. Output is suppressed; only shown in debug mode.
 fn git_pull(dir: &PathBuf) -> Result<()> {
-	let status = std::process::Command::new("git")
+	let output = std::process::Command::new("git")
 		.args(["pull"])
 		.current_dir(dir)
-		.status()
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
+		.output()
 		.context("Failed to run git pull")?;
 
-	if !status.success() {
-		crate::log_info!("Failed to update tap at {}", dir.display());
+	if !output.status.success() {
+		crate::log_debug!(
+			"Failed to update tap at {}: {}",
+			dir.display(),
+			String::from_utf8_lossy(&output.stderr).trim()
+		);
 	}
 	Ok(())
 }

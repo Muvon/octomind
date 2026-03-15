@@ -32,8 +32,14 @@ use std::process::Stdio;
 /// `tap_root` is the root directory of the tap (e.g. `~/.local/share/octomind/taps/muvon/octomind-tap/`).
 /// Scripts are expected at `<tap_root>/deps/<org>/<tool>.sh`.
 ///
+/// `status_cb` is called with a human-readable status string before each dep runs (e.g. for spinner updates).
+///
 /// Runs after INPUT and ENV resolution, before MCP initialisation.
-pub async fn resolve_deps(manifest_toml: &str, tap_root: &Path) -> Result<()> {
+pub async fn resolve_deps(
+	manifest_toml: &str,
+	tap_root: &Path,
+	status_cb: Option<&dyn Fn(&str)>,
+) -> Result<()> {
 	let entries = parse_dep_entries(manifest_toml)?;
 	if entries.is_empty() {
 		return Ok(());
@@ -42,6 +48,11 @@ pub async fn resolve_deps(manifest_toml: &str, tap_root: &Path) -> Result<()> {
 	let deps_root = tap_root.join("deps");
 
 	for entry in &entries {
+		if let Some(cb) = status_cb {
+			cb(&format!("Checking dep: {entry}"));
+		} else {
+			crate::log_debug!("checking dep: {}", entry);
+		}
 		run_dep_script(entry, &deps_root)
 			.with_context(|| format!("Dependency '{entry}' failed — cannot start session"))?;
 	}
@@ -78,7 +89,7 @@ fn parse_dep_entries(toml_str: &str) -> Result<Vec<String>> {
 /// Run a single dep script synchronously.
 ///
 /// `entry` is `"org/tool"` — maps to `<deps_root>/org/tool.sh`.
-/// stderr is inherited (user sees install output), stdout is suppressed.
+/// stdout and stderr are suppressed; progress is reported via the caller's status callback.
 fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 	let script_path = deps_root.join(format!("{entry}.sh"));
 
@@ -90,12 +101,12 @@ fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 		);
 	}
 
-	eprintln!("  → checking dep: {entry}");
+	crate::log_debug!("running dep script: {}", entry);
 
 	let status = std::process::Command::new("bash")
 		.arg(&script_path)
 		.stdout(Stdio::null()) // stdout reserved for Octomind
-		.stderr(Stdio::inherit()) // show install progress to user
+		.stderr(Stdio::null()) // suppress install output; shown only in debug
 		.status()
 		.with_context(|| format!("Failed to execute dep script: {}", script_path.display()))?;
 

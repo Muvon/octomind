@@ -54,12 +54,9 @@ pub struct RunArgs {
 pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	let is_interactive = args.format.is_none() && std::io::stdin().is_terminal();
 
-	// Resolve config + role: registry agent vs plain role name
+	// Full startup: tap/dep resolution + MCP init under one spinner
 	let (run_config, role) =
-		super::common::resolve_config_and_role(args.tag.as_deref(), config).await?;
-
-	// Initialize MCP servers (spinner only in interactive mode)
-	super::common::init_mcp(&role, &run_config, is_interactive).await?;
+		super::common::startup(args.tag.as_deref(), config, is_interactive).await?;
 
 	let session_args = octomind::session::chat::session::GenericSessionArgs {
 		role: role.clone(),

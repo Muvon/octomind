@@ -137,9 +137,10 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		.count();
 	if providing_count > 1 {
 		if let Some(ref tap) = providing_tap {
-			eprintln!(
-				"⚠️  Warning: '{}' found in multiple taps — using first match: {}",
-				tag, tap.name
+			crate::log_debug!(
+				"'{}' found in multiple taps — using first match: {}",
+				tag,
+				tap.name
 			);
 		}
 	}

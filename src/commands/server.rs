@@ -39,7 +39,7 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 	use octomind::websocket::WebSocketServer;
 
 	let (resolved_config, role) =
-		super::common::resolve_config_and_role(args.tag.as_deref(), config).await?;
+		super::common::resolve_config_and_role(args.tag.as_deref(), config, None).await?;
 
 	// Initialize tracing for WebSocket mode - logs to file
 	// stdout/stderr are used for server status messages
@@ -51,7 +51,7 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 		eprintln!("Warning: Failed to initialize tracing: {}", e);
 	}
 
-	super::common::init_mcp(&role, &resolved_config, true).await?;
+	super::common::startup_mcp_only(&role, &resolved_config, true).await?;
 
 	// Create and start WebSocket server
 	let server = WebSocketServer::new(&args.host, args.port, resolved_config, role)?;

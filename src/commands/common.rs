@@ -86,13 +86,13 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 				if servers.is_empty() {
 					spinner.set_message("No MCP servers to initialize".to_string());
 				} else {
-					spinner.set_message(format!("Starting MCP servers: {}", servers.join(", ")));
+					spinner.set_message(format!("Starting MCP: {}", servers.join(", ")));
 				}
 			}
 			McpInitProgress::Completed {
 				server,
 				success,
-				function_count,
+				function_count: _,
 			} => {
 				let mut completed_guard = completed.lock().unwrap();
 				*completed_guard += 1;
@@ -101,12 +101,12 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 
 				if *success {
 					spinner.set_message(format!(
-						"Started {} ({}) [{}/{}]",
-						server, function_count, completed_count, total_count
+						"✓ Started MCP: {} [{}/{}]",
+						server, completed_count, total_count
 					));
 				} else {
 					spinner.set_message(format!(
-						"Failed {} [{}/{}]",
+						"✗ Failed MCP: {} [{}/{}]",
 						server, completed_count, total_count
 					));
 				}

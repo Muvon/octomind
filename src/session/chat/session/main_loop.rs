@@ -669,7 +669,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		);
 
 		// Prepare for API call using helper function
-		prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
+		// Treat cancellation as a soft signal — continue the loop instead of exiting the session
+		match prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await {
+			Ok(()) => {}
+			Err(e) if e.to_string().contains("Operation cancelled") => continue,
+			Err(e) => return Err(e),
+		}
 
 		// Capture message count BEFORE API call to detect if assistant message gets added
 		let messages_before_api = chat_session.session.messages.len();

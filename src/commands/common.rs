@@ -134,8 +134,9 @@ pub async fn init_mcp(role: &str, config: &Config, is_interactive: bool) -> Resu
 /// `[[roles]]` entry in the manifest TOML.  This means manifests never need
 /// to declare their own name — the tag IS the identity.
 fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
-	// The role name is the part after the colon: "domain:spec" → "spec"
-	let role_name = tag.split(':').nth(1).unwrap_or(tag);
+	// The full tag IS the role identity — "doctor:blood" becomes the role name.
+	// This matches what resolve_config_and_role returns as the role string.
+	let role_name = tag;
 
 	let mut value: toml::Value =
 		toml::from_str(toml_str).context("Failed to parse agent manifest TOML")?;

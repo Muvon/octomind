@@ -49,12 +49,6 @@ custom_constraints_file_name = "CONSTRAINTS.md"
 # Can also be enabled at runtime with --sandbox CLI flag.
 sandbox = false
 
-# Capability provider overrides for tap agents
-# Each key is a capability name, value is the provider to use instead of "default"
-# Example: codesearch = "octocode" → uses capabilities/codesearch/octocode.toml
-# Leave empty to use default providers for all capabilities
-[capabilities]
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERFORMANCE & LIMITS
 # Configure thresholds and performance-related settings
@@ -104,6 +98,12 @@ max_session_spending_threshold = 0.0
 # When exceeded during a single request processing, Octomind will stop execution
 # This tracks cost from user input until next user input or session end
 max_request_spending_threshold = 0.0
+
+# Capability provider overrides for tap agents
+# Each key is a capability name, value is the provider to use instead of "default"
+# Example: codesearch = "octocode" → uses capabilities/codesearch/octocode.toml
+# Leave empty to use default providers for all capabilities
+[capabilities]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # API KEYS AND AUTHENTICATION

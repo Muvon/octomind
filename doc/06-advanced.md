@@ -95,22 +95,24 @@ The `plan` tool enables interactive, step-by-step task management inside Octomin
 The `mcp` tool allows you to manage MCP servers at runtime without editing the configuration file. This is useful for testing new servers or adding specialized tools temporarily.
 
 **Actions:**
-- **`list`**: Show all currently loaded dynamic servers and their tools.
+- **`list`**: Show all MCP servers (configured + dynamic) with status and persistence info.
 - **`add`**: Register a new MCP server configuration (does NOT connect yet).
 - **`enable`**: Connect to a registered server and activate its tools.
 - **`disable`**: Deactivate a server's tools (configuration stays registered).
 - **`remove`**: Unregister a server entirely.
+- **`persist`**: Save a registered server to config dir. If enabled, auto-binds to current role. If disabled, clears auto_bind.
+- **`unpersist`**: Remove a persisted server config file.
 
 **Parameters:**
-- `action` (string, required): `add`, `remove`, `enable`, `disable`, `list`
+- `action` (string, required): `add`, `remove`, `enable`, `disable`, `list`, `persist`, `unpersist`
 - `name` (string, optional): Unique name for the server
-- `server_type` (string, optional): `stdin` or `http`
-- `command` (string, optional): Executable to run (for `stdin`)
-- `args` (array, optional): Arguments for the command (for `stdin`)
+- `server_type` (string, optional): `stdio` or `http`
+- `command` (string, optional): Executable to run (for `stdio`)
+- `args` (array, optional): Arguments for the command (for `stdio`)
 - `url` (string, optional): Server endpoint (for `http`)
 - `auth_token` (string, optional): Bearer token for authentication (for `http`)
 - `timeout_seconds` (number, optional): Server response timeout (default: 60)
-- `tools` (array, optional): Which tools to expose (empty = all)
+- `tools` (array, optional): Which tools to expose (empty = all, supports wildcards like `github_*`)
 
 ### agent — Dynamic Agent Management
 
@@ -136,9 +138,42 @@ The `agent` tool allows you to manage specialized AI agents at runtime. These ag
 - `server_refs` (array, optional): MCP server references (config-defined or dynamic)
 - `allowed_tools` (array, optional): Allowed tools filter (supports wildcards)
 - `workdir` (string, optional): Working directory (default: '.')
-See `src/mcp/core/plan/` for code, and test integration in `src/session/chat/session/main_loop.rs`.
-- Single tool: clean header, no index
-- Multiple tools: indexed headers
+
+### schedule — Scheduled Message Injection
+
+The `schedule` tool allows you to schedule messages to be automatically injected as user messages into the current session at a future time. The session keeps running until all scheduled messages have fired.
+
+**Commands:**
+- **`add`**: Schedule a new message (requires `when` and `message`; `description` recommended)
+- **`list`**: Show all pending scheduled entries with IDs, trigger times, and countdown
+- **`remove`**: Cancel a scheduled entry by `id`
+- **`edit`**: Update an existing entry by `id` (any of `when`, `message`, `description`)
+
+**`when` format** (local timezone):
+- **Relative**: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`, `"in 2h 30m"`
+- **Time today**: `"15:30"`, `"3:30pm"`, `"9am"` (if already past, fires tomorrow)
+- **Exact datetime**: `"2026-03-22 15:30"`
+
+**Parameters:**
+- `command` (string, required): Action to perform (`add`, `list`, `remove`, `edit`)
+- `when` (string, optional): When to fire. Required for `add`, optional for `edit`
+- `message` (string, optional): The exact text injected verbatim as a user message when the timer fires. Required for `add`, optional for `edit`
+- `description` (string, optional): Human-readable description shown in list output
+- `id` (string, optional): Entry ID for `remove` and `edit` operations
+
+**Key Features:**
+- Each scheduled entry fires exactly once and is automatically removed after triggering
+- To repeat a task, schedule it again after it fires
+- The session keeps running until all scheduled messages have fired
+- Maximum 8 concurrent async jobs; jobs cancelled on session exit
+
+**Usage Example:**
+```json
+{"command": "add", "when": "in 30m", "message": "Check the build status", "description": "Build reminder"}
+{"command": "list"}
+{"command": "remove", "id": "entry-123"}
+{"command": "edit", "id": "entry-123", "when": "in 1h"}
+```
 
 **Adding a Tool/Server:**
 - Add your tool/server in config and code (see [08-mcp-server-development.md](./08-mcp-server-development.md))

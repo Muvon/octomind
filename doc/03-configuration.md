@@ -697,9 +697,25 @@ server_refs = ["core", "filesystem"]  # Default servers
 
 ### Server Types
 
-- **core**: Built-in developer tools (shell, code search, file operations)
-- **filesystem**: Built-in filesystem tools (file reading, writing, listing)
 - **external**: External MCP servers (HTTP or command-based)
+
+### Auto-Bind Configuration
+
+MCP servers can be configured to automatically activate for specific roles using the `auto_bind` field:
+
+```toml
+[[mcp.servers]]
+name = "my-server"
+type = "stdio"
+command = "my-mcp-server"
+auto_bind = ["developer", "reviewer"]  # Auto-activate for these roles
+```
+
+When a role is loaded, any server with that role in its `auto_bind` list will be automatically enabled:
+- **During session start**: Servers with matching `auto_bind` are added to the role's server list
+- **With `mcp persist`**: When persisting an enabled server, `auto_bind` is set to the current role; when persisting a disabled server, `auto_bind` is cleared
+
+This is useful for servers that should always be available for certain roles without manual configuration in each role's `server_refs`.
 
 ### Migration from Legacy Configuration
 

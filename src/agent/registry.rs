@@ -24,8 +24,9 @@
 //! Sources are resolved from user taps (see `agent::taps`) — user taps first, built-in last.
 
 use anyhow::{Context, Result};
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::config::registry::RegistryConfig;
@@ -209,4 +210,243 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 		"Failed to fetch agent manifest for '{}' from all taps",
 		tag
 	))
+}
+
+/// Resolve `capabilities = [...]` declared in an agent manifest.
+///
+/// For each capability name, loads `<tap_root>/capabilities/<name>/<provider>.toml`
+/// where `<provider>` comes from the user's `[capabilities]` config overrides,
+/// falling back to `"default"` when not overridden.
+///
+/// Merges into the agent TOML:
+/// - `[deps] require` → union
+/// - `[roles.mcp] server_refs` → union
+/// - `[roles.mcp] allowed_tools` → union
+/// - `[[mcp.servers]]` blocks → append (deduplicated by name)
+///
+/// Strips the `capabilities = [...]` line from the output.
+pub fn resolve_capabilities(
+	raw_toml: &str,
+	tap_root: &Path,
+	overrides: &HashMap<String, String>,
+) -> Result<String> {
+	let mut value: toml::Value =
+		toml::from_str(raw_toml).context("Failed to parse agent manifest TOML")?;
+
+	// Extract and remove capabilities list
+	let cap_names: Vec<String> = match value.get("capabilities") {
+		Some(toml::Value::Array(arr)) => arr
+			.iter()
+			.filter_map(|v| v.as_str().map(String::from))
+			.collect(),
+		_ => return Ok(raw_toml.to_string()), // No capabilities declared — pass through
+	};
+	if let toml::Value::Table(t) = &mut value {
+		t.remove("capabilities");
+	}
+
+	// Collect merged values from all capability files
+	let mut all_deps: Vec<String> = Vec::new();
+	let mut all_server_refs: Vec<String> = Vec::new();
+	let mut all_allowed_tools: Vec<String> = Vec::new();
+	let mut all_mcp_servers: Vec<toml::Value> = Vec::new();
+	let mut seen_server_names: HashSet<String> = HashSet::new();
+
+	// Track server names already in the agent manifest
+	if let Some(servers) = value
+		.get("mcp")
+		.and_then(|m| m.get("servers"))
+		.and_then(|s| s.as_array())
+	{
+		for s in servers {
+			if let Some(name) = s.get("name").and_then(|n| n.as_str()) {
+				seen_server_names.insert(name.to_string());
+			}
+		}
+	}
+
+	for cap_name in &cap_names {
+		let provider = overrides
+			.get(cap_name)
+			.map(|s| s.as_str())
+			.unwrap_or("default");
+		let cap_path = tap_root
+			.join("capabilities")
+			.join(cap_name)
+			.join(format!("{provider}.toml"));
+
+		if !cap_path.exists() {
+			anyhow::bail!(
+				"Capability file not found: {} (looked in {})",
+				cap_name,
+				cap_path.display()
+			);
+		}
+
+		let cap_str = fs::read_to_string(&cap_path)
+			.with_context(|| format!("Failed to read capability file: {}", cap_path.display()))?;
+		let cap: toml::Value = toml::from_str(&cap_str)
+			.with_context(|| format!("Failed to parse capability file: {}", cap_path.display()))?;
+
+		// [deps] require
+		if let Some(deps) = cap
+			.get("deps")
+			.and_then(|d| d.get("require"))
+			.and_then(|r| r.as_array())
+		{
+			for d in deps {
+				if let Some(s) = d.as_str() {
+					if !all_deps.contains(&s.to_string()) {
+						all_deps.push(s.to_string());
+					}
+				}
+			}
+		}
+
+		// [roles.mcp] server_refs
+		if let Some(refs) = cap
+			.get("roles")
+			.and_then(|r| r.get("mcp"))
+			.and_then(|m| m.get("server_refs"))
+			.and_then(|s| s.as_array())
+		{
+			for r in refs {
+				if let Some(s) = r.as_str() {
+					if !all_server_refs.contains(&s.to_string()) {
+						all_server_refs.push(s.to_string());
+					}
+				}
+			}
+		}
+
+		// [roles.mcp] allowed_tools
+		if let Some(tools) = cap
+			.get("roles")
+			.and_then(|r| r.get("mcp"))
+			.and_then(|m| m.get("allowed_tools"))
+			.and_then(|a| a.as_array())
+		{
+			for t in tools {
+				if let Some(s) = t.as_str() {
+					if !all_allowed_tools.contains(&s.to_string()) {
+						all_allowed_tools.push(s.to_string());
+					}
+				}
+			}
+		}
+
+		// [[mcp.servers]] blocks — deduplicate by name
+		if let Some(servers) = cap
+			.get("mcp")
+			.and_then(|m| m.get("servers"))
+			.and_then(|s| s.as_array())
+		{
+			for server in servers {
+				let name = server.get("name").and_then(|n| n.as_str()).unwrap_or("");
+				if !name.is_empty() && seen_server_names.insert(name.to_string()) {
+					all_mcp_servers.push(server.clone());
+				}
+			}
+		}
+	}
+
+	// Merge deps into agent value
+	if !all_deps.is_empty() {
+		let existing_deps: Vec<String> = value
+			.get("deps")
+			.and_then(|d| d.get("require"))
+			.and_then(|r| r.as_array())
+			.map(|arr| {
+				arr.iter()
+					.filter_map(|v| v.as_str().map(String::from))
+					.collect()
+			})
+			.unwrap_or_default();
+
+		let mut merged = existing_deps;
+		for d in all_deps {
+			if !merged.contains(&d) {
+				merged.push(d);
+			}
+		}
+
+		let deps_table = value
+			.as_table_mut()
+			.unwrap()
+			.entry("deps")
+			.or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+		if let toml::Value::Table(t) = deps_table {
+			t.insert(
+				"require".to_string(),
+				toml::Value::Array(merged.into_iter().map(toml::Value::String).collect()),
+			);
+		}
+	}
+
+	// Merge server_refs and allowed_tools into [roles] entries
+	// The agent manifest has [[roles]] as an array — merge into each entry's mcp section
+	if let Some(toml::Value::Array(roles)) = value.get_mut("roles") {
+		for role in roles.iter_mut() {
+			if let toml::Value::Table(role_table) = role {
+				let mcp = role_table
+					.entry("mcp")
+					.or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+				if let toml::Value::Table(mcp_table) = mcp {
+					// server_refs
+					merge_string_array(mcp_table, "server_refs", &all_server_refs);
+					// allowed_tools
+					merge_string_array(mcp_table, "allowed_tools", &all_allowed_tools);
+				}
+			}
+		}
+	}
+
+	// Append [[mcp.servers]] blocks
+	if !all_mcp_servers.is_empty() {
+		let mcp = value
+			.as_table_mut()
+			.unwrap()
+			.entry("mcp")
+			.or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+		if let toml::Value::Table(mcp_table) = mcp {
+			let servers = mcp_table
+				.entry("servers")
+				.or_insert_with(|| toml::Value::Array(Vec::new()));
+			if let toml::Value::Array(arr) = servers {
+				arr.extend(all_mcp_servers);
+			}
+		}
+	}
+
+	toml::to_string(&value)
+		.context("Failed to re-serialize agent manifest after capability resolution")
+}
+
+/// Merge a list of strings into an existing TOML array field, deduplicating.
+fn merge_string_array(
+	table: &mut toml::map::Map<String, toml::Value>,
+	key: &str,
+	additions: &[String],
+) {
+	let existing: Vec<String> = table
+		.get(key)
+		.and_then(|v| v.as_array())
+		.map(|arr| {
+			arr.iter()
+				.filter_map(|v| v.as_str().map(String::from))
+				.collect()
+		})
+		.unwrap_or_default();
+
+	let mut merged = existing;
+	for item in additions {
+		if !merged.contains(item) {
+			merged.push(item.clone());
+		}
+	}
+
+	table.insert(
+		key.to_string(),
+		toml::Value::Array(merged.into_iter().map(toml::Value::String).collect()),
+	);
 }

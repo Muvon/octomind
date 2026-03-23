@@ -45,8 +45,12 @@ pub async fn resolve_config_and_role(
 		let (raw_toml, tap_root) = registry::fetch_manifest(tag, &config.registry)
 			.await
 			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
+		// Resolve capabilities before input/env/dep resolution
+		let resolved_toml =
+			registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
+				.context("Failed to resolve agent capabilities")?;
 		// INPUT first (persistent credential store), then ENV (environment / .env fallback)
-		let resolved_toml = inputs::resolve_inputs(&raw_toml).await?;
+		let resolved_toml = inputs::resolve_inputs(&resolved_toml).await?;
 		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
 		// Run dep scripts before MCP init — idempotent, exit 0 if already installed
 		deps::resolve_deps(&resolved_toml, &tap_root, status_cb).await?;

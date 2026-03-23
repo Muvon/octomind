@@ -49,6 +49,12 @@ custom_constraints_file_name = "CONSTRAINTS.md"
 # Can also be enabled at runtime with --sandbox CLI flag.
 sandbox = false
 
+# Capability provider overrides for tap agents
+# Each key is a capability name, value is the provider to use instead of "default"
+# Example: codesearch = "octocode" → uses capabilities/codesearch/octocode.toml
+# Leave empty to use default providers for all capabilities
+[capabilities]
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERFORMANCE & LIMITS
 # Configure thresholds and performance-related settings

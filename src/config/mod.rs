@@ -269,6 +269,12 @@ pub struct Config {
 	// Can also be enabled at runtime with --sandbox CLI flag
 	pub sandbox: bool,
 
+	// Capability provider overrides (capability_name → provider_name)
+	// Empty by default — uses "default" provider for each capability.
+	// User can override e.g. capabilities = { codesearch = "octocode" }
+	#[serde(default)]
+	pub capabilities: HashMap<String, String>,
+
 	// Agent registry configuration
 	#[serde(default)]
 	pub registry: crate::config::registry::RegistryConfig,

@@ -571,21 +571,21 @@ allowed_tools = []
 [[agents]]
 name = "context_gatherer"
 description = "Gather detailed context from files and codebase. Reads files, searches code patterns, and provides comprehensive information about specific areas of the codebase for development tasks."
-command = "octomind acp --role context_gatherer"
+command = "octomind acp context_gatherer"
 workdir = "."  # Working directory for agent execution (default: current directory)
 
 # Example: Architect Agent - Design system architecture
 # [[agents]]
 # name = "architect"
 # description = "Design system architecture and evaluate technical decisions. Provides high-level design guidance."
-# command = "octomind acp --role architect"
+# command = "octomind acp architect"
 # workdir = "."
 
 # Example: Code Reviewer Agent - Review code for quality and best practices
 # [[agents]]
 # name = "code_reviewer"
 # description = "Review code for quality, best practices, security issues, and performance problems."
-# command = "octomind acp --role code_reviewer"
+# command = "octomind acp code_reviewer"
 # workdir = "."
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROMPT TEMPLATES

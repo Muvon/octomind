@@ -82,6 +82,10 @@ serde_urlencoded = "0.7"
 thiserror = "2.0"
 open = "5"
 tracing = { version = "0.1", default-features = false }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
 agent-client-protocol = "0.10.2"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 

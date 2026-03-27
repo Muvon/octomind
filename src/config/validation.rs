@@ -34,9 +34,58 @@ impl Config {
 		// Validate workflows - STRICT
 		self.validate_workflows()?;
 
+		// Validate webhook hooks - STRICT
+		self.validate_hooks()?;
+
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
+		Ok(())
+	}
+
+	/// Validate webhook hook configurations
+	fn validate_hooks(&self) -> Result<()> {
+		let mut seen_names = std::collections::HashSet::new();
+		let mut seen_binds = std::collections::HashSet::new();
+
+		for hook in &self.hooks {
+			if hook.name.is_empty() {
+				return Err(anyhow!("Hook has empty name"));
+			}
+			if !seen_names.insert(&hook.name) {
+				return Err(anyhow!("Duplicate hook name: '{}'", hook.name));
+			}
+			if hook.bind.is_empty() {
+				return Err(anyhow!("Hook '{}' has empty bind address", hook.name));
+			}
+			if !seen_binds.insert(&hook.bind) {
+				return Err(anyhow!(
+					"Hook '{}' has duplicate bind address '{}' (already used by another hook)",
+					hook.name,
+					hook.bind
+				));
+			}
+			if hook.bind.parse::<std::net::SocketAddr>().is_err() {
+				return Err(anyhow!(
+					"Hook '{}' has invalid bind address: '{}'",
+					hook.name,
+					hook.bind
+				));
+			}
+			if hook.script.is_empty() {
+				return Err(anyhow!("Hook '{}' has empty script path", hook.name));
+			}
+			if hook.timeout == 0 {
+				return Err(anyhow!("Hook '{}' timeout must be > 0", hook.name));
+			}
+			if hook.timeout > 3600 {
+				return Err(anyhow!(
+					"Hook '{}' timeout too high: {}s (max 3600)",
+					hook.name,
+					hook.timeout
+				));
+			}
+		}
 		Ok(())
 	}
 

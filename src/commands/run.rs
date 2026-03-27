@@ -55,6 +55,11 @@ pub struct RunArgs {
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
+
+	/// Activate a webhook hook by name (defined in [[hooks]] config).
+	/// Can be specified multiple times for multiple hooks.
+	#[arg(long = "hook", value_name = "NAME")]
+	pub hooks: Vec<String>,
 }
 pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	// Daemon mode: no spinner, but still use readline if terminal input available.
@@ -75,6 +80,7 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
 		daemon: args.daemon,
+		hooks: args.hooks.clone(),
 		..Default::default()
 	};
 

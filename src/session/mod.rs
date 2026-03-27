@@ -36,6 +36,7 @@ pub mod inject_listener; // Unix Domain Socket listener for external message inj
 pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system
+pub mod webhook_listener; // HTTP webhook listener for hook-to-inbox injection
 pub mod workflows; // Workflow orchestration system // Background job tracking for async agent execution
 
 // Provider system exports

@@ -42,6 +42,60 @@ async fn print_command_output(
 	output.display_cli(session, config).await;
 }
 
+/// Extract webhook hook names from the Debug representation of session args.
+fn extract_hooks_from_args<T: std::fmt::Debug>(args: &T) -> Vec<String> {
+	let args_str = format!("{:?}", args);
+	// Match: hooks: ["name1", "name2"]
+	if let Some(start) = args_str.find("hooks: [") {
+		let inner_start = start + 8;
+		if let Some(end) = args_str[inner_start..].find(']') {
+			let hooks_str = &args_str[inner_start..inner_start + end];
+			return hooks_str
+				.split(',')
+				.filter_map(|s| {
+					let trimmed = s.trim().trim_matches('"');
+					if trimmed.is_empty() {
+						None
+					} else {
+						Some(trimmed.to_string())
+					}
+				})
+				.collect();
+		}
+	}
+	Vec::new()
+}
+
+/// Start webhook listeners for all activated hooks.
+/// Returns RAII guards that stop the listeners on drop.
+async fn start_webhook_guards<T: std::fmt::Debug>(
+	args: &T,
+	config: &Config,
+	session_name: &str,
+) -> Result<Vec<crate::session::webhook_listener::WebhookListenerGuard>> {
+	let hook_names = extract_hooks_from_args(args);
+	let mut guards = Vec::with_capacity(hook_names.len());
+	for hook_name in &hook_names {
+		let hook_config = config.get_hook_by_name(hook_name).ok_or_else(|| {
+			anyhow::anyhow!(
+				"Hook '{}' not found in config. Define it in [[hooks]].",
+				hook_name
+			)
+		})?;
+		let (addr, script_path) = crate::session::webhook_listener::validate_hook(hook_config)?;
+		guards.push(
+			crate::session::webhook_listener::start_webhook_listener(
+				session_name,
+				hook_config,
+				addr,
+				script_path,
+			)
+			.await?,
+		);
+	}
+	Ok(guards)
+}
+
 // Run an interactive session
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
 	// Setup and initialize session using helper function
@@ -59,6 +113,9 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Start inject listener so `octomind send` can push messages into this session
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
+		// Start webhook listeners for any --hook flags
+		let _webhook_guards =
+			start_webhook_guards(args, config, &chat_session.session.info.name).await?;
 		// Get current directory for file operations - use thread-local if set (ACP/WebSocket), otherwise process cwd
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let mut chat_session = chat_session;
@@ -864,6 +921,8 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	crate::mcp::agent::functions::init_job_manager();
 	// Start inject listener so `octomind send` can push messages into this session
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
+	// Start webhook listeners for any --hook flags
+	let _webhook_guards = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
 	// Parse daemon flag from args debug string
 	let daemon = format!("{:?}", args).contains("daemon: true");
 	let mut chat_session = chat_session;

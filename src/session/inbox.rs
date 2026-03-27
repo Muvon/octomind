@@ -47,6 +47,8 @@ pub enum InboxSource {
 	Skill { name: String },
 	/// An external injection via `octomind inject` CLI command.
 	Inject,
+	/// A webhook hook that received an HTTP request.
+	Webhook { hook: String },
 }
 
 /// A message waiting to be injected into the session as a user turn.
@@ -184,6 +186,9 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 			return Some(format!("skill '{name}'"));
 		}
 		InboxSource::Inject => "external inject",
+		InboxSource::Webhook { hook } => {
+			return Some(format!("webhook '{hook}'"));
+		}
 	};
 	// Truncate content preview to first line, max 80 chars
 	let preview: String = msg

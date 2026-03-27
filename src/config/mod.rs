@@ -29,6 +29,8 @@ pub fn get_env_tracker() -> &'static Mutex<env_source::EnvTracker> {
 pub mod agents;
 pub mod env_source;
 
+pub mod hooks;
+
 pub mod layers;
 
 pub mod loading;
@@ -54,6 +56,7 @@ pub mod workflows;
 // Tests should be rewritten to use complete config structures
 
 // Re-export commonly used types
+pub use hooks::*;
 pub use layers::*;
 pub use mcp::*;
 pub use oauth_config::*; // OAuth 2.1 + PKCE configuration types
@@ -280,6 +283,10 @@ pub struct Config {
 	#[serde(default)]
 	pub capabilities: HashMap<String, String>,
 
+	// Webhook hook configurations
+	#[serde(default)]
+	pub hooks: Vec<HookConfig>,
+
 	// Agent registry configuration
 	#[serde(default)]
 	pub registry: crate::config::registry::RegistryConfig,
@@ -376,6 +383,11 @@ impl McpConfig {
 }
 
 impl Config {
+	/// Look up a webhook hook by name.
+	pub fn get_hook_by_name(&self, name: &str) -> Option<&HookConfig> {
+		self.hooks.iter().find(|h| h.name == name)
+	}
+
 	/// Get the effective model to use - uses root config model (now always required)
 	pub fn get_effective_model(&self) -> String {
 		// Model is now always required in config, no fallback needed

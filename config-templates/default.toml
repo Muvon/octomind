@@ -207,6 +207,27 @@ tools = []
 # scopes = ["repo", "read:org"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WEBHOOK HOOKS
+# Configure HTTP webhook listeners that pipe payloads through scripts
+# and inject the output into the session as user messages.
+# Activate hooks with: octomind run --hook <name> --daemon --format jsonl
+#
+# Script interface:
+#   stdin:  raw HTTP body
+#   stdout: message to inject into session (if exit code 0)
+#   stderr: error info (logged on non-zero exit)
+#   env:    HOOK_NAME, HOOK_METHOD, HOOK_PATH, HOOK_QUERY,
+#           HOOK_CONTENT_TYPE, HOOK_SESSION, HOOK_HEADER_*
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Example: GitHub push webhook
+# [[hooks]]
+# name = "github-push"
+# bind = "0.0.0.0:9876"
+# script = "/path/to/process-github-push.sh"
+# timeout = 30  # seconds (default: 30)
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # WORKFLOWS (BRAIN-INSPIRED PLANNING SYSTEM)
 # Configure multi-step AI processing workflows with validation and feedback loops
 # Workflows act as PLANNERS that enhance user requests before execution

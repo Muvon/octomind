@@ -47,6 +47,8 @@ pub struct GenericSessionArgs {
 	/// When true, the non-interactive session loop never exits on its own —
 	/// it waits indefinitely for messages (via `octomind send`).
 	pub daemon: bool,
+	/// Webhook hook names to activate for this session.
+	pub hooks: Vec<String>,
 }
 
 impl GenericSessionArgs {

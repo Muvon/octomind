@@ -5,39 +5,42 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Try release binary first, then debug binary
-if [[ -f "${SCRIPT_DIR}/../target/release/octomind" ]]; then
-	OCTOMIND_BIN="${SCRIPT_DIR}/../target/release/octomind"
-elif [[ -f "${SCRIPT_DIR}/../target/debug/octomind" ]]; then
-	OCTOMIND_BIN="${SCRIPT_DIR}/../target/debug/octomind"
+# Use the most recently built binary (debug or release).
+RELEASE="${SCRIPT_DIR}/../target/release/octomind"
+DEBUG="${SCRIPT_DIR}/../target/debug/octomind"
+
+if [[ -f "$DEBUG" && -f "$RELEASE" ]]; then
+	if [[ "$DEBUG" -nt "$RELEASE" ]]; then
+		OCTOMIND_BIN="$DEBUG"
+	else
+		OCTOMIND_BIN="$RELEASE"
+	fi
+elif [[ -f "$RELEASE" ]]; then
+	OCTOMIND_BIN="$RELEASE"
+elif [[ -f "$DEBUG" ]]; then
+	OCTOMIND_BIN="$DEBUG"
 else
 	echo "Error: octomind binary not found"
-	echo "Please run 'cargo build --release' or 'cargo build' first"
+	echo "Please run 'cargo build' first"
 	exit 1
 fi
 
 echo "Installing shell completions for octomind..."
 
-# Detect the shell and install accordingly
-detect_shell() {
-	if [[ -n "$ZSH_VERSION" ]]; then
-		echo "zsh"
-	elif [[ -n "$BASH_VERSION" ]]; then
-		echo "bash"
-	else
-		# Try to detect from SHELL environment variable
-		case "$SHELL" in
-			*/zsh) echo "zsh" ;;
-			*/bash) echo "bash" ;;
-			*) echo "unknown" ;;
-		esac
+# Append lines to a file only if the guard comment is not already present.
+append_if_absent() {
+	local file="$1"
+	local guard="$2"
+	local content="$3"
+	if grep -qF "$guard" "$file" 2>/dev/null; then
+		return 0
 	fi
+	printf '\n%s\n' "$content" >> "$file"
 }
 
 install_bash_completion() {
 	echo "Installing bash completion..."
 
-	# Standard bash completion directories (in order of preference)
 	BASH_COMPLETION_DIRS=(
 		"$HOME/.local/share/bash-completion/completions"
 		"$HOME/.bash_completion.d"
@@ -45,7 +48,6 @@ install_bash_completion() {
 		"/etc/bash_completion.d"
 	)
 
-	# Find the first writable directory
 	BASH_DIR=""
 	for dir in "${BASH_COMPLETION_DIRS[@]}"; do
 		if [[ -d "$(dirname "$dir")" ]] && [[ -w "$(dirname "$dir")" ]]; then
@@ -55,91 +57,74 @@ install_bash_completion() {
 	done
 
 	if [[ -z "$BASH_DIR" ]]; then
-		# Create user directory as fallback
 		BASH_DIR="$HOME/.local/share/bash-completion/completions"
-		mkdir -p "$BASH_DIR"
-	else
-		mkdir -p "$BASH_DIR"
 	fi
+	mkdir -p "$BASH_DIR"
 
 	"$OCTOMIND_BIN" completion bash > "$BASH_DIR/octomind"
-	echo "✓ Bash completion installed to: $BASH_DIR/octomind"
+	echo "✓ Bash completion file written to: $BASH_DIR/octomind"
 
-	# Check if bash-completion is properly configured
-	if ! grep -q "bash-completion" "$HOME/.bashrc" 2>/dev/null &&
-							! grep -q "bash_completion" "$HOME/.bash_profile" 2>/dev/null; then
-		echo ""
-		echo "📝 To enable bash completion, add this to your ~/.bashrc:"
-		echo "   # Enable bash completion"
-		echo "   if [[ -f /usr/share/bash-completion/bash_completion ]]; then"
-		echo "       source /usr/share/bash-completion/bash_completion"
-		echo "   elif [[ -f /usr/local/etc/bash_completion ]]; then"
-		echo "       source /usr/local/etc/bash_completion"
-		echo "   fi"
-		echo ""
-		echo "   # Load user completions"
-		echo "   if [[ -d ~/.local/share/bash-completion/completions ]]; then"
-		echo "       for completion in ~/.local/share/bash-completion/completions/*; do"
-		echo "           [[ -r \$completion ]] && source \$completion"
-		echo "       done"
-		echo "   fi"
+	# Determine which rc file to update.
+	# On macOS bash login shells read .bash_profile; interactive shells read .bashrc.
+	# We write to whichever exists (preferring .bashrc, falling back to .bash_profile).
+	local rc_file=""
+	if [[ -f "$HOME/.bashrc" ]]; then
+		rc_file="$HOME/.bashrc"
+	elif [[ -f "$HOME/.bash_profile" ]]; then
+		rc_file="$HOME/.bash_profile"
+	else
+		rc_file="$HOME/.bashrc"
+		touch "$rc_file"
 	fi
+
+	local guard="# octomind completions"
+	local snippet="${guard}
+[[ -f \"${BASH_DIR}/octomind\" ]] && source \"${BASH_DIR}/octomind\""
+
+	append_if_absent "$rc_file" "$guard" "$snippet"
+	echo "✓ Shell config updated: $rc_file"
+	echo "  Run: source $rc_file  (or open a new terminal)"
 }
 
 install_zsh_completion() {
 	echo "Installing zsh completion..."
 
-	# Standard zsh completion directories (in order of preference)
-	ZSH_COMPLETION_DIRS=(
-		"$HOME/.local/share/zsh/site-functions"
-		"$HOME/.zsh/completions"
-		"$HOME/.config/zsh/completions"
-		"/usr/local/share/zsh/site-functions"
-		"/usr/share/zsh/site-functions"
-	)
+	# Use ~/.zsh/completions — a well-known user directory that works with
+	# both plain zsh and oh-my-zsh (add it to fpath before compinit).
+	ZSH_DIR="${HOME}/.zsh/completions"
 
-	# Find the first writable directory
-	ZSH_DIR=""
-	for dir in "${ZSH_COMPLETION_DIRS[@]}"; do
-		if [[ -d "$(dirname "$dir")" ]] && [[ -w "$(dirname "$dir")" ]]; then
-			ZSH_DIR="$dir"
-			break
-		fi
-	done
-
-	if [[ -z "$ZSH_DIR" ]]; then
-		# Create user directory as fallback
-		ZSH_DIR="$HOME/.local/share/zsh/site-functions"
-		mkdir -p "$ZSH_DIR"
-	else
-		mkdir -p "$ZSH_DIR"
-	fi
+	mkdir -p "$ZSH_DIR"
+	chmod 755 "$ZSH_DIR"
 
 	"$OCTOMIND_BIN" completion zsh > "$ZSH_DIR/_octomind"
+	chmod 644 "$ZSH_DIR/_octomind"
 	echo "✓ Zsh completion installed to: $ZSH_DIR/_octomind"
 
-	# Check if the directory is in fpath
-	echo ""
-	echo "📝 To enable zsh completion, ensure your ~/.zshrc contains:"
-	echo "   # Add completion directory to fpath"
-	echo "   fpath=($ZSH_DIR \$fpath)"
-	echo "   autoload -U compinit && compinit"
-	echo ""
-	echo "   Alternatively, add this line to regenerate completions:"
-	echo "   autoload -U compinit && compinit -d ~/.zcompdump"
-	echo ""
+	# Clear the zsh completion dump so it is rebuilt with the new file.
+	rm -f "${HOME}/.zcompdump"*
+	echo "✓ Completion cache cleared"
 
-	# Offer to fix common zsh completion issues
-	if [[ -n "$ZSH_VERSION" ]]; then
-		echo "🔧 Current session setup:"
-		echo "   Run: autoload -U compinit && compinit -d ~/.zcompdump"
-		echo "   Then: exec zsh  # to restart your shell"
+	if [[ -d "${HOME}/.oh-my-zsh" ]]; then
+		echo "  Open a new terminal to activate completions."
+	else
+		# Non-oh-my-zsh: ensure fpath and compinit are set in .zshrc.
+		local rc_file="$HOME/.zshrc"
+		[[ -f "$rc_file" ]] || touch "$rc_file"
+		if grep -qF "$ZSH_DIR" "$rc_file" 2>/dev/null; then
+			echo "  $ZSH_DIR already in $rc_file"
+		else
+			local guard="# octomind completions"
+			local snippet="${guard}
+fpath=(\"${ZSH_DIR}\" \$fpath)
+autoload -Uz compinit && compinit -u"
+			append_if_absent "$rc_file" "$guard" "$snippet"
+			echo "✓ Added fpath to $rc_file"
+		fi
+		echo "  Run: source $rc_file  (or open a new terminal)"
 	fi
 }
 
-# Main installation logic
-SHELL_TYPE=$(detect_shell)
-
+# Main: detect shell and install both by default
 case "$1" in
 	bash)
 		install_bash_completion
@@ -153,22 +138,10 @@ case "$1" in
 		;;
 	*)
 		echo "Usage: $0 [bash|zsh|both]"
-		echo "  bash - Install bash completion only"
-		echo "  zsh  - Install zsh completion only"
-		echo "  both - Install both completions (default)"
-		echo ""
-		echo "Auto-detected shell: $SHELL_TYPE"
 		exit 1
 		;;
 esac
 
 echo ""
-echo "✅ Shell completion installation complete!"
-echo ""
-echo "💡 Quick test:"
-echo "   octomind <TAB>        # Should show available commands"
-echo "   octomind session <TAB> # Should show session options"
-echo ""
-echo "🔄 If completions don't work immediately:"
-echo "   - Restart your shell: exec \$SHELL"
-echo "   - Or source your config: source ~/.bashrc (bash) or source ~/.zshrc (zsh)"
+echo "✅ Done. Open a new terminal (or source your shell config) to activate completions."
+echo "   octomind run <TAB>  — should show agent tags and role names"

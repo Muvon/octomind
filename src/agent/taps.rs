@@ -217,6 +217,58 @@ pub fn list_taps() -> Result<Vec<Tap>> {
 	Ok(read_taps_file()?.taps)
 }
 
+/// Returns all available agent tags (`category:variant`) from all active taps.
+///
+/// Uses only locally cached tap data — no network calls. First tap wins on duplicates
+/// (same priority as `fetch_manifest`). Result is sorted alphabetically.
+pub fn list_agent_tags() -> Result<Vec<String>> {
+	let taps = get_taps()?;
+	let mut tags: Vec<String> = Vec::new();
+	let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+	for tap in &taps {
+		let agents_dir = match tap.agents_dir() {
+			Ok(d) if d.exists() => d,
+			_ => continue,
+		};
+		let category_entries = match fs::read_dir(&agents_dir) {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+		for category_entry in category_entries.flatten() {
+			let category_path = category_entry.path();
+			if !category_path.is_dir() {
+				continue;
+			}
+			let category = match category_path.file_name().and_then(|n| n.to_str()) {
+				Some(c) => c.to_string(),
+				None => continue,
+			};
+			let variant_entries = match fs::read_dir(&category_path) {
+				Ok(e) => e,
+				Err(_) => continue,
+			};
+			for variant_entry in variant_entries.flatten() {
+				let variant_path = variant_entry.path();
+				if variant_path.extension().and_then(|e| e.to_str()) != Some("toml") {
+					continue;
+				}
+				let variant = match variant_path.file_stem().and_then(|n| n.to_str()) {
+					Some(v) => v.to_string(),
+					None => continue,
+				};
+				let tag = format!("{category}:{variant}");
+				if seen.insert(tag.clone()) {
+					tags.push(tag);
+				}
+			}
+		}
+	}
+
+	tags.sort();
+	Ok(tags)
+}
+
 /// Add a tap. Clones from GitHub or creates a symlink for local taps.
 ///
 /// Format: `user/repo` or `user/repo /path/to/local`

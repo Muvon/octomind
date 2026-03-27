@@ -14,6 +14,7 @@
 
 pub mod acp;
 pub mod common;
+pub mod complete;
 pub mod config;
 pub mod run;
 pub mod send;
@@ -23,6 +24,7 @@ pub mod untap;
 pub mod vars;
 
 pub use acp::AcpArgs;
+pub use complete::CompleteArgs;
 pub use config::ConfigArgs;
 pub use run::RunArgs;
 pub use send::SendArgs;

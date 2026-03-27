@@ -42,6 +42,18 @@ Welcome to the comprehensive Octomind documentation. This manual provides detail
 - **Layered Processing**: AI pipeline system for complex task decomposition
 - **MAP Planning**: Brain-inspired Modular Agentic Planner architecture for multi-step tasks
 - **Template-Based Configuration**: All defaults in `config-templates/default.toml`, including MAP planning template at `config-templates/map-planner.toml`
+### Webhook Integration
+- **HTTP Webhook Hooks**: External systems trigger actions via HTTP webhooks
+- **Script Processing**: Webhook payloads processed through custom scripts
+- **Session Injection**: Script output injected as user messages
+- **Environment Context**: Rich metadata available to hook scripts
+### Unified Inbox System
+- **Session-Scoped Queues**: Each session has isolated message queue
+- **Multiple Sources**: Schedule, BackgroundAgent, Skill, Inject, Webhook
+- **Thread-Safe**: RwLock<HashMap<SessionId, InboxQueue>> for concurrent access
+- **Async Wakeup**: Arc<Notify> for efficient session loop integration
+
+
 - **Structured Output**: `--schema` flag enforces JSON Schema-validated responses for pipelines and automation
 
 ### Smart Adaptive Compression System

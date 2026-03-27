@@ -844,7 +844,7 @@ hints_min_interval = 5
 
 # Compression triggers at these token thresholds with corresponding compression ratios
 # Each level defines: threshold (absolute token count) and target_ratio (compression strength)
-# Compression triggers when context exceeds ANY threshold, using the highest matched ratio
+# The threshold determines WHICH compression ratio to use, exponential cooldown determines WHEN to compress
 
 [[compression.pressure_levels]]
 threshold = 50000
@@ -857,7 +857,6 @@ target_ratio = 4.0  # Medium: 75% reduction (compress to 1/4 size)
 [[compression.pressure_levels]]
 threshold = 150000
 target_ratio = 8.0  # Aggressive: 87.5% reduction (compress to 1/8 size)
-
 # Maximum number of critical knowledge entries retained across compressions
 # Each compression may extract a short snippet of critical knowledge (decisions,
 # constraints, user preferences). Only the last N entries are kept.
@@ -906,6 +905,28 @@ Use session commands to manage tokens:
 - **target_ratio = 8.0**: Compress conversation to 12.5% of original size
 
 Higher ratios = more aggressive compression = smaller context = lower future costs
+
+### Exponential Cooldown Mechanism
+
+Octomind uses exponential cooldown to prevent futile compression loops during tool-call chains:
+
+**How it works:**
+- Each consecutive compression (without a user message) requires exponentially more token growth
+- Formula: `required_growth = 10% × 2^n` where n = consecutive compressions
+- Prevents compression when context temporarily grows then shrinks (common in tool-call sequences)
+
+**Example sequence:**
+```
+1st compression at 50k tokens → requires 10% growth (55k) for next compression
+2nd compression at 55k tokens → requires 20% growth (66k) for next compression
+3rd compression at 66k tokens → requires 40% growth (92k) for next compression
+4th+ compression → requires 80-100% growth (context must nearly double)
+```
+
+**Benefits:**
+- Prevents wasteful re-compression during temporary context spikes
+- Allows compression when context genuinely grows
+- Automatically resets when user sends a message (new conversation turn)
 
 ### Cache-Aware Economics
 
@@ -970,6 +991,80 @@ Compression Statistics:
 - Enable `decision_model` to use cheaper model for decisions
 - Increase thresholds to compress less frequently
 - Consider disabling compression if your sessions are short
+
+## Webhook Hooks
+
+Octomind supports HTTP webhook listeners that pipe payloads through scripts and inject the output into the session as user messages. This enables external systems to trigger actions in your Octomind session.
+
+### Configuration
+
+Configure webhook hooks in your `config.toml`:
+
+```toml
+# Example: GitHub push webhook
+[[hooks]]
+name = "github-push"
+bind = "0.0.0.0:9876"
+script = "/path/to/process-github-push.sh"
+timeout = 30  # seconds (default: 30)
+```
+
+### Activation
+
+Activate hooks when starting a session:
+
+```bash
+# Start session with webhook hook active
+octomind run --hook github-push --daemon --format jsonl
+```
+
+### Script Interface
+
+Your hook script receives:
+
+**Input:**
+- `stdin`: Raw HTTP body from the webhook request
+- `stdout`: Message to inject into session (if exit code 0)
+- `stderr`: Error information (logged on non-zero exit)
+
+**Environment Variables:**
+- `HOOK_NAME`: Name of the hook from config
+- `HOOK_METHOD`: HTTP method (GET, POST, etc.)
+- `HOOK_PATH`: URL path from the request
+- `HOOK_QUERY`: Query string parameters
+- `HOOK_CONTENT_TYPE`: Content-Type header value
+- `HOOK_SESSION`: Current session ID
+- `HOOK_HEADER_*`: All HTTP headers (e.g., `HOOK_HEADER_X_GITHUB_EVENT`)
+
+### Example Script
+
+```bash
+#!/bin/bash
+# process-github-push.sh - Handle GitHub push webhook
+
+# Parse JSON payload
+REPO=$(jq -r '.repository.name' <<< "$HOOK_BODY")
+BRANCH=$(jq -r '.ref' <<< "$HOOK_BODY" | sed 's|refs/heads/||')
+
+# Output message to inject into session
+echo "GitHub push to $REPO on branch $BRANCH. Check the changes and suggest improvements."
+
+exit 0
+```
+
+### Use Cases
+
+- **CI/CD Integration**: Trigger tests or deployments from CI webhooks
+- **GitHub Integration**: React to push, PR, or issue events
+- **Monitoring Alerts**: Inject alerts from monitoring systems
+- **Chat Bot Integration**: Bridge external chat systems to Octomind
+
+### Security Considerations
+
+- Hook scripts run with the same permissions as Octomind
+- Validate webhook payloads in your scripts
+- Use HTTPS endpoints in production
+- Consider authentication tokens for webhook sources
 
 ## Command Layers
 

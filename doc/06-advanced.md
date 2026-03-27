@@ -173,6 +173,47 @@ The `schedule` tool allows you to schedule messages to be automatically injected
 ```json
 {"command": "add", "when": "in 30m", "message": "Check the build status", "description": "Build reminder"}
 {"command": "list"}
+**Skill Resources (Tier 3):**
+
+Skills can include additional resources in subdirectories:
+- `scripts/` — Executable scripts for the AI to run via `shell`
+- `references/` — Documentation files for the AI to read via `view`
+- `assets/` — Static files (images, data files, etc.)
+
+When a skill is activated (`use` action), Octomind scans these directories and builds a **resource catalog** that lists all available resources with their absolute paths. The AI can then access these resources on demand using `shell` or `view` tools.
+
+**Example skill directory:**
+```
+skills/code-review/
+├── SKILL.md              # Skill instructions
+├── scripts/
+│   ├── lint.sh          # Run linter
+│   └── test.sh          # Run tests
+├── references/
+│   ├── style-guide.md   # Coding standards
+│   └── patterns.md      # Design patterns
+└── assets/
+    └── config.json      # Configuration template
+```
+
+**Resource catalog output:**
+```markdown
+## Skill Resources
+
+**scripts/**
+- `lint.sh` — /path/to/skills/code-review/scripts/lint.sh
+- `test.sh` — /path/to/skills/code-review/scripts/test.sh
+
+**references/**
+- `style-guide.md` — /path/to/skills/code-review/references/style-guide.md
+- `patterns.md` — /path/to/skills/code-review/references/patterns.md
+
+**assets/**
+- `config.json` — /path/to/skills/code-review/assets/config.json
+```
+
+The AI reads this catalog and can execute scripts or read references as needed.
+
 {"command": "remove", "id": "entry-123"}
 {"command": "edit", "id": "entry-123", "when": "in 1h"}
 ```
@@ -832,23 +873,36 @@ The compression system is implemented across multiple modules:
 
 Compression operates through three key mechanisms:
 
-#### 1. Token-Based Triggers
+#### 1. Token-Based Triggers with Exponential Cooldown
 
-Unlike pressure-ratio systems, Octomind uses **absolute token count thresholds**:
+Octomind uses **absolute token count thresholds** with **exponential cooldown** to prevent futile compression loops:
 
+**Threshold-Based Ratio Selection:**
 ```
-Token Count → Compression Trigger
+Token Count → Compression Strength
 50,000 tokens → 2.0x compression (50% reduction)
 100,000 tokens → 4.0x compression (75% reduction)
 150,000 tokens → 8.0x compression (87.5% reduction)
 ```
+
+**Exponential Cooldown Mechanism:**
+Each consecutive compression (without a user message) doubles the required token growth before re-compression is allowed:
+
+```
+Consecutive Compressions → Required Growth
+1st compression → 10% token growth required
+2nd compression → 20% token growth required
+3rd compression → 40% token growth required
+4th+ compression → 80-100% token growth required (capped at 100%)
+```
+
+This prevents compression loops during tool-call chains where context temporarily grows then shrinks.
 
 The system monitors `session.get_full_context_tokens(config)` which includes:
 - All conversation messages
 - System prompt
 - Tool definitions
 - Safety margin for response generation
-
 #### 2. Cache-Aware Decision Making
 
 Before compressing, the system calculates if compression saves money by analyzing the net benefit:
@@ -1333,6 +1387,64 @@ log_level = "debug"
 enabled = true
 providers = ["core"]
 ```
+
+## Unified Inbox System
+
+Octomind uses a session-scoped unified inbox for all message injection sources. This replaces multiple ad-hoc mechanisms with a single, thread-safe queue.
+
+### Architecture
+
+The unified inbox (`src/session/inbox.rs`) provides:
+
+**Single Queue Per Session:**
+- Thread-safe `RwLock<HashMap<SessionId, InboxQueue>>`
+- Each session has its own isolated message queue
+- `InboxQueue` contains messages and a `Notify` for wakeup signaling
+
+**Message Sources:**
+- **Schedule**: Scheduled messages from the `schedule` tool
+- **BackgroundAgent**: Completed background agent jobs
+- **Skill**: Skill activations requiring content injection
+- **Inject**: External injection via `octomind inject` CLI command
+- **Webhook**: HTTP webhook requests
+
+### API
+
+```rust
+// Lifecycle management
+init_inbox_for_session(session_id)      // Create inbox on session start
+clear_inbox_for_session(session_id)     // Clean up on session end
+
+// Message operations
+push_to_inbox(session_id, message)      // Add message to queue
+drain_inbox(session_id)                 // Retrieve all pending messages
+get_inbox_notify(session_id)            // Get notification handle for async wait
+```
+
+### Benefits
+
+**Replaces Ad-Hoc Mechanisms:**
+- `ChatSession.pending_prompt` (single-slot for schedule/job injection)
+- `ChatSession.job_rx` (mpsc channel for background agents)
+- `PENDING_SKILL_INJECTIONS` (static map in context.rs)
+
+**Unified Behavior:**
+- Consistent ordering across all message sources
+- Single wakeup mechanism for session loop
+- Simplified error handling and cleanup
+- Better concurrency control
+
+### Implementation Details
+
+**Thread Safety:**
+- Global `INBOX` static with `RwLock` for concurrent access
+- `Arc<Notify>` for efficient async wakeup without busy-polling
+- Session-scoped isolation prevents cross-session message leakage
+
+**Session Loop Integration:**
+- Session loop awaits `inbox_notify` in `select!` with other event sources
+- Messages drained at appropriate points in the conversation flow
+- Preserves ordering: scheduled → background → skill → webhook
 
 **Current format:**
 ```toml

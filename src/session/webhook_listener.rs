@@ -403,6 +403,7 @@ mod tests {
 		assert_eq!(path, script.path());
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn webhook_listener_processes_post() {
 		// Script that echoes stdin with a prefix
@@ -494,6 +495,7 @@ mod tests {
 		.await;
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn webhook_listener_handles_script_failure() {
 		let script = make_script("exit 1");

@@ -32,7 +32,7 @@ strip = true      # Strip symbols from binary
 [dependencies]
 octolib = { version = "0.13.0", default-features = false }
 # octolib = { path = "../octolib", default-features = false }
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", default-features = false }
+rmcp = { version = "1.3.0", default-features = false }
 
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }
 crossterm = "0.29.0"

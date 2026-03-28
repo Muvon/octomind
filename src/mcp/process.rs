@@ -72,6 +72,9 @@ lazy_static::lazy_static! {
 type InFlightHandle =
 	Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<anyhow::Result<serde_json::Value>>>>>;
 
+/// Shared buffer collecting recent stderr lines from a server process.
+type StderrBuffer = Arc<std::sync::Mutex<Vec<String>>>;
+
 // Global process registry to keep track of running server processes
 lazy_static::lazy_static! {
 	pub static ref SERVER_PROCESSES: Arc<RwLock<HashMap<String, Arc<Mutex<ServerProcess>>>>> =
@@ -91,6 +94,16 @@ lazy_static::lazy_static! {
 	// preventing one session from tearing down a server that another session is still using.
 	// stop_all_servers() bypasses ref counts — it is only called on process shutdown.
 	static ref SERVER_REF_COUNTS: Arc<RwLock<HashMap<String, usize>>> =
+		Arc::new(RwLock::new(HashMap::new()));
+
+	/// Recent stderr lines per server — background reader threads push lines here
+	/// so that initialization/runtime errors can be surfaced to the user.
+	static ref SERVER_STDERR: Arc<RwLock<HashMap<String, StderrBuffer>>> =
+		Arc::new(RwLock::new(HashMap::new()));
+
+	/// Parsed server capabilities from the initialize response.
+	/// Stored per server name after successful initialization.
+	static ref SERVER_CAPABILITIES: Arc<RwLock<HashMap<String, rmcp::model::InitializeResult>>> =
 		Arc::new(RwLock::new(HashMap::new()));
 }
 // Global notification sender — set by the session when WebSocket or JSONL output is active.
@@ -752,6 +765,41 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				anyhow::anyhow!("Failed to open stdout for MCP server: {}", server.name())
 			})?;
 
+			// Drain stderr in a background thread to prevent pipe buffer deadlock.
+			// Keeps last N lines so init-failure diagnostics are available.
+			let stderr_buf: Arc<std::sync::Mutex<Vec<String>>> =
+				Arc::new(std::sync::Mutex::new(Vec::new()));
+			{
+				let mut map = SERVER_STDERR.write().unwrap();
+				map.insert(server.name().to_string(), stderr_buf.clone());
+			}
+			if let Some(child_stderr) = child.stderr.take() {
+				let buf = stderr_buf;
+				let sname = server.name().to_string();
+				std::thread::spawn(move || {
+					let reader = BufReader::new(child_stderr);
+					for line in reader.lines() {
+						match line {
+							Ok(l) => {
+								let trimmed = l.trim().to_string();
+								if !trimmed.is_empty() {
+									crate::log_debug!("MCP '{}' stderr: {}", sname, trimmed);
+									if let Ok(mut b) = buf.lock() {
+										b.push(trimmed);
+										// Keep only last 50 lines
+										if b.len() > 50 {
+											let drain_count = b.len() - 50;
+											b.drain(..drain_count);
+										}
+									}
+								}
+							}
+							Err(_) => break,
+						}
+					}
+				});
+			}
+
 			// Create buffered reader/writer
 			let writer = BufWriter::new(child_stdin);
 			let reader = BufReader::new(child_stdout);
@@ -799,10 +847,25 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 			let init_result = initialize_stdin_server(server.name()).await;
 
 			if let Err(e) = &init_result {
+				// Collect stderr output for diagnostics
+				let stderr_lines = {
+					let map = SERVER_STDERR.read().unwrap();
+					map.get(server.name())
+						.and_then(|buf| buf.lock().ok().map(|b| b.clone()))
+						.unwrap_or_default()
+				};
+
+				let stderr_detail = if stderr_lines.is_empty() {
+					String::new()
+				} else {
+					format!("\nServer stderr:\n  {}", stderr_lines.join("\n  "))
+				};
+
 				crate::log_error!(
-					"Failed to initialize stdin MCP server '{}': {}",
+					"Failed to initialize stdin MCP server '{}': {}{}",
 					server.name(),
-					e
+					e,
+					stderr_detail
 				);
 
 				// Use the proper cleanup function to kill the process
@@ -815,9 +878,10 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 				}
 
 				return Err(anyhow::anyhow!(
-					"Failed to initialize stdin MCP server '{}': {}",
+					"Failed to initialize stdin MCP server '{}': {}{}",
 					server.name(),
-					e
+					e,
+					stderr_detail
 				));
 			}
 
@@ -870,8 +934,31 @@ async fn initialize_stdin_server(server_name: &str) -> Result<()> {
 		));
 	}
 
-	// Check if we got a valid result
-	if response.get("result").is_none() {
+	// Parse and store server capabilities from the initialize result
+	if let Some(result_value) = response.get("result").cloned() {
+		match serde_json::from_value::<rmcp::model::InitializeResult>(result_value) {
+			Ok(init_info) => {
+				crate::log_debug!(
+					"Stdin server '{}': {} v{}, protocol {}",
+					server_name,
+					init_info.server_info.name,
+					init_info.server_info.version,
+					init_info.protocol_version
+				);
+				if let Some(ref instructions) = init_info.instructions {
+					crate::log_debug!("Server '{}' instructions: {}", server_name, instructions);
+				}
+				store_server_capabilities(server_name, init_info);
+			}
+			Err(e) => {
+				crate::log_debug!(
+					"Failed to parse InitializeResult for '{}': {}",
+					server_name,
+					e
+				);
+			}
+		}
+	} else {
 		return Err(anyhow::anyhow!(
 			"Server did not return a valid result during initialization"
 		));
@@ -893,6 +980,24 @@ async fn initialize_stdin_server(server_name: &str) -> Result<()> {
 
 	// If we reach here, initialization was successful
 	Ok(())
+}
+
+/// Store parsed server capabilities after successful initialization.
+pub fn store_server_capabilities(server_name: &str, init_result: rmcp::model::InitializeResult) {
+	let mut caps = SERVER_CAPABILITIES.write().unwrap();
+	caps.insert(server_name.to_string(), init_result);
+}
+
+/// Retrieve stored server capabilities (if the server has been initialized).
+pub fn get_server_capabilities(server_name: &str) -> Option<rmcp::model::InitializeResult> {
+	let caps = SERVER_CAPABILITIES.read().unwrap();
+	caps.get(server_name).cloned()
+}
+
+/// Get the server instructions string (if provided during initialization).
+pub fn get_server_instructions(server_name: &str) -> Option<String> {
+	let caps = SERVER_CAPABILITIES.read().unwrap();
+	caps.get(server_name).and_then(|c| c.instructions.clone())
 }
 
 // Try to connect to a server to see if it's running
@@ -1163,8 +1268,31 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 						.map_err(|e| anyhow::anyhow!("Failed to read from stdout: {}", e))?;
 
 					if read_result == 0 {
+						// Include recent stderr lines for diagnostics
+						let stderr_hint = {
+							let map = SERVER_STDERR.read().unwrap();
+							map.get(&server_name_for_closure)
+								.and_then(|buf| {
+									buf.lock().ok().and_then(|b| {
+										let last: Vec<_> =
+											b.iter().rev().take(10).cloned().collect();
+										if last.is_empty() {
+											None
+										} else {
+											let mut lines = last;
+											lines.reverse();
+											Some(format!(
+												"\nServer stderr:\n  {}",
+												lines.join("\n  ")
+											))
+										}
+									})
+								})
+								.unwrap_or_default()
+						};
 						return Err(anyhow::anyhow!(
-							"Server closed connection while reading response"
+							"Server closed connection while reading response{}",
+							stderr_hint
 						));
 					}
 
@@ -1312,63 +1440,67 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 	}
 }
 
-// Get tool definitions from a stdin-based server
+// Get tool definitions from a stdin-based server with pagination support
 pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
-	// Create a list_tools request message following the MCP protocol
-	let message = json!({
-		"jsonrpc": "2.0",
-		"id": 1,
-		"method": "tools/list", // Correct MCP method name
-		"params": {}
-	});
+	let mut all_functions = Vec::new();
+	let mut cursor: Option<String> = None;
+	const MAX_PAGES: usize = 20; // Safety limit
 
-	// Try to get tool information from the server with a timeout
-	// Pass the same ID that's in the message (1) and no cancellation token for initialization
-	let response = communicate_with_stdin_server(server.name(), &message, 1, None).await?;
+	for page in 0..MAX_PAGES {
+		let mut params = json!({});
+		if let Some(ref c) = cursor {
+			params["cursor"] = json!(c);
+		}
+		let message = json!({
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list",
+			"params": params
+		});
 
-	// Extract functions from the response
-	let mut functions = Vec::new();
-
-	// Debug output
-	// println!("Tools/list response: {}", response);
-
-	// Check for errors in the response
-	if let Some(error) = response.get("error") {
-		crate::log_error!(
-			"Warning: Server returned error during tools/list: {}",
-			error
+		crate::log_debug!(
+			"tools/list request to '{}' (page {}, cursor: {:?})",
+			server.name(),
+			page + 1,
+			cursor
 		);
-		return Ok(functions); // Return empty list on error
-	}
 
-	// Deserialize the result into ListToolsResult for typed tool extraction
-	if let Some(result_value) = response.get("result").cloned() {
-		match serde_json::from_value::<rmcp::model::ListToolsResult>(result_value) {
-			Ok(list_result) => {
-				for tool in list_result.tools {
-					let name = tool.name.as_ref();
-					if server.tools().is_empty()
-						|| crate::mcp::is_tool_allowed_by_patterns(name, server.tools())
-					{
-						let description = tool.description.as_deref().unwrap_or("").to_string();
-						let parameters = tool.schema_as_json_value();
-						functions.push(McpFunction {
-							name: name.to_string(),
-							description,
-							parameters,
-						});
+		let response = communicate_with_stdin_server(server.name(), &message, 1, None).await?;
+
+		// Check for errors in the response
+		if let Some(error) = response.get("error") {
+			crate::log_error!(
+				"Warning: Server returned error during tools/list: {}",
+				error
+			);
+			return Ok(all_functions);
+		}
+
+		if let Some(result_value) = response.get("result").cloned() {
+			match serde_json::from_value::<rmcp::model::ListToolsResult>(result_value) {
+				Ok(list_result) => {
+					let next = list_result.next_cursor.clone();
+					let functions =
+						crate::mcp::server::parse_tools_from_list_result(&list_result, server);
+					all_functions.extend(functions);
+
+					match next {
+						Some(c) if !c.is_empty() => cursor = Some(c),
+						_ => break,
 					}
 				}
+				Err(e) => {
+					crate::log_debug!("Failed to deserialize ListToolsResult: {}", e);
+					break;
+				}
 			}
-			Err(e) => {
-				crate::log_debug!("Failed to deserialize ListToolsResult: {}", e);
-			}
+		} else {
+			crate::log_debug!("Invalid response format from tools/list: {}", response);
+			break;
 		}
-	} else {
-		crate::log_debug!("Invalid response format from tools/list: {}", response);
 	}
 
-	Ok(functions)
+	Ok(all_functions)
 }
 
 // Execute a tool on a stdin-based server
@@ -1503,6 +1635,18 @@ pub fn stop_all_servers() -> Result<()> {
 		counts.clear();
 	}
 
+	// Clear stderr buffers
+	{
+		let mut stderr_map = SERVER_STDERR.write().unwrap();
+		stderr_map.clear();
+	}
+
+	// Clear capabilities
+	{
+		let mut caps = SERVER_CAPABILITIES.write().unwrap();
+		caps.clear();
+	}
+
 	Ok(())
 }
 
@@ -1552,6 +1696,18 @@ pub fn cleanup_server_process(server_name: &str) -> Result<()> {
 		{
 			let mut in_flight_map = SERVER_IN_FLIGHT.write().unwrap();
 			in_flight_map.remove(server_name);
+		}
+
+		// Clean up stderr buffer
+		{
+			let mut stderr_map = SERVER_STDERR.write().unwrap();
+			stderr_map.remove(server_name);
+		}
+
+		// Clean up capabilities
+		{
+			let mut caps = SERVER_CAPABILITIES.write().unwrap();
+			caps.remove(server_name);
 		}
 
 		// Clean up restart mutex

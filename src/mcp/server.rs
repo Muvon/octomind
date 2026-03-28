@@ -38,11 +38,20 @@ lazy_static::lazy_static! {
 
 // Shared JSON-RPC message builders for MCP protocol
 pub fn create_tools_list_request() -> Value {
+	create_tools_list_request_with_cursor(None)
+}
+
+/// Create a tools/list request with optional pagination cursor.
+pub fn create_tools_list_request_with_cursor(cursor: Option<&str>) -> Value {
+	let mut params = json!({});
+	if let Some(c) = cursor {
+		params["cursor"] = json!(c);
+	}
 	json!({
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tools/list",
-		"params": {}
+		"params": params
 	})
 }
 
@@ -101,11 +110,11 @@ pub fn create_initialize_request() -> Value {
 		"id": 1,
 		"method": "initialize",
 		"params": {
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": "2025-03-26",
 			"capabilities": {},
 			"clientInfo": {
 				"name": "octomind-health-check",
-				"version": "1.0.0"
+				"version": env!("CARGO_PKG_VERSION")
 			}
 		}
 	})
@@ -166,13 +175,35 @@ pub fn clear_http_session_id(server_name: &str) {
 	}
 }
 
+/// Parse tools from a ListToolsResult, applying server tool filters.
+/// Returns (functions, next_cursor) for pagination support.
+pub fn parse_tools_from_list_result(
+	list_result: &rmcp::model::ListToolsResult,
+	server: &McpServerConfig,
+) -> Vec<McpFunction> {
+	let mut functions = Vec::new();
+	for tool in &list_result.tools {
+		let name = tool.name.as_ref();
+		if server.tools().is_empty()
+			|| crate::mcp::is_tool_allowed_by_patterns(name, server.tools())
+		{
+			let description = tool.description.as_deref().unwrap_or("").to_string();
+			let parameters = tool.schema_as_json_value();
+			functions.push(McpFunction {
+				name: name.to_string(),
+				description,
+				parameters,
+			});
+		}
+	}
+	functions
+}
+
 // Shared function to parse tools from JSON-RPC response
 fn parse_tools_from_jsonrpc_response(
 	response: &Value,
 	server: &McpServerConfig,
-) -> Result<Vec<McpFunction>> {
-	let mut functions = Vec::new();
-
+) -> Result<(Vec<McpFunction>, Option<String>)> {
 	// Check for JSON-RPC error
 	if let Some(error) = response.get("error") {
 		return Err(anyhow::anyhow!("JSON-RPC error from MCP server: {}", error));
@@ -182,27 +213,14 @@ fn parse_tools_from_jsonrpc_response(
 	if let Some(result_value) = response.get("result").cloned() {
 		let list_result = serde_json::from_value::<rmcp::model::ListToolsResult>(result_value)
 			.map_err(|e| anyhow::anyhow!("Failed to deserialize ListToolsResult: {}", e))?;
-		for tool in list_result.tools {
-			let name = tool.name.as_ref();
-			if server.tools().is_empty()
-				|| crate::mcp::is_tool_allowed_by_patterns(name, server.tools())
-			{
-				let description = tool.description.as_deref().unwrap_or("").to_string();
-				let parameters = tool.schema_as_json_value();
-				functions.push(McpFunction {
-					name: name.to_string(),
-					description,
-					parameters,
-				});
-			}
-		}
+		let next_cursor = list_result.next_cursor.clone();
+		let functions = parse_tools_from_list_result(&list_result, server);
+		Ok((functions, next_cursor))
 	} else {
-		return Err(anyhow::anyhow!(
+		Err(anyhow::anyhow!(
 			"Invalid JSON-RPC response: missing 'result' field"
-		));
+		))
 	}
-
-	Ok(functions)
 }
 
 // Get server function definitions (will start server if needed)
@@ -359,13 +377,43 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 				}
 			}
 
-			// Parse the initialize response to verify it's valid
+			// Parse the initialize response and extract server capabilities
 			let init_result = parse_http_response_body(init_response).await?;
 			if init_result.get("error").is_some() {
 				return Err(anyhow::anyhow!(
 					"Server returned error during initialization: {}",
 					init_result["error"]
 				));
+			}
+
+			// Parse and store server capabilities from the initialize result
+			if let Some(result_value) = init_result.get("result").cloned() {
+				match serde_json::from_value::<rmcp::model::InitializeResult>(result_value) {
+					Ok(init_info) => {
+						crate::log_debug!(
+							"HTTP server '{}': {} v{}, protocol {}",
+							server.name(),
+							init_info.server_info.name,
+							init_info.server_info.version,
+							init_info.protocol_version
+						);
+						if let Some(ref instructions) = init_info.instructions {
+							crate::log_debug!(
+								"Server '{}' instructions: {}",
+								server.name(),
+								instructions
+							);
+						}
+						process::store_server_capabilities(server.name(), init_info);
+					}
+					Err(e) => {
+						crate::log_debug!(
+							"Failed to parse InitializeResult for '{}': {}",
+							server.name(),
+							e
+						);
+					}
+				}
 			}
 
 			// Send notifications/initialized (no id — it's a notification, not a request)
@@ -382,46 +430,58 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 				.send()
 				.await;
 
-			// Now list tools (with session ID if assigned)
-			let jsonrpc_request = create_tools_list_request();
+			// Now list tools with pagination support (with session ID if assigned)
+			let mut all_functions = Vec::new();
+			let mut cursor: Option<String> = None;
+			const MAX_PAGES: usize = 20; // Safety limit
 
-			crate::log_debug!(
-				"Making JSON-RPC tools/list request to HTTP server '{}' at URL: {}",
-				server.name(),
-				schema_url
-			);
+			for page in 0..MAX_PAGES {
+				let jsonrpc_request = create_tools_list_request_with_cursor(cursor.as_deref());
 
-			let mut list_headers = headers.clone();
-			add_session_id_header(&mut list_headers, server.name());
+				crate::log_debug!(
+					"Making JSON-RPC tools/list request to HTTP server '{}' (page {}, cursor: {:?})",
+					server.name(),
+					page + 1,
+					cursor
+				);
 
-			let response = client
-				.post(&schema_url)
-				.headers(list_headers)
-				.json(&jsonrpc_request)
-				.send()
-				.await?;
+				let mut list_headers = headers.clone();
+				add_session_id_header(&mut list_headers, server.name());
 
-			if !response.status().is_success() {
-				return Err(anyhow::anyhow!(
-					"Failed to get schema from MCP server: {}",
-					response.status()
-				));
+				let response = client
+					.post(&schema_url)
+					.headers(list_headers)
+					.json(&jsonrpc_request)
+					.send()
+					.await?;
+
+				if !response.status().is_success() {
+					return Err(anyhow::anyhow!(
+						"Failed to get schema from MCP server: {}",
+						response.status()
+					));
+				}
+
+				let jsonrpc_response = parse_http_response_body(response).await?;
+
+				crate::log_debug!(
+					"JSON-RPC response from server '{}': {}",
+					server.name(),
+					serde_json::to_string_pretty(&jsonrpc_response)
+						.unwrap_or_else(|_| jsonrpc_response.to_string())
+				);
+
+				let (functions, next_cursor) =
+					parse_tools_from_jsonrpc_response(&jsonrpc_response, server)?;
+				all_functions.extend(functions);
+
+				match next_cursor {
+					Some(c) if !c.is_empty() => cursor = Some(c),
+					_ => break,
+				}
 			}
 
-			// Parse JSON-RPC response (handles both plain JSON and SSE format)
-			let jsonrpc_response = parse_http_response_body(response).await?;
-
-			crate::log_debug!(
-				"JSON-RPC response from server '{}': {}",
-				server.name(),
-				serde_json::to_string_pretty(&jsonrpc_response)
-					.unwrap_or_else(|_| jsonrpc_response.to_string())
-			);
-
-			// Use shared parser
-			let functions = parse_tools_from_jsonrpc_response(&jsonrpc_response, server)?;
-
-			Ok(functions)
+			Ok(all_functions)
 		}
 		McpConnectionType::Stdin => {
 			// For stdin-based servers, ensure the server is running and get functions

@@ -332,19 +332,36 @@ mod tests {
 	use crate::config::HookConfig;
 	use crate::session::inbox;
 	use std::io::Write;
-	use tempfile::NamedTempFile;
+	use tempfile::TempDir;
 
-	fn make_script(code: &str) -> NamedTempFile {
-		let mut f = NamedTempFile::new().unwrap();
-		writeln!(f, "#!/bin/bash").unwrap();
-		writeln!(f, "{}", code).unwrap();
-		f.flush().unwrap();
+	/// A temporary script file whose write fd is closed before returning.
+	/// On Linux, executing a file with an open write fd causes ETXTBSY (error 26).
+	struct TempScript {
+		path: PathBuf,
+		_dir: TempDir, // keeps the directory (and file) alive
+	}
+
+	impl TempScript {
+		fn path(&self) -> &std::path::Path {
+			&self.path
+		}
+	}
+
+	fn make_script(code: &str) -> TempScript {
+		let dir = TempDir::new().unwrap();
+		let path = dir.path().join("script.sh");
+		{
+			// Write and close the fd inside this block so the file is not open when executed.
+			let mut f = std::fs::File::create(&path).unwrap();
+			writeln!(f, "#!/bin/bash").unwrap();
+			writeln!(f, "{}", code).unwrap();
+		}
 		#[cfg(unix)]
 		{
 			use std::os::unix::fs::PermissionsExt;
-			std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+			std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 		}
-		f
+		TempScript { path, _dir: dir }
 	}
 
 	#[test]

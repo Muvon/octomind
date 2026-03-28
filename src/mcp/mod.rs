@@ -700,7 +700,8 @@ async fn execute_tool_without_cancellation(
 				route_builtin_tool(call, target_server.name(), config, cancellation_token).await
 			}
 			McpConnectionType::Http | McpConnectionType::Stdin => {
-				let mut result = server::execute_tool_call(call, &target_server, None).await?;
+				let mut result =
+					server::execute_tool_call(call, &target_server, cancellation_token).await?;
 				result.tool_id = call.tool_id.clone();
 				Ok(result)
 			}

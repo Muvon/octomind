@@ -50,6 +50,8 @@ pub mod validation;
 
 pub mod registry;
 
+pub mod pipelines;
+
 pub mod workflows;
 
 // Tests removed - strict configuration mode doesn't support Default implementations
@@ -60,6 +62,7 @@ pub use hooks::*;
 pub use layers::*;
 pub use mcp::*;
 pub use oauth_config::*; // OAuth 2.1 + PKCE configuration types
+pub use pipelines::*;
 pub use providers::*;
 pub use registry::*;
 pub use roles::*;
@@ -255,6 +258,10 @@ pub struct Config {
 	// Workflows configuration - array of workflow definitions
 	#[serde(default)]
 	pub workflows: Vec<WorkflowDefinition>,
+
+	// Pipelines configuration - deterministic script steps before workflows
+	#[serde(default)]
+	pub pipelines: Vec<PipelineDefinition>,
 
 	// Prompt template configurations
 	pub prompts: Vec<PromptConfig>,

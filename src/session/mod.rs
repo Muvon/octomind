@@ -33,6 +33,7 @@ pub mod video; // Video processing and attachment utilities // Project context c
 pub mod background_jobs;
 pub mod inbox; // Unified message injection queue for all session sources
 pub mod inject_listener; // Unix Domain Socket listener for external message injection
+pub mod pipelines; // Deterministic script pipeline system
 pub mod report; // Session usage reporting
 pub mod smart_summarizer; // Smart text summarization for context management
 mod token_counter; // Token counting utilities // Comprehensive caching system

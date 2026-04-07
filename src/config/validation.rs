@@ -34,6 +34,9 @@ impl Config {
 		// Validate workflows - STRICT
 		self.validate_workflows()?;
 
+		// Validate pipelines - STRICT
+		self.validate_pipelines()?;
+
 		// Validate webhook hooks - STRICT
 		self.validate_hooks()?;
 
@@ -268,6 +271,30 @@ impl Config {
 			// Additional layer-specific validation can be added here if needed
 
 			// Additional layer-specific validation can be added here
+		}
+
+		Ok(())
+	}
+
+	/// Validate pipelines configuration
+	fn validate_pipelines(&self) -> Result<()> {
+		for pipeline in &self.pipelines {
+			pipeline
+				.validate()
+				.map_err(|e| anyhow!("Pipeline validation failed: {}", e))?;
+		}
+
+		// Validate role pipeline references
+		for role in &self.roles {
+			if let Some(pipeline_name) = &role.pipeline {
+				if !self.pipelines.iter().any(|p| &p.name == pipeline_name) {
+					return Err(anyhow!(
+						"Role '{}' references undefined pipeline '{}'",
+						role.name,
+						pipeline_name
+					));
+				}
+			}
 		}
 
 		Ok(())

@@ -18,6 +18,7 @@ use super::core::ChatSession;
 use crate::config::Config;
 use crate::log_info;
 use crate::session::chat::layered_response::process_layered_response;
+use crate::session::pipelines::PipelineOrchestrator;
 use anyhow::Result;
 use colored::*;
 use tokio::sync::watch;
@@ -31,20 +32,75 @@ pub async fn process_layers_if_enabled(
 	first_message_processed: bool,
 	operation_rx: watch::Receiver<bool>,
 ) -> Result<(String, bool, bool)> {
-	// Check if role uses workflow
+	// Check if role uses pipeline and/or workflow
+	let has_pipeline = config
+		.role_map
+		.get(role)
+		.and_then(|r| r.pipeline.as_ref())
+		.is_some();
 	let has_workflow = config
 		.role_map
 		.get(role)
 		.and_then(|r| r.workflow.as_ref())
 		.is_some();
 
-	if has_workflow && !first_message_processed {
+	if (!has_pipeline && !has_workflow) || first_message_processed {
+		return Ok((input.to_string(), false, false));
+	}
+
+	let mut current_input = input.to_string();
+
+	// Phase 1: Pipeline (deterministic scripts) — runs BEFORE workflow
+	if has_pipeline {
+		let pipeline_name = config
+			.role_map
+			.get(role)
+			.and_then(|r| r.pipeline.as_ref())
+			.unwrap();
+
+		let pipeline_def = config
+			.pipelines
+			.iter()
+			.find(|p| &p.name == pipeline_name)
+			.ok_or_else(|| anyhow::anyhow!("Pipeline '{}' not found", pipeline_name))?
+			.clone();
+
+		let working_dir = config.get_working_directory();
+		let orchestrator = PipelineOrchestrator::new(pipeline_def, pipeline_name.clone());
+
+		log_info!("Running pipeline '{}'", pipeline_name);
+
+		match orchestrator
+			.execute(&current_input, &working_dir, role, operation_rx.clone())
+			.await
+		{
+			Ok(output) => {
+				log_info!("Pipeline '{}' completed.", pipeline_name);
+				current_input = output;
+			}
+			Err(e) => {
+				let error_msg = e.to_string();
+				if error_msg.contains("cancelled") {
+					crate::log_debug!("Pipeline cancelled by user.");
+					println!("{}", "Pipeline cancelled.".yellow());
+					return Ok((input.to_string(), false, true));
+				}
+				// Pipeline errors are fatal — non-zero exit code = hard stop
+				println!("\n{}: {}", "Pipeline failed".bright_red(), e);
+				return Err(e);
+			}
+		}
+	}
+
+	// Phase 2: Workflow (agentic LLM processing) — uses pipeline output as input
+	if has_workflow {
 		// Track session message count before workflow processing
 		let messages_before_workflow = chat_session.session.messages.len();
 
 		// Process using workflow architecture to get improved input
 		let workflow_result =
-			process_layered_response(input, chat_session, config, role, operation_rx).await;
+			process_layered_response(&current_input, chat_session, config, role, operation_rx)
+				.await;
 
 		match workflow_result {
 			Ok(processed_input) => {
@@ -59,12 +115,12 @@ pub async fn process_layers_if_enabled(
 						messages_after_workflow - messages_before_workflow
 					);
 					// Return indication that workflow modified session
-					Ok((processed_input, true, false))
+					return Ok((processed_input, true, false));
 				} else {
 					// Workflow didn't modify session (all had output_mode = none)
 					// Use the processed input from workflow instead of the original input
 					log_info!("Workflow processing complete. Using enhanced input for main model.");
-					Ok((processed_input, false, false))
+					return Ok((processed_input, false, false));
 				}
 			}
 			Err(e) => {
@@ -109,12 +165,11 @@ pub async fn process_layers_if_enabled(
 					e
 				);
 				println!("{}", "Continuing with original input.".yellow());
-				// Return original input
-				Ok((input.to_string(), false, false))
+				return Ok((input.to_string(), false, false));
 			}
 		}
-	} else {
-		// Layers not enabled or already processed
-		Ok((input.to_string(), false, false))
 	}
+
+	// Pipeline ran but no workflow — return pipeline output
+	Ok((current_input, false, false))
 }

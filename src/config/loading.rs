@@ -529,12 +529,33 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 		}
 	}
 
+	// Concatenate pipelines (additive, skip duplicates by name)
+	if let (Some(toml::Value::Array(base_pipelines)), Some(toml::Value::Array(agent_pipelines))) = (
+		base_value.get_mut("pipelines"),
+		agent_value.get("pipelines"),
+	) {
+		let existing_names: std::collections::HashSet<String> = base_pipelines
+			.iter()
+			.filter_map(|p| {
+				p.get("name")
+					.and_then(|n| n.as_str())
+					.map(|n| n.to_string())
+			})
+			.collect();
+		for pipeline in agent_pipelines {
+			let name = pipeline.get("name").and_then(|n| n.as_str()).unwrap_or("");
+			if !existing_names.contains(name) {
+				base_pipelines.push(pipeline.clone());
+			}
+		}
+	}
+
 	// Merge remaining keys with override semantics (tables deep-merge, scalars replace).
-	// mcp and roles are already handled above — skip them here.
+	// mcp, roles, and pipelines are already handled above — skip them here.
 	if let toml::Value::Table(agent_table) = &agent_value {
 		if let toml::Value::Table(base_table) = &mut base_value {
 			for (key, value) in agent_table {
-				if key == "mcp" || key == "roles" {
+				if key == "mcp" || key == "roles" || key == "pipelines" {
 					continue;
 				}
 				if let Some(base_val) = base_table.get(key) {

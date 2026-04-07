@@ -84,6 +84,7 @@ Define custom roles that override or extend tap-provided agents.
 | `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
 | `top_k` | u32 | no | Top-k token limit (1-1000) |
 | `workflow` | string | no | Workflow name to activate for this role |
+| `pipeline` | string | no | Pipeline name to activate for this role (runs before workflow) |
 
 ### `[roles.mcp]`
 
@@ -220,6 +221,50 @@ name = "github-push"
 bind = "0.0.0.0:9876"
 script = "/path/to/process-github-push.sh"
 timeout = 30
+```
+
+## `[[pipelines]]`
+
+Deterministic script-driven processing steps that run before workflows.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Pipeline identifier |
+| `description` | string | yes | Human-readable description |
+
+### `[[pipelines.steps]]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Step identifier |
+| `type` | string | yes | `"once"`, `"loop"`, `"foreach"`, `"conditional"` |
+| `command` | string | conditional | Script path to execute (required for `once`, `conditional`) |
+| `exit_pattern` | string | conditional | Regex to stop loop (required for `loop`) |
+| `parse_pattern` | string | conditional | Regex to extract items (required for `foreach`) |
+| `max_iterations` | u32 | no | Max loop iterations (default: 10) |
+| `condition_pattern` | string | conditional | Regex for conditional branching |
+| `on_match` | string[] | no | Commands to run when condition matches |
+| `on_no_match` | string[] | no | Commands to run when condition doesn't match |
+| `timeout` | u64 | no | Script timeout in seconds (default: 30, max: 3600) |
+
+Substeps are nested as `[[pipelines.steps.substeps]]` with the same schema.
+
+```toml
+[[pipelines]]
+name = "context_pipeline"
+description = "Gather context before AI processing"
+
+[[pipelines.steps]]
+name = "detect_files"
+type = "once"
+command = "./scripts/detect-files.sh"
+timeout = 30
+
+[[pipelines.steps]]
+name = "enrich"
+type = "once"
+command = "./scripts/enrich-context.py"
+timeout = 60
 ```
 
 ## `[[workflows]]`

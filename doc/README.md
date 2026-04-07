@@ -22,7 +22,8 @@ For users working with Octomind day-to-day.
 | [Roles](usage/06-roles.md) | Roles, permissions, tool access |
 | [MCP Tools](usage/07-mcp-tools.md) | All built-in tools reference |
 | [Compression](usage/08-compression.md) | Automatic context compression |
-| [Workflows](usage/09-workflows.md) | Multi-step processing pipelines |
+| [Workflows](usage/09-workflows.md) | Multi-step AI processing workflows |
+| [Pipelines](usage/14-pipelines.md) | Deterministic script-driven pre-processing |
 | [Commands & Layers](usage/10-commands-and-layers.md) | Custom commands, layers, agents, prompts |
 | [Structured Output](usage/11-structured-output.md) | JSON Schema output for automation |
 | [Editor Integration](usage/12-editor-integration.md) | Neovim, Zed, JetBrains setup |
@@ -63,6 +64,7 @@ Real-world examples showing how to solve practical problems with Octomind.
 | [Scheduled Tasks](use-cases/07-scheduled-tasks.md) | Timed automation, reminders, periodic checks |
 | [Long-Running Development](use-cases/08-long-running-development.md) | Multi-day tasks with session resume |
 | [Custom Hooks](use-cases/09-custom-hooks.md) | Write hooks in any language for any integration |
+| [Deterministic Pipelines](use-cases/10-deterministic-pipelines.md) | Script-driven context preparation before AI |
 
 ## Troubleshooting
 

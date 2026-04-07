@@ -9,7 +9,8 @@ Every session runs with a role. The role determines:
 - **MCP server access** -- which tool servers are available
 - **Tool permissions** -- which specific tools can be used
 - **Model parameters** -- temperature, top_p, top_k
-- **Workflow** -- optional pre-processing pipeline
+- **Pipeline** -- optional deterministic script pre-processing (runs before workflow)
+- **Workflow** -- optional AI-driven pre-processing pipeline
 
 ## Built-in Roles
 
@@ -53,6 +54,9 @@ allowed_tools = ["core:*", "filesystem:*", "agent:*"]
 | `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
 | `top_k` | u32 | no | Top-k token limit (1-1000) |
 | `workflow` | string | no | Workflow to activate for this role |
+| `pipeline` | string | no | Pipeline to activate for this role (runs before workflow) |
+
+When both `pipeline` and `workflow` are set, the execution order is: **user message → pipeline (scripts) → workflow (AI) → main model**. The pipeline's output replaces the user message as input to the workflow. See [Pipelines](14-pipelines.md) for details.
 
 ## Tool Permissions
 

@@ -37,6 +37,7 @@ CLI / WebSocket
       |
       +-- Roles       <- src/config/roles.rs         (model, system prompt, MCP servers per role)
       +-- Layers      <- src/session/layers/          (chained AI sub-agents, run after each response)
+      +-- Pipelines   <- src/session/pipelines/       (deterministic script steps, run before workflows)
       +-- Workflows   <- src/session/workflows/       (multi-step orchestrated task runners)
       |
       +-- MCP servers <- src/mcp/
@@ -62,6 +63,8 @@ CLI / WebSocket
 | Session commands (`/role`, `/model` ...) | `src/session/chat/session/commands/` |
 | Conversation compression | `src/session/chat/conversation_compression.rs` |
 | Layers runtime | `src/session/layers/layer_trait.rs`, `processor.rs` |
+| Pipelines config | `src/config/pipelines.rs` |
+| Pipelines runtime | `src/session/pipelines/orchestrator.rs`, `executor.rs` |
 | Workflows | `src/session/workflows/orchestrator.rs` |
 | MCP tool routing | `src/mcp/mod.rs` -> `try_execute_tool_call()` |
 | MCP tool registry | `src/mcp/tool_map.rs` |

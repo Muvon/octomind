@@ -2,14 +2,16 @@
 
 Workflows are multi-step AI processing pipelines that enhance user requests before the main AI processes them. They implement a planner-executor separation.
 
+> **See also:** [Pipelines](14-pipelines.md) -- deterministic script-driven steps that run *before* workflows. Use pipelines for context gathering and preparation, workflows for AI-driven reasoning.
+
 ## Concept
 
 ```
-User Input --> [Workflow Pipeline] --> Enhanced Input --> AI Session
-                  |
-                  ├── Step 1: Refine query
-                  ├── Step 2: Research context
-                  └── Step 3: Validate plan
+User Input --> [Pipeline (scripts)] --> [Workflow (AI)] --> Enhanced Input --> AI Session
+                                             |
+                                             ├── Step 1: Refine query
+                                             ├── Step 2: Research context
+                                             └── Step 3: Validate plan
 ```
 
 The workflow acts as a **planner**: it enriches and clarifies the user's request. The session AI acts as the **executor**: it carries out the refined task.

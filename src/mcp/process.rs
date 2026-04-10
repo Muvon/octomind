@@ -137,11 +137,11 @@ lazy_static::lazy_static! {
 		RwLock::new(Vec::new());
 }
 
-// Session context (role + project) sent to MCP servers during initialization.
+// Session context (role + project + workdir) sent to MCP servers during initialization.
 // NOTE: This is process-global for CLI mode. For multi-session WebSocket mode,
 // use the session-keyed context in crate::session::context.
 lazy_static::lazy_static! {
-	static ref CLI_SESSION_CONTEXT: RwLock<(String, String)> = RwLock::new((String::new(), String::new()));
+	static ref CLI_SESSION_CONTEXT: RwLock<(String, String, String)> = RwLock::new((String::new(), String::new(), String::new()));
 }
 
 /// Derive a stable project identifier: SHA-256 of the git remote origin URL if available,
@@ -182,34 +182,38 @@ pub fn derive_project_id_from_path(path: &std::path::Path) -> String {
 	let hash = Sha256::digest(source.as_bytes());
 	hex::encode(hash)[..16].to_string()
 }
-/// Set the session context (role + project) that will be sent to MCP servers on initialization.
+/// Set the session context (role + project + workdir) that will be sent to MCP servers on initialization.
 /// Call this before starting MCP servers for a session.
 ///
 /// For multi-session WebSocket mode, this sets the CLI global. Use
 /// `session::context::SessionContext` for session-scoped context.
-pub fn set_session_context(role: &str, project: &str) {
+pub fn set_session_context(role: &str, project: &str, workdir: &str) {
 	// Check for session-scoped context first (WebSocket mode)
 	if let Some(_session_id) = crate::session::context::current_session_id() {
 		// In session mode, context is stored per-session in context.rs
 		// This CLI global is not used, but we set it for backward compatibility
 	}
 	// Always set CLI global for backward compatibility
-	*CLI_SESSION_CONTEXT.write().unwrap() = (role.to_string(), project.to_string());
+	*CLI_SESSION_CONTEXT.write().unwrap() =
+		(role.to_string(), project.to_string(), workdir.to_string());
 }
 
-/// Get the session context (role domain, spec, project, session_id).
+/// Get the session context (role domain, spec, project, session_id, workdir).
 /// Splits the full role name on `:` — left part is domain, right part is spec.
 /// Local roles like `"developer"` → domain=`"developer"`, spec=`""`.
 /// Tap roles like `"doctor:blood"` → domain=`"doctor"`, spec=`"blood"`.
-pub fn get_session_context() -> (String, String, String, String) {
-	let (full_role, project) = {
+pub fn get_session_context() -> (String, String, String, String, String) {
+	let (full_role, project, workdir) = {
 		// Check for session-scoped context first (WebSocket mode)
 		if let Some(session_id) = crate::session::context::current_session_id() {
 			if let Some(role) = crate::session::context::get_session_role(&session_id) {
 				let project = crate::session::context::get_session_workdir_anchor(&session_id)
 					.map(|p| crate::mcp::process::derive_project_id_from_path(&p))
 					.unwrap_or_default();
-				(role, project)
+				let workdir = crate::session::context::get_session_workdir_anchor(&session_id)
+					.map(|p| p.to_string_lossy().into_owned())
+					.unwrap_or_default();
+				(role, project, workdir)
 			} else {
 				CLI_SESSION_CONTEXT.read().unwrap().clone()
 			}
@@ -227,13 +231,16 @@ pub fn get_session_context() -> (String, String, String, String) {
 		None => (full_role, String::new()),
 	};
 
-	(domain, spec, project, session_id)
+	(domain, spec, project, session_id, workdir)
 }
 
 /// Derive and set the project id from the current git remote / cwd, then store role.
 pub fn init_session_context(role: &str) {
 	let project = derive_project_id();
-	set_session_context(role, &project);
+	let workdir = std::env::current_dir()
+		.map(|p| p.to_string_lossy().into_owned())
+		.unwrap_or_default();
+	set_session_context(role, &project, &workdir);
 }
 
 /// Register a channel sender so MCP notifications are forwarded as structured messages.
@@ -930,13 +937,14 @@ async fn start_server_process(server: &McpServerConfig) -> Result<String> {
 
 // Initialize a stdin-based server following the MCP protocol
 async fn initialize_stdin_server(server_name: &str) -> Result<()> {
-	let (role, spec, project, session_id) = get_session_context();
+	let (role, spec, project, session_id, workdir) = get_session_context();
 	// Construct an initialize message according to the MCP protocol
 	let session_obj = serde_json::json!({
 		"role": role,
 		"spec": spec,
 		"project": project,
 		"session_id": session_id,
+		"workdir": workdir,
 	});
 	let init_message = json!({
 		"jsonrpc": "2.0",

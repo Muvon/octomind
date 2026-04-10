@@ -121,12 +121,13 @@ pub fn create_initialize_request() -> Value {
 }
 
 fn create_session_initialize_request() -> Value {
-	let (role, spec, project, session_id) = process::get_session_context();
+	let (role, spec, project, session_id, workdir) = process::get_session_context();
 	let session_obj = serde_json::json!({
 		"role": role,
 		"spec": spec,
 		"project": project,
 		"session_id": session_id,
+		"workdir": workdir,
 	});
 	json!({
 		"jsonrpc": "2.0",

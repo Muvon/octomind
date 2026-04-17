@@ -142,11 +142,27 @@ impl Event {
 	}
 }
 
+/// Get the skills config from the current session, falling back to defaults.
+fn get_skills_config() -> crate::config::SkillsConfig {
+	crate::session::context::current_session_id()
+		.and_then(|sid| crate::session::context::get_session_config(&sid))
+		.map(|cfg| cfg.skills.clone())
+		.unwrap_or_default()
+}
+
 /// Run auto-activation for the given event and content.
 ///
 /// Executes `activate` scripts from the skill pool in parallel.
 /// Skills returning exit 0 are activated, non-zero are deactivated.
+/// Respects `[skills]` config: `auto_activation` flag and `activation_timeout`.
 pub async fn run_activation(event: Event, content: &str, workdir: &std::path::Path) {
+	let skills_config = get_skills_config();
+
+	// Check if auto-activation is enabled
+	if !skills_config.auto_activation {
+		return;
+	}
+
 	let session_id = match crate::session::context::current_session_id() {
 		Some(id) => id,
 		None => return,
@@ -165,7 +181,11 @@ pub async fn run_activation(event: Event, content: &str, workdir: &std::path::Pa
 	}
 
 	let active_skills = crate::session::context::get_active_skills(&session_id);
-	let timeout = Duration::from_secs(3);
+	let timeout = if skills_config.activation_timeout == 0 {
+		Duration::from_secs(3600) // 0 = effectively unlimited (1h)
+	} else {
+		Duration::from_secs(skills_config.activation_timeout)
+	};
 
 	// Run all activate scripts in parallel
 	let mut tasks = Vec::new();
@@ -279,15 +299,25 @@ async fn auto_activate_skill(name: &str, _session_id: &str) {
 	}
 }
 
+/// Track validator retry counts per skill. Reset when validation passes.
+static VALIDATOR_RETRIES: OnceLock<Arc<RwLock<std::collections::HashMap<String, u32>>>> =
+	OnceLock::new();
+
+fn get_retry_tracker() -> &'static Arc<RwLock<std::collections::HashMap<String, u32>>> {
+	VALIDATOR_RETRIES.get_or_init(|| Arc::new(RwLock::new(std::collections::HashMap::new())))
+}
+
 /// Run validators from all active skills for the given event.
 ///
 /// Returns a list of validation failures (skill_name, stderr) that should be
-/// fed back to the LLM as error messages.
+/// fed back to the LLM as error messages. Respects `[skills]` config:
+/// `validation_timeout` and `max_retries`.
 pub async fn run_validators(
 	event: Event,
 	content: &str,
 	workdir: &std::path::Path,
 ) -> Vec<(String, String)> {
+	let skills_config = get_skills_config();
 	let session_id = match crate::session::context::current_session_id() {
 		Some(id) => id,
 		None => return Vec::new(),
@@ -298,7 +328,12 @@ pub async fn run_validators(
 		return Vec::new();
 	}
 
-	let timeout = Duration::from_secs(60); // validators can take longer (e.g., cargo test)
+	let timeout = if skills_config.validation_timeout == 0 {
+		Duration::from_secs(3600) // 0 = effectively unlimited (1h)
+	} else {
+		Duration::from_secs(skills_config.validation_timeout)
+	};
+	let max_retries = skills_config.max_retries;
 
 	// Find validate scripts for active skills
 	let taps = match crate::agent::taps::get_taps() {
@@ -307,8 +342,24 @@ pub async fn run_validators(
 	};
 
 	let mut tasks = Vec::new();
+	let retry_tracker = get_retry_tracker();
 
 	for skill_name in &active_skills {
+		// Check retry cap before even running the script
+		if max_retries > 0 {
+			let retries = retry_tracker.read().unwrap();
+			if let Some(&count) = retries.get(skill_name) {
+				if count >= max_retries {
+					crate::log_debug!(
+						"skill_auto: validator '{}' exceeded max_retries ({}), skipping",
+						skill_name,
+						max_retries
+					);
+					continue;
+				}
+			}
+		}
+
 		// Find the skill's validate script across taps
 		for tap in &taps {
 			let skills_dir = match tap.skills_dir() {
@@ -348,7 +399,15 @@ pub async fn run_validators(
 		match task.await {
 			Ok((name, Ok((exit_code, stderr)))) => {
 				if exit_code != 0 && !stderr.is_empty() {
+					// Increment retry counter
+					let mut retries = retry_tracker.write().unwrap();
+					let count = retries.entry(name.clone()).or_insert(0);
+					*count += 1;
 					failures.push((name, stderr));
+				} else if exit_code == 0 {
+					// Validation passed — reset retry counter
+					let mut retries = retry_tracker.write().unwrap();
+					retries.remove(&name);
 				}
 			}
 			Ok((name, Err(e))) => {

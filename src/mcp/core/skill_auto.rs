@@ -114,6 +114,12 @@ pub fn init_pool(domain: &str) {
 		domain
 	);
 
+	// Clear retry counters from any previous session
+	{
+		let mut retries = get_retry_tracker().write().unwrap();
+		retries.clear();
+	}
+
 	let mut pool = get_pool().write().unwrap();
 	*pool = Some(SkillPool {
 		entries,
@@ -299,12 +305,19 @@ async fn auto_activate_skill(name: &str, _session_id: &str) {
 	}
 }
 
-/// Track validator retry counts per skill. Reset when validation passes.
+/// Track validator retry counts per skill. Reset when validation passes,
+/// when a skill is deactivated, or when a new session pool is initialized.
 static VALIDATOR_RETRIES: OnceLock<Arc<RwLock<std::collections::HashMap<String, u32>>>> =
 	OnceLock::new();
 
 fn get_retry_tracker() -> &'static Arc<RwLock<std::collections::HashMap<String, u32>>> {
 	VALIDATOR_RETRIES.get_or_init(|| Arc::new(RwLock::new(std::collections::HashMap::new())))
+}
+
+/// Clear retry counter for a specific skill.
+fn clear_retry_count(skill_name: &str) {
+	let mut retries = get_retry_tracker().write().unwrap();
+	retries.remove(skill_name);
 }
 
 /// Run validators from all active skills for the given event.
@@ -463,13 +476,14 @@ async fn run_validate_script(
 	}
 }
 
-/// Auto-deactivate a skill: forget + compress.
+/// Auto-deactivate a skill: forget + compress + clear retry counter.
 fn auto_deactivate_skill(name: &str, _session_id: &str) {
 	let sid = crate::session::context::current_session_id().unwrap_or_default();
 	let n = name.to_string();
 	if crate::session::context::has_active_skill(&sid, &n) {
 		crate::session::context::remove_active_skill(&sid, &n);
 		crate::session::context::request_skill_compression(&sid);
+		clear_retry_count(name);
 		crate::log_debug!("skill_auto: deactivated '{}'", name);
 	}
 }

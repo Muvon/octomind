@@ -21,6 +21,7 @@ pub mod functions;
 pub mod plan;
 pub mod schedule;
 pub mod skill;
+pub mod skill_auto;
 
 #[cfg(test)]
 mod plan_tests;

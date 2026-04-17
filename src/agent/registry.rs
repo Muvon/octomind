@@ -218,6 +218,127 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 	)
 }
 
+/// A resolved capability's components — extracted from a capability TOML file.
+/// Used by both static resolution (agent init) and dynamic resolution (runtime skill activation).
+#[derive(Debug, Clone)]
+pub struct ResolvedCapability {
+	pub name: String,
+	pub deps: Vec<String>,
+	pub server_refs: Vec<String>,
+	pub allowed_tools: Vec<String>,
+	pub mcp_servers: Vec<crate::config::McpServerConfig>,
+}
+
+/// Parse a single capability TOML file and return its resolved components.
+///
+/// Searches across all taps for `capabilities/<cap_name>/<provider>.toml`.
+/// The provider defaults to `"default"` unless overridden in `config.capabilities`.
+///
+/// Used at runtime when a skill declares `capabilities: [...]` and needs
+/// to auto-load the backing MCP servers.
+pub fn parse_capability_toml(
+	cap_name: &str,
+	overrides: &HashMap<String, String>,
+) -> Result<ResolvedCapability> {
+	let taps =
+		crate::agent::taps::get_taps().context("Failed to load taps for capability resolution")?;
+
+	let provider = overrides
+		.get(cap_name)
+		.map(|s| s.as_str())
+		.unwrap_or("default");
+
+	for tap in &taps {
+		let tap_root = match tap.local_dir() {
+			Ok(d) => d,
+			Err(_) => continue,
+		};
+		let cap_path = tap_root
+			.join("capabilities")
+			.join(cap_name)
+			.join(format!("{provider}.toml"));
+
+		if !cap_path.exists() {
+			continue;
+		}
+
+		let cap_str = fs::read_to_string(&cap_path)
+			.with_context(|| format!("Failed to read capability file: {}", cap_path.display()))?;
+		let cap: toml::Value = toml::from_str(&cap_str)
+			.with_context(|| format!("Failed to parse capability file: {}", cap_path.display()))?;
+
+		let mut resolved = ResolvedCapability {
+			name: cap_name.to_string(),
+			deps: Vec::new(),
+			server_refs: Vec::new(),
+			allowed_tools: Vec::new(),
+			mcp_servers: Vec::new(),
+		};
+
+		// [deps] require
+		if let Some(deps) = cap
+			.get("deps")
+			.and_then(|d| d.get("require"))
+			.and_then(|r| r.as_array())
+		{
+			resolved.deps = deps
+				.iter()
+				.filter_map(|v| v.as_str().map(String::from))
+				.collect();
+		}
+
+		// [roles.mcp] server_refs
+		if let Some(refs) = cap
+			.get("roles")
+			.and_then(|r| r.get("mcp"))
+			.and_then(|m| m.get("server_refs"))
+			.and_then(|s| s.as_array())
+		{
+			resolved.server_refs = refs
+				.iter()
+				.filter_map(|v| v.as_str().map(String::from))
+				.collect();
+		}
+
+		// [roles.mcp] allowed_tools
+		if let Some(tools) = cap
+			.get("roles")
+			.and_then(|r| r.get("mcp"))
+			.and_then(|m| m.get("allowed_tools"))
+			.and_then(|a| a.as_array())
+		{
+			resolved.allowed_tools = tools
+				.iter()
+				.filter_map(|v| v.as_str().map(String::from))
+				.collect();
+		}
+
+		// [[mcp.servers]] blocks — deserialize into McpServerConfig
+		if let Some(servers) = cap
+			.get("mcp")
+			.and_then(|m| m.get("servers"))
+			.and_then(|s| s.as_array())
+		{
+			for server_val in servers {
+				let server_str = toml::to_string(server_val).unwrap_or_default();
+				if let Ok(server_config) =
+					toml::from_str::<crate::config::McpServerConfig>(&server_str)
+				{
+					resolved.mcp_servers.push(server_config);
+				}
+			}
+		}
+
+		return Ok(resolved);
+	}
+
+	anyhow::bail!(
+		"Capability '{}' not found (provider: '{}') in any tap",
+		cap_name,
+		provider
+	)
+}
+
 /// Resolve `capabilities = [...]` declared in an agent manifest.
 ///
 /// For each capability name, loads `<tap_root>/capabilities/<name>/<provider>.toml`

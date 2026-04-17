@@ -112,6 +112,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Initialize session-scoped inbox and background job manager now that session ID is set
 		crate::session::inbox::init_inbox_for_session();
 		crate::mcp::agent::functions::init_job_manager();
+		// Initialize skill auto-activation pool for the current role's domain
+		crate::mcp::core::skill_auto::init_pool(&role);
 		// Start inject listener so `octomind send` can push messages into this session
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
@@ -680,6 +682,14 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				}
 			}
 
+			// Run skill auto-activation on user input
+			crate::mcp::core::skill_auto::run_activation(
+				crate::mcp::core::skill_auto::Event::User,
+				&input,
+				&current_dir,
+			)
+			.await;
+
 			// Check for cancellation before starting layered processing
 			if cancellation.is_cancelled() {
 				continue;
@@ -963,6 +973,8 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	// Initialize session-scoped inbox and background job manager now that session ID is set
 	crate::session::inbox::init_inbox_for_session();
 	crate::mcp::agent::functions::init_job_manager();
+	// Initialize skill auto-activation pool for the current role's domain
+	crate::mcp::core::skill_auto::init_pool(&role);
 	// Start inject listener so `octomind send` can push messages into this session
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	// Start webhook listeners for any --hook flags
@@ -1061,6 +1073,14 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			}
 		}
 	}
+
+	// Run skill auto-activation on user input
+	crate::mcp::core::skill_auto::run_activation(
+		crate::mcp::core::skill_auto::Event::User,
+		&input,
+		&current_dir,
+	)
+	.await;
 
 	// Layer processing if enabled and first message using helper function
 	let (processed_input, workflow_modified_session, layer_cancelled) = process_layers_if_enabled(

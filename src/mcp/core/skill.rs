@@ -39,6 +39,41 @@ pub struct SkillMeta {
 	pub license: Option<String>,
 	/// Tools this skill requires (from `allowed-tools` frontmatter, space-delimited).
 	pub allowed_tools: Vec<String>,
+	/// Capabilities this skill requires — auto-loaded when skill activates.
+	/// Space-delimited in frontmatter: `capabilities: git memory`
+	pub capabilities: Vec<String>,
+	/// Agent domains this skill belongs to — limits auto-activation pool.
+	/// Space-delimited in frontmatter: `domains: developer devops`
+	/// Empty = manual activation only (backward compatible).
+	pub domains: Vec<String>,
+}
+
+/// Parse a value that may be space-delimited (`git memory`) or YAML-array-like
+/// (`["git", "memory"]`). Returns the list of items.
+fn parse_space_or_array(value: &str) -> Vec<String> {
+	let trimmed = value.trim();
+	if trimmed.starts_with('[') && trimmed.ends_with(']') {
+		// YAML array syntax: ["git", "memory"] or [git, memory]
+		trimmed[1..trimmed.len() - 1]
+			.split(',')
+			.map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+			.filter(|s| !s.is_empty())
+			.collect()
+	} else {
+		// Space-delimited: git memory
+		trimmed.split_whitespace().map(|s| s.to_string()).collect()
+	}
+}
+
+/// Check if a skill directory contains an `activate` script.
+pub(crate) fn has_activate_script(skill_dir: &std::path::Path) -> bool {
+	skill_dir.join("activate").exists()
+}
+
+/// Check if a skill directory contains a `validate` script.
+#[allow(dead_code)]
+pub(crate) fn has_validate_script(skill_dir: &std::path::Path) -> bool {
+	skill_dir.join("validate").exists()
 }
 
 /// Parse YAML frontmatter from a SKILL.md file.
@@ -60,6 +95,8 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 	let mut compatibility = None;
 	let mut license = None;
 	let mut allowed_tools = Vec::new();
+	let mut capabilities = Vec::new();
+	let mut domains = Vec::new();
 
 	for line in frontmatter.lines() {
 		if let Some((key, value)) = line.split_once(':') {
@@ -74,9 +111,15 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 				"description" => description = Some(value),
 				"compatibility" => compatibility = Some(value),
 				"license" => license = Some(value),
-				// Space-delimited list: `allowed-tools: shell view text_editor`
+				// Space-delimited lists
 				"allowed-tools" => {
 					allowed_tools = value.split_whitespace().map(|s| s.to_string()).collect();
+				}
+				"capabilities" => {
+					capabilities = parse_space_or_array(&value);
+				}
+				"domains" => {
+					domains = parse_space_or_array(&value);
 				}
 				_ => {}
 			}
@@ -89,6 +132,8 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 		compatibility,
 		license,
 		allowed_tools,
+		capabilities,
+		domains,
 	})
 }
 
@@ -516,13 +561,66 @@ async fn execute_use(call: &McpToolCall) -> Result<McpToolResult, String> {
 	// Tier 3: append resource catalog (scripts/, references/, assets/)
 	let resources = build_resource_catalog(&skill_dir);
 
-	// Tool compatibility: warn if required tools are missing in the current role
+	// Auto-load required capabilities — resolves to MCP servers and enables them
+	let mut cap_messages = Vec::new();
+	if !meta.capabilities.is_empty() {
+		let overrides = crate::session::context::current_session_id()
+			.and_then(|sid| crate::session::context::get_session_config(&sid))
+			.map(|cfg| cfg.capabilities.clone())
+			.unwrap_or_default();
+
+		for cap_name in &meta.capabilities {
+			match crate::agent::registry::parse_capability_toml(cap_name, &overrides) {
+				Ok(resolved) => {
+					let mut loaded_servers = Vec::new();
+					for server_config in resolved.mcp_servers {
+						let server_name = server_config.name().to_string();
+						// Register + enable via dynamic server manager
+						if let Err(e) =
+							crate::mcp::core::dynamic::register_server(server_config.clone())
+						{
+							crate::log_debug!(
+								"skill: capability '{}' server '{}' register: {}",
+								cap_name,
+								server_name,
+								e
+							);
+						}
+						match crate::mcp::core::dynamic::enable_server(&server_name, None).await {
+							Ok(_) => loaded_servers.push(server_name),
+							Err(e) => {
+								crate::log_debug!(
+									"skill: capability '{}' server '{}' enable failed: {}",
+									cap_name,
+									server_name,
+									e
+								);
+							}
+						}
+					}
+					if !loaded_servers.is_empty() {
+						cap_messages.push(format!(
+							"Loaded capability '{}' (servers: {})",
+							cap_name,
+							loaded_servers.join(", ")
+						));
+					}
+				}
+				Err(e) => {
+					crate::log_debug!("skill: capability '{}' resolution failed: {}", cap_name, e);
+					cap_messages.push(format!("⚠️ Capability '{}' not found: {}", cap_name, e));
+				}
+			}
+		}
+	}
+
+	// Tool compatibility: warn if required tools are still missing after capability loading
 	let unavailable = missing_tools(&meta.allowed_tools);
 	let tool_warning = if unavailable.is_empty() {
 		String::new()
 	} else {
 		format!(
-			"\n\n⚠️ This skill requires tools that are not available in the current role: {}\nSome skill functionality may not work. Consider switching to a role that includes these tools.",
+			"\n\n⚠️ Some tools still unavailable after capability loading: {}",
 			unavailable.join(", ")
 		)
 	};
@@ -547,11 +645,13 @@ async fn execute_use(call: &McpToolCall) -> Result<McpToolResult, String> {
 	);
 
 	// Return short confirmation — the actual content is injected as a system message
-	let msg = if tool_warning.is_empty() {
-		format!("Skill '{}' is now active.", name)
-	} else {
-		format!("Skill '{}' is now active.{}", name, tool_warning)
-	};
+	let mut msg = format!("Skill '{}' is now active.", name);
+	for cap_msg in &cap_messages {
+		msg.push_str(&format!("\n{}", cap_msg));
+	}
+	if !tool_warning.is_empty() {
+		msg.push_str(&tool_warning);
+	}
 
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),

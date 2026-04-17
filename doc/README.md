@@ -28,6 +28,7 @@ For users working with Octomind day-to-day.
 | [Structured Output](usage/11-structured-output.md) | JSON Schema output for automation |
 | [Editor Integration](usage/12-editor-integration.md) | Neovim, Zed, JetBrains setup |
 | [Learning](usage/13-learning.md) | Cross-session adaptive learning |
+| [Skills](usage/15-skills.md) | Auto-expanding skills, capabilities, validators |
 
 ## Integration Guide
 

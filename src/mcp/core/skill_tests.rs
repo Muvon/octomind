@@ -14,7 +14,9 @@
 
 #[cfg(test)]
 mod tests {
-	use crate::mcp::core::skill::{build_resource_catalog, parse_skill_meta};
+	use crate::mcp::core::skill::{
+		build_resource_catalog, has_activate_script, has_validate_script, parse_skill_meta,
+	};
 	use std::fs;
 
 	// ---------------------------------------------------------------------------
@@ -30,6 +32,8 @@ mod tests {
 		assert!(meta.compatibility.is_none());
 		assert!(meta.license.is_none());
 		assert!(meta.allowed_tools.is_empty());
+		assert!(meta.capabilities.is_empty());
+		assert!(meta.domains.is_empty());
 	}
 
 	#[test]
@@ -106,6 +110,82 @@ mod tests {
 		let meta = parse_skill_meta(content).expect("should parse");
 		assert_eq!(meta.name, "s");
 		assert_eq!(meta.description, "d");
+	}
+
+	// ---------------------------------------------------------------------------
+	// capabilities and domains parsing
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn test_parse_skill_meta_capabilities_space_delimited() {
+		let content = "---\nname: s\ndescription: d\ncapabilities: git memory codesearch\n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.capabilities, vec!["git", "memory", "codesearch"]);
+	}
+
+	#[test]
+	fn test_parse_skill_meta_capabilities_array_syntax() {
+		let content = "---\nname: s\ndescription: d\ncapabilities: [\"git\", \"memory\"]\n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.capabilities, vec!["git", "memory"]);
+	}
+
+	#[test]
+	fn test_parse_skill_meta_capabilities_array_unquoted() {
+		let content = "---\nname: s\ndescription: d\ncapabilities: [git, memory]\n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.capabilities, vec!["git", "memory"]);
+	}
+
+	#[test]
+	fn test_parse_skill_meta_domains_space_delimited() {
+		let content = "---\nname: s\ndescription: d\ndomains: developer devops\n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.domains, vec!["developer", "devops"]);
+	}
+
+	#[test]
+	fn test_parse_skill_meta_domains_array_syntax() {
+		let content = "---\nname: s\ndescription: d\ndomains: [\"developer\", \"devops\"]\n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.domains, vec!["developer", "devops"]);
+	}
+
+	#[test]
+	fn test_parse_skill_meta_empty_capabilities() {
+		let content = "---\nname: s\ndescription: d\ncapabilities: \n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert!(meta.capabilities.is_empty());
+	}
+
+	#[test]
+	fn test_parse_skill_meta_all_new_fields() {
+		let content = "---\nname: rust-dev\ndescription: Rust development\ncapabilities: git memory\ndomains: developer\nallowed-tools: shell text_editor\n---\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.name, "rust-dev");
+		assert_eq!(meta.capabilities, vec!["git", "memory"]);
+		assert_eq!(meta.domains, vec!["developer"]);
+		assert_eq!(meta.allowed_tools, vec!["shell", "text_editor"]);
+	}
+
+	// ---------------------------------------------------------------------------
+	// activate/validate script discovery
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn test_has_activate_script() {
+		let dir = tempfile::tempdir().unwrap();
+		assert!(!has_activate_script(dir.path()));
+		fs::write(dir.path().join("activate"), "#!/bin/bash\nexit 0").unwrap();
+		assert!(has_activate_script(dir.path()));
+	}
+
+	#[test]
+	fn test_has_validate_script() {
+		let dir = tempfile::tempdir().unwrap();
+		assert!(!has_validate_script(dir.path()));
+		fs::write(dir.path().join("validate"), "#!/bin/bash\nexit 0").unwrap();
+		assert!(has_validate_script(dir.path()));
 	}
 
 	// ---------------------------------------------------------------------------

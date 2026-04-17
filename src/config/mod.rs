@@ -171,6 +171,64 @@ fn default_knowledge_retention() -> usize {
 	10
 }
 
+/// Skill auto-activation and validation configuration.
+///
+/// In TOML:
+/// ```toml
+/// [skills]
+/// auto_activation = true
+/// activation_timeout = 3
+/// validation_timeout = 60
+/// max_retries = 3
+/// ```
+///
+/// Timeout of 0 means unlimited (no timeout).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillsConfig {
+	/// Enable automatic skill activation via `activate` scripts in tap skills.
+	#[serde(default = "default_skill_auto_enabled")]
+	pub auto_activation: bool,
+
+	/// Timeout in seconds for `activate` scripts. 0 = unlimited.
+	#[serde(default = "default_skill_activation_timeout")]
+	pub activation_timeout: u64,
+
+	/// Timeout in seconds for `validate` scripts. 0 = unlimited.
+	#[serde(default = "default_skill_validation_timeout")]
+	pub validation_timeout: u64,
+
+	/// Maximum validation retries before giving up per skill per turn.
+	#[serde(default = "default_skill_max_retries")]
+	pub max_retries: u32,
+}
+
+impl Default for SkillsConfig {
+	fn default() -> Self {
+		Self {
+			auto_activation: default_skill_auto_enabled(),
+			activation_timeout: default_skill_activation_timeout(),
+			validation_timeout: default_skill_validation_timeout(),
+			max_retries: default_skill_max_retries(),
+		}
+	}
+}
+
+fn default_skill_auto_enabled() -> bool {
+	true
+}
+
+fn default_skill_activation_timeout() -> u64 {
+	3
+}
+
+fn default_skill_validation_timeout() -> u64 {
+	60
+}
+
+fn default_skill_max_retries() -> u32 {
+	3
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {
 	/// Name of the prompt (used with /prompt command)
@@ -295,6 +353,10 @@ pub struct Config {
 	// When running `octomind run developer:rust`, uses ollama:glm-5 instead of default.
 	#[serde(default)]
 	pub taps: HashMap<String, String>,
+
+	// Skill auto-activation and validation configuration
+	#[serde(default)]
+	pub skills: SkillsConfig,
 
 	// Webhook hook configurations
 	#[serde(default)]

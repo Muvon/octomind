@@ -43,6 +43,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 uuid = { version = "1.20.0", features = ["v4"] }
 tiktoken-rs = "0.9.1" # Token counter
 reqwest = { version = "0.13.2", features = ["json", "rustls", "gzip"], default-features = false }
+rustls-webpki = ">=0.103.12"
 anyhow = "1.0.102"
 serde_json = "1.0.149"
 clap = { version = "4.5.61", features = ["derive"] }

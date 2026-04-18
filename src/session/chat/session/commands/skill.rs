@@ -23,11 +23,11 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 	let subcommand = if params.is_empty() { "list" } else { params[0] };
 
 	match subcommand {
-		"list" => handle_skill_list(params),
-		"active" => handle_skill_active(),
-		"use" | "enable" => handle_skill_use(session, params).await,
-		"forget" | "disable" => handle_skill_forget(params).await,
-		"help" => handle_skill_help(),
+		"list" | "l" | "ls" => handle_skill_list(params),
+		"active" | "a" => handle_skill_active(),
+		"use" | "u" | "enable" => handle_skill_use(session, params).await,
+		"forget" | "f" | "disable" => handle_skill_forget(params).await,
+		"help" | "h" => handle_skill_help(),
 		_ => {
 			// Check if it's a valid skill name before treating as shorthand
 			let all_skills = crate::mcp::core::skill::find_all_skills_with_details();

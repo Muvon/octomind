@@ -60,6 +60,23 @@ impl<'a> CommandCompleter<'a> {
 		vec!["list", "info", "full", "health", "dump", "validate"]
 	}
 
+	/// Get available skill subcommands for /skill command
+	fn get_skill_subcommands() -> Vec<String> {
+		let mut subs = vec![
+			"list".to_string(),
+			"active".to_string(),
+			"use".to_string(),
+			"forget".to_string(),
+			"help".to_string(),
+		];
+		// Add available skill names for direct shorthand
+		let skills = crate::mcp::core::skill::find_all_skills_with_details();
+		for (meta, _) in &skills {
+			subs.push(meta.name.clone());
+		}
+		subs
+	}
+
 	/// Get available cache subcommands for /cache command
 	fn get_cache_subcommands() -> Vec<&'static str> {
 		vec!["stats", "clear", "threshold"]
@@ -521,6 +538,25 @@ impl<'a> CommandCompleter<'a> {
 				.map(|subcommand| Pair {
 					display: subcommand.to_string(),
 					replacement: subcommand.to_string(),
+				})
+				.collect();
+
+			(prefix_len, candidates)
+		} else if line.starts_with("/skill ") {
+			let skill_prefix = "/skill ";
+			let prefix_len = skill_prefix.len();
+			let subcommand_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates: Vec<Pair> = Self::get_skill_subcommands()
+				.iter()
+				.filter(|s| s.starts_with(subcommand_part))
+				.map(|s| Pair {
+					display: s.to_string(),
+					replacement: s.to_string(),
 				})
 				.collect();
 

@@ -73,16 +73,10 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		};
 
 		match super::skill::execute_skill_tool(&call).await {
-			Ok(result) => {
-				// Inject skill content into session messages
+			Ok(_) => {
 				if let Some(content) = super::skill::take_silent_skill_content() {
 					let _ = session.add_user_message(&content);
 				}
-				crate::log_debug!(
-					"skill_auto: env skill '{}': {}",
-					name,
-					result.extract_content()
-				);
 			}
 			Err(e) => {
 				eprintln!("OCTOMIND_SKILLS: skill '{}' failed: {}", name, e);

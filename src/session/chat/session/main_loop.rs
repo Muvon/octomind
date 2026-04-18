@@ -107,29 +107,104 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
 	crate::session::context::with_session_id(session_id, async move {
-		// MCP init — progress display handled internally when stderr is a terminal
-		crate::mcp::initialize_mcp_for_role(&role, config).await?;
-		// Initialize session-scoped inbox and background job manager now that session ID is set
+		// --- Initialization phase with spinner ---
+		// Everything before the user prompt runs under one spinner.
+		let is_interactive = std::io::IsTerminal::is_terminal(&std::io::stderr());
+		let spinner = if is_interactive {
+			let sp = indicatif::ProgressBar::new_spinner();
+			sp.set_style(
+				indicatif::ProgressStyle::default_spinner()
+					.template(" {spinner:.cyan} {msg:.cyan}")
+					.unwrap()
+					.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
+			);
+			sp.enable_steady_tick(std::time::Duration::from_millis(80));
+			sp.set_message("Initializing...");
+			Some(sp)
+		} else {
+			None
+		};
+
+		// MCP init with progress callback tied to spinner
+		{
+			use std::sync::{Arc, Mutex};
+			let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+			let total: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+			let sp_ref = spinner.clone();
+
+			let cb = move |progress: crate::mcp::McpInitProgress| {
+				let Some(sp) = sp_ref.as_ref() else { return };
+				match &progress {
+					crate::mcp::McpInitProgress::Starting { servers } => {
+						*total.lock().unwrap() = servers.len();
+						*pending.lock().unwrap() = servers.clone();
+						if !servers.is_empty() {
+							sp.set_message(format!(
+								"Starting MCP: {} [0/{}]",
+								servers.join(", "),
+								servers.len()
+							));
+						}
+					}
+					crate::mcp::McpInitProgress::Completed { server, .. } => {
+						let mut pg = pending.lock().unwrap();
+						pg.retain(|s| s != server);
+						let done = *total.lock().unwrap() - pg.len();
+						let tc = *total.lock().unwrap();
+						if pg.is_empty() {
+							sp.set_message(format!("Starting MCP: done [{}/{}]", done, tc));
+						} else {
+							sp.set_message(format!(
+								"Starting MCP: {} [{}/{}]",
+								pg.join(", "),
+								done,
+								tc
+							));
+						}
+					}
+				}
+			};
+
+			crate::mcp::initialize_mcp_for_role_with_callback(&role, config, Some(&cb)).await?;
+		}
+
+		// Continue init under same spinner
+		if let Some(sp) = &spinner {
+			sp.set_message("Loading session...");
+		}
 		crate::session::inbox::init_inbox_for_session();
 		crate::mcp::agent::functions::init_job_manager();
-		// Initialize skill auto-activation pool for the current role's domain
 		crate::mcp::core::skill_auto::init_pool(&role);
-		// Start inject listener so `octomind send` can push messages into this session
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
-		// Start webhook listeners for any --hook flags
 		let _webhook_guards =
 			start_webhook_guards(args, config, &chat_session.session.info.name).await?;
-		// Get current directory for file operations - use thread-local if set (ACP/WebSocket), otherwise process cwd
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let mut chat_session = chat_session;
 		let mut first_message_processed = first_message_processed;
 
-		// Setup system prompt and cache using helper function (BEFORE showing interactive prompts)
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
 
-		// Load skills from OCTOMIND_SKILLS env var AFTER system prompt + welcome + instructions are set
+		// Load env skills (still under spinner)
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
+
+		// Print loaded skills through the spinner (no flicker)
+		if let Some(sp) = &spinner {
+			let session_id = crate::session::context::current_session_id();
+			if let Some(sid) = session_id {
+				let active = crate::session::context::get_active_skills(&sid);
+				for name in &active {
+					sp.println(format!("{} {}", "Using skill:".dimmed(), name.bright_cyan()));
+				}
+			}
+		}
+
+		// Spinner done — clear immediately before prompt
+		if let Some(sp) = spinner {
+			sp.finish_and_clear();
+			print!("\x1B[2K\r");
+			std::io::Write::flush(&mut std::io::stdout()).ok();
+		}
 
 		// Print the last few messages for context with colors if terminal supports them (for resumed sessions)
 		// Only show context for truly resumed sessions, not new sessions

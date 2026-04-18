@@ -1508,15 +1508,24 @@ pub(super) fn display_skill(output: &CommandOutput) {
 
 		match subcommand {
 			"list" | "active" => display_skill_list(data),
-			"use" | "forget" | "error" | "help" => {
+			"use" => {
+				if let Some(name) = data.get("name").and_then(|v| v.as_str()) {
+					println!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
+				}
+			}
+			"forget" => {
+				if let Some(name) = data.get("name").and_then(|v| v.as_str()) {
+					println!("{} {}", "Removed skill:".dimmed(), name.bright_cyan());
+				}
+			}
+			"error" => {
 				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
-					if subcommand == "error" {
-						println!("{}", msg.bright_red());
-					} else if subcommand == "use" {
-						println!("{}", msg.bright_green());
-					} else {
-						println!("{}", msg);
-					}
+					println!("{}", msg.bright_red());
+				}
+			}
+			"help" => {
+				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
+					println!("{}", msg);
 				}
 			}
 			_ => {}

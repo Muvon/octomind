@@ -670,12 +670,6 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Register as active
 	crate::session::context::add_active_skill(&session_id, &name);
 
-	// Show activation to user
-	if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-		use colored::Colorize;
-		eprintln!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
-	}
-
 	// Inject skill body (strip frontmatter — only instructions matter for the LLM).
 	let mut injection_content = strip_frontmatter(&content).to_string();
 	if !resources.is_empty() {

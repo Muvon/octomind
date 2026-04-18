@@ -100,14 +100,14 @@ async fn start_webhook_guards<T: std::fmt::Debug>(
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
 	// Setup and initialize session using helper function
 
-	let (mut chat_session, config_for_role, role, first_message_processed) =
+	let (chat_session, config_for_role, role, first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
 
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
 	crate::session::context::with_session_id(session_id, async move {
-		// MCP init happens here so session_id is already set when MCP servers receive it
+		// MCP init — progress display handled internally when stderr is a terminal
 		crate::mcp::initialize_mcp_for_role(&role, config).await?;
 		// Initialize session-scoped inbox and background job manager now that session ID is set
 		crate::session::inbox::init_inbox_for_session();
@@ -964,14 +964,14 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 ) -> Result<()> {
 	// Setup and initialize session using helper function
 
-	let (mut chat_session, config_for_role, role, first_message_processed) =
+	let (chat_session, config_for_role, role, first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
 
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
 	crate::session::context::with_session_id(session_id, async move {
-	// MCP init happens here so session_id is already set when MCP servers receive it
+	// MCP init — progress display handled internally when stderr is a terminal
 	crate::mcp::initialize_mcp_for_role(&role, config).await?;
 	// Initialize session-scoped inbox and background job manager now that session ID is set
 	crate::session::inbox::init_inbox_for_session();

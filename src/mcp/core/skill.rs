@@ -30,7 +30,7 @@ use std::path::PathBuf;
 
 // Thread-local to pass skill content from execute_use(silent=true) to caller.
 thread_local! {
-	static LAST_SKILL_CONTENT: RefCell<Option<String>> = RefCell::new(None);
+	static LAST_SKILL_CONTENT: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// Take the last silently-activated skill's content (if any).

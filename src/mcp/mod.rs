@@ -283,8 +283,7 @@ pub async fn initialize_servers_for_role_with_callback(
 	Ok(())
 }
 
-/// Initialize MCP servers and tool map for a role (used at startup and role switching)
-/// This is the complete initialization that should be used whenever switching roles
+/// Initialize MCP servers and tool map for a role (used at startup and role switching).
 pub async fn initialize_mcp_for_role(role: &str, config: &crate::config::Config) -> Result<()> {
 	initialize_mcp_for_role_with_callback(role, config, None).await
 }

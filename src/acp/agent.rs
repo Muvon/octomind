@@ -474,13 +474,28 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		})
 		.await;
 
-		// Load env skills after session is stored (needs &mut ChatSession)
 		self.sessions
 			.borrow_mut()
 			.insert(session_id.clone(), (chat_session, session_cwd));
 		self.cancellations
 			.borrow_mut()
 			.insert(session_id.clone(), SessionCancellation::new());
+
+		// Load env skills after session is stored (needs &mut ChatSession).
+		// Extract from map, load, put back — can't hold RefCell borrow across await.
+		{
+			let entry = self.sessions.borrow_mut().remove(&session_id);
+			if let Some((mut session, cwd)) = entry {
+				let sid = session_id.clone();
+				crate::session::context::with_session_id(sid, async {
+					crate::mcp::core::skill_auto::load_env_skills(&mut session).await;
+				})
+				.await;
+				self.sessions
+					.borrow_mut()
+					.insert(session_id.clone(), (session, cwd));
+			}
+		}
 
 		let conn = self.conn.borrow().clone();
 		send_available_commands(conn, &session_id).await;
@@ -928,6 +943,21 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		self.cancellations
 			.borrow_mut()
 			.insert(session_id.clone(), SessionCancellation::new());
+
+		// Load env skills after session is stored
+		{
+			let entry = self.sessions.borrow_mut().remove(&session_id);
+			if let Some((mut session, cwd)) = entry {
+				let sid = actual_session_id.clone();
+				crate::session::context::with_session_id(sid, async {
+					crate::mcp::core::skill_auto::load_env_skills(&mut session).await;
+				})
+				.await;
+				self.sessions
+					.borrow_mut()
+					.insert(session_id.clone(), (session, cwd));
+			}
+		}
 
 		let conn = self.conn.borrow().clone();
 		send_available_commands(conn, &session_id).await;

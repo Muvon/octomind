@@ -417,6 +417,10 @@ pub fn read_user_input(
 				crate::log_debug!("Session preserved for future reference.");
 				return Ok(InputResult::Exit);
 			}
+			Ok(_) => {
+				// reedline Signal is non-exhaustive — handle future variants gracefully
+				continue;
+			}
 			Err(err) => {
 				let msg = format!("{err:?}");
 				// Terminal is broken/detached (e.g. another shell took over, resize event

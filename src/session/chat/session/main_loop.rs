@@ -194,7 +194,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			if let Some(sid) = session_id {
 				let active = crate::session::context::get_active_skills(&sid);
 				for name in &active {
-					sp.println(format!("{} {}", "Using skill:".dimmed(), name.bright_cyan()));
+					sp.println(format!(
+						"{} {}",
+						"Using skill:".dimmed(),
+						name.bright_cyan()
+					));
 				}
 			}
 		}

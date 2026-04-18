@@ -606,11 +606,14 @@ async fn handle_session_message(
 	active_session_ids.insert(session_id.clone());
 
 	// Wrap in session context so all session-scoped registries route correctly
+	let role_for_pool = session_role.clone();
 	crate::session::context::with_session_id(session_id.clone(), async {
-		// Initialize session-scoped inbox and job manager so schedule/inbox
-		// storage is keyed to this session ID.
+		// Initialize session-scoped inbox, job manager, and skill pool so
+		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::inbox::init_inbox_for_session();
 		crate::mcp::agent::functions::init_job_manager();
+		crate::mcp::core::skill_auto::init_pool(&role_for_pool);
+		crate::mcp::core::skill_auto::load_env_skills().await;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)
 			.await?;

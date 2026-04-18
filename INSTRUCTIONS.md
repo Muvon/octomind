@@ -66,6 +66,10 @@ CLI / WebSocket
 | Pipelines config | `src/config/pipelines.rs` |
 | Pipelines runtime | `src/session/pipelines/orchestrator.rs`, `executor.rs` |
 | Workflows | `src/session/workflows/orchestrator.rs` |
+| Skills (auto-activation, validation) | `src/mcp/core/skill.rs`, `src/mcp/core/skill_auto.rs` |
+| Skills config | `src/config/mod.rs` -> `SkillsConfig` |
+| Capability resolution (runtime) | `src/agent/registry.rs` -> `parse_capability_toml()` |
+| Tap registry & discovery | `src/agent/taps.rs` |
 | MCP tool routing | `src/mcp/mod.rs` -> `try_execute_tool_call()` |
 | MCP tool registry | `src/mcp/tool_map.rs` |
 | MCP tool definitions | `src/mcp/*/functions.rs` -> `get_all_functions()` |
@@ -73,6 +77,42 @@ CLI / WebSocket
 | Structured output (schema) | `src/providers.rs` -> `ChatCompletionParams::with_schema()`, `src/session/mod.rs` -> `chat_completion_with_provider()` |
 | CLI schema flag parsing | `src/session/chat/session/params.rs`, `src/session/chat/session/setup.rs` |
 | File read/write helpers | `src/utils/file_parser.rs`, `src/utils/file_renderer.rs` |
+
+## Session Entry Points (CRITICAL — keep synchronized)
+
+All session modes share the same initialization sequence. When adding new session-scoped
+state (like skill pools, inbox, job managers), it MUST be added to ALL entry points.
+
+| Mode | File | Function |
+|------|------|----------|
+| Interactive CLI | `src/session/chat/session/main_loop.rs:100` | `run_interactive_session()` |
+| Non-interactive CLI | `src/session/chat/session/main_loop.rs:959` | `run_interactive_session_with_input()` |
+| ACP new_session | `src/acp/agent.rs:469` | `AcpAgent` — first `with_session_id` block |
+| ACP initialize | `src/acp/agent.rs:917` | `AcpAgent` — second `with_session_id` block |
+| WebSocket server | `src/websocket/server.rs:609` | `handle_session_message()` |
+
+**Required initialization sequence** (inside `with_session_id` context):
+```
+1. crate::session::inbox::init_inbox_for_session()
+2. crate::mcp::agent::functions::init_job_manager()
+3. crate::mcp::core::skill_auto::init_pool(&role)
+4. crate::mcp::core::skill_auto::load_env_skills().await
+```
+
+**run_activation hook** (user input processing — only in main_loop.rs):
+```
+crate::mcp::core::skill_auto::run_activation(Event::User, &input, &current_dir).await
+```
+Called before layers/pipeline processing, after command handling.
+
+**run_validators hook** (after tool execution — only in tool_result_processor.rs):
+```
+crate::mcp::core::skill_auto::run_validators(Event::Turn, &content, &workdir).await
+```
+Called after tool results are collected, before spending threshold check.
+
+**If you add a new session entry point or session-scoped state, grep for
+`init_inbox_for_session` to find all locations that need updating.**
 
 ## Code Quality Rules
 

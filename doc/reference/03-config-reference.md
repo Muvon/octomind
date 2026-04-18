@@ -478,6 +478,19 @@ This allows organizing config by concern (e.g., `mcp-github.toml`, `layers-custo
 
 ## Template Variables
 
+## `[skills]` — Skill Auto-Activation & Validation (required)
+
+| Field | Type | Value | Description |
+|-------|------|-------|-------------|
+| `auto_activation` | bool | `true` | Enable automatic skill activation via `activate` scripts. |
+| `activation_timeout` | u64 | `3` | Timeout in seconds for `activate` scripts. `0` = unlimited. |
+| `validation_timeout` | u64 | `60` | Timeout in seconds for `validate` scripts. `0` = unlimited. |
+| `max_retries` | u32 | `3` | Max validation retries per skill before skipping. Resets on success. |
+
+All fields are required. See [Skills](../usage/15-skills.md) for full documentation.
+
+## Template Variables
+
 Available in `system`, `welcome`, and `system_prompt` fields:
 
 | Variable | Description |

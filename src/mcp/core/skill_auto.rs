@@ -49,9 +49,8 @@ fn get_pool() -> &'static Arc<RwLock<Option<SkillPool>>> {
 
 /// Load skills from OCTOMIND_SKILLS env var. Called at session start.
 /// Format: comma-delimited skill names, e.g. "programming-rust,git-workflow"
-/// These skills are activated immediately as permanent skills.
-/// Content is added directly to session messages — NOT via inbox (no auto API call).
-pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSession) {
+/// Uses `use_silent` — registers skill + loads capabilities, no inbox push.
+pub async fn load_env_skills() {
 	let env_val = match std::env::var("OCTOMIND_SKILLS") {
 		Ok(v) if !v.trim().is_empty() => v,
 		_ => return,
@@ -66,65 +65,25 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		return;
 	}
 
-	let session_id = match crate::session::context::current_session_id() {
-		Some(id) => id,
-		None => return,
-	};
-
 	for name in &skill_names {
-		// Find skill by name
-		let (meta, skill_dir, content) = match super::skill::find_skill_by_name_pub(name) {
-			Some(s) => s,
-			None => {
-				eprintln!(
-					"OCTOMIND_SKILLS: skill '{}' not found in any tap, skipping",
-					name
-				);
-				continue;
-			}
+		let call = crate::mcp::McpToolCall {
+			tool_name: "skill".to_string(),
+			tool_id: format!("env_{}", name),
+			parameters: serde_json::json!({"action": "use_silent", "name": name}),
 		};
 
-		// Skip if already active
-		if crate::session::context::has_active_skill(&session_id, &meta.name) {
-			continue;
-		}
-
-		// Auto-load capabilities
-		if !meta.capabilities.is_empty() {
-			let overrides = crate::session::context::get_session_config(&session_id)
-				.map(|cfg| cfg.capabilities.clone())
-				.unwrap_or_default();
-			for cap_name in &meta.capabilities {
-				if let Ok(resolved) =
-					crate::agent::registry::parse_capability_toml(cap_name, &overrides)
-				{
-					for server_config in resolved.mcp_servers {
-						let server_name = server_config.name().to_string();
-						let _ = crate::mcp::core::dynamic::register_server(server_config);
-						let _ =
-							crate::mcp::core::dynamic::enable_server(&server_name, None).await;
-					}
-				}
+		match super::skill::execute_skill_tool(&call).await {
+			Ok(result) => {
+				crate::log_debug!(
+					"skill_auto: env skill '{}': {}",
+					name,
+					result.extract_content()
+				);
+			}
+			Err(e) => {
+				eprintln!("OCTOMIND_SKILLS: skill '{}' failed: {}", name, e);
 			}
 		}
-
-		// Register as active
-		crate::session::context::add_active_skill(&session_id, &meta.name);
-
-		// Build injection content
-		let mut injection_content = content;
-		let resources = super::skill::build_resource_catalog(&skill_dir);
-		if !resources.is_empty() {
-			injection_content.push_str(&resources);
-		}
-
-		// Add directly to session messages — NOT inbox
-		if let Err(e) = session.add_user_message(&injection_content) {
-			crate::log_debug!("skill_auto: failed to inject env skill '{}': {}", name, e);
-			continue;
-		}
-
-		crate::log_debug!("skill_auto: loaded env skill '{}'", name);
 	}
 }
 

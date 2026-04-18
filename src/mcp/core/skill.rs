@@ -385,7 +385,8 @@ pub async fn execute_skill_tool(call: &McpToolCall) -> Result<McpToolResult, Str
 
 	match action.as_str() {
 		"list" => execute_list(call),
-		"use" => execute_use(call).await,
+		"use" => execute_use(call, false).await,
+		"use_silent" => execute_use(call, true).await,
 		"forget" => execute_forget(call),
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
@@ -506,7 +507,7 @@ fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 	))
 }
 
-async fn execute_use(call: &McpToolCall) -> Result<McpToolResult, String> {
+async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, String> {
 	let name = match call.parameters.get("name") {
 		Some(Value::String(n)) if !n.trim().is_empty() => n.clone(),
 		Some(_) => {
@@ -633,21 +634,36 @@ async fn execute_use(call: &McpToolCall) -> Result<McpToolResult, String> {
 	// Register as active
 	crate::session::context::add_active_skill(&session_id, &name);
 
-	// Push skill content into the session inbox — the loop will inject it as a user message.
-	let mut injection_content = content;
-	if !resources.is_empty() {
-		injection_content.push_str(&resources);
+	// Show activation to user
+	if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+		use colored::Colorize;
+		eprintln!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
 	}
-	crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-		source: crate::session::inbox::InboxSource::Skill { name: name.clone() },
-		content: injection_content,
-	});
 
-	crate::log_debug!(
-		"skill: queued '{}' for injection in session {}",
-		name,
-		session_id
-	);
+	// Push skill content into the session inbox — the loop will inject it as a user message.
+	// In silent mode (env/auto activation at session start), skip inbox to avoid triggering an API call.
+	if !silent {
+		let mut injection_content = content;
+		if !resources.is_empty() {
+			injection_content.push_str(&resources);
+		}
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			source: crate::session::inbox::InboxSource::Skill { name: name.clone() },
+			content: injection_content,
+		});
+
+		crate::log_debug!(
+			"skill: queued '{}' for injection in session {}",
+			name,
+			session_id
+		);
+	} else {
+		crate::log_debug!(
+			"skill: silently activated '{}' in session {} (no inbox)",
+			name,
+			session_id
+		);
+	}
 
 	// Return short confirmation — the actual content is injected as a system message
 	let mut msg = format!("Skill '{}' is now active.", name);

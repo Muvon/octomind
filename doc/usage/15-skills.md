@@ -6,28 +6,32 @@ Skills are reusable instruction packs that inject domain knowledge into AI sessi
 
 Skills are stored in taps at `skills/<name>/SKILL.md`. When activated, the skill's full content is injected into the session context, giving the AI domain-specific knowledge.
 
-### Manual Activation
+### Three Activation Methods
 
-The AI can activate skills via the `skill` MCP tool:
-
-```
-skill(action="list")                        # discover available skills
-skill(action="use", name="git-workflow")    # inject skill into context
-skill(action="forget", name="git-workflow") # remove skill from context
+**1. Environment variable** — preload skills at session start:
+```bash
+OCTOMIND_SKILLS=programming-rust,git-workflow octomind run developer:general
 ```
 
-### Auto-Activation
+**2. Auto-activation** — skills with `activate` scripts activate based on project context (e.g., `Cargo.toml` detected). Scoped by `domains` field to the current agent's role.
 
-Skills can declare an `activate` script that runs on conversation events. When the script returns exit 0, the skill is automatically activated — no AI decision needed.
-
+**3. Manual** — via `/skill` command or the `skill` MCP tool:
 ```
-skills/rust-dev/
-  SKILL.md      # metadata + instructions
-  activate      # executable script — decides when to activate
-  validate      # executable script — validates LLM output quality
+/skill use programming-rust        # CLI command
+skill(action="use", name="...")     # MCP tool (AI-initiated)
 ```
 
-The system scans skills matching the current agent's domain and runs their `activate` scripts on each event.
+### Skill Directory Structure
+
+```
+skills/<name>/
+  SKILL.md      # Required: metadata (frontmatter) + instructions (body)
+  activate      # Optional: auto-activation script (exit 0 = activate)
+  validate      # Optional: validation script (exit 0 = valid, stderr = error)
+  scripts/      # Optional: executable scripts the skill references
+  references/   # Optional: supplementary documentation
+  assets/       # Optional: templates, config files, resources
+```
 
 ## SKILL.md Format
 
@@ -35,22 +39,22 @@ The system scans skills matching the current agent's domain and runs their `acti
 
 ```yaml
 ---
-name: rust-dev
+name: programming-rust
 title: "Rust Development"
-description: "Rust development conventions and validation."
+description: "Rust conventions, idiomatic patterns, and cargo tooling. Auto-activates in Rust projects."
 license: Apache-2.0
 compatibility: "Requires cargo and rustc."
-capabilities: git memory              # capabilities to auto-load (space-delimited or array)
-domains: developer devops             # agent categories that check this skill
-allowed-tools: shell text_editor      # pre-approved tools (existing)
+capabilities: programming-rust       # capabilities to auto-load (space-delimited or array)
+domains: developer                   # agent categories that check this skill
+allowed-tools: shell text_editor     # pre-approved tools
 ---
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Max 64 chars. Lowercase, hyphens. Must match directory name. |
-| `title` | yes | 5–60 chars. Human-readable label. |
-| `description` | yes | 20–1024 chars. What the skill does and when to use it. |
+| `title` | yes | 5-60 chars. Human-readable label. |
+| `description` | yes | 20-1024 chars. What the skill does and when to use it. |
 | `capabilities` | no | Capabilities to auto-load when skill activates. Space-delimited or `["git", "memory"]`. |
 | `domains` | no | Agent categories for auto-activation scoping. Without this, skill is manual-only. |
 | `allowed-tools` | no | Space-delimited pre-approved tools. |
@@ -59,7 +63,22 @@ allowed-tools: shell text_editor      # pre-approved tools (existing)
 
 ### Body
 
-The body after frontmatter is the skill's instructions — what the AI reads and follows. Structure: Overview → Instructions → Examples → References.
+The body after frontmatter is the skill's instructions. Structure: Conventions, Tooling, Best Practices, Examples.
+
+## Environment Variable: OCTOMIND_SKILLS
+
+Preload skills at session start. Comma-delimited skill names:
+
+```bash
+export OCTOMIND_SKILLS=programming-rust,git-workflow
+octomind run developer:general
+```
+
+- Skills are activated immediately as permanent skills
+- No `activate` scripts are run for env-loaded skills
+- Each name is validated against available skills in taps
+- Unknown skill names are skipped with a warning
+- Already-active skills are not re-injected
 
 ## Activate Script
 
@@ -71,6 +90,7 @@ An executable script at `skills/<name>/activate` that decides whether the skill 
 - Runs in the project working directory
 - **exit 0** = activate this skill
 - **exit non-zero** = don't activate (or deactivate if currently active)
+- Already-active skills are skipped (no script executed)
 
 **Events:**
 - `user` — real user typed input (not auto-injected)
@@ -79,9 +99,10 @@ An executable script at `skills/<name>/activate` that decides whether the skill 
 
 **Example:**
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 case "$1" in
-  user) grep -qi "rust\|cargo" && exit 0 ;;
+  user) grep -qi '\brust\b\|cargo\b' && exit 0 ;;
   *)    [ -f Cargo.toml ] && exit 0 ;;
 esac
 exit 1
@@ -89,22 +110,23 @@ exit 1
 
 ## Validate Script
 
-An executable script at `skills/<name>/validate` that checks LLM output quality.
+An executable script at `skills/<name>/validate` that checks LLM output quality deterministically.
 
 **Protocol:**
-- Same events and invocation as `activate`
+- Runs at the end of each assistant turn
+- Runs in the project working directory
 - **exit 0** = output is valid
-- **exit non-zero** = output is invalid. stderr (or stdout if stderr empty) is captured and fed back to the LLM as an error message.
-- The script decides whether to validate based on the event type
+- **exit non-zero** = output is invalid. stderr (or stdout if stderr empty) is captured and fed back to the LLM as an error message for correction.
 
 **Example:**
 ```bash
-#!/bin/bash
-[ "$1" = "turn" ] || exit 0
-[ -f Cargo.toml ] && cargo test 2>&1
+#!/usr/bin/env bash
+set -euo pipefail
+[ -f Cargo.toml ] || exit 0
+cargo clippy --quiet --all-targets -- -D warnings 2>&1
 ```
 
-If `cargo test` fails, its output is sent back to the LLM: "Validation failed (rust-dev): <test output>". The LLM gets another turn to fix the issue.
+If clippy fails, its output is sent back to the LLM: "Validation failed (programming-rust): <clippy output>". The LLM gets another turn to fix the issue. Retries are capped by `max_retries` in `[skills]` config.
 
 ## Capabilities Auto-Loading
 
@@ -129,23 +151,41 @@ The `domains` field limits which agents check this skill's `activate` script:
 domains: developer devops
 ```
 
-- Only agents with matching role names (e.g., `developer:rust`) run this skill's `activate` script
-- Reduces the activation pool from hundreds of skills to ~10 relevant ones
+- Only agents with matching role names run this skill's `activate` script
+- Reduces the activation pool to relevant skills only
 - Skills without `domains` are manual-only (backward compatible)
+
+## /skill Command
+
+Manage skills interactively during a session:
+
+```
+/skill                     # list all skills with active status
+/skill list                # same as above
+/skill list <pattern>      # filter by name/description
+/skill active              # show only active skills
+/skill use <name>          # activate a skill
+/skill forget <name>       # deactivate a skill
+/skill help                # show usage
+```
 
 ## Configuration
 
+Required `[skills]` section in config:
+
 ```toml
 [skills]
-auto_activation = true       # enable/disable auto-activation (default: true)
-activation_timeout = 3        # seconds per activate script, 0 = unlimited (default: 3)
-validation_timeout = 60       # seconds per validate script, 0 = unlimited (default: 60)
-max_retries = 3               # max validation retries per turn (default: 3)
+auto_activation = true       # enable/disable auto-activation
+activation_timeout = 3        # seconds per activate script, 0 = unlimited
+validation_timeout = 60       # seconds per validate script, 0 = unlimited
+max_retries = 3               # max validation retries per skill before giving up
 ```
 
-## Validation
+All fields are required. The `[skills]` section must be present in the config file.
 
-Both `activate` and `validate` scripts must be executable (`chmod +x`). The lint script checks this:
+## Lint Validation
+
+Both `activate` and `validate` scripts must be executable (`chmod +x`). The tap lint script checks this:
 
 ```bash
 bash scripts/lint-skills.sh

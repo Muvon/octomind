@@ -660,6 +660,34 @@ prompt = """Please help debug the issue above:
 - Identify common pitfalls in this scenario"""
 
 # ═══════════════════════════════════════════════════════════════════════
+# SKILL AUTO-ACTIVATION & VALIDATION
+# Configure automatic skill activation and output validation.
+# Skills are tap-distributed instruction packs that inject domain knowledge.
+# With auto-activation, skills activate based on project context (e.g.,
+# Cargo.toml detected → programming-rust skill activates automatically).
+# Validators run deterministic checks on LLM output (e.g., cargo clippy).
+# ═══════════════════════════════════════════════════════════════════════
+
+[skills]
+# Enable automatic skill activation via `activate` scripts in tap skills.
+# When enabled, skills with `domains` matching the current agent's role
+# are checked on each conversation event. Disable to use manual /skill only.
+auto_activation = true
+
+# Timeout in seconds for `activate` scripts. 0 = unlimited.
+# Keep short — activate scripts run on every user message.
+activation_timeout = 3
+
+# Timeout in seconds for `validate` scripts. 0 = unlimited.
+# Can be longer — validators like `cargo test` may need time.
+validation_timeout = 60
+
+# Maximum validation retries per skill before giving up.
+# Prevents infinite loops when a validator consistently fails.
+# Counter resets when validation passes or skill is deactivated.
+max_retries = 3
+
+# ═══════════════════════════════════════════════════════════════════════
 # PLAN-DRIVEN AUTONOMOUS COMPRESSION
 # Configure automatic context compression for plan-driven sessions
 # ═══════════════════════════════════════════════════════════════════════

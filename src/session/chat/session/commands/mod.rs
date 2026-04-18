@@ -35,6 +35,7 @@ mod role;
 mod run;
 mod save;
 mod session;
+mod skill;
 mod summarize;
 mod truncate;
 mod utils;
@@ -179,6 +180,9 @@ pub enum CommandOutput {
 		switched: bool,
 		session_name: String,
 	},
+	Skill {
+		data: serde_json::Value,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -240,6 +244,7 @@ impl CommandOutput {
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),
 			Self::Session { .. } => display::display_session(self),
+			Self::Skill { .. } => display::display_skill(self),
 			Self::Error { error, .. } => {
 				println!("{}", error.bright_red());
 			}
@@ -314,6 +319,7 @@ pub async fn process_command(
 		ROLE_COMMAND => role::handle_role(session, config, params).await,
 		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
 		PLAN_COMMAND => plan::handle_plan().await,
+		SKILL_COMMAND => skill::handle_skill(params).await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

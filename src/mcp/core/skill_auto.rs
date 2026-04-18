@@ -47,6 +47,41 @@ fn get_pool() -> &'static Arc<RwLock<Option<SkillPool>>> {
 	SKILL_POOL.get_or_init(|| Arc::new(RwLock::new(None)))
 }
 
+/// Load skills from OCTOMIND_SKILLS env var. Called at session start.
+/// Format: comma-delimited skill names, e.g. "programming-rust,git-workflow"
+/// These skills are activated immediately as permanent skills (no activate scripts run for them).
+pub async fn load_env_skills() {
+	let env_val = match std::env::var("OCTOMIND_SKILLS") {
+		Ok(v) if !v.trim().is_empty() => v,
+		_ => return,
+	};
+
+	let skill_names: Vec<&str> = env_val.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+	if skill_names.is_empty() {
+		return;
+	}
+
+	// Validate all skill names exist before activating any
+	let all_skills = super::skill::find_all_skills_with_details();
+	let known_names: std::collections::HashSet<&str> = all_skills.iter().map(|(m, _)| m.name.as_str()).collect();
+
+	for name in &skill_names {
+		if !known_names.contains(name) {
+			eprintln!("OCTOMIND_SKILLS: skill '{}' not found in any tap, skipping", name);
+			continue;
+		}
+		crate::log_debug!("skill_auto: loading env skill '{}'", name);
+		auto_activate_skill(name, "").await;
+	}
+
+	if !skill_names.is_empty() {
+		crate::log_debug!(
+			"skill_auto: loaded {} skill(s) from OCTOMIND_SKILLS",
+			skill_names.len()
+		);
+	}
+}
+
 /// Initialize the skill pool for the given agent domain (e.g., "developer").
 /// Scans all taps for skills with `activate` scripts whose `domains` field
 /// includes the given domain.
@@ -148,12 +183,17 @@ impl Event {
 	}
 }
 
-/// Get the skills config from the current session, falling back to defaults.
+/// Get the skills config from the current session config.
 fn get_skills_config() -> crate::config::SkillsConfig {
 	crate::session::context::current_session_id()
 		.and_then(|sid| crate::session::context::get_session_config(&sid))
 		.map(|cfg| cfg.skills.clone())
-		.unwrap_or_default()
+		.unwrap_or(crate::config::SkillsConfig {
+			auto_activation: true,
+			activation_timeout: 3,
+			validation_timeout: 60,
+			max_retries: 3,
+		})
 }
 
 /// Run auto-activation for the given event and content.

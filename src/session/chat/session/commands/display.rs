@@ -1492,3 +1492,162 @@ fn display_plain_list(markdown_content: &str) {
 		.replace("*", "");
 	println!("{}", plain_text);
 }
+
+// ---------------------------------------------------------------------------
+// /skill display
+// ---------------------------------------------------------------------------
+
+pub(super) fn display_skill(output: &CommandOutput) {
+	use colored::Colorize;
+
+	if let CommandOutput::Skill { data } = output {
+		let subcommand = data
+			.get("subcommand")
+			.and_then(|v| v.as_str())
+			.unwrap_or("");
+
+		match subcommand {
+			"list" | "active" => display_skill_list(data),
+			"use" | "forget" | "error" | "help" => {
+				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
+					if subcommand == "error" {
+						println!("{}", msg.bright_red());
+					} else if subcommand == "use" {
+						println!("{}", msg.bright_green());
+					} else {
+						println!("{}", msg);
+					}
+				}
+			}
+			_ => {}
+		}
+	}
+}
+
+fn display_skill_list(data: &serde_json::Value) {
+	use colored::Colorize;
+
+	let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+	let active_count = data
+		.get("active_count")
+		.and_then(|v| v.as_u64())
+		.unwrap_or(0);
+	let is_active_filter = data.get("subcommand").and_then(|v| v.as_str()) == Some("active");
+
+	println!();
+	if is_active_filter {
+		println!(
+			"{}",
+			format!("Active Skills ({active_count})")
+				.bright_cyan()
+				.bold()
+		);
+	} else {
+		println!(
+			"{}",
+			format!("Skills ({total} available, {active_count} active)")
+				.bright_cyan()
+				.bold()
+		);
+	}
+	println!("{}", "─".repeat(50).dimmed());
+
+	let skills = match data.get("skills").and_then(|v| v.as_array()) {
+		Some(s) => s,
+		None => {
+			println!("{}", "No skills found.".yellow());
+			return;
+		}
+	};
+
+	if skills.is_empty() {
+		if is_active_filter {
+			println!("{}", "No active skills.".dimmed());
+		} else {
+			println!("{}", "No skills found.".yellow());
+		}
+		println!();
+		return;
+	}
+
+	for skill in skills {
+		let name = skill.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+		let desc = skill
+			.get("description")
+			.and_then(|v| v.as_str())
+			.unwrap_or("");
+		let is_active = skill
+			.get("active")
+			.and_then(|v| v.as_bool())
+			.unwrap_or(false);
+		let capabilities = skill
+			.get("capabilities")
+			.and_then(|v| v.as_array())
+			.map(|a| {
+				a.iter()
+					.filter_map(|v| v.as_str())
+					.collect::<Vec<_>>()
+					.join(", ")
+			})
+			.unwrap_or_default();
+		let domains = skill
+			.get("domains")
+			.and_then(|v| v.as_array())
+			.map(|a| {
+				a.iter()
+					.filter_map(|v| v.as_str())
+					.collect::<Vec<_>>()
+					.join(", ")
+			})
+			.unwrap_or_default();
+		let scripts = skill
+			.get("scripts")
+			.and_then(|v| v.as_array())
+			.map(|a| {
+				a.iter()
+					.filter_map(|v| v.as_str())
+					.collect::<Vec<_>>()
+					.join(" ")
+			})
+			.unwrap_or_default();
+
+		println!();
+		if is_active {
+			print!("  {} ", "✓".bright_green().bold());
+			print!("{}", name.bright_green().bold());
+			println!("  {}", "[active]".bright_green());
+		} else {
+			print!("    ");
+			println!("{}", name.bright_white().bold());
+		}
+
+		// Truncate description to ~80 chars
+		let desc_display = if desc.len() > 80 {
+			format!("{}...", &desc[..77])
+		} else {
+			desc.to_string()
+		};
+		println!("    {}", desc_display.dimmed());
+
+		// Metadata line
+		let mut meta_parts = Vec::new();
+		if !capabilities.is_empty() {
+			meta_parts.push(format!("capabilities: {}", capabilities));
+		}
+		if !domains.is_empty() {
+			meta_parts.push(format!("domains: {}", domains));
+		}
+		if !scripts.is_empty() {
+			meta_parts.push(format!("scripts: {}", scripts));
+		}
+		if !meta_parts.is_empty() {
+			println!("    {}", meta_parts.join(" | ").dimmed());
+		}
+	}
+
+	println!();
+	println!(
+		"{}",
+		"Use '/skill use <name>' to activate, '/skill forget <name>' to deactivate.".dimmed()
+	);
+}

@@ -40,8 +40,9 @@ pub const ROLE_COMMAND: &str = "/role";
 pub const PROMPT_COMMAND: &str = "/prompt";
 pub const PLAN_COMMAND: &str = "/plan";
 pub const WORKFLOW_COMMAND: &str = "/workflow";
+pub const SKILL_COMMAND: &str = "/skill";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 25] = [
+pub const COMMANDS: [&str; 26] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -67,4 +68,5 @@ pub const COMMANDS: [&str; 25] = [
 	PROMPT_COMMAND,
 	PLAN_COMMAND,
 	WORKFLOW_COMMAND,
+	SKILL_COMMAND,
 ];

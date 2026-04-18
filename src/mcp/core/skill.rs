@@ -215,6 +215,11 @@ fn missing_tools(allowed_tools: &[String]) -> Vec<String> {
 
 /// Scan all active taps for skills. Returns (meta, skill_dir) pairs.
 /// Skills live at `<tap>/skills/<skill-name>/SKILL.md`.
+/// Public alias for use by `/skill` command.
+pub fn find_all_skills_with_details() -> Vec<(SkillMeta, PathBuf)> {
+	find_all_skills()
+}
+
 fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 	let taps = match crate::agent::taps::get_taps() {
 		Ok(t) => t,

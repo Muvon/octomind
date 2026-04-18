@@ -764,13 +764,21 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				}
 			}
 
-			// Run skill auto-activation on user input
-			crate::mcp::core::skill_auto::run_activation(
-				crate::mcp::core::skill_auto::Event::User,
-				&input,
-				&current_dir,
-			)
-			.await;
+			// Run skill activation + validators on user input
+			{
+				crate::mcp::core::skill_auto::run_activation(
+					crate::mcp::core::skill_auto::Event::User,
+					&input,
+					&current_dir,
+				)
+				.await;
+				crate::mcp::core::skill_auto::run_validators(
+					crate::mcp::core::skill_auto::Event::User,
+					&input,
+					&current_dir,
+				)
+				.await;
+			}
 
 			// Check for cancellation before starting layered processing
 			if cancellation.is_cancelled() {
@@ -1159,13 +1167,21 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		}
 	}
 
-	// Run skill auto-activation on user input
-	crate::mcp::core::skill_auto::run_activation(
-		crate::mcp::core::skill_auto::Event::User,
-		&input,
-		&current_dir,
-	)
-	.await;
+	// Run skill activation + validators on user input
+	{
+		crate::mcp::core::skill_auto::run_activation(
+			crate::mcp::core::skill_auto::Event::User,
+			&input,
+			&current_dir,
+		)
+		.await;
+		crate::mcp::core::skill_auto::run_validators(
+			crate::mcp::core::skill_auto::Event::User,
+			&input,
+			&current_dir,
+		)
+		.await;
+	}
 
 	// Layer processing if enabled and first message using helper function
 	let (processed_input, workflow_modified_session, layer_cancelled) = process_layers_if_enabled(

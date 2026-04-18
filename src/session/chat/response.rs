@@ -19,13 +19,13 @@ pub mod tool_result_processor;
 
 use super::{CostTracker, MessageHandler, ToolProcessor};
 use crate::config::Config;
-use crate::log_debug;
 use crate::providers::ThinkingBlock;
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::display_thinking;
 use crate::session::chat::get_animation_manager;
 use crate::session::chat::session::ChatSession;
 use crate::session::ProviderExchange;
+use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 
@@ -624,6 +624,31 @@ pub async fn process_response<S: OutputSink>(
 		params.role,
 		params.mode,
 	)?;
+
+	// Run skill activation + validators on assistant event (LLM done responding)
+	{
+		let workdir = crate::mcp::get_thread_working_directory();
+		crate::mcp::core::skill_auto::run_activation(
+			crate::mcp::core::skill_auto::Event::Assistant,
+			&current_content,
+			&workdir,
+		)
+		.await;
+		let failures = crate::mcp::core::skill_auto::run_validators(
+			crate::mcp::core::skill_auto::Event::Assistant,
+			&current_content,
+			&workdir,
+		)
+		.await;
+		for (skill_name, error) in &failures {
+			let error_msg = format!(
+				"Validation failed ({}): {}\nPlease fix the issue.",
+				skill_name, error
+			);
+			params.chat_session.add_user_message(&error_msg)?;
+			log_info!("Validator '{}' failed on assistant event", skill_name);
+		}
+	}
 
 	// 🗜️ DEFERRED PLAN COMPRESSION: Process plan(done) compression after assistant message
 	// When plan(done) triggers compression, we defer it to here so the follow-up API call

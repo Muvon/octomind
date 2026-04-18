@@ -49,36 +49,82 @@ fn get_pool() -> &'static Arc<RwLock<Option<SkillPool>>> {
 
 /// Load skills from OCTOMIND_SKILLS env var. Called at session start.
 /// Format: comma-delimited skill names, e.g. "programming-rust,git-workflow"
-/// These skills are activated immediately as permanent skills (no activate scripts run for them).
-pub async fn load_env_skills() {
+/// These skills are activated immediately as permanent skills.
+/// Content is added directly to session messages — NOT via inbox (no auto API call).
+pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSession) {
 	let env_val = match std::env::var("OCTOMIND_SKILLS") {
 		Ok(v) if !v.trim().is_empty() => v,
 		_ => return,
 	};
 
-	let skill_names: Vec<&str> = env_val.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+	let skill_names: Vec<&str> = env_val
+		.split(',')
+		.map(|s| s.trim())
+		.filter(|s| !s.is_empty())
+		.collect();
 	if skill_names.is_empty() {
 		return;
 	}
 
-	// Validate all skill names exist before activating any
-	let all_skills = super::skill::find_all_skills_with_details();
-	let known_names: std::collections::HashSet<&str> = all_skills.iter().map(|(m, _)| m.name.as_str()).collect();
+	let session_id = match crate::session::context::current_session_id() {
+		Some(id) => id,
+		None => return,
+	};
 
 	for name in &skill_names {
-		if !known_names.contains(name) {
-			eprintln!("OCTOMIND_SKILLS: skill '{}' not found in any tap, skipping", name);
+		// Find skill by name
+		let (meta, skill_dir, content) = match super::skill::find_skill_by_name_pub(name) {
+			Some(s) => s,
+			None => {
+				eprintln!(
+					"OCTOMIND_SKILLS: skill '{}' not found in any tap, skipping",
+					name
+				);
+				continue;
+			}
+		};
+
+		// Skip if already active
+		if crate::session::context::has_active_skill(&session_id, &meta.name) {
 			continue;
 		}
-		crate::log_debug!("skill_auto: loading env skill '{}'", name);
-		auto_activate_skill(name, "").await;
-	}
 
-	if !skill_names.is_empty() {
-		crate::log_debug!(
-			"skill_auto: loaded {} skill(s) from OCTOMIND_SKILLS",
-			skill_names.len()
-		);
+		// Auto-load capabilities
+		if !meta.capabilities.is_empty() {
+			let overrides = crate::session::context::get_session_config(&session_id)
+				.map(|cfg| cfg.capabilities.clone())
+				.unwrap_or_default();
+			for cap_name in &meta.capabilities {
+				if let Ok(resolved) =
+					crate::agent::registry::parse_capability_toml(cap_name, &overrides)
+				{
+					for server_config in resolved.mcp_servers {
+						let server_name = server_config.name().to_string();
+						let _ = crate::mcp::core::dynamic::register_server(server_config);
+						let _ =
+							crate::mcp::core::dynamic::enable_server(&server_name, None).await;
+					}
+				}
+			}
+		}
+
+		// Register as active
+		crate::session::context::add_active_skill(&session_id, &meta.name);
+
+		// Build injection content
+		let mut injection_content = content;
+		let resources = super::skill::build_resource_catalog(&skill_dir);
+		if !resources.is_empty() {
+			injection_content.push_str(&resources);
+		}
+
+		// Add directly to session messages — NOT inbox
+		if let Err(e) = session.add_user_message(&injection_content) {
+			crate::log_debug!("skill_auto: failed to inject env skill '{}': {}", name, e);
+			continue;
+		}
+
+		crate::log_debug!("skill_auto: loaded env skill '{}'", name);
 	}
 }
 
@@ -233,9 +279,12 @@ pub async fn run_activation(event: Event, content: &str, workdir: &std::path::Pa
 		Duration::from_secs(skills_config.activation_timeout)
 	};
 
-	// Run all activate scripts in parallel
+	// Run activate scripts in parallel, skipping already-active skills
 	let mut tasks = Vec::new();
 	for entry in &entries {
+		if active_skills.contains(&entry.name) {
+			continue; // Already active (e.g., from OCTOMIND_SKILLS or previous activation)
+		}
 		let script_path = entry.skill_dir.join("activate");
 		let event_str = event.as_str().to_string();
 		let content = content.to_string();

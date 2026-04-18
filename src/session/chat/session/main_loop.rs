@@ -114,6 +114,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		crate::mcp::agent::functions::init_job_manager();
 		// Initialize skill auto-activation pool for the current role's domain
 		crate::mcp::core::skill_auto::init_pool(&role);
+		// Load skills from OCTOMIND_SKILLS env var (permanent, no activate scripts)
+		crate::mcp::core::skill_auto::load_env_skills().await;
 		// Start inject listener so `octomind send` can push messages into this session
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
@@ -975,6 +977,8 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	crate::mcp::agent::functions::init_job_manager();
 	// Initialize skill auto-activation pool for the current role's domain
 	crate::mcp::core::skill_auto::init_pool(&role);
+	// Load skills from OCTOMIND_SKILLS env var (permanent, no activate scripts)
+	crate::mcp::core::skill_auto::load_env_skills().await;
 	// Start inject listener so `octomind send` can push messages into this session
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	// Start webhook listeners for any --hook flags

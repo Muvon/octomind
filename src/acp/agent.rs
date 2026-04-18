@@ -471,10 +471,10 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			crate::session::inbox::init_inbox_for_session();
 			crate::mcp::agent::functions::init_job_manager();
 			crate::mcp::core::skill_auto::init_pool(&role_for_pool);
-			crate::mcp::core::skill_auto::load_env_skills().await;
 		})
 		.await;
 
+		// Load env skills after session is stored (needs &mut ChatSession)
 		self.sessions
 			.borrow_mut()
 			.insert(session_id.clone(), (chat_session, session_cwd));
@@ -919,7 +919,6 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			crate::session::inbox::init_inbox_for_session();
 			crate::mcp::agent::functions::init_job_manager();
 			crate::mcp::core::skill_auto::init_pool(&role_for_pool);
-			crate::mcp::core::skill_auto::load_env_skills().await;
 		})
 		.await;
 

@@ -613,7 +613,7 @@ async fn handle_session_message(
 		crate::session::inbox::init_inbox_for_session();
 		crate::mcp::agent::functions::init_job_manager();
 		crate::mcp::core::skill_auto::init_pool(&role_for_pool);
-		crate::mcp::core::skill_auto::load_env_skills().await;
+		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)
 			.await?;

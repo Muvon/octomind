@@ -25,7 +25,19 @@
 
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use serde_json::{json, Value};
+use std::cell::RefCell;
 use std::path::PathBuf;
+
+// Thread-local to pass skill content from execute_use(silent=true) to caller.
+thread_local! {
+	static LAST_SKILL_CONTENT: RefCell<Option<String>> = RefCell::new(None);
+}
+
+/// Take the last silently-activated skill's content (if any).
+/// Returns None if no silent activation happened or content was already taken.
+pub fn take_silent_skill_content() -> Option<String> {
+	LAST_SKILL_CONTENT.with(|cell| cell.borrow_mut().take())
+}
 
 // ---------------------------------------------------------------------------
 // Skill metadata (parsed from SKILL.md frontmatter)
@@ -74,6 +86,25 @@ pub(crate) fn has_activate_script(skill_dir: &std::path::Path) -> bool {
 #[allow(dead_code)]
 pub(crate) fn has_validate_script(skill_dir: &std::path::Path) -> bool {
 	skill_dir.join("validate").exists()
+}
+
+/// Strip frontmatter from SKILL.md content, returning only the body.
+pub(crate) fn strip_frontmatter(content: &str) -> &str {
+	let trimmed = content.trim_start();
+	if !trimmed.starts_with("---") {
+		return content;
+	}
+	let after_open = match trimmed.strip_prefix("---") {
+		Some(s) => s.trim_start_matches('\n'),
+		None => return content,
+	};
+	match after_open.find("\n---") {
+		Some(end) => {
+			let after_close = &after_open[end + 4..];
+			after_close.trim_start_matches('\n')
+		}
+		None => content,
+	}
 }
 
 /// Parse YAML frontmatter from a SKILL.md file.
@@ -276,6 +307,11 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 
 /// Find a specific skill by name across all taps.
 /// Returns (meta, skill_dir, full_content) — reads SKILL.md only once.
+/// Public alias for `/skill` command.
+pub fn find_skill_by_name_pub(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
+	find_skill_by_name(name)
+}
+
 fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 	let taps = match crate::agent::taps::get_taps() {
 		Ok(t) => t,
@@ -640,26 +676,32 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 		eprintln!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
 	}
 
-	// Push skill content into the session inbox — the loop will inject it as a user message.
-	// In silent mode (env/auto activation at session start), skip inbox to avoid triggering an API call.
-	if !silent {
-		let mut injection_content = content;
-		if !resources.is_empty() {
-			injection_content.push_str(&resources);
-		}
-		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-			source: crate::session::inbox::InboxSource::Skill { name: name.clone() },
-			content: injection_content,
-		});
+	// Inject skill body (strip frontmatter — only instructions matter for the LLM).
+	let mut injection_content = strip_frontmatter(&content).to_string();
+	if !resources.is_empty() {
+		injection_content.push_str(&resources);
+	}
 
+	if silent {
+		// Silent mode (env loading, /skill command): store content for the caller to inject
+		// into session messages directly. We stash it in a thread-local so the caller can
+		// retrieve it without re-reading the file.
+		LAST_SKILL_CONTENT.with(|cell| {
+			*cell.borrow_mut() = Some(injection_content);
+		});
 		crate::log_debug!(
-			"skill: queued '{}' for injection in session {}",
+			"skill: silently activated '{}' in session {}",
 			name,
 			session_id
 		);
 	} else {
+		// Normal mode (AI-initiated): push to inbox for the main loop to process.
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			source: crate::session::inbox::InboxSource::Skill { name: name.clone() },
+			content: injection_content,
+		});
 		crate::log_debug!(
-			"skill: silently activated '{}' in session {} (no inbox)",
+			"skill: queued '{}' for injection in session {}",
 			name,
 			session_id
 		);

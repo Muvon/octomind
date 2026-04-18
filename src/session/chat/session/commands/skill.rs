@@ -14,22 +14,34 @@
 
 // Skill command handler — /skill [list|active|use|forget]
 
+use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
 use anyhow::Result;
 use serde_json::json;
 
-pub async fn handle_skill(params: &[&str]) -> Result<CommandResult> {
+pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	let subcommand = if params.is_empty() { "list" } else { params[0] };
 
 	match subcommand {
 		"list" => handle_skill_list(params),
 		"active" => handle_skill_active(),
-		"use" | "enable" => handle_skill_use(params).await,
+		"use" | "enable" => handle_skill_use(session, params).await,
 		"forget" | "disable" => handle_skill_forget(params).await,
 		"help" => handle_skill_help(),
 		_ => {
-			// Treat as /skill use <name> shorthand
-			handle_skill_use(&[subcommand]).await
+			// Check if it's a valid skill name before treating as shorthand
+			let all_skills = crate::mcp::core::skill::find_all_skills_with_details();
+			if all_skills.iter().any(|(m, _)| m.name == subcommand) {
+				handle_skill_use(session, &[subcommand]).await
+			} else {
+				let data = json!({
+					"subcommand": "error",
+					"message": format!("Unknown subcommand '{}'. Use: /skill [list|active|use|forget|help]", subcommand),
+				});
+				Ok(CommandResult::HandledWithOutput(Box::new(
+					CommandOutput::Skill { data },
+				)))
+			}
 		}
 	}
 }
@@ -112,7 +124,7 @@ fn handle_skill_active() -> Result<CommandResult> {
 	)))
 }
 
-async fn handle_skill_use(params: &[&str]) -> Result<CommandResult> {
+async fn handle_skill_use(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	let name = if params.len() > 1 {
 		params[1]
 	} else if !params.is_empty() && params[0] != "use" && params[0] != "enable" {
@@ -127,14 +139,23 @@ async fn handle_skill_use(params: &[&str]) -> Result<CommandResult> {
 		)));
 	};
 
+	// Use silent mode — registers skill + loads capabilities without inbox push.
+	// Then inject content directly into session messages so the LLM sees it
+	// on the next user turn, not as a standalone API call.
 	let call = crate::mcp::McpToolCall {
 		tool_name: "skill".to_string(),
 		tool_id: format!("cmd_skill_use_{}", name),
-		parameters: json!({"action": "use", "name": name}),
+		parameters: json!({"action": "use_silent", "name": name}),
 	};
 
 	let message = match crate::mcp::core::skill::execute_skill_tool(&call).await {
-		Ok(result) => result.extract_content(),
+		Ok(result) => {
+			// Grab the stashed content and inject into session messages
+			if let Some(content) = crate::mcp::core::skill::take_silent_skill_content() {
+				let _ = session.add_user_message(&content);
+			}
+			result.extract_content()
+		}
 		Err(e) => format!("Error: {}", e),
 	};
 

@@ -100,7 +100,7 @@ async fn start_webhook_guards<T: std::fmt::Debug>(
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
 	// Setup and initialize session using helper function
 
-	let (chat_session, config_for_role, role, first_message_processed) =
+	let (mut chat_session, config_for_role, role, first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
 
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
@@ -114,8 +114,6 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		crate::mcp::agent::functions::init_job_manager();
 		// Initialize skill auto-activation pool for the current role's domain
 		crate::mcp::core::skill_auto::init_pool(&role);
-		// Load skills from OCTOMIND_SKILLS env var (permanent, no activate scripts)
-		crate::mcp::core::skill_auto::load_env_skills().await;
 		// Start inject listener so `octomind send` can push messages into this session
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
@@ -129,6 +127,9 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 		// Setup system prompt and cache using helper function (BEFORE showing interactive prompts)
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
+
+		// Load skills from OCTOMIND_SKILLS env var AFTER system prompt + welcome + instructions are set
+		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 
 		// Print the last few messages for context with colors if terminal supports them (for resumed sessions)
 		// Only show context for truly resumed sessions, not new sessions
@@ -963,7 +964,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 ) -> Result<()> {
 	// Setup and initialize session using helper function
 
-	let (chat_session, config_for_role, role, first_message_processed) =
+	let (mut chat_session, config_for_role, role, first_message_processed) =
 		setup_and_initialize_session(args, config).await?;
 
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
@@ -977,8 +978,6 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	crate::mcp::agent::functions::init_job_manager();
 	// Initialize skill auto-activation pool for the current role's domain
 	crate::mcp::core::skill_auto::init_pool(&role);
-	// Load skills from OCTOMIND_SKILLS env var (permanent, no activate scripts)
-	crate::mcp::core::skill_auto::load_env_skills().await;
 	// Start inject listener so `octomind send` can push messages into this session
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	// Start webhook listeners for any --hook flags
@@ -989,6 +988,9 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 
 	// Setup system prompt and cache using helper function (non-interactive mode)
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
+
+	// Load skills from OCTOMIND_SKILLS env var AFTER system prompt + welcome + instructions are set
+	crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 
 	// Set up cancellation handling for non-interactive mode (simplified)
 	let mut cancellation = SessionCancellation::new();

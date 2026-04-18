@@ -49,8 +49,8 @@ fn get_pool() -> &'static Arc<RwLock<Option<SkillPool>>> {
 
 /// Load skills from OCTOMIND_SKILLS env var. Called at session start.
 /// Format: comma-delimited skill names, e.g. "programming-rust,git-workflow"
-/// Uses `use_silent` — registers skill + loads capabilities, no inbox push.
-pub async fn load_env_skills() {
+/// Uses `use_silent` — registers skill + loads capabilities, content added to session.
+pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSession) {
 	let env_val = match std::env::var("OCTOMIND_SKILLS") {
 		Ok(v) if !v.trim().is_empty() => v,
 		_ => return,
@@ -74,6 +74,10 @@ pub async fn load_env_skills() {
 
 		match super::skill::execute_skill_tool(&call).await {
 			Ok(result) => {
+				// Inject skill content into session messages
+				if let Some(content) = super::skill::take_silent_skill_content() {
+					let _ = session.add_user_message(&content);
+				}
 				crate::log_debug!(
 					"skill_auto: env skill '{}': {}",
 					name,

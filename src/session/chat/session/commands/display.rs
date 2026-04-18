@@ -1621,9 +1621,9 @@ fn display_skill_list(data: &serde_json::Value) {
 			println!("{}", name.bright_white().bold());
 		}
 
-		// Truncate description to ~80 chars
-		let desc_display = if desc.len() > 80 {
-			format!("{}...", &desc[..77])
+		// Truncate description to ~80 chars (char-safe)
+		let desc_display = if desc.chars().count() > 80 {
+			format!("{}...", desc.chars().take(77).collect::<String>())
 		} else {
 			desc.to_string()
 		};

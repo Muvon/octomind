@@ -319,7 +319,7 @@ pub async fn process_command(
 		ROLE_COMMAND => role::handle_role(session, config, params).await,
 		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
 		PLAN_COMMAND => plan::handle_plan().await,
-		SKILL_COMMAND => skill::handle_skill(params).await,
+		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

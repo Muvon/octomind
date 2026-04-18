@@ -1507,25 +1507,20 @@ pub(super) fn display_skill(output: &CommandOutput) {
 			.unwrap_or("");
 
 		match subcommand {
-			"list" | "active" => display_skill_list(data),
+			"list" => display_skill_list(data),
 			"use" => {
 				if let Some(name) = data.get("name").and_then(|v| v.as_str()) {
-					println!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
+					println!("{} {}", "Enabled skill:".dimmed(), name.bright_green());
 				}
 			}
 			"forget" => {
 				if let Some(name) = data.get("name").and_then(|v| v.as_str()) {
-					println!("{} {}", "Removed skill:".dimmed(), name.bright_cyan());
+					println!("{} {}", "Disabled skill:".dimmed(), name.bright_yellow());
 				}
 			}
 			"error" => {
 				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
 					println!("{}", msg.bright_red());
-				}
-			}
-			"help" => {
-				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
-					println!("{}", msg);
 				}
 			}
 			_ => {}
@@ -1655,8 +1650,5 @@ fn display_skill_list(data: &serde_json::Value) {
 	}
 
 	println!();
-	println!(
-		"{}",
-		"Use '/skill use <name>' to activate, '/skill forget <name>' to deactivate.".dimmed()
-	);
+	println!("{}", "Use '/skill <name>' to toggle.".dimmed());
 }

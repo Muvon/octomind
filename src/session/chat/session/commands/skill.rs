@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Skill command handler — /skill [list|active|use|forget]
+//! /skill command — list skills or toggle by name.
+//!
+//! `/skill`        → list all skills with active status
+//! `/skill <name>` → toggle: enable if inactive, disable if active
 
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
@@ -20,35 +23,28 @@ use anyhow::Result;
 use serde_json::json;
 
 pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
-	let subcommand = if params.is_empty() { "list" } else { params[0] };
+	if params.is_empty() {
+		return handle_list();
+	}
 
-	match subcommand {
-		"list" | "l" | "ls" => handle_skill_list(params),
-		"active" | "a" => handle_skill_active(),
-		"use" | "u" | "enable" => handle_skill_use(session, params).await,
-		"forget" | "f" | "disable" => handle_skill_forget(params).await,
-		"help" | "h" => handle_skill_help(),
-		_ => {
-			// Check if it's a valid skill name before treating as shorthand
-			let all_skills = crate::mcp::core::skill::find_all_skills_with_details();
-			if all_skills.iter().any(|(m, _)| m.name == subcommand) {
-				handle_skill_use(session, &[subcommand]).await
-			} else {
-				let data = json!({
-					"subcommand": "error",
-					"message": format!("Unknown subcommand '{}'. Use: /skill [list|active|use|forget|help]", subcommand),
-				});
-				Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Skill { data },
-				)))
-			}
-		}
+	let name = params[0];
+
+	// Check active status and toggle
+	let session_id = crate::session::context::current_session_id();
+	let is_active = session_id
+		.as_ref()
+		.map(|sid| crate::session::context::get_active_skills(sid).contains(&name.to_string()))
+		.unwrap_or(false);
+
+	if is_active {
+		handle_forget(name).await
+	} else {
+		handle_use(session, name).await
 	}
 }
 
-fn build_skill_list(filter_active_only: bool, pattern: Option<&str>) -> serde_json::Value {
+fn handle_list() -> Result<CommandResult> {
 	let all_skills = crate::mcp::core::skill::find_all_skills_with_details();
-
 	let active_skills = crate::session::context::current_session_id()
 		.map(|sid| crate::session::context::get_active_skills(&sid))
 		.unwrap_or_default();
@@ -62,22 +58,8 @@ fn build_skill_list(filter_active_only: bool, pattern: Option<&str>) -> serde_js
 			active_count += 1;
 		}
 
-		if filter_active_only && !is_active {
-			continue;
-		}
-
-		if let Some(pat) = pattern {
-			let pat_lower = pat.to_lowercase();
-			if !meta.name.to_lowercase().contains(&pat_lower)
-				&& !meta.description.to_lowercase().contains(&pat_lower)
-			{
-				continue;
-			}
-		}
-
 		let has_activate = crate::mcp::core::skill::has_activate_script(skill_dir);
 		let has_validate = crate::mcp::core::skill::has_validate_script(skill_dir);
-
 		let mut scripts = Vec::new();
 		if has_activate {
 			scripts.push("activate");
@@ -96,118 +78,59 @@ fn build_skill_list(filter_active_only: bool, pattern: Option<&str>) -> serde_js
 		}));
 	}
 
-	json!({
-		"subcommand": if filter_active_only { "active" } else { "list" },
+	let data = json!({
+		"subcommand": "list",
 		"skills": skills_data,
 		"total": all_skills.len(),
 		"active_count": active_count,
-	})
-}
-
-fn handle_skill_list(params: &[&str]) -> Result<CommandResult> {
-	let pattern = if params.len() > 1 {
-		Some(params[1])
-	} else {
-		None
-	};
-
-	let data = build_skill_list(false, pattern);
+	});
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Skill { data },
 	)))
 }
 
-fn handle_skill_active() -> Result<CommandResult> {
-	let data = build_skill_list(true, None);
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Skill { data },
-	)))
-}
-
-async fn handle_skill_use(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
-	let name = if params.len() > 1 {
-		params[1]
-	} else if !params.is_empty() && params[0] != "use" && params[0] != "enable" {
-		params[0]
-	} else {
-		let data = json!({
-			"subcommand": "error",
-			"message": "Usage: /skill use <name>",
-		});
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Skill { data },
-		)));
-	};
-
-	// Use silent mode — registers skill + loads capabilities without inbox push.
-	// Then inject content directly into session messages so the LLM sees it
-	// on the next user turn, not as a standalone API call.
+async fn handle_use(session: &mut ChatSession, name: &str) -> Result<CommandResult> {
 	let call = crate::mcp::McpToolCall {
 		tool_name: "skill".to_string(),
-		tool_id: format!("cmd_skill_use_{}", name),
+		tool_id: format!("cmd_skill_{}", name),
 		parameters: json!({"action": "use_silent", "name": name}),
 	};
 
-	let message = match crate::mcp::core::skill::execute_skill_tool(&call).await {
-		Ok(result) => {
-			// Grab the stashed content and inject into session messages
+	match crate::mcp::core::skill::execute_skill_tool(&call).await {
+		Ok(_) => {
 			if let Some(content) = crate::mcp::core::skill::take_silent_skill_content() {
 				let _ = session.add_user_message(&content);
 			}
-			result.extract_content()
 		}
-		Err(e) => format!("Error: {}", e),
-	};
+		Err(e) => {
+			let data = json!({"subcommand": "error", "message": format!("Error: {}", e)});
+			return Ok(CommandResult::HandledWithOutput(Box::new(
+				CommandOutput::Skill { data },
+			)));
+		}
+	}
 
-	let data = json!({
-		"subcommand": "use",
-		"name": name,
-		"message": message,
-	});
+	let data = json!({"subcommand": "use", "name": name});
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Skill { data },
 	)))
 }
 
-async fn handle_skill_forget(params: &[&str]) -> Result<CommandResult> {
-	let name = if params.len() > 1 {
-		params[1]
-	} else {
-		let data = json!({
-			"subcommand": "error",
-			"message": "Usage: /skill forget <name>",
-		});
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Skill { data },
-		)));
-	};
-
+async fn handle_forget(name: &str) -> Result<CommandResult> {
 	let call = crate::mcp::McpToolCall {
 		tool_name: "skill".to_string(),
-		tool_id: format!("cmd_skill_forget_{}", name),
+		tool_id: format!("cmd_skill_{}", name),
 		parameters: json!({"action": "forget", "name": name}),
 	};
 
-	let message = match crate::mcp::core::skill::execute_skill_tool(&call).await {
-		Ok(result) => result.extract_content(),
-		Err(e) => format!("Error: {}", e),
-	};
+	if let Err(e) = crate::mcp::core::skill::execute_skill_tool(&call).await {
+		let data = json!({"subcommand": "error", "message": format!("Error: {}", e)});
+		return Ok(CommandResult::HandledWithOutput(Box::new(
+			CommandOutput::Skill { data },
+		)));
+	}
 
-	let data = json!({
-		"subcommand": "forget",
-		"name": name,
-		"message": message,
-	});
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Skill { data },
-	)))
-}
-
-fn handle_skill_help() -> Result<CommandResult> {
-	let data = json!({
-		"subcommand": "help",
-		"message": "/skill [list|active|use|forget|help]\n  list [pattern]  — show all skills\n  active           — show active skills\n  use <name>       — activate a skill\n  forget <name>    — deactivate a skill",
-	});
+	let data = json!({"subcommand": "forget", "name": name});
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Skill { data },
 	)))

@@ -29,7 +29,17 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 
 	let name = params[0];
 
-	// Check active status and toggle
+	// Validate skill exists
+	let all_skills = crate::mcp::core::skill::find_all_skills_with_details();
+	if !all_skills.iter().any(|(m, _)| m.name == name) {
+		let data =
+			json!({"subcommand": "error", "message": format!("Skill '{}' not found.", name)});
+		return Ok(CommandResult::HandledWithOutput(Box::new(
+			CommandOutput::Skill { data },
+		)));
+	}
+
+	// Toggle: active → disable, inactive → enable
 	let session_id = crate::session::context::current_session_id();
 	let is_active = session_id
 		.as_ref()

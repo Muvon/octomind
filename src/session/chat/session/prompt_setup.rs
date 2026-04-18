@@ -134,7 +134,11 @@ pub async fn setup_system_prompt_and_cache(
 								)
 								.await;
 
-								chat_session.add_user_message(&processed_instructions)?;
+								let wrapped = format!(
+									"<instructions>\n{}\n</instructions>",
+									processed_instructions
+								);
+								chat_session.add_user_message(&wrapped)?;
 
 								if supports_caching {
 									let cache_manager = CacheManager::new();

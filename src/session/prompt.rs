@@ -45,6 +45,20 @@ pub async fn create_system_prompt(
 		}
 	}
 
+	// Add context about structured tags in conversation
+	prompt.push_str(
+		"\n\n## CONTEXT TAGS\n\
+		User messages may contain structured context in XML-like tags:\n\
+		- `<instructions>` — Project-specific instructions from the working directory. \
+		Treat as persistent rules that apply to ALL your responses in this session.\n\
+		- `<skill id=\"...\" name=\"...\" description=\"...\">` — Domain knowledge injected on demand. \
+		Follow the conventions and best practices described within. Multiple skills may be active simultaneously.\n\
+		- `<constraints>` — Hard constraints appended to individual requests. \
+		These override other guidance when they conflict.\n\n\
+		These tags are system-managed context, not user-written messages. \
+		Do not reference the tags themselves — just follow the content within them.",
+	);
+
 	prompt
 }
 

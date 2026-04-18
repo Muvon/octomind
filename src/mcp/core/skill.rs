@@ -88,6 +88,19 @@ pub(crate) fn has_validate_script(skill_dir: &std::path::Path) -> bool {
 	skill_dir.join("validate").exists()
 }
 
+/// Check if a session message contains a skill injection by tag.
+pub fn is_skill_message(content: &str) -> bool {
+	content.trim_start().starts_with("<skill id=\"")
+}
+
+/// Extract skill name from a skill-tagged message.
+pub fn extract_skill_id(content: &str) -> Option<&str> {
+	let trimmed = content.trim_start();
+	let after = trimmed.strip_prefix("<skill id=\"")?;
+	let end = after.find('"')?;
+	Some(&after[..end])
+}
+
 /// Strip frontmatter from SKILL.md content, returning only the body.
 pub(crate) fn strip_frontmatter(content: &str) -> &str {
 	let trimmed = content.trim_start();
@@ -670,11 +683,19 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Register as active
 	crate::session::context::add_active_skill(&session_id, &name);
 
-	// Inject skill body (strip frontmatter — only instructions matter for the LLM).
-	let mut injection_content = strip_frontmatter(&content).to_string();
+	// Inject skill body wrapped in tags for detection on session resume.
+	let body = strip_frontmatter(&content);
+	let mut injection_content = format!(
+		"<skill id=\"{}\" name=\"{}\" description=\"{}\">\n{}",
+		name,
+		meta.name,
+		meta.description.replace('"', "&quot;"),
+		body
+	);
 	if !resources.is_empty() {
 		injection_content.push_str(&resources);
 	}
+	injection_content.push_str("\n</skill>");
 
 	if silent {
 		// Silent mode (env loading, /skill command): store content for the caller to inject

@@ -49,7 +49,7 @@ fn get_pool() -> &'static Arc<RwLock<Option<SkillPool>>> {
 
 /// Load skills from OCTOMIND_SKILLS env var. Called at session start.
 /// Format: comma-delimited skill names, e.g. "programming-rust,git-workflow"
-/// Uses `use_silent` — registers skill + loads capabilities, content added to session.
+/// On resume: removes stale skill messages and re-injects fresh content.
 pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSession) {
 	let env_val = match std::env::var("OCTOMIND_SKILLS") {
 		Ok(v) if !v.trim().is_empty() => v,
@@ -65,7 +65,23 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		return;
 	}
 
+	// Collect skill IDs already in session (from previous run / resume)
+	let existing: std::collections::HashSet<String> = session
+		.session
+		.messages
+		.iter()
+		.filter(|m| m.role == "user")
+		.filter_map(|m| super::skill::extract_skill_id(&m.content).map(String::from))
+		.collect();
+
 	for name in &skill_names {
+		if existing.contains(*name) {
+			// Already injected from previous session — just register as active
+			if let Some(sid) = crate::session::context::current_session_id() {
+				crate::session::context::add_active_skill(&sid, name);
+			}
+			continue;
+		}
 		let call = crate::mcp::McpToolCall {
 			tool_name: "skill".to_string(),
 			tool_id: format!("env_{}", name),

@@ -1536,24 +1536,13 @@ fn display_skill_list(data: &serde_json::Value) {
 		.get("active_count")
 		.and_then(|v| v.as_u64())
 		.unwrap_or(0);
-	let is_active_filter = data.get("subcommand").and_then(|v| v.as_str()) == Some("active");
-
 	println!();
-	if is_active_filter {
-		println!(
-			"{}",
-			format!("Active Skills ({active_count})")
-				.bright_cyan()
-				.bold()
-		);
-	} else {
-		println!(
-			"{}",
-			format!("Skills ({total} available, {active_count} active)")
-				.bright_cyan()
-				.bold()
-		);
-	}
+	println!(
+		"{}",
+		format!("Skills ({total} available, {active_count} active)")
+			.bright_cyan()
+			.bold()
+	);
 	println!("{}", "─".repeat(50).dimmed());
 
 	let skills = match data.get("skills").and_then(|v| v.as_array()) {
@@ -1565,11 +1554,7 @@ fn display_skill_list(data: &serde_json::Value) {
 	};
 
 	if skills.is_empty() {
-		if is_active_filter {
-			println!("{}", "No active skills.".dimmed());
-		} else {
-			println!("{}", "No skills found.".yellow());
-		}
+		println!("{}", "No skills found.".yellow());
 		println!();
 		return;
 	}

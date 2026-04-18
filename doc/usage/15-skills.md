@@ -157,17 +157,14 @@ domains: developer devops
 
 ## /skill Command
 
-Manage skills interactively during a session:
+Toggle skills interactively during a session:
 
 ```
 /skill                     # list all skills with active status
-/skill list                # same as above
-/skill list <pattern>      # filter by name/description
-/skill active              # show only active skills
-/skill use <name>          # activate a skill
-/skill forget <name>       # deactivate a skill
-/skill help                # show usage
+/skill <name>              # toggle: enable if inactive, disable if active
 ```
+
+Tab completion suggests available skill names after `/skill `.
 
 ## Configuration
 

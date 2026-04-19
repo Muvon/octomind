@@ -452,7 +452,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			mode: "websocket".into(),
 			..Default::default()
 		};
-		let (mut chat_session, config_for_role, session_role, _) =
+		let (mut chat_session, config_for_role, session_role, _, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
@@ -468,9 +468,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		// so schedule/inbox storage is keyed to this session ID.
 		let role_for_pool = self.role.clone();
 		crate::session::context::with_session_id(session_id.clone(), async move {
-			crate::session::inbox::init_inbox_for_session();
-			crate::mcp::agent::functions::init_job_manager();
-			crate::mcp::core::skill_auto::init_pool(&role_for_pool);
+			crate::session::context::init_session_services(&role_for_pool);
 		})
 		.await;
 
@@ -916,7 +914,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			mode: "websocket".into(),
 			..Default::default()
 		};
-		let (mut chat_session, config_for_role, session_role, _) =
+		let (mut chat_session, config_for_role, session_role, _, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
@@ -931,9 +929,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		// so schedule/inbox storage is keyed to this session ID.
 		let role_for_pool = self.role.clone();
 		crate::session::context::with_session_id(actual_session_id.clone(), async move {
-			crate::session::inbox::init_inbox_for_session();
-			crate::mcp::agent::functions::init_job_manager();
-			crate::mcp::core::skill_auto::init_pool(&role_for_pool);
+			crate::session::context::init_session_services(&role_for_pool);
 		})
 		.await;
 

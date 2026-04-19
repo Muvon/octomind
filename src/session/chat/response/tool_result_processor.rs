@@ -340,6 +340,7 @@ pub async fn process_tool_results(
 			crate::mcp::core::skill_auto::Event::Turn,
 			&turn_content,
 			&workdir,
+			chat_session,
 		)
 		.await;
 		let failures = crate::mcp::core::skill_auto::run_validators(

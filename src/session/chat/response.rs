@@ -632,6 +632,7 @@ pub async fn process_response<S: OutputSink>(
 			crate::mcp::core::skill_auto::Event::Assistant,
 			&current_content,
 			&workdir,
+			params.chat_session,
 		)
 		.await;
 		let failures = crate::mcp::core::skill_auto::run_validators(

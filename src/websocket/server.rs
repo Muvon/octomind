@@ -570,7 +570,7 @@ async fn handle_session_message(
 				};
 
 				match setup_and_initialize_session(&args, config).await {
-					Ok((session, cfg, role_name, _)) => {
+					Ok((session, cfg, role_name, _, _)) => {
 						let is_new = !session.was_resumed;
 						(session, cfg, role_name, is_new)
 					}
@@ -592,7 +592,7 @@ async fn handle_session_message(
 				..Default::default()
 			};
 			match setup_and_initialize_session(&args, config).await {
-				Ok((session, cfg, role_name, _)) => (session, cfg, role_name, true),
+				Ok((session, cfg, role_name, _, _)) => (session, cfg, role_name, true),
 				Err(e) => {
 					let error = ServerMessage::error(format!("Failed to create session: {}", e));
 					send_message(ws_sender, &error).await?;
@@ -610,9 +610,7 @@ async fn handle_session_message(
 	crate::session::context::with_session_id(session_id.clone(), async {
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
-		crate::session::inbox::init_inbox_for_session();
-		crate::mcp::agent::functions::init_job_manager();
-		crate::mcp::core::skill_auto::init_pool(&role_for_pool);
+		crate::session::context::init_session_services(&role_for_pool);
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)
@@ -672,7 +670,7 @@ async fn lookup_session(
 	let mut args = GenericSessionArgs::resume(session_id.to_string(), role.to_string());
 	args.mode = "websocket".to_string();
 	match setup_and_initialize_session(&args, config).await {
-		Ok((mut session, config_for_role, session_role, _)) => {
+		Ok((mut session, config_for_role, session_role, _, _)) => {
 			if let Err(e) =
 				setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false)
 					.await

@@ -169,6 +169,143 @@ mod tests {
 	}
 
 	// ---------------------------------------------------------------------------
+	// activate rules parsing
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn test_parse_activate_rules_file() {
+		let content = "---\nname: s\ndescription: d\nactivate:\n  - on: any\n    rule: file(Cargo.toml)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.activate.len(), 1);
+		assert_eq!(
+			meta.activate[0].on,
+			crate::mcp::core::skill::ActivateEvent::Any
+		);
+		assert_eq!(meta.activate[0].rules.len(), 1);
+		assert!(
+			matches!(&meta.activate[0].rules[0], crate::mcp::core::skill::ActivateCheck::File(p) if p == "Cargo.toml")
+		);
+	}
+
+	#[test]
+	fn test_parse_activate_rules_multiple_entries() {
+		let content = "---\nname: s\ndescription: d\nactivate:\n  - on: any\n    rule: file(Cargo.toml)\n  - on: user\n    rule: content(rust)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.activate.len(), 2);
+		assert_eq!(
+			meta.activate[0].on,
+			crate::mcp::core::skill::ActivateEvent::Any
+		);
+		assert_eq!(
+			meta.activate[1].on,
+			crate::mcp::core::skill::ActivateEvent::User
+		);
+		assert!(
+			matches!(&meta.activate[1].rules[0], crate::mcp::core::skill::ActivateCheck::Content(p) if p == "rust")
+		);
+	}
+
+	#[test]
+	fn test_parse_activate_rules_multiple_checks_in_rule() {
+		let content = "---\nname: s\ndescription: d\nactivate:\n  - on: user\n    rule: content(rust) content(cargo)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.activate.len(), 1);
+		assert_eq!(meta.activate[0].rules.len(), 2);
+		assert!(
+			matches!(&meta.activate[0].rules[0], crate::mcp::core::skill::ActivateCheck::Content(p) if p == "rust")
+		);
+		assert!(
+			matches!(&meta.activate[0].rules[1], crate::mcp::core::skill::ActivateCheck::Content(p) if p == "cargo")
+		);
+	}
+
+	#[test]
+	fn test_parse_activate_rules_grep_with_path() {
+		let content = "---\nname: s\ndescription: d\nactivate:\n  - on: any\n    rule: grep(fn main, *.rs)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.activate.len(), 1);
+		assert!(
+			matches!(&meta.activate[0].rules[0], crate::mcp::core::skill::ActivateCheck::Grep { pattern, path } if pattern == "fn main" && path.as_deref() == Some("*.rs"))
+		);
+	}
+
+	#[test]
+	fn test_parse_activate_rules_event_types() {
+		let content = "---\nname: s\ndescription: d\nactivate:\n  - on: user\n    rule: file(x)\n  - on: assistant\n    rule: file(y)\n  - on: turn\n    rule: file(z)\n  - on: any\n    rule: file(w)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.activate.len(), 4);
+		assert_eq!(
+			meta.activate[0].on,
+			crate::mcp::core::skill::ActivateEvent::User
+		);
+		assert_eq!(
+			meta.activate[1].on,
+			crate::mcp::core::skill::ActivateEvent::Assistant
+		);
+		assert_eq!(
+			meta.activate[2].on,
+			crate::mcp::core::skill::ActivateEvent::Turn
+		);
+		assert_eq!(
+			meta.activate[3].on,
+			crate::mcp::core::skill::ActivateEvent::Any
+		);
+	}
+
+	#[test]
+	fn test_parse_no_activate_rules() {
+		let content = "---\nname: s\ndescription: d\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert!(meta.activate.is_empty());
+	}
+
+	#[test]
+	fn test_parse_activate_with_other_fields() {
+		let content = "---\nname: programming-rust\ndescription: Rust dev\ncapabilities: programming-rust\ndomains: developer\nactivate:\n  - on: any\n    rule: file(Cargo.toml)\n  - on: user\n    rule: content(rust)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.name, "programming-rust");
+		assert_eq!(meta.capabilities, vec!["programming-rust"]);
+		assert_eq!(meta.domains, vec!["developer"]);
+		assert_eq!(meta.activate.len(), 2);
+	}
+
+	// ---------------------------------------------------------------------------
+	// activate rule evaluation
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn test_activate_check_file_exists() {
+		let dir = tempfile::tempdir().unwrap();
+		fs::write(dir.path().join("Cargo.toml"), "").unwrap();
+		let check = crate::mcp::core::skill::ActivateCheck::File("Cargo.toml".to_string());
+		assert!(check.matches("", dir.path()));
+		assert!(
+			!crate::mcp::core::skill::ActivateCheck::File("go.mod".to_string())
+				.matches("", dir.path())
+		);
+	}
+
+	#[test]
+	fn test_activate_check_content_match() {
+		let check = crate::mcp::core::skill::ActivateCheck::Content("rust".to_string());
+		assert!(check.matches("lets code in rust", std::path::Path::new(".")));
+		assert!(check.matches("RUST is great", std::path::Path::new(".")));
+		assert!(!check.matches("lets code in python", std::path::Path::new(".")));
+	}
+
+	#[test]
+	fn test_activate_event_matches() {
+		use crate::mcp::core::skill::ActivateEvent;
+		assert!(ActivateEvent::Any.matches("user"));
+		assert!(ActivateEvent::Any.matches("assistant"));
+		assert!(ActivateEvent::Any.matches("turn"));
+		assert!(ActivateEvent::User.matches("user"));
+		assert!(!ActivateEvent::User.matches("assistant"));
+		assert!(ActivateEvent::Assistant.matches("assistant"));
+		assert!(!ActivateEvent::Assistant.matches("user"));
+	}
+
+	// ---------------------------------------------------------------------------
 	// activate/validate script discovery
 	// ---------------------------------------------------------------------------
 

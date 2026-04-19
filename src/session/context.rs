@@ -999,3 +999,13 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::mcp::core::plan::compression::cleanup_compression_state(session_id);
 	clear_schedule_notify(session_id);
 }
+
+/// Initialize all session-scoped services. Call once per session inside `with_session_id`.
+/// Centralizes the init sequence so entry points don't duplicate it.
+pub fn init_session_services(role: &str) {
+	crate::session::inbox::init_inbox_for_session();
+	crate::mcp::agent::functions::init_job_manager();
+	// Extract domain from role/tag (e.g., "developer:general" → "developer")
+	let domain = role.split(':').next().unwrap_or(role);
+	crate::mcp::core::skill_auto::init_pool(domain);
+}

@@ -60,7 +60,13 @@ fn display_random_tip() -> String {
 pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	args: &T,
 	config: &Config,
-) -> Result<(ChatSession, Config, String, bool)> {
+) -> Result<(
+	ChatSession,
+	Config,
+	String,
+	bool,
+	Option<indicatif::ProgressBar>,
+)> {
 	use indicatif::{ProgressBar, ProgressStyle};
 
 	// Show loading spinner in interactive mode
@@ -201,23 +207,38 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 	let output_mode_clone = output_mode.clone();
 	session_params = session_params.with_output_mode(output_mode_clone);
 
-	// Clean up spinner BEFORE initializing session (which prints messages)
-	if let Some(sp) = spinner {
-		sp.finish_and_clear();
-		// Clear entire line and move cursor to beginning
-		print!("\x1B[2K\r");
-		std::io::Write::flush(&mut std::io::stdout()).ok();
+	// Suspend spinner while ChatSession::initialize prints messages, then resume
+	if let Some(ref sp) = spinner {
+		sp.set_message("Loading...");
 	}
 
-	let mut chat_session = ChatSession::initialize(session_params).await?;
+	let mut chat_session = if let Some(ref sp) = spinner {
+		let result = sp.suspend(|| {
+			// ChatSession::initialize is async but suspend takes sync fn
+			// We need to block briefly — this is during startup, acceptable
+			tokio::task::block_in_place(|| {
+				tokio::runtime::Handle::current().block_on(ChatSession::initialize(session_params))
+			})
+		});
+		result?
+	} else {
+		ChatSession::initialize(session_params).await?
+	};
 
 	// Display initial status line for new sessions (not resumed) - skip in structured output modes
 	let suppress = crate::session::output::OutputMode::from_runtime_mode(&output_mode_for_check)
 		.should_suppress_cli_output();
 	if !chat_session.was_resumed && !suppress {
-		// Show tip first, then shortcut help
-		println!("{}", display_random_tip().bright_yellow());
-		println!("{}", "? for shortcuts • /help for commands".bright_black());
+		if let Some(ref sp) = spinner {
+			sp.println(format!("{}", display_random_tip().bright_yellow()));
+			sp.println(format!(
+				"{}",
+				"? for shortcuts • /help for commands".bright_black()
+			));
+		} else {
+			println!("{}", display_random_tip().bright_yellow());
+			println!("{}", "? for shortcuts • /help for commands".bright_black());
+		}
 		chat_session.initial_status_shown = true;
 	}
 
@@ -275,7 +296,13 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
-	Ok((chat_session, config_for_role, role, first_message_processed))
+	Ok((
+		chat_session,
+		config_for_role,
+		role,
+		first_message_processed,
+		spinner,
+	))
 }
 
 /// Check that the provider for the given model string has its credentials set.

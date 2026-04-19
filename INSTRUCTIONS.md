@@ -91,13 +91,12 @@ state (like skill pools, inbox, job managers), it MUST be added to ALL entry poi
 | ACP initialize | `src/acp/agent.rs:917` | `AcpAgent` — second `with_session_id` block |
 | WebSocket server | `src/websocket/server.rs:609` | `handle_session_message()` |
 
-**Required initialization sequence** (inside `with_session_id` context):
+**Required initialization** (inside `with_session_id` context):
 ```
-1. crate::session::inbox::init_inbox_for_session()
-2. crate::mcp::agent::functions::init_job_manager()
-3. crate::mcp::core::skill_auto::init_pool(&role)
-4. crate::mcp::core::skill_auto::load_env_skills().await
+crate::session::context::init_session_services(&role);
 ```
+This single call initializes inbox, job manager, and skill pool.
+Do NOT call `init_inbox_for_session`, `init_job_manager`, or `init_pool` directly — use `init_session_services`.
 
 **run_activation hook** (user input processing — only in main_loop.rs):
 ```

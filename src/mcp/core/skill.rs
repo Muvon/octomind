@@ -49,15 +49,178 @@ pub struct SkillMeta {
 	pub description: String,
 	pub compatibility: Option<String>,
 	pub license: Option<String>,
-	/// Tools this skill requires (from `allowed-tools` frontmatter, space-delimited).
 	pub allowed_tools: Vec<String>,
-	/// Capabilities this skill requires — auto-loaded when skill activates.
-	/// Space-delimited in frontmatter: `capabilities: git memory`
 	pub capabilities: Vec<String>,
-	/// Agent domains this skill belongs to — limits auto-activation pool.
-	/// Space-delimited in frontmatter: `domains: developer devops`
-	/// Empty = manual activation only (backward compatible).
 	pub domains: Vec<String>,
+	/// Declarative activation rules. Empty = manual only.
+	pub activate: Vec<ActivateEntry>,
+}
+
+/// One activation entry: event filter + checks.
+/// Entries are OR'd — any entry matching activates the skill.
+#[derive(Debug, Clone)]
+pub struct ActivateEntry {
+	pub on: ActivateEvent,
+	pub rules: Vec<ActivateCheck>,
+}
+
+/// Event filter for activation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActivateEvent {
+	Any,
+	User,
+	Assistant,
+	Turn,
+}
+
+impl ActivateEvent {
+	fn parse(s: &str) -> Self {
+		match s.trim().to_lowercase().as_str() {
+			"user" => Self::User,
+			"assistant" => Self::Assistant,
+			"turn" => Self::Turn,
+			_ => Self::Any,
+		}
+	}
+
+	pub fn matches(&self, event: &str) -> bool {
+		matches!(self, Self::Any)
+			|| (matches!(self, Self::User) && event == "user")
+			|| (matches!(self, Self::Assistant) && event == "assistant")
+			|| (matches!(self, Self::Turn) && event == "turn")
+	}
+}
+
+/// Individual activation check within a rule line.
+#[derive(Debug, Clone)]
+pub enum ActivateCheck {
+	/// file(Cargo.toml) — file or glob exists in workdir
+	File(String),
+	/// content(rust) — match against event content
+	Content(String),
+	/// grep(pattern) or grep(pattern, path_glob) — search inside files
+	Grep {
+		pattern: String,
+		path: Option<String>,
+	},
+}
+
+impl ActivateCheck {
+	/// Parse a check from `type(args)` syntax.
+	fn parse(s: &str) -> Option<Self> {
+		let s = s.trim();
+		let open = s.find('(')?;
+		let close = s.rfind(')')?;
+		if close <= open {
+			return None;
+		}
+		let check_type = &s[..open];
+		let args = &s[open + 1..close];
+
+		match check_type {
+			"file" => Some(Self::File(args.trim().to_string())),
+			"content" => Some(Self::Content(args.trim().to_string())),
+			"grep" => {
+				if let Some((pattern, path)) = args.split_once(',') {
+					Some(Self::Grep {
+						pattern: pattern.trim().to_string(),
+						path: Some(path.trim().to_string()),
+					})
+				} else {
+					Some(Self::Grep {
+						pattern: args.trim().to_string(),
+						path: None,
+					})
+				}
+			}
+			_ => None,
+		}
+	}
+
+	/// Evaluate this check against current context.
+	pub fn matches(&self, content: &str, workdir: &std::path::Path) -> bool {
+		match self {
+			Self::File(pattern) => {
+				let path = workdir.join(pattern);
+				if path.exists() {
+					return true;
+				}
+				// Try as glob
+				glob::glob(&workdir.join(pattern).to_string_lossy())
+					.map(|mut iter| iter.next().is_some())
+					.unwrap_or(false)
+			}
+			Self::Content(pattern) => match_pattern(pattern, content),
+			Self::Grep { pattern, path } => grep_workdir(pattern, path.as_deref(), workdir),
+		}
+	}
+}
+
+/// Try case-insensitive regex first, fallback to case-insensitive contains.
+fn match_pattern(pattern: &str, text: &str) -> bool {
+	let ci_pattern = format!("(?i){}", pattern);
+	regex::Regex::new(&ci_pattern)
+		.map(|re| re.is_match(text))
+		.unwrap_or_else(|_| text.to_lowercase().contains(&pattern.to_lowercase()))
+}
+
+/// Search file contents in workdir for pattern, respecting .gitignore.
+fn grep_workdir(pattern: &str, path_filter: Option<&str>, workdir: &std::path::Path) -> bool {
+	let walker = ignore::WalkBuilder::new(workdir)
+		.hidden(true)
+		.git_ignore(true)
+		.build();
+
+	let re = regex::Regex::new(pattern).ok();
+
+	for entry in walker.flatten() {
+		if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+			continue;
+		}
+		// Apply path filter if specified
+		if let Some(filter) = path_filter {
+			let fname = entry.file_name().to_string_lossy();
+			if !glob::Pattern::new(filter)
+				.map(|p| p.matches(&fname))
+				.unwrap_or(false)
+			{
+				continue;
+			}
+		}
+		// Read and search
+		if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+			let found = if let Some(ref re) = re {
+				re.is_match(&contents)
+			} else {
+				contents.to_lowercase().contains(&pattern.to_lowercase())
+			};
+			if found {
+				return true;
+			}
+		}
+	}
+	false
+}
+
+/// Parse the `rule:` line into a list of checks.
+/// Format: `file(Cargo.toml) content(rust) grep(fn main, *.rs)`
+fn parse_rule_line(line: &str) -> Vec<ActivateCheck> {
+	let mut checks = Vec::new();
+	let mut rest = line.trim();
+	while !rest.is_empty() {
+		if rest.find('(').is_some() {
+			if let Some(close) = rest.find(')') {
+				let check_str = &rest[..=close];
+				if let Some(check) = ActivateCheck::parse(check_str) {
+					checks.push(check);
+				}
+				rest = rest[close + 1..].trim_start();
+				continue;
+			}
+		}
+		break;
+	}
+	checks
 }
 
 /// Parse a value that may be space-delimited (`git memory`) or YAML-array-like
@@ -90,13 +253,13 @@ pub(crate) fn has_validate_script(skill_dir: &std::path::Path) -> bool {
 
 /// Check if a session message contains a skill injection by tag.
 pub fn is_skill_message(content: &str) -> bool {
-	content.trim_start().starts_with("<skill id=\"")
+	content.trim_start().starts_with("<skill name=\"")
 }
 
 /// Extract skill name from a skill-tagged message.
-pub fn extract_skill_id(content: &str) -> Option<&str> {
+pub fn extract_skill_name(content: &str) -> Option<&str> {
 	let trimmed = content.trim_start();
-	let after = trimmed.strip_prefix("<skill id=\"")?;
+	let after = trimmed.strip_prefix("<skill name=\"")?;
 	let end = after.find('"')?;
 	Some(&after[..end])
 }
@@ -141,8 +304,47 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 	let mut allowed_tools = Vec::new();
 	let mut capabilities = Vec::new();
 	let mut domains = Vec::new();
+	let mut activate = Vec::new();
 
-	for line in frontmatter.lines() {
+	let lines: Vec<&str> = frontmatter.lines().collect();
+	let mut i = 0;
+	while i < lines.len() {
+		let line = lines[i];
+
+		// Check for activate: block (no value on same line)
+		if line.trim() == "activate:" {
+			i += 1;
+			// Parse indented entries: `- on: X` / `  rule: Y`
+			let mut current_on: Option<ActivateEvent> = None;
+			while i < lines.len() {
+				let entry_line = lines[i];
+				// Stop if not indented (back to top-level)
+				if !entry_line.starts_with(' ') && !entry_line.starts_with('\t') {
+					break;
+				}
+				let trimmed = entry_line.trim();
+				if let Some(rest) = trimmed.strip_prefix("- on:") {
+					// Save previous entry if complete
+					// Start new entry
+					current_on = Some(ActivateEvent::parse(rest));
+				} else if let Some(rest) = trimmed.strip_prefix("rule:") {
+					if let Some(ref on) = current_on {
+						let rules = parse_rule_line(rest);
+						if !rules.is_empty() {
+							activate.push(ActivateEntry {
+								on: on.clone(),
+								rules,
+							});
+						}
+					}
+					current_on = None;
+				}
+				i += 1;
+			}
+			continue;
+		}
+
+		// Regular key: value line
 		if let Some((key, value)) = line.split_once(':') {
 			let key = key.trim();
 			let value = value
@@ -155,7 +357,6 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 				"description" => description = Some(value),
 				"compatibility" => compatibility = Some(value),
 				"license" => license = Some(value),
-				// Space-delimited lists
 				"allowed-tools" => {
 					allowed_tools = value.split_whitespace().map(|s| s.to_string()).collect();
 				}
@@ -168,6 +369,7 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 				_ => {}
 			}
 		}
+		i += 1;
 	}
 
 	Some(SkillMeta {
@@ -178,6 +380,7 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 		allowed_tools,
 		capabilities,
 		domains,
+		activate,
 	})
 }
 
@@ -685,13 +888,8 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 
 	// Inject skill body wrapped in tags for detection on session resume.
 	let body = strip_frontmatter(&content);
-	let mut injection_content = format!(
-		"<skill id=\"{}\" name=\"{}\" description=\"{}\">\n{}",
-		name,
-		meta.name,
-		meta.description.replace('"', "&quot;"),
-		body
-	);
+	let title = meta.description.replace('"', "&quot;");
+	let mut injection_content = format!("<skill name=\"{}\" title=\"{}\">\n{}", name, title, body);
 	if !resources.is_empty() {
 		injection_content.push_str(&resources);
 	}

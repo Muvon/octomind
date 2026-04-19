@@ -21,18 +21,16 @@
 //! When a skill auto-activates, its required capabilities are auto-loaded
 //! (MCP servers enabled) and its content is injected via the inbox.
 
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
-/// Cached skill pool entry — a skill with an `activate` script.
+/// Cached skill pool entry — a skill with declarative activate rules.
 #[derive(Debug, Clone)]
 struct PoolEntry {
 	name: String,
-	skill_dir: PathBuf,
-	_domains: Vec<String>,
+	activate: Vec<super::skill::ActivateEntry>,
 }
 
 /// Cached pool of auto-activatable skills, filtered by domain.
@@ -71,7 +69,7 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		.messages
 		.iter()
 		.filter(|m| m.role == "user")
-		.filter_map(|m| super::skill::extract_skill_id(&m.content).map(String::from))
+		.filter_map(|m| super::skill::extract_skill_name(&m.content).map(String::from))
 		.collect();
 
 	for name in &skill_names {
@@ -132,11 +130,6 @@ pub fn init_pool(domain: &str) {
 				continue;
 			}
 
-			// Must have activate script
-			if !super::skill::has_activate_script(&skill_dir) {
-				continue;
-			}
-
 			// Must have SKILL.md with metadata
 			let skill_md = skill_dir.join("SKILL.md");
 			let content = match std::fs::read_to_string(&skill_md) {
@@ -149,6 +142,11 @@ pub fn init_pool(domain: &str) {
 				None => continue,
 			};
 
+			// Must have activate rules
+			if meta.activate.is_empty() {
+				continue;
+			}
+
 			// Must have domains that include the current domain
 			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain) {
 				continue;
@@ -156,8 +154,7 @@ pub fn init_pool(domain: &str) {
 
 			entries.push(PoolEntry {
 				name: meta.name,
-				skill_dir,
-				_domains: meta.domains,
+				activate: meta.activate,
 			});
 		}
 	}
@@ -217,13 +214,16 @@ fn get_skills_config() -> crate::config::SkillsConfig {
 
 /// Run auto-activation for the given event and content.
 ///
-/// Executes `activate` scripts from the skill pool in parallel.
-/// Skills returning exit 0 are activated, non-zero are deactivated.
-/// Respects `[skills]` config: `auto_activation` flag and `activation_timeout`.
-pub async fn run_activation(event: Event, content: &str, workdir: &std::path::Path) {
+/// Evaluates declarative rules from the skill pool in-process.
+/// Any rule matching activates the skill. No process spawns.
+pub async fn run_activation(
+	event: Event,
+	content: &str,
+	workdir: &std::path::Path,
+	session: &mut crate::session::chat::session::ChatSession,
+) {
 	let skills_config = get_skills_config();
 
-	// Check if auto-activation is enabled
 	if !skills_config.auto_activation {
 		return;
 	}
@@ -246,120 +246,49 @@ pub async fn run_activation(event: Event, content: &str, workdir: &std::path::Pa
 	}
 
 	let active_skills = crate::session::context::get_active_skills(&session_id);
-	let timeout = if skills_config.activation_timeout == 0 {
-		Duration::from_secs(3600) // 0 = effectively unlimited (1h)
-	} else {
-		Duration::from_secs(skills_config.activation_timeout)
-	};
+	let event_str = event.as_str();
 
-	// Run activate scripts in parallel, skipping already-active skills
-	let mut tasks = Vec::new();
 	for entry in &entries {
 		if active_skills.contains(&entry.name) {
-			continue; // Already active (e.g., from OCTOMIND_SKILLS or previous activation)
+			continue;
 		}
-		let script_path = entry.skill_dir.join("activate");
-		let event_str = event.as_str().to_string();
-		let content = content.to_string();
-		let workdir = workdir.to_path_buf();
-		let name = entry.name.clone();
 
-		tasks.push(tokio::spawn(async move {
-			let result = run_script(&script_path, &event_str, &content, &workdir, timeout).await;
-			(name, result)
-		}));
-	}
+		// Evaluate: any entry matching = activate
+		let should_activate = entry.activate.iter().any(|act| {
+			act.on.matches(event_str)
+				&& act
+					.rules
+					.iter()
+					.any(|check| check.matches(content, workdir))
+		});
 
-	// Collect results
-	let mut to_activate = Vec::new();
-	let mut to_deactivate = Vec::new();
-
-	for task in tasks {
-		match task.await {
-			Ok((name, Ok(exit_code))) => {
-				let is_active = active_skills.contains(&name);
-				if exit_code == 0 && !is_active {
-					to_activate.push(name);
-				} else if exit_code != 0 && is_active {
-					to_deactivate.push(name);
-				}
-			}
-			Ok((name, Err(e))) => {
-				crate::log_debug!("skill_auto: '{}' activate script error: {}", name, e);
-			}
-			Err(e) => {
-				crate::log_debug!("skill_auto: task join error: {}", e);
-			}
-		}
-	}
-
-	// Activate new skills
-	for name in &to_activate {
-		crate::log_debug!("skill_auto: auto-activating '{}'", name);
-		auto_activate_skill(name, &session_id).await;
-	}
-
-	// Deactivate skills
-	for name in &to_deactivate {
-		crate::log_debug!("skill_auto: auto-deactivating '{}'", name);
-		auto_deactivate_skill(name, &session_id);
-	}
-}
-
-/// Run a script with event type as argv[1] and content on stdin.
-/// Returns the exit code.
-async fn run_script(
-	script_path: &std::path::Path,
-	event: &str,
-	content: &str,
-	workdir: &std::path::Path,
-	timeout: Duration,
-) -> anyhow::Result<i32> {
-	let mut child = tokio::process::Command::new(script_path)
-		.arg(event)
-		.current_dir(workdir)
-		.stdin(Stdio::piped())
-		.stdout(Stdio::null())
-		.stderr(Stdio::null())
-		.spawn()
-		.map_err(|e| anyhow::anyhow!("Failed to spawn {}: {}", script_path.display(), e))?;
-
-	// Write content to stdin
-	if let Some(mut stdin) = child.stdin.take() {
-		let _ = stdin.write_all(content.as_bytes()).await;
-		drop(stdin);
-	}
-
-	// Wait with timeout
-	match tokio::time::timeout(timeout, child.wait()).await {
-		Ok(Ok(status)) => Ok(status.code().unwrap_or(1)),
-		Ok(Err(e)) => Err(anyhow::anyhow!("Script wait error: {}", e)),
-		Err(_) => {
-			let _ = child.kill().await;
-			Err(anyhow::anyhow!("Script timed out"))
+		if should_activate {
+			crate::log_debug!("skill_auto: rule-activated '{}'", entry.name);
+			auto_activate_skill(&entry.name, session).await;
 		}
 	}
 }
 
-/// Auto-activate a skill: inject content via inbox + load capabilities.
-async fn auto_activate_skill(name: &str, _session_id: &str) {
-	// Use the existing skill activation logic by constructing a synthetic tool call
+/// Auto-activate a skill: register + load capabilities + inject content into session.
+async fn auto_activate_skill(name: &str, session: &mut crate::session::chat::session::ChatSession) {
 	let call = crate::mcp::McpToolCall {
 		tool_name: "skill".to_string(),
 		tool_id: format!("auto_{}", name),
 		parameters: serde_json::json!({
-			"action": "use",
+			"action": "use_silent",
 			"name": name
 		}),
 	};
 
 	match super::skill::execute_skill_tool(&call).await {
-		Ok(result) => {
-			crate::log_debug!(
-				"skill_auto: activated '{}': {}",
-				name,
-				result.extract_content()
-			);
+		Ok(_) => {
+			if let Some(content) = super::skill::take_silent_skill_content() {
+				let _ = session.add_user_message(&content);
+			}
+			if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+				use colored::Colorize;
+				eprintln!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
+			}
 		}
 		Err(e) => {
 			crate::log_debug!("skill_auto: failed to activate '{}': {}", name, e);
@@ -377,6 +306,7 @@ fn get_retry_tracker() -> &'static Arc<RwLock<std::collections::HashMap<String, 
 }
 
 /// Clear retry counter for a specific skill.
+#[allow(dead_code)]
 fn clear_retry_count(skill_name: &str) {
 	let mut retries = get_retry_tracker().write().unwrap();
 	retries.remove(skill_name);
@@ -539,6 +469,7 @@ async fn run_validate_script(
 }
 
 /// Auto-deactivate a skill: forget + compress + clear retry counter.
+#[allow(dead_code)]
 fn auto_deactivate_skill(name: &str, _session_id: &str) {
 	let sid = crate::session::context::current_session_id().unwrap_or_default();
 	let n = name.to_string();

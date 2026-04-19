@@ -100,32 +100,13 @@ async fn start_webhook_guards<T: std::fmt::Debug>(
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
 	// Setup and initialize session using helper function
 
-	let (chat_session, config_for_role, role, first_message_processed) =
+	let (chat_session, config_for_role, role, first_message_processed, spinner) =
 		setup_and_initialize_session(args, config).await?;
 
-	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
-	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
 	crate::session::context::with_session_id(session_id, async move {
-		// --- Initialization phase with spinner ---
-		// Everything before the user prompt runs under one spinner.
-		let is_interactive = std::io::IsTerminal::is_terminal(&std::io::stderr());
-		let spinner = if is_interactive {
-			let sp = indicatif::ProgressBar::new_spinner();
-			sp.set_style(
-				indicatif::ProgressStyle::default_spinner()
-					.template(" {spinner:.cyan} {msg:.cyan}")
-					.unwrap()
-					.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
-			);
-			sp.enable_steady_tick(std::time::Duration::from_millis(80));
-			sp.set_message("Initializing...");
-			Some(sp)
-		} else {
-			None
-		};
-
-		// MCP init with progress callback tied to spinner
+		// MCP init (spinner still running from setup)
+		// MCP init with progress on spinner
 		{
 			use std::sync::{Arc, Mutex};
 			let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -152,7 +133,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 						let done = *total.lock().unwrap() - pg.len();
 						let tc = *total.lock().unwrap();
 						if pg.is_empty() {
-							sp.set_message(format!("Starting MCP: done [{}/{}]", done, tc));
+							sp.set_message(format!("MCP ready [{}/{}]", done, tc));
 						} else {
 							sp.set_message(format!(
 								"Starting MCP: {} [{}/{}]",
@@ -164,17 +145,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					}
 				}
 			};
-
 			crate::mcp::initialize_mcp_for_role_with_callback(&role, config, Some(&cb)).await?;
 		}
 
-		// Continue init under same spinner
-		if let Some(sp) = &spinner {
-			sp.set_message("Loading session...");
-		}
-		crate::session::inbox::init_inbox_for_session();
-		crate::mcp::agent::functions::init_job_manager();
-		crate::mcp::core::skill_auto::init_pool(&role);
+		crate::session::context::init_session_services(&role);
+
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 		let _webhook_guards =
@@ -185,13 +160,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
 
-		// Load env skills (still under spinner)
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 
-		// Print loaded skills through the spinner (no flicker)
-		if let Some(sp) = &spinner {
-			let session_id = crate::session::context::current_session_id();
-			if let Some(sid) = session_id {
+		// Done initializing — clear spinner, print skills
+		if let Some(sp) = spinner {
+			// Print skills through spinner before clearing
+			if let Some(sid) = crate::session::context::current_session_id() {
 				let active = crate::session::context::get_active_skills(&sid);
 				for name in &active {
 					sp.println(format!(
@@ -201,13 +175,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					));
 				}
 			}
-		}
-
-		// Spinner done — clear immediately before prompt
-		if let Some(sp) = spinner {
+			sp.disable_steady_tick();
 			sp.finish_and_clear();
 			print!("\x1B[2K\r");
 			std::io::Write::flush(&mut std::io::stdout()).ok();
+			drop(sp);
 		}
 
 		// Print the last few messages for context with colors if terminal supports them (for resumed sessions)
@@ -770,6 +742,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					crate::mcp::core::skill_auto::Event::User,
 					&input,
 					&current_dir,
+					&mut chat_session,
 				)
 				.await;
 				crate::mcp::core::skill_auto::run_validators(
@@ -1051,7 +1024,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 ) -> Result<()> {
 	// Setup and initialize session using helper function
 
-	let (chat_session, config_for_role, role, first_message_processed) =
+	let (chat_session, config_for_role, role, first_message_processed, spinner) =
 		setup_and_initialize_session(args, config).await?;
 
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
@@ -1060,11 +1033,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	crate::session::context::with_session_id(session_id, async move {
 	// MCP init — progress display handled internally when stderr is a terminal
 	crate::mcp::initialize_mcp_for_role(&role, config).await?;
-	// Initialize session-scoped inbox and background job manager now that session ID is set
-	crate::session::inbox::init_inbox_for_session();
-	crate::mcp::agent::functions::init_job_manager();
-	// Initialize skill auto-activation pool for the current role's domain
-	crate::mcp::core::skill_auto::init_pool(&role);
+	crate::session::context::init_session_services(&role);
 	// Start inject listener so `octomind send` can push messages into this session
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	// Start webhook listeners for any --hook flags
@@ -1076,8 +1045,14 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	// Setup system prompt and cache using helper function (non-interactive mode)
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
 
-	// Load skills from OCTOMIND_SKILLS env var AFTER system prompt + welcome + instructions are set
 	crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
+
+	// Clear spinner from setup
+	if let Some(sp) = spinner {
+		sp.finish_and_clear();
+		print!("\x1B[2K\r");
+		std::io::Write::flush(&mut std::io::stdout()).ok();
+	}
 
 	// Set up cancellation handling for non-interactive mode (simplified)
 	let mut cancellation = SessionCancellation::new();
@@ -1168,20 +1143,13 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	}
 
 	// Run skill activation + validators on user input
-	{
-		crate::mcp::core::skill_auto::run_activation(
-			crate::mcp::core::skill_auto::Event::User,
-			&input,
-			&current_dir,
-		)
-		.await;
-		crate::mcp::core::skill_auto::run_validators(
-			crate::mcp::core::skill_auto::Event::User,
-			&input,
-			&current_dir,
-		)
-		.await;
-	}
+	crate::mcp::core::skill_auto::run_activation(
+		crate::mcp::core::skill_auto::Event::User,
+		&input,
+		&current_dir,
+		&mut chat_session,
+	)
+	.await;
 
 	// Layer processing if enabled and first message using helper function
 	let (processed_input, workflow_modified_session, layer_cancelled) = process_layers_if_enabled(
@@ -1237,6 +1205,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		);
 		chat_session.add_user_message(&input_with_constraints)?;
 	}
+
 	// Prepare for API call using helper function
 	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 

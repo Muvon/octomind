@@ -35,7 +35,6 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		println!("{} - Show this help message", HELP_COMMAND.cyan());
 		println!("{} - Copy last response to clipboard", COPY_COMMAND.cyan());
 		println!("{} - Clear the screen", CLEAR_COMMAND.cyan());
-		println!("{} - Save the session", SAVE_COMMAND.cyan());
 		println!(
 			"{} [page] - List all available sessions with pagination (default: page 1)",
 			LIST_COMMAND.cyan()

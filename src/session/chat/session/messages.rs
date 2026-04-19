@@ -199,12 +199,12 @@ impl ChatSession {
 	}
 	// Add a system message
 	pub fn add_system_message(&mut self, content: &str) -> Result<()> {
-		// Log to raw session log
+		// Lazily create the session file with its initial SUMMARY on first write
+		// Must happen BEFORE logger which also writes to the same file
+		self.ensure_file_initialized()?;
+
 		// Log to raw session log
 		let _ = crate::session::logger::log_system_message(&self.session.info.name, content);
-
-		// Lazily create the session file with its initial SUMMARY on first write
-		self.ensure_file_initialized()?;
 
 		// Add message to session
 		self.session.add_message("system", content);

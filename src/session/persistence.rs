@@ -40,39 +40,35 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 		let path = entry.path();
 
 		if path.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
-			// Read just the first line to get session info
+			// Scan first few lines for SUMMARY entry (may not be line 1 in older files)
 			if let Ok(file) = File::open(&path) {
 				let reader = BufReader::new(file);
-				let first_line = reader.lines().next();
+				let name = path
+					.file_stem()
+					.and_then(|s| s.to_str())
+					.unwrap_or_default()
+					.to_string();
 
-				if let Some(Ok(line)) = first_line {
+				for line in reader.lines().take(10) {
+					let Ok(line) = line else { break };
+
 					// Try new JSON format first
 					if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
-						if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
-							if log_type == "SUMMARY" {
-								if let Some(session_info_value) = json_value.get("session_info") {
-									if let Ok(info) = serde_json::from_value::<SessionInfo>(
-										session_info_value.clone(),
-									) {
-										let name = path
-											.file_stem()
-											.and_then(|s| s.to_str())
-											.unwrap_or_default()
-											.to_string();
-										sessions.push((name, info));
-									}
+						if json_value.get("type").and_then(|t| t.as_str()) == Some("SUMMARY") {
+							if let Some(session_info_value) = json_value.get("session_info") {
+								if let Ok(info) = serde_json::from_value::<SessionInfo>(
+									session_info_value.clone(),
+								) {
+									sessions.push((name.clone(), info));
+									break;
 								}
 							}
 						}
 					} else if let Some(content) = line.strip_prefix("SUMMARY: ") {
 						// Fallback to legacy format
 						if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
-							let name = path
-								.file_stem()
-								.and_then(|s| s.to_str())
-								.unwrap_or_default()
-								.to_string();
-							sessions.push((name, info));
+							sessions.push((name.clone(), info));
+							break;
 						}
 					}
 				}

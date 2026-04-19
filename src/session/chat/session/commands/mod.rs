@@ -33,7 +33,6 @@ mod prompt;
 mod report;
 mod role;
 mod run;
-mod save;
 mod session;
 mod skill;
 mod summarize;
@@ -97,11 +96,6 @@ pub enum CommandOutput {
 		current_level: Option<String>,
 		available_levels: Vec<String>,
 		changed: bool,
-	},
-	Save {
-		success: bool,
-		message: Option<String>,
-		session_id: Option<String>,
 	},
 	Copy {
 		copied: bool,
@@ -208,17 +202,6 @@ impl CommandOutput {
 			Self::Model { .. } => display::display_model(self),
 			Self::Role { .. } => display::display_role(self),
 			Self::Loglevel { .. } => display::display_loglevel(self),
-			Self::Save {
-				success, message, ..
-			} => {
-				if *success {
-					if let Some(msg) = message {
-						println!("{}", msg.bright_green());
-					}
-				} else if let Some(msg) = message {
-					println!("{}", msg.bright_red());
-				}
-			}
 			Self::Copy { copied, .. } => {
 				if *copied {
 					println!("{}", "Last response copied to clipboard.".bright_green());
@@ -289,7 +272,6 @@ pub async fn process_command(
 		HELP_COMMAND => help::handle_help(config, &current_role).await,
 		COPY_COMMAND => copy::handle_copy(&session.last_response),
 		CLEAR_COMMAND => clear::handle_clear(),
-		SAVE_COMMAND => save::handle_save(session),
 		INFO_COMMAND => info::handle_info(session, config),
 		REPORT_COMMAND => report::handle_report(session, config),
 

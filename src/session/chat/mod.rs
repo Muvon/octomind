@@ -46,7 +46,7 @@ pub use command_executor::{
 };
 pub use commands::{
 	CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND, QUIT_COMMAND,
-	RUN_COMMAND, SAVE_COMMAND,
+	RUN_COMMAND,
 };
 pub use cost_tracker::CostTracker;
 pub use edit_mode::EmacsWithShortcutHelp;

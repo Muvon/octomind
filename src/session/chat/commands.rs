@@ -21,7 +21,6 @@ pub const EXIT_COMMAND: &str = "/exit";
 pub const QUIT_COMMAND: &str = "/quit";
 pub const COPY_COMMAND: &str = "/copy";
 pub const CLEAR_COMMAND: &str = "/clear";
-pub const SAVE_COMMAND: &str = "/save";
 pub const LIST_COMMAND: &str = "/list";
 pub const SESSION_COMMAND: &str = "/session";
 pub const INFO_COMMAND: &str = "/info";
@@ -42,14 +41,13 @@ pub const PLAN_COMMAND: &str = "/plan";
 pub const WORKFLOW_COMMAND: &str = "/workflow";
 pub const SKILL_COMMAND: &str = "/skill";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 26] = [
+pub const COMMANDS: [&str; 25] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
 	QUIT_COMMAND,
 	COPY_COMMAND,
 	CLEAR_COMMAND,
-	SAVE_COMMAND,
 	LIST_COMMAND,
 	SESSION_COMMAND,
 	INFO_COMMAND,

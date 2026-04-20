@@ -736,6 +736,18 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				}
 			}
 
+			// Start animation early to provide visual feedback during pre-processing
+			// (skill activation, layer processing, compression checks)
+			// api_executor will stop and restart with proper cost/context values
+			let animation_manager =
+				crate::session::chat::animation_manager::get_animation_manager();
+			animation_manager
+				.start_animation(
+					&crate::config::with_thread_config(|c| c.output_mode())
+						.unwrap_or(crate::session::output::OutputMode::NonInteractive),
+				)
+				.await;
+
 			// Run skill activation + validators on user input
 			{
 				crate::mcp::core::skill_auto::run_activation(
@@ -755,6 +767,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 			// Check for cancellation before starting layered processing
 			if cancellation.is_cancelled() {
+				animation_manager.stop_current().await;
 				continue;
 			}
 
@@ -772,6 +785,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 			// Check for cancellation after layer processing
 			if cancellation.is_cancelled() {
+				animation_manager.stop_current().await;
 				continue;
 			}
 

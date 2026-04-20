@@ -154,7 +154,7 @@ impl LearningBackend for FileBackend {
 			.filter(|(_, hits)| *hits > 0)
 			.collect();
 
-		scored.sort_by(|a, b| b.1.cmp(&a.1));
+		scored.sort_by_key(|b| std::cmp::Reverse(b.1));
 		Ok(scored.into_iter().take(limit).map(|(l, _)| l).collect())
 	}
 

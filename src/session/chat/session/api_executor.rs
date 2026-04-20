@@ -85,7 +85,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
-	// NOW start animation after spending checks passed
+	// Update animation state with current cost/context values
+	// Animation was already started early in main_loop to cover pre-processing
 	use crate::session::chat::get_animation_manager;
 	let animation_manager = get_animation_manager();
 	let anim_state = animation_manager.get_state();
@@ -95,7 +96,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 
 	// CRITICAL: Connect session cancellation to animation for INSTANT Ctrl+C response
 	animation_manager.set_cancel_receiver(operation_rx.clone());
-	animation_manager.start_animation(&mode).await;
 
 	// Inject learned lessons as user message on first API call (once per session, resets on /done)
 	if !chat_session.learning_injected && config.learning.enabled {

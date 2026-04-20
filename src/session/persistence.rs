@@ -77,7 +77,7 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 	}
 
 	// Sort sessions by creation time (newest first)
-	sessions.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+	sessions.sort_by_key(|b| std::cmp::Reverse(b.1.created_at));
 
 	Ok(sessions)
 }
@@ -133,7 +133,7 @@ pub fn find_most_recent_session_for_project(
 	}
 
 	// Sort by modification time (newest first)
-	matching_sessions.sort_by(|a, b| b.1.cmp(&a.1));
+	matching_sessions.sort_by_key(|b| std::cmp::Reverse(b.1));
 
 	// Return the most recent session name
 	Ok(matching_sessions.first().map(|(name, _)| name.clone()))
@@ -883,24 +883,17 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 	}
 
 	match parts[0] {
-		"/model" => {
-			if parts.len() > 1 {
-				let new_model = parts[1..].join(" ");
-				state.model = Some(new_model);
-			}
+		"/model" if parts.len() > 1 => {
+			let new_model = parts[1..].join(" ");
+			state.model = Some(new_model);
 		}
-		"/role" => {
-			if parts.len() > 1 {
-				let new_role = parts[1].to_string();
-				state.role = Some(new_role);
-			}
+		"/role" if parts.len() > 1 => {
+			let new_role = parts[1].to_string();
+			state.role = Some(new_role);
 		}
-		"/layers" => {
-			// Parse the actual state from the logged command
-			if parts.len() > 1 {
-				let state_str = parts[1];
-				state.layers_enabled = Some(state_str == "enabled");
-			}
+		"/layers" if parts.len() > 1 => {
+			let state_str = parts[1];
+			state.layers_enabled = Some(state_str == "enabled");
 		}
 		"/cache" => {
 			// Set cache next message flag

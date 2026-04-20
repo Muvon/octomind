@@ -819,12 +819,28 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Tier 3: append resource catalog (scripts/, references/, assets/)
 	let resources = build_resource_catalog(&skill_dir);
 
-	// Auto-load required capabilities — resolves to MCP servers and enables them
+	// Auto-load required capabilities — resolves to MCP servers and enables them.
+	// Uses refcounting so shared capabilities are only offloaded when the last skill forgets.
 	let mut cap_messages = Vec::new();
+	let mut servers_loaded_by_this_skill = Vec::new();
 	if !meta.capabilities.is_empty() {
-		let overrides = crate::session::context::current_session_id()
-			.and_then(|sid| crate::session::context::get_session_config(&sid))
+		let session_config = crate::session::context::current_session_id()
+			.and_then(|sid| crate::session::context::get_session_config(&sid));
+		let overrides = session_config
+			.as_ref()
 			.map(|cfg| cfg.capabilities.clone())
+			.unwrap_or_default();
+
+		// Collect config-level server names to avoid touching domain-owned servers
+		let config_server_names: std::collections::HashSet<String> = session_config
+			.as_ref()
+			.map(|cfg| {
+				cfg.mcp
+					.servers
+					.iter()
+					.map(|s| s.name().to_string())
+					.collect()
+			})
 			.unwrap_or_default();
 
 		for cap_name in &meta.capabilities {
@@ -833,7 +849,36 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 					let mut loaded_servers = Vec::new();
 					for server_config in resolved.mcp_servers {
 						let server_name = server_config.name().to_string();
-						// Register + enable via dynamic server manager
+
+						// Domain-level server (loaded at session init) — skip, not our responsibility
+						if config_server_names.contains(&server_name) {
+							crate::log_debug!(
+								"skill: capability '{}' server '{}' already config-level, skipping",
+								cap_name,
+								server_name
+							);
+							loaded_servers.push(server_name);
+							continue;
+						}
+
+						// Already in dynamic registry and enabled — just bump refcount
+						if let Some((_cfg, true)) = crate::session::context::current_session_id()
+							.and_then(|sid| {
+								crate::session::context::get_dynamic_server_for_session(
+									&sid,
+									&server_name,
+								)
+							}) {
+							crate::session::context::increment_capability_refcount(
+								&session_id,
+								&server_name,
+							);
+							servers_loaded_by_this_skill.push(server_name.clone());
+							loaded_servers.push(server_name);
+							continue;
+						}
+
+						// New server — register + enable + refcount=1
 						if let Err(e) =
 							crate::mcp::core::dynamic::register_server(server_config.clone())
 						{
@@ -845,7 +890,14 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 							);
 						}
 						match crate::mcp::core::dynamic::enable_server(&server_name, None).await {
-							Ok(_) => loaded_servers.push(server_name),
+							Ok(_) => {
+								crate::session::context::increment_capability_refcount(
+									&session_id,
+									&server_name,
+								);
+								servers_loaded_by_this_skill.push(server_name.clone());
+								loaded_servers.push(server_name);
+							}
 							Err(e) => {
 								crate::log_debug!(
 									"skill: capability '{}' server '{}' enable failed: {}",
@@ -872,6 +924,13 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 		}
 	}
 
+	// Record which servers this skill loaded for proper offloading on forget
+	crate::session::context::set_skill_capability_servers(
+		&session_id,
+		&name,
+		servers_loaded_by_this_skill,
+	);
+
 	// Tool compatibility: warn if required tools are still missing after capability loading
 	let unavailable = missing_tools(&meta.allowed_tools);
 	let tool_warning = if unavailable.is_empty() {
@@ -888,8 +947,11 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 
 	// Inject skill body wrapped in tags for detection on session resume.
 	let body = strip_frontmatter(&content);
-	let title = meta.description.replace('"', "&quot;");
-	let mut injection_content = format!("<skill name=\"{}\" title=\"{}\">\n{}", name, title, body);
+	let description = meta.description.replace('"', "&quot;");
+	let mut injection_content = format!(
+		"<skill name=\"{}\" description=\"{}\">\n{}",
+		name, description, body
+	);
 	if !resources.is_empty() {
 		injection_content.push_str(&resources);
 	}
@@ -978,17 +1040,50 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 	}
 
 	crate::session::context::remove_active_skill(&session_id, &name);
+
+	// Offload capability servers this skill loaded (refcount-aware)
+	let servers = crate::session::context::take_skill_capability_servers(&session_id, &name);
+	let mut offloaded = Vec::new();
+	for server_name in &servers {
+		let remaining =
+			crate::session::context::decrement_capability_refcount(&session_id, server_name);
+		if remaining == 0 {
+			if let Err(e) = crate::mcp::core::dynamic::disable_server(server_name) {
+				crate::log_debug!("skill: offload disable '{}': {}", server_name, e);
+			}
+			crate::mcp::core::dynamic::remove_server(server_name);
+			offloaded.push(server_name.clone());
+		}
+	}
+	if !offloaded.is_empty() {
+		crate::log_debug!(
+			"skill: forgot '{}' — offloaded servers: {}",
+			name,
+			offloaded.join(", ")
+		);
+	}
+
 	// Signal the session to run forced compression so the injected skill content is cleaned up
 	crate::session::context::request_skill_compression(&session_id);
 
 	crate::log_debug!("skill: forgot '{}' from session {}", name, session_id);
 
-	Ok(McpToolResult::success(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
+	let msg = if offloaded.is_empty() {
 		format!(
 			"Skill '{}' removed from context. Conversation will be compressed to clean up injected content.",
 			name
-		),
+		)
+	} else {
+		format!(
+			"Skill '{}' removed from context (offloaded servers: {}). Conversation will be compressed.",
+			name,
+			offloaded.join(", ")
+		)
+	};
+
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		msg,
 	))
 }

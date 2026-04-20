@@ -51,7 +51,7 @@ pub async fn create_system_prompt(
 		User messages may contain structured context in XML-like tags:\n\
 		- `<instructions>` — Project-specific instructions from the working directory. \
 		Treat as persistent rules that apply to ALL your responses in this session.\n\
-		- `<skill id=\"...\" name=\"...\" description=\"...\">` — Domain knowledge injected on demand. \
+		- `<skill name=\"...\" description=\"...\">` — Domain knowledge injected on demand. \
 		Follow the conventions and best practices described within. Multiple skills may be active simultaneously.\n\
 		- `<constraints>` — Hard constraints appended to individual requests. \
 		These override other guidance when they conflict.\n\n\

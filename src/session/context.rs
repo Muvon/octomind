@@ -943,6 +943,95 @@ pub fn clear_active_skills(session_id: &SessionId) {
 }
 
 // ---------------------------------------------------------------------------
+// Session-keyed capability refcounts (skill → MCP server lifecycle)
+// ---------------------------------------------------------------------------
+
+/// skill_name → Vec<server_name> mapping per session.
+type SkillServerMap = HashMap<SessionId, HashMap<String, Vec<String>>>;
+
+/// Refcount per MCP server name: how many active skills loaded this server via capabilities.
+/// When the count reaches 0 on skill forget, the server is disabled + removed.
+static CAPABILITY_REFCOUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> =
+	RwLock::new(None);
+
+/// Which MCP servers each skill loaded via capabilities.
+/// Used by `execute_forget` to know which servers to decrement.
+static SKILL_CAPABILITY_SERVERS: RwLock<Option<SkillServerMap>> = RwLock::new(None);
+
+/// Increment the refcount for a capability-loaded server. Returns the new count.
+pub fn increment_capability_refcount(session_id: &SessionId, server_name: &str) -> usize {
+	let mut guard = CAPABILITY_REFCOUNTS.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let counts = registry.entry(session_id.clone()).or_default();
+	let count = counts.entry(server_name.to_string()).or_insert(0);
+	*count += 1;
+	*count
+}
+
+/// Decrement the refcount for a capability-loaded server. Returns the new count.
+/// Returns 0 if the server was not tracked (safe to call unconditionally).
+pub fn decrement_capability_refcount(session_id: &SessionId, server_name: &str) -> usize {
+	let mut guard = CAPABILITY_REFCOUNTS.write().unwrap();
+	if let Some(registry) = guard.as_mut() {
+		if let Some(counts) = registry.get_mut(session_id) {
+			if let Some(count) = counts.get_mut(server_name) {
+				*count = count.saturating_sub(1);
+				let result = *count;
+				if result == 0 {
+					counts.remove(server_name);
+				}
+				return result;
+			}
+		}
+	}
+	0
+}
+
+/// Record which servers a skill loaded via capabilities.
+pub fn set_skill_capability_servers(
+	session_id: &SessionId,
+	skill_name: &str,
+	servers: Vec<String>,
+) {
+	if servers.is_empty() {
+		return;
+	}
+	let mut guard = SKILL_CAPABILITY_SERVERS.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let map = registry.entry(session_id.clone()).or_default();
+	map.insert(skill_name.to_string(), servers);
+}
+
+/// Remove and return the servers a skill loaded via capabilities.
+pub fn take_skill_capability_servers(session_id: &SessionId, skill_name: &str) -> Vec<String> {
+	let mut guard = SKILL_CAPABILITY_SERVERS.write().unwrap();
+	if let Some(registry) = guard.as_mut() {
+		if let Some(map) = registry.get_mut(session_id) {
+			return map.remove(skill_name).unwrap_or_default();
+		}
+	}
+	Vec::new()
+}
+
+/// Clear capability refcounts when a session ends.
+pub fn clear_capability_refcounts(session_id: &SessionId) {
+	if let Ok(mut guard) = CAPABILITY_REFCOUNTS.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+/// Clear skill capability server mappings when a session ends.
+pub fn clear_skill_capability_servers(session_id: &SessionId) {
+	if let Ok(mut guard) = SKILL_CAPABILITY_SERVERS.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Session-keyed skill compression request
 // ---------------------------------------------------------------------------
 
@@ -994,6 +1083,8 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_dynamic_servers_for_session(session_id);
 	clear_job_manager_for_session(session_id);
 	clear_active_skills(session_id);
+	clear_capability_refcounts(session_id);
+	clear_skill_capability_servers(session_id);
 	clear_skill_compress_requests(session_id);
 	crate::session::inbox::clear_inbox_for_session(session_id);
 	crate::mcp::core::plan::compression::cleanup_compression_state(session_id);

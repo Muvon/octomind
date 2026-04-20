@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Session persistence: load/save/list session files
+// Session persistence: auto-save/load/list session files
 
 use super::{CompressionStats, Message, Session, SessionInfo};
 use anyhow::Result;

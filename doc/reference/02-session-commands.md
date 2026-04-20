@@ -16,9 +16,6 @@ List all saved sessions. Optional page number for pagination.
 ### `/session [NAME]`
 Switch to a different session by name. Without argument, shows current session info.
 
-### `/save`
-Manually save the current session. Sessions are also auto-saved.
-
 ### `/clear`
 Clear the terminal screen.
 
@@ -154,3 +151,11 @@ Manage the structured task plan.
 |--------|-------------|
 | `/plan` or `/plan show` | Show current plan with progress |
 | `/plan clear` | Reset/abort the current plan |
+
+### `/skill [NAME]`
+Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
+
+| Usage | Description |
+|-------|-------------|
+| `/skill` | List all available skills with active status |
+| `/skill <name>` | Toggle a skill on/off |

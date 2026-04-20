@@ -84,9 +84,9 @@ Editors can inject additional MCP servers into the Octomind session. The servers
 
 ## Available Slash Commands
 
-All 24 session commands are available via ACP:
+All 23 session commands are available via ACP:
 
-`/help`, `/exit`, `/list`, `/session`, `/save`, `/clear`, `/info`, `/report`, `/model`, `/role`, `/loglevel`, `/context`, `/summarize`, `/truncate`, `/done`, `/image`, `/video`, `/copy`, `/mcp`, `/run`, `/workflow`, `/prompt`, `/plan`
+`/help`, `/exit`, `/list`, `/session`, `/clear`, `/info`, `/report`, `/model`, `/role`, `/loglevel`, `/context`, `/summarize`, `/truncate`, `/done`, `/image`, `/video`, `/copy`, `/mcp`, `/run`, `/workflow`, `/prompt`, `/plan`, `/skill`
 
 ## Roles
 

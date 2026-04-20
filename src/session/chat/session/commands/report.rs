@@ -68,7 +68,7 @@ pub fn handle_report(session: &ChatSession, _config: &Config) -> Result<CommandR
 			CommandOutput::Error {
 				error: "No session file available for report generation.".to_string(),
 				context: Some(serde_json::json!({
-					"hint": "Save the session first with /save command."
+					"hint": "No session file found. Sessions are auto-saved after each interaction."
 				})),
 			},
 		)))

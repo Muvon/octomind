@@ -61,7 +61,6 @@ Run the test suite and fix any failures
 | `/help` | Show all commands |
 | `/info` | Token usage and costs |
 | `/image <path>` | Attach image for AI analysis |
-| `/save` | Save current session |
 | `/exit` | Exit session |
 
 ## Session Modes

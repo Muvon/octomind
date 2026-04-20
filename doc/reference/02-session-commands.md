@@ -152,10 +152,12 @@ Manage the structured task plan.
 | `/plan` or `/plan show` | Show current plan with progress |
 | `/plan clear` | Reset/abort the current plan |
 
-### `/skill [NAME]`
+### `/skill [NAME|PAGE|PATTERN]`
 Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
 
 | Usage | Description |
 |-------|-------------|
-| `/skill` | List all available skills with active status |
+| `/skill` | List all skills (active first, then alphabetical) |
 | `/skill <name>` | Toggle a skill on/off |
+| `/skill <page>` | Show page N of the skill list |
+| `/skill *pattern*` | Filter skills by glob pattern |

@@ -1535,13 +1535,20 @@ fn display_skill_list(data: &serde_json::Value) {
 		.get("active_count")
 		.and_then(|v| v.as_u64())
 		.unwrap_or(0);
+	let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
+	let total_pages = data
+		.get("total_pages")
+		.and_then(|v| v.as_u64())
+		.unwrap_or(1);
+	let pattern = data.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+
 	println!();
-	println!(
-		"{}",
+	let header = if pattern.is_empty() {
 		format!("Skills ({total} available, {active_count} active)")
-			.bright_cyan()
-			.bold()
-	);
+	} else {
+		format!("Skills matching '{pattern}' ({total} found, {active_count} active)")
+	};
+	println!("{}", header.bright_cyan().bold());
 	println!("{}", "─".repeat(50).dimmed());
 
 	let skills = match data.get("skills").and_then(|v| v.as_array()) {
@@ -1634,5 +1641,24 @@ fn display_skill_list(data: &serde_json::Value) {
 	}
 
 	println!();
-	println!("{}", "Use '/skill <name>' to toggle.".dimmed());
+
+	// Pagination footer
+	if total_pages > 1 {
+		let mut nav = Vec::new();
+		if page > 1 {
+			nav.push(format!("/skill {}", page - 1));
+		}
+		if page < total_pages {
+			nav.push(format!("/skill {}", page + 1));
+		}
+		println!(
+			"{}",
+			format!("Page {page}/{total_pages}  {}", nav.join("  ")).dimmed()
+		);
+	}
+
+	println!(
+		"{}",
+		"Use '/skill <name>' to toggle, '/skill *pattern*' to filter.".dimmed()
+	);
 }

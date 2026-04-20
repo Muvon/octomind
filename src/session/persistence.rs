@@ -184,11 +184,7 @@ pub(crate) fn has_incomplete_tool_calls(messages: &[Message]) -> bool {
 /// Instead of truncating the entire conversation from the first incomplete tool call,
 /// this inserts a synthetic "[Tool execution was interrupted]" result for each missing
 /// tool response. This preserves all valid conversation history and only patches the gaps.
-pub fn clean_interrupted_tool_calls(
-	messages: &mut Vec<Message>,
-	session_name: &str,
-	context: &str,
-) -> bool {
+pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) -> bool {
 	if messages.is_empty() {
 		return false;
 	}
@@ -271,14 +267,6 @@ pub fn clean_interrupted_tool_calls(
 		"🔧 {}: Inserted {} synthetic tool results for interrupted calls",
 		context,
 		count
-	);
-
-	let _ = crate::session::logger::log_system_message(
-		session_name,
-		&format!(
-			"{}: Inserted {} synthetic tool results for interrupted calls",
-			context, count
-		),
 	);
 
 	true
@@ -665,7 +653,7 @@ fn reconstruct_messages(
 
 	let mut cleaned_messages = final_messages;
 	if has_incomplete_tool_calls(&cleaned_messages) {
-		clean_interrupted_tool_calls(&mut cleaned_messages, &info.name, "Session restoration");
+		clean_interrupted_tool_calls(&mut cleaned_messages, "Session restoration");
 	}
 
 	Ok(Session {

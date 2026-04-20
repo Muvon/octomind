@@ -12,7 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Simplified logging module for Octomind - single JSONL session file with prefixes
+//! Session event logger — minimal persistence markers only.
+//!
+//! The session file is a JSONL stream where each line is either:
+//! - A `Message` JSON (user/assistant/tool/system role) — the actual conversation
+//! - A `SUMMARY` entry — session metadata
+//! - A marker entry (`COMPRESSION_POINT`, `RESTORATION_POINT`, `KNOWLEDGE_ENTRY`, `COMMAND`)
+//!
+//! Messages are written directly by `messages.rs` / `message_handler.rs` via
+//! `append_to_session_file`. This module only handles the marker entries that
+//! the loader needs to reconstruct session state.
 
 use anyhow::Result;
 use std::fs::OpenOptions;
@@ -20,163 +29,34 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Get the session file path for a specific session (unified JSONL approach)
+/// Get the session file path for a specific session.
 pub fn get_session_log_file(session_name: &str) -> Result<PathBuf> {
 	let sessions_dir = crate::directories::get_sessions_dir()?;
-
-	// Use single JSONL file for everything - session messages + raw debug logs
-	let log_file = sessions_dir.join(format!("{}.jsonl", session_name));
-	Ok(log_file)
+	Ok(sessions_dir.join(format!("{}.jsonl", session_name)))
 }
 
-/// Log session stats snapshot after each request completion
-pub fn log_session_stats(
-	session_name: &str,
-	session_info: &crate::session::SessionInfo,
-) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "STATS",
-		"timestamp": get_timestamp(),
-		"total_cost": session_info.total_cost,
-		"input_tokens": session_info.input_tokens,
-		"output_tokens": session_info.output_tokens,
-		"cache_read_tokens": session_info.cache_read_tokens,
-		"cache_write_tokens": session_info.cache_write_tokens,
-		"reasoning_tokens": session_info.reasoning_tokens,
-		"tool_calls": session_info.tool_calls,
-		"total_api_time_ms": session_info.total_api_time_ms,
-		"total_tool_time_ms": session_info.total_tool_time_ms,
-		"total_layer_time_ms": session_info.total_layer_time_ms,
-		"model": session_info.model,
-		"provider": session_info.provider
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
+/// Public alias for external callers.
+pub fn get_session_log_path(session_name: &str) -> Result<PathBuf> {
+	get_session_log_file(session_name)
 }
 
-/// Log system message (our prompts, system setup)
-pub fn log_system_message(session_name: &str, content: &str) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "SYSTEM",
-		"timestamp": get_timestamp(),
-		"content": content
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log user input
-pub fn log_user_input(session_name: &str, content: &str) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "USER",
-		"timestamp": get_timestamp(),
-		"content": content
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log RAW API request (what we send to the API)
-pub fn log_api_request(session_name: &str, request: &serde_json::Value) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "API_REQUEST",
-		"timestamp": get_timestamp(),
-		"data": request
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log RAW API response (what we get from the API) with processed usage data
-pub fn log_api_response(
-	session_name: &str,
-	response: &serde_json::Value,
-	usage: Option<&crate::providers::TokenUsage>,
-) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "API_RESPONSE",
-		"timestamp": get_timestamp(),
-		"data": response,
-		"usage": usage
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log tool call request
-pub fn log_tool_call(
-	session_name: &str,
-	tool_name: &str,
-	tool_id: &str,
-	parameters: &serde_json::Value,
-) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "TOOL_CALL",
-		"timestamp": get_timestamp(),
-		"tool_name": tool_name,
-		"tool_id": tool_id,
-		"parameters": parameters
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log tool response result with execution timing
-pub fn log_tool_result(
-	session_name: &str,
-	tool_id: &str,
-	result: &serde_json::Value,
-	execution_time_ms: u64,
-) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "TOOL_RESULT",
-		"timestamp": get_timestamp(),
-		"tool_id": tool_id,
-		"result": result,
-		"execution_time_ms": execution_time_ms
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log assistant response (final cleaned response shown to user)
-pub fn log_assistant_response(session_name: &str, content: &str) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "ASSISTANT",
-		"timestamp": get_timestamp(),
-		"content": content
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log restoration point for /done command
+/// Log restoration point for `/done` command — clears prior messages on reload.
 pub fn log_restoration_point(
 	session_name: &str,
 	user_message: &str,
 	assistant_response: &str,
 ) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
+	let entry = serde_json::json!({
 		"type": "RESTORATION_POINT",
 		"timestamp": get_timestamp(),
 		"user_message": user_message,
-		"assistant_response": assistant_response
+		"assistant_response": assistant_response,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
 }
 
-/// Log compression point - marks that messages were compressed
-/// On session load, this acts like RESTORATION_POINT: clears all previous messages
+/// Log compression point — clears prior messages on reload (messages were compressed).
 pub fn log_compression_point(
 	session_name: &str,
 	compression_type: &str,
@@ -184,55 +64,40 @@ pub fn log_compression_point(
 	tokens_saved: u64,
 ) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
+	let entry = serde_json::json!({
 		"type": "COMPRESSION_POINT",
 		"timestamp": get_timestamp(),
 		"compression_type": compression_type,
 		"messages_removed": messages_removed,
-		"tokens_saved": tokens_saved
+		"tokens_saved": tokens_saved,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
 }
 
-/// Log session command execution (runtime-only commands like /model, /cache, etc.)
+/// Log a critical knowledge entry extracted during compression.
+/// Re-injected as context on session resume.
+pub fn log_knowledge_entry(session_name: &str, knowledge: &str) -> Result<()> {
+	let log_file = get_session_log_file(session_name)?;
+	let entry = serde_json::json!({
+		"type": "KNOWLEDGE_ENTRY",
+		"timestamp": get_timestamp(),
+		"content": knowledge,
+	});
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+}
+
+/// Log runtime-only commands (`/model`, `/role`, `/layers`, `/cache`) so they
+/// can be replayed on resume to reconstruct runtime state.
 pub fn log_session_command(session_name: &str, command_line: &str) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
+	let entry = serde_json::json!({
 		"type": "COMMAND",
 		"timestamp": get_timestamp(),
-		"command": command_line
+		"command": command_line,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
 }
 
-/// Log cache operations for debugging
-pub fn log_cache_operation(session_name: &str, operation: &str, details: &str) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "CACHE",
-		"timestamp": get_timestamp(),
-		"operation": operation,
-		"details": details
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Log errors for debugging
-pub fn log_error(session_name: &str, error: &str) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "ERROR",
-		"timestamp": get_timestamp(),
-		"error": error
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-/// Helper to get timestamp
 fn get_timestamp() -> u64 {
 	SystemTime::now()
 		.duration_since(UNIX_EPOCH)
@@ -240,56 +105,15 @@ fn get_timestamp() -> u64 {
 		.as_secs()
 }
 
-/// Helper to append to log file ensuring single lines
+/// Append a single-line entry to the session log file.
 fn append_to_log(log_file: &PathBuf, content: &str) -> Result<()> {
 	let mut file = OpenOptions::new()
 		.create(true)
 		.append(true)
 		.open(log_file)?;
 
-	// Ensure content is on a single line - replace any newlines with spaces
-	let single_line_content = content.replace(['\n', '\r'], " ");
-	writeln!(file, "{}", single_line_content)?;
+	// Ensure content is on a single line — replace any newlines with spaces
+	let single_line = content.replace(['\n', '\r'], " ");
+	writeln!(file, "{}", single_line)?;
 	Ok(())
-}
-
-// Legacy functions for compatibility - redirect to new system
-pub fn log_user_request(content: &str) -> Result<()> {
-	// We need session name - for now use "default" but this should be passed properly
-	log_user_input("default", content)
-}
-
-/// Log a critical knowledge entry extracted during compression
-pub fn log_knowledge_entry(session_name: &str, knowledge: &str) -> Result<()> {
-	let log_file = get_session_log_file(session_name)?;
-	let log_entry = serde_json::json!({
-		"type": "KNOWLEDGE_ENTRY",
-		"timestamp": get_timestamp(),
-		"content": knowledge
-	});
-	append_to_log(&log_file, &serde_json::to_string(&log_entry)?)?;
-	Ok(())
-}
-
-pub fn log_raw_exchange(
-	session_name: &str,
-	exchange: &crate::session::ProviderExchange,
-) -> Result<()> {
-	log_api_request(session_name, &exchange.request)?;
-	log_api_response(session_name, &exchange.response, exchange.usage.as_ref())?;
-	Ok(())
-}
-
-/// Get session log file path for external use
-pub fn get_session_log_path(session_name: &str) -> Result<PathBuf> {
-	get_session_log_file(session_name)
-}
-
-/// Legacy function for compatibility
-pub fn get_log_file() -> Result<PathBuf> {
-	let logs_dir = crate::directories::get_logs_dir()?;
-
-	let now = chrono::Local::now();
-	let log_file = logs_dir.join(format!("session_{}.jsonl", now.format("%Y-%m-%d")));
-	Ok(log_file)
 }

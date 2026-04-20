@@ -389,11 +389,7 @@ pub fn read_user_input(
 					}
 				}
 
-				// Log user input only if it's not a command (doesn't start with '/')
-				// Note: We still log even if it starts with whitespace, as logging is separate from history
-				if !line.trim().starts_with('/') {
-					let _ = crate::session::logger::log_user_request(&line);
-				}
+				// User message persistence handled by ChatSession::add_user_message.
 
 				return if add_without_sending {
 					Ok(InputResult::AddWithoutSending(line))

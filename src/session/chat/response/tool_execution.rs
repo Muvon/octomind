@@ -194,15 +194,6 @@ async fn execute_tools_with_context(
 
 		// Execute in a tokio task
 		let config_clone = config.clone();
-		let params_clone = tool_call.parameters.clone();
-
-		// Log the tool request with the session name and ORIGINAL tool_id
-		let _ = crate::session::logger::log_tool_call(
-			context.session_name(),
-			&tool_name,
-			&original_tool_id,
-			&params_clone,
-		);
 
 		let tool_id_for_task = original_tool_id.clone();
 		let tool_call_clone = tool_call.clone(); // Clone for async move
@@ -387,7 +378,6 @@ async fn execute_tools_with_context(
 						let display_params = ToolDisplayParams {
 							stored_tool_call: &stored_tool_call,
 							tool_name: &tool_name,
-							tool_id: &tool_id,
 							tool_index,
 							is_single_tool,
 						};
@@ -397,7 +387,6 @@ async fn execute_tools_with_context(
 							tool_time_ms,
 							config,
 							mode,
-							context.session_name(),
 							context.execution_context(),
 						)
 						.await;
@@ -739,7 +728,6 @@ async fn handle_large_tool_results(
 struct ToolDisplayParams<'a> {
 	stored_tool_call: &'a Option<crate::mcp::McpToolCall>,
 	tool_name: &'a str,
-	tool_id: &'a str,
 	tool_index: usize,
 	is_single_tool: bool,
 }
@@ -751,7 +739,6 @@ async fn display_tool_success(
 	tool_time_ms: u64,
 	config: &Config,
 	mode: OutputMode,
-	session_name: &str,
 	execution_context: Option<String>, // New parameter for context display
 ) {
 	// For multiple tools: show header again with index
@@ -803,14 +790,6 @@ async fn display_tool_success(
 		);
 		println!("──────────────────");
 	}
-
-	// Log the tool response with session name and timing
-	let _ = crate::session::logger::log_tool_result(
-		session_name,
-		params.tool_id,
-		&serde_json::to_value(&res.result).unwrap_or_default(),
-		tool_time_ms,
-	);
 }
 
 // Display tool error in consolidated format

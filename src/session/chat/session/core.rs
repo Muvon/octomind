@@ -1127,13 +1127,9 @@ impl ChatSession {
 		// Find and replace the first system message (should be index 0)
 		if let Some(first_msg) = self.session.messages.first_mut() {
 			if first_msg.role == "system" {
-				// Log the system message replacement
-				let _ = crate::session::logger::log_system_message(
-					&self.session.info.name,
-					&new_system_prompt,
-				);
-
-				// Replace the system message content
+				// Replace the system message content.
+				// Persistence: the new system prompt is reflected on the next session save
+				// (or by the caller's own session-file append logic for mutations).
 				first_msg.content = new_system_prompt;
 
 				println!(

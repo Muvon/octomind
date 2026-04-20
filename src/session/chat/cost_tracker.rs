@@ -65,12 +65,6 @@ impl CostTracker {
 					cost,
 					chat_session.session.info.total_cost
 				);
-
-				// CRITICAL: Log session stats immediately after cost update
-				let _ = crate::session::logger::log_session_stats(
-					&chat_session.session.info.name,
-					&chat_session.session.info,
-				);
 			}
 		}
 

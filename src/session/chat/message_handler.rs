@@ -113,15 +113,4 @@ impl MessageHandler {
 
 		Ok(())
 	}
-
-	/// Log assistant response and exchange data
-	pub fn log_response_data(
-		session_name: &str,
-		content: &str,
-		exchange: &ProviderExchange,
-	) -> Result<()> {
-		let _ = crate::session::logger::log_assistant_response(session_name, content);
-		let _ = crate::session::logger::log_raw_exchange(session_name, exchange);
-		Ok(())
-	}
 }

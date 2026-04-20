@@ -308,19 +308,17 @@ fn add_assistant_message_with_tool_calls(
 	// Add the assistant message to the session
 	chat_session.session.messages.push(assistant_message);
 
+	// Persist immediately so Ctrl+C mid-turn can't lose this message.
+	if let Some(session_file) = &chat_session.session.session_file {
+		let message_json = serde_json::to_string(chat_session.session.messages.last().unwrap())?;
+		crate::session::append_to_session_file(session_file, &message_json)?;
+	}
+
 	// Update last response - no cost tracking here as it will be handled by follow-up processing
 	chat_session.last_response = current_content.to_string();
 
 	// CRITICAL FIX: DO NOT track cost/tokens here - already tracked by CostTracker::track_exchange_cost()
 	// in api_executor.rs:163. Tracking here causes DUPLICATE cost/token counting.
-
-	// Log the assistant response and exchange
-	let _ = crate::session::logger::log_assistant_response(
-		&chat_session.session.info.name,
-		current_content,
-	);
-	let _ =
-		crate::session::logger::log_raw_exchange(&chat_session.session.info.name, current_exchange);
 
 	Ok(())
 }

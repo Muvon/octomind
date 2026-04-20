@@ -589,7 +589,7 @@ mod tests {
 		];
 
 		let original_count = messages.len();
-		let cleaned = clean_interrupted_tool_calls(&mut messages, "test_session", "Test");
+		let cleaned = clean_interrupted_tool_calls(&mut messages, "Test");
 
 		// Should not clean anything (complete sequence)
 		assert!(!cleaned);
@@ -612,7 +612,7 @@ mod tests {
 			// Missing tool response - a synthetic result should be inserted
 		];
 
-		let cleaned = clean_interrupted_tool_calls(&mut messages, "test_session", "Test");
+		let cleaned = clean_interrupted_tool_calls(&mut messages, "Test");
 
 		// Should insert a synthetic tool result, preserving all messages
 		assert!(cleaned);

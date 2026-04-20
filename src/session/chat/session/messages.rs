@@ -203,9 +203,7 @@ impl ChatSession {
 		// Must happen BEFORE logger which also writes to the same file
 		self.ensure_file_initialized()?;
 
-		// Log to raw session log
-		let _ = crate::session::logger::log_system_message(&self.session.info.name, content);
-
+		// Message is persisted below (role=system) after being added to session.messages.
 		// Add message to session
 		self.session.add_message("system", content);
 
@@ -220,9 +218,7 @@ impl ChatSession {
 
 	// Add a user message
 	pub fn add_user_message(&mut self, content: &str) -> Result<()> {
-		// Log to raw session log
-		let _ = crate::session::logger::log_user_input(&self.session.info.name, content);
-
+		// User message content is persisted by the Message JSON append below.
 		// Add message to session with image if available
 		let mut message = self.session.add_message("user", content);
 
@@ -271,11 +267,7 @@ impl ChatSession {
 			self.cache_next_user_message = false;
 		}
 
-		// Log the user message if not already logged from input
-		if !content.starts_with("<fnr>") {
-			let _ = crate::session::logger::log_user_request(content);
-		}
-
+		// All user messages are persisted as Message JSON below; no separate log entry.
 		// Save to session file
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
@@ -293,14 +285,7 @@ impl ChatSession {
 		tool_name: &str,
 		_config: &Config,
 	) -> Result<()> {
-		// Log to raw session log
-		let _ = crate::session::logger::log_tool_result(
-			&self.session.info.name,
-			tool_call_id,
-			&serde_json::json!({"output": content}),
-			0, // No timing info available in this context
-		);
-
+		// Tool result content is persisted as a Message JSON below; no separate log entry.
 		// Create the tool message
 		let tool_message = crate::session::Message {
 			role: "tool".to_string(),
@@ -347,27 +332,9 @@ impl ChatSession {
 		config: &Config,
 		role: &str,
 	) -> Result<()> {
-		// Log to raw session log
-		let _ = crate::session::logger::log_assistant_response(&self.session.info.name, content);
-
-		// Log raw API exchange if available
-		if let Some(ref ex) = exchange {
-			let _ = crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
-			let _ = crate::session::logger::log_api_response(
-				&self.session.info.name,
-				&ex.response,
-				ex.usage.as_ref(),
-			);
-		}
-
 		// Add message to session
 		let message = self.session.add_message("assistant", content);
 		self.last_response = content.to_string();
-
-		// Log the raw exchange if available (legacy)
-		if let Some(ex) = &exchange {
-			let _ = crate::session::logger::log_raw_exchange(&self.session.info.name, ex);
-		}
 
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
@@ -496,24 +463,6 @@ impl ChatSession {
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
-
-			// If we have a raw exchange, save it inline in session file for complete restoration
-			if let Some(ex) = exchange {
-				// Save API request and response as separate prefixed lines for debugging
-				let _ =
-					crate::session::logger::log_api_request(&self.session.info.name, &ex.request);
-				let _ = crate::session::logger::log_api_response(
-					&self.session.info.name,
-					&ex.response,
-					ex.usage.as_ref(),
-				);
-			}
-
-			// Log session stats snapshot after each assistant response
-			let _ = crate::session::logger::log_session_stats(
-				&self.session.info.name,
-				&self.session.info,
-			);
 		}
 
 		Ok(())

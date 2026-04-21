@@ -1365,6 +1365,12 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 					}
 				}
 
+				// Accumulate bytes across WouldBlock retries until we see a newline.
+				// BufReader::read_line returns Err(WouldBlock) mid-line when the pipe
+				// drains before a newline — any bytes already appended to the buffer
+				// stay there; we must NOT discard them. Only clear after a complete
+				// line has been parsed (success or non-JSON stdout noise).
+				let mut response_str = String::new();
 				let response = loop {
 					// Check cancellation flag set by the outer tokio::select! on Ctrl+C
 					if cancel_flag_for_blocking.load(Ordering::Relaxed) {
@@ -1373,12 +1379,12 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 						));
 					}
 
-					let mut response_str = String::new();
+					let len_before = response_str.len();
 					let read_result = match reader.read_line(&mut response_str) {
 						Ok(n) => n,
 						Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-							// No data available yet — sleep briefly and retry.
-							// 50ms gives responsive cancellation without busy-spinning.
+							// No data available yet — sleep briefly and retry. Any bytes
+							// already read into response_str remain; next iteration appends.
 							std::thread::sleep(std::time::Duration::from_millis(50));
 							continue;
 						}
@@ -1387,41 +1393,54 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 						}
 					};
 
-					if read_result == 0 {
-						// Include recent stderr lines for diagnostics
-						let stderr_hint = {
-							let map = SERVER_STDERR.read().unwrap();
-							map.get(&server_name_for_closure)
-								.and_then(|buf| {
-									buf.lock().ok().and_then(|b| {
-										let last: Vec<_> =
-											b.iter().rev().take(10).cloned().collect();
-										if last.is_empty() {
-											None
-										} else {
-											let mut lines = last;
-											lines.reverse();
-											Some(format!(
-												"\nServer stderr:\n  {}",
-												lines.join("\n  ")
-											))
-										}
+					// Line not yet complete: Ok(n) with no trailing '\n' means the
+					// underlying read returned 0 (EOF) OR the line ended without newline.
+					// Distinguish: if n==0 AND nothing was appended this round AND buffer
+					// has no data → true EOF. Otherwise keep looping until we see '\n'.
+					let ended_with_newline = response_str.ends_with('\n');
+					if !ended_with_newline {
+						if read_result == 0 && response_str.len() == len_before {
+							// True EOF with no pending data — server closed.
+							let stderr_hint = {
+								let map = SERVER_STDERR.read().unwrap();
+								map.get(&server_name_for_closure)
+									.and_then(|buf| {
+										buf.lock().ok().and_then(|b| {
+											let last: Vec<_> =
+												b.iter().rev().take(10).cloned().collect();
+											if last.is_empty() {
+												None
+											} else {
+												let mut lines = last;
+												lines.reverse();
+												Some(format!(
+													"\nServer stderr:\n  {}",
+													lines.join("\n  ")
+												))
+											}
+										})
 									})
-								})
-								.unwrap_or_default()
-						};
-						return Err(anyhow::anyhow!(
-							"Server closed connection while reading response{}",
-							stderr_hint
-						));
+									.unwrap_or_default()
+							};
+							return Err(anyhow::anyhow!(
+								"Server closed connection while reading response{}",
+								stderr_hint
+							));
+						}
+						// Partial line — keep reading.
+						continue;
 					}
+
+					// Complete line captured. Take ownership so we can reset the
+					// accumulator before parsing, ready for the next line.
+					let line = std::mem::take(&mut response_str);
 
 					// Parse the line as JSON — non-JSON lines are spec violations (stdout noise).
 					// Warn and skip rather than hard-fail so badly-behaved servers still work.
-					let msg: Value = match serde_json::from_str(&response_str) {
+					let msg: Value = match serde_json::from_str(&line) {
 						Ok(v) => v,
 						Err(_) => {
-							let trimmed = response_str.trim();
+							let trimmed = line.trim();
 							if !trimmed.is_empty() {
 								eprintln!(
 									"⚠️  MCP '{}' prints: {}",

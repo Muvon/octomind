@@ -548,6 +548,7 @@ pub async fn compress_completed_task(
 		"task",
 		messages_removed,
 		tokens_saved,
+		&session.session.messages,
 	);
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
@@ -770,6 +771,7 @@ async fn compress_phase(
 		"phase",
 		messages_removed,
 		tokens_saved,
+		&session.session.messages,
 	);
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
@@ -920,6 +922,7 @@ async fn compress_project(
 		"project",
 		messages_removed,
 		tokens_saved,
+		&session.session.messages,
 	);
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression

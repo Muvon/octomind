@@ -23,6 +23,7 @@
 //! `append_to_session_file`. This module only handles the marker entries that
 //! the loader needs to reconstruct session state.
 
+use crate::session::Message;
 use anyhow::Result;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -57,11 +58,18 @@ pub fn log_restoration_point(
 }
 
 /// Log compression point — clears prior messages on reload (messages were compressed).
+///
+/// CRITICAL: After writing the marker, this also snapshots the current in-memory
+/// post-compression messages to the log. Without this, if no further activity occurs
+/// before session exit, the parser on resume would wipe everything at the marker and
+/// end up with zero messages (because compression mutates memory only — the compressed
+/// summary + preserved tail aren't otherwise persisted until new messages arrive).
 pub fn log_compression_point(
 	session_name: &str,
 	compression_type: &str,
 	messages_removed: usize,
 	tokens_saved: u64,
+	post_compression_messages: &[Message],
 ) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let entry = serde_json::json!({
@@ -71,7 +79,16 @@ pub fn log_compression_point(
 		"messages_removed": messages_removed,
 		"tokens_saved": tokens_saved,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)?;
+
+	// Snapshot the post-compression message state so resume can reconstruct it.
+	// The parser wipes `messages` at the marker and expects to re-read them below.
+	for msg in post_compression_messages {
+		let json = serde_json::to_string(msg)?;
+		append_to_log(&log_file, &json)?;
+	}
+
+	Ok(())
 }
 
 /// Log a critical knowledge entry extracted during compression.

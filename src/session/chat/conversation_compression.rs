@@ -1570,6 +1570,7 @@ async fn apply_compression(
 		"conversation",
 		messages_removed,
 		tokens_saved,
+		&session.session.messages,
 	);
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression

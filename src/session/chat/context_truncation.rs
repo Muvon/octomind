@@ -124,6 +124,17 @@ pub async fn perform_simple_boundary_truncation(
 		.bright_green()
 	);
 
+	// Write COMPRESSION_POINT marker + post-truncation message snapshot so resume
+	// reconstructs the truncated state. Without this, the parser re-reads all
+	// original messages from the JSONL and the /truncate effect is lost on resume.
+	crate::session::logger::log_compression_point(
+		&chat_session.session.info.name,
+		"manual_truncate",
+		messages_removed,
+		tokens_saved as u64,
+		&chat_session.session.messages,
+	)?;
+
 	// Save the session
 	chat_session.save()?;
 
@@ -223,6 +234,18 @@ pub async fn perform_smart_full_summarization(
 		debug: format!("Full summarization complete: {} messages replaced with summary", original_count).bright_green(),
 		default: "Conversation summarized successfully".bright_green()
 	);
+
+	// Write COMPRESSION_POINT marker + post-summarization snapshot so resume
+	// reconstructs the summarized state. Without this, the parser re-reads all
+	// original messages from the JSONL and the /summarize effect is lost on resume.
+	let messages_removed = original_count.saturating_sub(chat_session.session.messages.len());
+	crate::session::logger::log_compression_point(
+		&chat_session.session.info.name,
+		"manual_summarize",
+		messages_removed,
+		0,
+		&chat_session.session.messages,
+	)?;
 
 	// Save the updated session
 	chat_session.save()?;

@@ -114,7 +114,9 @@ pub fn init_pool(domain: &str) {
 	};
 
 	let mut entries = Vec::new();
+	let mut seen_names = std::collections::HashSet::new();
 
+	// 1. Tap skills (highest priority)
 	for tap in &taps {
 		let skills_dir = match tap.skills_dir() {
 			Ok(d) if d.exists() => d,
@@ -154,10 +156,54 @@ pub fn init_pool(domain: &str) {
 				continue;
 			}
 
-			entries.push(PoolEntry {
-				name: meta.name,
-				rules: meta.rules,
-			});
+			if seen_names.insert(meta.name.clone()) {
+				entries.push(PoolEntry {
+					name: meta.name,
+					rules: meta.rules,
+				});
+			}
+		}
+	}
+
+	// 2. Universal skill dirs (npx skills) — fallback after taps
+	let workdir = crate::mcp::workdir::get_thread_working_directory();
+	for dir in super::skill::universal_skill_dirs(&workdir) {
+		let dir_entries = match std::fs::read_dir(&dir) {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+
+		for entry in dir_entries.flatten() {
+			let skill_dir = entry.path();
+			if !skill_dir.is_dir() {
+				continue;
+			}
+
+			let skill_md = skill_dir.join("SKILL.md");
+			let content = match std::fs::read_to_string(&skill_md) {
+				Ok(c) => c,
+				Err(_) => continue,
+			};
+
+			let meta = match super::skill::parse_skill_meta(&content) {
+				Some(m) => m,
+				None => continue,
+			};
+
+			if meta.rules.is_empty() {
+				continue;
+			}
+
+			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain) {
+				continue;
+			}
+
+			if seen_names.insert(meta.name.clone()) {
+				entries.push(PoolEntry {
+					name: meta.name,
+					rules: meta.rules,
+				});
+			}
 		}
 	}
 

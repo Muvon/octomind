@@ -485,6 +485,32 @@ pub fn find_all_skills_with_details() -> Vec<(SkillMeta, PathBuf)> {
 	find_all_skills()
 }
 
+/// Returns universal skill directories used by `npx skills` (the open agent skills ecosystem).
+///
+/// These are scanned AFTER taps, so tap skills take priority on name collisions.
+/// Two locations:
+/// - Project: `<workdir>/.agents/skills/`
+/// - Global: `~/.config/agents/skills/` (xdg-basedir, same as npx skills)
+pub(crate) fn universal_skill_dirs(workdir: &std::path::Path) -> Vec<PathBuf> {
+	let mut dirs = Vec::new();
+
+	// Project-level: .agents/skills/ in current workdir
+	let project_skills = workdir.join(".agents").join("skills");
+	if project_skills.is_dir() {
+		dirs.push(project_skills);
+	}
+
+	// Global: ~/.config/agents/skills/ (xdg-basedir, matching npx skills CLI)
+	let global_skills = dirs::home_dir()
+		.map(|h| h.join(".config").join("agents").join("skills"))
+		.unwrap_or_else(|| PathBuf::from("/dev/null"));
+	if global_skills.is_dir() {
+		dirs.push(global_skills);
+	}
+
+	dirs
+}
+
 fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 	let taps = match crate::agent::taps::get_taps() {
 		Ok(t) => t,
@@ -497,6 +523,7 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 	let mut skills = Vec::new();
 	let mut seen_names = std::collections::HashSet::new();
 
+	// 1. Tap skills (highest priority)
 	for tap in &taps {
 		let skills_dir = match tap.skills_dir() {
 			Ok(d) => d,
@@ -508,6 +535,38 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 		}
 
 		let entries = match std::fs::read_dir(&skills_dir) {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+
+		for entry in entries.flatten() {
+			let skill_dir = entry.path();
+			if !skill_dir.is_dir() {
+				continue;
+			}
+
+			let skill_md = skill_dir.join("SKILL.md");
+			if !skill_md.exists() {
+				continue;
+			}
+
+			let content = match std::fs::read_to_string(&skill_md) {
+				Ok(c) => c,
+				Err(_) => continue,
+			};
+
+			if let Some(meta) = parse_skill_meta(&content) {
+				if seen_names.insert(meta.name.clone()) {
+					skills.push((meta, skill_dir));
+				}
+			}
+		}
+	}
+
+	// 2. Universal skill dirs (npx skills) — fallback after taps
+	let workdir = crate::mcp::workdir::get_thread_working_directory();
+	for dir in universal_skill_dirs(&workdir) {
+		let entries = match std::fs::read_dir(&dir) {
 			Ok(e) => e,
 			Err(_) => continue,
 		};
@@ -555,6 +614,7 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 		}
 	};
 
+	// 1. Tap skills (highest priority)
 	for tap in &taps {
 		let skills_dir = match tap.skills_dir() {
 			Ok(d) => d,
@@ -562,6 +622,27 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 		};
 
 		let skill_dir = skills_dir.join(name);
+		if !skill_dir.is_dir() {
+			continue;
+		}
+
+		let skill_md = skill_dir.join("SKILL.md");
+		let content = match std::fs::read_to_string(&skill_md) {
+			Ok(c) => c,
+			Err(_) => continue,
+		};
+
+		if let Some(meta) = parse_skill_meta(&content) {
+			if meta.name == name {
+				return Some((meta, skill_dir, content));
+			}
+		}
+	}
+
+	// 2. Universal skill dirs (npx skills) — fallback after taps
+	let workdir = crate::mcp::workdir::get_thread_working_directory();
+	for dir in universal_skill_dirs(&workdir) {
+		let skill_dir = dir.join(name);
 		if !skill_dir.is_dir() {
 			continue;
 		}

@@ -78,6 +78,12 @@ max_retries = 1
 
 # Base timeout for exponential backoff retry logic (config-only, no CLI override)
 retry_timeout = 30
+
+# Per-request HTTP timeout in seconds — hard limit on how long a single
+# HTTP call to the LLM provider may take before being aborted.
+# 0 = no timeout (LLM responses can take minutes for long generations).
+# Applied at the reqwest RequestBuilder level; retry/backoff still applies on timeout.
+request_timeout_seconds = 300
 # ═══════════════════════════════════════════════════════════════════════════════
 # USER INTERFACE
 # Configure how Octomind displays information

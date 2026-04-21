@@ -255,6 +255,10 @@ pub struct Config {
 	// Base timeout for exponential backoff retry logic (config-only, no CLI override)
 	pub retry_timeout: u32,
 
+	// Per-request HTTP timeout in seconds — hard limit on a single LLM HTTP call.
+	// 0 = no timeout (LLM responses can take minutes). Retry/backoff still applies on timeout.
+	pub request_timeout_seconds: u32,
+
 	// Agent configurations - simplified ACP-based definitions
 	#[serde(default)]
 	pub agents: Vec<crate::config::agents::AgentConfig>,

@@ -173,6 +173,10 @@ impl<'a> ChatCompletionParams<'a> {
 		)
 		.with_max_retries(self.max_retries)
 		.with_retry_timeout(self.retry_timeout)
+		.with_request_timeout(match self.config.request_timeout_seconds {
+			0 => None,
+			n => Some(std::time::Duration::from_secs(n as u64)),
+		})
 		.with_long_cache(self.config.use_long_system_cache);
 
 		if let Some(token) = &self.cancellation_token {

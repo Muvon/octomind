@@ -132,8 +132,17 @@ fn handle_final_response(
 		id: response_id, // CRITICAL: Set the response_id for conversation continuity
 	};
 
-	chat_session.session.messages.push(assistant_message);
+	chat_session
+		.session
+		.messages
+		.push(assistant_message.clone());
 	chat_session.last_response = content.to_string();
+
+	// Persist to session file so the message survives session close/resume
+	if let Some(session_file) = &chat_session.session.session_file {
+		let message_json = serde_json::to_string(&assistant_message)?;
+		crate::session::append_to_session_file(session_file, &message_json)?;
+	}
 
 	// CRITICAL FIX: DO NOT track cost/tokens here - already tracked by CostTracker::track_exchange_cost()
 	// in api_executor.rs:163. Tracking here causes DUPLICATE cost/token counting.

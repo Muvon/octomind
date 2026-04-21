@@ -712,4 +712,113 @@ mod session_restore_tests {
 			Some("call_123".to_string())
 		);
 	}
+
+	/// Regression test: assistant's final response (no tool calls) must be persisted
+	/// to the session file so it survives session close and --resume-recent.
+	/// Bug: handle_final_response pushed to in-memory messages but never wrote to file.
+	#[test]
+	fn test_restore_final_assistant_response_persisted() {
+		let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+		// Simulate a conversation where the assistant's last message is a plain
+		// text response (no tool calls) — the exact path handle_final_response takes.
+		let messages = vec![
+			create_message("system", "You are a helpful assistant"),
+			create_message("user", "What is 2+2?"),
+			create_message("assistant", "2+2 equals 4."),
+			create_message("user", "And 3+3?"),
+			create_message("assistant", "3+3 equals 6."),
+		];
+
+		let session_file = create_test_session_file(&temp_dir, messages.clone(), vec![]);
+
+		let loaded_session =
+			octomind::session::load_session(&session_file).expect("Failed to load session");
+
+		// The final assistant message must be present after restore
+		assert_eq!(
+			loaded_session.messages.len(),
+			5,
+			"All 5 messages (including final assistant response) must be restored"
+		);
+		assert_eq!(loaded_session.messages[4].role, "assistant");
+		assert_eq!(loaded_session.messages[4].content, "3+3 equals 6.");
+	}
+
+	/// Regression test: session ending with user message followed by assistant response
+	/// must restore both — the exact scenario from the --resume-recent bug.
+	#[test]
+	fn test_restore_session_ending_with_assistant_response() {
+		let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+		let messages = vec![
+			create_message("system", "System prompt"),
+			create_message("user", "First question"),
+			create_message("assistant", "First answer"),
+			create_message("user", "Second question"),
+			create_message("assistant", "Second answer — this was the last thing shown"),
+		];
+
+		// Also add a SUMMARY marker after messages (simulates session save on close)
+		let timestamp = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.unwrap()
+			.as_secs();
+		let summary_marker = serde_json::json!({
+			"type": "SUMMARY",
+			"timestamp": timestamp,
+			"session_info": {
+				"name": "test",
+				"created_at": timestamp,
+				"model": "test-model",
+				"provider": "test",
+				"input_tokens": 100,
+				"output_tokens": 50,
+				"cache_read_tokens": 0,
+				"cache_write_tokens": 0,
+				"reasoning_tokens": 0,
+				"total_cost": 0.01,
+				"duration_seconds": 60,
+				"layer_stats": [],
+				"tool_calls": 0,
+				"total_api_time_ms": 0,
+				"total_tool_time_ms": 0,
+				"total_layer_time_ms": 0,
+				"compression_stats": octomind::session::CompressionStats::default(),
+				"total_api_calls": 2,
+				"current_non_cached_tokens": 0,
+				"current_total_tokens": 150,
+				"last_cache_checkpoint_time": timestamp,
+				"cache_next_user_message": false,
+				"spending_threshold_checkpoint": 0.0,
+				"compression_hint_count": 0,
+				"last_compression_hint_shown": 0,
+				"context_tokens_after_last_compression": 0,
+				"predicted_turns_at_last_compression": 0.0,
+				"api_calls_at_last_compression": 0,
+				"output_tokens_at_last_compression": 0,
+				"consecutive_compressions": 0
+			}
+		});
+
+		let session_file =
+			create_test_session_file(&temp_dir, messages.clone(), vec![summary_marker]);
+
+		let loaded_session =
+			octomind::session::load_session(&session_file).expect("Failed to load session");
+
+		// The assistant's final response must survive even with a trailing SUMMARY marker
+		assert_eq!(
+			loaded_session.messages.len(),
+			5,
+			"All messages must be restored; assistant's final response must not be lost"
+		);
+
+		let last_msg = &loaded_session.messages[4];
+		assert_eq!(last_msg.role, "assistant");
+		assert_eq!(
+			last_msg.content,
+			"Second answer — this was the last thing shown"
+		);
+	}
 }

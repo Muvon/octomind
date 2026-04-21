@@ -496,12 +496,39 @@ pub async fn compress_completed_task(
 		}
 	}
 
+	// CRITICAL: If the anchor message (at start_index) has tool_calls, its tool results
+	// immediately follow it. remove_messages_in_range drains start_index+1..=end_index —
+	// if tool results are in that range they get removed, leaving orphaned tool_use blocks
+	// without tool_result. The API then rejects the sequence with
+	// "tool_use ids were found without tool_result".
+	// Fix: advance start_index past all tool results that belong to the anchor's tool_calls.
+	let mut adjusted_start = message_range.start_index;
+	if let Some(anchor) = session.session.messages.get(adjusted_start) {
+		if anchor.role == "assistant" && anchor.tool_calls.is_some() {
+			let mut next = adjusted_start + 1;
+			while next < session.session.messages.len()
+				&& session.session.messages[next].role == "tool"
+			{
+				next += 1;
+			}
+			if next > adjusted_start + 1 && next < session.session.messages.len() {
+				crate::log_debug!(
+					"Task compression: advancing start_index past {} tool results ({} -> {})",
+					next - adjusted_start - 1,
+					adjusted_start,
+					next
+				);
+				adjusted_start = next;
+			}
+		}
+	}
+
 	// Remove messages in range
 	let (messages_removed, _) =
-		session.remove_messages_in_range(message_range.start_index, message_range.end_index)?;
+		session.remove_messages_in_range(adjusted_start, message_range.end_index)?;
 
 	// Insert compressed summary (compressed block is always cached=true — new stable boundary)
-	session.insert_compressed_knowledge(message_range.start_index, compressed_entry)?;
+	session.insert_compressed_knowledge(adjusted_start, compressed_entry)?;
 
 	// Calculate metrics
 	let tokens_saved = tokens_before.saturating_sub(tokens_after);
@@ -1014,5 +1041,221 @@ mod tests {
 		assert!(formatted.contains("**Summary**: Task completed successfully"));
 		assert!(formatted.contains("Compressed"));
 		assert!(formatted.contains("test_123"));
+	}
+
+	/// Test that advancing start_index past tool results prevents orphaned tool_use blocks.
+	///
+	/// This reproduces the bug where task compression's remove_messages_in_range
+	/// drains tool_result messages that belong to an assistant message at start_index,
+	/// leaving orphaned tool_use blocks that cause API errors:
+	/// "tool_use ids were found without tool_result blocks immediately after"
+	#[test]
+	fn task_compression_advances_past_tool_results_to_prevent_orphans() {
+		use crate::session::Message;
+		use serde_json::json;
+
+		fn msg(role: &str) -> Message {
+			Message {
+				role: role.to_string(),
+				content: format!("{} message", role),
+				timestamp: 1000,
+				cached: false,
+				cache_ttl: None,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+				images: None,
+				videos: None,
+				thinking: None,
+				id: None,
+			}
+		}
+
+		// Build a message sequence where start_index (1) points to an assistant
+		// message with tool_calls, followed by tool_result messages.
+		// This is exactly the scenario that causes the Anthropic API error.
+		let mut messages = Vec::new();
+		messages.push(msg("system")); // 0
+
+		// Assistant with 2 tool calls — this is the anchor at start_index
+		let mut assistant = msg("assistant"); // 1
+		assistant.content = "I'll check those files.".to_string();
+		assistant.tool_calls = Some(json!([
+			{"id": "call_A", "type": "function", "function": {"name": "view_signatures", "arguments": "{}"}},
+			{"id": "call_B", "type": "function", "function": {"name": "view", "arguments": "{}"}}
+		]));
+		messages.push(assistant);
+
+		// Tool results that belong to the assistant above
+		let mut tool_a = msg("tool"); // 2
+		tool_a.tool_call_id = Some("call_A".to_string());
+		tool_a.name = Some("view_signatures".to_string());
+		messages.push(tool_a);
+
+		let mut tool_b = msg("tool"); // 3
+		tool_b.tool_call_id = Some("call_B".to_string());
+		tool_b.name = Some("view".to_string());
+		messages.push(tool_b);
+
+		// More conversation after the tool results
+		messages.push(msg("assistant")); // 4
+		messages.push(msg("user")); // 5
+		messages.push(msg("assistant")); // 6
+
+		// Simulate what compress_completed_task does:
+		// start_index = 1 (the assistant with tool_calls)
+		// end_index = 6 (last message)
+		let start_index = 1usize;
+		let end_index = 6usize;
+
+		// BUG SCENARIO (without fix):
+		// remove_messages_in_range drains start_index+1..=end_index = 2..=6
+		// This removes tool results at indices 2 and 3, orphaning the tool_calls at index 1.
+		// Verify the bug would occur without the advancement:
+		let drain_range = start_index + 1..=end_index;
+		let tool_ids_in_anchor: Vec<&str> = messages[start_index]
+			.tool_calls
+			.as_ref()
+			.unwrap()
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|tc| tc["id"].as_str().unwrap())
+			.collect();
+		let tool_results_in_drain: Vec<&str> = messages[drain_range.clone()]
+			.iter()
+			.filter(|m| m.role == "tool")
+			.filter_map(|m| m.tool_call_id.as_deref())
+			.collect();
+		// Without fix: tool_results_in_drain contains call_A and call_B — they'd be removed!
+		assert!(
+			tool_results_in_drain.contains(&"call_A"),
+			"Bug scenario: call_A tool result IS in drain range (would be orphaned without fix)"
+		);
+		assert!(
+			tool_results_in_drain.contains(&"call_B"),
+			"Bug scenario: call_B tool result IS in drain range (would be orphaned without fix)"
+		);
+
+		// FIX: Advance start_index past tool results that follow the anchor
+		let mut adjusted_start = start_index;
+		if let Some(anchor) = messages.get(adjusted_start) {
+			if anchor.role == "assistant" && anchor.tool_calls.is_some() {
+				let mut next = adjusted_start + 1;
+				while next < messages.len() && messages[next].role == "tool" {
+					next += 1;
+				}
+				if next > adjusted_start + 1 && next < messages.len() {
+					adjusted_start = next;
+				}
+			}
+		}
+
+		// After advancement: adjusted_start should be 4 (past tool results at 2 and 3)
+		assert_eq!(
+			adjusted_start, 4,
+			"start_index must advance past tool results to avoid orphaning tool_calls"
+		);
+
+		// Now verify the drain range (adjusted_start+1..=end_index) does NOT include
+		// any tool results that belong to the original anchor's tool_calls
+		let safe_drain_range = adjusted_start + 1..=end_index;
+		for msg in messages[safe_drain_range.clone()].iter() {
+			if msg.role == "tool" {
+				if let Some(ref tc_id) = msg.tool_call_id {
+					assert!(
+						!tool_ids_in_anchor.contains(&tc_id.as_str()),
+						"Drain range must not include tool results for anchor's tool_calls. Found {}",
+						tc_id
+					);
+				}
+			}
+		}
+
+		// Simulate the drain + insert to verify no orphaned tool_use blocks
+		messages.drain(safe_drain_range);
+		// After drain: messages = [system(0), assistant+tool_calls(1), tool_A(2), tool_B(3), assistant(4)]
+		// The assistant at index 1 still has its tool results at 2 and 3 — NOT orphaned.
+		let assistant_msg = &messages[1];
+		assert!(
+			assistant_msg.tool_calls.is_some(),
+			"Assistant message should still have tool_calls"
+		);
+
+		// Verify every tool_call_id in the assistant has a matching tool result
+		let tool_call_ids: Vec<String> = assistant_msg
+			.tool_calls
+			.as_ref()
+			.unwrap()
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|tc| tc["id"].as_str().unwrap().to_string())
+			.collect();
+
+		for tc_id in &tool_call_ids {
+			let has_result = messages
+				.iter()
+				.any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some(tc_id.as_str()));
+			assert!(
+				has_result,
+				"tool_call {} must have a matching tool_result — got orphaned!",
+				tc_id
+			);
+		}
+	}
+
+	/// Test that when start_index does NOT point to an assistant with tool_calls,
+	/// the advancement logic is a no-op (doesn't change start_index).
+	#[test]
+	fn task_compression_no_advancement_when_no_tool_calls() {
+		use crate::session::Message;
+
+		fn msg(role: &str) -> Message {
+			Message {
+				role: role.to_string(),
+				content: format!("{} message", role),
+				timestamp: 1000,
+				cached: false,
+				cache_ttl: None,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+				images: None,
+				videos: None,
+				thinking: None,
+				id: None,
+			}
+		}
+
+		let messages = [
+			msg("system"),    // 0
+			msg("user"),      // 1 — start_index points here (no tool_calls)
+			msg("assistant"), // 2
+			msg("user"),      // 3
+			msg("assistant"), // 4
+		];
+
+		let start_index = 1usize;
+
+		// Apply the same advancement logic
+		let mut adjusted_start = start_index;
+		if let Some(anchor) = messages.get(adjusted_start) {
+			if anchor.role == "assistant" && anchor.tool_calls.is_some() {
+				let mut next = adjusted_start + 1;
+				while next < messages.len() && messages[next].role == "tool" {
+					next += 1;
+				}
+				if next > adjusted_start + 1 && next < messages.len() {
+					adjusted_start = next;
+				}
+			}
+		}
+
+		// start_index should be unchanged — user message has no tool_calls
+		assert_eq!(
+			adjusted_start, start_index,
+			"start_index should not change when anchor has no tool_calls"
+		);
 	}
 }

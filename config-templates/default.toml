@@ -690,12 +690,6 @@ auto_validation = true
 activation_timeout = 3
 
 # Timeout in seconds for `validate` scripts. 0 = unlimited.
-validation_timeout = 60
-
-# Maximum validation retries before giving up per skill per turn.
-max_retries = 3
-
-# Timeout in seconds for `validate` scripts. 0 = unlimited.
 # Can be longer — validators like `cargo test` may need time.
 validation_timeout = 60
 

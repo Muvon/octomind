@@ -480,10 +480,10 @@ This allows organizing config by concern (e.g., `mcp-github.toml`, `layers-custo
 
 ## `[skills]` — Skill Auto-Activation & Validation (required)
 
-| Field | Type | Value | Description |
-|-------|------|-------|-------------|
-| `auto_activation` | bool | `true` | Enable automatic skill activation via `activate` scripts. |
-| `activation_timeout` | u64 | `3` | Timeout in seconds for `activate` scripts. `0` = unlimited. |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto_activation` | bool | `true` | Enable automatic skill activation via declarative `rules:` in SKILL.md frontmatter. |
+| `activation_timeout` | u64 | `3` | Reserved. Rules are evaluated in-process (no script timeout needed). Kept for config compatibility. |
 | `validation_timeout` | u64 | `60` | Timeout in seconds for `validate` scripts. `0` = unlimited. |
 | `max_retries` | u32 | `3` | Max validation retries per skill before skipping. Resets on success. |
 

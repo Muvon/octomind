@@ -53,56 +53,25 @@ pub struct SkillMeta {
 	pub capabilities: Vec<String>,
 	pub domains: Vec<String>,
 	/// Declarative activation rules. Empty = manual only.
-	pub activate: Vec<ActivateEntry>,
+	pub rules: Vec<Vec<ActivateCheck>>,
 }
-
-/// One activation entry: event filter + checks.
-/// Entries are OR'd — any entry matching activates the skill.
-#[derive(Debug, Clone)]
-pub struct ActivateEntry {
-	pub on: ActivateEvent,
-	pub rules: Vec<ActivateCheck>,
-}
-
-/// Event filter for activation.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ActivateEvent {
-	Any,
-	User,
-	Assistant,
-	Turn,
-}
-
-impl ActivateEvent {
-	fn parse(s: &str) -> Self {
-		match s.trim().to_lowercase().as_str() {
-			"user" => Self::User,
-			"assistant" => Self::Assistant,
-			"turn" => Self::Turn,
-			_ => Self::Any,
-		}
-	}
-
-	pub fn matches(&self, event: &str) -> bool {
-		matches!(self, Self::Any)
-			|| (matches!(self, Self::User) && event == "user")
-			|| (matches!(self, Self::Assistant) && event == "assistant")
-			|| (matches!(self, Self::Turn) && event == "turn")
-	}
-}
-
-/// Individual activation check within a rule line.
+/// Individual activation check within a group.
 #[derive(Debug, Clone)]
 pub enum ActivateCheck {
 	/// file(Cargo.toml) — file or glob exists in workdir
 	File(String),
-	/// content(rust) — match against event content
+	/// content(rust) — word-boundary match against user message content
 	Content(String),
 	/// grep(pattern) or grep(pattern, path_glob) — search inside files
 	Grep {
 		pattern: String,
 		path: Option<String>,
 	},
+	/// env(VAR) — environment variable is set and non-empty
+	/// env(VAR=val) — environment variable equals value
+	Env { var: String, value: Option<String> },
+	/// match(regex) — regex match against user message content
+	Match(String),
 }
 
 impl ActivateCheck {
@@ -133,6 +102,20 @@ impl ActivateCheck {
 					})
 				}
 			}
+			"env" => {
+				if let Some((var, val)) = args.trim().split_once('=') {
+					Some(Self::Env {
+						var: var.trim().to_string(),
+						value: Some(val.trim().to_string()),
+					})
+				} else {
+					Some(Self::Env {
+						var: args.trim().to_string(),
+						value: None,
+					})
+				}
+			}
+			"match" => Some(Self::Match(args.trim().to_string())),
 			_ => None,
 		}
 	}
@@ -150,16 +133,23 @@ impl ActivateCheck {
 					.map(|mut iter| iter.next().is_some())
 					.unwrap_or(false)
 			}
-			Self::Content(pattern) => match_pattern(pattern, content),
+			Self::Content(pattern) => match_word_pattern(pattern, content),
 			Self::Grep { pattern, path } => grep_workdir(pattern, path.as_deref(), workdir),
+			Self::Env { var, value } => match value {
+				Some(expected) => std::env::var(var).is_ok_and(|v| v == *expected),
+				None => std::env::var(var).is_ok_and(|v| !v.is_empty()),
+			},
+			Self::Match(pattern) => regex::Regex::new(pattern)
+				.map(|re| re.is_match(content))
+				.unwrap_or(false),
 		}
 	}
 }
 
-/// Try case-insensitive regex first, fallback to case-insensitive contains.
-fn match_pattern(pattern: &str, text: &str) -> bool {
-	let ci_pattern = format!("(?i){}", pattern);
-	regex::Regex::new(&ci_pattern)
+/// Word-boundary match: case-insensitive regex with \b boundaries, fallback to contains.
+fn match_word_pattern(pattern: &str, text: &str) -> bool {
+	let re_pattern = format!(r"(?i)\b{}\b", regex::escape(pattern));
+	regex::Regex::new(&re_pattern)
 		.map(|re| re.is_match(text))
 		.unwrap_or_else(|_| text.to_lowercase().contains(&pattern.to_lowercase()))
 }
@@ -246,7 +236,6 @@ pub(crate) fn has_activate_script(skill_dir: &std::path::Path) -> bool {
 }
 
 /// Check if a skill directory contains a `validate` script.
-#[allow(dead_code)]
 pub(crate) fn has_validate_script(skill_dir: &std::path::Path) -> bool {
 	skill_dir.join("validate").exists()
 }
@@ -304,18 +293,16 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 	let mut allowed_tools = Vec::new();
 	let mut capabilities = Vec::new();
 	let mut domains = Vec::new();
-	let mut activate = Vec::new();
+	let mut rules = Vec::new();
 
 	let lines: Vec<&str> = frontmatter.lines().collect();
 	let mut i = 0;
 	while i < lines.len() {
 		let line = lines[i];
 
-		// Check for activate: block (no value on same line)
-		if line.trim() == "activate:" {
+		if line.trim() == "rules:" {
 			i += 1;
-			// Parse indented entries: `- on: X` / `  rule: Y`
-			let mut current_on: Option<ActivateEvent> = None;
+			// Parse indented lines: each `- ` line is one AND-group
 			while i < lines.len() {
 				let entry_line = lines[i];
 				// Stop if not indented (back to top-level)
@@ -323,21 +310,11 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 					break;
 				}
 				let trimmed = entry_line.trim();
-				if let Some(rest) = trimmed.strip_prefix("- on:") {
-					// Save previous entry if complete
-					// Start new entry
-					current_on = Some(ActivateEvent::parse(rest));
-				} else if let Some(rest) = trimmed.strip_prefix("rule:") {
-					if let Some(ref on) = current_on {
-						let rules = parse_rule_line(rest);
-						if !rules.is_empty() {
-							activate.push(ActivateEntry {
-								on: on.clone(),
-								rules,
-							});
-						}
+				if let Some(rest) = trimmed.strip_prefix("- ") {
+					let checks = parse_rule_line(rest);
+					if !checks.is_empty() {
+						rules.push(checks);
 					}
-					current_on = None;
 				}
 				i += 1;
 			}
@@ -380,7 +357,7 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 		allowed_tools,
 		capabilities,
 		domains,
-		activate,
+		rules,
 	})
 }
 

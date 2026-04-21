@@ -13,7 +13,7 @@ Skills are stored in taps at `skills/<name>/SKILL.md`. When activated, the skill
 OCTOMIND_SKILLS=programming-rust,git-workflow octomind run developer:general
 ```
 
-**2. Auto-activation** — skills with `activate` scripts activate based on project context (e.g., `Cargo.toml` detected). Scoped by `domains` field to the current agent's role.
+**2. Auto-activation** — skills with declarative `rules:` in frontmatter activate based on project context (e.g., `Cargo.toml` detected, user mentions "rust"). Scoped by `domains` field to the current agent's role.
 
 **3. Manual** — via `/skill` command or the `skill` MCP tool:
 ```
@@ -26,7 +26,6 @@ skill(action="use", name="...")     # MCP tool (AI-initiated)
 ```
 skills/<name>/
   SKILL.md      # Required: metadata (frontmatter) + instructions (body)
-  activate      # Optional: auto-activation script (exit 0 = activate)
   validate      # Optional: validation script (exit 0 = valid, stderr = error)
   scripts/      # Optional: executable scripts the skill references
   references/   # Optional: supplementary documentation
@@ -47,6 +46,10 @@ compatibility: "Requires cargo and rustc."
 capabilities: programming-rust       # capabilities to auto-load (space-delimited or array)
 domains: developer                   # agent categories that check this skill
 allowed-tools: shell text_editor     # pre-approved tools
+rules:                                # declarative activation rules
+  - file(Cargo.toml)
+  - content(rust)
+  - content(rust) file(Cargo.toml)
 ---
 ```
 
@@ -60,10 +63,56 @@ allowed-tools: shell text_editor     # pre-approved tools
 | `allowed-tools` | no | Space-delimited pre-approved tools. |
 | `license` | no | License name (e.g., `Apache-2.0`). |
 | `compatibility` | no | Max 500 chars. Environment requirements. |
+| `rules` | no | Declarative activation rules. Each `- ` line is an OR-group; space-separated checks within a line are AND. Empty = manual-only. |
 
 ### Body
 
 The body after frontmatter is the skill's instructions. Structure: Conventions, Tooling, Best Practices, Examples.
+
+## Declarative Activation Rules
+
+The `rules:` field in SKILL.md frontmatter defines when a skill should auto-activate. Rules are evaluated in-process (no script spawning) on every user message.
+
+### Logic
+
+- Each `- ` line is an **OR-group** — if **any** group matches, the skill activates.
+- Space-separated checks within a line are **AND** — **all** must match for the group to activate.
+- Empty `rules:` (or omitted) = manual-only skill.
+
+```yaml
+rules:
+  - file(Cargo.toml)                    # OR: Cargo.toml exists
+  - content(rust)                       # OR: user mentions "rust"
+  - content(rust) file(Cargo.toml)      # OR: user mentions "rust" AND Cargo.toml exists
+```
+
+### Check Types
+
+| Check | Syntax | Description |
+|-------|--------|-------------|
+| `file` | `file(pattern)` | File or glob exists in working directory. Example: `file(Cargo.toml)`, `file(*.go)` |
+| `content` | `content(word)` | Case-insensitive word-boundary match against user message. Example: `content(rust)` matches "rust" but not "thrust" |
+| `grep` | `grep(pattern)` or `grep(pattern, glob)` | Search file contents in working directory (respects .gitignore). Example: `grep(fn main)`, `grep(TODO, *.rs)` |
+| `env` | `env(VAR)` or `env(VAR=val)` | Environment variable is set and non-empty, or equals a specific value. Example: `env(CI)`, `env(CI=true)` |
+| `match` | `match(regex)` | Regex match against user message content. Example: `match(\brust\b)` |
+
+### Evaluation Context
+
+- **`file`**, **`grep`**, **`env`** — evaluated against the project working directory and environment.
+- **`content`**, **`match`** — evaluated against the user's message text.
+- Rules are checked on every user message. Already-active skills are skipped.
+
+### Domain Scoping
+
+The `domains` field limits which agents evaluate this skill's rules:
+
+```yaml
+domains: developer devops
+```
+
+- Only agents with matching role names evaluate this skill's rules
+- Reduces the activation pool to relevant skills only
+- Skills without `domains` are manual-only (backward compatible)
 
 ## Environment Variable: OCTOMIND_SKILLS
 
@@ -75,45 +124,19 @@ octomind run developer:general
 ```
 
 - Skills are activated immediately as permanent skills
-- No `activate` scripts are run for env-loaded skills
+- Declarative rules are not evaluated for env-loaded skills
 - Each name is validated against available skills in taps
 - Unknown skill names are skipped with a warning
 - Already-active skills are not re-injected
-
-## Activate Script
-
-An executable script at `skills/<name>/activate` that decides whether the skill should be active.
-
-**Protocol:**
-- `argv[1]` = event type: `user` | `assistant` | `turn`
-- `stdin` = event content (user message, assistant response, or turn summary)
-- Runs in the project working directory
-- **exit 0** = activate this skill
-- **exit non-zero** = don't activate (or deactivate if currently active)
-- Already-active skills are skipped (no script executed)
-
-**Events:**
-- `user` — real user typed input (not auto-injected)
-- `assistant` — assistant finished responding, awaiting user
-- `turn` — tool execution done, ready for next loop. Content includes tool names + params.
-
-**Example:**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-case "$1" in
-  user) grep -qi '\brust\b\|cargo\b' && exit 0 ;;
-  *)    [ -f Cargo.toml ] && exit 0 ;;
-esac
-exit 1
-```
 
 ## Validate Script
 
 An executable script at `skills/<name>/validate` that checks LLM output quality deterministically.
 
 **Protocol:**
-- Runs at the end of each assistant turn
+- Runs only on the final assistant message (end of turn)
+- `argv[1]` = `"assistant"` (always — the script receives the assistant's response)
+- `stdin` = the assistant message content
 - Runs in the project working directory
 - **exit 0** = output is valid
 - **exit non-zero** = output is invalid. stderr (or stdout if stderr empty) is captured and fed back to the LLM as an error message for correction.
@@ -143,18 +166,6 @@ memory = "octobrain"
 codesearch = "octocode"
 ```
 
-## Domain Scoping
-
-The `domains` field limits which agents check this skill's `activate` script:
-
-```yaml
-domains: developer devops
-```
-
-- Only agents with matching role names run this skill's `activate` script
-- Reduces the activation pool to relevant skills only
-- Skills without `domains` are manual-only (backward compatible)
-
 ## /skill Command
 
 Toggle skills interactively during a session:
@@ -172,8 +183,8 @@ Required `[skills]` section in config:
 
 ```toml
 [skills]
-auto_activation = true       # enable/disable auto-activation
-activation_timeout = 3        # seconds per activate script, 0 = unlimited
+auto_activation = true       # enable/disable auto-activation via declarative rules
+activation_timeout = 3        # reserved (rules are in-process, no timeout needed)
 validation_timeout = 60       # seconds per validate script, 0 = unlimited
 max_retries = 3               # max validation retries per skill before giving up
 ```
@@ -182,7 +193,7 @@ All fields are required. The `[skills]` section must be present in the config fi
 
 ## Lint Validation
 
-Both `activate` and `validate` scripts must be executable (`chmod +x`). The tap lint script checks this:
+`validate` scripts must be executable (`chmod +x`). The tap lint script checks this:
 
 ```bash
 bash scripts/lint-skills.sh

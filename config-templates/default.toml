@@ -663,20 +663,18 @@ prompt = """Please help debug the issue above:
 # SKILL AUTO-ACTIVATION & VALIDATION
 # Configure automatic skill activation and output validation.
 # Skills are tap-distributed instruction packs that inject domain knowledge.
-# With auto-activation, skills activate based on project context (e.g.,
-# Cargo.toml detected → programming-rust skill activates automatically).
-# Validators run deterministic checks on LLM output (e.g., cargo clippy).
+# Auto-activation uses declarative `rules:` in SKILL.md frontmatter —
+# no script spawning, evaluated in-process on each user message.
+# Validators run deterministic checks on the final assistant message.
 # ═══════════════════════════════════════════════════════════════════════
 
 [skills]
-# Enable automatic skill activation via `activate` scripts in tap skills.
+# Enable automatic skill activation via declarative rules in SKILL.md frontmatter.
 # When enabled, skills with `domains` matching the current agent's role
-# are checked on each conversation event. Disable to use manual /skill only.
-auto_activation = true
+# are checked on each user message. Disable to use manual /skill only.
 
-# Timeout in seconds for `activate` scripts. 0 = unlimited.
-# Keep short — activate scripts run on every user message.
-activation_timeout = 3
+# Reserved. Rules are evaluated in-process (no script timeout needed).
+# Kept for config compatibility.
 
 # Timeout in seconds for `validate` scripts. 0 = unlimited.
 # Can be longer — validators like `cargo test` may need time.

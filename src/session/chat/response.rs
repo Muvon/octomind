@@ -622,22 +622,11 @@ pub async fn process_response<S: OutputSink>(
 		params.mode,
 	)?;
 
-	// Run skill activation + validators on assistant event (LLM done responding)
+	// Run skill validators on assistant response
 	{
 		let workdir = crate::mcp::get_thread_working_directory();
-		crate::mcp::core::skill_auto::run_activation(
-			crate::mcp::core::skill_auto::Event::Assistant,
-			&current_content,
-			&workdir,
-			params.chat_session,
-		)
-		.await;
-		let failures = crate::mcp::core::skill_auto::run_validators(
-			crate::mcp::core::skill_auto::Event::Assistant,
-			&current_content,
-			&workdir,
-		)
-		.await;
+		let failures =
+			crate::mcp::core::skill_auto::run_validators(&current_content, &workdir).await;
 		for (skill_name, error) in &failures {
 			let error_msg = format!(
 				"Validation failed ({}): {}\nPlease fix the issue.",

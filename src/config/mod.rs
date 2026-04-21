@@ -185,10 +185,10 @@ fn default_knowledge_retention() -> usize {
 /// Timeout of 0 means unlimited (no timeout).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillsConfig {
-	/// Enable automatic skill activation via `activate` scripts in tap skills.
+	/// Enable automatic skill activation via declarative rules in SKILL.md frontmatter.
 	pub auto_activation: bool,
 
-	/// Timeout in seconds for `activate` scripts. 0 = unlimited.
+	/// Reserved. Rules are evaluated in-process (no script timeout needed).
 	pub activation_timeout: u64,
 
 	/// Timeout in seconds for `validate` scripts. 0 = unlimited.

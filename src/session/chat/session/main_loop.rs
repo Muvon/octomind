@@ -748,19 +748,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				)
 				.await;
 
-			// Run skill activation + validators on user input
+			// Run skill activation on user input
 			{
 				crate::mcp::core::skill_auto::run_activation(
-					crate::mcp::core::skill_auto::Event::User,
 					&input,
 					&current_dir,
 					&mut chat_session,
-				)
-				.await;
-				crate::mcp::core::skill_auto::run_validators(
-					crate::mcp::core::skill_auto::Event::User,
-					&input,
-					&current_dir,
 				)
 				.await;
 			}
@@ -1156,9 +1149,8 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		}
 	}
 
-	// Run skill activation + validators on user input
+	// Run skill activation on user input
 	crate::mcp::core::skill_auto::run_activation(
-		crate::mcp::core::skill_auto::Event::User,
 		&input,
 		&current_dir,
 		&mut chat_session,

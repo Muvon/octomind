@@ -23,7 +23,7 @@ Octomind also loads `.env` files from the current directory via `dotenvy`. Varia
 | Variable | Description |
 |----------|-------------|
 | `OCTOMIND_CONFIG_PATH` | Override config directory path (default: `~/.local/share/octomind/config/`) |
-| `OCTOMIND_SKILLS` | Comma-delimited skill names to preload at session start (e.g., `programming-rust,git-workflow`). Skills are activated permanently without running `activate` scripts. |
+| `OCTOMIND_SKILLS` | Comma-delimited skill names to preload at session start (e.g., `programming-rust,git-workflow`). Skills are activated permanently without evaluating declarative rules. |
 
 ## Installation Script
 

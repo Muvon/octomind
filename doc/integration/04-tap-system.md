@@ -107,13 +107,14 @@ Manifests can include any config sections: roles, layers, workflows, MCP servers
 
 ## Skills
 
-Skills are reusable instruction packs managed via the `skill` MCP tool.
+Skills are reusable instruction packs managed via the `skill` MCP tool. Auto-activation uses declarative `rules:` in SKILL.md frontmatter — see [Skills](../usage/15-skills.md) for full documentation.
 
 ### Skill Structure
 
 ```
 skills/code-review/
   SKILL.md              # Instructions (injected into context)
+  validate              # Optional: validation script
   scripts/
     lint.sh             # Executable scripts
     test.sh

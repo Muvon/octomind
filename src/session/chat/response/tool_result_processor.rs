@@ -328,37 +328,6 @@ pub async fn process_tool_results(
 		);
 	}
 
-	// Run skill activation + validators on turn event (tools just executed)
-	{
-		let workdir = crate::mcp::get_thread_working_directory();
-		let turn_content = tool_results
-			.iter()
-			.map(|r| format!("tool: {}", r.tool_name))
-			.collect::<Vec<_>>()
-			.join("\n");
-		crate::mcp::core::skill_auto::run_activation(
-			crate::mcp::core::skill_auto::Event::Turn,
-			&turn_content,
-			&workdir,
-			chat_session,
-		)
-		.await;
-		let failures = crate::mcp::core::skill_auto::run_validators(
-			crate::mcp::core::skill_auto::Event::Turn,
-			&turn_content,
-			&workdir,
-		)
-		.await;
-		for (skill_name, error) in &failures {
-			let error_msg = format!(
-				"Validation failed ({}): {}\nPlease fix the issue.",
-				skill_name, error
-			);
-			chat_session.add_user_message(&error_msg)?;
-			log_info!("Validator '{}' failed on turn event", skill_name);
-		}
-	}
-
 	// Check spending threshold before making follow-up API call
 	match chat_session.check_spending_threshold(config) {
 		Ok(should_continue) => {

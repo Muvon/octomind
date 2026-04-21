@@ -14,29 +14,31 @@
 
 //! Skill auto-activation engine.
 //!
-//! Scans the tap skill pool for skills with `activate` scripts, filtered by
-//! the current agent's domain. Runs scripts on conversation events (`user`,
-//! `assistant`, `turn`) to determine which skills should be active.
+//! Scans the tap skill pool for skills with declarative rules, filtered by
+//! the current agent's domain. Evaluates rules on user input to determine
+//! which skills should be active.
 //!
 //! When a skill auto-activates, its required capabilities are auto-loaded
 //! (MCP servers enabled) and its content is injected via the inbox.
+//!
+//! Validators run only on the final assistant message (end of turn),
+//! passing the assistant content to each skill's `validate` script.
 
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
-/// Cached skill pool entry — a skill with declarative activate rules.
+/// Cached skill pool entry — a skill with declarative rules.
 #[derive(Debug, Clone)]
 struct PoolEntry {
 	name: String,
-	activate: Vec<super::skill::ActivateEntry>,
+	rules: Vec<Vec<super::skill::ActivateCheck>>,
 }
 
 /// Cached pool of auto-activatable skills, filtered by domain.
 struct SkillPool {
 	entries: Vec<PoolEntry>,
-	_domain: String,
 }
 
 static SKILL_POOL: OnceLock<Arc<RwLock<Option<SkillPool>>>> = OnceLock::new();
@@ -100,7 +102,7 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 }
 
 /// Initialize the skill pool for the given agent domain (e.g., "developer").
-/// Scans all taps for skills with `activate` scripts whose `domains` field
+/// Scans all taps for skills with declarative rules whose `domains` field
 /// includes the given domain.
 pub fn init_pool(domain: &str) {
 	let taps = match crate::agent::taps::get_taps() {
@@ -142,8 +144,8 @@ pub fn init_pool(domain: &str) {
 				None => continue,
 			};
 
-			// Must have activate rules
-			if meta.activate.is_empty() {
+			// Must have rules
+			if meta.rules.is_empty() {
 				continue;
 			}
 
@@ -154,7 +156,7 @@ pub fn init_pool(domain: &str) {
 
 			entries.push(PoolEntry {
 				name: meta.name,
-				activate: meta.activate,
+				rules: meta.rules,
 			});
 		}
 	}
@@ -172,31 +174,7 @@ pub fn init_pool(domain: &str) {
 	}
 
 	let mut pool = get_pool().write().unwrap();
-	*pool = Some(SkillPool {
-		entries,
-		_domain: domain.to_string(),
-	});
-}
-
-/// Conversation event types for activate/validate scripts.
-#[derive(Debug, Clone, Copy)]
-pub enum Event {
-	/// Real user input (typed, not auto-injected).
-	User,
-	/// Assistant finished responding, awaiting user.
-	Assistant,
-	/// Tool execution done, ready for next loop.
-	Turn,
-}
-
-impl Event {
-	fn as_str(&self) -> &'static str {
-		match self {
-			Event::User => "user",
-			Event::Assistant => "assistant",
-			Event::Turn => "turn",
-		}
-	}
+	*pool = Some(SkillPool { entries });
 }
 
 /// Get the skills config from the current session config.
@@ -212,12 +190,11 @@ fn get_skills_config() -> crate::config::SkillsConfig {
 		})
 }
 
-/// Run auto-activation for the given event and content.
+/// Run auto-activation for the given content.
 ///
 /// Evaluates declarative rules from the skill pool in-process.
-/// Any rule matching activates the skill. No process spawns.
+/// Any AND-group matching activates the skill. No process spawns.
 pub async fn run_activation(
-	event: Event,
 	content: &str,
 	workdir: &std::path::Path,
 	session: &mut crate::session::chat::session::ChatSession,
@@ -246,21 +223,17 @@ pub async fn run_activation(
 	}
 
 	let active_skills = crate::session::context::get_active_skills(&session_id);
-	let event_str = event.as_str();
 
 	for entry in &entries {
 		if active_skills.contains(&entry.name) {
 			continue;
 		}
 
-		// Evaluate: any entry matching = activate
-		let should_activate = entry.activate.iter().any(|act| {
-			act.on.matches(event_str)
-				&& act
-					.rules
-					.iter()
-					.any(|check| check.matches(content, workdir))
-		});
+		// Evaluate: any AND-group matching = activate
+		let should_activate = entry
+			.rules
+			.iter()
+			.any(|group| group.iter().all(|check| check.matches(content, workdir)));
 
 		if should_activate {
 			crate::log_debug!("skill_auto: rule-activated '{}'", entry.name);
@@ -305,23 +278,12 @@ fn get_retry_tracker() -> &'static Arc<RwLock<std::collections::HashMap<String, 
 	VALIDATOR_RETRIES.get_or_init(|| Arc::new(RwLock::new(std::collections::HashMap::new())))
 }
 
-/// Clear retry counter for a specific skill.
-#[allow(dead_code)]
-fn clear_retry_count(skill_name: &str) {
-	let mut retries = get_retry_tracker().write().unwrap();
-	retries.remove(skill_name);
-}
-
-/// Run validators from all active skills for the given event.
+/// Run validators from all active skills on the final assistant message.
 ///
 /// Returns a list of validation failures (skill_name, stderr) that should be
 /// fed back to the LLM as error messages. Respects `[skills]` config:
 /// `validation_timeout` and `max_retries`.
-pub async fn run_validators(
-	event: Event,
-	content: &str,
-	workdir: &std::path::Path,
-) -> Vec<(String, String)> {
+pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(String, String)> {
 	let skills_config = get_skills_config();
 	let session_id = match crate::session::context::current_session_id() {
 		Some(id) => id,
@@ -382,15 +344,13 @@ pub async fn run_validators(
 				break; // skill found but no validate script
 			}
 
-			let event_str = event.as_str().to_string();
 			let content = content.to_string();
 			let workdir = workdir.to_path_buf();
 			let name = skill_name.clone();
 
 			tasks.push(tokio::spawn(async move {
 				let result =
-					run_validate_script(&validate_script, &event_str, &content, &workdir, timeout)
-						.await;
+					run_validate_script(&validate_script, &content, &workdir, timeout).await;
 				(name, result)
 			}));
 
@@ -427,16 +387,16 @@ pub async fn run_validators(
 	failures
 }
 
-/// Run a validate script. Returns (exit_code, stderr).
+/// Run a validate script. Passes `"assistant"` as the first argument and
+/// the assistant message content on stdin. Returns (exit_code, stderr).
 async fn run_validate_script(
 	script_path: &std::path::Path,
-	event: &str,
 	content: &str,
 	workdir: &std::path::Path,
 	timeout: Duration,
 ) -> anyhow::Result<(i32, String)> {
 	let mut child = tokio::process::Command::new(script_path)
-		.arg(event)
+		.arg("assistant")
 		.current_dir(workdir)
 		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
@@ -465,18 +425,5 @@ async fn run_validate_script(
 		}
 		Ok(Err(e)) => Err(anyhow::anyhow!("Script wait error: {}", e)),
 		Err(_) => Err(anyhow::anyhow!("Validator timed out")),
-	}
-}
-
-/// Auto-deactivate a skill: forget + compress + clear retry counter.
-#[allow(dead_code)]
-fn auto_deactivate_skill(name: &str, _session_id: &str) {
-	let sid = crate::session::context::current_session_id().unwrap_or_default();
-	let n = name.to_string();
-	if crate::session::context::has_active_skill(&sid, &n) {
-		crate::session::context::remove_active_skill(&sid, &n);
-		crate::session::context::request_skill_compression(&sid);
-		clear_retry_count(name);
-		crate::log_debug!("skill_auto: deactivated '{}'", name);
 	}
 }

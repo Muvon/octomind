@@ -741,7 +741,7 @@ pub async fn check_and_compress_conversation(
 
 	if start_idx >= end_idx {
 		log_debug!("No messages to compress (range invalid)");
-		animation_manager.stop_current().await;
+		animation_manager.clear_phase();
 		return Ok(false);
 	}
 
@@ -812,7 +812,7 @@ pub async fn check_and_compress_conversation(
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
-		animation_manager.stop_current().await;
+		animation_manager.clear_phase();
 		return Ok(false);
 	}
 
@@ -884,7 +884,7 @@ pub async fn check_and_compress_conversation(
 		);
 	}
 
-	animation_manager.stop_current().await;
+	animation_manager.clear_phase();
 	Ok(true)
 }
 

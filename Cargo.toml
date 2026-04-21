@@ -32,7 +32,7 @@ opt-level = 3         # Optimize for speed
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-octolib = { version = "0.15.2", default-features = false }
+octolib = { version = "0.16.0", default-features = false }
 # octolib = { path = "../octolib", default-features = false }
 rmcp = { version = "1.4.0", default-features = false }
 

@@ -70,8 +70,14 @@ pub enum ActivateCheck {
 	/// env(VAR) — environment variable is set and non-empty
 	/// env(VAR=val) — environment variable equals value
 	Env { var: String, value: Option<String> },
-	/// match(regex) — regex match against user message content
+	/// match(\bdeploy\b) — regex match against user message content
 	Match(String),
+	/// bin(cargo) — executable is findable on PATH
+	Bin(String),
+	/// session(octomind) — case-insensitive substring match on current session name
+	Session(String),
+	/// workdir(rust) — case-insensitive substring match on working directory path
+	Workdir(String),
 }
 
 impl ActivateCheck {
@@ -116,12 +122,16 @@ impl ActivateCheck {
 				}
 			}
 			"match" => Some(Self::Match(args.trim().to_string())),
+			"bin" => Some(Self::Bin(args.trim().to_string())),
+			"session" => Some(Self::Session(args.trim().to_string())),
+			"workdir" => Some(Self::Workdir(args.trim().to_string())),
 			_ => None,
 		}
 	}
 
 	/// Evaluate this check against current context.
-	pub fn matches(&self, content: &str, workdir: &std::path::Path) -> bool {
+	/// `session_name` is the current session name (e.g., "260421-141708-octomind-a1b2c3").
+	pub fn matches(&self, content: &str, workdir: &std::path::Path, session_name: &str) -> bool {
 		match self {
 			Self::File(pattern) => {
 				let path = workdir.join(pattern);
@@ -142,6 +152,14 @@ impl ActivateCheck {
 			Self::Match(pattern) => regex::Regex::new(pattern)
 				.map(|re| re.is_match(content))
 				.unwrap_or(false),
+			Self::Bin(name) => which::which(name).is_ok(),
+			Self::Session(pattern) => session_name
+				.to_lowercase()
+				.contains(&pattern.to_lowercase()),
+			Self::Workdir(pattern) => workdir
+				.to_string_lossy()
+				.to_lowercase()
+				.contains(&pattern.to_lowercase()),
 		}
 	}
 }

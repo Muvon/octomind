@@ -255,6 +255,57 @@ mod tests {
 		assert_eq!(meta.rules.len(), 2);
 	}
 
+	#[test]
+	fn test_parse_rules_bin() {
+		let content = "---\nname: s\ndescription: d\nrules:\n  - bin(cargo)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.rules.len(), 1);
+		assert!(
+			matches!(&meta.rules[0][0], crate::mcp::core::skill::ActivateCheck::Bin(p) if p == "cargo")
+		);
+	}
+
+	#[test]
+	fn test_parse_rules_session() {
+		let content = "---\nname: s\ndescription: d\nrules:\n  - session(developer)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.rules.len(), 1);
+		assert!(
+			matches!(&meta.rules[0][0], crate::mcp::core::skill::ActivateCheck::Session(p) if p == "developer")
+		);
+	}
+
+	#[test]
+	fn test_parse_rules_workdir() {
+		let content = "---\nname: s\ndescription: d\nrules:\n  - workdir(rust)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.rules.len(), 1);
+		assert!(
+			matches!(&meta.rules[0][0], crate::mcp::core::skill::ActivateCheck::Workdir(p) if p == "rust")
+		);
+	}
+
+	#[test]
+	fn test_parse_rules_combined_new_checks() {
+		let content = "---\nname: s\ndescription: d\nrules:\n  - bin(cargo) file(Cargo.toml)\n  - session(dev) workdir(rust)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.rules.len(), 2);
+		assert_eq!(meta.rules[0].len(), 2);
+		assert_eq!(meta.rules[1].len(), 2);
+		assert!(
+			matches!(&meta.rules[0][0], crate::mcp::core::skill::ActivateCheck::Bin(p) if p == "cargo")
+		);
+		assert!(
+			matches!(&meta.rules[0][1], crate::mcp::core::skill::ActivateCheck::File(p) if p == "Cargo.toml")
+		);
+		assert!(
+			matches!(&meta.rules[1][0], crate::mcp::core::skill::ActivateCheck::Session(p) if p == "dev")
+		);
+		assert!(
+			matches!(&meta.rules[1][1], crate::mcp::core::skill::ActivateCheck::Workdir(p) if p == "rust")
+		);
+	}
+
 	// ---------------------------------------------------------------------------
 	// activate rule evaluation
 	// ---------------------------------------------------------------------------
@@ -264,29 +315,82 @@ mod tests {
 		let dir = tempfile::tempdir().unwrap();
 		fs::write(dir.path().join("Cargo.toml"), "").unwrap();
 		let check = crate::mcp::core::skill::ActivateCheck::File("Cargo.toml".to_string());
-		assert!(check.matches("", dir.path()));
+		assert!(check.matches("", dir.path(), ""));
 		assert!(
-			!crate::mcp::core::skill::ActivateCheck::File("go.mod".to_string())
-				.matches("", dir.path())
+			!crate::mcp::core::skill::ActivateCheck::File("go.mod".to_string()).matches(
+				"",
+				dir.path(),
+				""
+			)
 		);
 	}
 
 	#[test]
 	fn test_activate_check_content_match() {
 		let check = crate::mcp::core::skill::ActivateCheck::Content("rust".to_string());
-		assert!(check.matches("lets code in rust", std::path::Path::new(".")));
-		assert!(check.matches("RUST is great", std::path::Path::new(".")));
-		assert!(!check.matches("lets code in python", std::path::Path::new(".")));
+		assert!(check.matches("lets code in rust", std::path::Path::new("."), ""));
+		assert!(check.matches("RUST is great", std::path::Path::new("."), ""));
+		assert!(!check.matches("lets code in python", std::path::Path::new("."), ""));
 	}
 
 	#[test]
 	fn test_activate_check_content_word_boundary() {
 		let check = crate::mcp::core::skill::ActivateCheck::Content("rust".to_string());
-		assert!(check.matches("lets code in rust", std::path::Path::new(".")));
-		assert!(check.matches("RUST is great", std::path::Path::new(".")));
-		assert!(!check.matches("lets code in python", std::path::Path::new(".")));
+		assert!(check.matches("lets code in rust", std::path::Path::new("."), ""));
+		assert!(check.matches("RUST is great", std::path::Path::new("."), ""));
+		assert!(!check.matches("lets code in python", std::path::Path::new("."), ""));
 		// Word boundary: "rust" should not match "thrust"
-		assert!(!check.matches("thrust is powerful", std::path::Path::new(".")));
+		assert!(!check.matches("thrust is powerful", std::path::Path::new("."), ""));
+	}
+
+	#[test]
+	fn test_activate_check_bin_found() {
+		// "ls" exists on all platforms
+		let check = crate::mcp::core::skill::ActivateCheck::Bin("ls".to_string());
+		assert!(check.matches("", std::path::Path::new("."), ""));
+	}
+
+	#[test]
+	fn test_activate_check_bin_not_found() {
+		let check =
+			crate::mcp::core::skill::ActivateCheck::Bin("nonexistent_binary_xyz_12345".to_string());
+		assert!(!check.matches("", std::path::Path::new("."), ""));
+	}
+
+	#[test]
+	fn test_activate_check_session_match() {
+		let check = crate::mcp::core::skill::ActivateCheck::Session("octomind".to_string());
+		assert!(check.matches(
+			"",
+			std::path::Path::new("."),
+			"260421-141708-octomind-a1b2c3"
+		));
+		// Case-insensitive
+		assert!(check.matches("", std::path::Path::new("."), "Octomind-Session"));
+	}
+
+	#[test]
+	fn test_activate_check_session_no_match() {
+		let check = crate::mcp::core::skill::ActivateCheck::Session("python".to_string());
+		assert!(!check.matches(
+			"",
+			std::path::Path::new("."),
+			"260421-141708-octomind-a1b2c3"
+		));
+	}
+
+	#[test]
+	fn test_activate_check_workdir_match() {
+		let check = crate::mcp::core::skill::ActivateCheck::Workdir("octomind".to_string());
+		assert!(check.matches("", std::path::Path::new("/Users/dev/octomind"), ""));
+		// Case-insensitive
+		assert!(check.matches("", std::path::Path::new("/Users/dev/Octomind"), ""));
+	}
+
+	#[test]
+	fn test_activate_check_workdir_no_match() {
+		let check = crate::mcp::core::skill::ActivateCheck::Workdir("python".to_string());
+		assert!(!check.matches("", std::path::Path::new("/Users/dev/octomind"), ""));
 	}
 
 	// ---------------------------------------------------------------------------

@@ -224,16 +224,19 @@ pub async fn run_activation(
 
 	let active_skills = crate::session::context::get_active_skills(&session_id);
 
+	let session_name = session.session.info.name.clone();
+
 	for entry in &entries {
 		if active_skills.contains(&entry.name) {
 			continue;
 		}
 
 		// Evaluate: any AND-group matching = activate
-		let should_activate = entry
-			.rules
-			.iter()
-			.any(|group| group.iter().all(|check| check.matches(content, workdir)));
+		let should_activate = entry.rules.iter().any(|group| {
+			group
+				.iter()
+				.all(|check| check.matches(content, workdir, &session_name))
+		});
 
 		if should_activate {
 			crate::log_debug!("skill_auto: rule-activated '{}'", entry.name);

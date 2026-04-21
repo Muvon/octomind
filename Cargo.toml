@@ -92,6 +92,7 @@ http-body-util = "0.1"
 bytes = "1"
 agent-client-protocol = "0.10.4"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+which = "8.0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -308,12 +308,9 @@ async fn execute_tools_with_context(
 		}
 	};
 
-	// Stop animation before displaying tool results to prevent ghost spinners.
-	// The animation was started in response.rs after the tool header was printed.
-	if !mode.should_suppress_cli_output() {
-		use crate::session::chat::get_animation_manager;
-		get_animation_manager().stop_current().await;
-	}
+	// Note: No explicit stop needed before printing tool results.
+	// The spinner-aware print macros use pb.suspend() to safely interleave
+	// output with the live spinner (see src/lib.rs + animation_manager).
 
 	// All tasks completed before cancellation
 	for ((tool_name, tool_id, tool_index), task_result) in task_info.into_iter().zip(task_results) {

@@ -174,12 +174,28 @@ pub fn request_forced_compression(task: PlanTask) {
 /// For 93 messages (indices 0-92):
 /// - CORRECT: `set_pending_compression_range(10, 92);` // Compress to last message
 pub fn set_pending_compression_range(start_index: usize, end_index: usize) -> Result<()> {
+	// When start >= end, there are 0 messages to compress (the drain range start+1..=end
+	// is empty). This is a valid scenario — e.g. a task with no tool calls — not an error.
+	// Clear the pending compression so process_pending_compression doesn't fail later.
 	if start_index >= end_index {
-		return Err(anyhow!(
-			"Invalid compression range: start ({}) must be less than end ({})",
+		crate::log_debug!(
+			"Compression range is empty (start={}, end={}) — nothing to compress, skipping",
 			start_index,
 			end_index
-		));
+		);
+
+		// Remove the pending compression so it doesn't fail with "no message range" later
+		if let Some(session_id) = effective_session_id() {
+			let mut guard = PENDING_COMPRESSIONS.write().unwrap();
+			if let Some(registry) = guard.as_mut() {
+				registry.remove(&session_id);
+			}
+		} else {
+			let mut pending = CLI_PENDING_COMPRESSION.lock().unwrap();
+			*pending = None;
+		}
+
+		return Ok(());
 	}
 
 	let range = MessageRange {

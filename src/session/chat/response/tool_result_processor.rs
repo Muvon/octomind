@@ -196,7 +196,7 @@ pub async fn process_tool_results(
 					crate::mcp::core::plan::set_pending_compression_range(start_index, end_index)
 				{
 					log_info!(
-						"Failed to set compression range: {}. Compression will be skipped.",
+						"Compression range could not be set: {}. Compression will be skipped.",
 						e
 					);
 				}
@@ -236,7 +236,7 @@ pub async fn process_tool_results(
 				Ok(None) => false,
 				Err(e) => {
 					log_info!(
-						"❌ Task compression failed: {}. Context was not compressed.",
+						"Task compression skipped: {}. Context was not compressed.",
 						e
 					);
 					false
@@ -260,7 +260,7 @@ pub async fn process_tool_results(
 				Ok(None) => false,
 				Err(e) => {
 					log_info!(
-						"❌ Phase compression failed: {}. Context was not compressed.",
+						"Phase compression skipped: {}. Context was not compressed.",
 						e
 					);
 					false

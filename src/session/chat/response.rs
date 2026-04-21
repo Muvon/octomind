@@ -22,7 +22,6 @@ use crate::config::Config;
 use crate::providers::ThinkingBlock;
 use crate::session::chat::assistant_output::print_assistant_response;
 use crate::session::chat::display_thinking;
-use crate::session::chat::get_animation_manager;
 use crate::session::chat::session::ChatSession;
 use crate::session::ProviderExchange;
 use crate::{log_debug, log_info};
@@ -330,10 +329,10 @@ pub async fn process_response<S: OutputSink>(
 	// Check if operation has been cancelled at the very start
 	check_cancellation(&params.operation_cancelled)?;
 
-	// CRITICAL FIX: Stop animation BEFORE any output to prevent ghost text
-	// The animation must be stopped before printing assistant response to avoid
-	// the spinner text remaining visible on the terminal after the response is printed
-	get_animation_manager().stop_current().await;
+	// Note: No explicit stop needed here. The spinner-aware print macros in
+	// src/lib.rs use pb.suspend() around every println!/print!, which is
+	// indicatif's documented safe way to interleave output with a live spinner.
+	// The persistent bar stays up until a genuine turn boundary.
 
 	// Debug logging for finish_reason and tool calls
 	log_response_debug(params.config, &params.finish_reason, &params.tool_calls);

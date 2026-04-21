@@ -545,65 +545,104 @@ pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
 async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String> {
 	let server_id = server.name();
 
-	// Check if the server is already running and healthy
+	// Check if the server is already running and healthy.
+	//
+	// CRITICAL: Use try_lock() on the process mutex — NEVER .lock() from this
+	// async context. The ServerProcess mutex is held for the full read_line()
+	// duration by in-flight spawn_blocking tasks (potentially minutes while a
+	// MCP child runs `cargo test` etc). Blocking a tokio worker here cascades
+	// into runtime starvation → signal handler can't run → Ctrl+C deadlocks.
+	// If the mutex is held, the server is by definition alive and healthy —
+	// just return the URL without touching it.
 	{
 		let processes = SERVER_PROCESSES.read().unwrap();
 		if let Some(process_arc) = processes.get(server_id) {
-			let mut process = process_arc.lock().unwrap();
+			match process_arc.try_lock() {
+				Ok(mut process) => {
+					// Check if the process is still alive and not marked as shutdown
+					let is_alive = match &mut *process {
+						ServerProcess::Http(child) => child
+							.try_wait()
+							.map(|status| status.is_none())
+							.unwrap_or(false),
+						ServerProcess::Stdin {
+							child, is_shutdown, ..
+						} => {
+							let process_alive = child
+								.try_wait()
+								.map(|status| status.is_none())
+								.unwrap_or(false);
+							let not_marked_shutdown = !is_shutdown.load(Ordering::SeqCst);
+							process_alive && not_marked_shutdown
+						}
+					};
 
-			// Check if the process is still alive and not marked as shutdown
-			let is_alive = match &mut *process {
-				ServerProcess::Http(child) => child
-					.try_wait()
-					.map(|status| status.is_none())
-					.unwrap_or(false),
-				ServerProcess::Stdin {
-					child, is_shutdown, ..
-				} => {
-					let process_alive = child
-						.try_wait()
-						.map(|status| status.is_none())
-						.unwrap_or(false);
-					let not_marked_shutdown = !is_shutdown.load(Ordering::SeqCst);
-					process_alive && not_marked_shutdown
-				}
-			};
+					if is_alive {
+						// Server is running and healthy - return URL without any restart attempts
+						{
+							let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+							let info = restart_info_guard.entry(server_id.to_string()).or_default();
+							info.health_status = ServerHealth::Running;
+							info.last_health_check = Some(SystemTime::now());
+						}
 
-			if is_alive {
-				// Server is running and healthy - return URL without any restart attempts
-				{
-					let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-					let info = restart_info_guard.entry(server_id.to_string()).or_default();
-					info.health_status = ServerHealth::Running;
-					info.last_health_check = Some(SystemTime::now());
-				}
+						crate::log_debug!("Server '{}' is already running and healthy", server_id);
 
-				crate::log_debug!("Server '{}' is already running and healthy", server_id);
+						match server.connection_type() {
+							McpConnectionType::Http => return get_server_url(server),
+							McpConnectionType::Stdin => {
+								return Ok("stdin://".to_string() + server_id)
+							}
+							McpConnectionType::Builtin => {
+								unreachable!("Builtin servers should not use this function")
+							}
+						}
+					} else {
+						// Server process exists but is dead - clean it up
+						crate::log_info!(
+							"Server '{}' process is dead - cleaning up before restart",
+							server_id
+						);
 
-				match server.connection_type() {
-					McpConnectionType::Http => return get_server_url(server),
-					McpConnectionType::Stdin => return Ok("stdin://".to_string() + server_id),
-					McpConnectionType::Builtin => {
-						unreachable!("Builtin servers should not use this function")
+						// Try to clean up the dead process
+						if let Err(e) = process.kill() {
+							crate::log_debug!(
+								"Failed to kill dead server process '{}': {}",
+								server_id,
+								e
+							);
+						}
+
+						// Mark as dead
+						{
+							let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+							let info = restart_info_guard.entry(server_id.to_string()).or_default();
+							info.health_status = ServerHealth::Dead;
+						}
 					}
 				}
-			} else {
-				// Server process exists but is dead - clean it up
-				crate::log_info!(
-					"Server '{}' process is dead - cleaning up before restart",
-					server_id
-				);
+				Err(_) => {
+					// Mutex held by in-flight I/O — server is actively processing a request,
+					// so it's alive and healthy. Return the URL directly without blocking.
+					{
+						let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+						let info = restart_info_guard.entry(server_id.to_string()).or_default();
+						info.health_status = ServerHealth::Running;
+						info.last_health_check = Some(SystemTime::now());
+					}
 
-				// Try to clean up the dead process
-				if let Err(e) = process.kill() {
-					crate::log_debug!("Failed to kill dead server process '{}': {}", server_id, e);
-				}
+					crate::log_debug!(
+						"Server '{}' is busy (in-flight request) — treating as healthy",
+						server_id
+					);
 
-				// Mark as dead
-				{
-					let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-					let info = restart_info_guard.entry(server_id.to_string()).or_default();
-					info.health_status = ServerHealth::Dead;
+					match server.connection_type() {
+						McpConnectionType::Http => return get_server_url(server),
+						McpConnectionType::Stdin => return Ok("stdin://".to_string() + server_id),
+						McpConnectionType::Builtin => {
+							unreachable!("Builtin servers should not use this function")
+						}
+					}
 				}
 			}
 		} else {
@@ -1911,16 +1950,37 @@ pub fn release_server(server_name: &str) {
 }
 
 // Check if a server process is still running with enhanced health tracking
-// This function now properly handles different server types
+// This function now properly handles different server types.
+//
+// CRITICAL: This function MUST NOT block on the ServerProcess mutex.
+// It is called from async/tokio contexts (health monitor task, /mcp command,
+// on-demand health checks). The ServerProcess mutex is a std::sync::Mutex
+// held for the full duration of read_line() inside spawn_blocking during
+// tool execution — potentially minutes when the MCP server is running a
+// long child process like `cargo test`. Using `.lock()` here would block
+// a tokio worker thread for that entire duration. With enough concurrent
+// health checks, all workers block → signal handler task can't be scheduled
+// → Ctrl+C becomes invisible → full runtime deadlock.
+//
+// The fix: use try_lock(). If the mutex is held, the server IS alive
+// (something is actively using it), so return true without blocking.
+// If try_lock succeeds, fall through to the normal try_wait() check.
 pub fn is_server_running(server_name: &str) -> bool {
 	let processes = SERVER_PROCESSES.read().unwrap();
 	if let Some(process_arc) = processes.get(server_name) {
-		// This is a local server (stdin or local HTTP) - check the process
-		let mut process = process_arc.lock().unwrap();
-		let is_alive = process
-			.try_wait()
-			.map(|status| status.is_none())
-			.unwrap_or(false);
+		// This is a local server (stdin or local HTTP) - check the process.
+		// Non-blocking try_lock: if held by an in-flight spawn_blocking (mid-read_line),
+		// the server is by definition alive — return true without blocking tokio worker.
+		let is_alive = match process_arc.try_lock() {
+			Ok(mut process) => process
+				.try_wait()
+				.map(|status| status.is_none())
+				.unwrap_or(false),
+			Err(_) => {
+				// Mutex held by active spawn_blocking I/O — server is actively running.
+				true
+			}
+		};
 
 		// Update health status based on actual process state
 		{

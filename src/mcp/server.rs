@@ -625,27 +625,34 @@ pub fn is_server_already_running_with_config(server: &crate::config::McpServerCo
 			true
 		}
 		McpConnectionType::Http | McpConnectionType::Stdin => {
-			// External servers - check the process registry
+			// External servers - check the process registry.
+			// Use try_lock(): if held by in-flight spawn_blocking I/O, the server
+			// IS alive (actively running). Blocking on the std::sync::Mutex from
+			// this async context would freeze a tokio worker for the full
+			// read_line() duration → runtime deadlock. See is_server_running().
 			let is_process_running = {
 				let processes = process::SERVER_PROCESSES.read().unwrap();
 				if let Some(process_arc) = processes.get(server.name()) {
-					let mut process = process_arc.lock().unwrap();
-					match &mut *process {
-						process::ServerProcess::Http(child) => child
-							.try_wait()
-							.map(|status| status.is_none())
-							.unwrap_or(false),
-						process::ServerProcess::Stdin {
-							child, is_shutdown, ..
-						} => {
-							let process_alive = child
+					match process_arc.try_lock() {
+						Ok(mut process) => match &mut *process {
+							process::ServerProcess::Http(child) => child
 								.try_wait()
 								.map(|status| status.is_none())
-								.unwrap_or(false);
-							let not_marked_shutdown =
-								!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
-							process_alive && not_marked_shutdown
-						}
+								.unwrap_or(false),
+							process::ServerProcess::Stdin {
+								child, is_shutdown, ..
+							} => {
+								let process_alive = child
+									.try_wait()
+									.map(|status| status.is_none())
+									.unwrap_or(false);
+								let not_marked_shutdown =
+									!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
+								process_alive && not_marked_shutdown
+							}
+						},
+						// Mutex held by active I/O — server is alive by definition.
+						Err(_) => true,
 					}
 				} else {
 					false
@@ -691,27 +698,32 @@ pub fn is_server_already_running(server_name: &str) -> bool {
 		return true;
 	}
 
-	// For external servers, check the process registry
+	// For external servers, check the process registry.
+	// try_lock() — if held by in-flight I/O the server is alive; see
+	// is_server_running() for the full deadlock rationale.
 	let is_process_running = {
 		let processes = process::SERVER_PROCESSES.read().unwrap();
 		if let Some(process_arc) = processes.get(server_name) {
-			let mut process = process_arc.lock().unwrap();
-			match &mut *process {
-				process::ServerProcess::Http(child) => child
-					.try_wait()
-					.map(|status| status.is_none())
-					.unwrap_or(false),
-				process::ServerProcess::Stdin {
-					child, is_shutdown, ..
-				} => {
-					let process_alive = child
+			match process_arc.try_lock() {
+				Ok(mut process) => match &mut *process {
+					process::ServerProcess::Http(child) => child
 						.try_wait()
 						.map(|status| status.is_none())
-						.unwrap_or(false);
-					let not_marked_shutdown =
-						!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
-					process_alive && not_marked_shutdown
-				}
+						.unwrap_or(false),
+					process::ServerProcess::Stdin {
+						child, is_shutdown, ..
+					} => {
+						let process_alive = child
+							.try_wait()
+							.map(|status| status.is_none())
+							.unwrap_or(false);
+						let not_marked_shutdown =
+							!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
+						process_alive && not_marked_shutdown
+					}
+				},
+				// Mutex held by active I/O — server is alive by definition.
+				Err(_) => true,
 			}
 		} else {
 			false

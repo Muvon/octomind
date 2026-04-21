@@ -247,6 +247,45 @@ impl AnimationManager {
 		}
 	}
 
+	/// Set a transient phase label on the spinner (e.g. "Validating (rust)…").
+	///
+	/// Starts the spinner if not running (respects output mode / suspended flag),
+	/// then replaces the standard "Working …" message with the given phase until
+	/// `clear_phase()` is called or the spinner is stopped. Cost/context prefix
+	/// is preserved so the user still sees `[$1.23|45%] Validating (rust)…`.
+	pub async fn set_phase(&self, phase: &str) {
+		if self.is_suspended() {
+			return;
+		}
+		let output_mode = crate::config::with_thread_config(|c| c.output_mode())
+			.unwrap_or(crate::session::output::OutputMode::NonInteractive);
+		if !output_mode.should_show_animations() {
+			return;
+		}
+
+		self.ensure_started_internal();
+
+		let guard = self.spinner.lock().unwrap();
+		if let Some(ref pb) = *guard {
+			let cost_bits = self.state.cost.load(Ordering::Relaxed);
+			let ctx = self.state.context_tokens.load(Ordering::Relaxed);
+			let thresh = self.state.max_threshold.load(Ordering::Relaxed);
+			pb.set_message(build_phase_message(cost_bits, ctx, thresh, phase));
+		}
+	}
+
+	/// Clear the phase label and restore the standard "Working …" message.
+	/// No-op if the spinner isn't running.
+	pub fn clear_phase(&self) {
+		let guard = self.spinner.lock().unwrap();
+		if let Some(ref pb) = *guard {
+			let cost_bits = self.state.cost.load(Ordering::Relaxed);
+			let ctx = self.state.context_tokens.load(Ordering::Relaxed);
+			let thresh = self.state.max_threshold.load(Ordering::Relaxed);
+			pb.set_message(build_base_message(cost_bits, ctx, thresh));
+		}
+	}
+
 	/// Create the bar if not yet running, else refresh its message.
 	///
 	/// This is the core: we never destroy+recreate on transitions; we only
@@ -405,6 +444,24 @@ fn build_base_message(cost_bits: u64, ctx: u64, thresh: u64) -> String {
 		format!("[{:.1}%] Working …", pct)
 	} else {
 		"Working …".to_string()
+	}
+}
+
+/// Build a phase-labelled message like `[$1.23|45%] Validating (rust)…`.
+/// Preserves the same cost/context prefix as `build_base_message` so the
+/// user's mental model (bracketed prefix = session state) stays intact.
+fn build_phase_message(cost_bits: u64, ctx: u64, thresh: u64, phase: &str) -> String {
+	let cost = cost_bits as f64 / 10000.0;
+	if cost > 0.0 && thresh > 0 {
+		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
+		format!("[${:.2}|{:.1}%] {}", cost, pct, phase)
+	} else if cost > 0.0 {
+		format!("[${:.2}|∞] {}", cost, phase)
+	} else if thresh > 0 {
+		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
+		format!("[{:.1}%] {}", pct, phase)
+	} else {
+		phase.to_string()
 	}
 }
 

@@ -678,6 +678,12 @@ prompt = """Please help debug the issue above:
 # Enable automatic skill activation via declarative rules in SKILL.md frontmatter.
 # When enabled, skills with `domains` matching the current agent's role
 # are checked on each user message. Disable to use manual /skill only.
+auto_activation = true
+
+# Enable automatic validation via `validate` scripts at end of each assistant turn.
+# When enabled, active skills with a `validate` script are run automatically.
+# Disable to skip validators entirely (manual validation only).
+auto_validation = true
 
 # Reserved. Rules are evaluated in-process (no script timeout needed).
 # Kept for config compatibility.

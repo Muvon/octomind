@@ -724,6 +724,12 @@ pub async fn check_and_compress_conversation(
 		.start_with_params(current_cost, current_context_tokens, max_threshold)
 		.await;
 
+	// Surface the phase on the spinner — compression can take several seconds
+	// (decision model + summary call). Cleared on every exit path below.
+	animation_manager
+		.set_phase("Compressing conversation…")
+		.await;
+
 	log_debug!("Compression check triggered - asking AI for decision and summary in one call");
 
 	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)

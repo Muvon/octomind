@@ -256,7 +256,13 @@ pub async fn process_pending_compression(
 			ptc.task.title,
 			ptc.force
 		);
-		compress_completed_task(session, &ptc.task, ptc.force).await
+		let phase = format!("Compressing task ({})…", ptc.task.title);
+		crate::session::chat::animation_manager::get_animation_manager()
+			.set_phase(&phase)
+			.await;
+		let result = compress_completed_task(session, &ptc.task, ptc.force).await;
+		crate::session::chat::animation_manager::get_animation_manager().clear_phase();
+		result
 	} else {
 		Ok(None)
 	}
@@ -639,7 +645,13 @@ pub async fn process_pending_phase_compression(
 
 	if let Some(req) = request {
 		crate::log_debug!("Processing pending phase compression: {}", req.phase_name);
-		compress_phase(session, &req).await
+		let phase = format!("Compressing phase ({})…", req.phase_name);
+		crate::session::chat::animation_manager::get_animation_manager()
+			.set_phase(&phase)
+			.await;
+		let result = compress_phase(session, &req).await;
+		crate::session::chat::animation_manager::get_animation_manager().clear_phase();
+		result
 	} else {
 		Ok(None)
 	}
@@ -786,7 +798,13 @@ pub async fn process_pending_project_compression(
 
 	if let Some(req) = request {
 		crate::log_debug!("Processing pending project compression: {}", req.plan_title);
-		compress_project(session, &req).await
+		let phase = format!("Compressing project ({})…", req.plan_title);
+		crate::session::chat::animation_manager::get_animation_manager()
+			.set_phase(&phase)
+			.await;
+		let result = compress_project(session, &req).await;
+		crate::session::chat::animation_manager::get_animation_manager().clear_phase();
+		result
 	} else {
 		Ok(None)
 	}

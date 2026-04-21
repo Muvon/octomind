@@ -184,6 +184,7 @@ fn get_skills_config() -> crate::config::SkillsConfig {
 		.map(|cfg| cfg.skills.clone())
 		.unwrap_or(crate::config::SkillsConfig {
 			auto_activation: true,
+			auto_validation: true,
 			activation_timeout: 3,
 			validation_timeout: 60,
 			max_retries: 3,
@@ -288,6 +289,11 @@ fn get_retry_tracker() -> &'static Arc<RwLock<std::collections::HashMap<String, 
 /// `validation_timeout` and `max_retries`.
 pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(String, String)> {
 	let skills_config = get_skills_config();
+
+	if !skills_config.auto_validation {
+		return Vec::new();
+	}
+
 	let session_id = match crate::session::context::current_session_id() {
 		Some(id) => id,
 		None => return Vec::new(),
@@ -313,6 +319,9 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 
 	let mut tasks = Vec::new();
 	let retry_tracker = get_retry_tracker();
+	// Names of skills whose validators we actually scheduled — used for the
+	// animation phase label so the user sees exactly what's being validated.
+	let mut scheduled_names: Vec<String> = Vec::new();
 
 	for skill_name in &active_skills {
 		// Check retry cap before even running the script
@@ -350,6 +359,7 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 			let content = content.to_string();
 			let workdir = workdir.to_path_buf();
 			let name = skill_name.clone();
+			scheduled_names.push(skill_name.clone());
 
 			tasks.push(tokio::spawn(async move {
 				let result =
@@ -360,6 +370,19 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 			break; // found the skill, stop searching taps
 		}
 	}
+
+	// Nothing to run — skip the phase overhead entirely.
+	if tasks.is_empty() {
+		return Vec::new();
+	}
+
+	// Show "Validating (skill1, skill2)…" on the spinner while validators run.
+	// No-op in non-interactive modes; safe to always call. Cleared unconditionally
+	// below so a panic in a task can't leave the phase sticky.
+	let phase_label = format!("Validating ({})…", scheduled_names.join(", "));
+	crate::session::chat::animation_manager::get_animation_manager()
+		.set_phase(&phase_label)
+		.await;
 
 	let mut failures = Vec::new();
 
@@ -386,6 +409,9 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 			}
 		}
 	}
+
+	// Restore the standard "Working …" message regardless of outcome.
+	crate::session::chat::animation_manager::get_animation_manager().clear_phase();
 
 	failures
 }

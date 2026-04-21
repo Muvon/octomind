@@ -95,11 +95,17 @@ rules:
 | `grep` | `grep(pattern)` or `grep(pattern, glob)` | Search file contents in working directory (respects .gitignore). Example: `grep(fn main)`, `grep(TODO, *.rs)` |
 | `env` | `env(VAR)` or `env(VAR=val)` | Environment variable is set and non-empty, or equals a specific value. Example: `env(CI)`, `env(CI=true)` |
 | `match` | `match(regex)` | Regex match against user message content. Example: `match(\brust\b)` |
+| `bin` | `bin(name)` | Executable is findable on PATH (case-sensitive). Example: `bin(cargo)`, `bin(node)` |
+| `session` | `session(pattern)` | Case-insensitive substring match on current session name. Example: `session(octomind)` matches "260421-octomind-a1b2" |
+| `workdir` | `workdir(pattern)` | Case-insensitive substring match on working directory path. Example: `workdir(rust)` matches "/home/dev/rust-project" |
 
 ### Evaluation Context
 
-- **`file`**, **`grep`**, **`env`** — evaluated against the project working directory and environment.
+- **`file`**, **`grep`**, **`workdir`** — evaluated against the project working directory.
 - **`content`**, **`match`** — evaluated against the user's message text.
+- **`env`** — evaluated against environment variables.
+- **`bin`** — evaluated against the system PATH.
+- **`session`** — evaluated against the current session name.
 - Rules are checked on every user message. Already-active skills are skipped.
 
 ### Domain Scoping
@@ -184,6 +190,7 @@ Required `[skills]` section in config:
 ```toml
 [skills]
 auto_activation = true       # enable/disable auto-activation via declarative rules
+auto_validation = true       # enable/disable auto-validation via validate scripts
 activation_timeout = 3        # reserved (rules are in-process, no timeout needed)
 validation_timeout = 60       # seconds per validate script, 0 = unlimited
 max_retries = 3               # max validation retries per skill before giving up

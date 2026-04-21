@@ -188,6 +188,9 @@ pub struct SkillsConfig {
 	/// Enable automatic skill activation via declarative rules in SKILL.md frontmatter.
 	pub auto_activation: bool,
 
+	/// Enable automatic validation via `validate` scripts at end of each assistant turn.
+	pub auto_validation: bool,
+
 	/// Reserved. Rules are evaluated in-process (no script timeout needed).
 	pub activation_timeout: u64,
 

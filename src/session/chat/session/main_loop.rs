@@ -1016,6 +1016,16 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 			// Clear operation context at the end of each successful iteration
 			*current_operation.lock().unwrap() = None;
+
+			// Stop the spinner at the turn boundary — user prompt is imminent.
+			// Without this, indicatif's steady-tick thread keeps redrawing the
+			// "Working …" line over reedline's prompt after a final assistant
+			// response (no-tools path never hits any other stop_current site).
+			// Matches the design principle in animation_manager.rs: teardown at
+			// genuine boundaries (API error, cancel, user prompt imminent).
+			crate::session::chat::get_animation_manager()
+				.stop_current()
+				.await;
 		}
 
 		Ok(())

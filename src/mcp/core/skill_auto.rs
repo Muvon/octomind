@@ -232,22 +232,40 @@ pub async fn run_activation(
 			continue;
 		}
 
-		// Evaluate: any AND-group matching = activate
-		let should_activate = entry.rules.iter().any(|group| {
-			group
+		// Evaluate AND-groups in order; first fully-matching group wins and
+		// becomes the trigger we surface to the user.
+		let mut matched: Option<String> = None;
+		for group in &entry.rules {
+			if group
 				.iter()
 				.all(|check| check.matches(content, workdir, &session_name))
-		});
+			{
+				matched = Some(
+					group
+						.iter()
+						.map(|c| c.to_string())
+						.collect::<Vec<_>>()
+						.join(" "),
+				);
+				break;
+			}
+		}
 
-		if should_activate {
-			crate::log_debug!("skill_auto: rule-activated '{}'", entry.name);
-			auto_activate_skill(&entry.name, session).await;
+		if let Some(trigger) = matched {
+			crate::log_debug!("skill_auto: activated '{}' via [{}]", entry.name, trigger);
+			auto_activate_skill(&entry.name, &trigger, session).await;
+		} else {
+			crate::log_debug!("skill_auto: no rule matched for '{}'", entry.name);
 		}
 	}
 }
 
 /// Auto-activate a skill: register + load capabilities + inject content into session.
-async fn auto_activate_skill(name: &str, session: &mut crate::session::chat::session::ChatSession) {
+async fn auto_activate_skill(
+	name: &str,
+	trigger: &str,
+	session: &mut crate::session::chat::session::ChatSession,
+) {
 	let call = crate::mcp::McpToolCall {
 		tool_name: "skill".to_string(),
 		tool_id: format!("auto_{}", name),
@@ -264,7 +282,12 @@ async fn auto_activate_skill(name: &str, session: &mut crate::session::chat::ses
 			}
 			if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
 				use colored::Colorize;
-				eprintln!("{} {}", "Using skill:".dimmed(), name.bright_cyan());
+				eprintln!(
+					"{} {} {}",
+					"Using skill:".dimmed(),
+					name.bright_cyan(),
+					format!("[{}]", trigger).dimmed()
+				);
 			}
 		}
 		Err(e) => {

@@ -164,6 +164,29 @@ impl ActivateCheck {
 	}
 }
 
+impl std::fmt::Display for ActivateCheck {
+	/// Render back into the original `type(args)` syntax.
+	/// Used for user-facing activation messages (`Using skill: foo [file(Cargo.toml)]`).
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::File(p) => write!(f, "file({})", p),
+			Self::Content(p) => write!(f, "content({})", p),
+			Self::Grep { pattern, path } => match path {
+				Some(p) => write!(f, "grep({}, {})", pattern, p),
+				None => write!(f, "grep({})", pattern),
+			},
+			Self::Env { var, value } => match value {
+				Some(v) => write!(f, "env({}={})", var, v),
+				None => write!(f, "env({})", var),
+			},
+			Self::Match(p) => write!(f, "match({})", p),
+			Self::Bin(n) => write!(f, "bin({})", n),
+			Self::Session(p) => write!(f, "session({})", p),
+			Self::Workdir(p) => write!(f, "workdir({})", p),
+		}
+	}
+}
+
 /// Word-boundary match: case-insensitive regex with \b boundaries, fallback to contains.
 fn match_word_pattern(pattern: &str, text: &str) -> bool {
 	let re_pattern = format!(r"(?i)\b{}\b", regex::escape(pattern));

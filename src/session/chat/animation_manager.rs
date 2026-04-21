@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Global animation manager - ensures only one animation runs at a time
+//! Global animation manager — ensures only one animation runs at a time.
 //!
-//! This module provides a centralized animation management system that:
-//! - Ensures only one animation runs at a time (prevents overlapping animations)
-//! - Dynamically updates cost and context values in real-time
-//! - Provides clean cancellation and cleanup
-//! - Prevents animation stuck bugs
-//! - Responds INSTANTLY to Ctrl+C cancellation (no delays)
+//! Elapsed time is rendered via indicatif's `with_key` so the timer is computed
+//! inside the steady-tick thread's draw call.  This makes it immune to the
+//! `Mutex<BarState>` starvation that occurs when `suspend()` (called by every
+//! `println!`) holds the lock during terminal I/O — the tick thread already owns
+//! the lock when it draws, so the timer always advances.
 
 use crate::log_debug;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -200,24 +199,12 @@ impl AnimationManager {
 			}
 		}
 	}
-	/// Start new animation (stops any existing animation first)
+	/// Start new animation (stops any existing animation first).
 	///
-	/// This ensures only one animation runs at a time, preventing:
-	/// - Overlapping animations
-	/// - Animation stuck bugs
-	/// - Stale cost/context values
-	///
-	/// **Pro-level feature**: Dynamically reads live cost/context from shared state
-	/// during animation loop for real-time updates during long operations.
-	/// Start new animation (stops any existing animation first)
-	///
-	/// This ensures only one animation runs at a time, preventing:
-	/// - Overlapping animations
-	/// - Animation stuck bugs
-	/// - Stale cost/context values
-	///
-	/// **Pro-level feature**: Dynamically reads live cost/context from shared state
-	/// during animation loop for real-time updates during long operations.
+	/// Ensures only one animation runs at a time.  Cost/context values are read
+	/// from shared atomics; elapsed time is computed at draw time by indicatif's
+	/// steady-tick thread via a `with_key` template, so the timer never freezes
+	/// even under heavy mutex contention from `suspend()`/`println!`.
 	pub async fn start_animation(&self, mode: &crate::session::output::OutputMode) {
 		// Check if suspended - don't start animation during user prompts
 		if self.is_suspended() {
@@ -235,8 +222,8 @@ impl AnimationManager {
 
 		self.start_internal().await;
 	}
-	///
-	/// Use this for standalone animations where you have specific cost/context values.
+
+	/// Start animation with explicit cost/context values.
 	/// Automatically detects interactive vs non-interactive mode.
 	pub async fn start_with_params(&self, cost: f64, context_tokens: u64, max_threshold: usize) {
 		// Stop any existing animation first
@@ -290,9 +277,16 @@ impl AnimationManager {
 		let spinner_ref = self.spinner.clone();
 
 		let task = tokio::spawn(async move {
-			// Animation loop with truly dynamic cost/context updates
 			let mut spinner: Option<indicatif::ProgressBar> = None;
-			let start_time = std::time::Instant::now();
+
+			// Track previous cost/context to only call set_message when values change.
+			// set_message() contends with indicatif's internal BarState mutex (held by
+			// suspend() during every println). Calling it only on change reduces
+			// contention from 10/sec to ~1 per API response, preventing the animation
+			// task from starving on the mutex and freezing the timer / blocking Ctrl+C.
+			let mut prev_cost_bits: u64 = 0;
+			let mut prev_context: u64 = 0;
+			let mut prev_threshold: u64 = 0;
 
 			'animation: loop {
 				// Check session cancellation receiver if available (INSTANT Ctrl+C response)
@@ -302,70 +296,71 @@ impl AnimationManager {
 					}
 				}
 
-				// Read live cost/context from shared state (dynamic updates!)
-				let current_cost = state.get_cost();
-				let current_context_tokens = state.get_context_tokens();
-				let max_threshold = state.get_max_threshold();
-
-				// Calculate dynamic base message with live cost/context
-				let base_message = if current_cost > 0.0 && max_threshold > 0 {
-					let percentage =
-						(current_context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0);
-					format!("[${:.2}|{:.1}%] Working …", current_cost, percentage)
-				} else if current_cost > 0.0 {
-					format!("[${:.2}|∞] Working …", current_cost)
-				} else if max_threshold > 0 {
-					// No cost but still show context percentage
-					let percentage =
-						(current_context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0);
-					format!("[{:.1}%] Working …", percentage)
-				} else {
-					"Working …".to_string()
-				};
+				// Read live cost/context from shared atomics
+				let cost_bits = state.cost.load(Ordering::Relaxed);
+				let ctx = state.context_tokens.load(Ordering::Relaxed);
+				let thresh = state.max_threshold.load(Ordering::Relaxed);
+				let values_changed =
+					cost_bits != prev_cost_bits || ctx != prev_context || thresh != prev_threshold;
 
 				// Create spinner on first iteration
 				if spinner.is_none() {
-					use indicatif::{ProgressBar, ProgressStyle};
+					use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+					use std::fmt::Write as FmtWrite;
 					use std::time::Duration;
 
 					let s = ProgressBar::new_spinner();
 					s.set_style(
 						ProgressStyle::default_spinner()
-							.template(" {spinner:.cyan} {msg:.cyan}")
+							// Elapsed time is computed AT DRAW TIME by indicatif's steady
+							// tick thread — the one thread that always gets the BarState
+							// lock. This makes the timer immune to mutex starvation.
+							.with_key(
+								"elapsed_custom",
+								|ps: &ProgressState, w: &mut dyn FmtWrite| {
+									let elapsed = ps.elapsed();
+									if elapsed.as_secs() > 0 {
+										let _ = write!(
+											w,
+											"({} • Ctrl+C to interrupt)",
+											crate::session::chat::animation::format_elapsed_time(
+												elapsed
+											)
+										);
+									} else {
+										let _ = write!(w, "(Ctrl+C to interrupt)");
+									}
+								},
+							)
+							.template(" {spinner:.cyan} {msg:.cyan} {elapsed_custom:.cyan.dim}")
 							.unwrap()
 							.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
 					);
-					s.set_message(base_message.clone());
+
+					let base_message = build_base_message(cost_bits, ctx, thresh);
+					s.set_message(base_message);
 					s.enable_steady_tick(Duration::from_millis(50));
 
 					// Store spinner reference for suspend operations
 					*spinner_ref.lock().unwrap() = Some(s.clone());
 					spinner = Some(s);
-				}
 
-				// Update message with elapsed time and dynamic cost/context
-				if let Some(ref s) = spinner {
-					let elapsed = start_time.elapsed();
-					let elapsed_secs = elapsed.as_secs();
-					let message = if elapsed_secs > 0 {
-						use colored::Colorize;
-						let time_and_hint = format!(
-							"({} • Ctrl+C to interrupt)",
-							crate::session::chat::animation::format_elapsed_time(elapsed)
-						);
-						format!("{} {}", base_message, time_and_hint.dimmed())
-					} else {
-						use colored::Colorize;
-						format!("{} {}", base_message, "(Ctrl+C to interrupt)".dimmed())
-					};
-					s.set_message(message);
+					prev_cost_bits = cost_bits;
+					prev_context = ctx;
+					prev_threshold = thresh;
+				} else if values_changed {
+					// Only acquire indicatif's lock when cost/context actually changed
+					let base_message = build_base_message(cost_bits, ctx, thresh);
+					if let Some(ref s) = spinner {
+						s.set_message(base_message);
+					}
+					prev_cost_bits = cost_bits;
+					prev_context = ctx;
+					prev_threshold = thresh;
 				}
 
 				tokio::select! {
-					// Sleep for animation update interval
-					_ = tokio::time::sleep(Duration::from_millis(100)) => {
-						// Normal sleep completed, continue loop
-					}
+					_ = tokio::time::sleep(Duration::from_millis(100)) => {}
 					// INSTANT cancellation from session's watch channel (Ctrl+C)
 					_ = async {
 						if let Some(ref rx) = cancel_rx {
@@ -376,7 +371,6 @@ impl AnimationManager {
 								}
 							}
 						} else {
-							// No receiver - wait forever
 							std::future::pending::<()>().await;
 						}
 					} => {
@@ -424,6 +418,22 @@ impl AnimationManager {
 impl Default for AnimationManager {
 	fn default() -> Self {
 		Self::new()
+	}
+}
+
+/// Build the cost/context prefix shown before "Working …".
+fn build_base_message(cost_bits: u64, ctx: u64, thresh: u64) -> String {
+	let cost = cost_bits as f64 / 10000.0;
+	if cost > 0.0 && thresh > 0 {
+		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
+		format!("[${:.2}|{:.1}%] Working …", cost, pct)
+	} else if cost > 0.0 {
+		format!("[${:.2}|∞] Working …", cost)
+	} else if thresh > 0 {
+		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
+		format!("[{:.1}%] Working …", pct)
+	} else {
+		"Working …".to_string()
 	}
 }
 

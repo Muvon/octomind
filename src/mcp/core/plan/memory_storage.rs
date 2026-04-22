@@ -277,4 +277,9 @@ impl PlanStorage for MemoryPlanStorage {
 	fn get_plan(&self) -> Result<&ExecutionPlan> {
 		self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))
 	}
+
+	fn load_plan(&mut self, plan: ExecutionPlan) -> Result<()> {
+		self.plan = Some(plan);
+		Ok(())
+	}
 }

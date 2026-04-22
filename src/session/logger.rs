@@ -23,6 +23,7 @@
 //! `append_to_session_file`. This module only handles the marker entries that
 //! the loader needs to reconstruct session state.
 
+use crate::mcp::core::plan::storage::ExecutionPlan;
 use crate::session::Message;
 use anyhow::Result;
 use std::fs::OpenOptions;
@@ -111,6 +112,29 @@ pub fn log_session_command(session_name: &str, command_line: &str) -> Result<()>
 		"type": "COMMAND",
 		"timestamp": get_timestamp(),
 		"command": command_line,
+	});
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+}
+
+/// Log a snapshot of the active plan so it can be restored on session resume.
+/// The full ExecutionPlan is serialized; the most recent snapshot wins on replay.
+pub fn log_plan_snapshot(session_name: &str, plan: &ExecutionPlan) -> Result<()> {
+	let log_file = get_session_log_file(session_name)?;
+	let entry = serde_json::json!({
+		"type": "PLAN_SNAPSHOT",
+		"timestamp": get_timestamp(),
+		"plan": plan,
+	});
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+}
+
+/// Log that the active plan has been cleared (done/reset).
+/// Invalidates any prior PLAN_SNAPSHOT on resume.
+pub fn log_plan_cleared(session_name: &str) -> Result<()> {
+	let log_file = get_session_log_file(session_name)?;
+	let entry = serde_json::json!({
+		"type": "PLAN_CLEARED",
+		"timestamp": get_timestamp(),
 	});
 	append_to_log(&log_file, &serde_json::to_string(&entry)?)
 }

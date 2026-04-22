@@ -102,6 +102,100 @@ pub fn has_active_plan() -> bool {
 	storage.has_active_plan().unwrap_or(false)
 }
 
+/// Persist the current plan to the session log (best-effort, no-op outside a session).
+fn persist_plan_snapshot() {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	// Clone the plan out while holding the lock briefly, then release before I/O.
+	let plan_clone = {
+		let storage = get_storage();
+		let storage = storage.lock().unwrap();
+		match storage.get_plan() {
+			Ok(plan) => plan.clone(),
+			Err(_) => return,
+		}
+	};
+	if let Err(e) = crate::session::logger::log_plan_snapshot(&session_id, &plan_clone) {
+		crate::log_debug!("Failed to log plan snapshot: {}", e);
+	}
+}
+
+/// Mark the plan as cleared in the session log (best-effort, no-op outside a session).
+fn persist_plan_cleared() {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	if let Err(e) = crate::session::logger::log_plan_cleared(&session_id) {
+		crate::log_debug!("Failed to log plan cleared: {}", e);
+	}
+}
+
+/// Restore the active plan (if any) from the session log into session-scoped storage.
+/// Called at session startup (all entry points) right after init_session_services.
+/// Safe no-op when the log file doesn't exist or contains no snapshot.
+pub fn restore_plan_for_session(session_name: &str) {
+	let log_file = match crate::session::logger::get_session_log_file(session_name) {
+		Ok(p) => p,
+		Err(e) => {
+			crate::log_debug!("restore_plan_for_session: cannot resolve log file: {}", e);
+			return;
+		}
+	};
+	if !log_file.exists() {
+		return;
+	}
+
+	let file = match std::fs::File::open(&log_file) {
+		Ok(f) => f,
+		Err(e) => {
+			crate::log_debug!("restore_plan_for_session: open failed: {}", e);
+			return;
+		}
+	};
+
+	use std::io::{BufRead, BufReader};
+	let reader = BufReader::new(file);
+	let mut latest_plan: Option<super::storage::ExecutionPlan> = None;
+
+	for line in reader.lines().map_while(Result::ok) {
+		let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
+			continue;
+		};
+		let Some(t) = val.get("type").and_then(|t| t.as_str()) else {
+			continue;
+		};
+		match t {
+			"PLAN_SNAPSHOT" => {
+				if let Some(plan_val) = val.get("plan") {
+					match serde_json::from_value::<super::storage::ExecutionPlan>(plan_val.clone())
+					{
+						Ok(plan) => latest_plan = Some(plan),
+						Err(e) => {
+							crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e)
+						}
+					}
+				}
+			}
+			"PLAN_CLEARED" => {
+				latest_plan = None;
+			}
+			_ => {}
+		}
+	}
+
+	if let Some(plan) = latest_plan {
+		let session_id = session_name.to_string();
+		let storage = crate::session::context::get_plan_storage(&session_id);
+		let mut storage = storage.lock().unwrap();
+		if let Err(e) = storage.load_plan(plan) {
+			crate::log_debug!("restore_plan_for_session: load_plan failed: {}", e);
+		} else {
+			crate::log_debug!("Restored active plan for session '{}'", session_name);
+		}
+	}
+}
+
 /// Set message range for the last completed task (called from session after plan(next))
 pub fn set_last_task_message_range(start_index: usize, end_index: usize) -> Result<()> {
 	let storage = get_storage();
@@ -328,6 +422,10 @@ async fn handle_start_command(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	}
 
+	// Release lock before persisting to the session log.
+	drop(storage);
+	persist_plan_snapshot();
+
 	// Build response
 	let mut response = format!("PLAN CREATED: {title}\n\nTASKS:\n");
 	for (i, task) in tasks.iter().enumerate() {
@@ -393,6 +491,9 @@ async fn handle_step_command(call: &McpToolCall) -> Result<McpToolResult> {
 			let (current, total, task_title, _task_description) = storage
 				.get_current_task_info()
 				.unwrap_or((0, 0, "Unknown".to_string(), "No description".to_string()));
+
+			drop(storage);
+			persist_plan_snapshot();
 
 			Ok(McpToolResult::success(
 				call.tool_name.clone(),
@@ -526,6 +627,7 @@ async fn handle_next_command(call: &McpToolCall) -> Result<McpToolResult> {
 	};
 
 	drop(storage);
+	persist_plan_snapshot();
 
 	// Request task compression if we have a completed task
 	if let Some(task) = completed_task {
@@ -684,6 +786,7 @@ async fn handle_done_command(call: &McpToolCall) -> Result<McpToolResult> {
 	let last_task = storage.get_last_completed_task().ok().flatten();
 
 	drop(storage);
+	persist_plan_cleared();
 
 	// If start_index is still set, the last task's compression was skipped (e.g. 20% threshold).
 	// Force-compress it now so project compression has material to consolidate.
@@ -729,6 +832,9 @@ async fn handle_reset_command(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	}
 
+	drop(storage);
+	persist_plan_cleared();
+
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),
 		call.tool_id.clone(),
@@ -740,7 +846,10 @@ async fn handle_reset_command(call: &McpToolCall) -> Result<McpToolResult> {
 pub async fn clear_plan_data() -> Result<()> {
 	let storage = get_storage();
 	let mut storage = storage.lock().unwrap();
-	storage.clear_plan()
+	storage.clear_plan()?;
+	drop(storage);
+	persist_plan_cleared();
+	Ok(())
 }
 
 /// Get completed task count for compression hints

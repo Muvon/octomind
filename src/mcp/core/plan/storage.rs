@@ -160,4 +160,8 @@ pub trait PlanStorage {
 
 	/// Get the execution plan (for phase detection)
 	fn get_plan(&self) -> Result<&ExecutionPlan>;
+
+	/// Load a fully-formed ExecutionPlan into storage (for session resume).
+	/// Overwrites any existing plan.
+	fn load_plan(&mut self, plan: ExecutionPlan) -> Result<()>;
 }

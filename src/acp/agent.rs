@@ -467,8 +467,10 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		// Initialize session-scoped inbox and job manager inside the session context
 		// so schedule/inbox storage is keyed to this session ID.
 		let role_for_pool = self.role.clone();
+		let session_id_for_restore = session_id.clone();
 		crate::session::context::with_session_id(session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
+			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
 		})
 		.await;
 
@@ -928,8 +930,10 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		// Initialize session-scoped inbox, job manager, and skill pool inside the session context
 		// so schedule/inbox storage is keyed to this session ID.
 		let role_for_pool = self.role.clone();
+		let session_id_for_restore = actual_session_id.clone();
 		crate::session::context::with_session_id(actual_session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
+			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
 		})
 		.await;
 

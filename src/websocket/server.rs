@@ -611,6 +611,7 @@ async fn handle_session_message(
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
+		crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &session_role, false)

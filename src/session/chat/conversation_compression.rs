@@ -1451,6 +1451,18 @@ async fn apply_compression(
 		format!("## USER TASKS\n{}\n\n{}", user_tasks, base_entry)
 	};
 
+	// Append the current active plan (if any) to the summary so the model doesn't have
+	// to spend an extra `plan(list)` turn right after compression just to recover state.
+	// Absence of a plan → no section injected.
+	let compressed_entry = match crate::mcp::core::plan::core::get_current_plan_display().await {
+		Ok(plan_display) => format!(
+			"{}\n\nCurrent plan we are working on:\n<plan>\n{}\n</plan>",
+			compressed_entry,
+			plan_display.trim()
+		),
+		Err(_) => compressed_entry,
+	};
+
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
 	// COMPRESS-ALL: Drain everything from start_idx+1 to end_idx

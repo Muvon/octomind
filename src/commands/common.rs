@@ -13,77 +13,16 @@
 // limitations under the License.
 
 //! Shared helpers used by run, acp, and server commands.
+//!
+//! Tag resolution lives in `octomind::agent::resolver` (library-visible so
+//! the runtime `/role` command can reuse it). This module wraps it with the
+//! spinner-driven startup UX specific to the binary.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
-use octomind::agent::{deps, inputs, registry};
-use octomind::config::{loading::merge_agent_toml, Config};
+use octomind::agent::resolver;
+use octomind::config::Config;
 use std::time::Duration;
-
-/// Resolve config and role from a TAG argument.
-///
-/// - `None` / `"developer"` → plain role, config unchanged
-/// - `"some_role"` (no `:`) → plain role name, config unchanged
-/// - `"domain:spec"` (contains `:`) → fetch registry manifest, merge into config
-///
-/// `status_cb` is called with human-readable status strings during resolution
-/// (tap fetch, dep checks) so callers can update a spinner.
-///
-/// Returns `(resolved_config, role_name)`.
-pub async fn resolve_config_and_role(
-	tag: Option<&str>,
-	config: &Config,
-	status_cb: Option<&dyn Fn(&str)>,
-) -> Result<(Config, String)> {
-	let tag = tag.unwrap_or(config.default.as_str());
-
-	if tag.contains(':') {
-		// Registry agent: fetch manifest, resolve inputs, merge config
-		if let Some(cb) = status_cb {
-			cb(&format!("Fetching agent: {tag}"));
-		}
-		let (raw_toml, tap_root) = registry::fetch_manifest(tag, &config.registry)
-			.await
-			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
-		// Resolve capabilities before input/env/dep resolution
-		let resolved_toml =
-			registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
-				.context("Failed to resolve agent capabilities")?;
-		// INPUT first (persistent credential store), then ENV (environment / .env fallback)
-		let resolved_toml = inputs::resolve_inputs(&resolved_toml).await?;
-		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
-		// Run dep scripts before MCP init — idempotent, exit 0 if already installed
-		deps::resolve_deps(&resolved_toml, &tap_root, status_cb).await?;
-		// Always inject the tag as the role name — manifests never need to declare it.
-		let tagged_toml = inject_role_name(&resolved_toml, tag)
-			.context("Failed to inject role name into agent manifest")?;
-		let mut merged = merge_agent_toml(config, &tagged_toml)
-			.context("Failed to merge agent manifest into config")?;
-
-		// First role in merged config that isn't in the base config
-		let base_names: std::collections::HashSet<&str> =
-			config.roles.iter().map(|r| r.name.as_str()).collect();
-		let role = merged
-			.roles
-			.iter()
-			.find(|r| !base_names.contains(r.name.as_str()))
-			.map(|r| r.name.clone())
-			.context(format!(
-				"Agent manifest for '{tag}' must define at least one new [[roles]] entry"
-			))?;
-
-		// Apply tap model override if configured
-		if let Some(tap_model) = config.taps.get(tag) {
-			merged.model = tap_model.clone();
-			octomind::log_debug!("Applied tap model override: {} -> {}", tag, tap_model);
-		}
-
-		Ok((merged, role))
-	} else {
-		// Plain role name — use config as-is
-		Ok((config.clone(), tag.to_string()))
-	}
-}
 
 /// Run the full startup sequence (tap/dep resolution + MCP init) under a single spinner.
 ///
@@ -100,7 +39,7 @@ pub async fn startup(
 		// Phase 1: resolve config + deps (spinner shows tap/dep status)
 		let spinner_ref = &spinner;
 		let status_cb = |msg: &str| spinner_ref.set_message(msg.to_string());
-		let resolve_result = resolve_config_and_role(tag, config, Some(&status_cb)).await;
+		let resolve_result = resolver::resolve_config_and_role(tag, config, Some(&status_cb)).await;
 		let (run_config, role) = match resolve_result {
 			Ok(v) => v,
 			Err(e) => {
@@ -124,7 +63,7 @@ pub async fn startup(
 		Ok((run_config, role))
 	} else {
 		// Non-interactive: silent
-		let (run_config, role) = resolve_config_and_role(tag, config, None).await?;
+		let (run_config, role) = resolver::resolve_config_and_role(tag, config, None).await?;
 		octomind::mcp::initialize_mcp_for_role(&role, &run_config).await?;
 		Ok((run_config, role))
 	}
@@ -198,27 +137,4 @@ async fn mcp_init_with_spinner(role: &str, config: &Config, spinner: &ProgressBa
 	};
 
 	octomind::mcp::initialize_mcp_for_role_with_callback(role, config, Some(&cb)).await
-}
-
-/// Inject the tag (e.g. `"octomind:tap"`) as the `name` field of the first
-/// `[[roles]]` entry in the manifest TOML.  This means manifests never need
-/// to declare their own name — the tag IS the identity.
-fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
-	// The full tag IS the role identity — "doctor:blood" becomes the role name.
-	// This matches what resolve_config_and_role returns as the role string.
-	let role_name = tag;
-
-	let mut value: toml::Value =
-		toml::from_str(toml_str).context("Failed to parse agent manifest TOML")?;
-
-	if let Some(toml::Value::Array(roles)) = value.get_mut("roles") {
-		if let Some(toml::Value::Table(table)) = roles.first_mut() {
-			table.insert(
-				"name".to_string(),
-				toml::Value::String(role_name.to_string()),
-			);
-		}
-	}
-
-	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
 }

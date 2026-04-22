@@ -39,7 +39,8 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 	use octomind::websocket::WebSocketServer;
 
 	let (resolved_config, role) =
-		super::common::resolve_config_and_role(args.tag.as_deref(), config, None).await?;
+		octomind::agent::resolver::resolve_config_and_role(args.tag.as_deref(), config, None)
+			.await?;
 
 	// Initialize tracing for WebSocket mode - logs to file
 	// stdout/stderr are used for server status messages

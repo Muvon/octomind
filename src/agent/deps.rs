@@ -38,7 +38,7 @@ use std::process::Stdio;
 pub async fn resolve_deps(
 	manifest_toml: &str,
 	tap_root: &Path,
-	status_cb: Option<&dyn Fn(&str)>,
+	status_cb: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<()> {
 	let entries = parse_dep_entries(manifest_toml)?;
 	if entries.is_empty() {

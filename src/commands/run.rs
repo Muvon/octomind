@@ -80,7 +80,8 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 
 	// Resolve config and role (tap/dep resolution only — MCP init happens after session ID is set)
 	let (run_config, role) =
-		super::common::resolve_config_and_role(args.tag.as_deref(), config, None).await?;
+		octomind::agent::resolver::resolve_config_and_role(args.tag.as_deref(), config, None)
+			.await?;
 
 	let session_args = octomind::session::chat::session::GenericSessionArgs {
 		role: role.clone(),

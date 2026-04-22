@@ -17,4 +17,5 @@
 pub mod deps;
 pub mod inputs;
 pub mod registry;
+pub mod resolver;
 pub mod taps;

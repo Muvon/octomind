@@ -18,7 +18,7 @@ version = 1
 # • none: No logging output (cleanest experience)
 # • info: Show important operations and status messages
 # • debug: Show detailed debugging information
-log_level = "none"
+log_level = "info"
 
 # Default model for all operations (provider:model format)
 # Examples: "openrouter:anthropic/claude-3.5-sonnet", "openai:gpt-4o", "deepseek:deepseek-chat"
@@ -55,14 +55,14 @@ sandbox = false
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Warn when MCP tool responses exceed this token count (0 = disable warnings)
-mcp_response_warning_threshold = 10000
+mcp_response_warning_threshold = 0
 
 # Global token limit for ALL MCP tool responses (0 = unlimited)
 # When exceeded, responses are automatically truncated with notice
-mcp_response_tokens_threshold = 0
+mcp_response_tokens_threshold = 20000
 
 # Maximum tokens per session before truncation kicks in (0 = disabled, >0 = enabled)
-max_session_tokens_threshold = 0
+max_session_tokens_threshold = 200000
 
 # Cache responses when they exceed this token count (0 = no caching)
 cache_tokens_threshold = 2048
@@ -683,7 +683,7 @@ auto_activation = true
 # Enable automatic validation via `validate` scripts at end of each assistant turn.
 # When enabled, active skills with a `validate` script are run automatically.
 # Disable to skip validators entirely (manual validation only).
-auto_validation = true
+auto_validation = false
 
 # Reserved. Rules are evaluated in-process (no script timeout needed).
 # Kept for config compatibility.
@@ -716,15 +716,15 @@ hints_min_interval = 5
 # Compression triggers when context exceeds ANY threshold, using the highest matched ratio
 # Example: At 100k tokens, compress to 1/4 size (4x compression)
 [[compression.pressure_levels]]
-threshold = 50000
+threshold = 60000
 target_ratio = 2.0  # Light: 50% reduction
 
 [[compression.pressure_levels]]
-threshold = 100000
+threshold = 120000
 target_ratio = 4.0  # Medium: 75% reduction
 
 [[compression.pressure_levels]]
-threshold = 150000
+threshold = 160000
 target_ratio = 8.0  # Aggressive: 87.5% reduction
 
 # Maximum number of critical knowledge entries retained across compressions.
@@ -756,7 +756,7 @@ ignore_cost = false  # When true, compression decision API cost is not tracked (
 
 [learning]
 # Enable the learning system
-enabled = false
+enabled = true
 # Model for extraction and retrieval LLM calls (cheap model recommended)
 model = "anthropic:claude-haiku-4-5"
 # Backend: "file" (default, zero deps) or "mcp" (external tool with field mapping)

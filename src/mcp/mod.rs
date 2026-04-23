@@ -359,7 +359,18 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	}
 
 	let mut functions = Vec::new();
+	let session_id = crate::session::context::current_session_id();
 	for server in &config.mcp.servers {
+		// Skip config servers that are disabled in the dynamic registry
+		if let Some(ref sid) = session_id {
+			if let Some((_, enabled)) =
+				crate::session::context::get_dynamic_server_for_session(sid, server.name())
+			{
+				if !enabled {
+					continue;
+				}
+			}
+		}
 		functions.extend(server_functions_for(server, config).await);
 	}
 

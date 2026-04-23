@@ -319,8 +319,20 @@ pub fn unregister_dynamic_server_tools(server_name: &str, tool_names: &[String])
 async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, McpServerConfig>> {
 	let mut tool_map = HashMap::new();
 	let enabled_servers: Vec<McpServerConfig> = config.mcp.servers.to_vec();
+	let session_id = crate::session::context::current_session_id();
 
 	for server in enabled_servers {
+		// Skip config servers that are disabled in the dynamic registry
+		if let Some(ref sid) = session_id {
+			if let Some((_, enabled)) =
+				crate::session::context::get_dynamic_server_for_session(sid, server.name())
+			{
+				if !enabled {
+					continue;
+				}
+			}
+		}
+
 		// Get all functions this server provides
 		let server_functions = match server.connection_type() {
 			McpConnectionType::Builtin => {

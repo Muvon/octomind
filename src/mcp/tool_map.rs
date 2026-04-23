@@ -162,6 +162,38 @@ pub fn get_all_tool_names() -> Vec<String> {
 	state.tool_to_server.keys().cloned().collect()
 }
 
+/// Get all tool names that belong to a given server in the initialized tool map.
+///
+/// Used by the `mcp` tool's `disable` action to temporarily strip a
+/// config-loaded server's tools from the session's tool map.
+///
+/// # Returns
+/// * Vector of tool names belonging to `server_name`.
+/// * Empty vector if not initialized or the server has no tools registered.
+pub fn get_tools_for_server(server_name: &str) -> Vec<String> {
+	let tool_map_state = match TOOL_MAP.get() {
+		Some(state) => state,
+		None => return Vec::new(),
+	};
+
+	let state = tool_map_state.read().unwrap();
+	if !state.initialized {
+		return Vec::new();
+	}
+
+	state
+		.tool_to_server
+		.iter()
+		.filter_map(|(tool, server)| {
+			if server.name() == server_name {
+				Some(tool.clone())
+			} else {
+				None
+			}
+		})
+		.collect()
+}
+
 /// Get all unique server names from the initialized tool map
 ///
 /// # Returns

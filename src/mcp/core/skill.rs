@@ -1147,7 +1147,7 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 		let remaining =
 			crate::session::context::decrement_capability_refcount(&session_id, server_name);
 		if remaining == 0 {
-			if let Err(e) = crate::mcp::core::dynamic::disable_server(server_name) {
+			if let Err(e) = crate::mcp::core::dynamic::disable_server(server_name, None) {
 				crate::log_debug!("skill: offload disable '{}': {}", server_name, e);
 			}
 			crate::mcp::core::dynamic::remove_server(server_name);

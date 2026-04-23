@@ -167,51 +167,88 @@ pub async fn enable_server(
 
 /// Disable an enabled server: mark disabled and remove cached functions.
 ///
-/// The server config stays registered; use `enable_server` to re-activate.
-/// Also unregisters the tools from the global tool map.
+/// Works on BOTH dynamic and config-loaded servers:
+/// - Dynamic server already in session registry → flipped to `enabled=false`.
+/// - Config-loaded server (from `config.mcp.servers`, including auto-bound) →
+///   registered into the session's dynamic registry as `enabled=false` so
+///   subsequent `enable`/`persist` actions can find it. Its tools are stripped
+///   from the global TOOL_MAP so the LLM no longer sees them.
 ///
-/// Session-aware: uses session-scoped registry when in a session context,
-/// falls back to global singleton for CLI mode.
-pub fn disable_server(name: &str) -> Result<()> {
-	// Check if we're in a session context
+/// The underlying process (if any) is NOT killed — re-enabling reuses it via
+/// the cached function list.
+///
+/// Also unregisters the tools from the global tool map.
+pub fn disable_server(name: &str, config: Option<&crate::config::Config>) -> Result<()> {
+	// 1. Session-scoped dynamic registry (preferred path for servers already tracked there).
 	if let Some(session_id) = crate::session::context::current_session_id() {
 		if crate::session::context::disable_dynamic_server_for_session(&session_id, name) {
-			// Get tool names before they're removed
-			let tool_names: Vec<String> =
-				crate::session::context::get_dynamic_server_functions_for_session(
-					&session_id,
-					name,
-				)
-				.map(|funcs| funcs.iter().map(|f| f.name.clone()).collect())
-				.unwrap_or_default();
-			// Unregister the tools from the global tool map
+			// Server was in the dynamic registry — collect its cached tool names
+			// BEFORE disable removed them. `disable_dynamic_server_for_session`
+			// already cleared `functions`, so fall back to scanning the tool_map.
+			let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
 			crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
-			// Clear the global function cache so stale definitions don't linger
 			crate::mcp::server::clear_function_cache_for_server(name);
 			return Ok(());
 		}
+
+		// 2. Not in dynamic registry — look it up in the merged role config.
+		if let Some(server_config) =
+			config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
+		{
+			// Register a session-scoped "shadow" entry so persist/enable can see it.
+			crate::session::context::register_dynamic_server_for_session(
+				&session_id,
+				server_config.clone(),
+			);
+			// Strip tools from the global tool_map for this session.
+			let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
+			crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
+			crate::mcp::server::clear_function_cache_for_server(name);
+			return Ok(());
+		}
+
 		anyhow::bail!("Server '{}' not found", name);
 	}
 
-	// Fall back to global singleton for CLI mode
+	// CLI / non-session mode — fall back to the global singleton.
 	let manager = get_manager();
 	let mut state = manager.write().unwrap();
-	if !state.servers.contains_key(name) {
-		anyhow::bail!("Server '{}' not found", name);
-	}
-	state.enabled.insert(name.to_string(), false);
-	let tool_names: Vec<String> = state
-		.functions
-		.get(name)
-		.map(|f| f.iter().map(|f| f.name.clone()).collect())
-		.unwrap_or_default();
-	state.functions.remove(name);
-	drop(state); // Release lock before calling tool_map
+	if state.servers.contains_key(name) {
+		state.enabled.insert(name.to_string(), false);
+		let tool_names: Vec<String> = state
+			.functions
+			.get(name)
+			.map(|f| f.iter().map(|f| f.name.clone()).collect())
+			.unwrap_or_default();
+		state.functions.remove(name);
+		drop(state);
 
-	crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
-	// Clear the global function cache so stale definitions don't linger
-	crate::mcp::server::clear_function_cache_for_server(name);
-	Ok(())
+		crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
+		crate::mcp::server::clear_function_cache_for_server(name);
+		return Ok(());
+	}
+	drop(state);
+
+	// Not dynamic — try the config-loaded servers (CLI path).
+	if let Some(server_config) =
+		config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
+	{
+		// Stuff it into the global singleton so enable/persist find it later.
+		let manager = get_manager();
+		let mut state = manager.write().unwrap();
+		state
+			.servers
+			.insert(name.to_string(), server_config.clone());
+		state.enabled.insert(name.to_string(), false);
+		drop(state);
+
+		let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
+		crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
+		crate::mcp::server::clear_function_cache_for_server(name);
+		return Ok(());
+	}
+
+	anyhow::bail!("Server '{}' not found", name)
 }
 
 /// Remove a dynamic MCP server by name
@@ -420,26 +457,48 @@ pub struct PersistResult {
 /// Writes `<config_dir>/mcp-<name>.toml` with `[[mcp.servers]]` format
 /// so it gets auto-loaded and merged on next startup.
 ///
-/// If the server is currently enabled, sets auto_bind to the current role.
-/// If the server is disabled, clears auto_bind (so it won't auto-activate).
+/// Works on BOTH dynamic and config-loaded servers:
+/// - Dynamic server → uses its `enabled` flag from the session/global registry.
+/// - Config-loaded server (not in the dynamic registry) → treated as enabled,
+///   since config servers that reach this point are actively serving tools.
+///   (A `disable` call registers the server into the dynamic registry with
+///   `enabled=false`, so the dynamic lookup will pick it up as disabled.)
 ///
-/// Session-aware: uses session-scoped registry when in a session context,
-/// falls back to global singleton for CLI mode.
-pub fn persist_server(name: &str) -> Result<PersistResult> {
+/// `auto_bind` rule:
+/// - enabled → `auto_bind = [current_role]` (next session auto-activates it)
+/// - disabled → `auto_bind = None` (file persists but won't auto-load)
+pub fn persist_server(name: &str, config: Option<&crate::config::Config>) -> Result<PersistResult> {
+	// Lookup order: dynamic registry (session or global) first → config servers.
 	let (server, is_enabled) =
 		if let Some(session_id) = crate::session::context::current_session_id() {
-			crate::session::context::get_dynamic_server_for_session(&session_id, name)
-				.ok_or_else(|| anyhow::anyhow!("Server '{}' not registered", name))?
+			if let Some(found) =
+				crate::session::context::get_dynamic_server_for_session(&session_id, name)
+			{
+				found
+			} else if let Some(server_config) =
+				config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
+			{
+				// Config-loaded server that was never disabled — treat as enabled.
+				(server_config.clone(), true)
+			} else {
+				anyhow::bail!("Server '{}' not found", name);
+			}
 		} else {
 			let manager = get_manager();
 			let state = manager.read().unwrap();
-			let server = state
-				.servers
-				.get(name)
-				.cloned()
-				.ok_or_else(|| anyhow::anyhow!("Server '{}' not registered", name))?;
-			let is_enabled = *state.enabled.get(name).unwrap_or(&false);
-			(server, is_enabled)
+			if let Some(server) = state.servers.get(name).cloned() {
+				let is_enabled = *state.enabled.get(name).unwrap_or(&false);
+				(server, is_enabled)
+			} else {
+				drop(state);
+				if let Some(server_config) =
+					config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
+				{
+					(server_config.clone(), true)
+				} else {
+					anyhow::bail!("Server '{}' not found", name);
+				}
+			}
 		};
 
 	// Determine auto_bind based on enabled state and current role
@@ -574,9 +633,9 @@ pub async fn execute_mcp_command(
 		"list" => handle_list(call, config).await,
 		"add" => handle_add(call).await,
 		"enable" => handle_enable(call).await,
-		"disable" => handle_disable(call).await,
+		"disable" => handle_disable(call, config).await,
 		"remove" => handle_remove(call).await,
-		"persist" => handle_persist(call).await,
+		"persist" => handle_persist(call, config).await,
 		"unpersist" => handle_unpersist(call).await,
 		_ => Ok(McpToolResult::error(
 			call.tool_name.clone(),
@@ -845,7 +904,10 @@ async fn handle_enable(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> 
 	}
 }
 
-async fn handle_disable(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
+async fn handle_disable(
+	call: &crate::mcp::McpToolCall,
+	config: &crate::config::Config,
+) -> Result<McpToolResult> {
 	let params = &call.parameters;
 
 	let name = match params.get("name").and_then(|v| v.as_str()) {
@@ -859,7 +921,7 @@ async fn handle_disable(call: &crate::mcp::McpToolCall) -> Result<McpToolResult>
 		}
 	};
 
-	match disable_server(&name) {
+	match disable_server(&name, Some(config)) {
 		Ok(()) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -902,7 +964,10 @@ async fn handle_remove(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> 
 	}
 }
 
-async fn handle_persist(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
+async fn handle_persist(
+	call: &crate::mcp::McpToolCall,
+	config: &crate::config::Config,
+) -> Result<McpToolResult> {
 	let params = &call.parameters;
 
 	let name = match params.get("name").and_then(|v| v.as_str()) {
@@ -916,7 +981,7 @@ async fn handle_persist(call: &crate::mcp::McpToolCall) -> Result<McpToolResult>
 		}
 	};
 
-	match persist_server(&name) {
+	match persist_server(&name, Some(config)) {
 		Ok(result) => {
 			let msg = match &result.auto_bind {
 				Some(roles) => {
@@ -1036,7 +1101,7 @@ mod tests {
 		}
 
 		// Persist — should include auto_bind = ["developer"]
-		let result = persist_server("__test_persist_autobind").unwrap();
+		let result = persist_server("__test_persist_autobind", None).unwrap();
 
 		// Verify the PersistResult
 		assert_eq!(
@@ -1081,7 +1146,7 @@ mod tests {
 		register_server(server).unwrap();
 
 		// Persist while disabled — auto_bind should be None
-		let result = persist_server("__test_persist_disabled").unwrap();
+		let result = persist_server("__test_persist_disabled", None).unwrap();
 
 		assert_eq!(
 			result.auto_bind, None,

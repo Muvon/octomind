@@ -115,9 +115,27 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 				if let Some(content) = super::skill::take_silent_skill_content() {
 					let _ = session.add_user_message(&content);
 				}
+				// Emit structured event for JSONL/WebSocket consumers
+				if let Some(sid) = &session_id {
+					crate::mcp::process::send_notification_message(
+						crate::websocket::ServerMessage::skill(
+							"activate",
+							&name_str,
+							Some("env(OCTOMIND_SKILLS)".to_string()),
+							sid.clone(),
+						),
+					);
+				}
 			}
 			Err(e) => {
-				eprintln!("OCTOMIND_SKILLS: skill '{}' failed: {}", name, e);
+				let suppress = crate::config::with_thread_config(|c| c.output_mode())
+					.map(|m| m.should_suppress_cli_output())
+					.unwrap_or(false);
+				if !suppress {
+					eprintln!("OCTOMIND_SKILLS: skill '{}' failed: {}", name, e);
+				} else {
+					crate::log_debug!("OCTOMIND_SKILLS: skill '{}' failed: {}", name, e);
+				}
 			}
 		}
 	}
@@ -348,7 +366,24 @@ async fn auto_activate_skill(
 			if let Some(content) = super::skill::take_silent_skill_content() {
 				let _ = session.add_user_message(&content);
 			}
-			if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+
+			// Emit structured event for JSONL/WebSocket consumers
+			if let Some(sid) = crate::session::context::current_session_id() {
+				crate::mcp::process::send_notification_message(
+					crate::websocket::ServerMessage::skill(
+						"activate",
+						name,
+						Some(trigger.to_string()),
+						sid,
+					),
+				);
+			}
+
+			// Plain-text print: only when not suppressing CLI output (i.e. skip for jsonl/websocket)
+			let suppress = crate::config::with_thread_config(|c| c.output_mode())
+				.map(|m| m.should_suppress_cli_output())
+				.unwrap_or(false);
+			if !suppress && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
 				use colored::Colorize;
 				eprintln!(
 					"{} {} {}",

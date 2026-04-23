@@ -213,6 +213,12 @@ async fn handle_use(session: &mut ChatSession, name: &str) -> Result<CommandResu
 			if let Some(content) = crate::mcp::core::skill::take_silent_skill_content() {
 				let _ = session.add_user_message(&content);
 			}
+			// Emit structured lifecycle event for JSONL/WebSocket consumers
+			if let Some(sid) = crate::session::context::current_session_id() {
+				crate::mcp::process::send_notification_message(
+					crate::websocket::ServerMessage::skill("use", name, None, sid),
+				);
+			}
 		}
 		Err(e) => {
 			let data = json!({"subcommand": "error", "message": format!("Error: {}", e)});

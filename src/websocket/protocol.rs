@@ -159,6 +159,22 @@ pub struct ErrorPayload {
 	pub message: String,
 }
 
+/// Skill lifecycle event (activate via auto-activation, explicit use, or forget).
+/// Emitted for structured output modes (JSONL, WebSocket) so clients can track
+/// which skills are currently shaping the session context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillPayload {
+	/// Lifecycle action: "activate" (auto-activation), "use" (explicit), "forget".
+	pub action: String,
+	/// Skill name (e.g. "programming-rust").
+	pub name: String,
+	/// For `action = "activate"`: the matched rule that fired (e.g. "file(Cargo.toml)").
+	/// Absent for explicit use/forget.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub trigger: Option<String>,
+	pub session_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpNotificationPayload {
 	/// MCP server name that sent the notification
@@ -190,6 +206,8 @@ pub enum ServerMessage {
 	Error(ErrorPayload),
 	/// Notification received from an MCP server (e.g. progress, log messages)
 	McpNotification(McpNotificationPayload),
+	/// Skill lifecycle event (activate / use / forget) — emitted for structured output
+	Skill(SkillPayload),
 }
 
 impl ServerMessage {
@@ -202,6 +220,20 @@ impl ServerMessage {
 			message,
 			session_id,
 			data: None,
+		})
+	}
+
+	pub fn skill(
+		action: impl Into<String>,
+		name: impl Into<String>,
+		trigger: Option<String>,
+		session_id: impl Into<String>,
+	) -> Self {
+		ServerMessage::Skill(SkillPayload {
+			action: action.into(),
+			name: name.into(),
+			trigger,
+			session_id: session_id.into(),
 		})
 	}
 }
@@ -474,6 +506,30 @@ mod tests {
 		let json = serde_json::to_string(&msg).unwrap();
 		assert!(json.contains("\"type\":\"cost\""));
 		assert!(json.contains("\"session_tokens\":1234"));
+	}
+
+	#[test]
+	fn test_server_message_skill_serialization_with_trigger() {
+		let msg = ServerMessage::skill(
+			"activate",
+			"programming-rust",
+			Some("file(Cargo.toml)".to_string()),
+			"sess_123",
+		);
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"skill\""));
+		assert!(json.contains("\"action\":\"activate\""));
+		assert!(json.contains("\"name\":\"programming-rust\""));
+		assert!(json.contains("\"trigger\":\"file(Cargo.toml)\""));
+	}
+
+	#[test]
+	fn test_server_message_skill_serialization_without_trigger() {
+		let msg = ServerMessage::skill("forget", "programming-rust", None, "sess_123");
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"skill\""));
+		assert!(json.contains("\"action\":\"forget\""));
+		assert!(!json.contains("trigger"));
 	}
 
 	#[test]

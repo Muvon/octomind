@@ -166,15 +166,23 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 		// Done initializing — clear spinner, print skills
 		if let Some(sp) = spinner {
-			// Print skills through spinner before clearing
-			if let Some(sid) = crate::session::context::current_session_id() {
-				let active = crate::session::context::get_active_skills(&sid);
-				for name in &active {
-					sp.println(format!(
-						"{} {}",
-						"Using skill:".dimmed(),
-						name.bright_cyan()
-					));
+			// Print skills through spinner before clearing.
+			// Guard with should_suppress_cli_output so JSONL/WebSocket modes don't
+			// leak plain-text "Using skill:" lines into structured output — the
+			// Skill(activate) events emitted via notification_sender cover those modes.
+			let suppress = crate::config::with_thread_config(|c| c.output_mode())
+				.map(|m| m.should_suppress_cli_output())
+				.unwrap_or(false);
+			if !suppress {
+				if let Some(sid) = crate::session::context::current_session_id() {
+					let active = crate::session::context::get_active_skills(&sid);
+					for name in &active {
+						sp.println(format!(
+							"{} {}",
+							"Using skill:".dimmed(),
+							name.bright_cyan()
+						));
+					}
 				}
 			}
 			sp.disable_steady_tick();

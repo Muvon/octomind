@@ -1068,6 +1068,9 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 			name,
 			session_id
 		);
+		// Note: silent callers (skill_auto::auto_activate_skill, load_env_skills,
+		// /skill command handler) emit their own structured event since they know
+		// the context (auto-activation vs explicit command vs env load).
 	} else {
 		// Normal mode (AI-initiated): push to inbox for the main loop to process.
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
@@ -1079,6 +1082,14 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 			name,
 			session_id
 		);
+
+		// Emit structured lifecycle event for JSONL/WebSocket consumers
+		crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
+			"use",
+			&name,
+			None,
+			session_id.clone(),
+		));
 	}
 
 	// Return short confirmation — the actual content is injected as a system message
@@ -1166,6 +1177,14 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 	crate::session::context::request_skill_compression(&session_id);
 
 	crate::log_debug!("skill: forgot '{}' from session {}", name, session_id);
+
+	// Emit structured lifecycle event for JSONL/WebSocket consumers
+	crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
+		"forget",
+		&name,
+		None,
+		session_id.clone(),
+	));
 
 	let msg = if offloaded.is_empty() {
 		format!(

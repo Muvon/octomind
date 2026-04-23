@@ -542,10 +542,51 @@ impl Config {
 			crate::log_debug!("TRACE: Adding server '{}' to merged config", server.name());
 		}
 
+		// Auto-bind servers land in enabled_servers but are NOT in role_mcp_config.server_refs.
+		// Downstream code reads server_refs in many places (layers, tool filtering, prompt, command executor).
+		// To keep everything consistent we:
+		//   1. add auto-bind names to server_refs
+		//   2. add "<name>:*" patterns to allowed_tools (only when non-empty = restricted mode)
+		// Both the returned McpConfig AND the role_map entry are patched so any reader sees the same truth.
+		let explicit_refs: std::collections::HashSet<&str> = role_mcp_config
+			.server_refs
+			.iter()
+			.map(|s| s.as_str())
+			.collect();
+		let auto_bind_names: Vec<String> = enabled_servers
+			.iter()
+			.map(|s| s.name().to_string())
+			.filter(|name| !explicit_refs.contains(name.as_str()))
+			.collect();
+
+		let mut patched_server_refs = role_mcp_config.server_refs.clone();
+		for name in &auto_bind_names {
+			if !patched_server_refs.contains(name) {
+				patched_server_refs.push(name.clone());
+			}
+		}
+
+		let mut patched_allowed_tools = role_mcp_config.allowed_tools.clone();
+		if !patched_allowed_tools.is_empty() {
+			for name in &auto_bind_names {
+				let wildcard = format!("{}:*", name);
+				if !patched_allowed_tools.contains(&wildcard) {
+					patched_allowed_tools.push(wildcard);
+				}
+			}
+		}
+
 		merged.mcp = McpConfig {
-			servers: enabled_servers, // Only role-enabled servers (with runtime injection)
-			allowed_tools: role_mcp_config.allowed_tools.clone(),
+			servers: enabled_servers,
+			allowed_tools: patched_allowed_tools.clone(),
 		};
+
+		// Patch the role entry in role_map so downstream readers of
+		// config.role_map[role].mcp.server_refs see auto-bind servers.
+		if let Some(role_entry) = merged.role_map.get_mut(mode) {
+			role_entry.mcp.server_refs = patched_server_refs;
+			role_entry.mcp.allowed_tools = patched_allowed_tools;
+		}
 
 		// Role-specific layers are now managed by workflows
 		// Keep merged.layers as original registry for agent tools

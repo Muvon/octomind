@@ -92,6 +92,15 @@ fn dedup_tables_by_name(arr: Vec<toml::Value>) -> toml::Value {
 
 /// Load and merge all TOML files from a directory
 /// Order: config.toml first, then other *.toml files in alphabetical order
+/// `mcp-*.toml` files are treated as overrides and loaded last.
+/// `mcp.toml` (no dash) is a regular file and loads in normal alphabetical order.
+fn is_mcp_extension_file(path: &Path) -> bool {
+	path.file_name()
+		.and_then(|n| n.to_str())
+		.map(|n| n.starts_with("mcp-") && n.ends_with(".toml"))
+		.unwrap_or(false)
+}
+
 fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 	let mut merged: Option<toml::Value> = None;
 
@@ -102,8 +111,18 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 		.filter(|p| p.is_file() && p.extension().map(|e| e == "toml").unwrap_or(false))
 		.collect();
 
-	// Sort for deterministic loading order
-	files.sort();
+	// Load order: all regular files first (alphabetical), then `mcp-*.toml` files last.
+	// `mcp-*.toml` are special overrides — they must merge AFTER the base so their
+	// fields (e.g. `auto_bind`) win when a server with the same name exists in `mcp.toml`.
+	files.sort_by(|a, b| {
+		let a_is_mcp_ext = is_mcp_extension_file(a);
+		let b_is_mcp_ext = is_mcp_extension_file(b);
+		match (a_is_mcp_ext, b_is_mcp_ext) {
+			(true, false) => std::cmp::Ordering::Greater,
+			(false, true) => std::cmp::Ordering::Less,
+			_ => a.cmp(b),
+		}
+	});
 
 	for file in &files {
 		let content = fs::read_to_string(file)
@@ -692,6 +711,188 @@ tools = []
 		assert!(server_names.contains(&"clt"));
 		assert!(!server_names.contains(&"core")); // Should not be included
 		assert!(!server_names.contains(&"filesystem")); // Should not be included
+	}
+
+	/// Config with auto_bind servers for testing auto-bind behavior.
+	/// - `auto_bound` binds to the `developer` role via `auto_bind`
+	/// - `other_bound` binds to `assistant` only (should NOT appear for developer)
+	fn get_test_config_with_auto_bind() -> String {
+		let mut config = include_str!("../../config-templates/default.toml").to_string();
+		config.push_str(
+			r#"
+
+[[roles]]
+name = "developer"
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+system = "Developer."
+welcome = "Hi."
+mcp = { server_refs = ["explicit"], allowed_tools = ["explicit:*"] }
+
+[[roles]]
+name = "assistant"
+temperature = 0.5
+top_p = 0.9
+top_k = 40
+system = "Assistant."
+welcome = "Hi."
+mcp = { server_refs = [], allowed_tools = [] }
+
+[[mcp.servers]]
+name = "explicit"
+type = "stdio"
+command = "explicit"
+args = []
+timeout_seconds = 30
+tools = []
+
+[[mcp.servers]]
+name = "auto_bound"
+type = "stdio"
+command = "auto_bound"
+args = []
+timeout_seconds = 30
+tools = []
+auto_bind = ["developer"]
+
+[[mcp.servers]]
+name = "other_bound"
+type = "stdio"
+command = "other"
+args = []
+timeout_seconds = 30
+tools = []
+auto_bind = ["assistant"]
+"#,
+		);
+		config
+	}
+
+	#[test]
+	fn test_auto_bind_server_appears_in_merged_servers() {
+		let mut config: Config = toml::from_str(&get_test_config_with_auto_bind()).expect("parse");
+		config.build_role_map();
+
+		let merged = config.get_merged_config_for_role("developer");
+		let names: Vec<&str> = merged.mcp.servers.iter().map(|s| s.name()).collect();
+
+		assert!(
+			names.contains(&"explicit"),
+			"explicit server missing: {names:?}"
+		);
+		assert!(
+			names.contains(&"auto_bound"),
+			"auto_bound server missing: {names:?}"
+		);
+		assert!(
+			!names.contains(&"other_bound"),
+			"other_bound should NOT auto-bind to developer: {names:?}"
+		);
+	}
+
+	#[test]
+	fn test_auto_bind_patches_server_refs_in_role_map() {
+		let mut config: Config = toml::from_str(&get_test_config_with_auto_bind()).expect("parse");
+		config.build_role_map();
+
+		let merged = config.get_merged_config_for_role("developer");
+		let role_entry = merged
+			.role_map
+			.get("developer")
+			.expect("developer role must exist");
+
+		assert!(
+			role_entry
+				.mcp
+				.server_refs
+				.contains(&"auto_bound".to_string()),
+			"auto_bound must be added to role_map server_refs, got: {:?}",
+			role_entry.mcp.server_refs
+		);
+		assert!(
+			role_entry.mcp.server_refs.contains(&"explicit".to_string()),
+			"explicit server_ref must survive: {:?}",
+			role_entry.mcp.server_refs
+		);
+	}
+
+	#[test]
+	fn test_auto_bind_patches_allowed_tools_wildcard() {
+		let mut config: Config = toml::from_str(&get_test_config_with_auto_bind()).expect("parse");
+		config.build_role_map();
+
+		let merged = config.get_merged_config_for_role("developer");
+
+		// allowed_tools is non-empty (`explicit:*`) so patching must add `auto_bound:*`
+		assert!(
+			merged
+				.mcp
+				.allowed_tools
+				.contains(&"auto_bound:*".to_string()),
+			"auto_bound:* must be appended to allowed_tools, got: {:?}",
+			merged.mcp.allowed_tools
+		);
+		assert!(
+			merged.mcp.allowed_tools.contains(&"explicit:*".to_string()),
+			"explicit:* must survive: {:?}",
+			merged.mcp.allowed_tools
+		);
+
+		// Role map must mirror the merged allowed_tools.
+		let role_entry = merged.role_map.get("developer").unwrap();
+		assert_eq!(
+			role_entry.mcp.allowed_tools, merged.mcp.allowed_tools,
+			"role_map allowed_tools must match merged.mcp.allowed_tools"
+		);
+	}
+
+	#[test]
+	fn test_auto_bind_empty_allowed_tools_stays_empty() {
+		// When allowed_tools is empty = unrestricted → nothing to patch
+		let mut config_str = get_test_config_with_auto_bind();
+		// swap developer role to have empty allowed_tools
+		config_str = config_str.replace(
+			r#"mcp = { server_refs = ["explicit"], allowed_tools = ["explicit:*"] }"#,
+			r#"mcp = { server_refs = ["explicit"], allowed_tools = [] }"#,
+		);
+
+		let mut config: Config = toml::from_str(&config_str).expect("parse");
+		config.build_role_map();
+
+		let merged = config.get_merged_config_for_role("developer");
+		assert!(
+			merged.mcp.allowed_tools.is_empty(),
+			"empty allowed_tools must remain empty (unrestricted mode), got: {:?}",
+			merged.mcp.allowed_tools
+		);
+		// server_refs still patched even when allowed_tools is empty
+		let role_entry = merged.role_map.get("developer").unwrap();
+		assert!(
+			role_entry
+				.mcp
+				.server_refs
+				.contains(&"auto_bound".to_string()),
+			"auto_bound must still be in server_refs even when allowed_tools is empty"
+		);
+	}
+
+	#[test]
+	fn test_auto_bind_does_not_leak_across_roles() {
+		let mut config: Config = toml::from_str(&get_test_config_with_auto_bind()).expect("parse");
+		config.build_role_map();
+
+		let merged = config.get_merged_config_for_role("assistant");
+		let names: Vec<&str> = merged.mcp.servers.iter().map(|s| s.name()).collect();
+
+		assert!(
+			names.contains(&"other_bound"),
+			"other_bound must bind to assistant: {names:?}"
+		);
+		assert!(
+			!names.contains(&"auto_bound"),
+			"auto_bound (developer-only) must NOT leak to assistant: {names:?}"
+		);
 	}
 
 	#[test]

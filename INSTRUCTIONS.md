@@ -137,6 +137,69 @@ All defaults live in `config-templates/default.toml` (782 lines). The resolved c
 
 Config flow: `default.toml` → `load()` in `src/config/loading.rs` → merge with user config → `get_merged_config_for_role()` applies role overrides.
 
+### MCP Server Activation Flow
+
+How a server goes from config TOML to callable tool in a session:
+
+```
+Config::load()
+  └─ load_and_merge_toml_from_directory(config_dir)
+       ├─ regular *.toml files (config.toml, mcp.toml, roles.toml, …) — alphabetical
+       └─ mcp-*.toml override files                                    — alphabetical, LAST
+       merge_toml_values: tables deep-merge, [[arrays of tables]] concat + dedup by `name`
+       (last entry wins → mcp-*.toml overrides anything with the same server name)
+         → toml::Value → Config (serde) → config.mcp.servers = global registry
+         → config.build_role_map() indexes roles by full name (including `domain:spec`)
+
+resolve_config_and_role(tag)       [CLI `run`/`acp`/`server` + `/role`]
+  ├─ plain tag  (`developer`)               → (config, "developer")
+  └─ agent tag (`developer:general`)        → fetch tap manifest, resolve
+                                              capabilities/inputs/env/deps,
+                                              merge_agent_toml(base, manifest),
+                                              inject role name = full tag
+                                              → (merged_config, "developer:general")
+
+get_merged_config_for_role(role)   [src/config/mod.rs]
+  └─ get_enabled_servers_for_role
+       ├─ EXPLICIT : servers named in role.mcp.server_refs
+       └─ AUTO-BIND: servers whose auto_bind contains the role name (exact match,
+                     including `:` — `auto_bind = ["developer:general"]`)
+  └─ PATCH role_map[role] so downstream readers see a consistent view:
+       • server_refs  += auto-bind names
+       • allowed_tools += "<name>:*" for each auto-bind server (ONLY if allowed_tools
+                          was non-empty; empty = unrestricted, nothing to patch)
+  → merged.mcp.servers = only this role's active servers
+
+initialize_mcp_for_role(role, merged_config)
+  ├─ initialize_servers_for_role  — spawns stdio / opens http / registers builtins
+  └─ tool_map::initialize_tool_map — builds global TOOL_MAP
+
+TOOL_MAP (tool_name → McpServerConfig)
+  ├─ config servers   (merged_config.mcp.servers)
+  ├─ dynamic servers  (mcp add/enable at runtime)
+  └─ dynamic agents   (agent add/enable at runtime)
+```
+
+**Load order matters.** `mcp-*.toml` files load AFTER base files (regardless of
+alphabetical position) so they override same-named servers in `mcp.toml`. Without
+this, `mcp.toml` would lexicographically sort after `mcp-foo.toml` and silently
+overwrite the override's fields (e.g. `auto_bind`). See `is_mcp_extension_file`
+in `src/config/loading.rs`.
+
+**Persisted servers** (`mcp persist`): writes `<config_dir>/mcp-<name>.toml` with
+`auto_bind = ["<role>"]`. Picked up automatically on next startup via the
+mcp-override load order above. No manual `server_refs` edit needed.
+
+**`allowed_tools` gotcha**: a non-empty `allowed_tools` list (e.g.
+`["core:*", "filesystem:*"]`) silently filters tools from servers NOT listed.
+`get_merged_config_for_role` auto-appends `"<server>:*"` for every auto-bind
+server to prevent this. Empty list = no restriction, no patching.
+
+**Role name = full tag.** Agent tags like `developer:general` become the literal
+role name in `role_map` and in `auto_bind` matching. An `auto_bind` value of
+`"developer"` will NOT match the tag `"developer:general"` — the colon is part
+of the identity.
+
 ### MCP Tool Routing
 
 1. `initialize_mcp_for_role()` builds the tool map from config-defined servers

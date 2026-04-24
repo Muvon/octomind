@@ -663,7 +663,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		if let Some(layers) = &config.layers {
 			println!("  Configured Layers: {} available", layers.len());
 			for layer in layers {
-				println!("    ✅ {} (temp: {:.1})", layer.name, layer.temperature);
+				println!("    ✅ {} → {}", layer.name, layer.command);
 			}
 		}
 

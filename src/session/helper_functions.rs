@@ -543,17 +543,3 @@ pub async fn get_all_placeholders(project_dir: &Path) -> HashMap<String, String>
 
 	placeholders
 }
-
-/// Process system prompt placeholders for layer configurations
-/// This ensures consistent placeholder processing across all layer types
-pub async fn process_layer_system_prompt(
-	layer_config: &mut crate::session::layers::LayerConfig,
-	project_dir: &std::path::Path,
-) {
-	if let Some(ref system_prompt) = layer_config.system_prompt {
-		if layer_config.processed_system_prompt.is_none() {
-			let processed = process_placeholders_async(system_prompt, project_dir).await;
-			layer_config.processed_system_prompt = Some(processed);
-		}
-	}
-}

@@ -132,40 +132,6 @@ impl Config {
 			}
 		}
 
-		// Validate layer configurations
-		if let Some(layers) = &self.layers {
-			for layer in layers {
-				// Validate temperature
-				if layer.temperature < 0.0 || layer.temperature > 2.0 {
-					return Err(anyhow!(
-						"Layer '{}' temperature must be between 0.0 and 2.0, got: {}",
-						layer.name,
-						layer.temperature
-					));
-				}
-
-				// Validate top_p
-				if layer.top_p < 0.0 || layer.top_p > 1.0 {
-					return Err(anyhow!(
-						"Layer '{}' top_p must be between 0.0 and 1.0, got: {}",
-						layer.name,
-						layer.top_p
-					));
-				}
-
-				// Validate top_k
-				if layer.top_k < 1 || layer.top_k > 1000 {
-					return Err(anyhow!(
-						"Layer '{}' top_k must be between 1 and 1000, got: {}",
-						layer.name,
-						layer.top_k
-					));
-				}
-			}
-		}
-
-		// Role configurations no longer have models - using system-wide model
-
 		Ok(())
 	}
 

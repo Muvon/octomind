@@ -272,7 +272,7 @@ async fn execute_config_agent(
 
 /// Execute a dynamic agent in-process.
 ///
-/// Mirrors GenericLayer::process() — builds a merged config from server_refs
+/// Builds a merged config from server_refs
 /// (resolving both static config servers and dynamic servers), then runs
 /// chat_completion_with_validation with a recursive tool call loop.
 async fn execute_dynamic_agent(
@@ -431,7 +431,7 @@ fn build_agent_config(
 /// Core in-process execution for a dynamic agent.
 ///
 /// Builds messages (system + user task), calls chat_completion_with_validation,
-/// then handles recursive tool calls — same pattern as GenericLayer::process().
+/// then handles recursive tool calls.
 fn run_dynamic_agent_in_process(
 	agent: &crate::mcp::core::dynamic_agents::DynamicAgentConfig,
 	task: &str,
@@ -504,31 +504,10 @@ fn run_dynamic_agent_in_process(
 		let mut current_exchange = response.exchange;
 		let mut current_tool_calls_param = response.tool_calls;
 
-		// Recursive tool call loop — same as GenericLayer
+		// Recursive tool call loop
 		if !agent.server_refs.is_empty() {
 			// Accumulate messages for the conversation (system + user + tool rounds)
 			let mut conv_messages = messages.clone();
-
-			// Build a LayerConfig for tool execution (only mcp field matters here)
-			let layer_cfg = crate::session::layers::layer_trait::LayerConfig {
-				name: agent.name.clone(),
-				model: agent.model.clone(),
-				system_prompt: None,
-				description: String::new(),
-				temperature: agent.temperature.unwrap_or(0.7),
-				top_p: agent.top_p.unwrap_or(0.9),
-				top_k: agent.top_k.unwrap_or(0),
-				max_tokens: agent_config.get_effective_max_tokens(),
-				input_mode: crate::session::layers::layer_trait::InputMode::Last,
-				output_mode: crate::session::layers::layer_trait::OutputMode::Append,
-				output_role: crate::session::layers::layer_trait::OutputRole::Assistant,
-				mcp: crate::session::layers::layer_trait::LayerMcpConfig {
-					server_refs: agent.server_refs.clone(),
-					allowed_tools: agent.allowed_tools.clone(),
-				},
-				parameters: std::collections::HashMap::new(),
-				processed_system_prompt: None,
-			};
 
 			loop {
 				if *operation_cancelled.borrow() {
@@ -578,7 +557,6 @@ fn run_dynamic_agent_in_process(
 					crate::session::chat::response::tool_execution::LayerToolExecutionParams {
 						tool_calls: current_tool_calls,
 						session_name: format!("agent_{}", agent.name),
-						layer_config: layer_cfg.clone(),
 						layer_name: format!("agent_{}", agent.name),
 						operation_cancelled: Some(operation_cancelled.clone()),
 						mode: output_mode,
@@ -676,8 +654,9 @@ fn run_dynamic_agent_in_process(
 	}) // Box::pin
 }
 
-/// Spawn the ACP command, drive initialize → session/new → session/prompt,
-async fn run_acp_command(
+/// Spawn the ACP command, drive initialize → session/new → session/prompt.
+/// Used by both agents and layers to execute via ACP protocol.
+pub async fn run_acp_command(
 	command: &str,
 	task: &str,
 	workdir: &std::path::Path,

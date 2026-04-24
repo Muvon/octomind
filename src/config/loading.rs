@@ -668,9 +668,9 @@ tools = []
 		let mut config: Config = toml::from_str(&test_config).expect("Failed to parse test config");
 		config.build_role_map();
 
-		// Verify roles were parsed (template has 1 role + 3 appended by test = 4 in vec; assistant deduped in map → 3)
-		assert_eq!(config.roles.len(), 4);
-		assert_eq!(config.role_map.len(), 3);
+		// Verify roles were parsed (template has 4 roles + 3 appended by test = 7 in vec; assistant deduped in map → 6)
+		assert_eq!(config.roles.len(), 7);
+		assert_eq!(config.role_map.len(), 6);
 		assert!(config.role_map.contains_key("tester"));
 
 		let tester_role = config.role_map.get("tester").unwrap();

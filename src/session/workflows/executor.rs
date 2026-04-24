@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::config::{Config, WorkflowStep, WorkflowStepType};
-use crate::session::layers::types::GenericLayer;
 use crate::session::layers::Layer;
+use crate::session::layers::LayerProcessor;
 use crate::session::Session;
 use anyhow::Result;
 
@@ -409,7 +409,7 @@ impl StepExecutor {
 		use colored::Colorize;
 
 		// Get layer config from global registry
-		let mut layer_config = if let Some(layers) = &config.layers {
+		let layer_config = if let Some(layers) = &config.layers {
 			layers
 				.iter()
 				.find(|l| l.name == layer_name)
@@ -422,23 +422,8 @@ impl StepExecutor {
 			));
 		};
 
-		// CRITICAL FIX: Process and cache layer system prompt before execution
-		// This ensures placeholders are expanded and prompt is cached
-		// Use thread-local if set (ACP/WebSocket), otherwise process cwd
-		let current_dir = crate::mcp::get_thread_working_directory();
-		layer_config
-			.process_and_cache_system_prompt(&current_dir)
-			.await;
-
-		// Create GenericLayer instance
-		let mut layer = GenericLayer::new(layer_config);
-
-		// Set workflow context for display
-		layer.set_workflow_context(
-			context.step_index,
-			context.total_steps,
-			context.workflow_name.to_string(),
-		);
+		// Create layer processor (executes via ACP)
+		let layer = LayerProcessor::new(layer_config);
 
 		// Execute layer
 		let result = layer
@@ -531,28 +516,20 @@ impl StepExecutor {
 			}
 		}
 
-		// Check if layer had tool calls
-
-		let had_tool_calls =
-			result.tool_calls.is_some() && !result.tool_calls.as_ref().unwrap().is_empty();
-
-		// Display layer output (same as /run command does)
+		// Display layer output
 		if let Some(output) = result.outputs.last() {
 			if !output.trim().is_empty() {
-				// Display step header for non-tool responses (tool responses already have headers)
-				if !had_tool_calls {
-					let response_header = format!(
-						" {} | {} | Step {}/{} ",
-						context.workflow_name.bright_yellow(),
-						layer_name.bright_cyan(),
-						context.step_index,
-						context.total_steps
-					);
-					let separator_length = 70.max(response_header.len() + 4);
-					let dashes = "─".repeat(separator_length - response_header.len());
-					let separator = format!("──{}{}──", response_header, dashes.dimmed());
-					println!("{}", separator);
-				}
+				let response_header = format!(
+					" {} | {} | Step {}/{} ",
+					context.workflow_name.bright_yellow(),
+					layer_name.bright_cyan(),
+					context.step_index,
+					context.total_steps
+				);
+				let separator_length = 70.max(response_header.len() + 4);
+				let dashes = "─".repeat(separator_length - response_header.len());
+				let separator = format!("──{}{}──", response_header, dashes.dimmed());
+				println!("{}", separator);
 
 				println!();
 				use crate::session::chat::assistant_output::print_assistant_response;

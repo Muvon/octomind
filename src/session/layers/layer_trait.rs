@@ -13,22 +13,16 @@
 // limitations under the License.
 
 use crate::config::Config;
-use crate::session::{ProviderExchange, Session, TokenUsage};
+use crate::session::Session;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-// Layer result that contains data returned from a layer's processing
+// Layer result returned from ACP execution
 pub struct LayerResult {
-	pub outputs: Vec<String>, // All text outputs from layer processing
-	pub exchange: ProviderExchange,
-	pub token_usage: Option<TokenUsage>,
-	pub tool_calls: Option<Vec<crate::mcp::McpToolCall>>,
-	// Time tracking
-	pub api_time_ms: u64,   // Time spent on API requests
-	pub tool_time_ms: u64,  // Time spent executing tools
-	pub total_time_ms: u64, // Total processing time for this layer
+	pub outputs: Vec<String>,
+	pub total_time_ms: u64,
 }
 
 // Input mode determines what part of the previous layer's output will be used
@@ -166,203 +160,39 @@ where
 	OutputRole::from_str(&s).map_err(D::Error::custom)
 }
 
-// Configuration for layer-specific MCP settings
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct LayerMcpConfig {
-	// Server references - list of server names from the global registry to use for this layer
-	// Empty list means MCP is disabled for this layer
-	#[serde(default)]
-	pub server_refs: Vec<String>,
-
-	#[serde(default)]
-	pub allowed_tools: Vec<String>, // Specific tools allowed (empty = all tools from enabled servers)
-}
-
-impl LayerMcpConfig {
-	/// Check if a tool is allowed based on allowed_tools patterns
-	/// Supports:
-	/// - Exact tool names: "text_editor"
-	/// - Server group patterns: "filesystem:*" (all tools from filesystem server)
-	/// - Server-specific patterns: "filesystem:text_*" (filesystem tools starting with "text_")
-	pub fn is_tool_allowed(&self, tool_name: &str, server_name: &str) -> bool {
-		// If no allowed_tools specified, all tools are allowed
-		if self.allowed_tools.is_empty() {
-			return true;
-		}
-
-		for pattern in &self.allowed_tools {
-			// Check for server group pattern (e.g., "filesystem:*" or "filesystem:text_*")
-			if let Some((server_prefix, tool_pattern)) = pattern.split_once(':') {
-				// Check if server matches
-				if server_prefix == server_name {
-					// Check tool pattern
-					if tool_pattern == "*" {
-						// All tools from this server are allowed
-						return true;
-					} else if let Some(prefix) = tool_pattern.strip_suffix('*') {
-						// Prefix matching (e.g., "text_*")
-						if tool_name.starts_with(prefix) {
-							return true;
-						}
-					} else {
-						// Exact tool name within server namespace
-						if tool_name == tool_pattern {
-							return true;
-						}
-					}
-				}
-			} else {
-				// Exact tool name match (backward compatibility)
-				if tool_name == pattern {
-					return true;
-				}
-			}
-		}
-
-		false
-	}
-}
-
-// Common configuration properties for all layers - extended for flexibility
+// Common configuration for all layers.
+// Layers execute via ACP protocol - model/prompt config lives in the role
+// used by the command field, not here. Only orchestration fields remain.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LayerConfig {
 	pub name: String,
-	// Model is now optional - falls back to session model if not specified
-	pub model: Option<String>,
-	// System prompt is optional - uses built-in prompts for known layer types
-	pub system_prompt: Option<String>,
-	// Description for this layer (required - used for agents, commands, and documentation)
 	pub description: String,
-	pub temperature: f32,
-	pub top_p: f32,
-	pub top_k: u32,
-	pub max_tokens: u32,
+	pub command: String,
+	#[serde(default = "default_workdir")]
+	pub workdir: String,
 	#[serde(deserialize_with = "deserialize_input_mode")]
 	pub input_mode: InputMode,
 	#[serde(deserialize_with = "deserialize_output_mode")]
 	pub output_mode: OutputMode,
 	#[serde(deserialize_with = "deserialize_output_role")]
 	pub output_role: OutputRole,
-	// MCP configuration for this layer
-	#[serde(default)]
-	pub mcp: LayerMcpConfig,
-	// Custom parameters that can be used in system prompts via placeholders
-	#[serde(default)]
-	pub parameters: std::collections::HashMap<String, serde_json::Value>,
-	// Cached processed system prompt (not serialized - computed at session initialization)
-	#[serde(skip)]
-	pub processed_system_prompt: Option<String>,
+}
+
+fn default_workdir() -> String {
+	".".to_string()
 }
 
 impl LayerConfig {
-	/// Get the effective model for this layer (fallback to session model if not specified)
-	pub fn get_effective_model(&self, session_model: &str) -> String {
-		self.model
-			.clone()
-			.unwrap_or_else(|| session_model.to_string())
-	}
-
-	/// Create a merged config that respects this layer's MCP settings
-	/// This ensures that API calls use the layer's MCP configuration rather than just global settings
-	pub fn get_merged_config_for_layer(
-		&self,
-		base_config: &crate::config::Config,
-	) -> crate::config::Config {
-		let mut merged_config = base_config.clone();
-
-		// Create role-like MCP config from layer's server_refs
-		if !self.mcp.server_refs.is_empty() {
-			// CRITICAL BUG FIX: Use the base_config's full server registry instead of reloading
-			// The base_config should already have the complete server registry available
-			// Reloading Config::load() bypasses runtime processing and causes server_refs to fail
-
-			// Use the same logic as RoleMcpConfig::get_enabled_servers()
-			let layer_mcp_config = crate::config::RoleMcpConfig {
-				server_refs: self.mcp.server_refs.clone(),
-				allowed_tools: self.mcp.allowed_tools.clone(),
-			};
-
-			// Use base_config's server registry - it should contain all configured servers
-			// Note: auto_bind is not applied here since layers don't have a role context
-			let enabled_servers =
-				layer_mcp_config.get_enabled_servers(&base_config.mcp.servers, None);
-
-			crate::log_debug!(
-				"Layer '{}' enabling {} servers from server_refs: {:?}",
-				self.name,
-				enabled_servers.len(),
-				self.mcp.server_refs
-			);
-
-			merged_config.mcp = crate::config::McpConfig {
-				servers: enabled_servers,
-				allowed_tools: self.mcp.allowed_tools.clone(),
-			};
+	/// Get the resolved working directory as an absolute path.
+	///
+	/// If workdir is relative, it's resolved relative to the session's working directory.
+	pub fn get_resolved_workdir(&self, session_workdir: &std::path::Path) -> std::path::PathBuf {
+		let workdir_path = std::path::PathBuf::from(&self.workdir);
+		if workdir_path.is_absolute() {
+			workdir_path
 		} else {
-			// No server_refs means MCP is disabled for this layer
-			// Clear servers to ensure no MCP functionality
-			merged_config.mcp.servers.clear();
-			merged_config.mcp.allowed_tools.clear();
+			session_workdir.join(&self.workdir)
 		}
-
-		merged_config
-	}
-
-	/// Get the effective system prompt for this layer
-	/// Returns the pre-processed system prompt (processed once during session initialization)
-	pub fn get_effective_system_prompt(&self) -> String {
-		// Return cached processed prompt if available
-		if let Some(ref processed) = self.processed_system_prompt {
-			processed.clone()
-		} else {
-			// Fallback for layers that haven't been processed yet
-			// This should rarely happen in normal operation
-			if let Some(ref custom_prompt) = self.system_prompt {
-				custom_prompt.clone()
-			} else {
-				format!("You are a specialized AI layer named '{}'. Process the input according to your purpose.", self.name)
-			}
-		}
-	}
-
-	/// Process and cache the system prompt for this layer (called once during session initialization)
-	pub async fn process_and_cache_system_prompt(&mut self, project_dir: &std::path::Path) {
-		if let Some(ref custom_prompt) = self.system_prompt {
-			let processed = self
-				.process_prompt_placeholders_async(custom_prompt, project_dir)
-				.await;
-			self.processed_system_prompt = Some(processed);
-		} else {
-			// STRICT CONFIG: system_prompt must be defined in config for all layers
-			panic!("CRITICAL CONFIG ERROR: Layer '{}' missing system_prompt. All layers must have system_prompt defined in config.", self.name);
-		}
-	}
-
-	/// Process placeholders in system prompt using layer parameters (async version)
-	async fn process_prompt_placeholders_async(
-		&self,
-		prompt: &str,
-		project_dir: &std::path::Path,
-	) -> String {
-		let mut processed = prompt.to_string();
-
-		// Replace standard placeholders using the async version
-		processed =
-			crate::session::helper_functions::process_placeholders_async(&processed, project_dir)
-				.await;
-
-		// Replace custom parameter placeholders — {{KEY}} syntax
-		for (key, value) in &self.parameters {
-			let replacement = match value {
-				serde_json::Value::String(s) => s.clone(),
-				serde_json::Value::Number(n) => n.to_string(),
-				serde_json::Value::Bool(b) => b.to_string(),
-				_ => serde_json::to_string(value).unwrap_or_default(),
-			};
-			processed = processed.replace(&format!("{{{{{}}}}}", key), &replacement);
-		}
-
-		processed
 	}
 }
 

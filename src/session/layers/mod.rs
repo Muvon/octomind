@@ -14,8 +14,6 @@
 
 pub mod layer_trait;
 pub mod processor;
-pub mod types; // Keep for backward compatibility
 
-pub use layer_trait::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult, OutputMode};
+pub use layer_trait::{InputMode, Layer, LayerConfig, LayerResult, OutputMode};
 pub use processor::LayerProcessor;
-pub use types::GenericLayer;

@@ -31,10 +31,9 @@ pub enum ToolExecutionContext<'a> {
 		chat_session: &'a mut ChatSession,
 		tool_processor: &'a mut ToolProcessor,
 	},
-	/// Layer context with layer-specific configuration
+	/// Layer/agent context — tool access controlled by the ACP session's role config
 	Layer {
 		session_name: String,
-		layer_config: Box<crate::session::layers::LayerConfig>,
 		layer_name: String,
 	},
 }
@@ -58,19 +57,10 @@ impl ToolExecutionContext<'_> {
 		}
 	}
 
-	/// Check if tool is allowed in this context
-	pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-		match self {
-			ToolExecutionContext::MainSession { .. } => true, // Main session allows all tools
-			ToolExecutionContext::Layer { layer_config, .. } => {
-				// Get the server name for this tool to support server patterns
-				let server_name = crate::mcp::tool_map::get_tool_server_name(tool_name)
-					.unwrap_or_else(|| "unknown".to_string());
-
-				// Use the sophisticated pattern-based validation from LayerMcpConfig
-				layer_config.mcp.is_tool_allowed(tool_name, &server_name)
-			}
-		}
+	/// Check if tool is allowed in this context.
+	/// Tool access for layers/agents is controlled by the ACP session's role config.
+	pub fn is_tool_allowed(&self, _tool_name: &str) -> bool {
+		true
 	}
 
 	/// Get error tracker (if available)
@@ -221,25 +211,19 @@ async fn execute_tools_with_context(
 					.await
 				})
 			}
-			ToolExecutionContext::Layer { layer_config, .. } => {
-				let layer_config_clone = (**layer_config).clone();
-				tokio::spawn(async move {
-					// Propagate session ID to spawned task for session-scoped state
-					crate::session::context::with_session_id(session_id, async move {
-						let mut call_with_id = tool_call_clone.clone();
-						// CRITICAL: Use the original tool_id, don't change it
-						call_with_id.tool_id = tool_id_for_task.clone();
-						crate::mcp::execute_layer_tool_call(
-							&call_with_id,
-							&config_clone,
-							&layer_config_clone,
-							cancel_token_for_task, // FIXED: Pass cancellation token
-						)
-						.await
-					})
+			ToolExecutionContext::Layer { .. } => tokio::spawn(async move {
+				crate::session::context::with_session_id(session_id, async move {
+					let mut call_with_id = tool_call_clone.clone();
+					call_with_id.tool_id = tool_id_for_task.clone();
+					crate::mcp::execute_layer_tool_call(
+						&call_with_id,
+						&config_clone,
+						cancel_token_for_task,
+					)
 					.await
 				})
-			}
+				.await
+			}),
 		};
 
 		tool_tasks.push((tool_name, task, original_tool_id, tool_index));
@@ -859,7 +843,6 @@ fn handle_declined_in_session(tool_id: &str, chat_session: &mut ChatSession) {
 pub struct LayerToolExecutionParams {
 	pub tool_calls: Vec<crate::mcp::McpToolCall>,
 	pub session_name: String,
-	pub layer_config: crate::session::layers::LayerConfig,
 	pub layer_name: String,
 	pub operation_cancelled: Option<tokio::sync::watch::Receiver<bool>>,
 	pub mode: OutputMode,
@@ -872,7 +855,6 @@ pub async fn execute_layer_tool_calls_parallel(
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut context = ToolExecutionContext::Layer {
 		session_name: params.session_name,
-		layer_config: Box::new(params.layer_config),
 		layer_name: params.layer_name,
 	};
 

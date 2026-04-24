@@ -839,33 +839,13 @@ pub async fn handle_large_response(
 	Ok(result)
 }
 
-// Execute a tool call with layer-specific restrictions
+// Execute a tool call for a layer/agent context.
+// Tool access is controlled by the ACP session's role config, not by per-layer restrictions.
 pub async fn execute_layer_tool_call(
 	call: &McpToolCall,
 	config: &crate::config::Config,
-	layer_config: &crate::session::layers::LayerConfig,
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(McpToolResult, u64)> {
-	// Check if tools are enabled for this layer (has server_refs)
-	if layer_config.mcp.server_refs.is_empty() {
-		return Err(anyhow::anyhow!("Tool execution is disabled for this layer"));
-	}
-
-	// Check if specific tool is allowed for this layer using pattern-based validation
-	let server_name = crate::mcp::tool_map::get_tool_server_name(&call.tool_name)
-		.unwrap_or_else(|| "unknown".to_string());
-
-	if !layer_config
-		.mcp
-		.is_tool_allowed(&call.tool_name, &server_name)
-	{
-		return Err(anyhow::anyhow!(
-			"Tool '{}' is not allowed for this layer",
-			call.tool_name
-		));
-	}
-
-	// Pass to regular tool execution with cancellation token
 	execute_tool_call(call, config, cancellation_token).await
 }
 

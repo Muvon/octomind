@@ -15,9 +15,8 @@
 // Command executor for /run commands using layers
 
 use crate::config::Config;
-use crate::session::chat::format_number;
 use crate::session::chat::session::ChatSession;
-use crate::session::{layers::layer_trait::Layer, layers::GenericLayer};
+use crate::session::{layers::layer_trait::Layer, layers::LayerProcessor};
 use anyhow::Result;
 use colored::Colorize;
 
@@ -49,17 +48,16 @@ pub async fn execute_command_layer(
 		let log_entry = serde_json::json!({
 			"type": "COMMAND_EXEC",
 			"timestamp": std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
 			"command": command_name,
 			"role": role,
 			"config": {
-			"model": command_config.get_effective_model(&chat_session.session.info.model),
-			"temperature": command_config.temperature,
-			"input_mode": format!("{:?}", command_config.input_mode),
-			"mcp_enabled": !command_config.mcp.server_refs.is_empty()
-		}
+				"command": command_config.command,
+				"workdir": command_config.workdir,
+				"input_mode": format!("{:?}", command_config.input_mode)
+			}
 		});
 		let _ = crate::session::append_to_session_file(
 			session_file,
@@ -67,42 +65,11 @@ pub async fn execute_command_layer(
 		);
 	}
 
-	// Create a generic layer with processed system prompt
-	let mut processed_config = command_config.clone();
-	// Process system prompt placeholders before creating layer
-	// Use thread-local if set (ACP/WebSocket), otherwise process cwd
-	if let Some(ref system_prompt) = processed_config.system_prompt {
-		let current_dir = crate::mcp::get_thread_working_directory();
-		let processed = crate::session::helper_functions::process_placeholders_async(
-			system_prompt,
-			&current_dir,
-		)
-		.await;
-		processed_config.processed_system_prompt = Some(processed);
-	}
-	let command_layer = GenericLayer::new(processed_config);
+	// Execute the layer using ACP protocol
+	let command_layer = LayerProcessor::new(command_config.clone());
 
 	// Prepare the input according to the command's input_mode
-	// CRITICAL FIX: Always use prepare_input to respect the input_mode setting
-	// The input_mode determines what context the command should receive:
-	// - "last": Get the last assistant response from session
-	// - "all": Get all conversation context
-	// - "summary": Get a summarized version
-	let processed_input = match command_config.input_mode {
-		crate::session::layers::layer_trait::InputMode::Last => {
-			// For "Last" mode, always use prepare_input to get the last assistant response
-			// If explicit input is provided, it will be combined with the last assistant context
-			command_layer.prepare_input(provided_input, &chat_session.session)
-		}
-		crate::session::layers::layer_trait::InputMode::All => {
-			// For "All" mode, use prepare_input to format the full conversation context
-			command_layer.prepare_input(provided_input, &chat_session.session)
-		}
-		crate::session::layers::layer_trait::InputMode::Summary => {
-			// For "Summary" mode, use prepare_input to generate a summary
-			command_layer.prepare_input(provided_input, &chat_session.session)
-		}
-	};
+	let processed_input = command_layer.prepare_input(provided_input, &chat_session.session);
 
 	// Log the processed input
 	if let Some(session_file) = &chat_session.session.session_file {
@@ -137,54 +104,16 @@ pub async fn execute_command_layer(
 		let log_entry = serde_json::json!({
 			"type": "COMMAND_RESULT",
 			"timestamp": std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
 			"command": command_name,
 			"output_length": result.outputs.iter().map(|s| s.len()).sum::<usize>(),
-			"usage": result.token_usage
 		});
 		let _ = crate::session::append_to_session_file(
 			session_file,
 			&serde_json::to_string(&log_entry)?,
 		);
-	}
-
-	// Add command statistics to the session
-	if let Some(usage) = &result.token_usage {
-		let effective_model = command_config.get_effective_model(&chat_session.session.info.model);
-		let cost = usage.cost.unwrap_or(0.0);
-
-		// Add the stats to the session with a special prefix for commands
-		chat_session.session.add_layer_stats(
-			&format!("command:{command_name}"),
-			&effective_model,
-			usage.input_tokens,
-			usage.output_tokens,
-			cost,
-		);
-
-		// Save the session to persist the statistics
-		let _ = chat_session.save();
-
-		// Save the session to persist the statistics
-		let _ = chat_session.save();
-
-		// Display information about the command execution
-		println!(
-			"{} {} input, {} completion tokens",
-			"Command usage:".bright_blue(),
-			format_number(usage.input_tokens).bright_green(),
-			format_number(usage.output_tokens).bright_green()
-		);
-
-		if cost > 0.0 {
-			println!(
-				"{} ${:.5}",
-				"Command cost:".bright_blue(),
-				cost.to_string().bright_magenta()
-			);
-		}
 	}
 
 	// Handle output_mode to determine how this command's output affects the session

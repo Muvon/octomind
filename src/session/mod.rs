@@ -47,7 +47,7 @@ pub use crate::providers::{
 pub use background_jobs::{BackgroundJobManager, CompletedJob};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
-pub use layers::{InputMode, Layer, LayerConfig, LayerMcpConfig, LayerResult};
+pub use layers::{InputMode, Layer, LayerConfig, LayerResult};
 pub use model_utils::model_supports_caching;
 pub use output::{
 	detect_output_mode, JsonlSink, OutputMode, OutputSink, SilentSink, WebSocketSink,

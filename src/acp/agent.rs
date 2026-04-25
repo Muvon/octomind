@@ -136,7 +136,6 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 			"done",
 			"Finalize task with memorization, summarization, and auto-commit",
 		),
-		AvailableCommand::new("save", "Save the current session"),
 		AvailableCommand::new("info", "Display token and cost breakdown for this session"),
 		AvailableCommand::new("clear", "Clear the screen"),
 		AvailableCommand::new("copy", "Copy last response to clipboard"),
@@ -147,8 +146,6 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 			"summarize",
 			"Summarize entire conversation to reduce token usage",
 		),
-		AvailableCommand::new("cache", "Manage cache checkpoints")
-			.input(unstructured("[stats|clear|threshold]")),
 		AvailableCommand::new("list", "List all available sessions").input(unstructured("[page]")),
 		AvailableCommand::new("session", "Switch to or create a session")
 			.input(unstructured("[session_name]")),
@@ -168,6 +165,8 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		AvailableCommand::new("loglevel", "Set logging level")
 			.input(unstructured("[none|info|debug]")),
 		AvailableCommand::new("report", "Generate detailed usage report for this session"),
+		AvailableCommand::new("skill", "List, filter, or toggle skills")
+			.input(unstructured("[name|pattern|page]")),
 		AvailableCommand::new("exit", "Exit the session"),
 	]
 }

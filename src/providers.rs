@@ -188,22 +188,13 @@ impl<'a> ChatCompletionParams<'a> {
 			let mcp_functions = crate::mcp::get_available_functions(self.config).await;
 			if !mcp_functions.is_empty() {
 				// Convert MCP functions to octolib FunctionDefinitions
-				// LLM providers require parameters to have "type": "object" but
-				// schemars-generated schemas for tagged enums use top-level oneOf
-				// without a type field. Ensure it's always present.
 				let mut octolib_tools: Vec<octolib::llm::FunctionDefinition> = mcp_functions
 					.into_iter()
-					.map(|f| {
-						let mut parameters = f.parameters;
-						if let Some(obj) = parameters.as_object_mut() {
-							obj.entry("type").or_insert(serde_json::json!("object"));
-						}
-						octolib::llm::FunctionDefinition {
-							name: f.name,
-							description: f.description,
-							parameters,
-							cache_control: None, // Will be set below if needed
-						}
+					.map(|f| octolib::llm::FunctionDefinition {
+						name: f.name,
+						description: f.description,
+						parameters: f.parameters,
+						cache_control: None, // Will be set below if needed
 					})
 					.collect();
 

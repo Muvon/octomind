@@ -32,14 +32,20 @@ use std::sync::Arc;
 /// Result of user input operation
 #[derive(Debug)]
 pub enum InputResult {
-	/// Normal text input from user
-	Text(String),
+	/// Normal text input from user, plus any blobs auto-attached via Ctrl+V.
+	Text(
+		String,
+		Vec<crate::session::chat::reedline_adapter::PendingClipboardItem>,
+	),
 	/// Input was cancelled (Ctrl+C)
 	Cancelled,
 	/// User wants to exit (Ctrl+D)
 	Exit,
-	/// Add message to context without sending (Ctrl+G)
-	AddWithoutSending(String),
+	/// Add message to context without sending (Ctrl+G), plus any auto-attached blobs.
+	AddWithoutSending(
+		String,
+		Vec<crate::session::chat::reedline_adapter::PendingClipboardItem>,
+	),
 }
 
 use crate::log_info;
@@ -73,6 +79,10 @@ fn display_shortcuts_help() {
 	println!(
 		"{}",
 		"│ Ctrl+G      - Add message without sending to API        │".bright_black()
+	);
+	println!(
+		"{}",
+		"│ Ctrl+V      - Auto-attach clipboard image / video       │".bright_black()
 	);
 	println!(
 		"{}",
@@ -233,12 +243,19 @@ pub fn read_user_input(
 	let line_state = Arc::new(std::sync::Mutex::new(
 		crate::session::chat::reedline_adapter::LineState::default(),
 	));
+	// One ExternalPrinter shared between reedline (display) and edit_mode (Ctrl+V notifications).
+	// `ExternalPrinter` is `Clone` and shares its internal channel, so cloning before moving
+	// into reedline lets the Ctrl+V handler send notifications via the same render path.
+	let printer = reedline::ExternalPrinter::<String>::new(5);
+	let printer_for_edit = printer.clone();
+
 	let edit_mode = Box::new(crate::session::chat::EmacsWithShortcutHelp::new(
 		Emacs::new(keybindings),
 		buffer_empty.clone(),
 		reverse_search_active.clone(),
 		hint_available.clone(),
 		line_state.clone(),
+		printer_for_edit,
 	));
 
 	let completion_menu = Box::new(
@@ -285,7 +302,7 @@ pub fn read_user_input(
 	// Set up external printer for inbox notifications.
 	// A background thread polls the inbox_pending flag and sends a
 	// one-shot notification that reedline renders above the prompt.
-	let printer = reedline::ExternalPrinter::<String>::new(5);
+	// `printer` was created earlier and shared with edit_mode via clone.
 	let sender = printer.sender();
 	let inbox_slot = inbox_pending;
 	std::thread::spawn(move || {
@@ -362,14 +379,17 @@ pub fn read_user_input(
 				}
 
 				// Check if this is an "add without sending" request (Ctrl+G)
-				// The flag is set in edit_mode.rs when user presses Ctrl+G
-				let add_without_sending = if let Ok(mut state) = line_state_for_check.lock() {
-					let flag = state.add_without_sending;
-					state.add_without_sending = false; // Clear the flag
-					flag
-				} else {
-					false
-				};
+				// and drain any clipboard blobs auto-attached via Ctrl+V.
+				// The flag and queue are set in edit_mode.rs.
+				let (add_without_sending, clipboard_items) =
+					if let Ok(mut state) = line_state_for_check.lock() {
+						let flag = state.add_without_sending;
+						state.add_without_sending = false;
+						let items = std::mem::take(&mut state.pending_clipboard);
+						(flag, items)
+					} else {
+						(false, Vec::new())
+					};
 
 				// Check if line starts with whitespace (bash-like behavior)
 				// If it does, skip adding to history (both in-memory and persistent)
@@ -392,9 +412,9 @@ pub fn read_user_input(
 				// User message persistence handled by ChatSession::add_user_message.
 
 				return if add_without_sending {
-					Ok(InputResult::AddWithoutSending(line))
+					Ok(InputResult::AddWithoutSending(line, clipboard_items))
 				} else {
-					Ok(InputResult::Text(line))
+					Ok(InputResult::Text(line, clipboard_items))
 				};
 			}
 			Ok(Signal::CtrlC) => {
@@ -429,7 +449,7 @@ pub fn read_user_input(
 					return Ok(InputResult::Exit);
 				}
 				log_info!("Reedline error: {}", msg);
-				return Ok(InputResult::Text(String::new()));
+				return Ok(InputResult::Text(String::new(), Vec::new()));
 			}
 		}
 	}

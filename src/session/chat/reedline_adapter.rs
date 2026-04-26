@@ -163,12 +163,23 @@ impl Hinter for ReedlineAdapter {
 	}
 }
 
+/// A blob captured from the clipboard via Ctrl+V while the user keeps typing.
+/// Drained from `LineState` after a successful Reedline read and applied to
+/// the active `ChatSession` (sets `pending_image` / `pending_video`).
+#[derive(Debug, Clone)]
+pub enum PendingClipboardItem {
+	Image(crate::session::image::ImageAttachment),
+	Video(crate::session::video::VideoAttachment),
+}
+
 #[derive(Debug, Default)]
 pub struct LineState {
 	pub buffer: String,
 	pub cursor: usize,
 	/// When true, signals that the user pressed Ctrl+G to add message without sending
 	pub add_without_sending: bool,
+	/// Clipboard blobs auto-attached via Ctrl+V; consumed by the input loop on submit.
+	pub pending_clipboard: Vec<PendingClipboardItem>,
 }
 impl ReedlineAdapter {
 	fn history_hint(&self, line: &str, history: &dyn History) -> String {

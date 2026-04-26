@@ -33,6 +33,22 @@ use anyhow::Result;
 use colored::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
+/// Apply clipboard blobs auto-attached via Ctrl+V to the active session.
+/// Multiple items of the same kind: last one wins (matches `/image` and `/video` semantics).
+fn apply_clipboard_items(
+	chat_session: &mut ChatSession,
+	items: Vec<crate::session::chat::reedline_adapter::PendingClipboardItem>,
+) {
+	use crate::session::chat::reedline_adapter::PendingClipboardItem;
+	for item in items {
+		match item {
+			PendingClipboardItem::Image(att) => chat_session.pending_image = Some(att),
+			PendingClipboardItem::Video(att) => chat_session.pending_video = Some(att),
+		}
+	}
+}
+
 // Helper function to print command output in CLI context
 async fn print_command_output(
 	output: &mut super::commands::CommandOutput,
@@ -435,7 +451,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			let input_result = if let Some(inbox_msg) = pending_msg {
 				// An inbox message is ready — inject it without waiting for user input.
 				log_debug!("Processing inbox message from {:?}", inbox_msg.source);
-				InputResult::Text(inbox_msg.content)
+				InputResult::Text(inbox_msg.content, Vec::new())
 			} else {
 				// Reedline blocks for user input. A shared slot lets the
 				// inbox-notification thread (inside read_user_input) show a
@@ -491,7 +507,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				.await
 				.unwrap_or_else(|e| {
 					log_debug!("Input thread panicked: {}", e);
-					Ok(InputResult::Text(String::new()))
+					Ok(InputResult::Text(String::new(), Vec::new()))
 				})?;
 
 				// Clean up the notify watcher — no longer needed this iteration.
@@ -502,14 +518,19 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 			// Handle the input result with proper error recovery
 			let mut input = match input_result {
-				InputResult::Text(text) => text,
-				InputResult::AddWithoutSending(text) => {
+				InputResult::Text(text, clipboard_items) => {
+					apply_clipboard_items(&mut chat_session, clipboard_items);
+					text
+				}
+				InputResult::AddWithoutSending(text, clipboard_items) => {
 					// Ctrl+G pressed - add message to context without sending
 
 					// Skip if input is empty
 					if text.trim().is_empty() {
 						continue;
 					}
+
+					apply_clipboard_items(&mut chat_session, clipboard_items);
 
 					// Add the message to session context
 					chat_session.add_user_message(&text)?;

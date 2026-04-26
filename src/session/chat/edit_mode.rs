@@ -13,17 +13,25 @@
 // limitations under the License.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use reedline::{EditMode, Emacs, PromptEditMode, ReedlineEvent, ReedlineRawEvent};
+use reedline::{EditMode, Emacs, ExternalPrinter, PromptEditMode, ReedlineEvent, ReedlineRawEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use crate::session::chat::reedline_adapter::{LineState, PendingClipboardItem};
+use crate::session::image::ImageProcessor;
+use crate::session::video::VideoProcessor;
 
 pub struct EmacsWithShortcutHelp {
 	emacs: Emacs,
 	buffer_empty: Arc<AtomicBool>,
 	reverse_search_active: Arc<AtomicBool>,
 	hint_available: Arc<AtomicBool>,
-	line_state: Arc<Mutex<crate::session::chat::reedline_adapter::LineState>>,
+	line_state: Arc<Mutex<LineState>>,
+	/// Clone of the input loop's `ExternalPrinter`, used to print the
+	/// "📎 attached" notification line above the prompt without disturbing
+	/// the typing buffer.
+	notifier: ExternalPrinter<String>,
 	meta_pending: bool,
 }
 
@@ -33,7 +41,8 @@ impl EmacsWithShortcutHelp {
 		buffer_empty: Arc<AtomicBool>,
 		reverse_search_active: Arc<AtomicBool>,
 		hint_available: Arc<AtomicBool>,
-		line_state: Arc<Mutex<crate::session::chat::reedline_adapter::LineState>>,
+		line_state: Arc<Mutex<LineState>>,
+		notifier: ExternalPrinter<String>,
 	) -> Self {
 		Self {
 			emacs,
@@ -41,8 +50,88 @@ impl EmacsWithShortcutHelp {
 			reverse_search_active,
 			hint_available,
 			line_state,
+			notifier,
 			meta_pending: false,
 		}
+	}
+}
+
+/// Probe the clipboard synchronously. Image takes priority; otherwise inspect
+/// the text clipboard for a path/file URL pointing to a supported video file.
+/// Returns `None` if nothing usable is on the clipboard.
+fn try_capture_clipboard() -> Option<PendingClipboardItem> {
+	if let Ok(Some(image)) = ImageProcessor::load_from_clipboard() {
+		return Some(PendingClipboardItem::Image(image));
+	}
+
+	let mut clipboard = arboard::Clipboard::new().ok()?;
+	let text = clipboard.get_text().ok()?;
+	let trimmed = text.trim();
+	if trimmed.is_empty() || trimmed.contains('\n') {
+		return None;
+	}
+
+	let path_str = trimmed.strip_prefix("file://").unwrap_or(trimmed);
+	let expanded = if let Some(rest) = path_str.strip_prefix("~/") {
+		dirs::home_dir().map(|h| h.join(rest))
+	} else {
+		Some(std::path::PathBuf::from(path_str))
+	}?;
+
+	if !expanded.is_file() || !VideoProcessor::is_supported_video(&expanded) {
+		return None;
+	}
+
+	VideoProcessor::load_from_path(&expanded)
+		.ok()
+		.map(PendingClipboardItem::Video)
+}
+
+fn format_image_label(att: &crate::session::image::ImageAttachment) -> String {
+	let dims = att
+		.dimensions
+		.map(|(w, h)| format!("{}×{}", w, h))
+		.unwrap_or_else(|| "?×?".to_string());
+	let size = att.size_bytes.map(format_size).unwrap_or_default();
+	let suffix = if size.is_empty() {
+		String::new()
+	} else {
+		format!(", {}", size)
+	};
+	format!("📎 Image attached ({}{}) — keep typing", dims, suffix)
+}
+
+fn format_video_label(att: &crate::session::video::VideoAttachment) -> String {
+	let dims = att
+		.dimensions
+		.map(|(w, h)| format!("{}×{}", w, h))
+		.unwrap_or_else(|| att.media_type.clone());
+	let size = att.size_bytes.map(format_size).unwrap_or_default();
+	let suffix = if size.is_empty() {
+		String::new()
+	} else {
+		format!(", {}", size)
+	};
+	let name = match &att.source_type {
+		crate::session::video::SourceType::File(p) => p
+			.file_name()
+			.and_then(|n| n.to_str())
+			.map(|s| format!(" {}", s))
+			.unwrap_or_default(),
+		_ => String::new(),
+	};
+	format!(
+		"🎬 Video attached{} ({}{}) — keep typing",
+		name, dims, suffix
+	)
+}
+
+fn format_size(bytes: u64) -> String {
+	let kb = bytes as f64 / 1024.0;
+	if kb >= 1024.0 {
+		format!("{:.1} MB", kb / 1024.0)
+	} else {
+		format!("{:.0} KB", kb)
 	}
 }
 
@@ -147,6 +236,24 @@ impl EditMode for EmacsWithShortcutHelp {
 					state.add_without_sending = true;
 				}
 				return ReedlineEvent::Submit;
+			}
+
+			// Ctrl+V: auto-attach clipboard image/video without disturbing the
+			// typing buffer. Falls through to default paste when the clipboard
+			// holds neither an image nor a video file path.
+			if code == KeyCode::Char('v') && modifiers == KeyModifiers::CONTROL {
+				if let Some(item) = try_capture_clipboard() {
+					let label = match &item {
+						PendingClipboardItem::Image(att) => format_image_label(att),
+						PendingClipboardItem::Video(att) => format_video_label(att),
+					};
+					if let Ok(mut state) = self.line_state.lock() {
+						state.pending_clipboard.push(item);
+					}
+					let _ = self.notifier.print(format!("\x1b[36m{}\x1b[0m", label));
+					return ReedlineEvent::None;
+				}
+				// Fall through: no usable blob — let default Ctrl+V (text paste) run.
 			}
 
 			if code == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {

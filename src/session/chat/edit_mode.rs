@@ -138,6 +138,28 @@ fn format_size(bytes: u64) -> String {
 impl EditMode for EmacsWithShortcutHelp {
 	fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
 		let event: Event = event.into();
+
+		// Bracketed paste (e.g. Cmd+V on macOS): the terminal reads the clipboard's
+		// text representation and forwards it wrapped in `ESC[200~ … ESC[201~`. Image
+		// bytes never reach the PTY — but `arboard` can read the OS clipboard out-of-band.
+		// Probe it before letting the text paste through; if an image (or video file
+		// path) is present, attach it and swallow the textual paste (which is usually
+		// just a filename hint or empty).
+		if let Event::Paste(_) = &event {
+			if let Some(item) = try_capture_clipboard() {
+				let label = match &item {
+					PendingClipboardItem::Image(att) => format_image_label(att),
+					PendingClipboardItem::Video(att) => format_video_label(att),
+				};
+				if let Ok(mut state) = self.line_state.lock() {
+					state.pending_clipboard.push(item);
+				}
+				let _ = self.notifier.print(format!("\x1b[36m{}\x1b[0m", label));
+				return ReedlineEvent::None;
+			}
+			// No image / no recognizable video path — fall through; reedline will insert the text.
+		}
+
 		if let Event::Key(KeyEvent {
 			code, modifiers, ..
 		}) = event

@@ -310,11 +310,39 @@ impl ImageProcessor {
 			return None;
 		};
 		let proto = Self::detect_inline_protocol()?;
-		let (cols, rows) = (40_u32, 20_u32);
+
+		// Re-encode at display resolution so the escape sequence stays small.
+		// The full-resolution base64 can be 500 KB+ which makes the terminal
+		// stutter when written through reedline's ExternalPrinter. A 40-cell
+		// preview only needs ~320 px wide; the terminal still scales by aspect
+		// ratio on its end. Falls back to the original base64 if re-encoding
+		// fails for any reason.
+		let preview_b64 = Self::shrink_for_preview(data).unwrap_or_else(|_| data.clone());
+		let cols = 40_u32;
 		Some(match proto {
-			InlineProtocol::Kitty => Self::build_kitty_escape(data, cols, rows),
-			InlineProtocol::ITerm2 => Self::build_iterm2_escape(data, cols, rows),
+			InlineProtocol::Kitty => Self::build_kitty_escape(&preview_b64, cols),
+			InlineProtocol::ITerm2 => Self::build_iterm2_escape(&preview_b64, cols),
 		})
+	}
+
+	/// Decode the base64 PNG, resize so the longer side is ≤ 320 px, re-encode
+	/// as PNG, return the new base64 string. Aspect ratio preserved.
+	fn shrink_for_preview(b64: &str) -> Result<String> {
+		const MAX_DIM: u32 = 320;
+		let bytes = general_purpose::STANDARD.decode(b64)?;
+		let img = image::load_from_memory(&bytes)?;
+		let (w, h) = (img.width(), img.height());
+		let resized = if w > MAX_DIM || h > MAX_DIM {
+			let ratio = (MAX_DIM as f32 / w as f32).min(MAX_DIM as f32 / h as f32);
+			let nw = (w as f32 * ratio) as u32;
+			let nh = (h as f32 * ratio) as u32;
+			img.resize(nw, nh, image::imageops::FilterType::Triangle)
+		} else {
+			img
+		};
+		let mut buf = Vec::new();
+		resized.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)?;
+		Ok(general_purpose::STANDARD.encode(&buf))
 	}
 
 	fn detect_inline_protocol() -> Option<InlineProtocol> {
@@ -337,10 +365,13 @@ impl ImageProcessor {
 	}
 
 	/// Build a Kitty graphics escape sequence with `q=2` (silent — no responses).
-	/// Per the Kitty protocol, escape sequences must be ≤ 4096 bytes, so the
-	/// base64 payload is split into chunks; only the first chunk carries the
-	/// metadata, subsequent chunks just declare `m=1` (more) or `m=0` (last).
-	fn build_kitty_escape(b64: &str, cols: u32, rows: u32) -> String {
+	/// Only `c` (cell width) is specified; the terminal scales the image height
+	/// from the aspect ratio. Reserving a fixed `r=20` rows confused reedline's
+	/// prompt redraw and pushed the cursor off-screen on screenshot pastes.
+	/// Per the Kitty protocol, each escape ≤ 4096 bytes, so the base64 payload
+	/// is split into chunks: first chunk carries the metadata; subsequent ones
+	/// declare `m=1` (more) or `m=0` (last).
+	fn build_kitty_escape(b64: &str, cols: u32) -> String {
 		const CHUNK: usize = 4096;
 		let bytes = b64.as_bytes();
 		let chunk_count = bytes.len().div_ceil(CHUNK);
@@ -350,8 +381,8 @@ impl ImageProcessor {
 			let chunk_str = std::str::from_utf8(chunk).unwrap_or("");
 			if i == 0 {
 				out.push_str(&format!(
-					"\x1b_Ga=T,f=100,q=2,c={},r={},m={};{}\x1b\\",
-					cols, rows, more, chunk_str
+					"\x1b_Ga=T,f=100,q=2,c={},m={};{}\x1b\\",
+					cols, more, chunk_str
 				));
 			} else {
 				out.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk_str));
@@ -361,10 +392,11 @@ impl ImageProcessor {
 	}
 
 	/// Build an iTerm2 OSC 1337 inline-image escape — fire-and-forget, no ACK.
-	fn build_iterm2_escape(b64: &str, cols: u32, rows: u32) -> String {
+	/// `preserveAspectRatio=1` lets the terminal compute the height from `width`.
+	fn build_iterm2_escape(b64: &str, cols: u32) -> String {
 		format!(
-			"\x1b]1337;File=inline=1;width={};height={}:{}\x07",
-			cols, rows, b64
+			"\x1b]1337;File=inline=1;width={};preserveAspectRatio=1:{}\x07",
+			cols, b64
 		)
 	}
 

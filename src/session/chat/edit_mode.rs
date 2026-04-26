@@ -54,6 +54,35 @@ impl EmacsWithShortcutHelp {
 			meta_pending: false,
 		}
 	}
+
+	/// Push the captured blob onto the pending queue and surface a notification
+	/// (label + inline graphics for images) above the prompt via `ExternalPrinter`.
+	/// Used by both the Ctrl+V keystroke arm and the bracketed-paste arm.
+	fn attach_and_notify(&self, item: PendingClipboardItem) {
+		let label = match &item {
+			PendingClipboardItem::Image(att) => format_image_label(att),
+			PendingClipboardItem::Video(att) => format_video_label(att),
+		};
+
+		// Image preview: hand-built Kitty graphics (q=2 silent) or iTerm2 OSC 1337.
+		// Both are full-quality and emit no terminal response, so reedline's input
+		// stream stays clean. Returns None on terminals without graphics support
+		// → falls back to text-only label.
+		let preview = match &item {
+			PendingClipboardItem::Image(att) => ImageProcessor::render_inline_escape(att),
+			PendingClipboardItem::Video(_) => None,
+		};
+
+		if let Ok(mut state) = self.line_state.lock() {
+			state.pending_clipboard.push(item);
+		}
+
+		let payload = match preview {
+			Some(esc) => format!("\x1b[36m{}\x1b[0m\n{}", label, esc.trim_end_matches('\n')),
+			None => format!("\x1b[36m{}\x1b[0m", label),
+		};
+		let _ = self.notifier.print(payload);
+	}
 }
 
 /// Probe the clipboard synchronously. Image takes priority; otherwise inspect
@@ -147,14 +176,7 @@ impl EditMode for EmacsWithShortcutHelp {
 		// just a filename hint or empty).
 		if let Event::Paste(_) = &event {
 			if let Some(item) = try_capture_clipboard() {
-				let label = match &item {
-					PendingClipboardItem::Image(att) => format_image_label(att),
-					PendingClipboardItem::Video(att) => format_video_label(att),
-				};
-				if let Ok(mut state) = self.line_state.lock() {
-					state.pending_clipboard.push(item);
-				}
-				let _ = self.notifier.print(format!("\x1b[36m{}\x1b[0m", label));
+				self.attach_and_notify(item);
 				return ReedlineEvent::None;
 			}
 			// No image / no recognizable video path — fall through; reedline will insert the text.
@@ -265,14 +287,7 @@ impl EditMode for EmacsWithShortcutHelp {
 			// holds neither an image nor a video file path.
 			if code == KeyCode::Char('v') && modifiers == KeyModifiers::CONTROL {
 				if let Some(item) = try_capture_clipboard() {
-					let label = match &item {
-						PendingClipboardItem::Image(att) => format_image_label(att),
-						PendingClipboardItem::Video(att) => format_video_label(att),
-					};
-					if let Ok(mut state) = self.line_state.lock() {
-						state.pending_clipboard.push(item);
-					}
-					let _ = self.notifier.print(format!("\x1b[36m{}\x1b[0m", label));
+					self.attach_and_notify(item);
 					return ReedlineEvent::None;
 				}
 				// Fall through: no usable blob — let default Ctrl+V (text paste) run.

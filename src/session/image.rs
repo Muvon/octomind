@@ -45,6 +45,16 @@ pub enum SourceType {
 	Url,
 }
 
+/// Inline-graphics protocol selected for rendering an image escape sequence
+/// suitable for printing via reedline's `ExternalPrinter`.
+#[derive(Debug, Copy, Clone)]
+enum InlineProtocol {
+	/// Kitty graphics protocol — used on Kitty, Ghostty, WezTerm.
+	Kitty,
+	/// iTerm2 OSC 1337 inline image — used on iTerm2, Tabby, VS Code.
+	ITerm2,
+}
+
 /// Image processing utilities
 pub struct ImageProcessor;
 
@@ -278,6 +288,84 @@ impl ImageProcessor {
 			}
 		}
 		Ok(())
+	}
+
+	/// Render the image into a terminal-graphics escape sequence String, suitable
+	/// for printing via reedline's `ExternalPrinter` while a prompt is live.
+	///
+	/// Why this exists separately from `show_preview`: viuer writes directly to
+	/// stdout (which reedline owns during input), and Kitty graphics sends an OK
+	/// response back on stdin (`\x1b_Gi=N;OK\x1b\\`) that reedline reads as user
+	/// input — visibly leaking `Gi=N;OK` into the buffer.
+	///
+	/// Fix: hand-build the Kitty escape with `q=2` (quiet — terminal sends NO
+	/// response, ever, per the Kitty graphics protocol) or fall back to iTerm2
+	/// OSC 1337 (fire-and-forget by design). Both protocols render at full
+	/// quality — no half-block downgrade.
+	///
+	/// Returns `None` on terminals without inline-graphics support so the caller
+	/// can fall back to a text-only notification.
+	pub fn render_inline_escape(attachment: &ImageAttachment) -> Option<String> {
+		let ImageData::Base64(ref data) = attachment.data else {
+			return None;
+		};
+		let proto = Self::detect_inline_protocol()?;
+		let (cols, rows) = (40_u32, 20_u32);
+		Some(match proto {
+			InlineProtocol::Kitty => Self::build_kitty_escape(data, cols, rows),
+			InlineProtocol::ITerm2 => Self::build_iterm2_escape(data, cols, rows),
+		})
+	}
+
+	fn detect_inline_protocol() -> Option<InlineProtocol> {
+		if std::env::var("KITTY_WINDOW_ID").is_ok() {
+			return Some(InlineProtocol::Kitty);
+		}
+		if let Ok(term) = std::env::var("TERM") {
+			if term.contains("kitty") {
+				return Some(InlineProtocol::Kitty);
+			}
+		}
+		match std::env::var("TERM_PROGRAM").as_deref() {
+			// Ghostty and WezTerm both implement the Kitty graphics protocol natively
+			// and produce its highest-quality output.
+			Ok("ghostty") | Ok("WezTerm") => Some(InlineProtocol::Kitty),
+			// iTerm2, Tabby, VS Code's terminal use the iTerm2 OSC 1337 protocol.
+			Ok("iTerm.app") | Ok("Tabby") | Ok("vscode") => Some(InlineProtocol::ITerm2),
+			_ => None,
+		}
+	}
+
+	/// Build a Kitty graphics escape sequence with `q=2` (silent — no responses).
+	/// Per the Kitty protocol, escape sequences must be ≤ 4096 bytes, so the
+	/// base64 payload is split into chunks; only the first chunk carries the
+	/// metadata, subsequent chunks just declare `m=1` (more) or `m=0` (last).
+	fn build_kitty_escape(b64: &str, cols: u32, rows: u32) -> String {
+		const CHUNK: usize = 4096;
+		let bytes = b64.as_bytes();
+		let chunk_count = bytes.len().div_ceil(CHUNK);
+		let mut out = String::with_capacity(bytes.len() + chunk_count * 32);
+		for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
+			let more = if i + 1 < chunk_count { 1 } else { 0 };
+			let chunk_str = std::str::from_utf8(chunk).unwrap_or("");
+			if i == 0 {
+				out.push_str(&format!(
+					"\x1b_Ga=T,f=100,q=2,c={},r={},m={};{}\x1b\\",
+					cols, rows, more, chunk_str
+				));
+			} else {
+				out.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk_str));
+			}
+		}
+		out
+	}
+
+	/// Build an iTerm2 OSC 1337 inline-image escape — fire-and-forget, no ACK.
+	fn build_iterm2_escape(b64: &str, cols: u32, rows: u32) -> String {
+		format!(
+			"\x1b]1337;File=inline=1;width={};height={}:{}\x07",
+			cols, rows, b64
+		)
 	}
 
 	/// Check if file is a supported image format

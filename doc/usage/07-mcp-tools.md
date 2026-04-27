@@ -120,7 +120,7 @@ Manage skills (reusable instruction packs) from taps.
 **Workflow:**
 1. `skill(action="list")` -- discover available skills
 2. `skill(action="use", name="skill-name")` -- activate (injects instructions into context)
-3. `skill(action="forget", name="skill-name")` -- deactivate (triggers compression to clean up)
+3. `skill(action="forget", name="skill-name")` -- deactivate (removes from active skills, content cleaned up at next automatic compression)
 
 **Skill resources:** Skills can include `scripts/`, `references/`, and `assets/` subdirectories. When activated, a resource catalog with absolute paths is provided.
 

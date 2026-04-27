@@ -107,6 +107,20 @@ The `/done` command triggers **forced compression**, which behaves differently f
 
 Forced compression marks a task boundary. It resets cooldown counters so the next task starts fresh without accumulated compression debt.
 
+### Skill Preservation
+
+Skills injected into context are handled differently depending on the compression trigger:
+
+| Trigger | Skill Preservation Behavior |
+|---------|----------------------------|
+| Automatic (threshold-based) | All active skills preserved — their content stays in context |
+| `/done` (forced) | Only env-loaded skills (`OCTOMIND_SKILLS`) preserved — manually activated skills are dropped |
+| `skill(forget)` | No immediate compression — the skill is removed from the active list, and its stale content is naturally excluded at the next automatic compression |
+
+**Why `/done` is different:** It marks a task boundary. You want a clean slate for the next task, so only permanently configured skills (loaded via `OCTOMIND_SKILLS`) survive the compression.
+
+**Why `skill(forget)` doesn't force compression:** Immediate compression would be expensive and unnecessary. The forgotten skill's content naturally disappears at the next automatic compression since it's no longer in the active list.
+
 ### Context Preservation
 
 - Last 4 turns (2 exchanges) always remain uncompressed

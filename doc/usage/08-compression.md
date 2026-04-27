@@ -48,7 +48,7 @@ See [Configuration Reference](../reference/03-config-reference.md#compression) f
 
 ### Token-Based Triggers
 
-Compression triggers when the full context (messages + system prompt + tool definitions + safety margin) exceeds a pressure level threshold. The highest matched threshold determines compression strength.
+Compression triggers when the full context (messages + system prompt + tool definitions + safety margin) exceeds a pressure level threshold. The highest matched threshold determines the **base** compression ratio, but the actual level used is **escalated** based on consecutive compressions (round-robin through levels). This prevents infinite loops when compress-all drops context hard and it grows back to the same threshold repeatedly.
 
 | Token Count | Compression | Effect |
 |-------------|-------------|--------|
@@ -67,7 +67,7 @@ To prevent compression loops during tool-heavy operations, consecutive compressi
 | 3rd | 40% |
 | 4th+ | 80-100% (capped) |
 
-The cooldown resets when the user sends a new message.
+The cooldown resets when the user sends a new message. It also activates when the compression range is invalid (e.g., `start_idx >= end_idx`) or when compression won't bring context below the threshold — preventing futile re-analysis loops.
 
 ### Cache-Aware Economics
 

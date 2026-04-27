@@ -1,6 +1,20 @@
 # AI Providers
 
-Octomind supports 7 AI providers through a unified interface. Provider support is implemented in [octolib](https://github.com/muvon/octolib) -- new providers are added there and automatically become available in Octomind.
+Octomind supports 8 AI providers through a unified interface. Provider support is implemented in [octolib](https://github.com/muvon/octolib) -- new providers are added there and automatically become available in Octomind.
+
+All provider types are re-exported from `src/providers.rs`:
+- `AiProvider` (trait), `ProviderFactory`
+- `OpenRouterProvider`, `OpenAiProvider`, `AnthropicProvider`, `GoogleVertexProvider`
+- `AmazonBedrockProvider`, `CloudflareWorkersAiProvider`, `DeepSeekProvider`
+- `GenericToolCall`, `StructuredOutputRequest` — tool/schema types
+- `ModelPricing`, `ProviderExchange`, `ThinkingBlock`, `TokenUsage` — metadata types
+
+All provider types are re-exported from `src/providers.rs`:
+- `AiProvider` (trait), `ProviderFactory`
+- `OpenRouterProvider`, `OpenAiProvider`, `AnthropicProvider`, `GoogleVertexProvider`
+- `AmazonBedrockProvider`, `CloudflareWorkersAiProvider`, `DeepSeekProvider`
+- `GenericToolCall`, `StructuredOutputRequest` — tool/schema types
+- `ModelPricing`, `ProviderExchange`, `ThinkingBlock`, `TokenUsage` — metadata types
 
 ## Model Format
 

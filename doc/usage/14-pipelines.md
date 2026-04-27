@@ -98,6 +98,23 @@ Each script receives these environment variables:
 | `OCTOMIND_ROLE` | Current role name |
 | `OCTOMIND_WORKING_DIR` | Working directory |
 
+### Step Output Display
+
+Each step's result is displayed with timing information:
+
+```
+[Pipeline: context_pipeline]
+  Step 1/2: detect_files ........................ 0.12s ✓
+  Step 2/2: git_context ......................... 0.45s ✓
+```
+
+Failed steps show the error inline:
+
+```
+  Step 1/2: detect_files ........................ 0.02s ✗
+    Error: command not found: ./scripts/detect-files.sh
+```
+
 Scripts are executed with their working directory set to the project's working directory. Command paths are resolved relative to this directory.
 
 ## Step Types
@@ -162,6 +179,8 @@ on_no_match = ["./scripts/quick-scan.sh"]
 ```
 
 The condition script must exit 0 (non-zero = fatal). Branching is based on stdout pattern matching, not exit codes.
+
+Branch commands execute sequentially with piping — each command's stdout becomes the next command's stdin. The final command's stdout is passed to the next pipeline step.
 
 ## Writing Pipeline Scripts
 

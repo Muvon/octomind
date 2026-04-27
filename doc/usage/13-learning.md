@@ -15,19 +15,19 @@ Lessons are scoped by **project first, then role** — project knowledge stays w
 ```toml
 [learning]
 enabled = false
-model = "anthropic:claude-haiku-4-5"
+model = "anthropic:claude-haiku-4-5-20251001"
 backend = "file"
 min_messages_for_intermediate = 3
-max_inject = 10
+max_inject = 5
 ```
 
-| Field | Description |
-|-------|-------------|
-| `enabled` | Enable the learning system. Off by default. |
-| `model` | Model for extraction and retrieval LLM calls. Use a cheap model. |
-| `backend` | `"file"` (default) or `"mcp"` for external memory tools. |
-| `min_messages_for_intermediate` | Minimum user messages before intermediate learning triggers during auto-compaction. |
-| `max_inject` | Maximum lessons injected into the system prompt per session. |
+| Field | Description | Default |
+|-------|-------------|---------|
+| `enabled` | Enable the learning system. | `false` |
+| `model` | Model for extraction and retrieval LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5-20251001` |
+| `backend` | `"file"` (default) or `"mcp"` for external memory tools. | `"file"` |
+| `min_messages_for_intermediate` | Minimum user messages before intermediate learning triggers during auto-compaction. | `3` |
+| `max_inject` | Maximum lessons injected into the system prompt per session. | `5` |
 
 ## How It Works
 
@@ -78,7 +78,7 @@ For projects using external memory tools (e.g. octobrain), configure the MCP bac
 ```toml
 [learning]
 enabled = true
-model = "anthropic:claude-haiku-4-5"
+model = "anthropic:claude-haiku-4-5-20251001"
 backend = "mcp"
 
 [learning.store]
@@ -106,6 +106,15 @@ limit = "limit"            # octobrain max is 5
 Each entry in `field_map` maps a canonical learning field to the MCP tool's actual argument name. Set a value to `""` to omit that field. Missing entries are also omitted.
 
 Store and retrieve have separate field maps because MCP tools have different argument schemas.
+
+### `McpEndpointConfig`
+
+Both `store` and `retrieve` use the same structure:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool` | `String` | MCP tool name (e.g. `"memorize"`, `"remember"`) |
+| `field_map` | `HashMap<String, String>` | Maps canonical learning fields to the tool's argument names |
 
 ## Relationship to Memory
 

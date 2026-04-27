@@ -93,14 +93,15 @@ layer = "item_processor"
 
 ### Conditional
 
-Branch based on pattern matching.
+Branch based on pattern matching. If `condition_pattern` matches the output, execute `on_match` commands; otherwise execute `on_no_match` commands.
 
 ```toml
 [[workflows.steps]]
 name = "route"
 type = "conditional"
 condition_pattern = "COMPLEX"
-layer = "complex_handler"
+on_match = ["echo 'Complex task detected'"]
+on_no_match = ["echo 'Simple task'"]
 ```
 
 ### Parallel

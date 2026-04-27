@@ -129,6 +129,30 @@ temperature = 0.3
 octomind run developer
 ```
 
+## Step Timing and Results
+
+Pipeline execution displays each step with timing:
+
+```
+[Pipeline: context_pipeline]
+  Step 1/2: detect_files ........................ 0.12s ✓
+  Step 2/2: git_context ......................... 0.45s ✓
+```
+
+For conditional steps, the chosen branch is shown:
+
+```
+  Step 3/4: classify ............................ 0.08s ✓ (matched)
+    Branch: deep-analysis.sh .................... 1.23s ✓
+```
+
+Failed steps halt the pipeline and display the error:
+
+```
+  Step 1/2: detect_files ........................ 0.02s ✗
+    Error: command not found: ./scripts/detect-files.sh
+```
+
 Type "fix the login bug" and the pipeline:
 1. Detects relevant files (instant, free)
 2. Gathers git history for those files (instant, free)

@@ -233,8 +233,14 @@ impl Config {
 				));
 			}
 
-			// Validate layer name is not empty (layer_type field doesn't exist)
-			// Additional layer-specific validation can be added here if needed
+			// Validate layer command (required for ACP execution)
+			if layer.command.is_empty() {
+				return Err(anyhow!(
+					"Layer '{}' at index {} has empty command. Layers now execute via ACP protocol — add a 'command' field (e.g., command = 'octomind acp <role>')",
+					layer.name,
+					index
+				));
+			}
 
 			// Additional layer-specific validation can be added here
 		}

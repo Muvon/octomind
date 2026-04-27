@@ -32,7 +32,7 @@ opt-level = 3         # Optimize for speed
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-octolib = { version = "0.17.0", default-features = false }
+octolib = { version = "0.18.0", default-features = false }
 # octolib = { path = "../octolib", default-features = false }
 rmcp = { version = "1.4.0", default-features = false }
 
@@ -96,6 +96,7 @@ which = "8.0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+proctitle = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"

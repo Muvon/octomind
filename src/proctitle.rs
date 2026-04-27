@@ -120,13 +120,7 @@ pub fn set_process_title(title: &str) {
 		let len = bytes.len().min(15);
 		let mut buf = [0u8; 16];
 		buf[..len].copy_from_slice(&bytes[..len]);
-		libc::prctl(
-			PR_SET_NAME,
-			buf.as_ptr() as libc::c_ulong,
-			0u64,
-			0u64,
-			0u64,
-		);
+		libc::prctl(PR_SET_NAME, buf.as_ptr() as libc::c_ulong, 0u64, 0u64, 0u64);
 	}
 
 	// Overwrite the argv block in place so `ps`/Activity Monitor pick it up.

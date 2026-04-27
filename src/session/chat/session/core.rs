@@ -133,7 +133,7 @@ impl<'a> SessionInitParams<'a> {
 fn generate_session_name() -> String {
 	let now = chrono::Local::now();
 	let date_str = now.format("%y%m%d").to_string();
-	let time_str = now.format("%H%M%S").to_string();
+	let time_str = now.format("%H%M").to_string();
 
 	// Get current directory basename - use thread-local if set (ACP/WebSocket sessions), otherwise process cwd
 	let current_dir = crate::mcp::get_thread_working_directory();
@@ -143,11 +143,11 @@ fn generate_session_name() -> String {
 		.to_string_lossy()
 		.to_string();
 
-	// Generate a short UUID (first 8 characters)
+	// Generate a short UUID (first 4 characters)
 	let uuid = Uuid::new_v4().to_string();
-	let short_uuid: String = uuid.chars().take(8).collect();
+	let short_uuid: String = uuid.chars().take(4).collect();
 
-	format!("{}-{}-{}-{}", date_str, time_str, basename, short_uuid)
+	format!("{}-{}-{}-{}", date_str, basename, time_str, short_uuid)
 }
 
 // Chat session manager for interactive coding sessions

@@ -15,5 +15,5 @@
 pub mod layer_trait;
 pub mod processor;
 
-pub use layer_trait::{InputMode, Layer, LayerConfig, LayerResult, OutputMode};
+pub use layer_trait::{InputMode, Layer, LayerConfig, LayerResult, OutputMode, OutputRole};
 pub use processor::LayerProcessor;

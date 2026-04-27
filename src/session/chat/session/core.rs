@@ -129,7 +129,7 @@ impl<'a> SessionInitParams<'a> {
 	}
 }
 
-// Generate a session name in format: YYMMDD-HHMMSS-basename-uuid
+// Generate a session name in format: YYMMDD-basename-HHMM-uuid4
 fn generate_session_name() -> String {
 	let now = chrono::Local::now();
 	let date_str = now.format("%y%m%d").to_string();
@@ -1687,6 +1687,56 @@ mod tests {
 		assert_eq!(
 			cs.session.messages[last_marker_idx].role, "tool",
 			"marker #2 should be on the tool message"
+		);
+	}
+
+	#[test]
+	fn generate_session_name_format() {
+		let name = generate_session_name();
+		let parts: Vec<&str> = name.split('-').collect();
+		assert!(
+			parts.len() >= 4,
+			"session name should have at least 4 dash-separated parts, got: {name}"
+		);
+
+		// First part: YYMMDD (6 digits)
+		let date_part = parts[0];
+		assert_eq!(
+			date_part.len(),
+			6,
+			"date part should be 6 chars, got: {date_part}"
+		);
+		assert!(
+			date_part.chars().all(|c| c.is_ascii_digit()),
+			"date part should be all digits, got: {date_part}"
+		);
+
+		// Second part: basename (directory name, non-empty)
+		let basename_part = parts[1];
+		assert!(!basename_part.is_empty(), "basename should not be empty");
+
+		// Third part: HHMM (4 digits)
+		let time_part = parts[2];
+		assert_eq!(
+			time_part.len(),
+			4,
+			"time part should be 4 chars, got: {time_part}"
+		);
+		assert!(
+			time_part.chars().all(|c| c.is_ascii_digit()),
+			"time part should be all digits, got: {time_part}"
+		);
+
+		// Fourth part: uuid4 (4 hex chars)
+		let uuid_part = parts[3];
+		assert_eq!(
+			uuid_part.len(),
+			4,
+			"uuid part should be 4 chars, got: {uuid_part}"
+		);
+		assert!(
+			uuid_part.chars().all(|c| c.is_ascii_hexdigit()),
+			"uuid part should be hex, got: {uuid_part}"
 		);
 	}
 }

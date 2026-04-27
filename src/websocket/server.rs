@@ -912,7 +912,7 @@ async fn handle_user_message(
 			&mut chat_session,
 			&config_for_role,
 			operation_rx.clone(),
-			false,
+			crate::session::chat::conversation_compression::CompressionTrigger::Automatic,
 		)
 		.await
 		{

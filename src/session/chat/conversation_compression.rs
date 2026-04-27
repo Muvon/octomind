@@ -673,15 +673,29 @@ fn calculate_self_tuning_accuracy(info: &crate::session::SessionInfo) -> f64 {
 	ratio.clamp(0.25, 4.0)
 }
 
+pub enum CompressionTrigger {
+	/// Normal automatic compression — respects thresholds/cooldowns, preserves all active skills.
+	Automatic,
+	/// Force compression after `skill(forget)` — bypasses thresholds, preserves all active skills.
+	SkillForget,
+	/// `/done` command — bypasses thresholds, preserves only env-loaded skills (OCTOMIND_SKILLS).
+	Done,
+}
+
 /// Main entry point: check if compression needed and perform if AI decides YES
 /// Returns true if compression was performed, false otherwise
 pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
-	force: bool,
+	trigger: CompressionTrigger,
 ) -> Result<bool> {
 	let (should_check, computed_ratio) = should_check_compression(session, config).await;
+
+	let force = matches!(
+		trigger,
+		CompressionTrigger::SkillForget | CompressionTrigger::Done
+	);
 
 	if !force && !should_check {
 		return Ok(false);
@@ -695,7 +709,7 @@ pub async fn check_and_compress_conversation(
 			current_tokens >= config.max_session_tokens_threshold
 		});
 
-	// When force=true (/done), use fixed level 1 pressure ratio (no adaptive adjustment).
+	// When force=true (/done or skill-forget), use fixed level 1 pressure ratio (no adaptive adjustment).
 	// Regular automatic compressions use the adaptive ratio from should_check_compression.
 	let target_ratio = if force {
 		config
@@ -751,16 +765,26 @@ pub async fn check_and_compress_conversation(
 	// fall inside the drain range they get wiped by compression, and the AI
 	// loses the domain guidance that was active. Extract them here so
 	// apply_compression can re-insert them between the anchor and the summary.
-	// Only preserve skills that are still registered as active — a skill the
-	// user explicitly forgot must NOT come back.
-	let active_skill_names: Vec<String> = crate::session::context::current_session_id()
-		.map(|sid| crate::session::context::get_active_skills(&sid))
-		.unwrap_or_default();
+	//
+	// When trigger=Done (/done), preserve ONLY env-loaded skills (OCTOMIND_SKILLS).
+	// Auto-activated skills are context-dependent and should re-activate if
+	// the context still matches after the summary.
+	//
+	// When trigger=Automatic or SkillForget, preserve all active skills.
+	let skill_names_to_preserve: Vec<String> = if matches!(trigger, CompressionTrigger::Done) {
+		crate::session::context::current_session_id()
+			.map(|sid| crate::session::context::get_env_skills(&sid))
+			.unwrap_or_default()
+	} else {
+		crate::session::context::current_session_id()
+			.map(|sid| crate::session::context::get_active_skills(&sid))
+			.unwrap_or_default()
+	};
 	let preserved_skills = collect_preserved_skills(
 		&session.session.messages,
 		start_idx + 1,
 		end_idx,
-		&active_skill_names,
+		&skill_names_to_preserve,
 	);
 
 	// COMPRESS-ALL: Extract user messages BEFORE compression.

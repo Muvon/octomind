@@ -943,6 +943,44 @@ pub fn clear_active_skills(session_id: &SessionId) {
 }
 
 // ---------------------------------------------------------------------------
+// Session-keyed env skills (OCTOMIND_SKILLS — preserved across /done compression)
+// ---------------------------------------------------------------------------
+
+/// Registry for env-injected skills per session.
+/// Tracks only skills loaded via OCTOMIND_SKILLS env var, not auto-activated ones.
+static ENV_SKILLS: RwLock<Option<HashMap<SessionId, Vec<String>>>> = RwLock::new(None);
+
+/// Register a skill as env-loaded for a session.
+pub fn add_env_skill(session_id: &SessionId, skill_name: &str) {
+	let mut guard = ENV_SKILLS.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let skills = registry.entry(session_id.clone()).or_default();
+	if !skills.contains(&skill_name.to_string()) {
+		skills.push(skill_name.to_string());
+	}
+}
+
+/// Get all env-loaded skill names for a session.
+pub fn get_env_skills(session_id: &SessionId) -> Vec<String> {
+	let guard = ENV_SKILLS.read().unwrap();
+	if let Some(registry) = guard.as_ref() {
+		if let Some(skills) = registry.get(session_id) {
+			return skills.clone();
+		}
+	}
+	Vec::new()
+}
+
+/// Clear all env skills when a session ends.
+pub fn clear_env_skills(session_id: &SessionId) {
+	if let Ok(mut guard) = ENV_SKILLS.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Session-keyed capability refcounts (skill → MCP server lifecycle)
 // ---------------------------------------------------------------------------
 
@@ -1083,6 +1121,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_dynamic_servers_for_session(session_id);
 	clear_job_manager_for_session(session_id);
 	clear_active_skills(session_id);
+	clear_env_skills(session_id);
 	clear_capability_refcounts(session_id);
 	clear_skill_capability_servers(session_id);
 	clear_skill_compress_requests(session_id);

@@ -32,7 +32,7 @@ pub async fn handle_done(
 			session,
 			config,
 			operation_cancelled,
-			true,
+			crate::session::chat::conversation_compression::CompressionTrigger::Done,
 		)
 		.await
 		{

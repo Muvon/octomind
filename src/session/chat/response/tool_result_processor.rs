@@ -255,7 +255,7 @@ pub async fn process_tool_results(
 		chat_session,
 		config,
 		operation_cancelled.clone(),
-		false,
+		crate::session::chat::conversation_compression::CompressionTrigger::Automatic,
 	)
 	.await
 	{
@@ -274,7 +274,7 @@ pub async fn process_tool_results(
 				chat_session,
 				config,
 				operation_cancelled.clone(),
-				true,
+				crate::session::chat::conversation_compression::CompressionTrigger::SkillForget,
 			)
 			.await
 		{

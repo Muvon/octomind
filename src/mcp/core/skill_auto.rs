@@ -92,6 +92,7 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 			// Still ensure it is registered (harmless if duplicate)
 			if let Some(sid) = &session_id {
 				crate::session::context::add_active_skill(sid, &name_str);
+				crate::session::context::add_env_skill(sid, &name_str);
 			}
 			continue;
 		}
@@ -100,6 +101,7 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 			// Legacy path for restored sessions without active registry entry
 			if let Some(sid) = &session_id {
 				crate::session::context::add_active_skill(sid, &name_str);
+				crate::session::context::add_env_skill(sid, &name_str);
 			}
 			continue;
 		}

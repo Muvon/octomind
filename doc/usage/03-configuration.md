@@ -63,13 +63,13 @@ Template defaults (config-templates/default.toml)
 version = 1
 
 # Logging: "none", "info", "debug"
-log_level = "none"
+log_level = "info"
 
 # Default model (provider:model format)
 model = "openrouter:anthropic/claude-sonnet-4"
 
 # Default tag when no TAG passed to `octomind run`
-default = "octomind:assistant"
+default = "assistant:general"
 
 # Global max tokens
 max_tokens = 16384
@@ -97,13 +97,13 @@ custom_constraints_file_name = ""
 
 ```toml
 # Warn when MCP response exceeds this token count (0 = disable)
-mcp_response_warning_threshold = 10000
+mcp_response_warning_threshold = 0
 
 # Hard limit on MCP response tokens (0 = unlimited)
-mcp_response_tokens_threshold = 0
+mcp_response_tokens_threshold = 20000
 
 # Max tokens per session before truncation (0 = disabled)
-max_session_tokens_threshold = 0
+max_session_tokens_threshold = 200000
 
 # Cache responses exceeding this token count (0 = no caching)
 cache_tokens_threshold = 2048
@@ -117,6 +117,9 @@ use_long_system_cache = true
 # Retry configuration
 max_retries = 1
 retry_timeout = 30
+
+# Per-request HTTP timeout (0 = no timeout)
+request_timeout_seconds = 300
 ```
 
 ## User Interface

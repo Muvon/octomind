@@ -9,9 +9,9 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `version` | u32 | `1` | Config version. Do not modify. Used for automatic upgrades. |
-| `log_level` | string | `"none"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
+| `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `model` | string | `"openrouter:anthropic/claude-sonnet-4"` | Default model in `provider:model` format |
-| `default` | string | `"octomind:assistant"` | Default tag when no TAG passed to `octomind run` |
+| `default` | string | `"assistant:general"` | Default tag when no TAG passed to `octomind run` |
 | `max_tokens` | u32 | `16384` | Global max tokens for all operations |
 | `custom_instructions_file_name` | string | `"INSTRUCTIONS.md"` | File auto-loaded as user message in new sessions. Empty string to disable. |
 | `custom_constraints_file_name` | string | `"CONSTRAINTS.md"` | File appended to each request in `<constraints>` tags. Empty string to disable. |
@@ -21,14 +21,15 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mcp_response_warning_threshold` | u32 | `10000` | Warn when MCP tool response exceeds this token count. `0` = disable. |
-| `mcp_response_tokens_threshold` | u32 | `0` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
-| `max_session_tokens_threshold` | u32 | `0` | Max tokens per session before truncation. `0` = disabled. |
+| `mcp_response_warning_threshold` | u32 | `0` | Warn when MCP tool response exceeds this token count. `0` = disable. |
+| `mcp_response_tokens_threshold` | u32 | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
+| `max_session_tokens_threshold` | u32 | `200000` | Max tokens per session before truncation. `0` = disabled. |
 | `cache_tokens_threshold` | u32 | `2048` | Cache responses exceeding this token count. `0` = no caching. |
 | `cache_timeout_seconds` | u32 | `240` | Cache lifetime in seconds. |
 | `use_long_system_cache` | bool | `true` | Use longer cache lifetime for system messages. |
 | `max_retries` | u32 | `1` | Retry attempts for API calls. |
 | `retry_timeout` | u32 | `30` | Base timeout in seconds for exponential backoff. |
+| `request_timeout_seconds` | u32 | `300` | Per-request HTTP timeout in seconds. Hard limit on LLM provider API calls. `0` = no timeout. |
 
 ## User Interface
 
@@ -252,77 +253,34 @@ layer = "task_researcher"
 
 ## `[[layers]]`
 
-AI processing layers used by workflows, commands, and agents.
+AI processing layers used by workflows and commands. Layers delegate to roles via ACP protocol — the actual model, system prompt, and MCP configuration live in `[[roles]]`, not here.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | required | Layer identifier |
 | `description` | string | required | Human-readable description (used in help, MCP) |
-| `model` | string | required | Model in `provider:model` format |
-| `max_tokens` | u32 | required | Max response tokens. `0` = use model default. |
-| `system_prompt` | string | no | System prompt for this layer. Supports `{{CONTEXT}}`, `{{SYSTEM}}`. |
-| `temperature` | f64 | no | Sampling temperature (0.0-2.0) |
-| `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
-| `top_k` | u32 | no | Top-k token limit (1-200) |
-| `input_mode` | string | no | How input is fed: `"first"`, `"last"`, `"all"` |
-| `output_mode` | string | no | How output affects session: `"none"`, `"append"`, `"replace"` |
+| `command` | string | required | ACP command to execute: `"octomind acp <role_name>"` |
+| `workdir` | string | `"."` | Working directory (relative to session workdir) |
+| `input_mode` | string | no | How input is fed: `"last"`, `"all"`, `"summary"` |
+| `output_mode` | string | no | How output affects session: `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
 | `output_role` | string | no | Role for output messages: `"assistant"`, `"user"` |
-
-### `[layers.mcp]`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `server_refs` | string[] | `[]` | MCP servers available to this layer |
-| `allowed_tools` | string[] | `[]` | Allowed tools for this layer |
-
-### `[layers.parameters]`
-
-Custom key-value parameters. Accessible in system prompts via `{{PARAM:key}}`.
 
 ```toml
 [[layers]]
 name = "task_refiner"
-description = "Refines and clarifies user requests"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 2048
-system_prompt = "You are a query processor..."
-temperature = 0.3
-top_p = 0.7
-top_k = 20
+description = "Refines and clarifies user requests for better processing by subsequent layers"
+command = "octomind acp task_refiner"
 input_mode = "last"
 output_mode = "none"
 output_role = "assistant"
 
-[layers.mcp]
-server_refs = []
-allowed_tools = []
-
-[layers.parameters]
-```
-
-## `[[commands]]`
-
-Custom commands triggered with `/run <command_name>`. Same schema as `[[layers]]`.
-
-```toml
-[[commands]]
-name = "reduce"
-description = "Compress session history for cost optimization"
-model = "openrouter:openai/o4-mini"
-max_tokens = 0
-system_prompt = "You are a Session History Reducer..."
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-input_mode = "all"
-output_mode = "replace"
+[[layers]]
+name = "task_researcher"
+description = "Gathers information and context needed for development tasks through code analysis"
+command = "octomind acp task_researcher"
+input_mode = "last"
+output_mode = "append"
 output_role = "assistant"
-
-[commands.mcp]
-server_refs = []
-allowed_tools = []
-
-[commands.parameters]
 ```
 
 ## `[[agents]]`
@@ -495,19 +453,13 @@ Octomind supports split-file configuration. All `*.toml` files in the config dir
 
 This allows organizing config by concern (e.g., `mcp-github.toml`, `layers-custom.toml`).
 
-## Template Variables
+**Special Case: `mcp-*.toml` Override Files**
 
-## `[skills]` — Skill Auto-Activation & Validation (required)
+Files matching the pattern `mcp-*.toml` are loaded **AFTER** all other `*.toml` files, regardless of their alphabetical position. This ensures they can reliably override same-named MCP servers defined in earlier files like `mcp.toml`.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `auto_activation` | bool | `true` | Enable automatic skill activation via declarative `rules:` in SKILL.md frontmatter. |
-| `auto_validation` | bool | `true` | Enable automatic validation via `validate` scripts at end of each assistant turn. |
-| `activation_timeout` | u64 | `3` | Reserved. Rules are evaluated in-process (no script timeout needed). Kept for config compatibility. |
-| `validation_timeout` | u64 | `60` | Timeout in seconds for `validate` scripts. `0` = unlimited. |
-| `max_retries` | u32 | `3` | Max validation retries per skill before skipping. Resets on success. |
+Without this special handling, `mcp.toml` would lexicographically sort after `mcp-github.toml` and silently overwrite any server overrides.
 
-All fields are required. See [Skills](../usage/15-skills.md) for full documentation.
+This mechanism is used by the `mcp persist` command, which writes to `<config_dir>/mcp-<name>.toml` with `auto_bind = ["<role>"]`. These persisted servers are automatically available on the next startup without manual `server_refs` edits.
 
 ## Template Variables
 

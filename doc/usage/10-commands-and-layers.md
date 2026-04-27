@@ -4,29 +4,18 @@ Octomind provides four mechanisms for extending AI capabilities beyond the base 
 
 ## Layers
 
-Layers are AI processing stages used by workflows and commands. Each layer has its own model, system prompt, and tool access.
+Layers execute via ACP (Agent Client Protocol). Model, system prompt, and MCP tool access live in `[[roles]]` config — layers reference roles via the `command` field. Layers are workflow building blocks; commands are interactive layer shortcuts.
 
 ### Configuration
 
 ```toml
 [[layers]]
 name = "task_refiner"
-description = "Refines and clarifies user requests"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 2048
-system_prompt = "You are a query processor. {{CONTEXT}}"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
+description = "Refines and clarifies user requests for better processing"
+command = "octomind acp task_refiner"
 input_mode = "last"
 output_mode = "none"
 output_role = "assistant"
-
-[layers.mcp]
-server_refs = []
-allowed_tools = []
-
-[layers.parameters]
 ```
 
 ### Input Modes
@@ -35,9 +24,9 @@ How the layer receives conversation input:
 
 | Mode | Description |
 |------|-------------|
-| `"first"` | Only the first message |
-| `"last"` | Only the last message |
-| `"all"` | Entire conversation history |
+| `"last"` | Only the last assistant/message from the session (default for workflow stages) |
+| `"all"` | Entire conversation history from the session |
+| `"summary"` | A summarized version of the conversation history |
 
 ### Output Modes
 
@@ -45,27 +34,48 @@ How the layer's output affects the session:
 
 | Mode | Description |
 |------|-------------|
-| `"none"` | Intermediate processing, doesn't modify session |
+| `"none"` | Intermediate processing, doesn't modify session (for workflow stages like task_refiner) |
 | `"append"` | Adds output as a new message to the session |
-| `"replace"` | Replaces session content with layer output |
+| `"replace"` | Replaces entire session content with layer output (reducer functionality) |
+| `"last"` | Append only the last response to session (ignore multiple outputs) |
+| `"restart"` | Replace session with only the last response (fresh start with last message) |
+### Built-in Layers
 
 ### Built-in Layers
 
-The default configuration includes:
+The default configuration includes layers that reference built-in roles:
 
-| Layer | Model | Purpose |
-|-------|-------|---------|
-| `task_refiner` | `gpt-4.1-mini` | Query cleanup and file guessing |
-| `task_researcher` | `gemini-2.5-flash-preview` | Context gathering via code analysis |
+| Layer | Command | Purpose |
+|-------|---------|---------|
+| `task_refiner` | `octomind acp task_refiner` | Query cleanup and initial file guessing |
+| `task_researcher` | `octomind acp task_researcher` | Context gathering via code analysis |
 
-### Layer System Prompt Variables
+### Layer Fields
 
-| Variable | Description |
-|----------|-------------|
-| `{{CONTEXT}}` | Current session context |
-| `{{SYSTEM}}` | Parent system prompt |
-| `{{PARAM:key}}` | Custom parameter from `[layers.parameters]` |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Layer identifier |
+| `description` | string | yes | Human-readable purpose (shown in help) |
+| `command` | string | yes | ACP command to execute: `octomind acp <role_name>` |
+| `workdir` | string | no | Working directory (default: `"."`) |
+| `input_mode` | string | yes | `"last"`, `"all"`, or `"summary"` |
+| `output_mode` | string | yes | `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
+| `output_role` | string | no | `"assistant"` (default) or `"user"` — role for output messages |
 
+**Key Architecture**: Layers don't contain model/system/mcp config. Those live in `[[roles]]`. The `command` field references which role to spawn via ACP.
+
+Example role definition (in config or from taps):
+```toml
+[[roles]]
+name = "task_refiner"
+model = "openrouter:openai/gpt-4.1-mini"
+system = "You are a query processor..."
+temperature = 0.3
+
+[roles.mcp]
+server_refs = []
+allowed_tools = []
+```
 ## Custom Commands
 
 Commands are layers triggered interactively via `/run <name>`. Same configuration as layers.
@@ -73,22 +83,11 @@ Commands are layers triggered interactively via `/run <name>`. Same configuratio
 ```toml
 [[commands]]
 name = "reduce"
-description = "Compress session history for cost optimization"
-model = "openrouter:openai/o4-mini"
-max_tokens = 0
-system_prompt = "You are a Session History Reducer. {{CONTEXT}}"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
+description = "Compress session history for cost optimization during ongoing work"
+command = "octomind acp reduce"
 input_mode = "all"
 output_mode = "replace"
 output_role = "assistant"
-
-[commands.mcp]
-server_refs = []
-allowed_tools = []
-
-[commands.parameters]
 ```
 
 ### Usage

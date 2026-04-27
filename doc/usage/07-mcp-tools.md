@@ -324,6 +324,32 @@ tools = ["github_create_issue", "github_list_repos"]
 tools = ["github_*"]
 ```
 
+### Override Files (mcp-*.toml)
+
+Files named `mcp-*.toml` have special load order behavior — they are loaded **after** all other `*.toml` files, regardless of alphabetical order. This ensures they can reliably override same-named servers.
+
+**Use Case: Persisting Dynamic Servers**
+
+When you use `mcp(action="persist", name="my_server")`, Octomind writes:
+- File: `<config_dir>/mcp-my_server.toml`
+- Content: Full server config plus `auto_bind = ["<current_role>"]`
+
+On next startup, this file is loaded after all other config files, so it:
+1. Overwrites any existing server named `my_server` (last wins for same-name entries)
+2. Auto-binds to the role that persisted it
+
+**Example persisted override file:**
+
+```toml
+[[mcp.servers]]
+name = "github"
+type = "http"
+url = "https://api.github.com/mcp"
+auto_bind = ["developer"]
+```
+
+This server will automatically be available for the `developer` role on next startup.
+
 ## Health Monitoring
 
 MCP servers are monitored automatically:

@@ -145,13 +145,20 @@ Inject a prompt template defined in `[[prompts]]` config section. Without argume
 ```
 
 ### `/plan [ACTION]`
+
 Manage the structured task plan.
 
-| Action | Description |
-|--------|-------------|
+| Usage | Description |
+|-------|-------------|
 | `/plan` or `/plan show` | Show current plan with progress |
-| `/plan clear` | Reset/abort the current plan |
 
+**Note**: The `/plan` slash command only displays the current plan. To create, modify, or clear a plan, use the `plan` MCP tool directly with these commands:
+
+- `plan(command="start", title="...", tasks=[...])` — Create a new plan
+- `plan(command="next", content="...")` — Mark current task complete, advance to next
+- `plan(command="step", content="...")` — Add progress note to current task
+- `plan(command="reset")` — **Clear/reset the current plan**
+- `plan(command="done", content="...")` — Complete the plan with final summary
 ### `/skill [NAME|PAGE|PATTERN]`
 Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
 

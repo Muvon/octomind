@@ -23,6 +23,11 @@ pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResu
 	let info = &session.session.info;
 
 	let tokens_used = info.input_tokens + info.output_tokens;
+	let tokens_per_second = if info.total_api_time_ms > 0 {
+		(info.output_tokens as f64) / (info.total_api_time_ms as f64 / 1000.0)
+	} else {
+		0.0
+	};
 	// Estimate cache savings: approximate cost of cache_read_tokens if they had been
 	// charged at the full input rate. The 3x weight for output tokens reflects typical
 	// provider pricing (output tokens cost ~3x input tokens).
@@ -63,6 +68,7 @@ pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResu
 			tokens_reasoning: info.reasoning_tokens,
 			total_cost: info.total_cost,
 			cache_savings,
+			tokens_per_second,
 			compression_stats,
 			cache_markers_system: cache_stats.system_markers as u64,
 			cache_markers_tool: cache_stats.tool_markers as u64,

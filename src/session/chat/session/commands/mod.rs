@@ -67,6 +67,7 @@ pub enum CommandOutput {
 		tokens_reasoning: u64,
 		total_cost: f64,
 		cache_savings: f64,
+		tokens_per_second: f64,
 		compression_stats: Option<crate::session::CompressionStats>,
 		// Cache marker stats (from CacheManager)
 		cache_markers_system: u64,

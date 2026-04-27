@@ -398,6 +398,7 @@ pub fn display_info(output: &CommandOutput) {
 		tokens_cache_write,
 		tokens_reasoning,
 		total_cost,
+		tokens_per_second,
 		compression_stats,
 		cache_markers_system,
 		cache_markers_tool,
@@ -433,6 +434,13 @@ pub fn display_info(output: &CommandOutput) {
 			format_number(*tokens_reasoning).white(),
 		);
 		println!("{} ${:.5}", "Total cost:".yellow(), total_cost);
+		if *tokens_per_second > 0.0 {
+			println!(
+				"{} {:.1} tok/s",
+				"Throughput:".yellow(),
+				tokens_per_second
+			);
+		}
 
 		// Compression stats
 		if let Some(stats) = compression_stats {

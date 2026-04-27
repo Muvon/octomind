@@ -96,6 +96,18 @@ async fn main() -> Result<(), anyhow::Error> {
 
 	let args = CliArgs::parse();
 
+	// Set process/terminal title for long-running subcommands so they're
+	// self-identifying in `ps` and terminal tabs. `Run` is handled later in
+	// the session main loop once the session ID is known.
+	match &args.command {
+		Commands::Acp(_) => octomind::proctitle::set_process_title("octomind-acp"),
+		Commands::Server(_) => {
+			octomind::proctitle::set_process_title("octomind-server");
+			octomind::proctitle::set_terminal_title("octomind-server");
+		}
+		_ => {}
+	}
+
 	// Load configuration
 	let config = Config::load()?;
 

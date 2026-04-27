@@ -93,6 +93,7 @@ pub mod directories;
 pub mod learning;
 pub mod logging;
 pub mod mcp;
+pub mod proctitle;
 pub mod providers;
 pub mod sandbox;
 pub mod session;

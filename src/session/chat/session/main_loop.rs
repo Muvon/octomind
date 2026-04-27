@@ -120,6 +120,13 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		setup_and_initialize_session(args, config).await?;
 
 	let session_id = chat_session.session.info.name.clone();
+
+	// Now that the session ID is known, set the process & terminal title so
+	// `ps`/htop and the terminal tab show which run/role/session this is.
+	let title = format!("octomind-run {role} [{session_id}]");
+	crate::proctitle::set_process_title(&title);
+	crate::proctitle::set_terminal_title(&title);
+
 	crate::session::context::with_session_id(session_id, async move {
 		// MCP init (spinner still running from setup)
 		// MCP init with progress on spinner
@@ -1078,6 +1085,13 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
+
+	// Now that the session ID is known, set the process & terminal title so
+	// `ps`/htop and the terminal tab show which run/role/session this is.
+	let title = format!("octomind-run {role} [{session_id}]");
+	crate::proctitle::set_process_title(&title);
+	crate::proctitle::set_terminal_title(&title);
+
 	crate::session::context::with_session_id(session_id, async move {
 	// MCP init — progress display handled internally when stderr is a terminal
 	crate::mcp::initialize_mcp_for_role(&role, config).await?;

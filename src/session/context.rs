@@ -1070,39 +1070,6 @@ pub fn clear_skill_capability_servers(session_id: &SessionId) {
 }
 
 // ---------------------------------------------------------------------------
-// Session-keyed skill compression request
-// ---------------------------------------------------------------------------
-
-/// Flag set by `skill(forget)` to trigger forced compression after tool result processing.
-static SKILL_COMPRESS_REQUESTED: RwLock<Option<HashMap<SessionId, bool>>> = RwLock::new(None);
-
-/// Request forced compression for a session (called by skill forget action).
-pub fn request_skill_compression(session_id: &SessionId) {
-	let mut guard = SKILL_COMPRESS_REQUESTED.write().unwrap();
-	let registry = guard.get_or_insert_with(HashMap::new);
-	registry.insert(session_id.clone(), true);
-}
-
-/// Take (read + clear) the compression request flag for a session.
-/// Returns true if compression was requested, false otherwise.
-pub fn take_skill_compress_request(session_id: &SessionId) -> bool {
-	let mut guard = SKILL_COMPRESS_REQUESTED.write().unwrap();
-	if let Some(registry) = guard.as_mut() {
-		return registry.remove(session_id).unwrap_or(false);
-	}
-	false
-}
-
-/// Clear compression request flag when a session ends.
-fn clear_skill_compress_requests(session_id: &SessionId) {
-	if let Ok(mut guard) = SKILL_COMPRESS_REQUESTED.write() {
-		if let Some(registry) = guard.as_mut() {
-			registry.remove(session_id);
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Session cleanup
 // ---------------------------------------------------------------------------
 
@@ -1124,7 +1091,6 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_env_skills(session_id);
 	clear_capability_refcounts(session_id);
 	clear_skill_capability_servers(session_id);
-	clear_skill_compress_requests(session_id);
 	crate::session::inbox::clear_inbox_for_session(session_id);
 	crate::mcp::core::plan::compression::cleanup_compression_state(session_id);
 	clear_schedule_notify(session_id);

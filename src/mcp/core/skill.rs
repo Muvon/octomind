@@ -1173,9 +1173,6 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 		);
 	}
 
-	// Signal the session to run forced compression so the injected skill content is cleaned up
-	crate::session::context::request_skill_compression(&session_id);
-
 	crate::log_debug!("skill: forgot '{}' from session {}", name, session_id);
 
 	// Emit structured lifecycle event for JSONL/WebSocket consumers
@@ -1188,12 +1185,12 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 
 	let msg = if offloaded.is_empty() {
 		format!(
-			"Skill '{}' removed from context. Conversation will be compressed to clean up injected content.",
+			"Skill '{}' removed from context. Injected content will be cleaned up at next compression.",
 			name
 		)
 	} else {
 		format!(
-			"Skill '{}' removed from context (offloaded servers: {}). Conversation will be compressed.",
+			"Skill '{}' removed from context (offloaded servers: {}). Injected content will be cleaned up at next compression.",
 			name,
 			offloaded.join(", ")
 		)

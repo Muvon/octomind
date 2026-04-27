@@ -676,8 +676,6 @@ fn calculate_self_tuning_accuracy(info: &crate::session::SessionInfo) -> f64 {
 pub enum CompressionTrigger {
 	/// Normal automatic compression — respects thresholds/cooldowns, preserves all active skills.
 	Automatic,
-	/// Force compression after `skill(forget)` — bypasses thresholds, preserves all active skills.
-	SkillForget,
 	/// `/done` command — bypasses thresholds, preserves only env-loaded skills (OCTOMIND_SKILLS).
 	Done,
 }
@@ -692,10 +690,7 @@ pub async fn check_and_compress_conversation(
 ) -> Result<bool> {
 	let (should_check, computed_ratio) = should_check_compression(session, config).await;
 
-	let force = matches!(
-		trigger,
-		CompressionTrigger::SkillForget | CompressionTrigger::Done
-	);
+	let force = matches!(trigger, CompressionTrigger::Done);
 
 	if !force && !should_check {
 		return Ok(false);

@@ -399,6 +399,10 @@ pub fn display_info(output: &CommandOutput) {
 		tokens_reasoning,
 		total_cost,
 		tokens_per_second,
+		avg_tokens_per_compression,
+		avg_tokens_per_tool,
+		avg_tokens_per_response,
+		avg_input_tokens,
 		compression_stats,
 		cache_markers_system,
 		cache_markers_tool,
@@ -435,10 +439,36 @@ pub fn display_info(output: &CommandOutput) {
 		);
 		println!("{} ${:.5}", "Total cost:".yellow(), total_cost);
 		if *tokens_per_second > 0.0 {
+			println!("{} {:.1} tok/s", "Throughput:".yellow(), tokens_per_second);
+		}
+		println!();
+		println!("{}", "───────────── Averages ─────────────".bright_cyan());
+		if *avg_tokens_per_compression > 0.0 {
 			println!(
-				"{} {:.1} tok/s",
-				"Throughput:".yellow(),
-				tokens_per_second
+				"{} {} tok/compression",
+				"Tokens per compression:".yellow(),
+				format_number(*avg_tokens_per_compression as u64).bright_white()
+			);
+		}
+		if *avg_tokens_per_tool > 0.0 {
+			println!(
+				"{} {} tok/tool",
+				"Tokens per tool:".yellow(),
+				format_number(*avg_tokens_per_tool as u64).bright_white()
+			);
+		}
+		if *avg_tokens_per_response > 0.0 {
+			println!(
+				"{} {} tok/response",
+				"Tokens per response:".yellow(),
+				format_number(*avg_tokens_per_response as u64).bright_white()
+			);
+		}
+		if *avg_input_tokens > 0.0 {
+			println!(
+				"{} {} tok/request",
+				"Input per request:".yellow(),
+				format_number(*avg_input_tokens as u64).bright_white()
 			);
 		}
 

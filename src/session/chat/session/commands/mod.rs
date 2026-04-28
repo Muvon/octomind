@@ -68,6 +68,10 @@ pub enum CommandOutput {
 		total_cost: f64,
 		cache_savings: f64,
 		tokens_per_second: f64,
+		avg_tokens_per_compression: f64,
+		avg_tokens_per_tool: f64,
+		avg_tokens_per_response: f64,
+		avg_input_tokens: f64,
 		compression_stats: Option<crate::session::CompressionStats>,
 		// Cache marker stats (from CacheManager)
 		cache_markers_system: u64,

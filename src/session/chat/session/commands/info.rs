@@ -28,6 +28,28 @@ pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResu
 	} else {
 		0.0
 	};
+
+	let total_compressions = info.compression_stats.total_compressions();
+	let avg_tokens_per_compression = if total_compressions > 0 {
+		info.compression_stats.total_tokens_saved as f64 / total_compressions as f64
+	} else {
+		0.0
+	};
+	let avg_tokens_per_tool = if info.tool_calls > 0 {
+		info.output_tokens as f64 / info.tool_calls as f64
+	} else {
+		0.0
+	};
+	let avg_tokens_per_response = if info.total_api_calls > 0 {
+		info.output_tokens as f64 / info.total_api_calls as f64
+	} else {
+		0.0
+	};
+	let avg_input_tokens = if info.total_api_calls > 0 {
+		info.input_tokens as f64 / info.total_api_calls as f64
+	} else {
+		0.0
+	};
 	// Estimate cache savings: approximate cost of cache_read_tokens if they had been
 	// charged at the full input rate. The 3x weight for output tokens reflects typical
 	// provider pricing (output tokens cost ~3x input tokens).
@@ -69,6 +91,10 @@ pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResu
 			total_cost: info.total_cost,
 			cache_savings,
 			tokens_per_second,
+			avg_tokens_per_compression,
+			avg_tokens_per_tool,
+			avg_tokens_per_response,
+			avg_input_tokens,
 			compression_stats,
 			cache_markers_system: cache_stats.system_markers as u64,
 			cache_markers_tool: cache_stats.tool_markers as u64,

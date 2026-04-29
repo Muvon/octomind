@@ -172,6 +172,11 @@ pub async fn initialize_servers_for_role_with_callback(
 	config: &crate::config::Config,
 	progress_callback: Option<&(dyn Fn(McpInitProgress) + Send + Sync)>,
 ) -> Result<()> {
+	// Kick off embedding model warmup in the background so the first
+	// `capability discover` call doesn't block on a ~50MB download.
+	// Idempotent — only the first call actually triggers init.
+	crate::embeddings::warmup();
+
 	// The config passed here should be the merged config for the role
 	// config.mcp.servers already contains only the role's enabled servers
 	if config.mcp.servers.is_empty() {

@@ -585,6 +585,14 @@ pub async fn compress_completed_task(
 	// subsequent compressed-knowledge messages.
 	session.session.info.anchor = projected_anchor;
 
+	// Reset tool-result dedup for this session. Compaction has just
+	// removed the original messages our dedup placeholders were pointing
+	// at; if we kept the dedup map, future identical results would be
+	// replaced with placeholders that reference content that no longer
+	// exists. Clearing here guarantees post-compaction dedup behaves like
+	// a fresh session — first occurrences are recorded again from scratch.
+	crate::session::dedup::clear_current_session();
+
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
 	session.session.info.current_non_cached_tokens = 0;
@@ -608,18 +616,23 @@ pub async fn compress_completed_task(
 	Ok(Some(metrics))
 }
 
-/// Format task summary as structured knowledge block with transparency metadata
-/// Uses validated summary to avoid unwrap panic
-/// CRITICAL: Includes active plan state to preserve context after compression
-/// CRITICAL: Embeds the session-wide anchor so cross-compaction continuity
-/// (intent, decisions, accumulated file refs, errors) survives even when
-/// older compressed entries get re-compacted in subsequent passes.
+/// Format compressed knowledge with the session anchor as the primary
+/// content (extend-anchor pattern, replacing the previous regenerate-from-
+/// scratch summary). The anchor already contains the per-task data folded
+/// in by `compress_completed_task` before this function runs, so we don't
+/// duplicate task title/description/summary as separate blocks.
+///
+/// Active plan state and the latest task identifier are kept as small
+/// scaffolding so the model can recognize what was just compacted, but the
+/// real continuity comes from the anchor itself: intent, decisions,
+/// changes_made, file_refs, errors_seen, next_steps — accumulated across
+/// every compaction in this session.
 fn format_compressed_summary(
 	task: &PlanTask,
 	summary: &str,
 	compression_id: &str,
 	plan_context: Option<&(String, usize, usize, String)>,
-	file_refs: &[String],
+	_file_refs: &[String],
 	anchor: &crate::session::anchor::Anchor,
 ) -> String {
 	let completed_at = task
@@ -628,17 +641,32 @@ fn format_compressed_summary(
 		.unwrap_or_else(|| "Unknown".to_string());
 
 	let mut output = format!(
-		"## Task Completed: {} [COMPRESSED: {}]\n\n\
-		**Description**: {}\n\n\
-		**Summary**: {}\n\n\
-		**Completed**: {}\n\n",
-		task.title, compression_id, task.description, summary, completed_at
+		"## Compressed Knowledge [COMPRESSED: {}]\n\n\
+		**Latest fold**: {} (completed {})\n\n",
+		compression_id, task.title, completed_at
 	);
 
-	// CRITICAL: Preserve active plan state so LLM knows plan is still active
+	// Anchor is the primary content. It contains intent, decisions,
+	// changes_made (which already includes this task's summary, folded in
+	// before format runs), file_refs accumulated across compactions, and
+	// any errors / next_steps recorded so far.
+	if !anchor.is_empty() {
+		output.push_str(&anchor.to_markdown());
+	} else {
+		// Defensive fallback — should not happen because the caller
+		// extends the anchor before calling format. Kept so the function
+		// is correct even if invoked out of band (e.g. tests).
+		output.push_str(&format!(
+			"**Task**: {}\n**Summary**: {}\n\n",
+			task.title, summary
+		));
+	}
+
+	// CRITICAL: Preserve active plan state so the model knows the plan is
+	// still in progress and which task is current.
 	if let Some((plan_title, completed_count, total_tasks, current_task_title)) = plan_context {
 		output.push_str(&format!(
-			"🎯 **ACTIVE PLAN**: {}\n\
+			"\n🎯 **ACTIVE PLAN**: {}\n\
 			- Progress: {}/{} tasks completed\n\
 			- Current Task: {}\n\
 			- Status: IN PROGRESS (use plan commands to continue)\n\n",
@@ -646,33 +674,10 @@ fn format_compressed_summary(
 		));
 	}
 
-	// Include file references extracted from tool calls
-	// These allow the model to re-read critical files after compression
-	if !file_refs.is_empty() {
-		output.push_str("\n**File references (can be re-read on demand):**\n");
-		for ref_str in file_refs.iter().take(10) {
-			output.push_str(&format!("- {}\n", ref_str));
-		}
-		output.push('\n');
-	}
-
-	// Embed the session anchor: intent, decisions, accumulated file refs,
-	// errors, and next steps that have survived previous compactions in
-	// this session. Skipped on the very first compaction when the anchor
-	// is still empty.
-	if !anchor.is_empty() {
-		output.push_str("\n## Session Anchor\n\n");
-		output.push_str(&anchor.to_markdown());
-	}
-
 	output.push_str(&format!(
-		"**Compression Info**:\n\
-		- ID: `{}`\n\
-		- Type: Task-level compression\n\
-		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
-		---\n\
-		*Compressed - Detailed tool calls and intermediate work removed to optimize context.*",
-		compression_id, compression_id
+		"---\n\
+		*Compressed [{}]. Decisions, file references, and changes are preserved above.*",
+		compression_id
 	));
 
 	output
@@ -820,6 +825,9 @@ async fn compress_phase(
 		tokens_saved,
 		&session.session.messages,
 	);
+
+	// Reset tool-result dedup — see compress_completed_task for rationale.
+	crate::session::dedup::clear_current_session();
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
@@ -972,6 +980,9 @@ async fn compress_project(
 		&session.session.messages,
 	);
 
+	// Reset tool-result dedup — see compress_completed_task for rationale.
+	crate::session::dedup::clear_current_session();
+
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
 	session.session.info.current_non_cached_tokens = 0;
@@ -1084,6 +1095,9 @@ mod tests {
 			phase: None,
 		};
 
+		// With an empty anchor the function falls back to a minimal task
+		// block (defensive — production never hits this because the
+		// caller extends the anchor first).
 		let empty_anchor = crate::session::anchor::Anchor::default();
 		let formatted = format_compressed_summary(
 			&task,
@@ -1093,17 +1107,14 @@ mod tests {
 			&[],
 			&empty_anchor,
 		);
-		assert!(formatted.contains("## Task Completed: Test Task"));
-		assert!(formatted.contains("**Description**: Test description"));
-		assert!(formatted.contains("**Summary**: Task completed successfully"));
-		assert!(formatted.contains("Compressed"));
+		assert!(formatted.contains("## Compressed Knowledge"));
 		assert!(formatted.contains("test_123"));
-		// Empty anchor — Session Anchor section should be omitted.
-		assert!(!formatted.contains("## Session Anchor"));
+		assert!(formatted.contains("Test Task"));
+		assert!(formatted.contains("Task completed successfully"));
 	}
 
 	#[test]
-	fn format_compressed_summary_includes_anchor_when_non_empty() {
+	fn format_compressed_summary_uses_anchor_as_primary_content() {
 		use chrono::Utc;
 		let task = PlanTask {
 			title: "Test Task".to_string(),
@@ -1124,11 +1135,12 @@ mod tests {
 			},
 			0,
 		);
-		let formatted =
-			format_compressed_summary(&task, "ok", "id_xyz", None, &[], &anchor);
-		assert!(formatted.contains("## Session Anchor"));
+		let formatted = format_compressed_summary(&task, "ok", "id_xyz", None, &[], &anchor);
+		// Anchor content surfaces directly — no separate Session Anchor heading.
 		assert!(formatted.contains("Refactor auth layer"));
 		assert!(formatted.contains("use JWT not sessions"));
+		// The redundant per-task Summary block should be gone.
+		assert!(!formatted.contains("**Summary**: ok"));
 	}
 
 	/// Test that advancing start_index past tool results prevents orphaned tool_use blocks.

@@ -1666,6 +1666,11 @@ async fn apply_compression(
 		&session.session.messages,
 	);
 
+	// Reset tool-result dedup — compaction has just removed the original
+	// messages our placeholders point at; future identical results must
+	// be kept verbatim again.
+	crate::session::dedup::clear_current_session();
+
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
 	// Mirrors the behavior in context_truncation.rs::perform_smart_full_summarization()

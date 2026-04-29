@@ -328,6 +328,134 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 	))
 }
 
+// ---------------------------------------------------------------------------
+// Auto-discovery — embed each fresh user message, suggest top-matching
+// non-active capability when cosine clears the threshold.
+// ---------------------------------------------------------------------------
+
+/// Marker used to recognize and skip our own hint messages so we don't
+/// suggest on a message that is itself a suggestion.
+const AUTO_HINT_PREFIX: &str = "💡 Capability suggestion:";
+
+/// Cosine threshold below which a capability is too weakly matched to
+/// surface as a suggestion. Tuned for `BAAI/bge-small-en-v1.5` — values
+/// in the 0.4–0.6 range are typical for relevant matches; >0.7 is strong.
+const AUTO_SUGGEST_THRESHOLD: f32 = 0.55;
+
+/// Pick the highest-scoring entry strictly above `threshold`. Returns
+/// `None` if no entry clears the bar, or the input is empty. On exact
+/// ties, the first occurrence wins (stable, deterministic).
+///
+/// Pure helper — separated from the embedding-driven path so the
+/// threshold/top-pick logic can be unit-tested without the model.
+fn select_top_match_above_threshold<'a, I, T>(scored: I, threshold: f32) -> Option<(f32, T)>
+where
+	I: IntoIterator<Item = (f32, T)>,
+	T: 'a,
+{
+	let mut best: Option<(f32, T)> = None;
+	for (score, item) in scored {
+		if score <= threshold {
+			continue;
+		}
+		match &best {
+			None => best = Some((score, item)),
+			Some((current, _)) if score > *current => best = Some((score, item)),
+			_ => {}
+		}
+	}
+	best
+}
+
+/// Inspect the most recent user message and inject a one-line hint when
+/// a non-active capability is a strong embedding match. Silent no-op when
+/// the model isn't ready yet, no capabilities are installed, no match
+/// clears the threshold, or the last message is not a user message.
+///
+/// Designed to be called from `prepare_for_api_call` so it runs before
+/// every API request; the `AUTO_HINT_PREFIX` check ensures the same user
+/// message doesn't accumulate multiple hints across follow-up turns.
+pub async fn auto_suggest_capabilities(
+	session: &mut crate::session::chat::session::ChatSession,
+	config: &Config,
+) {
+	// Only fire when the most recent message is a fresh user input.
+	let intent = match session.session.messages.last() {
+		Some(m) if m.role == "user" && !m.content.contains(AUTO_HINT_PREFIX) => m.content.clone(),
+		_ => return,
+	};
+
+	// If the embedding model hasn't finished warmup, skip silently.
+	// The caller (initialize_servers_for_role) already kicked off warmup;
+	// we don't want to block the hot API path on a 50MB download.
+	if !crate::embeddings::is_ready() {
+		crate::log_debug!(
+			"capability auto-suggest: embedding model not ready yet, skipping this turn"
+		);
+		return;
+	}
+
+	let caps = match crate::agent::registry::list_all_capabilities(&config.capabilities) {
+		Ok(c) => c,
+		Err(e) => {
+			crate::log_debug!("capability auto-suggest: enumeration failed ({})", e);
+			return;
+		}
+	};
+
+	// Only consider capabilities that are not already active in this session.
+	let inactive: Vec<&crate::agent::registry::ResolvedCapability> =
+		caps.iter().filter(|c| !is_active(&c.name)).collect();
+	if inactive.is_empty() {
+		return;
+	}
+
+	let intent_vec = match crate::embeddings::embed(&intent).await {
+		Ok(v) => v,
+		Err(e) => {
+			crate::log_debug!("capability auto-suggest: intent embed failed ({})", e);
+			return;
+		}
+	};
+	let cap_texts: Vec<String> = inactive
+		.iter()
+		.map(|c| format!("{} {}", c.name, c.description))
+		.collect();
+	let cap_vecs = match crate::embeddings::embed_many(&cap_texts).await {
+		Ok(v) => v,
+		Err(e) => {
+			crate::log_debug!("capability auto-suggest: capability embed failed ({})", e);
+			return;
+		}
+	};
+
+	let scored = inactive
+		.iter()
+		.zip(cap_vecs.iter())
+		.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), *cap));
+	let top = select_top_match_above_threshold(scored, AUTO_SUGGEST_THRESHOLD);
+
+	if let Some((score, cap)) = top {
+		let hint = format!(
+			"{prefix} `{name}` ({desc}) looks relevant to this request (score {score:.2}). Call `capability(action=\"enable\", name=\"{name}\")` to activate it.",
+			prefix = AUTO_HINT_PREFIX,
+			name = cap.name,
+			desc = cap.description,
+			score = score,
+		);
+		session.session.messages.push(crate::session::Message {
+			role: "user".to_string(),
+			content: hint,
+			..Default::default()
+		});
+		crate::log_debug!(
+			"capability auto-suggest: injected hint for `{}` (score {:.2})",
+			cap.name,
+			score
+		);
+	}
+}
+
 async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let intent = match call.parameters.get("intent").and_then(|v| v.as_str()) {
 		Some(i) if !i.trim().is_empty() => i.trim().to_string(),
@@ -518,5 +646,61 @@ mod tests {
 			scored.is_empty(),
 			"expected no matches for nonsense intent, got {scored:?}"
 		);
+	}
+
+	// -----------------------------------------------------------------------
+	// Pure-logic tests for the auto-suggest threshold + top-pick selection.
+	// These cover the decision boundary that determines whether a hint is
+	// injected into the session — independent of the embedding model.
+	// -----------------------------------------------------------------------
+
+	#[test]
+	fn select_top_returns_none_for_empty_input() {
+		let empty: Vec<(f32, &str)> = Vec::new();
+		assert!(select_top_match_above_threshold(empty, 0.5).is_none());
+	}
+
+	#[test]
+	fn select_top_returns_none_when_all_below_threshold() {
+		let scored = vec![(0.30_f32, "a"), (0.40_f32, "b"), (0.10_f32, "c")];
+		assert!(select_top_match_above_threshold(scored, 0.5).is_none());
+	}
+
+	#[test]
+	fn select_top_excludes_score_at_exact_threshold() {
+		// Threshold is strictly greater-than (not >=) so a score equal to
+		// the threshold should NOT be selected.
+		let scored = vec![(0.55_f32, "a"), (0.40_f32, "b")];
+		assert!(select_top_match_above_threshold(scored, 0.55).is_none());
+	}
+
+	#[test]
+	fn select_top_picks_highest_above_threshold() {
+		let scored = vec![
+			(0.30_f32, "low"),
+			(0.62_f32, "mid"),
+			(0.81_f32, "high"),
+			(0.40_f32, "below"),
+		];
+		let top = select_top_match_above_threshold(scored, 0.55).unwrap();
+		assert_eq!(top.1, "high");
+		assert!((top.0 - 0.81).abs() < 1e-6);
+	}
+
+	#[test]
+	fn select_top_first_wins_on_exact_tie() {
+		// Stable selection: when two entries share the top score, the
+		// first one encountered in iteration order is kept.
+		let scored = vec![(0.70_f32, "first"), (0.70_f32, "second")];
+		let top = select_top_match_above_threshold(scored, 0.5).unwrap();
+		assert_eq!(top.1, "first");
+	}
+
+	#[test]
+	fn select_top_works_with_zero_threshold() {
+		// Threshold 0.0 admits any positive score (still strictly greater).
+		let scored = vec![(0.01_f32, "tiny"), (0.0_f32, "zero")];
+		let top = select_top_match_above_threshold(scored, 0.0).unwrap();
+		assert_eq!(top.1, "tiny");
 	}
 }

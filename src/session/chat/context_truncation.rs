@@ -135,6 +135,10 @@ pub async fn perform_simple_boundary_truncation(
 		&chat_session.session.messages,
 	)?;
 
+	// Reset tool-result dedup — truncation has dropped the original
+	// messages our placeholders point at.
+	crate::session::dedup::clear_current_session();
+
 	// Save the session
 	chat_session.save()?;
 
@@ -246,6 +250,9 @@ pub async fn perform_smart_full_summarization(
 		0,
 		&chat_session.session.messages,
 	)?;
+
+	// Reset tool-result dedup — summarization has replaced the originals.
+	crate::session::dedup::clear_current_session();
 
 	// Save the updated session
 	chat_session.save()?;

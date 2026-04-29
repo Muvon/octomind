@@ -87,6 +87,17 @@ pub fn clear_session(session_id: &str) {
 	state().write().unwrap().remove(session_id);
 }
 
+/// Drop the dedup state for the current session (or the CLI/test bucket
+/// when there is no session context). Called from every compaction path
+/// after compaction succeeds: once messages have been removed, the
+/// originals our placeholders point at no longer exist, so future
+/// duplicates of the same content must be kept verbatim again.
+pub fn clear_current_session() {
+	let key =
+		crate::session::context::current_session_id().unwrap_or_else(|| "_global_".to_string());
+	state().write().unwrap().remove(&key);
+}
+
 /// Number of distinct tool results recorded in the given session (testing/observability).
 #[cfg(test)]
 fn session_size(session_id: &str) -> usize {

@@ -63,6 +63,40 @@ async fn provider() -> Result<&'static (dyn EmbeddingProvider + 'static)> {
 	Ok(p.as_ref())
 }
 
+/// Kick off model initialization in the background so the first real
+/// `embed()` / `embed_many()` call doesn't pay the download/load cost.
+///
+/// Spawns a tokio task that calls `provider()` once. If weights need to be
+/// downloaded (~50MB on first ever run), that happens off the hot path.
+/// If init fails (no network, restricted env), the failure is logged and
+/// callers fall back to whatever path they implement (e.g. capability
+/// discover falls back to keyword scoring).
+///
+/// Idempotent: subsequent calls observe the already-initialized singleton
+/// and return immediately. Safe to call from multiple places — only the
+/// first one actually triggers init.
+pub fn warmup() {
+	tokio::spawn(async move {
+		match provider().await {
+			Ok(_) => {
+				crate::log_debug!("embeddings: model warmup complete");
+			}
+			Err(e) => {
+				crate::log_debug!(
+					"embeddings: warmup failed ({}) — features that need embeddings will fall back",
+					e
+				);
+			}
+		}
+	});
+}
+
+/// Whether the embedding model is initialized and ready (no further
+/// download/load cost). Useful for status UI; not required for correctness.
+pub fn is_ready() -> bool {
+	PROVIDER.initialized()
+}
+
 /// Embed a single text. Returns a cached vector if the same text was
 /// embedded earlier in the same process.
 pub async fn embed(text: &str) -> Result<Vec<f32>> {

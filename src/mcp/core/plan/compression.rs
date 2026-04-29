@@ -452,13 +452,42 @@ pub async fn compress_completed_task(
 		&session.session.messages[message_range.start_index..=message_range.end_index],
 	);
 
-	// Create compressed knowledge entry with validated summary
+	// Build the AnchorUpdate for this compaction. Heuristic for now: the
+	// task summary becomes one `changes_made` entry, file_refs come from
+	// tool-call extraction, and `intent` is set on the first compaction
+	// from the task description (first-write-wins). Future work can
+	// replace this with an LLM-generated update for richer
+	// decisions/errors_seen content — the call shape stays the same.
+	let now_unix = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default()
+		.as_secs();
+	let anchor_intent = if session.session.info.anchor.intent.is_empty() {
+		Some(task.description.clone())
+	} else {
+		None
+	};
+	let anchor_update = crate::session::anchor::AnchorUpdate {
+		intent: anchor_intent,
+		changes_made: vec![format!("{}: {}", task.title, summary)],
+		file_refs: file_refs.clone(),
+		..Default::default()
+	};
+
+	// Project the anchor forward without committing — we only mutate
+	// session state if compaction actually succeeds (skip checks below).
+	let mut projected_anchor = session.session.info.anchor.clone();
+	projected_anchor.extend(anchor_update, now_unix);
+
+	// Create compressed knowledge entry with validated summary and the
+	// projected anchor snapshot embedded for cross-compaction continuity.
 	let compressed_entry = format_compressed_summary(
 		task,
 		summary,
 		&compression_id,
 		plan_context.as_ref(),
 		&file_refs,
+		&projected_anchor,
 	);
 
 	// Calculate tokens in compressed entry
@@ -551,6 +580,11 @@ pub async fn compress_completed_task(
 		&session.session.messages,
 	);
 
+	// Commit the projected anchor — task compaction succeeded, so the
+	// update is now part of session state and will be embedded in
+	// subsequent compressed-knowledge messages.
+	session.session.info.anchor = projected_anchor;
+
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
 	session.session.info.current_non_cached_tokens = 0;
@@ -577,12 +611,16 @@ pub async fn compress_completed_task(
 /// Format task summary as structured knowledge block with transparency metadata
 /// Uses validated summary to avoid unwrap panic
 /// CRITICAL: Includes active plan state to preserve context after compression
+/// CRITICAL: Embeds the session-wide anchor so cross-compaction continuity
+/// (intent, decisions, accumulated file refs, errors) survives even when
+/// older compressed entries get re-compacted in subsequent passes.
 fn format_compressed_summary(
 	task: &PlanTask,
 	summary: &str,
 	compression_id: &str,
 	plan_context: Option<&(String, usize, usize, String)>,
 	file_refs: &[String],
+	anchor: &crate::session::anchor::Anchor,
 ) -> String {
 	let completed_at = task
 		.completed_at
@@ -616,6 +654,15 @@ fn format_compressed_summary(
 			output.push_str(&format!("- {}\n", ref_str));
 		}
 		output.push('\n');
+	}
+
+	// Embed the session anchor: intent, decisions, accumulated file refs,
+	// errors, and next steps that have survived previous compactions in
+	// this session. Skipped on the very first compaction when the anchor
+	// is still empty.
+	if !anchor.is_empty() {
+		output.push_str("\n## Session Anchor\n\n");
+		output.push_str(&anchor.to_markdown());
 	}
 
 	output.push_str(&format!(
@@ -1037,13 +1084,51 @@ mod tests {
 			phase: None,
 		};
 
-		let formatted =
-			format_compressed_summary(&task, "Task completed successfully", "test_123", None, &[]);
+		let empty_anchor = crate::session::anchor::Anchor::default();
+		let formatted = format_compressed_summary(
+			&task,
+			"Task completed successfully",
+			"test_123",
+			None,
+			&[],
+			&empty_anchor,
+		);
 		assert!(formatted.contains("## Task Completed: Test Task"));
 		assert!(formatted.contains("**Description**: Test description"));
 		assert!(formatted.contains("**Summary**: Task completed successfully"));
 		assert!(formatted.contains("Compressed"));
 		assert!(formatted.contains("test_123"));
+		// Empty anchor — Session Anchor section should be omitted.
+		assert!(!formatted.contains("## Session Anchor"));
+	}
+
+	#[test]
+	fn format_compressed_summary_includes_anchor_when_non_empty() {
+		use chrono::Utc;
+		let task = PlanTask {
+			title: "Test Task".to_string(),
+			description: "Test description".to_string(),
+			details: "Some details".to_string(),
+			summary: Some("ok".to_string()),
+			status: super::super::storage::TaskStatus::Completed,
+			completed_at: Some(Utc::now()),
+			message_range: None,
+			phase: None,
+		};
+		let mut anchor = crate::session::anchor::Anchor::default();
+		anchor.extend(
+			crate::session::anchor::AnchorUpdate {
+				intent: Some("Refactor auth layer".to_string()),
+				decisions: vec!["use JWT not sessions".to_string()],
+				..Default::default()
+			},
+			0,
+		);
+		let formatted =
+			format_compressed_summary(&task, "ok", "id_xyz", None, &[], &anchor);
+		assert!(formatted.contains("## Session Anchor"));
+		assert!(formatted.contains("Refactor auth layer"));
+		assert!(formatted.contains("use JWT not sessions"));
 	}
 
 	/// Test that advancing start_index past tool results prevents orphaned tool_use blocks.

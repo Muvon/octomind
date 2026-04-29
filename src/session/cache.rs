@@ -787,6 +787,7 @@ mod tests {
 				total_layer_time_ms: 0,
 				total_tool_time_ms: 0,
 				compression_stats: crate::session::CompressionStats::default(),
+				anchor: crate::session::anchor::Anchor::default(),
 				total_api_calls: 0,
 				// Cache state (Phase 1)
 				current_non_cached_tokens: 0,

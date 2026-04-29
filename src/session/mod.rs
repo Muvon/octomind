@@ -149,6 +149,13 @@ pub struct SessionInfo {
 	// Compression tracking
 	#[serde(default)]
 	pub compression_stats: CompressionStats,
+	// Iterative compaction anchor: structured memory that survives every
+	// compaction in this session. Updated by `compress_completed_task` and
+	// rendered into compressed-knowledge messages so the model gets stable
+	// access to intent, decisions, and file references across compaction
+	// cycles. See `src/session/anchor.rs`.
+	#[serde(default)]
+	pub anchor: crate::session::anchor::Anchor,
 	// API call tracking for cache-aware compression
 	#[serde(default)]
 	pub total_api_calls: usize, // Total API calls made in this session (for cache economics)
@@ -283,6 +290,7 @@ impl Session {
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
 				compression_stats: CompressionStats::default(),
+				anchor: crate::session::anchor::Anchor::default(),
 				total_api_calls: 0,
 				// Initialize cache state
 				current_non_cached_tokens: 0,

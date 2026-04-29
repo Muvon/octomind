@@ -123,9 +123,7 @@ pub async fn execute_capability_command(
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!(
-				"Unknown action '{other}'. Use list, enable, disable, or discover."
-			),
+			format!("Unknown action '{other}'. Use list, enable, disable, or discover."),
 		)),
 	}
 }
@@ -154,11 +152,12 @@ async fn handle_list(call: &McpToolCall, config: &Config) -> Result<McpToolResul
 	}
 	let mut output = format!("Installed capabilities ({}):\n", caps.len());
 	for cap in &caps {
-		let marker = if is_active(&cap.name) { "[active] " } else { "" };
-		output.push_str(&format!(
-			"- {}{} — {}\n",
-			marker, cap.name, cap.description
-		));
+		let marker = if is_active(&cap.name) {
+			"[active] "
+		} else {
+			""
+		};
+		output.push_str(&format!("- {}{} — {}\n", marker, cap.name, cap.description));
 	}
 	output.push_str("\nUse capability(action=\"enable\", name=\"<name>\") to activate.");
 	Ok(McpToolResult::success(
@@ -188,17 +187,17 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		));
 	}
 
-	let resolved =
-		match crate::agent::registry::parse_capability_toml(&name, &config.capabilities) {
-			Ok(r) => r,
-			Err(e) => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!("Capability '{name}' not found: {e}"),
-				));
-			}
-		};
+	let resolved = match crate::agent::registry::parse_capability_toml(&name, &config.capabilities)
+	{
+		Ok(r) => r,
+		Err(e) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Capability '{name}' not found: {e}"),
+			));
+		}
+	};
 
 	if resolved.mcp_servers.is_empty() {
 		return Ok(McpToolResult::error(
@@ -244,9 +243,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					format!(
-						"Failed to enable server '{server_name}' for capability '{name}': {e}"
-					),
+					format!("Failed to enable server '{server_name}' for capability '{name}': {e}"),
 				));
 			}
 		}
@@ -291,27 +288,23 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 		));
 	}
 
-	let resolved =
-		match crate::agent::registry::parse_capability_toml(&name, &config.capabilities) {
-			Ok(r) => r,
-			Err(e) => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Capability '{name}' not found (cannot determine servers to disable): {e}"
-					),
-				));
-			}
-		};
+	let resolved = match crate::agent::registry::parse_capability_toml(&name, &config.capabilities)
+	{
+		Ok(r) => r,
+		Err(e) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Capability '{name}' not found (cannot determine servers to disable): {e}"),
+			));
+		}
+	};
 
 	let mut disabled_servers: Vec<String> = Vec::new();
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
 		if crate::mcp::core::dynamic::is_dynamic(&server_name) {
-			if let Err(e) =
-				crate::mcp::core::dynamic::disable_server(&server_name, Some(config))
-			{
+			if let Err(e) = crate::mcp::core::dynamic::disable_server(&server_name, Some(config)) {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
@@ -393,7 +386,11 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 
 	let mut output = format!("Capabilities matching '{intent}':\n");
 	for (score, cap) in top {
-		let marker = if is_active(&cap.name) { "[active] " } else { "" };
+		let marker = if is_active(&cap.name) {
+			"[active] "
+		} else {
+			""
+		};
 		output.push_str(&format!(
 			"- {}{} (score {:.2}) — {}\n",
 			marker, cap.name, score, cap.description
@@ -428,10 +425,7 @@ async fn score_with_embeddings<'a>(
 		.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), cap))
 		.filter(|(score, _)| *score > 0.2)
 		.collect();
-	scored.sort_by(|a, b| {
-		b.0.partial_cmp(&a.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	Ok(scored)
 }
 
@@ -455,10 +449,7 @@ fn score_with_keywords<'a>(
 		})
 		.filter(|(score, _)| *score > 0.0)
 		.collect();
-	scored.sort_by(|a, b| {
-		b.0.partial_cmp(&a.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	scored
 }
 

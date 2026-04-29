@@ -357,8 +357,8 @@ pub fn parse_capability_toml(
 pub fn list_all_capabilities(
 	overrides: &HashMap<String, String>,
 ) -> Result<Vec<ResolvedCapability>> {
-	let taps = crate::agent::taps::get_taps()
-		.context("Failed to load taps for capability enumeration")?;
+	let taps =
+		crate::agent::taps::get_taps().context("Failed to load taps for capability enumeration")?;
 
 	let mut seen_names: HashSet<String> = HashSet::new();
 	let mut resolved: Vec<ResolvedCapability> = Vec::new();
@@ -377,10 +377,7 @@ pub fn list_all_capabilities(
 			Err(_) => continue,
 		};
 		for entry in entries.flatten() {
-			let is_dir = entry
-				.file_type()
-				.map(|ft| ft.is_dir())
-				.unwrap_or(false);
+			let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 			if !is_dir {
 				continue;
 			}

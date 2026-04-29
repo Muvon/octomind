@@ -177,9 +177,7 @@ mod tests {
 	#[tokio::test]
 	#[ignore]
 	async fn embed_smoke() {
-		let v = embed("hello world")
-			.await
-			.expect("embed should succeed");
+		let v = embed("hello world").await.expect("embed should succeed");
 		assert_eq!(v.len(), EMBED_DIM);
 		// Cache hit on second call.
 		let v2 = embed("hello world").await.unwrap();

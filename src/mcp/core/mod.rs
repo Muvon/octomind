@@ -13,8 +13,9 @@
 // limitations under the License.
 
 // Core MCP provider - modular structure
-// Handles core tools: plan, mcp, agent, schedule, skill
+// Handles core tools: plan, mcp, agent, schedule, skill, capability
 
+pub mod capability;
 pub mod dynamic;
 pub mod dynamic_agents;
 pub mod functions;
@@ -30,6 +31,7 @@ mod plan_tests;
 mod skill_tests;
 
 // Re-export main functionality
+pub use capability::execute_capability_command;
 pub use dynamic::execute_mcp_command;
 pub use dynamic_agents::execute_agent_tool_command;
 pub use functions::get_all_functions;

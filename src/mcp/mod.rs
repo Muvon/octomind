@@ -615,6 +615,9 @@ async fn route_builtin_tool(
 				"skill" => core::execute_skill_tool(call)
 					.await
 					.map_err(|e| format!("Skill tool failed: {}", e)),
+				"capability" => core::execute_capability_command(call, config)
+					.await
+					.map_err(|e| format!("Capability tool failed: {}", e)),
 				other => {
 					return Err(anyhow::anyhow!(
 						"Tool '{}' not implemented in core server",

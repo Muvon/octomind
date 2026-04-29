@@ -17,6 +17,7 @@
 // Function definitions for the Core MCP provider
 
 use super::super::McpFunction;
+use super::capability::get_capability_function;
 use super::dynamic::get_mcp_tool_function;
 use super::dynamic_agents::get_agent_tool_function;
 use super::plan::get_plan_function;
@@ -31,5 +32,6 @@ pub fn get_all_functions() -> Vec<McpFunction> {
 		get_agent_tool_function(),
 		get_schedule_function(),
 		get_skill_function(),
+		get_capability_function(),
 	]
 }

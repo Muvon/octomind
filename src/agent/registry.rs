@@ -223,6 +223,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 #[derive(Debug, Clone)]
 pub struct ResolvedCapability {
 	pub name: String,
+	pub description: String,
 	pub deps: Vec<String>,
 	pub server_refs: Vec<String>,
 	pub allowed_tools: Vec<String>,
@@ -267,8 +268,15 @@ pub fn parse_capability_toml(
 		let cap: toml::Value = toml::from_str(&cap_str)
 			.with_context(|| format!("Failed to parse capability file: {}", cap_path.display()))?;
 
+		let description = cap
+			.get("description")
+			.and_then(|d| d.as_str())
+			.map(String::from)
+			.unwrap_or_else(|| format!("Capability '{cap_name}' (provider: {provider})"));
+
 		let mut resolved = ResolvedCapability {
 			name: cap_name.to_string(),
+			description,
 			deps: Vec::new(),
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),
@@ -337,6 +345,60 @@ pub fn parse_capability_toml(
 		cap_name,
 		provider
 	)
+}
+
+/// Enumerate every capability installed across all configured taps.
+///
+/// Walks each tap's `capabilities/` directory, collects unique capability names
+/// (first-tap-wins precedence — same as `parse_capability_toml`), and returns
+/// the resolved metadata for each. Used at runtime by the `capability` tool to
+/// answer `list` and `discover` queries without the agent needing to know
+/// which tap provides what.
+pub fn list_all_capabilities(
+	overrides: &HashMap<String, String>,
+) -> Result<Vec<ResolvedCapability>> {
+	let taps = crate::agent::taps::get_taps()
+		.context("Failed to load taps for capability enumeration")?;
+
+	let mut seen_names: HashSet<String> = HashSet::new();
+	let mut resolved: Vec<ResolvedCapability> = Vec::new();
+
+	for tap in &taps {
+		let tap_root = match tap.local_dir() {
+			Ok(d) => d,
+			Err(_) => continue,
+		};
+		let cap_dir = tap_root.join("capabilities");
+		if !cap_dir.is_dir() {
+			continue;
+		}
+		let entries = match fs::read_dir(&cap_dir) {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+		for entry in entries.flatten() {
+			let is_dir = entry
+				.file_type()
+				.map(|ft| ft.is_dir())
+				.unwrap_or(false);
+			if !is_dir {
+				continue;
+			}
+			let cap_name = entry.file_name().to_string_lossy().to_string();
+			if seen_names.contains(&cap_name) {
+				continue;
+			}
+			// parse_capability_toml iterates taps internally and applies the same
+			// first-wins precedence; we just collect unique names here.
+			if let Ok(r) = parse_capability_toml(&cap_name, overrides) {
+				seen_names.insert(cap_name);
+				resolved.push(r);
+			}
+		}
+	}
+
+	resolved.sort_by(|a, b| a.name.cmp(&b.name));
+	Ok(resolved)
 }
 
 /// Resolve `capabilities = [...]` declared in an agent manifest.

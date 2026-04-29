@@ -205,16 +205,46 @@ mod tests {
 		assert_ne!(k1, k3);
 	}
 
-	/// Smoke test that actually loads the model and downloads weights on
-	/// first use. Run manually with:
-	/// `cargo test embeddings::tests::embed_smoke -- --ignored`
+	/// End-to-end smoke test: actually loads the BGE-small model (downloads
+	/// ~30MB weights to fastembed's cache on first run, fast on subsequent
+	/// runs) and verifies that `embed()` returns the expected dimension and
+	/// that the cache returns the same vector on a repeat call.
 	#[tokio::test]
-	#[ignore]
 	async fn embed_smoke() {
 		let v = embed("hello world").await.expect("embed should succeed");
 		assert_eq!(v.len(), EMBED_DIM);
-		// Cache hit on second call.
+		// Cache hit on second call — must return the exact same vector.
 		let v2 = embed("hello world").await.unwrap();
 		assert_eq!(v, v2);
+		// Different text should produce a different vector.
+		let v3 = embed("entirely different content").await.unwrap();
+		assert_ne!(v, v3);
+	}
+
+	#[tokio::test]
+	async fn embed_many_smoke() {
+		let texts = vec![
+			"query a postgres database for slow queries".to_string(),
+			"search the web for recent news".to_string(),
+			"read the contents of a local file".to_string(),
+		];
+		let vecs = embed_many(&texts).await.expect("embed_many should succeed");
+		assert_eq!(vecs.len(), texts.len());
+		for v in &vecs {
+			assert_eq!(v.len(), EMBED_DIM);
+		}
+		// Different prompts should produce different embeddings.
+		assert_ne!(vecs[0], vecs[1]);
+		assert_ne!(vecs[1], vecs[2]);
+		// Cosine should rank: same > different.
+		let same_q = embed("query a postgres database for slow queries")
+			.await
+			.unwrap();
+		let same_score = cosine(&same_q, &vecs[0]);
+		let diff_score = cosine(&same_q, &vecs[1]);
+		assert!(
+			same_score > diff_score,
+			"cosine should rank identical text higher than unrelated text (same={same_score:.3}, diff={diff_score:.3})"
+		);
 	}
 }

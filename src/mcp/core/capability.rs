@@ -703,4 +703,54 @@ mod tests {
 		let top = select_top_match_above_threshold(scored, 0.0).unwrap();
 		assert_eq!(top.1, "tiny");
 	}
+
+	/// End-to-end smoke test: with the real BGE-small model loaded, a
+	/// natural-language intent should pick the semantically closest
+	/// synthetic capability over plausible distractors.
+	///
+	/// Uses synthetic `ResolvedCapability` items so the test does not
+	/// depend on any real tap being installed. The model itself is
+	/// downloaded on first run to fastembed's cache (~30MB) and reused
+	/// across test runs.
+	#[tokio::test]
+	async fn auto_suggest_picks_semantically_closest_capability() {
+		let postgres = make_cap(
+			"database.postgres",
+			"Query and inspect Postgres databases — analyze slow queries, run EXPLAIN, read schema",
+		);
+		let web_search = make_cap(
+			"web.search",
+			"Search the web for recent news, articles, and documentation",
+		);
+		let filesystem = make_cap(
+			"filesystem.local",
+			"Read and write local files on disk, list directories, edit text",
+		);
+		let candidates = vec![postgres.clone(), web_search.clone(), filesystem.clone()];
+
+		// "I need to look at a slow Postgres query plan" should rank
+		// `database.postgres` first by cosine over the BGE embeddings.
+		let intent = "I need to look at a slow Postgres query plan";
+		let intent_vec = crate::embeddings::embed(intent)
+			.await
+			.expect("embed intent should succeed");
+		let cap_texts: Vec<String> = candidates
+			.iter()
+			.map(|c| format!("{} {}", c.name, c.description))
+			.collect();
+		let cap_vecs = crate::embeddings::embed_many(&cap_texts)
+			.await
+			.expect("embed_many capabilities should succeed");
+		let scored = candidates
+			.iter()
+			.zip(cap_vecs.iter())
+			.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), cap));
+		let top = select_top_match_above_threshold(scored, AUTO_SUGGEST_THRESHOLD)
+			.expect("at least one capability should clear the threshold for a clear intent");
+		assert_eq!(
+			top.1.name, "database.postgres",
+			"expected database.postgres to win for a postgres intent (got {} score {:.3})",
+			top.1.name, top.0
+		);
+	}
 }

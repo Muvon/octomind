@@ -90,6 +90,7 @@ pub mod acp;
 pub mod agent;
 pub mod config;
 pub mod directories;
+pub mod embeddings;
 pub mod learning;
 pub mod logging;
 pub mod mcp;

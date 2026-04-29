@@ -80,7 +80,24 @@ pub async fn process_tool_results(
 
 	for tool_result in &tool_results {
 		// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
-		let tool_content = extract_tool_content(tool_result);
+		let raw_content = extract_tool_content(tool_result);
+
+		// Tool result deduplication: if the same (tool_name, content) pair has
+		// already been seen in this session, replace the body with a small
+		// placeholder. The first occurrence is kept verbatim so the model can
+		// still reason about the original output.
+		let tool_content =
+			if crate::session::dedup::is_duplicate(&tool_result.tool_name, &raw_content) {
+				log_debug!(
+					"deduplicated tool result for `{}` ({} chars elided)",
+					tool_result.tool_name,
+					raw_content.len()
+				);
+				crate::session::dedup::placeholder(&tool_result.tool_name)
+			} else {
+				crate::session::dedup::record(&tool_result.tool_name, &raw_content);
+				raw_content
+			};
 
 		// Apply global MCP response token truncation before adding to session
 		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(

@@ -14,6 +14,7 @@
 
 // Session module for handling interactive coding sessions
 
+pub mod anchor; // Persistent compaction anchor (iterative summarization)
 pub mod cache;
 pub mod cancellation; // Cancellation management
 pub mod chat; // Chat session logic

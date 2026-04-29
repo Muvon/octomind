@@ -337,7 +337,7 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 
 async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let intent = match call.parameters.get("intent").and_then(|v| v.as_str()) {
-		Some(i) if !i.trim().is_empty() => i.trim().to_lowercase(),
+		Some(i) if !i.trim().is_empty() => i.trim().to_string(),
 		_ => {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
@@ -358,23 +358,27 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 		}
 	};
 
-	// Keyword scoring: each whitespace-separated token in `intent` that appears
-	// as a substring of `<name> <description>` (lowercase) adds 1 to the score.
-	// Embedding-based scoring lands in a follow-up commit (Layer B).
-	let intent_words: Vec<&str> = intent.split_whitespace().collect();
-	let mut scored: Vec<(usize, &crate::agent::registry::ResolvedCapability)> = caps
-		.iter()
-		.map(|cap| {
-			let haystack = format!("{} {}", cap.name, cap.description).to_lowercase();
-			let score = intent_words
-				.iter()
-				.filter(|word| haystack.contains(*word))
-				.count();
-			(score, cap)
-		})
-		.filter(|(score, _)| *score > 0)
-		.collect();
-	scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+	if caps.is_empty() {
+		return Ok(McpToolResult::success(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			"No capabilities installed in any tap.".to_string(),
+		));
+	}
+
+	// Embedding-based scoring is preferred; on any failure (model not yet
+	// downloaded, no network, runtime init error) fall back to keyword
+	// scoring so discover keeps working in restricted environments.
+	let scored = match score_with_embeddings(&intent, &caps).await {
+		Ok(s) => s,
+		Err(e) => {
+			crate::log_debug!(
+				"capability discover: embedding scoring unavailable ({}); using keyword fallback",
+				e
+			);
+			score_with_keywords(&intent, &caps)
+		}
+	};
 
 	let top: Vec<_> = scored.into_iter().take(5).collect();
 	if top.is_empty() {
@@ -391,7 +395,7 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 	for (score, cap) in top {
 		let marker = if is_active(&cap.name) { "[active] " } else { "" };
 		output.push_str(&format!(
-			"- {}{} (score {}) — {}\n",
+			"- {}{} (score {:.2}) — {}\n",
 			marker, cap.name, score, cap.description
 		));
 	}
@@ -403,6 +407,61 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 	))
 }
 
+/// Embedding-based scoring: cosine similarity between the intent and each
+/// capability's `name + description`. Filters out scores below 0.2 to avoid
+/// noise. Sorted by similarity descending. Errors propagate so the caller
+/// can fall back to keyword scoring on model-init failure.
+async fn score_with_embeddings<'a>(
+	intent: &str,
+	caps: &'a [crate::agent::registry::ResolvedCapability],
+) -> Result<Vec<(f32, &'a crate::agent::registry::ResolvedCapability)>> {
+	let intent_vec = crate::embeddings::embed(intent).await?;
+	let cap_texts: Vec<String> = caps
+		.iter()
+		.map(|c| format!("{} {}", c.name, c.description))
+		.collect();
+	let cap_vecs = crate::embeddings::embed_many(&cap_texts).await?;
+
+	let mut scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = caps
+		.iter()
+		.zip(cap_vecs.iter())
+		.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), cap))
+		.filter(|(score, _)| *score > 0.2)
+		.collect();
+	scored.sort_by(|a, b| {
+		b.0.partial_cmp(&a.0)
+			.unwrap_or(std::cmp::Ordering::Equal)
+	});
+	Ok(scored)
+}
+
+/// Keyword scoring fallback: count whitespace-separated tokens from `intent`
+/// that occur as substrings of the lowercased `name + description`.
+fn score_with_keywords<'a>(
+	intent: &str,
+	caps: &'a [crate::agent::registry::ResolvedCapability],
+) -> Vec<(f32, &'a crate::agent::registry::ResolvedCapability)> {
+	let intent_lower = intent.to_lowercase();
+	let intent_words: Vec<&str> = intent_lower.split_whitespace().collect();
+	let mut scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = caps
+		.iter()
+		.map(|cap| {
+			let haystack = format!("{} {}", cap.name, cap.description).to_lowercase();
+			let count = intent_words
+				.iter()
+				.filter(|word| haystack.contains(*word))
+				.count();
+			(count as f32, cap)
+		})
+		.filter(|(score, _)| *score > 0.0)
+		.collect();
+	scored.sort_by(|a, b| {
+		b.0.partial_cmp(&a.0)
+			.unwrap_or(std::cmp::Ordering::Equal)
+	});
+	scored
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -410,6 +469,18 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::agent::registry::ResolvedCapability;
+
+	fn make_cap(name: &str, description: &str) -> ResolvedCapability {
+		ResolvedCapability {
+			name: name.to_string(),
+			description: description.to_string(),
+			deps: Vec::new(),
+			server_refs: Vec::new(),
+			allowed_tools: Vec::new(),
+			mcp_servers: Vec::new(),
+		}
+	}
 
 	#[test]
 	fn schema_has_required_action() {
@@ -431,5 +502,30 @@ mod tests {
 		assert!(is_active(cap));
 		mark_inactive(cap);
 		assert!(!is_active(cap));
+	}
+
+	#[test]
+	fn keyword_scoring_ranks_relevant_first() {
+		let caps = vec![
+			make_cap("database.postgres", "Query and inspect Postgres databases"),
+			make_cap("web.search", "Search the web for information"),
+			make_cap("filesystem.local", "Read and write local files"),
+		];
+		let scored = score_with_keywords("I need to query a database", &caps);
+		assert!(!scored.is_empty(), "expected at least one match");
+		assert_eq!(scored[0].1.name, "database.postgres");
+	}
+
+	#[test]
+	fn keyword_scoring_filters_zero_matches() {
+		let caps = vec![
+			make_cap("web.search", "Search the web for information"),
+			make_cap("filesystem.local", "Read and write local files"),
+		];
+		let scored = score_with_keywords("zzz nothing matches xyzzy", &caps);
+		assert!(
+			scored.is_empty(),
+			"expected no matches for nonsense intent, got {scored:?}"
+		);
 	}
 }

@@ -734,10 +734,18 @@ pub async fn check_and_compress_conversation(
 		.await;
 
 	// Surface the phase on the spinner — compression can take several seconds
-	// (decision model + summary call). Cleared on every exit path below.
+	// (decision model + summary call). RAII guard guarantees clear_phase
+	// runs on every exit path (success, `return`, or `?` propagation).
 	animation_manager
 		.set_phase("Compressing conversation…")
 		.await;
+	struct PhaseGuard<'a>(&'a crate::session::chat::animation_manager::AnimationManager);
+	impl Drop for PhaseGuard<'_> {
+		fn drop(&mut self) {
+			self.0.clear_phase();
+		}
+	}
+	let _phase_guard = PhaseGuard(animation_manager);
 
 	log_debug!("Compression check triggered - asking AI for decision and summary in one call");
 
@@ -750,7 +758,6 @@ pub async fn check_and_compress_conversation(
 
 	if start_idx >= end_idx {
 		log_debug!("No messages to compress (range invalid)");
-		animation_manager.clear_phase();
 		return Ok(false);
 	}
 
@@ -862,7 +869,6 @@ pub async fn check_and_compress_conversation(
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
-		animation_manager.clear_phase();
 		return Ok(false);
 	}
 
@@ -935,7 +941,7 @@ pub async fn check_and_compress_conversation(
 		);
 	}
 
-	animation_manager.clear_phase();
+	// PhaseGuard above clears the phase on drop — no manual call needed.
 	Ok(true)
 }
 

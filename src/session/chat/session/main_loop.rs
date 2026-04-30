@@ -660,15 +660,39 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			if input.starts_with('/') {
 				// Handle special /done command separately
 				if input.trim() == "/done" {
-					// Handle /done command using dedicated handler
-					match super::commands::handle_done(
-						&mut chat_session,
-						&current_config,
-						operation_rx.clone(),
-					)
-					.await
-					{
-						Ok((exit_flag, reset_first_message)) => {
+					// Wire cancellation to spinner so the watcher inside
+					// AnimationManager auto-clears on Ctrl+C, and race the
+					// handle_done future against operation_rx so a cancellation
+					// returns control to the prompt instantly.
+					use crate::session::chat::get_animation_manager;
+					let animation_manager = get_animation_manager();
+					animation_manager.set_cancel_receiver(operation_rx.clone());
+
+					let mut cancel_rx = operation_rx.clone();
+					let done_result = tokio::select! {
+						biased;
+						_ = async {
+							// Resolve as soon as the watch flips to true.
+							if *cancel_rx.borrow() { return; }
+							let _ = cancel_rx.changed().await;
+						} => {
+							log_debug!("/done cancelled by user");
+							None
+						}
+						r = super::commands::handle_done(
+							&mut chat_session,
+							&current_config,
+							operation_rx.clone(),
+						) => Some(r),
+					};
+
+					// Always tear down the spinner before returning to the
+					// prompt — `continue` below skips the regular stop_current
+					// at the bottom of the loop.
+					animation_manager.stop_current().await;
+
+					match done_result {
+						Some(Ok((exit_flag, reset_first_message))) => {
 							if reset_first_message {
 								// Reset first_message_processed to false so that the next message goes through layers again
 								first_message_processed = false;
@@ -677,8 +701,11 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 								break;
 							}
 						}
-						Err(e) => {
+						Some(Err(e)) => {
 							println!("{}: {}", "❌ /done command failed".bright_red(), e);
+						}
+						None => {
+							// Cancelled — message already logged.
 						}
 					}
 					continue;

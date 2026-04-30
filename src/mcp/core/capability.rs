@@ -17,15 +17,27 @@
 //! A capability is a domain abstraction (e.g., `database.postgres`,
 //! `web.search`) that resolves to one or more MCP servers and a set of
 //! allowed tools. Taps declare must-have capabilities in agent manifests;
-//! those are merged into the effective config at boot. This tool exposes
-//! the *runtime* lever: agents can list, discover, enable, and disable
-//! capabilities on demand without knowing the underlying MCP server names.
+//! those are merged into the effective config at boot.
+//!
+//! Two activation paths exist:
+//!
+//! - **Deterministic auto-activation** (preferred). On every fresh user
+//!   message, `auto_activate_capabilities` embeds the intent and matches
+//!   it against each inactive capability's hand-authored `triggers`
+//!   (mean-of-top-K cosine + margin gate). On a hit, the capability's
+//!   MCP servers are registered and enabled directly — no LLM in the
+//!   routing loop, no extra tool-call turn.
+//!
+//! - **Manual via this tool** (fallback). The `capability` tool exposes
+//!   `list`, `enable`, `disable`, `discover` for cases where auto-
+//!   activation didn't fire (offline, model still warming up, intent
+//!   too ambiguous to clear the margin gate).
 //!
 //! Actions:
 //! - `list`     — show all installed capabilities (active marked).
 //! - `enable`   — activate a capability by name (registers + enables its MCP servers).
 //! - `disable`  — deactivate a previously-enabled capability.
-//! - `discover` — keyword-match an intent string against capability names + descriptions.
+//! - `discover` — find capabilities matching an intent string (semantic match via embeddings, falls back to keyword match).
 
 use crate::config::Config;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
@@ -157,7 +169,12 @@ async fn handle_list(call: &McpToolCall, config: &Config) -> Result<McpToolResul
 		} else {
 			""
 		};
-		output.push_str(&format!("- {}{} — {}\n", marker, cap.name, cap.description));
+		output.push_str(&format!(
+			"- {}{} — {}\n",
+			marker,
+			cap.name,
+			triggers_preview(&cap.triggers)
+		));
 	}
 	output.push_str("\nUse capability(action=\"enable\", name=\"<name>\") to activate.");
 	Ok(McpToolResult::success(
@@ -165,6 +182,22 @@ async fn handle_list(call: &McpToolCall, config: &Config) -> Result<McpToolResul
 		call.tool_id.clone(),
 		output,
 	))
+}
+
+/// Render the first few triggers of a capability as a comma-separated
+/// preview so users see *what they'd say* to invoke it. More useful than
+/// a hand-written description.
+fn triggers_preview(triggers: &[String]) -> String {
+	let take = triggers.iter().take(3).cloned().collect::<Vec<_>>();
+	let suffix = if triggers.len() > 3 { ", …" } else { "" };
+	format!(
+		"{}{}",
+		take.iter()
+			.map(|t| format!("\"{t}\""))
+			.collect::<Vec<_>>()
+			.join(", "),
+		suffix
+	)
 }
 
 async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
@@ -329,68 +362,113 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 }
 
 // ---------------------------------------------------------------------------
-// Auto-discovery — embed each fresh user message, suggest top-matching
-// non-active capability when cosine clears the threshold.
+// Deterministic auto-activation — embed each fresh user message and flip
+// the matching capability on without a tool-call round-trip through the LLM.
+//
+// Why deterministic: agents are unreliable as routers and every extra
+// tool-call turn costs money. The embedding layer is fast (≈30ms cold,
+// cached thereafter), local (BGE-small-en-v1.5), and cheap. We trade a
+// small false-positive risk — bounded by the margin gate — for not
+// burning a turn on every capability decision.
+//
+// Algorithm:
+//   1. Embed the user's message once.
+//   2. Embed each inactive capability's `triggers` (cached, so this is
+//      free after the first turn — triggers don't change mid-session).
+//   3. Per capability: cosine vs each trigger, take the mean of the
+//      top-K (K = 3). Aurelio Labs Semantic Router pattern; triggers
+//      drag the centroid into the query distribution where one-line
+//      descriptions don't reach.
+//   4. Margin gate: activate iff `top1 >= THRESHOLD && top1 - top2 >= MARGIN`.
+//      Single most important precision lever — ambiguous matches abstain
+//      rather than activating the wrong capability.
+//   5. On a hit, register + enable the underlying MCP servers directly.
+//      The agent never sees the routing decision; it just gets a wider
+//      tool surface next turn.
 // ---------------------------------------------------------------------------
 
-/// Marker used to recognize and skip our own hint messages so we don't
-/// suggest on a message that is itself a suggestion.
-const AUTO_HINT_PREFIX: &str = "💡 Capability suggestion:";
+/// Mean-of-top-K cosine threshold a capability must clear to be auto-activated.
+/// Tuned for BGE-small-en-v1.5 over short hand-authored triggers — lower
+/// than the 0.55 used previously against descriptions because triggers
+/// match the user's natural-language distribution and produce tighter
+/// clusters around real intents.
+const AUTO_ACTIVATE_THRESHOLD: f32 = 0.42;
 
-/// Cosine threshold below which a capability is too weakly matched to
-/// surface as a suggestion. Tuned for `BAAI/bge-small-en-v1.5` — values
-/// in the 0.4–0.6 range are typical for relevant matches; >0.7 is strong.
-const AUTO_SUGGEST_THRESHOLD: f32 = 0.55;
+/// Required gap between top-1 and top-2 capability scores. Prevents
+/// activating one of two near-tied capabilities (e.g. `database-postgres`
+/// vs `database-mysql`) when the user's intent doesn't disambiguate.
+/// Ambiguous matches abstain — the user (or the agent later via
+/// `capability(action="discover")`) clarifies.
+const AUTO_ACTIVATE_MARGIN: f32 = 0.05;
 
-/// Pick the highest-scoring entry strictly above `threshold`. Returns
-/// `None` if no entry clears the bar, or the input is empty. On exact
-/// ties, the first occurrence wins (stable, deterministic).
-///
-/// Pure helper — separated from the embedding-driven path so the
-/// threshold/top-pick logic can be unit-tested without the model.
-fn select_top_match_above_threshold<'a, I, T>(scored: I, threshold: f32) -> Option<(f32, T)>
-where
-	I: IntoIterator<Item = (f32, T)>,
-	T: 'a,
-{
-	let mut best: Option<(f32, T)> = None;
-	for (score, item) in scored {
-		if score <= threshold {
-			continue;
-		}
-		match &best {
-			None => best = Some((score, item)),
-			Some((current, _)) if score > *current => best = Some((score, item)),
-			_ => {}
-		}
+/// How many triggers per capability contribute to the per-cap score.
+/// Mean-of-top-K smooths a single noisy trigger while still rewarding
+/// capabilities whose authored examples align with the user's wording.
+const AUTO_ACTIVATE_TOP_K: usize = 3;
+
+/// Sort `(score, T)` pairs descending and return the top entry only if
+/// `top1 >= threshold` and `top1 - top2 >= margin`. With a single
+/// candidate, top2 is treated as 0.0. Sort is stable (Timsort) so ties
+/// preserve insertion order. Pure helper, separated from the embedding-
+/// driven path so threshold/margin behavior is unit-testable.
+fn select_with_margin<T>(
+	mut scored: Vec<(f32, T)>,
+	threshold: f32,
+	margin: f32,
+) -> Option<(f32, T)> {
+	if scored.is_empty() {
+		return None;
 	}
-	best
+	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+	let top1_score = scored[0].0;
+	if top1_score < threshold {
+		return None;
+	}
+	let top2_score = scored.get(1).map(|x| x.0).unwrap_or(0.0);
+	if top1_score - top2_score < margin {
+		return None;
+	}
+	scored.into_iter().next()
 }
 
-/// Inspect the most recent user message and inject a one-line hint when
-/// a non-active capability is a strong embedding match. Silent no-op when
-/// the model isn't ready yet, no capabilities are installed, no match
-/// clears the threshold, or the last message is not a user message.
+/// Score one capability against the user's intent: mean of the top-K
+/// cosines between the intent vector and each trigger vector. Empty
+/// trigger lists score 0.0.
+fn score_capability(intent_vec: &[f32], trigger_vecs: &[Vec<f32>]) -> f32 {
+	if trigger_vecs.is_empty() {
+		return 0.0;
+	}
+	let mut scores: Vec<f32> = trigger_vecs
+		.iter()
+		.map(|v| crate::embeddings::cosine(intent_vec, v))
+		.collect();
+	scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+	let take = scores.len().min(AUTO_ACTIVATE_TOP_K);
+	let sum: f32 = scores.iter().take(take).sum();
+	sum / take as f32
+}
+
+/// Inspect the most recent user message and, if a non-active capability
+/// strongly matches, activate it directly via `dynamic::enable_server`.
+/// Silent no-op when the model isn't ready, no capabilities are installed,
+/// no match clears the gate, or the last message is not user input.
 ///
-/// Designed to be called from `prepare_for_api_call` so it runs before
-/// every API request; the `AUTO_HINT_PREFIX` check ensures the same user
-/// message doesn't accumulate multiple hints across follow-up turns.
-pub async fn auto_suggest_capabilities(
+/// Designed to run before every API request from `prepare_for_api_call`.
+/// Does not block the hot path on model warmup — `is_ready` is consulted
+/// first and skips silently while the model is still downloading.
+pub async fn auto_activate_capabilities(
 	session: &mut crate::session::chat::session::ChatSession,
 	config: &Config,
 ) {
-	// Only fire when the most recent message is a fresh user input.
+	// Fire only on a fresh user message. Tool-loop iterations are skipped.
 	let intent = match session.session.messages.last() {
-		Some(m) if m.role == "user" && !m.content.contains(AUTO_HINT_PREFIX) => m.content.clone(),
+		Some(m) if m.role == "user" => m.content.clone(),
 		_ => return,
 	};
 
-	// If the embedding model hasn't finished warmup, skip silently.
-	// The caller (initialize_servers_for_role) already kicked off warmup;
-	// we don't want to block the hot API path on a 50MB download.
 	if !crate::embeddings::is_ready() {
 		crate::log_debug!(
-			"capability auto-suggest: embedding model not ready yet, skipping this turn"
+			"capability auto-activate: embedding model not ready yet, skipping this turn"
 		);
 		return;
 	}
@@ -398,12 +476,11 @@ pub async fn auto_suggest_capabilities(
 	let caps = match crate::agent::registry::list_all_capabilities(&config.capabilities) {
 		Ok(c) => c,
 		Err(e) => {
-			crate::log_debug!("capability auto-suggest: enumeration failed ({})", e);
+			crate::log_debug!("capability auto-activate: enumeration failed ({})", e);
 			return;
 		}
 	};
 
-	// Only consider capabilities that are not already active in this session.
 	let inactive: Vec<&crate::agent::registry::ResolvedCapability> =
 		caps.iter().filter(|c| !is_active(&c.name)).collect();
 	if inactive.is_empty() {
@@ -413,47 +490,92 @@ pub async fn auto_suggest_capabilities(
 	let intent_vec = match crate::embeddings::embed(&intent).await {
 		Ok(v) => v,
 		Err(e) => {
-			crate::log_debug!("capability auto-suggest: intent embed failed ({})", e);
+			crate::log_debug!("capability auto-activate: intent embed failed ({})", e);
 			return;
 		}
 	};
-	let cap_texts: Vec<String> = inactive
-		.iter()
-		.map(|c| format!("{} {}", c.name, c.description))
-		.collect();
-	let cap_vecs = match crate::embeddings::embed_many(&cap_texts).await {
+
+	// Flatten all triggers into one batch to amortize the embed call.
+	// `embed_many` caches by content hash, so subsequent turns are free.
+	let mut flat: Vec<String> = Vec::new();
+	let mut offsets: Vec<(usize, usize)> = Vec::with_capacity(inactive.len());
+	for cap in &inactive {
+		let start = flat.len();
+		flat.extend(cap.triggers.iter().cloned());
+		offsets.push((start, flat.len()));
+	}
+	if flat.is_empty() {
+		return;
+	}
+
+	let trigger_vecs = match crate::embeddings::embed_many(&flat).await {
 		Ok(v) => v,
 		Err(e) => {
-			crate::log_debug!("capability auto-suggest: capability embed failed ({})", e);
+			crate::log_debug!("capability auto-activate: trigger embed failed ({})", e);
 			return;
 		}
 	};
 
-	let scored = inactive
+	let scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = inactive
 		.iter()
-		.zip(cap_vecs.iter())
-		.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), *cap));
-	let top = select_top_match_above_threshold(scored, AUTO_SUGGEST_THRESHOLD);
+		.zip(offsets.iter())
+		.map(|(cap, (start, end))| {
+			let score = score_capability(&intent_vec, &trigger_vecs[*start..*end]);
+			(score, *cap)
+		})
+		.collect();
+
+	let top = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
 
 	if let Some((score, cap)) = top {
-		let hint = format!(
-			"{prefix} `{name}` ({desc}) looks relevant to this request (score {score:.2}). Call `capability(action=\"enable\", name=\"{name}\")` to activate it.",
-			prefix = AUTO_HINT_PREFIX,
-			name = cap.name,
-			desc = cap.description,
-			score = score,
-		);
-		session.session.messages.push(crate::session::Message {
-			role: "user".to_string(),
-			content: hint,
-			..Default::default()
-		});
-		crate::log_debug!(
-			"capability auto-suggest: injected hint for `{}` (score {:.2})",
-			cap.name,
-			score
-		);
+		match activate_capability_inline(&cap.name, config).await {
+			Ok(servers) => {
+				crate::log_info!(
+					"capability auto-activated: '{}' (score {:.2}) — servers: [{}]",
+					cap.name,
+					score,
+					servers.join(", ")
+				);
+			}
+			Err(e) => {
+				crate::log_debug!(
+					"capability auto-activate: failed to enable '{}' ({})",
+					cap.name,
+					e
+				);
+			}
+		}
 	}
+}
+
+/// Register + enable a capability's MCP servers and mark the capability
+/// active. Mirrors `handle_enable`'s logic minus the `McpToolResult`
+/// wrapping — errors propagate as `anyhow::Error` for the caller to log
+/// or surface. Idempotent: returns `Ok(empty)` when already active.
+async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<String>> {
+	if is_active(name) {
+		return Ok(Vec::new());
+	}
+	let resolved = crate::agent::registry::parse_capability_toml(name, &config.capabilities)?;
+	if resolved.mcp_servers.is_empty() {
+		anyhow::bail!("capability '{}' has no MCP servers configured", name);
+	}
+	let filter_tools: Option<Vec<String>> = if resolved.allowed_tools.is_empty() {
+		None
+	} else {
+		Some(resolved.allowed_tools.clone())
+	};
+	let mut activated_servers: Vec<String> = Vec::new();
+	for server in &resolved.mcp_servers {
+		let server_name = server.name().to_string();
+		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
+			crate::mcp::core::dynamic::register_server(server.clone())?;
+		}
+		crate::mcp::core::dynamic::enable_server(&server_name, filter_tools.clone()).await?;
+		activated_servers.push(server_name);
+	}
+	mark_active(name);
+	Ok(activated_servers)
 }
 
 async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
@@ -487,17 +609,21 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 		));
 	}
 
-	// Embedding-based scoring is preferred; on any failure (model not yet
-	// downloaded, no network, runtime init error) fall back to keyword
-	// scoring so discover keeps working in restricted environments.
-	let scored = match score_with_embeddings(&intent, &caps).await {
+	// Embedding-only — same scoring pipeline as auto-activation, just with
+	// the threshold/margin gate replaced by "return top 5". No keyword
+	// fallback: capability authors give us hand-authored triggers, the
+	// SOTA path runs always.
+	let scored = match score_caps_by_triggers(&intent, &caps).await {
 		Ok(s) => s,
 		Err(e) => {
-			crate::log_debug!(
-				"capability discover: embedding scoring unavailable ({}); using keyword fallback",
-				e
-			);
-			score_with_keywords(&intent, &caps)
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Capability discover requires the embedding model. Init failed: {e}. \
+					 If the model is still downloading, retry in a moment."
+				),
+			));
 		}
 	};
 
@@ -521,7 +647,10 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 		};
 		output.push_str(&format!(
 			"- {}{} (score {:.2}) — {}\n",
-			marker, cap.name, score, cap.description
+			marker,
+			cap.name,
+			score,
+			triggers_preview(&cap.triggers)
 		));
 	}
 	output.push_str("\nUse capability(action=\"enable\", name=\"<name>\") to activate.");
@@ -532,53 +661,37 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 	))
 }
 
-/// Embedding-based scoring: cosine similarity between the intent and each
-/// capability's `name + description`. Filters out scores below 0.2 to avoid
-/// noise. Sorted by similarity descending. Errors propagate so the caller
-/// can fall back to keyword scoring on model-init failure.
-async fn score_with_embeddings<'a>(
+/// Score every capability by mean-of-top-K cosine over its triggers —
+/// the same pipeline `auto_activate_capabilities` uses, just without the
+/// threshold/margin gate. Returns capabilities sorted by score descending,
+/// filtered to scores above a low noise floor (0.2) so empty intents
+/// don't pull every capability into the result.
+async fn score_caps_by_triggers<'a>(
 	intent: &str,
 	caps: &'a [crate::agent::registry::ResolvedCapability],
 ) -> Result<Vec<(f32, &'a crate::agent::registry::ResolvedCapability)>> {
 	let intent_vec = crate::embeddings::embed(intent).await?;
-	let cap_texts: Vec<String> = caps
-		.iter()
-		.map(|c| format!("{} {}", c.name, c.description))
-		.collect();
-	let cap_vecs = crate::embeddings::embed_many(&cap_texts).await?;
+
+	let mut flat: Vec<String> = Vec::new();
+	let mut offsets: Vec<(usize, usize)> = Vec::with_capacity(caps.len());
+	for cap in caps {
+		let start = flat.len();
+		flat.extend(cap.triggers.iter().cloned());
+		offsets.push((start, flat.len()));
+	}
+	let trigger_vecs = crate::embeddings::embed_many(&flat).await?;
 
 	let mut scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = caps
 		.iter()
-		.zip(cap_vecs.iter())
-		.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), cap))
+		.zip(offsets.iter())
+		.map(|(cap, (start, end))| {
+			let score = score_capability(&intent_vec, &trigger_vecs[*start..*end]);
+			(score, cap)
+		})
 		.filter(|(score, _)| *score > 0.2)
 		.collect();
 	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	Ok(scored)
-}
-
-/// Keyword scoring fallback: count whitespace-separated tokens from `intent`
-/// that occur as substrings of the lowercased `name + description`.
-fn score_with_keywords<'a>(
-	intent: &str,
-	caps: &'a [crate::agent::registry::ResolvedCapability],
-) -> Vec<(f32, &'a crate::agent::registry::ResolvedCapability)> {
-	let intent_lower = intent.to_lowercase();
-	let intent_words: Vec<&str> = intent_lower.split_whitespace().collect();
-	let mut scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = caps
-		.iter()
-		.map(|cap| {
-			let haystack = format!("{} {}", cap.name, cap.description).to_lowercase();
-			let count = intent_words
-				.iter()
-				.filter(|word| haystack.contains(*word))
-				.count();
-			(count as f32, cap)
-		})
-		.filter(|(score, _)| *score > 0.0)
-		.collect();
-	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-	scored
 }
 
 // ---------------------------------------------------------------------------
@@ -590,10 +703,10 @@ mod tests {
 	use super::*;
 	use crate::agent::registry::ResolvedCapability;
 
-	fn make_cap(name: &str, description: &str) -> ResolvedCapability {
+	fn make_cap_with_triggers(name: &str, triggers: &[&str]) -> ResolvedCapability {
 		ResolvedCapability {
 			name: name.to_string(),
-			description: description.to_string(),
+			triggers: triggers.iter().map(|s| s.to_string()).collect(),
 			deps: Vec::new(),
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),
@@ -623,132 +736,169 @@ mod tests {
 		assert!(!is_active(cap));
 	}
 
-	#[test]
-	fn keyword_scoring_ranks_relevant_first() {
-		let caps = vec![
-			make_cap("database.postgres", "Query and inspect Postgres databases"),
-			make_cap("web.search", "Search the web for information"),
-			make_cap("filesystem.local", "Read and write local files"),
-		];
-		let scored = score_with_keywords("I need to query a database", &caps);
-		assert!(!scored.is_empty(), "expected at least one match");
-		assert_eq!(scored[0].1.name, "database.postgres");
-	}
-
-	#[test]
-	fn keyword_scoring_filters_zero_matches() {
-		let caps = vec![
-			make_cap("web.search", "Search the web for information"),
-			make_cap("filesystem.local", "Read and write local files"),
-		];
-		let scored = score_with_keywords("zzz nothing matches xyzzy", &caps);
-		assert!(
-			scored.is_empty(),
-			"expected no matches for nonsense intent, got {scored:?}"
-		);
-	}
-
 	// -----------------------------------------------------------------------
-	// Pure-logic tests for the auto-suggest threshold + top-pick selection.
-	// These cover the decision boundary that determines whether a hint is
-	// injected into the session — independent of the embedding model.
+	// Pure-logic tests for the deterministic auto-activation gate. These
+	// cover the (threshold, margin) decision boundary that controls whether
+	// a capability is flipped on — independent of any embedding model.
 	// -----------------------------------------------------------------------
 
 	#[test]
-	fn select_top_returns_none_for_empty_input() {
+	fn select_with_margin_returns_none_for_empty_input() {
 		let empty: Vec<(f32, &str)> = Vec::new();
-		assert!(select_top_match_above_threshold(empty, 0.5).is_none());
+		assert!(select_with_margin(empty, 0.4, 0.05).is_none());
 	}
 
 	#[test]
-	fn select_top_returns_none_when_all_below_threshold() {
-		let scored = vec![(0.30_f32, "a"), (0.40_f32, "b"), (0.10_f32, "c")];
-		assert!(select_top_match_above_threshold(scored, 0.5).is_none());
+	fn select_with_margin_returns_none_when_top_below_threshold() {
+		let scored = vec![(0.30_f32, "a"), (0.10_f32, "b")];
+		assert!(select_with_margin(scored, 0.4, 0.05).is_none());
 	}
 
 	#[test]
-	fn select_top_excludes_score_at_exact_threshold() {
-		// Threshold is strictly greater-than (not >=) so a score equal to
-		// the threshold should NOT be selected.
-		let scored = vec![(0.55_f32, "a"), (0.40_f32, "b")];
-		assert!(select_top_match_above_threshold(scored, 0.55).is_none());
+	fn select_with_margin_admits_score_at_threshold() {
+		// Threshold is `>=` (inclusive). A score equal to the threshold
+		// IS selected provided the margin gate is also satisfied.
+		let scored = vec![(0.42_f32, "a"), (0.10_f32, "b")];
+		let top = select_with_margin(scored, 0.42, 0.05).unwrap();
+		assert_eq!(top.1, "a");
 	}
 
 	#[test]
-	fn select_top_picks_highest_above_threshold() {
+	fn select_with_margin_rejects_when_top1_top2_too_close() {
+		// Both entries clear the threshold but are within the margin —
+		// ambiguous, so the gate abstains rather than picking one.
+		let scored = vec![(0.50_f32, "a"), (0.48_f32, "b")];
+		assert!(select_with_margin(scored, 0.4, 0.05).is_none());
+	}
+
+	#[test]
+	fn select_with_margin_admits_when_margin_satisfied() {
+		let scored = vec![(0.50_f32, "a"), (0.40_f32, "b")];
+		let top = select_with_margin(scored, 0.4, 0.05).unwrap();
+		assert_eq!(top.1, "a");
+	}
+
+	#[test]
+	fn select_with_margin_handles_single_candidate() {
+		// With only one candidate, top2 is treated as 0.0 — so the margin
+		// gate reduces to "top1 >= max(threshold, margin)".
+		let scored = vec![(0.45_f32, "only")];
+		let top = select_with_margin(scored, 0.4, 0.05).unwrap();
+		assert_eq!(top.1, "only");
+	}
+
+	#[test]
+	fn select_with_margin_zero_margin_returns_first_on_tie() {
+		// With margin=0.0, exact ties pass the gate; the stable sort keeps
+		// the first occurrence.
+		let scored = vec![(0.70_f32, "first"), (0.70_f32, "second")];
+		let top = select_with_margin(scored, 0.4, 0.0).unwrap();
+		assert_eq!(top.1, "first");
+	}
+
+	#[test]
+	fn select_with_margin_picks_top_when_scores_well_separated() {
 		let scored = vec![
 			(0.30_f32, "low"),
 			(0.62_f32, "mid"),
 			(0.81_f32, "high"),
 			(0.40_f32, "below"),
 		];
-		let top = select_top_match_above_threshold(scored, 0.55).unwrap();
+		let top = select_with_margin(scored, 0.55, 0.05).unwrap();
 		assert_eq!(top.1, "high");
 		assert!((top.0 - 0.81).abs() < 1e-6);
 	}
 
 	#[test]
-	fn select_top_first_wins_on_exact_tie() {
-		// Stable selection: when two entries share the top score, the
-		// first one encountered in iteration order is kept.
-		let scored = vec![(0.70_f32, "first"), (0.70_f32, "second")];
-		let top = select_top_match_above_threshold(scored, 0.5).unwrap();
-		assert_eq!(top.1, "first");
+	fn score_capability_empty_triggers_returns_zero() {
+		let intent = vec![1.0_f32, 0.0, 0.0];
+		let empty: Vec<Vec<f32>> = Vec::new();
+		assert_eq!(score_capability(&intent, &empty), 0.0);
 	}
 
 	#[test]
-	fn select_top_works_with_zero_threshold() {
-		// Threshold 0.0 admits any positive score (still strictly greater).
-		let scored = vec![(0.01_f32, "tiny"), (0.0_f32, "zero")];
-		let top = select_top_match_above_threshold(scored, 0.0).unwrap();
-		assert_eq!(top.1, "tiny");
+	fn score_capability_takes_mean_of_top_k() {
+		// Trigger vectors aligned with intent at varying degrees so the
+		// computed cosines are 1.0, 0.5, 0.0, 0.0 — top-3 mean is 0.5.
+		let intent = vec![1.0_f32, 0.0];
+		let triggers = vec![
+			vec![1.0_f32, 0.0],   // cos = 1.0
+			vec![0.5_f32, 0.866], // cos ≈ 0.5
+			vec![0.0_f32, 1.0],   // cos = 0.0
+			vec![0.0_f32, 1.0],   // cos = 0.0 — excluded by top-3
+		];
+		let score = score_capability(&intent, &triggers);
+		// Mean of (1.0, 0.5, 0.0) = 0.5. Allow small float slack.
+		assert!((score - 0.5).abs() < 0.01, "expected ~0.5 got {score}");
 	}
 
 	/// End-to-end smoke test: with the real BGE-small model loaded, a
 	/// natural-language intent should pick the semantically closest
-	/// synthetic capability over plausible distractors.
+	/// synthetic capability over plausible distractors when ranked by
+	/// the same `score_capability` + `select_with_margin` pipeline used
+	/// by `auto_activate_capabilities`.
 	///
-	/// Uses synthetic `ResolvedCapability` items so the test does not
-	/// depend on any real tap being installed. The model itself is
-	/// downloaded on first run to fastembed's cache (~30MB) and reused
-	/// across test runs.
+	/// Uses synthetic capabilities with hand-authored triggers so the
+	/// test doesn't depend on any real tap being installed. The model
+	/// itself is downloaded on first run to fastembed's cache (~30MB)
+	/// and reused thereafter.
 	#[tokio::test]
-	async fn auto_suggest_picks_semantically_closest_capability() {
-		let postgres = make_cap(
+	async fn auto_activate_picks_semantically_closest_capability() {
+		let postgres = make_cap_with_triggers(
 			"database.postgres",
-			"Query and inspect Postgres databases — analyze slow queries, run EXPLAIN, read schema",
+			&[
+				"query a postgres database",
+				"EXPLAIN ANALYZE a slow postgres query",
+				"look at the postgres schema",
+				"investigate a Postgres query plan",
+			],
 		);
-		let web_search = make_cap(
+		let web_search = make_cap_with_triggers(
 			"web.search",
-			"Search the web for recent news, articles, and documentation",
+			&[
+				"search the web for an article",
+				"find recent news online",
+				"look something up on the internet",
+			],
 		);
-		let filesystem = make_cap(
+		let filesystem = make_cap_with_triggers(
 			"filesystem.local",
-			"Read and write local files on disk, list directories, edit text",
+			&[
+				"read a file from disk",
+				"list the contents of a directory",
+				"write to a local file",
+			],
 		);
-		let candidates = [postgres.clone(), web_search.clone(), filesystem.clone()];
+		let candidates = vec![postgres.clone(), web_search.clone(), filesystem.clone()];
 
-		// "I need to look at a slow Postgres query plan" should rank
-		// `database.postgres` first by cosine over the BGE embeddings.
 		let intent = "I need to look at a slow Postgres query plan";
 		let intent_vec = crate::embeddings::embed(intent)
 			.await
 			.expect("embed intent should succeed");
-		let cap_texts: Vec<String> = candidates
-			.iter()
-			.map(|c| format!("{} {}", c.name, c.description))
-			.collect();
-		let cap_vecs = crate::embeddings::embed_many(&cap_texts)
+
+		let mut flat: Vec<String> = Vec::new();
+		let mut offsets: Vec<(usize, usize)> = Vec::new();
+		for cap in &candidates {
+			let start = flat.len();
+			flat.extend(cap.triggers.iter().cloned());
+			offsets.push((start, flat.len()));
+		}
+		let trigger_vecs = crate::embeddings::embed_many(&flat)
 			.await
-			.expect("embed_many capabilities should succeed");
-		// Use threshold 0.0 so the test verifies *ranking* (postgres beats
-		// the others for a postgres intent), not absolute cosine values
-		// which depend on the specific embedding model.
-		let scored = candidates
+			.expect("embed_many should succeed");
+
+		let scored: Vec<(f32, &ResolvedCapability)> = candidates
 			.iter()
-			.zip(cap_vecs.iter())
-			.map(|(cap, vec)| (crate::embeddings::cosine(&intent_vec, vec), cap));
-		let top = select_top_match_above_threshold(scored, 0.0)
+			.zip(offsets.iter())
+			.map(|(cap, (start, end))| {
+				let score = score_capability(&intent_vec, &trigger_vecs[*start..*end]);
+				(score, cap)
+			})
+			.collect();
+
+		// Use threshold 0.0 / margin 0.0 so the test checks *ranking*, not
+		// absolute cosine values which depend on the specific model.
+		let top = select_with_margin(scored, 0.0, 0.0)
 			.expect("at least one capability should outscore the rest for a clear intent");
 		assert_eq!(
 			top.1.name, "database.postgres",

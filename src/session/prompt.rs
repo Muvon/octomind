@@ -42,27 +42,6 @@ pub async fn create_system_prompt(
 					function.name, function.description
 				));
 			}
-
-			// Teach the agent about capability discovery so it knows there
-			// is more available beyond the active tool surface. Octomind
-			// also auto-suggests via embedding match on user turns; this
-			// hint covers the cases where auto-suggest can't run (offline,
-			// model not yet warmed up) or the agent needs to explore.
-			prompt.push_str(
-				"\n\n## EXTENDING YOUR TOOL SURFACE\n\
-				Only the tools above are currently active. Additional capabilities \
-				(domain bundles like `database-postgres`, `filesystem`, `kubernetes`, etc.) \
-				may be installed but not yet active. If the task needs something you don't \
-				have, use the `capability` tool:\n\
-				- `capability(action=\"list\")` — see all installed capabilities.\n\
-				- `capability(action=\"discover\", intent=\"...\")` — find one matching \
-				  what you need (semantic match).\n\
-				- `capability(action=\"enable\", name=\"...\")` — activate it for the rest \
-				  of this session.\n\n\
-				When the user's request is generic (e.g. \"I need a database\") and \
-				multiple capabilities could fit, prefer `list` or `discover` to surface \
-				the options rather than guessing which one to enable.",
-			);
 		}
 	}
 

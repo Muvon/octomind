@@ -43,11 +43,12 @@ pub async fn prepare_for_api_call(
 		crate::log_debug!("Compression failed before API call: {}. Continuing.", e);
 	}
 
-	// Auto-discovery: when the latest message is a fresh user input and a
-	// non-active capability strongly matches, inject a one-line suggestion
-	// the agent can act on. Silent no-op if the embedding model isn't
-	// ready yet or no capability clears the threshold.
-	crate::mcp::core::capability::auto_suggest_capabilities(chat_session, config).await;
+	// Deterministic auto-activation: when the latest message is a fresh
+	// user input and a non-active capability strongly matches (margin-gated
+	// cosine over hand-authored triggers), enable its MCP servers
+	// directly — no LLM in the routing loop. Silent no-op if the model
+	// isn't ready or nothing clears the gate.
+	crate::mcp::core::capability::auto_activate_capabilities(chat_session, config).await;
 
 	// Ensure system message is cached before making API calls
 	let mut system_message_cached = false;

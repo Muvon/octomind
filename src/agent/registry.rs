@@ -218,25 +218,77 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 	)
 }
 
-/// A resolved capability's components — extracted from a capability TOML file.
-/// Used by both static resolution (agent init) and dynamic resolution (runtime skill activation).
+/// A resolved capability — split across two files in the tap:
+///
+/// - `<tap>/capabilities/<name>/config.toml` — capability-level metadata
+///   (`triggers = [...]`). Required, shared across all providers.
+/// - `<tap>/capabilities/<name>/<provider>.toml` — provider-specific MCP
+///   wiring (deps, server_refs, allowed_tools, mcp.servers).
+///
+/// We don't carry a `description` field; the deterministic routing layer
+/// uses triggers, and the authoring comments in each TOML cover human
+/// reading. `capability list` shows name + first few triggers as preview.
 #[derive(Debug, Clone)]
 pub struct ResolvedCapability {
 	pub name: String,
-	pub description: String,
+	/// Required. Phrases a user might write to trigger this capability —
+	/// drive the deterministic auto-activation path (mean-of-top-K cosine
+	/// + margin gate). Authored in `<tap>/capabilities/<name>/config.toml`.
+	pub triggers: Vec<String>,
 	pub deps: Vec<String>,
 	pub server_refs: Vec<String>,
 	pub allowed_tools: Vec<String>,
 	pub mcp_servers: Vec<crate::config::McpServerConfig>,
 }
 
-/// Parse a single capability TOML file and return its resolved components.
+/// Read the `triggers = [...]` array from `<cap_dir>/config.toml`. Returns
+/// an error when the file is missing or the field is absent/empty — we own
+/// the schema in the tap, so triggers are required.
+fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<Vec<String>> {
+	let config_path = cap_dir.join("config.toml");
+	if !config_path.exists() {
+		anyhow::bail!(
+			"Capability '{cap_name}' is missing `config.toml` (expected at {})",
+			config_path.display()
+		);
+	}
+	let raw = fs::read_to_string(&config_path)
+		.with_context(|| format!("Failed to read {}", config_path.display()))?;
+	let value: toml::Value = toml::from_str(&raw)
+		.with_context(|| format!("Failed to parse {}", config_path.display()))?;
+	let triggers: Vec<String> = value
+		.get("triggers")
+		.and_then(|u| u.as_array())
+		.map(|arr| {
+			arr.iter()
+				.filter_map(|v| v.as_str())
+				.map(str::trim)
+				.filter(|s| !s.is_empty())
+				.map(String::from)
+				.collect()
+		})
+		.unwrap_or_default();
+	if triggers.is_empty() {
+		anyhow::bail!(
+			"Capability '{cap_name}' has no `triggers = [...]` in {}. \
+			 Author 5–15 short trigger phrases — they drive the deterministic \
+			 routing layer that activates this capability when the user's \
+			 message embeds close to one of them.",
+			config_path.display()
+		);
+	}
+	Ok(triggers)
+}
+
+/// Parse a capability and return its resolved components.
 ///
-/// Searches across all taps for `capabilities/<cap_name>/<provider>.toml`.
-/// The provider defaults to `"default"` unless overridden in `config.capabilities`.
+/// Reads two files from the first tap that has them:
+/// - `<tap>/capabilities/<name>/config.toml` — `triggers` (required)
+/// - `<tap>/capabilities/<name>/<provider>.toml` — provider wiring
 ///
-/// Used at runtime when a skill declares `capabilities: [...]` and needs
-/// to auto-load the backing MCP servers.
+/// `<provider>` is taken from `config.capabilities` overrides, defaulting
+/// to `"default"`. Used at runtime when a skill declares `capabilities: [...]`
+/// or when `auto_activate_capabilities` flips a capability on.
 pub fn parse_capability_toml(
 	cap_name: &str,
 	overrides: &HashMap<String, String>,
@@ -254,29 +306,26 @@ pub fn parse_capability_toml(
 			Ok(d) => d,
 			Err(_) => continue,
 		};
-		let cap_path = tap_root
-			.join("capabilities")
-			.join(cap_name)
-			.join(format!("{provider}.toml"));
+		let cap_dir = tap_root.join("capabilities").join(cap_name);
+		let provider_path = cap_dir.join(format!("{provider}.toml"));
 
-		if !cap_path.exists() {
+		// Both files must exist for this tap to provide the capability.
+		if !cap_dir.is_dir() || !provider_path.exists() {
 			continue;
 		}
 
-		let cap_str = fs::read_to_string(&cap_path)
-			.with_context(|| format!("Failed to read capability file: {}", cap_path.display()))?;
-		let cap: toml::Value = toml::from_str(&cap_str)
-			.with_context(|| format!("Failed to parse capability file: {}", cap_path.display()))?;
+		let triggers = read_capability_config(&cap_dir, cap_name)?;
 
-		let description = cap
-			.get("description")
-			.and_then(|d| d.as_str())
-			.map(String::from)
-			.unwrap_or_else(|| format!("Capability '{cap_name}' (provider: {provider})"));
+		let cap_str = fs::read_to_string(&provider_path).with_context(|| {
+			format!("Failed to read provider file: {}", provider_path.display())
+		})?;
+		let cap: toml::Value = toml::from_str(&cap_str).with_context(|| {
+			format!("Failed to parse provider file: {}", provider_path.display())
+		})?;
 
 		let mut resolved = ResolvedCapability {
 			name: cap_name.to_string(),
-			description,
+			triggers,
 			deps: Vec::new(),
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),

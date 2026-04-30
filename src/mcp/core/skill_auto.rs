@@ -315,6 +315,15 @@ pub async fn run_activation(
 
 	let session_name = session.session.info.name.clone();
 
+	// Pre-compute semantic similarity scores once per evaluation cycle so
+	// the rule loop stays sync. Embeds the user message + every unique
+	// `semantic(phrase)` argument from inactive skills in one batch, then
+	// builds a phrase → cosine table that `ActivateCheck::matches` reads.
+	// Returns None when no semantic checks exist or the model isn't ready
+	// — those Semantic rules then evaluate to false silently.
+	let semantic_scores = compute_semantic_scores(content, &entries, &active_skills).await;
+	let semantic_ref = semantic_scores.as_ref();
+
 	for entry in &entries {
 		if active_skills.contains(&entry.name) {
 			continue;
@@ -326,7 +335,7 @@ pub async fn run_activation(
 		for group in &entry.rules {
 			if group
 				.iter()
-				.all(|check| check.matches(content, workdir, &session_name))
+				.all(|check| check.matches(content, workdir, &session_name, semantic_ref))
 			{
 				matched = Some(
 					group
@@ -346,6 +355,77 @@ pub async fn run_activation(
 			crate::log_debug!("skill_auto: no rule matched for '{}'", entry.name);
 		}
 	}
+}
+
+/// Pre-compute cosine similarity for every `semantic(phrase)` rule across
+/// inactive skills. Embeds the user message once and batch-embeds all
+/// unique phrases (one network/CPU pass), then builds `phrase → cosine`.
+///
+/// Returns `None` when:
+/// - No `Semantic` checks exist anywhere in the inactive pool (skip entirely)
+/// - The embedding model isn't ready yet (warmup pending, no network)
+/// - Embedding fails for any reason
+///
+/// In all cases, downstream `ActivateCheck::matches` treats `Semantic` as
+/// `false` — same fall-through pattern as capability auto-activation, so
+/// non-semantic rules in the same skill still fire correctly.
+async fn compute_semantic_scores(
+	content: &str,
+	entries: &[PoolEntry],
+	active_skills: &[String],
+) -> Option<std::collections::HashMap<String, f32>> {
+	use std::collections::{HashMap, HashSet};
+
+	let mut phrases: HashSet<String> = HashSet::new();
+	for entry in entries {
+		if active_skills.iter().any(|n| n == &entry.name) {
+			continue;
+		}
+		for group in &entry.rules {
+			for check in group {
+				if let super::skill::ActivateCheck::Semantic { phrase, .. } = check {
+					phrases.insert(phrase.clone());
+				}
+			}
+		}
+	}
+	if phrases.is_empty() {
+		return None;
+	}
+
+	if !crate::embeddings::is_ready() {
+		crate::log_debug!(
+			"skill_auto: embedding model not ready, semantic({} phrase{}) check{} will evaluate false",
+			phrases.len(),
+			if phrases.len() == 1 { "" } else { "s" },
+			if phrases.len() == 1 { "" } else { "s" }
+		);
+		return None;
+	}
+
+	let content_vec = match crate::embeddings::embed(content).await {
+		Ok(v) => v,
+		Err(e) => {
+			crate::log_debug!("skill_auto: failed to embed user message ({})", e);
+			return None;
+		}
+	};
+
+	let phrase_list: Vec<String> = phrases.into_iter().collect();
+	let phrase_vecs = match crate::embeddings::embed_many(&phrase_list).await {
+		Ok(v) => v,
+		Err(e) => {
+			crate::log_debug!("skill_auto: failed to embed semantic phrases ({})", e);
+			return None;
+		}
+	};
+
+	let mut scores: HashMap<String, f32> = HashMap::with_capacity(phrase_list.len());
+	for (phrase, vec) in phrase_list.iter().zip(phrase_vecs.iter()) {
+		let cosine = crate::embeddings::cosine(&content_vec, vec);
+		scores.insert(phrase.clone(), cosine);
+	}
+	Some(scores)
 }
 
 /// Auto-activate a skill: register + load capabilities + inject content into session.

@@ -315,12 +315,13 @@ mod tests {
 		let dir = tempfile::tempdir().unwrap();
 		fs::write(dir.path().join("Cargo.toml"), "").unwrap();
 		let check = crate::mcp::core::skill::ActivateCheck::File("Cargo.toml".to_string());
-		assert!(check.matches("", dir.path(), ""));
+		assert!(check.matches("", dir.path(), "", None));
 		assert!(
 			!crate::mcp::core::skill::ActivateCheck::File("go.mod".to_string()).matches(
 				"",
 				dir.path(),
-				""
+				"",
+				None
 			)
 		);
 	}
@@ -328,33 +329,33 @@ mod tests {
 	#[test]
 	fn test_activate_check_content_match() {
 		let check = crate::mcp::core::skill::ActivateCheck::Content("rust".to_string());
-		assert!(check.matches("lets code in rust", std::path::Path::new("."), ""));
-		assert!(check.matches("RUST is great", std::path::Path::new("."), ""));
-		assert!(!check.matches("lets code in python", std::path::Path::new("."), ""));
+		assert!(check.matches("lets code in rust", std::path::Path::new("."), "", None));
+		assert!(check.matches("RUST is great", std::path::Path::new("."), "", None));
+		assert!(!check.matches("lets code in python", std::path::Path::new("."), "", None));
 	}
 
 	#[test]
 	fn test_activate_check_content_word_boundary() {
 		let check = crate::mcp::core::skill::ActivateCheck::Content("rust".to_string());
-		assert!(check.matches("lets code in rust", std::path::Path::new("."), ""));
-		assert!(check.matches("RUST is great", std::path::Path::new("."), ""));
-		assert!(!check.matches("lets code in python", std::path::Path::new("."), ""));
+		assert!(check.matches("lets code in rust", std::path::Path::new("."), "", None));
+		assert!(check.matches("RUST is great", std::path::Path::new("."), "", None));
+		assert!(!check.matches("lets code in python", std::path::Path::new("."), "", None));
 		// Word boundary: "rust" should not match "thrust"
-		assert!(!check.matches("thrust is powerful", std::path::Path::new("."), ""));
+		assert!(!check.matches("thrust is powerful", std::path::Path::new("."), "", None));
 	}
 
 	#[test]
 	fn test_activate_check_bin_found() {
 		// "ls" exists on all platforms
 		let check = crate::mcp::core::skill::ActivateCheck::Bin("ls".to_string());
-		assert!(check.matches("", std::path::Path::new("."), ""));
+		assert!(check.matches("", std::path::Path::new("."), "", None));
 	}
 
 	#[test]
 	fn test_activate_check_bin_not_found() {
 		let check =
 			crate::mcp::core::skill::ActivateCheck::Bin("nonexistent_binary_xyz_12345".to_string());
-		assert!(!check.matches("", std::path::Path::new("."), ""));
+		assert!(!check.matches("", std::path::Path::new("."), "", None));
 	}
 
 	#[test]
@@ -363,10 +364,11 @@ mod tests {
 		assert!(check.matches(
 			"",
 			std::path::Path::new("."),
-			"260421-141708-octomind-a1b2c3"
+			"260421-141708-octomind-a1b2c3",
+			None
 		));
 		// Case-insensitive
-		assert!(check.matches("", std::path::Path::new("."), "Octomind-Session"));
+		assert!(check.matches("", std::path::Path::new("."), "Octomind-Session", None));
 	}
 
 	#[test]
@@ -375,22 +377,143 @@ mod tests {
 		assert!(!check.matches(
 			"",
 			std::path::Path::new("."),
-			"260421-141708-octomind-a1b2c3"
+			"260421-141708-octomind-a1b2c3",
+			None
 		));
 	}
 
 	#[test]
 	fn test_activate_check_workdir_match() {
 		let check = crate::mcp::core::skill::ActivateCheck::Workdir("octomind".to_string());
-		assert!(check.matches("", std::path::Path::new("/Users/dev/octomind"), ""));
+		assert!(check.matches("", std::path::Path::new("/Users/dev/octomind"), "", None));
 		// Case-insensitive
-		assert!(check.matches("", std::path::Path::new("/Users/dev/Octomind"), ""));
+		assert!(check.matches("", std::path::Path::new("/Users/dev/Octomind"), "", None));
 	}
 
 	#[test]
 	fn test_activate_check_workdir_no_match() {
 		let check = crate::mcp::core::skill::ActivateCheck::Workdir("python".to_string());
-		assert!(!check.matches("", std::path::Path::new("/Users/dev/octomind"), ""));
+		assert!(!check.matches("", std::path::Path::new("/Users/dev/octomind"), "", None));
+	}
+
+	// ---------------------------------------------------------------------------
+	// activate check: semantic(...) — parse, render, match
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn test_activate_check_semantic_parse_default_threshold() {
+		// `semantic(phrase)` parses with the global default threshold.
+		let check = crate::mcp::core::skill::ActivateCheck::parse("semantic(deploying to prod)")
+			.expect("parse semantic");
+		match check {
+			crate::mcp::core::skill::ActivateCheck::Semantic { phrase, threshold } => {
+				assert_eq!(phrase, "deploying to prod");
+				assert!(
+					(threshold - crate::mcp::core::skill::SEMANTIC_DEFAULT_THRESHOLD).abs() < 1e-6
+				);
+			}
+			other => panic!("expected Semantic variant, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn test_activate_check_semantic_parse_explicit_threshold() {
+		// `semantic(phrase, 0.55)` parses the trailing float as threshold.
+		let check = crate::mcp::core::skill::ActivateCheck::parse("semantic(deploy, 0.55)")
+			.expect("parse with threshold");
+		match check {
+			crate::mcp::core::skill::ActivateCheck::Semantic { phrase, threshold } => {
+				assert_eq!(phrase, "deploy");
+				assert!((threshold - 0.55).abs() < 1e-6);
+			}
+			other => panic!("expected Semantic variant, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn test_activate_check_semantic_parse_phrase_with_comma() {
+		// `semantic(deploy, ship, release)` — last piece doesn't parse as
+		// f32, so the whole arg is the phrase (commas preserved).
+		let check =
+			crate::mcp::core::skill::ActivateCheck::parse("semantic(deploy, ship, release)")
+				.expect("parse phrase with commas");
+		match check {
+			crate::mcp::core::skill::ActivateCheck::Semantic { phrase, threshold } => {
+				assert_eq!(phrase, "deploy, ship, release");
+				assert!(
+					(threshold - crate::mcp::core::skill::SEMANTIC_DEFAULT_THRESHOLD).abs() < 1e-6
+				);
+			}
+			other => panic!("expected Semantic variant, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn test_activate_check_semantic_parse_empty_rejects() {
+		// Empty phrase is invalid; parser returns None.
+		assert!(crate::mcp::core::skill::ActivateCheck::parse("semantic()").is_none());
+		assert!(crate::mcp::core::skill::ActivateCheck::parse("semantic(   )").is_none());
+		assert!(crate::mcp::core::skill::ActivateCheck::parse("semantic(, 0.5)").is_none());
+	}
+
+	#[test]
+	fn test_activate_check_semantic_display_round_trip() {
+		// Default-threshold renders as `semantic(phrase)`.
+		let default_t = crate::mcp::core::skill::SEMANTIC_DEFAULT_THRESHOLD;
+		let check = crate::mcp::core::skill::ActivateCheck::Semantic {
+			phrase: "deploy".into(),
+			threshold: default_t,
+		};
+		assert_eq!(check.to_string(), "semantic(deploy)");
+
+		// Explicit threshold renders as `semantic(phrase, X)`.
+		let check = crate::mcp::core::skill::ActivateCheck::Semantic {
+			phrase: "deploy".into(),
+			threshold: 0.6,
+		};
+		assert_eq!(check.to_string(), "semantic(deploy, 0.6)");
+	}
+
+	#[test]
+	fn test_activate_check_semantic_matches_via_precomputed_scores() {
+		use std::collections::HashMap;
+		let check = crate::mcp::core::skill::ActivateCheck::Semantic {
+			phrase: "deploying to production".into(),
+			threshold: 0.45,
+		};
+		// Precomputed cosine above threshold → match.
+		let mut scores = HashMap::new();
+		scores.insert("deploying to production".to_string(), 0.6_f32);
+		assert!(check.matches("any", std::path::Path::new("."), "", Some(&scores)));
+
+		// Below threshold → no match.
+		scores.insert("deploying to production".to_string(), 0.3_f32);
+		assert!(!check.matches("any", std::path::Path::new("."), "", Some(&scores)));
+	}
+
+	#[test]
+	fn test_activate_check_semantic_silent_false_without_context() {
+		// When precomputed scores are unavailable (model not ready, etc.),
+		// the semantic check evaluates to false rather than panicking — so
+		// other checks in the same DNF group can still fire.
+		let check = crate::mcp::core::skill::ActivateCheck::Semantic {
+			phrase: "deploying to production".into(),
+			threshold: 0.45,
+		};
+		assert!(!check.matches("any", std::path::Path::new("."), "", None));
+	}
+
+	#[test]
+	fn test_activate_check_semantic_missing_phrase_in_scores_fails() {
+		use std::collections::HashMap;
+		// Score map exists but doesn't contain the phrase — fall through to false.
+		let check = crate::mcp::core::skill::ActivateCheck::Semantic {
+			phrase: "deploying to production".into(),
+			threshold: 0.45,
+		};
+		let mut scores = HashMap::new();
+		scores.insert("something else".to_string(), 0.99_f32);
+		assert!(!check.matches("any", std::path::Path::new("."), "", Some(&scores)));
 	}
 
 	// ---------------------------------------------------------------------------

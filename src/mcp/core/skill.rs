@@ -55,6 +55,13 @@ pub struct SkillMeta {
 	/// Declarative activation rules. Empty = manual only.
 	pub rules: Vec<Vec<ActivateCheck>>,
 }
+/// Default cosine threshold for `semantic(phrase)` checks. Looser than the
+/// capability auto-activation threshold (0.42 + 0.05 margin) because the
+/// skill DSL composes via DNF — a single semantic check is one signal in
+/// an AND-group, not the whole gate. Authors override per check via
+/// `semantic(phrase, 0.55)` syntax.
+pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.45;
+
 /// Individual activation check within a group.
 #[derive(Debug, Clone)]
 pub enum ActivateCheck {
@@ -78,11 +85,16 @@ pub enum ActivateCheck {
 	Session(String),
 	/// workdir(rust) — case-insensitive substring match on working directory path
 	Workdir(String),
+	/// semantic(deploying to production) — BGE-small cosine vs user message
+	/// must clear `threshold`. Catches paraphrases that regex/content miss
+	/// ("ship to prod", "release process" → matches `deploying`).
+	/// Authors compose via DNF for OR across paraphrases; one phrase per check.
+	Semantic { phrase: String, threshold: f32 },
 }
 
 impl ActivateCheck {
 	/// Parse a check from `type(args)` syntax.
-	fn parse(s: &str) -> Option<Self> {
+	pub(crate) fn parse(s: &str) -> Option<Self> {
 		let s = s.trim();
 		let open = s.find('(')?;
 		let close = s.rfind(')')?;
@@ -125,13 +137,49 @@ impl ActivateCheck {
 			"bin" => Some(Self::Bin(args.trim().to_string())),
 			"session" => Some(Self::Session(args.trim().to_string())),
 			"workdir" => Some(Self::Workdir(args.trim().to_string())),
+			"semantic" => {
+				let trimmed = args.trim();
+				if trimmed.is_empty() {
+					return None;
+				}
+				// `semantic(phrase, 0.5)` — last comma-separated piece is the
+				// threshold iff it parses as f32. Otherwise the whole arg is
+				// the phrase (which may legitimately contain commas).
+				if let Some((phrase_raw, tail)) = trimmed.rsplit_once(',') {
+					if let Ok(threshold) = tail.trim().parse::<f32>() {
+						let phrase = phrase_raw.trim();
+						if phrase.is_empty() {
+							return None;
+						}
+						return Some(Self::Semantic {
+							phrase: phrase.to_string(),
+							threshold,
+						});
+					}
+				}
+				Some(Self::Semantic {
+					phrase: trimmed.to_string(),
+					threshold: SEMANTIC_DEFAULT_THRESHOLD,
+				})
+			}
 			_ => None,
 		}
 	}
 
 	/// Evaluate this check against current context.
 	/// `session_name` is the current session name (e.g., "260421-141708-octomind-a1b2c3").
-	pub fn matches(&self, content: &str, workdir: &std::path::Path, session_name: &str) -> bool {
+	/// `semantic_scores` is a precomputed cosine-similarity table for
+	/// `Semantic` checks (phrase → cosine vs user message). Pass `None`
+	/// when the embedding model isn't ready or no semantic checks exist;
+	/// `Semantic` then evaluates to `false` (skill won't activate via
+	/// semantic alone, but DNF allows other checks to still fire).
+	pub fn matches(
+		&self,
+		content: &str,
+		workdir: &std::path::Path,
+		session_name: &str,
+		semantic_scores: Option<&std::collections::HashMap<String, f32>>,
+	) -> bool {
 		match self {
 			Self::File(pattern) => {
 				let path = workdir.join(pattern);
@@ -160,6 +208,9 @@ impl ActivateCheck {
 				.to_string_lossy()
 				.to_lowercase()
 				.contains(&pattern.to_lowercase()),
+			Self::Semantic { phrase, threshold } => semantic_scores
+				.and_then(|scores| scores.get(phrase))
+				.is_some_and(|cosine| *cosine >= *threshold),
 		}
 	}
 }
@@ -183,6 +234,13 @@ impl std::fmt::Display for ActivateCheck {
 			Self::Bin(n) => write!(f, "bin({})", n),
 			Self::Session(p) => write!(f, "session({})", p),
 			Self::Workdir(p) => write!(f, "workdir({})", p),
+			Self::Semantic { phrase, threshold } => {
+				if (*threshold - SEMANTIC_DEFAULT_THRESHOLD).abs() < 1e-6 {
+					write!(f, "semantic({})", phrase)
+				} else {
+					write!(f, "semantic({}, {})", phrase, threshold)
+				}
+			}
 		}
 	}
 }

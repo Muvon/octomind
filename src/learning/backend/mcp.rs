@@ -112,6 +112,7 @@ impl LearningBackend for McpBackend {
 
 	async fn retrieve(
 		&self,
+		intent: &str,
 		patterns: &[String],
 		role: &str,
 		project: &str,
@@ -123,7 +124,14 @@ impl LearningBackend for McpBackend {
 			.as_ref()
 			.ok_or_else(|| anyhow::anyhow!("MCP retrieve not configured in [learning.retrieve]"))?;
 
-		let query = patterns.first().cloned().unwrap_or_default();
+		// Prefer the LLM-prepared natural-language query (patterns[0]); if
+		// the LLM call was skipped, fall back to raw user intent so the
+		// MCP backend still has something to score against.
+		let query = patterns
+			.first()
+			.cloned()
+			.filter(|q| !q.trim().is_empty())
+			.unwrap_or_else(|| intent.to_string());
 		let args = Self::build_retrieve_args(&query, role, project, limit, &endpoint.field_map);
 		let call = crate::mcp::McpToolCall {
 			tool_name: endpoint.tool.clone(),
@@ -141,7 +149,7 @@ impl LearningBackend for McpBackend {
 		project: &str,
 		config: &Config,
 	) -> Result<Vec<Lesson>> {
-		self.retrieve(&["*".to_string()], role, project, 100, config)
+		self.retrieve("", &["*".to_string()], role, project, 100, config)
 			.await
 	}
 }

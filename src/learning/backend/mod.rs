@@ -12,18 +12,31 @@ use async_trait::async_trait;
 
 /// Backend trait for learning storage and retrieval.
 ///
-/// File backend: writes `.md` files, grep-based retrieval.
-/// MCP backend: calls external tools with field mapping.
+/// File backend: hybrid retrieval — LLM-extracted keywords (sparse) +
+/// BGE-small cosine over lesson text (dense), fused via Reciprocal Rank
+/// Fusion. Both signals are kept because they have non-overlapping
+/// failure modes (keyword catches exact API names / error codes;
+/// embedding catches paraphrases and semantic neighbors).
+/// MCP backend: calls external tools with field mapping; the MCP server
+/// owns its own retrieval semantics.
 #[async_trait]
 pub trait LearningBackend: Send + Sync {
 	/// Store a lesson.
 	async fn store(&self, lesson: &Lesson, config: &Config) -> Result<()>;
 
-	/// Retrieve lessons matching the given patterns/query.
-	/// For file backend: `patterns` are grep keywords.
-	/// For MCP backend: `patterns` is a semantic query string (single element).
+	/// Retrieve lessons relevant to a user request.
+	///
+	/// `intent` is the raw user input — used for embedding-based dense
+	/// scoring. `patterns` are LLM-extracted keywords/phrases — used for
+	/// sparse (substring) scoring on the file backend, or as a single
+	/// natural-language query on the MCP backend.
+	///
+	/// File backend fuses both via Reciprocal Rank Fusion. MCP backend
+	/// hands the patterns to the configured tool; intent is informational
+	/// (the tool owns its own scoring).
 	async fn retrieve(
 		&self,
+		intent: &str,
 		patterns: &[String],
 		role: &str,
 		project: &str,

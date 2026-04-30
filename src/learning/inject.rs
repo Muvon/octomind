@@ -71,9 +71,19 @@ pub async fn retrieve_and_format(
 		}
 	};
 
-	// Retrieve from backend
+	// Retrieve from backend — pass both the raw user input (for dense
+	// embedding scoring) and the LLM-extracted patterns (for sparse
+	// keyword scoring). The file backend fuses both via RRF; the MCP
+	// backend hands the patterns to the configured tool.
 	let lessons = match backend
-		.retrieve(&patterns, role, project, learning.max_inject, config)
+		.retrieve(
+			user_input,
+			&patterns,
+			role,
+			project,
+			learning.max_inject,
+			config,
+		)
 		.await
 	{
 		Ok(l) => l,

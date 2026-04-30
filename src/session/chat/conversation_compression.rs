@@ -1666,10 +1666,34 @@ async fn apply_compression(
 		&session.session.messages,
 	);
 
-	// Reset tool-result dedup — compaction has just removed the original
-	// messages our placeholders point at; future identical results must
-	// be kept verbatim again.
-	crate::session::dedup::clear_current_session();
+	// Extend the session anchor so conversation compaction contributes to
+	// cross-compaction continuity. Heuristic update: record a marker entry
+	// with the metrics; subsequent task compactions (which embed the anchor
+	// in their compressed-knowledge messages) surface it in context.
+	{
+		let now_unix = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default()
+			.as_secs();
+		let intent_seed = if session.session.info.anchor.intent.is_empty() {
+			Some("Free-form conversation session".to_string())
+		} else {
+			None
+		};
+		session.session.info.anchor.extend(
+			crate::session::anchor::AnchorUpdate {
+				intent: intent_seed,
+				changes_made: vec![format!(
+					"Conversation compaction: {} messages folded, {} tokens saved",
+					messages_removed, tokens_saved
+				)],
+				..Default::default()
+			},
+			now_unix,
+		);
+	}
+
+	// (dedup state is cleared inside `remove_messages_in_range` — see core.rs.)
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations

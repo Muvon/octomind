@@ -135,8 +135,8 @@ pub async fn perform_simple_boundary_truncation(
 		&chat_session.session.messages,
 	)?;
 
-	// Reset tool-result dedup — truncation has dropped the original
-	// messages our placeholders point at.
+	// Reset tool-result dedup — this path replaces messages directly
+	// without going through `remove_messages_in_range`, so we clear here.
 	crate::session::dedup::clear_current_session();
 
 	// Save the session
@@ -251,7 +251,8 @@ pub async fn perform_smart_full_summarization(
 		&chat_session.session.messages,
 	)?;
 
-	// Reset tool-result dedup — summarization has replaced the originals.
+	// Reset tool-result dedup — this path replaces messages directly
+	// without going through `remove_messages_in_range`, so we clear here.
 	crate::session::dedup::clear_current_session();
 
 	// Save the updated session

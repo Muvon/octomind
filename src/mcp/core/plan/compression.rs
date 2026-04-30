@@ -584,14 +584,8 @@ pub async fn compress_completed_task(
 	// update is now part of session state and will be embedded in
 	// subsequent compressed-knowledge messages.
 	session.session.info.anchor = projected_anchor;
-
-	// Reset tool-result dedup for this session. Compaction has just
-	// removed the original messages our dedup placeholders were pointing
-	// at; if we kept the dedup map, future identical results would be
-	// replaced with placeholders that reference content that no longer
-	// exists. Clearing here guarantees post-compaction dedup behaves like
-	// a fresh session — first occurrences are recorded again from scratch.
-	crate::session::dedup::clear_current_session();
+	// (dedup state is cleared inside `remove_messages_in_range` above —
+	// see core.rs for rationale.)
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
@@ -826,8 +820,7 @@ async fn compress_phase(
 		&session.session.messages,
 	);
 
-	// Reset tool-result dedup — see compress_completed_task for rationale.
-	crate::session::dedup::clear_current_session();
+	// (dedup state is cleared inside `remove_messages_in_range` — see core.rs.)
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations
@@ -980,8 +973,7 @@ async fn compress_project(
 		&session.session.messages,
 	);
 
-	// Reset tool-result dedup — see compress_completed_task for rationale.
-	crate::session::dedup::clear_current_session();
+	// (dedup state is cleared inside `remove_messages_in_range` — see core.rs.)
 
 	// CRITICAL FIX: Reset token tracking for fresh start after compression
 	// This prevents token drift and ensures accurate cache/pricing calculations

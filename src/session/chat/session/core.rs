@@ -895,6 +895,15 @@ impl ChatSession {
 		// Using ..= for inclusive end index
 		self.session.messages.drain(start_index + 1..=end_index);
 
+		// Reset tool-result dedup state. Any of our placeholders that
+		// referenced messages in the just-drained range now point at
+		// vanished content; future identical results must be kept verbatim
+		// again. Centralized here so every caller that drops messages
+		// (task / phase / project / conversation compaction, manual
+		// truncate, manual summarize, future paths) gets it for free
+		// without needing to remember a separate cleanup call.
+		crate::session::dedup::clear_current_session();
+
 		crate::log_debug!(
 			"Compressed {} messages (range {}-{}), had_cached={}",
 			messages_to_remove,

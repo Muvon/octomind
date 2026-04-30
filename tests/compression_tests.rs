@@ -355,6 +355,7 @@ mod adaptive_compression_tests {
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
 				compression_stats: octomind::session::CompressionStats::default(),
+				anchor: Default::default(),
 				total_api_calls: 0,
 				// Cache state (Phase 1)
 				current_non_cached_tokens: 100, // Simulate some cache activity

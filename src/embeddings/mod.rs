@@ -34,8 +34,15 @@ use std::hash::{Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 use tokio::sync::OnceCell;
 
-/// Hardcoded internal model. Small + fast + good enough for description matching.
-const MODEL_NAME: &str = "BAAI/bge-small-en-v1.5";
+/// Hardcoded internal embedding model.
+///
+/// Choice rationale: BGE-small-en-v1.5 is the best fast+small+precise English
+/// embedding model in fastembed's catalog (33M params, 384-dim, ~50ms CPU
+/// embed, MTEB retrieval scores ~3-5% above MiniLM-L6 at the same size).
+/// fastembed 5.x registers this model under the `Xenova/` HuggingFace path —
+/// the `BAAI/...` alias maps in octolib but octolib's runtime support check
+/// matches against fastembed's own `model_code`, which uses the Xenova path.
+const MODEL_NAME: &str = "Xenova/bge-small-en-v1.5";
 
 /// Embedding dimension for the default model.
 pub const EMBED_DIM: usize = 384;

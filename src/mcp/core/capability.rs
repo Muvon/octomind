@@ -41,7 +41,7 @@
 
 use crate::config::Config;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -326,12 +326,36 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		}
 	};
 
+	// Deps-only capabilities (no MCP servers): activation runs the dep
+	// installers — that IS the activation. Toolchain caps like
+	// `programming-nodejs` use this path to install node/npm/npx so the
+	// agent's shell can use them. Genuinely empty caps (no servers AND no
+	// deps) remain an error.
 	if resolved.mcp_servers.is_empty() {
-		return Ok(McpToolResult::error(
+		if resolved.deps.is_empty() {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Capability '{name}' has no [[mcp.servers]] and no [deps] — nothing to activate."),
+			));
+		}
+		evict_lru_if_full(config);
+		if let Err(e) =
+			crate::agent::deps::run_dep_entries(&resolved.deps, &resolved.tap_root, None).await
+		{
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Failed to install deps for capability '{name}': {e:#}"),
+			));
+		}
+		mark_active(&name, Vec::new());
+		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
 			format!(
-				"Capability '{name}' has no MCP servers configured (no [[mcp.servers]] blocks)."
+				"Capability '{name}' enabled. Installed deps: {}",
+				resolved.deps.join(", ")
 			),
 		));
 	}
@@ -655,8 +679,18 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		return Ok(Vec::new());
 	}
 	let resolved = crate::agent::registry::parse_capability_toml(name, &config.capabilities)?;
+	// Deps-only capability: activation installs its toolchain. Mirrors
+	// `handle_enable` so auto-activation and manual `enable` behave the same.
 	if resolved.mcp_servers.is_empty() {
-		anyhow::bail!("capability '{}' has no MCP servers configured", name);
+		if resolved.deps.is_empty() {
+			anyhow::bail!("capability '{}' has no [[mcp.servers]] and no [deps]", name);
+		}
+		evict_lru_if_full(config);
+		crate::agent::deps::run_dep_entries(&resolved.deps, &resolved.tap_root, None)
+			.await
+			.with_context(|| format!("dep install failed for capability '{name}'"))?;
+		mark_active(name, Vec::new());
+		return Ok(Vec::new());
 	}
 	// Make room before activating — drops the LRU active capability if
 	// we'd exceed `MAX_ACTIVE_CAPS`. No-op when below the cap.
@@ -813,6 +847,7 @@ mod tests {
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),
 			mcp_servers: Vec::new(),
+			tap_root: std::path::PathBuf::new(),
 		}
 	}
 

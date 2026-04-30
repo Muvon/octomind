@@ -41,20 +41,33 @@ pub async fn resolve_deps(
 	status_cb: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<()> {
 	let entries = parse_dep_entries(manifest_toml)?;
+	run_dep_entries(&entries, tap_root, status_cb).await
+}
+
+/// Run a list of `org/tool` dep entries against `<tap_root>/deps/<org>/<tool>.sh`.
+///
+/// Lower-level entry point used by both `resolve_deps` (boot-time, parses from a
+/// manifest) and runtime capability activation (already has the list in hand,
+/// no manifest to round-trip through).
+pub async fn run_dep_entries(
+	entries: &[String],
+	tap_root: &Path,
+	status_cb: Option<&(dyn Fn(&str) + Send + Sync)>,
+) -> Result<()> {
 	if entries.is_empty() {
 		return Ok(());
 	}
 
 	let deps_root = tap_root.join("deps");
 
-	for entry in &entries {
+	for entry in entries {
 		if let Some(cb) = status_cb {
 			cb(&format!("Checking dep: {entry}"));
 		} else {
 			crate::log_debug!("checking dep: {}", entry);
 		}
 		run_dep_script(entry, &deps_root)
-			.with_context(|| format!("Dependency '{entry}' failed — cannot start session"))?;
+			.with_context(|| format!("Dependency '{entry}' failed"))?;
 	}
 
 	Ok(())

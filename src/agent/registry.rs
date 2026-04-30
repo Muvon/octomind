@@ -239,6 +239,10 @@ pub struct ResolvedCapability {
 	pub server_refs: Vec<String>,
 	pub allowed_tools: Vec<String>,
 	pub mcp_servers: Vec<crate::config::McpServerConfig>,
+	/// Root of the tap that provided this capability (first-wins across
+	/// `get_taps()`). Used to resolve `<tap_root>/deps/<org>/<tool>.sh`
+	/// paths when activation needs to run dep installers.
+	pub tap_root: PathBuf,
 }
 
 /// Read the `triggers = [...]` array from `<cap_dir>/config.toml`. Returns
@@ -330,6 +334,7 @@ pub fn parse_capability_toml(
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),
 			mcp_servers: Vec::new(),
+			tap_root: tap_root.clone(),
 		};
 
 		// [deps] require

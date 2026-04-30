@@ -513,6 +513,17 @@ pub async fn execute_tool_call(
 	let tool_duration = tool_start.elapsed();
 	let tool_time_ms = tool_duration.as_millis() as u64;
 
+	// LRU bookkeeping: if this tool came from a dynamic-server backed
+	// capability, bump its last_used so eviction tracks real usage.
+	// Cheap (one HashMap scan); only walks active capabilities.
+	if result.is_ok() {
+		if let Some(server_name) =
+			crate::mcp::core::dynamic::get_dynamic_server_name_by_tool(&call.tool_name)
+		{
+			crate::mcp::core::capability::touch_capability_for_server(&server_name);
+		}
+	}
+
 	match result {
 		Ok(tool_result) => {
 			// Skip individual large response handling when called from parallel execution

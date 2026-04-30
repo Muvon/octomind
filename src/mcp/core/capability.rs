@@ -43,32 +43,126 @@ use crate::config::Config;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use anyhow::Result;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Instant;
 
 // ---------------------------------------------------------------------------
 // Active capabilities registry (process-global; mirrors dynamic.rs pattern)
+//
+// We track per-capability state so we can do LRU eviction when the active
+// set hits a soft cap. Eviction is the only auto-disable mechanism; we
+// deliberately don't time-decay or domain-shift evict because production
+// agent UX is hurt more by false-disable than by carrying an idle cap.
 // ---------------------------------------------------------------------------
+
+/// State for one active capability. `servers` is the list of MCP server
+/// names this capability registered when it was activated — stored here
+/// so eviction can disable them without re-parsing the TOML. `last_used`
+/// updates on every successful tool call from any of these servers; LRU
+/// eviction picks the entry with the smallest `last_used`.
+#[derive(Debug, Clone)]
+struct CapState {
+	servers: Vec<String>,
+	last_used: Instant,
+}
+
+/// Soft cap on simultaneously-active capabilities. When a new activation
+/// would exceed this, the LRU entry is disabled first to make room.
+/// Sized loose enough that normal sessions never hit it; only flapping
+/// or runaway accumulation does.
+const MAX_ACTIVE_CAPS: usize = 8;
 
 /// Capabilities activated at runtime by this tool. Capabilities pre-loaded from
 /// the tap manifest at boot are NOT tracked here — they are already merged into
 /// the agent's effective config and represented as regular MCP servers.
-static ACTIVE_CAPABILITIES: OnceLock<Arc<RwLock<HashSet<String>>>> = OnceLock::new();
+static ACTIVE_CAPABILITIES: OnceLock<Arc<RwLock<HashMap<String, CapState>>>> = OnceLock::new();
 
-fn registry() -> &'static Arc<RwLock<HashSet<String>>> {
-	ACTIVE_CAPABILITIES.get_or_init(|| Arc::new(RwLock::new(HashSet::new())))
+fn registry() -> &'static Arc<RwLock<HashMap<String, CapState>>> {
+	ACTIVE_CAPABILITIES.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
 }
 
 fn is_active(name: &str) -> bool {
-	registry().read().unwrap().contains(name)
+	registry().read().unwrap().contains_key(name)
 }
 
-fn mark_active(name: &str) {
-	registry().write().unwrap().insert(name.to_string());
+fn active_count() -> usize {
+	registry().read().unwrap().len()
+}
+
+fn mark_active(name: &str, servers: Vec<String>) {
+	registry().write().unwrap().insert(
+		name.to_string(),
+		CapState {
+			servers,
+			last_used: Instant::now(),
+		},
+	);
 }
 
 fn mark_inactive(name: &str) {
 	registry().write().unwrap().remove(name);
+}
+
+/// Find which active capability owns the given MCP server name and bump
+/// its `last_used` to now. Called from the tool-call dispatch path so
+/// LRU eviction tracks real usage, not just activation order.
+pub(crate) fn touch_capability_for_server(server_name: &str) {
+	let mut reg = registry().write().unwrap();
+	for state in reg.values_mut() {
+		if state.servers.iter().any(|s| s == server_name) {
+			state.last_used = Instant::now();
+			return;
+		}
+	}
+}
+
+/// Pure helper: find the entry with the smallest `last_used` and remove it.
+/// Returns `(name, servers)` so the caller can disable the underlying
+/// servers; doesn't touch the dynamic-server registry itself. Separated
+/// from `evict_lru_if_full` so the selection logic is unit-testable
+/// without touching global state or needing a `Config`.
+fn select_lru_in(map: &mut HashMap<String, CapState>) -> Option<(String, Vec<String>)> {
+	let lru_name = map
+		.iter()
+		.min_by_key(|(_, st)| st.last_used)
+		.map(|(n, _)| n.clone())?;
+	let st = map.remove(&lru_name)?;
+	Some((lru_name, st.servers))
+}
+
+/// If the active set is at or above the soft cap, evict the LRU entry
+/// (lowest `last_used`) and disable its underlying MCP servers. Logged
+/// at info level so users see what flipped off.
+///
+/// Called before activating a new capability; idempotent when the active
+/// set is below the cap. Errors disabling individual servers are logged
+/// but don't block: we'd rather have the eviction happen with one stale
+/// server than fail the new activation.
+fn evict_lru_if_full(config: &Config) {
+	if active_count() < MAX_ACTIVE_CAPS {
+		return;
+	}
+	let evicted = {
+		let mut reg = registry().write().unwrap();
+		select_lru_in(&mut reg)
+	};
+	if let Some((name, servers)) = evicted {
+		for server_name in &servers {
+			if let Err(e) = crate::mcp::core::dynamic::disable_server(server_name, Some(config)) {
+				crate::log_debug!(
+					"capability LRU evict: failed to disable server '{}' ({})",
+					server_name,
+					e
+				);
+			}
+		}
+		crate::log_info!(
+			"capability LRU evicted: '{}' ({} server(s) disabled to make room)",
+			name,
+			servers.len()
+		);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +336,10 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		));
 	}
 
+	// Make room before activating — drops the LRU active capability if
+	// we'd exceed `MAX_ACTIVE_CAPS`. No-op when below the cap.
+	evict_lru_if_full(config);
+
 	let filter_tools: Option<Vec<String>> = if resolved.allowed_tools.is_empty() {
 		None
 	} else {
@@ -282,7 +380,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		}
 	}
 
-	mark_active(&name);
+	mark_active(&name, activated_servers.clone());
 
 	let msg = format!(
 		"Capability '{name}' enabled. Activated {} server(s): {}\nTools available: {}",
@@ -560,6 +658,10 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 	if resolved.mcp_servers.is_empty() {
 		anyhow::bail!("capability '{}' has no MCP servers configured", name);
 	}
+	// Make room before activating — drops the LRU active capability if
+	// we'd exceed `MAX_ACTIVE_CAPS`. No-op when below the cap.
+	evict_lru_if_full(config);
+
 	let filter_tools: Option<Vec<String>> = if resolved.allowed_tools.is_empty() {
 		None
 	} else {
@@ -574,7 +676,7 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		crate::mcp::core::dynamic::enable_server(&server_name, filter_tools.clone()).await?;
 		activated_servers.push(server_name);
 	}
-	mark_active(name);
+	mark_active(name, activated_servers.clone());
 	Ok(activated_servers)
 }
 
@@ -730,10 +832,81 @@ mod tests {
 	fn active_registry_marks_and_clears() {
 		let cap = "test.cap.alpha";
 		assert!(!is_active(cap));
-		mark_active(cap);
+		mark_active(cap, vec!["test-server".to_string()]);
 		assert!(is_active(cap));
 		mark_inactive(cap);
 		assert!(!is_active(cap));
+	}
+
+	#[test]
+	fn select_lru_picks_oldest_timestamp() {
+		use std::time::Duration;
+		let now = Instant::now();
+		let mut map: HashMap<String, CapState> = HashMap::new();
+		map.insert(
+			"alpha".to_string(),
+			CapState {
+				servers: vec!["s1".to_string()],
+				last_used: now - Duration::from_secs(100),
+			},
+		);
+		map.insert(
+			"beta".to_string(),
+			CapState {
+				servers: vec!["s2".to_string()],
+				last_used: now - Duration::from_secs(50),
+			},
+		);
+		map.insert(
+			"gamma".to_string(),
+			CapState {
+				servers: vec!["s3".to_string()],
+				last_used: now,
+			},
+		);
+		let evicted = select_lru_in(&mut map).expect("should evict the oldest");
+		assert_eq!(evicted.0, "alpha");
+		assert_eq!(evicted.1, vec!["s1".to_string()]);
+		assert_eq!(map.len(), 2);
+		assert!(!map.contains_key("alpha"));
+	}
+
+	#[test]
+	fn select_lru_returns_none_for_empty_map() {
+		let mut map: HashMap<String, CapState> = HashMap::new();
+		assert!(select_lru_in(&mut map).is_none());
+	}
+
+	#[test]
+	fn select_lru_handles_single_entry() {
+		let mut map: HashMap<String, CapState> = HashMap::new();
+		map.insert(
+			"only".to_string(),
+			CapState {
+				servers: vec!["s1".to_string()],
+				last_used: Instant::now(),
+			},
+		);
+		let evicted = select_lru_in(&mut map).expect("should evict the only entry");
+		assert_eq!(evicted.0, "only");
+		assert!(map.is_empty());
+	}
+
+	#[test]
+	fn touch_capability_updates_timestamp_for_owning_cap() {
+		// Use unique cap name so we don't interfere with other tests.
+		let cap = "test.touch.alpha";
+		let server = "test.touch.server";
+		mark_active(cap, vec![server.to_string()]);
+		let before = registry().read().unwrap().get(cap).unwrap().last_used;
+		std::thread::sleep(std::time::Duration::from_millis(2));
+		touch_capability_for_server(server);
+		let after = registry().read().unwrap().get(cap).unwrap().last_used;
+		assert!(
+			after > before,
+			"touch_capability_for_server should bump last_used"
+		);
+		mark_inactive(cap);
 	}
 
 	// -----------------------------------------------------------------------
@@ -904,6 +1077,280 @@ mod tests {
 			top.1.name, "database.postgres",
 			"expected database.postgres to win for a postgres intent (got {} score {:.3})",
 			top.1.name, top.0
+		);
+	}
+
+	/// Fixture-based regression test for the deterministic auto-activation
+	/// gate. Each fixture is a `(user_message, expected_capability_or_None)`
+	/// pair authored by hand. We run the *production* gate (same scoring
+	/// pipeline + `AUTO_ACTIVATE_THRESHOLD` + `AUTO_ACTIVATE_MARGIN`) and
+	/// assert ≥85% top-1 accuracy on positive cases plus ≥80% abstain rate
+	/// on negative cases.
+	///
+	/// Substitute for a labeled corpus we don't have. Catches threshold/
+	/// margin drift, BGE-small ranking regressions, and trigger-set quality
+	/// across 12 representative capabilities. Triggers are copied verbatim
+	/// from `../octomind-tap/capabilities/<cap>/config.toml`; if those
+	/// change, update both places (intentional duplication — the test is a
+	/// regression net for the data we ship).
+	#[tokio::test]
+	async fn capability_routing_fixtures_match_expected_caps() {
+		let caps = vec![
+			make_cap_with_triggers(
+				"database-postgres",
+				&[
+					"query a postgres database",
+					"EXPLAIN ANALYZE a slow postgres query",
+					"look at the postgres schema",
+					"investigate a Postgres query plan",
+					"check rows in a postgres table",
+					"run SQL against postgres",
+				],
+			),
+			make_cap_with_triggers(
+				"database-sqlite",
+				&[
+					"query a sqlite database",
+					"inspect a SQLite file",
+					"run SQL against a sqlite db",
+					"look at the schema of a sqlite database",
+					"open a .db file and read tables",
+				],
+			),
+			make_cap_with_triggers(
+				"filesystem",
+				&[
+					"read a local file",
+					"edit a file on disk",
+					"list directory contents",
+					"search files for a pattern",
+					"execute a shell command",
+					"find files by name",
+				],
+			),
+			make_cap_with_triggers(
+				"codesearch",
+				&[
+					"find where this function is used",
+					"search the codebase for an implementation",
+					"look up symbol definitions",
+					"find code matching a pattern",
+					"semantic search across the repo",
+					"view function signatures in this file",
+				],
+			),
+			make_cap_with_triggers(
+				"websearch",
+				&[
+					"search the web for information",
+					"find recent news online",
+					"google something",
+					"look up an article on the web",
+					"find a tutorial online",
+				],
+			),
+			make_cap_with_triggers(
+				"webfetch",
+				&[
+					"fetch a URL's content",
+					"download a webpage",
+					"get the contents of a web page",
+					"retrieve a web resource",
+				],
+			),
+			make_cap_with_triggers(
+				"kubernetes",
+				&[
+					"list pods in a kubernetes cluster",
+					"check kubectl logs",
+					"describe a kubernetes deployment",
+					"look at a helm chart",
+					"troubleshoot a failing pod",
+					"scale a kubernetes deployment",
+				],
+			),
+			make_cap_with_triggers(
+				"docker",
+				&[
+					"list running docker containers",
+					"build a docker image",
+					"inspect a container's logs",
+					"run a docker compose service",
+					"stop a docker container",
+					"check docker container status",
+				],
+			),
+			make_cap_with_triggers(
+				"messaging-slack",
+				&[
+					"send a slack message",
+					"post to a slack channel",
+					"search slack history",
+					"look up a slack thread",
+					"list slack channels",
+				],
+			),
+			make_cap_with_triggers(
+				"messaging-discord",
+				&[
+					"send a message to a discord channel",
+					"post to discord",
+					"list discord servers",
+					"read recent discord messages",
+				],
+			),
+			make_cap_with_triggers(
+				"versioning",
+				&[
+					"check git status",
+					"look at the version history",
+					"view git log",
+					"see what changed between commits",
+					"track changes in version control",
+				],
+			),
+			make_cap_with_triggers(
+				"payments",
+				&[
+					"look up a stripe payment",
+					"check payment status",
+					"refund a stripe charge",
+					"manage stripe customers",
+					"create a stripe invoice",
+				],
+			),
+		];
+
+		// Embed all triggers once.
+		let mut flat: Vec<String> = Vec::new();
+		let mut offsets: Vec<(usize, usize)> = Vec::with_capacity(caps.len());
+		for cap in &caps {
+			let start = flat.len();
+			flat.extend(cap.triggers.iter().cloned());
+			offsets.push((start, flat.len()));
+		}
+		let trigger_vecs = crate::embeddings::embed_many(&flat)
+			.await
+			.expect("embed all triggers should succeed");
+
+		// Positive fixtures: clear intent → expected capability.
+		let positives: &[(&str, &str)] = &[
+			(
+				"EXPLAIN ANALYZE this slow postgres query",
+				"database-postgres",
+			),
+			(
+				"look at the postgres users table schema",
+				"database-postgres",
+			),
+			(
+				"I have a sqlite database I need to query",
+				"database-sqlite",
+			),
+			("open a .db file and check the tables", "database-sqlite"),
+			("read the contents of this file", "filesystem"),
+			("list everything in the current directory", "filesystem"),
+			("find where this function is defined", "codesearch"),
+			("search the codebase for the user model", "codesearch"),
+			("search the web for recent AI news", "websearch"),
+			("google how to do X", "websearch"),
+			("fetch the contents of this URL", "webfetch"),
+			("download this webpage", "webfetch"),
+			("list the pods in my k8s cluster", "kubernetes"),
+			("describe this kubernetes deployment", "kubernetes"),
+			("show me running docker containers", "docker"),
+			("build a docker image", "docker"),
+			("send a slack message to the team", "messaging-slack"),
+			(
+				"post in a slack channel about the deploy",
+				"messaging-slack",
+			),
+			("send a discord message", "messaging-discord"),
+			("post to discord", "messaging-discord"),
+			("show me git log", "versioning"),
+			("what changed in the last commit", "versioning"),
+			("look up a stripe payment", "payments"),
+			("refund this customer's stripe charge", "payments"),
+		];
+
+		// Negative fixtures: chitchat / generic with no clear capability fit.
+		// The gate should abstain (return None) for these.
+		let negatives: &[&str] = &[
+			"hello how are you doing today",
+			"what's the weather like",
+			"explain the concept of recursion",
+			"good morning, can you help me?",
+			"thanks, that was helpful",
+		];
+
+		let mut positive_correct = 0usize;
+		let mut positive_misses: Vec<String> = Vec::new();
+		for (intent, expected) in positives {
+			let intent_vec = crate::embeddings::embed(intent)
+				.await
+				.expect("embed intent should succeed");
+			let scored: Vec<(f32, &ResolvedCapability)> = caps
+				.iter()
+				.zip(offsets.iter())
+				.map(|(cap, (start, end))| {
+					let s = score_capability(&intent_vec, &trigger_vecs[*start..*end]);
+					(s, cap)
+				})
+				.collect();
+			let result = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
+			match &result {
+				Some((_, c)) if c.name == *expected => positive_correct += 1,
+				other => positive_misses.push(format!(
+					"{intent:?} → expected {expected}, got {:?}",
+					other
+						.as_ref()
+						.map(|(s, c)| format!("{} (score {:.2})", c.name, s))
+				)),
+			}
+		}
+
+		let mut negative_abstained = 0usize;
+		let mut negative_misses: Vec<String> = Vec::new();
+		for intent in negatives {
+			let intent_vec = crate::embeddings::embed(intent)
+				.await
+				.expect("embed intent should succeed");
+			let scored: Vec<(f32, &ResolvedCapability)> = caps
+				.iter()
+				.zip(offsets.iter())
+				.map(|(cap, (start, end))| {
+					let s = score_capability(&intent_vec, &trigger_vecs[*start..*end]);
+					(s, cap)
+				})
+				.collect();
+			let result = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
+			match &result {
+				None => negative_abstained += 1,
+				Some((s, c)) => negative_misses.push(format!(
+					"{intent:?} → expected None, got {} (score {:.2})",
+					c.name, s
+				)),
+			}
+		}
+
+		let pos_total = positives.len();
+		let neg_total = negatives.len();
+		let pos_acc = positive_correct as f32 / pos_total as f32;
+		let neg_acc = negative_abstained as f32 / neg_total as f32;
+
+		assert!(
+			pos_acc >= 0.85,
+			"Positive top-1 accuracy {pos_acc:.2} below 0.85 threshold ({}/{} correct).\nMisses:\n{}",
+			positive_correct,
+			pos_total,
+			positive_misses.join("\n")
+		);
+		assert!(
+			neg_acc >= 0.80,
+			"Negative abstain rate {neg_acc:.2} below 0.80 threshold ({}/{} abstained).\nMisses:\n{}",
+			negative_abstained,
+			neg_total,
+			negative_misses.join("\n")
 		);
 	}
 }

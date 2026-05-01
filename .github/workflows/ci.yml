@@ -234,7 +234,7 @@ jobs:
             ORT_LIB_LOCATION="$ORT_DIR/lib"
             if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
               echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
-              rm -rf /tmp/onnxruntime "$ORT_DIR"
+              rm -rf /tmp/onnxruntime
               mkdir -p "$ORT_LIB_LOCATION"
               git clone --single-branch --branch v1.24.2 --recursive \
                 https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime

@@ -144,6 +144,16 @@ jobs:
           ${{ runner.os }}-${{ matrix.rust }}-cargo-
           ${{ runner.os }}-cargo-
 
+    - name: Download ONNX Runtime static library (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        ORT_VERSION="1.24.2"
+        ORT_ASSET="onnxruntime-linux-x64-static_lib-${ORT_VERSION}-glibc2_17"
+        curl -sL "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v${ORT_VERSION}/${ORT_ASSET}.zip" -o /tmp/ort.zip
+        unzip -q /tmp/ort.zip -d /tmp/ort
+        echo "ORT_LIB_LOCATION=/tmp/ort/${ORT_ASSET}/lib" >> "$GITHUB_ENV"
+
     - name: Run tests
       shell: bash
       run: |
@@ -185,6 +195,11 @@ jobs:
 
     - name: Build in Alpine (mirrors release pipeline)
       run: |
+        # Pre-create the output directory on the host so the Docker mount
+        # already has it — avoids "Permission denied" on some ARM runners
+        # where the volume mount has restrictive permissions.
+        mkdir -p onnxruntime-static/lib
+
         docker run --rm \
           -v "$(pwd):/workspace" \
           -w /workspace \
@@ -220,6 +235,7 @@ jobs:
             if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
               echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
               rm -rf /tmp/onnxruntime "$ORT_DIR"
+              mkdir -p "$ORT_LIB_LOCATION"
               git clone --single-branch --branch v1.24.2 --recursive \
                 https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime
               cd /tmp/onnxruntime
@@ -237,7 +253,6 @@ jobs:
                   CMAKE_POSITION_INDEPENDENT_CODE=ON \
                   onnxruntime_BUILD_UNIT_TESTS=OFF \
                   onnxruntime_BUILD_SHARED_LIB=OFF
-              mkdir -p "$ORT_LIB_LOCATION"
               find build/Release -name "*.a" -exec cp -v {} "$ORT_LIB_LOCATION/" \;
               cd /workspace
               rm -rf /tmp/onnxruntime

@@ -195,11 +195,6 @@ jobs:
 
     - name: Build in Alpine (mirrors release pipeline)
       run: |
-        # Pre-create the output directory on the host so the Docker mount
-        # already has it — avoids "Permission denied" on some ARM runners
-        # where the volume mount has restrictive permissions.
-        mkdir -p onnxruntime-static/lib
-
         docker run --rm \
           -v "$(pwd):/workspace" \
           -w /workspace \
@@ -212,9 +207,8 @@ jobs:
               cmake make linux-headers python3 py3-pip patch
 
             # Provide stub execinfo.h — musl lacks it and Alpine 3.17+ removed
-            # libexecinfo. ORT's stacktrace.cc unconditionally includes it on
+            # libexecinfo. ORT'\''s stacktrace.cc unconditionally includes it on
             # non-Android POSIX. The stub provides no-op backtrace functions.
-            # Written to /tmp since /usr/include may not be writable.
             mkdir -p /tmp/include
             cat > /tmp/include/execinfo.h << "EOF"
         #ifndef _EXECINFO_H
@@ -230,8 +224,7 @@ jobs:
 
             rustup target add ${{ matrix.target }}
 
-            ORT_DIR=/workspace/onnxruntime-static
-            ORT_LIB_LOCATION="$ORT_DIR/lib"
+            ORT_LIB_LOCATION="/tmp/ort-static/lib"
             if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
               echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
               rm -rf /tmp/onnxruntime
@@ -254,7 +247,6 @@ jobs:
                   onnxruntime_BUILD_UNIT_TESTS=OFF \
                   onnxruntime_BUILD_SHARED_LIB=OFF
               find build/Release -name "*.a" -exec cp -v {} "$ORT_LIB_LOCATION/" \;
-              cd /workspace
               rm -rf /tmp/onnxruntime
             else
               echo "==> Using cached ONNX Runtime static build"

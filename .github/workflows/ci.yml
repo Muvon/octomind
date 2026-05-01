@@ -195,6 +195,9 @@ jobs:
 
     - name: Build in Alpine (mirrors release pipeline)
       run: |
+        # Pre-create on host so the volume mount dir exists with correct permissions
+        mkdir -p onnxruntime-static/lib
+
         docker run --rm \
           -v "$(pwd):/workspace" \
           -w /workspace \
@@ -224,11 +227,10 @@ jobs:
 
             rustup target add ${{ matrix.target }}
 
-            ORT_LIB_LOCATION="/tmp/ort-static/lib"
+            ORT_LIB_LOCATION="/workspace/onnxruntime-static/lib"
             if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
               echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
               rm -rf /tmp/onnxruntime
-              mkdir -p "$ORT_LIB_LOCATION"
               git clone --single-branch --branch v1.24.2 --recursive \
                 https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime
               cd /tmp/onnxruntime

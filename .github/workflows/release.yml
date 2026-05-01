@@ -179,22 +179,94 @@ jobs:
           ${{ endsWith(matrix.target, '-unknown-linux-musl') && 'docker-alpine' || runner.os }}-${{ matrix.target }}-cargo-
           ${{ endsWith(matrix.target, '-unknown-linux-musl') && 'docker-alpine' || runner.os }}-cargo-
 
+    # Cache the static ONNX Runtime build for musl targets so we don't rebuild
+    # (45–60 min) on every CI run. Keyed by ORT version + target.
+    - name: Cache ONNX Runtime static build (musl)
+      if: endsWith(matrix.target, '-unknown-linux-musl')
+      uses: actions/cache@v4
+      with:
+        path: onnxruntime-static
+        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23
+
     - name: Build binary
       shell: sh
       run: |
         if [ "${{ runner.os }}" = "Linux" ]; then
-          # Use official Rust Docker image for Linux builds
-          # Disable default features to avoid ONNX Runtime issues (same as Windows)
+          # Linux musl: build ONNX Runtime statically from source inside Alpine,
+          # then build octomind with fastembed enabled, linking ort-sys against
+          # the local static build via ORT_LIB_LOCATION. Pyke ships no musl
+          # prebuilts, so this is the only supported path. ORT 1.24.2 matches
+          # ort-sys 2.0.0-rc.12 / fastembed's api-24 feature.
           docker run --rm \
             -v "$(pwd):/workspace" \
             -w /workspace \
             rust:1.95.0-alpine3.23 \
-            sh -c "apk add --no-cache git perl musl-dev openssl-dev openssl-libs-static pkgconfig gcc g++ protobuf-dev && rustup target add ${{ matrix.target }} && cargo build --release --target ${{ matrix.target }} --no-default-features"
+            sh -c '
+              set -eu
+              apk add --no-cache \
+                git perl bash musl-dev openssl-dev openssl-libs-static \
+                pkgconfig gcc g++ protobuf-dev \
+                cmake make linux-headers python3 py3-pip patch
+
+              # Provide stub execinfo.h — musl lacks it and Alpine 3.17+ removed
+              # libexecinfo. ORT's stacktrace.cc unconditionally includes it on
+              # non-Android POSIX. The stub provides no-op backtrace functions.
+              # Written to /tmp since /usr/include may not be writable.
+              mkdir -p /tmp/include
+              cat > /tmp/include/execinfo.h << "EOF"
+        #ifndef _EXECINFO_H
+        #define _EXECINFO_H
+        #include <stddef.h>
+        static inline int backtrace(void **buffer, int size) { (void)buffer; (void)size; return 0; }
+        static inline char **backtrace_symbols(void *const *buffer, int size) { (void)buffer; (void)size; return NULL; }
+        static inline void backtrace_symbols_fd(void *const *buffer, int size, int fd) { (void)buffer; (void)size; (void)fd; }
+        #endif
+        EOF
+              export C_INCLUDE_PATH=/tmp/include
+              export CPLUS_INCLUDE_PATH=/tmp/include
+
+              rustup target add ${{ matrix.target }}
+
+              ORT_DIR=/workspace/onnxruntime-static
+              ORT_LIB_LOCATION="$ORT_DIR/lib"
+              if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
+                echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
+                rm -rf /tmp/onnxruntime "$ORT_DIR"
+                git clone --single-branch --branch v1.24.2 --recursive \
+                  https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime
+                cd /tmp/onnxruntime
+                ./build.sh \
+                  --config Release \
+                  --build_dir build \
+                  --parallel \
+                  --skip_tests \
+                  --skip_submodule_sync \
+                  --allow_running_as_root \
+                  --compile_no_warning_as_error \
+                  --no_kleidiai \
+                  --no_sve \
+                  --cmake_extra_defines \
+                    CMAKE_POSITION_INDEPENDENT_CODE=ON \
+                    onnxruntime_BUILD_UNIT_TESTS=OFF \
+                    onnxruntime_BUILD_SHARED_LIB=OFF
+                mkdir -p "$ORT_LIB_LOCATION"
+                # Collect every static lib produced by the ORT build (ort-sys
+                # walks the directory and links them all).
+                find build/Release -name "*.a" -exec cp -v {} "$ORT_LIB_LOCATION/" \;
+                cd /workspace
+                rm -rf /tmp/onnxruntime
+              else
+                echo "==> Using cached ONNX Runtime static build"
+              fi
+
+              export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
+              cargo build --release --target ${{ matrix.target }}
+            '
         elif [ "${{ runner.os }}" = "Windows" ]; then
-          # Windows: disable default features to avoid ONNX Runtime issues
-          cargo build --release --target ${{ matrix.target }} --no-default-features
+          # Windows: Pyke ships prebuilts for MSVC targets.
+          cargo build --release --target ${{ matrix.target }}
         else
-          # Native build for other platforms (macOS)
+          # Native build for other platforms (macOS) — Pyke ships prebuilts.
           cargo build --release --target ${{ matrix.target }}
         fi
 

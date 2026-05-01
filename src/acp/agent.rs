@@ -54,22 +54,63 @@ pub struct OctomindAgent {
 	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
 	/// Connection back to the client — used to send session/update notifications
 	conn: Rc<RefCell<Option<Rc<AgentSideConnection>>>>,
+	/// Preferred session name for the next `new_session` (consumed once).
+	pending_name: RefCell<Option<String>>,
+	/// Resume target for the next `new_session` (consumed once).
+	pending_resume: RefCell<Option<String>>,
+	/// Whether the next `new_session` should resume the most recent session (consumed once).
+	pending_resume_recent: RefCell<bool>,
+	/// Model override applied to every session (new and loaded).
+	model: Option<String>,
+	/// Webhook hooks activated for every session (new and loaded).
+	hooks: Vec<String>,
 }
 
 impl OctomindAgent {
-	pub fn new(config: Config, role: String) -> Self {
+	pub fn new(config: Config, role: String, options: crate::acp::AcpRunOptions) -> Self {
 		Self {
 			config: RefCell::new(config),
 			role,
 			sessions: Rc::new(RefCell::new(HashMap::new())),
 			cancellations: Rc::new(RefCell::new(HashMap::new())),
 			conn: Rc::new(RefCell::new(None)),
+			pending_name: RefCell::new(options.name),
+			pending_resume: RefCell::new(options.resume),
+			pending_resume_recent: RefCell::new(options.resume_recent),
+			model: options.model,
+			hooks: options.hooks,
 		}
 	}
 
 	/// Inject the connection after it's created (chicken-and-egg: agent needs conn, conn needs agent).
 	pub fn set_connection(&self, conn: Rc<AgentSideConnection>) {
 		*self.conn.borrow_mut() = Some(conn);
+	}
+
+	/// Build session args for a new ACP session, consuming the one-shot CLI overrides.
+	fn build_new_session_args(&self) -> GenericSessionArgs {
+		GenericSessionArgs {
+			role: self.role.clone(),
+			mode: "websocket".into(),
+			name: self.pending_name.borrow_mut().take(),
+			resume: self.pending_resume.borrow_mut().take(),
+			resume_recent: std::mem::replace(&mut *self.pending_resume_recent.borrow_mut(), false),
+			model: self.model.clone(),
+			hooks: self.hooks.clone(),
+			..Default::default()
+		}
+	}
+
+	/// Build session args for an explicit `load_session` (resume by client-supplied id).
+	fn build_load_session_args(&self, session_id: String) -> GenericSessionArgs {
+		GenericSessionArgs {
+			resume: Some(session_id),
+			role: self.role.clone(),
+			mode: "websocket".into(),
+			model: self.model.clone(),
+			hooks: self.hooks.clone(),
+			..Default::default()
+		}
 	}
 }
 
@@ -446,11 +487,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			.await
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
-		let session_args = GenericSessionArgs {
-			role: self.role.clone(),
-			mode: "websocket".into(),
-			..Default::default()
-		};
+		let session_args = self.build_new_session_args();
 		let (mut chat_session, config_for_role, session_role, _, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await
@@ -909,12 +946,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
 		// Resume the existing session from disk by its ID
-		let session_args = GenericSessionArgs {
-			resume: Some(session_id.clone()),
-			role: self.role.clone(),
-			mode: "websocket".into(),
-			..Default::default()
-		};
+		let session_args = self.build_load_session_args(session_id.clone());
 		let (mut chat_session, config_for_role, session_role, _, _) =
 			setup_and_initialize_session(&session_args, &config_snapshot)
 				.await

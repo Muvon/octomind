@@ -28,8 +28,22 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::config::Config;
 
+/// Runtime options for the ACP server, mirroring the relevant subset of `octomind run` flags.
+///
+/// Values like `name`/`resume`/`resume_recent` are consumed once on the first client
+/// `new_session` request, then revert to defaults. `model` and `hooks` apply to every
+/// session created or loaded during the agent's lifetime.
+#[derive(Debug, Clone, Default)]
+pub struct AcpRunOptions {
+	pub name: Option<String>,
+	pub resume: Option<String>,
+	pub resume_recent: bool,
+	pub model: Option<String>,
+	pub hooks: Vec<String>,
+}
+
 /// Run the ACP agent over stdio until the client disconnects.
-pub async fn run(config: Config, role: String) -> Result<()> {
+pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result<()> {
 	// In ACP mode stdout/stderr are reserved for JSON-RPC, so init failures
 	// are written to a fallback file instead of eprintln.
 	let write_init_error = |msg: String| {
@@ -64,7 +78,7 @@ pub async fn run(config: Config, role: String) -> Result<()> {
 
 	local
 		.run_until(async move {
-			let agent = std::rc::Rc::new(OctomindAgent::new(config, role));
+			let agent = std::rc::Rc::new(OctomindAgent::new(config, role, options));
 
 			let stdin = tokio::io::stdin().compat();
 			let stdout = tokio::io::stdout().compat_write();

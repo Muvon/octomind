@@ -48,16 +48,17 @@ If you cannot quote the user, you do not have a lesson — skip it.
 Lesson text — what to do or avoid, stated as a rule.
 </lesson>"#;
 
-/// Extract lessons from a session and store them via the backend.
+/// Shared extraction core: build transcript, call LLM, parse lessons, store with dedup.
 ///
-/// Called from `/done` (always) and auto-compaction (when enough user messages).
-/// Returns the number of lessons stored.
-pub async fn extract_and_store_lessons(
-	session: &mut ChatSession,
+/// Used by both `extract_lessons_detached` (fire-and-forget) and any caller that wants
+/// awaited extraction. Takes owned data so it works without a `ChatSession` reference.
+/// Cost is not tracked against the active session — this is background bookkeeping.
+async fn run_extraction(
+	messages: &[crate::session::Message],
 	config: &Config,
 	role: &str,
 	project: &str,
-	operation_rx: tokio::sync::watch::Receiver<bool>,
+	session_name: &str,
 ) -> Result<usize> {
 	let learning = &config.learning;
 	if !learning.enabled {
@@ -91,25 +92,13 @@ pub async fn extract_and_store_lessons(
 			.join("\n")
 	};
 
-	// Build transcript from session messages
-	let transcript = build_transcript(&session.session.messages);
+	let transcript = build_transcript(messages);
 	if transcript.is_empty() {
 		return Ok(0);
 	}
 
-	// Build prompt
 	let system = EXTRACTION_SYSTEM_PROMPT.replace("{existing_lessons}", &existing_text);
-
-	// Call LLM
-	let response = call_learning_llm(
-		session,
-		config,
-		&learning.model,
-		system,
-		transcript,
-		operation_rx,
-	)
-	.await?;
+	let response = call_extraction_llm(config, &learning.model, system, transcript).await?;
 
 	// Gate: check <decision> tag first — if NONE, skip parsing entirely
 	if !response.contains("<decision>LEARN</decision>") {
@@ -117,8 +106,7 @@ pub async fn extract_and_store_lessons(
 		return Ok(0);
 	}
 
-	// Parse lessons (only those with evidence)
-	let lessons = parse_lesson_tags(&response, role, project, &session.session.info.name);
+	let lessons = parse_lesson_tags(&response, role, project, session_name);
 	crate::log_debug!(
 		"Learning extraction: LLM returned {} lessons with evidence",
 		lessons.len()
@@ -291,8 +279,11 @@ fn extract_attr(attrs: &str, key: &str) -> Option<String> {
 	Some(attrs[start..end].to_string())
 }
 
-/// Fire-and-forget extraction for session exit. Takes owned data, no session reference needed.
-/// Spawns a detached tokio task — caller returns immediately.
+/// Fire-and-forget extraction. Spawns a detached tokio task — caller returns immediately.
+///
+/// This is the canonical extraction entry point: used by `/done`, `/exit`, Ctrl+D, and
+/// auto-compaction. Lessons are extracted and stored in the background; the user is never
+/// blocked on the LLM call. Errors are logged at debug level.
 pub fn extract_lessons_detached(
 	messages: Vec<crate::session::Message>,
 	config: Config,
@@ -301,77 +292,16 @@ pub fn extract_lessons_detached(
 	session_name: String,
 ) {
 	tokio::spawn(async move {
-		let learning = &config.learning;
-		if !learning.enabled {
-			return;
-		}
-
-		let backend = create_backend(learning);
-		let existing = backend
-			.retrieve_all(&role, &project, &config)
-			.await
-			.unwrap_or_default();
-
-		let existing_text = if existing.is_empty() {
-			"(none)".to_string()
-		} else {
-			existing
-				.iter()
-				.map(|l| format!("- [{}] {}", l.confidence, l.content))
-				.collect::<Vec<_>>()
-				.join("\n")
-		};
-
-		let transcript = build_transcript(&messages);
-		if transcript.is_empty() {
-			return;
-		}
-
-		let system = EXTRACTION_SYSTEM_PROMPT.replace("{existing_lessons}", &existing_text);
-
-		// Call LLM without ChatSession — no cost tracking on exit
-		let response =
-			match call_learning_llm_detached(&config, &learning.model, system, transcript).await {
-				Ok(r) => r,
-				Err(e) => {
-					crate::log_debug!("Learning detached extraction failed: {}", e);
-					return;
-				}
-			};
-
-		// Gate: check decision
-		if !response.contains("<decision>LEARN</decision>") {
-			crate::log_debug!("Learning detached: model decided NONE");
-			return;
-		}
-
-		let lessons = parse_lesson_tags(&response, &role, &project, &session_name);
-		for lesson in &lessons {
-			if is_duplicate(&lesson.content, &existing) {
-				crate::log_debug!("Learning detached skipped (duplicate): {}", lesson.content);
-				continue;
-			}
-			if let Err(e) = backend.store(lesson, &config).await {
-				crate::log_debug!("Learning detached store failed: {}", e);
-			} else {
-				crate::log_debug!(
-					"Learning detached stored: [{}] {}",
-					lesson.confidence,
-					lesson.content
-				);
-			}
-		}
-		if !lessons.is_empty() {
-			crate::log_debug!(
-				"Learning detached: {} lessons extracted on exit",
-				lessons.len()
-			);
+		match run_extraction(&messages, &config, &role, &project, &session_name).await {
+			Ok(0) => crate::log_debug!("Learning detached: no lessons extracted"),
+			Ok(n) => crate::log_debug!("Learning detached: {} lessons extracted", n),
+			Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
 		}
 	});
 }
 
-/// LLM call without ChatSession reference — for detached/fire-and-forget extraction.
-async fn call_learning_llm_detached(
+/// LLM call for lesson extraction — no `ChatSession` reference, no cost tracking.
+async fn call_extraction_llm(
 	config: &Config,
 	model: &str,
 	system_content: String,

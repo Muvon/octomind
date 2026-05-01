@@ -26,7 +26,6 @@ pub async fn handle_done(
 	config: &Config,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(bool, bool)> {
-	let learning_rx = operation_cancelled.clone();
 	let compressed =
 		match crate::session::chat::conversation_compression::check_and_compress_conversation(
 			session,
@@ -52,36 +51,24 @@ pub async fn handle_done(
 
 	crate::log_debug!("/done: compression={}", compressed);
 
-	// Extract and store lessons (always on /done, regardless of compression result)
+	// Fire-and-forget lesson extraction — do NOT block the prompt on the LLM round-trip.
+	// Same pattern as /exit and Ctrl+D in main_loop.rs.
 	if config.learning.enabled {
 		let role = crate::config::get_thread_role().unwrap_or_default();
-		let project = session
-			.session
-			.info
-			.name
-			.split('-')
-			.nth(2)
-			.unwrap_or("unknown")
-			.to_string();
-		match crate::learning::extract::extract_and_store_lessons(
-			session,
-			config,
-			&role,
-			&project,
-			learning_rx,
-		)
-		.await
-		{
-			Ok(0) => crate::log_debug!("/done: no new lessons extracted"),
-			Ok(n) => println!(
-				"{}",
-				format!("📝 {} lesson{} learned", n, if n > 1 { "s" } else { "" }).bright_cyan()
-			),
-			Err(e) => crate::log_debug!("/done: lesson extraction failed: {}", e),
-		}
-		// Mark as extracted so exit doesn't double-extract
+		let project = std::env::current_dir()
+			.ok()
+			.and_then(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+			.unwrap_or_else(|| "unknown".to_string());
+		crate::learning::extract::extract_lessons_detached(
+			session.session.messages.clone(),
+			config.clone(),
+			role,
+			project,
+			session.session.info.name.clone(),
+		);
+		// Mark as extracted so /exit and Ctrl+D don't double-extract.
 		session.learning_extracted = true;
-		// Reset so next user message triggers fresh injection with new query
+		// Reset so next user message triggers fresh injection with new query.
 		session.learning_injected = false;
 	}
 

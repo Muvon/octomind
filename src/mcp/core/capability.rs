@@ -364,14 +364,11 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	// we'd exceed `MAX_ACTIVE_CAPS`. No-op when below the cap.
 	evict_lru_if_full(config);
 
-	let filter_tools: Option<Vec<String>> = if resolved.allowed_tools.is_empty() {
-		None
-	} else {
-		Some(resolved.allowed_tools.clone())
-	};
-
 	let mut activated_tools: Vec<String> = Vec::new();
 	let mut activated_servers: Vec<String> = Vec::new();
+	// Track whether *any* server activation passed a non-empty filter, so
+	// the success message can distinguish "all-tools" from "filter-applied".
+	let mut any_filter_applied = false;
 
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
@@ -389,7 +386,21 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			}
 		}
 
-		match crate::mcp::core::dynamic::enable_server(&server_name, filter_tools.clone()).await {
+		// Compute the filter for *this* server. `allowed_tools` patterns in
+		// capability TOMLs are namespace-prefixed (e.g., `playwright:*`,
+		// `playwright:browser_navigate`) so a single capability config can
+		// scope tools across multiple MCP servers. But `enable_server`
+		// matches against the *bare* tool names returned by the server
+		// (e.g., `browser_navigate`, not `playwright:browser_navigate`),
+		// so we strip the `<server>:` prefix here. Patterns for *other*
+		// servers in the same cap are dropped for this server. Patterns
+		// without any namespace apply to every server.
+		let filter_for_this = filter_for_server(&resolved.allowed_tools, &server_name);
+		if filter_for_this.is_some() {
+			any_filter_applied = true;
+		}
+
+		match crate::mcp::core::dynamic::enable_server(&server_name, filter_for_this).await {
 			Ok(functions) => {
 				activated_tools.extend(functions.iter().map(|f| f.name.clone()));
 				activated_servers.push(server_name);
@@ -412,11 +423,11 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	// hasn't completed its tool-list handshake yet (e.g., Playwright MCP
 	// initializes lazily). Saying "none" makes the agent disable the
 	// server it just activated. Distinguish the three cases explicitly.
-	let tools_summary = if filter_tools.is_none() {
-		"all tools the server exposes (list populates on first use if empty now)"
-			.to_string()
+	let tools_summary = if !any_filter_applied {
+		"all tools the server exposes (list populates on first use if empty now)".to_string()
 	} else if activated_tools.is_empty() {
-		"none — the configured allowed_tools filter excluded every tool the server reported".to_string()
+		"none — the configured allowed_tools filter excluded every tool the server reported"
+			.to_string()
 	} else {
 		activated_tools.join(", ")
 	};
@@ -681,6 +692,47 @@ pub async fn auto_activate_capabilities(
 	}
 }
 
+/// Translate capability `allowed_tools` patterns into the bare-name
+/// patterns `enable_server` expects, for one server.
+///
+/// Capability TOMLs use a namespaced convention (`<server>:<tool>` or
+/// `<server>:*`) so a single capability config can scope tools across
+/// multiple MCP servers. The actual tool names returned by an MCP
+/// server are bare (`browser_navigate`, not `playwright:browser_navigate`),
+/// so we strip the prefix here. Rules:
+///
+/// - `<server_name>:<rest>` → `<rest>` (applies to this server)
+/// - `<other>:<...>` → dropped (pattern is for a different server)
+/// - `<bare_name_or_glob>` → unchanged (applies to all servers in cap)
+///
+/// Returns `None` when the input list is empty (no filter ⇒ all tools)
+/// or all patterns are scoped to other servers (also "no filter for me",
+/// expose all). Returns `Some(...)` only when at least one pattern
+/// genuinely scopes this server.
+fn filter_for_server(allowed_tools: &[String], server_name: &str) -> Option<Vec<String>> {
+	if allowed_tools.is_empty() {
+		return None;
+	}
+	let prefix = format!("{server_name}:");
+	let kept: Vec<String> = allowed_tools
+		.iter()
+		.filter_map(|p| {
+			if let Some(rest) = p.strip_prefix(&prefix) {
+				Some(rest.to_string())
+			} else if p.contains(':') {
+				None
+			} else {
+				Some(p.clone())
+			}
+		})
+		.collect();
+	if kept.is_empty() {
+		None
+	} else {
+		Some(kept)
+	}
+}
+
 /// Register + enable a capability's MCP servers and mark the capability
 /// active. Mirrors `handle_enable`'s logic minus the `McpToolResult`
 /// wrapping — errors propagate as `anyhow::Error` for the caller to log
@@ -707,18 +759,16 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 	// we'd exceed `MAX_ACTIVE_CAPS`. No-op when below the cap.
 	evict_lru_if_full(config);
 
-	let filter_tools: Option<Vec<String>> = if resolved.allowed_tools.is_empty() {
-		None
-	} else {
-		Some(resolved.allowed_tools.clone())
-	};
 	let mut activated_servers: Vec<String> = Vec::new();
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
 		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
 			crate::mcp::core::dynamic::register_server(server.clone())?;
 		}
-		crate::mcp::core::dynamic::enable_server(&server_name, filter_tools.clone()).await?;
+		// Per-server bare-name filter (strips `<server>:` namespace from
+		// capability `allowed_tools` patterns; see `filter_for_server`).
+		let filter = filter_for_server(&resolved.allowed_tools, &server_name);
+		crate::mcp::core::dynamic::enable_server(&server_name, filter).await?;
 		activated_servers.push(server_name);
 	}
 	mark_active(name, activated_servers.clone());
@@ -882,6 +932,69 @@ mod tests {
 		assert!(is_active(cap));
 		mark_inactive(cap);
 		assert!(!is_active(cap));
+	}
+
+	// --------------------------------------------------------------------
+	// filter_for_server — translates capability `allowed_tools` patterns
+	// (namespaced) into the bare-name patterns enable_server expects.
+	// --------------------------------------------------------------------
+
+	#[test]
+	fn filter_for_server_empty_input_returns_none() {
+		assert!(filter_for_server(&[], "playwright").is_none());
+	}
+
+	#[test]
+	fn filter_for_server_strips_matching_namespace_prefix() {
+		// `playwright:*` → `*` for the playwright server.
+		let patterns = vec!["playwright:*".to_string()];
+		let f = filter_for_server(&patterns, "playwright").expect("should produce a filter");
+		assert_eq!(f, vec!["*".to_string()]);
+	}
+
+	#[test]
+	fn filter_for_server_strips_specific_tool_namespace() {
+		let patterns = vec![
+			"playwright:browser_navigate".to_string(),
+			"playwright:browser_click".to_string(),
+		];
+		let f = filter_for_server(&patterns, "playwright").expect("should produce a filter");
+		assert_eq!(
+			f,
+			vec!["browser_navigate".to_string(), "browser_click".to_string()]
+		);
+	}
+
+	#[test]
+	fn filter_for_server_drops_other_servers_namespaced_patterns() {
+		// Patterns scoped to `octoweb:*` shouldn't apply when enabling
+		// `playwright`. With nothing scoped to playwright, no filter.
+		let patterns = vec!["octoweb:*".to_string()];
+		assert!(filter_for_server(&patterns, "playwright").is_none());
+	}
+
+	#[test]
+	fn filter_for_server_keeps_unnamespaced_patterns_for_all_servers() {
+		// A bare pattern (no `:`) applies to every server in the cap.
+		let patterns = vec!["browser_*".to_string()];
+		let f = filter_for_server(&patterns, "playwright").expect("bare pattern applies");
+		assert_eq!(f, vec!["browser_*".to_string()]);
+	}
+
+	#[test]
+	fn filter_for_server_mixed_patterns_only_keeps_relevant_ones() {
+		// Mixed: own namespace + foreign namespace + bare. Result for
+		// `playwright`: own (stripped) + bare; foreign dropped.
+		let patterns = vec![
+			"playwright:browser_navigate".to_string(),
+			"octoweb:fetch".to_string(),
+			"shared_tool".to_string(),
+		];
+		let f = filter_for_server(&patterns, "playwright").expect("filter applies");
+		assert_eq!(
+			f,
+			vec!["browser_navigate".to_string(), "shared_tool".to_string()]
+		);
 	}
 
 	#[test]

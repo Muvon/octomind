@@ -154,10 +154,20 @@ jobs:
         unzip -q /tmp/ort.zip -d /tmp/ort
         echo "ORT_LIB_LOCATION=/tmp/ort/${ORT_ASSET}/lib" >> "$GITHUB_ENV"
 
-    - name: Run tests
+    - name: Download ONNX Runtime static library (Windows)
+      if: runner.os == 'Windows'
       shell: bash
       run: |
-        cargo test --verbose
+        ORT_VERSION="1.24.2"
+        ORT_ASSET="onnxruntime-win-x64-static_lib-MD-Release-${ORT_VERSION}"
+        curl -sL "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v${ORT_VERSION}/${ORT_ASSET}.tar.bz2" -o /tmp/ort.tar.bz2
+        mkdir -p /tmp/ort
+        tar -xjf /tmp/ort.tar.bz2 -C /tmp/ort
+        echo "ORT_LIB_LOCATION=/tmp/ort/${ORT_ASSET}/lib" >> "$GITHUB_ENV"
+
+    - name: Run tests
+      shell: bash
+      run: cargo test --verbose
 
   musl-build:
     name: Musl Build (x86_64 + aarch64)
@@ -195,8 +205,8 @@ jobs:
 
     - name: Build in Alpine (mirrors release pipeline)
       run: |
-        # Pre-create on host so the volume mount dir exists with correct permissions
         mkdir -p onnxruntime-static/lib
+        chmod -R 777 onnxruntime-static
 
         docker run --rm \
           -v "$(pwd):/workspace" \
@@ -249,6 +259,7 @@ jobs:
                   onnxruntime_BUILD_UNIT_TESTS=OFF \
                   onnxruntime_BUILD_SHARED_LIB=OFF
               find build/Release -name "*.a" -exec cp -v {} "$ORT_LIB_LOCATION/" \;
+              cd /workspace
               rm -rf /tmp/onnxruntime
             else
               echo "==> Using cached ONNX Runtime static build"

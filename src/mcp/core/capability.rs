@@ -406,15 +406,26 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 
 	mark_active(&name, activated_servers.clone());
 
+	// Don't mislead the LLM with "Tools available: none" when no filter
+	// was applied — that path means "expose all server tools", and an
+	// empty function list at activation time can simply mean the server
+	// hasn't completed its tool-list handshake yet (e.g., Playwright MCP
+	// initializes lazily). Saying "none" makes the agent disable the
+	// server it just activated. Distinguish the three cases explicitly.
+	let tools_summary = if filter_tools.is_none() {
+		"all tools the server exposes (list populates on first use if empty now)"
+			.to_string()
+	} else if activated_tools.is_empty() {
+		"none — the configured allowed_tools filter excluded every tool the server reported".to_string()
+	} else {
+		activated_tools.join(", ")
+	};
+
 	let msg = format!(
 		"Capability '{name}' enabled. Activated {} server(s): {}\nTools available: {}",
 		activated_servers.len(),
 		activated_servers.join(", "),
-		if activated_tools.is_empty() {
-			"none".to_string()
-		} else {
-			activated_tools.join(", ")
-		}
+		tools_summary
 	);
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),

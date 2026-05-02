@@ -236,7 +236,10 @@ jobs:
 
               ORT_SRC=/workspace/onnxruntime-src
               ORT_LIB_LOCATION="$ORT_SRC/build/Release"
-              if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime_common.a" ]; then
+              # Check libre2.a (not libonnxruntime_common.a) — re2 is built late in the process,
+              # so its presence confirms the build completed fully. A partial build may have
+              # libonnxruntime_common.a but be missing re2/abseil/protobuf, causing link failure.
+              if [ ! -f "$ORT_LIB_LOCATION/_deps/re2-build/libre2.a" ]; then
                 echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
                 rm -rf "$ORT_SRC"
                 git clone --single-branch --branch v1.24.2 --recursive \

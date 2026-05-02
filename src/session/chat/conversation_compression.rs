@@ -1373,10 +1373,35 @@ async fn call_ai_for_decision(
 	Ok(response.content)
 }
 
+/// Minimum acceptable length (after trim + knowledge-tag strip) for a compression summary.
+///
+/// A 200-OK response from the AI is no guarantee the body is usable. The model can
+/// return:
+/// - bare `"YES"` with no summary line,
+/// - `"YES\n<knowledge>...</knowledge>"` (knowledge stripped → empty),
+/// - `force=true` response that is ONLY knowledge tags (also strips to empty),
+/// - whitespace, a stray punctuation, or other near-empty noise.
+///
+/// If we accept any of those, `apply_compression` would drain dozens of messages and
+/// insert a header-only "## Conversation Summary" block — wiping the entire context.
+/// This guard refuses to compress in that case so the caller sets a cooldown and the
+/// session keeps its real history.
+const MIN_SUMMARY_LEN: usize = 20;
+
+/// True if a candidate summary is substantive enough to replace compressed messages.
+fn is_summary_valid(summary: &str) -> bool {
+	summary.trim().chars().count() >= MIN_SUMMARY_LEN
+}
+
 /// Parse the AI response into a compression decision and optional summary text.
 ///
 /// `force=true`: entire response is the summary (no YES/NO gate).
 /// `force=false`: first line must be YES to proceed; NO means skip compression.
+///
+/// SAFETY: A response that yields a too-short summary (after trim + knowledge-tag
+/// strip) is treated as a compression failure and returns `(false, "")` — even on
+/// the `force` path. Better to skip compression than to wipe the conversation with
+/// an empty summary. See `MIN_SUMMARY_LEN`.
 fn parse_ai_response(
 	session: &mut ChatSession,
 	config: &Config,
@@ -1402,6 +1427,13 @@ fn parse_ai_response(
 	if force {
 		// Entire response is the summary — no YES/NO prefix expected.
 		let summary = strip_knowledge_tags(content);
+		if !is_summary_valid(&summary) {
+			log_info!(
+				"Compression aborted: AI returned too-short summary ({} chars, force=true). Skipping compression to avoid context loss.",
+				summary.trim().chars().count()
+			);
+			return Ok((false, String::new()));
+		}
 		log_debug!("AI forced compression summary ({} chars)", summary.len());
 		return Ok((true, summary));
 	}
@@ -1416,6 +1448,13 @@ fn parse_ai_response(
 		} else {
 			String::new()
 		};
+		if !is_summary_valid(&summary) {
+			log_info!(
+				"Compression aborted: AI said YES but summary is too short ({} chars). Skipping compression to avoid context loss.",
+				summary.trim().chars().count()
+			);
+			return Ok((false, String::new()));
+		}
 		log_debug!(
 			"AI compression decision: YES with summary ({} chars)",
 			summary.len()
@@ -2014,7 +2053,8 @@ fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usiz
 #[cfg(test)]
 mod tests {
 	use super::{
-		collect_preserved_skills, find_compression_range, strip_file_context_from_summary,
+		collect_preserved_skills, find_compression_range, format_compressed_entry_with_context,
+		is_summary_valid, strip_file_context_from_summary, strip_knowledge_tags, MIN_SUMMARY_LEN,
 	};
 	use crate::session::Message;
 	use serde_json::json;
@@ -4030,5 +4070,110 @@ mod tests {
 			"'knowledge' key must not be present — persistence reads 'content'"
 		);
 		assert_eq!(entry["content"].as_str().unwrap(), "test knowledge");
+	}
+
+	// ───────────────────────────────────────────────────────────────────────
+	// Empty-summary safety guard
+	//
+	// Background: AI responses can pass HTTP-200 yet yield a useless summary —
+	// `"YES"` with no second line, `"YES\n<knowledge>...</knowledge>"` (knowledge
+	// stripped → empty), or whitespace. Without a guard, `apply_compression`
+	// drains all messages and replaces them with a header-only summary block.
+	// `is_summary_valid` is the gate that prevents catastrophic context loss.
+	// ───────────────────────────────────────────────────────────────────────
+
+	#[test]
+	fn is_summary_valid_rejects_empty_string() {
+		assert!(!is_summary_valid(""));
+	}
+
+	#[test]
+	fn is_summary_valid_rejects_whitespace_only() {
+		assert!(!is_summary_valid("   \n\t  "));
+	}
+
+	#[test]
+	fn is_summary_valid_rejects_below_min_length() {
+		// 19 chars = below the 20-char floor
+		let short = "a".repeat(MIN_SUMMARY_LEN - 1);
+		assert!(!is_summary_valid(&short));
+	}
+
+	#[test]
+	fn is_summary_valid_accepts_at_min_length() {
+		let exact = "a".repeat(MIN_SUMMARY_LEN);
+		assert!(is_summary_valid(&exact));
+	}
+
+	#[test]
+	fn is_summary_valid_accepts_real_summary() {
+		assert!(is_summary_valid(
+			"User asked about config loading, AI explained the merge order."
+		));
+	}
+
+	#[test]
+	fn is_summary_valid_counts_after_trim() {
+		// Padded with whitespace but inner content is below the floor.
+		let padded = format!("   {}   ", "a".repeat(MIN_SUMMARY_LEN - 1));
+		assert!(!is_summary_valid(&padded));
+	}
+
+	#[test]
+	fn is_summary_valid_counts_chars_not_bytes() {
+		// 20 multibyte chars — bytes would be 60 (each emoji is 4 bytes), but
+		// we count characters so this is exactly at the boundary.
+		let unicode = "🎯".repeat(MIN_SUMMARY_LEN);
+		assert!(is_summary_valid(&unicode));
+	}
+
+	#[test]
+	fn knowledge_only_response_strips_to_empty() {
+		// Regression: AI response that is ONLY knowledge tags must strip to a
+		// summary that fails validation — guarding against the force-path bug
+		// where such input would have produced a header-only "summary".
+		let content = "<knowledge>some critical fact</knowledge>";
+		let stripped = strip_knowledge_tags(content);
+		assert!(
+			!is_summary_valid(&stripped),
+			"knowledge-only content must not produce a valid summary (got: {:?})",
+			stripped
+		);
+	}
+
+	#[test]
+	fn yes_with_knowledge_only_strips_to_empty() {
+		// Regression: `"YES\n<knowledge>...</knowledge>"` after split + strip
+		// yields an empty summary — must fail validation.
+		let after_yes_line = "<knowledge>fact A</knowledge>\n<knowledge>fact B</knowledge>";
+		let stripped = strip_knowledge_tags(after_yes_line);
+		assert!(
+			!is_summary_valid(&stripped),
+			"YES + knowledge-only must not produce a valid summary (got: {:?})",
+			stripped
+		);
+	}
+
+	#[test]
+	fn empty_summary_in_format_produces_header_only_block() {
+		// PROOF that the bug is real: without the validator, this is exactly
+		// what `apply_compression` would write back into the conversation
+		// after draining 50+ messages. The test exists as a permanent record
+		// of why `is_summary_valid` must gate every code path that calls
+		// `format_compressed_entry_with_context`.
+		let formatted = format_compressed_entry_with_context("", "", "test-id".to_string());
+		assert!(
+			formatted.contains("## Conversation Summary [COMPRESSED: test-id]"),
+			"header always present"
+		);
+		// Body after the header is just the section join (empty) → trailing whitespace only.
+		let body = formatted
+			.trim_start_matches("## Conversation Summary [COMPRESSED: test-id]")
+			.trim();
+		assert!(
+			body.is_empty(),
+			"empty summary produces header-only block (proves catastrophic loss path); got body: {:?}",
+			body
+		);
 	}
 }

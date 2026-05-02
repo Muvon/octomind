@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://octomind.run" target="_blank">
-    <img src="doc/assets/banner.png" width="720" alt="Octomind — AI Agent Runtime" />
+    <img src="assets/logo.svg" width="640" alt="Octomind — AI Agent Runtime" />
   </a>
   <br /><br />
   <strong>Specialist AI agents with cost guardrails and sessions that don't break at hour 4.</strong><br />

@@ -20,3 +20,7 @@ Thumbs.db
 .env
 .env.local
 /.marketing
+
+# Local design/branding exploration (canonical assets live in assets/)
+/branding
+/scripts

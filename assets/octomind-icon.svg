@@ -1,0 +1,34 @@
+<svg width="480" height="480" viewBox="0 0 480 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_3097_172)">
+<path d="M45 255H15V285H45V255Z" fill="#A855F7"/>
+<path d="M45 135H15V165H45V135Z" fill="#A855F7"/>
+<path d="M135 75H105V105H135V75Z" fill="#C084FC"/>
+<path d="M315 75H285V105H315V75Z" fill="#C084FC"/>
+<path d="M195 75H105V105H195V75Z" fill="#A855F7"/>
+<path d="M375 75H285V105H375V75Z" fill="#A855F7"/>
+<path d="M405 105H75V135H405V105Z" fill="#A855F7"/>
+<path d="M405 135H75V165H405V135Z" fill="#A855F7"/>
+<path d="M465 165H15V195H465V165Z" fill="#A855F7"/>
+<path d="M405 195H75V225H405V195Z" fill="#A855F7"/>
+<path d="M465 225H15V255H465V225Z" fill="#A855F7"/>
+<path d="M405 255H75V285H405V255Z" fill="#A855F7"/>
+<path d="M105 285H75V345H105V285Z" fill="#A855F7"/>
+<path d="M75 315H15V345H75V315Z" fill="#A855F7"/>
+<path d="M405 285H375V345H405V285Z" fill="#A855F7"/>
+<path d="M465 315H405V345H465V315Z" fill="#A855F7"/>
+<path d="M345 315H315V345H345V315Z" fill="#A855F7"/>
+<path d="M465 255H435V285H465V255Z" fill="#A855F7"/>
+<path d="M165 315H135V345H165V315Z" fill="#A855F7"/>
+<path d="M195 285H165V345H195V285Z" fill="#A855F7"/>
+<path d="M315 285H285V345H315V285Z" fill="#A855F7"/>
+<path d="M255 105H225V285H255V105Z" fill="#C084FC"/>
+<path d="M165 165H135V195H165V165Z" fill="#22D3EE"/>
+<path d="M345 165H315V195H345V165Z" fill="#22D3EE"/>
+<path d="M465 135H435V165H465V135Z" fill="#A855F7"/>
+</g>
+<defs>
+<clipPath id="clip0_3097_172">
+<rect width="480" height="480" fill="white"/>
+</clipPath>
+</defs>
+</svg>

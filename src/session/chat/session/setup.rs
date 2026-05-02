@@ -70,21 +70,7 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 )> {
 	use indicatif::{ProgressBar, ProgressStyle};
 
-	// Show loading spinner in interactive mode
-	let spinner = if std::io::stdin().is_terminal() {
-		let sp = ProgressBar::new_spinner();
-		sp.set_style(
-			ProgressStyle::default_spinner()
-				.template(" {spinner:.cyan} {msg:.cyan}")
-				.unwrap()
-				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
-		);
-		sp.set_message("Starting session...");
-		sp.enable_steady_tick(Duration::from_millis(80));
-		Some(sp)
-	} else {
-		None
-	};
+	let is_interactive = std::io::stdin().is_terminal();
 
 	// Extract session parameters
 	let (
@@ -121,6 +107,37 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 		.as_deref()
 		.or(role_config.model.as_deref())
 		.unwrap_or(&config.model);
+
+	// Print startup banner before the spinner so the icon stays visible above the
+	// transient spinner line. Interactive TTY + plain output mode only.
+	let banner_printed = is_interactive
+		&& !crate::session::output::OutputMode::from_runtime_mode(&output_mode)
+			.should_suppress_cli_output();
+	if banner_printed {
+		let cwd = crate::mcp::get_thread_working_directory();
+		let extra = vec![
+			format!("{}", display_random_tip().bright_yellow()),
+			format!("{}", "? for shortcuts • /help for commands".bright_black()),
+		];
+		crate::branding::print_startup_banner(&role, effective_model, &cwd, &extra);
+	}
+
+	// Show loading spinner in interactive mode
+	let spinner = if is_interactive {
+		let sp = ProgressBar::new_spinner();
+		sp.set_style(
+			ProgressStyle::default_spinner()
+				.template(" {spinner:.cyan} {msg:.cyan}")
+				.unwrap()
+				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
+		);
+		sp.set_message("Starting session...");
+		sp.enable_steady_tick(Duration::from_millis(80));
+		Some(sp)
+	} else {
+		None
+	};
+
 	if let Err(e) = validate_provider_credentials(effective_model) {
 		if let Some(sp) = spinner {
 			sp.finish_and_clear();
@@ -226,10 +243,11 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 		ChatSession::initialize(session_params).await?
 	};
 
-	// Display initial status line for new sessions (not resumed) - skip in structured output modes
+	// Tip + shortcuts line are shown inline next to the icon as part of
+	// `print_startup_banner` above; suppress the duplicate here.
 	let suppress = crate::session::output::OutputMode::from_runtime_mode(&output_mode_for_check)
 		.should_suppress_cli_output();
-	if !chat_session.was_resumed && !suppress {
+	if !chat_session.was_resumed && !suppress && !banner_printed {
 		if let Some(ref sp) = spinner {
 			sp.println(format!("{}", display_random_tip().bright_yellow()));
 			sp.println(format!(
@@ -240,6 +258,8 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 			println!("{}", display_random_tip().bright_yellow());
 			println!("{}", "? for shortcuts • /help for commands".bright_black());
 		}
+		chat_session.initial_status_shown = true;
+	} else if banner_printed && !chat_session.was_resumed {
 		chat_session.initial_status_shown = true;
 	}
 

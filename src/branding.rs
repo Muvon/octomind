@@ -61,6 +61,22 @@ fn rasterize() -> Box<[[Cell; ICON_SIZE]; ICON_SIZE]> {
 		let (xa, xb) = (x1.min(x2), x1.max(x2));
 		let (ya, yb) = (y1.min(y2), y1.max(y2));
 
+		// Snap rect bounds to nearest cell-center positions (15 + 30k).
+		// The SVG is hand-authored with occasional ±3px nudges (e.g. 168/198
+		// instead of 165/195) that don't align to the 30px design grid. Those
+		// stray pixels make a 1-cell-wide rect rasterize to the wrong cell —
+		// breaking left/right symmetry of the icon's legs. Snapping pulls every
+		// rect onto the design grid before center-sampling, so the symmetric
+		// SVG renders symmetrically in the terminal.
+		let snap = |v: i32| -> i32 {
+			let k = (v - HALF).div_euclid(CELL);
+			let rem = (v - HALF).rem_euclid(CELL);
+			let kk = if rem * 2 >= CELL { k + 1 } else { k };
+			kk * CELL + HALF
+		};
+		let (xa, xb) = (snap(xa), snap(xb));
+		let (ya, yb) = (snap(ya), snap(yb));
+
 		// Paint cells whose centers fall inside [xa, xb) × [ya, yb).
 		// Half-open interval mirrors how the SVG's overlapping rects compose
 		// (each 30px feature → exactly one 16-grid cell, no edge bleed).

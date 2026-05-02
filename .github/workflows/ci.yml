@@ -144,6 +144,11 @@ jobs:
           ${{ runner.os }}-${{ matrix.rust }}-cargo-
           ${{ runner.os }}-cargo-
 
+    # Linux: csukuangfj ships a single bundled libonnxruntime.a — ort-sys's
+    # single-file shortcut links it directly. Just point ORT_LIB_LOCATION at
+    # the extracted lib/ dir.
+    # Windows MSVC: nothing to do — ort-sys's download-binaries feature pulls
+    # pyke's prebuilts automatically when ORT_LIB_LOCATION is unset.
     - name: Download ONNX Runtime static library (Linux)
       if: runner.os == 'Linux'
       shell: bash
@@ -153,18 +158,6 @@ jobs:
         curl -sL "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v${ORT_VERSION}/${ORT_ASSET}.zip" -o /tmp/ort.zip
         unzip -q /tmp/ort.zip -d /tmp/ort
         echo "ORT_LIB_LOCATION=/tmp/ort/${ORT_ASSET}/lib" >> "$GITHUB_ENV"
-
-    - name: Download ONNX Runtime static library (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        $ORT_VERSION = "1.24.2"
-        $ORT_ASSET = "onnxruntime-win-x64-static_lib-MD-Release-$ORT_VERSION"
-        $ORT_DIR = "C:\ort"
-        New-Item -ItemType Directory -Force -Path $ORT_DIR | Out-Null
-        Invoke-WebRequest -Uri "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/$ORT_ASSET.tar.bz2" -OutFile "$ORT_DIR\ort.tar.bz2"
-        tar -xjf "$ORT_DIR\ort.tar.bz2" -C $ORT_DIR
-        echo "ORT_LIB_LOCATION=$ORT_DIR\$ORT_ASSET\lib" >> $env:GITHUB_ENV
 
     - name: Run tests
       shell: bash
@@ -186,12 +179,15 @@ jobs:
       uses: actions/checkout@v4
 
     # Cache the static ONNX Runtime build (45–60 min cold) between runs.
+    # Cache the full source+build tree because ort-sys's full static-link
+    # branch needs to walk build/_deps/ for re2, abseil, protobuf, etc.
+    # Flattening the .a files into one dir breaks linking.
     # Keyed by ORT version + target so a version bump invalidates correctly.
     - name: Cache ONNX Runtime static build
       uses: actions/cache@v4
       with:
-        path: onnxruntime-static
-        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v2
+        path: onnxruntime-src
+        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v3
 
     - name: Cache cargo registry and target
       uses: actions/cache@v4
@@ -206,8 +202,10 @@ jobs:
 
     - name: Build in Alpine (mirrors release pipeline)
       run: |
-        mkdir -p onnxruntime-static/lib
-        chmod -R 777 onnxruntime-static
+        # Pre-create the cache dir on the host so Docker volume-mount inherits
+        # writable permissions.
+        mkdir -p onnxruntime-src
+        chmod -R 777 onnxruntime-src
 
         docker run --rm \
           --user 0:0 \
@@ -239,13 +237,14 @@ jobs:
 
             rustup target add ${{ matrix.target }}
 
-            ORT_LIB_LOCATION="/workspace/onnxruntime-static/lib"
-            if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
+            ORT_SRC=/workspace/onnxruntime-src
+            ORT_LIB_LOCATION="$ORT_SRC/build/Release"
+            if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime_common.a" ]; then
               echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
-              rm -rf /tmp/onnxruntime
+              rm -rf "$ORT_SRC"
               git clone --single-branch --branch v1.24.2 --recursive \
-                https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime
-              cd /tmp/onnxruntime
+                https://github.com/microsoft/onnxruntime.git "$ORT_SRC"
+              cd "$ORT_SRC"
               ./build.sh \
                 --config Release \
                 --build_dir build \
@@ -261,13 +260,14 @@ jobs:
                   onnxruntime_BUILD_UNIT_TESTS=OFF \
                   onnxruntime_BUILD_SHARED_LIB=OFF \
                   onnxruntime_USE_KLEIDIAI=OFF
-              find build/Release -name "*.a" -exec cp -v {} "$ORT_LIB_LOCATION/" \;
               cd /workspace
-              rm -rf /tmp/onnxruntime
             else
               echo "==> Using cached ONNX Runtime static build"
             fi
 
+            # ort-sys layout: lib_dir = $ORT_LIB_LOCATION (build/Release),
+            # external _deps = lib_dir.parent()/_deps (build/_deps). Matches
+            # the third static_config in ort-sys/build/static_link/mod.rs.
             export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
             cargo build --target ${{ matrix.target }}
           '

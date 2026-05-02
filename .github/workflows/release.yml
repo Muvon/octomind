@@ -180,13 +180,15 @@ jobs:
           ${{ endsWith(matrix.target, '-unknown-linux-musl') && 'docker-alpine' || runner.os }}-cargo-
 
     # Cache the static ONNX Runtime build for musl targets so we don't rebuild
-    # (45–60 min) on every CI run. Keyed by ORT version + target.
+    # (45–60 min) on every CI run. Cache full source+build tree because
+    # ort-sys's full static-link branch needs build/_deps/ subtrees for
+    # re2/abseil/protobuf/etc.
     - name: Cache ONNX Runtime static build (musl)
       if: endsWith(matrix.target, '-unknown-linux-musl')
       uses: actions/cache@v4
       with:
-        path: onnxruntime-static
-        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23
+        path: onnxruntime-src
+        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v2
 
     - name: Build binary
       shell: sh
@@ -198,10 +200,9 @@ jobs:
           # prebuilts, so this is the only supported path. ORT 1.24.2 matches
           # ort-sys 2.0.0-rc.12 / fastembed's api-24 feature.
           #
-          # Pre-create the output directory on the host so the Docker mount
-          # already has it — avoids "Permission denied" on some ARM runners
-          # where the volume mount has restrictive permissions.
-          mkdir -p onnxruntime-static/lib
+          # Pre-create the cache dir on the host so Docker volume-mount
+          # inherits writable permissions.
+          mkdir -p onnxruntime-src
 
           docker run --rm \
             -v "$(pwd):/workspace" \
@@ -233,15 +234,14 @@ jobs:
 
               rustup target add ${{ matrix.target }}
 
-              ORT_DIR=/workspace/onnxruntime-static
-              ORT_LIB_LOCATION="$ORT_DIR/lib"
-              if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime.a" ]; then
+              ORT_SRC=/workspace/onnxruntime-src
+              ORT_LIB_LOCATION="$ORT_SRC/build/Release"
+              if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime_common.a" ]; then
                 echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
-                rm -rf /tmp/onnxruntime "$ORT_DIR"
-                mkdir -p "$ORT_LIB_LOCATION"
+                rm -rf "$ORT_SRC"
                 git clone --single-branch --branch v1.24.2 --recursive \
-                  https://github.com/microsoft/onnxruntime.git /tmp/onnxruntime
-                cd /tmp/onnxruntime
+                  https://github.com/microsoft/onnxruntime.git "$ORT_SRC"
+                cd "$ORT_SRC"
                 ./build.sh \
                   --config Release \
                   --build_dir build \
@@ -256,15 +256,14 @@ jobs:
                     CMAKE_POSITION_INDEPENDENT_CODE=ON \
                     onnxruntime_BUILD_UNIT_TESTS=OFF \
                     onnxruntime_BUILD_SHARED_LIB=OFF
-                # Collect every static lib produced by the ORT build (ort-sys
-                # walks the directory and links them all).
-                find build/Release -name "*.a" -exec cp -v {} "$ORT_LIB_LOCATION/" \;
                 cd /workspace
-                rm -rf /tmp/onnxruntime
               else
                 echo "==> Using cached ONNX Runtime static build"
               fi
 
+              # ort-sys layout: lib_dir = build/Release, _deps walked from
+              # lib_dir.parent()/_deps. Matches the third static_config in
+              # ort-sys/build/static_link/mod.rs.
               export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
               cargo build --release --target ${{ matrix.target }}
             '

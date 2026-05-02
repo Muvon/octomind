@@ -159,8 +159,14 @@ jobs:
         unzip -q /tmp/ort.zip -d /tmp/ort
         echo "ORT_LIB_LOCATION=/tmp/ort/${ORT_ASSET}/lib" >> "$GITHUB_ENV"
 
+    # Windows: ORT prebuilts (pyke download-binaries) are compiled with /MD
+    # (dynamic CRT). Rust on MSVC defaults to /MT (static CRT), causing
+    # __imp_* unresolved-symbol link errors. Switch to dynamic CRT to match.
+    # vcruntime140.dll is present on all GitHub Windows runners.
     - name: Run tests
       shell: bash
+      env:
+        RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=-crt-static' || '' }}
       run: cargo test --verbose
 
   musl-build:
@@ -238,8 +244,8 @@ jobs:
             rustup target add ${{ matrix.target }}
 
             ORT_SRC=/workspace/onnxruntime-src
-            ORT_LIB_LOCATION="$ORT_SRC/build"
-            if [ ! -f "$ORT_LIB_LOCATION/Release/libonnxruntime_common.a" ]; then
+            ORT_LIB_LOCATION="$ORT_SRC/build/Release"
+            if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime_common.a" ]; then
               echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
               rm -rf "$ORT_SRC"
               git clone --single-branch --branch v1.24.2 --recursive \
@@ -265,9 +271,17 @@ jobs:
               echo "==> Using cached ONNX Runtime static build"
             fi
 
-            # ort-sys static_config #2: ORT_LIB_LOCATION = build dir (parent of Release).
-            # lib_dir = build/Release (has libonnxruntime_common.a)
-            # external_lib_dir = build/Release/_deps (where cmake puts re2, abseil, protobuf, etc.)
+            # ort-sys static_config #1 with empty profile detection.
+            # ORT_LIB_LOCATION = build/Release (where libonnxruntime_common.a lives directly).
+            # Profile detection iterates build/Release/{Release,RelWithDebInfo,...},
+            # none exist → profile="" → transform_dep adds no suffix.
+            # lib_dir = base ✓, external_lib_dir = base/_deps = build/Release/_deps
+            # which is where cmake actually places onnx-build/, re2-build/, abseil_cpp-build/, etc.
+            #
+            # DO NOT use ORT_LIB_LOCATION="$ORT_SRC/build": that triggers profile=Release
+            # detection, which makes transform_dep append /Release to every _deps path,
+            # so search paths land at build/_deps/onnx-build/Release (non-existent) and
+            # linking fails with "could not find native static library 'onnx'".
             export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
             cargo build --target ${{ matrix.target }}
           '

@@ -188,7 +188,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: onnxruntime-src
-        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v2
+        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v4
 
     - name: Build binary
       shell: sh

@@ -31,10 +31,17 @@ pub struct ScheduleEntry {
 	pub trigger_at: DateTime<Local>,
 	/// When this entry was created.
 	pub created_at: DateTime<Local>,
+	/// If set, the entry repeats every this many seconds after firing.
+	pub interval_secs: Option<i64>,
 }
 
 impl ScheduleEntry {
-	pub fn new(description: String, message: String, trigger_at: DateTime<Local>) -> Self {
+	pub fn new(
+		description: String,
+		message: String,
+		trigger_at: DateTime<Local>,
+		interval_secs: Option<i64>,
+	) -> Self {
 		let id = Uuid::new_v4().to_string()[..8].to_string();
 		Self {
 			id,
@@ -42,6 +49,24 @@ impl ScheduleEntry {
 			message,
 			trigger_at,
 			created_at: Local::now(),
+			interval_secs,
+		}
+	}
+
+	/// Create a rescheduled copy of this entry with a new ID and bumped trigger_at.
+	/// Only valid when interval_secs is Some — caller must check before calling.
+	pub fn reschedule(&self) -> Self {
+		let secs = self
+			.interval_secs
+			.expect("reschedule called on non-repeating entry");
+		let id = Uuid::new_v4().to_string()[..8].to_string();
+		Self {
+			id,
+			description: self.description.clone(),
+			message: self.message.clone(),
+			trigger_at: self.trigger_at + Duration::seconds(secs),
+			created_at: Local::now(),
+			interval_secs: self.interval_secs,
 		}
 	}
 
@@ -94,12 +119,14 @@ impl ScheduleStore {
 	}
 
 	/// Edit an existing entry. Only provided fields are updated.
+	/// `interval_secs`: Some(Some(x)) = set interval, Some(None) = clear interval, None = no change.
 	pub fn edit(
 		&mut self,
 		id: &str,
 		description: Option<String>,
 		message: Option<String>,
 		trigger_at: Option<DateTime<Local>>,
+		interval_secs: Option<Option<i64>>,
 	) -> bool {
 		let entry = self.entries.iter_mut().find(|e| e.id == id);
 		match entry {
@@ -113,6 +140,9 @@ impl ScheduleStore {
 				}
 				if let Some(t) = trigger_at {
 					e.trigger_at = t;
+				}
+				if let Some(i) = interval_secs {
+					e.interval_secs = i;
 				}
 				// Re-sort after potential time change.
 				self.entries.sort_by_key(|e| e.trigger_at);
@@ -195,7 +225,7 @@ fn parse_relative(s: &str) -> Result<DateTime<Local>> {
 
 /// Parse a duration string into total seconds.
 /// Accepts: `"5m"`, `"2h"`, `"90s"`, `"1h30m"`, `"2h 30m 10s"` (spaces optional).
-fn parse_duration_secs(s: &str) -> Result<i64> {
+pub(crate) fn parse_duration_secs(s: &str) -> Result<i64> {
 	// Remove spaces so "1h 30m" and "1h30m" both work.
 	let s = s.replace(' ', "");
 	if s.is_empty() {
@@ -396,6 +426,7 @@ mod tests {
 			message: "hello".to_string(),
 			trigger_at: past,
 			created_at: Local::now(),
+			interval_secs: None,
 		};
 		store.add(entry);
 		assert!(store.pop_due().is_some());
@@ -412,6 +443,7 @@ mod tests {
 			message: "hello".to_string(),
 			trigger_at: future,
 			created_at: Local::now(),
+			interval_secs: None,
 		};
 		store.add(entry);
 		assert!(store.pop_due().is_none());
@@ -429,6 +461,7 @@ mod tests {
 			message: "b".to_string(),
 			trigger_at: later,
 			created_at: Local::now(),
+			interval_secs: None,
 		});
 		store.add(ScheduleEntry {
 			id: "soon0001".to_string(),
@@ -436,6 +469,7 @@ mod tests {
 			message: "a".to_string(),
 			trigger_at: sooner,
 			created_at: Local::now(),
+			interval_secs: None,
 		});
 		// First entry should be the sooner one.
 		assert_eq!(store.entries()[0].id, "soon0001");

@@ -14,7 +14,7 @@
 
 //! Core schedule tool: global store, MCP handler, and session-loop helpers.
 
-use super::storage::{parse_when, ScheduleEntry, ScheduleStore};
+use super::storage::{parse_duration_secs, parse_when, ScheduleEntry, ScheduleStore};
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -47,6 +47,15 @@ fn get_store() -> Arc<Mutex<ScheduleStore>> {
 pub fn flush_due_to_inbox() {
 	let store = get_store();
 	while let Some(entry) = store.lock().unwrap().pop_due() {
+		// If this is a repeating entry, re-add it before pushing to inbox.
+		if entry.interval_secs.is_some() {
+			let next = entry.reschedule();
+			store.lock().unwrap().add(next);
+			// Wake the monitor so it recalculates the next sleep duration.
+			if let Some(sid) = crate::session::context::current_session_id() {
+				crate::session::context::notify_schedule_change(&sid);
+			}
+		}
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
 			source: crate::session::inbox::InboxSource::Schedule {
 				id: entry.id.clone(),
@@ -102,18 +111,22 @@ pub fn get_schedule_function() -> McpFunction {
 		name: "schedule".to_string(),
 		description: r#"Schedule a message to be automatically injected as a user message into the current session at a future time. The session keeps running until all scheduled messages have fired — nothing is blocked.
 
-Each scheduled entry fires exactly once and is automatically removed after triggering. To repeat a task, schedule it again.
+One-shot entries fire once and are removed. Repeating entries (set via `every`) re-schedule automatically after each firing — they stay active until explicitly removed.
 
 **commands:**
 - `add`    — schedule a new message (requires `when` and `message`; `description` recommended)
 - `list`   — show all pending scheduled entries with IDs, trigger times, and countdown
 - `remove` — cancel a scheduled entry by `id`
-- `edit`   — update an existing entry by `id` (any of `when`, `message`, `description`)
+- `edit`   — update an existing entry by `id` (any of `when`, `message`, `description`, `every`)
 
 **`when` format** (local timezone):
 - Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`, `"in 2h 30m"`
 - Time today: `"15:30"`, `"3:30pm"`, `"9am"` (if already past, fires tomorrow)
 - Exact datetime: `"2026-03-22 15:30"`
+
+**`every` format** — repeat interval (optional, omit for one-shot):
+- `"10m"`, `"1h"`, `"30s"`, `"1h30m"` — fires first at `when`, then every interval after that
+- To stop a repeating entry use `remove`, or clear the interval with `edit every="none"`
 
 **`description`** — what this task is about (shown in list, helps you track intent).
 
@@ -141,6 +154,10 @@ Each scheduled entry fires exactly once and is automatically removed after trigg
 				"id": {
 					"type": "string",
 					"description": "Entry ID (from list output). Required for remove and edit."
+				},
+				"every": {
+					"type": "string",
+					"description": "Repeat interval — entry re-schedules automatically after each firing. Format: '10m', '1h', '30s', '1h30m'. Omit for one-shot. Use 'none' or 'off' in edit to clear an existing interval."
 				}
 			},
 			"required": ["command"]
@@ -187,6 +204,20 @@ pub async fn execute_schedule_tool(call: &McpToolCall) -> Result<McpToolResult> 
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
+
+/// Format interval_secs as a human-readable string, e.g. "1h 30m", "10m", "45s".
+fn format_interval(secs: i64) -> String {
+	let hours = secs / 3600;
+	let mins = (secs % 3600) / 60;
+	let s = secs % 60;
+	match (hours, mins, s) {
+		(h, m, 0) if h > 0 && m > 0 => format!("{}h {}m", h, m),
+		(h, 0, 0) if h > 0 => format!("{}h", h),
+		(0, m, s) if m > 0 && s > 0 => format!("{}m {}s", m, s),
+		(0, m, 0) if m > 0 => format!("{}m", m),
+		_ => format!("{}s", secs),
+	}
+}
 
 fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 	let when_str = match call.parameters.get("when") {
@@ -241,7 +272,28 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 		}
 	};
 
-	let entry = ScheduleEntry::new(description.clone(), message, trigger_at);
+	let interval_secs = match call.parameters.get("every") {
+		Some(Value::String(s)) if !s.trim().is_empty() => match parse_duration_secs(s.trim()) {
+			Ok(secs) if secs > 0 => Some(secs),
+			Ok(_) => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"'every' duration must be greater than zero".to_string(),
+				))
+			}
+			Err(e) => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!("invalid 'every' value: {}", e),
+				))
+			}
+		},
+		_ => None,
+	};
+
+	let entry = ScheduleEntry::new(description.clone(), message, trigger_at, interval_secs);
 	let id = entry.id.clone();
 	let countdown = entry.countdown();
 	let trigger_fmt = entry.trigger_at.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -257,13 +309,17 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 	} else {
 		format!("\nDescription: {}", description)
 	};
+	let repeat_line = match interval_secs {
+		Some(secs) => format!("\nRepeats: every {}", format_interval(secs)),
+		None => String::new(),
+	};
 
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),
 		call.tool_id.clone(),
 		format!(
-			"✅ Scheduled [{}] at {} ({}){}\n\nThe message will be injected as a user message when the timer fires.",
-			id, trigger_fmt, countdown, desc_line
+			"✅ Scheduled [{}] at {} ({}){}{}\n\nThe message will be injected as a user message when the timer fires.",
+			id, trigger_fmt, countdown, desc_line, repeat_line
 		),
 	))
 }
@@ -302,12 +358,16 @@ fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 			entry.message.clone()
 		};
 		lines.push(format!(
-			"[{}] {} ({}) — {}\n  Message: {}",
+			"[{}] {} ({}) — {}\n  Message: {}{}",
 			entry.id,
 			trigger_fmt,
 			entry.countdown(),
 			desc,
-			preview
+			preview,
+			match entry.interval_secs {
+				Some(secs) => format!("\n  🔁 Repeats every {}", format_interval(secs)),
+				None => String::new(),
+			},
 		));
 	}
 
@@ -400,18 +460,47 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => None,
 	};
 
-	if new_when.is_none() && new_message.is_none() && new_description.is_none() {
+	// Some(Some(secs)) = set interval, Some(None) = clear interval, None = no change.
+	// Pass `every = ""` or omit to leave unchanged; pass `every = "0"` is rejected.
+	let new_interval: Option<Option<i64>> = match call.parameters.get("every") {
+		Some(Value::String(s)) if s.trim() == "none" || s.trim() == "off" => Some(None),
+		Some(Value::String(s)) if !s.trim().is_empty() => match parse_duration_secs(s.trim()) {
+			Ok(secs) if secs > 0 => Some(Some(secs)),
+			Ok(_) => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"'every' duration must be greater than zero (use 'none' to clear)".to_string(),
+				))
+			}
+			Err(e) => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!("invalid 'every' value: {}", e),
+				))
+			}
+		},
+		_ => None,
+	};
+
+	if new_when.is_none()
+		&& new_message.is_none()
+		&& new_description.is_none()
+		&& new_interval.is_none()
+	{
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"edit requires at least one of: when, message, description".to_string(),
+			"edit requires at least one of: when, message, description, every".to_string(),
 		));
 	}
 	let store = get_store();
-	let updated = store
-		.lock()
-		.unwrap()
-		.edit(&id, new_description, new_message, new_when);
+	let updated =
+		store
+			.lock()
+			.unwrap()
+			.edit(&id, new_description, new_message, new_when, new_interval);
 
 	if updated {
 		// Wake up the schedule monitor so it recalculates the next due time
@@ -425,10 +514,15 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		let entry = guard.entries().iter().find(|e| e.id == id);
 		let summary = entry
 			.map(|e| {
+				let repeat = match e.interval_secs {
+					Some(secs) => format!(", repeats every {}", format_interval(secs)),
+					None => String::new(),
+				};
 				format!(
-					" → fires at {} ({})",
+					" → fires at {} ({}){}",
 					e.trigger_at.format("%Y-%m-%d %H:%M:%S"),
-					e.countdown()
+					e.countdown(),
+					repeat,
 				)
 			})
 			.unwrap_or_default();

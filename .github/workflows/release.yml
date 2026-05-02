@@ -235,8 +235,8 @@ jobs:
               rustup target add ${{ matrix.target }}
 
               ORT_SRC=/workspace/onnxruntime-src
-              ORT_LIB_LOCATION="$ORT_SRC/build/Release"
-              if [ ! -f "$ORT_LIB_LOCATION/libonnxruntime_common.a" ]; then
+              ORT_LIB_LOCATION="$ORT_SRC/build"
+              if [ ! -f "$ORT_LIB_LOCATION/Release/libonnxruntime_common.a" ]; then
                 echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
                 rm -rf "$ORT_SRC"
                 git clone --single-branch --branch v1.24.2 --recursive \
@@ -261,9 +261,9 @@ jobs:
                 echo "==> Using cached ONNX Runtime static build"
               fi
 
-              # ort-sys layout: lib_dir = build/Release, _deps walked from
-              # lib_dir.parent()/_deps. Matches the third static_config in
-              # ort-sys/build/static_link/mod.rs.
+              # ort-sys static_config #2: ORT_LIB_LOCATION = build dir (parent of Release).
+              # lib_dir = build/Release (has libonnxruntime_common.a)
+              # external_lib_dir = build/Release/_deps (where cmake puts re2, abseil, protobuf, etc.)
               export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
               cargo build --release --target ${{ matrix.target }}
             '

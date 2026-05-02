@@ -188,7 +188,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: onnxruntime-src
-        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v4
+        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v5
 
     - name: Build binary
       shell: sh
@@ -210,13 +210,20 @@ jobs:
             rust:1.95.0-alpine3.23 \
             sh -c '
               set -eu
+              # No protobuf-dev: it pulls in abseil-cpp-dev transitively, which
+              # makes ORT'\''s CMake skip its bundled abseil and (because re2
+              # depends on bundled absl targets) drop re2 from the build entirely.
+              # ort-sys 2.0.0-rc.12 hardcodes static links to ~25 absl_*, re2,
+              # protobuf libs at fixed _deps/ paths, so all three must be built
+              # by ORT, not the system. Without the system packages ORT
+              # FetchContent'\''s and compiles all three from source.
               apk add --no-cache \
                 git perl bash musl-dev openssl-dev openssl-libs-static \
-                pkgconfig gcc g++ protobuf-dev \
+                pkgconfig gcc g++ \
                 cmake make linux-headers python3 py3-pip patch
 
               # Provide stub execinfo.h — musl lacks it and Alpine 3.17+ removed
-              # libexecinfo. ORT's stacktrace.cc unconditionally includes it on
+              # libexecinfo. ORT'\''s stacktrace.cc unconditionally includes it on
               # non-Android POSIX. The stub provides no-op backtrace functions.
               # Written to /tmp since /usr/include may not be writable.
               mkdir -p /tmp/include
@@ -236,9 +243,10 @@ jobs:
 
               ORT_SRC=/workspace/onnxruntime-src
               ORT_LIB_LOCATION="$ORT_SRC/build/Release"
-              # Check libre2.a (not libonnxruntime_common.a) — re2 is built late in the process,
-              # so its presence confirms the build completed fully. A partial build may have
-              # libonnxruntime_common.a but be missing re2/abseil/protobuf, causing link failure.
+              # libre2.a is the late marker — re2 is built last in the bundled
+              # dep graph (after abseil + protobuf), so its presence proves the
+              # full static tree is in place. A partial cache that only has
+              # libonnxruntime_common.a but no libre2.a triggers a clean rebuild.
               if [ ! -f "$ORT_LIB_LOCATION/_deps/re2-build/libre2.a" ]; then
                 echo "==> Building ONNX Runtime 1.24.2 from source (static, musl)"
                 rm -rf "$ORT_SRC"

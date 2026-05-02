@@ -45,8 +45,7 @@ fn parse_hex(s: &str) -> Rgb {
 
 fn rasterize() -> Box<[[Cell; ICON_SIZE]; ICON_SIZE]> {
 	// Empty cells stay None → rendered as transparent (terminal bg shows through).
-	let mut grid: Box<[[Cell; ICON_SIZE]; ICON_SIZE]> =
-		Box::new([[None; ICON_SIZE]; ICON_SIZE]);
+	let mut grid: Box<[[Cell; ICON_SIZE]; ICON_SIZE]> = Box::new([[None; ICON_SIZE]; ICON_SIZE]);
 
 	// Path shape: M{x1} {y1}H{x2}V{y2}H{x1}V{y1}Z
 	let re = Regex::new(r#"M(\d+)\s+(\d+)H(\d+)V(\d+)H\d+V\d+Z"\s+fill="(#[0-9A-Fa-f]{6})""#)
@@ -138,7 +137,11 @@ fn icon_lines() -> Vec<String> {
 	};
 
 	let cell_at = |r: usize, c: usize| -> Cell {
-		if r >= rlo && r < rhi { g[r][c] } else { None }
+		if r >= rlo && r < rhi {
+			g[r][c]
+		} else {
+			None
+		}
 	};
 
 	let mut lines = Vec::new();

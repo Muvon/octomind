@@ -112,8 +112,8 @@ fn handle_final_response(
 		}
 	}
 
-	// CRITICAL FIX: Add the assistant message with response_id to maintain conversation continuity
-	// The response_id is essential for OpenAI Responses API to track conversation state
+	// Add the assistant message with response_id to maintain conversation continuity.
+	// The response_id is essential for OpenAI Responses API to track conversation state.
 	let assistant_message = crate::session::Message {
 		role: "assistant".to_string(),
 		content: content.to_string(),

@@ -174,12 +174,22 @@ impl EditMode for EmacsWithShortcutHelp {
 		// Probe it before letting the text paste through; if an image (or video file
 		// path) is present, attach it and swallow the textual paste (which is usually
 		// just a filename hint or empty).
-		if let Event::Paste(_) = &event {
+		if let Event::Paste(text) = &event {
 			if let Some(item) = try_capture_clipboard() {
 				self.attach_and_notify(item);
 				return ReedlineEvent::None;
 			}
-			// No image / no recognizable video path — fall through; reedline will insert the text.
+			// Auto-wrap multiline pastes (3+ lines) in <log>...</log> so the AI
+			// receives them as structured context rather than raw text, and so
+			// skill auto-activation ignores the pasted content. Wrapping happens
+			// at paste time on the pasted chunk only — typed-in newlines and
+			// pasted text mixed with typing are preserved verbatim.
+			if text.lines().count() >= 3 {
+				let wrapped = format!("<log>\n{}\n</log>", text);
+				return ReedlineEvent::Edit(vec![reedline::EditCommand::InsertString(wrapped)]);
+			}
+			// No image / no recognizable video path / short paste — fall through;
+			// reedline will insert the text as-is.
 		}
 
 		if let Event::Key(KeyEvent {

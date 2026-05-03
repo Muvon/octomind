@@ -188,7 +188,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: onnxruntime-src
-        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.23-v5
+        key: onnxruntime-1.24.2-${{ matrix.target }}-alpine3.22-v6
 
     - name: Build binary
       shell: sh
@@ -207,7 +207,7 @@ jobs:
           docker run --rm \
             -v "$(pwd):/workspace" \
             -w /workspace \
-            rust:1.95.0-alpine3.23 \
+            rust:1.95.0-alpine3.22 \
             sh -c '
               set -eu
               # No protobuf-dev: it pulls in abseil-cpp-dev transitively, which
@@ -291,6 +291,10 @@ jobs:
               # so search paths land at build/_deps/onnx-build/Release (non-existent) and
               # linking fails with "could not find native static library 'onnx'".
               export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
+              # GCC 15 (Alpine 3.23) introduced __cpu_features2 in libgcc.
+              # ORT'\''s cpuid_info.cc.o references it; musl static link needs
+              # libgcc.a explicitly or the symbol is undefined at link time.
+              export RUSTFLAGS="-C link-arg=-lgcc"
               cargo build --release --target ${{ matrix.target }}
             '
         elif [ "${{ runner.os }}" = "Windows" ]; then

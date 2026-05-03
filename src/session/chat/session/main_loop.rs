@@ -21,7 +21,7 @@ use super::api_executor::execute_api_call_and_process_response;
 use super::api_prep::prepare_for_api_call;
 use super::commands::CommandResult;
 use super::core::{ChatSession, SessionInitParams};
-use super::error_utils::handle_api_error;
+use super::error_utils::{handle_api_error, handle_followup_api_error};
 use super::layer_processor::process_layers_if_enabled;
 use super::prompt_setup::setup_system_prompt_and_cache;
 use super::setup::setup_and_initialize_session;
@@ -274,6 +274,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// empty prompt without retyping. Cleared on any successful API call. Commands and
 		// the AddWithoutSending (non-empty) path never touch this.
 		let mut last_failed_input: Option<String> = None;
+
+		// Set when a follow-up API call (after tool execution) failed with a transient error.
+		// History already contains valid assistant(tool_calls) + tool_results; an empty Ctrl+G
+		// re-issues the API call against current state without truncation or duplication.
+		// Cleared on any successful API call.
+		let mut last_failed_followup: bool = false;
 
 		// Apply runtime state from session log if this is a resumed session
 		if chat_session.was_resumed {
@@ -540,6 +546,79 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					// This lets the user resend the last failed prompt without retyping after
 					// a transient API error (e.g. "error decoding response body").
 					if text.trim().is_empty() {
+						// Follow-up retry: a transient error hit the post-tool-execution API
+						// call. History is in a valid state (assistant tool_calls + tool_results
+						// already recorded). Re-issue the API call against current state — no
+						// user message to add, no layers/compression to re-run.
+						if last_failed_followup {
+							apply_clipboard_items(&mut chat_session, clipboard_items);
+							last_failed_followup = false;
+							println!("{}", "↻ Retrying last failed request...".bright_cyan());
+
+							let operation_rx_retry = cancellation.new_operation();
+							*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
+
+							match prepare_for_api_call(
+								&mut chat_session,
+								&current_config,
+								operation_rx_retry.clone(),
+							)
+							.await
+							{
+								Ok(()) => {}
+								Err(e) if e.to_string().contains("Operation cancelled") => {
+									continue;
+								}
+								Err(e) => return Err(e),
+							}
+
+							let retry_result = tokio::select! {
+								result = execute_api_call_and_process_response(
+									&mut chat_session,
+									&current_config,
+									&role,
+									operation_rx_retry.clone(),
+									OutputMode::Interactive,
+									SilentSink,
+								) => result,
+								_ = async {
+									let mut cancel_rx = cancellation.operation_receiver();
+									while !*cancel_rx.borrow() {
+										if cancel_rx.changed().await.is_err() {
+											break;
+										}
+									}
+								} => {
+									use crate::session::chat::get_animation_manager;
+									get_animation_manager().stop_current().await;
+									log_debug!("Follow-up retry cancelled by user");
+									continue;
+								}
+							};
+
+							match retry_result {
+								Ok(_) => {
+									// Successful retry — clear both retry buffers.
+									last_failed_input = None;
+									last_failed_followup = false;
+								}
+								Err(e) => {
+									handle_followup_api_error(
+										&chat_session.model,
+										&e,
+										OutputMode::Interactive,
+									);
+									last_failed_followup = true;
+									println!(
+										"{}",
+										"💡 Press Ctrl+G with empty input to retry the last failed request."
+											.dimmed()
+									);
+								}
+							}
+							continue;
+						}
+
 						if let Some(prev_input) = last_failed_input.take() {
 							apply_clipboard_items(&mut chat_session, clipboard_items);
 							println!("{}", "↻ Retrying last failed request...".bright_cyan());
@@ -1086,19 +1165,31 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 					// Successful turn — clear retry buffer.
 					last_failed_input = None;
+					last_failed_followup = false;
 				}
 				Err(e) => {
-					// Handle API error using helper function
-					handle_api_error(
-						&mut chat_session,
-						user_message_index_for_error,
-						&model_for_error,
-						&e,
-						OutputMode::Interactive,
-					);
+					// Distinguish follow-up failure (after tools executed) from initial-call
+					// failure. handle_api_error truncates the user message — correct only for
+					// the initial call. For follow-ups the history already contains valid
+					// assistant(tool_calls) + tool_results; truncating would discard that work.
+					let messages_after_api = chat_session.session.messages.len();
+					let is_followup_failure = messages_after_api > messages_before_api;
 
-					// Stash the original input so an empty Ctrl+G replays this turn.
-					last_failed_input = Some(original_input_for_retry);
+					if is_followup_failure {
+						handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive);
+						last_failed_followup = true;
+					} else {
+						handle_api_error(
+							&mut chat_session,
+							user_message_index_for_error,
+							&model_for_error,
+							&e,
+							OutputMode::Interactive,
+						);
+						// Stash the original input so an empty Ctrl+G replays this turn.
+						last_failed_input = Some(original_input_for_retry);
+					}
+
 					println!(
 						"{}",
 						"💡 Press Ctrl+G with empty input to retry the last failed request."

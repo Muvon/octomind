@@ -220,3 +220,33 @@ pub fn handle_api_error(
 		}
 	}
 }
+
+// Helper for follow-up API call failures (e.g. transient network errors after tool
+// execution). Unlike `handle_api_error` this does NOT truncate the message history:
+// at this point the history already contains a valid assistant(tool_calls) +
+// tool_results sequence. Truncating would discard completed tool work. The session
+// is in a state where the same API call can simply be retried.
+pub fn handle_followup_api_error(model: &str, error: &anyhow::Error, mode: OutputMode) {
+	let provider_name =
+		if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {
+			provider
+		} else {
+			"unknown provider".to_string()
+		};
+
+	let error_message = format_provider_error(&provider_name, error);
+	if mode.should_suppress_cli_output() {
+		log_info!(
+			"Follow-up call to {} failed: {}",
+			provider_name,
+			error_message
+		);
+		return;
+	}
+
+	println!(
+		"\n{}: {}",
+		format!("Error calling {}", provider_name).bright_red(),
+		error_message
+	);
+}

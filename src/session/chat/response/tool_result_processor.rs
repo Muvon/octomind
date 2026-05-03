@@ -457,27 +457,14 @@ pub async fn process_tool_results(
 			}
 		}
 		Err(e) => {
-			// Extract provider name from the model for better error messaging
-			let provider_name = if let Ok((provider, _)) =
-				crate::providers::ProviderFactory::parse_model(&chat_session.model)
-			{
-				provider
-			} else {
-				"unknown provider".to_string()
-			};
-
-			// IMPROVED: Show provider-aware context about the API error
-			let error_message =
-				crate::session::chat::session::format_provider_error(&provider_name, &e);
-			println!(
-				"\n{} {}: {}",
-				"✗".bright_red(),
-				format!("Error calling {}", provider_name).bright_red(),
-				error_message
+			// Centralized error printing happens in the main loop's Err branch
+			// (handle_followup_api_error). Just log diagnostics, stop animation,
+			// and propagate so the caller can offer a Ctrl+G retry.
+			log_debug!(
+				"Follow-up API call failed for model {}: {}",
+				chat_session.model,
+				e
 			);
-
-			// Additional context if error contains provider information
-			log_debug!("Model: {}", chat_session.model);
 			log_debug!("Temperature: {}", chat_session.temperature);
 
 			// Stop animation on error before returning

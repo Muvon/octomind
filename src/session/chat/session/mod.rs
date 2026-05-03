@@ -32,7 +32,7 @@ mod setup;
 pub use api_executor::execute_api_call_and_process_response;
 pub use api_prep::prepare_for_api_call;
 pub use core::ChatSession;
-pub use error_utils::{format_provider_error, handle_api_error};
+pub use error_utils::{format_provider_error, handle_api_error, handle_followup_api_error};
 pub use layer_processor::process_layers_if_enabled;
 pub use main_loop::{run_interactive_session, run_interactive_session_with_input};
 pub use params::{extract_session_params, GenericSessionArgs, SessionParams};

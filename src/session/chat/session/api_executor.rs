@@ -210,11 +210,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			})
 			.await;
 
-			if let Err(e) = process_result {
-				if mode.is_terminal_mode() {
-					println!("\n{}: {}", "Error processing response".bright_red(), e);
-				}
-			}
+			// Propagate response-processing errors (e.g. follow-up API call failures
+			// after tool execution) so the main loop can offer a Ctrl+G retry.
+			// Previously this was printed-and-swallowed, hiding the failure from
+			// the retry mechanism.
+			process_result?;
 		}
 		Err(e) => {
 			// Stop animation on error before returning

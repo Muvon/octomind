@@ -69,9 +69,18 @@ struct CapState {
 
 /// Soft cap on simultaneously-active capabilities. When a new activation
 /// would exceed this, the LRU entry is disabled first to make room.
-/// Sized loose enough that normal sessions never hit it; only flapping
-/// or runaway accumulation does.
-const MAX_ACTIVE_CAPS: usize = 8;
+///
+/// Sized to balance two pressures:
+/// - **Tool overload research** (Microsoft, AWS, Boundary, Chroma) shows
+///   sharp accuracy degradation past ~20-25 tools exposed to the model.
+///   With baseline always-on tools (~15-20) plus ~4-5 tools per capability,
+///   4 active caps keeps total tool surface in the safe zone (~35-40).
+/// - **Real task concurrency** rarely needs more than 2-3 capabilities at
+///   once; 4 leaves headroom for cross-domain tasks without churning.
+///
+/// Eviction is purely demand-driven: caps stay active indefinitely until
+/// a new activation hits the cap. No background timers or idle cleanup.
+const MAX_ACTIVE_CAPS: usize = 4;
 
 /// Capabilities activated at runtime by this tool. Capabilities pre-loaded from
 /// the tap manifest at boot are NOT tracked here — they are already merged into

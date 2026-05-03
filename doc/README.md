@@ -29,6 +29,7 @@ For users working with Octomind day-to-day.
 | [Editor Integration](usage/12-editor-integration.md) | Neovim, Zed, JetBrains setup |
 | [Learning](usage/13-learning.md) | Cross-session adaptive learning |
 | [Skills](usage/15-skills.md) | Auto-expanding skills, capabilities, validators |
+| [Token Efficiency](usage/16-token-efficiency.md) | Capabilities, auto-activation, LRU eviction |
 
 ## Integration Guide
 

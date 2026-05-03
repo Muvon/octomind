@@ -8,7 +8,7 @@ Octomind ships with three MCP servers:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | Task management, server/agent management, scheduling, skills |
+| `core` | builtin | Task management, server/agent management, scheduling, skills, capabilities |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents |
 | `filesystem` | stdio (octofs) | File operations, shell commands, code analysis |
 
@@ -105,6 +105,31 @@ Schedule messages for future injection into the session.
 | `edit` | `id` | Update `when`, `message`, or `description` |
 
 Each entry fires exactly once and is removed. Max 8 concurrent scheduled jobs. Jobs cancelled on session exit.
+
+### `capability` -- Discover and Activate Domain Bundles
+
+Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-defined groups of MCP servers and tool filters distributed via taps (`<tap>/capabilities/<name>/<provider>.toml`).
+
+**Parameters:**
+- `action` (string, required): `"list"`, `"discover"`, `"enable"`, `"disable"`
+- `name` (string): Capability name (required for `enable` and `disable`)
+- `intent` (string): Free-text intent for `discover` (e.g., `"I need to query a database"`)
+
+| Action | Description |
+|--------|-------------|
+| `list` | Show every installed capability with active marker |
+| `discover` | Semantic search by intent — top 5 by trigger similarity |
+| `enable` | Register and connect a capability's MCP servers |
+| `disable` | Disconnect and unregister a capability's tools |
+
+```json
+{"action": "list"}
+{"action": "discover", "intent": "I need to query a Postgres database"}
+{"action": "enable", "name": "database-postgres"}
+{"action": "disable", "name": "database-postgres"}
+```
+
+**Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Active set is bounded by an LRU eviction policy (soft cap of 8). See [Token Efficiency](16-token-efficiency.md) for the algorithm and constants.
 
 ### `skill` -- Skill Management from Taps
 

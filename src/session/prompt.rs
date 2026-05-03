@@ -59,6 +59,19 @@ pub async fn create_system_prompt(
 		Do not reference the tags themselves — just follow the content within them.",
 	);
 
+	// Enforce concise, action-first output behavior across all models and roles.
+	// Modeled after production agentic system prompts (Claude Code, internal Anthropic guidelines).
+	// Hard word limits between tool calls are the single most effective lever for mid-task verbosity.
+	prompt.push_str(
+		"\n\n## OUTPUT RULES\n\
+		Go straight to the point. Be extra concise. Do not overdo it.\n\n\
+		Between tool calls: <=25 words of text. State what you found or decided -- nothing else.\n\
+		Final response: <=2 sentences unless the task explicitly requires more detail.\n\n\
+		Never narrate intent before acting. Skip \"I'll now...\", \"Let me...\", \"I will search for...\" -- just act.\n\
+		Never restate the request, add filler (\"Great!\", \"Sure!\"), or offer unsolicited follow-ups.\n\
+		Don't explain your reasoning unless asked. State results and decisions directly.",
+	);
+
 	prompt
 }
 

@@ -203,32 +203,27 @@ impl ChatSession {
 		// Must happen BEFORE logger which also writes to the same file
 		self.ensure_file_initialized()?;
 
-		// Message is persisted below (role=system) after being added to session.messages.
-		// Add message to session
-		self.session.add_message("system", content);
-
-		// Save to session file
+		// ATOMIC ADD: persist FIRST, push only on success.
+		let message = crate::session::Session::build_message("system", content);
 		if let Some(session_file) = &self.session.session_file {
-			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
+			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
+		self.session.messages.push(message);
 
 		Ok(())
 	}
 
 	// Add a user message
 	pub fn add_user_message(&mut self, content: &str) -> Result<()> {
-		// User message content is persisted by the Message JSON append below.
-		// Add message to session with image if available
-		let mut message = self.session.add_message("user", content);
+		// Build the message in full WITHOUT pushing, attach pending image/video,
+		// persist it, and only THEN push to the in-memory Vec. This keeps memory
+		// and disk strictly in sync — a persist failure leaves no orphan message.
+		let mut message = crate::session::Session::build_message("user", content);
 
 		// Attach pending image if available
 		if let Some(image_attachment) = self.take_pending_image() {
 			message.images = Some(vec![image_attachment]);
-			// Update the message in the session
-			if let Some(last_msg) = self.session.messages.last_mut() {
-				last_msg.images = message.images.clone();
-			}
 			if !crate::logging::tracing_setup::is_structured_output_mode() {
 				println!("{}", "📎 Image attached to message".bright_green());
 			}
@@ -237,16 +232,24 @@ impl ChatSession {
 		// Attach pending video if available
 		if let Some(video_attachment) = self.take_pending_video() {
 			message.videos = Some(vec![video_attachment]);
-			// Update the message in the session
-			if let Some(last_msg) = self.session.messages.last_mut() {
-				last_msg.videos = message.videos.clone();
-			}
 			if !crate::logging::tracing_setup::is_structured_output_mode() {
 				println!("{}", "🎬 Video attached to message".bright_green());
 			}
 		}
 
-		// Check if we should cache this user message
+		// ATOMIC ADD: persist FIRST, push only on success.
+		// Cache marker is applied AFTER push (it mutates the in-memory message and
+		// may demote older markers / reset token counters — those mutations are
+		// purely in-memory and do not need to be reflected in the persisted JSON
+		// line, since cache state is derived per-request from the session struct).
+		if let Some(session_file) = &self.session.session_file {
+			let message_json = serde_json::to_string(&message)?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
+		self.session.messages.push(message);
+
+		// Check if we should cache this user message (after push, so the message exists
+		// at a known index and the cache manager can enforce the 2-marker limit).
 		if self.cache_next_user_message {
 			let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
 			if supports_caching {
@@ -265,13 +268,6 @@ impl ChatSession {
 			}
 			// Reset the flag after applying (or attempting to apply) cache
 			self.cache_next_user_message = false;
-		}
-
-		// All user messages are persisted as Message JSON below; no separate log entry.
-		// Save to session file
-		if let Some(session_file) = &self.session.session_file {
-			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
-			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 
 		Ok(())
@@ -300,7 +296,14 @@ impl ChatSession {
 			..Default::default()
 		};
 
-		// Add message to session
+		// ATOMIC ADD: persist BEFORE pushing to in-memory Vec and updating token counters.
+		// A partial failure (one tool_result persisted, next ENOSPC) must not leave a
+		// pushed-but-unpersisted tool_message in memory — that would create orphaned
+		// tool_use blocks for Anthropic on the next request.
+		if let Some(session_file) = &self.session.session_file {
+			let message_json = serde_json::to_string(&tool_message)?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
 		self.session.messages.push(tool_message);
 
 		// Update token tracking for auto-cache threshold logic
@@ -315,12 +318,6 @@ impl ChatSession {
 		self.session.info.current_total_tokens += tool_input_tokens;
 		self.session.info.current_non_cached_tokens += tool_input_tokens;
 
-		// Save to session file
-		if let Some(session_file) = &self.session.session_file {
-			let message_json = serde_json::to_string(&self.session.messages.last().unwrap())?;
-			crate::session::append_to_session_file(session_file, &message_json)?;
-		}
-
 		Ok(())
 	}
 
@@ -332,8 +329,15 @@ impl ChatSession {
 		config: &Config,
 		role: &str,
 	) -> Result<()> {
-		// Add message to session
-		let message = self.session.add_message("assistant", content);
+		// ATOMIC ADD: build, persist, then push. If persist fails, `?` propagates with
+		// clean memory state — no orphaned assistant message and no token/cost
+		// bookkeeping side-effects.
+		let message = crate::session::Session::build_message("assistant", content);
+		if let Some(session_file) = &self.session.session_file {
+			let message_json = serde_json::to_string(&message)?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
+		self.session.messages.push(message);
 		self.last_response = content.to_string();
 
 		// Update token counts and estimated costs if we have usage data
@@ -459,11 +463,7 @@ impl ChatSession {
 			}
 		}
 
-		// Save to session file
-		if let Some(session_file) = &self.session.session_file {
-			let message_json = serde_json::to_string(&message)?;
-			crate::session::append_to_session_file(session_file, &message_json)?;
-		}
+		// (Persistence happened at the top of this function — atomic add.)
 
 		Ok(())
 	}

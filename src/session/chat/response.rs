@@ -313,14 +313,16 @@ fn add_assistant_message_with_tool_calls(
 		id: response_id.clone(),
 	};
 
-	// Add the assistant message to the session
-	chat_session.session.messages.push(assistant_message);
-
-	// Persist immediately so Ctrl+C mid-turn can't lose this message.
+	// ATOMIC ADD: persist BEFORE pushing to in-memory Vec.
+	// If persist fails (e.g. ENOSPC), `?` propagates with clean memory state — no
+	// orphaned assistant(tool_calls=...) without matching tool_results, which would
+	// otherwise corrupt the conversation for Anthropic ("tool_use ids found without
+	// tool_result"). Tool execution + process_tool_results only runs after this returns Ok.
 	if let Some(session_file) = &chat_session.session.session_file {
-		let message_json = serde_json::to_string(chat_session.session.messages.last().unwrap())?;
+		let message_json = serde_json::to_string(&assistant_message)?;
 		crate::session::append_to_session_file(session_file, &message_json)?;
 	}
+	chat_session.session.messages.push(assistant_message);
 
 	// Update last response - no cost tracking here as it will be handled by follow-up processing
 	chat_session.last_response = current_content.to_string();

@@ -69,7 +69,14 @@ impl MessageHandler {
 			id: response_id,
 		};
 
-		// Add the assistant message to the session
+		// ATOMIC ADD: persist BEFORE pushing to in-memory Vec.
+		// If persist fails, `?` propagates with clean memory state — prevents orphaned
+		// assistant(tool_calls=...) without matching tool_results. Token/cost
+		// bookkeeping only runs after the message is durably recorded.
+		if let Some(session_file) = &chat_session.session.session_file {
+			let message_json = serde_json::to_string(&assistant_message)?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
 		chat_session.session.messages.push(assistant_message);
 
 		// Update last response
@@ -87,7 +94,6 @@ impl MessageHandler {
 			chat_session.session.info.total_api_calls += 1;
 
 			// Update token counts using cache manager with octolib data directly
-			// Update token counts using cache manager with octolib data directly
 			let cache_manager = crate::session::cache::CacheManager::new();
 			cache_manager.update_token_tracking(
 				&mut chat_session.session,
@@ -102,13 +108,6 @@ impl MessageHandler {
 			if let Some(cost) = usage.cost {
 				chat_session.session.info.total_cost += cost;
 			}
-		}
-
-		// Save to session file to persist the message with id field
-		if let Some(session_file) = &chat_session.session.session_file {
-			let message_json =
-				serde_json::to_string(&chat_session.session.messages.last().unwrap())?;
-			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 
 		Ok(())

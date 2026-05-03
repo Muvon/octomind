@@ -316,7 +316,15 @@ impl Session {
 
 	// Add a message to the session
 	pub fn add_message(&mut self, role: &str, content: &str) -> Message {
-		let message = Message {
+		let message = Self::build_message(role, content);
+		self.messages.push(message.clone());
+		message
+	}
+
+	// Build a Message without pushing it to the session.
+	// Used by atomic-add paths that must persist BEFORE pushing to in-memory Vec.
+	pub fn build_message(role: &str, content: &str) -> Message {
+		Message {
 			role: role.to_string(),
 			content: content.to_string(),
 			timestamp: SystemTime::now()
@@ -325,10 +333,7 @@ impl Session {
 				.as_secs(),
 			cached: false,
 			..Default::default()
-		};
-
-		self.messages.push(message.clone());
-		message
+		}
 	}
 
 	// Add a cache checkpoint - simplified to only handle system messages automatically

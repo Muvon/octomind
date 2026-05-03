@@ -282,6 +282,48 @@ fn get_skills_config() -> crate::config::SkillsConfig {
 /// Run auto-activation for the given content.
 ///
 /// Evaluates declarative rules from the skill pool in-process.
+/// Strip XML-style blocks (`<tag>...</tag>`) from a string so that injected
+/// context (system tags, skill blocks, log pastes, etc.) does not influence
+/// skill auto-activation matching.  Only the plain user-written text remains.
+pub(crate) fn strip_xml_blocks(input: &str) -> std::borrow::Cow<'_, str> {
+	// Fast path: no '<' at all.
+	if !input.contains('<') {
+		return std::borrow::Cow::Borrowed(input);
+	}
+
+	let mut out = String::with_capacity(input.len());
+	let mut rest = input;
+	while let Some(open_start) = rest.find('<') {
+		// Collect the tag name (letters, digits, hyphens, underscores).
+		let after_lt = &rest[open_start + 1..];
+		let tag_end = after_lt
+			.find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+			.unwrap_or(after_lt.len());
+		let tag = &after_lt[..tag_end];
+
+		if tag.is_empty() {
+			// Not a real tag — keep the '<' and advance past it.
+			out.push_str(&rest[..open_start + 1]);
+			rest = &rest[open_start + 1..];
+			continue;
+		}
+
+		// Look for the matching closing tag.
+		let close_tag = format!("</{tag}>");
+		if let Some(close_pos) = rest.find(&close_tag) {
+			// Emit text before the opening '<', skip the entire block.
+			out.push_str(&rest[..open_start]);
+			rest = &rest[close_pos + close_tag.len()..];
+		} else {
+			// No closing tag found — keep everything up to and including '<'.
+			out.push_str(&rest[..open_start + 1]);
+			rest = &rest[open_start + 1..];
+		}
+	}
+	out.push_str(rest);
+	std::borrow::Cow::Owned(out)
+}
+
 /// Any AND-group matching activates the skill. No process spawns.
 pub async fn run_activation(
 	content: &str,
@@ -298,6 +340,11 @@ pub async fn run_activation(
 		Some(id) => id,
 		None => return,
 	};
+
+	// Strip XML blocks (skill injections, log pastes, system tags, etc.) so
+	// they don't trigger false-positive skill matches.
+	let stripped = strip_xml_blocks(content);
+	let content: &str = &stripped;
 
 	let entries = {
 		let pool = get_pool().read().unwrap();

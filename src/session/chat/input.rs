@@ -411,6 +411,15 @@ pub fn read_user_input(
 
 				// User message persistence handled by ChatSession::add_user_message.
 
+				// Auto-wrap multiline pastes (3+ lines) in <log>...</log> so the
+				// AI receives them as structured context rather than raw text, and
+				// so skill auto-activation ignores the pasted content.
+				let line = if line.lines().count() >= 3 {
+					format!("<log>\n{}\n</log>", line)
+				} else {
+					line
+				};
+
 				return if add_without_sending {
 					Ok(InputResult::AddWithoutSending(line, clipboard_items))
 				} else {

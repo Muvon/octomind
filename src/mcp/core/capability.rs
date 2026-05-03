@@ -610,6 +610,10 @@ pub async fn auto_activate_capabilities(
 		_ => return,
 	};
 
+	// Strip XML blocks (skill injections, <log> pastes, system tags, etc.)
+	// so pasted content doesn't drive false-positive capability matches.
+	let intent = crate::mcp::core::skill_auto::strip_xml_blocks(&intent);
+
 	if !crate::embeddings::is_ready() {
 		crate::log_debug!(
 			"capability auto-activate: embedding model not ready yet, skipping this turn"

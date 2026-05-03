@@ -86,18 +86,29 @@ pub async fn process_tool_results(
 		// already been seen in this session, replace the body with a small
 		// placeholder. The first occurrence is kept verbatim so the model can
 		// still reason about the original output.
-		let tool_content =
-			if crate::session::dedup::is_duplicate(&tool_result.tool_name, &raw_content) {
-				log_debug!(
-					"deduplicated tool result for `{}` ({} chars elided)",
-					tool_result.tool_name,
-					raw_content.len()
-				);
-				crate::session::dedup::placeholder(&tool_result.tool_name)
-			} else {
-				crate::session::dedup::record(&tool_result.tool_name, &raw_content);
-				raw_content
-			};
+		//
+		// Errors are NEVER deduped: we neither record them nor replace them
+		// with a placeholder. Two reasons:
+		//   1. Identical error text often comes from independent failures the
+		//      model needs to see each time (e.g. repeated parameter mistakes,
+		//      transient tool failures). Hiding the body behind a placeholder
+		//      strips the actionable feedback.
+		//   2. Recording errors would also poison the cache for a later
+		//      successful call whose body happens to match an earlier error
+		//      string — extremely unlikely, but trivially avoided by skipping.
+		let tool_content = if tool_result.is_error() {
+			raw_content
+		} else if crate::session::dedup::is_duplicate(&tool_result.tool_name, &raw_content) {
+			log_debug!(
+				"deduplicated tool result for `{}` ({} chars elided)",
+				tool_result.tool_name,
+				raw_content.len()
+			);
+			crate::session::dedup::placeholder(&tool_result.tool_name)
+		} else {
+			crate::session::dedup::record(&tool_result.tool_name, &raw_content);
+			raw_content
+		};
 
 		// Apply global MCP response token truncation before adding to session
 		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(

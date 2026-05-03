@@ -219,87 +219,85 @@ impl CostTracker {
 		println!();
 	}
 
-	/// Display detailed cost breakdown
+	/// Display detailed cost breakdown using real per-token pricing.
+	///
+	/// Looks up the model's pricing tuple (input / output / cache_write / cache_read
+	/// per 1M tokens) from octolib's reference pricing table and computes each line
+	/// item from the actual tracked token counts. The "saved" figure is the genuine
+	/// difference between what cache reads would have cost at the full input rate
+	/// vs. what they actually cost at the cache-read rate -- not an estimate.
+	///
+	/// If the model isn't in the pricing table (custom / local / unknown provider),
+	/// only the authoritative `total_cost` (set by the provider via `usage.cost`) is
+	/// shown -- no fabricated breakdown.
 	fn display_cost_breakdown(chat_session: &ChatSession) {
 		use crate::log_info;
 
 		let total_cost = chat_session.session.info.total_cost;
-		let cache_read = chat_session.session.info.cache_read_tokens;
-		let non_cached_prompt = chat_session.session.info.input_tokens;
-		let completion = chat_session.session.info.output_tokens;
-		let total_tokens = non_cached_prompt + cache_read + completion;
+		let info = &chat_session.session.info;
+		let non_cached_input = info.input_tokens;
+		let cache_read = info.cache_read_tokens;
+		let cache_write = info.cache_write_tokens;
+		let output = info.output_tokens;
 
-		if total_tokens == 0 {
-			return; // Avoid division by zero
+		if non_cached_input + cache_read + cache_write + output == 0 {
+			return;
 		}
 
-		// Estimate cost breakdown based on typical pricing patterns
-		// Most providers charge more for output tokens than input tokens
-		// Cache read tokens are typically free or heavily discounted
-		let estimated_input_cost = if non_cached_prompt > 0 {
-			// Estimate input cost as proportional to tokens, assuming typical 1:3 input:output ratio
-			let input_weight = 1.0;
-			let output_weight = 3.0; // Output tokens typically cost 3x more
-			let total_weighted =
-				(non_cached_prompt as f64 * input_weight) + (completion as f64 * output_weight);
-			if total_weighted > 0.0 {
-				total_cost * (non_cached_prompt as f64 * input_weight) / total_weighted
-			} else {
-				0.0
-			}
-		} else {
-			0.0
+		// Strip provider prefix ("anthropic:claude-opus-4-7" -> "claude-opus-4-7").
+		// get_reference_pricing tolerates either form, but stripping makes the match
+		// path predictable across providers.
+		let model_for_lookup = info
+			.model
+			.split_once(':')
+			.map(|(_, m)| m)
+			.unwrap_or(&info.model);
+
+		let pricing = octolib::llm::reference_pricing::get_reference_pricing(model_for_lookup);
+
+		let Some(pricing) = pricing else {
+			// Unknown model -- show only the authoritative total. No estimates.
+			log_info!("cost: ${:.5} total", total_cost);
+			return;
 		};
 
-		let estimated_output_cost = total_cost - estimated_input_cost;
-		let cache_savings = if cache_read > 0 {
-			// Estimate savings from cache read tokens (assuming they would cost same as input tokens)
-			let input_weight = 1.0;
-			let output_weight = 3.0;
-			let total_weighted =
-				(non_cached_prompt as f64 * input_weight) + (completion as f64 * output_weight);
-			if total_weighted > 0.0 && non_cached_prompt > 0 {
-				let estimated_input_rate = estimated_input_cost / non_cached_prompt as f64;
-				cache_read as f64 * estimated_input_rate
-			} else {
-				0.0
-			}
-		} else {
-			0.0
-		};
+		// Real per-component cost from the pricing table.
+		let per_million = |tokens: u64, rate: f64| (tokens as f64 / 1_000_000.0) * rate;
+		let input_cost = per_million(non_cached_input, pricing.input_price_per_1m);
+		let output_cost = per_million(output, pricing.output_price_per_1m);
+		let cache_write_cost = per_million(cache_write, pricing.cache_write_price_per_1m);
+		let cache_read_cost = per_million(cache_read, pricing.cache_read_price_per_1m);
 
-		// Display cost breakdown
-		if non_cached_prompt > 0 && completion > 0 {
-			log_info!(
-				"cost: ${:.5} total (input: ${:.5}, output: ${:.5}{})",
-				total_cost,
-				estimated_input_cost,
-				estimated_output_cost,
-				if cache_savings > 0.0 {
-					format!(", saved: ${:.5}", cache_savings)
-				} else {
-					String::new()
-				}
-			);
-		} else if non_cached_prompt > 0 {
-			log_info!(
-				"cost: ${:.5} total (input: ${:.5}{})",
-				total_cost,
-				total_cost,
-				if cache_savings > 0.0 {
-					format!(", saved: ${:.5}", cache_savings)
-				} else {
-					String::new()
-				}
-			);
-		} else if completion > 0 {
-			log_info!(
-				"cost: ${:.5} total (output: ${:.5})",
-				total_cost,
-				total_cost
-			);
+		// Genuine savings: what cache reads would have cost at the full input rate
+		// minus what they actually cost at the cache-read rate.
+		let cache_savings = per_million(
+			cache_read,
+			pricing.input_price_per_1m - pricing.cache_read_price_per_1m,
+		)
+		.max(0.0);
+
+		// Build the breakdown showing only the components that actually contributed.
+		let mut parts: Vec<String> = Vec::with_capacity(4);
+		if non_cached_input > 0 {
+			parts.push(format!("input: ${:.5}", input_cost));
+		}
+		if output > 0 {
+			parts.push(format!("output: ${:.5}", output_cost));
+		}
+		if cache_write > 0 {
+			parts.push(format!("cache write: ${:.5}", cache_write_cost));
+		}
+		if cache_read > 0 {
+			parts.push(format!("cache read: ${:.5}", cache_read_cost));
+		}
+		if cache_savings > 0.0 {
+			parts.push(format!("saved: ${:.5}", cache_savings));
+		}
+
+		if parts.is_empty() {
+			log_info!("cost: ${:.5} total", total_cost);
 		} else {
-			log_info!("cost: ${:.5}", total_cost);
+			log_info!("cost: ${:.5} total ({})", total_cost, parts.join(", "));
 		}
 	}
 }

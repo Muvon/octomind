@@ -661,6 +661,12 @@ pub fn register_dynamic_server_for_session(session_id: &SessionId, server: McpSe
 }
 
 /// Enable a dynamic MCP server for a session (stores functions).
+///
+/// Merges `funcs` into any existing function list for `server_name` instead
+/// of overwriting. Required because multiple capabilities can share one MCP
+/// server with disjoint tool filters — overwriting would erase the first
+/// cap's tool record when the second one activates. Dedup is by `name`:
+/// a function already present is skipped, not duplicated.
 pub fn enable_dynamic_server_for_session(
 	session_id: &SessionId,
 	server_name: &str,
@@ -670,7 +676,14 @@ pub fn enable_dynamic_server_for_session(
 	if let Some(registry) = guard.as_mut() {
 		if let Some((servers, functions, enabled)) = registry.get_mut(session_id) {
 			if servers.contains_key(server_name) {
-				functions.insert(server_name.to_string(), funcs);
+				let entry = functions.entry(server_name.to_string()).or_default();
+				let known: std::collections::HashSet<String> =
+					entry.iter().map(|f| f.name.clone()).collect();
+				for f in funcs {
+					if !known.contains(&f.name) {
+						entry.push(f);
+					}
+				}
 				enabled.insert(server_name.to_string(), true);
 				return true;
 			}

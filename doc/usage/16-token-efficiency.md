@@ -109,7 +109,18 @@ Descriptions are written for humans and tend to use abstract domain language ("P
 
 ## LRU Eviction
 
-The active set has a soft cap of 8 capabilities. When activating a 9th would exceed it, the **least-recently-used** active capability is disabled first to make room. Eviction is the only auto-disable mechanism — Octomind deliberately does not time-decay or domain-shift evict, because production agent UX is hurt more by false-disable than by carrying an idle cap.
+The active set has a soft cap of `MAX_ACTIVE_CAPS` capabilities (currently 4). When activating one more would exceed it, the **least-recently-used** active capability is disabled first to make room. Eviction is the only auto-disable mechanism — Octomind deliberately does not time-decay or domain-shift evict, because production agent UX is hurt more by false-disable than by carrying an idle cap.
+
+### Shared MCP Servers Are Safe
+
+Multiple capabilities can legitimately back onto the **same** MCP server with disjoint tool filters. For example, `octocode` exposes both `semantic_search`+`view_signatures` (used by the `codesearch` capability) and `graphrag`+`get_node` (used by `codesearch-graph`). Both capabilities can be active simultaneously, and disabling one does **not** strip tools belonging to the other.
+
+Each `CapState` records `server_tools: Vec<(String, Vec<String>)>` — the precise list of bare tool names *this* capability registered on each backing server. Eviction (and explicit `disable`) computes a refcount across the active set:
+
+- **kill_server = true** → no other active cap references this server. The server process is shut down, its function cache cleared, and all of its tools are removed from `TOOL_MAP`.
+- **kill_server = false** → another active cap still references this server. Only **this cap's** tools are stripped from `TOOL_MAP`; the server stays enabled and its process keeps running for the remaining cap(s).
+
+The decision is per-(capability, server) pair, computed atomically under a single registry write lock so refcounts never see a partial state. This means tap authors can split a chunky capability into focused sub-capabilities (`filesystem` + `filesystem-edit`, `memory` + `memory-knowledge`, `codesearch` + `codesearch-structural` + `codesearch-graph`) without worrying that activating one will tear down the others — even when they all point at the same MCP server binary.
 
 ### What "Recently Used" Means
 
@@ -139,16 +150,31 @@ The touch is one HashMap scan over at most `MAX_ACTIVE_CAPS` active caps (4) —
 fn evict_lru_if_full(config: &Config) {
     if active_count() < MAX_ACTIVE_CAPS { return; }     // 1. soft cap check
 
-    let mut reg = registry().write().unwrap();
-    let evicted = select_lru_in(&mut reg);              // 2. pick smallest last_used
+    // 2. Compute the disable plan under one write lock so refcounts
+    //    are consistent: pull the LRU's per-server tool record,
+    //    remove the cap from the registry, then compute kill_server
+    //    for each (server, tools) by counting remaining references.
+    let plan: Option<(String, Vec<(String, Vec<String>, bool)>)> = {
+        let mut reg = registry().write().unwrap();
+        select_lru_in(&mut reg).map(|(lru_name, server_tools)| {
+            let entries = server_tools.into_iter()
+                .map(|(srv, tools)| {
+                    let kill = server_refcount(&reg, &srv, &lru_name) == 0;
+                    (srv, tools, kill)
+                })
+                .collect();
+            (lru_name, entries)
+        })
+    };
 
-    if let Some((name, servers)) = evicted {
-        for server_name in &servers {
-            // 3. physically disable each server — also unregisters its tools
-            //    from the global tool map.
-            dynamic::disable_server(server_name, Some(config))?;
+    // 3. Apply the plan outside the lock. `disable_server_tools` strips
+    //    the listed tool names from TOOL_MAP, and only kills the server
+    //    process when kill == true.
+    if let Some((name, entries)) = plan {
+        for (srv, tools, kill) in &entries {
+            dynamic::disable_server_tools(srv, tools, *kill, Some(config))?;
         }
-        log_info!("capability LRU evicted: '{}' ({} server(s) disabled)", ...);
+        log_info!("capability LRU evicted: '{}' ({} server-tool-group(s))", ...);
     }
 }
 ```

@@ -165,90 +165,121 @@ pub async fn enable_server(
 	Ok(functions)
 }
 
-/// Disable an enabled server: mark disabled and remove cached functions.
+/// Disable an enabled server fully. Strips ALL of its tools from the global
+/// TOOL_MAP, flips it to `enabled=false` in the appropriate registry, and
+/// clears the function cache. Equivalent to `disable_server_tools(name,
+/// &all_tools, true, config)` and kept for callers that genuinely want the
+/// whole server gone (e.g. the user's `capability disable` on a cap with
+/// no shared servers, or CLI mode).
 ///
 /// Works on BOTH dynamic and config-loaded servers:
 /// - Dynamic server already in session registry → flipped to `enabled=false`.
 /// - Config-loaded server (from `config.mcp.servers`, including auto-bound) →
 ///   registered into the session's dynamic registry as `enabled=false` so
-///   subsequent `enable`/`persist` actions can find it. Its tools are stripped
-///   from the global TOOL_MAP so the LLM no longer sees them.
+///   subsequent `enable`/`persist` actions can find it.
 ///
 /// The underlying process (if any) is NOT killed — re-enabling reuses it via
 /// the cached function list.
-///
-/// Also unregisters the tools from the global tool map.
 pub fn disable_server(name: &str, config: Option<&crate::config::Config>) -> Result<()> {
+	let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
+	disable_server_tools(name, &tool_names, true, config)
+}
+
+/// Disable a specific subset of tools from a server.
+///
+/// This is the refcount-aware variant used when multiple capabilities share
+/// one MCP server: only the tools that *this* capability owns get stripped
+/// from the global TOOL_MAP, leaving tools owned by other still-active caps
+/// reachable.
+///
+/// Parameters:
+/// - `tool_names`: bare tool names (as they appear in TOOL_MAP) that this
+///   call is responsible for. Always unregistered from the global tool_map.
+/// - `kill_server`: when true, also flips the server to `enabled=false` in
+///   the session/global registry and clears the function cache (full server
+///   disable). When false, the server stays enabled and its process keeps
+///   running — appropriate when another active cap still references it.
+///
+/// Behaviour mirrors `disable_server`'s session/CLI/config-fallback branches
+/// so callers don't have to think about which mode they're in.
+pub fn disable_server_tools(
+	name: &str,
+	tool_names: &[String],
+	kill_server: bool,
+	config: Option<&crate::config::Config>,
+) -> Result<()> {
 	// 1. Session-scoped dynamic registry (preferred path for servers already tracked there).
 	if let Some(session_id) = crate::session::context::current_session_id() {
-		if crate::session::context::disable_dynamic_server_for_session(&session_id, name) {
-			// Server was in the dynamic registry — collect its cached tool names
-			// BEFORE disable removed them. `disable_dynamic_server_for_session`
-			// already cleared `functions`, so fall back to scanning the tool_map.
-			let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
-			crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
-			crate::mcp::server::clear_function_cache_for_server(name);
-			return Ok(());
+		if kill_server {
+			if crate::session::context::disable_dynamic_server_for_session(&session_id, name) {
+				crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
+				crate::mcp::server::clear_function_cache_for_server(name);
+				return Ok(());
+			}
+
+			// 2. Not in dynamic registry — look it up in the merged role config.
+			if let Some(server_config) =
+				config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
+			{
+				// Register a session-scoped "shadow" entry so persist/enable can see it.
+				crate::session::context::register_dynamic_server_for_session(
+					&session_id,
+					server_config.clone(),
+				);
+				crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
+				crate::mcp::server::clear_function_cache_for_server(name);
+				return Ok(());
+			}
+
+			anyhow::bail!("Server '{}' not found", name);
 		}
 
-		// 2. Not in dynamic registry — look it up in the merged role config.
-		if let Some(server_config) =
-			config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
-		{
-			// Register a session-scoped "shadow" entry so persist/enable can see it.
-			crate::session::context::register_dynamic_server_for_session(
-				&session_id,
-				server_config.clone(),
-			);
-			// Strip tools from the global tool_map for this session.
-			let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
-			crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
-			crate::mcp::server::clear_function_cache_for_server(name);
-			return Ok(());
-		}
-
-		anyhow::bail!("Server '{}' not found", name);
+		// kill_server == false: leave the server enabled and the function
+		// cache intact (other caps still need it). Just strip THIS cap's
+		// tools from the global tool_map.
+		crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
+		return Ok(());
 	}
 
 	// CLI / non-session mode — fall back to the global singleton.
-	let manager = get_manager();
-	let mut state = manager.write().unwrap();
-	if state.servers.contains_key(name) {
-		state.enabled.insert(name.to_string(), false);
-		let tool_names: Vec<String> = state
-			.functions
-			.get(name)
-			.map(|f| f.iter().map(|f| f.name.clone()).collect())
-			.unwrap_or_default();
-		state.functions.remove(name);
-		drop(state);
-
-		crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
-		crate::mcp::server::clear_function_cache_for_server(name);
-		return Ok(());
-	}
-	drop(state);
-
-	// Not dynamic — try the config-loaded servers (CLI path).
-	if let Some(server_config) =
-		config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
-	{
-		// Stuff it into the global singleton so enable/persist find it later.
+	if kill_server {
 		let manager = get_manager();
 		let mut state = manager.write().unwrap();
-		state
-			.servers
-			.insert(name.to_string(), server_config.clone());
-		state.enabled.insert(name.to_string(), false);
+		if state.servers.contains_key(name) {
+			state.enabled.insert(name.to_string(), false);
+			state.functions.remove(name);
+			drop(state);
+
+			crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
+			crate::mcp::server::clear_function_cache_for_server(name);
+			return Ok(());
+		}
 		drop(state);
 
-		let tool_names = crate::mcp::tool_map::get_tools_for_server(name);
-		crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
-		crate::mcp::server::clear_function_cache_for_server(name);
-		return Ok(());
-	}
+		// Not dynamic — try the config-loaded servers (CLI path).
+		if let Some(server_config) =
+			config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
+		{
+			// Stuff it into the global singleton so enable/persist find it later.
+			let manager = get_manager();
+			let mut state = manager.write().unwrap();
+			state
+				.servers
+				.insert(name.to_string(), server_config.clone());
+			state.enabled.insert(name.to_string(), false);
+			drop(state);
 
-	anyhow::bail!("Server '{}' not found", name)
+			crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
+			crate::mcp::server::clear_function_cache_for_server(name);
+			return Ok(());
+		}
+
+		anyhow::bail!("Server '{}' not found", name)
+	} else {
+		// kill_server == false in CLI mode: still just strip the tools.
+		crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
+		Ok(())
+	}
 }
 
 /// Remove a dynamic MCP server by name

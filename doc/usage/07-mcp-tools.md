@@ -129,7 +129,7 @@ Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-de
 {"action": "disable", "name": "database-postgres"}
 ```
 
-**Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Active set is bounded by an LRU eviction policy (soft cap of 8). See [Token Efficiency](16-token-efficiency.md) for the algorithm and constants.
+**Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Active set is bounded by an LRU eviction policy (soft cap of 4). Multiple capabilities can safely share the same MCP server — eviction is per-(capability, server, tools), and the underlying server is only stopped when no other active capability references it. See [Token Efficiency](16-token-efficiency.md) for the algorithm and constants.
 
 ### `skill` -- Skill Management from Taps
 

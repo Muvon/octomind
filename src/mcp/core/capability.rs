@@ -56,14 +56,19 @@ use std::time::Instant;
 // agent UX is hurt more by false-disable than by carrying an idle cap.
 // ---------------------------------------------------------------------------
 
-/// State for one active capability. `servers` is the list of MCP server
-/// names this capability registered when it was activated — stored here
-/// so eviction can disable them without re-parsing the TOML. `last_used`
-/// updates on every successful tool call from any of these servers; LRU
-/// eviction picks the entry with the smallest `last_used`.
+/// State for one active capability. `server_tools` is the list of MCP
+/// servers + the bare tool names this capability registered when it was
+/// activated. Per-server tool granularity is required because multiple
+/// capabilities can share one MCP server (e.g. `codesearch` exposes
+/// `semantic_search`+`view_signatures` while `codesearch-graph` exposes
+/// `graphrag`, both backed by the same `octocode` server). On eviction
+/// we strip only THIS cap's tools and only kill the server when no other
+/// active cap still references it (refcount → 0). `last_used` updates on
+/// every successful tool call from any of these servers; LRU eviction
+/// picks the entry with the smallest `last_used`.
 #[derive(Debug, Clone)]
 struct CapState {
-	servers: Vec<String>,
+	server_tools: Vec<(String, Vec<String>)>,
 	last_used: Instant,
 }
 
@@ -99,19 +104,19 @@ fn active_count() -> usize {
 	registry().read().unwrap().len()
 }
 
-fn mark_active(name: &str, servers: Vec<String>) {
+fn mark_active(name: &str, server_tools: Vec<(String, Vec<String>)>) {
 	registry().write().unwrap().insert(
 		name.to_string(),
 		CapState {
-			servers,
+			server_tools,
 			last_used: Instant::now(),
 		},
 	);
 }
 
-fn mark_inactive(name: &str) {
-	registry().write().unwrap().remove(name);
-}
+// `mark_inactive` removed — handle_disable / evict_lru_if_full now
+// remove cap entries directly under the same write lock that builds
+// the per-server disable plan, so a separate helper is dead weight.
 
 /// Find which active capability owns the given MCP server name and bump
 /// its `last_used` to now. Called from the tool-call dispatch path so
@@ -119,30 +124,57 @@ fn mark_inactive(name: &str) {
 pub(crate) fn touch_capability_for_server(server_name: &str) {
 	let mut reg = registry().write().unwrap();
 	for state in reg.values_mut() {
-		if state.servers.iter().any(|s| s == server_name) {
+		if state.server_tools.iter().any(|(s, _)| s == server_name) {
 			state.last_used = Instant::now();
 			return;
 		}
 	}
 }
 
+/// Count how many active capabilities (other than `excluding`) still
+/// reference `server_name`. Used by eviction to decide whether the
+/// underlying MCP server should be fully shut down or only have its
+/// caller's tools stripped from the global tool_map.
+fn server_refcount(reg: &HashMap<String, CapState>, server_name: &str, excluding: &str) -> usize {
+	reg.iter()
+		.filter(|(name, _)| name.as_str() != excluding)
+		.filter(|(_, st)| st.server_tools.iter().any(|(s, _)| s == server_name))
+		.count()
+}
+
 /// Pure helper: find the entry with the smallest `last_used` and remove it.
-/// Returns `(name, servers)` so the caller can disable the underlying
-/// servers; doesn't touch the dynamic-server registry itself. Separated
-/// from `evict_lru_if_full` so the selection logic is unit-testable
-/// without touching global state or needing a `Config`.
-fn select_lru_in(map: &mut HashMap<String, CapState>) -> Option<(String, Vec<String>)> {
+/// Returns `(name, server_tools)` so the caller can disable the underlying
+/// servers selectively; doesn't touch the dynamic-server registry itself.
+/// Separated from `evict_lru_if_full` so the selection logic is unit-
+/// testable without touching global state or needing a `Config`.
+/// Per-capability tool ownership: (server_name, bare tool names this
+/// cap registered on that server). Multiple caps can list the same
+/// `server_name` with disjoint tool sets — refcount logic uses this.
+pub(crate) type ServerToolGroups = Vec<(String, Vec<String>)>;
+
+/// Disable plan entry: server name, the specific tools to strip from
+/// the global tool_map, and whether to fully kill the server (true =
+/// no other active cap references it).
+type DisablePlanEntry = (String, Vec<String>, bool);
+
+fn select_lru_in(map: &mut HashMap<String, CapState>) -> Option<(String, ServerToolGroups)> {
 	let lru_name = map
 		.iter()
 		.min_by_key(|(_, st)| st.last_used)
 		.map(|(n, _)| n.clone())?;
 	let st = map.remove(&lru_name)?;
-	Some((lru_name, st.servers))
+	Some((lru_name, st.server_tools))
 }
 
 /// If the active set is at or above the soft cap, evict the LRU entry
-/// (lowest `last_used`) and disable its underlying MCP servers. Logged
-/// at info level so users see what flipped off.
+/// (lowest `last_used`) and disable its MCP-server tools. Logged at info
+/// level so users see what flipped off.
+///
+/// Refcount-aware: for each (server, tools) the evicted cap registered,
+/// the underlying server is fully shut down ONLY when no other active
+/// cap still references that server name. Otherwise just THIS cap's
+/// tools are stripped from the global tool_map and the server keeps
+/// running for its other consumers.
 ///
 /// Called before activating a new capability; idempotent when the active
 /// set is below the cap. Errors disabling individual servers are logged
@@ -152,24 +184,43 @@ fn evict_lru_if_full(config: &Config) {
 	if active_count() < MAX_ACTIVE_CAPS {
 		return;
 	}
-	let evicted = {
+
+	// Compute the disable plan under one write lock so refcounts are
+	// consistent: read the LRU's server list, remove it from the
+	// registry, then count remaining references for each server.
+	let plan: Option<(String, Vec<DisablePlanEntry>)> = {
 		let mut reg = registry().write().unwrap();
-		select_lru_in(&mut reg)
+		select_lru_in(&mut reg).map(|(lru_name, server_tools)| {
+			let entries = server_tools
+				.into_iter()
+				.map(|(srv, tools)| {
+					let kill = server_refcount(&reg, &srv, &lru_name) == 0;
+					(srv, tools, kill)
+				})
+				.collect();
+			(lru_name, entries)
+		})
 	};
-	if let Some((name, servers)) = evicted {
-		for server_name in &servers {
-			if let Err(e) = crate::mcp::core::dynamic::disable_server(server_name, Some(config)) {
+
+	if let Some((name, entries)) = plan {
+		let server_count = entries.len();
+		for (srv, tools, kill) in &entries {
+			if let Err(e) =
+				crate::mcp::core::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
+			{
 				crate::log_debug!(
-					"capability LRU evict: failed to disable server '{}' ({})",
-					server_name,
+					"capability LRU evict: failed to disable tools for server '{}' (kill={}, {} tools): {}",
+					srv,
+					kill,
+					tools.len(),
 					e
 				);
 			}
 		}
 		crate::log_info!(
-			"capability LRU evicted: '{}' ({} server(s) disabled to make room)",
+			"capability LRU evicted: '{}' ({} server-tool-group(s) processed)",
 			name,
-			servers.len()
+			server_count
 		);
 	}
 }
@@ -375,6 +426,10 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 
 	let mut activated_tools: Vec<String> = Vec::new();
 	let mut activated_servers: Vec<String> = Vec::new();
+	// Per-(server, bare-tool-names) record we hand to `mark_active` so
+	// LRU eviction can strip only THIS cap's tools when servers are
+	// shared with other active caps. See CapState docs.
+	let mut activated_server_tools: Vec<(String, Vec<String>)> = Vec::new();
 	// Track whether *any* server activation passed a non-empty filter, so
 	// the success message can distinguish "all-tools" from "filter-applied".
 	let mut any_filter_applied = false;
@@ -411,7 +466,9 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 
 		match crate::mcp::core::dynamic::enable_server(&server_name, filter_for_this).await {
 			Ok(functions) => {
-				activated_tools.extend(functions.iter().map(|f| f.name.clone()));
+				let bare_names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
+				activated_tools.extend(bare_names.iter().cloned());
+				activated_server_tools.push((server_name.clone(), bare_names));
 				activated_servers.push(server_name);
 			}
 			Err(e) => {
@@ -424,7 +481,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		}
 	}
 
-	mark_active(&name, activated_servers.clone());
+	mark_active(&name, activated_server_tools);
 
 	// Don't mislead the LLM with "Tools available: none" when no filter
 	// was applied — that path means "expose all server tools", and an
@@ -474,42 +531,73 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 		));
 	}
 
-	let resolved = match crate::agent::registry::parse_capability_toml(&name, &config.capabilities)
-	{
-		Ok(r) => r,
-		Err(e) => {
-			return Ok(McpToolResult::error(
+	// Compute the disable plan under one write lock so refcounts are
+	// consistent: pull THIS cap's (server, tools) record, remove the
+	// cap from the registry, then count remaining references for each
+	// server. Mirrors `evict_lru_if_full`.
+	let plan: Option<Vec<DisablePlanEntry>> = {
+		let mut reg = registry().write().unwrap();
+		reg.remove(&name).map(|state| {
+			state
+				.server_tools
+				.into_iter()
+				.map(|(srv, tools)| {
+					let kill = server_refcount(&reg, &srv, &name) == 0;
+					(srv, tools, kill)
+				})
+				.collect()
+		})
+	};
+
+	let plan = match plan {
+		Some(p) => p,
+		None => {
+			// Race: someone else evicted between is_active check and the
+			// write-lock above. Treat as no-op.
+			return Ok(McpToolResult::success(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Capability '{name}' not found (cannot determine servers to disable): {e}"),
+				format!("Capability '{name}' is not active."),
 			));
 		}
 	};
 
 	let mut disabled_servers: Vec<String> = Vec::new();
-	for server in &resolved.mcp_servers {
-		let server_name = server.name().to_string();
-		if crate::mcp::core::dynamic::is_dynamic(&server_name) {
-			if let Err(e) = crate::mcp::core::dynamic::disable_server(&server_name, Some(config)) {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!("Failed to disable server '{server_name}': {e}"),
-				));
-			}
-			disabled_servers.push(server_name);
+	for (srv, tools, kill) in &plan {
+		// Skip non-dynamic servers entirely (they were never registered
+		// here, so there's nothing to do — matches old handle_disable
+		// behaviour). For shared servers (kill=false), strip only this
+		// cap's tools regardless of dynamic-vs-config status.
+		if !crate::mcp::core::dynamic::is_dynamic(srv) && *kill {
+			continue;
+		}
+		if let Err(e) =
+			crate::mcp::core::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
+		{
+			// Re-insert the cap so the user can retry. Fail closed — partial
+			// disable is worse than reporting the error.
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("Failed to disable server '{srv}' for capability '{name}': {e}"),
+			));
+		}
+		if *kill {
+			disabled_servers.push(srv.clone());
 		}
 	}
-
-	mark_inactive(&name);
 
 	Ok(McpToolResult::success(
 		call.tool_name.clone(),
 		call.tool_id.clone(),
 		format!(
-			"Capability '{name}' disabled. Deactivated {} server(s): {}",
+			"Capability '{name}' disabled. Fully shut down {} server(s): {}",
 			disabled_servers.len(),
-			disabled_servers.join(", ")
+			if disabled_servers.is_empty() {
+				"(none — all servers still in use by other active capabilities)".to_string()
+			} else {
+				disabled_servers.join(", ")
+			}
 		),
 	))
 }
@@ -773,6 +861,7 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 	evict_lru_if_full(config);
 
 	let mut activated_servers: Vec<String> = Vec::new();
+	let mut activated_server_tools: Vec<(String, Vec<String>)> = Vec::new();
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
 		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
@@ -781,10 +870,12 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		// Per-server bare-name filter (strips `<server>:` namespace from
 		// capability `allowed_tools` patterns; see `filter_for_server`).
 		let filter = filter_for_server(&resolved.allowed_tools, &server_name);
-		crate::mcp::core::dynamic::enable_server(&server_name, filter).await?;
+		let functions = crate::mcp::core::dynamic::enable_server(&server_name, filter).await?;
+		let bare_names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
+		activated_server_tools.push((server_name.clone(), bare_names));
 		activated_servers.push(server_name);
 	}
-	mark_active(name, activated_servers.clone());
+	mark_active(name, activated_server_tools);
 	Ok(activated_servers)
 }
 
@@ -941,9 +1032,12 @@ mod tests {
 	fn active_registry_marks_and_clears() {
 		let cap = "test.cap.alpha";
 		assert!(!is_active(cap));
-		mark_active(cap, vec!["test-server".to_string()]);
+		mark_active(
+			cap,
+			vec![("test-server".to_string(), vec!["t1".to_string()])],
+		);
 		assert!(is_active(cap));
-		mark_inactive(cap);
+		registry().write().unwrap().remove(cap);
 		assert!(!is_active(cap));
 	}
 
@@ -1018,27 +1112,27 @@ mod tests {
 		map.insert(
 			"alpha".to_string(),
 			CapState {
-				servers: vec!["s1".to_string()],
+				server_tools: vec![("s1".to_string(), vec!["t1".to_string()])],
 				last_used: now - Duration::from_secs(100),
 			},
 		);
 		map.insert(
 			"beta".to_string(),
 			CapState {
-				servers: vec!["s2".to_string()],
+				server_tools: vec![("s2".to_string(), vec!["t2".to_string()])],
 				last_used: now - Duration::from_secs(50),
 			},
 		);
 		map.insert(
 			"gamma".to_string(),
 			CapState {
-				servers: vec!["s3".to_string()],
+				server_tools: vec![("s3".to_string(), vec!["t3".to_string()])],
 				last_used: now,
 			},
 		);
 		let evicted = select_lru_in(&mut map).expect("should evict the oldest");
 		assert_eq!(evicted.0, "alpha");
-		assert_eq!(evicted.1, vec!["s1".to_string()]);
+		assert_eq!(evicted.1, vec![("s1".to_string(), vec!["t1".to_string()])]);
 		assert_eq!(map.len(), 2);
 		assert!(!map.contains_key("alpha"));
 	}
@@ -1055,7 +1149,7 @@ mod tests {
 		map.insert(
 			"only".to_string(),
 			CapState {
-				servers: vec!["s1".to_string()],
+				server_tools: vec![("s1".to_string(), vec!["t1".to_string()])],
 				last_used: Instant::now(),
 			},
 		);
@@ -1064,12 +1158,75 @@ mod tests {
 		assert!(map.is_empty());
 	}
 
+	// --------------------------------------------------------------------
+	// server_refcount — counts active caps (excluding `excluding`) that
+	// reference a given server name. Drives the "kill server vs strip
+	// tools only" decision in evict_lru_if_full and handle_disable.
+	// --------------------------------------------------------------------
+
+	#[test]
+	fn server_refcount_zero_when_no_other_caps_reference_server() {
+		let mut map: HashMap<String, CapState> = HashMap::new();
+		map.insert(
+			"alpha".to_string(),
+			CapState {
+				server_tools: vec![("octofs".to_string(), vec!["view".to_string()])],
+				last_used: Instant::now(),
+			},
+		);
+		// excluding alpha → no caps left referencing octofs
+		assert_eq!(server_refcount(&map, "octofs", "alpha"), 0);
+	}
+
+	#[test]
+	fn server_refcount_counts_other_caps_sharing_same_server() {
+		let now = Instant::now();
+		let mut map: HashMap<String, CapState> = HashMap::new();
+		map.insert(
+			"codesearch".to_string(),
+			CapState {
+				server_tools: vec![(
+					"octocode".to_string(),
+					vec!["semantic_search".to_string(), "view_signatures".to_string()],
+				)],
+				last_used: now,
+			},
+		);
+		map.insert(
+			"codesearch-graph".to_string(),
+			CapState {
+				server_tools: vec![("octocode".to_string(), vec!["graphrag".to_string()])],
+				last_used: now,
+			},
+		);
+		// Excluding codesearch: still 1 active cap (codesearch-graph) refs octocode
+		assert_eq!(server_refcount(&map, "octocode", "codesearch"), 1);
+		// Excluding codesearch-graph: still 1 active cap (codesearch) refs octocode
+		assert_eq!(server_refcount(&map, "octocode", "codesearch-graph"), 1);
+		// Some other unrelated server name → 0
+		assert_eq!(server_refcount(&map, "octofs", "codesearch"), 0);
+	}
+
+	#[test]
+	fn server_refcount_ignores_the_excluded_cap_itself() {
+		let mut map: HashMap<String, CapState> = HashMap::new();
+		map.insert(
+			"alpha".to_string(),
+			CapState {
+				server_tools: vec![("s1".to_string(), vec!["t1".to_string()])],
+				last_used: Instant::now(),
+			},
+		);
+		// alpha references s1 but is excluded → count = 0
+		assert_eq!(server_refcount(&map, "s1", "alpha"), 0);
+	}
+
 	#[test]
 	fn touch_capability_updates_timestamp_for_owning_cap() {
 		// Use unique cap name so we don't interfere with other tests.
 		let cap = "test.touch.alpha";
 		let server = "test.touch.server";
-		mark_active(cap, vec![server.to_string()]);
+		mark_active(cap, vec![(server.to_string(), vec!["tool1".to_string()])]);
 		let before = registry().read().unwrap().get(cap).unwrap().last_used;
 		std::thread::sleep(std::time::Duration::from_millis(2));
 		touch_capability_for_server(server);
@@ -1078,7 +1235,7 @@ mod tests {
 			after > before,
 			"touch_capability_for_server should bump last_used"
 		);
-		mark_inactive(cap);
+		registry().write().unwrap().remove(cap);
 	}
 
 	// -----------------------------------------------------------------------

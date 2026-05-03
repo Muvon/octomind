@@ -78,7 +78,11 @@ fn display_shortcuts_help() {
 	);
 	println!(
 		"{}",
-		"│ Ctrl+G      - Add message without sending to API        │".bright_black()
+		"│ Ctrl+G      - Add message without sending (or retry on  │".bright_black()
+	);
+	println!(
+		"{}",
+		"│               empty input after a failed request)       │".bright_black()
 	);
 	println!(
 		"{}",

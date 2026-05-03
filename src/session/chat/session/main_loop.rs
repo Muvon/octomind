@@ -269,6 +269,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// We need to handle configuration reloading, so keep our own copy that we can update
 		let mut current_config = config_for_role.clone();
 
+		// Last user input that failed at the API layer (after handle_api_error truncated it
+		// from the message history). Lets the user re-send the same request via Ctrl+G on an
+		// empty prompt without retyping. Cleared on any successful API call. Commands and
+		// the AddWithoutSending (non-empty) path never touch this.
+		let mut last_failed_input: Option<String> = None;
+
 		// Apply runtime state from session log if this is a resumed session
 		if chat_session.was_resumed {
 			if let Some(session_file) = &chat_session.session.session_file {
@@ -530,31 +536,38 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					text
 				}
 				InputResult::AddWithoutSending(text, clipboard_items) => {
-					// Ctrl+G pressed - add message to context without sending
-
-					// Skip if input is empty
+					// Ctrl+G with EMPTY input + a previously failed request → retry that request.
+					// This lets the user resend the last failed prompt without retyping after
+					// a transient API error (e.g. "error decoding response body").
 					if text.trim().is_empty() {
+						if let Some(prev_input) = last_failed_input.take() {
+							apply_clipboard_items(&mut chat_session, clipboard_items);
+							println!("{}", "↻ Retrying last failed request...".bright_cyan());
+							prev_input
+						} else {
+							continue;
+						}
+					} else {
+						// Ctrl+G with non-empty input — add to context without sending.
+						apply_clipboard_items(&mut chat_session, clipboard_items);
+
+						// Add the message to session context
+						chat_session.add_user_message(&text)?;
+
+						// Save the session to persist the added message
+						if let Err(e) = chat_session.save() {
+							log_debug!(
+								"Warning: Failed to save session after adding message: {}",
+								e
+							);
+						}
+
+						// Provide feedback to user
+						println!("{}", "✓ Message added to context".bright_cyan());
+
+						// Continue to next input without sending to API
 						continue;
 					}
-
-					apply_clipboard_items(&mut chat_session, clipboard_items);
-
-					// Add the message to session context
-					chat_session.add_user_message(&text)?;
-
-					// Save the session to persist the added message
-					if let Err(e) = chat_session.save() {
-						log_debug!(
-							"Warning: Failed to save session after adding message: {}",
-							e
-						);
-					}
-
-					// Provide feedback to user
-					println!("{}", "✓ Message added to context".bright_cyan());
-
-					// Continue to next input without sending to API
-					continue;
 				}
 				InputResult::Cancelled => {
 					// Ctrl+C pressed during input
@@ -847,6 +860,10 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				continue;
 			}
 
+			// Snapshot the user's original input for retry-on-failure (Ctrl+G with empty input).
+			// `input` itself is consumed by the workflow_modified_session branch below.
+			let original_input_for_retry = input.clone();
+
 			let final_input = if workflow_modified_session {
 				// Layers used output_mode append/replace and added messages to session
 				// Skip adding user message to avoid duplicates and continue with the user message
@@ -1066,6 +1083,9 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 							log_debug!("Assistant message added at index {}", messages_before_api);
 						}
 					}
+
+					// Successful turn — clear retry buffer.
+					last_failed_input = None;
 				}
 				Err(e) => {
 					// Handle API error using helper function
@@ -1075,6 +1095,14 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 						&model_for_error,
 						&e,
 						OutputMode::Interactive,
+					);
+
+					// Stash the original input so an empty Ctrl+G replays this turn.
+					last_failed_input = Some(original_input_for_retry);
+					println!(
+						"{}",
+						"💡 Press Ctrl+G with empty input to retry the last failed request."
+							.dimmed()
 					);
 				}
 			}

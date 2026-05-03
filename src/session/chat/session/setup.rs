@@ -31,6 +31,7 @@ fn display_random_tip() -> String {
 	let tips = [
 		"Use ↑/↓ arrows or Ctrl+R for command history search",
 		"Press Ctrl+G to add a message to context without sending to AI",
+		"After an API error, press Ctrl+G with empty input to retry the last failed request",
 		"Press Ctrl+V to auto-attach a clipboard image (or copied video file) and keep typing",
 		"Press Tab for command or file completion",
 		"Type @ followed by a filename for fuzzy file search and insertion",

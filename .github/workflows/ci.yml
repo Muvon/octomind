@@ -277,6 +277,13 @@ jobs:
                   onnxruntime_BUILD_UNIT_TESTS=OFF \
                   onnxruntime_BUILD_SHARED_LIB=OFF \
                   onnxruntime_USE_KLEIDIAI=OFF
+              # ORT'\''s static build (.a archives, --skip_tests) never link an
+              # executable, so target_link_libraries deps like re2::re2 don'\''t
+              # trigger compilation — re2 is FetchContent-populated but its
+              # CMake target stays unbuilt. ort-sys 2.0.0-rc.12 hardcodes a
+              # static link to it. Explicitly drive the re2 target inside ORT'\''s
+              # configured build tree (uses bundled abseil from the same tree).
+              cmake --build "$ORT_LIB_LOCATION" --target re2 -j
               cd /workspace
             else
               echo "==> Using cached ONNX Runtime static build"

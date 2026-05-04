@@ -1421,6 +1421,10 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	let user_message_index_for_error = user_message_index;
 	let operation_rx_clone = operation_rx.clone();
 	let model_for_error = chat_session.model.clone();
+	// Capture message count BEFORE API call to detect follow-up failures (post-tool-execution).
+	// On follow-up failure the history already contains valid assistant(tool_calls) +
+	// tool_results — truncating would discard completed tool work.
+	let messages_before_api = chat_session.session.messages.len();
 	let api_result = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
 		// For JSONL mode, set up a notification channel so MCP server notifications
 		// are forwarded as structured JSON lines alongside the regular output.
@@ -1505,19 +1509,29 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 				manager.kill_all();
 			}
 
-			// Handle API error using helper function
 			let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
 				OutputMode::Jsonl
 			} else {
 				OutputMode::NonInteractive
 			};
-			handle_api_error(
-				&mut chat_session,
-				user_message_index_for_error,
-				&model_for_error,
-				&e,
-				output_mode,
-			);
+
+			// Distinguish follow-up failure (after tools executed) from initial-call failure.
+			// handle_api_error truncates the user message — correct only for the initial call.
+			// For follow-ups the history already contains valid assistant(tool_calls) +
+			// tool_results; truncating would discard that completed work and corrupt the
+			// persisted session log on the next reload.
+			let messages_after_api = chat_session.session.messages.len();
+			if messages_after_api > messages_before_api {
+				handle_followup_api_error(&model_for_error, &e, output_mode);
+			} else {
+				handle_api_error(
+					&mut chat_session,
+					user_message_index_for_error,
+					&model_for_error,
+					&e,
+					output_mode,
+				);
+			}
 		}
 	}
 	} // end if !input.is_empty()

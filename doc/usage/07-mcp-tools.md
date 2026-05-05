@@ -17,6 +17,18 @@ Octomind ships with four MCP servers:
 
 Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio` types.
 
+### Why two builtin servers
+
+The split exists for two reasons: a clearer mental model, and a lower default token tax.
+
+**The taxonomy.** `runtime` answers *"what am I?"* — its tools mutate the agent's identity: register a new MCP server, define a dynamic-agent class, load a skill instruction-pack. `core` answers *"how do I get this done?"* — planning a multi-step task, deferring work, growing the toolset on intent, delegating to a specialist. Most roles always want the second. Only specialized harness-authoring roles want the first.
+
+**The token cost.** Every always-on tool is schema text the model stares at every turn, even when irrelevant. Splitting `runtime` out lets a typical role (`lawyer:sg`, `doctor:blood`, `developer:general`) drop those three tools from its surface entirely — they're never reached for during normal work, and exposing them just adds noise.
+
+**Where new tools go.** When adding a tool, ask: *does it change what the agent **is**, or help the agent **work**?* Identity-change → `runtime`. Work-help → `core`. If neither fits cleanly, it's probably a [capability](#capability----discover-and-activate-domain-bundles) — a domain bundle activated on demand rather than a built-in.
+
+**Direction of travel.** Even `core` is moving toward capability-gated rather than always-on. Today the essentials (`capability`, `tap`, `plan`) are always exposed because they're the bootstrap layer — `capability` loads everything else, `tap` is foundational delegation, `plan` is meta-cognition every role benefits from. Auxiliaries like `schedule`, and the entirety of `runtime`, are good candidates to migrate behind opt-in capability bundles authored in taps. The auto-activation pipeline already handles this for external capabilities; extending it to builtin tools is a tap-side authoring task.
+
 ## Core Server Tools
 
 ### `plan` -- Structured Task Management

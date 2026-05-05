@@ -59,16 +59,33 @@ When multiple taps provide the same agent tag, priority is:
 
 ## Using Tap Agents
 
+### From the CLI
+
 Run a tap agent with `domain:spec` format:
 
+```
 octomind run octomind:assistant
 octomind run developer:general
+```
 
 When you specify a tag with `:`, Octomind:
 1. Searches taps for a matching agent manifest
 2. Downloads and resolves dependencies
 3. Merges the manifest into config
 4. Starts the session with the agent's role
+
+### From within a session — the `tap` core tool
+
+Inside a running session you can launch a tap role as a subagent via the `tap` core tool. Same role catalog, but invoked from the LLM mid-conversation rather than a CLI command:
+
+```json
+{"action": "discover", "intent": "review a legal contract"}
+{"action": "run", "role": "lawyer:sg", "prompt": "What are the notice period rules?"}
+{"action": "list"}
+{"action": "stop", "session": "tap-lawyer-sg-9b2c1d"}
+```
+
+Use `background: true` for long tasks; the reply lands as a user message in the next turn. See [MCP Tools — `tap`](../usage/07-mcp-tools.md#tap----run-specialist-roles-from-taps) for the full schema.
 
 ### Model Overrides
 
@@ -85,21 +102,26 @@ This overrides the model for `octomind run developer:general` while leaving othe
 ## Agent Manifests
 
 
-Agent manifests are TOML files in `agents/<category>/<variant>.toml`:
+Agent manifests are TOML files in `agents/<category>/<variant>.toml`. The header comment block is part of the schema — `# Title:` and `# Description:` are required (used by `tap discover` and `octomind run` autocomplete):
 
 ```toml
 # agents/developer/general.toml
+# Agent: developer:general
+# Title: General Developer
+# Description: Elite senior developer. Pragmatic, precise, zero waste.
+
 [[roles]]
-name = "developer"
 system = "You are an expert software developer..."
 temperature = 0.3
 
 [roles.mcp]
-server_refs = ["core", "filesystem"]
-allowed_tools = ["core:*", "filesystem:*"]
+server_refs = ["core", "runtime", "filesystem"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*"]
 ```
 
-Manifests can include any config sections: roles, layers, workflows, MCP servers, etc.
+The role's `name` is auto-injected from the file path (`category:variant` becomes the name) — manifests don't need to declare it. Manifests can include any config sections: roles, layers, workflows, MCP servers, etc.
+
+If the role needs runtime harness control (`mcp` / `agent` / `skill` tools), include `"runtime"` in `server_refs`. Most roles only need `"core"` (planning, scheduling, capability, tap) plus the data servers they actually use.
 
 ## Skills
 

@@ -107,8 +107,8 @@ Working directory: {{CWD}}
 welcome = "Hello! Ready to help. Working in {{CWD}} (Role: {{ROLE}})"
 
 [roles.mcp]
-server_refs = ["core", "filesystem", "agent"]
-allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
 ## `[mcp]`
@@ -122,6 +122,16 @@ Global MCP (Model Context Protocol) configuration.
 ### `[[mcp.servers]]`
 
 MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
+
+**Builtin servers** (always available, no external process):
+
+| Name | Tools | Purpose |
+|------|-------|---------|
+| `core` | `plan`, `schedule`, `capability`, `tap` | High-level day-to-day tools |
+| `runtime` | `mcp`, `agent`, `skill` | Low-level harness reconfiguration |
+| `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
+
+`filesystem` is no longer a builtin — it's an external `stdio` server backed by `octofs`. See [MCP Tools](../usage/07-mcp-tools.md) for the tool surface.
 
 #### Common Fields
 

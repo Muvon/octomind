@@ -55,7 +55,7 @@ Every coding agent in 2026 swaps models and calls it a feature. Octomind solves 
 | Pillar | What it gives you | Built on |
 |---|---|---|
 | **Cost as a control plane** | Per-request and per-session spending limits, real-time cost tracking, cache-aware accounting. | `src/config/roles.rs`, spending threshold enforcement |
-| **Zero-config specialist agents** | `octomind run aws-debug` → prompts + MCP servers + tools, all pre-wired. Agents auto-enable new MCP servers mid-session and spawn sub-agents. | Tap registry, `mcp` and `agent` built-in tools, runtime self-extension |
+| **Zero-config specialist agents** | `octomind run aws-debug` → prompts + MCP servers + tools, all pre-wired. Agents auto-enable new MCP servers mid-session and delegate to specialist sub-agents. | Tap registry, runtime self-extension |
 | **Sessions that don't break at hour 4** | SOTA adaptive compaction: cache-aware, structurally preserving. Smaller context = faster responses + lower cost. | `src/mcp/core/plan/compression.rs` |
 
 ---
@@ -119,10 +119,11 @@ This is **packaged expertise** — not a prompt file, not a skill injection. The
 
 ### Specialists grow at runtime
 
-Every agent has two built-in power tools that let it acquire new capabilities and spawn sub-agents mid-session, without restart:
+Every agent has built-in power tools that let it acquire new capabilities and spawn sub-agents mid-session, without restart:
 
 | Tool | What it does |
 |---|---|
+| `tap` | Delegate to any specialist role from the tap registry. Foreground for an inline reply or background for long tasks. |
 | `mcp` | Enable or disable MCP servers on the fly. Agent picks the server it needs and registers it mid-conversation. |
 | `agent` | Spawn a specialist sub-agent for a sub-task. Sub-agent runs, returns, parent continues. |
 

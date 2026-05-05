@@ -57,8 +57,8 @@ name = "developer"
 model = "openrouter:anthropic/claude-sonnet-4"
 
 [roles.mcp]
-server_refs = ["core", "filesystem", "agent"]
-allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
 Key changes:
@@ -66,6 +66,7 @@ Key changes:
 - `enabled` field removed (roles are always available if defined)
 - `enable_layers` removed (layers are controlled by workflows)
 - Tool permissions use `allowed_tools` patterns
+- `runtime` builtin server is new — see "Runtime Namespace Move" below
 
 ## Layer Configuration
 
@@ -107,6 +108,60 @@ octomind config --upgrade
 ```
 
 This attempts to migrate your config to the latest version. Review the result and adjust manually if needed.
+
+## Runtime Namespace Move
+
+The `core` builtin server was split into two: high-level tools stay in `core`, low-level harness-control tools moved to a new `runtime` server.
+
+| Tool | Old server | New server |
+|------|------------|------------|
+| `plan` | `core` | `core` |
+| `schedule` | `core` | `core` |
+| `capability` | `core` | `core` |
+| `tap` *(new)* | -- | `core` |
+| `mcp` | `core` | **`runtime`** |
+| `agent` | `core` | **`runtime`** |
+| `skill` | `core` | **`runtime`** |
+
+If your config or tap manifest has `server_refs = ["core", ...]` and the role calls any of `mcp`, `agent`, or `skill`, add `"runtime"` to the list:
+
+```diff
+ [roles.mcp]
+-server_refs = ["core", "filesystem", "agent"]
+-allowed_tools = ["core:*", "filesystem:*", "agent:*"]
++server_refs = ["core", "runtime", "filesystem", "agent"]
++allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
+```
+
+The `runtime` server is registered automatically in the default config:
+
+```toml
+[[mcp.servers]]
+name = "runtime"
+type = "builtin"
+timeout_seconds = 30
+tools = []
+```
+
+If you have a hand-rolled config without it, add the block.
+
+Roles that don't call `mcp`/`agent`/`skill` (most roles) don't need `"runtime"` at all — drop it from `server_refs` to keep the tool surface tighter.
+
+## Filesystem Is Now External
+
+`filesystem` is no longer a builtin server. It's served by an external `octofs` process configured as a `stdio` server. The default config already wires this:
+
+```toml
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "octofs"
+args = ["mcp", "--path={{CWD}}"]
+timeout_seconds = 30
+tools = []
+```
+
+If your config still declares `filesystem` as `type = "builtin"`, switch it to the stdio block above. `octomind config --upgrade` does this automatically.
 
 ## MCP Server Type
 

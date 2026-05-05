@@ -4,13 +4,16 @@ Octomind uses the Model Context Protocol (MCP) to provide AI models with externa
 
 ## Architecture
 
-Octomind ships with three MCP servers:
+Octomind ships with four MCP servers:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | Task management, server/agent management, scheduling, skills, capabilities |
-| `agent` | builtin | Delegates tasks to configured ACP sub-agents |
-| `filesystem` | stdio (octofs) | File operations, shell commands, code analysis |
+| `core` | builtin | High-level day-to-day tools: planning, scheduling, capability discovery, tap-role launch |
+| `runtime` | builtin | Low-level harness reconfiguration: register MCP servers, manage dynamic agents, load skills |
+| `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
+| `filesystem` | stdio (`octofs`) | File operations, shell commands, code analysis |
+
+`core` and `runtime` are the two split halves of what used to be a single `core` server. The split separates "what the agent uses to do work" (`core`) from "what reconfigures the harness mid-session" (`runtime`).
 
 Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio` types.
 
@@ -40,50 +43,6 @@ Break down large objectives into steps with progress tracking.
 {"command": "next", "content": "API designed, moving to tests"}
 {"command": "done", "content": "Feature complete"}
 ```
-
-### `mcp` -- Dynamic MCP Server Management
-
-Manage MCP servers at runtime without editing config.
-
-**Parameters:**
-- `action` (string, required): `"list"`, `"add"`, `"enable"`, `"disable"`, `"remove"`, `"persist"`, `"unpersist"`
-
-| Action | Description |
-|--------|-------------|
-| `list` | Show all servers with status and persistence info |
-| `add` | Register a new server (does not connect yet) |
-| `enable` | Connect and activate a registered server's tools |
-| `disable` | Deactivate server tools (config stays) |
-| `remove` | Unregister entirely |
-| `persist` | Save server to config directory |
-| `unpersist` | Remove persisted config file |
-
-**Add parameters:**
-- `name` (string): Unique server name
-- `server_type` (string): `"stdio"` or `"http"`
-- `command` (string): Executable (for stdio)
-- `args` (array): Arguments (for stdio)
-- `url` (string): Endpoint (for http)
-- `timeout_seconds` (number): Timeout (default: 60)
-- `tools` (array): Tool filter (empty = all, supports wildcards like `"github_*"`)
-
-### `agent` -- Dynamic Agent Management
-
-Manage AI agents at runtime. Each agent becomes a tool prefixed with `agent_`.
-
-**Parameters:**
-- `action` (string, required): `"list"`, `"add"`, `"enable"`, `"disable"`, `"remove"`
-
-**Add parameters:**
-- `name` (string): Unique agent name (tool becomes `agent_<name>`)
-- `description` (string): MCP tool description
-- `system` (string): System prompt (required for add)
-- `welcome` (string): Optional welcome message
-- `model` (string): Model override
-- `temperature`, `top_p`, `top_k`: Sampling parameters
-- `server_refs` (array): MCP server references
-- `allowed_tools` (array): Tool filter (supports wildcards)
-- `workdir` (string): Working directory (default: `"."`)
 
 ### `schedule` -- Scheduled Message Injection
 
@@ -130,6 +89,87 @@ Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-de
 ```
 
 **Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Active set is bounded by an LRU eviction policy (soft cap of 4). Multiple capabilities can safely share the same MCP server — eviction is per-(capability, server, tools), and the underlying server is only stopped when no other active capability references it. See [Token Efficiency](16-token-efficiency.md) for the algorithm and constants.
+
+### `tap` -- Run Specialist Roles from Taps
+
+Delegate work to a specialist role installed via a tap (e.g. `developer:general`, `lawyer:us`, `security:owasp`). Each role brings its own system prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, stop a run, or browse the catalog.
+
+**Parameters:**
+- `action` (string, required): `"run"`, `"list"`, `"stop"`, `"discover"`
+- `role` (string): Role tag in `category:variant` form. Required for `run` when `session` is not given.
+- `prompt` (string): User message to send. Required for `run`.
+- `session` (string): Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop`. For `run`, supply this to resume an existing run instead of starting a new one.
+- `workdir` (string): Working directory the role operates in. Optional -- defaults to the parent session's current cwd.
+- `background` (boolean, default: false): When true, return immediately and inject the reply as a user message when ready.
+- `intent` (string): Free-text intent for `discover`.
+
+| Action | Description |
+|--------|-------------|
+| `run` | Launch a role (or resume one). Foreground blocks for the reply; background returns the run id and injects the reply later. |
+| `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
+| `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
+| `discover` | Semantic match free-text intent against installed roles' `# Title:` / `# Description:` headers. Returns top 5. |
+
+```json
+{"action": "discover", "intent": "review a Singapore employment contract"}
+{"action": "run", "role": "lawyer:sg", "prompt": "What are the notice period rules for termination?"}
+{"action": "run", "role": "security:owasp", "prompt": "Audit this auth module", "background": true}
+{"action": "list"}
+{"action": "stop", "session": "tap-security-owasp-a3f1c2"}
+{"action": "run", "session": "tap-lawyer-sg-9b2c1d", "prompt": "What about probationary periods?"}
+```
+
+**Lifecycle.** Tap-runs live for the duration of the parent session. When the parent session exits, all in-flight runs are cancelled. The on-disk role manifest is unaffected.
+
+**Non-interactive.** Tap-runs run in non-interactive mode, so `{{INPUT:KEY}}` / `{{ENV:KEY}}` placeholders that would normally prompt stdin instead return a structured error. Pre-populate inputs once via `octomind run <role>` (interactive), then tap-run picks up the stored values.
+
+## Runtime Server Tools
+
+Low-level tools for reconfiguring the harness mid-session. Most agents won't need these — they're for tasks like adding a one-off MCP server, prototyping a dynamic agent, or activating a skill.
+
+### `mcp` -- Dynamic MCP Server Management
+
+Manage MCP servers at runtime without editing config.
+
+**Parameters:**
+- `action` (string, required): `"list"`, `"add"`, `"enable"`, `"disable"`, `"remove"`, `"persist"`, `"unpersist"`
+
+| Action | Description |
+|--------|-------------|
+| `list` | Show all servers with status and persistence info |
+| `add` | Register a new server (does not connect yet) |
+| `enable` | Connect and activate a registered server's tools |
+| `disable` | Deactivate server tools (config stays) |
+| `remove` | Unregister entirely |
+| `persist` | Save server to config directory |
+| `unpersist` | Remove persisted config file |
+
+**Add parameters:**
+- `name` (string): Unique server name
+- `server_type` (string): `"stdio"` or `"http"`
+- `command` (string): Executable (for stdio)
+- `args` (array): Arguments (for stdio)
+- `url` (string): Endpoint (for http)
+- `timeout_seconds` (number): Timeout (default: 60)
+- `tools` (array): Tool filter (empty = all, supports wildcards like `"github_*"`)
+
+### `agent` -- Dynamic Agent Management
+
+Manage in-process AI agents at runtime. Each registered agent becomes a tool prefixed with `agent_`. Distinct from the `agent` server (which exposes config-defined ACP sub-agents) and from `tap run` (which launches tap-distributed roles).
+
+**Parameters:**
+- `action` (string, required): `"list"`, `"add"`, `"enable"`, `"disable"`, `"remove"`
+
+**Add parameters:**
+- `name` (string): Unique agent name (tool becomes `agent_<name>`)
+- `description` (string): MCP tool description
+- `system` (string): System prompt (required for add)
+- `welcome` (string): Optional welcome message
+- `model` (string): Model override
+- `temperature`, `top_p`, `top_k`: Sampling parameters
+- `server_refs` (array): MCP server references
+- `allowed_tools` (array): Tool filter (supports wildcards)
+- `workdir` (string): Working directory (default: `"."`)
 
 ### `skill` -- Skill Management from Taps
 

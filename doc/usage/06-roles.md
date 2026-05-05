@@ -38,8 +38,8 @@ Working directory: {{CWD}}
 welcome = "Hello! Working in {{CWD}} (Role: {{ROLE}})"
 
 [roles.mcp]
-server_refs = ["core", "filesystem", "agent"]
-allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
 ### Role Fields
@@ -75,14 +75,20 @@ server_refs = ["core", "filesystem"]  # Only core and filesystem servers
 
 ```toml
 [roles.mcp]
-server_refs = ["core", "filesystem", "agent"]
+server_refs = ["core", "runtime", "filesystem", "agent"]
 allowed_tools = [
-  "core:*",              # All tools from core server
+  "core:*",              # plan, schedule, capability, tap
+  "runtime:mcp",         # only the mcp tool from runtime (skip agent / skill)
   "filesystem:view",     # Only view from filesystem
   "filesystem:shell",    # Only shell from filesystem
-  "agent:*",             # All agent tools
+  "agent:*",             # All agent_* sub-agent tools
 ]
 ```
+
+**Builtin servers:**
+- `core` -- high-level day-to-day tools: `plan`, `schedule`, `capability`, `tap`.
+- `runtime` -- low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills). Most roles don't need this.
+- `agent` -- dispatches to `[[agents]]`-defined ACP sub-agents (`agent_<name>` per entry).
 
 **Pattern syntax:**
 - `"server:*"` -- all tools from a server
@@ -113,8 +119,8 @@ Git status: {{GIT_STATUS}}
 """
 
 [roles.mcp]
-server_refs = ["core", "filesystem", "agent"]
-allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
 ### Read-Only Analyst

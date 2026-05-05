@@ -115,9 +115,23 @@ agent_code_reviewer(task="Scan for OWASP Top 10 vulnerabilities", async=true)
 # "[Async agent 'code_reviewer' completed]"
 ```
 
+### Tap Roles (no config needed)
+
+If a tap registry already provides a specialist role for the sub-task, use the `tap` core tool instead of defining your own `[[agents]]`:
+
+```json
+// Discover, then delegate — no config edits, no subprocess setup.
+{"action": "discover", "intent": "review code for OWASP Top 10 issues"}
+{"action": "run", "role": "security:owasp", "prompt": "Audit src/auth/ for OWASP issues", "background": true}
+```
+
+Tap roles share their own system prompt + model + tool kit. `background: true` returns the run id immediately and the reply lands as a user message in the next turn. Resume with `{"action": "run", "session": "<id>", "prompt": "follow-up question"}`. See [Tap System](../integration/04-tap-system.md) and [MCP Tools — `tap`](../usage/07-mcp-tools.md#tap----run-specialist-roles-from-taps).
+
+Use `[[agents]]` (this page) when the role doesn't exist in any tap or you need a custom local-only agent. Use `tap` when a community-maintained role already covers the task.
+
 ### Dynamic Agents
 
-Create agents on the fly during a session using the `agent` MCP tool:
+Create agents on the fly during a session using the `agent` runtime tool (formerly under `core`):
 
 ```json
 // AI creates a specialized agent at runtime

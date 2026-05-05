@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Core MCP provider - modular structure
-// Handles core tools: plan, mcp, agent, schedule, skill, capability
+// Handles core tools: plan, mcp, agent, schedule, skill, capability, tap
 
 pub mod capability;
 pub mod dynamic;
@@ -23,6 +23,7 @@ pub mod plan;
 pub mod schedule;
 pub mod skill;
 pub mod skill_auto;
+pub mod tap;
 
 #[cfg(test)]
 mod plan_tests;
@@ -40,3 +41,4 @@ pub use schedule::{
 	execute_schedule_tool, flush_due_to_inbox, has_pending_schedules, next_schedule_sleep,
 };
 pub use skill::execute_skill_tool;
+pub use tap::execute_tap_command;

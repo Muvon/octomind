@@ -34,8 +34,8 @@ top_k = 0
 
 [roles.mcp]
 # Inherit all servers from the base config plus any added below
-server_refs = ["core", "filesystem", "agent"]
-allowed_tools = ["core:*", "filesystem:*", "agent_*"]
+server_refs = ["core", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent_*"]
 
 # ---------------------------------------------------------------------------
 # Additional MCP servers (optional — uncomment to enable)

@@ -218,6 +218,184 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 	)
 }
 
+/// Metadata header for a tap agent manifest.
+///
+/// Every `<tap>/agents/<category>/<variant>.toml` opens with required
+/// `# Title:` and `# Description:` header comments. That convention IS the
+/// schema — we don't carry parallel structured fields. `parse_agent_meta`
+/// reads those header lines directly; missing values are a hard error.
+#[derive(Debug, Clone)]
+pub struct AgentMeta {
+	pub title: String,
+	pub description: String,
+}
+
+/// One role enumerated from a tap. Naming follows the agent-facing surface:
+/// callers refer to these as "roles" (the unit they `run`); internally the
+/// string is still a `category:variant` tag.
+#[derive(Debug, Clone)]
+pub struct TapAgent {
+	/// Role identifier in `category:variant` form — e.g. `developer:general`.
+	pub role: String,
+	pub meta: AgentMeta,
+	/// Tap that provides this manifest (first-wins precedence).
+	pub source_tap: String,
+}
+
+/// Extract `Title` and `Description` from the manifest's header comment block.
+///
+/// Scans the leading comment block (everything before the first non-comment,
+/// non-blank line) for lines of the form:
+///
+/// ```text
+/// # Title: <title>
+/// # Description: <description>
+/// ```
+///
+/// Both are required. Returns an error if either is absent — we own the
+/// authoring convention, so there's no fallback.
+pub fn parse_agent_meta(raw_toml: &str, tag: &str) -> Result<AgentMeta> {
+	let mut title: Option<String> = None;
+	let mut description: Option<String> = None;
+	for line in raw_toml.lines() {
+		let trimmed = line.trim_start();
+		// Stop at first non-comment, non-blank line — header block ends here.
+		if !trimmed.is_empty() && !trimmed.starts_with('#') {
+			break;
+		}
+		if let Some(rest) = trimmed.strip_prefix("# Title:") {
+			let v = rest.trim();
+			if !v.is_empty() {
+				title = Some(v.to_string());
+			}
+		} else if let Some(rest) = trimmed.strip_prefix("# Description:") {
+			let v = rest.trim();
+			if !v.is_empty() {
+				description = Some(v.to_string());
+			}
+		}
+	}
+	let title = title.ok_or_else(|| {
+		anyhow::anyhow!("Agent '{tag}' is missing required `# Title:` header comment.")
+	})?;
+	let description = description.ok_or_else(|| {
+		anyhow::anyhow!("Agent '{tag}' is missing required `# Description:` header comment.")
+	})?;
+	Ok(AgentMeta { title, description })
+}
+
+#[cfg(test)]
+mod meta_tests {
+	use super::*;
+
+	#[test]
+	fn parses_title_and_description_from_header_comments() {
+		let raw = "# agents/developer/general.toml\n\
+		           # Agent: developer:general\n\
+		           # Title: General Developer\n\
+		           # Description: Elite senior developer.\n\
+		           \n\
+		           [[roles]]\n\
+		           temperature = 0.1\n";
+		let m = parse_agent_meta(raw, "developer:general").unwrap();
+		assert_eq!(m.title, "General Developer");
+		assert_eq!(m.description, "Elite senior developer.");
+	}
+
+	#[test]
+	fn errors_when_title_missing() {
+		let raw = "# Description: Only description\n[[roles]]\n";
+		let err = parse_agent_meta(raw, "x:y").unwrap_err().to_string();
+		assert!(err.contains("Title"));
+	}
+
+	#[test]
+	fn errors_when_description_missing() {
+		let raw = "# Title: Only title\n[[roles]]\n";
+		let err = parse_agent_meta(raw, "x:y").unwrap_err().to_string();
+		assert!(err.contains("Description"));
+	}
+
+	#[test]
+	fn stops_at_first_non_comment_line() {
+		// A `# Title:` after the header block should NOT be picked up.
+		let raw = "# Title: Real\n\
+		           # Description: Real desc\n\
+		           [[roles]]\n\
+		           system = \"# Title: not metadata\"\n";
+		let m = parse_agent_meta(raw, "x:y").unwrap();
+		assert_eq!(m.title, "Real");
+		assert_eq!(m.description, "Real desc");
+	}
+}
+
+/// Enumerate every agent installed across all configured taps.
+///
+/// Walks each tap's `agents/` directory, reads `<category>/<variant>.toml`,
+/// extracts the `# Title:` / `# Description:` header comments (required by
+/// tap-level linting), and returns `TapAgent` entries in first-tap-wins
+/// order (later taps with same tag are skipped). Used by the `tap` core
+/// tool to power `discover`.
+pub fn list_all_tap_agents() -> Result<Vec<TapAgent>> {
+	let taps =
+		crate::agent::taps::get_taps().context("Failed to load taps for agent enumeration")?;
+
+	let mut seen: HashSet<String> = HashSet::new();
+	let mut out: Vec<TapAgent> = Vec::new();
+
+	for tap in &taps {
+		let agents_dir = match tap.agents_dir() {
+			Ok(d) => d,
+			Err(_) => continue,
+		};
+		if !agents_dir.is_dir() {
+			continue;
+		}
+		let cat_entries = match fs::read_dir(&agents_dir) {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+		for cat_entry in cat_entries.flatten() {
+			if !cat_entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+				continue;
+			}
+			let category = cat_entry.file_name().to_string_lossy().to_string();
+			let var_entries = match fs::read_dir(cat_entry.path()) {
+				Ok(e) => e,
+				Err(_) => continue,
+			};
+			for var_entry in var_entries.flatten() {
+				let path = var_entry.path();
+				if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+					continue;
+				}
+				let variant = match path.file_stem().and_then(|s| s.to_str()) {
+					Some(s) => s.to_string(),
+					None => continue,
+				};
+				let role = format!("{category}:{variant}");
+				if seen.contains(&role) {
+					continue;
+				}
+				let raw = match fs::read_to_string(&path) {
+					Ok(s) => s,
+					Err(_) => continue,
+				};
+				let meta = parse_agent_meta(&raw, &role)?;
+				seen.insert(role.clone());
+				out.push(TapAgent {
+					role,
+					meta,
+					source_tap: tap.name.clone(),
+				});
+			}
+		}
+	}
+
+	out.sort_by(|a, b| a.role.cmp(&b.role));
+	Ok(out)
+}
+
 /// A resolved capability — split across two files in the tap:
 ///
 /// - `<tap>/capabilities/<name>/config.toml` — capability-level metadata

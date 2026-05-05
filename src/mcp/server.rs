@@ -683,11 +683,11 @@ pub fn is_server_already_running_with_config(server: &crate::config::McpServerCo
 
 // Legacy function for backward compatibility - tries to guess server type
 pub fn is_server_already_running(server_name: &str) -> bool {
-	// Internal servers (Core/Filesystem) are always "running" since they're built-in
-
-	// Check if this is an internal server by looking for it in a typical config
-	// This is a bit of a hack, but we need to distinguish internal vs external servers
-	if server_name == "core" || server_name == "filesystem" {
+	// Internal builtin servers (`core`, `runtime`, `agent`) are always
+	// considered "running" — they're in-process and have no external lifecycle.
+	// `filesystem` is no longer internal: it's served by an external MCP
+	// (`octofs`) configured as a `stdio` server.
+	if server_name == "core" || server_name == "runtime" || server_name == "agent" {
 		// Internal servers are always considered running
 		let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
 		let info = restart_info_guard

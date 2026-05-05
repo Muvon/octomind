@@ -43,6 +43,8 @@ pub enum InboxSource {
 	Schedule { id: String },
 	/// A background agent job that completed (success or failure).
 	BackgroundAgent { name: String },
+	/// A background tap-run launched via the `tap` core tool.
+	TapRun { id: String, role: String },
 	/// A `skill(use)` activation that needs its content injected.
 	Skill { name: String },
 	/// A skill validator failure that needs to be fed back to the AI.
@@ -183,6 +185,9 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 		InboxSource::Schedule { .. } => "scheduled message",
 		InboxSource::BackgroundAgent { name } => {
 			return Some(format!("background agent '{name}'"));
+		}
+		InboxSource::TapRun { id, role } => {
+			return Some(format!("tap-run {id} ({role})"));
 		}
 		InboxSource::Skill { name } => {
 			return Some(format!("skill '{name}'"));

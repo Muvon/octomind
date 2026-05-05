@@ -18,20 +18,17 @@
 
 use super::super::McpFunction;
 use super::capability::get_capability_function;
-use super::dynamic::get_mcp_tool_function;
-use super::dynamic_agents::get_agent_tool_function;
 use super::plan::get_plan_function;
 use super::schedule::get_schedule_function;
-use super::skill::get_skill_function;
+use super::tap::get_tap_function;
 
-// Get all available core functions
+// Core builtin tools — high-level, day-to-day. Low-level runtime control
+// tools (`mcp`, `agent`, `skill`) live under the `runtime` builtin server.
 pub fn get_all_functions() -> Vec<McpFunction> {
 	vec![
 		get_plan_function(),
-		get_mcp_tool_function(),
-		get_agent_tool_function(),
 		get_schedule_function(),
-		get_skill_function(),
 		get_capability_function(),
+		get_tap_function(),
 	]
 }

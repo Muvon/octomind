@@ -62,6 +62,7 @@ pub mod agent;
 pub mod core;
 pub mod health_monitor;
 pub mod process;
+pub mod runtime;
 pub mod server;
 pub mod shared_utils;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,6 +330,9 @@ async fn server_functions_for(
 		McpConnectionType::Builtin => match server.name() {
 			"core" => {
 				get_filtered_server_functions("core", server.tools(), core::get_all_functions)
+			}
+			"runtime" => {
+				get_filtered_server_functions("runtime", server.tools(), runtime::get_all_functions)
 			}
 			"agent" => {
 				let fns = agent::get_all_functions(config);
@@ -619,21 +623,15 @@ async fn route_builtin_tool(
 				"plan" => core::execute_plan(call)
 					.await
 					.map_err(|e| format!("Plan execution failed: {}", e)),
-				"mcp" => core::execute_mcp_command(call, config)
-					.await
-					.map_err(|e| format!("MCP management failed: {}", e)),
-				"agent" => core::execute_agent_tool_command(call)
-					.await
-					.map_err(|e| format!("Agent management failed: {}", e)),
 				"schedule" => core::execute_schedule_tool(call)
 					.await
 					.map_err(|e| format!("Schedule execution failed: {}", e)),
-				"skill" => core::execute_skill_tool(call)
-					.await
-					.map_err(|e| format!("Skill tool failed: {}", e)),
 				"capability" => core::execute_capability_command(call, config)
 					.await
 					.map_err(|e| format!("Capability tool failed: {}", e)),
+				"tap" => core::execute_tap_command(call, config)
+					.await
+					.map_err(|e| format!("Tap tool failed: {}", e)),
 				other => {
 					return Err(anyhow::anyhow!(
 						"Tool '{}' not implemented in core server",
@@ -641,6 +639,23 @@ async fn route_builtin_tool(
 					))
 				}
 			};
+			match result {
+				Ok(mut r) => {
+					r.tool_id = call.tool_id.clone();
+					Ok(r)
+				}
+				Err(msg) => Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					msg,
+				)),
+			}
+		}
+		"runtime" => {
+			crate::log_debug!("Executing '{}' via runtime builtin server", call.tool_name);
+			let result = runtime::execute_runtime_tool(call, config)
+				.await
+				.map_err(|e| format!("Runtime tool failed: {}", e));
 			match result {
 				Ok(mut r) => {
 					r.tool_id = call.tool_id.clone();

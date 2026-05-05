@@ -1105,6 +1105,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_capability_refcounts(session_id);
 	clear_skill_capability_servers(session_id);
 	crate::session::inbox::clear_inbox_for_session(session_id);
+	crate::session::tap_runs::clear_for_session(session_id);
 	crate::mcp::core::plan::compression::cleanup_compression_state(session_id);
 	clear_schedule_notify(session_id);
 }
@@ -1113,6 +1114,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 /// Centralizes the init sequence so entry points don't duplicate it.
 pub fn init_session_services(role: &str) {
 	crate::session::inbox::init_inbox_for_session();
+	crate::session::tap_runs::init_for_session();
 	crate::mcp::agent::functions::init_job_manager();
 	// Extract domain from role/tag (e.g., "developer:general" → "developer")
 	let domain = role.split(':').next().unwrap_or(role);

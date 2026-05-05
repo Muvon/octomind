@@ -186,7 +186,54 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
 
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
-		crate::mcp::core::capability::load_env_capabilities(&config_for_role).await;
+
+		// Drive the same boot spinner used for static MCP init so env-loaded
+		// capabilities (which may start their own MCP servers) show progress
+		// instead of stalling the UI silently.
+		{
+			use std::sync::{Arc, Mutex};
+			let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+			let total: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+			let sp_ref = spinner.clone();
+			let cb = move |progress: crate::mcp::core::capability::EnvCapabilityProgress| {
+				let Some(sp) = sp_ref.as_ref() else { return };
+				match progress {
+					crate::mcp::core::capability::EnvCapabilityProgress::Starting {
+						capabilities,
+					} => {
+						*total.lock().unwrap() = capabilities.len();
+						*pending.lock().unwrap() = capabilities.clone();
+						if !capabilities.is_empty() {
+							sp.set_message(format!(
+								"Loading capabilities: {} [0/{}]",
+								capabilities.join(", "),
+								capabilities.len()
+							));
+						}
+					}
+					crate::mcp::core::capability::EnvCapabilityProgress::Completed {
+						capability,
+						..
+					} => {
+						let mut pg = pending.lock().unwrap();
+						pg.retain(|s| s != &capability);
+						let done = *total.lock().unwrap() - pg.len();
+						let tc = *total.lock().unwrap();
+						if pg.is_empty() {
+							sp.set_message(format!("Capabilities ready [{}/{}]", done, tc));
+						} else {
+							sp.set_message(format!(
+								"Loading capabilities: {} [{}/{}]",
+								pg.join(", "),
+								done,
+								tc
+							));
+						}
+					}
+				}
+			};
+			crate::mcp::core::capability::load_env_capabilities(&config_for_role, Some(&cb)).await;
+		}
 
 		// Done initializing — clear spinner, print skills
 		if let Some(sp) = spinner {
@@ -207,6 +254,13 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 							name.bright_cyan()
 						));
 					}
+				}
+				for name in crate::mcp::core::capability::list_active_names() {
+					sp.println(format!(
+						"{} {}",
+						"Using capability:".dimmed(),
+						name.bright_magenta()
+					));
 				}
 			}
 			sp.disable_steady_tick();
@@ -1256,7 +1310,9 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
 
 	crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
-	crate::mcp::core::capability::load_env_capabilities(&config_for_role).await;
+	// Non-interactive paths have no spinner — env-capability progress events
+	// would have nothing to drive, so pass None.
+	crate::mcp::core::capability::load_env_capabilities(&config_for_role, None).await;
 
 	// Clear spinner from setup
 	if let Some(sp) = spinner {

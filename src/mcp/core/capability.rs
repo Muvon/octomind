@@ -710,6 +710,18 @@ fn score_capability(intent_vec: &[f32], trigger_vecs: &[Vec<f32>]) -> f32 {
 /// Inspect the most recent user message and, if a non-active capability
 /// strongly matches, activate it directly via `dynamic::enable_server`.
 /// Silent no-op when the model isn't ready, no capabilities are installed,
+/// Progress events emitted by `load_env_capabilities`.
+///
+/// Mirrors `crate::mcp::McpInitProgress` so the boot spinner can drive both
+/// phases (static MCP init + env-capability load) through one UI loop.
+#[derive(Debug, Clone)]
+pub enum EnvCapabilityProgress {
+	/// Initial event with the full list of capabilities about to load.
+	Starting { capabilities: Vec<String> },
+	/// One capability finished (success or failure).
+	Completed { capability: String, success: bool },
+}
+
 /// Load capabilities from the `OCTOMIND_CAPABILITIES` env var (if set).
 ///
 /// Mirrors `skill_auto::load_env_skills`: parses a comma-separated list of
@@ -718,10 +730,17 @@ fn score_capability(intent_vec: &[f32], trigger_vecs: &[Vec<f32>]) -> f32 {
 /// `capability` tool — capabilities listed here are always loaded,
 /// regardless of intent matching.
 ///
+/// `progress` is an optional callback driven during loading so a boot
+/// spinner / TUI can show per-capability status alongside the standard MCP
+/// init phase. Pass `None` for headless flows (ACP, WebSocket).
+///
 /// Failures are logged and skipped (never abort the session). Already-active
 /// capabilities are no-ops. Use this from CLI / CI / non-interactive runs
 /// that need a deterministic tool surface (e.g., `OCTOMIND_CAPABILITIES=cron,docker octomind run -r ...`).
-pub async fn load_env_capabilities(config: &Config) {
+pub async fn load_env_capabilities(
+	config: &Config,
+	progress: Option<&(dyn Fn(EnvCapabilityProgress) + Send + Sync)>,
+) {
 	let env_val = match std::env::var("OCTOMIND_CAPABILITIES") {
 		Ok(v) if !v.trim().is_empty() => v,
 		_ => return,
@@ -735,12 +754,24 @@ pub async fn load_env_capabilities(config: &Config) {
 		return;
 	}
 
+	if let Some(cb) = progress {
+		cb(EnvCapabilityProgress::Starting {
+			capabilities: names.clone(),
+		});
+	}
+
 	let suppress = crate::config::with_thread_config(|c| c.output_mode())
 		.map(|m| m.should_suppress_cli_output())
 		.unwrap_or(false);
 
 	for name in &names {
 		if is_active(name) {
+			if let Some(cb) = progress {
+				cb(EnvCapabilityProgress::Completed {
+					capability: name.clone(),
+					success: true,
+				});
+			}
 			continue;
 		}
 		let call = crate::mcp::McpToolCall {
@@ -748,7 +779,7 @@ pub async fn load_env_capabilities(config: &Config) {
 			tool_id: format!("env_{name}"),
 			parameters: serde_json::json!({"action": "enable", "name": name}),
 		};
-		match handle_enable(&call, config).await {
+		let success = match handle_enable(&call, config).await {
 			Ok(result) if result.is_error() => {
 				let msg = result.extract_content();
 				if !suppress {
@@ -760,9 +791,11 @@ pub async fn load_env_capabilities(config: &Config) {
 						msg
 					);
 				}
+				false
 			}
 			Ok(_) => {
 				crate::log_debug!("OCTOMIND_CAPABILITIES: enabled capability '{}'", name);
+				true
 			}
 			Err(e) => {
 				if !suppress {
@@ -774,9 +807,25 @@ pub async fn load_env_capabilities(config: &Config) {
 						e
 					);
 				}
+				false
 			}
+		};
+		if let Some(cb) = progress {
+			cb(EnvCapabilityProgress::Completed {
+				capability: name.clone(),
+				success,
+			});
 		}
 	}
+}
+
+/// Snapshot of currently-active capability names. Used by the boot flow to
+/// print "Using capability: X" summary lines after env loading completes,
+/// mirroring the per-skill summary lines.
+pub fn list_active_names() -> Vec<String> {
+	let mut names: Vec<String> = registry().read().unwrap().keys().cloned().collect();
+	names.sort();
+	names
 }
 
 /// no match clears the gate, or the last message is not user input.

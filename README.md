@@ -3,8 +3,8 @@
     <img src="assets/logo.svg" width="640" alt="Octomind — AI Agent Runtime" />
   </a>
   <br /><br />
-  <strong>Specialist AI agents with cost guardrails and sessions that don't break at hour 4.</strong><br />
-  <em>Plug-and-play domain experts. Adaptive compaction. Real spending limits.</em>
+  <strong>Install agents, not frameworks.</strong><br />
+  <em>Open-source runtime for specialist AI agents. One command. Any model. Any domain.</em>
   <br /><br />
 
   [![License](https://img.shields.io/badge/license-Apache%202.0-7c3aed?style=flat-square)](LICENSE)
@@ -22,9 +22,9 @@
 
 - [The Problem](#the-problem)
 - [Three Pillars](#three-pillars)
-- [Pillar 1 — Cost as a Control Plane](#pillar-1--cost-as-a-control-plane)
-- [Pillar 2 — Zero-Config Specialist Agents](#pillar-2--zero-config-specialist-agents)
-- [Pillar 3 — Sessions That Don't Break at Hour 4](#pillar-3--sessions-that-dont-break-at-hour-4)
+- [Pillar 1 — Zero Config, Full Flexibility](#pillar-1--zero-config-full-flexibility)
+- [Pillar 2 — Sessions That Stay Sharp at Hour 4](#pillar-2--sessions-that-stay-sharp-at-hour-4)
+- [Pillar 3 — Cost as a Control Plane](#pillar-3--cost-as-a-control-plane)
 - [Quick Start](#quick-start)
 - [How It Works](#how-it-works)
 - [Power Users — Roles, Workflows, Layers](#power-users--roles-workflows-layers)
@@ -39,14 +39,15 @@
 
 ## The Problem
 
-You want an AI that knows your domain, costs what you expected, and remembers what it decided an hour ago. In 2026 you get:
+Building a specialist AI agent in 2026 means stitching together three different tools, writing glue code nobody wants to own, and praying it holds. You spend 45 minutes wiring MCP servers, system prompts, tool configs, and credentials — every domain, every machine, every time.
 
-- **45 minutes of setup per domain** — MCP servers, system prompts, tool configs, credentials, all wired by hand, every time.
-- **Surprise bills.** Cursor users posting $7K daily overages. Claude Code rate-limiting mid-task. No per-task budget, no simulator, no kill switch.
-- **Context rot at hour 2-4.** Naive truncation drops the decisions you need. Quality collapses. You restart.
-- **One generic assistant** for every task — Rust debugging, blood-test interpretation, contract review — same prompt, same tools.
+- **Config Wars.** No central registry. Skills here, MCP servers there, agent configs nowhere. The community calls it ["solidarity in frustration."](https://dev.to/satinathnit/the-agent-config-wars-why-your-ai-agent-documentation-is-already-obsolete-4d6i)
+- **Generic AI hallucinates in expert domains.** ChatGPT writes wrong drug dosages. Lawyers cite cases that don't exist. Multi-agent specialization is now [the default architecture](https://dev.to/aibughunter/ai-agents-in-april-2026-from-research-to-production-whats-actually-happening-55oc) for serious work.
+- **One generic assistant for every task.** Rust debugging, blood-test interpretation, contract review — same prompt, same tools. Drift compounds.
+- **Sessions break at hour 4.** Naive truncation drops the decisions you need. Quality collapses. You restart.
+- **Bills surprise you.** Cursor users posting $7K daily overages. No per-task budget, no kill switch.
 
-Every coding agent in 2026 swaps models and calls it a feature. Octomind solves the three things they don't.
+Octomind ships specialist agents ready to run — and a runtime that grows with you.
 
 ---
 
@@ -54,49 +55,15 @@ Every coding agent in 2026 swaps models and calls it a feature. Octomind solves 
 
 | Pillar | What it gives you | Built on |
 |---|---|---|
-| **Cost as a control plane** | Per-request and per-session spending limits, real-time cost tracking, cache-aware accounting. | `src/config/roles.rs`, spending threshold enforcement |
-| **Zero-config specialist agents** | `octomind run aws-debug` → prompts + MCP servers + tools, all pre-wired. Agents auto-enable new MCP servers mid-session and delegate to specialist sub-agents. | Tap registry, runtime self-extension |
-| **Sessions that don't break at hour 4** | SOTA adaptive compaction: cache-aware, structurally preserving. Smaller context = faster responses + lower cost. | `src/mcp/core/plan/compression.rs` |
+| **Zero config, full flexibility** | `octomind run lawyer:sg` works out of the box. Need a different model, MCP server, or pipeline? Same TOML, no framework code. | Tap registry, runtime self-extension |
+| **Sessions stay sharp at hour 4** | SOTA adaptive compaction: cache-aware, structurally preserving. Smaller context = faster responses + lower cost. | `src/mcp/core/plan/compression.rs` |
+| **Cost as a control plane** | Per-step model selection across 13+ providers. Hard spending caps and cache-aware accounting come for free. | `src/config/roles.rs`, spending threshold enforcement |
 
 ---
 
-## Pillar 1 — Cost as a Control Plane
+## Pillar 1 — Zero Config, Full Flexibility
 
-Cost is treated as infrastructure, not an afterthought.
-
-```toml
-# Hard spending limits — enforced, not advisory
-max_request_spending_threshold = 0.50    # USD per request
-max_session_spending_threshold = 5.00    # USD per session
-
-# Per-role model selection — pay Opus only where it's worth it
-[[roles]]
-name = "researcher"
-model = "google:gemini-2.5-flash"   # cheap broad context
-
-[[roles]]
-name = "reviewer"
-model = "anthropic:claude-opus-4"   # precision where it counts
-```
-
-What's already shipped:
-- Real-time cost tracking per request and per session.
-- Cache-aware token accounting (`cache_read_tokens`, `cache_write_tokens` separated from input/output).
-- Hard spending thresholds with enforcement.
-- Per-role and per-layer model selection — different roles can run on different providers.
-
-What's in flight:
-- Cost simulator (`octomind cost simulate <agent> --runs N`).
-- Provider arbitrage — dynamic routing on cost-per-quality-point.
-- Per-provider budgets and alerts.
-
-> Cursor users get $7,000 surprise bills. Octomind agents trip a budget and stop, fall back, or warn — before the bill, not after.
-
----
-
-## Pillar 2 — Zero-Config Specialist Agents
-
-Most agent tools force you to assemble a system prompt, choose MCP servers, set up role config, and manage credentials — for every domain, on every machine, every time. Octomind ships specialists ready to run.
+Most agent tools force a tradeoff: zero-config (Lindy, no-code) or fully customizable (Mastra, LangGraph). Octomind gives you both. `octomind run lawyer:sg` works out of the box. Need a different model, a custom MCP server, a pipeline of agents — all live in TOML, no framework code.
 
 ```bash
 octomind run developer            # general dev, language skills auto-activate
@@ -138,7 +105,7 @@ Agent:
   → presents the analysis
 ```
 
-OpenClaw pre-loads 5,700 skills into every agent. Octomind starts focused for the domain and grows only when needed. **Smaller context, lower cost, faster responses, no surprise tools.**
+Most agent harnesses pre-load every available tool into context. Octomind starts focused for the domain and grows only when needed. **Smaller context, lower cost, faster responses, no surprise tools.**
 
 ### Add your own taps
 
@@ -156,7 +123,7 @@ Each tap is a Git repo. Each agent is one TOML file. Pull requests are contribut
 
 ---
 
-## Pillar 3 — Sessions That Don't Break at Hour 4
+## Pillar 2 — Sessions That Stay Sharp at Hour 4
 
 Every coding agent degrades after a few hours. Context fills. Decisions get truncated. The agent forgets why it started.
 
@@ -171,6 +138,35 @@ Octomind's adaptive compaction engine runs automatically:
 The second-order benefit: smaller context means **fewer tokens, faster responses, lower cost** every turn after compaction fires. The three pillars compound.
 
 > Work on a hard problem for 4 hours. The agent still knows what it decided in hour one.
+
+---
+
+## Pillar 3 — Cost as a Control Plane
+
+Pick the right model for each step. A cheap one for routine research, a frontier one for review — per-role, per-step, mid-session swap. Real-time cost tracking and hard spending caps come for free.
+
+```toml
+# Per-role model selection — pay Opus only where it's worth it
+[[roles]]
+name = "researcher"
+model = "google:gemini-2.5-flash"   # cheap broad context
+
+[[roles]]
+name = "reviewer"
+model = "anthropic:claude-opus-4"   # precision where it counts
+
+# Hard spending limits — enforced, not advisory
+max_request_spending_threshold = 0.50    # USD per request
+max_session_spending_threshold = 5.00    # USD per session
+```
+
+- Per-role and per-layer model selection across 13+ providers — different roles can run on different vendors.
+- Mid-session model swap with `/model deepseek:v3`.
+- Real-time cost tracking per request and per session.
+- Cache-aware token accounting (`cache_read_tokens`, `cache_write_tokens` separated from input/output).
+- Hard spending thresholds with enforcement — agent stops, falls back, or warns before the bill.
+
+> Cursor users get $7,000 surprise bills. Octomind agents trip a budget and stop, fall back, or warn — before the bill, not after.
 
 ---
 
@@ -207,9 +203,9 @@ That's it. You're in an interactive session with a specialist that can read your
 
 `view`, `text_editor`, `batch_edit`, `shell`, `semantic_search`, `structural_search`, `workdir` — file operations come from the companion octofs MCP server, included by default in tap formulas that need them.
 
-### Memory tools (via [octomem](https://github.com/muvon/octomem))
+### Brain (via [octobrain](https://github.com/muvon/octobrain))
 
-`remember`, `memorize`, `knowledge`, `graphrag` — long-term memory and knowledge indexing, included by default in taps that need persistent context.
+`memorize`, `remember`, `forget`, `knowledge`, `relate`, `memory_graph` — long-term memory, knowledge indexing, and relationship graphs. The companion octobrain MCP server is included by default in taps that need persistent context across sessions.
 
 ### Providers
 
@@ -393,7 +389,7 @@ CLI / WebSocket / ACP / Daemon
             +-- MCP servers         <- src/mcp/
                   +-- core/  plan, mcp, agent, schedule, skill
                   +-- (filesystem via external octofs)
-                  +-- (memory via external octomem)
+                  +-- (brain via external octobrain)
                   +-- agent/ agent_* tools route tasks to layers
 ```
 

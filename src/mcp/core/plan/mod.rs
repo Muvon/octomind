@@ -58,14 +58,14 @@ Use for: multi-file implementations, long-running work that may be interrupted, 
 Skip for: single-step changes, quick fixes, anything completable in one focused pass without losing context.
 
 Commands:
-- start: Create plan with tasks array (ERROR if plan already exists — use 'done' or 'reset' first)
-- step: Add progress note to current task (does NOT advance it)
-- next: Mark current task DONE and advance to next
-- list: Show all tasks with status
-- done: Complete the plan with final summary
-- reset: Clear all plan data
+- start: create plan with tasks array (ERROR if plan already exists, use done or reset first)
+- step: add progress note to current task (does NOT advance it)
+- next: mark current task DONE and advance to next
+- list: show all tasks with status
+- done: complete the plan with final summary
+- reset: clear all plan data
 
-Each task requires `title` (short) and `description` (detailed: file paths, commands, expected outcomes, validation steps).".to_string(),
+Each task requires title (short) and description (detailed: file paths, commands, expected outcomes, validation steps).".to_string(),
         parameters: json!({
             "type": "object",
             "properties": {

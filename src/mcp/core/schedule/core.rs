@@ -109,28 +109,27 @@ pub async fn next_schedule_sleep() {
 pub fn get_schedule_function() -> McpFunction {
 	McpFunction {
 		name: "schedule".to_string(),
-		description: r#"Schedule a message to be automatically injected as a user message into the current session at a future time. The session keeps running until all scheduled messages have fired — nothing is blocked.
+		description: r#"Schedule a message to be automatically injected as a user message into the current session at a future time. The session keeps running until all scheduled messages have fired.
 
-One-shot entries fire once and are removed. Repeating entries (set via `every`) re-schedule automatically after each firing — they stay active until explicitly removed.
+One-shot entries fire once and are removed. Repeating entries (set via 'every') re-schedule automatically after each firing until explicitly removed.
 
-**commands:**
-- `add`    — schedule a new message (requires `when` and `message`; `description` recommended)
-- `list`   — show all pending scheduled entries with IDs, trigger times, and countdown
-- `remove` — cancel a scheduled entry by `id`
-- `edit`   — update an existing entry by `id` (any of `when`, `message`, `description`, `every`)
+Commands:
+- add: schedule a new message (requires 'when' and 'message'; 'description' recommended)
+- list: show all pending scheduled entries with IDs, trigger times, and countdown
+- remove: cancel a scheduled entry by 'id'
+- edit: update an existing entry by 'id' (any of when, message, description, every)
 
-**`when` format** (local timezone):
-- Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`, `"in 2h 30m"`
-- Time today: `"15:30"`, `"3:30pm"`, `"9am"` (if already past, fires tomorrow)
-- Exact datetime: `"2026-03-22 15:30"`
+'when' format (local timezone):
+- Relative: 'in 5m', 'in 2h', 'in 1h30m', 'in 90s', 'in 2h 30m'
+- Time today: '15:30', '3:30pm', '9am' (if already past, fires tomorrow)
+- Exact datetime: '2026-03-22 15:30'
 
-**`every` format** — repeat interval (optional, omit for one-shot):
-- `"10m"`, `"1h"`, `"30s"`, `"1h30m"` — fires first at `when`, then every interval after that
-- To stop a repeating entry use `remove`, or clear the interval with `edit every="none"`
+'every' format (optional, omit for one-shot):
+- '10m', '1h', '30s', '1h30m' fires first at 'when', then every interval after
+- To stop a repeating entry use remove, or clear interval with edit every='none'
 
-**`description`** — what this task is about (shown in list, helps you track intent).
-
-**`message`** — the EXACT text that will be injected verbatim as a user message when the timer fires. Write it as if a human typed it: include all context the AI will need to act on it, because the AI will see only this message at trigger time with no other hint about why it arrived."#.to_string(),
+'description' is what this task is about (shown in list, helps track intent).
+'message' is the EXACT text injected verbatim as a user message when the timer fires. Write it as if a human typed it: include all context the AI will need to act on it, because the AI will see only this message at trigger time with no other hint about why it arrived."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {

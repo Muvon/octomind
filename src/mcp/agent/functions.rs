@@ -76,12 +76,12 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 				name: format!("agent_{}", agent_config.name),
 		description: format!(
 			"{}\n\n\
-			## Async Execution\n\n\
-			**async: false** (default) — blocks until complete, result returned immediately.\n\
-			**async: true** — returns immediately, result injected as a user message when done.\n\n\
-			Use async when: task takes 30+ seconds, or you can continue other work while waiting.\n\
-			Use sync when: you need the result before your next action.\n\n\
-			Result format: `[Async agent 'name' completed]` or `[Async agent 'name' failed]`\n\
+			Async execution:\n\
+			async=false (default): blocks until complete, result returned immediately.\n\
+			async=true: returns immediately, result injected as a user message when done.\n\n\
+			Use async when task takes 30+ seconds, or you can continue other work while waiting.\n\
+			Use sync when you need the result before your next action.\n\n\
+			Result format: [Async agent 'name' completed] or [Async agent 'name' failed]\n\
 			Max {} concurrent async jobs. Jobs cancelled on session exit.",
 			agent_config.description,
 			get_max_concurrent_jobs()

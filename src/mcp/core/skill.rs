@@ -730,15 +730,12 @@ pub fn get_skill_function() -> McpFunction {
 		name: "skill".to_string(),
 		description: r#"Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
 
-**Actions:**
-- `list`   — discover available skills across all taps. Supports optional `pattern` (substring filter on name/description), `offset`, and `limit` (default 20).
-- `use`    — inject a skill's full content into the current session context. The skill instructions become immediately active.
-- `forget` — remove a skill from context. Triggers conversation compression to clean up the injected content.
+Actions:
+- list: discover available skills across all taps. Supports optional pattern (substring filter on name/description), offset, and limit (default 20).
+- use: inject a skill's full content into the current session context. Instructions become immediately active.
+- forget: remove a skill from context. Triggers conversation compression to clean up injected content.
 
-**Workflow:**
-1. `skill(action="list")` to explore what's available
-2. `skill(action="use", name="skill-name")` to activate a skill
-3. `skill(action="forget", name="skill-name")` when the skill is no longer needed"#.to_string(),
+Workflow: list to explore, use to activate, forget when no longer needed."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {

@@ -594,7 +594,7 @@ pub fn clear_all() {
 pub fn get_mcp_tool_function() -> McpFunction {
 	McpFunction {
 		name: "mcp".to_string(),
-		description: "Manage MCP servers at runtime without editing config. Use when:\n- You need a tool that's available in an MCP server but not currently configured\n- You want to test a server temporarily before adding to config\n- You need different servers for different tasks\n\nActions:\n- list: Show all MCP servers (configured + dynamic) with status and persistence info\n- add: Register a new MCP server config (does NOT connect yet)\n- enable: Connect to a registered server and activate its tools\n- disable: Deactivate a server's tools (config stays registered)\n- remove: Unregister a server entirely\n- persist: Save a registered server to config dir. If enabled, auto-binds to current role. If disabled, clears auto_bind.\n- unpersist: Remove a persisted server config file".to_string(),
+		description: "Manage MCP servers at runtime without editing config. Use when:\n- You need a tool available in an MCP server but not currently configured\n- You want to test a server temporarily before adding to config\n- You need different servers for different tasks\n\nActions:\n- list: show all MCP servers (configured + dynamic) with status and persistence info\n- add: register a new MCP server config (does NOT connect yet)\n- enable: connect to a registered server and activate its tools\n- disable: deactivate a server's tools (config stays registered)\n- remove: unregister a server entirely\n- persist: save a registered server to config dir. If enabled, auto-binds to current role. If disabled, clears auto_bind.\n- unpersist: remove a persisted server config file".to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {

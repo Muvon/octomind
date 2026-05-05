@@ -232,15 +232,15 @@ fn evict_lru_if_full(config: &Config) {
 pub fn get_capability_function() -> McpFunction {
 	McpFunction {
 		name: "capability".to_string(),
-		description: r#"Discover and activate capabilities mid-session. Capabilities are domain bundles (e.g., "database-postgres", "filesystem", "kubernetes") that resolve to MCP servers and tools. Use this when the agent needs functionality outside its starting kit.
+		description: r#"Discover and activate capabilities mid-session. Capabilities are domain bundles (e.g., database-postgres, filesystem, kubernetes) that resolve to MCP servers and tools. Use when the agent needs functionality outside its starting kit.
 
 Actions:
-- `list`     — show all installed capabilities. Active ones are marked. Returns one line per capability: name + brief description.
-- `enable`   — activate a capability by name. Registers and enables its MCP servers, exposing the capability's tools in subsequent turns.
-- `disable`  — deactivate a previously-enabled capability.
-- `discover` — find capabilities matching an intent string (semantic match via embeddings, falls back to keyword match).
+- list: show all installed capabilities. Active ones are marked. One line per capability: name + brief description.
+- enable: activate a capability by name. Registers and enables its MCP servers, exposing tools in subsequent turns.
+- disable: deactivate a previously-enabled capability.
+- discover: find capabilities matching an intent string (semantic match via embeddings, falls back to keyword match).
 
-Workflow: call `list` or `discover` to find the right capability, then `enable` to activate it. The agent's tool surface grows on demand; nothing loaded that wasn't asked for. When the user's intent is generic (e.g. "I need a database") and multiple capabilities could fit, prefer `list` or `discover` to surface options rather than guessing."#.to_string(),
+Workflow: call list or discover to find the right capability, then enable to activate it. Tool surface grows on demand. When intent is generic (e.g. 'I need a database') and multiple capabilities could fit, prefer list or discover over guessing."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {

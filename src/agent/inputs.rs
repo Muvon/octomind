@@ -29,6 +29,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::io::{self, Write};
 
 const INPUT_PLACEHOLDER_PREFIX: &str = "{{INPUT:";
@@ -36,6 +37,34 @@ const INPUT_PLACEHOLDER_SUFFIX: &str = "}}";
 
 const ENV_PLACEHOLDER_PREFIX: &str = "{{ENV:";
 const ENV_PLACEHOLDER_SUFFIX: &str = "}}";
+
+// ---------------------------------------------------------------------------
+// Non-interactive scope
+//
+// When set, `prompt_user` fails fast instead of blocking on stdin. Used by
+// `tap run` (and any other in-process subagent) so a missing INPUT/ENV value
+// surfaces as a structured error in the parent agent's tool result rather
+// than deadlocking on a prompt the user can't answer.
+// ---------------------------------------------------------------------------
+
+tokio::task_local! {
+	static NON_INTERACTIVE: bool;
+}
+
+/// Run `f` with the non-interactive flag set. Any `prompt_user` call inside
+/// the future returns a `Missing …` error instead of reading stdin. CLI
+/// entry points never call this, so the interactive flow is unchanged.
+pub async fn with_non_interactive<F, T>(f: F) -> T
+where
+	F: Future<Output = T>,
+{
+	NON_INTERACTIVE.scope(true, f).await
+}
+
+/// Returns `true` if the current async task is inside `with_non_interactive`.
+pub fn is_non_interactive() -> bool {
+	NON_INTERACTIVE.try_with(|v| *v).unwrap_or(false)
+}
 
 /// Extract all unique `{{INPUT:KEY}}` keys from a raw string.
 fn extract_input_keys(raw: &str) -> Vec<String> {
@@ -100,7 +129,20 @@ fn save_input(key: &str, value: &str) -> Result<()> {
 }
 
 /// Prompt the user for a value on stderr (so stdout stays clean for piped output).
+///
+/// In non-interactive scope (see `with_non_interactive`), blocks would
+/// deadlock the parent agent's tool dispatch — return a structured error
+/// instead so the caller can surface a remediation message.
 fn prompt_user(key: &str) -> Result<String> {
+	if is_non_interactive() {
+		anyhow::bail!(
+			"Missing required input '{key}' and this run is non-interactive. \
+			 Pre-populate it once by running the role interactively \
+			 (`octomind run <role>`) or store it directly in \
+			 `~/.local/share/octomind/inputs.toml`, then retry."
+		);
+	}
+
 	let stderr = io::stderr();
 	let mut err = stderr.lock();
 	write!(err, "Enter value for {key}: ").ok();
@@ -214,13 +256,17 @@ pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 	}
 
 	for key in &keys {
+		// `Ok(v)` covers any value the user has explicitly set — including
+		// the empty string. An empty stored value is a valid, intentional
+		// configuration (e.g. "no token configured for this optional API");
+		// re-prompting would be a regression. Only `Err` (truly unset) is
+		// treated as missing.
 		let value = match std::env::var(key) {
-			Ok(v) if !v.trim().is_empty() => v,
-			_ => {
-				// Not in env — prompt and persist to .env so next run picks it up automatically
+			Ok(v) => v,
+			Err(_) => {
 				let v = prompt_user(key)?;
 				save_env_to_dotenv(key, &v)?;
-				// Also set in current process so the session can use it immediately
+				// Also set in current process so the session can use it immediately.
 				std::env::set_var(key, &v);
 				v
 			}

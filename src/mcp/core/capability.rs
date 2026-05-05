@@ -437,6 +437,24 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
 
+		// If the role's manifest declared this capability via
+		// `capabilities = [...]`, the resolver already inlined the
+		// capability's `[[mcp.servers]]` block into `config.mcp.servers`
+		// at boot, and the standard MCP init exposes its tools through
+		// the static path. Re-registering the same server in the dynamic
+		// registry would surface every tool twice in `get_available_functions`
+		// (and once more in `mcp list` / `mcp info`). Skip the dynamic
+		// register/enable pair for these servers — they're already live —
+		// and don't track them in `activated_server_tools` either, since
+		// LRU eviction shouldn't tear down tools that belong to the role's
+		// persistent surface.
+		let already_in_static = config.mcp.servers.iter().any(|s| s.name() == server_name);
+
+		if already_in_static {
+			activated_servers.push(server_name);
+			continue;
+		}
+
 		// Register if not already in the dynamic registry (idempotent on conflicts).
 		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
 			if let Err(e) = crate::mcp::core::dynamic::register_server(server.clone()) {
@@ -692,6 +710,75 @@ fn score_capability(intent_vec: &[f32], trigger_vecs: &[Vec<f32>]) -> f32 {
 /// Inspect the most recent user message and, if a non-active capability
 /// strongly matches, activate it directly via `dynamic::enable_server`.
 /// Silent no-op when the model isn't ready, no capabilities are installed,
+/// Load capabilities from the `OCTOMIND_CAPABILITIES` env var (if set).
+///
+/// Mirrors `skill_auto::load_env_skills`: parses a comma-separated list of
+/// capability names and force-activates each one before the agent's first
+/// turn. Bypasses both the auto-activation embedding pipeline and the
+/// `capability` tool — capabilities listed here are always loaded,
+/// regardless of intent matching.
+///
+/// Failures are logged and skipped (never abort the session). Already-active
+/// capabilities are no-ops. Use this from CLI / CI / non-interactive runs
+/// that need a deterministic tool surface (e.g., `OCTOMIND_CAPABILITIES=cron,docker octomind run -r ...`).
+pub async fn load_env_capabilities(config: &Config) {
+	let env_val = match std::env::var("OCTOMIND_CAPABILITIES") {
+		Ok(v) if !v.trim().is_empty() => v,
+		_ => return,
+	};
+	let names: Vec<String> = env_val
+		.split(',')
+		.map(|s| s.trim().to_string())
+		.filter(|s| !s.is_empty())
+		.collect();
+	if names.is_empty() {
+		return;
+	}
+
+	let suppress = crate::config::with_thread_config(|c| c.output_mode())
+		.map(|m| m.should_suppress_cli_output())
+		.unwrap_or(false);
+
+	for name in &names {
+		if is_active(name) {
+			continue;
+		}
+		let call = crate::mcp::McpToolCall {
+			tool_name: "capability".to_string(),
+			tool_id: format!("env_{name}"),
+			parameters: serde_json::json!({"action": "enable", "name": name}),
+		};
+		match handle_enable(&call, config).await {
+			Ok(result) if result.is_error() => {
+				let msg = result.extract_content();
+				if !suppress {
+					eprintln!("OCTOMIND_CAPABILITIES: capability '{name}' failed: {msg}");
+				} else {
+					crate::log_debug!(
+						"OCTOMIND_CAPABILITIES: capability '{}' failed: {}",
+						name,
+						msg
+					);
+				}
+			}
+			Ok(_) => {
+				crate::log_debug!("OCTOMIND_CAPABILITIES: enabled capability '{}'", name);
+			}
+			Err(e) => {
+				if !suppress {
+					eprintln!("OCTOMIND_CAPABILITIES: capability '{name}' failed: {e:#}");
+				} else {
+					crate::log_debug!(
+						"OCTOMIND_CAPABILITIES: capability '{}' failed: {:#}",
+						name,
+						e
+					);
+				}
+			}
+		}
+	}
+}
+
 /// no match clears the gate, or the last message is not user input.
 ///
 /// Designed to run before every API request from `prepare_for_api_call`.
@@ -864,6 +951,17 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 	let mut activated_server_tools: Vec<(String, Vec<String>)> = Vec::new();
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
+
+		// Server already provided by the role's static config (capability
+		// inlined at boot via `capabilities = [...]` in the manifest).
+		// Re-registering would double the tool surface — skip the dynamic
+		// register/enable, and don't track for LRU eviction since the static
+		// surface isn't ours to tear down. Mirrors `handle_enable`.
+		if config.mcp.servers.iter().any(|s| s.name() == server_name) {
+			activated_servers.push(server_name);
+			continue;
+		}
+
 		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
 			crate::mcp::core::dynamic::register_server(server.clone())?;
 		}

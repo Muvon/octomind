@@ -525,6 +525,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				let sid = session_id.clone();
 				crate::session::context::with_session_id(sid, async {
 					crate::mcp::core::skill_auto::load_env_skills(&mut session).await;
+					crate::mcp::core::capability::load_env_capabilities(&config_for_role).await;
 				})
 				.await;
 				self.sessions
@@ -982,6 +983,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				let sid = actual_session_id.clone();
 				crate::session::context::with_session_id(sid, async {
 					crate::mcp::core::skill_auto::load_env_skills(&mut session).await;
+					crate::mcp::core::capability::load_env_capabilities(&config_for_role).await;
 				})
 				.await;
 				self.sessions

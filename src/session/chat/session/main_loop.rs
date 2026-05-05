@@ -186,6 +186,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
 
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
+		crate::mcp::core::capability::load_env_capabilities(&config_for_role).await;
 
 		// Done initializing — clear spinner, print skills
 		if let Some(sp) = spinner {
@@ -1255,6 +1256,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
 
 	crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
+	crate::mcp::core::capability::load_env_capabilities(&config_for_role).await;
 
 	// Clear spinner from setup
 	if let Some(sp) = spinner {

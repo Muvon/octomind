@@ -383,7 +383,11 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 		functions.extend(server_functions_for(server, config).await);
 	}
 
-	// Include functions from dynamically added servers and agents
+	// Include functions from dynamically added servers and agents.
+	// Dynamic-side capability activation is responsible for not re-registering
+	// servers that are already in the role's static config (see
+	// `handle_enable` / `activate_capability_inline` in `core::capability`),
+	// so this extend doesn't double-count tools.
 	functions.extend(crate::mcp::core::dynamic::get_all_functions());
 	functions.extend(crate::mcp::core::dynamic_agents::get_all_functions());
 

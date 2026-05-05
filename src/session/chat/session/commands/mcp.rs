@@ -86,6 +86,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 	// Collect server status data
 	let server_report = crate::mcp::server::get_server_status_report();
 	let mut servers_data = Vec::new();
+	let mut seen_server_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
 	for server in &config_for_role.mcp.servers {
 		let (health, restart_info) = match server.connection_type() {
@@ -111,11 +112,45 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
 		};
 
+		seen_server_names.insert(server.name().to_string());
 		servers_data.push(serde_json::json!({
 			"name": server.name(),
 			"health": health_str,
 			"connection_type": format!("{:?}", server.connection_type()),
 			"tools": server.tools(),
+			"restart_count": restart_info.restart_count,
+			"consecutive_failures": restart_info.consecutive_failures,
+		}));
+	}
+
+	// Append dynamically-registered servers (capability activations, runtime
+	// `mcp add`) that aren't already in the static config — otherwise they'd
+	// show their tools under "Available Tools" but be invisible under
+	// "MCP Server Status".
+	for (name, tools, enabled) in crate::mcp::core::dynamic::list_servers() {
+		if !enabled || seen_server_names.contains(&name) {
+			continue;
+		}
+		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
+			(*h, r.clone())
+		} else {
+			(
+				crate::mcp::process::ServerHealth::Running,
+				Default::default(),
+			)
+		};
+		let health_str = match health {
+			crate::mcp::process::ServerHealth::Running => "running",
+			crate::mcp::process::ServerHealth::Dead => "dead",
+			crate::mcp::process::ServerHealth::Restarting => "restarting",
+			crate::mcp::process::ServerHealth::Failed => "failed",
+			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
+		};
+		servers_data.push(serde_json::json!({
+			"name": name,
+			"health": health_str,
+			"connection_type": "Dynamic",
+			"tools": tools,
 			"restart_count": restart_info.restart_count,
 			"consecutive_failures": restart_info.consecutive_failures,
 		}));
@@ -174,6 +209,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 	// Collect server status data
 	let server_report = crate::mcp::server::get_server_status_report();
 	let mut servers_data = Vec::new();
+	let mut seen_server_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
 	for server in &config_for_role.mcp.servers {
 		let (health, restart_info) = match server.connection_type() {
@@ -199,11 +235,43 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
 		};
 
+		seen_server_names.insert(server.name().to_string());
 		servers_data.push(serde_json::json!({
 			"name": server.name(),
 			"health": health_str,
 			"connection_type": format!("{:?}", server.connection_type()),
 			"tools": server.tools(),
+			"restart_count": restart_info.restart_count,
+			"consecutive_failures": restart_info.consecutive_failures,
+		}));
+	}
+
+	// Append dynamically-registered servers (capability activations, runtime
+	// `mcp add`) that aren't already in the static config.
+	for (name, tools, enabled) in crate::mcp::core::dynamic::list_servers() {
+		if !enabled || seen_server_names.contains(&name) {
+			continue;
+		}
+		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
+			(*h, r.clone())
+		} else {
+			(
+				crate::mcp::process::ServerHealth::Running,
+				Default::default(),
+			)
+		};
+		let health_str = match health {
+			crate::mcp::process::ServerHealth::Running => "running",
+			crate::mcp::process::ServerHealth::Dead => "dead",
+			crate::mcp::process::ServerHealth::Restarting => "restarting",
+			crate::mcp::process::ServerHealth::Failed => "failed",
+			crate::mcp::process::ServerHealth::Unreachable => "unreachable",
+		};
+		servers_data.push(serde_json::json!({
+			"name": name,
+			"health": health_str,
+			"connection_type": "Dynamic",
+			"tools": tools,
 			"restart_count": restart_info.restart_count,
 			"consecutive_failures": restart_info.consecutive_failures,
 		}));

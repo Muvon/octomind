@@ -85,14 +85,74 @@ impl EmacsWithShortcutHelp {
 	}
 }
 
-/// Probe the clipboard synchronously. Image takes priority; otherwise inspect
-/// the text clipboard for a path/file URL pointing to a supported video file.
+/// Probe the clipboard synchronously. A video file reference takes priority
+/// over the image representation, because macOS Finder exposes BOTH a file
+/// URL (NSURL pasteboard / `«class furl»`) AND a thumbnail icon when a video
+/// file is copied — without this ordering we would attach the thumbnail and
+/// silently drop the actual video. Falls back to the clipboard image otherwise.
 /// Returns `None` if nothing usable is on the clipboard.
 fn try_capture_clipboard() -> Option<PendingClipboardItem> {
+	if let Some(video) = try_capture_clipboard_video() {
+		return Some(PendingClipboardItem::Video(video));
+	}
+
 	if let Ok(Some(image)) = ImageProcessor::load_from_clipboard() {
 		return Some(PendingClipboardItem::Image(image));
 	}
 
+	None
+}
+
+/// Resolve a clipboard reference to a supported video file.
+///
+/// On macOS, Finder copies put the absolute file path on the NSURL pasteboard
+/// (`«class furl»`) while the text pasteboard holds only the bare filename.
+/// We query NSURL via `osascript` first, then fall back to a text-path probe
+/// for users who manually copied an absolute path or `file://` URL.
+fn try_capture_clipboard_video() -> Option<crate::session::video::VideoAttachment> {
+	#[cfg(target_os = "macos")]
+	if let Some(att) = try_capture_clipboard_video_furl_macos() {
+		return Some(att);
+	}
+
+	try_capture_clipboard_video_text()
+}
+
+/// macOS-only: ask AppleScript for the POSIX path of a file URL on the
+/// clipboard. Returns `None` if no `furl` is present or it isn't a supported
+/// video file.
+#[cfg(target_os = "macos")]
+fn try_capture_clipboard_video_furl_macos() -> Option<crate::session::video::VideoAttachment> {
+	let output = std::process::Command::new("osascript")
+		.args([
+			"-e",
+			"try",
+			"-e",
+			"POSIX path of (the clipboard as «class furl»)",
+			"-e",
+			"end try",
+		])
+		.output()
+		.ok()?;
+	if !output.status.success() {
+		return None;
+	}
+	let path_str = String::from_utf8(output.stdout).ok()?;
+	let trimmed = path_str.trim();
+	if trimmed.is_empty() {
+		return None;
+	}
+	let path = std::path::PathBuf::from(trimmed);
+	if !path.is_file() || !VideoProcessor::is_supported_video(&path) {
+		return None;
+	}
+	VideoProcessor::load_from_path(&path).ok()
+}
+
+/// Inspect the text clipboard for a single path/file URL pointing to a
+/// supported video file. Used as a fallback for users who copied a typed
+/// path (e.g. from a terminal) and on platforms without a file-URL pasteboard.
+fn try_capture_clipboard_video_text() -> Option<crate::session::video::VideoAttachment> {
 	let mut clipboard = arboard::Clipboard::new().ok()?;
 	let text = clipboard.get_text().ok()?;
 	let trimmed = text.trim();
@@ -111,9 +171,7 @@ fn try_capture_clipboard() -> Option<PendingClipboardItem> {
 		return None;
 	}
 
-	VideoProcessor::load_from_path(&expanded)
-		.ok()
-		.map(PendingClipboardItem::Video)
+	VideoProcessor::load_from_path(&expanded).ok()
 }
 
 fn format_image_label(att: &crate::session::image::ImageAttachment) -> String {

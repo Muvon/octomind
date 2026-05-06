@@ -371,35 +371,108 @@ pub async fn run_activation(
 	let semantic_scores = compute_semantic_scores(content, &entries, &active_skills).await;
 	let semantic_ref = semantic_scores.as_ref();
 
+	// Bucket each skill into one of three outcomes:
+	//   - deterministic match: a fully-non-semantic AND-group matched
+	//     (file/content/grep/match/env/bin/session/workdir). These are
+	//     hand-authored, precise — fire unconditionally, no margin gate.
+	//   - semantic candidate: only semantic-bearing groups matched. The
+	//     skill enters a winner-take-all selection where the top scorer
+	//     must beat #2 by SEMANTIC_MARGIN to fire. Prevents the avalanche
+	//     where ambiguous prompts ("rewrite my landing page text") clear
+	//     the floor for many marketing/copy skills at once.
+	//   - no match: skipped silently.
+	let mut deterministic: Vec<(String, String)> = Vec::new();
+	let mut semantic_candidates: Vec<(f32, String, String)> = Vec::new();
+
 	for entry in &entries {
 		if active_skills.contains(&entry.name) {
 			continue;
 		}
 
-		// Evaluate AND-groups in order; first fully-matching group wins and
-		// becomes the trigger we surface to the user.
-		let mut matched: Option<String> = None;
+		let mut det_trigger: Option<String> = None;
+		let mut sem_best: Option<(f32, String)> = None;
+
 		for group in &entry.rules {
-			if group
+			if !group
 				.iter()
 				.all(|check| check.matches(content, workdir, &session_name, semantic_ref))
 			{
-				matched = Some(
-					group
-						.iter()
-						.map(|c| c.to_string())
-						.collect::<Vec<_>>()
-						.join(" "),
-				);
+				continue;
+			}
+
+			let trigger = group
+				.iter()
+				.map(|c| c.to_string())
+				.collect::<Vec<_>>()
+				.join(" ");
+
+			let has_semantic = group
+				.iter()
+				.any(|c| matches!(c, super::skill::ActivateCheck::Semantic { .. }));
+
+			if !has_semantic {
+				det_trigger = Some(trigger);
 				break;
+			}
+
+			let group_score = group
+				.iter()
+				.filter_map(|c| match c {
+					super::skill::ActivateCheck::Semantic { phrase, .. } => {
+						semantic_ref.and_then(|s| s.get(phrase)).copied()
+					}
+					_ => None,
+				})
+				.fold(f32::NEG_INFINITY, f32::max);
+
+			let group_score = if group_score.is_finite() {
+				group_score
+			} else {
+				0.0
+			};
+
+			match &sem_best {
+				Some((best, _)) if group_score <= *best => {}
+				_ => sem_best = Some((group_score, trigger)),
 			}
 		}
 
-		if let Some(trigger) = matched {
-			crate::log_debug!("skill_auto: activated '{}' via [{}]", entry.name, trigger);
-			auto_activate_skill(&entry.name, &trigger, session).await;
+		if let Some(trigger) = det_trigger {
+			deterministic.push((entry.name.clone(), trigger));
+		} else if let Some((score, trigger)) = sem_best {
+			semantic_candidates.push((score, entry.name.clone(), trigger));
 		} else {
 			crate::log_debug!("skill_auto: no rule matched for '{}'", entry.name);
+		}
+	}
+
+	for (name, trigger) in &deterministic {
+		crate::log_debug!("skill_auto: activated '{}' via [{}]", name, trigger);
+		auto_activate_skill(name, trigger, session).await;
+	}
+
+	semantic_candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+	if let Some((top1, name, trigger)) = semantic_candidates.first().cloned() {
+		let top2 = semantic_candidates.get(1).map(|x| x.0).unwrap_or(0.0);
+		if top1 - top2 >= super::skill::SEMANTIC_MARGIN {
+			crate::log_debug!(
+				"skill_auto: activated '{}' via [{}] (semantic top1={:.3}, top2={:.3}, margin ok)",
+				name,
+				trigger,
+				top1,
+				top2
+			);
+			auto_activate_skill(&name, &trigger, session).await;
+		} else {
+			crate::log_debug!(
+				"skill_auto: {} semantic candidate(s) abstained — top1={:.3} top2={:.3} gap {:.3} < {} (winner: '{}')",
+				semantic_candidates.len(),
+				top1,
+				top2,
+				top1 - top2,
+				super::skill::SEMANTIC_MARGIN,
+				name
+			);
 		}
 	}
 }

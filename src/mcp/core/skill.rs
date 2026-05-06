@@ -55,12 +55,24 @@ pub struct SkillMeta {
 	/// Declarative activation rules. Empty = manual only.
 	pub rules: Vec<Vec<ActivateCheck>>,
 }
-/// Default cosine threshold for `semantic(phrase)` checks. Looser than the
-/// capability auto-activation threshold (0.42 + 0.05 margin) because the
-/// skill DSL composes via DNF — a single semantic check is one signal in
-/// an AND-group, not the whole gate. Authors override per check via
-/// `semantic(phrase, 0.55)` syntax.
-pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.45;
+/// Default cosine floor for `semantic(phrase)` checks. Empirically tuned for
+/// BGE-small-en-v1.5: at 0.45 long mixed-topic prompts produce a flood of
+/// loosely-related matches (e.g. a "humanize the landing page" prompt clears
+/// `marketing-guest-posting` paraphrases purely on lexical overlap with
+/// "blogs"/"landing"). 0.55 is the floor where most lexical-overlap noise
+/// drops out; the actual precision lever is the margin gate applied across
+/// candidate skills in `skill_auto`. Authors override per check via
+/// `semantic(phrase, 0.6)` syntax.
+pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.55;
+
+/// Required gap between top-1 and top-2 semantic-only skill scores in a
+/// single activation cycle. Mirrors `capability::AUTO_ACTIVATE_MARGIN`. When
+/// two skills are near-tied on cosine (typical for ambiguous prompts where
+/// "landing page" pulls marketing/copy/ad skills together), neither fires
+/// — better to abstain than activate the wrong one. Skills that match via
+/// any deterministic check (file/content/grep/match/etc.) bypass this gate;
+/// hand-authored regex/keyword rules are precise by construction.
+pub const SEMANTIC_MARGIN: f32 = 0.05;
 
 /// Individual activation check within a group.
 #[derive(Debug, Clone)]

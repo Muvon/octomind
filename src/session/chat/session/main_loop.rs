@@ -26,6 +26,7 @@ use super::layer_processor::process_layers_if_enabled;
 use super::prompt_setup::setup_system_prompt_and_cache;
 use super::setup::setup_and_initialize_session;
 use crate::config::Config;
+use crate::session::cache_keepalive::KeepaliveHandle;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::output::{JsonlSink, OutputMode, SilentSink};
 use crate::{log_debug, log_info};
@@ -336,6 +337,12 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		// Cleared on any successful API call.
 		let mut last_failed_followup: bool = false;
 
+		// Idle-time prompt cache keepalive. Set after each successful API call,
+		// taken (cancelled) at the top of the next iteration before we read
+		// fresh user input. None when keepalive is disabled, the snapshot has
+		// no cached blocks, or the resolved provider has no policy.
+		let mut keepalive: Option<KeepaliveHandle> = None;
+
 		// Apply runtime state from session log if this is a resumed session
 		if chat_session.was_resumed {
 			if let Some(session_file) = &chat_session.session.session_file {
@@ -502,6 +509,29 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 
 			// Set state to reading input
 			*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
+
+			// Stop any in-flight cache keepalive from the previous turn and fold
+			// its accumulated cost into the session before we read new input.
+			// Done early so the next read_user_input runs with no background
+			// pings competing for the network or rate-limit budget.
+			if let Some(handle) = keepalive.take() {
+				let exchanges = handle.cancel().await;
+				if !exchanges.is_empty() {
+					log_debug!(
+						"Cache keepalive: folding {} ping(s) into session cost",
+						exchanges.len()
+					);
+					for exchange in &exchanges {
+						if let Err(e) = CostTracker::track_exchange_cost(
+							&mut chat_session,
+							exchange,
+							&current_config,
+						) {
+							log_debug!("Failed to track keepalive cost: {}", e);
+						}
+					}
+				}
+			}
 
 			// Flush any due schedule entries into the inbox so all injection sources
 			// are unified — the loop only needs to drain the inbox from here on.
@@ -1221,6 +1251,20 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 					// Successful turn — clear retry buffer.
 					last_failed_input = None;
 					last_failed_followup = false;
+
+					// Start a keepalive ping task against a frozen snapshot of
+					// the conversation. Read-only on session state — pings
+					// never mutate messages; the harvested exchanges fold into
+					// cost at the top of the next loop iteration.
+					keepalive = KeepaliveHandle::spawn(
+						chat_session.session.messages.clone(),
+						chat_session.model.clone(),
+						current_config.clone(),
+						current_config.cache_keepalive_enabled,
+						std::time::Duration::from_secs(
+							current_config.cache_keepalive_max_idle_seconds,
+						),
+					);
 				}
 				Err(e) => {
 					// Distinguish follow-up failure (after tools executed) from initial-call
@@ -1265,6 +1309,28 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			crate::session::chat::get_animation_manager()
 				.stop_current()
 				.await;
+		}
+
+		// Session is ending — drain any in-flight keepalive so its cost is
+		// reflected in the persisted session log.
+		if let Some(handle) = keepalive.take() {
+			let exchanges = handle.cancel().await;
+			if !exchanges.is_empty() {
+				log_debug!(
+					"Cache keepalive: folding {} ping(s) on session exit",
+					exchanges.len()
+				);
+				for exchange in &exchanges {
+					if let Err(e) = CostTracker::track_exchange_cost(
+						&mut chat_session,
+						exchange,
+						&current_config,
+					) {
+						log_debug!("Failed to track keepalive cost on exit: {}", e);
+					}
+				}
+				let _ = chat_session.save();
+			}
 		}
 
 		Ok(())
@@ -1337,6 +1403,11 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	// Get current directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
 	let current_dir = crate::mcp::get_thread_working_directory();
 	let mut operation_rx = cancellation.new_operation();
+
+	// Idle-time prompt cache keepalive. Spawned after each successful AI
+	// turn (initial or inbox-driven), cancelled+folded before the next turn
+	// or on session exit. Read-only on session.messages.
+	let mut keepalive: Option<KeepaliveHandle> = None;
 
 	// Apply runtime state from session log if this is a resumed session
 	if chat_session.was_resumed {
@@ -1560,6 +1631,16 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	match api_result {
 		Ok(_) => {
 			// JSONL output is now streamed via callback - no need for batch output
+			// Start a keepalive ping task while the daemon waits for the next
+			// inbox message or schedule fire. Cancelled+folded at the top of
+			// the inbox-drain loop or on exit.
+			keepalive = KeepaliveHandle::spawn(
+				chat_session.session.messages.clone(),
+				chat_session.model.clone(),
+				current_config.clone(),
+				current_config.cache_keepalive_enabled,
+				std::time::Duration::from_secs(current_config.cache_keepalive_max_idle_seconds),
+			);
 		}
 		Err(e) => {
 			// Kill any running async jobs on error/cancellation
@@ -1603,6 +1684,29 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		// Process all messages currently in the inbox.
 		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
 			log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
+
+			// Stop any in-flight keepalive from the previous turn and fold
+			// its cost before we add the new user message — keeps the
+			// session log's cost ordering correct.
+			if let Some(handle) = keepalive.take() {
+				let exchanges = handle.cancel().await;
+				if !exchanges.is_empty() {
+					log_debug!(
+						"Cache keepalive: folding {} ping(s) into session cost",
+						exchanges.len()
+					);
+					for exchange in &exchanges {
+						if let Err(e) = CostTracker::track_exchange_cost(
+							&mut chat_session,
+							exchange,
+							&current_config,
+						) {
+							log_debug!("Failed to track keepalive cost: {}", e);
+						}
+					}
+				}
+			}
+
 			chat_session.add_user_message(&inbox_msg.content)?;
 			prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
@@ -1670,8 +1774,22 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 			crate::mcp::process::clear_notification_sender(None);
 			let _ = drain_handle.await;
 
-			if let Err(e) = api_result {
-				log_debug!("Error processing inbox message: {}", e);
+			match api_result {
+				Ok(_) => {
+					// Spawn a fresh keepalive against the post-turn snapshot.
+					keepalive = KeepaliveHandle::spawn(
+						chat_session.session.messages.clone(),
+						chat_session.model.clone(),
+						current_config.clone(),
+						current_config.cache_keepalive_enabled,
+						std::time::Duration::from_secs(
+							current_config.cache_keepalive_max_idle_seconds,
+						),
+					);
+				}
+				Err(e) => {
+					log_debug!("Error processing inbox message: {}", e);
+				}
 			}
 
 			// Refresh operation receiver in case cancellation was triggered
@@ -1699,6 +1817,24 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 					std::future::pending::<()>().await;
 				}
 			} => {}
+		}
+	}
+
+	// Drain any in-flight keepalive so its cost lands in the persisted log.
+	if let Some(handle) = keepalive.take() {
+		let exchanges = handle.cancel().await;
+		if !exchanges.is_empty() {
+			log_debug!(
+				"Cache keepalive: folding {} ping(s) on session exit",
+				exchanges.len()
+			);
+			for exchange in &exchanges {
+				if let Err(e) =
+					CostTracker::track_exchange_cost(&mut chat_session, exchange, &current_config)
+				{
+					log_debug!("Failed to track keepalive cost on exit: {}", e);
+				}
+			}
 		}
 	}
 

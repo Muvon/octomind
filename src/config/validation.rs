@@ -169,6 +169,15 @@ impl Config {
 			));
 		}
 
+		// Validate cache keepalive max idle (0 = unbounded, otherwise cap at 24h
+		// so a typo can't burn through credit on an abandoned session).
+		if self.cache_keepalive_max_idle_seconds > 86400 {
+			return Err(anyhow!(
+				"Cache keepalive max idle too high: {} seconds. Maximum allowed: 86400 (24 hours), or 0 for unbounded",
+				self.cache_keepalive_max_idle_seconds
+			));
+		}
+
 		Ok(())
 	}
 

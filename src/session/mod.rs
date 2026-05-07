@@ -16,6 +16,7 @@
 
 pub mod anchor; // Persistent compaction anchor (iterative summarization)
 pub mod cache;
+pub mod cache_keepalive; // Idle-time prompt cache keepalive pings
 pub mod cancellation; // Cancellation management
 pub mod chat; // Chat session logic
 mod chat_helper; // Chat command completion

@@ -73,6 +73,23 @@ cache_timeout_seconds = 240
 # Wether to use long system cache (longer cache lifetime)
 use_long_system_cache = true
 
+# Keep the prompt cache warm with periodic pings while the session idles.
+# When you walk away after the AI replies, Octomind sends a minimal request
+# (max_tokens = 1) just before the cache TTL would expire, so the next turn
+# still hits the cache. Each ping costs cache-read tokens, so this is opt-in.
+#
+# Provider-aware: only providers whose API supports refresh-on-read are
+# pinged. Today that's Anthropic (5m or 1h depending on use_long_system_cache).
+# Other providers (OpenAI implicit cache, Gemini, DeepSeek) are skipped — no
+# wasted requests.
+cache_keepalive_enabled = false
+
+# Stop pinging this many seconds after the last user activity. Default 1800
+# (30 min). Past this point the cache is left to expire so an abandoned
+# session does not keep billing forever. Set to 0 to ping until the session
+# ends (only sensible in daemon mode under explicit cost monitoring).
+cache_keepalive_max_idle_seconds = 1800
+
 # Maximum number of retries for API calls (can be overridden by --max-retries CLI flag)
 max_retries = 1
 

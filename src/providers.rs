@@ -177,7 +177,8 @@ impl<'a> ChatCompletionParams<'a> {
 			0 => None,
 			n => Some(std::time::Duration::from_secs(n as u64)),
 		})
-		.with_long_cache(self.config.use_long_system_cache);
+		.with_long_cache(self.config.use_long_system_cache)
+		.with_reasoning_effort(self.config.reasoning_effort.to_octolib());
 
 		if let Some(token) = &self.cancellation_token {
 			params = params.with_cancellation_token(token.clone());

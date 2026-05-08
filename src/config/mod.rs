@@ -201,6 +201,30 @@ pub struct SkillsConfig {
 	pub max_retries: u32,
 }
 
+/// Reasoning effort hint for thinking-capable models.
+/// Maps 1:1 to `octolib::llm::ReasoningEffort`. Models without thinking support ignore it.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffortConfig {
+	Low,
+	Medium,
+	High,
+	XHigh,
+	Max,
+}
+
+impl ReasoningEffortConfig {
+	pub fn to_octolib(self) -> octolib::llm::ReasoningEffort {
+		match self {
+			ReasoningEffortConfig::Low => octolib::llm::ReasoningEffort::Low,
+			ReasoningEffortConfig::Medium => octolib::llm::ReasoningEffort::Medium,
+			ReasoningEffortConfig::High => octolib::llm::ReasoningEffort::High,
+			ReasoningEffortConfig::XHigh => octolib::llm::ReasoningEffort::XHigh,
+			ReasoningEffortConfig::Max => octolib::llm::ReasoningEffort::Max,
+		}
+	}
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {
 	/// Name of the prompt (used with /prompt command)
@@ -276,6 +300,10 @@ pub struct Config {
 	// Per-request HTTP timeout in seconds — hard limit on a single LLM HTTP call.
 	// 0 = no timeout (LLM responses can take minutes). Retry/backoff still applies on timeout.
 	pub request_timeout_seconds: u32,
+
+	// Reasoning effort hint for thinking-capable models (low/medium/high/xhigh/max).
+	// Applied to every LLM call via `to_octolib_params()`. Non-thinking models ignore it.
+	pub reasoning_effort: ReasoningEffortConfig,
 
 	// Agent configurations - simplified ACP-based definitions
 	#[serde(default)]

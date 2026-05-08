@@ -101,6 +101,12 @@ retry_timeout = 30
 # 0 = no timeout (LLM responses can take minutes for long generations).
 # Applied at the reqwest RequestBuilder level; retry/backoff still applies on timeout.
 request_timeout_seconds = 300
+
+# Reasoning effort hint for thinking-capable models.
+# Valid values: "low", "medium", "high", "xhigh", "max".
+# Each provider maps this to its native knob (effort string, budget tokens, etc.).
+# Models without thinking support silently ignore this.
+reasoning_effort = "medium"
 # ═══════════════════════════════════════════════════════════════════════════════
 # USER INTERFACE
 # Configure how Octomind displays information

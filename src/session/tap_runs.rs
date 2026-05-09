@@ -35,7 +35,6 @@ use std::time::SystemTime;
 use tokio::sync::watch;
 
 use crate::session::context::SessionId;
-use crate::session::Message;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TapJobStatus {
@@ -58,9 +57,10 @@ impl TapJobStatus {
 
 /// A single tap-run, tracked from spawn through completion.
 ///
-/// `cancel_tx` carries the abort signal — the running `run_tap_role` future
-/// holds a paired receiver and bails when the value flips to `true`. The
-/// receiver is also handed to the LLM call so cancellation aborts mid-tool.
+/// `cancel_tx` carries the abort signal — the ACP subprocess driver holds a
+/// paired receiver and kills the child when the value flips to `true`.
+/// Conversation state lives on disk in the named session file (`<id>.jsonl`),
+/// so resume is just a fresh subprocess with `--name <id>`.
 pub struct TapJob {
 	pub id: String,
 	/// Role tag — `category:variant`, e.g. `developer:general`.
@@ -69,9 +69,6 @@ pub struct TapJob {
 	pub workdir: String,
 	pub started_at: SystemTime,
 	pub status: Arc<RwLock<TapJobStatus>>,
-	/// Conversation history — system + user/assistant/tool messages.
-	/// Shared with the runner so resume sees prior turns.
-	pub history: Arc<RwLock<Vec<Message>>>,
 	pub cancel_tx: watch::Sender<bool>,
 }
 
@@ -219,52 +216,19 @@ pub fn cancel_job(id: &str) -> Option<TapJobStatus> {
 	Some(current)
 }
 
-/// Type alias for the complex return type of [`get_handles`].
-type TapHandles = (
-	Arc<RwLock<Vec<Message>>>,
-	Arc<RwLock<TapJobStatus>>,
-	watch::Receiver<bool>,
-);
-
-/// Borrow the runtime handles for a job — history, status, and a fresh
-/// cancellation receiver. Used by the runner to resume an existing job.
-#[allow(clippy::type_complexity)]
-pub fn get_handles(id: &str) -> Option<TapHandles> {
+/// Borrow the live status handle and a fresh cancellation receiver for a
+/// running job. Used by `tap run` when a caller resumes by id — we need the
+/// shared status cell (so the resumed turn flips it back to terminal) and
+/// a cancel receiver subscribed to the existing sender.
+pub fn get_status_and_cancel(
+	id: &str,
+) -> Option<(Arc<RwLock<TapJobStatus>>, watch::Receiver<bool>)> {
 	let session_id = crate::session::context::current_session_id()?;
 	let guard = REGISTRY.read().ok()?;
 	let reg = guard.as_ref()?;
 	let jobs = reg.jobs.get(&session_id)?;
 	let job = jobs.iter().find(|j| j.id == id)?;
-	Some((
-		Arc::clone(&job.history),
-		Arc::clone(&job.status),
-		job.cancel_tx.subscribe(),
-	))
-}
-
-/// Set a job's terminal status. Used by the runner to mark `Done`/`Failed`
-/// when the LLM loop completes.
-pub fn mark_status(id: &str, status: TapJobStatus) {
-	let session_id = match crate::session::context::current_session_id() {
-		Some(id) => id,
-		None => return,
-	};
-	let guard = match REGISTRY.read() {
-		Ok(g) => g,
-		Err(_) => return,
-	};
-	let Some(reg) = guard.as_ref() else { return };
-	let Some(jobs) = reg.jobs.get(&session_id) else {
-		return;
-	};
-	if let Some(job) = jobs.iter().find(|j| j.id == id) {
-		if let Ok(mut s) = job.status.write() {
-			// Don't overwrite a terminal status (e.g. Cancelled wins over Done).
-			if *s == TapJobStatus::Running {
-				*s = status;
-			}
-		}
-	}
+	Some((Arc::clone(&job.status), job.cancel_tx.subscribe()))
 }
 
 /// Generate a fresh tap-run id from a role tag — `tap-<role-with-dash>-<6hex>`.

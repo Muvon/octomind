@@ -56,8 +56,10 @@ impl Layer for LayerProcessor {
 
 		// Execute via ACP protocol
 		let start = std::time::Instant::now();
-		let output =
-			run_acp_command(&self.config.command, &task, &workdir, operation_cancelled).await?;
+		let mut parts = self.config.command.split_whitespace();
+		let program = parts.next().unwrap_or("");
+		let args: Vec<&str> = parts.collect();
+		let output = run_acp_command(program, &args, &task, &workdir, operation_cancelled).await?;
 
 		// Return result with timing info
 		// Note: exchange/token_usage come from the ACP session's role config

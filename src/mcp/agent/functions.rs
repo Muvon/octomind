@@ -218,8 +218,13 @@ async fn execute_config_agent(
 		// Spawn the async task
 		let handle = tokio::spawn(async move {
 			let run = async move {
+				let mut parts = command.split_whitespace();
+				let program = parts.next().unwrap_or("");
+				let args: Vec<&str> = parts.collect();
 				let output =
-					match run_acp_command(&command, &task_owned, &workdir_owned, cancel_rx).await {
+					match run_acp_command(program, &args, &task_owned, &workdir_owned, cancel_rx)
+						.await
+					{
 						Ok(text) => text,
 						Err(e) => format!("ERROR: {e:#}"),
 					};
@@ -249,14 +254,10 @@ async fn execute_config_agent(
 	}
 
 	// Synchronous path (default)
-	match run_acp_command(
-		&agent_config.command,
-		task,
-		&workdir,
-		watch::channel(false).1,
-	)
-	.await
-	{
+	let mut parts = agent_config.command.split_whitespace();
+	let program = parts.next().unwrap_or("");
+	let args: Vec<&str> = parts.collect();
+	match run_acp_command(program, &args, task, &workdir, watch::channel(false).1).await {
 		Ok(output) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -656,20 +657,19 @@ fn run_dynamic_agent_in_process(
 
 /// Spawn the ACP command, drive initialize → session/new → session/prompt.
 /// Used by both agents and layers to execute via ACP protocol.
+///
+/// `program` is the executable path; `args` are CLI arguments passed verbatim.
+/// Callers that have a single "program plus space-separated args" string should
+/// split it themselves (e.g. via `split_whitespace`) before calling.
 pub async fn run_acp_command(
-	command: &str,
+	program: &str,
+	args: &[&str],
 	task: &str,
 	workdir: &std::path::Path,
 	mut cancel_rx: watch::Receiver<bool>,
 ) -> Result<String> {
-	let mut parts = command.split_whitespace();
-	let program = parts
-		.next()
-		.ok_or_else(|| anyhow::anyhow!("Empty command"))?;
-	let args: Vec<&str> = parts.collect();
-
 	let mut child = Command::new(program)
-		.args(&args)
+		.args(args)
 		.current_dir(workdir)
 		.stdin(std::process::Stdio::piped())
 		.stdout(std::process::Stdio::piped())

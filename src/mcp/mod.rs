@@ -391,6 +391,10 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	functions.extend(crate::mcp::core::dynamic::get_all_functions());
 	functions.extend(crate::mcp::core::dynamic_agents::get_all_functions());
 
+	// Project-local tools (`<workdir>/.agents/tools/<name>`) — always-on,
+	// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
+	functions.extend(crate::mcp::core::local_tool::get_all_functions());
+
 	functions
 }
 
@@ -687,6 +691,24 @@ async fn route_builtin_tool(
 			result.tool_id = call.tool_id.clone();
 			Ok(result)
 		}
+		"local" => {
+			crate::log_debug!(
+				"Executing '{}' via local-tool runner (.agents/tools)",
+				call.tool_name
+			);
+			let result = match core::local_tool::execute(call).await {
+				Ok(mut r) => {
+					r.tool_id = call.tool_id.clone();
+					r
+				}
+				Err(e) => McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!("local tool '{}' failed: {}", call.tool_name, e),
+				),
+			};
+			Ok(result)
+		}
 		other => Err(anyhow::anyhow!("Unknown builtin server: {}", other)),
 	}
 }
@@ -716,8 +738,12 @@ async fn execute_tool_without_cancellation(
 					));
 				}
 			}
-			// Dynamic server tools: allow if from a config-defined server or owned by this session
-			if !core::dynamic::is_dynamic_by_tool(&call.tool_name) {
+			// Dynamic server tools: allow if from a config-defined server or owned by this session.
+			// Project-local tools live under the synthetic "local" server and are workdir-scoped,
+			// so they bypass this check (no session-ownership concept applies).
+			if !core::dynamic::is_dynamic_by_tool(&call.tool_name)
+				&& target_server.name() != core::local_tool::SERVER_NAME
+			{
 				let is_config_server = config
 					.mcp
 					.servers

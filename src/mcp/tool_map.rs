@@ -413,6 +413,20 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 		};
 		tool_map.entry(tool_name).or_insert_with(|| agent_server);
 	}
+
+	// Project-local tools — `<workdir>/.agents/tools/<name>` shebang scripts.
+	// Lowest priority: `or_insert` keeps config/dynamic winners on collision,
+	// so a script can never shadow a real tool by accident.
+	for func in crate::mcp::core::local_tool::get_all_functions() {
+		let local_server = McpServerConfig::Builtin {
+			name: crate::mcp::core::local_tool::SERVER_NAME.to_string(),
+			timeout_seconds: 300,
+			tools: vec![func.name.clone()],
+			auto_bind: None,
+		};
+		tool_map.entry(func.name).or_insert(local_server);
+	}
+
 	Ok(tool_map)
 }
 

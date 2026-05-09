@@ -30,6 +30,7 @@ For users working with Octomind day-to-day.
 | [Learning](usage/13-learning.md) | Cross-session adaptive learning |
 | [Skills](usage/15-skills.md) | Auto-expanding skills, capabilities, validators |
 | [Token Efficiency](usage/16-token-efficiency.md) | Capabilities, auto-activation, LRU eviction |
+| [Local Tools](usage/17-local-tools.md) | Project-local shebang scripts auto-exposed as MCP tools |
 
 ## Integration Guide
 

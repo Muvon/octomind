@@ -19,6 +19,7 @@ pub mod capability;
 pub mod dynamic;
 pub mod dynamic_agents;
 pub mod functions;
+pub mod local_tool;
 pub mod plan;
 pub mod schedule;
 pub mod skill;

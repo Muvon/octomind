@@ -4,13 +4,14 @@ Octomind uses the Model Context Protocol (MCP) to provide AI models with externa
 
 ## Architecture
 
-Octomind ships with four MCP servers:
+Octomind ships with five MCP servers:
 
 | Server | Type | Description |
 |--------|------|-------------|
 | `core` | builtin | High-level day-to-day tools: planning, scheduling, capability discovery, tap-role launch |
 | `runtime` | builtin | Low-level harness reconfiguration: register MCP servers, manage dynamic agents, load skills |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
+| `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
 | `filesystem` | stdio (`octofs`) | File operations, shell commands, code analysis |
 
 `core` and `runtime` are the two split halves of what used to be a single `core` server. The split separates "what the agent uses to do work" (`core`) from "what reconfigures the harness mid-session" (`runtime`).

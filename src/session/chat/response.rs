@@ -643,8 +643,10 @@ pub async fn process_response<S: OutputSink>(
 		let failures =
 			crate::mcp::core::skill_auto::run_validators(&current_content, &workdir).await;
 		for (skill_name, error) in &failures {
+			// Wrap in <validation> tags so skill auto-activation (strip_xml_blocks)
+			// ignores this injected message — it must not match user-intent skills.
 			let error_msg = format!(
-				"Validation failed ({}): {}\nPlease fix the issue.",
+				"<validation skill=\"{}\">\nValidation failed: {}\nPlease fix the issue.\n</validation>",
 				skill_name, error
 			);
 			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {

@@ -47,6 +47,13 @@ Show or change the current role. Without argument, displays current role.
 /role assistant
 /role developer
 ```
+### `/effort [LEVEL]`
+Show or change the reasoning effort level. Without argument, displays current level. With argument, sets the effort to one of: `low`, `medium`, `high`, `xhigh`, `max`.
+
+```
+/effort high
+/effort max
+```
 
 ### `/loglevel [LEVEL]`
 Change the log level. Options: `none`, `info`, `debug`.

@@ -260,6 +260,66 @@ pub fn display_model(output: &CommandOutput) {
 	}
 }
 
+pub fn display_effort(output: &CommandOutput) {
+	if let CommandOutput::Effort {
+		old_effort,
+		new_effort,
+		changed,
+		saved,
+		save_error,
+	} = output
+	{
+		if *changed {
+			if let Some(old) = old_effort {
+				println!(
+					"{} {} → {}",
+					"Reasoning effort changed:".bright_green(),
+					old.bright_yellow(),
+					new_effort.bright_green()
+				);
+			} else {
+				println!(
+					"{} {}",
+					"Reasoning effort set to:".bright_green(),
+					new_effort.bright_white()
+				);
+			}
+			println!(
+				"{}",
+				"Note: This change only affects the current session.".bright_blue()
+			);
+			if let Some(false) = saved {
+				if let Some(err) = save_error {
+					println!(
+						"{} {}",
+						"Warning: Could not save session:".bright_red(),
+						err
+					);
+				}
+			}
+		} else {
+			println!(
+				"{} {}",
+				"Current reasoning effort:".bright_cyan(),
+				new_effort.bright_white()
+			);
+			println!();
+			println!("{}", "Available levels:".bright_yellow());
+			println!("{}", "  - low".bright_white());
+			println!("{}", "  - medium".bright_white());
+			println!("{}", "  - high".bright_white());
+			println!("{}", "  - xhigh".bright_white());
+			println!("{}", "  - max".bright_white());
+			println!();
+			println!(
+				"{}",
+				"Usage: /effort <level> (e.g., /effort high)".bright_blue()
+			);
+		}
+		println!();
+	}
+}
+
 pub fn display_role(output: &CommandOutput) {
 	if let CommandOutput::Role {
 		old_role,

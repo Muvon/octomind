@@ -356,6 +356,7 @@ Full reference: [Configuration Reference](doc/reference/03-config-reference.md).
 | `/help` | Show all commands |
 | `/info` | Token usage and costs |
 | `/model <provider:model>` | Switch model mid-session |
+| `/effort <level>` | Set reasoning effort (low/medium/high/xhigh/max) |
 | `/role <name>` | Switch role mid-session |
 | `/session` | Manage saved sessions (sessions auto-save) |
 | `/exit` | Exit session |

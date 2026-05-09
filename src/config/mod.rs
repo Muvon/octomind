@@ -223,6 +223,27 @@ impl ReasoningEffortConfig {
 			ReasoningEffortConfig::Max => octolib::llm::ReasoningEffort::Max,
 		}
 	}
+
+	pub fn as_str(self) -> &'static str {
+		match self {
+			ReasoningEffortConfig::Low => "low",
+			ReasoningEffortConfig::Medium => "medium",
+			ReasoningEffortConfig::High => "high",
+			ReasoningEffortConfig::XHigh => "xhigh",
+			ReasoningEffortConfig::Max => "max",
+		}
+	}
+
+	pub fn parse(s: &str) -> Option<Self> {
+		match s.trim().to_ascii_lowercase().as_str() {
+			"low" => Some(ReasoningEffortConfig::Low),
+			"medium" | "med" => Some(ReasoningEffortConfig::Medium),
+			"high" => Some(ReasoningEffortConfig::High),
+			"xhigh" | "x-high" | "extra-high" => Some(ReasoningEffortConfig::XHigh),
+			"max" | "maximum" => Some(ReasoningEffortConfig::Max),
+			_ => None,
+		}
+	}
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

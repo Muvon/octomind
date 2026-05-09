@@ -135,6 +135,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	let messages = chat_session.session.messages.clone();
 	let max_retries = chat_session.max_retries;
 	let schema = chat_session.schema.clone();
+	let reasoning_effort = chat_session.reasoning_effort;
 	let validation_params = ChatCompletionWithValidationParams::new(
 		&messages,
 		&model,
@@ -149,6 +150,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	.with_cancellation_token(operation_rx);
 	let validation_params = if let Some(schema) = schema {
 		validation_params.with_schema(schema)
+	} else {
+		validation_params
+	};
+	let validation_params = if let Some(effort) = reasoning_effort {
+		validation_params.with_reasoning_effort(effort)
 	} else {
 		validation_params
 	};

@@ -48,7 +48,7 @@ src/
       animation.rs / animation_manager.rs  # Spinner & animation
       assistant_output.rs    # Assistant output formatting
       command_executor.rs    # Command execution
-      commands.rs            # Slash-command constants (COMMANDS array, 25 entries)
+      commands.rs            # Slash-command constants (COMMANDS array, 26 entries)
       context_truncation.rs  # Context truncation
       conversation_compression.rs  # Context compression (task/phase/project/conversation)
       cost_tracker.rs        # Token cost tracking

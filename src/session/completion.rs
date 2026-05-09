@@ -47,6 +47,8 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub cancellation_token: Option<watch::Receiver<bool>>,
 	/// Optional JSON schema for structured output
 	pub schema: Option<serde_json::Value>,
+	/// Optional reasoning effort override (falls back to `config.reasoning_effort`)
+	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 }
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
@@ -72,6 +74,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			chat_session: None,
 			cancellation_token: None,
 			schema: None,
+			reasoning_effort: None,
 		}
 	}
 
@@ -99,6 +102,12 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 	/// Set JSON schema for structured output
 	pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
 		self.schema = Some(schema);
+		self
+	}
+
+	/// Override reasoning effort for this call (otherwise inherits from config).
+	pub fn with_reasoning_effort(mut self, effort: crate::config::ReasoningEffortConfig) -> Self {
+		self.reasoning_effort = Some(effort);
 		self
 	}
 }
@@ -185,6 +194,12 @@ pub async fn chat_completion_with_validation(
 
 	let chat_params = if let Some(token) = params.cancellation_token {
 		chat_params.with_cancellation_token(token)
+	} else {
+		chat_params
+	};
+
+	let chat_params = if let Some(effort) = params.reasoning_effort {
+		chat_params.with_reasoning_effort(effort)
 	} else {
 		chat_params
 	};

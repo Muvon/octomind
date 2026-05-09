@@ -71,6 +71,8 @@ pub struct ChatCompletionParams<'a> {
 	pub cancellation_token: Option<watch::Receiver<bool>>,
 	/// Optional JSON schema for structured output
 	pub schema: Option<serde_json::Value>,
+	/// Optional reasoning effort override (falls back to `config.reasoning_effort`)
+	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 }
 
 impl<'a> ChatCompletionParams<'a> {
@@ -96,6 +98,7 @@ impl<'a> ChatCompletionParams<'a> {
 			config,
 			cancellation_token: None,
 			schema: None,
+			reasoning_effort: None,
 		}
 	}
 
@@ -114,6 +117,12 @@ impl<'a> ChatCompletionParams<'a> {
 	/// Set JSON schema for structured output
 	pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
 		self.schema = Some(schema);
+		self
+	}
+
+	/// Override reasoning effort for this call (otherwise inherits from config).
+	pub fn with_reasoning_effort(mut self, effort: crate::config::ReasoningEffortConfig) -> Self {
+		self.reasoning_effort = Some(effort);
 		self
 	}
 
@@ -178,7 +187,11 @@ impl<'a> ChatCompletionParams<'a> {
 			n => Some(std::time::Duration::from_secs(n as u64)),
 		})
 		.with_long_cache(self.config.use_long_system_cache)
-		.with_reasoning_effort(self.config.reasoning_effort.to_octolib());
+		.with_reasoning_effort(
+			self.reasoning_effort
+				.unwrap_or(self.config.reasoning_effort)
+				.to_octolib(),
+		);
 
 		if let Some(token) = &self.cancellation_token {
 			params = params.with_cancellation_token(token.clone());

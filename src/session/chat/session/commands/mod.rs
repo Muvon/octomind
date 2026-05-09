@@ -20,6 +20,7 @@ mod copy;
 mod display;
 mod done;
 pub use done::handle_done;
+mod effort;
 mod exit;
 mod help;
 mod image;
@@ -82,6 +83,13 @@ pub enum CommandOutput {
 	Model {
 		old_model: Option<String>,
 		new_model: String,
+		changed: bool,
+		saved: Option<bool>,
+		save_error: Option<String>,
+	},
+	Effort {
+		old_effort: Option<String>,
+		new_effort: String,
 		changed: bool,
 		saved: Option<bool>,
 		save_error: Option<String>,
@@ -205,6 +213,7 @@ impl CommandOutput {
 			Self::Help { .. } => display::display_help(self, config),
 			Self::Info { .. } => display::display_info(self),
 			Self::Model { .. } => display::display_model(self),
+			Self::Effort { .. } => display::display_effort(self),
 			Self::Role { .. } => display::display_role(self),
 			Self::Loglevel { .. } => display::display_loglevel(self),
 			Self::Copy { copied, .. } => {
@@ -291,6 +300,7 @@ pub async fn process_command(
 		SUMMARIZE_COMMAND => summarize::handle_summarize(session, config).await,
 		LIST_COMMAND => list::handle_list(session, config, params),
 		MODEL_COMMAND => model::handle_model(session, config, params),
+		EFFORT_COMMAND => effort::handle_effort(session, config, params),
 		SESSION_COMMAND => session::handle_session(session, params),
 		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,
 		RUN_COMMAND => {

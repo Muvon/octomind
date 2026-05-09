@@ -189,6 +189,8 @@ pub struct ChatSession {
 	pub learning_injected: bool,
 	/// Whether learning extraction already ran for this session (prevents double extraction on exit).
 	pub learning_extracted: bool,
+	/// Runtime override for reasoning effort (set via /effort). None = use config default.
+	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -306,6 +308,7 @@ impl ChatSession {
 			critical_knowledge: Vec::new(),     // Populated from session log on resume
 			learning_injected: false,
 			learning_extracted: false,
+			reasoning_effort: None,
 		}
 	}
 
@@ -503,6 +506,7 @@ impl ChatSession {
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						learning_injected: false,
 						learning_extracted: false,
+						reasoning_effort: None,
 					};
 
 					// Apply runtime state from session log (legacy support)
@@ -532,6 +536,11 @@ impl ChatSession {
 							"Session resume: Restored {} critical knowledge entries",
 							chat_session.critical_knowledge.len()
 						);
+					}
+
+					// Restore runtime reasoning effort override
+					if let Some(effort) = runtime_state.reasoning_effort {
+						chat_session.reasoning_effort = Some(effort);
 					}
 
 					// CRITICAL FIX: Recalculate token tracking from actual messages
@@ -1245,6 +1254,7 @@ mod tests {
 			critical_knowledge: Vec::new(),
 			learning_injected: false,
 			learning_extracted: false,
+			reasoning_effort: None,
 		}
 	}
 

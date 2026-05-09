@@ -824,7 +824,8 @@ pub struct SessionRuntimeState {
 	pub model: Option<String>,
 	pub layers_enabled: Option<bool>,
 	pub cache_next_message: bool,
-	pub role: Option<String>,            // Track runtime role changes
+	pub role: Option<String>, // Track runtime role changes
+	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 	pub critical_knowledge: Vec<String>, // Knowledge entries from compressions
 }
 
@@ -879,6 +880,11 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 		"/role" if parts.len() > 1 => {
 			let new_role = parts[1].to_string();
 			state.role = Some(new_role);
+		}
+		"/effort" if parts.len() > 1 => {
+			if let Some(e) = crate::config::ReasoningEffortConfig::parse(parts[1]) {
+				state.reasoning_effort = Some(e);
+			}
 		}
 		"/layers" if parts.len() > 1 => {
 			let state_str = parts[1];

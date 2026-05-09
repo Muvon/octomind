@@ -720,16 +720,52 @@ impl Default for MarkdownRenderer {
 
 // Helper function to check if content looks like markdown
 pub fn is_markdown_content(content: &str) -> bool {
-	// Simple heuristics to detect markdown content
-	content.contains("```")
-		|| content.contains("# ")
-		|| content.contains("## ")
-		|| content.contains("### ")
+	// Simple heuristics to detect markdown content.
+	// Check line-anchored markers (lists, headings, quotes) so we don't
+	// require a leading newline before them, and detect inline code (`...`)
+	// independently of fenced blocks.
+	if content.contains("```")
 		|| content.contains("**")
-		|| content.contains("*")
-		|| content.contains("[")
-		|| content.contains("|")
-		|| content.contains("> ")
+		|| content.contains("__")
+		|| content.contains("](")
+	{
+		return true;
+	}
+
+	// Inline code: at least one matched pair of backticks on the same line.
+	if content.contains('`') {
+		for line in content.lines() {
+			if line.matches('`').count() >= 2 {
+				return true;
+			}
+		}
+	}
+
+	for raw in content.lines() {
+		let line = raw.trim_start();
+		if line.starts_with("# ")
+			|| line.starts_with("## ")
+			|| line.starts_with("### ")
+			|| line.starts_with("#### ")
+			|| line.starts_with("##### ")
+			|| line.starts_with("###### ")
+			|| line.starts_with("- ")
+			|| line.starts_with("* ")
+			|| line.starts_with("+ ")
+			|| line.starts_with("> ")
+			|| line.starts_with("| ")
+		{
+			return true;
+		}
+		// Ordered list: digits followed by ". "
+		let bytes = line.as_bytes();
+		let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+		if digits > 0 && bytes.get(digits) == Some(&b'.') && bytes.get(digits + 1) == Some(&b' ') {
+			return true;
+		}
+	}
+
+	false
 }
 
 #[cfg(test)]

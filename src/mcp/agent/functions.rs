@@ -745,6 +745,11 @@ pub async fn run_acp_command(
 		.await?;
 
 	let mut output = String::new();
+	// Captured prompt-response error: if the subprocess returns
+	// `{"id":3,"error":{...}}` we want to surface it instead of silently
+	// returning an empty string. Without this the parent sees `output: ""`
+	// with status `done` even when the API call inside the subprocess failed.
+	let mut prompt_error: Option<Value> = None;
 
 	loop {
 		// Check for cancellation before each line read
@@ -777,9 +782,13 @@ pub async fn run_acp_command(
 			Err(_) => continue,
 		};
 
-		// Collect agent_message_chunk text from notifications
+		// Forward session/update notifications to the parent's notification
+		// sink so the user sees thinking, tool calls, and tool results
+		// streamed live — the same shape the parent renders for its own
+		// in-process tool calls.
 		if msg.get("method").and_then(|m| m.as_str()) == Some("session/update") {
 			if let Some(update) = msg.pointer("/params/update") {
+				forward_session_update_to_parent(update);
 				if update.get("sessionUpdate").and_then(|u| u.as_str())
 					== Some("agent_message_chunk")
 				{
@@ -790,8 +799,12 @@ pub async fn run_acp_command(
 			}
 		}
 
-		// Stop when we get the prompt response (id=3)
+		// Stop when we get the prompt response (id=3). Capture any error
+		// payload so we can fail the call instead of returning empty output.
 		if msg.get("id").and_then(|i| i.as_u64()) == Some(3) {
+			if let Some(err) = msg.get("error") {
+				prompt_error = Some(err.clone());
+			}
 			break;
 		}
 	}
@@ -800,7 +813,119 @@ pub async fn run_acp_command(
 	drop(stdin);
 	let _ = child.wait().await;
 
+	if let Some(err) = prompt_error {
+		let trimmed = output.trim();
+		let detail = err
+			.get("message")
+			.and_then(|m| m.as_str())
+			.map(|s| s.to_string())
+			.unwrap_or_else(|| err.to_string());
+		if trimmed.is_empty() {
+			return Err(anyhow::anyhow!("ACP prompt failed: {detail}"));
+		}
+		return Err(anyhow::anyhow!(
+			"ACP prompt failed: {detail}\n\nPartial output:\n{trimmed}"
+		));
+	}
+
 	Ok(output.trim().to_string())
+}
+
+/// Convert an ACP `session/update` notification into a `ServerMessage` and
+/// push it through the parent's notification sender. Lets `agent_*`, `tap`,
+/// and layer subprocess events render on the parent's output sink (CLI
+/// stream, JSONL, websocket) instead of being silently dropped.
+fn forward_session_update_to_parent(update: &Value) {
+	let kind = match update.get("sessionUpdate").and_then(|u| u.as_str()) {
+		Some(k) => k,
+		None => return,
+	};
+	let session_id =
+		crate::session::context::current_session_id().unwrap_or_else(|| String::from("acp"));
+
+	let msg = match kind {
+		"agent_message_chunk" => {
+			let text = update
+				.pointer("/content/text")
+				.and_then(|t| t.as_str())
+				.unwrap_or("");
+			if text.is_empty() {
+				return;
+			}
+			crate::websocket::ServerMessage::Assistant(crate::websocket::AssistantPayload {
+				content: text.to_string(),
+				session_id,
+			})
+		}
+		"agent_thought_chunk" => {
+			let text = update
+				.pointer("/content/text")
+				.and_then(|t| t.as_str())
+				.unwrap_or("");
+			if text.is_empty() {
+				return;
+			}
+			crate::websocket::ServerMessage::Thinking(crate::websocket::ThinkingPayload {
+				content: text.to_string(),
+				session_id,
+			})
+		}
+		"tool_call" => {
+			let tool_id = update
+				.get("toolCallId")
+				.and_then(|s| s.as_str())
+				.unwrap_or("")
+				.to_string();
+			let title = update
+				.get("title")
+				.and_then(|s| s.as_str())
+				.unwrap_or("")
+				.to_string();
+			let raw_input = update
+				.get("rawInput")
+				.cloned()
+				.unwrap_or(serde_json::Value::Null);
+			crate::websocket::ServerMessage::ToolUse(crate::websocket::ToolUsePayload {
+				tool: title,
+				tool_id,
+				server: String::new(),
+				params: raw_input,
+				session_id,
+			})
+		}
+		"tool_call_update" => {
+			let tool_id = update
+				.get("toolCallId")
+				.and_then(|s| s.as_str())
+				.unwrap_or("")
+				.to_string();
+			let status = update.get("status").and_then(|s| s.as_str()).unwrap_or("");
+			// Only surface terminal updates as ToolResult — intermediate
+			// status flips would otherwise emit duplicate "result" rows.
+			let success = match status {
+				"completed" => true,
+				"failed" => false,
+				_ => return,
+			};
+			let raw_output = update
+				.get("rawOutput")
+				.map(|v| match v {
+					Value::String(s) => s.clone(),
+					other => other.to_string(),
+				})
+				.unwrap_or_default();
+			crate::websocket::ServerMessage::ToolResult(crate::websocket::ToolResultPayload {
+				tool: String::new(),
+				tool_id,
+				server: String::new(),
+				content: raw_output,
+				success,
+				session_id,
+			})
+		}
+		_ => return,
+	};
+	crate::mcp::process::send_notification_message(msg);
 }
 
 /// Read lines until we find a JSON-RPC response with the given id, return it.

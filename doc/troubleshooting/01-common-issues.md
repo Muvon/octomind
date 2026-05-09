@@ -156,10 +156,10 @@ Monitor with:
 
 Reduce context:
 ```
-/summarize          # AI compression
-/truncate           # Remove oldest messages
+/done               # Force compression and start a fresh task boundary
 /run reduce         # Custom reduce command (if configured)
 ```
+Automatic compression also runs in the background once token thresholds are reached — see [Compression Guide](../usage/08-compression.md).
 
 Enable automatic compression in config. See [Compression](../usage/08-compression.md).
 

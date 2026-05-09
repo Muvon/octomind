@@ -26,8 +26,6 @@ pub const SESSION_COMMAND: &str = "/session";
 pub const INFO_COMMAND: &str = "/info";
 pub const DONE_COMMAND: &str = "/done";
 pub const LOGLEVEL_COMMAND: &str = "/loglevel";
-pub const TRUNCATE_COMMAND: &str = "/truncate";
-pub const SUMMARIZE_COMMAND: &str = "/summarize";
 pub const MODEL_COMMAND: &str = "/model";
 pub const RUN_COMMAND: &str = "/run";
 pub const MCP_COMMAND: &str = "/mcp";
@@ -42,7 +40,7 @@ pub const WORKFLOW_COMMAND: &str = "/workflow";
 pub const SKILL_COMMAND: &str = "/skill";
 pub const EFFORT_COMMAND: &str = "/effort";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 26] = [
+pub const COMMANDS: [&str; 24] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -54,8 +52,6 @@ pub const COMMANDS: [&str; 26] = [
 	INFO_COMMAND,
 	DONE_COMMAND,
 	LOGLEVEL_COMMAND,
-	TRUNCATE_COMMAND,
-	SUMMARIZE_COMMAND,
 	MODEL_COMMAND,
 	RUN_COMMAND,
 	MCP_COMMAND,

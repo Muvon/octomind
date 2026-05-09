@@ -34,8 +34,6 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 
 	commands.push(LOGLEVEL_COMMAND.to_string());
 
-	commands.push(TRUNCATE_COMMAND.to_string());
-	commands.push(SUMMARIZE_COMMAND.to_string());
 	commands.push(RUN_COMMAND.to_string());
 	commands.push(CONTEXT_COMMAND.to_string());
 	commands.push(MODEL_COMMAND.to_string());

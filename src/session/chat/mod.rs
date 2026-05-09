@@ -18,7 +18,6 @@ pub mod animation_manager;
 pub mod assistant_output;
 mod command_executor;
 mod commands;
-pub(crate) mod context_truncation;
 pub(crate) mod conversation_compression;
 mod cost_tracker;
 mod edit_mode;

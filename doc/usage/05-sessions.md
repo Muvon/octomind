@@ -73,7 +73,7 @@ All 23 commands available at the session prompt. See [Session Commands Reference
 
 **Monitoring:** `/info`, `/report`, `/model`, `/role`, `/loglevel`
 
-**Context:** `/context`, `/summarize`, `/truncate`, `/done`
+**Context:** `/context`, `/done`
 
 **Media:** `/image`, `/video`, `/copy`
 
@@ -123,9 +123,7 @@ As sessions grow, manage context to control costs:
 
 | Command | Effect |
 |---------|--------|
-| `/summarize` | AI-powered compression of history |
-| `/truncate` | Remove oldest messages |
-| `/done` | Complete task with cleanup and summary |
+| `/done` | Complete task with cleanup, forced compression, and summary |
 | `/context` | View current context |
 | `/context large` | Show only large messages |
 

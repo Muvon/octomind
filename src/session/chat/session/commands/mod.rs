@@ -36,8 +36,6 @@ mod role;
 mod run;
 mod session;
 mod skill;
-mod summarize;
-mod truncate;
 mod utils;
 mod video;
 mod workflow;
@@ -122,19 +120,6 @@ pub enum CommandOutput {
 		has_plan: bool,
 		plan: Option<serde_json::Value>,
 		display: Option<String>,
-	},
-	Truncate {
-		success: bool,
-		tokens_before: usize,
-		tokens_after: usize,
-		tokens_saved: usize,
-	},
-	Summarize {
-		success: bool,
-		tokens_before: usize,
-		tokens_after: usize,
-		tokens_saved: usize,
-		summary: bool,
 	},
 	Context {
 		filter: String,
@@ -227,8 +212,6 @@ impl CommandOutput {
 				println!("{}", message);
 			}
 			Self::Plan { .. } => display::display_plan(self),
-			Self::Truncate { .. } => display::display_truncate(self),
-			Self::Summarize { .. } => display::display_summarize(self),
 			Self::Context { .. } => display::display_context(self, session, config).await,
 			Self::Image { .. } => display::display_image(self),
 			Self::Video { .. } => display::display_video(self),
@@ -296,8 +279,6 @@ pub async fn process_command(
 			// This case should not be reached as /done is intercepted before process_command
 			unreachable!("/done command should be handled in runner.rs main loop")
 		}
-		TRUNCATE_COMMAND => truncate::handle_truncate(session, config, &current_role).await,
-		SUMMARIZE_COMMAND => summarize::handle_summarize(session, config).await,
 		LIST_COMMAND => list::handle_list(session, config, params),
 		MODEL_COMMAND => model::handle_model(session, config, params),
 		EFFORT_COMMAND => effort::handle_effort(session, config, params),

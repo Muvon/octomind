@@ -80,8 +80,9 @@ As sessions grow, context management becomes important:
 # Check token usage
 /info
 
-# If context is getting large, compress it
-/summarize
+# If context is getting large, force compression with /done
+# (or rely on automatic compression at threshold)
+/done
 
 # Or use the reduce command (if configured)
 /run reduce
@@ -194,6 +195,6 @@ This keeps context manageable while preserving critical decisions.
 - `--resume-recent` finds the most recent session for the current project
 - Full conversation history is persisted in `~/.local/share/octomind/sessions/`
 - The AI picks up exactly where you left off -- all context, decisions, and findings intact
-- Use `/summarize` or automatic compression to manage growing context
+- Use `/done` or automatic compression to manage growing context
 - Combine with agents for parallel subtask delegation
 - Session persistence works across CLI, daemon, and WebSocket modes

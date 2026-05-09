@@ -78,12 +78,6 @@ View session context (message history). Filters:
 /context large
 ```
 
-### `/summarize`
-Compress conversation history using AI summarization. Reduces token usage while preserving key context.
-
-### `/truncate`
-Trim context by removing oldest messages. More aggressive than `/summarize`.
-
 ### `/done`
 Mark the current task as complete. Triggers:
 - Plan completion (if a plan is active)

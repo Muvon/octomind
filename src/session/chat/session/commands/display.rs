@@ -54,14 +54,6 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			LOGLEVEL_COMMAND.cyan()
 		);
 		println!(
-			"{} - Perform smart context truncation to reduce token usage",
-			TRUNCATE_COMMAND.cyan()
-		);
-		println!(
-			"{} - Create intelligent summary of entire conversation using local processing",
-			SUMMARIZE_COMMAND.cyan()
-		);
-		println!(
 			"{} <command_name> - Execute a command layer",
 			RUN_COMMAND.cyan()
 		);
@@ -395,53 +387,6 @@ pub fn display_plan(output: &CommandOutput) {
 			println!();
 			println!("For simple tasks, just execute them directly without creating a plan");
 		}
-	}
-}
-
-pub fn display_truncate(output: &CommandOutput) {
-	if let CommandOutput::Truncate {
-		success,
-		tokens_before,
-		tokens_after,
-		tokens_saved,
-	} = output
-	{
-		if *success {
-			println!("{}", "Context truncated successfully.".bright_green());
-			println!(
-				"{} {} → {}",
-				"Tokens:".bright_cyan(),
-				tokens_before,
-				tokens_after
-			);
-			if *tokens_saved > 0 {
-				println!("{} {}", "Tokens saved:".bright_cyan(), tokens_saved);
-			}
-		}
-		println!();
-	}
-}
-
-pub fn display_summarize(output: &CommandOutput) {
-	if let CommandOutput::Summarize {
-		success,
-		tokens_before,
-		tokens_after,
-		tokens_saved,
-		..
-	} = output
-	{
-		if *success {
-			println!("{}", "Smart summarization completed.".bright_green());
-			println!(
-				"{} {} → {}",
-				"Tokens:".bright_cyan(),
-				tokens_before,
-				tokens_after
-			);
-			println!("{} {}", "Tokens saved:".bright_cyan(), tokens_saved);
-		}
-		println!();
 	}
 }
 

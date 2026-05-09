@@ -63,7 +63,7 @@ src/
       mod.rs                 # Chat orchestration
       session/
         core.rs              # Session state management
-        commands/           # 25 command handlers: help, info, model, role, loglevel, copy, clear, plan, truncate, summarize, context, image, video, prompt, done, list, run, workflow, mcp, report, session, skill, exit, utils
+        commands/           # 23 command handlers: help, info, model, role, loglevel, copy, clear, plan, context, image, video, prompt, done, list, run, workflow, mcp, report, session, skill, exit, utils
         setup.rs             # Session setup & initialization
         params.rs           # CLI parameter parsing
         main_loop.rs        # Interactive & non-interactive session loops

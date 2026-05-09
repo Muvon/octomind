@@ -25,9 +25,9 @@ use agent_client_protocol::{
 	CancelNotification, Client, ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest,
 	ExtResponse, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
 	LoadSessionResponse, McpCapabilities, McpServer, NewSessionRequest, NewSessionResponse,
-	PromptCapabilities, PromptRequest, PromptResponse, ProtocolVersion, SessionNotification,
-	SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-	UnstructuredCommandInput,
+	PromptCapabilities, PromptRequest, PromptResponse, ProtocolVersion, SessionInfoUpdate,
+	SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
+	ToolCallUpdateFields, UnstructuredCommandInput,
 };
 
 use crate::config::mcp::McpServerConfig;
@@ -855,6 +855,38 @@ impl agent_client_protocol::Agent for OctomindAgent {
 								),
 							);
 							Some(SessionUpdate::ToolCallUpdate(update))
+						}
+						// Forward cost / token usage as a SessionInfoUpdate carrying an
+						// `octomind.usage` block in `_meta`. We don't gate on the unstable
+						// `UsageUpdate` variant — `_meta` is the spec-blessed extensibility
+						// channel and works on all 0.10.x clients that pass `_meta` through.
+						// Side-channel: we send the notification ourselves here (bypassing
+						// the `update` pattern below) because we need to attach `meta`.
+						ServerMessage::Cost(p) => {
+							if let Some(conn) = conn_for_task.as_ref() {
+								let mut meta = serde_json::Map::new();
+								meta.insert(
+									"octomind.usage".to_string(),
+									serde_json::json!({
+										"session_tokens":     p.session_tokens,
+										"session_cost":       p.session_cost,
+										"input_tokens":       p.input_tokens,
+										"output_tokens":      p.output_tokens,
+										"cache_read_tokens":  p.cache_read_tokens,
+										"cache_write_tokens": p.cache_write_tokens,
+										"reasoning_tokens":   p.reasoning_tokens,
+									}),
+								);
+								let notif = SessionNotification::new(
+									session_id_for_task.clone(),
+									SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+								)
+								.meta(meta);
+								if let Err(e) = conn.session_notification(notif).await {
+									log_error!("ACP: failed to send usage notification: {}", e);
+								}
+							}
+							None
 						}
 						_ => None,
 					};

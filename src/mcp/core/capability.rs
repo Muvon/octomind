@@ -188,13 +188,20 @@ fn evict_lru_if_full(config: &Config) {
 	// Compute the disable plan under one write lock so refcounts are
 	// consistent: read the LRU's server list, remove it from the
 	// registry, then count remaining references for each server.
+	//
+	// `kill` here means "tear down the underlying MCP server process", not
+	// "strip this cap's tools". Two reasons to keep the server alive:
+	//   1. Another active capability still references it (refcount > 0).
+	//   2. The role's static config declares it — the role still owns it
+	//      regardless of dynamic-cap activity.
 	let plan: Option<(String, Vec<DisablePlanEntry>)> = {
 		let mut reg = registry().write().unwrap();
 		select_lru_in(&mut reg).map(|(lru_name, server_tools)| {
 			let entries = server_tools
 				.into_iter()
 				.map(|(srv, tools)| {
-					let kill = server_refcount(&reg, &srv, &lru_name) == 0;
+					let static_owned = config.mcp.servers.iter().any(|s| s.name() == srv);
+					let kill = !static_owned && server_refcount(&reg, &srv, &lru_name) == 0;
 					(srv, tools, kill)
 				})
 				.collect();
@@ -203,6 +210,10 @@ fn evict_lru_if_full(config: &Config) {
 	};
 
 	if let Some((name, entries)) = plan {
+		// Drop overlay contributions before stripping tools so the next
+		// merge sees the reduced filter.
+		crate::config::runtime_overlay::clear_capability_extras(&name);
+
 		let server_count = entries.len();
 		for (srv, tools, kill) in &entries {
 			if let Err(e) =
@@ -434,39 +445,15 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	// the success message can distinguish "all-tools" from "filter-applied".
 	let mut any_filter_applied = false;
 
+	// Per-server tool contributions for the runtime overlay. Only servers
+	// that are already in the role's static config get an overlay entry —
+	// fully-dynamic servers are surfaced through `dynamic::get_all_functions`
+	// and don't need overlay extras to be visible.
+	let mut overlay_per_server: std::collections::HashMap<String, Vec<String>> =
+		std::collections::HashMap::new();
+
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
-
-		// If the role's manifest declared this capability via
-		// `capabilities = [...]`, the resolver already inlined the
-		// capability's `[[mcp.servers]]` block into `config.mcp.servers`
-		// at boot, and the standard MCP init exposes its tools through
-		// the static path. Re-registering the same server in the dynamic
-		// registry would surface every tool twice in `get_available_functions`
-		// (and once more in `mcp list` / `mcp info`). Skip the dynamic
-		// register/enable pair for these servers — they're already live —
-		// and don't track them in `activated_server_tools` either, since
-		// LRU eviction shouldn't tear down tools that belong to the role's
-		// persistent surface.
-		let already_in_static = config.mcp.servers.iter().any(|s| s.name() == server_name);
-
-		if already_in_static {
-			activated_servers.push(server_name);
-			continue;
-		}
-
-		// Register if not already in the dynamic registry (idempotent on conflicts).
-		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
-			if let Err(e) = crate::mcp::core::dynamic::register_server(server.clone()) {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Failed to register server '{server_name}' for capability '{name}': {e}"
-					),
-				));
-			}
-		}
 
 		// Compute the filter for *this* server. `allowed_tools` patterns in
 		// capability TOMLs are namespace-prefixed (e.g., `playwright:*`,
@@ -480,6 +467,64 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		let filter_for_this = filter_for_server(&resolved.allowed_tools, &server_name);
 		if filter_for_this.is_some() {
 			any_filter_applied = true;
+		}
+
+		// Two activation paths share the same registry/overlay/tool-map
+		// shape so disable/eviction is uniform regardless of where the
+		// server originated.
+		//
+		// 1. Server already in the role's static config (declared by the
+		//    role's `capabilities = [...]` at boot). The MCP init already
+		//    exposes its tools via the static path, but this capability's
+		//    `allowed_tools` for that server may include names the role's
+		//    own filter rejects. We extend the role's effective filter
+		//    via the runtime overlay (consulted by
+		//    `RoleMcpConfig::get_enabled_servers`) AND register the bare
+		//    tool names in the global tool_map so dispatch can route them.
+		// 2. Server is fully dynamic (capability brought it in at runtime).
+		//    Register + enable through the dynamic registry as before; the
+		//    dynamic `get_all_functions` path surfaces its tools, no
+		//    overlay needed.
+		let already_in_static = config.mcp.servers.iter().any(|s| s.name() == server_name);
+
+		if already_in_static {
+			let bare_names: Vec<String> = filter_for_this.clone().unwrap_or_default();
+
+			// Register THIS cap's named tools in the global tool_map so the
+			// dispatcher can route a call like `octofs:shell` even though
+			// the role's static filter never listed it. Empty `bare_names`
+			// (capability allows all tools from this server) is a no-op
+			// here — the static path already mapped them.
+			if !bare_names.is_empty() {
+				if let Some(server_config) =
+					config.mcp.servers.iter().find(|s| s.name() == server_name)
+				{
+					crate::mcp::tool_map::register_dynamic_server_tools(
+						&server_name,
+						server_config,
+						&bare_names,
+					);
+				}
+				overlay_per_server.insert(server_name.clone(), bare_names.clone());
+			}
+
+			activated_tools.extend(bare_names.iter().cloned());
+			activated_server_tools.push((server_name.clone(), bare_names));
+			activated_servers.push(server_name);
+			continue;
+		}
+
+		// Fully dynamic — register + enable.
+		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
+			if let Err(e) = crate::mcp::core::dynamic::register_server(server.clone()) {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!(
+						"Failed to register server '{server_name}' for capability '{name}': {e}"
+					),
+				));
+			}
 		}
 
 		match crate::mcp::core::dynamic::enable_server(&server_name, filter_for_this).await {
@@ -498,6 +543,10 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			}
 		}
 	}
+
+	// Publish overlay entries so the next config merge picks up this
+	// capability's contributions to static servers' filters.
+	crate::config::runtime_overlay::set_capability_extras(&name, overlay_per_server);
 
 	mark_active(&name, activated_server_tools);
 
@@ -553,6 +602,11 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 	// consistent: pull THIS cap's (server, tools) record, remove the
 	// cap from the registry, then count remaining references for each
 	// server. Mirrors `evict_lru_if_full`.
+	//
+	// `kill` only flips true when no other active capability references
+	// the server AND the server is not in the role's static config. The
+	// static-config check stops `disable` from tearing down servers the
+	// role still relies on (the LRU eviction path uses the same rule).
 	let plan: Option<Vec<DisablePlanEntry>> = {
 		let mut reg = registry().write().unwrap();
 		reg.remove(&name).map(|state| {
@@ -560,7 +614,8 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 				.server_tools
 				.into_iter()
 				.map(|(srv, tools)| {
-					let kill = server_refcount(&reg, &srv, &name) == 0;
+					let static_owned = config.mcp.servers.iter().any(|s| s.name() == srv);
+					let kill = !static_owned && server_refcount(&reg, &srv, &name) == 0;
 					(srv, tools, kill)
 				})
 				.collect()
@@ -580,15 +635,20 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 		}
 	};
 
+	// Drop the overlay entry so the next merge sees the reduced per-server
+	// filter for static servers this cap was contributing to. Order matters:
+	// clear before tool_map updates so the two stay in sync if a concurrent
+	// merge reads them.
+	crate::config::runtime_overlay::clear_capability_extras(&name);
+
 	let mut disabled_servers: Vec<String> = Vec::new();
 	for (srv, tools, kill) in &plan {
-		// Skip non-dynamic servers entirely (they were never registered
-		// here, so there's nothing to do — matches old handle_disable
-		// behaviour). For shared servers (kill=false), strip only this
-		// cap's tools regardless of dynamic-vs-config status.
-		if !crate::mcp::core::dynamic::is_dynamic(srv) && *kill {
-			continue;
-		}
+		// Always strip THIS cap's tool entries from the global tool_map,
+		// even on static servers — the cap brought them in via the runtime
+		// overlay, so they need to leave the map when it's disabled.
+		// `kill=false` selects the strip-only path inside
+		// `disable_server_tools`; static servers reach this branch via the
+		// `static_owned` rule above.
 		if let Err(e) =
 			crate::mcp::core::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
 		{
@@ -998,15 +1058,32 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 
 	let mut activated_servers: Vec<String> = Vec::new();
 	let mut activated_server_tools: Vec<(String, Vec<String>)> = Vec::new();
+	let mut overlay_per_server: std::collections::HashMap<String, Vec<String>> =
+		std::collections::HashMap::new();
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
+		let filter = filter_for_server(&resolved.allowed_tools, &server_name);
 
-		// Server already provided by the role's static config (capability
-		// inlined at boot via `capabilities = [...]` in the manifest).
-		// Re-registering would double the tool surface — skip the dynamic
-		// register/enable, and don't track for LRU eviction since the static
-		// surface isn't ours to tear down. Mirrors `handle_enable`.
+		// Server already provided by the role's static config — extend
+		// rather than re-register. Mirrors the `already_in_static` branch
+		// in `handle_enable`. The overlay extends the role's per-server
+		// filter at next merge; tool_map registration makes named tools
+		// dispatchable now.
 		if config.mcp.servers.iter().any(|s| s.name() == server_name) {
+			let bare_names: Vec<String> = filter.clone().unwrap_or_default();
+			if !bare_names.is_empty() {
+				if let Some(server_config) =
+					config.mcp.servers.iter().find(|s| s.name() == server_name)
+				{
+					crate::mcp::tool_map::register_dynamic_server_tools(
+						&server_name,
+						server_config,
+						&bare_names,
+					);
+				}
+				overlay_per_server.insert(server_name.clone(), bare_names.clone());
+			}
+			activated_server_tools.push((server_name.clone(), bare_names));
 			activated_servers.push(server_name);
 			continue;
 		}
@@ -1014,14 +1091,13 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
 			crate::mcp::core::dynamic::register_server(server.clone())?;
 		}
-		// Per-server bare-name filter (strips `<server>:` namespace from
-		// capability `allowed_tools` patterns; see `filter_for_server`).
-		let filter = filter_for_server(&resolved.allowed_tools, &server_name);
 		let functions = crate::mcp::core::dynamic::enable_server(&server_name, filter).await?;
 		let bare_names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
 		activated_server_tools.push((server_name.clone(), bare_names));
 		activated_servers.push(server_name);
 	}
+
+	crate::config::runtime_overlay::set_capability_extras(name, overlay_per_server);
 	mark_active(name, activated_server_tools);
 	Ok(activated_servers)
 }

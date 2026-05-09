@@ -47,6 +47,8 @@ pub mod validation;
 
 pub mod registry;
 
+pub mod runtime_overlay;
+
 pub mod pipelines;
 
 pub mod workflows;

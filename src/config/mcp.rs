@@ -308,8 +308,22 @@ impl RoleMcpConfig {
 				let mut server = server_config.clone();
 				// Apply role-specific tool filtering if specified
 				if !self.allowed_tools.is_empty() {
-					// Convert patterns to actual tool names for this server
-					let filtered_tools = self.expand_patterns_for_server(server_name);
+					// Convert patterns to actual tool names for this server.
+					let mut filtered_tools = self.expand_patterns_for_server(server_name);
+					// Union runtime capability extras when the role applies a
+					// restrictive filter (non-empty result). When the role
+					// already grants `<server>:*` for this server,
+					// `expand_patterns_for_server` returns an empty Vec to mean
+					// "all tools" — leave it untouched, since extras are
+					// already implicitly allowed.
+					if !filtered_tools.is_empty() {
+						for extra in crate::config::runtime_overlay::extras_for_server(server_name)
+						{
+							if !filtered_tools.iter().any(|t| t == &extra) {
+								filtered_tools.push(extra);
+							}
+						}
+					}
 					// Update tools based on server type
 					server = match server {
 						McpServerConfig::Builtin {

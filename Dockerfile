@@ -18,6 +18,7 @@ COPY Cargo.toml Cargo.lock ./
 # Copy source code and config templates
 COPY src ./src
 COPY config-templates ./config-templates
+COPY assets ./assets
 
 # Build the application
 RUN cargo build --release

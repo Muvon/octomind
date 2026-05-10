@@ -178,34 +178,32 @@ pub fn clear_http_session_id(server_name: &str) {
 	}
 }
 
-/// Parse tools from a ListToolsResult, applying server tool filters.
-/// Returns (functions, next_cursor) for pagination support.
+/// Parse tools from a ListToolsResult.
+///
+/// Returns the server's FULL tool inventory — no role/capability filtering
+/// applied here. The cached result is reused across role merges and runtime
+/// capability activations, so filtering at parse time would permanently
+/// hide tools that the role's static `tools = [...]` excludes, defeating
+/// `capability enable <cap>` whose runtime overlay extends that filter
+/// (see `server_functions_for` in `src/mcp/mod.rs` for the union with
+/// `runtime_overlay::extras_for_server`).
 pub fn parse_tools_from_list_result(
 	list_result: &rmcp::model::ListToolsResult,
-	server: &McpServerConfig,
 ) -> Vec<McpFunction> {
-	let mut functions = Vec::new();
-	for tool in &list_result.tools {
-		let name = tool.name.as_ref();
-		if server.tools().is_empty()
-			|| crate::mcp::is_tool_allowed_by_patterns(name, server.tools())
-		{
-			let description = tool.description.as_deref().unwrap_or("").to_string();
-			let parameters = tool.schema_as_json_value();
-			functions.push(McpFunction {
-				name: name.to_string(),
-				description,
-				parameters,
-			});
-		}
-	}
-	functions
+	list_result
+		.tools
+		.iter()
+		.map(|tool| McpFunction {
+			name: tool.name.as_ref().to_string(),
+			description: tool.description.as_deref().unwrap_or("").to_string(),
+			parameters: tool.schema_as_json_value(),
+		})
+		.collect()
 }
 
 // Shared function to parse tools from JSON-RPC response
 fn parse_tools_from_jsonrpc_response(
 	response: &Value,
-	server: &McpServerConfig,
 ) -> Result<(Vec<McpFunction>, Option<String>)> {
 	// Check for JSON-RPC error
 	if let Some(error) = response.get("error") {
@@ -217,7 +215,7 @@ fn parse_tools_from_jsonrpc_response(
 		let list_result = serde_json::from_value::<rmcp::model::ListToolsResult>(result_value)
 			.map_err(|e| anyhow::anyhow!("Failed to deserialize ListToolsResult: {}", e))?;
 		let next_cursor = list_result.next_cursor.clone();
-		let functions = parse_tools_from_list_result(&list_result, server);
+		let functions = parse_tools_from_list_result(&list_result);
 		Ok((functions, next_cursor))
 	} else {
 		Err(anyhow::anyhow!(
@@ -419,7 +417,7 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 				);
 
 				let (functions, next_cursor) =
-					parse_tools_from_jsonrpc_response(&jsonrpc_response, server)?;
+					parse_tools_from_jsonrpc_response(&jsonrpc_response)?;
 				all_functions.extend(functions);
 
 				match next_cursor {

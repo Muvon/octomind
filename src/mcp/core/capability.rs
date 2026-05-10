@@ -504,6 +504,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 						server_config,
 						&bare_names,
 					);
+					crate::mcp::server::clear_function_cache_for_server(&server_name);
 				}
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
@@ -1080,6 +1081,7 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 						server_config,
 						&bare_names,
 					);
+					crate::mcp::server::clear_function_cache_for_server(&server_name);
 				}
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}

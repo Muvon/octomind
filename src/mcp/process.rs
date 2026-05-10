@@ -1623,8 +1623,7 @@ pub async fn get_stdin_server_functions(server: &McpServerConfig) -> Result<Vec<
 			match serde_json::from_value::<rmcp::model::ListToolsResult>(result_value) {
 				Ok(list_result) => {
 					let next = list_result.next_cursor.clone();
-					let functions =
-						crate::mcp::server::parse_tools_from_list_result(&list_result, server);
+					let functions = crate::mcp::server::parse_tools_from_list_result(&list_result);
 					all_functions.extend(functions);
 
 					match next {

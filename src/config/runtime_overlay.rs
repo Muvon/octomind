@@ -98,6 +98,10 @@ pub fn extras_for_server(server_name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::sync::Mutex;
+
+	// Serialize all tests in this module — they share the process-global OVERLAY static.
+	static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 	fn fresh_registry() {
 		if let Ok(mut r) = registry().write() {
@@ -107,6 +111,7 @@ mod tests {
 
 	#[test]
 	fn extras_unions_across_capabilities() {
+		let _guard = TEST_LOCK.lock().unwrap();
 		fresh_registry();
 		let mut shell_map = HashMap::new();
 		shell_map.insert("octofs".to_string(), vec!["shell".to_string()]);
@@ -132,6 +137,7 @@ mod tests {
 
 	#[test]
 	fn clear_removes_only_named_capability() {
+		let _guard = TEST_LOCK.lock().unwrap();
 		fresh_registry();
 		let mut a = HashMap::new();
 		a.insert("svr".to_string(), vec!["one".to_string()]);
@@ -149,6 +155,7 @@ mod tests {
 
 	#[test]
 	fn empty_per_server_is_treated_as_clear() {
+		let _guard = TEST_LOCK.lock().unwrap();
 		fresh_registry();
 		let mut a = HashMap::new();
 		a.insert("svr".to_string(), vec!["one".to_string()]);
@@ -162,12 +169,14 @@ mod tests {
 
 	#[test]
 	fn unknown_server_returns_empty() {
+		let _guard = TEST_LOCK.lock().unwrap();
 		fresh_registry();
 		assert!(extras_for_server("never-seen").is_empty());
 	}
 
 	#[test]
 	fn duplicates_within_one_server_are_deduped() {
+		let _guard = TEST_LOCK.lock().unwrap();
 		fresh_registry();
 		let mut a = HashMap::new();
 		a.insert(

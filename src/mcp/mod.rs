@@ -345,7 +345,25 @@ async fn server_functions_for(
 		},
 		McpConnectionType::Http | McpConnectionType::Stdin => {
 			match server::get_server_functions_cached(server).await {
-				Ok(fns) => filter_tools_by_patterns(fns, server.tools()),
+				Ok(fns) => {
+					let allowed = server.tools();
+					// When the static filter is restrictive, also include tools unlocked
+					// at runtime by capability activation (e.g. `capability enable shell`).
+					if !allowed.is_empty() {
+						let overlay =
+							crate::config::runtime_overlay::extras_for_server(server.name());
+						if !overlay.is_empty() {
+							let mut effective = allowed.to_vec();
+							for extra in overlay {
+								if !effective.contains(&extra) {
+									effective.push(extra);
+								}
+							}
+							return filter_tools_by_patterns(fns, &effective);
+						}
+					}
+					filter_tools_by_patterns(fns, allowed)
+				}
 				Err(e) => {
 					crate::log_error!(
 						"Failed to get cached functions from external server '{}': {} (will be available when server starts)",

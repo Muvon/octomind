@@ -24,7 +24,7 @@
 use crate::config::{Config, McpServerConfig};
 use crate::mcp::McpConnectionType;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// Global tool map singleton - initialized once at startup
@@ -34,6 +34,9 @@ static TOOL_MAP: OnceLock<Arc<RwLock<ToolMapState>>> = OnceLock::new();
 struct ToolMapState {
 	/// Tool name -> Server config mapping
 	tool_to_server: HashMap<String, McpServerConfig>,
+	/// Tools that originated from the static role config. Capability deactivation
+	/// must never evict these — they belong to the role, not to any capability.
+	static_tools: HashSet<String>,
 	/// Whether the tool map has been successfully initialized
 	initialized: bool,
 	/// Configuration hash used to detect if reinitialization is needed
@@ -79,6 +82,7 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 	// Update the state
 	{
 		let mut state = tool_map_state.write().unwrap();
+		state.static_tools = tool_to_server.keys().cloned().collect();
 		state.tool_to_server = tool_to_server;
 		state.initialized = true;
 		state.config_hash = config_hash;
@@ -304,6 +308,18 @@ pub fn unregister_dynamic_server_tools(server_name: &str, tool_names: &[String])
 
 	let mut state = tool_map_state.write().unwrap();
 	for tool_name in tool_names {
+		// Never evict tools owned by the static role config — they belong to the
+		// role, not to the capability being deactivated. Without this guard,
+		// disabling a capability that was enabled on a server already in the
+		// static config (e.g. octofs with tools=[]) would silently break dispatch
+		// for every tool that server exposes.
+		if state.static_tools.contains(tool_name) {
+			crate::log_debug!(
+				"Skipping unregister of static tool '{}' (capability deactivation must not evict role-owned tools)",
+				tool_name
+			);
+			continue;
+		}
 		state.tool_to_server.remove(tool_name);
 		crate::log_debug!("Unregistered dynamic server tool: {}", tool_name);
 	}

@@ -152,70 +152,37 @@ pub async fn process_tool_results(
 	// This happens after tool results are added but before the follow-up API call
 	// Compression can significantly reduce context before the next request
 
-	// CRITICAL FIX: Set start_index for next task AFTER plan tool execution
-	// This ensures start_index points to the BEGINNING of task work, not the last message
-	let mut plan_tool_executed = false;
-	for tool_result in &tool_results {
-		if tool_result.tool_name == "plan" {
-			plan_tool_executed = true;
-			break;
-		}
-	}
+	let plan_tool_executed = tool_results
+		.iter()
+		.any(|tool_result| tool_result.tool_name == "plan");
 
-	// If plan tool was executed, handle start_index and compression range
-	if plan_tool_executed {
-		// Check if we need to set start_index for the NEXT task
-		// This happens after plan(start) or plan(next) when start_index is None
-		if crate::mcp::core::plan::core::get_current_task_start_index().is_none()
-			&& crate::mcp::core::plan::core::has_active_plan()
-		{
-			// CRITICAL: Set start_index to last valid message index (the plan tool result)
-			// Compression will remove messages from (start_index + 1) to end_index
-			// So start_index should point to the plan command result that we want to KEEP
-			// If we have 93 messages (indices 0-92), start_index should be 92 (last message)
-			let message_count = chat_session.get_message_count();
-			if message_count == 0 {
-				crate::log_debug!("Cannot set start_index: no messages in session");
-			} else {
-				let start_index = message_count - 1; // Last valid index
-				crate::mcp::core::plan::set_current_task_start_index(start_index);
-				crate::log_debug!(
-					"Plan task start_index set to: {} (last message index, total messages: {})",
-					start_index,
-					message_count
-				);
-			}
-		}
+	// If plan(next) completed a task, bind the pending compression to the start index
+	// recorded when that task began. Do NOT create a new start index here: that would
+	// point at the current plan result (the end of the task) and produce an empty range.
+	if plan_tool_executed && crate::mcp::core::plan::has_pending_compression() {
+		let end_index = chat_session.get_message_count().saturating_sub(1);
+		if let Some(start_index) = crate::mcp::core::plan::core::get_current_task_start_index() {
+			crate::log_debug!(
+				"Setting compression range: start={}, end={} (total messages: {})",
+				start_index,
+				end_index,
+				chat_session.get_message_count()
+			);
 
-		// If compression is pending (plan(next) was called), set the message range
-		if crate::mcp::core::plan::has_pending_compression() {
-			// Get the start index that was set when the PREVIOUS task started
-			if let Some(start_index) = crate::mcp::core::plan::core::get_and_clear_start_index() {
-				// Use last valid index (len - 1) since remove_messages_in_range uses inclusive end_index
-				let end_index = chat_session.get_message_count() - 1;
-
-				crate::log_debug!(
-					"Setting compression range: start={}, end={} (total messages: {})",
-					start_index,
-					end_index,
-					chat_session.get_message_count()
-				);
-
-				// Set the message range on the pending compression task
-				if let Err(e) =
-					crate::mcp::core::plan::set_pending_compression_range(start_index, end_index)
-				{
-					log_info!(
-						"Compression range could not be set: {}. Compression will be skipped.",
-						e
-					);
-				}
-			} else {
+			if let Err(e) =
+				crate::mcp::core::plan::set_pending_compression_range(start_index, end_index)
+			{
 				log_info!(
-					"Plan compression pending but no start_index found. \
-					This may indicate plan(next) was called before any task work was done."
+					"Compression range could not be set: {}. Compression will be skipped.",
+					e
 				);
 			}
+		} else {
+			log_info!(
+				"Plan compression pending but no start_index found. \
+				This completed task cannot be compressed; starting range for the next task."
+			);
+			let _ = crate::mcp::core::plan::set_pending_compression_range(end_index, end_index);
 		}
 	}
 
@@ -276,6 +243,27 @@ pub async fn process_tool_results(
 					false
 				}
 			};
+	}
+
+	// Set the start index for the next active task after any task/phase compression
+	// had a chance to clear the previous one. If compression was skipped, the old
+	// start index remains so the next task accumulates into the same range.
+	if plan_tool_executed
+		&& crate::mcp::core::plan::core::has_active_plan()
+		&& crate::mcp::core::plan::core::get_current_task_start_index().is_none()
+	{
+		let message_count = chat_session.get_message_count();
+		if message_count == 0 {
+			crate::log_debug!("Cannot set start_index: no messages in session");
+		} else {
+			let start_index = message_count - 1;
+			crate::mcp::core::plan::set_current_task_start_index(start_index);
+			crate::log_debug!(
+				"Plan task start_index set to: {} (last message index, total messages: {})",
+				start_index,
+				message_count
+			);
+		}
 	}
 
 	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed

@@ -27,7 +27,7 @@ model = "openrouter:anthropic/claude-sonnet-4"
 # Default tag used when no TAG is passed to `octomind run` (and acp/server).
 # Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").
 # The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:assistant.
-default = "assistant:general"
+default = "assistant:concierge"
 
 # Default max_tokens for all operations
 max_tokens = 16384

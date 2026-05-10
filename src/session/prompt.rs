@@ -29,6 +29,8 @@ pub async fn create_system_prompt(
 		crate::session::helper_functions::process_placeholders_async(system_prompt, project_dir)
 			.await;
 
+	let mut has_tap_tool = false;
+
 	// Add MCP tools information if enabled
 	if !mcp_config.server_refs.is_empty() {
 		let config_for_role = config.get_merged_config_for_role(mode);
@@ -37,12 +39,21 @@ pub async fn create_system_prompt(
 			prompt.push_str("\n\nYou have access to the following tools:");
 
 			for function in &functions {
+				if function.name == "tap" {
+					has_tap_tool = true;
+				}
 				prompt.push_str(&format!(
 					"\n\n- {} - {}",
 					function.name, function.description
 				));
 			}
 		}
+	}
+
+	if has_tap_tool {
+		prompt.push_str(
+			"\n\nIf required tools, skills, or capabilities are missing, call `tap` with `action=\"capability\"` and a short `prompt` describing the need.",
+		);
 	}
 
 	// Add context about structured tags in conversation

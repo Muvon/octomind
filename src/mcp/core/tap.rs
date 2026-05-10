@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `tap` core tool — run, list, stop, and discover agents from configured taps.
+//! `tap` core tool — run, list, stop, discover agents, and request runtime capability activation from configured taps.
 //!
-//! Exposes four actions over a single tool surface:
+//! Exposes five actions over a single tool surface:
 //!
 //! - `run`      — launch a fresh tap-tag (e.g. `developer:general`) or resume
 //!   an existing run by `session` id. `prompt` is required.
@@ -28,6 +28,8 @@
 //! - `discover` — semantic match a free-text intent against installed tap
 //!   agents' `# Title:` / `# Description:` header lines.
 //!   Same matcher pipeline as `capability discover`.
+//! - `capability` — send a short intent through the same skill/capability
+//!   auto-activation path used for user messages.
 //!
 //! Tap-runs are tracked in `crate::session::tap_runs` — a registry that is
 //! intentionally separate from `BackgroundJobManager` (which tracks
@@ -62,18 +64,20 @@ When to use:
 Discovery flow:
 - If you know the role: `tap(action="run", role="developer:general", prompt="…")`.
 - If you don't: `tap(action="discover", intent="<plain-English need>")` returns the closest 5 roles ranked by semantic match. Pick one, then `run`.
+- If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<what you need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:
-- `run`      — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default false; true = return immediately, reply injected later).
-- `list`     — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
-- `stop`     — cancel a running specialist. Required: `session` (the id).
-- `discover` — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap."#.to_string(),
+- `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default false; true = return immediately, reply injected later).
+- `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
+- `stop`       — cancel a running specialist. Required: `session` (the id).
+- `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
+- `capability` — trigger skill/capability auto-activation from a plain prompt. Required: `prompt`."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["run", "list", "stop", "discover"],
+					"enum": ["run", "list", "stop", "discover", "capability"],
 					"description": "Action to perform"
 				},
 				"role": {
@@ -82,7 +86,7 @@ Actions:
 				},
 				"prompt": {
 					"type": "string",
-					"description": "User message to send to the specialist. Required for run."
+					"description": "Prompt for run, or plain-language tool/skill/capability need for capability. Required for run and capability."
 				},
 				"session": {
 					"type": "string",
@@ -127,10 +131,11 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		"run" => handle_run(call, config).await,
 		"stop" => handle_stop(call).await,
 		"discover" => handle_discover(call).await,
+		"capability" => handle_capability(call, config).await,
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Unknown action '{other}'. Use run, list, stop, or discover."),
+			format!("Unknown action '{other}'. Use run, list, stop, discover, or capability."),
 		)),
 	}
 }
@@ -287,6 +292,42 @@ async fn handle_discover(call: &McpToolCall) -> Result<McpToolResult> {
 			"matches": entries,
 		})
 		.to_string(),
+	))
+}
+
+async fn handle_capability(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
+	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
+		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
+		_ => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"Missing required parameter 'prompt'.".to_string(),
+			));
+		}
+	};
+
+	let activated =
+		crate::mcp::core::capability::auto_activate_capabilities_for_intent(&prompt, config).await;
+
+	let content = if activated.is_empty() {
+		json!({
+			"activated_capabilities": [],
+			"message": "No capability matched the prompt."
+		})
+		.to_string()
+	} else {
+		json!({
+			"activated_capabilities": activated,
+			"message": "Capability auto-activation completed."
+		})
+		.to_string()
+	};
+
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		content,
 	))
 }
 
@@ -585,5 +626,6 @@ mod tests {
 		assert!(names.contains(&"list"));
 		assert!(names.contains(&"stop"));
 		assert!(names.contains(&"discover"));
+		assert!(names.contains(&"capability"));
 	}
 }

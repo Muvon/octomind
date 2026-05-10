@@ -889,8 +889,6 @@ pub fn list_active_names() -> Vec<String> {
 	names
 }
 
-/// no match clears the gate, or the last message is not user input.
-///
 /// Designed to run before every API request from `prepare_for_api_call`.
 /// Does not block the hot path on model warmup — `is_ready` is consulted
 /// first and skips silently while the model is still downloading.
@@ -904,36 +902,44 @@ pub async fn auto_activate_capabilities(
 		_ => return,
 	};
 
+	let _ = auto_activate_capabilities_for_intent(&intent, config).await;
+}
+
+/// Trigger capability auto-activation for explicit intent text.
+///
+/// This is the same scoring path as fresh user-message activation, exposed for
+/// runtime prompts that ask the session to load missing tools.
+pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config) -> Vec<String> {
 	// Strip XML blocks (skill injections, <log> pastes, system tags, etc.)
 	// so pasted content doesn't drive false-positive capability matches.
-	let intent = crate::mcp::core::skill_auto::strip_xml_blocks(&intent);
+	let intent = crate::mcp::core::skill_auto::strip_xml_blocks(intent);
 
 	if !crate::embeddings::is_ready() {
 		crate::log_debug!(
 			"capability auto-activate: embedding model not ready yet, skipping this turn"
 		);
-		return;
+		return Vec::new();
 	}
 
 	let caps = match crate::agent::registry::list_all_capabilities(&config.capabilities) {
 		Ok(c) => c,
 		Err(e) => {
 			crate::log_debug!("capability auto-activate: enumeration failed ({})", e);
-			return;
+			return Vec::new();
 		}
 	};
 
 	let inactive: Vec<&crate::agent::registry::ResolvedCapability> =
 		caps.iter().filter(|c| !is_active(&c.name)).collect();
 	if inactive.is_empty() {
-		return;
+		return Vec::new();
 	}
 
 	let intent_vec = match crate::embeddings::embed(&intent).await {
 		Ok(v) => v,
 		Err(e) => {
 			crate::log_debug!("capability auto-activate: intent embed failed ({})", e);
-			return;
+			return Vec::new();
 		}
 	};
 
@@ -947,14 +953,14 @@ pub async fn auto_activate_capabilities(
 		offsets.push((start, flat.len()));
 	}
 	if flat.is_empty() {
-		return;
+		return Vec::new();
 	}
 
 	let trigger_vecs = match crate::embeddings::embed_many(&flat).await {
 		Ok(v) => v,
 		Err(e) => {
 			crate::log_debug!("capability auto-activate: trigger embed failed ({})", e);
-			return;
+			return Vec::new();
 		}
 	};
 
@@ -978,6 +984,7 @@ pub async fn auto_activate_capabilities(
 					score,
 					servers.join(", ")
 				);
+				return vec![cap.name.clone()];
 			}
 			Err(e) => {
 				crate::log_debug!(
@@ -988,6 +995,8 @@ pub async fn auto_activate_capabilities(
 			}
 		}
 	}
+
+	Vec::new()
 }
 
 /// Translate capability `allowed_tools` patterns into the bare-name

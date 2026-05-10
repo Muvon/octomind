@@ -17,18 +17,12 @@
 // Function definitions for the Core MCP provider
 
 use super::super::McpFunction;
-use super::capability::get_capability_function;
 use super::plan::get_plan_function;
-use super::schedule::get_schedule_function;
 use super::tap::get_tap_function;
 
-// Core builtin tools — high-level, day-to-day. Low-level runtime control
-// tools (`mcp`, `agent`, `skill`) live under the `runtime` builtin server.
+// Core builtin tools — high-level planning and delegation. Runtime control
+// tools (`mcp`, `agent`, `skill`, `schedule`, `capability`) live under the
+// `runtime` builtin server.
 pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![
-		get_plan_function(),
-		get_schedule_function(),
-		get_capability_function(),
-		get_tap_function(),
-	]
+	vec![get_plan_function(), get_tap_function()]
 }

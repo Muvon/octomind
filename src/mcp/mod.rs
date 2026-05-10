@@ -649,12 +649,6 @@ async fn route_builtin_tool(
 				"plan" => core::execute_plan(call)
 					.await
 					.map_err(|e| format!("Plan execution failed: {}", e)),
-				"schedule" => core::execute_schedule_tool(call)
-					.await
-					.map_err(|e| format!("Schedule execution failed: {}", e)),
-				"capability" => core::execute_capability_command(call, config)
-					.await
-					.map_err(|e| format!("Capability tool failed: {}", e)),
 				"tap" => core::execute_tap_command(call, config)
 					.await
 					.map_err(|e| format!("Tap tool failed: {}", e)),

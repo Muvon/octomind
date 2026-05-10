@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Core MCP provider - modular structure
-// Handles core tools: plan, mcp, agent, schedule, skill, capability, tap
+// Handles core tools: plan, tap
 
 pub mod capability;
 pub mod dynamic;

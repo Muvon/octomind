@@ -142,6 +142,14 @@ pub async fn execute_tools_parallel(
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
+	if current_tool_calls.len() == 1 && is_tap_capability_call(&current_tool_calls[0]) {
+		chat_session.session.info.tool_calls += 1;
+		let (result, elapsed_ms) =
+			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
+		let processed = handle_large_tool_results(vec![result], config, mode).await?;
+		return Ok((processed, elapsed_ms));
+	}
+
 	let mut context = ToolExecutionContext::MainSession {
 		chat_session,
 		tool_processor,
@@ -157,6 +165,81 @@ pub async fn execute_tools_parallel(
 	.await;
 
 	result
+}
+
+fn is_tap_capability_call(call: &crate::mcp::McpToolCall) -> bool {
+	call.tool_name == "tap"
+		&& call
+			.parameters
+			.get("action")
+			.and_then(|v| v.as_str())
+			.is_some_and(|action| action == "capability")
+}
+
+async fn execute_tap_capability_inline(
+	call: &crate::mcp::McpToolCall,
+	chat_session: &mut ChatSession,
+	config: &Config,
+) -> (crate::mcp::McpToolResult, u64) {
+	let started = std::time::Instant::now();
+	let prompt = match call.parameters.get("prompt").and_then(|v| v.as_str()) {
+		Some(p) if !p.trim().is_empty() => p.trim().to_string(),
+		_ => {
+			return (
+				crate::mcp::McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					"Missing required parameter 'prompt'.".to_string(),
+				),
+				started.elapsed().as_millis() as u64,
+			);
+		}
+	};
+
+	let session_id = crate::session::context::current_session_id();
+	let skills_before = session_id
+		.as_ref()
+		.map(crate::session::context::get_active_skills)
+		.unwrap_or_default();
+	let capabilities_before = crate::mcp::core::capability::list_active_names();
+
+	let workdir = crate::mcp::workdir::get_thread_working_directory();
+	crate::mcp::core::skill_auto::run_activation(&prompt, &workdir, chat_session).await;
+	let mut activated_capabilities =
+		crate::mcp::core::capability::auto_activate_capabilities_for_intent(&prompt, config).await;
+
+	let activated_skills = session_id
+		.as_ref()
+		.map(crate::session::context::get_active_skills)
+		.unwrap_or_default()
+		.into_iter()
+		.filter(|name| !skills_before.contains(name))
+		.collect::<Vec<_>>();
+
+	for name in crate::mcp::core::capability::list_active_names() {
+		if !capabilities_before.contains(&name) && !activated_capabilities.contains(&name) {
+			activated_capabilities.push(name);
+		}
+	}
+
+	let message = if activated_skills.is_empty() && activated_capabilities.is_empty() {
+		"No skill or capability matched the prompt."
+	} else {
+		"Skill/capability auto-activation completed."
+	};
+
+	let result = crate::mcp::McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		serde_json::json!({
+			"activated_skills": activated_skills,
+			"activated_capabilities": activated_capabilities,
+			"message": message,
+		})
+		.to_string(),
+	);
+
+	(result, started.elapsed().as_millis() as u64)
 }
 
 // Implementation that works with execution context

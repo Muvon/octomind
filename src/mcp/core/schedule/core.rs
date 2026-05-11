@@ -120,6 +120,7 @@ Commands:
 - edit: update an existing entry by 'id' (any of when, message, description, every)
 
 'when' format (local timezone):
+- 'now' — fires on the next scheduler tick (immediately)
 - Relative: 'in 5m', 'in 2h', 'in 1h30m', 'in 90s', 'in 2h 30m'
 - Time today: '15:30', '3:30pm', '9am' (if already past, fires tomorrow)
 - Exact datetime: '2026-03-22 15:30'
@@ -140,7 +141,7 @@ Commands:
 				},
 				"when": {
 					"type": "string",
-					"description": "When to fire. Relative: 'in 5m', 'in 2h', 'in 1h30m', 'in 90s'. Time today: '15:30', '3:30pm'. Exact: '2026-03-22 15:30'. Required for add; optional for edit."
+					"description": "When to fire. 'now' (fires immediately). Relative: 'in 5m', 'in 2h', 'in 1h30m', 'in 90s'. Time today: '15:30', '3:30pm'. Exact: '2026-03-22 15:30'. Required for add; optional for edit."
 				},
 				"message": {
 					"type": "string",

@@ -95,6 +95,20 @@ AI calls: schedule(command="remove", id="abc12345")
 AI calls: schedule(command="edit", id="def67890", when="in 20m")
 ```
 
+### Direct Control: `/schedule` Slash Command
+
+The same operations are available as a session command, so you can list, add, edit, and remove schedules without going through the AI:
+
+```
+/schedule                                                 # list pending
+/schedule add when="in 5m" message="check the build"
+/schedule add when="9am" message="standup" every="1d" description="daily"
+/schedule edit abc12345 when="in 1h"
+/schedule remove abc12345
+```
+
+Multi-word values must be quoted (`when="in 1h 30m"`, `message='hello world'`). See [Session Commands → /schedule](../reference/02-session-commands.md#schedule-subcommand-args) for the full reference.
+
 ## Daemon + Scheduled Tasks
 
 Combine with daemon mode for long-running automated workflows:
@@ -115,6 +129,7 @@ The AI schedules recurring checks within the session, each check can schedule th
 
 | Format | Example | Description |
 |--------|---------|-------------|
+| Immediate | `now` | Fires on the next scheduler tick |
 | Relative | `in 5m` | Minutes from now |
 | Relative | `in 2h` | Hours from now |
 | Relative | `in 1h30m` | Combined hours and minutes |
@@ -126,7 +141,6 @@ The AI schedules recurring checks within the session, each check can schedule th
 
 ## Limitations
 
-- **One-shot only**: Each schedule fires once and is removed. For recurring tasks, the AI must re-schedule in its response to the fired message.
 - **In-memory**: Schedules are lost when the session exits. Use daemon mode (`--daemon`) for long-running scheduled work.
 - **Local timezone**: All times are interpreted in the system's local timezone.
 - **Session-scoped**: Schedules belong to the session that created them.
@@ -134,8 +148,9 @@ The AI schedules recurring checks within the session, each check can schedule th
 ## Key Points
 
 - `schedule` is a built-in MCP tool -- the AI uses it naturally in conversation
+- The same operations are exposed as the `/schedule` slash command for direct control
 - Messages fire automatically and the AI processes them like any user message
-- Chain schedules for recurring patterns (each fired message triggers the next)
+- One-shot entries fire once; entries with `every` re-schedule themselves automatically until removed
 - Combine with daemon mode for persistent monitoring
-- Use `schedule(command="list")` to see all pending entries
+- Use `schedule(command="list")` or `/schedule` to see all pending entries
 - The session stays alive until all scheduled messages have fired

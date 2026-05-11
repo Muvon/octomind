@@ -59,24 +59,28 @@ Break down large objectives into steps with progress tracking.
 
 ### `schedule` -- Scheduled Message Injection
 
-Schedule messages for future injection into the session.
+Schedule messages for future injection into the session. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for direct user control.
 
 **Parameters:**
 - `command` (string, required): `"add"`, `"list"`, `"remove"`, `"edit"`
+- `every` (string, optional): repeat interval — entry re-schedules itself after each firing until removed
 
 **`when` formats** (local timezone):
+- `"now"` (fires immediately on the next scheduler tick)
 - Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`
 - Time today: `"15:30"`, `"3:30pm"`, `"9am"` (past times fire tomorrow)
 - Exact: `"2026-03-22 15:30"`
 
+**`every` format** (omit for one-shot): same syntax as relative `when` without the `in` prefix — `"10m"`, `"1h"`, `"1h30m"`. Pass `"none"` (or `"off"`) in `edit` to clear an existing interval.
+
 | Command | Required Params | Description |
 |---------|----------------|-------------|
-| `add` | `when`, `message` | Schedule a message. `description` recommended. |
+| `add` | `when`, `message` | Schedule a message. `description` and `every` optional. |
 | `list` | -- | Show pending entries with countdown |
 | `remove` | `id` | Cancel entry by ID |
-| `edit` | `id` | Update `when`, `message`, or `description` |
+| `edit` | `id` | Update `when`, `message`, `description`, or `every` |
 
-Each entry fires exactly once and is removed. Max 8 concurrent scheduled jobs. Jobs cancelled on session exit.
+One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing. Jobs cancelled on session exit.
 
 ### `capability` -- Discover and Activate Domain Bundles
 

@@ -37,6 +37,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(RUN_COMMAND.to_string());
 	commands.push(CONTEXT_COMMAND.to_string());
 	commands.push(MODEL_COMMAND.to_string());
+	commands.push(EFFORT_COMMAND.to_string());
 	commands.push(ROLE_COMMAND.to_string());
 	commands.push(MCP_COMMAND.to_string());
 	commands.push(IMAGE_COMMAND.to_string());
@@ -44,6 +45,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(PROMPT_COMMAND.to_string());
 	commands.push(PLAN_COMMAND.to_string());
 	commands.push(SKILL_COMMAND.to_string());
+	commands.push(SCHEDULE_COMMAND.to_string());
 	commands.push(REPORT_COMMAND.to_string());
 	commands.push(format!("{} | {}", EXIT_COMMAND, QUIT_COMMAND));
 

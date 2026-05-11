@@ -39,8 +39,9 @@ pub const PLAN_COMMAND: &str = "/plan";
 pub const WORKFLOW_COMMAND: &str = "/workflow";
 pub const SKILL_COMMAND: &str = "/skill";
 pub const EFFORT_COMMAND: &str = "/effort";
+pub const SCHEDULE_COMMAND: &str = "/schedule";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 24] = [
+pub const COMMANDS: [&str; 25] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -65,4 +66,5 @@ pub const COMMANDS: [&str; 24] = [
 	WORKFLOW_COMMAND,
 	SKILL_COMMAND,
 	EFFORT_COMMAND,
+	SCHEDULE_COMMAND,
 ];

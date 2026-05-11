@@ -70,6 +70,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			MODEL_COMMAND.cyan()
 		);
 		println!(
+			"{} [level] - View or change reasoning effort: low, medium, high, xhigh, max",
+			EFFORT_COMMAND.cyan()
+		);
+		println!(
 			"{} [role] - View or change current role (runtime only)",
 			ROLE_COMMAND.cyan()
 		);
@@ -92,6 +96,14 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		println!(
 			"{} - Display current plan stored in MCP plan tool",
 			PLAN_COMMAND.cyan()
+		);
+		println!(
+			"{} [page|*pattern*|<name>] - List skills or toggle a skill on/off by name",
+			SKILL_COMMAND.cyan()
+		);
+		println!(
+			"{} [list|add|remove|edit] - Schedule a message to be injected later (mirrors MCP schedule tool)",
+			SCHEDULE_COMMAND.cyan()
 		);
 		println!(
 			"{} - Generate detailed usage report for this session",
@@ -1538,6 +1550,100 @@ fn display_plain_list(markdown_content: &str) {
 // ---------------------------------------------------------------------------
 // /skill display
 // ---------------------------------------------------------------------------
+
+pub(super) fn display_schedule(output: &CommandOutput) {
+	use colored::Colorize;
+
+	if let CommandOutput::Schedule { data } = output {
+		let subcommand = data
+			.get("subcommand")
+			.and_then(|v| v.as_str())
+			.unwrap_or("");
+
+		match subcommand {
+			"error" => {
+				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
+					println!("{}", msg.bright_red());
+				}
+			}
+			"help" => {
+				println!();
+				println!(
+					"{}",
+					"Schedule — inject a user message later"
+						.bright_cyan()
+						.bold()
+				);
+				println!("{}", "─".repeat(50).dimmed());
+				println!(
+					"  {}                                   list pending entries",
+					"/schedule".cyan()
+				);
+				println!(
+					"  {} {}                              list pending entries",
+					"/schedule".cyan(),
+					"list".yellow()
+				);
+				println!(
+					"  {} {} {}                       cancel an entry",
+					"/schedule".cyan(),
+					"remove".yellow(),
+					"<id>".dimmed()
+				);
+				println!(
+					"  {} {} {}     add a new entry",
+					"/schedule".cyan(),
+					"add".yellow(),
+					"when=\"in 5m\" message=\"...\"".dimmed()
+				);
+				println!(
+					"  {} {} {} {}  update an entry",
+					"/schedule".cyan(),
+					"edit".yellow(),
+					"<id>".dimmed(),
+					"[when=...] [message=...]".dimmed()
+				);
+				println!();
+				println!("{}", "Optional add/edit keys:".bright_yellow());
+				println!(
+					"  {} \"now\"; duration like \"in 5m\", \"in 1h30m\"; time \"15:30\", \"9am\"; or \"2026-03-22 15:30\"",
+					"when=".bright_white()
+				);
+				println!(
+					"  {} text injected verbatim as user message when timer fires",
+					"message=".bright_white()
+				);
+				println!(
+					"  {} repeat interval — \"10m\", \"1h\", \"1h30m\"; \"none\" in edit clears it",
+					"every=".bright_white()
+				);
+				println!(
+					"  {} short label shown in list output",
+					"description=".bright_white()
+				);
+				println!();
+				println!(
+					"{}",
+					"Quote values with spaces: when=\"in 1h 30m\" message='hello world'".dimmed()
+				);
+			}
+			_ => {
+				// Default path — list/add/remove/edit all just print the tool's text output.
+				let is_error = data
+					.get("is_error")
+					.and_then(|v| v.as_bool())
+					.unwrap_or(false);
+				if let Some(msg) = data.get("message").and_then(|v| v.as_str()) {
+					if is_error {
+						println!("{}", msg.bright_red());
+					} else {
+						println!("{}", msg);
+					}
+				}
+			}
+		}
+	}
+}
 
 pub(super) fn display_skill(output: &CommandOutput) {
 	use colored::Colorize;

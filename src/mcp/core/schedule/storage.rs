@@ -195,11 +195,16 @@ impl ScheduleStore {
 /// Parse a human-readable time expression into an absolute `DateTime<Local>`.
 ///
 /// Supported formats:
+/// - `"now"` -- fires on the next scheduler tick (immediately)
 /// - Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`, `"in 2h 30m 10s"`
 /// - Absolute time today: `"15:30"`, `"3:30pm"`, `"9am"` (if past, schedules for tomorrow)
 /// - Absolute datetime: `"2026-03-22 15:30"`, `"2026-03-22 15:30:00"`
 pub fn parse_when(input: &str) -> Result<DateTime<Local>> {
 	let s = input.trim().to_lowercase();
+
+	if s == "now" {
+		return Ok(Local::now());
+	}
 
 	if let Some(stripped) = s.strip_prefix("in ") {
 		return parse_relative(stripped);
@@ -351,6 +356,22 @@ fn parse_absolute_datetime(s: &str) -> Result<DateTime<Local>> {
 mod tests {
 	use super::*;
 	use chrono::{Datelike, Timelike};
+
+	#[test]
+	fn test_parse_now() {
+		let t = parse_when("now").unwrap();
+		let diff = t
+			.signed_duration_since(Local::now())
+			.num_milliseconds()
+			.abs();
+		assert!(diff < 100, "expected ~0ms, got {}", diff);
+	}
+
+	#[test]
+	fn test_parse_now_case_insensitive() {
+		assert!(parse_when("NOW").is_ok());
+		assert!(parse_when("  Now  ").is_ok());
+	}
 
 	#[test]
 	fn test_parse_relative_minutes() {

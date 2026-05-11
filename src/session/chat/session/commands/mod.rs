@@ -34,6 +34,7 @@ mod prompt;
 mod report;
 mod role;
 mod run;
+mod schedule;
 mod session;
 mod skill;
 mod utils;
@@ -175,6 +176,9 @@ pub enum CommandOutput {
 	Skill {
 		data: serde_json::Value,
 	},
+	Schedule {
+		data: serde_json::Value,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -225,6 +229,7 @@ impl CommandOutput {
 			Self::Report { .. } => display::display_report(self, config),
 			Self::Session { .. } => display::display_session(self),
 			Self::Skill { .. } => display::display_skill(self),
+			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Error { error, .. } => {
 				println!("{}", error.bright_red());
 			}
@@ -298,6 +303,7 @@ pub async fn process_command(
 		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
 		PLAN_COMMAND => plan::handle_plan().await,
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
+		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

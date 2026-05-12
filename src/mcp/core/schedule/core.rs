@@ -46,7 +46,15 @@ fn get_store() -> Arc<Mutex<ScheduleStore>> {
 /// so the inbox is the single source of truth for all injected messages.
 pub fn flush_due_to_inbox() {
 	let store = get_store();
-	while let Some(entry) = store.lock().unwrap().pop_due() {
+	// NOTE: must NOT use `while let Some(entry) = store.lock().unwrap().pop_due()`.
+	// The MutexGuard temporary in a `while let` scrutinee lives for the entire
+	// loop body, so re-locking inside the body (to reschedule) deadlocks.
+	loop {
+		let entry = match store.lock().unwrap().pop_due() {
+			Some(e) => e,
+			None => break,
+		};
+
 		// If this is a repeating entry, re-add it before pushing to inbox.
 		if entry.interval_secs.is_some() {
 			let next = entry.reschedule();

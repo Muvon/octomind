@@ -558,25 +558,40 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				InputResult::Text(inbox_msg.content, Vec::new())
 			} else {
 				// Reedline blocks for user input. A shared slot lets the
-				// inbox-notification thread (inside read_user_input) show a
-				// preview above the prompt when an inbox entry arrives.  The
-				// user then presses Enter to accept it.
+				// inbox-notification thread (inside read_user_input) flip
+				// `break_signal` and auto-fire scheduled / background messages
+				// without requiring the user to press Enter.
 				let inbox_pending: Arc<std::sync::Mutex<Option<String>>> =
 					Arc::new(std::sync::Mutex::new(None));
 
-				// Spawn a task that watches the inbox notify and sets the preview.
+				// Spawn a task that races schedule timers against inbox notifications.
+				// Whichever fires first, we flush due schedules, then publish a preview
+				// to the slot watched by the input thread. Wrapped in `with_session_id`
+				// because `tokio::spawn` does not propagate task-local context, and
+				// both `flush_due_to_inbox` and `next_schedule_sleep` need the session
+				// id to find the session-scoped schedule store.
 				let inbox_notify = crate::session::inbox::get_inbox_notify();
 				let slot_for_notify = inbox_pending.clone();
 				let session_name_for_peek = chat_session.session.info.name.clone();
+				let session_id_for_task = chat_session.session.info.name.clone();
 				let notify_task = tokio::spawn(async move {
-					if let Some(notify) = inbox_notify {
+					crate::session::context::with_session_id(session_id_for_task, async move {
 						loop {
-							notify.notified().await;
-							// Flush schedule entries so the inbox has the message ready.
+							// Wait for any event that might make the inbox non-empty:
+							// a schedule timer fires, or someone pushed to the inbox.
+							tokio::select! {
+								_ = crate::mcp::core::next_schedule_sleep() => {}
+								_ = async {
+									if let Some(ref notify) = inbox_notify {
+										notify.notified().await;
+									} else {
+										std::future::pending::<()>().await;
+									}
+								} => {}
+							}
+							// Flush any due schedule entries into the inbox.
 							crate::mcp::core::flush_due_to_inbox();
-							// Verify the inbox actually has a message — the permit
-							// may be stale from a previous iteration where
-							// try_pop_inbox_message() already consumed the entry.
+							// Publish a preview if the inbox now has a message.
 							if let Some(preview) =
 								crate::session::inbox::peek_inbox_preview(&session_name_for_peek)
 							{
@@ -585,9 +600,10 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 								}
 								break;
 							}
-							// Stale permit — go back to waiting for a real message.
+							// Stale wakeup — loop and wait for the next event.
 						}
-					}
+					})
+					.await;
 				});
 
 				let estimated_cost = chat_session.estimated_cost;

@@ -32,7 +32,15 @@ use anyhow::Result;
 use serde_json::{json, Map, Value};
 
 pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResult> {
-	let subcommand = params.first().copied().unwrap_or("list");
+	// If the user typed `/schedule key=value ...` (no explicit subcommand),
+	// treat it as `add` — matches the common shape and avoids surprising errors.
+	let (subcommand, args_input) = match params.first().copied() {
+		None => ("list", ""),
+		Some(tok) if tok.contains('=') => {
+			("add", slice_after_token(input, "/schedule").unwrap_or(""))
+		}
+		Some(tok) => (tok, slice_after_token(input, tok).unwrap_or("")),
+	};
 
 	let mut json_params: Map<String, Value> = Map::new();
 
@@ -59,7 +67,7 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 		}
 		"add" => {
 			json_params.insert("command".to_string(), json!("add"));
-			match parse_kv_args(input, "add", &mut json_params) {
+			match parse_kv_args(args_input, "add", &mut json_params) {
 				Ok(()) => {}
 				Err(e) => {
 					return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -81,7 +89,7 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 					json_params.insert("id".to_string(), json!(*id));
 				}
 			}
-			match parse_kv_args(input, "edit", &mut json_params) {
+			match parse_kv_args(args_input, "edit", &mut json_params) {
 				Ok(()) => {}
 				Err(e) => {
 					return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -150,12 +158,11 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 /// quoting into `json_params`. Unknown keys are passed through verbatim so future
 /// MCP-tool fields keep working without code changes.
 fn parse_kv_args(
-	input: &str,
+	args_input: &str,
 	subcommand: &str,
 	json_params: &mut Map<String, Value>,
 ) -> Result<()> {
-	let after_sub = slice_after_token(input, subcommand).unwrap_or("");
-	let tokens = tokenize_shell_like(after_sub)?;
+	let tokens = tokenize_shell_like(args_input)?;
 
 	let mut consumed_first_positional = false;
 	for tok in tokens {
@@ -286,7 +293,7 @@ mod tests {
 	fn test_parse_kv_add() {
 		let mut params = Map::new();
 		parse_kv_args(
-			r#"/schedule add when="in 5m" message="hi" every="10m""#,
+			r#" when="in 5m" message="hi" every="10m""#,
 			"add",
 			&mut params,
 		)
@@ -299,7 +306,7 @@ mod tests {
 	#[test]
 	fn test_parse_kv_edit_skips_positional_id() {
 		let mut params = Map::new();
-		parse_kv_args(r#"/schedule edit abc123 when="9am""#, "edit", &mut params).unwrap();
+		parse_kv_args(r#" abc123 when="9am""#, "edit", &mut params).unwrap();
 		assert_eq!(params.get("when").and_then(|v| v.as_str()), Some("9am"));
 		assert!(params.get("id").is_none()); // caller inserts id; parse_kv just skips it
 	}
@@ -307,7 +314,7 @@ mod tests {
 	#[test]
 	fn test_parse_kv_rejects_bare_for_add() {
 		let mut params = Map::new();
-		let err = parse_kv_args("/schedule add bareword", "add", &mut params).unwrap_err();
+		let err = parse_kv_args(" bareword", "add", &mut params).unwrap_err();
 		assert!(err.to_string().contains("expected key=value"));
 	}
 }

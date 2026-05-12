@@ -244,6 +244,10 @@ pub fn read_user_input(
 	let buffer_empty = Arc::new(AtomicBool::new(true));
 	let reverse_search_active = Arc::new(AtomicBool::new(false));
 	let hint_available = Arc::new(AtomicBool::new(false));
+	// External break signal — flipped by the inbox-watcher thread below when a
+	// scheduled / background message arrives while the user is idle, so the
+	// session auto-processes it without requiring an Enter keypress.
+	let break_signal = Arc::new(AtomicBool::new(false));
 	let line_state = Arc::new(std::sync::Mutex::new(
 		crate::session::chat::reedline_adapter::LineState::default(),
 	));
@@ -294,21 +298,28 @@ pub fn read_user_input(
 			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
 				config,
 				role_name.clone(),
-				buffer_empty,
+				buffer_empty.clone(),
 				hint_available,
 				line_state.clone(),
 			),
 		))
 		.with_quick_completions(true)
 		.use_bracketed_paste(true)
+		.with_break_signal(break_signal.clone())
 		.with_edit_mode(edit_mode);
 
 	// Set up external printer for inbox notifications.
 	// A background thread polls the inbox_pending flag and sends a
 	// one-shot notification that reedline renders above the prompt.
+	// When the user is idle (empty buffer, no reverse-search), it also flips
+	// `break_signal` so reedline returns immediately and the main loop drains
+	// the inbox without waiting for an Enter keypress.
 	// `printer` was created earlier and shared with edit_mode via clone.
 	let sender = printer.sender();
 	let inbox_slot = inbox_pending;
+	let break_signal_for_thread = break_signal.clone();
+	let buffer_empty_for_thread = buffer_empty.clone();
+	let reverse_search_for_thread = reverse_search_active.clone();
 	std::thread::spawn(move || {
 		let mut notified = false;
 		loop {
@@ -317,12 +328,22 @@ pub fn read_user_input(
 			if let Some(preview) = preview {
 				if !notified {
 					let msg = format!(
-						"\x1b[33m📨 Inbox message received ({preview}) — press Enter to process\x1b[0m"
+						"\x1b[33m📨 Inbox message received ({preview}) — processing...\x1b[0m"
 					);
 					if sender.send(msg).is_err() {
 						break; // receiver dropped, reedline is gone
 					}
 					notified = true;
+				}
+				// Auto-fire only when the user isn't actively typing or searching.
+				// Otherwise we'd interrupt them mid-input. Once they finish (Enter
+				// or clear the buffer), the empty-input fallback in the main loop
+				// will pick up the inbox message.
+				let is_empty = buffer_empty_for_thread.load(std::sync::atomic::Ordering::Relaxed);
+				let in_search =
+					reverse_search_for_thread.load(std::sync::atomic::Ordering::Relaxed);
+				if is_empty && !in_search {
+					break_signal_for_thread.store(true, std::sync::atomic::Ordering::Relaxed);
 				}
 			} else {
 				notified = false;
@@ -436,6 +457,17 @@ pub fn read_user_input(
 				}
 				crate::log_debug!("Session preserved for future reference.");
 				return Ok(InputResult::Exit);
+			}
+			Ok(Signal::ExternalBreak(buffer)) => {
+				// Inbox-watcher thread flipped `break_signal` because a scheduled /
+				// background message is waiting and the user buffer was empty.
+				// Return empty Text so the main loop drains the inbox in its
+				// empty-input fallback path. If by race the buffer is non-empty,
+				// preserve what the user typed instead of dropping it.
+				if buffer.trim().is_empty() {
+					return Ok(InputResult::Text(String::new(), Vec::new()));
+				}
+				return Ok(InputResult::Text(buffer, Vec::new()));
 			}
 			Ok(_) => {
 				// reedline Signal is non-exhaustive — handle future variants gracefully

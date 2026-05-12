@@ -329,7 +329,8 @@ fn spawn_inbox_monitor(
 					// Tell the client what's about to drive the AI, before we kick off
 					// the API call. Rendered as a user-side chunk so the client UI shows
 					// the injected message in the conversation, prefixed with its source.
-					if let Some(c) = conn.borrow().as_ref().cloned() {
+					let conn_client = conn.borrow().as_ref().cloned();
+					if let Some(c) = conn_client {
 						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
 						let text = format!(
 							"[{}] {}",
@@ -752,7 +753,8 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					);
 					// Surface the injected message to the client as a user-side chunk so
 					// the user sees what triggered the AI's upcoming response.
-					if let Some(c) = self.conn.borrow().as_ref().cloned() {
+					let conn_client = self.conn.borrow().as_ref().cloned();
+					if let Some(c) = conn_client {
 						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
 						let text = format!(
 							"[{}] {}",

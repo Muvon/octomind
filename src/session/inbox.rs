@@ -78,6 +78,20 @@ impl InboxSource {
 		}
 	}
 
+	/// Machine-readable source kind used by structured protocols (WebSocket, ACP).
+	/// snake_case so it round-trips cleanly through JSON without quoting surprises.
+	pub fn display_kind(&self) -> &'static str {
+		match self {
+			InboxSource::Schedule { .. } => "schedule",
+			InboxSource::BackgroundAgent { .. } => "background_agent",
+			InboxSource::TapRun { .. } => "tap_run",
+			InboxSource::Skill { .. } => "skill",
+			InboxSource::SkillValidator { .. } => "skill_validator",
+			InboxSource::Inject => "inject",
+			InboxSource::Webhook { .. } => "webhook",
+		}
+	}
+
 	/// Icon shown next to an injected message in the CLI.
 	pub fn display_icon(&self) -> &'static str {
 		match self {

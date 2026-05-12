@@ -396,6 +396,17 @@ fn spawn_ws_inbox_monitor(
 					let mut cancellation = crate::session::cancellation::SessionCancellation::new();
 					let op_rx = cancellation.new_operation();
 
+					// Notify the client what's about to drive the AI, before we kick off
+					// the API call. Mirrors `display_injected_input` in CLI mode.
+					let _ = bg_tx.send(ServerMessage::Injected(
+						crate::websocket::protocol::InjectedPayload {
+							source_kind: inbox_msg.source.display_kind().to_string(),
+							source_label: inbox_msg.source.display_label(),
+							content: inbox_msg.content.clone(),
+							session_id: session_id.clone(),
+						},
+					));
+
 					if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
 						log_error!("WS monitor: failed to add inbox message: {}", e);
 						sessions
@@ -860,6 +871,17 @@ async fn handle_user_message(
 				"WebSocket pre-user: processing inbox message from {:?}",
 				inbox_msg.source
 			);
+			// Tell the client what's being injected before the AI responds to it.
+			send_message(
+				ws_sender,
+				&ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
+					source_kind: inbox_msg.source.display_kind().to_string(),
+					source_label: inbox_msg.source.display_label(),
+					content: inbox_msg.content.clone(),
+					session_id: session_id.clone(),
+				}),
+			)
+			.await?;
 			chat_session.add_user_message(&inbox_msg.content)?;
 			let op_rx = cancellation.new_operation();
 			prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await?;

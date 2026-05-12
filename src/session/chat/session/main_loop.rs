@@ -1703,6 +1703,23 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
 			log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
 
+			// Tell structured consumers (JSONL) what's about to drive the AI, so a
+			// scheduled / agent / skill turn is distinguishable from a user turn.
+			// Plain non-interactive mode stays silent — adding a header line would
+			// corrupt downstream parsers that just want raw AI text.
+			if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+				let injected =
+					crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
+						source_kind: inbox_msg.source.display_kind().to_string(),
+						source_label: inbox_msg.source.display_label(),
+						content: inbox_msg.content.clone(),
+						session_id: chat_session.session.info.name.clone(),
+					});
+				if let Ok(json) = serde_json::to_string(&injected) {
+					println!("{}", json);
+				}
+			}
+
 			// Stop any in-flight keepalive from the previous turn and fold
 			// its cost before we add the new user message — keeps the
 			// session log's cost ordering correct.

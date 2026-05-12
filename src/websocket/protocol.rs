@@ -175,6 +175,23 @@ pub struct SkillPayload {
 	pub session_id: String,
 }
 
+/// A message injected into the session by something other than the user
+/// (a scheduled timer fired, a background agent completed, a skill activated, …).
+/// Emitted just before the AI is invoked, so clients can render what the AI
+/// is actually about to respond to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InjectedPayload {
+	/// Machine-readable source kind:
+	/// `schedule`, `background_agent`, `tap_run`, `skill`, `skill_validator`,
+	/// `inject`, `webhook`.
+	pub source_kind: String,
+	/// Human-readable source label, e.g. `"schedule abc12345"`, `"agent reviewer"`.
+	pub source_label: String,
+	/// The content that's about to be added to the conversation as a user turn.
+	pub content: String,
+	pub session_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpNotificationPayload {
 	/// MCP server name that sent the notification
@@ -208,6 +225,10 @@ pub enum ServerMessage {
 	McpNotification(McpNotificationPayload),
 	/// Skill lifecycle event (activate / use / forget) — emitted for structured output
 	Skill(SkillPayload),
+	/// A message injected into the session loop by a non-user source
+	/// (scheduled timer, background agent, skill, …). Emitted just before
+	/// the AI processes it so clients can render the trigger.
+	Injected(InjectedPayload),
 }
 
 impl ServerMessage {

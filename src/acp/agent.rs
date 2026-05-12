@@ -160,6 +160,42 @@ fn build_config_with_injected_servers(
 	config
 }
 
+/// Translate an internal `ServerMessage` (the protocol shared with the WebSocket
+/// server) into an ACP `SessionUpdate` for forwarding to the client. Returns
+/// `None` for messages that have no ACP equivalent (e.g. Cost — sent separately).
+fn translate_server_message_to_acp(msg: ServerMessage) -> Option<SessionUpdate> {
+	match msg {
+		ServerMessage::Assistant(p) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+			p.content.into(),
+		))),
+		ServerMessage::Thinking(p) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+			p.content.into(),
+		))),
+		ServerMessage::ToolUse(p) => {
+			let tc = ToolCall::new(p.tool_id.clone(), p.tool.clone())
+				.status(ToolCallStatus::InProgress)
+				.raw_input(p.params.clone());
+			Some(SessionUpdate::ToolCall(tc))
+		}
+		ServerMessage::ToolResult(p) => {
+			let status = if p.success {
+				ToolCallStatus::Completed
+			} else {
+				ToolCallStatus::Failed
+			};
+			let upd = ToolCallUpdate::new(
+				p.tool_id.clone(),
+				ToolCallUpdateFields::new().status(status).raw_output(
+					serde_json::from_str::<serde_json::Value>(&p.content)
+						.unwrap_or(serde_json::Value::String(p.content)),
+				),
+			);
+			Some(SessionUpdate::ToolCallUpdate(upd))
+		}
+		_ => None,
+	}
+}
+
 /// Build the list of available slash commands to advertise to ACP clients.
 ///
 /// Command names are sent WITHOUT the leading `/` — the client prepends it when displaying.
@@ -182,11 +218,6 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		AvailableCommand::new("copy", "Copy last response to clipboard"),
 		AvailableCommand::new("context", "Display session context")
 			.input(unstructured("[all|assistant|user|tool|large]")),
-		AvailableCommand::new("truncate", "Smart context truncation to reduce token usage"),
-		AvailableCommand::new(
-			"summarize",
-			"Summarize entire conversation to reduce token usage",
-		),
 		AvailableCommand::new("list", "List all available sessions").input(unstructured("[page]")),
 		AvailableCommand::new("session", "Switch to or create a session")
 			.input(unstructured("[session_name]")),
@@ -208,6 +239,15 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		AvailableCommand::new("report", "Generate detailed usage report for this session"),
 		AvailableCommand::new("skill", "List, filter, or toggle skills")
 			.input(unstructured("[name|pattern|page]")),
+		AvailableCommand::new("effort", "View or change reasoning effort level")
+			.input(unstructured("[low|medium|high]")),
+		AvailableCommand::new(
+			"schedule",
+			"Schedule a message to be injected at a future time",
+		)
+		.input(unstructured(
+			"[list|add|remove|edit] [<id>] [when=...] [message=...] [every=...]",
+		)),
 		AvailableCommand::new("exit", "Exit the session"),
 	]
 }
@@ -286,6 +326,27 @@ fn spawn_inbox_monitor(
 						.or_default()
 						.new_operation();
 
+					// Tell the client what's about to drive the AI, before we kick off
+					// the API call. Rendered as a user-side chunk so the client UI shows
+					// the injected message in the conversation, prefixed with its source.
+					if let Some(c) = conn.borrow().as_ref().cloned() {
+						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+						let text = format!(
+							"[{}] {}",
+							inbox_msg.source.display_label(),
+							inbox_msg.content
+						);
+						let update =
+							SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
+						let notif = SessionNotification::new(sid_arc, update);
+						if let Err(e) = c.session_notification(notif).await {
+							log_error!(
+								"ACP monitor: failed to send injected-message notification: {}",
+								e
+							);
+						}
+					}
+
 					if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
 						log_error!("ACP monitor: failed to add inbox message: {}", e);
 						sessions
@@ -316,41 +377,9 @@ fn spawn_inbox_monitor(
 					let conn_for_fwd = conn.borrow().as_ref().cloned();
 					let forward_task = tokio::task::spawn_local(async move {
 						while let Some(msg) = ws_rx.recv().await {
-							let update = match msg {
-								ServerMessage::Assistant(p) => {
-									Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-										p.content.into(),
-									)))
-								}
-								ServerMessage::Thinking(p) => {
-									Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-										p.content.into(),
-									)))
-								}
-								ServerMessage::ToolUse(p) => {
-									let tc = ToolCall::new(p.tool_id.clone(), p.tool.clone())
-										.status(ToolCallStatus::InProgress)
-										.raw_input(p.params.clone());
-									Some(SessionUpdate::ToolCall(tc))
-								}
-								ServerMessage::ToolResult(p) => {
-									let status = if p.success {
-										ToolCallStatus::Completed
-									} else {
-										ToolCallStatus::Failed
-									};
-									let upd = ToolCallUpdate::new(
-										p.tool_id.clone(),
-										ToolCallUpdateFields::new().status(status).raw_output(
-											serde_json::from_str::<serde_json::Value>(&p.content)
-												.unwrap_or(serde_json::Value::String(p.content)),
-										),
-									);
-									Some(SessionUpdate::ToolCallUpdate(upd))
-								}
-								_ => None,
-							};
-							if let (Some(update), Some(c)) = (update, conn_for_fwd.as_ref()) {
+							if let (Some(update), Some(c)) =
+								(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
+							{
 								let notif = SessionNotification::new(sid_arc.clone(), update);
 								if let Err(e) = c.session_notification(notif).await {
 									log_error!("ACP monitor: failed to send notification: {}", e);
@@ -721,6 +750,22 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						"ACP pre-user: processing inbox message from {:?}",
 						inbox_msg.source
 					);
+					// Surface the injected message to the client as a user-side chunk so
+					// the user sees what triggered the AI's upcoming response.
+					if let Some(c) = self.conn.borrow().as_ref().cloned() {
+						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+						let text = format!(
+							"[{}] {}",
+							inbox_msg.source.display_label(),
+							inbox_msg.content
+						);
+						let update =
+							SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
+						let notif = SessionNotification::new(sid_arc, update);
+						if let Err(e) = c.session_notification(notif).await {
+							log_error!("ACP: failed to send injected-message notification: {}", e);
+						}
+					}
 					if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
 						log_error!("ACP: failed to add inbox message: {}", e);
 						continue;
@@ -738,9 +783,34 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						log_error!("ACP: failed to prepare inbox API call: {}", e);
 						continue;
 					}
-					let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-					let sink = WebSocketSink::new(tx);
-					if let Err(e) = execute_api_call_and_process_response(
+
+					// Stream the AI's response to this inbox message back to the client,
+					// just like a normal user prompt. Without this forwarding the
+					// receiver would drop and all chunks would silently disappear.
+					let (ws_tx, mut ws_rx) =
+						tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+					let sink = WebSocketSink::new(ws_tx.clone());
+					crate::mcp::process::set_notification_sender(
+						Some(session_id.to_string()),
+						ws_tx,
+					);
+
+					let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+					let conn_for_fwd = self.conn.borrow().as_ref().cloned();
+					let forward_task = tokio::task::spawn_local(async move {
+						while let Some(msg) = ws_rx.recv().await {
+							if let (Some(update), Some(c)) =
+								(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
+							{
+								let notif = SessionNotification::new(sid_arc.clone(), update);
+								if let Err(e) = c.session_notification(notif).await {
+									log_error!("ACP pre-user: failed to send notification: {}", e);
+								}
+							}
+						}
+					});
+
+					let result = execute_api_call_and_process_response(
 						&mut chat_session,
 						&config_for_role,
 						&self.role,
@@ -748,8 +818,12 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						OutputMode::WebSocket,
 						sink,
 					)
-					.await
-					{
+					.await;
+
+					crate::mcp::process::clear_notification_sender(Some(session_id.to_string()));
+					let _ = forward_task.await;
+
+					if let Err(e) = result {
 						log_debug!("ACP: error processing pre-user inbox message: {}", e);
 					}
 				}

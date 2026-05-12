@@ -64,14 +64,14 @@ When to use:
 Discovery flow:
 - If you know the role: `tap(action="run", role="developer:general", prompt="…")`.
 - If you don't: `tap(action="discover", intent="<plain-English need>")` returns the closest 5 roles ranked by semantic match. Pick one, then `run`.
-- If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<what you need>")` triggers the same auto-activation checks used for user messages.
+- If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:
 - `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default false; true = return immediately, reply injected later).
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
-- `capability` — trigger skill/capability auto-activation from a plain prompt. Required: `prompt`."#.to_string(),
+- `capability` — trigger skill/capability auto-activation. Required: `prompt`."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -86,7 +86,7 @@ Actions:
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run, or plain-language tool/skill/capability need for capability. Required for run and capability."
+					"description": "Prompt for run, or capability-need phrase for capability."
 				},
 				"session": {
 					"type": "string",

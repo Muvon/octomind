@@ -726,21 +726,6 @@ const AUTO_ACTIVATE_MARGIN: f32 = 0.05;
 /// capabilities whose authored examples align with the user's wording.
 const AUTO_ACTIVATE_TOP_K: usize = 3;
 
-/// How many top capabilities (by bi-encoder score) the reranker re-scores
-/// in the second stage. Latency budget: ~50ms per (query, doc) pair on
-/// CPU, so 5 candidates ≈ 250ms — negligible against the LLM turn.
-const RERANK_TOP_N: usize = 5;
-
-/// Score threshold the top-1 reranker result must clear. Reranker scores
-/// are post-sigmoid relevance probabilities in [0, 1]; a positive class
-/// after BCE training usually lands ≥0.7 for a true match.
-const RERANK_THRESHOLD: f32 = 0.5;
-
-/// Required gap between top-1 and top-2 reranker scores. Reranker score
-/// distributions are wider than bi-encoder cosines, so the margin is
-/// proportionally larger. Tuned to abstain on genuinely ambiguous inputs.
-const RERANK_MARGIN: f32 = 0.15;
-
 /// Sort `(score, T)` pairs descending and return the top entry only if
 /// `top1 >= threshold` and `top1 - top2 >= margin`. With a single
 /// candidate, top2 is treated as 0.0. Sort is stable (Timsort) so ties
@@ -979,7 +964,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		}
 	};
 
-	let bi_scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = inactive
+	let scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = inactive
 		.iter()
 		.zip(offsets.iter())
 		.map(|(cap, (start, end))| {
@@ -987,52 +972,6 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 			(score, *cap)
 		})
 		.collect();
-
-	let mut bi_ranked: Vec<(f32, String)> = bi_scored
-		.iter()
-		.map(|(s, c)| (*s, c.name.clone()))
-		.collect();
-	bi_ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-	let bi_preview: Vec<String> = bi_ranked
-		.iter()
-		.take(5)
-		.map(|(s, n)| format!("{n}={s:.3}"))
-		.collect();
-	crate::log_debug!(
-		"capability auto-activate: intent={:?} candidates={} bi-encoder top5=[{}]",
-		intent,
-		bi_ranked.len(),
-		bi_preview.join(", ")
-	);
-
-	// Two-stage retrieval. If the reranker is ready, the gate decides on
-	// rerank scores; otherwise we fall back to bi-encoder cosines so the
-	// activation path still works while the reranker warms up or if it
-	// failed to load.
-	let (scored, threshold, margin, stage) = if crate::embeddings::reranker::is_ready() {
-		match rerank_top_candidates(&intent, &bi_scored, &offsets, &flat).await {
-			Ok(reranked) => (reranked, RERANK_THRESHOLD, RERANK_MARGIN, "reranker"),
-			Err(e) => {
-				crate::log_debug!(
-					"capability auto-activate: reranker failed ({}) — falling back to bi-encoder gate",
-					e
-				);
-				(
-					bi_scored,
-					AUTO_ACTIVATE_THRESHOLD,
-					AUTO_ACTIVATE_MARGIN,
-					"bi-encoder",
-				)
-			}
-		}
-	} else {
-		(
-			bi_scored,
-			AUTO_ACTIVATE_THRESHOLD,
-			AUTO_ACTIVATE_MARGIN,
-			"bi-encoder",
-		)
-	};
 
 	let mut ranked: Vec<(f32, String)> = scored.iter().map(|(s, c)| (*s, c.name.clone())).collect();
 	ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -1042,14 +981,15 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		.map(|(s, n)| format!("{n}={s:.3}"))
 		.collect();
 	crate::log_debug!(
-		"capability auto-activate: stage={} threshold={} margin={} top5=[{}]",
-		stage,
-		threshold,
-		margin,
+		"capability auto-activate: intent={:?} candidates={} threshold={} margin={} top5=[{}]",
+		intent,
+		ranked.len(),
+		AUTO_ACTIVATE_THRESHOLD,
+		AUTO_ACTIVATE_MARGIN,
 		preview.join(", ")
 	);
 
-	let top = select_with_margin(scored, threshold, margin);
+	let top = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
 
 	if let Some((score, cap)) = top {
 		match activate_capability_inline(&cap.name, config).await {
@@ -1074,85 +1014,26 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		let top1 = ranked.first().map(|x| x.0).unwrap_or(0.0);
 		let top2 = ranked.get(1).map(|x| x.0).unwrap_or(0.0);
 		let top1_name = ranked.first().map(|x| x.1.as_str()).unwrap_or("<none>");
-		let reason = if top1 < threshold {
-			format!("top1 {top1:.3} below threshold {threshold:.3}")
+		let reason = if top1 < AUTO_ACTIVATE_THRESHOLD {
+			format!(
+				"top1 {top1:.3} below threshold {:.3}",
+				AUTO_ACTIVATE_THRESHOLD
+			)
 		} else {
 			format!(
-				"margin {:.3} below required {margin:.3} (top1={top1:.3} top2={top2:.3})",
-				top1 - top2
+				"margin {:.3} below required {:.3} (top1={top1:.3} top2={top2:.3})",
+				top1 - top2,
+				AUTO_ACTIVATE_MARGIN
 			)
 		};
 		crate::log_debug!(
-			"capability auto-activate: no winner via {} — {} (top1 was '{}')",
-			stage,
+			"capability auto-activate: no winner — {} (top1 was '{}')",
 			reason,
 			top1_name
 		);
 	}
 
 	Vec::new()
-}
-
-/// Rerank the top-N bi-encoder candidates with the cross-encoder model.
-///
-/// For each candidate capability we pick the trigger with the highest
-/// individual cosine against the intent (cheapest representative document),
-/// then batch-score `(intent, best_trigger)` pairs through the cross-encoder.
-/// Capabilities outside the top-N keep their bi-encoder scores — they are
-/// already eliminated from contention by being below the rerank cutoff but
-/// we keep them in the returned vector so callers can log/debug the full
-/// ranking unchanged.
-async fn rerank_top_candidates<'a>(
-	intent: &str,
-	bi_scored: &[(f32, &'a crate::agent::registry::ResolvedCapability)],
-	offsets: &[(usize, usize)],
-	flat_triggers: &[String],
-) -> Result<Vec<(f32, &'a crate::agent::registry::ResolvedCapability)>> {
-	if bi_scored.is_empty() {
-		return Ok(Vec::new());
-	}
-
-	let mut by_score: Vec<usize> = (0..bi_scored.len()).collect();
-	by_score.sort_by(|&a, &b| {
-		bi_scored[b]
-			.0
-			.partial_cmp(&bi_scored[a].0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
-	let top_n: Vec<usize> = by_score.into_iter().take(RERANK_TOP_N).collect();
-	if top_n.is_empty() {
-		return Ok(bi_scored.iter().map(|&(s, c)| (s, c)).collect());
-	}
-
-	// Pick the best trigger per top-N capability by per-trigger cosine.
-	// `embed()` is cached by content hash so the trigger vectors are reused
-	// from the same call that produced `bi_scored` — no extra model latency.
-	let intent_vec = crate::embeddings::embed(intent).await?;
-	let mut docs: Vec<String> = Vec::with_capacity(top_n.len());
-	for &idx in &top_n {
-		let (start, end) = offsets[idx];
-		let triggers = &flat_triggers[start..end];
-		let mut best_idx = 0usize;
-		let mut best_sim = f32::NEG_INFINITY;
-		for (j, t) in triggers.iter().enumerate() {
-			let tv = crate::embeddings::embed(t).await?;
-			let sim = crate::embeddings::cosine(&intent_vec, &tv);
-			if sim > best_sim {
-				best_sim = sim;
-				best_idx = j;
-			}
-		}
-		docs.push(triggers[best_idx].clone());
-	}
-
-	let rerank_scores = crate::embeddings::reranker::rerank(intent, docs).await?;
-
-	let mut out: Vec<(f32, &crate::agent::registry::ResolvedCapability)> =
-		bi_scored.iter().map(|&(s, c)| (s, c)).collect();
-	for (pos, &idx) in top_n.iter().enumerate() {
-		out[idx].0 = rerank_scores[pos];
-	}
-	Ok(out)
 }
 
 /// Translate capability `allowed_tools` patterns into the bare-name

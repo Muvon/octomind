@@ -51,8 +51,6 @@ const MODEL_NAME: &str = "muvon/octomind-embed";
 /// Embedding dimension. BGE-small family is 384.
 pub const EMBED_DIM: usize = 384;
 
-pub mod reranker;
-
 static PROVIDER: OnceCell<Box<dyn EmbeddingProvider>> = OnceCell::const_new();
 static CACHE: OnceLock<RwLock<HashMap<u64, Vec<f32>>>> = OnceLock::new();
 

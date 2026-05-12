@@ -973,6 +973,22 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		})
 		.collect();
 
+	let mut ranked: Vec<(f32, String)> = scored.iter().map(|(s, c)| (*s, c.name.clone())).collect();
+	ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+	let preview: Vec<String> = ranked
+		.iter()
+		.take(5)
+		.map(|(s, n)| format!("{n}={s:.3}"))
+		.collect();
+	crate::log_debug!(
+		"capability auto-activate: intent={:?} candidates={} threshold={} margin={} top5=[{}]",
+		intent,
+		ranked.len(),
+		AUTO_ACTIVATE_THRESHOLD,
+		AUTO_ACTIVATE_MARGIN,
+		preview.join(", ")
+	);
+
 	let top = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
 
 	if let Some((score, cap)) = top {
@@ -994,6 +1010,27 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 				);
 			}
 		}
+	} else {
+		let top1 = ranked.first().map(|x| x.0).unwrap_or(0.0);
+		let top2 = ranked.get(1).map(|x| x.0).unwrap_or(0.0);
+		let top1_name = ranked.first().map(|x| x.1.as_str()).unwrap_or("<none>");
+		let reason = if top1 < AUTO_ACTIVATE_THRESHOLD {
+			format!(
+				"top1 {top1:.3} below threshold {:.3}",
+				AUTO_ACTIVATE_THRESHOLD
+			)
+		} else {
+			format!(
+				"margin {:.3} below required {:.3} (top1={top1:.3} top2={top2:.3})",
+				top1 - top2,
+				AUTO_ACTIVATE_MARGIN
+			)
+		};
+		crate::log_debug!(
+			"capability auto-activate: no winner — {} (top1 was '{}')",
+			reason,
+			top1_name
+		);
 	}
 
 	Vec::new()

@@ -555,6 +555,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 			let input_result = if let Some(inbox_msg) = pending_msg {
 				// An inbox message is ready — inject it without waiting for user input.
 				log_debug!("Processing inbox message from {:?}", inbox_msg.source);
+				crate::session::inbox::display_injected_input(&inbox_msg);
 				InputResult::Text(inbox_msg.content, Vec::new())
 			} else {
 				// Reedline blocks for user input. A shared slot lets the
@@ -830,6 +831,7 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 				if crate::session::inbox::has_inbox_messages() {
 					if let Some(msg) = crate::session::inbox::try_pop_inbox_message() {
 						log_debug!("Processing inbox message from {:?}", msg.source);
+						crate::session::inbox::display_injected_input(&msg);
 						input = msg.content;
 					}
 				}

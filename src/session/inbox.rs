@@ -62,6 +62,58 @@ pub struct InboxMessage {
 	pub content: String,
 }
 
+impl InboxSource {
+	/// Short human-readable label for CLI rendering of an injected message.
+	/// Pairs with an icon in `display_injected_input` to mimic the regular
+	/// user prompt so the user can see what triggered the AI's response.
+	pub fn display_label(&self) -> String {
+		match self {
+			InboxSource::Schedule { id } => format!("schedule {id}"),
+			InboxSource::BackgroundAgent { name } => format!("agent {name}"),
+			InboxSource::TapRun { id, role } => format!("tap-run {id} ({role})"),
+			InboxSource::Skill { name } => format!("skill {name}"),
+			InboxSource::SkillValidator { name } => format!("skill-validator {name}"),
+			InboxSource::Inject => "inject".to_string(),
+			InboxSource::Webhook { hook } => format!("webhook {hook}"),
+		}
+	}
+
+	/// Icon shown next to an injected message in the CLI.
+	pub fn display_icon(&self) -> &'static str {
+		match self {
+			InboxSource::Schedule { .. } => "⏰",
+			InboxSource::BackgroundAgent { .. } => "🤖",
+			InboxSource::TapRun { .. } => "🚰",
+			InboxSource::Skill { .. } => "🧩",
+			InboxSource::SkillValidator { .. } => "⚠️",
+			InboxSource::Inject => "💬",
+			InboxSource::Webhook { .. } => "🪝",
+		}
+	}
+}
+
+/// Render an injected inbox message to stdout so the user sees what the AI
+/// is about to respond to. Mirrors the format of a user-typed prompt line
+/// (source-tagged) with the message content below if multi-line.
+pub fn display_injected_input(msg: &InboxMessage) {
+	use colored::Colorize;
+
+	let icon = msg.source.display_icon();
+	let label = msg.source.display_label();
+	let first_line = msg.content.lines().next().unwrap_or("");
+	let rest = msg.content.lines().skip(1).collect::<Vec<_>>();
+
+	println!(
+		"{} {} {}",
+		icon,
+		format!("[{label}]").bright_black(),
+		first_line
+	);
+	for line in rest {
+		println!("   {}", line);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Internal registry
 // ---------------------------------------------------------------------------

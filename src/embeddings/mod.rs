@@ -36,16 +36,22 @@ use tokio::sync::OnceCell;
 
 /// Hardcoded internal embedding model.
 ///
-/// Choice rationale: BGE-small-en-v1.5 is the best fast+small+precise English
-/// embedding model in fastembed's catalog (33M params, 384-dim, ~50ms CPU
-/// embed, MTEB retrieval scores ~3-5% above MiniLM-L6 at the same size).
-/// fastembed 5.x registers this model under the `Xenova/` HuggingFace path —
-/// the `BAAI/...` alias maps in octolib but octolib's runtime support check
-/// matches against fastembed's own `model_code`, which uses the Xenova path.
-const MODEL_NAME: &str = "Xenova/bge-small-en-v1.5";
+/// `muvon/octomind-embed` is a BGE-small-en-v1.5 fine-tune trained on the
+/// octomind-tap capability triggers with paraphrase + hard-negative
+/// augmentation (see `octomind-tap/model/`). 33M params, 384-dim, same
+/// size/latency as base BGE-small but sharpened on the capability-routing
+/// task: confusable clusters (shell vs programming-rust, etc.) clear the
+/// margin gate where the base model abstains.
+///
+/// Loaded via octolib's HuggingFace provider — downloads ONNX weights from
+/// `https://huggingface.co/<MODEL_NAME>` to the standard HF cache on first
+/// use and reuses them thereafter.
+const MODEL_NAME: &str = "muvon/octomind-embed";
 
-/// Embedding dimension for the default model.
+/// Embedding dimension. BGE-small family is 384.
 pub const EMBED_DIM: usize = 384;
+
+pub mod reranker;
 
 static PROVIDER: OnceCell<Box<dyn EmbeddingProvider>> = OnceCell::const_new();
 static CACHE: OnceLock<RwLock<HashMap<u64, Vec<f32>>>> = OnceLock::new();
@@ -63,7 +69,7 @@ fn cache_key(text: &str) -> u64 {
 async fn provider() -> Result<&'static (dyn EmbeddingProvider + 'static)> {
 	let p = PROVIDER
 		.get_or_try_init(|| async {
-			let provider_type = EmbeddingProviderType::FastEmbed;
+			let provider_type = EmbeddingProviderType::HuggingFace;
 			octolib::create_embedding_provider_from_parts(&provider_type, MODEL_NAME).await
 		})
 		.await?;

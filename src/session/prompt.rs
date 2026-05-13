@@ -55,8 +55,8 @@ pub async fn create_system_prompt(
 	if has_tap_tool {
 		prompt.push_str(
 			"\n<delegation>\n\
-		Missing a tool that fits your role (e.g. shell for a developer) → capability(action=\"discover\"|\"enable\", …), activate it yourself. \
-		Task outside your role (e.g. video editing for a developer) → tap(action=\"run\", role=\"…\", …), hand off to a specialist.\n\
+		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …), activate it yourself. \
+		Task outside your role → tap(action=\"run\", role=\"…\", …), hand off to a specialist.\n\
 		</delegation>",
 		);
 	}

@@ -413,6 +413,16 @@ pub struct ResolvedCapability {
 	/// drive the deterministic auto-activation path (mean-of-top-K cosine
 	/// + margin gate). Authored in `<tap>/capabilities/<name>/config.toml`.
 	pub triggers: Vec<String>,
+	/// Optional domain bindings from `<tap>/capabilities/<name>/config.toml`.
+	/// Empty = capability is available in every role (filesystem-style universal
+	/// utility). Non-empty = capability only loads when the active role's
+	/// domain part (`developer:general` → `"developer"`) is in this list.
+	/// Hard-bound: applies to auto-activation, `capability list`, `capability
+	/// discover`, manual `capability enable`, and `OCTOMIND_CAPABILITIES`
+	/// env loading. There is no bypass — out-of-domain access is rejected
+	/// everywhere so a `medical:*` role never sees code-search and a
+	/// `developer:*` role never sees medical-reference.
+	pub domains: Vec<String>,
 	pub deps: Vec<String>,
 	pub server_refs: Vec<String>,
 	pub allowed_tools: Vec<String>,
@@ -423,10 +433,23 @@ pub struct ResolvedCapability {
 	pub tap_root: PathBuf,
 }
 
-/// Read the `triggers = [...]` array from `<cap_dir>/config.toml`. Returns
-/// an error when the file is missing or the field is absent/empty — we own
-/// the schema in the tap, so triggers are required.
-fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<Vec<String>> {
+/// True when the capability is available to the given runtime domain.
+/// Empty `cap_domains` means universal (no restriction). Non-empty restricts
+/// to exact-match domain strings.
+///
+/// The single shared filter — used at every consumption site so the rule is
+/// consistent (auto-activation, list, discover, enable, env-load).
+pub fn cap_available_in_domain(cap_domains: &[String], current: &str) -> bool {
+	cap_domains.is_empty() || cap_domains.iter().any(|d| d == current)
+}
+
+/// Read `triggers` (required) and `domains` (optional) arrays from
+/// `<cap_dir>/config.toml`. Returns `(triggers, domains)`.
+///
+/// `triggers` errors when absent or empty — we own the schema in the tap, so
+/// triggers are required. `domains` defaults to empty (universal availability)
+/// when absent. Both arrays trim whitespace and drop empty entries silently.
+fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<(Vec<String>, Vec<String>)> {
 	let config_path = cap_dir.join("config.toml");
 	if !config_path.exists() {
 		anyhow::bail!(
@@ -438,18 +461,23 @@ fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<Vec<String>>
 		.with_context(|| format!("Failed to read {}", config_path.display()))?;
 	let value: toml::Value = toml::from_str(&raw)
 		.with_context(|| format!("Failed to parse {}", config_path.display()))?;
-	let triggers: Vec<String> = value
-		.get("triggers")
-		.and_then(|u| u.as_array())
-		.map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str())
-				.map(str::trim)
-				.filter(|s| !s.is_empty())
-				.map(String::from)
-				.collect()
-		})
-		.unwrap_or_default();
+
+	let read_string_array = |field: &str| -> Vec<String> {
+		value
+			.get(field)
+			.and_then(|u| u.as_array())
+			.map(|arr| {
+				arr.iter()
+					.filter_map(|v| v.as_str())
+					.map(str::trim)
+					.filter(|s| !s.is_empty())
+					.map(String::from)
+					.collect()
+			})
+			.unwrap_or_default()
+	};
+
+	let triggers = read_string_array("triggers");
 	if triggers.is_empty() {
 		anyhow::bail!(
 			"Capability '{cap_name}' has no `triggers = [...]` in {}. \
@@ -459,7 +487,8 @@ fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<Vec<String>>
 			config_path.display()
 		);
 	}
-	Ok(triggers)
+	let domains = read_string_array("domains");
+	Ok((triggers, domains))
 }
 
 /// Parse a capability and return its resolved components.
@@ -496,7 +525,7 @@ pub fn parse_capability_toml(
 			continue;
 		}
 
-		let triggers = read_capability_config(&cap_dir, cap_name)?;
+		let (triggers, domains) = read_capability_config(&cap_dir, cap_name)?;
 
 		let cap_str = fs::read_to_string(&provider_path).with_context(|| {
 			format!("Failed to read provider file: {}", provider_path.display())
@@ -508,6 +537,7 @@ pub fn parse_capability_toml(
 		let mut resolved = ResolvedCapability {
 			name: cap_name.to_string(),
 			triggers,
+			domains,
 			deps: Vec::new(),
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),

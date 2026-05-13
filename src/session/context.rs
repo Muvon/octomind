@@ -255,6 +255,19 @@ pub fn get_session_role(session_id: &SessionId) -> Option<String> {
 	registry.get(session_id).cloned()
 }
 
+/// Get the domain (the `category` part of `category:variant`) for the current
+/// session, or `None` when there's no session context or no role recorded.
+///
+/// Single source of truth for the capability domain filter and the skill pool
+/// init (`init_session_services` line 1106 already does the same split). Used
+/// by `auto_activate_capabilities_for_intent`, `handle_list`, `handle_discover`,
+/// `handle_enable`, and `load_env_capabilities` to gate cross-domain access.
+pub fn current_session_domain() -> Option<String> {
+	let sid = current_session_id()?;
+	let role = get_session_role(&sid)?;
+	Some(role.split(':').next().unwrap_or(&role).to_string())
+}
+
 /// Remove role when a session ends.
 pub fn clear_session_role(session_id: &SessionId) {
 	if let Ok(mut guard) = SESSION_ROLES.write() {

@@ -278,6 +278,32 @@ Workflow: call list or discover to find the right capability, then enable to act
 // Dispatcher
 // ---------------------------------------------------------------------------
 
+/// Filter a capability list down to those available in the current session's
+/// domain. Wraps `agent::registry::cap_available_in_domain` against the
+/// session-scoped domain string from `session::context::current_session_domain`.
+///
+/// When no domain is set (early init / out-of-session tool calls), only
+/// universal (empty-`domains`) caps survive — strict interpretation of the
+/// hard-bound rule: a domain-restricted cap requires a known domain context.
+fn filter_caps_by_domain(
+	caps: Vec<crate::agent::registry::ResolvedCapability>,
+) -> Vec<crate::agent::registry::ResolvedCapability> {
+	let domain = crate::session::context::current_session_domain();
+	let domain_ref: &str = domain.as_deref().unwrap_or("");
+	caps.into_iter()
+		.filter(|c| crate::agent::registry::cap_available_in_domain(&c.domains, domain_ref))
+		.collect()
+}
+
+/// Domain check for a single capability's domains list. Same rule as
+/// `filter_caps_by_domain` but for the single-cap activation path
+/// (`handle_enable`, `activate_capability_inline`).
+fn cap_in_current_domain(domains: &[String]) -> bool {
+	let cur = crate::session::context::current_session_domain();
+	let cur_ref: &str = cur.as_deref().unwrap_or("");
+	crate::agent::registry::cap_available_in_domain(domains, cur_ref)
+}
+
 pub async fn execute_capability_command(
 	call: &McpToolCall,
 	config: &Config,
@@ -320,6 +346,7 @@ async fn handle_list(call: &McpToolCall, config: &Config) -> Result<McpToolResul
 			));
 		}
 	};
+	let caps = filter_caps_by_domain(caps);
 	if caps.is_empty() {
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
@@ -396,6 +423,29 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			));
 		}
 	};
+
+	// Domain gate. Refuses to enable a capability that's bound to other
+	// domains, regardless of whether the user invoked `capability enable`
+	// directly, the auto-activator routed here, or `OCTOMIND_CAPABILITIES`
+	// env-loaded it at boot. Hard-bound — no bypass.
+	if !cap_in_current_domain(&resolved.domains) {
+		let current = crate::session::context::current_session_domain()
+			.unwrap_or_else(|| "<unknown>".to_string());
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!(
+				"Capability '{name}' is bound to domains {:?}; current domain is '{current}'. \
+				 Run the matching role (e.g. `octomind run {}:general`) to access it.",
+				resolved.domains,
+				resolved
+					.domains
+					.first()
+					.map(String::as_str)
+					.unwrap_or("<domain>"),
+			),
+		));
+	}
 
 	// Deps-only capabilities (no MCP servers): activation runs the dep
 	// installers — that IS the activation. Toolchain caps like
@@ -951,6 +1001,11 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 			return Vec::new();
 		}
 	};
+	// Domain gate: skip out-of-domain caps before embedding their triggers.
+	// Saves embed work AND prevents the gate from picking, say, medical-
+	// reference for a `developer:general` user message that happens to score
+	// well against medical-domain triggers.
+	let caps = filter_caps_by_domain(caps);
 
 	let inactive: Vec<&crate::agent::registry::ResolvedCapability> =
 		caps.iter().filter(|c| !is_active(&c.name)).collect();
@@ -1195,6 +1250,7 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 			));
 		}
 	};
+	let caps = filter_caps_by_domain(caps);
 
 	if caps.is_empty() {
 		return Ok(McpToolResult::success(
@@ -1302,6 +1358,7 @@ mod tests {
 		ResolvedCapability {
 			name: name.to_string(),
 			triggers: triggers.iter().map(|s| s.to_string()).collect(),
+			domains: Vec::new(),
 			deps: Vec::new(),
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),

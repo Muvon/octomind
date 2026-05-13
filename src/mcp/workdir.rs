@@ -21,16 +21,12 @@
 //! # Architecture
 //!
 //! Before: Thread-local WORKDIR (single session per process)
-//! After: Session-keyed registry + task-local session ID propagation
+//! After: Session-keyed registry + task-local session ID propagation.
 //!
-//! ```ignore
-//! // Session-scoped (WebSocket mode):
-//! fn get_workdir() -> Option<PathBuf> {
-//!     current_session_id()
-//!         .and_then(|id| get_session_workdir(&id))
-//!         .or_else(|| thread_local_fallback())
-//! }
-//! ```
+//! The session-scoped lookup pattern: `get_thread_working_directory` first
+//! reads `current_session_id` (task-local) and looks up
+//! `crate::session::context::get_current_workdir(&id)`; on miss it falls
+//! back to the per-thread `WORKDIR` cell.
 
 use std::path::PathBuf;
 
@@ -123,4 +119,49 @@ pub fn get_thread_original_working_directory() -> PathBuf {
 			.map(|wd| wd.session.clone())
 			.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 	})
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// Each #[test] runs on a fresh thread, so the `thread_local!(WORKDIR)`
+	// cell is independently empty per test. No cross-test interference
+	// even under parallel execution.
+
+	#[test]
+	fn set_session_then_get_returns_that_path_in_thread_local_mode() {
+		let p = PathBuf::from("/tmp/octomind-test-session");
+		set_session_working_directory(p.clone());
+		assert_eq!(get_thread_working_directory(), p);
+		assert_eq!(get_thread_original_working_directory(), p);
+	}
+
+	#[test]
+	fn override_active_does_not_move_session_anchor() {
+		let session = PathBuf::from("/tmp/octomind-test-anchor");
+		let active = PathBuf::from("/tmp/octomind-test-active");
+		set_session_working_directory(session.clone());
+		set_thread_working_directory(active.clone());
+
+		assert_eq!(get_thread_working_directory(), active);
+		assert_eq!(get_thread_original_working_directory(), session);
+	}
+
+	#[test]
+	fn unset_workdir_falls_back_to_current_dir() {
+		let cwd = std::env::current_dir().unwrap_or_default();
+		assert_eq!(get_thread_working_directory(), cwd);
+		assert_eq!(get_thread_original_working_directory(), cwd);
+	}
+
+	#[test]
+	fn override_without_prior_session_does_not_materialize_record() {
+		// `set_thread_working_directory` only mutates `current` when a
+		// WorkDir already exists. Without a prior `set_session_working_directory`,
+		// the call is a no-op — anchor stays at the process cwd.
+		let cwd = std::env::current_dir().unwrap_or_default();
+		set_thread_working_directory(PathBuf::from("/tmp/should-be-ignored"));
+		assert_eq!(get_thread_original_working_directory(), cwd);
+	}
 }

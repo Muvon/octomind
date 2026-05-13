@@ -50,38 +50,34 @@ pub async fn create_system_prompt(
 		}
 	}
 
+	prompt.push_str("\n\n<important>");
+
 	if has_tap_tool {
 		prompt.push_str(
-			"\n\nIf required tools, skills, or capabilities are missing, call `tap` with `action=\"capability\"` and a short `prompt` describing the need.",
+			"\n<delegation>\n\
+		Missing a tool that fits your role (e.g. shell for a developer) → capability(action=\"discover\"|\"enable\", …), activate it yourself. \
+		Task outside your role (e.g. video editing for a developer) → tap(action=\"run\", role=\"…\", …), hand off to a specialist.\n\
+		</delegation>",
 		);
 	}
 
-	// Add context about structured tags in conversation
 	prompt.push_str(
-		"\n\n## CONTEXT TAGS\n\
-		User messages may contain structured context in XML-like tags:\n\
-		- `<instructions>` — Project-specific instructions from the working directory. \
-		Treat as persistent rules that apply to ALL your responses in this session.\n\
-		- `<skill name=\"...\" description=\"...\">` — Domain knowledge injected on demand. \
-		Follow the conventions and best practices described within. Multiple skills may be active simultaneously.\n\
-		- `<constraints>` — Hard constraints appended to individual requests. \
-		These override other guidance when they conflict.\n\n\
-		These tags are system-managed context, not user-written messages. \
-		Do not reference the tags themselves — just follow the content within them.",
+		"\n<context-tags>\n\
+		User messages may contain XML-like context tags. Treat their content as system-managed; don't reference the tags themselves.\n\
+		- <instructions>: persistent project rules, apply to all responses.\n\
+		- <skill name=\"...\">: domain knowledge, follow its conventions; multiple may be active.\n\
+		- <constraints>: hard per-request constraints, override other guidance on conflict.\n\
+		</context-tags>",
 	);
 
-	// Enforce concise, action-first output behavior across all models and roles.
-	// Modeled after production agentic system prompts (Claude Code, internal Anthropic guidelines).
-	// Hard word limits between tool calls are the single most effective lever for mid-task verbosity.
 	prompt.push_str(
-		"\n\n## OUTPUT RULES\n\
-		Go straight to the point. Be extra concise. Do not overdo it.\n\n\
-		Between tool calls: <=25 words of text. State what you found or decided -- nothing else.\n\
-		Final response: <=2 sentences unless the task explicitly requires more detail.\n\n\
-		Never narrate intent before acting. Skip \"I'll now...\", \"Let me...\", \"I will search for...\" -- just act.\n\
-		Never restate the request, add filler (\"Great!\", \"Sure!\"), or offer unsolicited follow-ups.\n\
-		Don't explain your reasoning unless asked. State results and decisions directly.",
+		"\n<output-rules>\n\
+		Be concise, action-first. Between tool calls <=25 words. Final response <=2 sentences unless more is required. \
+		No narration of intent (\"I'll now...\", \"Let me...\"), no filler (\"Great!\", \"Sure!\"), no restating the request, no unsolicited follow-ups, no reasoning unless asked.\n\
+		</output-rules>",
 	);
+
+	prompt.push_str("\n</important>");
 
 	prompt
 }

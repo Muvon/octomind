@@ -27,15 +27,10 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! // At startup (before any logging):
-//! init_tracing(LoggingMode::Acp, "debug")?;
-//!
-//! // In code, use macros that respect the mode:
-//! log_debug!("Processing request");  // → tracing::debug! in ACP mode
-//! log_info!("Request completed");    // → tracing::info! in ACP mode
-//! log_error!("Failed: {}", err);     // → tracing::error! + file in ACP mode
-//! ```
+//! At startup (before any logging), call `init_tracing(LoggingMode::Acp,
+//! "debug")`. In code, use the mode-aware macros `log_debug!`, `log_info!`,
+//! `log_error!` — they route to `tracing::{debug,info,error}!` and, in ACP
+//! mode, also write to the file sink.
 
 use anyhow::{Context, Result};
 use std::sync::Arc;

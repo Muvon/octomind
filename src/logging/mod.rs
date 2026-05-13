@@ -29,15 +29,10 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! // At startup (ACP mode):
-//! init_tracing(LoggingMode::Acp, "debug")?;
-//! AcpErrorSink::initialize()?;
-//!
-//! // In code:
-//! log_debug!("Processing request");  // → tracing::debug! (file in ACP mode)
-//! log_error!("Failed: {}", err);     // → tracing::error! + AcpErrorSink
-//! ```
+//! At startup (ACP mode): call `init_tracing(LoggingMode::Acp, "debug")` and
+//! `AcpErrorSink::initialize()`. In code, use the `log_debug!` / `log_error!`
+//! macros — they route to `tracing::debug!` and `tracing::error!` (plus
+//! AcpErrorSink for errors in ACP mode).
 
 pub mod acp_error;
 pub mod tracing_setup;

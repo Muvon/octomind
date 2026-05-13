@@ -824,7 +824,9 @@ mod tests {
 	#[test]
 	fn intent_gate_rejects_short_acknowledgments() {
 		// Common chatter that should never drive auto-activation.
-		for short in ["", " ", "try", "ok", "yes", "no", "hmm", "do it", "thanks!", "what?"] {
+		for short in [
+			"", " ", "try", "ok", "yes", "no", "hmm", "do it", "thanks!", "what?",
+		] {
 			assert!(
 				!intent_has_enough_signal(short),
 				"expected {short:?} to be rejected by intent gate"

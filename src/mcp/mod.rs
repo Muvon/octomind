@@ -178,6 +178,18 @@ pub async fn initialize_servers_for_role_with_callback(
 	// model download. Idempotent — only the first call actually triggers init.
 	crate::embeddings::warmup();
 
+	// Pre-embed every installed capability's trigger phrases in the
+	// background. Combined with warmup's disk-cache load, this means the
+	// first auto-activation after the model is ready hits an all-cached
+	// path (~30 ms for the user-input embed only) instead of paying the
+	// ~300-500 ms trigger-batch cost on the user's hot path. Tap updates
+	// invalidate per-text (content hash) so only changed triggers are
+	// recomputed.
+	if let Ok(caps) = crate::agent::registry::list_all_capabilities(&config.capabilities) {
+		let trigger_texts: Vec<String> = caps.into_iter().flat_map(|c| c.triggers).collect();
+		crate::embeddings::prewarm(trigger_texts);
+	}
+
 	// The config passed here should be the merged config for the role
 	// config.mcp.servers already contains only the role's enabled servers
 	if config.mcp.servers.is_empty() {

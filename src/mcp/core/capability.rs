@@ -2349,9 +2349,8 @@ mod tests {
 						.collect();
 					let mut ranked: Vec<(f32, String)> =
 						scored.iter().map(|(s, c)| (*s, c.name.clone())).collect();
-					ranked.sort_by(|a, b| {
-						b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-					});
+					ranked
+						.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 					let outcome =
 						select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN)
 							.map(|(_, c)| c.name.clone());

@@ -71,8 +71,11 @@ pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.55;
 /// "landing page" pulls marketing/copy/ad skills together), neither fires
 /// — better to abstain than activate the wrong one. Skills that match via
 /// any deterministic check (file/content/grep/match/etc.) bypass this gate;
-/// hand-authored regex/keyword rules are precise by construction.
-pub const SEMANTIC_MARGIN: f32 = 0.05;
+/// hand-authored regex/keyword rules are precise by construction. Tightened
+/// from 0.05 to require a clearer "exact winner" before activating, which
+/// reduces false positives on ambiguous prompts at the cost of a few more
+/// abstains on genuinely close matches.
+pub const SEMANTIC_MARGIN: f32 = 0.08;
 
 /// Individual activation check within a group.
 #[derive(Debug, Clone)]

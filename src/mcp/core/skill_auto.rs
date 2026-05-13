@@ -282,6 +282,25 @@ fn get_skills_config() -> crate::config::SkillsConfig {
 /// Run auto-activation for the given content.
 ///
 /// Evaluates declarative rules from the skill pool in-process.
+/// Minimum non-whitespace character count for user input to drive
+/// auto-activation. Short acknowledgments ("try", "ok", "do it", "thanks")
+/// carry no real intent — letting them activate skills/capabilities causes
+/// expensive MCP server loads on typos and one-word follow-ups (the dominant
+/// false-positive class in production logs). Tuned so 2-word intents like
+/// "run tests" (8 chars) and "list files" (9 chars) still pass, while
+/// "try"/"ok"/"do it"/"fix bug" abstain. The semantic margin gate further
+/// filters longer-but-ambiguous inputs.
+pub(crate) const MIN_INTENT_NON_WS_CHARS: usize = 8;
+
+/// Returns true when `input` has enough content to justify running
+/// auto-activation (both skill rule evaluation and capability semantic
+/// matching). Counted on non-whitespace chars after XML stripping so that
+/// `<log>…</log>` pastes don't artificially inflate the signal of an
+/// otherwise empty user message.
+pub(crate) fn intent_has_enough_signal(input: &str) -> bool {
+	input.chars().filter(|c| !c.is_whitespace()).count() >= MIN_INTENT_NON_WS_CHARS
+}
+
 /// Strip XML-style blocks (`<tag>...</tag>`) from a string so that injected
 /// context (system tags, skill blocks, log pastes, etc.) does not influence
 /// skill auto-activation matching.  Only the plain user-written text remains.
@@ -345,6 +364,19 @@ pub async fn run_activation(
 	// they don't trigger false-positive skill matches.
 	let stripped = strip_xml_blocks(content);
 	let content: &str = &stripped;
+
+	// Bail before any rule evaluation when the user message is too short to
+	// carry intent. Deterministic file/content checks would otherwise fire on
+	// "try"/"ok"/"hmm" in any project that happens to have a matching marker
+	// file, dragging heavy MCP servers in for what's almost always a typo.
+	if !intent_has_enough_signal(content) {
+		crate::log_debug!(
+			"skill_auto: skipping activation — intent below {} non-ws chars: {:?}",
+			MIN_INTENT_NON_WS_CHARS,
+			content
+		);
+		return;
+	}
 
 	let entries = {
 		let pool = get_pool().read().unwrap();
@@ -782,5 +814,48 @@ async fn run_validate_script(
 		}
 		Ok(Err(e)) => Err(anyhow::anyhow!("Script wait error: {}", e)),
 		Err(_) => Err(anyhow::anyhow!("Validator timed out")),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn intent_gate_rejects_short_acknowledgments() {
+		// Common chatter that should never drive auto-activation.
+		for short in ["", " ", "try", "ok", "yes", "no", "hmm", "do it", "thanks!", "what?"] {
+			assert!(
+				!intent_has_enough_signal(short),
+				"expected {short:?} to be rejected by intent gate"
+			);
+		}
+	}
+
+	#[test]
+	fn intent_gate_accepts_two_word_intents() {
+		// Real 2-word intents at the boundary should pass.
+		for ok in [
+			"run tests",
+			"list files",
+			"deploy app",
+			"build code",
+			"show me logs",
+			"explain this code to me",
+		] {
+			assert!(
+				intent_has_enough_signal(ok),
+				"expected {ok:?} to pass intent gate"
+			);
+		}
+	}
+
+	#[test]
+	fn intent_gate_ignores_whitespace_padding() {
+		// Pure whitespace and padded short inputs are still rejected.
+		assert!(!intent_has_enough_signal("   \n\t  "));
+		assert!(!intent_has_enough_signal("  try   "));
+		// Whitespace doesn't pad a real intent up to the threshold.
+		assert!(!intent_has_enough_signal("a b c"));
 	}
 }

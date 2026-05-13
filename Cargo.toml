@@ -32,8 +32,8 @@ opt-level = 3         # Optimize for speed
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-# octolib = { path = "../octolib", default-features = false, features = ["fastembed"] }
-octolib = { version = "0.21.1", default-features = false, features = ["fastembed"] }
+# octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
+octolib = { version = "0.21.1", default-features = false, features = ["huggingface"] }
 rmcp = { version = "1.6.0", default-features = false }
 
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }

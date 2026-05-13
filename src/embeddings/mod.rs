@@ -32,7 +32,7 @@ use octolib::{EmbeddingProvider, EmbeddingProviderType, InputType};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Hardcoded internal embedding model.
 ///
@@ -51,7 +51,15 @@ const MODEL_NAME: &str = "muvon/octomind-embed";
 /// Embedding dimension. BGE-small family is 384.
 pub const EMBED_DIM: usize = 384;
 
-static PROVIDER: OnceCell<Box<dyn EmbeddingProvider>> = OnceCell::const_new();
+static PROVIDER: OnceLock<Box<dyn EmbeddingProvider>> = OnceLock::new();
+// Serialize provider init across all callers — `#[tokio::test]` creates
+// a separate runtime per test, and `tokio::sync::OnceCell` does not
+// reliably gate concurrent init across runtimes (multiple tests can race
+// the same hf_hub cache file, corrupting the partial download and yielding
+// "Could not find model weights" for late-comers). std `OnceLock` is
+// process-global, and the tokio `Mutex` lets the slow async init run
+// inside `.await`. After init, callers take only the lock-free fast path.
+static INIT_LOCK: TokioMutex<()> = TokioMutex::const_new(());
 static CACHE: OnceLock<RwLock<HashMap<u64, Vec<f32>>>> = OnceLock::new();
 
 fn cache() -> &'static RwLock<HashMap<u64, Vec<f32>>> {
@@ -65,13 +73,23 @@ fn cache_key(text: &str) -> u64 {
 }
 
 async fn provider() -> Result<&'static (dyn EmbeddingProvider + 'static)> {
-	let p = PROVIDER
-		.get_or_try_init(|| async {
-			let provider_type = EmbeddingProviderType::HuggingFace;
-			octolib::create_embedding_provider_from_parts(&provider_type, MODEL_NAME).await
-		})
-		.await?;
-	Ok(p.as_ref())
+	// Fast path: already initialized, lock-free atomic read.
+	if let Some(p) = PROVIDER.get() {
+		return Ok(p.as_ref());
+	}
+	// Slow path: serialize the actual download/load so concurrent tasks
+	// don't race the hf_hub cache. Re-check after acquiring the lock — a
+	// peer task may have completed init while we were waiting.
+	let _guard = INIT_LOCK.lock().await;
+	if let Some(p) = PROVIDER.get() {
+		return Ok(p.as_ref());
+	}
+	let provider_type = EmbeddingProviderType::HuggingFace;
+	let new_p = octolib::create_embedding_provider_from_parts(&provider_type, MODEL_NAME).await?;
+	// `set` returns Err only if some other task slipped in between our
+	// check and set — in that case use whichever pointer won.
+	let _ = PROVIDER.set(new_p);
+	Ok(PROVIDER.get().expect("PROVIDER set above").as_ref())
 }
 
 /// Kick off model initialization in the background so the first real
@@ -105,7 +123,7 @@ pub fn warmup() {
 /// Whether the embedding model is initialized and ready (no further
 /// download/load cost). Useful for status UI; not required for correctness.
 pub fn is_ready() -> bool {
-	PROVIDER.initialized()
+	PROVIDER.get().is_some()
 }
 
 /// Embed a single text. Returns a cached vector if the same text was
@@ -216,10 +234,10 @@ mod tests {
 		assert_ne!(k1, k3);
 	}
 
-	/// End-to-end smoke test: actually loads the BGE-small model (downloads
-	/// ~30MB weights to fastembed's cache on first run, fast on subsequent
-	/// runs) and verifies that `embed()` returns the expected dimension and
-	/// that the cache returns the same vector on a repeat call.
+	/// End-to-end smoke test: actually loads `muvon/octomind-embed`
+	/// (downloads safetensors from HuggingFace on first run, fast on
+	/// subsequent runs) and verifies that `embed()` returns the expected
+	/// dimension and that the cache returns the same vector on a repeat call.
 	#[tokio::test]
 	async fn embed_smoke() {
 		let v = embed("hello world").await.expect("embed should succeed");

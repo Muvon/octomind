@@ -144,6 +144,24 @@ jobs:
           ${{ runner.os }}-${{ matrix.rust }}-cargo-
           ${{ runner.os }}-cargo-
 
+    # Cache the HuggingFace model weights fetched by smoke tests
+    # (`muvon/octomind-embed`, ~130MB safetensors). octolib stores them via
+    # `dirs::cache_dir()/octolib/huggingface`, which expands to:
+    #   Linux:   ~/.cache/octolib/huggingface
+    #   macOS:   ~/Library/Caches/octolib/huggingface
+    #   Windows: ~/AppData/Local/octolib/huggingface
+    # Cache key invalidates when src/embeddings/mod.rs changes (e.g. MODEL_NAME).
+    - name: Cache HuggingFace model weights
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/octolib/huggingface
+          ~/Library/Caches/octolib/huggingface
+          ~/AppData/Local/octolib/huggingface
+        key: ${{ runner.os }}-octolib-hf-${{ hashFiles('src/embeddings/mod.rs') }}
+        restore-keys: |
+          ${{ runner.os }}-octolib-hf-
+
     # Linux: csukuangfj ships a single bundled libonnxruntime.a — ort-sys's
     # single-file shortcut links it directly. Just point ORT_LIB_LOCATION at
     # the extracted lib/ dir.

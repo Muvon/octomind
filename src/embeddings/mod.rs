@@ -239,6 +239,7 @@ mod tests {
 	/// subsequent runs) and verifies that `embed()` returns the expected
 	/// dimension and that the cache returns the same vector on a repeat call.
 	#[tokio::test]
+	#[serial_test::serial(embed_model)]
 	async fn embed_smoke() {
 		let v = embed("hello world").await.expect("embed should succeed");
 		assert_eq!(v.len(), EMBED_DIM);
@@ -251,6 +252,7 @@ mod tests {
 	}
 
 	#[tokio::test]
+	#[serial_test::serial(embed_model)]
 	async fn embed_many_smoke() {
 		let texts = vec![
 			"query a postgres database for slow queries".to_string(),

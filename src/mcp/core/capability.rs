@@ -1614,6 +1614,7 @@ mod tests {
 	/// Uses synthetic capabilities with hand-authored triggers so the
 	/// test doesn't depend on any real tap being installed.
 	#[tokio::test]
+	#[serial_test::serial(embed_model)]
 	async fn auto_activate_picks_semantically_closest_capability() {
 		let postgres = make_cap_with_triggers(
 			"database.postgres",
@@ -1700,6 +1701,7 @@ mod tests {
 	/// them; we accept a few false-positive activations in exchange for
 	/// the wider positive-margin behavior that production needs.
 	#[tokio::test]
+	#[serial_test::serial(embed_model)]
 	async fn capability_routing_fixtures_match_expected_caps() {
 		let caps = vec![
 			make_cap_with_triggers(

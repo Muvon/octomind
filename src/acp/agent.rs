@@ -537,6 +537,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		crate::session::context::with_session_id(session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
 			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
+			crate::mcp::core::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
 
@@ -1075,6 +1076,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		crate::session::context::with_session_id(actual_session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
 			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
+			crate::mcp::core::schedule::core::restore_schedule_for_session(&session_id_for_restore);
 		})
 		.await;
 

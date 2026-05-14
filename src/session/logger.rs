@@ -24,6 +24,7 @@
 //! the loader needs to reconstruct session state.
 
 use crate::mcp::core::plan::storage::ExecutionPlan;
+use crate::mcp::core::schedule::storage::ScheduleEntry;
 use crate::session::Message;
 use anyhow::Result;
 use std::fs::OpenOptions;
@@ -135,6 +136,19 @@ pub fn log_plan_cleared(session_name: &str) -> Result<()> {
 	let entry = serde_json::json!({
 		"type": "PLAN_CLEARED",
 		"timestamp": get_timestamp(),
+	});
+	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+}
+
+/// Log a full snapshot of the schedule store so it can be restored on session resume.
+/// Written on every mutation (add/remove/edit/flush). The most recent snapshot wins on replay;
+/// an empty `entries` vec is meaningful — it records that the store was cleared.
+pub fn log_schedule_snapshot(session_name: &str, entries: &[ScheduleEntry]) -> Result<()> {
+	let log_file = get_session_log_file(session_name)?;
+	let entry = serde_json::json!({
+		"type": "SCHEDULE_SNAPSHOT",
+		"timestamp": get_timestamp(),
+		"entries": entries,
 	});
 	append_to_log(&log_file, &serde_json::to_string(&entry)?)
 }

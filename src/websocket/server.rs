@@ -623,6 +623,7 @@ async fn handle_session_message(
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
 		crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
+		crate::mcp::core::schedule::core::restore_schedule_for_session(&session_id);
 		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
 		crate::mcp::core::capability::load_env_capabilities(&config_for_role, None).await;
 

@@ -175,6 +175,9 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 		crate::session::context::init_session_services(&role);
 
 		crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
+		crate::mcp::core::schedule::core::restore_schedule_for_session(
+			&chat_session.session.info.name,
+		);
 
 		let _inject_listener =
 			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
@@ -1382,6 +1385,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	crate::mcp::initialize_mcp_for_role(&role, config).await?;
 	crate::session::context::init_session_services(&role);
 	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
+	crate::mcp::core::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
 	// Start inject listener so `octomind send` can push messages into this session
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	// Start webhook listeners for any --hook flags

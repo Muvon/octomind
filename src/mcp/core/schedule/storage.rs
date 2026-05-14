@@ -16,10 +16,11 @@
 
 use anyhow::{bail, Result};
 use chrono::{DateTime, Duration, Local, NaiveTime};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// A single scheduled task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleEntry {
 	/// Short unique ID (first 8 chars of UUID).
 	pub id: String,
@@ -185,6 +186,13 @@ impl ScheduleStore {
 
 	pub fn entries(&self) -> &[ScheduleEntry] {
 		&self.entries
+	}
+
+	/// Replace all entries with the given set, keeping the trigger-time ordering invariant.
+	/// Used by session restore to seed the store from a persisted snapshot.
+	pub fn seed_entries(&mut self, mut entries: Vec<ScheduleEntry>) {
+		entries.sort_by_key(|e| e.trigger_at);
+		self.entries = entries;
 	}
 }
 

@@ -46,6 +46,7 @@ fn get_store() -> Arc<Mutex<ScheduleStore>> {
 /// so the inbox is the single source of truth for all injected messages.
 pub fn flush_due_to_inbox() {
 	let store = get_store();
+	let mut mutated = false;
 	// NOTE: must NOT use `while let Some(entry) = store.lock().unwrap().pop_due()`.
 	// The MutexGuard temporary in a `while let` scrutinee lives for the entire
 	// loop body, so re-locking inside the body (to reschedule) deadlocks.
@@ -54,6 +55,7 @@ pub fn flush_due_to_inbox() {
 			Some(e) => e,
 			None => break,
 		};
+		mutated = true;
 
 		// If this is a repeating entry, re-add it before pushing to inbox.
 		if entry.interval_secs.is_some() {
@@ -71,6 +73,92 @@ pub fn flush_due_to_inbox() {
 			content: entry.message,
 		});
 	}
+	if mutated {
+		persist_schedule_snapshot();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Persistence: write snapshot after every mutation, replay last on resume
+// ---------------------------------------------------------------------------
+
+/// Append the current schedule store to the session log (best-effort, no-op outside a session).
+/// Lock is held only long enough to clone the entries; file I/O happens after release.
+fn persist_schedule_snapshot() {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	let entries_snapshot: Vec<ScheduleEntry> = {
+		let store = get_store();
+		let guard = store.lock().unwrap();
+		guard.entries().to_vec()
+	};
+	if let Err(e) = crate::session::logger::log_schedule_snapshot(&session_id, &entries_snapshot) {
+		crate::log_debug!("Failed to log schedule snapshot: {}", e);
+	}
+}
+
+/// Restore the schedule store (if any) from the session log into session-scoped storage.
+/// Called at session startup (all entry points) right after init_session_services.
+/// Safe no-op when the log file doesn't exist or contains no snapshot.
+pub fn restore_schedule_for_session(session_name: &str) {
+	let log_file = match crate::session::logger::get_session_log_path(session_name) {
+		Ok(p) => p,
+		Err(e) => {
+			crate::log_debug!(
+				"restore_schedule_for_session: cannot resolve log file: {}",
+				e
+			);
+			return;
+		}
+	};
+	if !log_file.exists() {
+		return;
+	}
+
+	let file = match std::fs::File::open(&log_file) {
+		Ok(f) => f,
+		Err(e) => {
+			crate::log_debug!("restore_schedule_for_session: open failed: {}", e);
+			return;
+		}
+	};
+
+	use std::io::{BufRead, BufReader};
+	let reader = BufReader::new(file);
+	let mut latest_entries: Option<Vec<ScheduleEntry>> = None;
+
+	for line in reader.lines().map_while(Result::ok) {
+		let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
+			continue;
+		};
+		let Some(t) = val.get("type").and_then(|t| t.as_str()) else {
+			continue;
+		};
+		if t != "SCHEDULE_SNAPSHOT" {
+			continue;
+		}
+		let Some(entries_val) = val.get("entries") else {
+			continue;
+		};
+		match serde_json::from_value::<Vec<ScheduleEntry>>(entries_val.clone()) {
+			Ok(entries) => latest_entries = Some(entries),
+			Err(e) => crate::log_debug!("restore_schedule_for_session: deserialize failed: {}", e),
+		}
+	}
+
+	let Some(entries) = latest_entries else {
+		return;
+	};
+	let count = entries.len();
+	let session_id = session_name.to_string();
+	let storage = crate::session::context::get_schedule_storage(&session_id);
+	storage.lock().unwrap().seed_entries(entries);
+	crate::log_debug!(
+		"Restored {} scheduled entries for session '{}'",
+		count,
+		session_name
+	);
 }
 
 /// Returns true if there are any pending scheduled entries.
@@ -307,6 +395,7 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 	let trigger_fmt = entry.trigger_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
 	get_store().lock().unwrap().add(entry);
+	persist_schedule_snapshot();
 
 	// Wake up the schedule monitor so it recalculates the next due time
 	if let Some(sid) = crate::session::context::current_session_id() {
@@ -407,6 +496,7 @@ fn handle_remove(call: &McpToolCall) -> Result<McpToolResult> {
 
 	let removed = get_store().lock().unwrap().remove(&id);
 	if removed {
+		persist_schedule_snapshot();
 		// Wake up the schedule monitor so it recalculates the next due time
 		if let Some(sid) = crate::session::context::current_session_id() {
 			crate::session::context::notify_schedule_change(&sid);
@@ -511,6 +601,7 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 			.edit(&id, new_description, new_message, new_when, new_interval);
 
 	if updated {
+		persist_schedule_snapshot();
 		// Wake up the schedule monitor so it recalculates the next due time
 		if let Some(sid) = crate::session::context::current_session_id() {
 			crate::session::context::notify_schedule_change(&sid);

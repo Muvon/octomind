@@ -178,6 +178,7 @@ octomind run assistant
 # Use tap agent
 octomind run octomind:developer
 octomind run developer:general
+```
 
 ### Switching Roles Mid-Session
 

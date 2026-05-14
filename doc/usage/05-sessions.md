@@ -67,7 +67,7 @@ See [Daemon and Hooks](../integration/03-daemon-and-hooks.md) for webhook integr
 
 ## Session Commands
 
-All 23 commands available at the session prompt. See [Session Commands Reference](../reference/02-session-commands.md) for details.
+All 25 commands available at the session prompt. See [Session Commands Reference](../reference/02-session-commands.md) for details.
 
 **Session management:** `/help`, `/exit`, `/list`, `/session`, `/clear`
 

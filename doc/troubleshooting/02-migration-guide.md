@@ -96,7 +96,7 @@ The main AI uses these agents as tools:
 ## Config File Location
 
 **Old location:** `~/.config/octomind/config.toml` or `~/.octomind/config.toml`
-// agent_test_writer is available as a tool
+
 **Current location:** `~/.local/share/octomind/config/config.toml`
 
 Override: `OCTOMIND_CONFIG_PATH` environment variable.

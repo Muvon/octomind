@@ -11,9 +11,10 @@ src/
   branding.rs       # Branding assets
   commands/         # CLI subcommands (acp, complete, config, run, send, server, tap, untap, vars)
   config/           # Config loading, roles, MCP, layers, pipelines, hooks, agents, providers,
-                    #   workflows, validation, registry, env_source; log_debug!/log_info!/log_error! macros
+                    #   workflows, validation, registry, env_source, runtime_overlay;
+                    #   log_debug!/log_info!/log_error! macros
   directories.rs    # Path constants (data dir, config dir, sessions, logs, cache)
-  embeddings/       # Local embedding engine (fastembed, Xenova/bge-small-en-v1.5, cosine similarity)
+  embeddings/       # Local embedding engine (octolib FastEmbedProviderImpl, muvon/octomind-embed, cosine similarity)
   learning/         # Cross-session lesson extraction, storage, injection
   lib.rs            # Spinner-aware println!/print!/eprintln!/eprint! macros (shadow std)
   logging/          # ACP error sink (acp_error.rs), tracing setup (tracing_setup.rs)
@@ -24,13 +25,16 @@ src/
       dynamic.rs          # Dynamic MCP server management (add/remove at runtime)
       dynamic_agents.rs   # Dynamic agent tool registration
       functions.rs        # Core builtin tool definitions → get_all_functions()
+      local_tool.rs       # Project-local shebang tool discovery and execution (.agents/tools/)
       plan/               # Plan tool (core, storage, memory_storage, compression)
       schedule/           # Schedule tool (core, storage)
       skill.rs            # Skill management
       skill_auto.rs       # Skill auto-activation & validation hooks
       skill_tests.rs      # Skill unit tests
       plan_tests.rs       # Plan tool unit tests
-    agent/                # Agent tool routing (agent_* → layer execution)
+      tap.rs              # Tap tool (discover, run, capability actions)
+    agent/                # Agent tool routing (agent_* → layer/subprocess execution)
+    runtime/              # Runtime builtin server (mcp, agent, skill, schedule, capability tools)
     health_monitor.rs     # Server health checks, restart tracking
     hint_accumulator.rs   # Misuse hint accumulation
     mod.rs                # Tool routing, server init, try_execute_tool_call()
@@ -48,8 +52,7 @@ src/
       animation.rs / animation_manager.rs  # Spinner & animation
       assistant_output.rs    # Assistant output formatting
       command_executor.rs    # Command execution
-      commands.rs            # Slash-command constants (COMMANDS array, 26 entries)
-      context_truncation.rs  # Context truncation
+      commands.rs            # Slash-command constants (COMMANDS array, 25 entries)
       conversation_compression.rs  # Context compression (task/phase/project/conversation)
       cost_tracker.rs        # Token cost tracking
       edit_mode.rs           # Edit mode handling
@@ -65,6 +68,7 @@ src/
       response/
         tool_execution.rs    # Tool execution orchestration
         tool_result_processor.rs  # Tool result post-processing
+      status_prefix.rs       # Status bar and context tracking formatting
       syntax.rs              # Syntax highlighting
       thinking_display.rs    # Thinking/reasoning display
       tool_display.rs        # Tool output display
@@ -73,7 +77,7 @@ src/
       session/
         api_executor.rs      # API call execution
         api_prep.rs          # API call preparation
-        commands/            # 23 session command handler modules
+        commands/            # 24 session command handler modules
         core.rs              # ChatSession struct, SessionInitParams builder
         display.rs           # Session display
         error_utils.rs       # Error utilities
@@ -87,6 +91,7 @@ src/
     anchor.rs          # Session anchor management
     background_jobs.rs # Async agent job tracking
     cache.rs           # CacheManager for prompt caching
+    cache_keepalive.rs # Cache keepalive management
     cancellation.rs    # Cancellation tokens
     chat_helper.rs     # CommandCompleter (fuzzy autocomplete for reedline)
     completion.rs      # Completion logic
@@ -107,15 +112,16 @@ src/
     project_context.rs # Project context management
     prompt.rs          # Session-level prompt management
     report.rs          # Session usage reporting
-    smart_summarizer.rs # Smart text summarization
+    smart_summarizer.rs # Smart text summarizer
+    tap_runs.rs        # Tap run tracking for specialist agents
     token_counter.rs   # Token counting
     workflows/         # WorkflowOrchestrator, StepExecutor, PatternParser
     webhook_listener.rs # HTTP webhook → inbox injection
-  state.rs           # IndexState (current_directory, graphrag_blocks)
-  utils/              # file_parser, file_renderer, glob, terminal_output, time, truncation
+  state.rs           # IndexState (current_directory, indexed_files, embedding_calls, graphrag_blocks)
+  utils/              # file_parser, file_renderer, glob, term_echo, terminal_output, time, truncation
   websocket/          # WebSocket server (protocol, server)
 config-templates/
-  default.toml       # Single source of truth for all config defaults (729 lines)
+  default.toml       # Single source of truth for all config defaults
   agents/            # Agent template files
   map-executor.toml  # Map executor config
   map-planner.toml   # Map planner config
@@ -158,10 +164,12 @@ config-templates/
 | Dynamic agent tools | `src/mcp/core/dynamic_agents.rs` |
 | MCP tool routing | `src/mcp/mod.rs` → `try_execute_tool_call()` |
 | MCP tool registry | `src/mcp/tool_map.rs` |
-| MCP tool definitions | `src/mcp/*/functions.rs` → `get_all_functions()` |
+| MCP tool definitions | `src/mcp/core/functions.rs`, `src/mcp/runtime/mod.rs`, `src/mcp/agent/functions.rs` |
 | MCP server init | `src/mcp/mod.rs` → `initialize_mcp_for_role()` |
+| MCP runtime tools | `src/mcp/runtime/mod.rs` → `get_all_functions()`, `execute_runtime_tool()` |
 | MCP health monitor | `src/mcp/health_monitor.rs` |
 | MCP server connections | `src/mcp/server.rs` |
+| Local tools (project shebangs) | `src/mcp/core/local_tool.rs` |
 | Agent registry, manifests, capabilities | `src/agent/registry.rs` → `parse_capability_toml()` |
 | Agent config/role resolution | `src/agent/resolver.rs` |
 | Agent dependency resolution | `src/agent/deps.rs` |
@@ -184,7 +192,7 @@ config-templates/
 
 ### Config is the Single Source of Truth
 
-All defaults live in `config-templates/default.toml` (729 lines). The resolved config drives everything: model, MCP servers, layers, roles, workflows, commands, agents, compression, learning. No hardcoded values in code.
+All defaults live in `config-templates/default.toml`. The resolved config drives everything: model, MCP servers, layers, roles, workflows, commands, agents, compression, learning. No hardcoded values in code.
 
 Config flow: `default.toml` → `load()` in `src/config/loading.rs` → merge with user config → `get_merged_config_for_role()` applies role overrides.
 
@@ -243,7 +251,7 @@ TOOL_MAP (tool_name → McpServerConfig)
 
 1. `initialize_mcp_for_role()` builds the tool map from config-defined servers
 2. `try_execute_tool_call()` looks up tool name in `TOOL_MAP` (global)
-3. Routes to: builtin `core` (plan/mcp/agent/schedule/skill/capability), builtin `agent` (agent_*), or external server (stdio/http)
+3. Routes to: builtin `core` (plan, tap), builtin `runtime` (mcp, agent, skill, schedule, capability), builtin `agent` (agent_*), builtin `local` (project-local shebang tools), or external server (stdio/http)
 4. Dynamic tools (added at runtime via `mcp`/`agent` tools) are registered in `tool_map.rs` and checked for session ownership
 5. All errors return `Ok(McpToolResult::error())` — never `Err()` from tool execution
 
@@ -253,17 +261,17 @@ All session modes share the same initialization. When adding session-scoped stat
 
 | Mode | File | `init_session_services` call site |
 |------|------|-----------------------------------|
-| Interactive CLI | `src/session/chat/session/main_loop.rs` | line 174 |
-| Non-interactive CLI | `src/session/chat/session/main_loop.rs` | line 1153 |
-| ACP new_session | `src/acp/agent.rs` | line 508 |
-| ACP initialize | `src/acp/agent.rs` | line 966 |
-| WebSocket server | `src/websocket/server.rs` | line 613 |
+| Interactive CLI | `src/session/chat/session/main_loop.rs` | ~line 181 |
+| Non-interactive CLI | `src/session/chat/session/main_loop.rs` | ~line 1392 |
+| ACP new_session | `src/acp/agent.rs` | ~line 538 |
+| ACP initialize | `src/acp/agent.rs` | ~line 1077 |
+| WebSocket server | `src/websocket/server.rs` | ~line 624 |
 
 **Required initialization** (inside `with_session_id` context):
 ```rust
 crate::session::context::init_session_services(&role);
 ```
-This single call initializes inbox, job manager, and skill pool. Do NOT call `init_inbox_for_session`, `init_job_manager`, or `init_pool` directly.
+This single call initializes inbox, job manager, skill pool, and schedule storage. Do NOT call `init_inbox_for_session`, `init_job_manager`, `init_pool`, or schedule storage directly.
 
 **run_activation hook** (user input — only in `main_loop.rs`):
 ```rust
@@ -277,7 +285,7 @@ crate::mcp::core::skill_auto::run_validators(&current_content, &workdir).await
 
 ### Session Command Dispatch
 
-`process_command()` in `commands/mod.rs` routes 25 slash-commands (constants in `src/session/chat/commands.rs`) to handler modules. Unknown commands return `CommandResult::TreatAsUserInput`. Each command returns `CommandOutput` (strongly-typed enum). `/done` is intercepted in `main_loop.rs` before reaching `process_command`.
+`process_command()` in `commands/mod.rs` routes 25 slash-commands (constants in `src/session/chat/commands.rs`) to 24 handler modules. Unknown commands return `CommandResult::TreatAsUserInput`. Each command returns `CommandOutput` (strongly-typed enum). `/done` is intercepted in `main_loop.rs` before reaching `process_command`.
 
 ### Processing Pipeline
 
@@ -306,7 +314,6 @@ Every `.rs` file must have:
 // Licensed under the Apache License, Version 2.0 (the "License");
 // ...full Apache 2.0 header...
 ```
-New files: use current year. Modified files: update year if outdated.
 
 ### Errors — Fail Fast, Never Hide
 
@@ -362,13 +369,14 @@ Reference: `src/mcp/core/schedule/core.rs` (schedule misuse hints), `src/mcp/hin
 
 ## Adding a New MCP Tool
 
-1. Define in `src/mcp/*/functions.rs` → `get_all_functions()`
+1. Define in `src/mcp/core/functions.rs` → `get_all_functions()` (core server) or `src/mcp/runtime/mod.rs` → `get_all_functions()` (runtime server)
 2. Implement in the same module
-3. Route in `src/mcp/mod.rs` → `try_execute_tool_call()` (add to `route_builtin_tool` for core tools)
+3. Route in `src/mcp/mod.rs` → `route_builtin_tool()` (add match arm for `"core"` or `"runtime"`)
 4. Register in `src/mcp/tool_map.rs` (tool name → server config mapping)
 5. Return `Ok(McpToolResult::error())` for all failures — never `Err()`
 6. Add misuse hints if a more specific tool should be preferred
 7. For dynamic tools: use `register_dynamic_agent_tool()` or `register_dynamic_server_tools()` in `tool_map.rs`
+8. For local tools: drop executable scripts into `<workdir>/.agents/tools/` (see `src/mcp/core/local_tool.rs`)
 
 ## Adding a New Session Command
 
@@ -384,7 +392,7 @@ Reference: `src/mcp/core/schedule/core.rs` (schedule misuse hints), `src/mcp/hin
 - Config examples must match `config-templates/default.toml` field names
 - Paths must match `src/directories.rs` (data: `~/.local/share/octomind/`, config: `~/.local/share/octomind/config/config.toml`)
 - MCP server type is `"stdio"` (not `"stdin"`); role format is `[[roles]]` with `name = "..."` (not `[role_name]`)
-- Core MCP tools: `plan`, `mcp`, `agent`, `schedule`, `skill`, `capability`; filesystem tools from external octofs
+- Core MCP tools: `plan`, `tap` (core server); `mcp`, `agent`, `skill`, `schedule`, `capability` (runtime server); `agent_*` (agent server); local tools from `.agents/tools/`
 
 ## Debugging Starting Points
 
@@ -405,6 +413,8 @@ Reference: `src/mcp/core/schedule/core.rs` (schedule misuse hints), `src/mcp/hin
 | ACP connection issues | `src/acp/agent.rs` → `authenticate()`, `new_session()` |
 | Agent dependency resolution | `src/agent/deps.rs` → `resolve_deps()` |
 | Placeholder substitution | `src/agent/inputs.rs` ({{INPUT:KEY}}, {{ENV:KEY}}) |
+| Schedule persistence | `src/mcp/core/schedule/core.rs` → `persist_schedule_snapshot()`, `restore_schedule_for_session()` |
+| Runtime tool routing | `src/mcp/runtime/mod.rs` → `execute_runtime_tool()` |
 
 ## Gotchas
 
@@ -415,6 +425,7 @@ Reference: `src/mcp/core/schedule/core.rs` (schedule misuse hints), `src/mcp/hin
 - **Compression decision model** is separate from main model — `[compression.decision]`
 - **Learning backend** defaults to `file` — `mcp` backend requires field mapping
 - **`/done` command** is intercepted in `main_loop.rs` before `process_command()` — the `DONE_COMMAND` branch in `process_command` is `unreachable!()`
+- **Runtime vs core** — core server has `plan` and `tap`; runtime server has `mcp`, `agent`, `skill`, `schedule`, `capability` — both are builtin but routed through different match arms
 
 ## Never
 

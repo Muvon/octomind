@@ -67,7 +67,7 @@ user message arrives
 It is a silent no-op when:
 
 - The last message in the session is not a fresh user message (e.g. mid tool loop).
-- The local embedding model (BGE-small-en-v1.5) is not yet ready (still downloading on first run).
+- The local embedding model (`muvon/octomind-embed`, a BGE-small-en-v1.5 fine-tune) is not yet ready (still downloading on first run).
 - No capability has triggers, or every cap is already active.
 - No score clears the gate.
 
@@ -84,7 +84,7 @@ It is a silent no-op when:
      - Score = mean of top-3 cosines between intent and trigger vectors.
 
 4. Margin gate:
-     activate iff   top1 >= 0.42   AND   top1 - top2 >= 0.05.
+     activate iff   top1 >= 0.55   AND   top1 - top2 >= 0.08.
 
 5. On a hit, register + enable the capability's MCP servers directly.
    The agent never sees the routing decision; it just gets a wider tool
@@ -93,8 +93,8 @@ It is a silent no-op when:
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `AUTO_ACTIVATE_THRESHOLD` | `0.42` | Minimum mean-of-top-3 cosine. Tuned for BGE-small over short hand-authored triggers. |
-| `AUTO_ACTIVATE_MARGIN` | `0.05` | Required gap between top-1 and top-2. Prevents flipping a near-tied competitor on. |
+| `AUTO_ACTIVATE_THRESHOLD` | `0.55` | Minimum mean-of-top-3 cosine. Tuned for the fine-tuned octomind-embed model over short hand-authored triggers. |
+| `AUTO_ACTIVATE_MARGIN` | `0.08` | Required gap between top-1 and top-2. Prevents flipping a near-tied competitor on. |
 | `AUTO_ACTIVATE_TOP_K` | `3` | Number of triggers averaged per capability. Mean-of-top-K smooths a single noisy trigger while still rewarding cap-author-aligned triggers. |
 
 These are compile-time constants in `src/mcp/core/capability.rs`. The values are picked so that capability fixtures pass ≥85% top-1 accuracy on positive cases and ≥80% abstain rate on negatives — see `capability_routing_fixtures_match_expected_caps` in the same file.
@@ -204,7 +204,7 @@ on user_message:
         if not embedding_model_ready: return
         if no inactive caps: return
         score each inactive cap (mean-of-top-3 trigger cosine)
-        if top1 >= 0.42 and top1 - top2 >= 0.05:
+        if top1 >= 0.55 and top1 - top2 >= 0.08:
             activate_capability_inline(top1.name):
                 evict_lru_if_full()         ← may disable LRU cap + its servers
                 register + enable each [[mcp.servers]]
@@ -249,7 +249,7 @@ Octomind's design point: the model gets exactly the tools it needs, when it need
 | Touch hook in tool dispatch | `src/mcp/mod.rs` (around the `try_execute_tool_call` site) |
 | Auto-activation call site | `src/session/chat/session/api_prep.rs` → `prepare_for_api_call` |
 | Server enable / disable / unregister | `src/mcp/core/dynamic.rs` |
-| Embedding model | `src/embeddings/` (BGE-small-en-v1.5 via fastembed) |
+| Embedding model | `src/embeddings/` (`muvon/octomind-embed`, fine-tuned BGE-small via candle) |
 | Capability TOML parsing | `src/agent/registry.rs` → `parse_capability_toml`, `list_all_capabilities` |
 | Tap layout (capabilities directory) | `doc/integration/04-tap-system.md` |
 

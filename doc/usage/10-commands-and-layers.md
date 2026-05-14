@@ -41,8 +41,6 @@ How the layer's output affects the session:
 | `"restart"` | Replace session with only the last response (fresh start with last message) |
 ### Built-in Layers
 
-### Built-in Layers
-
 The default configuration includes layers that reference built-in roles:
 
 | Layer | Command | Purpose |

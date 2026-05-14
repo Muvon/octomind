@@ -11,7 +11,7 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | `version` | u32 | `1` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `model` | string | `"openrouter:anthropic/claude-sonnet-4"` | Default model in `provider:model` format |
-| `default` | string | `"assistant:general"` | Default tag when no TAG passed to `octomind run` |
+| `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run` |
 | `max_tokens` | u32 | `16384` | Global max tokens for all operations |
 | `custom_instructions_file_name` | string | `"INSTRUCTIONS.md"` | File auto-loaded as user message in new sessions. Empty string to disable. |
 | `custom_constraints_file_name` | string | `"CONSTRAINTS.md"` | File appended to each request in `<constraints>` tags. Empty string to disable. |
@@ -422,11 +422,11 @@ Cross-session adaptive learning. Extracts lessons from sessions and injects them
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable the learning system |
+| `enabled` | bool | `true` | Enable the learning system |
 | `model` | string | `"anthropic:claude-haiku-4-5"` | Model for extraction and retrieval LLM calls |
 | `backend` | string | `"file"` | Backend: `"file"` or `"mcp"` |
 | `min_messages_for_intermediate` | u32 | `3` | Min user messages before intermediate learning triggers |
-| `max_inject` | u32 | `10` | Max lessons injected into system prompt |
+| `max_inject` | u32 | `5` | Max lessons injected into system prompt |
 
 ### `[learning.store]` (MCP backend only)
 
@@ -444,11 +444,11 @@ Cross-session adaptive learning. Extracts lessons from sessions and injects them
 
 ```toml
 [learning]
-enabled = false
+enabled = true
 model = "anthropic:claude-haiku-4-5"
 backend = "file"
 min_messages_for_intermediate = 3
-max_inject = 10
+max_inject = 5
 ```
 
 ## Multi-File Configuration

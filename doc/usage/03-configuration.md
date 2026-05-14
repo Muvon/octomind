@@ -69,7 +69,7 @@ log_level = "info"
 model = "openrouter:anthropic/claude-sonnet-4"
 
 # Default tag when no TAG passed to `octomind run`
-default = "assistant:general"
+default = "assistant:concierge"
 
 # Global max tokens
 max_tokens = 16384

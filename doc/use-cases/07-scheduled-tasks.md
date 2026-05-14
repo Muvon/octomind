@@ -141,9 +141,7 @@ The AI schedules recurring checks within the session, each check can schedule th
 
 ## Limitations
 
-- **In-memory**: Schedules are lost when the session exits. Use daemon mode (`--daemon`) for long-running scheduled work.
-- **Local timezone**: All times are interpreted in the system's local timezone.
-- **Session-scoped**: Schedules belong to the session that created them.
+- **Session-scoped**: Schedules belong to the session that created them. When resuming a session, scheduled entries are restored from the session event log.
 
 ## Key Points
 

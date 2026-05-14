@@ -26,8 +26,12 @@ use reedline::{
 	ReedlineMenu, Signal,
 };
 use std::io::Write;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Last cost we displayed in the status line above the prompt. Used to
+/// compute the `(+$delta)` segment on subsequent prompts. Stored as f64 bits.
+static LAST_DISPLAYED_COST: AtomicU64 = AtomicU64::new(0);
 
 /// Result of user input operation
 #[derive(Debug)]
@@ -454,23 +458,42 @@ pub fn read_user_input(
 		.with_external_printer(printer)
 		.with_poll_interval(std::time::Duration::from_millis(100));
 
-	// Build the session-status prefix (`▍ $cost  bar  pct%`) — same renderer
-	// the working spinner uses, so prompt line and spinner line share a
-	// visual identity. Chevron `〉` is appended separately by ChatPrompt's
-	// indicator and is intentionally NOT part of the shared prefix.
-	let prompt_text = crate::session::chat::status_prefix::build_prompt_prefix(
+	// Print the persistent status line ABOVE the prompt:
+	//   ▍ $0.48 (+$0.013) ▰▰▰▱▱ 54.2%
+	//   ▍ 〉
+	// The `▍` on both lines acts as a session-identity rail. Reedline only
+	// owns the bottom row (`▍ 〉` + input); the status line is a plain
+	// println we control and scrolls naturally into history.
+	let last_cost = f64::from_bits(LAST_DISPLAYED_COST.load(Ordering::Relaxed));
+	let delta = if last_cost > 0.0 && estimated_cost > last_cost {
+		Some(estimated_cost - last_cost)
+	} else {
+		None
+	};
+	let status_line = crate::session::chat::status_prefix::build_status_line(
 		estimated_cost,
 		current_context_tokens,
 		max_session_tokens_threshold as u64,
+		delta,
 	);
-	let prompt_left = if prompt_text.is_empty() {
-		String::new()
-	} else {
-		format!("{} ", prompt_text)
-	};
+	if !status_line.is_empty() {
+		std::println!("{}", status_line);
+	}
+	LAST_DISPLAYED_COST.store(estimated_cost.to_bits(), Ordering::Relaxed);
+
+	let prompt_left = String::new();
+	// Prompt indicator is `▍ 〉` — the `▍` carries the session-identity rail
+	// down from the status line. Trailing space inside the indicator means
+	// reedline draws `▍ 〉` then immediately user input, with the wide `〉`
+	// naturally providing visual separation from the typed text.
+	let indicator = format!(
+		"{} {}",
+		"▍".bright_blue(),
+		"〉".bright_blue()
+	);
 	let prompt = crate::session::chat::ChatPrompt::new(
 		prompt_left.clone(),
-		"〉".bright_blue().to_string(),
+		indicator.clone(),
 		reverse_search_active,
 	);
 
@@ -490,9 +513,11 @@ pub fn read_user_input(
 					continue;
 				}
 
-				// Replace reedline's plain echo of the submitted input with a
-				// dim-background highlight so it stands out as a history marker.
-				highlight_submitted_input(&prompt_left, "〉", "  ", &line);
+				// Replace reedline's plain echo of the submitted input with the
+				// `▍ italic` history marker. Pass the actual indicator we used
+				// (`▍ 〉`, 4 visual cells) and matching 4-cell multiline pad
+				// so row counting clears exactly what reedline rendered.
+				highlight_submitted_input(&prompt_left, "▍ 〉", "    ", &line);
 
 				// Check if this is an "add without sending" request (Ctrl+G)
 				// and drain any clipboard blobs auto-attached via Ctrl+V.

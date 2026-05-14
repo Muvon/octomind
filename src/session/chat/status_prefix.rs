@@ -50,55 +50,54 @@ fn build_context_bar(pct: f64) -> String {
 	out
 }
 
-/// Build the status body (no leading marker). Returns an empty string when
-/// neither cost nor a max threshold is set (callers should not add a
-/// separator in that case).
+/// Build the persistent "session status" line printed above each prompt:
 ///
-/// Layout matrix:
-/// - cost > 0,  threshold > 0:  `$0.01 ▰▰▱▱▱ 13.8%`
-/// - cost > 0,  threshold == 0: `$0.01 · ∞`
-/// - cost == 0, threshold > 0:  `▰▰▱▱▱ 13.8%`
-/// - cost == 0, threshold == 0: `` (empty)
-pub fn build_status_body(cost: f64, context_tokens: u64, max_threshold: u64) -> String {
+///   `▍ $0.48 (+$0.013) ▰▰▰▱▱ 54.2%`
+///
+/// The `(+$delta)` part shows the cost increase since the previous prompt
+/// (only when positive and non-trivial). When there's no cost and no max
+/// threshold to show, returns an empty string — caller should skip printing.
+pub fn build_status_line(
+	cost: f64,
+	context_tokens: u64,
+	max_threshold: u64,
+	delta: Option<f64>,
+) -> String {
 	let pct = if max_threshold > 0 {
 		Some((context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0))
 	} else {
 		None
 	};
-
-	match (cost > 0.0, pct) {
-		(true, Some(pct)) => format!(
-			"{} {} {}",
-			format!("${:.2}", cost).bright_blue(),
-			build_context_bar(pct),
-			format!("{:.1}%", pct).bright_blue(),
-		),
-		(true, None) => format!(
-			"{} {} {}",
-			format!("${:.2}", cost).bright_blue(),
-			"·".bright_black(),
-			"∞".bright_blue(),
-		),
-		(false, Some(pct)) => format!(
-			"{} {}",
-			build_context_bar(pct),
-			format!("{:.1}%", pct).bright_blue(),
-		),
-		(false, None) => String::new(),
+	let has_cost = cost > 0.0;
+	if !has_cost && pct.is_none() {
+		return String::new();
 	}
-}
 
-/// Build the prompt prefix: `▍`-marker + status body. Returns just `▍ ` if
-/// no cost/threshold data is available so the prompt always has its
-/// identifying marker.
-pub fn build_prompt_prefix(cost: f64, context_tokens: u64, max_threshold: u64) -> String {
 	let marker = "▍".bright_blue();
-	let body = build_status_body(cost, context_tokens, max_threshold);
-	if body.is_empty() {
-		String::new()
-	} else {
-		format!("{} {}", marker, body)
+	let mut parts: Vec<String> = vec![marker.to_string()];
+
+	if has_cost {
+		parts.push(format!("${:.2}", cost).bright_blue().to_string());
+		if let Some(d) = delta {
+			if d > 0.0001 {
+				parts.push(format!("(+${:.3})", d).bright_black().to_string());
+			}
+		}
 	}
+
+	match pct {
+		Some(pct) => {
+			parts.push(build_context_bar(pct));
+			parts.push(format!("{:.1}%", pct).bright_blue().to_string());
+		}
+		None if has_cost => {
+			parts.push("·".bright_black().to_string());
+			parts.push("∞".bright_blue().to_string());
+		}
+		None => {}
+	}
+
+	parts.join(" ")
 }
 
 /// Same status body but with no embedded ANSI codes. Used by the spinner

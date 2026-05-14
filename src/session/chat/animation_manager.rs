@@ -431,38 +431,26 @@ impl Default for AnimationManager {
 	}
 }
 
-/// Build the cost/context prefix shown before "Working …".
-fn build_base_message(cost_bits: u64, ctx: u64, thresh: u64) -> String {
+/// Build a spinner message: shared status body + label. The spinner tick
+/// character (`⠋⠙⠹⠸…`) is the left-edge marker for this line — drawn by
+/// indicatif's template — so the body has no `▍`. The prompt's input line
+/// owns `▍` as its own line-leader.
+fn build_spinner_message(cost_bits: u64, ctx: u64, thresh: u64, label: &str) -> String {
 	let cost = cost_bits as f64 / 10000.0;
-	if cost > 0.0 && thresh > 0 {
-		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
-		format!("[${:.2}|{:.1}%] Working …", cost, pct)
-	} else if cost > 0.0 {
-		format!("[${:.2}|∞] Working …", cost)
-	} else if thresh > 0 {
-		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
-		format!("[{:.1}%] Working …", pct)
+	let body = crate::session::chat::status_prefix::build_status_body(cost, ctx, thresh);
+	if body.is_empty() {
+		label.to_string()
 	} else {
-		"Working …".to_string()
+		format!("{} {}", body, label)
 	}
 }
 
-/// Build a phase-labelled message like `[$1.23|45%] Validating (rust)…`.
-/// Preserves the same cost/context prefix as `build_base_message` so the
-/// user's mental model (bracketed prefix = session state) stays intact.
+fn build_base_message(cost_bits: u64, ctx: u64, thresh: u64) -> String {
+	build_spinner_message(cost_bits, ctx, thresh, "Working …")
+}
+
 fn build_phase_message(cost_bits: u64, ctx: u64, thresh: u64, phase: &str) -> String {
-	let cost = cost_bits as f64 / 10000.0;
-	if cost > 0.0 && thresh > 0 {
-		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
-		format!("[${:.2}|{:.1}%] {}", cost, pct, phase)
-	} else if cost > 0.0 {
-		format!("[${:.2}|∞] {}", cost, phase)
-	} else if thresh > 0 {
-		let pct = (ctx as f64 / thresh as f64 * 100.0).min(100.0);
-		format!("[{:.1}%] {}", pct, phase)
-	} else {
-		phase.to_string()
-	}
+	build_spinner_message(cost_bits, ctx, thresh, phase)
 }
 
 /// Global animation manager instance.

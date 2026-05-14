@@ -235,20 +235,6 @@ fn highlight_submitted_input(prompt_left: &str, indicator: &str, multiline: &str
 	let _ = std::io::stdout().flush();
 }
 
-fn calculate_context_percentage(
-	current_context_tokens: u64,
-	max_session_tokens_threshold: usize,
-) -> Option<f64> {
-	if max_session_tokens_threshold > 0 {
-		Some(
-			(current_context_tokens as f64 / max_session_tokens_threshold as f64 * 100.0)
-				.min(100.0),
-		)
-	} else {
-		None
-	}
-}
-
 fn add_completion_menu_keybindings(keybindings: &mut Keybindings) {
 	keybindings.add_binding(
 		KeyModifiers::NONE,
@@ -468,32 +454,19 @@ pub fn read_user_input(
 		.with_external_printer(printer)
 		.with_poll_interval(std::time::Duration::from_millis(100));
 
-	// Set prompt with cost and context percentage
-	let prompt_text = if estimated_cost > 0.0 {
-		let context_pct =
-			calculate_context_percentage(current_context_tokens, max_session_tokens_threshold);
-
-		if let Some(pct) = context_pct {
-			format!("[${:.2}|{:.1}%]", estimated_cost, pct)
-		} else {
-			format!("[${:.2}|∞]", estimated_cost)
-		}
-	} else if max_session_tokens_threshold > 0 {
-		// No cost but still show context percentage
-		let context_pct =
-			calculate_context_percentage(current_context_tokens, max_session_tokens_threshold);
-		if let Some(pct) = context_pct {
-			format!("[{:.1}%]", pct)
-		} else {
-			String::new()
-		}
-	} else {
-		String::new()
-	};
+	// Build the session-status prefix (`▍ $cost  bar  pct%`) — same renderer
+	// the working spinner uses, so prompt line and spinner line share a
+	// visual identity. Chevron `〉` is appended separately by ChatPrompt's
+	// indicator and is intentionally NOT part of the shared prefix.
+	let prompt_text = crate::session::chat::status_prefix::build_prompt_prefix(
+		estimated_cost,
+		current_context_tokens,
+		max_session_tokens_threshold as u64,
+	);
 	let prompt_left = if prompt_text.is_empty() {
 		String::new()
 	} else {
-		format!("{} ", prompt_text).bright_blue().to_string()
+		format!("{} ", prompt_text)
 	};
 	let prompt = crate::session::chat::ChatPrompt::new(
 		prompt_left.clone(),

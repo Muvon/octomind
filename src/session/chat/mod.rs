@@ -31,6 +31,7 @@ mod prompt;
 mod reedline_adapter;
 pub(crate) mod response;
 pub mod session;
+mod status_prefix;
 mod syntax;
 mod thinking_display;
 mod tool_display;

@@ -115,6 +115,12 @@ async fn start_webhook_guards<T: std::fmt::Debug>(
 
 // Run an interactive session
 pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
+	// Suppress the tty driver's `^C` echo for the lifetime of the session.
+	// Otherwise the spinner's last drawn row gets stranded in scrollback when
+	// the echoed `^C` auto-wraps off the indicatif-padded line and our clear
+	// lands on the wrong row. See utils::term_echo for the full rationale.
+	let _echo_guard = crate::utils::term_echo::CtrlCEchoGuard::install();
+
 	// Setup and initialize session using helper function
 
 	let (chat_session, config_for_role, role, first_message_processed, spinner) =

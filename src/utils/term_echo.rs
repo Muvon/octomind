@@ -12,20 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Suppress the tty driver's `^C` echo on SIGINT for the lifetime of an
-//! interactive session.
+//! Suppress the tty driver's keypress echo for the lifetime of an
+//! interactive session — covers both `^C` on SIGINT and stray `\n` from
+//! Enter presses while the spinner is running.
 //!
-//! Why this is needed: when the user presses Ctrl+C in a cooked-mode terminal,
-//! the tty driver echoes the literal characters `^C` to stdout at the current
-//! cursor position *before* delivering SIGINT. indicatif's spinner pads its
-//! line to terminal width on each draw, leaving the cursor at the very last
-//! column. The `^` of the echo therefore auto-wraps to a new row, and the
-//! subsequent `finish_and_clear` (which clears `bar_count = 1` rows starting
-//! from the current cursor row) wipes the wrapped echo line — leaving the
-//! actual spinner content stuck in scrollback above.
+//! Why this is needed: in cooked-mode terminal, the tty driver echoes typed
+//! characters to stdout before passing them to the program. indicatif's
+//! spinner pads its line to terminal width on each draw, leaving the cursor
+//! at the very last column. Any echoed character (the `^` of `^C`, or `\n`
+//! from Enter) auto-wraps to a new row, and the next indicatif redraw
+//! clears the wrong row — leaving the actual spinner content stranded in
+//! scrollback above.
 //!
-//! Disabling `ECHOCTL` removes the echo entirely; SIGINT still fires
-//! normally and the spinner is cleared from the row it was actually drawn on.
+//! We clear both `ECHO` and `ECHOCTL`. Reedline puts the tty in raw mode
+//! during `read_line` and draws every typed character itself, so disabling
+//! the tty's own echo doesn't affect what the user sees at the prompt.
 
 #[cfg(unix)]
 pub struct CtrlCEchoGuard {
@@ -34,9 +35,9 @@ pub struct CtrlCEchoGuard {
 
 #[cfg(unix)]
 impl CtrlCEchoGuard {
-	/// Clear `ECHOCTL` on stdin and return a guard that restores the original
-	/// value on Drop. Returns `None` if stdin isn't a tty or the tcgetattr /
-	/// tcsetattr calls fail.
+	/// Clear `ECHO` and `ECHOCTL` on stdin and return a guard that restores
+	/// the originals on Drop. Returns `None` if stdin isn't a tty or the
+	/// tcgetattr / tcsetattr calls fail.
 	pub fn install() -> Option<Self> {
 		let fd = libc::STDIN_FILENO;
 		// SAFETY: passing a valid stack pointer to libc::tcgetattr.
@@ -45,7 +46,9 @@ impl CtrlCEchoGuard {
 			return None;
 		}
 		let saved_lflag = termios.c_lflag;
-		termios.c_lflag &= !libc::ECHOCTL;
+		// ECHO suppresses ordinary keypresses (incl. Enter `\n`); ECHOCTL
+		// suppresses the `^C` / `^V` etc. visualizations on signal keys.
+		termios.c_lflag &= !(libc::ECHO | libc::ECHOCTL);
 		// SAFETY: termios is fully initialized by tcgetattr above.
 		if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } != 0 {
 			return None;
@@ -75,5 +78,22 @@ impl CtrlCEchoGuard {
 	pub fn install() -> Option<Self> {
 		// Windows console does not echo `^C` for Ctrl+C events; no-op.
 		None
+	}
+}
+
+/// Discard any pending bytes in stdin's input queue. Call right before a
+/// new prompt read so keypresses that piled up during animation (Enter,
+/// arrow keys, etc.) don't get consumed as the user's actual input.
+///
+/// We suppress *echoing* those keypresses via `ECHO` in `CtrlCEchoGuard`,
+/// but the bytes still buffer in the tty's input queue — without this
+/// flush, reedline would pick them up on its next read.
+pub fn drain_stdin() {
+	#[cfg(unix)]
+	{
+		// SAFETY: calling tcflush with a valid fd and known constant.
+		unsafe {
+			libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH);
+		}
 	}
 }

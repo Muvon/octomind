@@ -71,35 +71,25 @@ impl CostTracker {
 		Ok(())
 	}
 
-	/// Display short, single-line cost information
+	/// Compact cost snapshot at a turn boundary (end of response, Ctrl+C
+	/// cancellation). Delegates to the full breakdown so the user sees the
+	/// same `· $X · input $Y · output $Z` (or `· $X · N in · N out` for
+	/// unknown-pricing models) on every cost-emit point.
 	pub fn display_cost_line(chat_session: &ChatSession) {
-		use crate::log_info;
-
 		let total_cost = chat_session.session.info.total_cost;
 		if total_cost > 0.0 {
-			log_info!(
-				" ── cost: ${:.5} ────────────────────────────────────────",
-				total_cost
-			);
+			Self::display_cost_breakdown(chat_session);
 		}
 	}
 
-	/// Display detailed cost breakdown for intermediate results (after tool calls)
+	/// Show cost + breakdown on a single line after tool execution. Replaces
+	/// the previous two-line banner+breakdown (`── cost: $X ──` + `cost: $X
+	/// total (…)`) which was noisy and redundant.
 	pub fn display_intermediate_cost_breakdown(chat_session: &ChatSession) {
-		use crate::log_info;
-
 		let total_cost = chat_session.session.info.total_cost;
 		if total_cost <= 0.0 {
-			return; // No cost to show
+			return;
 		}
-
-		// Show cost breakdown after tool execution, before next AI call
-		log_info!(
-			" ── cost: ${:.5} ────────────────────────────────────────",
-			total_cost
-		);
-
-		// Show detailed breakdown
 		Self::display_cost_breakdown(chat_session);
 	}
 
@@ -256,8 +246,38 @@ impl CostTracker {
 		let pricing = octolib::llm::reference_pricing::get_reference_pricing(model_for_lookup);
 
 		let Some(pricing) = pricing else {
-			// Unknown model -- show only the authoritative total. No estimates.
-			log_info!("cost: ${:.5} total", total_cost);
+			use colored::Colorize;
+			// Unknown model — no pricing table, so we can't split cost by
+			// component. But token counts are still a useful state snapshot,
+			// so we surface them: `· $X · N in · N out [· N cache]`.
+			let dot = "·".bright_black();
+			let in_total = non_cached_input + cache_read;
+			let in_label = crate::session::chat::format_number(in_total);
+			let out_label = crate::session::chat::format_number(output);
+			if cache_read > 0 || cache_write > 0 {
+				let cache_label = crate::session::chat::format_number(cache_read + cache_write);
+				log_info!(
+					"{} ${:.5} {} {} in {} {} out {} {} cache",
+					dot,
+					total_cost,
+					dot,
+					in_label,
+					dot,
+					out_label,
+					dot,
+					cache_label
+				);
+			} else {
+				log_info!(
+					"{} ${:.5} {} {} in {} {} out",
+					dot,
+					total_cost,
+					dot,
+					in_label,
+					dot,
+					out_label
+				);
+			}
 			return;
 		};
 
@@ -276,28 +296,32 @@ impl CostTracker {
 		)
 		.max(0.0);
 
-		// Build the breakdown showing only the components that actually contributed.
-		let mut parts: Vec<String> = Vec::with_capacity(4);
+		// Compact breakdown: `· $0.48 total · input $0.05 · output $0.22 …`
+		// Each part separated by middle dots; no parens, no commas.
+		use colored::Colorize;
+		let dot = "·".bright_black();
+		let mut parts: Vec<String> = Vec::with_capacity(5);
 		if non_cached_input > 0 {
-			parts.push(format!("input: ${:.5}", input_cost));
+			parts.push(format!("input ${:.5}", input_cost));
 		}
 		if output > 0 {
-			parts.push(format!("output: ${:.5}", output_cost));
+			parts.push(format!("output ${:.5}", output_cost));
 		}
 		if cache_write > 0 {
-			parts.push(format!("cache write: ${:.5}", cache_write_cost));
+			parts.push(format!("cache write ${:.5}", cache_write_cost));
 		}
 		if cache_read > 0 {
-			parts.push(format!("cache read: ${:.5}", cache_read_cost));
+			parts.push(format!("cache read ${:.5}", cache_read_cost));
 		}
 		if cache_savings > 0.0 {
-			parts.push(format!("saved: ${:.5}", cache_savings));
+			parts.push(format!("saved ${:.5}", cache_savings));
 		}
 
+		let joiner = format!(" {} ", dot);
 		if parts.is_empty() {
-			log_info!("cost: ${:.5} total", total_cost);
+			log_info!("{} ${:.5}", dot, total_cost);
 		} else {
-			log_info!("cost: ${:.5} total ({})", total_cost, parts.join(", "));
+			log_info!("{} ${:.5} {} {}", dot, total_cost, dot, parts.join(&joiner));
 		}
 	}
 }

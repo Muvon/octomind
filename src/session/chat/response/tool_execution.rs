@@ -251,7 +251,6 @@ async fn execute_tools_with_context(
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
-	let is_single_tool = current_tool_calls.len() == 1;
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
@@ -443,7 +442,6 @@ async fn execute_tools_with_context(
 							stored_tool_call: &stored_tool_call,
 							tool_name: &tool_name,
 							tool_index,
-							is_single_tool,
 						};
 						display_tool_success(
 							display_params,
@@ -793,70 +791,73 @@ struct ToolDisplayParams<'a> {
 	stored_tool_call: &'a Option<crate::mcp::McpToolCall>,
 	tool_name: &'a str,
 	tool_index: usize,
-	is_single_tool: bool,
 }
 
-// Display successful tool execution (after execution - header + results)
+// Display successful tool execution. Each tool gets a self-contained block:
+// `╭ tool · server` + railed params + railed output + `╰ ✓ tool Xms · N tokens`.
+// The header is re-rendered here regardless of upfront preview — the upfront
+// preview is only a compact `▸ tool · server` queue listing for parallel
+// tools, not a substitute for the full result block.
 async fn display_tool_success(
 	params: ToolDisplayParams<'_>,
 	res: &crate::mcp::McpToolResult,
 	tool_time_ms: u64,
 	config: &Config,
 	mode: OutputMode,
-	execution_context: Option<String>, // New parameter for context display
+	execution_context: Option<String>,
 ) {
-	// For multiple tools: show header again with index
-	// For single tool in main session: skip header (already shown upfront)
-	// For layer/agent contexts: always show header (no upfront display in isolated contexts)
-	if !mode.should_suppress_cli_output() && (!params.is_single_tool || execution_context.is_some())
-	{
+	if !mode.should_suppress_cli_output() {
 		crate::session::chat::tool_display::display_individual_tool_header_with_context(
 			params.tool_name,
 			params.stored_tool_call,
 			config,
 			params.tool_index,
-			execution_context.as_deref(), // Pass the execution context
+			execution_context.as_deref(),
 		)
 		.await;
 	}
 
-	// Show the actual tool output based on log level using MCP protocol
-	// Skip in JSONL mode (output goes through callback instead)
+	// Output content (info/debug levels only; respect JSONL suppression).
+	// `display_tool_output_smart` adds the `│ ` rail per line.
 	if !mode.should_suppress_cli_output()
 		&& (config.get_log_level().is_info_enabled() || config.get_log_level().is_debug_enabled())
 	{
-		// Extract content using MCP protocol
 		let content = res.extract_content();
-
 		if !content.trim().is_empty() {
 			if config.get_log_level().is_debug_enabled() {
-				// Debug mode: Show full content
-				println!("{}", content);
+				use colored::Colorize;
+				let rail = "│".bright_black();
+				for line in content.lines() {
+					println!("{} {}", rail, line);
+				}
 			} else {
-				// Info mode: Show smart output (with some reasonable limits)
 				crate::session::chat::tool_display::display_tool_output_smart(&content);
 			}
 		}
 	}
 
-	// None mode: No output shown (as requested)
-
-	// Always show completion status with timing and token count
-	// Skip in JSONL mode (output goes through callback instead)
+	// Close line: `╰ ✓ tool Xms · N tokens` — tool name identifies which
+	// tool finished when results arrive out of order.
 	if !mode.should_suppress_cli_output() {
 		let content = res.extract_content();
 		let token_count = crate::session::token_counter::estimate_tokens(&content);
 		let formatted_tokens = crate::session::chat::format_number(token_count as u64);
 
+		use colored::Colorize;
 		println!(
-			"✓ Tool '{}' completed in {}ms [{}]",
-			params.tool_name, tool_time_ms, formatted_tokens
+			"{} {} {} {}ms {} {} tokens",
+			"╰".bright_cyan(),
+			"✓".bright_green(),
+			params.tool_name.bright_cyan(),
+			tool_time_ms,
+			"·".bright_black(),
+			formatted_tokens,
 		);
-		println!("──────────────────");
 	}
 }
 
-// Display tool error in consolidated format
+// Display tool error in consolidated format. Matches the success layout:
+// re-rendered header + `╰ ✗ tool: error` close.
 async fn display_tool_error(
 	stored_tool_call: &Option<crate::mcp::McpToolCall>,
 	tool_name: &str,
@@ -870,8 +871,6 @@ async fn display_tool_error(
 		return;
 	}
 
-	// Always show header with parameters — same as success path.
-	// On error the upfront header was shown without parameters, so we must re-show it here.
 	crate::session::chat::tool_display::display_individual_tool_header_with_context(
 		tool_name,
 		stored_tool_call,
@@ -881,8 +880,14 @@ async fn display_tool_error(
 	)
 	.await;
 
-	// Show error status
-	println!("✗ Tool '{}' failed: {}", tool_name, error);
+	use colored::Colorize;
+	println!(
+		"{} {} {}: {}",
+		"╰".bright_cyan(),
+		"✗".bright_red(),
+		tool_name.bright_red(),
+		error,
+	);
 }
 
 // Handle user-declined large output in chat session

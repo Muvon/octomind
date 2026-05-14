@@ -32,6 +32,11 @@ use std::sync::Arc;
 /// Last cost we displayed in the status line above the prompt. Used to
 /// compute the `(+$delta)` segment on subsequent prompts. Stored as f64 bits.
 static LAST_DISPLAYED_COST: AtomicU64 = AtomicU64::new(0);
+/// Last context-tokens / max-threshold we showed. If nothing changed since the
+/// previous prompt (e.g. user hit Enter on an empty input), we suppress the
+/// status line — otherwise empty submits spam the screen with identical rows.
+static LAST_DISPLAYED_CTX: AtomicU64 = AtomicU64::new(u64::MAX);
+static LAST_DISPLAYED_MAX: AtomicU64 = AtomicU64::new(u64::MAX);
 
 /// Result of user input operation
 #[derive(Debug)]
@@ -464,33 +469,44 @@ pub fn read_user_input(
 	// The `▍` on both lines acts as a session-identity rail. Reedline only
 	// owns the bottom row (`▍ 〉` + input); the status line is a plain
 	// println we control and scrolls naturally into history.
-	let last_cost = f64::from_bits(LAST_DISPLAYED_COST.load(Ordering::Relaxed));
-	let delta = if last_cost > 0.0 && estimated_cost > last_cost {
-		Some(estimated_cost - last_cost)
-	} else {
-		None
-	};
-	let status_line = crate::session::chat::status_prefix::build_status_line(
-		estimated_cost,
-		current_context_tokens,
-		max_session_tokens_threshold as u64,
-		delta,
-	);
-	if !status_line.is_empty() {
-		std::println!("{}", status_line);
+	// Suppress when nothing has changed since the previous prompt — otherwise
+	// an empty `<Enter>` submit (no API call, no cost change) spams an
+	// identical status row each time.
+	let last_cost_bits = LAST_DISPLAYED_COST.load(Ordering::Relaxed);
+	let last_cost = f64::from_bits(last_cost_bits);
+	let last_ctx = LAST_DISPLAYED_CTX.load(Ordering::Relaxed);
+	let last_max = LAST_DISPLAYED_MAX.load(Ordering::Relaxed);
+	let max_u64 = max_session_tokens_threshold as u64;
+	let unchanged = last_ctx != u64::MAX
+		&& estimated_cost.to_bits() == last_cost_bits
+		&& current_context_tokens == last_ctx
+		&& max_u64 == last_max;
+	if !unchanged {
+		let delta = if last_cost > 0.0 && estimated_cost > last_cost {
+			Some(estimated_cost - last_cost)
+		} else {
+			None
+		};
+		let status_line = crate::session::chat::status_prefix::build_status_line(
+			estimated_cost,
+			current_context_tokens,
+			max_u64,
+			delta,
+		);
+		if !status_line.is_empty() {
+			std::println!("{}", status_line);
+		}
+		LAST_DISPLAYED_COST.store(estimated_cost.to_bits(), Ordering::Relaxed);
+		LAST_DISPLAYED_CTX.store(current_context_tokens, Ordering::Relaxed);
+		LAST_DISPLAYED_MAX.store(max_u64, Ordering::Relaxed);
 	}
-	LAST_DISPLAYED_COST.store(estimated_cost.to_bits(), Ordering::Relaxed);
 
 	let prompt_left = String::new();
 	// Prompt indicator is `▍ 〉` — the `▍` carries the session-identity rail
 	// down from the status line. Trailing space inside the indicator means
 	// reedline draws `▍ 〉` then immediately user input, with the wide `〉`
 	// naturally providing visual separation from the typed text.
-	let indicator = format!(
-		"{} {}",
-		"▍".bright_blue(),
-		"〉".bright_blue()
-	);
+	let indicator = format!("{} {}", "▍".bright_blue(), "〉".bright_blue());
 	let prompt = crate::session::chat::ChatPrompt::new(
 		prompt_left.clone(),
 		indicator.clone(),
@@ -499,6 +515,12 @@ pub fn read_user_input(
 
 	// Clone line_state for use in the loop (original moved into edit_mode)
 	let line_state_for_check = line_state.clone();
+
+	// Flush any keypresses that piled up during animation. ECHO was already
+	// off (CtrlCEchoGuard) so the user didn't see them, but the bytes still
+	// sit in stdin's input queue — without this, reedline would consume
+	// them as the next prompt's input.
+	crate::utils::term_echo::drain_stdin();
 
 	// Read line with reedline
 	loop {

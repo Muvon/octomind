@@ -188,62 +188,105 @@ pub async fn get_tool_server_name_async(tool_name: &str, _config: &Config) -> St
 	"unknown".to_string()
 }
 
-// Display execution intent with headers upfront (before execution)
-async fn display_tool_parameters_only(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
-	if !tool_calls.is_empty() {
-		// Always log debug info if debug enabled
-		log_debug!("Found {} tool calls in response", tool_calls.len());
+// Print a single param as `{prefix} key  value`, with `value` bounded to a
+// reasonable display length so long paths/contents never blow up the layout.
+fn print_preview_param(prefix: &str, key: &str, key_width: usize, value: &serde_json::Value) {
+	let formatted = preview_value(value);
+	println!(
+		"{}{} {}",
+		prefix,
+		format!("{:width$}", key, width = key_width).bright_black(),
+		formatted,
+	);
+}
 
-		let is_single_tool = tool_calls.len() == 1;
-
-		// Show headers upfront - with indices for multiple tools, without for single tool
-		for (index, call) in tool_calls.iter().enumerate() {
-			let tool_index = index + 1;
-
-			// Get server name using same logic as execution
-			let server_name = get_tool_server_name_async(&call.tool_name, config).await;
-
-			// Create formatted header - with or without index based on tool count
-			let title = if is_single_tool {
+// Compact (single-line, length-bounded) rendering of a param value for the
+// upfront preview. Strings get `"…"` truncation, arrays show first element
+// + count, objects collapse to `{…}`. Newlines are flattened to spaces.
+fn preview_value(v: &serde_json::Value) -> String {
+	const MAX_STR: usize = 60;
+	match v {
+		serde_json::Value::String(s) => {
+			let cleaned = s.replace('\n', " ");
+			if cleaned.chars().count() > MAX_STR {
 				format!(
-					" {} | {} ",
-					call.tool_name.bright_cyan(),
-					server_name.bright_blue()
+					"\"{}…\"",
+					cleaned.chars().take(MAX_STR - 1).collect::<String>()
 				)
 			} else {
-				format!(
-					" [{}] {} | {} ",
-					tool_index,
-					call.tool_name.bright_cyan(),
-					server_name.bright_blue()
-				)
-			};
-			let separator_length = 70.max(title.len() + 4);
-			let dashes = "─".repeat(separator_length - title.len());
-			let separator = format!("──{}{}──", title, dashes.dimmed());
-			println!("{}", separator);
-
-			// Show parameters based on log level
-			if config.get_log_level().is_debug_enabled() || config.get_log_level().is_info_enabled()
-			{
-				display_tool_parameters_full(call, config);
-			}
-
-			// Add spacing between tools (except for the last one)
-			if index < tool_calls.len() - 1 {
-				println!();
+				format!("\"{}\"", cleaned)
 			}
 		}
-
-		// Add final spacing before execution starts
-		println!();
+		serde_json::Value::Array(a) => {
+			if a.is_empty() {
+				"[]".to_string()
+			} else if a.len() == 1 {
+				format!("[{}]", preview_value(&a[0]))
+			} else {
+				format!("[{}, +{}]", preview_value(&a[0]), a.len() - 1)
+			}
+		}
+		serde_json::Value::Object(_) => "{…}".to_string(),
+		serde_json::Value::Null => "null".to_string(),
+		_ => v.to_string(),
 	}
 }
 
-// Display tool parameters in full detail (for info/debug modes)
-pub fn display_tool_parameters_full(tool_call: &crate::mcp::McpToolCall, config: &Config) {
-	// Delegate to shared implementation
-	crate::session::chat::tool_display::display_tool_parameters_full(tool_call, config);
+// Upfront preview before execution. Only fires when there's more than one
+// tool — a single tool gets nothing here and its full block opens at result
+// time.
+//
+// Layout for parallel tools:
+//
+//   ╭ tools
+//   │ ▸ tool1 · server
+//   │     key  value
+//   │     key  value
+//   │ ▸ tool2 · server
+//   │     key  value
+//   ╰ N queued
+//
+// Indented params let parallel `view` calls be distinguished without an
+// inline `(k=v, k=v)` that would truncate badly for long paths.
+async fn display_tool_preview(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
+	if tool_calls.len() < 2 {
+		return;
+	}
+	log_debug!("Found {} tool calls in response", tool_calls.len());
+
+	let sep = "·".bright_black();
+	let rail = "│".bright_black();
+	// One indent step under `│ ▸` — keeps params visually nested without
+	// burning horizontal space.
+	let param_prefix = format!("{}  ", rail);
+
+	println!("{} {}", "╭".bright_cyan(), "tools".bright_cyan());
+	for call in tool_calls {
+		let server_name = get_tool_server_name_async(&call.tool_name, config).await;
+		println!(
+			"{} {} {} {} {}",
+			rail,
+			"▸".bright_cyan(),
+			call.tool_name.bright_cyan(),
+			sep,
+			server_name.bright_blue(),
+		);
+		if let Ok(params) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+			call.parameters.clone(),
+		) {
+			let key_width = params.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
+			for (k, v) in params.iter() {
+				print_preview_param(&param_prefix, k, key_width, v);
+			}
+		}
+	}
+	println!(
+		"{} {} {}",
+		"╰".bright_cyan(),
+		tool_calls.len(),
+		"queued".bright_black(),
+	);
+	println!();
 }
 
 // Helper function to resolve current tool calls
@@ -415,9 +458,13 @@ pub async fn process_response<S: OutputSink>(
 					);
 				}
 
-				// Display tool parameters upfront (headers will be shown per-tool during execution) - ONLY in interactive mode
+				// Upfront preview: full `╭ tool · server` block + params per tool
+				// (NEW format, no `╰` yet — block is "open"). When each result
+				// arrives, the result section prints the output + `╰ ✓ tool …`
+				// close line without re-rendering the header. For long-running
+				// or hung tools, the user always sees what's currently running.
 				if params.mode.is_interactive() {
-					display_tool_parameters_only(params.config, &current_tool_calls).await;
+					display_tool_preview(params.config, &current_tool_calls).await;
 				}
 
 				// Start animation during tool execution so the user sees progress feedback.

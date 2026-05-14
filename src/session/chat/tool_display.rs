@@ -34,67 +34,75 @@ pub async fn display_individual_tool_header_with_params(
 	.await;
 }
 
-/// Display individual tool header with optional execution context (layer/agent)
+/// Display individual tool header with optional execution context (layer/agent).
+/// Format: `╭ tool · server [· context]` — corner glyph opens the block,
+/// the result line (printed by the executor) closes it with `╰`. Params are
+/// indented under the header.
 pub async fn display_individual_tool_header_with_context(
 	tool_name: &str,
 	stored_tool_call: &Option<crate::mcp::McpToolCall>,
 	config: &Config,
-	tool_index: usize,
+	_tool_index: usize,
 	execution_context: Option<&str>, // e.g., "layer_name" or "agent_context_gatherer"
 ) {
-	// Get server name using same logic as execution
 	let server_name =
 		crate::session::chat::response::get_tool_server_name_async(tool_name, config).await;
 
-	// Create formatted header with optional context suffix
-	let title = if let Some(context) = execution_context {
+	let corner = "╭".bright_cyan();
+	let sep = "·".bright_black();
+	let header = if let Some(context) = execution_context {
 		format!(
-			" [{}] {} | {} | {} ",
-			tool_index,
+			"{} {} {} {} {} {}",
+			corner,
 			tool_name.bright_cyan(),
+			sep,
 			server_name.bright_blue(),
-			context.bright_yellow()
+			"·".bright_black(),
+			context.bright_yellow(),
 		)
 	} else {
 		format!(
-			" [{}] {} | {} ",
-			tool_index,
+			"{} {} {} {}",
+			corner,
 			tool_name.bright_cyan(),
-			server_name.bright_blue()
+			sep,
+			server_name.bright_blue(),
 		)
 	};
+	println!("{}", header);
 
-	let separator_length = 70.max(title.len() + 4);
-	let dashes = "─".repeat(separator_length - title.len());
-	let separator = format!("──{}{}──", title, dashes.dimmed());
-	println!("{}", separator);
-
-	// Show parameters if available and log level allows
+	// Show parameters if available and log level allows. Indented 3 cells
+	// under the corner so the block reads as `╭ tool …` + `   k v` lines.
 	if let Some(tool_call) = stored_tool_call {
 		if config.get_log_level().is_info_enabled() || config.get_log_level().is_debug_enabled() {
 			display_tool_parameters_full(tool_call, config);
-			println!(); // Extra newline after parameters for better spacing
 		}
 	}
 }
 
-/// Display tool output in smart format (for info mode)
+/// Display tool output in smart format with `│ ` rail prefix on each line,
+/// creating visual continuity between the `╭` header and `╰` close in a
+/// tool result block.
 pub fn display_tool_output_smart(output_str: &str) {
+	let rail = "│".bright_black();
 	let lines: Vec<&str> = output_str.lines().collect();
 
 	if lines.len() <= 20 && output_str.chars().count() <= 2000 {
-		// Small output: show as-is
-		println!("{}", output_str);
-	} else if lines.len() > 20 {
-		// Many lines: show first 15 lines + summary
-		for line in lines.iter().take(15) {
-			println!("{}", line);
+		for line in &lines {
+			println!("{} {}", rail, line);
 		}
-		println!("... [{} more lines]", lines.len().saturating_sub(15));
+	} else if lines.len() > 20 {
+		for line in lines.iter().take(15) {
+			println!("{} {}", rail, line);
+		}
+		println!(
+			"{} {}",
+			rail,
+			format!("... [{} more lines]", lines.len().saturating_sub(15)).bright_black(),
+		);
 	} else {
-		// Long single line or few long lines: truncate
 		let truncated: String = output_str.chars().take(1997).collect();
-		println!("{}...", truncated);
+		println!("{} {}...", rail, truncated);
 	}
 }
 
@@ -112,20 +120,21 @@ pub fn display_tool_parameters_full(tool_call: &crate::mcp::McpToolCall, config:
 				.unwrap_or(0)
 				.min(20);
 
+			let rail = "│".bright_black();
 			for (key, value) in params_obj.iter() {
 				let formatted_value = if config.get_log_level().is_debug_enabled() {
-					// Debug mode: Show full value
 					format_parameter_value_full(value)
 				} else {
-					// Info mode: Show smart formatted value
 					format_parameter_value_smart(value)
 				};
 
-				// Format with proper column alignment and indentation
+				// `│ key  value` — rail connects `╭` header to `╰` close,
+				// key dim, value default fg, separator is plain spaces.
 				println!(
-					"{}: {}",
-					format!("{:width$}", key, width = max_key_length).bright_blue(),
-					formatted_value.white()
+					"{} {} {}",
+					rail,
+					format!("{:width$}", key, width = max_key_length).bright_black(),
+					formatted_value
 				);
 			}
 		}
@@ -133,15 +142,14 @@ pub fn display_tool_parameters_full(tool_call: &crate::mcp::McpToolCall, config:
 		// Fallback for non-object parameters (arrays, primitives, etc.)
 		let params_str = serde_json::to_string(&tool_call.parameters).unwrap_or_default();
 		if params_str != "null" {
+			let rail = "│".bright_black();
 			if config.get_log_level().is_debug_enabled() {
-				// Debug mode: Show full params
-				println!("params: {}", params_str);
+				println!("{} {} {}", rail, "params".bright_black(), params_str);
 			} else if params_str.chars().count() > 100 {
-				// Info mode: Truncate long params
 				let truncated: String = params_str.chars().take(97).collect();
-				println!("params: {}...", truncated);
+				println!("{} {} {}...", rail, "params".bright_black(), truncated);
 			} else {
-				println!("params: {}", params_str);
+				println!("{} {} {}", rail, "params".bright_black(), params_str);
 			}
 		}
 	}

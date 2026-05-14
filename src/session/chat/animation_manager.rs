@@ -431,13 +431,14 @@ impl Default for AnimationManager {
 	}
 }
 
-/// Build a spinner message: shared status body + label. The spinner tick
-/// character (`⠋⠙⠹⠸…`) is the left-edge marker for this line — drawn by
-/// indicatif's template — so the body has no `▍`. The prompt's input line
-/// owns `▍` as its own line-leader.
+/// Build a spinner message: status body (plain, no embedded ANSI) + label.
+/// The template's `{msg:.cyan}` directive paints the entire message cyan —
+/// matching the original spinner appearance. Inline ANSI in the body would
+/// locally override the cyan and break uniform line coloring, so we use the
+/// plain body here and rely on glyph contrast for the bar.
 fn build_spinner_message(cost_bits: u64, ctx: u64, thresh: u64, label: &str) -> String {
 	let cost = cost_bits as f64 / 10000.0;
-	let body = crate::session::chat::status_prefix::build_status_body(cost, ctx, thresh);
+	let body = crate::session::chat::status_prefix::build_status_body_plain(cost, ctx, thresh);
 	if body.is_empty() {
 		label.to_string()
 	} else {

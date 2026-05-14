@@ -100,3 +100,36 @@ pub fn build_prompt_prefix(cost: f64, context_tokens: u64, max_threshold: u64) -
 		format!("{} {}", marker, body)
 	}
 }
+
+/// Same status body but with no embedded ANSI codes. Used by the spinner
+/// so indicatif's `{msg:.cyan}` template directive paints the whole line
+/// uniformly cyan (the original spinner color). Filled vs empty bar cells
+/// rely on glyph contrast (`▰` vs `▱`) alone, since any inline ANSI here
+/// would locally override the template's cyan.
+pub fn build_status_body_plain(cost: f64, context_tokens: u64, max_threshold: u64) -> String {
+	let pct = if max_threshold > 0 {
+		Some((context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0))
+	} else {
+		None
+	};
+
+	let plain_bar = |pct: f64| -> String {
+		const CELLS: usize = 5;
+		let filled = (((pct / 100.0) * CELLS as f64).ceil() as usize).min(CELLS);
+		let mut out = String::with_capacity(CELLS * 3);
+		for _ in 0..filled {
+			out.push('▰');
+		}
+		for _ in 0..(CELLS - filled) {
+			out.push('▱');
+		}
+		out
+	};
+
+	match (cost > 0.0, pct) {
+		(true, Some(pct)) => format!("${:.2} {} {:.1}%", cost, plain_bar(pct), pct),
+		(true, None) => format!("${:.2} · ∞", cost),
+		(false, Some(pct)) => format!("{} {:.1}%", plain_bar(pct), pct),
+		(false, None) => String::new(),
+	}
+}

@@ -121,6 +121,120 @@ fn display_shortcuts_help() {
 	let _ = std::io::stdout().flush();
 }
 
+/// Strip ANSI CSI escape sequences from a string.
+fn strip_ansi(s: &str) -> String {
+	let mut out = String::with_capacity(s.len());
+	let mut in_esc = false;
+	for c in s.chars() {
+		if in_esc {
+			if c.is_ascii_alphabetic() {
+				in_esc = false;
+			}
+			continue;
+		}
+		if c == '\x1b' {
+			in_esc = true;
+			continue;
+		}
+		out.push(c);
+	}
+	out
+}
+
+/// Approximate display width: char count of ANSI-stripped string.
+/// Underestimates for wide chars (CJK, emoji), which is the safe direction —
+/// we only ever clear rows we know reedline rendered.
+fn display_cols(s: &str) -> usize {
+	strip_ansi(s).chars().count()
+}
+
+/// Number of terminal rows reedline used to render the prompt+input.
+/// Returns 0 if it couldn't be determined (callers should skip redraw).
+fn rendered_rows(
+	prompt_left: &str,
+	indicator: &str,
+	multiline: &str,
+	line: &str,
+	term_w: usize,
+) -> usize {
+	if term_w == 0 {
+		return 0;
+	}
+	let first_prefix = display_cols(prompt_left) + display_cols(indicator);
+	let cont_prefix = display_cols(multiline);
+	let mut rows = 0usize;
+	for (i, l) in line.split('\n').enumerate() {
+		let prefix = if i == 0 { first_prefix } else { cont_prefix };
+		let combined = (prefix + display_cols(l)).max(1);
+		rows += combined.div_ceil(term_w);
+	}
+	rows
+}
+
+/// Re-render a just-submitted user input as a styled history marker,
+/// replacing reedline's plain rendering. Call immediately after
+/// `Signal::Success` returns, while the cursor is on the line below the
+/// rendered prompt+input.
+///
+/// Style: bright-blue left bar (▌) + italic message text. No background,
+/// so it's resize-stable in scrollback and reads clearly on any terminal
+/// theme.
+///
+/// No-op for empty input. Best-effort: silently bails if terminal size or
+/// I/O fails.
+fn highlight_submitted_input(prompt_left: &str, indicator: &str, multiline: &str, line: &str) {
+	use crossterm::{cursor, queue, terminal};
+
+	if line.trim().is_empty() {
+		return;
+	}
+	let Ok((term_w_u16, _)) = crossterm::terminal::size() else {
+		return;
+	};
+	let term_w = term_w_u16 as usize;
+	if term_w < 4 {
+		return;
+	}
+
+	let rows = rendered_rows(prompt_left, indicator, multiline, line, term_w);
+	if rows == 0 {
+		return;
+	}
+
+	let mut out = std::io::stdout();
+	if queue!(
+		out,
+		cursor::MoveUp(rows as u16),
+		cursor::MoveToColumn(0),
+		terminal::Clear(terminal::ClearType::FromCursorDown),
+	)
+	.is_err()
+	{
+		return;
+	}
+	let _ = out.flush();
+
+	// Bright-blue left bar (▍) + italic message text. One marker at the start
+	// of the line is enough to make user messages stand out in history.
+	// No background, so it's resize-stable and works on any terminal theme.
+	let marker = "\x1b[94m▍\x1b[39m"; // bright blue ▍, then reset fg only
+	let italic_on = "\x1b[3m";
+	let reset = "\x1b[0m";
+
+	// Continuation prefix aligns under the message text (▍=1 cell + space).
+	let cont_pad = "  ";
+
+	for (i, raw_line) in line.split('\n').enumerate() {
+		let prefix = if i == 0 {
+			format!("{} {}", marker, italic_on)
+		} else {
+			format!("{}{}", cont_pad, italic_on)
+		};
+		println!("{}{}{}", prefix, raw_line, reset);
+	}
+	let _ = std::io::stdout().flush();
+}
+
 fn calculate_context_percentage(
 	current_context_tokens: u64,
 	max_session_tokens_threshold: usize,
@@ -382,7 +496,7 @@ pub fn read_user_input(
 		format!("{} ", prompt_text).bright_blue().to_string()
 	};
 	let prompt = crate::session::chat::ChatPrompt::new(
-		prompt_left,
+		prompt_left.clone(),
 		"〉".bright_blue().to_string(),
 		reverse_search_active,
 	);
@@ -402,6 +516,10 @@ pub fn read_user_input(
 					display_shortcuts_help();
 					continue;
 				}
+
+				// Replace reedline's plain echo of the submitted input with a
+				// dim-background highlight so it stands out as a history marker.
+				highlight_submitted_input(&prompt_left, "〉", "  ", &line);
 
 				// Check if this is an "add without sending" request (Ctrl+G)
 				// and drain any clipboard blobs auto-attached via Ctrl+V.

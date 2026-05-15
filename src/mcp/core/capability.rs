@@ -1073,7 +1073,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		match activate_capability_inline(&cap.name, config).await {
 			Ok(servers) => {
 				crate::log_info!(
-					"capability auto-activated: '{}' (score {:.2}) — servers: [{}]",
+					"· capability auto-activated: '{}' (score {:.2}) — servers: [{}]",
 					cap.name,
 					score,
 					servers.join(", ")

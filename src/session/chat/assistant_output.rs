@@ -52,6 +52,13 @@ pub fn print_assistant_response(
 		return;
 	}
 
+	// Frame the assistant block with a dim horizontal rule above and below so
+	// the reply is visually distinct from system notes (`·`-prefixed) and from
+	// the prompt status line (`▍`-prefixed). Per-line markers would fight the
+	// markdown renderer (code blocks, tables); a top/bottom rule does not.
+	let rule = "─────".bright_black();
+	println!("{}", rule);
+
 	if config.enable_markdown_rendering && is_markdown_content(&content_to_display) {
 		// Use markdown rendering with theme from config
 		let theme = config.markdown_theme.parse().unwrap_or_default();
@@ -70,4 +77,6 @@ pub fn print_assistant_response(
 		// Use plain text with color
 		println!("{}", content_to_display.bright_green());
 	}
+
+	println!("{}", rule);
 }

@@ -620,7 +620,8 @@ async fn auto_activate_skill(
 			if !suppress && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
 				use colored::Colorize;
 				eprintln!(
-					"{} {} {}",
+					"{} {} {} {}",
+					"·".bright_black(),
 					"Using skill:".dimmed(),
 					name.bright_cyan(),
 					format!("[{}]", trigger).dimmed()

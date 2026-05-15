@@ -545,7 +545,11 @@ async fn execute_tools_with_context(
 					continue;
 				}
 
-				// Display task error in consolidated format for other errors
+				// Display task error in consolidated format for other errors —
+				// `display_tool_error` already prints a framed `╭ … ╰ ✗` block
+				// with the error summary on the close line, so no extra raw
+				// `println!` is needed below (that would just spill outside
+				// the visual block as an unframed line).
 				display_tool_error(
 					&stored_tool_call,
 					&tool_name,
@@ -556,10 +560,6 @@ async fn execute_tools_with_context(
 					context.execution_context(),
 				)
 				.await;
-
-				if !mode.should_suppress_cli_output() {
-					println!("✗ Task error for '{}': {}", tool_name, e);
-				}
 
 				// ALWAYS add error result for task failures too (unless it was a user decline)
 				let error_result = crate::mcp::McpToolResult::error(
@@ -836,28 +836,47 @@ async fn display_tool_success(
 		}
 	}
 
-	// Close line: `╰ ✓ tool Xms · N tokens` — tool name identifies which
-	// tool finished when results arrive out of order.
+	// Close line: `╰ ✓ tool Xms · N tokens [· truncated to MK]` — tool name
+	// identifies which tool finished when results arrive out of order. When
+	// the response will be truncated by `mcp_response_tokens_threshold`, the
+	// indicator is appended inline (yellow) instead of dumping a separate
+	// `⚠️ … response truncated …` line below the block.
 	if !mode.should_suppress_cli_output() {
 		let content = res.extract_content();
 		let token_count = crate::session::token_counter::estimate_tokens(&content);
 		let formatted_tokens = crate::session::chat::format_number(token_count as u64);
 
 		use colored::Colorize;
+		let threshold = config.mcp_response_tokens_threshold;
+		let truncated_suffix = if threshold > 0 && token_count > threshold {
+			let formatted_threshold = crate::session::chat::format_number(threshold as u64);
+			format!(
+				" {} {}",
+				"·".bright_black(),
+				format!("truncated to {} tokens", formatted_threshold).bright_yellow()
+			)
+		} else {
+			String::new()
+		};
 		println!(
-			"{} {} {} {}ms {} {} tokens",
+			"{} {} {} {}ms {} {} tokens{}",
 			"╰".bright_cyan(),
 			"✓".bright_green(),
 			params.tool_name.bright_cyan(),
 			tool_time_ms,
 			"·".bright_black(),
 			formatted_tokens,
+			truncated_suffix,
 		);
 	}
 }
 
 // Display tool error in consolidated format. Matches the success layout:
-// re-rendered header + `╰ ✗ tool: error` close.
+// re-rendered header + optional body lines under a `│ ` rail + `╰ ✗ tool:
+// summary` close. The body rail is essential when the error message spans
+// multiple lines (e.g. a `view` on a directory returns a one-line summary
+// plus the directory listing as a hint) — without it, every line after the
+// first prints raw and breaks the visual block.
 async fn display_tool_error(
 	stored_tool_call: &Option<crate::mcp::McpToolCall>,
 	tool_name: &str,
@@ -881,18 +900,30 @@ async fn display_tool_error(
 	.await;
 
 	use colored::Colorize;
+	let error_text = error.to_string();
+	let mut lines = error_text.lines();
+	let summary = lines.next().unwrap_or("").to_string();
+	let body: String = lines.collect::<Vec<&str>>().join("\n");
+	if !body.is_empty() {
+		crate::session::chat::tool_display::display_tool_output_smart(&body);
+	}
 	println!(
 		"{} {} {}: {}",
 		"╰".bright_cyan(),
 		"✗".bright_red(),
 		tool_name.bright_red(),
-		error,
+		summary,
 	);
 }
 
 // Handle user-declined large output in chat session
 fn handle_declined_in_session(tool_id: &str, chat_session: &mut ChatSession) {
-	println!("⚠ Tool output declined by user - removing tool call from conversation");
+	use colored::Colorize;
+	println!(
+		"{} {}",
+		"⚠".bright_yellow(),
+		"Tool output declined by user — removing tool call from conversation".bright_yellow()
+	);
 
 	// CRITICAL FIX: Remove the tool_use block from the assistant message
 	// to prevent "tool_use ids found without tool_result blocks" error

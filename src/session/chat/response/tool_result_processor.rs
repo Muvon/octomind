@@ -115,22 +115,11 @@ pub async fn process_tool_results(
 			&tool_content,
 			config.mcp_response_tokens_threshold,
 		);
-		if was_truncated {
-			let is_terminal = crate::config::with_thread_config(|c| c.output_mode())
-				.unwrap_or(crate::session::output::OutputMode::NonInteractive)
-				.is_terminal_mode();
-			if is_terminal {
-				use colored::Colorize;
-				eprintln!(
-					"{}",
-					format!(
-						"⚠️  Tool '{}' response truncated to {} tokens (mcp_response_tokens_threshold)",
-						tool_result.tool_name, config.mcp_response_tokens_threshold
-					)
-					.bright_yellow()
-				);
-			}
-		}
+		// Truncation marker is rendered inline on each tool's close line in
+		// `display_tool_success` (e.g. `╰ ✓ view 55ms · 6.9K tokens · truncated
+		// to 4K tokens`). Re-printing a separate `⚠️ … truncated …` line here
+		// would duplicate the warning and break the framed block.
+		let _ = was_truncated;
 
 		// Use the new add_tool_message method which handles token tracking properly
 		// NOTE: Compression intentionally does NOT run mid-loop here. Compressing while

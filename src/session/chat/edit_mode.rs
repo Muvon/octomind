@@ -67,8 +67,12 @@ impl EmacsWithShortcutHelp {
 		// Image preview: hand-built Kitty graphics (q=2 silent) or iTerm2 OSC 1337.
 		// Both are full-quality and emit no terminal response, so reedline's input
 		// stream stays clean. Returns None on terminals without graphics support
-		// → falls back to text-only label.
-		let preview = match &item {
+		// → falls back to text-only label. The `u32` is the estimated cell-row
+		// count: graphics escapes contain no `\n`s, but reedline's ExternalPrinter
+		// counts newlines to know how far to scroll the prompt — without padding,
+		// the redraw lands on top of the rendered image when the input buffer
+		// already has typed content.
+		let preview: Option<(String, u32)> = match &item {
 			PendingClipboardItem::Image(att) => ImageProcessor::render_inline_escape(att),
 			PendingClipboardItem::Video(_) => None,
 		};
@@ -78,7 +82,17 @@ impl EmacsWithShortcutHelp {
 		}
 
 		let payload = match preview {
-			Some(esc) => format!("\x1b[36m{}\x1b[0m\n{}", label, esc.trim_end_matches('\n')),
+			Some((esc, rows)) => {
+				// Pad with `rows` newlines so reedline's prompt redraw scrolls
+				// past the rendered image instead of overwriting it.
+				let pad = "\n".repeat(rows as usize);
+				format!(
+					"\x1b[36m{}\x1b[0m\n{}{}",
+					label,
+					esc.trim_end_matches('\n'),
+					pad
+				)
+			}
 			None => format!("\x1b[36m{}\x1b[0m", label),
 		};
 		let _ = self.notifier.print(payload);

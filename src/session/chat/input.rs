@@ -233,13 +233,40 @@ fn highlight_submitted_input(prompt_left: &str, indicator: &str, multiline: &str
 	// Continuation prefix aligns under the message text (▍=1 cell + space).
 	let cont_pad = "  ";
 
-	for (i, raw_line) in line.split('\n').enumerate() {
-		let prefix = if i == 0 {
-			format!("{} {}", marker, italic_on)
-		} else {
-			format!("{}{}", cont_pad, italic_on)
-		};
-		println!("{}{}{}", prefix, raw_line, reset);
+	// Manually wrap each logical line to the available width so EVERY visual
+	// row carries either the `▍` marker (first row) or the alignment pad
+	// (continuation rows). If we let the terminal wrap, wrap-rows fall under
+	// no prefix and the message visually merges with surrounding output.
+	// Prefix width = 2 cells (`▍ ` or `  `); wrap budget is term_w - 2.
+	let wrap_w = term_w.saturating_sub(2).max(1);
+
+	let mut first_visual_row = true;
+	for raw_line in line.split('\n') {
+		// Split by char count, matching `display_cols`'s width model (safe
+		// underestimate for wide chars — we only ever wrap earlier, never
+		// past the right edge).
+		let chars: Vec<char> = raw_line.chars().collect();
+		if chars.is_empty() {
+			// Preserve blank lines from explicit `\n\n` in user input.
+			let prefix = if first_visual_row {
+				format!("{} {}", marker, italic_on)
+			} else {
+				format!("{}{}", cont_pad, italic_on)
+			};
+			println!("{}{}", prefix, reset);
+			first_visual_row = false;
+			continue;
+		}
+		for chunk in chars.chunks(wrap_w) {
+			let prefix = if first_visual_row {
+				format!("{} {}", marker, italic_on)
+			} else {
+				format!("{}{}", cont_pad, italic_on)
+			};
+			let text: String = chunk.iter().collect();
+			println!("{}{}{}", prefix, text, reset);
+			first_visual_row = false;
+		}
 	}
 	let _ = std::io::stdout().flush();
 }

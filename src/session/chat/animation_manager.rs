@@ -165,12 +165,17 @@ impl AnimationManager {
 	where
 		F: FnOnce() -> R,
 	{
-		let spinner_guard = self.spinner.lock().unwrap();
-		if let Some(ref pb) = *spinner_guard {
-			pb.suspend(f)
-		} else {
-			drop(spinner_guard);
-			f()
+		// Clone the ProgressBar handle out under the mutex, then DROP the
+		// guard before calling `pb.suspend(f)`.  Holding `self.spinner`
+		// across `suspend` deadlocks the moment `f` reenters any spinner-
+		// aware macro (println!/print!/eprintln!) — every reentrant call
+		// would block on the same `std::sync::Mutex`.  ProgressBar itself
+		// is cheaply cloneable (Arc inside) and safe to suspend from any
+		// thread without holding our mutex.
+		let pb = self.spinner.lock().unwrap().clone();
+		match pb {
+			Some(pb) => pb.suspend(f),
+			None => f(),
 		}
 	}
 

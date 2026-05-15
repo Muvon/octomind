@@ -63,7 +63,13 @@ pub fn print_assistant_response(
 		// Use markdown rendering with theme from config
 		let theme = config.markdown_theme.parse().unwrap_or_default();
 		let renderer = MarkdownRenderer::with_theme(theme);
-		match renderer.render_and_print(&content_to_display) {
+		// termimad writes directly to stdout via `skin.print_text`, bypassing
+		// our spinner-aware print macros. Suspend the spinner around the whole
+		// render so the working-spinner row doesn't leak above the response.
+		let result = crate::utils::terminal_output::with_suspended_spinner(|| {
+			renderer.render_and_print(&content_to_display)
+		});
+		match result {
 			Ok(_) => {
 				// Successfully rendered as markdown
 			}

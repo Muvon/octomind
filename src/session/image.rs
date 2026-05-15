@@ -305,7 +305,16 @@ impl ImageProcessor {
 	///
 	/// Returns `None` on terminals without inline-graphics support so the caller
 	/// can fall back to a text-only notification.
-	pub fn render_inline_escape(attachment: &ImageAttachment) -> Option<String> {
+	///
+	/// Returns `(escape, estimated_cell_rows)`. The row count is the caller's
+	/// hint to reserve vertical space when printing through reedline's
+	/// `ExternalPrinter`: reedline counts `\n`s in the payload to know how far
+	/// to scroll its prompt, but inline-graphics escapes contain ZERO newlines
+	/// yet occupy real cell-rows on screen. Without padding, when the input
+	/// buffer already holds typed text the redraw lands on top of the rendered
+	/// image and corrupts the layout. Caller appends `rows` newlines to the
+	/// payload to give reedline an accurate row count.
+	pub fn render_inline_escape(attachment: &ImageAttachment) -> Option<(String, u32)> {
 		let ImageData::Base64(ref data) = attachment.data else {
 			return None;
 		};
@@ -319,10 +328,24 @@ impl ImageProcessor {
 		// fails for any reason.
 		let preview_b64 = Self::shrink_for_preview(data).unwrap_or_else(|_| data.clone());
 		let cols = 40_u32;
-		Some(match proto {
+
+		// Estimate rendered cell-rows from image aspect ratio. Terminal cells
+		// are roughly 2:1 (height : width), so a `cols`-wide preview renders
+		// at roughly `cols / 2 * (img_h / img_w)` cell-rows. Fallback to a
+		// conservative 10 rows if the source dimensions are unknown.
+		let rows = match attachment.dimensions {
+			Some((w, h)) if w > 0 => {
+				let r = (cols as f32 * 0.5 * (h as f32 / w as f32)).ceil() as u32;
+				r.clamp(1, 30)
+			}
+			_ => 10,
+		};
+
+		let escape = match proto {
 			InlineProtocol::Kitty => Self::build_kitty_escape(&preview_b64, cols),
 			InlineProtocol::ITerm2 => Self::build_iterm2_escape(&preview_b64, cols),
-		})
+		};
+		Some((escape, rows))
 	}
 
 	/// Decode the base64 PNG, resize so the longer side is ≤ 320 px, re-encode

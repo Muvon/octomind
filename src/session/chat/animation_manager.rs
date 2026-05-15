@@ -165,16 +165,31 @@ impl AnimationManager {
 	where
 		F: FnOnce() -> R,
 	{
-		// Clone the ProgressBar handle out under the mutex, then DROP the
-		// guard before calling `pb.suspend(f)`.  Holding `self.spinner`
-		// across `suspend` deadlocks the moment `f` reenters any spinner-
-		// aware macro (println!/print!/eprintln!) — every reentrant call
-		// would block on the same `std::sync::Mutex`.  ProgressBar itself
-		// is cheaply cloneable (Arc inside) and safe to suspend from any
-		// thread without holding our mutex.
+		// Clone the ProgressBar out from under our mutex BEFORE calling
+		// `pb.suspend(f)`. Holding `self.spinner` across `suspend` would
+		// deadlock the moment `f` reenters via shadowed print macros.
+		//
+		// Callers must NOT nest `with_suspended_spinner`: indicatif's
+		// `pb.suspend()` takes an internal RwLock and is not reentrant.
+		// Wrap only the leaf write that bypasses our shadowed print macros
+		// (e.g. a foreign-crate API that writes directly to stdout).
+		//
+		// We also flush stdout/stderr INSIDE the suspend closure before
+		// returning. indicatif draws on stderr (unbuffered) but our caller
+		// writes the user-visible text on stdout (line-buffered to a TTY).
+		// Without an explicit flush, indicatif's redraw can land on the
+		// terminal BEFORE the stdout bytes do, so the spinner re-paints on
+		// the same row the caller meant to write — leaving residue like
+		// "Working … ─────" glued together.
 		let pb = self.spinner.lock().unwrap().clone();
 		match pb {
-			Some(pb) => pb.suspend(f),
+			Some(pb) => pb.suspend(|| {
+				let r = f();
+				use std::io::Write;
+				let _ = std::io::stdout().flush();
+				let _ = std::io::stderr().flush();
+				r
+			}),
 			None => f(),
 		}
 	}

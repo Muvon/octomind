@@ -665,10 +665,14 @@ impl MarkdownRenderer {
 		let mut last_end = 0;
 
 		for cap in code_block_regex.captures_iter(markdown) {
-			// Render content before this code block with termimad
+			// Render content before this code block with termimad.
+			// `skin.print_text` writes straight to stdout and bypasses our
+			// shadowed print macros, so suspend the spinner explicitly here.
 			let before_content = &markdown[last_end..cap.get(0).unwrap().start()];
 			if !before_content.trim().is_empty() {
-				self.skin.print_text(before_content);
+				crate::utils::terminal_output::with_suspended_spinner(|| {
+					self.skin.print_text(before_content);
+				});
 			}
 
 			let language = cap.get(1).map(|m| m.as_str()).unwrap_or("text");
@@ -702,10 +706,13 @@ impl MarkdownRenderer {
 			last_end = cap.get(0).unwrap().end();
 		}
 
-		// Render remaining content after last code block
+		// Render remaining content after last code block.
+		// Same reason as above: termimad bypasses our shadowed macros.
 		let remaining_content = &markdown[last_end..];
 		if !remaining_content.trim().is_empty() {
-			self.skin.print_text(remaining_content);
+			crate::utils::terminal_output::with_suspended_spinner(|| {
+				self.skin.print_text(remaining_content);
+			});
 		}
 
 		Ok(())

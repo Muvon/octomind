@@ -3,28 +3,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 280" width="1020" height="280" shape-rendering="crispEdges">
   <!-- icon: 480x480 source placed at (20,20), scaled 0.5 → 240x240 -->
   <g transform="translate(20 20) scale(0.5)">
-    <path d="M75 255H45V285H75V255Z" fill="#A855F7"/>
-    <path d="M75 135H45V165H75V135Z" fill="#A855F7"/>
-    <path d="M195 105H134V135H195V105Z" fill="#A855F7"/>
-    <path d="M345 105H285V135H345V105Z" fill="#A855F7"/>
-    <path d="M375 135H104V165H375V135Z" fill="#A855F7"/>
-    <path d="M435 165H45V195H435V165Z" fill="#A855F7"/>
-    <path d="M375 195H104V225H375V195Z" fill="#A855F7"/>
-    <path d="M435 225H45V255H435V225Z" fill="#A855F7"/>
-    <path d="M375 255H105V285H375V255Z" fill="#A855F7"/>
-    <path d="M135 285H105V345H135V285Z" fill="#A855F7"/>
-    <path d="M105 315H75V345H105V315Z" fill="#A855F7"/>
-    <path d="M375 285H345V345H375V285Z" fill="#A855F7"/>
-    <path d="M405 315H375V345H405V315Z" fill="#A855F7"/>
-    <path d="M315 315H285V345H315V315Z" fill="#A855F7"/>
-    <path d="M435 255H405V285H435V255Z" fill="#A855F7"/>
-    <path d="M198 315H168V345H198V315Z" fill="#A855F7"/>
-    <path d="M225 285H195V345H225V285Z" fill="#A855F7"/>
-    <path d="M285 285H255V345H285V285Z" fill="#A855F7"/>
-    <path d="M255 135H225V285H255V135Z" fill="#C084FC"/>
-    <path d="M194 195H164V225H194V195Z" fill="#22D3EE"/>
-    <path d="M315 195H285V225H315V195Z" fill="#22D3EE"/>
-    <path d="M435 135H405V165H435V135Z" fill="#A855F7"/>
+    <path d="M384 48H96V96H384V48Z" fill="#A855F7"/>
+    <path d="M408 96H72V192H408V96Z" fill="#A855F7"/>
+    <path d="M192 144H144V192H192V144Z" fill="#22D3EE"/>
+    <path d="M336 144H288V192H336V144Z" fill="#22D3EE"/>
+    <path d="M408 192H72V240H408V192Z" fill="#A855F7"/>
+    <path d="M384 240H96V288H384V240Z" fill="#A855F7"/>
+    <path d="M120 288H72V384H120V288Z" fill="#A855F7"/>
+    <path d="M216 288H168V384H216V288Z" fill="#A855F7"/>
+    <path d="M312 288H264V384H312V288Z" fill="#A855F7"/>
+    <path d="M408 288H360V384H408V288Z" fill="#A855F7"/>
+    <path d="M96 384H72V432H96V384Z" fill="#A855F7"/>
+    <path d="M192 384H168V432H192V384Z" fill="#A855F7"/>
+    <path d="M288 384H264V432H288V384Z" fill="#A855F7"/>
+    <path d="M384 384H360V432H384V384Z" fill="#A855F7"/>
   </g>
 
   <!-- pixel wordmark: 5x7 OCTOMIND, pixel=15px (matches icon grain), centered vertically -->

@@ -1,0 +1,57 @@
+<svg width="480" height="480" viewBox="0 0 480 480" fill="none" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <!-- ─ Static head body — same as octomind-icon.svg ─ -->
+  <path d="M384 48H96V96H384V48Z" fill="#A855F7"/>
+  <path d="M408 96H72V192H408V96Z" fill="#A855F7"/>
+  <path d="M408 192H72V240H408V192Z" fill="#A855F7"/>
+  <path d="M384 240H96V288H384V240Z" fill="#A855F7"/>
+
+  <!-- ─ Eyes (cyan) — 4s cycle: center → look-left → center → look-right → blink ─ -->
+  <!-- Both eyes animate in sync (octopus moves both eyes together). -->
+  <rect x="144" y="144" width="48" height="48" fill="#22D3EE">
+    <animate attributeName="x"
+             values="144;120;144;168;144"
+             keyTimes="0;0.2;0.5;0.8;1"
+             dur="4s" repeatCount="indefinite" calcMode="discrete"/>
+    <animate attributeName="opacity"
+             values="1;1;0;1"
+             keyTimes="0;0.88;0.9;1"
+             dur="4s" repeatCount="indefinite" calcMode="discrete"/>
+  </rect>
+  <rect x="288" y="144" width="48" height="48" fill="#22D3EE">
+    <animate attributeName="x"
+             values="288;264;288;312;288"
+             keyTimes="0;0.2;0.5;0.8;1"
+             dur="4s" repeatCount="indefinite" calcMode="discrete"/>
+    <animate attributeName="opacity"
+             values="1;1;0;1"
+             keyTimes="0;0.88;0.9;1"
+             dur="4s" repeatCount="indefinite" calcMode="discrete"/>
+  </rect>
+
+  <!-- ─ Tentacle shafts (static) ─ -->
+  <path d="M120 288H72V384H120V288Z" fill="#A855F7"/>
+  <path d="M216 288H168V384H216V288Z" fill="#A855F7"/>
+  <path d="M312 288H264V384H312V288Z" fill="#A855F7"/>
+  <path d="M408 288H360V384H408V288Z" fill="#A855F7"/>
+
+  <!-- ─ Tentacle tips — 0.8s wave cycle, sequential begin offsets travel a wave across ─ -->
+  <!-- Each tip snaps left/right every 0.4s. The 0.2s stagger between adjacent
+       tentacles creates a propagating wave (like an octopus undulating its
+       arms while station-keeping). -->
+  <rect x="72" y="384" width="24" height="48" fill="#A855F7">
+    <animate attributeName="x" values="72;96;72" keyTimes="0;0.5;1"
+             dur="0.8s" repeatCount="indefinite" calcMode="discrete" begin="0s"/>
+  </rect>
+  <rect x="168" y="384" width="24" height="48" fill="#A855F7">
+    <animate attributeName="x" values="168;192;168" keyTimes="0;0.5;1"
+             dur="0.8s" repeatCount="indefinite" calcMode="discrete" begin="0.2s"/>
+  </rect>
+  <rect x="264" y="384" width="24" height="48" fill="#A855F7">
+    <animate attributeName="x" values="264;288;264" keyTimes="0;0.5;1"
+             dur="0.8s" repeatCount="indefinite" calcMode="discrete" begin="0.4s"/>
+  </rect>
+  <rect x="360" y="384" width="24" height="48" fill="#A855F7">
+    <animate attributeName="x" values="360;384;360" keyTimes="0;0.5;1"
+             dur="0.8s" repeatCount="indefinite" calcMode="discrete" begin="0.6s"/>
+  </rect>
+</svg>

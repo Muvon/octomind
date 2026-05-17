@@ -35,6 +35,40 @@ use colored::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+/// RAII bundle of per-session listeners that must outlive the session loop.
+///
+/// Dropping this releases the inject-listener socket and all webhook listeners
+/// in one go. Callers bind to a `_guards` local to keep both alive for the
+/// session's lifetime.
+struct SessionRuntimeGuards {
+	_inject: crate::session::inject_listener::InjectListenerGuard,
+	_webhooks: Vec<crate::session::webhook_listener::WebhookListenerGuard>,
+}
+
+/// Boot the per-session runtime services shared by interactive and
+/// non-interactive paths: session-scoped service registry, plan/schedule
+/// restoration, inject-listener socket, and webhook listeners.
+///
+/// Returns RAII guards the caller MUST hold for the session's lifetime —
+/// dropping them stops the listeners.
+async fn init_session_runtime(
+	args: &super::params::GenericSessionArgs,
+	config: &Config,
+	chat_session: &ChatSession,
+	role: &str,
+) -> Result<SessionRuntimeGuards> {
+	crate::session::context::init_session_services(role);
+	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
+	crate::mcp::core::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
+	let inject =
+		crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
+	let webhooks = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
+	Ok(SessionRuntimeGuards {
+		_inject: inject,
+		_webhooks: webhooks,
+	})
+}
+
 /// Cancel any in-flight cache-keepalive task and fold its harvested ping costs
 /// into the session. Returns `true` when at least one ping was folded — callers
 /// that persist post-fold (session save) check this to skip a no-op write.
@@ -193,17 +227,7 @@ pub async fn run_interactive_session(
 			crate::mcp::initialize_mcp_for_role_with_callback(&role, config, Some(&cb)).await?;
 		}
 
-		crate::session::context::init_session_services(&role);
-
-		crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
-		crate::mcp::core::schedule::core::restore_schedule_for_session(
-			&chat_session.session.info.name,
-		);
-
-		let _inject_listener =
-			crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
-		let _webhook_guards =
-			start_webhook_guards(args, config, &chat_session.session.info.name).await?;
+		let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let mut chat_session = chat_session;
 		let mut first_message_processed = first_message_processed;
@@ -1358,13 +1382,7 @@ pub async fn run_interactive_session_with_input(
 	crate::session::context::with_session_id(session_id, async move {
 	// MCP init — progress display handled internally when stderr is a terminal
 	crate::mcp::initialize_mcp_for_role(&role, config).await?;
-	crate::session::context::init_session_services(&role);
-	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
-	crate::mcp::core::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
-	// Start inject listener so `octomind send` can push messages into this session
-	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
-	// Start webhook listeners for any --hook flags
-	let _webhook_guards = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
+	let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
 	let daemon = args.daemon;
 	let mut chat_session = chat_session;
 

@@ -18,6 +18,7 @@
 // independently.
 
 use super::knowledge::strip_file_context_from_summary;
+use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 
 /// This combines decision + summarization to reduce latency and cost by 50%
@@ -303,11 +304,7 @@ secondary context.\n\n",
 						// Extract file references from tool arguments
 						// These allow the model to re-read files after compression
 						if let Some(args) = call.get("function").and_then(|f| f.get("arguments")) {
-							super::file_context::extract_file_refs_from_args(
-								name,
-								args,
-								&mut file_refs,
-							);
+							file_context::extract_file_refs_from_args(name, args, &mut file_refs);
 						}
 					}
 				}
@@ -361,7 +358,7 @@ secondary context.\n\n",
 	// These allow the model to re-read critical files after compression
 	if !file_refs.is_empty() {
 		// Merge overlapping ranges and dedupe
-		let merged_refs = super::file_context::merge_file_refs(&file_refs);
+		let merged_refs = file_context::merge_file_refs(&file_refs);
 		if !merged_refs.is_empty() {
 			user_content.push_str("\n**File references (can be re-read on demand):**\n");
 			// Limit to prevent bloat

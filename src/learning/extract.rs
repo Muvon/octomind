@@ -299,6 +299,47 @@ pub fn extract_lessons_detached(
 	});
 }
 
+/// Higher-level convenience wrapper that consolidates the common pre-call prep
+/// shared by /done, /exit, Ctrl+D and auto-compaction:
+///
+/// - early-return when `config.learning.enabled` is false (matches existing site gates),
+/// - derive `project` from the supplied `current_dir` (or process cwd when `None`),
+/// - snapshot `session.messages` for the detached task.
+///
+/// Pass `current_dir = Some(...)` from interactive sessions that thread the
+/// thread-local session cwd; pass `None` to fall back to `std::env::current_dir()`
+/// (auto-compaction / `/done` path).
+pub fn spawn_lesson_extraction(
+	session: &crate::session::chat::session::ChatSession,
+	config: &Config,
+	role: String,
+	current_dir: Option<&std::path::Path>,
+) {
+	if !config.learning.enabled {
+		return;
+	}
+	let owned_cwd;
+	let resolved_dir: Option<&std::path::Path> = match current_dir {
+		Some(p) => Some(p),
+		None => {
+			owned_cwd = std::env::current_dir().ok();
+			owned_cwd.as_deref()
+		}
+	};
+	let project = resolved_dir
+		.and_then(|p| p.file_name())
+		.and_then(|n| n.to_str())
+		.map(String::from)
+		.unwrap_or_else(|| "unknown".to_string());
+	extract_lessons_detached(
+		session.session.messages.clone(),
+		config.clone(),
+		role,
+		project,
+		session.session.info.name.clone(),
+	);
+}
+
 /// LLM call for lesson extraction — no `ChatSession` reference, no cost tracking.
 async fn call_extraction_llm(
 	config: &Config,

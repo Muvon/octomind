@@ -55,17 +55,7 @@ pub async fn handle_done(
 	// Same pattern as /exit and Ctrl+D in main_loop.rs.
 	if config.learning.enabled {
 		let role = crate::config::get_thread_role().unwrap_or_default();
-		let project = std::env::current_dir()
-			.ok()
-			.and_then(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
-			.unwrap_or_else(|| "unknown".to_string());
-		crate::learning::extract::extract_lessons_detached(
-			session.session.messages.clone(),
-			config.clone(),
-			role,
-			project,
-			session.session.info.name.clone(),
-		);
+		crate::learning::extract::spawn_lesson_extraction(session, config, role, None);
 		// Mark as extracted so /exit and Ctrl+D don't double-extract.
 		session.learning_extracted = true;
 		// Reset so next user message triggers fresh injection with new query.

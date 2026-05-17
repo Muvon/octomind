@@ -777,17 +777,11 @@ pub async fn run_interactive_session(
 					// Ctrl+D pressed - graceful exit handled in input.rs
 					// Fire-and-forget learning extraction on exit (skip if /done already extracted)
 					if current_config.learning.enabled && !chat_session.learning_extracted {
-						let project = current_dir
-							.file_name()
-							.and_then(|n| n.to_str())
-							.unwrap_or("unknown")
-							.to_string();
-						crate::learning::extract::extract_lessons_detached(
-							chat_session.session.messages.clone(),
-							current_config.clone(),
+						crate::learning::extract::spawn_lesson_extraction(
+							&chat_session,
+							&current_config,
 							role.clone(),
-							project,
-							chat_session.session.info.name.clone(),
+							Some(&current_dir),
 						);
 					}
 					// Kill any running async jobs
@@ -806,17 +800,11 @@ pub async fn run_interactive_session(
 			if input == "/exit" || input == "/quit" {
 				// Fire-and-forget learning extraction on exit (skip if /done already extracted)
 				if current_config.learning.enabled && !chat_session.learning_extracted {
-					let project = current_dir
-						.file_name()
-						.and_then(|n| n.to_str())
-						.unwrap_or("unknown")
-						.to_string();
-					crate::learning::extract::extract_lessons_detached(
-						chat_session.session.messages.clone(),
-						current_config.clone(),
+					crate::learning::extract::spawn_lesson_extraction(
+						&chat_session,
+						&current_config,
 						role.clone(),
-						project,
-						chat_session.session.info.name.clone(),
+						Some(&current_dir),
 					);
 				}
 				// Kill any running async jobs before exiting

@@ -896,17 +896,7 @@ pub async fn check_and_compress_conversation(
 			.count();
 		if user_msg_count >= config.learning.min_messages_for_intermediate {
 			let role = crate::config::get_thread_role().unwrap_or_default();
-			let project = std::env::current_dir()
-				.ok()
-				.and_then(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
-				.unwrap_or_else(|| "unknown".to_string());
-			crate::learning::extract::extract_lessons_detached(
-				session.session.messages.clone(),
-				config.clone(),
-				role,
-				project,
-				session.session.info.name.clone(),
-			);
+			crate::learning::extract::spawn_lesson_extraction(session, config, role, None);
 		}
 	}
 

@@ -78,7 +78,7 @@ impl KeepaliveHandle {
 		}
 
 		let (provider, actual_model) = ProviderFactory::get_provider_for_model(&model).ok()?;
-		let policy = provider.keepalive_policy(&actual_model, config.use_long_system_cache)?;
+		let policy = provider.keepalive_policy(&actual_model, true)?;
 
 		let (cancel_tx, cancel_rx) = watch::channel(false);
 		let task = tokio::spawn(run(

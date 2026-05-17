@@ -561,10 +561,6 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	);
 	println!("  Markdown theme:            {}", config.markdown_theme);
 	println!(
-		"  MCP response warning:      {} tokens",
-		config.mcp_response_warning_threshold
-	);
-	println!(
 		"  Max session tokens:        {} tokens ({})",
 		config.max_session_tokens_threshold,
 		if config.max_session_tokens_threshold > 0 {
@@ -572,14 +568,6 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		} else {
 			"disabled"
 		}
-	);
-	println!(
-		"  Cache threshold:           {} tokens",
-		config.cache_tokens_threshold
-	);
-	println!(
-		"  Cache timeout:             {} seconds",
-		config.cache_timeout_seconds
 	);
 	println!();
 

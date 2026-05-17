@@ -96,23 +96,11 @@ custom_constraints_file_name = ""
 ## Performance Settings
 
 ```toml
-# Warn when MCP response exceeds this token count (0 = disable)
-mcp_response_warning_threshold = 0
-
 # Hard limit on MCP response tokens (0 = unlimited)
 mcp_response_tokens_threshold = 20000
 
 # Max tokens per session before truncation (0 = disabled)
 max_session_tokens_threshold = 200000
-
-# Cache responses exceeding this token count (0 = no caching)
-cache_tokens_threshold = 2048
-
-# Cache lifetime in seconds
-cache_timeout_seconds = 240
-
-# Use longer cache lifetime for system messages
-use_long_system_cache = true
 
 # Retry configuration
 max_retries = 1

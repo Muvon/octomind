@@ -19,7 +19,6 @@ use crate::log_debug;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::{IsTerminal, Write};
 use std::sync::{Arc, RwLock};
 
 /// Progress events for MCP server initialization
@@ -817,114 +816,6 @@ async fn execute_tool_without_cancellation(
 			available_tools.join(", ")
 		}
 	))
-}
-
-// Helper function to handle large response warnings
-pub async fn handle_large_response(
-	result: McpToolResult,
-	config: &crate::config::Config,
-	mode: crate::session::output::OutputMode,
-) -> Result<McpToolResult> {
-	// Check if result is large - warn user if it exceeds threshold
-	let estimated_tokens = crate::session::estimate_tokens(&result.extract_content());
-	if config.mcp_response_warning_threshold > 0
-		&& estimated_tokens > config.mcp_response_warning_threshold
-	{
-		// Create a modified result that warns about the size
-		use colored::Colorize;
-		let suppress_cli_output = mode.should_suppress_cli_output();
-		let non_interactive = !mode.is_interactive() || !std::io::stdin().is_terminal();
-
-		// Get server name for better identification
-		let server_name =
-			crate::session::chat::response::get_tool_server_name_async(&result.tool_name, config)
-				.await;
-
-		if !suppress_cli_output {
-			println!(
-				"{}",
-				format!(
-					"! WARNING: Tool '{}' ({}){} produced a large output ({} tokens)",
-					result.tool_name,
-					server_name,
-					if !result.tool_id.is_empty() {
-						format!(" [ID: {}]", result.tool_id)
-					} else {
-						String::new()
-					},
-					estimated_tokens
-				)
-				.bright_yellow()
-			);
-			println!(
-				"{}",
-				"This may consume significant tokens and impact your usage limits.".bright_yellow()
-			);
-		}
-
-		// Auto-decline in structured output or non-interactive mode.
-		if suppress_cli_output || non_interactive {
-			if !suppress_cli_output {
-				println!(
-					"{}",
-					format!(
-						"Large output from '{}' ({}) automatically declined in non-interactive mode. Continuing...",
-						result.tool_name, server_name
-					)
-					.bright_red()
-				);
-			}
-			return Ok(McpToolResult::error(
-				result.tool_name.clone(),
-				result.tool_id.clone(),
-				format!("Large output from tool '{}' ({} tokens) was automatically declined in non-interactive mode to avoid excessive token usage. The tool executed successfully but the output was too large.", result.tool_name, estimated_tokens)
-			));
-		}
-
-		// CRITICAL: Suspend animation before prompting user
-		// This prevents animation from covering the prompt and from being restarted
-		// by other code paths while waiting for user input
-		use crate::session::chat::get_animation_manager;
-		let animation_manager = get_animation_manager();
-		animation_manager.suspend().await;
-
-		// Interactive terminal mode - ask user for confirmation before proceeding
-		print!(
-			"{}",
-			"Do you want to continue with this large output? [y/N]: ".bright_cyan()
-		);
-		std::io::stdout().flush().unwrap();
-
-		let mut input = String::new();
-		std::io::stdin().read_line(&mut input).unwrap_or_default();
-
-		// Resume animation now that user input is complete
-		animation_manager.resume();
-
-		if !input.trim().to_lowercase().starts_with('y') {
-			// User declined large output. Return an MCP-compliant error result instead of
-			// breaking the communication flow. This allows the conversation to continue
-			// normally while informing the AI that the user declined the large output.
-			println!(
-				"{}",
-				format!(
-					"Large output from '{}' ({}) declined by user. Continuing conversation...",
-					result.tool_name, server_name
-				)
-				.bright_red()
-			);
-			return Ok(McpToolResult::error(
-				result.tool_name.clone(),
-				result.tool_id.clone(),
-				format!("User declined to process large output from tool '{}' ({} tokens). The tool executed successfully but the output was too large and the user chose not to include it in the conversation to avoid excessive token usage.", result.tool_name, estimated_tokens)
-			));
-		}
-
-		// User confirmed, continue with original result
-		println!("{}", "Proceeding with full output...".bright_green());
-	}
-
-	Ok(result)
 }
 
 // Execute a tool call for a layer/agent context.

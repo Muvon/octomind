@@ -21,12 +21,8 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mcp_response_warning_threshold` | u32 | `0` | Warn when MCP tool response exceeds this token count. `0` = disable. |
 | `mcp_response_tokens_threshold` | u32 | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
 | `max_session_tokens_threshold` | u32 | `200000` | Max tokens per session before truncation. `0` = disabled. |
-| `cache_tokens_threshold` | u32 | `2048` | Cache responses exceeding this token count. `0` = no caching. |
-| `cache_timeout_seconds` | u32 | `240` | Cache lifetime in seconds. |
-| `use_long_system_cache` | bool | `true` | Use longer cache lifetime for system messages. |
 | `max_retries` | u32 | `1` | Retry attempts for API calls. |
 | `retry_timeout` | u32 | `30` | Base timeout in seconds for exponential backoff. |
 | `request_timeout_seconds` | u32 | `300` | Per-request HTTP timeout in seconds. Hard limit on LLM provider API calls. `0` = no timeout. |

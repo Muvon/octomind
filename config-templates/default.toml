@@ -54,9 +54,6 @@ sandbox = false
 # Configure thresholds and performance-related settings
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Warn when MCP tool responses exceed this token count (0 = disable warnings)
-mcp_response_warning_threshold = 0
-
 # Global token limit for ALL MCP tool responses (0 = unlimited)
 # When exceeded, responses are automatically truncated with notice
 mcp_response_tokens_threshold = 20000
@@ -64,22 +61,13 @@ mcp_response_tokens_threshold = 20000
 # Maximum tokens per session before truncation kicks in (0 = disabled, >0 = enabled)
 max_session_tokens_threshold = 200000
 
-# Cache responses when they exceed this token count (0 = no caching)
-cache_tokens_threshold = 2048
-
-# How long to keep cached responses (in seconds)
-cache_timeout_seconds = 240
-
-# Wether to use long system cache (longer cache lifetime)
-use_long_system_cache = true
-
 # Keep the prompt cache warm with periodic pings while the session idles.
 # When you walk away after the AI replies, Octomind sends a minimal request
 # (max_tokens = 1) just before the cache TTL would expire, so the next turn
 # still hits the cache. Each ping costs cache-read tokens, so this is opt-in.
 #
 # Provider-aware: only providers whose API supports refresh-on-read are
-# pinged. Today that's Anthropic (5m or 1h depending on use_long_system_cache).
+# pinged. Today that's Anthropic (1h TTL, always long cache).
 # Other providers (OpenAI implicit cache, Gemini, DeepSeek) are skipped — no
 # wasted requests.
 cache_keepalive_enabled = false

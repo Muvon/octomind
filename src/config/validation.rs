@@ -136,36 +136,11 @@ impl Config {
 	}
 
 	pub fn validate_thresholds(&self) -> Result<()> {
-		// Validate cache tokens threshold (0 is valid for disabling)
-		if self.cache_tokens_threshold > 1_000_000 {
-			return Err(anyhow!(
-				"Cache tokens threshold too high: {}. Maximum allowed: 1,000,000",
-				self.cache_tokens_threshold
-			));
-		}
-
-		// Validate MCP response warning threshold (0 is valid for disabling)
-		if self.mcp_response_warning_threshold > 1_000_000 {
-			return Err(anyhow!(
-				"MCP response warning threshold too high: {}. Maximum allowed: 1,000,000",
-				self.mcp_response_warning_threshold
-			));
-		}
-
 		// Validate max session tokens threshold (0 = disabled, >0 = enabled)
 		if self.max_session_tokens_threshold > 2_000_000 {
 			return Err(anyhow!(
 				"Max session tokens threshold too high: {}. Maximum allowed: 2,000,000",
 				self.max_session_tokens_threshold
-			));
-		}
-
-		// Validate cache timeout
-		if self.cache_timeout_seconds > 86400 {
-			// 24 hours max
-			return Err(anyhow!(
-				"Cache timeout too high: {} seconds. Maximum allowed: 86400 (24 hours)",
-				self.cache_timeout_seconds
 			));
 		}
 

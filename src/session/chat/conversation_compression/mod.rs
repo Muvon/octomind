@@ -882,7 +882,6 @@ pub async fn check_and_compress_conversation(
 		user_tasks_msgs,
 		last_user_message,
 		preserved_skills,
-		config.use_long_system_cache,
 	)
 	.await?;
 
@@ -1494,7 +1493,6 @@ async fn apply_compression(
 	user_tasks_msgs: Vec<String>,
 	last_user_message: Option<crate::session::Message>,
 	preserved_skills: Vec<crate::session::Message>,
-	use_long_cache: bool,
 ) -> Result<()> {
 	// Parse file contexts from AI summary (AI may request specific file ranges to re-inject)
 	let file_contexts = super::file_context::parse_file_contexts(context_summary);
@@ -1591,13 +1589,9 @@ async fn apply_compression(
 	if supports_caching {
 		for (i, msg) in session.session.messages.iter_mut().enumerate() {
 			if i == start_idx {
-				// Anchor: keep marker, set long TTL if supported
+				// Anchor: keep marker, set long TTL (always enabled — Anthropic 1h cache).
 				msg.cached = true;
-				msg.cache_ttl = if use_long_cache {
-					Some("1h".to_string())
-				} else {
-					None
-				};
+				msg.cache_ttl = Some("1h".to_string());
 			} else if msg.cached && msg.role != "system" {
 				msg.cached = false;
 				msg.cache_ttl = None;

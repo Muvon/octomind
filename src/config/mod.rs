@@ -283,11 +283,8 @@ pub struct Config {
 	pub custom_constraints_file_name: String,
 
 	// System-wide configuration settings (not role-specific)
-	pub mcp_response_warning_threshold: usize,
 	pub mcp_response_tokens_threshold: usize,
 	pub max_session_tokens_threshold: usize,
-	pub cache_tokens_threshold: u64,
-	pub cache_timeout_seconds: u64,
 
 	// Keep the provider's prompt cache warm while the session idles between
 	// turns. Off by default — opt in only when the cost of periodic refresh
@@ -310,9 +307,6 @@ pub struct Config {
 	pub max_session_spending_threshold: f64,
 	// Request spending threshold in USD - if > 0, stop execution when exceeded during single request
 	pub max_request_spending_threshold: f64,
-
-	// Use long-term (1h) caching for system messages (strict: must be in config)
-	pub use_long_system_cache: bool,
 
 	// Maximum number of retries for API calls (can be overridden by --max-retries CLI flag)
 	pub max_retries: u32,

@@ -213,12 +213,14 @@ impl CacheManager {
 		Ok(false)
 	}
 
-	/// Check if auto-cache threshold is reached and add marker if needed
-	/// Returns true if a cache marker was added
+	/// Move cache marker to the latest tool/user message on every call.
+	/// Replaces the previous time/token threshold logic — the provider's
+	/// cache TTL governs lifetime; we just keep the marker fresh on every turn.
+	/// Returns true if a marker was added/moved.
 	pub fn check_and_apply_auto_cache_threshold(
 		&self,
 		session: &mut Session,
-		config: &Config,
+		_config: &Config,
 		supports_caching: bool,
 		_role: &str,
 	) -> Result<bool> {
@@ -226,98 +228,44 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// If there are no messages, nothing to do
 		if session.messages.is_empty() {
 			return Ok(false);
 		}
 
-		// Check time-based threshold first
-		let current_time = std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs();
+		// Find the LAST tool message, falling back to the LAST user message.
+		let target_index = session
+			.messages
+			.iter()
+			.enumerate()
+			.rev()
+			.find(|(_, msg)| msg.role == "tool")
+			.or_else(|| {
+				session
+					.messages
+					.iter()
+					.enumerate()
+					.rev()
+					.find(|(_, msg)| msg.role == "user")
+			})
+			.map(|(i, _)| i);
 
-		let time_since_last_cache =
-			current_time.saturating_sub(session.info.last_cache_checkpoint_time);
-
-		if time_since_last_cache >= config.cache_timeout_seconds {
-			// Find the LAST tool message, and if none, the LAST user message
-			let target_index = session
-				.messages
-				.iter()
-				.enumerate()
-				.rev()
-				.find(|(_, msg)| msg.role == "tool")
-				.or_else(|| {
-					session
-						.messages
-						.iter()
-						.enumerate()
-						.rev()
-						.find(|(_, msg)| msg.role == "user")
-				})
-				.map(|(i, _)| i);
-
-			if let Some(index) = target_index {
-				match self.apply_cache_to_message(session, index, supports_caching) {
-					Ok(true) => {
-						return Ok(true);
-					}
-					Ok(false) => {
-						// Even if we couldn't add a marker, update the time to prevent constant attempts
-						session.info.last_cache_checkpoint_time = current_time;
-						return Ok(false);
-					}
-					Err(_) => {
-						// Update time on error too to prevent constant attempts
-						session.info.last_cache_checkpoint_time = current_time;
-						return Ok(false); // Silently fail for auto-cache
-					}
-				}
-			}
-		}
-
-		// Check absolute threshold (only check if > 0, meaning enabled)
-		if config.cache_tokens_threshold > 0
-			&& session.info.current_non_cached_tokens >= config.cache_tokens_threshold
-		{
-			// Find the LAST tool message, and if none, the LAST user message
-			let target_index = session
-				.messages
-				.iter()
-				.enumerate()
-				.rev()
-				.find(|(_, msg)| msg.role == "tool")
-				.or_else(|| {
-					session
-						.messages
-						.iter()
-						.enumerate()
-						.rev()
-						.find(|(_, msg)| msg.role == "user")
-				})
-				.map(|(i, _)| i);
-
-			if let Some(index) = target_index {
-				match self.apply_cache_to_message(session, index, supports_caching) {
-					Ok(true) => return Ok(true),
-					Ok(false) => return Ok(false),
-					Err(_) => return Ok(false), // Silently fail for auto-cache
-				}
-			}
+		if let Some(index) = target_index {
+			return match self.apply_cache_to_message(session, index, supports_caching) {
+				Ok(v) => Ok(v),
+				Err(_) => Ok(false),
+			};
 		}
 
 		Ok(false)
 	}
 
-	/// Check if auto-cache threshold is reached on EACH tool result and add marker if needed
-	/// This should be called after EACH individual tool result is processed, not after all tools
-	/// Returns true if a cache marker was added
-	/// CRITICAL FIX: Ensure this properly accumulates tokens and checks thresholds correctly
+	/// Move cache marker to a specific tool-result message.
+	/// Called after each tool result is appended so the cache window always
+	/// covers the freshest content.
 	pub fn check_and_apply_auto_cache_threshold_on_tool_result(
 		&self,
 		session: &mut Session,
-		config: &Config,
+		_config: &Config,
 		supports_caching: bool,
 		tool_message_index: usize,
 		_role: &str,
@@ -326,12 +274,10 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// Only check thresholds if we have enough messages and the specified index is valid
 		if session.messages.len() <= tool_message_index {
 			return Ok(false);
 		}
 
-		// Verify the message at the index is indeed a tool message
 		if let Some(msg) = session.messages.get(tool_message_index) {
 			if msg.role != "tool" {
 				return Ok(false);
@@ -340,46 +286,10 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// CRITICAL FIX: Check the threshold immediately after the tool result is added
-		// This ensures we're checking against the most up-to-date token counts
-
-		// Check absolute threshold first (only check if > 0, meaning enabled)
-		if config.cache_tokens_threshold > 0
-			&& session.info.current_non_cached_tokens >= config.cache_tokens_threshold
-		{
-			match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
-				Ok(true) => return Ok(true),
-				Ok(false) => return Ok(false),
-				Err(_) => return Ok(false), // Silently fail for auto-cache
-			}
+		match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
+			Ok(v) => Ok(v),
+			Err(_) => Ok(false),
 		}
-
-		// Check time-based threshold
-		let current_time = std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs();
-
-		let time_since_last_cache =
-			current_time.saturating_sub(session.info.last_cache_checkpoint_time);
-
-		if time_since_last_cache >= config.cache_timeout_seconds {
-			match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
-				Ok(true) => return Ok(true),
-				Ok(false) => {
-					// Even if we couldn't add a marker, update the time to prevent constant attempts
-					session.info.last_cache_checkpoint_time = current_time;
-					return Ok(false);
-				}
-				Err(_) => {
-					// Update time on error too to prevent constant attempts
-					session.info.last_cache_checkpoint_time = current_time;
-					return Ok(false); // Silently fail for auto-cache
-				}
-			}
-		}
-
-		Ok(false)
 	}
 
 	/// Update token tracking after API response

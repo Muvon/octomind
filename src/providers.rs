@@ -138,14 +138,12 @@ impl<'a> ChatCompletionParams<'a> {
 
 		let mut octolib_messages = octolib_messages?;
 
-		// Set long cache TTL on system message when configured
-		if self.config.use_long_system_cache {
-			if let Some(sys_msg) = octolib_messages
-				.iter_mut()
-				.find(|m| m.role == "system" && m.cached)
-			{
-				sys_msg.cache_ttl = Some("1h".to_string());
-			}
+		// Long cache TTL on system message — always enabled (Anthropic 1h cache).
+		if let Some(sys_msg) = octolib_messages
+			.iter_mut()
+			.find(|m| m.role == "system" && m.cached)
+		{
+			sys_msg.cache_ttl = Some("1h".to_string());
 		}
 
 		// Some providers (e.g. Gemini, Mistral) require the last message to be from the user.
@@ -186,7 +184,7 @@ impl<'a> ChatCompletionParams<'a> {
 			0 => None,
 			n => Some(std::time::Duration::from_secs(n as u64)),
 		})
-		.with_long_cache(self.config.use_long_system_cache)
+		.with_long_cache(true)
 		.with_reasoning_effort(
 			self.reasoning_effort
 				.unwrap_or(self.config.reasoning_effort)
@@ -217,15 +215,9 @@ impl<'a> ChatCompletionParams<'a> {
 				let system_cached = self.messages.iter().any(|m| m.role == "system" && m.cached);
 				if system_cached && !octolib_tools.is_empty() {
 					if let Some(last_tool) = octolib_tools.last_mut() {
-						// Use same TTL logic as system message
-						let ttl = if self.config.use_long_system_cache {
-							"1h"
-						} else {
-							"5m"
-						};
 						last_tool.cache_control = Some(serde_json::json!({
 							"type": "ephemeral",
-							"ttl": ttl
+							"ttl": "1h"
 						}));
 					}
 				}

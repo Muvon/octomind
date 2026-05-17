@@ -145,12 +145,7 @@ Providers with caching support can reduce costs by caching repeated context:
 - **Anthropic**: Automatic for Claude 3.5+ models. Cache write at 1.25x, read at 0.1x cost.
 - **OpenRouter**: Depends on underlying model.
 
-Configure caching behavior:
-```toml
-cache_tokens_threshold = 2048    # Cache responses > 2048 tokens
-cache_timeout_seconds = 240      # Cache lifetime
-use_long_system_cache = true     # Longer cache for system messages
-```
+Caching is always-on for supporting providers — the cache marker is moved to the latest message on every turn and uses the provider's long (1h) TTL. No configuration required.
 
 ## Cost Tracking
 

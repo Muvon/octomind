@@ -35,6 +35,43 @@ use colored::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+/// Cancel any in-flight cache-keepalive task and fold its harvested ping costs
+/// into the session. Returns `true` when at least one ping was folded — callers
+/// that persist post-fold (session save) check this to skip a no-op write.
+///
+/// Replaces 4 near-identical inline blocks. `on_exit` selects the log wording
+/// for end-of-session drains versus mid-loop pre-turn drains.
+async fn drain_keepalive_into_session(
+	keepalive: &mut Option<KeepaliveHandle>,
+	chat_session: &mut ChatSession,
+	config: &Config,
+	on_exit: bool,
+) -> bool {
+	let Some(handle) = keepalive.take() else {
+		return false;
+	};
+	let exchanges = handle.cancel().await;
+	if exchanges.is_empty() {
+		return false;
+	}
+	let (where_msg, err_msg) = if on_exit {
+		("on session exit", "Failed to track keepalive cost on exit")
+	} else {
+		("into session cost", "Failed to track keepalive cost")
+	};
+	log_debug!(
+		"Cache keepalive: folding {} ping(s) {}",
+		exchanges.len(),
+		where_msg
+	);
+	for exchange in &exchanges {
+		if let Err(e) = CostTracker::track_exchange_cost(chat_session, exchange, config) {
+			log_debug!("{}: {}", err_msg, e);
+		}
+	}
+	true
+}
+
 /// Apply clipboard blobs auto-attached via Ctrl+V to the active session.
 /// Multiple items of the same kind: last one wins (matches `/image` and `/video` semantics).
 fn apply_clipboard_items(
@@ -501,24 +538,8 @@ pub async fn run_interactive_session(
 			// its accumulated cost into the session before we read new input.
 			// Done early so the next read_user_input runs with no background
 			// pings competing for the network or rate-limit budget.
-			if let Some(handle) = keepalive.take() {
-				let exchanges = handle.cancel().await;
-				if !exchanges.is_empty() {
-					log_debug!(
-						"Cache keepalive: folding {} ping(s) into session cost",
-						exchanges.len()
-					);
-					for exchange in &exchanges {
-						if let Err(e) = CostTracker::track_exchange_cost(
-							&mut chat_session,
-							exchange,
-							&current_config,
-						) {
-							log_debug!("Failed to track keepalive cost: {}", e);
-						}
-					}
-				}
-			}
+			drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, false)
+				.await;
 
 			// Flush any due schedule entries into the inbox so all injection sources
 			// are unified — the loop only needs to drain the inbox from here on.
@@ -1318,25 +1339,11 @@ pub async fn run_interactive_session(
 
 		// Session is ending — drain any in-flight keepalive so its cost is
 		// reflected in the persisted session log.
-		if let Some(handle) = keepalive.take() {
-			let exchanges = handle.cancel().await;
-			if !exchanges.is_empty() {
-				log_debug!(
-					"Cache keepalive: folding {} ping(s) on session exit",
-					exchanges.len()
-				);
-				for exchange in &exchanges {
-					if let Err(e) = CostTracker::track_exchange_cost(
-						&mut chat_session,
-						exchange,
-						&current_config,
-					) {
-						log_debug!("Failed to track keepalive cost on exit: {}", e);
-					}
-				}
-				if let Err(e) = chat_session.save() {
-					crate::log_debug!("session save failed: {}", e);
-				}
+		if drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true)
+			.await
+		{
+			if let Err(e) = chat_session.save() {
+				crate::log_debug!("session save failed: {}", e);
 			}
 		}
 
@@ -1721,24 +1728,13 @@ pub async fn run_interactive_session_with_input(
 			// Stop any in-flight keepalive from the previous turn and fold
 			// its cost before we add the new user message — keeps the
 			// session log's cost ordering correct.
-			if let Some(handle) = keepalive.take() {
-				let exchanges = handle.cancel().await;
-				if !exchanges.is_empty() {
-					log_debug!(
-						"Cache keepalive: folding {} ping(s) into session cost",
-						exchanges.len()
-					);
-					for exchange in &exchanges {
-						if let Err(e) = CostTracker::track_exchange_cost(
-							&mut chat_session,
-							exchange,
-							&current_config,
-						) {
-							log_debug!("Failed to track keepalive cost: {}", e);
-						}
-					}
-				}
-			}
+			drain_keepalive_into_session(
+				&mut keepalive,
+				&mut chat_session,
+				&current_config,
+				false,
+			)
+			.await;
 
 			chat_session.add_user_message(&inbox_msg.content)?;
 			prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
@@ -1860,22 +1856,7 @@ pub async fn run_interactive_session_with_input(
 	}
 
 	// Drain any in-flight keepalive so its cost lands in the persisted log.
-	if let Some(handle) = keepalive.take() {
-		let exchanges = handle.cancel().await;
-		if !exchanges.is_empty() {
-			log_debug!(
-				"Cache keepalive: folding {} ping(s) on session exit",
-				exchanges.len()
-			);
-			for exchange in &exchanges {
-				if let Err(e) =
-					CostTracker::track_exchange_cost(&mut chat_session, exchange, &current_config)
-				{
-					log_debug!("Failed to track keepalive cost on exit: {}", e);
-				}
-			}
-		}
-	}
+	drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true).await;
 
 	// Save session before exit
 	if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }

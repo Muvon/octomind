@@ -8,7 +8,6 @@
 use super::backend::create_backend;
 use super::Lesson;
 use crate::config::Config;
-use crate::session::chat::ChatSession;
 use anyhow::Result;
 
 const EXTRACTION_SYSTEM_PROMPT: &str = r#"# Step 1: Decision
@@ -350,7 +349,6 @@ async fn call_extraction_llm(
 
 /// Call the learning LLM (cheap model) for extraction or retrieval prep.
 pub(crate) async fn call_learning_llm(
-	session: &mut ChatSession,
 	config: &Config,
 	model: &str,
 	system_content: String,
@@ -397,7 +395,7 @@ pub(crate) async fn call_learning_llm(
 		config,
 	)
 	.with_max_retries(1)
-	.with_chat_session(session)
+	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;

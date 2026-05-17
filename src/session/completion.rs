@@ -41,8 +41,11 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub max_retries: u32,
 	/// Configuration object
 	pub config: &'a Config,
-	/// Optional chat session for context management
-	pub chat_session: Option<&'a mut crate::session::chat::session::ChatSession>,
+	/// When true, validate against the *full* context window (system prompt +
+	/// tool definitions + messages). When false, validate against the message
+	/// list alone. Callers with an active session should set this so the
+	/// request fails fast before the provider rejects an oversized payload.
+	pub full_context_tokens: bool,
 	/// Cancellation token for request abortion
 	pub cancellation_token: Option<watch::Receiver<bool>>,
 	/// Optional JSON schema for structured output
@@ -71,7 +74,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			max_tokens,
 			max_retries: 0,
 			config,
-			chat_session: None,
+			full_context_tokens: false,
 			cancellation_token: None,
 			schema: None,
 			reasoning_effort: None,
@@ -84,12 +87,12 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 		self
 	}
 
-	/// Set chat session for context management
-	pub fn with_chat_session(
-		mut self,
-		chat_session: &'a mut crate::session::chat::session::ChatSession,
-	) -> Self {
-		self.chat_session = Some(chat_session);
+	/// Enable full-context token validation (system prompt + tools + messages)
+	/// instead of message-only counting. Use this when a real session is
+	/// driving the call — it catches oversized payloads before they reach
+	/// the provider.
+	pub fn with_full_context_tokens(mut self, enabled: bool) -> Self {
+		self.full_context_tokens = enabled;
 		self
 	}
 
@@ -146,7 +149,7 @@ pub async fn chat_completion_with_validation(
 	let max_input_tokens = provider.get_max_input_tokens(&actual_model);
 
 	// Calculate EXACTLY what we're about to send to the API using enhanced token counting
-	let total_input_tokens = if params.chat_session.is_some() {
+	let total_input_tokens = if params.full_context_tokens {
 		// Use enhanced token counting that includes system prompt + tools
 		let tools = crate::mcp::get_available_functions(params.config).await;
 		estimate_full_context_tokens(

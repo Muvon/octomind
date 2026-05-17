@@ -117,7 +117,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
 		let learned_context = crate::learning::inject::retrieve_and_format(
-			chat_session,
 			config,
 			&user_input,
 			role,
@@ -131,13 +130,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
-	// Make API call
-	let messages = chat_session.session.messages.clone();
+	// Make API call. `session.messages` is borrowed directly — no clone — and
+	// the validation params hold that shared borrow only until they're consumed
+	// by `chat_completion_with_validation` below.
 	let max_retries = chat_session.max_retries;
 	let schema = chat_session.schema.clone();
 	let reasoning_effort = chat_session.reasoning_effort;
 	let validation_params = ChatCompletionWithValidationParams::new(
-		&messages,
+		&chat_session.session.messages,
 		&model,
 		temperature,
 		chat_session.top_p,
@@ -146,7 +146,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		&config_clone,
 	)
 	.with_max_retries(max_retries)
-	.with_chat_session(chat_session)
+	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx);
 	let validation_params = if let Some(schema) = schema {
 		validation_params.with_schema(schema)

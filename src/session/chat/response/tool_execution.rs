@@ -16,10 +16,10 @@
 // Unified interface for both main sessions and layers
 
 use crate::config::Config;
+use crate::log_info;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::ToolProcessor;
 use crate::session::output::OutputMode;
-use crate::{log_debug, log_info};
 use anyhow::Result;
 use colored::Colorize;
 use std::io::IsTerminal;
@@ -80,14 +80,6 @@ impl ToolExecutionContext<'_> {
 		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
 			chat_session.session.info.tool_calls += 1;
 		}
-	}
-
-	/// Handle declined output by removing tool call from conversation
-	pub fn handle_declined_output(&mut self, tool_id: &str) {
-		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
-			handle_declined_in_session(tool_id, chat_session);
-		}
-		// For layers, we don't need to modify conversation history
 	}
 }
 
@@ -462,12 +454,6 @@ async fn execute_tools_with_context(
 				Err(e) => {
 					_has_error = true;
 
-					// Check if this is a user-declined large output error
-					if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
-						context.handle_declined_output(&tool_id);
-						continue;
-					}
-
 					// Display error in consolidated format for other errors
 					display_tool_error(
 						&stored_tool_call,
@@ -538,12 +524,6 @@ async fn execute_tools_with_context(
 			},
 			Err(e) => {
 				_has_error = true;
-
-				// Check if this is a user-declined large output error (can occur at task level too)
-				if e.to_string().contains("LARGE_OUTPUT_DECLINED_BY_USER") {
-					context.handle_declined_output(&tool_id);
-					continue;
-				}
 
 				// Display task error in consolidated format for other errors —
 				// `display_tool_error` already prints a framed `╭ … ╰ ✗` block
@@ -914,48 +894,6 @@ async fn display_tool_error(
 		tool_name.bright_red(),
 		summary,
 	);
-}
-
-// Handle user-declined large output in chat session
-fn handle_declined_in_session(tool_id: &str, chat_session: &mut ChatSession) {
-	use colored::Colorize;
-	println!(
-		"{} {}",
-		"⚠".bright_yellow(),
-		"Tool output declined by user — removing tool call from conversation".bright_yellow()
-	);
-
-	// CRITICAL FIX: Remove the tool_use block from the assistant message
-	// to prevent "tool_use ids found without tool_result blocks" error
-	if let Some(last_msg) = chat_session.session.messages.last_mut() {
-		if last_msg.role == "assistant" {
-			if let Some(tool_calls_value) = &last_msg.tool_calls {
-				// Parse the tool_calls and remove the declined one
-				if let Ok(mut tool_calls_array) =
-					serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
-				{
-					// Remove the tool call with matching ID
-					tool_calls_array
-						.retain(|tc| tc.get("id").and_then(|id| id.as_str()) != Some(tool_id));
-
-					// Update the assistant message
-					if tool_calls_array.is_empty() {
-						// No more tool calls, remove the tool_calls field entirely
-						last_msg.tool_calls = None;
-						log_debug!("Removed all tool calls from assistant message after user declined large output");
-					} else {
-						// Update with remaining tool calls
-						last_msg.tool_calls =
-							Some(serde_json::to_value(tool_calls_array).unwrap_or_default());
-						log_debug!(
-							"Removed declined tool call '{}' from assistant message",
-							tool_id
-						);
-					}
-				}
-			}
-		}
-	}
 }
 
 /// Parameters for layer tool execution using the unified parallel logic.

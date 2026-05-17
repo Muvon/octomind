@@ -7,7 +7,6 @@
 
 use super::backend::create_backend;
 use crate::config::Config;
-use crate::session::chat::ChatSession;
 use anyhow::Result;
 
 const FILE_RETRIEVAL_PROMPT: &str = r#"# Task
@@ -30,7 +29,6 @@ Given the user's request below, write a single concise semantic search query to 
 ///
 /// Returns the formatted string to append to the system prompt, or empty string if none.
 pub async fn retrieve_and_format(
-	session: &mut ChatSession,
 	config: &Config,
 	user_input: &str,
 	role: &str,
@@ -52,7 +50,6 @@ pub async fn retrieve_and_format(
 
 	// Prepare retrieval query via LLM (backend-adaptive)
 	let patterns = match prepare_retrieval_query(
-		session,
 		config,
 		user_input,
 		&learning.backend,
@@ -112,7 +109,6 @@ pub async fn retrieve_and_format(
 
 /// Call LLM to prepare retrieval patterns/query based on backend type.
 async fn prepare_retrieval_query(
-	session: &mut ChatSession,
 	config: &Config,
 	user_input: &str,
 	backend_type: &str,
@@ -125,7 +121,6 @@ async fn prepare_retrieval_query(
 	};
 
 	let response = super::extract::call_learning_llm(
-		session,
 		config,
 		model,
 		system.to_string(),

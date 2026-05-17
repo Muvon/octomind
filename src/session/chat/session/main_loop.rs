@@ -1699,6 +1699,15 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 					output_mode,
 				);
 			}
+
+			// Non-interactive (non-daemon) runs must surface API failures (wrong API
+			// key, 401, model not found, etc.) as a non-zero exit so shell scripts,
+			// CI, and external wrappers can detect them. Daemon mode stays
+			// resilient — it logs and keeps listening so transient errors don't
+			// kill the long-running process.
+			if !daemon {
+				return Err(e);
+			}
 		}
 	}
 	} // end if !input.is_empty()
@@ -1834,6 +1843,12 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 				}
 				Err(e) => {
 					log_debug!("Error processing inbox message: {}", e);
+					// Non-daemon non-interactive runs exit non-zero on failure;
+					// daemons keep listening so a single bad turn doesn't kill
+					// the long-running process.
+					if !daemon {
+						return Err(e);
+					}
 				}
 			}
 

@@ -539,7 +539,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 
 		// Start any newly injected servers and register their tools in the tool map.
 		// initialize_mcp_for_role is idempotent: already-running servers and already-registered
-		// tools are skipped via config-hash and is_server_already_running checks.
+		// tools are skipped via config-hash and is_server_already_running_with_config checks.
 		crate::mcp::initialize_mcp_for_role(&self.role, &config_snapshot)
 			.await
 			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;

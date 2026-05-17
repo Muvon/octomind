@@ -1551,6 +1551,33 @@ async fn apply_compression(
 
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;
 
+	// CRITICAL: Capture the most recent assistant response_id from the range we're
+	// about to drain. The Responses API (OpenAI + OctoHub) chains via this id —
+	// the server stores prior turns under it and reconstructs full history from
+	// the chain. If we drain every id-bearing assistant and leave the summary
+	// without one, the next request finds no `previous_id`, falls into the
+	// "initial request" branch of `messages_to_input`, which filters out the
+	// summary (role=assistant) entirely. The model then receives only the
+	// re-injected user turn with zero context — exactly the "lost YES / plan
+	// approval" failure mode. Inheriting the id keeps the server-side chain
+	// intact while local view shrinks for token budget.
+	let inherited_response_id: Option<String> = session.session.messages[start_idx + 1..=end_idx]
+		.iter()
+		.rev()
+		.find(|m| m.role == "assistant" && m.id.is_some())
+		.and_then(|m| m.id.clone());
+
+	if let Some(ref id) = inherited_response_id {
+		log_debug!(
+			"Compression: inheriting last assistant response_id={} onto summary to preserve chain continuity",
+			id
+		);
+	} else {
+		log_debug!(
+			"Compression: no assistant response_id found in drained range; summary will start a fresh chain"
+		);
+	}
+
 	// COMPRESS-ALL: Drain everything from start_idx+1 to end_idx
 	let (messages_removed, _) = session.remove_messages_in_range(start_idx, end_idx)?;
 
@@ -1606,13 +1633,16 @@ async fn apply_compression(
 		);
 	}
 
-	// Summary message (no cache marker — sits between anchor marker and user marker)
+	// Summary message (no cache marker — sits between anchor marker and user marker).
+	// The `id` is inherited from the most recent assistant turn in the drained range
+	// so the provider can chain via `previous_response_id` on the next API call.
 	let summary_msg = crate::session::Message {
 		role: "assistant".to_string(),
 		content: compressed_entry,
 		timestamp: now,
 		cached: false,
 		name: Some("plan_compression".to_string()),
+		id: inherited_response_id,
 		..Default::default()
 	};
 	session

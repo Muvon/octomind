@@ -48,13 +48,6 @@ pub fn guess_tool_category(tool_name: &str) -> &'static str {
 	}
 }
 
-// Parse a model's response to extract tool calls - kept for backward compatibility
-pub fn parse_tool_calls(_content: &str) -> Vec<McpToolCall> {
-	// This function is kept for backward compatibility but is no longer used directly
-	// as we now prefer to pass tool calls directly as structs
-	Vec::new()
-}
-
 // Structure to represent tool responses for OpenAI/Claude format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponseMessage {

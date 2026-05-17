@@ -391,13 +391,12 @@ pub async fn process_tool_results(
 
 	match follow_up_result {
 		Ok(response) => {
-			// Store direct tool calls for efficient processing if they exist
-			let has_more_tools = if let Some(ref calls) = response.tool_calls {
-				!calls.is_empty()
-			} else {
-				// Fall back to parsing if no direct tool calls
-				!crate::mcp::parse_tool_calls(&response.content).is_empty()
-			};
+			// Use structured tool_calls from the API response; the legacy
+			// text-parse fallback never returned anything.
+			let has_more_tools = response
+				.tool_calls
+				.as_ref()
+				.is_some_and(|calls| !calls.is_empty());
 
 			// Debug logging for follow-up finish_reason
 			if let Some(ref reason) = response.finish_reason {

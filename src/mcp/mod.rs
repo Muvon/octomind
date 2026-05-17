@@ -40,8 +40,7 @@ pub mod utils;
 pub mod workdir;
 
 pub use utils::{
-	ensure_tool_call_ids, guess_tool_category, parse_tool_calls, tool_results_to_messages,
-	ToolResponseMessage,
+	ensure_tool_call_ids, guess_tool_category, tool_results_to_messages, ToolResponseMessage,
 };
 pub use workdir::{
 	get_thread_original_working_directory, get_thread_working_directory,

@@ -526,16 +526,10 @@ fn run_dynamic_agent_in_process(
 					anyhow::bail!(crate::session::cancellation::Cancelled);
 				}
 
-				// Resolve tool calls for this iteration
-				let current_tool_calls = if let Some(calls) = current_tool_calls_param.take() {
-					if !calls.is_empty() {
-						calls
-					} else {
-						crate::mcp::parse_tool_calls(&current_content)
-					}
-				} else {
-					crate::mcp::parse_tool_calls(&current_content)
-				};
+				// Resolve tool calls for this iteration. Structured tool_calls from the
+				// API response are authoritative — the legacy fallback to parse them
+				// out of the raw response text never returned anything.
+				let current_tool_calls = current_tool_calls_param.take().unwrap_or_default();
 
 				if current_tool_calls.is_empty() {
 					break;
@@ -630,11 +624,8 @@ fn run_dynamic_agent_in_process(
 							anyhow::bail!(crate::session::cancellation::Cancelled);
 						}
 
-						let has_tool_calls = if let Some(ref calls) = follow_up.tool_calls {
-							!calls.is_empty()
-						} else {
-							!crate::mcp::parse_tool_calls(&follow_up.content).is_empty()
-						};
+						let has_tool_calls =
+							follow_up.tool_calls.as_ref().is_some_and(|c| !c.is_empty());
 
 						let should_continue = crate::session::chat::response::tool_result_processor::check_should_continue(
 						&follow_up,

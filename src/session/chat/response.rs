@@ -292,19 +292,12 @@ async fn display_tool_preview(config: &Config, tool_calls: &[crate::mcp::McpTool
 // Helper function to resolve current tool calls
 fn resolve_tool_calls(
 	current_tool_calls_param: &mut Option<Vec<crate::mcp::McpToolCall>>,
-	current_content: &str,
+	_current_content: &str,
 ) -> Vec<crate::mcp::McpToolCall> {
-	if let Some(calls) = current_tool_calls_param.take() {
-		// Use the tool calls from the API response only once
-		if !calls.is_empty() {
-			calls
-		} else {
-			crate::mcp::parse_tool_calls(current_content) // Fallback
-		}
-	} else {
-		// For follow-up iterations, parse from content if any new tool calls exist
-		crate::mcp::parse_tool_calls(current_content)
-	}
+	// Earlier fallback parsed tool calls out of raw response text. All providers
+	// now return structured `tool_calls`, so the text-parse fallback only ever
+	// returned an empty Vec. Behave the same way without the dead call.
+	current_tool_calls_param.take().unwrap_or_default()
 }
 
 // Helper function to check for cancellation
@@ -595,46 +588,23 @@ pub async fn process_response<S: OutputSink>(
 											 // Moonshot requires reasoning_content for ALL assistant messages with tool calls
 						current_thinking = new_thinking;
 
-						// Check if there are more tools to process
+						// Continue when the follow-up surfaced more structured tool_calls;
+						// otherwise the loop is done. (The earlier text-parse fallback never
+						// returned anything, so no inline-content branch is needed.)
 						if current_tool_calls_param.is_some()
 							&& !current_tool_calls_param.as_ref().unwrap().is_empty()
 						{
-							// Continue processing the new content with tool calls
 							continue;
 						} else {
-							// Check if there are more tool calls in the content itself
-							let more_tools = crate::mcp::parse_tool_calls(&current_content);
-							if !more_tools.is_empty() {
-								// Log if debug mode is enabled
-								log_debug!(
-									"Found {} more tool calls to process in content",
-									more_tools.len()
-								);
-								continue;
-							} else {
-								// No more tool calls, break out of the loop
-								break;
-							}
+							break;
 						}
 					} else {
 						// No follow-up response (cancelled or error), exit
 						return Ok(());
 					}
 				} else {
-					// No tool results - check if there were more tools to execute directly
-					let more_tools = crate::mcp::parse_tool_calls(&current_content);
-					if !more_tools.is_empty() {
-						// Log if debug mode is enabled
-						log_debug!(
-							"Found {} more tool calls to process (no previous tool results)",
-							more_tools.len()
-						);
-						// If there are more tool calls later in the response, continue processing
-						continue;
-					} else {
-						// No more tool calls, exit the loop
-						break;
-					}
+					// No tool results and no follow-up tools to execute — done.
+					break;
 				}
 			} else {
 				// No tool calls in this content, break out of the loop

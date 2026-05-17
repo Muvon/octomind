@@ -311,7 +311,7 @@ fn resolve_tool_calls(
 fn check_cancellation(operation_cancelled: &tokio::sync::watch::Receiver<bool>) -> Result<()> {
 	if *operation_cancelled.borrow() {
 		crate::log_debug!("Operation cancelled by user.");
-		return Err(anyhow::anyhow!("Operation cancelled"));
+		return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 	}
 	Ok(())
 }
@@ -516,7 +516,7 @@ pub async fn process_response<S: OutputSink>(
 						Ok(results) => results,
 						Err(e) => {
 							// Check if this was a cancellation
-							if e.to_string().contains("cancelled")
+							if crate::session::cancellation::is_cancelled(&e)
 								|| *operation_cancelled_clone.borrow()
 							{
 								crate::log_debug!("Operation cancelled by user.");

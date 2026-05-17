@@ -28,7 +28,7 @@ pub async fn prepare_for_api_call(
 ) -> Result<()> {
 	// Check for cancellation before compression
 	if *operation_rx.borrow() {
-		return Err(anyhow::anyhow!("Operation cancelled"));
+		return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 	}
 
 	// Run compression if max_session_tokens_threshold is exceeded

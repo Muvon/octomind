@@ -23,6 +23,29 @@ use std::sync::{Arc, Mutex};
 use tokio::signal;
 use tokio::sync::watch;
 
+/// Typed sentinel for "operation cancelled" results.
+///
+/// Replaces the previous pattern of `anyhow::bail!("Operation cancelled")` +
+/// `e.to_string().contains("Operation cancelled")`. The Display impl preserves
+/// the original message text so log output is unchanged, but callers should
+/// detect cancellation via [`is_cancelled`] rather than string matching.
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("Operation cancelled")]
+pub struct Cancelled;
+
+/// Returns true when `err`'s root cause is a [`Cancelled`] marker or octolib's
+/// `ProviderError::Cancelled` (raised when a provider request is aborted).
+///
+/// Walks the anyhow chain so a cancellation wrapped by `.context(...)` further
+/// up the stack still matches.
+pub fn is_cancelled(err: &anyhow::Error) -> bool {
+	err.chain().any(|c| {
+		c.is::<Cancelled>()
+			|| c.downcast_ref::<octolib::ProviderError>()
+				.is_some_and(|p| matches!(p, octolib::ProviderError::Cancelled))
+	})
+}
+
 /// Manages cancellation state for a session with proper signal handling.
 ///
 /// Uses per-operation watch channels to avoid a race where `reset()` sends

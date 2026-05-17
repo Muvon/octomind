@@ -82,7 +82,7 @@ impl WorkflowOrchestrator {
 			.await?;
 
 			if *operation_cancelled.borrow() {
-				return Err(anyhow::anyhow!("Operation cancelled"));
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 			}
 
 			// Update current input with step output

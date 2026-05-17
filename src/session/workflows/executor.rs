@@ -83,7 +83,7 @@ impl StepExecutor {
 	{
 		Box::pin(async move {
 			if *operation_cancelled.borrow() {
-				return Err(anyhow::anyhow!("Operation cancelled"));
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 			}
 
 			crate::log_debug!(
@@ -208,7 +208,7 @@ impl StepExecutor {
 				current_input = substep_result.output;
 
 				if *operation_cancelled.borrow() {
-					return Err(anyhow::anyhow!("Operation cancelled"));
+					return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 				}
 			}
 
@@ -264,7 +264,7 @@ impl StepExecutor {
 				current_input = substep_result.output;
 
 				if *operation_cancelled.borrow() {
-					return Err(anyhow::anyhow!("Operation cancelled"));
+					return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 				}
 			}
 

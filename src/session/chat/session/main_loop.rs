@@ -655,7 +655,7 @@ pub async fn run_interactive_session(
 							.await
 							{
 								Ok(()) => {}
-								Err(e) if e.to_string().contains("Operation cancelled") => {
+								Err(e) if crate::session::cancellation::is_cancelled(&e) => {
 									continue;
 								}
 								Err(e) => return Err(e),
@@ -1130,7 +1130,7 @@ pub async fn run_interactive_session(
 				.await
 			{
 				Ok(()) => {}
-				Err(e) if e.to_string().contains("Operation cancelled") => continue,
+				Err(e) if crate::session::cancellation::is_cancelled(&e) => continue,
 				Err(e) => return Err(e),
 			}
 

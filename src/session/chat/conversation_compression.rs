@@ -719,7 +719,7 @@ pub async fn check_and_compress_conversation(
 
 	// Check for cancellation before starting compression (which involves an API call)
 	if *operation_rx.borrow() {
-		return Err(anyhow::anyhow!("Operation cancelled"));
+		return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 	}
 
 	// Show animation immediately to avoid perceived lag during decision/summary call

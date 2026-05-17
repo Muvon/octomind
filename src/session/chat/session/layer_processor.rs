@@ -79,8 +79,7 @@ pub async fn process_layers_if_enabled(
 				current_input = output;
 			}
 			Err(e) => {
-				let error_msg = e.to_string();
-				if error_msg.contains("cancelled") {
+				if crate::session::cancellation::is_cancelled(&e) {
 					crate::log_debug!("Pipeline cancelled by user.");
 					println!("{}", "Pipeline cancelled.".yellow());
 					return Ok((input.to_string(), false, true));
@@ -125,10 +124,7 @@ pub async fn process_layers_if_enabled(
 			}
 			Err(e) => {
 				// Check if this is a cancellation error - if so, propagate it to main loop
-				let error_msg = e.to_string();
-				if error_msg.contains("Operation cancelled")
-					|| error_msg.contains("Request cancelled")
-				{
+				if crate::session::cancellation::is_cancelled(&e) {
 					// This is a cancellation error - handle gracefully and continue session
 					crate::log_debug!("Operation cancelled by user.");
 					println!("{}", "Continuing with original input.".yellow());

@@ -449,7 +449,7 @@ fn run_dynamic_agent_in_process(
 		use crate::session::{ChatCompletionWithValidationParams, Message};
 
 		if *operation_cancelled.borrow() {
-			anyhow::bail!("Operation cancelled");
+			anyhow::bail!(crate::session::cancellation::Cancelled);
 		}
 
 		let effective_model = agent
@@ -498,7 +498,7 @@ fn run_dynamic_agent_in_process(
 		let response = crate::session::chat_completion_with_validation(validation_params).await?;
 
 		if *operation_cancelled.borrow() {
-			anyhow::bail!("Operation cancelled");
+			anyhow::bail!(crate::session::cancellation::Cancelled);
 		}
 
 		let mut current_content = response.content;
@@ -512,7 +512,7 @@ fn run_dynamic_agent_in_process(
 
 			loop {
 				if *operation_cancelled.borrow() {
-					anyhow::bail!("Operation cancelled");
+					anyhow::bail!(crate::session::cancellation::Cancelled);
 				}
 
 				// Resolve tool calls for this iteration
@@ -570,7 +570,7 @@ fn run_dynamic_agent_in_process(
 				.await?;
 
 				if *operation_cancelled.borrow() {
-					anyhow::bail!("Operation cancelled");
+					anyhow::bail!(crate::session::cancellation::Cancelled);
 				}
 
 				if tool_results.is_empty() {
@@ -616,7 +616,7 @@ fn run_dynamic_agent_in_process(
 				match crate::session::chat_completion_with_validation(follow_up_params).await {
 					Ok(follow_up) => {
 						if *operation_cancelled.borrow() {
-							anyhow::bail!("Operation cancelled");
+							anyhow::bail!(crate::session::cancellation::Cancelled);
 						}
 
 						let has_tool_calls = if let Some(ref calls) = follow_up.tool_calls {

@@ -763,9 +763,7 @@ pub async fn run_interactive_session(
 					log_debug!("Input cancelled by user - cleaning up");
 
 					// Kill any running async jobs
-					if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
-						manager.kill_all();
-					}
+					crate::mcp::agent::functions::kill_all_jobs();
 
 					// Ensure session is saved
 					if let Err(e) = chat_session.save() {
@@ -785,9 +783,7 @@ pub async fn run_interactive_session(
 						);
 					}
 					// Kill any running async jobs
-					if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
-						manager.kill_all();
-					}
+					crate::mcp::agent::functions::kill_all_jobs();
 					// Ensure session is saved
 					if let Err(e) = chat_session.save() {
 						log_debug!("Warning: Failed to save session: {}", e);
@@ -808,9 +804,7 @@ pub async fn run_interactive_session(
 					);
 				}
 				// Kill any running async jobs before exiting
-				if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
-					manager.kill_all();
-				}
+				crate::mcp::agent::functions::kill_all_jobs();
 				// Show resume command with session ID
 				let resume_cmd =
 					format!("octomind run --resume {}", chat_session.session.info.name)
@@ -1646,9 +1640,7 @@ pub async fn run_interactive_session_with_input(
 		}
 		Err(e) => {
 			// Kill any running async jobs on error/cancellation
-			if let Some(manager) = crate::mcp::agent::functions::get_job_manager() {
-				manager.kill_all();
-			}
+			crate::mcp::agent::functions::kill_all_jobs();
 
 			let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
 				OutputMode::Jsonl

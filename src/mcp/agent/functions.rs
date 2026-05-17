@@ -65,6 +65,17 @@ pub fn get_job_manager() -> Option<Arc<BackgroundJobManager>> {
 	JOB_MANAGER.get().cloned()
 }
 
+/// Kill all running background jobs for the current context.
+///
+/// No-op when no job manager is registered (CLI mode pre-bootstrap, or
+/// non-session contexts). Centralises the `get_job_manager() + kill_all()`
+/// idiom used across exit/cancel paths.
+pub fn kill_all_jobs() {
+	if let Some(manager) = get_job_manager() {
+		manager.kill_all();
+	}
+}
+
 /// Get all available agent functions based on config.
 ///
 /// Each agent becomes a separate MCP tool (e.g., `agent_context_gatherer`).

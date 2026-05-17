@@ -18,15 +18,11 @@
 // update anchor + token bookkeeping. Pure side-effects on `ChatSession`.
 
 use super::decision::estimate_future_turns;
-use super::knowledge::{
-	extract_and_store_knowledge, format_compressed_entry_with_context,
-	strip_file_context_from_summary, strip_knowledge_tags,
-};
-use crate::config::Config;
+use super::knowledge::format_compressed_entry_with_context;
+use crate::log_debug;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 use crate::session::estimate_tokens;
-use crate::{log_debug, log_info};
 use anyhow::Result;
 
 /// Apply compression: drain all messages, insert summary, re-inject recent user messages.
@@ -317,15 +313,6 @@ pub(super) async fn apply_compression(
 	Ok(())
 }
 
-/// Format final compressed entry with optional file context
-// `format_compressed_entry_with_context` is the only knowledge-submodule helper
-// directly invoked by `apply_compression` here. The others
-// (`extract_and_store_knowledge`, `strip_file_context_from_summary`,
-// `strip_knowledge_tags`) are reached via the `ai` and `prompt` submodules.
-use knowledge::format_compressed_entry_with_context;
-
-/// Parse all <done>...</done> tags from AI compression response.
-/// Returns task IDs (e.g. "task1", "task2") that the AI marked as fully completed.
 /// Collect active skill messages from a compression drain range so they can be
 /// re-inserted after the summary. Skill messages are user-role entries whose
 /// content is wrapped in `<skill name="...">…</skill>` tags.

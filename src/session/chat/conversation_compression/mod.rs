@@ -47,7 +47,6 @@ use range::{calculate_range_tokens, find_compression_range};
 use crate::config::Config;
 use crate::session::chat::get_animation_manager;
 use crate::session::chat::session::ChatSession;
-use crate::session::estimate_tokens;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 

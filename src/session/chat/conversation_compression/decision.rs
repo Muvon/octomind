@@ -19,10 +19,9 @@
 // decide whether compression is profitable considering cache-invalidation
 // costs vs. future savings over the predicted remaining turns.
 
-use crate::config::Config;
+use crate::log_debug;
 use crate::session::chat::session::ChatSession;
 use crate::session::estimate_tokens;
-use crate::log_debug;
 
 /// Calculate net benefit of compression using realistic cost analysis with REAL pricing
 ///

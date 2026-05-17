@@ -59,40 +59,15 @@ async fn print_command_output(
 	output.display_cli(session, config).await;
 }
 
-/// Extract webhook hook names from the Debug representation of session args.
-fn extract_hooks_from_args<T: std::fmt::Debug>(args: &T) -> Vec<String> {
-	let args_str = format!("{:?}", args);
-	// Match: hooks: ["name1", "name2"]
-	if let Some(start) = args_str.find("hooks: [") {
-		let inner_start = start + 8;
-		if let Some(end) = args_str[inner_start..].find(']') {
-			let hooks_str = &args_str[inner_start..inner_start + end];
-			return hooks_str
-				.split(',')
-				.filter_map(|s| {
-					let trimmed = s.trim().trim_matches('"');
-					if trimmed.is_empty() {
-						None
-					} else {
-						Some(trimmed.to_string())
-					}
-				})
-				.collect();
-		}
-	}
-	Vec::new()
-}
-
 /// Start webhook listeners for all activated hooks.
 /// Returns RAII guards that stop the listeners on drop.
-async fn start_webhook_guards<T: std::fmt::Debug>(
-	args: &T,
+async fn start_webhook_guards(
+	args: &super::params::GenericSessionArgs,
 	config: &Config,
 	session_name: &str,
 ) -> Result<Vec<crate::session::webhook_listener::WebhookListenerGuard>> {
-	let hook_names = extract_hooks_from_args(args);
-	let mut guards = Vec::with_capacity(hook_names.len());
-	for hook_name in &hook_names {
+	let mut guards = Vec::with_capacity(args.hooks.len());
+	for hook_name in &args.hooks {
 		let hook_config = config.get_hook_by_name(hook_name).ok_or_else(|| {
 			anyhow::anyhow!(
 				"Hook '{}' not found in config. Define it in [[hooks]].",
@@ -114,7 +89,10 @@ async fn start_webhook_guards<T: std::fmt::Debug>(
 }
 
 // Run an interactive session
-pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Config) -> Result<()> {
+pub async fn run_interactive_session(
+	args: &super::params::GenericSessionArgs,
+	config: &Config,
+) -> Result<()> {
 	// Suppress the tty driver's `^C` echo for the lifetime of the session.
 	// Otherwise the spinner's last drawn row gets stranded in scrollback when
 	// the echoed `^C` auto-wraps off the indicatif-padded line and our clear
@@ -1366,8 +1344,8 @@ pub async fn run_interactive_session<T: std::fmt::Debug>(args: &T, config: &Conf
 }
 
 // Run a single non-interactive session with provided input
-pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
-	args: &T,
+pub async fn run_interactive_session_with_input(
+	args: &super::params::GenericSessionArgs,
 	config: &Config,
 	initial_input: &str,
 ) -> Result<()> {
@@ -1396,8 +1374,7 @@ pub async fn run_interactive_session_with_input<T: std::fmt::Debug>(
 	let _inject_listener = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	// Start webhook listeners for any --hook flags
 	let _webhook_guards = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
-	// Parse daemon flag from args debug string
-	let daemon = format!("{:?}", args).contains("daemon: true");
+	let daemon = args.daemon;
 	let mut chat_session = chat_session;
 
 	// Setup system prompt and cache using helper function (non-interactive mode)

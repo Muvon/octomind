@@ -15,7 +15,7 @@
 // Session setup and initialization utilities
 
 use super::core::{ChatSession, SessionInitParams};
-use super::params::extract_session_params;
+use super::params::GenericSessionArgs;
 use crate::config::Config;
 use crate::log_info;
 use crate::providers::ProviderFactory;
@@ -59,8 +59,8 @@ fn display_random_tip() -> String {
 }
 
 // Helper function to setup session parameters and initialize chat session
-pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
-	args: &T,
+pub async fn setup_and_initialize_session(
+	args: &GenericSessionArgs,
 	config: &Config,
 ) -> Result<(
 	ChatSession,
@@ -73,21 +73,25 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 
 	let is_interactive = std::io::stdin().is_terminal();
 
-	// Extract session parameters
-	let (
-		name,
-		resume,
-		resume_recent,
-		model,
-		max_tokens,
-		temperature,
-		role,
-		max_retries,
-		output_mode,
-		system_file,
-		instructions_file,
-		schema_file,
-	) = extract_session_params(args, config);
+	// Read session parameters directly off the args struct.
+	let name = args.name.clone();
+	let resume = args.resume.clone();
+	let resume_recent = args.resume_recent;
+	let model = args.model.clone();
+	let max_tokens = args.max_tokens;
+	let temperature = args.temperature;
+	let role = if args.role.is_empty() {
+		"core".to_string()
+	} else {
+		args.role.clone()
+	};
+	let max_retries = args.max_retries;
+	// Normalize unknown modes to "plain" — preserves prior validation behavior.
+	let output_mode = if args.mode == "jsonl" || args.mode == "websocket" {
+		args.mode.clone()
+	} else {
+		"plain".to_string()
+	};
 
 	// Validate role exists before doing anything — give a clean error instead of a panic
 	if !config.has_role(&role) {
@@ -153,24 +157,6 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 
 	// Get the merged configuration for the specified role
 	let mut config_for_role = config.get_merged_config_for_role(&role);
-
-	// Apply CLI overrides directly into config_for_role — single injection point, no downstream changes
-	if let Some(ref path) = system_file {
-		match std::fs::read_to_string(path) {
-			Ok(content) => {
-				log_info!("Overriding system prompt from file: {}", path);
-				// Mutate the role entry so create_system_prompt picks it up via get_role_config()
-				if let Some(role_entry) = config_for_role.role_map.get_mut(&role) {
-					role_entry.config.system = content;
-				}
-			}
-			Err(e) => log_info!("Failed to read --system file {}: {}", path, e),
-		}
-	}
-	if let Some(ref path) = instructions_file {
-		// Use absolute path — Path::join with absolute path ignores the base, so existing logic works
-		config_for_role.custom_instructions_file_name = path.clone();
-	}
 
 	// Store resolved output_mode in config for later use (animation decisions, etc.)
 	// Resolve "plain" → "interactive" when running in a terminal
@@ -292,26 +278,6 @@ pub async fn setup_and_initialize_session<T: std::fmt::Debug>(
 			"Using runtime max_retries override: {}",
 			runtime_max_retries
 		);
-	}
-
-	// Load and apply schema for structured output if provided via --schema
-	if let Some(ref path) = schema_file {
-		match std::fs::read_to_string(path) {
-			Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-				Ok(schema) => {
-					log_info!("Using structured output schema from: {}", path);
-					chat_session.schema = Some(schema);
-				}
-				Err(e) => return Err(anyhow::anyhow!("Invalid JSON schema file {}: {}", path, e)),
-			},
-			Err(e) => {
-				return Err(anyhow::anyhow!(
-					"Failed to read --schema file {}: {}",
-					path,
-					e
-				))
-			}
-		}
 	}
 
 	// Track if the first message has been processed through layers

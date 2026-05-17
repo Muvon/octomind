@@ -35,7 +35,7 @@ pub use core::ChatSession;
 pub use error_utils::{format_provider_error, handle_api_error, handle_followup_api_error};
 pub use layer_processor::process_layers_if_enabled;
 pub use main_loop::{run_interactive_session, run_interactive_session_with_input};
-pub use params::{extract_session_params, GenericSessionArgs, SessionParams};
+pub use params::GenericSessionArgs;
 pub use prompt_setup::setup_system_prompt_and_cache;
 pub use setup::setup_and_initialize_session;
 pub use utils::{format_number, get_initial_messages};

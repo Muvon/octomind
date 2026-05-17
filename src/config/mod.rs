@@ -563,22 +563,54 @@ impl Config {
 		self.role_map.contains_key(role)
 	}
 
-	/// Get configuration for a specific role
+	/// Get configuration for a specific role.
 	/// Returns: (role_config, role_mcp_config, layers, commands, system_prompt)
-	/// Panics if the role is not found — call `has_role` first when the role comes from user input.
+	///
+	/// When the role is missing, this used to `panic!` and tear down the
+	/// long-running process. Now it logs a loud error and falls back to the
+	/// first role in `role_map` so the session stays alive. Callers handling
+	/// user-supplied role names should still validate with `has_role` and
+	/// return a structured error — the fallback is a safety net, not the
+	/// intended path. Truly broken configs (empty `role_map`) still panic
+	/// because there is nothing sensible to fall back to.
 	pub fn get_role_config(&self, role: &str) -> RoleConfigResult<'_> {
 		if let Some(role_config) = self.role_map.get(role) {
-			(
+			return (
 				&role_config.config,
 				&role_config.mcp,
 				self.layers.as_ref(),
 				self.commands.as_ref(),
 				&role_config.config.system,
-			)
-		} else {
-			// STRICT CONFIG: Unknown roles are not allowed - all roles must be explicitly defined
-			panic!("CRITICAL CONFIG ERROR: Role '{role}' not found in config. All roles must be explicitly defined in config template.");
+			);
 		}
+
+		// Fallback: pick the first role in the map. role_map is preserved as a
+		// HashMap so "first" is stable-but-unspecified across runs — good enough
+		// for a degraded path that already shouts about itself via log_error.
+		let Some((fallback_name, fallback_role)) = self.role_map.iter().next() else {
+			// Empty role_map = config loader produced no roles at all. This
+			// is a load-time invariant violation, not a per-call problem.
+			panic!(
+				"CRITICAL CONFIG ERROR: role_map is empty — config loaded with no roles defined. \
+				 At least one role must be present."
+			);
+		};
+		let available: Vec<&str> = self.role_map.keys().map(|s| s.as_str()).collect();
+		crate::log_error!(
+			"Unknown role '{}' — falling back to '{}'. Available roles: {}. \
+			 Define '{}' explicitly in your config to silence this warning.",
+			role,
+			fallback_name,
+			available.join(", "),
+			role
+		);
+		(
+			&fallback_role.config,
+			&fallback_role.mcp,
+			self.layers.as_ref(),
+			self.commands.as_ref(),
+			&fallback_role.config.system,
+		)
 	}
 
 	/// Get a merged config for a specific role (for backward compatibility)

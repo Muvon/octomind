@@ -59,10 +59,12 @@ pub async fn execute_command_layer(
 				"input_mode": command_config.input_mode.as_str()
 			}
 		});
-		let _ = crate::session::append_to_session_file(
+		if let Err(e) = crate::session::append_to_session_file(
 			session_file,
 			&serde_json::to_string(&log_entry)?,
-		);
+		) {
+			crate::log_debug!("session log append failed: {}", e);
+		}
 	}
 
 	// Execute the layer using ACP protocol
@@ -83,10 +85,12 @@ pub async fn execute_command_layer(
 			"input_length": processed_input.len(),
 			"input_mode": command_config.input_mode.as_str()
 		});
-		let _ = crate::session::append_to_session_file(
+		if let Err(e) = crate::session::append_to_session_file(
 			session_file,
 			&serde_json::to_string(&log_entry)?,
-		);
+		) {
+			crate::log_debug!("session log append failed: {}", e);
+		}
 	}
 
 	// Execute the layer without affecting the session
@@ -110,10 +114,12 @@ pub async fn execute_command_layer(
 			"command": command_name,
 			"output_length": result.outputs.iter().map(|s| s.len()).sum::<usize>(),
 		});
-		let _ = crate::session::append_to_session_file(
+		if let Err(e) = crate::session::append_to_session_file(
 			session_file,
 			&serde_json::to_string(&log_entry)?,
-		);
+		) {
+			crate::log_debug!("session log append failed: {}", e);
+		}
 	}
 
 	// Handle output_mode to determine how this command's output affects the session
@@ -150,10 +156,12 @@ pub async fn execute_command_layer(
 					"command": command_name,
 					"content_length": result.outputs.iter().map(|s| s.len()).sum::<usize>()
 				});
-				let _ = crate::session::append_to_session_file(
+				if let Err(e) = crate::session::append_to_session_file(
 					session_file,
 					&serde_json::to_string(&log_entry)?,
-				);
+				) {
+					crate::log_debug!("session log append failed: {}", e);
+				}
 			}
 
 			// Save session to persist the new message
@@ -180,10 +188,12 @@ pub async fn execute_command_layer(
 					"previous_message_count": chat_session.session.messages.len(),
 					"content_length": result.outputs.iter().map(|s| s.len()).sum::<usize>()
 				});
-				let _ = crate::session::append_to_session_file(
+				if let Err(e) = crate::session::append_to_session_file(
 					session_file,
 					&serde_json::to_string(&log_entry)?,
-				);
+				) {
+					crate::log_debug!("session log append failed: {}", e);
+				}
 			}
 
 			// Find system message to preserve
@@ -267,10 +277,12 @@ pub async fn execute_command_layer(
 					"content_length": result.outputs.last().map(|s| s.len()).unwrap_or(0),
 					"total_outputs": result.outputs.len()
 				});
-				let _ = crate::session::append_to_session_file(
+				if let Err(e) = crate::session::append_to_session_file(
 					session_file,
 					&serde_json::to_string(&log_entry)?,
-				);
+				) {
+					crate::log_debug!("session log append failed: {}", e);
+				}
 			}
 
 			// Save session to persist the new message
@@ -298,10 +310,12 @@ pub async fn execute_command_layer(
 					"content_length": result.outputs.last().map(|s| s.len()).unwrap_or(0),
 					"total_outputs": result.outputs.len()
 				});
-				let _ = crate::session::append_to_session_file(
+				if let Err(e) = crate::session::append_to_session_file(
 					session_file,
 					&serde_json::to_string(&log_entry)?,
-				);
+				) {
+					crate::log_debug!("session log append failed: {}", e);
+				}
 			}
 
 			// Clear existing messages and replace with only the last command output

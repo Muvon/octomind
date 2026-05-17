@@ -17,31 +17,57 @@
 use std::sync::OnceLock;
 use tiktoken_rs::{cl100k_base, CoreBPE};
 
-// Global tokenizer instance - created once and reused
-static TOKENIZER: OnceLock<CoreBPE> = OnceLock::new();
+// Global tokenizer instance — `Option` because cl100k_base() is fallible.
+// The BPE table is embedded in the crate, so init failure is theoretical, but
+// we never want a panic to take down a long-running session. When init fails
+// we log once and silently degrade to a char-count fallback. Token counts
+// drive budgeting decisions (compression thresholds, headroom estimates) —
+// approximate counts are acceptable; a crashed process is not.
+static TOKENIZER: OnceLock<Option<CoreBPE>> = OnceLock::new();
 
-// Get or initialize the global tokenizer instance
-fn get_tokenizer() -> &'static CoreBPE {
-	TOKENIZER.get_or_init(|| {
-		cl100k_base().unwrap_or_else(|_| {
-			// Fallback - this shouldn't happen in practice
-			panic!("Failed to initialize tokenizer")
+fn get_tokenizer() -> Option<&'static CoreBPE> {
+	TOKENIZER
+		.get_or_init(|| match cl100k_base() {
+			Ok(bpe) => Some(bpe),
+			Err(e) => {
+				tracing::warn!(
+					error = %e,
+					"tiktoken cl100k_base init failed; falling back to char/4 token estimation"
+				);
+				None
+			}
 		})
-	})
+		.as_ref()
+}
+
+/// Fallback used when the BPE tokenizer is unavailable. Char count divided by
+/// 4 approximates BPE tokens for English text closely enough for budgeting.
+fn fallback_token_count(text: &str) -> usize {
+	(text.chars().count() / 4).max(1)
 }
 
 // Simple token counter that uses tiktoken to estimate token counts
 pub fn estimate_tokens(text: &str) -> usize {
-	// Use the cached global tokenizer
-	let tokenizer = get_tokenizer();
-	let tokens = tokenizer.encode_ordinary(text);
-	tokens.len()
+	match get_tokenizer() {
+		Some(tok) => tok.encode_ordinary(text).len(),
+		None => fallback_token_count(text),
+	}
 }
 
 // Truncate text to at most max_tokens tokens, decoding back to a string.
 // Returns the truncated text (losslessly decoded from the token boundary).
 pub fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
-	let tokenizer = get_tokenizer();
+	let Some(tokenizer) = get_tokenizer() else {
+		// Tokenizer unavailable: truncate at an approximate char boundary that
+		// matches the fallback `tokens ≈ chars/4` estimator.
+		if fallback_token_count(text) <= max_tokens {
+			return text.to_string();
+		}
+		let approx_chars = max_tokens.saturating_mul(4);
+		let boundary = crate::utils::truncation::floor_char_boundary(text, approx_chars);
+		return text[..boundary].to_string();
+	};
+
 	let mut tokens = tokenizer.encode_ordinary(text);
 	if tokens.len() <= max_tokens {
 		return text.to_string();

@@ -1,7 +1,7 @@
-use super::{
-	collect_preserved_skills, find_compression_range, format_compressed_entry_with_context,
-	is_summary_valid, strip_file_context_from_summary, strip_knowledge_tags, MIN_SUMMARY_LEN,
+use super::knowledge::{
+	format_compressed_entry_with_context, strip_file_context_from_summary, strip_knowledge_tags,
 };
+use super::{collect_preserved_skills, find_compression_range, is_summary_valid, MIN_SUMMARY_LEN};
 use crate::session::Message;
 use serde_json::json;
 

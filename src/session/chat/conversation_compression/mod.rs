@@ -23,6 +23,8 @@
 //! - Reuses existing plan compression infrastructure
 //! - Triggered BEFORE user message is added to avoid breaking conversation flow
 
+mod knowledge;
+
 use crate::config::Config;
 use crate::session::chat::get_animation_manager;
 use crate::session::chat::session::ChatSession;
@@ -1759,116 +1761,11 @@ async fn apply_compression(
 }
 
 /// Format final compressed entry with optional file context
-fn format_compressed_entry_with_context(
-	context: &str,
-	file_context: &str,
-	compression_id: String,
-) -> String {
-	let mut sections = Vec::new();
-
-	if !context.is_empty() {
-		sections.push(context.to_string());
-	}
-
-	// Add file context if provided (automatically expanded from AI's <context> tags)
-	if !file_context.is_empty() {
-		sections.push(format!(
-			"**FILE CONTEXT** (auto-expanded):\n{}",
-			file_context
-		));
-	}
-
-	format!(
-		"## Conversation Summary [COMPRESSED: {}]\n\n{}",
-		compression_id,
-		sections.join("\n\n"),
-	)
-}
-
-/// Strip the FILE CONTEXT section from a prior compressed summary before re-feeding it
-/// to the next compression pass.
-///
-/// When a summary is re-compressed, the embedded file bytes are stale and bloat the
-/// prompt. The AI will re-request any files it still needs via <context> tags.
-/// Returns the summary text with the FILE CONTEXT block removed, trimmed.
-fn strip_file_context_from_summary(summary: &str) -> String {
-	const SENTINEL: &str = "\n\n**FILE CONTEXT** (auto-expanded):";
-	if let Some(pos) = summary.find(SENTINEL) {
-		summary[..pos].trim().to_string()
-	} else {
-		summary.trim().to_string()
-	}
-}
-
-/// Extract <knowledge> tags from AI compression response, store in session, and log.
-/// Trims to the configured knowledge_retention limit (keeps most recent entries).
-fn extract_and_store_knowledge(session: &mut ChatSession, config: &Config, content: &str) {
-	let knowledge_entries = parse_knowledge_tags(content);
-	if knowledge_entries.is_empty() {
-		return;
-	}
-
-	let retention_limit = config.compression.knowledge_retention;
-	for entry in &knowledge_entries {
-		log_debug!("Extracted critical knowledge: {}", entry);
-		session.critical_knowledge.push(entry.clone());
-
-		// Persist to session log
-		let _ = crate::session::logger::log_knowledge_entry(&session.session.info.name, entry);
-	}
-
-	// Trim to retention limit (keep most recent)
-	if retention_limit > 0 && session.critical_knowledge.len() > retention_limit {
-		let drain_count = session.critical_knowledge.len() - retention_limit;
-		session.critical_knowledge.drain(..drain_count);
-		log_debug!(
-			"Trimmed critical knowledge to {} entries (retention limit)",
-			retention_limit
-		);
-	}
-
-	log_info!(
-		"Stored {} new critical knowledge entries ({} total)",
-		knowledge_entries.len(),
-		session.critical_knowledge.len()
-	);
-}
-
-/// Parse all <knowledge>...</knowledge> tags from text.
-/// Returns the trimmed content of each tag.
-fn parse_knowledge_tags(content: &str) -> Vec<String> {
-	let mut entries = Vec::new();
-	let mut search_from = 0;
-	while let Some(start) = content[search_from..].find("<knowledge>") {
-		let abs_start = search_from + start + "<knowledge>".len();
-		if let Some(end) = content[abs_start..].find("</knowledge>") {
-			let abs_end = abs_start + end;
-			let entry = content[abs_start..abs_end].trim().to_string();
-			if !entry.is_empty() {
-				entries.push(entry);
-			}
-			search_from = abs_end + "</knowledge>".len();
-		} else {
-			break;
-		}
-	}
-	entries
-}
-
-/// Strip <knowledge>...</knowledge> tags from summary text.
-/// The knowledge is already extracted and stored separately — no need to keep it in the summary.
-fn strip_knowledge_tags(content: &str) -> String {
-	let mut result = content.to_string();
-	while let Some(start) = result.find("<knowledge>") {
-		if let Some(end) = result[start..].find("</knowledge>") {
-			let abs_end = start + end + "</knowledge>".len();
-			result = format!("{}{}", &result[..start], &result[abs_end..]);
-		} else {
-			break;
-		}
-	}
-	result.trim().to_string()
-}
+// Summary formatting + <knowledge> tag handling live in the `knowledge` submodule.
+use knowledge::{
+	extract_and_store_knowledge, format_compressed_entry_with_context,
+	strip_file_context_from_summary, strip_knowledge_tags,
+};
 
 /// Parse all <done>...</done> tags from AI compression response.
 /// Returns task IDs (e.g. "task1", "task2") that the AI marked as fully completed.

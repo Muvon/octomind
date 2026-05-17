@@ -253,9 +253,12 @@ fn convert_message_to_octolib(
 		"user" => octolib::llm::MessageBuilder::user(&msg.content),
 		"assistant" => {
 			let mut builder = octolib::llm::MessageBuilder::assistant(&msg.content);
-			// CRITICAL: Convert tool_calls to unified GenericToolCall format
+			// CRITICAL: Convert tool_calls to unified GenericToolCall format.
+			// Malformed shapes return a typed error (see convert_to_generic_tool_calls)
+			// rather than panicking, so a misbehaving model fails the request
+			// cleanly instead of bringing the whole process down.
 			if let Some(ref tool_calls) = msg.tool_calls {
-				let generic_calls = convert_to_generic_tool_calls(tool_calls);
+				let generic_calls = convert_to_generic_tool_calls(tool_calls)?;
 				if !generic_calls.is_empty() {
 					builder = builder.with_tool_calls(generic_calls);
 				}
@@ -398,60 +401,67 @@ fn convert_video_to_octolib(
 	}
 }
 
-/// Convert tool_calls from session format to unified GenericToolCall format
+/// Convert tool_calls from session format to unified GenericToolCall format.
 ///
 /// Session loading reconstructs tool_calls in OpenAI format. This function converts
-/// them to the unified GenericToolCall format that octolib requires.
-/// NO FALLBACKS - unified format is MANDATORY.
+/// them to the unified GenericToolCall format that octolib requires. Hostile or
+/// buggy model output that doesn't match an expected shape returns a typed error
+/// so the request fails cleanly — it must NOT crash the long-running process.
 fn convert_to_generic_tool_calls(
 	tool_calls: &serde_json::Value,
-) -> Vec<octolib::llm::GenericToolCall> {
+) -> Result<Vec<octolib::llm::GenericToolCall>, octolib::MessageError> {
 	// Check if it's already in unified GenericToolCall format
 	if let Ok(calls) =
 		serde_json::from_value::<Vec<octolib::llm::GenericToolCall>>(tool_calls.clone())
 	{
-		return calls;
+		return Ok(calls);
 	}
 
 	// Handle OpenAI format (array with "type": "function") - from session loading
 	if let Some(calls_array) = tool_calls.as_array() {
 		let mut generic_calls = Vec::new();
 		for call in calls_array {
-			if let Some(function) = call.get("function") {
-				if let (Some(id), Some(name), Some(args_str)) = (
-					call.get("id").and_then(|v| v.as_str()),
-					function.get("name").and_then(|v| v.as_str()),
-					function.get("arguments").and_then(|v| v.as_str()),
-				) {
-					// Parse arguments string to JSON
-					let arguments = if args_str.trim().is_empty() {
-						serde_json::json!({})
-					} else {
-						match serde_json::from_str::<serde_json::Value>(args_str) {
-							Ok(json_args) => json_args,
-							Err(e) => {
-								panic!("Failed to parse tool call arguments '{}': {}", args_str, e);
-							}
-						}
-					};
+			let function =
+				call.get("function")
+					.ok_or_else(|| octolib::MessageError::MissingToolField {
+						field: "function".to_string(),
+					})?;
 
-					generic_calls.push(octolib::llm::GenericToolCall {
-						id: id.to_string(),
-						name: name.to_string(),
-						arguments,
-						meta: None, // Preserve meta from session if present
-					});
-				} else {
-					panic!("Invalid OpenAI tool call format - missing required fields");
+			let (id, name, args_str) = match (
+				call.get("id").and_then(|v| v.as_str()),
+				function.get("name").and_then(|v| v.as_str()),
+				function.get("arguments").and_then(|v| v.as_str()),
+			) {
+				(Some(id), Some(name), Some(args)) => (id, name, args),
+				_ => {
+					return Err(octolib::MessageError::MissingToolField {
+						field: "function.{id|name|arguments}".to_string(),
+					})
 				}
+			};
+
+			// Parse arguments string to JSON. `ToolCallsError` wraps the
+			// underlying serde_json::Error via `#[from]`, surfacing the
+			// exact parse failure to the caller.
+			let arguments = if args_str.trim().is_empty() {
+				serde_json::json!({})
 			} else {
-				panic!("Invalid tool call format - missing 'function' field");
-			}
+				serde_json::from_str::<serde_json::Value>(args_str)?
+			};
+
+			generic_calls.push(octolib::llm::GenericToolCall {
+				id: id.to_string(),
+				name: name.to_string(),
+				arguments,
+				meta: None, // Preserve meta from session if present
+			});
 		}
-		return generic_calls;
+		return Ok(generic_calls);
 	}
 
-	panic!("Unsupported tool_calls format - must be Vec<GenericToolCall> or OpenAI format array");
+	Err(octolib::MessageError::MissingToolField {
+		field: "tool_calls (root must be Vec<GenericToolCall> or OpenAI array)".to_string(),
+	})
 }
 
 /// Convert octolib ProviderResponse to Octomind ProviderResponse

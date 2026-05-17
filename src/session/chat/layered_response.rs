@@ -52,7 +52,9 @@ pub async fn process_layered_response(
 						.yellow()
 				);
 				// Save the session to ensure the cached status is persisted
-				let _ = chat_session.save();
+				if let Err(e) = chat_session.save() {
+					crate::log_debug!("session save failed: {}", e);
+				}
 			}
 		}
 	}

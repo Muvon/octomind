@@ -711,7 +711,9 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					.await
 					{
 						Ok(_) => {
-							let _ = chat_session.save();
+							if let Err(e) = chat_session.save() {
+								crate::log_debug!("session save failed: {}", e);
+							}
 							Ok(crate::session::chat::session::commands::CommandResult::Handled)
 						}
 						Err(e) => Err(e),

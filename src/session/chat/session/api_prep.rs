@@ -69,7 +69,9 @@ pub async fn prepare_for_api_call(
 					"System message has been automatically marked for caching to save tokens."
 				);
 				// Save the session to ensure the cached status is persisted
-				let _ = chat_session.save();
+				if let Err(e) = chat_session.save() {
+					crate::log_debug!("session save failed: {}", e);
+				}
 			}
 		}
 	}

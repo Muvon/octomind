@@ -157,7 +157,9 @@ pub async fn execute_command_layer(
 			}
 
 			// Save session to persist the new message
-			let _ = chat_session.save();
+			if let Err(e) = chat_session.save() {
+				crate::log_debug!("session save failed: {}", e);
+			}
 		}
 		OutputMode::Replace => {
 			// Replace entire session with this command's output
@@ -235,7 +237,9 @@ pub async fn execute_command_layer(
 			chat_session.session.messages = final_messages;
 
 			// Save session to persist the replacement
-			let _ = chat_session.save();
+			if let Err(e) = chat_session.save() {
+				crate::log_debug!("session save failed: {}", e);
+			}
 		}
 		OutputMode::Last => {
 			// Add only the last command output as assistant message to session
@@ -270,7 +274,9 @@ pub async fn execute_command_layer(
 			}
 
 			// Save session to persist the new message
-			let _ = chat_session.save();
+			if let Err(e) = chat_session.save() {
+				crate::log_debug!("session save failed: {}", e);
+			}
 		}
 		OutputMode::Restart => {
 			// Replace entire session with only the last command output (fresh start)
@@ -307,7 +313,9 @@ pub async fn execute_command_layer(
 			}
 
 			// Save session to persist the replacement
-			let _ = chat_session.save();
+			if let Err(e) = chat_session.save() {
+				crate::log_debug!("session save failed: {}", e);
+			}
 		}
 	}
 

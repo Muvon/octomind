@@ -1334,7 +1334,9 @@ pub async fn run_interactive_session(
 						log_debug!("Failed to track keepalive cost on exit: {}", e);
 					}
 				}
-				let _ = chat_session.save();
+				if let Err(e) = chat_session.save() {
+					crate::log_debug!("session save failed: {}", e);
+				}
 			}
 		}
 
@@ -1444,7 +1446,7 @@ pub async fn run_interactive_session_with_input(
 				"{}",
 				"✓ Session optimized and ready for next message".bright_green()
 			);
-			let _ = chat_session.save();
+			if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 			return Ok(());
 		}
 
@@ -1463,13 +1465,13 @@ pub async fn run_interactive_session_with_input(
 					println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind run' for interactive session management.".yellow())
 				}
 				// Save session after command execution
-				let _ = chat_session.save();
+				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 				return Ok(());
 			}
 			crate::session::chat::session::commands::CommandResult::Handled => {
 				// Command was handled successfully
 				// Save session after command execution
-				let _ = chat_session.save();
+				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 				return Ok(());
 			}
 			crate::session::chat::session::commands::CommandResult::HandledWithOutput(
@@ -1479,7 +1481,7 @@ pub async fn run_interactive_session_with_input(
 				// Print it for CLI run command using existing display functions
 				print_command_output(&mut json_output, &mut chat_session, &current_config).await;
 				// Save session after command execution
-				let _ = chat_session.save();
+				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 				return Ok(());
 			}
 		}
@@ -1513,7 +1515,7 @@ pub async fn run_interactive_session_with_input(
 		);
 
 		// Save session after layer cancellation cleanup to persist the cleaned state
-		let _ = chat_session.save();
+		if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 		log_info!("Session saved after layer cancellation cleanup");
 
 		// Create new operation receiver with reset cancellation state
@@ -1876,7 +1878,7 @@ pub async fn run_interactive_session_with_input(
 	}
 
 	// Save session before exit
-	let _ = chat_session.save();
+	if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 	Ok(())
 	}).await
 }

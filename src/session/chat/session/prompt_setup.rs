@@ -54,7 +54,9 @@ pub async fn setup_system_prompt_and_cache(
 
 			log_info!("System prompt has been automatically marked for caching to save tokens in future interactions.");
 			// Save the session to ensure the cached status is persisted
-			let _ = chat_session.save();
+			if let Err(e) = chat_session.save() {
+				crate::log_debug!("session save failed: {}", e);
+			}
 		} else {
 			// Don't show warning for models that don't support caching
 			log_info!(

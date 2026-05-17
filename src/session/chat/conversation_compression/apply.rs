@@ -17,6 +17,7 @@
 // chain continuity), re-inject the most recent user turn, fold knowledge,
 // update anchor + token bookkeeping. Pure side-effects on `ChatSession`.
 
+use super::decision::estimate_future_turns;
 use super::knowledge::{
 	extract_and_store_knowledge, format_compressed_entry_with_context,
 	strip_file_context_from_summary, strip_knowledge_tags,

@@ -391,23 +391,6 @@ pub async fn run_interactive_session(
 		// no cached blocks, or the resolved provider has no policy.
 		let mut keepalive: Option<KeepaliveHandle> = None;
 
-		// Apply runtime state from session log if this is a resumed session
-		if chat_session.was_resumed {
-			if let Some(session_file) = &chat_session.session.session_file {
-				if let Ok(runtime_state) =
-					crate::session::extract_runtime_state_from_log(session_file)
-				{
-					// Workflow state is now stored in role config, not runtime state
-					// This section is kept for backward compatibility but does nothing
-					if let Some(_workflow_enabled) = runtime_state.layers_enabled {
-						log_info!(
-							"Legacy layers_enabled state ignored - using workflow configuration"
-						);
-					}
-				}
-			}
-		}
-
 		// Set the thread-local config for logging macros
 		crate::config::set_thread_config(&current_config);
 		crate::config::set_thread_role(&role);
@@ -1422,20 +1405,6 @@ pub async fn run_interactive_session_with_input(
 	// turn (initial or inbox-driven), cancelled+folded before the next turn
 	// or on session exit. Read-only on session.messages.
 	let mut keepalive: Option<KeepaliveHandle> = None;
-
-	// Apply runtime state from session log if this is a resumed session
-	if chat_session.was_resumed {
-		if let Some(session_file) = &chat_session.session.session_file {
-			if let Ok(runtime_state) = crate::session::extract_runtime_state_from_log(session_file)
-			{
-				// Workflow state is now stored in role config, not runtime state
-				// This section is kept for backward compatibility but does nothing
-				if let Some(_workflow_enabled) = runtime_state.layers_enabled {
-					log_info!("Legacy layers_enabled state ignored - using workflow configuration");
-				}
-			}
-		}
-	}
 
 	// Skip initial message processing when daemon starts with no input.
 	if !input.is_empty() {

@@ -822,7 +822,6 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 #[derive(Debug, Default)]
 pub struct SessionRuntimeState {
 	pub model: Option<String>,
-	pub layers_enabled: Option<bool>,
 	pub cache_next_message: bool,
 	pub role: Option<String>, // Track runtime role changes
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
@@ -885,10 +884,6 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 			if let Some(e) = crate::config::ReasoningEffortConfig::parse(parts[1]) {
 				state.reasoning_effort = Some(e);
 			}
-		}
-		"/layers" if parts.len() > 1 => {
-			let state_str = parts[1];
-			state.layers_enabled = Some(state_str == "enabled");
 		}
 		"/cache" => {
 			// Set cache next message flag

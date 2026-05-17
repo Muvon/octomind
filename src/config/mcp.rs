@@ -59,6 +59,20 @@ pub enum McpConnectionType {
 	Http,
 }
 
+impl McpConnectionType {
+	/// Stable wire-format string for JSON output and session-log entries.
+	/// Use this instead of `format!("{:?}", ...)` — Debug formatting is not a
+	/// stable public format and silently breaks downstream consumers if the
+	/// variant ordering or naming ever changes.
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			McpConnectionType::Builtin => "builtin",
+			McpConnectionType::Stdin => "stdin",
+			McpConnectionType::Http => "http",
+		}
+	}
+}
+
 impl McpServerConfig {
 	/// Get the server name regardless of variant
 	pub fn name(&self) -> &str {

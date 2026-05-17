@@ -56,7 +56,7 @@ pub async fn execute_command_layer(
 			"config": {
 				"command": command_config.command,
 				"workdir": command_config.workdir,
-				"input_mode": format!("{:?}", command_config.input_mode)
+				"input_mode": command_config.input_mode.as_str()
 			}
 		});
 		let _ = crate::session::append_to_session_file(
@@ -81,7 +81,7 @@ pub async fn execute_command_layer(
 			.as_secs(),
 			"command": command_name,
 			"input_length": processed_input.len(),
-			"input_mode": format!("{:?}", command_config.input_mode)
+			"input_mode": command_config.input_mode.as_str()
 		});
 		let _ = crate::session::append_to_session_file(
 			session_file,

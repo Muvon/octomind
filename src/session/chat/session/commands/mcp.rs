@@ -116,7 +116,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 		servers_data.push(serde_json::json!({
 			"name": server.name(),
 			"health": health_str,
-			"connection_type": format!("{:?}", server.connection_type()),
+			"connection_type": server.connection_type().as_str(),
 			"tools": server.tools(),
 			"restart_count": restart_info.restart_count,
 			"consecutive_failures": restart_info.consecutive_failures,
@@ -149,7 +149,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 		servers_data.push(serde_json::json!({
 			"name": name,
 			"health": health_str,
-			"connection_type": "Dynamic",
+			"connection_type": "dynamic",
 			"tools": tools,
 			"restart_count": restart_info.restart_count,
 			"consecutive_failures": restart_info.consecutive_failures,
@@ -239,7 +239,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 		servers_data.push(serde_json::json!({
 			"name": server.name(),
 			"health": health_str,
-			"connection_type": format!("{:?}", server.connection_type()),
+			"connection_type": server.connection_type().as_str(),
 			"tools": server.tools(),
 			"restart_count": restart_info.restart_count,
 			"consecutive_failures": restart_info.consecutive_failures,
@@ -270,7 +270,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 		servers_data.push(serde_json::json!({
 			"name": name,
 			"health": health_str,
-			"connection_type": "Dynamic",
+			"connection_type": "dynamic",
 			"tools": tools,
 			"restart_count": restart_info.restart_count,
 			"consecutive_failures": restart_info.consecutive_failures,

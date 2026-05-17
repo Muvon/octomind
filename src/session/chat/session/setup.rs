@@ -298,6 +298,9 @@ pub async fn setup_and_initialize_session(
 fn validate_provider_credentials(model: &str) -> Result<()> {
 	let (provider, _) = ProviderFactory::parse_model(model)
 		.map_err(|e| anyhow::anyhow!("Invalid model '{}': {}", model, e))?;
+	if provider.eq_ignore_ascii_case("cli") {
+		return Ok(());
+	}
 	let provider_instance = ProviderFactory::create_provider(&provider)
 		.map_err(|e| anyhow::anyhow!("Unknown provider '{}': {}", provider, e))?;
 	provider_instance

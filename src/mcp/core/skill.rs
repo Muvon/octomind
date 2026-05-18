@@ -55,15 +55,21 @@ pub struct SkillMeta {
 	/// Declarative activation rules. Empty = manual only.
 	pub rules: Vec<Vec<ActivateCheck>>,
 }
-/// Default cosine floor for `semantic(phrase)` checks. Empirically tuned for
-/// BGE-small-en-v1.5: at 0.45 long mixed-topic prompts produce a flood of
-/// loosely-related matches (e.g. a "humanize the landing page" prompt clears
-/// `marketing-guest-posting` paraphrases purely on lexical overlap with
-/// "blogs"/"landing"). 0.55 is the floor where most lexical-overlap noise
-/// drops out; the actual precision lever is the margin gate applied across
-/// candidate skills in `skill_auto`. Authors override per check via
-/// `semantic(phrase, 0.6)` syntax.
-pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.55;
+/// Default cosine floor for `semantic(phrase)` checks. Tuned for
+/// `muvon/octomind-embed` (BGE-small-en-v1.5 fine-tune).
+///
+/// 0.45 is the post-fine-tune calibration. After fine-tuning, lexical-
+/// overlap noise (a "humanize the landing page" prompt clearing
+/// `marketing-guest-posting` paraphrases on "blogs"/"landing" alone)
+/// drops away — the FT model learned a dedicated OOS cluster and pushes
+/// chitchat / generic-vocabulary inputs into it. The precision lever is
+/// the margin gate (`SEMANTIC_MARGIN`) applied across candidate skills
+/// in `skill_auto`. Authors override per check via `semantic(phrase, 0.6)`.
+///
+/// Re-calibrate after every embed retrain with
+/// `octomind-tap/model/scripts/calibrate_thresholds.py`. Keep this in
+/// sync with `capability::AUTO_ACTIVATE_THRESHOLD`.
+pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.45;
 
 /// Required gap between top-1 and top-2 semantic-only skill scores in a
 /// single activation cycle. Mirrors `capability::AUTO_ACTIVATE_MARGIN`. When

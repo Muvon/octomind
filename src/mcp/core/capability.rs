@@ -758,18 +758,25 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 // ---------------------------------------------------------------------------
 
 /// Mean-of-top-K cosine threshold a capability must clear to be auto-activated.
-/// Tuned for BGE-small-en-v1.5 over short hand-authored triggers.
+/// Tuned for `muvon/octomind-embed` (BGE-small-en-v1.5 fine-tune) over short
+/// hand-authored triggers.
 ///
-/// 0.55 is calibrated for *false-positive aversion*: short/vague prompts
-/// ("good morning", "what's the weather today", "where is X") score in the
-/// 0.45–0.53 band against semantically-adjacent caps (calendar, kubernetes,
-/// codesearch) due to keyword-leak rather than real intent. A floor at 0.55
-/// abstains on that band — the user can rephrase more specifically if they
-/// actually want the cap. Strong matches (verbatim or near-paraphrase
-/// triggers) score 0.6–0.9 and pass cleanly. Originally 0.42 (calibrated
-/// for recall); raised after the diversity test surfaced that false
-/// positives in production outnumber missed activations as a complaint.
-const AUTO_ACTIVATE_THRESHOLD: f32 = 0.55;
+/// 0.45 is the post-fine-tune calibration. After fine-tuning, the FT model
+/// places every matched-intent positive well above 0.55 (mean top1 cosine
+/// on `eval_real` is ~0.7+), so the threshold is no longer the load-bearing
+/// constraint — `AUTO_ACTIVATE_MARGIN` is. The floor is kept at 0.45 only
+/// as a safety net for the bottom-tail of legitimately-matched intents that
+/// score lower than typical; tightening it further trades recall for no
+/// false-positive reduction, since the FT model already separates chitchat
+/// / OOD inputs into a distinct cluster (see `_oos` sink label training in
+/// octomind-tap/model/scripts/build_dataset.py).
+///
+/// Re-calibrate after every model retrain with
+/// `octomind-tap/model/scripts/calibrate_thresholds.py`.
+///
+/// History: 0.42 (base BGE, recall-tuned) → 0.55 (base BGE, FP-tuned for
+/// chitchat aversion) → 0.45 (FT model, margin is now the binding gate).
+const AUTO_ACTIVATE_THRESHOLD: f32 = 0.45;
 
 /// Required gap between top-1 and top-2 capability scores. Prevents
 /// activating one of two near-tied capabilities (e.g. `database-postgres`

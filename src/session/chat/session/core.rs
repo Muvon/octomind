@@ -1015,31 +1015,40 @@ impl ChatSession {
 			return Ok(());
 		}
 
-		let post_markers: Vec<usize> = self
+		let last_eligible = self
 			.session
 			.messages
 			.iter()
 			.enumerate()
-			.filter(|(_, m)| m.cached && m.role != "system")
-			.map(|(i, _)| i)
-			.collect();
+			.rev()
+			.find(|(i, m)| *i > compressed_idx && (m.role == "user" || m.role == "tool"))
+			.map(|(i, _)| i);
 
-		if post_markers.len() < MAX_CONTENT_MARKERS {
-			// Find the last user or tool message AFTER the compressed block
-			let last_eligible = self
-				.session
-				.messages
-				.iter()
-				.enumerate()
-				.rev()
-				.find(|(i, m)| {
-					*i != compressed_idx
-						&& (m.role == "user" || m.role == "tool")
-						&& m.role != "system"
-				})
-				.map(|(i, _)| i);
+		if let Some(target_idx) = last_eligible {
+			if !self.session.messages[target_idx].cached {
+				let markers: Vec<usize> = self
+					.session
+					.messages
+					.iter()
+					.enumerate()
+					.filter(|(_, m)| m.cached && m.role != "system")
+					.map(|(i, _)| i)
+					.collect();
 
-			if let Some(target_idx) = last_eligible {
+				if markers.len() >= MAX_CONTENT_MARKERS {
+					let marker_to_remove = markers
+						.iter()
+						.copied()
+						.find(|i| *i != compressed_idx)
+						.or_else(|| markers.first().copied());
+
+					if let Some(index) = marker_to_remove {
+						if let Some(m) = self.session.messages.get_mut(index) {
+							m.cached = false;
+						}
+					}
+				}
+
 				if let Some(m) = self.session.messages.get_mut(target_idx) {
 					m.cached = true;
 					crate::log_debug!(
@@ -1707,6 +1716,34 @@ mod tests {
 		assert_eq!(
 			cs.session.messages[last_marker_idx].role, "tool",
 			"marker #2 should be on the tool message"
+		);
+	}
+
+	#[test]
+	fn case12_compression_moves_second_marker_to_latest_preserved_message() {
+		let messages = vec![
+			msg("system", false),
+			msg("user", false), // start_idx=1
+			msg("assistant", false),
+			msg("user", false), // end_idx=3
+			msg("user", true),  // stale marker in preserved zone
+			msg("assistant", false),
+			msg("user", false), // freshest eligible — must become marker #2
+			msg("assistant", false),
+		];
+		let mut cs = make_session(messages);
+
+		let (_, _) = cs.remove_messages_in_range(1, 3).unwrap();
+		cs.insert_compressed_knowledge(1, "summary".to_string())
+			.unwrap();
+
+		let markers = content_cache_indices(&cs);
+		assert_eq!(markers.len(), 2, "must have exactly 2 markers");
+		assert_eq!(cs.session.messages[markers[0]].content, "summary");
+		assert_eq!(markers[1], 5, "marker #2 must move to freshest user");
+		assert!(
+			!cs.session.messages[3].cached,
+			"stale preserved marker must be evicted"
 		);
 	}
 

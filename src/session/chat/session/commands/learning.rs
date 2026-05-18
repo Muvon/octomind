@@ -130,7 +130,11 @@ async fn handle_list(
 	};
 
 	let total = filtered.len();
-	let total_pages = if total == 0 { 0 } else { total.div_ceil(LESSONS_PER_PAGE) };
+	let total_pages = if total == 0 {
+		0
+	} else {
+		total.div_ceil(LESSONS_PER_PAGE)
+	};
 
 	if page > total_pages && total > 0 {
 		return Ok(CommandResult::HandledWithOutput(Box::new(

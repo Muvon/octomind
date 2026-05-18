@@ -130,6 +130,21 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
+	// Advance Anthropic-style content cache markers after all pre-call message injections
+	// (learning context, inbox hints, etc.) and immediately before building the request.
+	// This preserves the previous marker while moving the oldest marker to the latest
+	// user/tool boundary for this new request.
+	let cache_manager = crate::session::cache::CacheManager::new();
+	let supports_caching = crate::session::model_supports_caching(&model);
+	if let Err(e) = cache_manager.check_and_apply_auto_cache_threshold(
+		&mut chat_session.session,
+		config,
+		supports_caching,
+		role,
+	) {
+		crate::log_debug!("pre-request cache marker advance failed: {}", e);
+	}
+
 	// Make API call. `session.messages` is borrowed directly — no clone — and
 	// the validation params hold that shared borrow only until they're consumed
 	// by `chat_completion_with_validation` below.

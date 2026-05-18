@@ -1818,7 +1818,10 @@ pub fn display_learning(output: &CommandOutput) {
 		_ => return,
 	};
 
-	let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
+	let subcommand = data
+		.get("subcommand")
+		.and_then(|v| v.as_str())
+		.unwrap_or("");
 
 	match subcommand {
 		"list" => {
@@ -1826,7 +1829,10 @@ pub fn display_learning(output: &CommandOutput) {
 			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
 			let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
 			let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
-			let total_pages = data.get("total_pages").and_then(|v| v.as_u64()).unwrap_or(0);
+			let total_pages = data
+				.get("total_pages")
+				.and_then(|v| v.as_u64())
+				.unwrap_or(0);
 			let pattern = data.get("pattern").and_then(|v| v.as_str());
 
 			let header = if let Some(pat) = pattern {
@@ -1855,8 +1861,14 @@ pub fn display_learning(output: &CommandOutput) {
 			for lesson in lessons {
 				let index = lesson.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
 				let content = lesson.get("content").and_then(|v| v.as_str()).unwrap_or("");
-				let importance = lesson.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.5);
-				let confidence = lesson.get("confidence").and_then(|v| v.as_str()).unwrap_or("");
+				let importance = lesson
+					.get("importance")
+					.and_then(|v| v.as_f64())
+					.unwrap_or(0.5);
+				let confidence = lesson
+					.get("confidence")
+					.and_then(|v| v.as_str())
+					.unwrap_or("");
 				let tags = lesson
 					.get("tags")
 					.and_then(|v| v.as_array())
@@ -1960,14 +1972,20 @@ pub fn display_learning(output: &CommandOutput) {
 				if errors > 0 {
 					println!(
 						"{}",
-						format!("  {} error(s) — some files may not have been removed.", errors)
-							.yellow()
+						format!(
+							"  {} error(s) — some files may not have been removed.",
+							errors
+						)
+						.yellow()
 					);
 				}
 			}
 		}
 		"error" => {
-			let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+			let msg = data
+				.get("message")
+				.and_then(|v| v.as_str())
+				.unwrap_or("unknown error");
 			println!("{}", msg.bright_red());
 		}
 		_ => {}

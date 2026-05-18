@@ -59,28 +59,34 @@ Break down large objectives into steps with progress tracking.
 
 ### `schedule` -- Scheduled Message Injection
 
-Schedule messages for future injection into the session. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for direct user control.
+Schedule messages for future injection into the session — fire at a specific time, or the next time the session becomes idle. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for direct user control.
 
 **Parameters:**
 - `command` (string, required): `"add"`, `"list"`, `"remove"`, `"edit"`
+- `message` (string, required for `add`): exact text injected as a user message when the entry fires
+- `when` (string, optional for `add`): when to fire. Defaults to `"idle"` when both `when` and `every` are omitted.
 - `every` (string, optional): repeat interval — entry re-schedules itself after each firing until removed
 
 **`when` formats** (local timezone):
+- `"idle"` — fires the next time the session becomes idle (no running taps, no running background jobs)
 - `"now"` (fires immediately on the next scheduler tick)
 - Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`
 - Time today: `"15:30"`, `"3:30pm"`, `"9am"` (past times fire tomorrow)
 - Exact: `"2026-03-22 15:30"`
 
-**`every` format** (omit for one-shot): same syntax as relative `when` without the `in` prefix — `"10m"`, `"1h"`, `"1h30m"`. Pass `"none"` (or `"off"`) in `edit` to clear an existing interval.
+**`every` format** (omit for one-shot):
+- `"idle"` — fires on every idle transition (pairs with `when="idle"` or omitted)
+- Same syntax as relative `when` without the `in` prefix — `"10m"`, `"1h"`, `"1h30m"`
+- Pass `"none"` (or `"off"`) in `edit` to clear an existing interval
 
 | Command | Required Params | Description |
 |---------|----------------|-------------|
-| `add` | `when`, `message` | Schedule a message. `description` and `every` optional. |
+| `add` | `message` | Schedule a message. `when` defaults to `"idle"`. `description` and `every` optional. |
 | `list` | -- | Show pending entries with countdown |
 | `remove` | `id` | Cancel entry by ID |
-| `edit` | `id` | Update `when`, `message`, `description`, or `every` |
+| `edit` | `id` | Update `when`, `message`, `description`, or `every` (time formats only — switch to/from idle by remove + add) |
 
-One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing. Jobs cancelled on session exit.
+One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing. Idle entries fire only when the response loop is idle AND no tap-runs or background-agent jobs are running, so messages cannot interrupt in-flight work. Jobs cancelled on session exit.
 
 ### `capability` -- Discover and Activate Domain Bundles
 

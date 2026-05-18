@@ -39,7 +39,8 @@ pub use dynamic_agents::execute_agent_tool_command;
 pub use functions::get_all_functions;
 pub use plan::{clear_plan_data, execute_plan};
 pub use schedule::{
-	execute_schedule_tool, flush_due_to_inbox, has_pending_schedules, next_schedule_sleep,
+	execute_schedule_tool, flush_due_to_inbox, flush_idle_to_inbox, has_pending_idle_schedules,
+	has_pending_schedules, is_session_idle, next_schedule_sleep,
 };
 pub use skill::execute_skill_tool;
 pub use tap::execute_tap_command;

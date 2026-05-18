@@ -551,6 +551,9 @@ pub async fn run_interactive_session(
 			// Flush any due schedule entries into the inbox so all injection sources
 			// are unified — the loop only needs to drain the inbox from here on.
 			crate::mcp::core::flush_due_to_inbox();
+			// Now that the response loop is back to idle, fire any idle-mode entries
+			// (only if no taps / background jobs are still running).
+			crate::mcp::core::flush_idle_to_inbox();
 
 			// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
 			// If one is ready, skip user input entirely and process it immediately.
@@ -1681,6 +1684,9 @@ pub async fn run_interactive_session_with_input(
 	loop {
 		// Flush any due schedule entries into the inbox first.
 		crate::mcp::core::flush_due_to_inbox();
+		// Idle-mode entries fire here too — non-interactive is "idle" between turns
+		// as long as nothing is in flight.
+		crate::mcp::core::flush_idle_to_inbox();
 
 		// Process all messages currently in the inbox.
 		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {

@@ -14,7 +14,7 @@
 
 //! Core schedule tool: global store, MCP handler, and session-loop helpers.
 
-use super::storage::{parse_duration_secs, parse_when, ScheduleEntry, ScheduleStore};
+use super::storage::{parse_duration_secs, parse_when, ScheduleEntry, ScheduleStore, TriggerMode};
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -76,6 +76,58 @@ pub fn flush_due_to_inbox() {
 	if mutated {
 		persist_schedule_snapshot();
 	}
+}
+
+/// True when the session has no in-flight work: no running tap-runs and no
+/// running background agent jobs. The main response loop having returned to
+/// the input-waiting state is implicit at the only call site.
+pub fn is_session_idle() -> bool {
+	if crate::session::tap_runs::has_running_jobs() {
+		return false;
+	}
+	let active_jobs = crate::mcp::agent::functions::get_job_manager()
+		.map(|m| m.active_count())
+		.unwrap_or(0);
+	active_jobs == 0
+}
+
+/// Flush all idle-mode entries into the session inbox iff the session is
+/// idle (no running taps, no running background jobs). One-shot entries are
+/// consumed; repeating entries (`interval_secs = Some(_)`) are re-added.
+pub fn flush_idle_to_inbox() {
+	if !is_session_idle() {
+		return;
+	}
+	let store = get_store();
+	if !store.lock().unwrap().has_idle() {
+		return;
+	}
+	let mut mutated = false;
+	loop {
+		let entry = match store.lock().unwrap().pop_idle() {
+			Some(e) => e,
+			None => break,
+		};
+		mutated = true;
+		if entry.interval_secs.is_some() {
+			let next = entry.reschedule();
+			store.lock().unwrap().add(next);
+		}
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			source: crate::session::inbox::InboxSource::Schedule {
+				id: entry.id.clone(),
+			},
+			content: entry.message,
+		});
+	}
+	if mutated {
+		persist_schedule_snapshot();
+	}
+}
+
+/// Returns true if there are any pending idle-mode entries.
+pub fn has_pending_idle_schedules() -> bool {
+	get_store().lock().unwrap().has_idle()
 }
 
 // ---------------------------------------------------------------------------
@@ -205,28 +257,32 @@ pub async fn next_schedule_sleep() {
 pub fn get_schedule_function() -> McpFunction {
 	McpFunction {
 		name: "schedule".to_string(),
-		description: r#"Schedule a message to be automatically injected as a user message into the current session at a future time. The session keeps running until all scheduled messages have fired.
+		description: r#"Schedule a message to be automatically injected as a user message into the current session at a future time or when the session becomes idle. The session keeps running until all scheduled messages have fired.
 
 One-shot entries fire once and are removed. Repeating entries (set via 'every') re-schedule automatically after each firing until explicitly removed.
 
 Commands:
-- add: schedule a new message (requires 'when' and 'message'; 'description' recommended)
+- add: schedule a new message ('message' required; 'when' and 'every' both optional — defaults to when=\"idle\")
 - list: show all pending scheduled entries with IDs, trigger times, and countdown
 - remove: cancel a scheduled entry by 'id'
 - edit: update an existing entry by 'id' (any of when, message, description, every)
 
 'when' format (local timezone):
+- 'idle' — fires the next time the session is idle (no running taps, no background jobs)
 - 'now' — fires on the next scheduler tick (immediately)
 - Relative: 'in 5m', 'in 2h', 'in 1h30m', 'in 90s', 'in 2h 30m'
 - Time today: '15:30', '3:30pm', '9am' (if already past, fires tomorrow)
 - Exact datetime: '2026-03-22 15:30'
 
 'every' format (optional, omit for one-shot):
+- 'idle' — fires every time the session becomes idle (pairs with when=\"idle\" or omitted)
 - '10m', '1h', '30s', '1h30m' fires first at 'when', then every interval after
 - To stop a repeating entry use remove, or clear interval with edit every='none'
 
+If neither 'when' nor 'every' is provided, the entry defaults to when=\"idle\" (one-shot at next idle).
+
 'description' is what this task is about (shown in list, helps track intent).
-'message' is the EXACT text injected verbatim as a user message when the timer fires. Write it as if a human typed it: include all context the AI will need to act on it, because the AI will see only this message at trigger time with no other hint about why it arrived."#.to_string(),
+'message' is the EXACT text injected verbatim as a user message when the entry fires. Write it as if a human typed it: include all context the AI will need to act on it, because the AI will see only this message at trigger time with no other hint about why it arrived."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -237,7 +293,7 @@ Commands:
 				},
 				"when": {
 					"type": "string",
-					"description": "When to fire. 'now' (fires immediately). Relative: 'in 5m', 'in 2h', 'in 1h30m', 'in 90s'. Time today: '15:30', '3:30pm'. Exact: '2026-03-22 15:30'. Required for add; optional for edit."
+					"description": "When to fire. 'idle' fires on the next session idle (no running taps/jobs). 'now' fires immediately. Relative: 'in 5m', 'in 1h30m'. Time today: '15:30', '3:30pm'. Exact: '2026-03-22 15:30'. Optional for add (defaults to 'idle' if both when and every are omitted)."
 				},
 				"message": {
 					"type": "string",
@@ -253,7 +309,7 @@ Commands:
 				},
 				"every": {
 					"type": "string",
-					"description": "Repeat interval — entry re-schedules automatically after each firing. Format: '10m', '1h', '30s', '1h30m'. Omit for one-shot. Use 'none' or 'off' in edit to clear an existing interval."
+					"description": "Repeat interval. 'idle' fires on every session idle. Time formats: '10m', '1h', '30s', '1h30m'. Omit for one-shot. Use 'none' or 'off' in edit to clear an existing interval."
 				}
 			},
 			"required": ["command"]
@@ -316,24 +372,6 @@ fn format_interval(secs: i64) -> String {
 }
 
 fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
-	let when_str = match call.parameters.get("when") {
-		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
-		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"'when' must be a non-empty string".to_string(),
-			))
-		}
-		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"missing required parameter 'when' for add".to_string(),
-			))
-		}
-	};
-
 	let message = match call.parameters.get("message") {
 		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
 		Some(_) => {
@@ -357,6 +395,86 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => String::new(),
 	};
 
+	// Raw `when` / `every` strings — both optional. Empty/omitted `when` defaults to "idle".
+	let when_raw = match call.parameters.get("when") {
+		Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+		Some(_) => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"'when' must be a non-empty string".to_string(),
+			))
+		}
+		None => None,
+	};
+	let every_raw = match call.parameters.get("every") {
+		Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+		_ => None,
+	};
+
+	let when_is_idle = when_raw.as_deref().map(str::to_lowercase).as_deref() == Some("idle");
+	let every_is_idle = every_raw.as_deref().map(str::to_lowercase).as_deref() == Some("idle");
+
+	// Idle mode: `when="idle"`, `every="idle"`, or neither specified (default).
+	let idle_mode = when_is_idle || every_is_idle || (when_raw.is_none() && every_raw.is_none());
+
+	if idle_mode {
+		// Reject inconsistent mixes: a real time alongside "idle" makes no sense.
+		if when_raw.is_some() && !when_is_idle {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"cannot combine a time-based 'when' with idle scheduling — use when=\"idle\" or omit when".to_string(),
+			));
+		}
+		if every_raw.is_some() && !every_is_idle {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"cannot combine time-based 'every' with idle scheduling — use every=\"idle\" or omit every".to_string(),
+			));
+		}
+
+		let repeating = every_is_idle;
+		let entry = ScheduleEntry::new_idle(description.clone(), message, repeating);
+		let id = entry.id.clone();
+		get_store().lock().unwrap().add(entry);
+		persist_schedule_snapshot();
+		if let Some(sid) = crate::session::context::current_session_id() {
+			crate::session::context::notify_schedule_change(&sid);
+		}
+		let desc_line = if description.is_empty() {
+			String::new()
+		} else {
+			format!("\nDescription: {}", description)
+		};
+		let repeat_line = if repeating {
+			"\nRepeats: every idle".to_string()
+		} else {
+			String::new()
+		};
+		return Ok(McpToolResult::success(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!(
+				"✅ Scheduled [{}] for next idle{}{}\n\nThe message will be injected when the session is idle (no running taps or background jobs).",
+				id, desc_line, repeat_line
+			),
+		));
+	}
+
+	// Time mode — `when` is required at this point.
+	let when_str = match when_raw {
+		Some(s) => s,
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"missing required parameter 'when' for add".to_string(),
+			))
+		}
+	};
+
 	let trigger_at = match parse_when(&when_str) {
 		Ok(t) => t,
 		Err(e) => {
@@ -368,8 +486,8 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 		}
 	};
 
-	let interval_secs = match call.parameters.get("every") {
-		Some(Value::String(s)) if !s.trim().is_empty() => match parse_duration_secs(s.trim()) {
+	let interval_secs = match every_raw.as_deref() {
+		Some(s) => match parse_duration_secs(s) {
 			Ok(secs) if secs > 0 => Some(secs),
 			Ok(_) => {
 				return Ok(McpToolResult::error(
@@ -386,7 +504,7 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 				))
 			}
 		},
-		_ => None,
+		None => None,
 	};
 
 	let entry = ScheduleEntry::new(description.clone(), message, trigger_at, interval_secs);
@@ -436,7 +554,11 @@ fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 
 	let mut lines = vec![format!("{} scheduled entries:\n", entries.len())];
 	for entry in entries {
-		let trigger_fmt = entry.trigger_at.format("%Y-%m-%d %H:%M:%S").to_string();
+		let trigger_fmt = if entry.trigger_mode == TriggerMode::Idle {
+			"idle".to_string()
+		} else {
+			entry.trigger_at.format("%Y-%m-%d %H:%M:%S").to_string()
+		};
 		let desc = if entry.description.is_empty() {
 			"(no description)".to_string()
 		} else {
@@ -454,6 +576,13 @@ fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 		} else {
 			entry.message.clone()
 		};
+		let repeat_suffix = match (entry.trigger_mode, entry.interval_secs) {
+			(TriggerMode::Idle, Some(_)) => "\n  🔁 Repeats every idle".to_string(),
+			(TriggerMode::Time, Some(secs)) => {
+				format!("\n  🔁 Repeats every {}", format_interval(secs))
+			}
+			_ => String::new(),
+		};
 		lines.push(format!(
 			"[{}] {} ({}) — {}\n  Message: {}{}",
 			entry.id,
@@ -461,10 +590,7 @@ fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 			entry.countdown(),
 			desc,
 			preview,
-			match entry.interval_secs {
-				Some(secs) => format!("\n  🔁 Repeats every {}", format_interval(secs)),
-				None => String::new(),
-			},
+			repeat_suffix,
 		));
 	}
 

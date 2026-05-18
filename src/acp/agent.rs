@@ -304,6 +304,9 @@ fn spawn_inbox_monitor(
 			// Returns true to exit the monitor loop.
 			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
 				crate::mcp::core::flush_due_to_inbox();
+				// Idle-mode entries fire here too — ACP monitor runs only when nothing
+				// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
+				crate::mcp::core::flush_idle_to_inbox();
 
 				// Drain inbox while there are messages. Acquire the per-session
 				// exclusion lock BEFORE removing the session from the map so a

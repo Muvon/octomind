@@ -19,6 +19,18 @@ use chrono::{DateTime, Duration, Local, NaiveTime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// How an entry decides to fire.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TriggerMode {
+	/// Fire at `trigger_at` (and repeat by `interval_secs` if set).
+	#[default]
+	Time,
+	/// Fire when the session becomes idle. `trigger_at` is a placeholder.
+	/// `interval_secs = Some(_)` means "fire every idle"; `None` means one-shot.
+	Idle,
+}
+
 /// A single scheduled task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleEntry {
@@ -28,12 +40,16 @@ pub struct ScheduleEntry {
 	pub description: String,
 	/// Exact text that will be injected verbatim as a user message when triggered.
 	pub message: String,
-	/// When to fire this entry.
+	/// When to fire this entry. Meaningless when `trigger_mode == Idle`.
 	pub trigger_at: DateTime<Local>,
 	/// When this entry was created.
 	pub created_at: DateTime<Local>,
-	/// If set, the entry repeats every this many seconds after firing.
+	/// For time mode: repeat every this many seconds after firing.
+	/// For idle mode: any `Some(_)` means "repeat on every idle"; `None` is one-shot.
 	pub interval_secs: Option<i64>,
+	/// How this entry fires. Defaults to `Time` for back-compat with old snapshots.
+	#[serde(default)]
+	pub trigger_mode: TriggerMode,
 }
 
 impl ScheduleEntry {
@@ -51,28 +67,54 @@ impl ScheduleEntry {
 			trigger_at,
 			created_at: Local::now(),
 			interval_secs,
+			trigger_mode: TriggerMode::Time,
 		}
 	}
 
-	/// Create a rescheduled copy of this entry with a new ID and bumped trigger_at.
+	/// Build an idle-mode entry. `repeating = true` fires on every idle until removed.
+	pub fn new_idle(description: String, message: String, repeating: bool) -> Self {
+		let id = Uuid::new_v4().to_string()[..8].to_string();
+		Self {
+			id,
+			description,
+			message,
+			trigger_at: Local::now(),
+			created_at: Local::now(),
+			interval_secs: if repeating { Some(0) } else { None },
+			trigger_mode: TriggerMode::Idle,
+		}
+	}
+
+	/// Create a rescheduled copy of this entry with a new ID.
 	/// Only valid when interval_secs is Some — caller must check before calling.
 	pub fn reschedule(&self) -> Self {
-		let secs = self
-			.interval_secs
-			.expect("reschedule called on non-repeating entry");
 		let id = Uuid::new_v4().to_string()[..8].to_string();
+		let trigger_at = match self.trigger_mode {
+			TriggerMode::Idle => Local::now(),
+			TriggerMode::Time => {
+				let secs = self
+					.interval_secs
+					.expect("reschedule called on non-repeating entry");
+				self.trigger_at + Duration::seconds(secs)
+			}
+		};
 		Self {
 			id,
 			description: self.description.clone(),
 			message: self.message.clone(),
-			trigger_at: self.trigger_at + Duration::seconds(secs),
+			trigger_at,
 			created_at: Local::now(),
 			interval_secs: self.interval_secs,
+			trigger_mode: self.trigger_mode,
 		}
 	}
 
 	/// Human-friendly countdown string, e.g. "in 1h 23m" or "in 45s".
+	/// Idle entries return "when idle".
 	pub fn countdown(&self) -> String {
+		if self.trigger_mode == TriggerMode::Idle {
+			return "when idle".to_string();
+		}
 		let now = Local::now();
 		let diff = self.trigger_at.signed_duration_since(now);
 		if diff.num_seconds() <= 0 {
@@ -152,32 +194,49 @@ impl ScheduleStore {
 		}
 	}
 
-	/// Pop the earliest entry that is due (trigger_at <= now). Returns None if nothing is due.
+	/// Pop the earliest time-mode entry that is due (trigger_at <= now).
+	/// Idle entries are ignored — drain them via `pop_idle`.
 	pub fn pop_due(&mut self) -> Option<ScheduleEntry> {
 		let now = Local::now();
-		if self
+		let idx = self
 			.entries
-			.first()
-			.map(|e| e.trigger_at <= now)
-			.unwrap_or(false)
-		{
-			Some(self.entries.remove(0))
-		} else {
-			None
-		}
+			.iter()
+			.position(|e| e.trigger_mode == TriggerMode::Time && e.trigger_at <= now)?;
+		Some(self.entries.remove(idx))
 	}
 
-	/// Duration until the next entry fires. Returns None if the store is empty.
+	/// Pop the next idle-mode entry. Caller decides when "idle" actually holds.
+	pub fn pop_idle(&mut self) -> Option<ScheduleEntry> {
+		let idx = self
+			.entries
+			.iter()
+			.position(|e| e.trigger_mode == TriggerMode::Idle)?;
+		Some(self.entries.remove(idx))
+	}
+
+	/// Returns true if any idle-mode entries are queued.
+	pub fn has_idle(&self) -> bool {
+		self.entries
+			.iter()
+			.any(|e| e.trigger_mode == TriggerMode::Idle)
+	}
+
+	/// Duration until the next time-mode entry fires. Returns None if no time entries exist.
 	pub fn next_due_duration(&self) -> Option<std::time::Duration> {
 		let now = Local::now();
-		self.entries.first().map(|e| {
-			let diff = e.trigger_at.signed_duration_since(now);
-			if diff.num_milliseconds() <= 0 {
-				std::time::Duration::ZERO
-			} else {
-				std::time::Duration::from_millis(diff.num_milliseconds() as u64)
-			}
-		})
+		self.entries
+			.iter()
+			.filter(|e| e.trigger_mode == TriggerMode::Time)
+			.map(|e| e.trigger_at)
+			.min()
+			.map(|t| {
+				let diff = t.signed_duration_since(now);
+				if diff.num_milliseconds() <= 0 {
+					std::time::Duration::ZERO
+				} else {
+					std::time::Duration::from_millis(diff.num_milliseconds() as u64)
+				}
+			})
 	}
 
 	pub fn is_empty(&self) -> bool {
@@ -456,6 +515,7 @@ mod tests {
 			trigger_at: past,
 			created_at: Local::now(),
 			interval_secs: None,
+			trigger_mode: TriggerMode::Time,
 		};
 		store.add(entry);
 		assert!(store.pop_due().is_some());
@@ -473,6 +533,7 @@ mod tests {
 			trigger_at: future,
 			created_at: Local::now(),
 			interval_secs: None,
+			trigger_mode: TriggerMode::Time,
 		};
 		store.add(entry);
 		assert!(store.pop_due().is_none());
@@ -491,6 +552,7 @@ mod tests {
 			trigger_at: later,
 			created_at: Local::now(),
 			interval_secs: None,
+			trigger_mode: TriggerMode::Time,
 		});
 		store.add(ScheduleEntry {
 			id: "soon0001".to_string(),
@@ -499,6 +561,7 @@ mod tests {
 			trigger_at: sooner,
 			created_at: Local::now(),
 			interval_secs: None,
+			trigger_mode: TriggerMode::Time,
 		});
 		// First entry should be the sooner one.
 		assert_eq!(store.entries()[0].id, "soon0001");

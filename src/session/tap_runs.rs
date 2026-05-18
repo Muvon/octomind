@@ -163,6 +163,29 @@ pub fn find_job(id: &str) -> Option<TapJobInfo> {
 	})
 }
 
+/// Returns true if the current session has any tap-runs in the `Running` state.
+pub fn has_running_jobs() -> bool {
+	let session_id = match crate::session::context::current_session_id() {
+		Some(id) => id,
+		None => return false,
+	};
+	let Ok(guard) = REGISTRY.read() else {
+		return false;
+	};
+	let Some(reg) = guard.as_ref() else {
+		return false;
+	};
+	let Some(jobs) = reg.jobs.get(&session_id) else {
+		return false;
+	};
+	jobs.iter().any(|j| {
+		j.status
+			.read()
+			.map(|s| *s == TapJobStatus::Running)
+			.unwrap_or(false)
+	})
+}
+
 /// List all jobs for the current session, newest first.
 pub fn list_jobs() -> Vec<TapJobInfo> {
 	let session_id = match crate::session::context::current_session_id() {

@@ -171,20 +171,24 @@ Manage skills from taps. Skills are reusable instruction packs that inject domai
 | `/skill *pattern*` | Filter skills by glob pattern |
 
 ### `/schedule [SUBCOMMAND] [ARGS]`
-Direct control over the built-in `schedule` MCP tool — schedule a message to be injected as a user message at a future time. Same operations as the MCP tool, but driven from chat input. See [Scheduled Tasks](../use-cases/07-scheduled-tasks.md) for the broader use case.
+Direct control over the built-in `schedule` MCP tool — schedule a message to be injected as a user message at a future time or on the next idle. Same operations as the MCP tool, but driven from chat input. See [Scheduled Tasks](../use-cases/07-scheduled-tasks.md) for the broader use case.
 
 | Usage | Description |
 |-------|-------------|
 | `/schedule` or `/schedule list` | List all pending entries with IDs, trigger times, and countdown |
 | `/schedule remove <id>` | Cancel a scheduled entry |
+| `/schedule add message="<text>"` | Schedule a one-shot for the next idle (default `when="idle"`) |
 | `/schedule add when="<when>" message="<text>" [every="<interval>"] [description="<label>"]` | Schedule a new entry |
 | `/schedule edit <id> [when="..."] [message="..."] [every="..."] [description="..."]` | Update an existing entry (use `every="none"` to clear a repeat) |
 | `/schedule help` | Show inline usage |
 
-Key=value tokens accept shell-style quoting so multi-word values work: `when="in 1h 30m"`, `message='hello world'`. Supported `when` formats: `now` (fires immediately), relative (`in 5m`, `in 1h30m`, `in 90s`), time-of-day (`15:30`, `3:30pm`, `9am` — tomorrow if past), or absolute (`2026-03-30 15:30`). `every` accepts the same duration syntax as relative `when` (`10m`, `1h`, `1h30m`).
+Key=value tokens accept shell-style quoting so multi-word values work: `when="in 1h 30m"`, `message='hello world'`. Supported `when` formats: `idle` (fires on next idle — no running taps or background jobs), `now` (fires immediately), relative (`in 5m`, `in 1h30m`, `in 90s`), time-of-day (`15:30`, `3:30pm`, `9am` — tomorrow if past), or absolute (`2026-03-30 15:30`). `every` accepts `idle` (fires on every idle) or the same duration syntax as relative `when` (`10m`, `1h`, `1h30m`). When both `when` and `every` are omitted on `add`, `when` defaults to `idle`.
 
 Examples:
 ```
+/schedule add message="summarize what we just did"             # default: when="idle"
+/schedule add when="idle" message="run lint and report results"
+/schedule add every="idle" message="remind me to commit"        # fires every idle
 /schedule add when="now" message="say the date" every="5m"
 /schedule add when="in 5m" message="check the build"
 /schedule add when="9am" message="standup reminder" every="1h" description="daily"

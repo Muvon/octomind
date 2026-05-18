@@ -363,6 +363,7 @@ fn spawn_ws_inbox_monitor(
 			// Returns true to exit the monitor loop.
 			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
 				crate::mcp::core::flush_due_to_inbox();
+				crate::mcp::core::flush_idle_to_inbox();
 
 				// Drain inbox only when session is available.
 				// If held by handle_user_message(), skip — it fires inbox_notify when done,
@@ -867,6 +868,7 @@ async fn handle_user_message(
 	{
 		// Flush due schedule entries first.
 		crate::mcp::core::flush_due_to_inbox();
+		crate::mcp::core::flush_idle_to_inbox();
 		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
 			log_debug!(
 				"WebSocket pre-user: processing inbox message from {:?}",

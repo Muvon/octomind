@@ -98,30 +98,34 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			.collect::<Vec<_>>()
 	);
 
-	// RATIO SELECTION: Pick pressure level by token threshold, then escalate
-	// based on consecutive compressions (without user interaction).
-	// Each consecutive compression bumps to the next level (round-robin).
-	// This prevents infinite loops at level 0 when compress-all drops context
-	// hard and it grows back to the same threshold repeatedly.
-	let matched_level = config
-		.compression
-		.pressure_levels
-		.iter()
-		.filter(|l| current_tokens >= l.threshold)
-		.max_by(|a, b| a.threshold.cmp(&b.threshold));
-
+	// RATIO SELECTION: Find the highest matched pressure level, then escalate
+	// upward based on consecutive compressions (without user interaction).
+	// Escalation clamps at the last level — never wraps back to a lighter level.
+	// This prevents infinite loops when compress-all drops context hard and it
+	// grows back to the same threshold repeatedly.
 	let num_levels = config.compression.pressure_levels.len();
 	if num_levels == 0 {
 		log_debug!("No pressure levels configured - compression disabled");
 		return (false, 2.0);
 	}
 
-	let level = match matched_level {
-		Some(_) => {
-			// Escalate: use consecutive_compressions to index into levels (round-robin)
+	// Find the index of the highest threshold that current_tokens exceeds.
+	let matched_idx = config
+		.compression
+		.pressure_levels
+		.iter()
+		.enumerate()
+		.filter(|(_, l)| current_tokens >= l.threshold)
+		.max_by(|(_, a), (_, b)| a.threshold.cmp(&b.threshold))
+		.map(|(i, _)| i);
+
+	let (matched_idx, level) = match matched_idx {
+		Some(base_idx) => {
+			// Escalate UP from the matched level; clamp at the last level so we
+			// never de-escalate back to a lighter ratio under sustained pressure.
 			let n = session.session.info.consecutive_compressions as usize;
-			let escalated_idx = n % num_levels;
-			&config.compression.pressure_levels[escalated_idx]
+			let escalated_idx = (base_idx + n).min(num_levels - 1);
+			(base_idx, &config.compression.pressure_levels[escalated_idx])
 		}
 		None => {
 			log_debug!(
@@ -142,10 +146,11 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	let adjusted_ratio = calculate_adaptive_compression_ratio(session, level.target_ratio);
 
 	log_debug!(
-		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (threshold: {})",
+		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (matched threshold: {}, escalated level: {})",
 		current_tokens,
 		level.target_ratio,
 		adjusted_ratio,
+		config.compression.pressure_levels[matched_idx].threshold,
 		level.threshold
 	);
 
@@ -226,12 +231,17 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			.saturating_sub(compressible_tokens)
 			.saturating_add(estimated_compressed_size);
 
-		if estimated_after_compression >= level.threshold as u64 {
+		// Use the matched (trigger) threshold for the feasibility check, not the
+		// escalated level's threshold. The goal is to drop below the threshold that
+		// actually fired — the escalated level may have a higher threshold and would
+		// incorrectly pass contexts that compression cannot meaningfully reduce.
+		let trigger_threshold = config.compression.pressure_levels[matched_idx].threshold as u64;
+		if estimated_after_compression >= trigger_threshold {
 			log_debug!(
-				"Compression won't bring context below threshold: {} → {} (threshold: {}). Compressible: {} → {}. Setting cooldown.",
+				"Compression won't bring context below trigger threshold: {} → {} (threshold: {}). Compressible: {} → {}. Setting cooldown.",
 				current_tokens,
 				estimated_after_compression,
-				level.threshold,
+				trigger_threshold,
 				compressible_tokens,
 				estimated_compressed_size
 			);
@@ -244,7 +254,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			net_benefit,
 			current_tokens,
 			estimated_after_compression,
-			level.threshold
+			trigger_threshold
 		);
 		(true, adjusted_ratio)
 	} else {

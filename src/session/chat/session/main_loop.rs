@@ -1078,8 +1078,12 @@ pub async fn run_interactive_session(
 			// CONVERSATION COMPRESSION: Check if AI should compress older exchanges
 			// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
 			// AI decides if compression is beneficial based on conversation history
-			// EXPONENTIAL COOLDOWN: Reset consecutive compressions so this turn starts with minimal cooldown.
-			chat_session.session.info.consecutive_compressions = 0;
+			// EXPONENTIAL COOLDOWN: Reset consecutive compressions on each new user message so
+			// escalation starts from the matched level, not a stale counter from a prior turn.
+			// The reset happens AFTER the compression call so that if compression fires here
+			// (back-to-back without a user message in between), the counter is still valid for
+			// escalation inside should_check_compression. apply_compression increments it;
+			// we reset it now only when no compression is needed (healthy context).
 			let _compression_occurred =
 			match crate::session::chat::conversation_compression::check_and_compress_conversation(
 				&mut chat_session,
@@ -1089,7 +1093,14 @@ pub async fn run_interactive_session(
 			)
 			.await
 			{
-				Ok(compressed) => compressed,
+				Ok(compressed) => {
+					if !compressed {
+						// No compression needed — reset escalation counter so the next
+						// compression cycle starts fresh from the matched level.
+						chat_session.session.info.consecutive_compressions = 0;
+					}
+					compressed
+				}
 				Err(e) => {
 					// Best-effort: log error but continue session
 					log_debug!(

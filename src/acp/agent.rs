@@ -892,6 +892,12 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					if let Err(e) = result {
 						log_debug!("ACP: error processing pre-user inbox message: {}", e);
 					}
+
+					// Persist updated session.info (tokens/cost accumulated via
+					// add_assistant_message) so `/info` and resume show real stats.
+					if let Err(e) = chat_session.save() {
+						log_debug!("ACP: failed to save session after inbox message: {}", e);
+					}
 				}
 			}
 
@@ -1069,6 +1075,13 @@ impl agent_client_protocol::Agent for OctomindAgent {
 
 			// Wait for the forwarding task to drain any remaining messages
 			let _ = forward_task.await;
+
+			// Persist updated session.info (tokens/cost accumulated via
+			// add_assistant_message during the API call) so `/info` and
+			// resume show real stats. Mirrors the WebSocket server pattern.
+			if let Err(e) = chat_session.save() {
+				log_debug!("ACP: failed to save session after prompt: {}", e);
+			}
 
 			// Put session back and wake inbox monitor if it has pending messages.
 			self.sessions

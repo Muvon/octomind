@@ -48,10 +48,21 @@ pub(super) async fn calculate_compression_net_benefit(
 	let decision_pricing = get_model_pricing(decision_model, config);
 	let session_pricing = get_model_pricing(session_model, config);
 
-	// If we can't get pricing, fall back to conservative estimate (don't compress)
+	// If we can't get pricing, check ignore_cost before giving up.
+	// With ignore_cost=true the user explicitly opts out of cost-gating —
+	// treat missing pricing as zero-cost and compress for context management.
+	let ignore_cost = config.compression.decision.ignore_cost;
 	let (decision_pricing, session_pricing) = match (decision_pricing, session_pricing) {
 		(Some(d), Some(s)) => (d, s),
 		_ => {
+			if ignore_cost {
+				log_debug!(
+					"Cannot get pricing for models: decision='{}', session='{}' - ignore_cost=true, compressing anyway",
+					decision_model,
+					session_model
+				);
+				return 1.0; // Positive = compress (context management, cost ignored)
+			}
 			log_debug!(
 				"Cannot get pricing for models: decision='{}', session='{}' - skipping compression",
 				decision_model,
@@ -134,7 +145,6 @@ pub(super) async fn calculate_compression_net_benefit(
 
 	// SCENARIO B: WITH compression
 	// 1. Compression cost (one-time) using DECISION model pricing
-	let ignore_cost = config.compression.decision.ignore_cost;
 	let compression_cost = if same_model {
 		// Same model: session context is already cached, only decision prompt is new
 		decision_pricing.calculate_cost(

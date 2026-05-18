@@ -104,10 +104,29 @@ pub(super) async fn apply_compression(
 	// re-injected user turn with zero context — exactly the "lost YES / plan
 	// approval" failure mode. Inheriting the id keeps the server-side chain
 	// intact while local view shrinks for token budget.
+	//
+	// The inherited id must point to a SETTLED completion — one whose stored
+	// output did not end with `function_call` items. When the server walks the
+	// chain back from an unsettled id, the reconstructed history ends with
+	// `assistant_with_tool_calls`, and the next request (whose `input` after
+	// compression is a re-injected user message, not the matching tool_results)
+	// produces `tool_use → user` upstream, which Anthropic rejects with:
+	//   "tool_use ids were found without tool_result blocks immediately after".
+	// An assistant message with non-empty `tool_calls` corresponds to a
+	// completion whose stored output had `function_call` items, so we skip
+	// those when scanning the drained range.
 	let inherited_response_id: Option<String> = session.session.messages[start_idx + 1..=end_idx]
 		.iter()
 		.rev()
-		.find(|m| m.role == "assistant" && m.id.is_some())
+		.find(|m| {
+			m.role == "assistant"
+				&& m.id.is_some()
+				&& match m.tool_calls.as_ref() {
+					Some(serde_json::Value::Array(arr)) => arr.is_empty(),
+					Some(_) => false,
+					None => true,
+				}
+		})
 		.and_then(|m| m.id.clone());
 
 	if let Some(ref id) = inherited_response_id {

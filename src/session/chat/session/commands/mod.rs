@@ -37,6 +37,7 @@ mod run;
 mod schedule;
 mod session;
 mod skill;
+mod learning;
 mod utils;
 mod video;
 mod workflow;
@@ -179,6 +180,9 @@ pub enum CommandOutput {
 	Schedule {
 		data: serde_json::Value,
 	},
+	Learning {
+		data: serde_json::Value,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -230,6 +234,7 @@ impl CommandOutput {
 			Self::Session { .. } => display::display_session(self),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
+			Self::Learning { .. } => display::display_learning(self),
 			Self::Error { error, .. } => {
 				println!("{}", error.bright_red());
 			}
@@ -304,6 +309,7 @@ pub async fn process_command(
 		PLAN_COMMAND => plan::handle_plan().await,
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
+		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

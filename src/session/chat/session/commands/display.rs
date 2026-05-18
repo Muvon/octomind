@@ -1811,3 +1811,165 @@ fn display_skill_list(data: &serde_json::Value) {
 		"Use '/skill <name>' to toggle, '/skill *pattern*' to filter.".dimmed()
 	);
 }
+
+pub fn display_learning(output: &CommandOutput) {
+	let data = match output {
+		CommandOutput::Learning { data } => data,
+		_ => return,
+	};
+
+	let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
+
+	match subcommand {
+		"list" => {
+			let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
+			let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+			let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
+			let total_pages = data.get("total_pages").and_then(|v| v.as_u64()).unwrap_or(0);
+			let pattern = data.get("pattern").and_then(|v| v.as_str());
+
+			let header = if let Some(pat) = pattern {
+				format!("Lessons — {}/{} (filter: {})", role, project, pat)
+			} else {
+				format!("Lessons — {}/{}", role, project)
+			};
+			println!();
+			println!("{}", header.bright_cyan().bold());
+			println!("{}", "─".repeat(60).dimmed());
+
+			let lessons = match data.get("lessons").and_then(|v| v.as_array()) {
+				Some(l) => l,
+				None => {
+					println!("{}", "No lessons found.".yellow());
+					return;
+				}
+			};
+
+			if lessons.is_empty() {
+				println!("{}", "No lessons found.".yellow());
+				println!();
+				return;
+			}
+
+			for lesson in lessons {
+				let index = lesson.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+				let content = lesson.get("content").and_then(|v| v.as_str()).unwrap_or("");
+				let importance = lesson.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.5);
+				let confidence = lesson.get("confidence").and_then(|v| v.as_str()).unwrap_or("");
+				let tags = lesson
+					.get("tags")
+					.and_then(|v| v.as_array())
+					.map(|a| {
+						a.iter()
+							.filter_map(|v| v.as_str())
+							.collect::<Vec<_>>()
+							.join(", ")
+					})
+					.unwrap_or_default();
+				let created = lesson.get("created").and_then(|v| v.as_str()).unwrap_or("");
+
+				// Importance indicator: high ≥0.7, medium ≥0.4, low <0.4
+				let imp_indicator = if importance >= 0.7 {
+					"[high]".bright_yellow()
+				} else if importance >= 0.4 {
+					"[med] ".normal().dimmed()
+				} else {
+					"[low] ".normal().dimmed()
+				};
+
+				println!();
+				print!("  {:>3}. {} ", index, imp_indicator);
+				// Truncate content to ~80 chars
+				let content_display = if content.chars().count() > 80 {
+					format!("{}…", content.chars().take(79).collect::<String>())
+				} else {
+					content.to_string()
+				};
+				println!("{}", content_display.bright_white());
+
+				// Metadata line
+				let mut meta = Vec::new();
+				if !confidence.is_empty() {
+					meta.push(format!("confidence: {}", confidence));
+				}
+				if !tags.is_empty() {
+					meta.push(format!("tags: {}", tags));
+				}
+				if !created.is_empty() {
+					// Show just the date portion (first 10 chars of ISO timestamp)
+					let date: String = created.chars().take(10).collect();
+					meta.push(format!("created: {}", date));
+				}
+				if !meta.is_empty() {
+					println!("       {}", meta.join(" | ").dimmed());
+				}
+			}
+
+			println!();
+
+			// Pagination footer
+			if total_pages > 1 {
+				let mut nav = Vec::new();
+				if page > 1 {
+					nav.push(format!("/learning list {}", page - 1));
+				}
+				if page < total_pages {
+					nav.push(format!("/learning list {}", page + 1));
+				}
+				println!(
+					"{}",
+					format!("Page {page}/{total_pages}  {}", nav.join("  ")).dimmed()
+				);
+			}
+
+			println!(
+				"{}",
+				format!(
+					"{} lesson(s) total  |  /learning delete <n> to remove  |  /learning clear to remove all",
+					total
+				)
+				.dimmed()
+			);
+		}
+		"delete" => {
+			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+			let preview = data
+				.get("content_preview")
+				.and_then(|v| v.as_str())
+				.unwrap_or("");
+			println!(
+				"{}",
+				format!("✓ Deleted lesson #{}: {}…", index, preview).bright_green()
+			);
+		}
+		"clear" => {
+			let deleted = data.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
+			let errors = data
+				.get("errors")
+				.and_then(|v| v.as_array())
+				.map(|a| a.len())
+				.unwrap_or(0);
+			if deleted == 0 {
+				println!("{}", "No lessons to clear.".yellow());
+			} else {
+				println!(
+					"{}",
+					format!("✓ Cleared {} lesson(s).", deleted).bright_green()
+				);
+				if errors > 0 {
+					println!(
+						"{}",
+						format!("  {} error(s) — some files may not have been removed.", errors)
+							.yellow()
+					);
+				}
+			}
+		}
+		"error" => {
+			let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+			println!("{}", msg.bright_red());
+		}
+		_ => {}
+	}
+}

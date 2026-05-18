@@ -176,6 +176,22 @@ impl LearningBackend for FileBackend {
 			.collect())
 	}
 
+	async fn delete(&self, id: &str, role: &str, project: &str, _config: &Config) -> Result<()> {
+		let dir = Self::learning_dir(role, project)?;
+		// Find the .md file whose stem matches `id`.
+		for entry in std::fs::read_dir(&dir)? {
+			let entry = entry?;
+			let path = entry.path();
+			if path.extension().is_some_and(|e| e == "md") {
+				if path.file_stem().and_then(|s| s.to_str()) == Some(id) {
+					std::fs::remove_file(&path)?;
+					return Ok(());
+				}
+			}
+		}
+		anyhow::bail!("lesson '{}' not found", id)
+	}
+
 	async fn retrieve_all(
 		&self,
 		role: &str,

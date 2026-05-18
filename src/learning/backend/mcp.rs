@@ -152,4 +152,8 @@ impl LearningBackend for McpBackend {
 		self.retrieve("", &["*".to_string()], role, project, 100, config)
 			.await
 	}
+
+	async fn delete(&self, _id: &str, _role: &str, _project: &str, _config: &Config) -> Result<()> {
+		anyhow::bail!("deletion is not supported for the MCP backend — manage lessons through the MCP tool directly")
+	}
 }

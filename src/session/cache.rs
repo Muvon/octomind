@@ -232,21 +232,16 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// Find the LAST tool message, falling back to the LAST user message.
+		// Walk backwards to find the latest tool or user message that is NOT
+		// already cached. Skipping already-cached messages ensures the marker
+		// always advances to the freshest uncached boundary rather than
+		// returning a no-op when the previous turn's target is still marked.
 		let target_index = session
 			.messages
 			.iter()
 			.enumerate()
 			.rev()
-			.find(|(_, msg)| msg.role == "tool")
-			.or_else(|| {
-				session
-					.messages
-					.iter()
-					.enumerate()
-					.rev()
-					.find(|(_, msg)| msg.role == "user")
-			})
+			.find(|(_, msg)| (msg.role == "tool" || msg.role == "user") && !msg.cached)
 			.map(|(i, _)| i);
 
 		if let Some(index) = target_index {

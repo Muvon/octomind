@@ -47,6 +47,9 @@ pub trait LearningBackend: Send + Sync {
 	/// Retrieve ALL lessons for a role/project (used for dedup during extraction).
 	async fn retrieve_all(&self, role: &str, project: &str, config: &Config)
 		-> Result<Vec<Lesson>>;
+
+	/// Delete a lesson by its id (file backend: filename stem; MCP backend: unsupported).
+	async fn delete(&self, id: &str, role: &str, project: &str, config: &Config) -> Result<()>;
 }
 
 /// Create a backend based on config.

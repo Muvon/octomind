@@ -232,11 +232,10 @@ fn preview_value(v: &serde_json::Value) -> String {
 	}
 }
 
-// Upfront preview before execution. Only fires when there's more than one
-// tool — a single tool gets nothing here and its full block opens at result
-// time.
+// Upfront preview before execution. Fires for any number of tools — single
+// or parallel — so the display is always consistent.
 //
-// Layout for parallel tools:
+// Layout:
 //
 //   ╭ tools
 //   │ ▸ tool1 · server
@@ -249,10 +248,9 @@ fn preview_value(v: &serde_json::Value) -> String {
 // Indented params let parallel `view` calls be distinguished without an
 // inline `(k=v, k=v)` that would truncate badly for long paths.
 async fn display_tool_preview(config: &Config, tool_calls: &[crate::mcp::McpToolCall]) {
-	if tool_calls.len() < 2 {
+	if tool_calls.is_empty() {
 		return;
 	}
-	log_debug!("Found {} tool calls in response", tool_calls.len());
 
 	let sep = "·".bright_black();
 	let rail = "│".bright_black();

@@ -182,11 +182,11 @@ impl LearningBackend for FileBackend {
 		for entry in std::fs::read_dir(&dir)? {
 			let entry = entry?;
 			let path = entry.path();
-			if path.extension().is_some_and(|e| e == "md") {
-				if path.file_stem().and_then(|s| s.to_str()) == Some(id) {
-					std::fs::remove_file(&path)?;
-					return Ok(());
-				}
+			if path.extension().is_some_and(|e| e == "md")
+				&& path.file_stem().and_then(|s| s.to_str()) == Some(id)
+			{
+				std::fs::remove_file(&path)?;
+				return Ok(());
 			}
 		}
 		anyhow::bail!("lesson '{}' not found", id)

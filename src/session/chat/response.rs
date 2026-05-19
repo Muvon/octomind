@@ -222,6 +222,15 @@ fn preview_value(v: &serde_json::Value) -> String {
 				"[]".to_string()
 			} else if a.len() == 1 {
 				format!("[{}]", preview_value(&a[0]))
+			} else if a.len() == 2
+				&& a.iter().all(|e| {
+					matches!(
+						e,
+						serde_json::Value::Number(_) | serde_json::Value::String(_)
+					)
+				}) {
+				// Compact range-like pairs (e.g. lines [1, 150]) — show both values
+				format!("[{}, {}]", preview_value(&a[0]), preview_value(&a[1]))
 			} else {
 				format!("[{}, +{}]", preview_value(&a[0]), a.len() - 1)
 			}

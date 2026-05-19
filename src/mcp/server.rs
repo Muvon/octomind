@@ -692,7 +692,7 @@ pub async fn execute_tool_call(
 		}
 	}
 
-	// Check server health before attempting execution (but don't restart)
+	// Check server health before attempting execution. Dead stdin servers are restarted here.
 	let server_health = process::get_server_health(server.name());
 	match server_health {
 		process::ServerHealth::Failed => {
@@ -717,12 +717,20 @@ pub async fn execute_tool_call(
 					server.name()
 				);
 			} else {
-				// For stdin servers, Dead means process is actually dead
-				return Err(anyhow::anyhow!(
-					"Server '{}' is not running. Cannot execute tool '{}'. Server will not be restarted automatically.",
+				// For stdin servers, Dead means the process was killed (e.g. after Ctrl+C).
+				// Restart it now so the next tool call succeeds — same auto-recovery HTTP uses.
+				crate::log_info!(
+					"Server '{}' is dead — restarting before executing tool '{}'",
 					server.name(),
 					call.tool_name
-				));
+				);
+				if let Err(e) = process::ensure_server_running(server).await {
+					return Err(anyhow::anyhow!(
+						"Server '{}' failed to restart: {}",
+						server.name(),
+						e
+					));
+				}
 			}
 		}
 		process::ServerHealth::Unreachable => {

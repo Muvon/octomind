@@ -46,6 +46,10 @@ fn display_random_tip() -> String {
 		"Use /prompt [text] to send some predefined prompt",
 		"Use /info to see current session costs and token usage",
 		"Use /workflow to execute multi-step automation tasks",
+		"Use /share to publish this session to octomind.run and get a permanent link",
+		"Use /analyze to open the current session in your browser without uploading anything",
+		"Share a transcript with a teammate: type /share, then copy the URL it prints",
+		"Want to inspect a long-running session visually? /analyze opens it in the web viewer",
 	];
 
 	// Generate deterministic but randomized tip based on session start time

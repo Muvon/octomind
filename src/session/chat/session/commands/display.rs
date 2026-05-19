@@ -2262,6 +2262,22 @@ pub fn display_share(output: &CommandOutput) {
 		let kw = key_width(["url", "id"]);
 		block_row("url", &url.bright_cyan().underline().to_string(), kw);
 		block_row("id", &id.dimmed().to_string(), kw);
+		// Surface local-only shares clearly — the URL won't work for anyone else.
+		if url.starts_with("http://localhost")
+			|| url.starts_with("http://127.0.0.1")
+			|| url.starts_with("http://0.0.0.0")
+		{
+			block_line(
+				&"⚠  Local share — visible only from this machine."
+					.yellow()
+					.to_string(),
+			);
+			block_line(
+				&"   Unset OCTOMIND_SHARE_URL (or set to https://octomind.run) to share publicly."
+					.dimmed()
+					.to_string(),
+			);
+		}
 		block_close_ok("/share", Some(id));
 		println!();
 	}

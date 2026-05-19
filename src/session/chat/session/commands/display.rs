@@ -1433,6 +1433,65 @@ fn display_mcp_invalid(_data: &serde_json::Value) {
 pub fn display_report(output: &CommandOutput, _config: &Config) {
 	use crate::session::chat::formatting::format_duration;
 
+	// Column widths — chosen to fit ~92 chars including the rail prefix.
+	const W_NUM: usize = 3;
+	const W_REQUEST: usize = 42;
+	const W_COST: usize = 9;
+	const W_TOOLS: usize = 5;
+	const W_TASK: usize = 6;
+	const W_AI: usize = 6;
+	const W_PROC: usize = 6;
+
+	// Truncate to a single line of `max` chars, collapsing newlines to spaces
+	// so multi-line user prompts don't break the table layout.
+	fn cell_text(s: &str, max: usize) -> String {
+		let flat: String = s
+			.chars()
+			.map(|c| {
+				if c == '\n' || c == '\r' || c == '\t' {
+					' '
+				} else {
+					c
+				}
+			})
+			.collect();
+		// Collapse runs of whitespace.
+		let mut compact = String::with_capacity(flat.len());
+		let mut prev_space = false;
+		for c in flat.chars() {
+			let is_space = c == ' ';
+			if is_space && prev_space {
+				continue;
+			}
+			compact.push(c);
+			prev_space = is_space;
+		}
+		let compact = compact.trim();
+		if compact.chars().count() > max {
+			format!("{}…", compact.chars().take(max - 1).collect::<String>())
+		} else {
+			compact.to_string()
+		}
+	}
+
+	// Pad to width counting char count (not bytes) so non-ASCII titles align.
+	fn pad_left(s: &str, w: usize) -> String {
+		let n = s.chars().count();
+		if n >= w {
+			s.to_string()
+		} else {
+			format!("{}{}", s, " ".repeat(w - n))
+		}
+	}
+	fn pad_right(s: &str, w: usize) -> String {
+		let n = s.chars().count();
+		if n >= w {
+			s.to_string()
+		} else {
+			format!("{}{}", " ".repeat(w - n), s)
+		}
+	}
+
 	if let CommandOutput::Report { entries, totals } = output {
 		block_open("/report", None);
 
@@ -1443,7 +1502,31 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			return;
 		}
 
-		// Per-request entries — each becomes one section.
+		// Header row + divider — both on the rail.
+		let header = format!(
+			"{}  {}  {}  {}  {}  {}  {}",
+			pad_right("#", W_NUM).bright_black(),
+			pad_left("request", W_REQUEST).bright_black(),
+			pad_right("cost", W_COST).bright_black(),
+			pad_right("tools", W_TOOLS).bright_black(),
+			pad_right("task", W_TASK).bright_black(),
+			pad_right("ai", W_AI).bright_black(),
+			pad_right("proc", W_PROC).bright_black(),
+		);
+		block_line(&header);
+		let divider = format!(
+			"{}  {}  {}  {}  {}  {}  {}",
+			"─".repeat(W_NUM),
+			"─".repeat(W_REQUEST),
+			"─".repeat(W_COST),
+			"─".repeat(W_TOOLS),
+			"─".repeat(W_TASK),
+			"─".repeat(W_AI),
+			"─".repeat(W_PROC),
+		);
+		block_line(&divider.bright_black().to_string());
+
+		// Data rows.
 		for (i, entry) in entries.iter().enumerate() {
 			let user_request = entry
 				.get("user_request")
@@ -1454,62 +1537,35 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				.get("tool_calls")
 				.and_then(|v| v.as_u64())
 				.unwrap_or(0);
-			let tools_used = entry
-				.get("tools_used")
-				.and_then(|v| v.as_str())
-				.unwrap_or("");
 			let task_time = entry
 				.get("task_time")
 				.and_then(|v| v.as_str())
-				.unwrap_or("");
-			let ai_time = entry.get("ai_time").and_then(|v| v.as_str()).unwrap_or("");
+				.unwrap_or("0ms");
+			let ai_time = entry
+				.get("ai_time")
+				.and_then(|v| v.as_str())
+				.unwrap_or("0ms");
 			let processing_time = entry
 				.get("processing_time")
 				.and_then(|v| v.as_str())
-				.unwrap_or("");
+				.unwrap_or("0ms");
 
-			block_section(&format!("#{}", i + 1));
-			let kw = key_width([
-				"request",
-				"cost",
-				"tools",
-				"task time",
-				"ai time",
-				"processing",
-			]);
-			let request_preview: String = if user_request.chars().count() > 80 {
-				format!("{}…", user_request.chars().take(79).collect::<String>())
-			} else {
-				user_request.to_string()
-			};
-			block_row("request", &request_preview.bright_white().to_string(), kw);
-			block_row("cost", &cost.bright_yellow().to_string(), kw);
-			block_row(
-				"tools",
-				&format!(
-					"{} call(s){}",
-					tool_calls,
-					if tools_used.is_empty() {
-						String::new()
-					} else {
-						format!(" · {}", tools_used).dimmed().to_string()
-					}
-				),
-				kw,
+			let row = format!(
+				"{}  {}  {}  {}  {}  {}  {}",
+				pad_right(&(i + 1).to_string(), W_NUM).bright_white(),
+				pad_left(&cell_text(user_request, W_REQUEST), W_REQUEST),
+				pad_right(cost, W_COST).bright_yellow(),
+				pad_right(&tool_calls.to_string(), W_TOOLS),
+				pad_right(task_time, W_TASK),
+				pad_right(ai_time, W_AI),
+				pad_right(processing_time, W_PROC),
 			);
-			if !task_time.is_empty() {
-				block_row("task time", task_time, kw);
-			}
-			if !ai_time.is_empty() {
-				block_row("ai time", ai_time, kw);
-			}
-			if !processing_time.is_empty() {
-				block_row("processing", processing_time, kw);
-			}
+			block_line(&row);
 		}
 
-		// Totals section.
-		block_section("totals");
+		// Footer divider + Σ row.
+		block_line(&divider.bright_black().to_string());
+
 		let total_cost = totals
 			.get("total_cost")
 			.and_then(|v| v.as_f64())
@@ -1530,30 +1586,17 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			.get("total_processing_time_ms")
 			.and_then(|v| v.as_u64())
 			.unwrap_or(0);
-		let kw = key_width([
-			"requests",
-			"cost",
-			"tools",
-			"task time",
-			"ai time",
-			"processing",
-		]);
-		block_row("requests", &entries.len().to_string(), kw);
-		block_row(
-			"cost",
-			&format!("${:.5}", total_cost).bright_yellow().to_string(),
-			kw,
+		let totals_row = format!(
+			"{}  {}  {}  {}  {}  {}  {}",
+			pad_right("Σ", W_NUM).bright_cyan(),
+			pad_left(&format!("{} request(s)", entries.len()), W_REQUEST).dimmed(),
+			pad_right(&format!("${:.5}", total_cost), W_COST).bright_yellow(),
+			pad_right(&total_tool_calls.to_string(), W_TOOLS),
+			pad_right(&format_duration(total_task), W_TASK),
+			pad_right(&format_duration(total_ai), W_AI),
+			pad_right(&format_duration(total_proc), W_PROC),
 		);
-		block_row("tools", &total_tool_calls.to_string(), kw);
-		if total_task > 0 {
-			block_row("task time", &format_duration(total_task), kw);
-		}
-		if total_ai > 0 {
-			block_row("ai time", &format_duration(total_ai), kw);
-		}
-		if total_proc > 0 {
-			block_row("processing", &format_duration(total_proc), kw);
-		}
+		block_line(&totals_row);
 
 		block_close_ok(
 			"/report",
@@ -1587,6 +1630,38 @@ pub fn display_session(output: &CommandOutput) {
 }
 
 pub fn display_list(output: &CommandOutput, _config: &Config) {
+	// Column widths chosen to fit ~95 chars with rail prefix.
+	const W_MARK: usize = 1;
+	const W_NAME: usize = 28;
+	const W_CREATED: usize = 16;
+	const W_MODEL: usize = 24;
+	const W_TOKENS: usize = 8;
+	const W_COST: usize = 9;
+
+	fn truncate_cell(s: &str, max: usize) -> String {
+		if s.chars().count() > max {
+			format!("{}…", s.chars().take(max - 1).collect::<String>())
+		} else {
+			s.to_string()
+		}
+	}
+	fn pad_left(s: &str, w: usize) -> String {
+		let n = s.chars().count();
+		if n >= w {
+			s.to_string()
+		} else {
+			format!("{}{}", s, " ".repeat(w - n))
+		}
+	}
+	fn pad_right(s: &str, w: usize) -> String {
+		let n = s.chars().count();
+		if n >= w {
+			s.to_string()
+		} else {
+			format!("{}{}", " ".repeat(w - n), s)
+		}
+	}
+
 	if let CommandOutput::List {
 		sessions,
 		total_sessions,
@@ -1595,6 +1670,10 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 		plain_text,
 	} = output
 	{
+		// plain_text was used by the legacy markdown renderer fallback; the
+		// table replaces it but we still take ownership of the field.
+		let _ = plain_text;
+
 		block_open("/list", None);
 
 		if sessions.is_empty() {
@@ -1604,53 +1683,75 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 			return;
 		}
 
-		// Each session = one section. Pull fields from the JSON entries directly so
-		// we don't depend on the markdown-rendered fallback path.
+		// Header + divider.
+		let header = format!(
+			"{} {}  {}  {}  {}  {}",
+			pad_left("", W_MARK),
+			pad_left("name", W_NAME).bright_black(),
+			pad_left("created", W_CREATED).bright_black(),
+			pad_left("model", W_MODEL).bright_black(),
+			pad_right("tokens", W_TOKENS).bright_black(),
+			pad_right("cost", W_COST).bright_black(),
+		);
+		block_line(&header);
+		let divider = format!(
+			"{} {}  {}  {}  {}  {}",
+			"─".repeat(W_MARK),
+			"─".repeat(W_NAME),
+			"─".repeat(W_CREATED),
+			"─".repeat(W_MODEL),
+			"─".repeat(W_TOKENS),
+			"─".repeat(W_COST),
+		);
+		block_line(&divider.bright_black().to_string());
+
 		for entry in sessions {
 			let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-			let model = entry.get("model").and_then(|v| v.as_str()).unwrap_or("");
-			let messages = entry.get("messages").and_then(|v| v.as_u64()).unwrap_or(0);
-			let tokens = entry
-				.get("total_tokens")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
-			let cost = entry
-				.get("total_cost")
-				.and_then(|v| v.as_f64())
-				.unwrap_or(0.0);
-			let updated = entry
-				.get("updated_at")
-				.and_then(|v| v.as_str())
-				.unwrap_or("");
+			let created = entry.get("created").and_then(|v| v.as_str()).unwrap_or("");
+			let model_full = entry.get("model").and_then(|v| v.as_str()).unwrap_or("");
+			let tokens = entry.get("tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+			let cost = entry.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+			let is_current = entry
+				.get("is_current")
+				.and_then(|v| v.as_bool())
+				.unwrap_or(false);
 
-			block_section_with("session", name);
-			let kw = key_width(["model", "messages", "tokens", "cost", "updated"]);
-			if !model.is_empty() {
-				block_row("model", &model.dimmed().to_string(), kw);
-			}
-			block_row("messages", &messages.to_string(), kw);
-			if tokens > 0 {
-				block_row(
-					"tokens",
-					&crate::session::chat::format_number(tokens)
-						.bright_white()
-						.to_string(),
-					kw,
-				);
-			}
-			if cost > 0.0 {
-				block_row(
-					"cost",
-					&format!("${:.5}", cost).bright_yellow().to_string(),
-					kw,
-				);
-			}
-			if !updated.is_empty() {
-				block_row("updated", &updated.dimmed().to_string(), kw);
-			}
+			// Strip provider prefix from model name for display: openrouter:anthropic/claude-X → claude-X
+			let model_short = model_full
+				.split_once(':')
+				.map(|(_, rest)| rest)
+				.unwrap_or(model_full)
+				.split('/')
+				.next_back()
+				.unwrap_or(model_full);
+
+			let mark = if is_current {
+				"→".bright_green().to_string()
+			} else {
+				" ".to_string()
+			};
+			let name_cell = pad_left(&truncate_cell(name, W_NAME), W_NAME);
+			let name_colored = if is_current {
+				name_cell.bright_green().bold().to_string()
+			} else {
+				name_cell.bright_white().to_string()
+			};
+
+			let row = format!(
+				"{} {}  {}  {}  {}  {}",
+				mark,
+				name_colored,
+				pad_left(&truncate_cell(created, W_CREATED), W_CREATED).dimmed(),
+				pad_left(&truncate_cell(model_short, W_MODEL), W_MODEL).dimmed(),
+				pad_right(&crate::session::chat::format_number(tokens), W_TOKENS),
+				pad_right(&format!("${:.5}", cost), W_COST).bright_yellow(),
+			);
+			block_line(&row);
 		}
 
+		// Pagination footer + close.
 		if *total_pages > 1 {
+			block_line(&divider.bright_black().to_string());
 			let mut nav = Vec::new();
 			if *page > 1 {
 				nav.push(format!("/list {}", page - 1));
@@ -1664,9 +1765,6 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 					.to_string(),
 			);
 		}
-
-		// Suppress unused warning when plain_text is None.
-		let _ = plain_text;
 
 		block_close_ok(
 			"/list",

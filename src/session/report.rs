@@ -90,7 +90,15 @@ impl SessionReport {
 
 		// Process entries and track cost/time
 		for log_entry in all_entries.iter() {
-			let log_type = log_entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
+			// User messages are persisted as `Message` structs with `role:"user"` (no
+			// `type` field). Synthesize "USER" so the request-context machinery picks
+			// them up alongside `{"type":"COMMAND",…}` entries. Without this, /report
+			// only ever shows slash commands and skips real chat turns.
+			let role = log_entry.get("role").and_then(|r| r.as_str()).unwrap_or("");
+			let log_type = log_entry
+				.get("type")
+				.and_then(|t| t.as_str())
+				.unwrap_or_else(|| if role == "user" { "USER" } else { "" });
 			let entry_timestamp = log_entry
 				.get("timestamp")
 				.and_then(|t| t.as_u64())
@@ -160,12 +168,27 @@ impl SessionReport {
 					}
 				}
 				_ => {
-					// Check for any other entries that might contain session cost updates
+					// SUMMARY entries carry the running totals via `session_info`. STATS
+					// entries are only emitted in tests, so SUMMARY is the *only* place
+					// real sessions get their time/cost rollup from. Pull cost AND time
+					// fields here — without the time pulls, ai/processing always read 0ms.
 					if let Some(session_info) = log_entry.get("session_info") {
 						if let Some(total_cost) =
 							session_info.get("total_cost").and_then(|c| c.as_f64())
 						{
 							last_total_cost = total_cost;
+						}
+						if let Some(api_ms) = session_info
+							.get("total_api_time_ms")
+							.and_then(|t| t.as_u64())
+						{
+							last_total_api_time_ms = api_ms;
+						}
+						if let Some(tool_ms) = session_info
+							.get("total_tool_time_ms")
+							.and_then(|t| t.as_u64())
+						{
+							last_total_tool_time_ms = tool_ms;
 						}
 					}
 				}

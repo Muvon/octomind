@@ -125,6 +125,9 @@ pub enum CommandOutput {
 		has_plan: bool,
 		plan: Option<serde_json::Value>,
 		display: Option<String>,
+		// Critical knowledge entries accumulated from conversation compressions.
+		// Empty when the session has never been compressed.
+		knowledge: Vec<String>,
 	},
 	Context {
 		filter: String,
@@ -333,7 +336,7 @@ pub async fn process_command(
 		VIDEO_COMMAND => video::handle_video(session, params).await,
 		ROLE_COMMAND => role::handle_role(session, config, params).await,
 		PROMPT_COMMAND => prompt::handle_prompt(session, config, &current_role, params).await,
-		PLAN_COMMAND => plan::handle_plan().await,
+		PLAN_COMMAND => plan::handle_plan(session).await,
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
 		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,

@@ -309,26 +309,58 @@ pub fn display_plan(output: &CommandOutput) {
 		has_plan,
 		plan: _,
 		display,
+		knowledge,
 	} = output
 	{
+		block_open("/plan", None);
+
 		if *has_plan {
-			block_open("/plan", None);
+			block_section("plan");
 			if let Some(display_text) = display {
 				for line in display_text.lines() {
 					block_row_text(line);
 				}
 			}
-			block_close_ok("/plan", Some("active"));
 		} else {
-			block_open("/plan", None);
 			block_line(&"No active plan.".bright_yellow().to_string());
 			block_line(
 				&"Create with plan(command=\"start\", title=\"...\", tasks=[...])"
 					.dimmed()
 					.to_string(),
 			);
-			block_close_ok("/plan", Some("empty"));
 		}
+
+		// Critical knowledge from compressions — surfaced as a numbered list
+		// so each entry is scannable. Only rendered when non-empty.
+		if !knowledge.is_empty() {
+			block_section(&format!("knowledge ({} entries)", knowledge.len()));
+			let num_width = knowledge.len().to_string().chars().count();
+			for (i, entry) in knowledge.iter().enumerate() {
+				let mut lines = entry.lines();
+				let head = lines.next().unwrap_or("");
+				block_row_text(&format!(
+					"{}. {}",
+					format!("{:>width$}", i + 1, width = num_width).bright_cyan(),
+					head.bright_white(),
+				));
+				for cont in lines {
+					block_row_text(&format!("{}  {}", " ".repeat(num_width + 2), cont));
+				}
+			}
+		}
+
+		let suffix = if *has_plan {
+			if knowledge.is_empty() {
+				"active".to_string()
+			} else {
+				format!("active · {} knowledge", knowledge.len())
+			}
+		} else if knowledge.is_empty() {
+			"empty".to_string()
+		} else {
+			format!("no plan · {} knowledge", knowledge.len())
+		};
+		block_close_ok("/plan", Some(&suffix));
 		println!();
 	}
 }

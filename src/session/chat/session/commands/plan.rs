@@ -12,24 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
 use anyhow::Result;
 
-/// Handle /plan command - display current plan stored in MCP plan tool
-pub async fn handle_plan() -> Result<CommandResult> {
-	// Access the plan storage directly from the MCP plan tool
+/// Handle /plan command — display current plan stored in MCP plan tool, plus any
+/// critical knowledge accumulated from compressions on this session.
+pub async fn handle_plan(session: &ChatSession) -> Result<CommandResult> {
+	let knowledge = session.critical_knowledge.clone();
+
 	match crate::mcp::core::plan::core::get_current_plan_display().await {
 		Ok(plan_display) => {
-			// Get structured plan data
 			let plan_json = crate::mcp::core::plan::core::get_current_plan_json()
 				.await
 				.ok();
-
 			Ok(CommandResult::HandledWithOutput(Box::new(
 				CommandOutput::Plan {
 					has_plan: true,
 					plan: plan_json,
 					display: Some(plan_display),
+					knowledge,
 				},
 			)))
 		}
@@ -38,6 +40,7 @@ pub async fn handle_plan() -> Result<CommandResult> {
 				has_plan: false,
 				plan: None,
 				display: Some(e.to_string()),
+				knowledge,
 			},
 		))),
 	}

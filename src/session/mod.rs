@@ -38,6 +38,7 @@ pub mod inbox; // Unified message injection queue for all session sources
 pub mod inject_listener; // Unix Domain Socket listener for external message injection
 pub mod pipelines; // Deterministic script pipeline system
 pub mod report; // Session usage reporting
+pub mod share; // /share: upload session JSONL → octomind.run/r/<id>
 pub mod smart_summarizer; // Smart text summarization for context management
 pub mod tap_runs; // Registry for agents launched via the `tap` core tool
 mod token_counter; // Token counting utilities // Comprehensive caching system

@@ -37,6 +37,7 @@ mod role;
 mod run;
 mod schedule;
 mod session;
+mod share;
 mod skill;
 mod utils;
 mod video;
@@ -189,6 +190,10 @@ pub enum CommandOutput {
 	Learning {
 		data: serde_json::Value,
 	},
+	Share {
+		id: String,
+		url: String,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -263,6 +268,7 @@ impl CommandOutput {
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Learning { .. } => display::display_learning(self),
+			Self::Share { .. } => display::display_share(self),
 			Self::Error { error, .. } => {
 				block_open("/error", None);
 				block_close_err("error", error);
@@ -340,6 +346,7 @@ pub async fn process_command(
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
 		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,
+		SHARE_COMMAND => share::handle_share(session).await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

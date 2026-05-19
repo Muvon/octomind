@@ -1392,15 +1392,16 @@ mod tests {
 		assert!(markers.contains(&2), "compressed block must be cached");
 	}
 
-	// ── Case 4: marker at start_idx (kept), one inside range ─────────────────────
-	// start_idx marker survives the drain (it is the kept message, not in drain range).
-	// Compressed block inserted after it gets cached=true → ideal 2-marker layout.
+	// ── Case 4: marker at start_idx, one inside range ───────────────────────────
+	// start_idx marker survives the drain initially, but is redundant once the
+	// compressed block is inserted. The second marker moves to the latest preserved
+	// user/tool boundary so the preserved tail remains cached.
 	#[test]
-	fn case4_marker_at_start_idx_and_one_inside_both_survive_correctly() {
+	fn case4_marker_at_start_idx_and_one_inside_moves_to_latest_preserved_boundary() {
 		// idx: 0=system, 1=user(start,cached!), 2=assistant, 3=user(cached!), 4=assistant(end), 5..8=preserved
 		let messages = vec![
 			msg("system", false),
-			msg("user", true), // start_idx=1, marker #1 (KEPT — not in drain range)
+			msg("user", true), // start_idx=1, marker #1 (KEPT by drain, later evicted)
 			msg("assistant", false),
 			msg("user", true),       // marker #2 — inside range, removed
 			msg("assistant", false), // end_idx=4
@@ -1417,22 +1418,22 @@ mod tests {
 			.unwrap();
 
 		let markers = content_cache_indices(&cs);
-		// start_idx=1 (user, cached=true) + compressed block at idx=2 (cached=true)
+		// compressed block at idx=2 + latest preserved user at idx=5
 		assert_eq!(
 			markers,
-			vec![1, 2],
-			"start_idx marker survives + compressed block gets cached"
+			vec![2, 5],
+			"compressed block + latest preserved boundary are cached"
 		);
 	}
 	// ── Case 5: marker at start_idx only, nothing inside range ───────────────────
 	// had_cached=false from remove, but compressed block must still get cached=true.
-	// Result: start_idx keeps marker (#1), compressed block gets marker (#2).
+	// start_idx marker is then evicted so marker #2 can cover the preserved tail.
 	#[test]
-	fn case5_marker_at_start_idx_only_compressed_block_must_get_cached() {
+	fn case5_marker_at_start_idx_only_moves_to_latest_preserved_boundary() {
 		// idx: 0=system, 1=user(start,cached!), 2=assistant, 3=user, 4=assistant(end), 5..8=preserved
 		let messages = vec![
 			msg("system", false),
-			msg("user", true), // start_idx=1, marker #1 (KEPT)
+			msg("user", true), // start_idx=1, marker #1 (KEPT by drain, later evicted)
 			msg("assistant", false),
 			msg("user", false),
 			msg("assistant", false), // end_idx=4
@@ -1445,16 +1446,14 @@ mod tests {
 
 		let (_, had_cached) = cs.remove_messages_in_range(1, 4).unwrap();
 		assert!(!had_cached, "nothing inside range was cached");
-		// BUG (current): insert with had_cached=false → compressed block cached=false
-		// CORRECT: always cached=true
 		cs.insert_compressed_knowledge(1, "summary".to_string())
 			.unwrap();
 
 		let markers = content_cache_indices(&cs);
 		assert_eq!(
 			markers,
-			vec![1, 2],
-			"start_idx marker + compressed block both cached"
+			vec![2, 5],
+			"compressed block + latest preserved boundary are cached"
 		);
 	}
 

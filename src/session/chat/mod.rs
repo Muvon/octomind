@@ -62,8 +62,10 @@ pub use session::{
 };
 pub use thinking_display::display_thinking;
 pub use tool_display::{
-	display_individual_tool_header_with_context, display_individual_tool_header_with_params,
-	display_tool_output_smart, display_tool_parameters_full,
+	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row,
+	block_row_text, block_section, block_section_with, display_individual_tool_header_with_context,
+	display_individual_tool_header_with_params, display_tool_output_smart,
+	display_tool_parameters_full, key_width,
 };
 pub use tool_processor::ToolProcessor;
 

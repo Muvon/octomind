@@ -16,6 +16,10 @@ use anyhow::Result;
 use clap::Args;
 use colored::*;
 use octomind::config::Config;
+use octomind::session::chat::{
+	block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
+	block_section_with,
+};
 use octomind::session::helper_functions::get_all_placeholders;
 use std::env;
 
@@ -34,70 +38,73 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 	let current_dir = env::current_dir()?;
 	let placeholders = get_all_placeholders(&current_dir).await;
 
-	println!("{}", "Available placeholders:".bright_blue().bold());
-	println!();
+	let mode = if args.expand {
+		"expand"
+	} else if args.preview {
+		"preview"
+	} else {
+		"list"
+	};
+	block_open("vars", Some(mode));
 
-	// Sort placeholders by name for consistent output
 	let mut sorted_placeholders: Vec<_> = placeholders.iter().collect();
 	sorted_placeholders.sort_by_key(|(name, _)| *name);
 
-	for (placeholder, value) in sorted_placeholders {
-		print!("{}", placeholder.bright_green().bold());
+	let name_width = sorted_placeholders
+		.iter()
+		.map(|(n, _)| n.len())
+		.max()
+		.unwrap_or(0)
+		.min(24);
 
+	if !args.expand && !args.preview && !sorted_placeholders.is_empty() {
+		block_section("placeholders");
+	}
+
+	for (placeholder, value) in &sorted_placeholders {
 		if args.expand || args.preview {
-			println!(":");
+			let lines: Vec<&str> = value.lines().collect();
+			let tokens = octomind::session::estimate_tokens(value);
+
 			if value.trim().is_empty() {
-				println!("  {}", "(empty)".dimmed());
-			} else if args.expand {
-				// Show full content
-				println!("  {}", value.trim());
+				block_section_with(placeholder, "empty");
+			} else if args.expand || (lines.len() <= 5 && tokens <= 200) {
+				block_section_with(
+					placeholder,
+					&format!("{} line(s), {} tokens", lines.len(), tokens),
+				);
+				for line in value.lines() {
+					block_row_text(line);
+				}
 			} else {
-				// Show preview (current behavior)
-				let lines: Vec<&str> = value.lines().collect();
-				let tokens = octomind::session::estimate_tokens(value);
-				if lines.len() <= 5 && tokens <= 200 {
-					// Short value, show inline
-					println!("  {}", value.trim());
-				} else {
-					// Long value, show truncated with meaningful preview
-					println!(
-						"  {}",
-						format!("({} lines, {} tokens)", lines.len(), tokens).dimmed()
-					);
-
-					// Show first 3 non-empty lines as preview
-					let mut preview_lines = Vec::new();
-					for line in lines.iter().take(10) {
-						// Look at first 10 lines to find 3 non-empty ones
-						let trimmed = line.trim();
-						if !trimmed.is_empty() && preview_lines.len() < 3 {
-							preview_lines.push(trimmed);
-						}
-						if preview_lines.len() >= 3 {
-							break;
-						}
+				block_section_with(
+					placeholder,
+					&format!("{} line(s), {} tokens", lines.len(), tokens),
+				);
+				let mut preview_lines = Vec::new();
+				for line in lines.iter().take(10) {
+					let trimmed = line.trim();
+					if !trimmed.is_empty() && preview_lines.len() < 3 {
+						preview_lines.push(trimmed);
 					}
-
-					if !preview_lines.is_empty() {
-						println!("  {} ", "Preview:".dimmed());
-						for line in preview_lines.iter() {
-							let display_line = if line.chars().count() > 100 {
-								let truncated: String = line.chars().take(97).collect();
-								format!("{}...", truncated)
-							} else {
-								line.to_string()
-							};
-							println!("    {}", display_line);
-						}
-						if lines.len() > preview_lines.len() {
-							println!("    {}", "...".dimmed());
-						}
+					if preview_lines.len() >= 3 {
+						break;
 					}
 				}
+				for line in &preview_lines {
+					let display_line = if line.chars().count() > 100 {
+						let truncated: String = line.chars().take(97).collect();
+						format!("{}…", truncated)
+					} else {
+						line.to_string()
+					};
+					block_row_text(&display_line.dimmed().to_string());
+				}
+				if lines.len() > preview_lines.len() {
+					block_row_text(&"…".dimmed().to_string());
+				}
 			}
-			println!();
 		} else {
-			// Show just a brief description
 			let description = match placeholder.as_str() {
 				"{{DATE}}" => "Current date and time with timezone",
 				"{{SHELL}}" => "Current shell name and version",
@@ -112,18 +119,22 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 				"{{README}}" => "Project README content",
 				_ => "Project context variable",
 			};
-			println!(" - {}", description.dimmed());
+			block_row(placeholder, &description.dimmed().to_string(), name_width);
 		}
 	}
 
 	if !args.expand && !args.preview {
-		println!();
-		println!(
-			"{}",
-			"Use --preview (-p) to see preview values or --expand (-e) to see full values."
-				.yellow()
+		block_line(
+			&"Use --preview (-p) for preview values or --expand (-e) for full values."
+				.dimmed()
+				.to_string(),
 		);
 	}
 
+	block_close_ok(
+		"vars",
+		Some(&format!("{} placeholder(s)", sorted_placeholders.len())),
+	);
+	println!();
 	Ok(())
 }

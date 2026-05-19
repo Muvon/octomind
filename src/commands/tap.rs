@@ -15,6 +15,9 @@
 use anyhow::Result;
 use clap::Args;
 use octomind::agent::taps;
+use octomind::session::chat::{
+	block_close_ok, block_line, block_open, block_row, block_section, key_width,
+};
 
 #[derive(Args, Debug)]
 pub struct TapArgs {
@@ -32,6 +35,8 @@ pub struct TapArgs {
 }
 
 pub fn execute(args: &TapArgs) -> Result<()> {
+	use colored::Colorize;
+
 	match &args.tap {
 		Some(tap_arg) => {
 			let full_arg = match &args.local_path {
@@ -39,27 +44,48 @@ pub fn execute(args: &TapArgs) -> Result<()> {
 				None => tap_arg.clone(),
 			};
 			taps::add_tap(&full_arg)?;
+			block_open("tap", None);
+			let kw = key_width(["name", "local"]);
+			block_row("name", &tap_arg.bright_green().to_string(), kw);
 			if let Some(ref path) = args.local_path {
-				println!("✓ Tapped: {} (local: {})", tap_arg, path);
-			} else {
-				println!("✓ Tapped: {}", tap_arg);
+				block_row("local", &path.bright_white().to_string(), kw);
 			}
+			block_close_ok("tap", Some(tap_arg));
+			println!();
 		}
 		None => {
 			let user_taps = taps::list_taps()?;
+			block_open("tap", Some("active taps"));
 			if user_taps.is_empty() {
-				println!("No user taps configured.");
+				block_line(&"No user taps configured.".dimmed().to_string());
 			} else {
-				println!("User taps:");
+				block_section("user");
+				let name_width = user_taps
+					.iter()
+					.map(|t| t.name.len())
+					.max()
+					.unwrap_or(0)
+					.min(40);
 				for tap in &user_taps {
-					if let Some(ref path) = tap.local_path {
-						println!("  {} (local: {})", tap.name, path);
-					} else {
-						println!("  {}", tap.name);
-					}
+					let suffix = tap
+						.local_path
+						.as_ref()
+						.map(|p| format!("(local: {})", p).dimmed().to_string())
+						.unwrap_or_default();
+					block_row(&tap.name, &suffix, name_width);
 				}
 			}
-			println!("\nBuilt-in: {} (always active)", taps::DEFAULT_TAP);
+			block_section("built-in");
+			block_row(
+				taps::DEFAULT_TAP,
+				&"(always active)".dimmed().to_string(),
+				taps::DEFAULT_TAP.len(),
+			);
+			block_close_ok(
+				"tap",
+				Some(&format!("{} user + 1 built-in", user_taps.len())),
+			);
+			println!();
 		}
 	}
 	Ok(())

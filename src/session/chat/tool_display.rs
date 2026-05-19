@@ -238,3 +238,120 @@ fn format_parameter_value_full(value: &serde_json::Value) -> String {
 		_ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
 	}
 }
+
+// ─── Block rendering for CLI commands ──────────────────────────────────────
+//
+// Mirrors the tool block format (`╭ … │ … ╰`) so command outputs read like
+// tool result blocks. One block per command invocation; sections inside are
+// introduced by dim subheaders on the rail. The opening title is colored
+// bright_cyan and the closing line carries a ✓/✗ glyph + the command name.
+
+const RAIL: &str = "│";
+const CORNER_OPEN: &str = "╭";
+const CORNER_CLOSE: &str = "╰";
+
+/// Open a block with the given title (typically the command name like `/info`).
+/// Optionally a subtitle is appended after a dim `·` separator.
+pub fn block_open(title: &str, subtitle: Option<&str>) {
+	if let Some(sub) = subtitle {
+		println!(
+			"{} {} {} {}",
+			CORNER_OPEN.bright_cyan(),
+			title.bright_cyan(),
+			"·".bright_black(),
+			sub.bright_white(),
+		);
+	} else {
+		println!("{} {}", CORNER_OPEN.bright_cyan(), title.bright_cyan());
+	}
+}
+
+/// Render a dim subheader inside the block. Used to introduce sections.
+/// Format: `│ name`  or  `│ name · value`.
+pub fn block_section(name: &str) {
+	println!("{} {}", RAIL.bright_black(), name.bright_cyan(),);
+}
+
+pub fn block_section_with(name: &str, value: &str) {
+	println!(
+		"{} {} {} {}",
+		RAIL.bright_black(),
+		name.bright_cyan(),
+		"·".bright_black(),
+		value.bright_white(),
+	);
+}
+
+/// Render a key/value row indented under a section header. Keys are padded
+/// to `key_width` and dimmed; values use the caller-provided color.
+pub fn block_row(key: &str, value: &str, key_width: usize) {
+	println!(
+		"{}   {}  {}",
+		RAIL.bright_black(),
+		format!("{:width$}", key, width = key_width).bright_black(),
+		value,
+	);
+}
+
+/// Render a free-form indented line under a section. No key/value alignment.
+pub fn block_row_text(text: &str) {
+	println!("{}   {}", RAIL.bright_black(), text);
+}
+
+/// Render a top-level line on the rail (no indent — same level as section
+/// headers). Use sparingly for prose like notes or empty-state messages.
+pub fn block_line(text: &str) {
+	println!("{} {}", RAIL.bright_black(), text);
+}
+
+/// Blank rail line — a `│` with nothing after. Useful as a section gap.
+pub fn block_blank() {
+	println!("{}", RAIL.bright_black());
+}
+
+/// Close the block with a success marker: `╰ ✓ <title>` and optional suffix.
+pub fn block_close_ok(title: &str, suffix: Option<&str>) {
+	if let Some(s) = suffix {
+		println!(
+			"{} {} {} {} {}",
+			CORNER_CLOSE.bright_cyan(),
+			"✓".bright_green(),
+			title.bright_cyan(),
+			"·".bright_black(),
+			s,
+		);
+	} else {
+		println!(
+			"{} {} {}",
+			CORNER_CLOSE.bright_cyan(),
+			"✓".bright_green(),
+			title.bright_cyan(),
+		);
+	}
+}
+
+/// Close the block with an error marker: `╰ ✗ <title> · <summary>`.
+pub fn block_close_err(title: &str, summary: &str) {
+	println!(
+		"{} {} {} {} {}",
+		CORNER_CLOSE.bright_cyan(),
+		"✗".bright_red(),
+		title.bright_red(),
+		"·".bright_black(),
+		summary.bright_white(),
+	);
+}
+
+/// Compute the max key length for a slice of (key, value) tuples, clamped to
+/// 20 columns to keep alignment readable when one key is wildly long.
+pub fn key_width<'a, I, S>(keys: I) -> usize
+where
+	I: IntoIterator<Item = S>,
+	S: AsRef<str> + 'a,
+{
+	keys.into_iter()
+		.map(|k| k.as_ref().chars().count())
+		.max()
+		.unwrap_or(0)
+		.min(20)
+}

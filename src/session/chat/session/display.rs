@@ -17,170 +17,239 @@
 use super::core::ChatSession;
 use super::utils::format_number;
 use crate::session::chat::formatting::format_duration;
+use crate::session::chat::tool_display::{
+	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text,
+	block_section, block_section_with, key_width,
+};
 use colored::*;
 
+// Render aggregate stats for a slice of layer executions under the current
+// `/info` block — emits model/executions/tokens/cost/time rows on the rail.
+fn render_layer_stats(stats: &[&crate::session::LayerStats]) {
+	if stats.is_empty() {
+		return;
+	}
+	let kw = key_width(["model", "executions", "tokens", "cost", "time"]);
+	let executions = stats.len();
+	let (mut total_input, mut total_output, mut total_cost) = (0u64, 0u64, 0.0f64);
+	let (mut total_api_time, mut total_tool_time, mut total_layer_time) = (0u64, 0u64, 0u64);
+	for stat in stats {
+		total_input += stat.input_tokens;
+		total_output += stat.output_tokens;
+		total_cost += stat.cost;
+		total_api_time += stat.api_time_ms;
+		total_tool_time += stat.tool_time_ms;
+		total_layer_time += stat.total_time_ms;
+	}
+	let dot = "·".bright_black();
+	block_row("model", &stats[0].model.bright_white().to_string(), kw);
+	block_row("executions", &executions.to_string(), kw);
+	block_row(
+		"tokens",
+		&format!(
+			"{} in {} {} out",
+			format_number(total_input).bright_white(),
+			dot,
+			format_number(total_output).bright_white(),
+		),
+		kw,
+	);
+	block_row("cost", &format!("${:.5}", total_cost), kw);
+	let total_time = total_api_time + total_tool_time + total_layer_time;
+	if total_time > 0 {
+		block_row(
+			"time",
+			&format!(
+				"{} {} api {} {} {} tools {} {} total",
+				format_duration(total_time).bright_white(),
+				dot,
+				format_duration(total_api_time).bright_cyan(),
+				dot,
+				format_duration(total_tool_time).bright_green(),
+				dot,
+				format_duration(total_layer_time).bright_magenta(),
+			),
+			kw,
+		);
+	}
+}
+
 impl ChatSession {
-	// Display detailed information about the session, including layer-specific stats
+	// Display detailed information about the session, including layer-specific stats.
+	// Uses the unified block layout (╭/│/╰) for consistency with other command outputs.
 	pub fn display_session_info(&self) {
-		// Display overall session metrics
-		println!(
-			"{}",
-			"───────────── Session Information ─────────────".bright_cyan()
-		);
+		block_open("/info", None);
 
-		// Session basics
-		println!(
-			"{} {}",
-			"Session name:".yellow(),
-			self.session.info.name.bright_white()
+		// ── session ────────────────────────────────────────────────────
+		block_section_with("session", &self.session.info.name);
+		let kw_sess = key_width([
+			"model",
+			"tokens",
+			"breakdown",
+			"cost",
+			"time",
+			"messages",
+			"tool calls",
+		]);
+		block_row(
+			"model",
+			&self.session.info.model.bright_white().to_string(),
+			kw_sess,
 		);
-		println!(
-			"{} {}",
-			"Main model:".yellow(),
-			self.session.info.model.bright_white()
-		);
-
-		// Total token usage
 		let total_tokens = self.session.info.input_tokens
 			+ self.session.info.output_tokens
 			+ self.session.info.cache_read_tokens
 			+ self.session.info.cache_write_tokens
 			+ self.session.info.reasoning_tokens;
-		println!(
-			"{} {}",
-			"Total tokens:".yellow(),
-			format_number(total_tokens).bright_white()
+		block_row(
+			"tokens",
+			&format!("{} total", format_number(total_tokens).bright_white()),
+			kw_sess,
 		);
-		println!(
-			"{} {} input, {} output, {} cache read, {} cache write, {} reasoning",
-			"Breakdown:".yellow(),
-			format_number(self.session.info.input_tokens).bright_blue(),
-			format_number(self.session.info.output_tokens).bright_green(),
-			format_number(self.session.info.cache_read_tokens).bright_magenta(),
-			format_number(self.session.info.cache_write_tokens).bright_cyan(),
-			format_number(self.session.info.reasoning_tokens).white()
+		let dot = "·".bright_black();
+		block_row(
+			"breakdown",
+			&format!(
+				"{} in {} {} out {} {} cache rd {} {} cache wr {} {} reasoning",
+				format_number(self.session.info.input_tokens).bright_blue(),
+				dot,
+				format_number(self.session.info.output_tokens).bright_green(),
+				dot,
+				format_number(self.session.info.cache_read_tokens).bright_magenta(),
+				dot,
+				format_number(self.session.info.cache_write_tokens).bright_cyan(),
+				dot,
+				format_number(self.session.info.reasoning_tokens).white(),
+			),
+			kw_sess,
+		);
+		block_row(
+			"cost",
+			&format!("${:.5}", self.session.info.total_cost),
+			kw_sess,
 		);
 
-		// Cost information
-		println!(
-			"{} ${:.5}",
-			"Total cost:".yellow(),
-			self.session.info.total_cost
-		);
-
-		// Time information
 		let total_time_ms = self.session.info.total_api_time_ms
 			+ self.session.info.total_tool_time_ms
 			+ self.session.info.total_layer_time_ms;
 		if total_time_ms > 0 {
-			println!(
-				"{} {} (API: {}, Tools: {}, Processing: {})",
-				"Total time:".yellow(),
-				format_duration(total_time_ms).bright_white(),
-				format_duration(self.session.info.total_api_time_ms).bright_blue(),
-				format_duration(self.session.info.total_tool_time_ms).bright_green(),
-				format_duration(self.session.info.total_layer_time_ms).bright_magenta()
+			block_row(
+				"time",
+				&format!(
+					"{} {} api {} {} {} tools {} {} processing",
+					format_duration(total_time_ms).bright_white(),
+					dot,
+					format_duration(self.session.info.total_api_time_ms).bright_blue(),
+					dot,
+					format_duration(self.session.info.total_tool_time_ms).bright_green(),
+					dot,
+					format_duration(self.session.info.total_layer_time_ms).bright_magenta(),
+				),
+				kw_sess,
 			);
 		}
-
-		// Messages count and tool calls
-		println!("{} {}", "Messages:".yellow(), self.session.messages.len());
-
-		// Tool calls information
+		block_row(
+			"messages",
+			&self.session.messages.len().to_string(),
+			kw_sess,
+		);
 		if self.session.info.tool_calls > 0 {
-			println!(
-				"{} {}",
-				"Tool calls:".yellow(),
-				self.session.info.tool_calls.to_string().bright_cyan()
+			block_row(
+				"tool calls",
+				&self
+					.session
+					.info
+					.tool_calls
+					.to_string()
+					.bright_cyan()
+					.to_string(),
+				kw_sess,
 			);
 		}
 
-		// Compression statistics
-		let compression_stats = &self.session.info.compression_stats;
-		if compression_stats.total_compressions() > 0 {
-			println!();
-			println!(
-				"{}",
-				"───────────── Compression Statistics ─────────────".bright_cyan()
-			);
-
-			if compression_stats.task_compressions > 0 {
-				println!(
-					"{} {}",
-					"Task compressions:".yellow(),
-					format_number(compression_stats.task_compressions as u64).bright_white()
-				);
-			}
-
-			if compression_stats.phase_compressions > 0 {
-				println!(
-					"{} {}",
-					"Phase compressions:".yellow(),
-					format_number(compression_stats.phase_compressions as u64).bright_white()
-				);
-			}
-
-			if compression_stats.project_compressions > 0 {
-				println!(
-					"{} {}",
-					"Project compressions:".yellow(),
-					format_number(compression_stats.project_compressions as u64).bright_white()
-				);
-			}
-
-			if compression_stats.conversation_compressions > 0 {
-				println!(
-					"{} {}",
-					"Conversation compressions:".yellow(),
-					format_number(compression_stats.conversation_compressions as u64)
+		// ── compression ────────────────────────────────────────────────
+		let cs = &self.session.info.compression_stats;
+		if cs.total_compressions() > 0 {
+			block_section("compression");
+			let kw = key_width([
+				"task",
+				"phase",
+				"project",
+				"conversation",
+				"messages removed",
+				"tokens saved",
+				"avg ratio",
+			]);
+			if cs.task_compressions > 0 {
+				block_row(
+					"task",
+					&format_number(cs.task_compressions as u64)
 						.bright_white()
+						.to_string(),
+					kw,
 				);
 			}
-
-			println!(
-				"{} {}",
-				"Messages removed:".yellow(),
-				format_number(compression_stats.total_messages_removed as u64).bright_green()
+			if cs.phase_compressions > 0 {
+				block_row(
+					"phase",
+					&format_number(cs.phase_compressions as u64)
+						.bright_white()
+						.to_string(),
+					kw,
+				);
+			}
+			if cs.project_compressions > 0 {
+				block_row(
+					"project",
+					&format_number(cs.project_compressions as u64)
+						.bright_white()
+						.to_string(),
+					kw,
+				);
+			}
+			if cs.conversation_compressions > 0 {
+				block_row(
+					"conversation",
+					&format_number(cs.conversation_compressions as u64)
+						.bright_white()
+						.to_string(),
+					kw,
+				);
+			}
+			block_row(
+				"messages removed",
+				&format_number(cs.total_messages_removed as u64)
+					.bright_green()
+					.to_string(),
+				kw,
 			);
-
-			println!(
-				"{} {}",
-				"Tokens saved:".yellow(),
-				format_number(compression_stats.total_tokens_saved).bright_green()
+			block_row(
+				"tokens saved",
+				&format_number(cs.total_tokens_saved)
+					.bright_green()
+					.to_string(),
+				kw,
 			);
-
-			let avg_ratio = compression_stats.avg_compression_ratio() * 100.0;
+			let avg_ratio = cs.avg_compression_ratio() * 100.0;
 			if avg_ratio > 0.0 {
-				println!("{} {:.1}%", "Avg compression:".yellow(), avg_ratio);
+				block_row("avg ratio", &format!("{:.1}%", avg_ratio), kw);
 			}
 		}
 
-		// Display layered stats if available
+		// ── layers ─────────────────────────────────────────────────────
 		if !self.session.info.layer_stats.is_empty() {
-			println!();
-			println!(
-				"{}",
-				"───────────── Layer-by-Layer Statistics ─────────────".bright_cyan()
-			);
-
-			// Group by layer type
 			let mut layer_stats: std::collections::HashMap<
 				String,
 				Vec<&crate::session::LayerStats>,
 			> = std::collections::HashMap::new();
-
-			// Group stats by layer type
 			for stat in &self.session.info.layer_stats {
 				layer_stats
 					.entry(stat.layer_type.clone())
 					.or_default()
 					.push(stat);
 			}
-
-			// Separate command layers from regular layers
 			let mut command_layers = Vec::new();
 			let mut regular_layers = Vec::new();
-
 			for (layer_type, stats) in layer_stats.iter() {
 				if layer_type.starts_with("command:") {
 					command_layers.push((layer_type, stats));
@@ -189,148 +258,38 @@ impl ChatSession {
 				}
 			}
 
-			// Print regular layers first
 			for (layer_type, stats) in regular_layers.iter() {
-				// Add special highlighting for context optimization
-				let layer_display = if layer_type.as_str() == "context_optimization" {
-					format!("Layer: {}", layer_type).bright_magenta()
-				} else {
-					format!("Layer: {}", layer_type).bright_yellow()
-				};
-
-				println!("{}", layer_display);
-
-				// Count total tokens and cost for this layer type
-				let mut total_input = 0;
-				let mut total_output = 0;
-				let mut total_cost = 0.0;
-				let mut total_api_time = 0;
-				let mut total_tool_time = 0;
-				let mut total_layer_time = 0;
-
-				// Count executions
-				let executions = stats.len();
-
-				for stat in stats.iter() {
-					total_input += stat.input_tokens;
-					total_output += stat.output_tokens;
-					total_cost += stat.cost;
-					total_api_time += stat.api_time_ms;
-					total_tool_time += stat.tool_time_ms;
-					total_layer_time += stat.total_time_ms;
-				}
-
-				// Print the stats
-				println!("  {}: {}", "Model".blue(), stats[0].model);
-				println!("  {}: {}", "Executions".blue(), executions);
-				println!(
-					"  {}: {} input, {} output",
-					"Tokens".blue(),
-					format_number(total_input).bright_white(),
-					format_number(total_output).bright_white()
-				);
-				println!("  {}: ${:.5}", "Cost".blue(), total_cost);
-
-				// Show time information if available
-				let total_time = total_api_time + total_tool_time + total_layer_time;
-				if total_time > 0 {
-					println!(
-						"  {}: {} (API: {}, Tools: {}, Total: {})",
-						"Time".blue(),
-						format_duration(total_time).bright_white(),
-						format_duration(total_api_time).bright_cyan(),
-						format_duration(total_tool_time).bright_green(),
-						format_duration(total_layer_time).bright_magenta()
-					);
-				}
-
-				// Add special note for context optimization
+				block_section_with("layer", layer_type.as_str());
+				render_layer_stats(stats.as_slice());
 				if layer_type.as_str() == "context_optimization" {
-					println!(
-						"  {}",
-						"Note: These are costs for optimizing context between interactions"
+					block_line(
+						&"Note: costs for optimizing context between interactions"
 							.bright_cyan()
+							.to_string(),
 					);
 				}
-
-				println!();
 			}
-
-			// Print command layers separately if any exist
-			if !command_layers.is_empty() {
-				println!(
-					"{}",
-					"───────────── Command Layer Statistics ─────────────".bright_green()
+			for (layer_type, stats) in command_layers.iter() {
+				let name = layer_type
+					.strip_prefix("command:")
+					.unwrap_or(layer_type.as_str());
+				block_section_with("command", name);
+				render_layer_stats(stats.as_slice());
+				block_line(
+					&"Note: command layers don't affect session history"
+						.bright_cyan()
+						.to_string(),
 				);
-
-				for (layer_type, stats) in command_layers.iter() {
-					// Extract command name from "command:name" format
-					let command_name = layer_type.strip_prefix("command:").unwrap_or(layer_type);
-					let layer_display = format!("Command: {}", command_name).bright_green();
-
-					println!("{}", layer_display);
-
-					// Count total tokens and cost for this command
-					let mut total_input = 0;
-					let mut total_output = 0;
-					let mut total_cost = 0.0;
-					let mut total_api_time = 0;
-					let mut total_tool_time = 0;
-					let mut total_layer_time = 0;
-
-					// Count executions
-					let executions = stats.len();
-
-					for stat in stats.iter() {
-						total_input += stat.input_tokens;
-						total_output += stat.output_tokens;
-						total_cost += stat.cost;
-						total_api_time += stat.api_time_ms;
-						total_tool_time += stat.tool_time_ms;
-						total_layer_time += stat.total_time_ms;
-					}
-
-					// Print the stats
-					println!("  {}: {}", "Model".blue(), stats[0].model);
-					println!("  {}: {}", "Executions".blue(), executions);
-					println!(
-						"  {}: {} input, {} output",
-						"Tokens".blue(),
-						format_number(total_input).bright_white(),
-						format_number(total_output).bright_white()
-					);
-					println!("  {}: ${:.5}", "Cost".blue(), total_cost);
-
-					// Show time information if available
-					let total_time = total_api_time + total_tool_time + total_layer_time;
-					if total_time > 0 {
-						println!(
-							"  {}: {} (API: {}, Tools: {}, Total: {})",
-							"Time".blue(),
-							format_duration(total_time).bright_white(),
-							format_duration(total_api_time).bright_cyan(),
-							format_duration(total_tool_time).bright_green(),
-							format_duration(total_layer_time).bright_magenta()
-						);
-					}
-
-					println!(
-						"  {}",
-						"Note: Command layers don't affect session history".bright_cyan()
-					);
-
-					println!();
-				}
 			}
 		} else {
-			println!();
-			println!(
-				"{}",
-				"No layer-specific statistics available.".bright_yellow()
+			block_line(
+				&"No layer-specific statistics available."
+					.bright_yellow()
+					.to_string(),
 			);
-			println!("{}", "This may be because the session was created before layered architecture was enabled.".bright_yellow());
 		}
 
+		block_close_ok("/info", Some(&self.session.info.name));
 		println!();
 	}
 
@@ -581,18 +540,13 @@ impl ChatSession {
 		// Check if debug mode is enabled
 		let is_debug = config.log_level.is_debug_enabled();
 
-		// Display header with filter info
-		println!(
-			"{}",
-			format!(
-				"───────────── Session Context ({}) ─────────────",
-				filter.to_uppercase()
-			)
-			.bright_cyan()
-		);
+		// Open /context block — the markdown body prints between the corners
+		// without a rail prefix (rail conflicts with code blocks / lists).
+		block_open("/context", Some(&filter.to_uppercase()));
 
 		if self.session.messages.is_empty() {
-			println!("{}", "No messages in current session.".yellow());
+			block_line(&"No messages in current session.".yellow().to_string());
+			block_close_ok("/context", Some("empty"));
 			println!();
 			return;
 		}
@@ -673,43 +627,46 @@ impl ChatSession {
 				}
 			}
 			_ => {
-				println!(
-					"{}",
-					format!(
-						"Unknown filter '{}'. Available filters: all, assistant, user, tool, large",
-						filter
-					)
-					.bright_red()
+				block_line(
+					&"Available filters: all, assistant, user, tool, large"
+						.dimmed()
+						.to_string(),
 				);
-				println!(
-					"{}",
-					"Usage: /context [all|assistant|user|tool|large]".bright_yellow()
-				);
+				block_close_err("/context", &format!("unknown filter '{}'", filter));
 				println!();
 				return;
 			}
 		};
 
 		if filtered_messages.is_empty() {
-			println!(
-				"{}",
-				format!("No messages match the '{}' filter.", filter).yellow()
+			block_line(
+				&format!("No messages match the '{}' filter.", filter)
+					.yellow()
+					.to_string(),
 			);
+			block_close_ok("/context", Some("empty"));
 			println!();
 			return;
 		}
 
-		// Build markdown content for the filtered context
-		let mut markdown_content = String::new();
-		markdown_content.push_str("# Session Context\n\n");
-		markdown_content.push_str(&format!("**Session:** {}\n", self.session.info.name));
-		markdown_content.push_str(&format!("**Model:** {}\n", self.session.info.model));
-		markdown_content.push_str(&format!(
-			"**Messages:** {} total, {} shown (filter: {})\n\n",
-			self.session.messages.len(),
-			filtered_messages.len(),
-			filter
-		));
+		// Header section — session + model + filter summary, all on the rail.
+		block_section_with("session", &self.session.info.name);
+		let head_kw = key_width(["model", "messages"]);
+		block_row(
+			"model",
+			&self.session.info.model.bright_white().to_string(),
+			head_kw,
+		);
+		block_row(
+			"messages",
+			&format!(
+				"{} total, {} shown (filter: {})",
+				self.session.messages.len(),
+				filtered_messages.len(),
+				filter
+			),
+			head_kw,
+		);
 
 		// Content length limits
 		let content_limit = if is_debug { None } else { Some(200) };
@@ -718,7 +675,7 @@ impl ChatSession {
 			+ self.session.info.output_tokens
 			+ self.session.info.cache_read_tokens
 			+ self.session.info.cache_write_tokens;
-		// Add median and std dev info for large filter
+		// "large" filter — show median / stddev / threshold stats as a section.
 		if filter == "large" && !self.session.messages.is_empty() {
 			let mut token_counts: Vec<f64> = self
 				.session
@@ -726,8 +683,6 @@ impl ChatSession {
 				.iter()
 				.map(|msg| crate::session::token_counter::estimate_tokens(&msg.content) as f64)
 				.collect();
-
-			// Calculate median
 			token_counts.sort_by(|a, b| a.partial_cmp(b).unwrap());
 			let median = if token_counts.len().is_multiple_of(2) {
 				(token_counts[token_counts.len() / 2 - 1] + token_counts[token_counts.len() / 2])
@@ -735,8 +690,6 @@ impl ChatSession {
 			} else {
 				token_counts[token_counts.len() / 2]
 			};
-
-			// Calculate standard deviation
 			let variance: f64 =
 				self.session
 					.messages
@@ -748,18 +701,21 @@ impl ChatSession {
 					})
 					.sum::<f64>() / self.session.messages.len() as f64;
 			let std_dev = variance.sqrt();
-
 			let threshold = median + (2.0 * std_dev);
 
-			markdown_content.push_str(&format!(
-				"**Filter Info:** Showing messages > {:.0} tokens (median: {:.0}, std dev: {:.0}, threshold: median + 2σ)\\n\\n",
-				threshold, median, std_dev
-			));
+			block_section("filter (large)");
+			let kw = key_width(["median", "std dev", "threshold"]);
+			block_row("median", &format!("{:.0}", median), kw);
+			block_row("std dev", &format!("{:.0}", std_dev), kw);
+			block_row(
+				"threshold",
+				&format!("{:.0} tokens (median + 2σ)", threshold),
+				kw,
+			);
 		}
 
-		// Process each filtered message
+		// Per-message sections — each as `│ #N · ROLE` + indented rows / content.
 		for (original_index, message) in &filtered_messages {
-			// Calculate tokens for this message
 			let message_tokens = crate::session::token_counter::estimate_tokens(&message.content);
 			let percentage = if total_session_tokens > 0 {
 				(message_tokens as f64 / total_session_tokens as f64) * 100.0
@@ -767,136 +723,164 @@ impl ChatSession {
 				0.0
 			};
 
-			markdown_content.push_str(&format!(
-				"## Message {} - {}\n\n",
-				*original_index + 1,
-				message.role.to_uppercase()
-			));
+			let role_label = message.role.to_uppercase();
+			let section_title = format!("#{}", *original_index + 1);
+			block_section_with(&section_title, &role_label);
 
-			// Add timestamp
+			let kw = key_width([
+				"time",
+				"tokens",
+				"cached",
+				"tool call id",
+				"tool",
+				"images",
+				"content",
+				"tool calls",
+			]);
+
 			if let Some(datetime) = chrono::DateTime::from_timestamp(message.timestamp as i64, 0) {
-				markdown_content.push_str(&format!(
-					"**Time:** {}\n",
-					datetime.format("%Y-%m-%d %H:%M:%S UTC")
-				));
+				block_row(
+					"time",
+					&datetime
+						.format("%Y-%m-%d %H:%M:%S UTC")
+						.to_string()
+						.dimmed()
+						.to_string(),
+					kw,
+				);
 			}
 
-			// Add token information
-			markdown_content.push_str(&format!(
-				"**Tokens:** {} ({:.2}%)\n",
-				crate::session::chat::format_number(message_tokens as u64),
-				percentage
-			));
+			block_row(
+				"tokens",
+				&format!(
+					"{} ({:.2}%)",
+					crate::session::chat::format_number(message_tokens as u64).bright_white(),
+					percentage
+				),
+				kw,
+			);
 
-			// Add cached status
 			if message.cached {
-				markdown_content.push_str("**Cached:** ✅ Yes\n");
+				block_row("cached", &"yes".bright_green().to_string(), kw);
 			}
 
-			// Add tool call ID if present
 			if let Some(ref tool_call_id) = message.tool_call_id {
-				markdown_content.push_str(&format!("**Tool Call ID:** {}\n", tool_call_id));
+				block_row("tool call id", &tool_call_id.dimmed().to_string(), kw);
 			}
 
-			// Add tool name if present
 			if let Some(ref name) = message.name {
-				markdown_content.push_str(&format!("**Tool:** {}\n", name));
+				block_row("tool", &name.bright_cyan().to_string(), kw);
 			}
 
-			// Add content
-			let content = if let Some(limit) = content_limit {
+			if let Some(ref images) = message.images {
+				block_row("images", &format!("{} attachment(s)", images.len()), kw);
+				for (i, image) in images.iter().enumerate() {
+					block_row_text(
+						&format!("  {}. type: {}", i + 1, image.media_type)
+							.dimmed()
+							.to_string(),
+					);
+				}
+			}
+
+			// Content body — truncated unless debug mode.
+			let (content, truncated_msg) = if let Some(limit) = content_limit {
 				if message.content.chars().count() > limit {
 					let truncated: String = message.content.chars().take(limit).collect();
-					format!("{}...\n\n*[Content truncated - {} total chars. Use debug mode (/loglevel debug) for full content]*",
-						truncated, message.content.chars().count())
+					(
+						format!("{}…", truncated),
+						Some(format!(
+							"truncated — {} total chars (use /loglevel debug for full)",
+							message.content.chars().count()
+						)),
+					)
 				} else {
-					message.content.clone()
+					(message.content.clone(), None)
 				}
 			} else {
-				message.content.clone()
+				(message.content.clone(), None)
 			};
-
-			markdown_content.push_str("**Content:**\n");
-			markdown_content.push_str("```\n");
-			markdown_content.push_str(&content);
-			markdown_content.push_str("\n```\n");
-
-			// Add tool calls if present
-			if let Some(ref tool_calls) = message.tool_calls {
-				markdown_content.push_str("**Tool Calls:**\n");
-				markdown_content.push_str("```json\n");
-				markdown_content.push_str(
-					&serde_json::to_string_pretty(tool_calls)
-						.unwrap_or_else(|_| "Invalid JSON".to_string()),
-				);
-				markdown_content.push_str("\n```\n");
+			block_row("content", "", kw);
+			for line in content.lines() {
+				block_row_text(line);
+			}
+			if let Some(msg) = truncated_msg {
+				block_row_text(&msg.dimmed().to_string());
 			}
 
-			// Add images if present
-			if let Some(ref images) = message.images {
-				markdown_content.push_str(&format!("**Images:** {} attachment(s)\n", images.len()));
-				for (i, image) in images.iter().enumerate() {
-					markdown_content.push_str(&format!(
-						"  {}. Type: {}\n",
-						i + 1,
-						image.media_type
-					));
+			if let Some(ref tool_calls) = message.tool_calls {
+				block_row("tool calls", "", kw);
+				let json = serde_json::to_string_pretty(tool_calls)
+					.unwrap_or_else(|_| "Invalid JSON".to_string());
+				for line in json.lines() {
+					block_row_text(line);
 				}
 			}
-
-			markdown_content.push_str("\n---\n\n");
 		}
 
-		// Add summary
-		markdown_content.push_str("## Summary\n\n");
-		markdown_content.push_str(&format!(
-			"- **Total Messages:** {}\n",
-			self.session.messages.len()
-		));
-		markdown_content.push_str(&format!(
-			"- **Filtered Messages:** {}\n",
-			filtered_messages.len()
-		));
+		// Snapshot counts BEFORE the mutable borrow below — `filtered_messages` aliases
+		// `self.session.messages`, and `get_full_context_tokens` takes `&mut self`.
+		// NLL ends the borrow once `filtered_messages` is no longer used after this point.
+		let filtered_count = filtered_messages.len();
+		let total_count = self.session.messages.len();
 
 		// Calculate current session context tokens using UNIFIED calculation
 		// This ensures consistency with compression, continuation, and all other systems
 		let current_context_tokens = self.get_full_context_tokens(config).await;
+		let total_tokens_sum = self.session.info.input_tokens
+			+ self.session.info.output_tokens
+			+ self.session.info.cache_read_tokens
+			+ self.session.info.cache_write_tokens;
+		let total_cost = self.session.info.total_cost;
 
-		markdown_content.push_str(&format!(
-			"- **Current Context Tokens:** {} (includes system prompt + tools)\n",
-			crate::session::chat::format_number(current_context_tokens as u64)
-		));
-
-		markdown_content.push_str(&format!(
-			"- **Total Tokens:** {}\n",
-			crate::session::chat::format_number(
-				self.session.info.input_tokens
-					+ self.session.info.output_tokens
-					+ self.session.info.cache_read_tokens
-					+ self.session.info.cache_write_tokens
-			)
-		));
-		markdown_content.push_str(&format!(
-			"- **Total Cost:** ${:.5}\n",
-			self.session.info.total_cost
-		));
-		if is_debug {
-			markdown_content.push_str("\n*Debug mode: Showing full content*\n");
-		} else {
-			markdown_content.push_str(
-				"\n*Compact mode: Content truncated. Use `/loglevel debug` to toggle full content*\n",
-			);
-		}
-
-		// Render using existing markdown renderer
-		// This is for assistant message display, no thinking block
-		crate::session::chat::assistant_output::print_assistant_response(
-			&markdown_content,
-			config,
-			"assistant", // role parameter for markdown rendering
-			&None,
+		// Summary section — totals + mode footer, on the rail.
+		block_section("summary");
+		let kw = key_width([
+			"total messages",
+			"filtered",
+			"context tokens",
+			"total tokens",
+			"total cost",
+			"mode",
+		]);
+		block_row("total messages", &total_count.to_string(), kw);
+		block_row("filtered", &filtered_count.to_string(), kw);
+		block_row(
+			"context tokens",
+			&format!(
+				"{} (system prompt + tools)",
+				crate::session::chat::format_number(current_context_tokens as u64).bright_white()
+			),
+			kw,
+		);
+		block_row(
+			"total tokens",
+			&crate::session::chat::format_number(total_tokens_sum)
+				.bright_white()
+				.to_string(),
+			kw,
+		);
+		block_row(
+			"total cost",
+			&format!("${:.5}", total_cost).bright_yellow().to_string(),
+			kw,
+		);
+		block_row(
+			"mode",
+			&if is_debug {
+				"debug — full content".bright_green().to_string()
+			} else {
+				"compact — content truncated (/loglevel debug for full)"
+					.dimmed()
+					.to_string()
+			},
+			kw,
 		);
 
+		block_close_ok(
+			"/context",
+			Some(&format!("{} of {} message(s)", filtered_count, total_count)),
+		);
 		println!();
 	}
 }

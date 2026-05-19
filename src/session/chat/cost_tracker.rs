@@ -134,80 +134,114 @@ impl CostTracker {
 		);
 	}
 
-	/// Display session usage statistics
+	/// Display session usage statistics in the unified command-output block style
+	/// (╭ session usage · model · │ rows · ╰).
 	pub fn display_session_usage(chat_session: &ChatSession) {
-		use crate::log_info;
+		use crate::session::chat::format_number;
 		use crate::session::chat::formatting::format_duration;
+		use crate::session::chat::tool_display::{
+			block_close_ok, block_open, block_row, key_width,
+		};
+		use colored::Colorize;
 
 		println!();
 
-		log_info!(
-			"{}",
-			"── session usage ────────────────────────────────────────"
-		);
-
-		// Format token usage with cached tokens
-		let cache_read = chat_session.session.info.cache_read_tokens;
-		let cache_write = chat_session.session.info.cache_write_tokens;
-		let non_cached_prompt = chat_session.session.info.input_tokens;
-		let completion = chat_session.session.info.output_tokens;
-		let reasoning = chat_session.session.info.reasoning_tokens;
-
-		// FIXED: Show total prompt tokens (cached + non-cached) as "prompt"
-		// This matches user expectation that prompt tokens should show the actual tokens processed
+		let info = &chat_session.session.info;
+		let cache_read = info.cache_read_tokens;
+		let cache_write = info.cache_write_tokens;
+		let non_cached_prompt = info.input_tokens;
+		let completion = info.output_tokens;
+		let reasoning = info.reasoning_tokens;
 		let total_prompt = non_cached_prompt + cache_read;
 		let total = total_prompt + completion + reasoning;
 
-		// Build token display string
-		let mut token_parts = vec![
-			format!("{} prompt ({} cache read)", total_prompt, cache_read),
-			format!("{} completion", completion),
-		];
+		block_open("session usage", Some(&info.model));
+		let kw = key_width([
+			"tokens",
+			"prompt",
+			"completion",
+			"cache write",
+			"reasoning",
+			"cache read",
+			"cost",
+			"time",
+		]);
+		let dot = "·".bright_black();
 
-		// Add cache write tokens if present (Anthropic-style cache creation)
+		block_row(
+			"tokens",
+			&format!("{} total", format_number(total).bright_white()),
+			kw,
+		);
+		block_row(
+			"prompt",
+			&format!(
+				"{} ({} cache read)",
+				format_number(total_prompt).bright_blue(),
+				format_number(cache_read).bright_magenta()
+			),
+			kw,
+		);
+		block_row(
+			"completion",
+			&format_number(completion).bright_green().to_string(),
+			kw,
+		);
 		if cache_write > 0 {
-			token_parts.push(format!("{} cache write", cache_write));
+			block_row(
+				"cache write",
+				&format_number(cache_write).bright_cyan().to_string(),
+				kw,
+			);
 		}
-
-		// Add reasoning tokens if present
 		if reasoning > 0 {
-			token_parts.push(format!("{} reasoning", reasoning));
+			block_row(
+				"reasoning",
+				&format_number(reasoning).white().to_string(),
+				kw,
+			);
 		}
-
-		log_info!(
-			"tokens: {}, {} total, ${:.5}",
-			token_parts.join(", "),
-			total,
-			chat_session.session.info.total_cost
+		if cache_read > 0 && total_prompt > 0 {
+			let saving_pct = (cache_read as f64 / total_prompt as f64) * 100.0;
+			block_row(
+				"cache read",
+				&format!(
+					"{:.1}% of prompt {} {} tokens saved",
+					saving_pct,
+					dot,
+					format_number(cache_read).bright_green()
+				),
+				kw,
+			);
+		}
+		block_row(
+			"cost",
+			&format!("${:.5}", info.total_cost)
+				.bright_yellow()
+				.to_string(),
+			kw,
 		);
 
-		// If we have cache read tokens, show the savings percentage
-		if cache_read > 0 {
-			let saving_pct = (cache_read as f64 / total_prompt as f64) * 100.0;
-			log_info!(
-				"cache read: {:.1}% of prompt tokens ({} tokens saved)",
-				saving_pct,
-				cache_read
-			);
-		}
-
-		// Show cost breakdown
-		Self::display_cost_breakdown(chat_session);
-
-		// Show time information if available
-		let total_time_ms = chat_session.session.info.total_api_time_ms
-			+ chat_session.session.info.total_tool_time_ms
-			+ chat_session.session.info.total_layer_time_ms;
+		let total_time_ms =
+			info.total_api_time_ms + info.total_tool_time_ms + info.total_layer_time_ms;
 		if total_time_ms > 0 {
-			log_info!(
-				"time: {} (API: {}, Tools: {}, Processing: {})",
-				format_duration(total_time_ms),
-				format_duration(chat_session.session.info.total_api_time_ms),
-				format_duration(chat_session.session.info.total_tool_time_ms),
-				format_duration(chat_session.session.info.total_layer_time_ms)
+			block_row(
+				"time",
+				&format!(
+					"{} {} api {} {} {} tools {} {} processing",
+					format_duration(total_time_ms).bright_white(),
+					dot,
+					format_duration(info.total_api_time_ms).bright_blue(),
+					dot,
+					format_duration(info.total_tool_time_ms).bright_green(),
+					dot,
+					format_duration(info.total_layer_time_ms).bright_magenta(),
+				),
+				kw,
 			);
 		}
 
+		block_close_ok("session usage", Some(&format!("${:.5}", info.total_cost)));
 		println!();
 	}
 

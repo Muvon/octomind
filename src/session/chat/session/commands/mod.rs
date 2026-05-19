@@ -45,6 +45,9 @@ mod workflow;
 use super::super::commands::*;
 use super::core::ChatSession;
 use crate::config::Config;
+use crate::session::chat::tool_display::{
+	block_close_err, block_close_ok, block_line, block_open, block_row, key_width,
+};
 use anyhow::Result;
 use colored::Colorize;
 use serde::Serialize;
@@ -209,15 +212,37 @@ impl CommandOutput {
 			Self::Effort { .. } => display::display_effort(self),
 			Self::Role { .. } => display::display_role(self),
 			Self::Loglevel { .. } => display::display_loglevel(self),
-			Self::Copy { copied, .. } => {
+			Self::Copy { copied, length } => {
+				block_open("/copy", None);
 				if *copied {
-					println!("{}", "Last response copied to clipboard.".bright_green());
+					if let Some(len) = length {
+						let kw = key_width(["copied"]);
+						block_row(
+							"copied",
+							&format!("{} chars to clipboard", len)
+								.bright_green()
+								.to_string(),
+							kw,
+						);
+						block_close_ok("/copy", Some(&format!("{} chars", len)));
+					} else {
+						block_close_ok("/copy", Some("clipboard"));
+					}
+				} else {
+					block_line(&"Nothing to copy yet.".yellow().to_string());
+					block_close_ok("/copy", Some("empty"));
 				}
+				println!();
 			}
 			Self::Clear { message, .. } => {
 				print!("\x1B[2J\x1B[1;1H");
 				std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-				println!("{}", message);
+				block_open("/clear", None);
+				if !message.is_empty() {
+					block_line(message);
+				}
+				block_close_ok("/clear", Some("screen reset"));
+				println!();
 			}
 			Self::Plan { .. } => display::display_plan(self),
 			Self::Context { .. } => display::display_context(self, session, config).await,
@@ -236,7 +261,9 @@ impl CommandOutput {
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Error { error, .. } => {
-				println!("{}", error.bright_red());
+				block_open("/error", None);
+				block_close_err("error", error);
+				println!();
 			}
 		}
 	}

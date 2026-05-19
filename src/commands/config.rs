@@ -13,9 +13,14 @@
 // limitations under the License.
 
 use clap::Args;
+use colored::Colorize;
 
 use octomind::config::{Config, McpConnectionType, McpServerConfig};
 use octomind::directories;
+use octomind::session::chat::{
+	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text,
+	block_section, block_section_with, key_width,
+};
 
 #[derive(Args)]
 pub struct ConfigArgs {
@@ -84,13 +89,17 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// If validation flag is set, just validate and exit
 	if args.validate {
+		block_open("config validate", None);
 		match config.validate() {
 			Ok(()) => {
-				println!("✅ Configuration is valid!");
+				block_line(&"Configuration is valid.".bright_green().to_string());
+				block_close_ok("config validate", Some("valid"));
+				println!();
 				return Ok(());
 			}
 			Err(e) => {
-				octomind::log_error!("❌ Configuration validation failed: {}", e);
+				block_close_err("config validate", &e.to_string());
+				println!();
 				return Err(e);
 			}
 		}
@@ -103,45 +112,54 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		return Ok(());
 	}
 
-	let mut modified = false;
+	// Buffer the change confirmations so the whole modification path renders as
+	// one /config block at the end (matches tool/command output style).
+	let mut changes: Vec<(String, String)> = Vec::new();
 
 	// Set root-level model if specified
 	if let Some(model) = &args.model {
-		// Validate model format
 		if !model.contains(':') {
-			octomind::log_error!("Error: Model must be in provider:model format (e.g., openrouter:anthropic/claude-3.5-sonnet)");
+			block_open("config", None);
+			block_close_err(
+				"config",
+				"model must be in provider:model format (e.g., openrouter:anthropic/claude-3.5-sonnet)",
+			);
+			println!();
 			return Ok(());
 		}
-
 		config.model = model.clone();
-		println!("Set root-level model to {}", model);
-		modified = true;
+		changes.push(("model".to_string(), model.clone()));
 	}
 
-	// Set API key for provider if specified
+	// Set API key for provider if specified — env vars only
 	if let Some(api_key_input) = &args.api_key {
-		// Parse provider:key format
 		let parts: Vec<&str> = api_key_input.splitn(2, ':').collect();
 		if parts.len() != 2 {
-			octomind::log_error!(
-				"Error: API key must be in provider:key format (e.g., openrouter:your-key)"
+			block_open("config", None);
+			block_close_err(
+				"config",
+				"api key must be in provider:key format (e.g., openrouter:your-key)",
 			);
+			println!();
 			return Ok(());
 		}
-
 		let provider = parts[0];
-
-		// API keys are now only supported via environment variables for security
-		octomind::log_error!(
-			"❌ Error: API keys can no longer be set in config file for security reasons."
+		block_open("config", None);
+		block_line(
+			&"API keys can no longer be set in config file for security reasons."
+				.bright_red()
+				.to_string(),
 		);
-		octomind::log_error!("Please set the API key as an environment variable instead:");
-		octomind::log_error!(
-			"  For {}: export {}_API_KEY=your-key-here",
-			provider.to_uppercase(),
-			provider.to_uppercase()
+		block_line(
+			&format!(
+				"Set the environment variable instead: export {}_API_KEY=your-key",
+				provider.to_uppercase()
+			)
+			.dimmed()
+			.to_string(),
 		);
-		octomind::log_error!("  Then restart your shell and try again.");
+		block_close_err("config", "use environment variable");
+		println!();
 		return Ok(());
 	}
 
@@ -150,237 +168,267 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		match log_level_str.to_lowercase().as_str() {
 			"none" => {
 				config.log_level = octomind::config::LogLevel::None;
-				println!("Set log level to None");
+				changes.push(("log level".to_string(), "None".to_string()));
 			}
 			"info" => {
 				config.log_level = octomind::config::LogLevel::Info;
-				println!("Set log level to Info");
+				changes.push(("log level".to_string(), "Info".to_string()));
 			}
 			"debug" => {
 				config.log_level = octomind::config::LogLevel::Debug;
-				println!("Set log level to Debug");
+				changes.push(("log level".to_string(), "Debug".to_string()));
 			}
 			_ => {
-				octomind::log_error!(
-					"Error: Invalid log level '{}'. Valid options: none, info, debug",
-					log_level_str
+				block_open("config", None);
+				block_close_err(
+					"config",
+					&format!("invalid log level '{}' (none, info, debug)", log_level_str),
 				);
+				println!();
 				return Ok(());
 			}
 		}
-		modified = true;
 	}
 
-	// Enable/disable MCP protocol - REMOVED: MCP is now controlled by role server_refs
-	// MCP is enabled when roles have server_refs configured
-
-	// Enable/disable markdown rendering
 	if let Some(enable_markdown) = args.markdown_enable {
 		config.enable_markdown_rendering = enable_markdown;
-		println!(
-			"Markdown rendering {}",
+		changes.push((
+			"markdown".to_string(),
 			if enable_markdown {
 				"enabled"
 			} else {
 				"disabled"
 			}
-		);
-		modified = true;
+			.to_string(),
+		));
 	}
 
-	// Set markdown theme
 	if let Some(theme) = &args.markdown_theme {
 		let valid_themes = octomind::session::chat::markdown::MarkdownTheme::all_themes();
 		if valid_themes.contains(&theme.as_str()) {
 			config.markdown_theme = theme.clone();
-			println!("Markdown theme set to '{}'", theme);
-			modified = true;
+			changes.push(("markdown theme".to_string(), theme.clone()));
 		} else {
-			octomind::log_error!(
-				"Error: Invalid markdown theme '{}'. Valid themes: {}",
-				theme,
-				valid_themes.join(", ")
+			block_open("config", None);
+			block_close_err(
+				"config",
+				&format!(
+					"invalid theme '{}' (valid: {})",
+					theme,
+					valid_themes.join(", ")
+				),
 			);
+			println!();
 			return Ok(());
 		}
 	}
 
-	// Update MCP server references if specified
 	if let Some(providers) = &args.mcp_providers {
 		let server_names: Vec<String> =
 			providers.split(',').map(|s| s.trim().to_string()).collect();
-
-		// Clear existing servers and add new ones
 		config.mcp.servers.clear();
 		for server_name in &server_names {
-			// Create basic server config if not exists
 			if !config.mcp.servers.iter().any(|s| s.name() == *server_name) {
 				let server = McpServerConfig::builtin(server_name, 30, Vec::new());
 				config.mcp.servers.push(server);
 			}
 		}
-
-		println!("Set MCP servers to: {}", providers);
-		modified = true;
+		changes.push(("mcp servers".to_string(), providers.clone()));
 	}
 
-	// Configure MCP server if specified
 	if let Some(server_config) = &args.mcp_server {
-		// Parse server config string: name,url=X|command=Y,args=Z
 		let parts: Vec<&str> = server_config.split(',').collect();
-
 		if parts.len() < 2 {
-			println!("Invalid MCP server configuration format. Expected format: name,url=X|command=Y,args=Z");
-		} else {
-			let name = parts[0].trim().to_string();
+			block_open("config", None);
+			block_close_err("config", "mcp server format: name,url=X|command=Y,args=Z");
+			println!();
+			return Ok(());
+		}
+		let name = parts[0].trim().to_string();
+		let mut url: Option<String> = None;
+		let mut command: Option<String> = None;
+		let mut args_vec: Vec<String> = Vec::new();
+		let mut timeout_seconds: u64 = 30;
+		let mut connection_type = McpConnectionType::Http;
+		let mut warnings: Vec<String> = Vec::new();
 
-			// Create a new server config - start with default values
-			let mut url: Option<String> = None;
-			let mut command: Option<String> = None;
-			let mut args: Vec<String> = Vec::new();
-			let mut timeout_seconds: u64 = 30;
-			let mut connection_type = McpConnectionType::Http; // Default to HTTP
-
-			// Process remaining parts
-			for part in &parts[1..] {
-				let kv: Vec<&str> = part.split('=').collect();
-				if kv.len() == 2 {
-					let key = kv[0].trim();
-					let value = kv[1].trim();
-
-					match key {
-						"url" => {
-							url = Some(value.to_string());
-						}
-						"command" => {
-							command = Some(value.to_string());
-						}
-						"args" => {
-							args = value
-								.split(' ')
-								.map(|s| s.trim().to_string())
-								.filter(|s| !s.is_empty())
-								.collect();
-						}
-						"type" => match value.to_lowercase().as_str() {
-							"http" => connection_type = McpConnectionType::Http,
-							"stdio" => connection_type = McpConnectionType::Stdin,
-							"builtin" => connection_type = McpConnectionType::Builtin,
-							_ => println!("Unknown server type: {}, defaulting to HTTP", value),
-						},
-						"timeout" | "timeout_seconds" => {
-							if let Ok(timeout) = value.parse::<u64>() {
-								timeout_seconds = timeout;
-							} else {
-								println!("Invalid timeout value: {}, using default", value);
-							}
-						}
-						_ => {
-							println!("Unknown server config key: {}", key);
+		for part in &parts[1..] {
+			let kv: Vec<&str> = part.split('=').collect();
+			if kv.len() == 2 {
+				let key = kv[0].trim();
+				let value = kv[1].trim();
+				match key {
+					"url" => url = Some(value.to_string()),
+					"command" => command = Some(value.to_string()),
+					"args" => {
+						args_vec = value
+							.split(' ')
+							.map(|s| s.trim().to_string())
+							.filter(|s| !s.is_empty())
+							.collect()
+					}
+					"type" => match value.to_lowercase().as_str() {
+						"http" => connection_type = McpConnectionType::Http,
+						"stdio" => connection_type = McpConnectionType::Stdin,
+						"builtin" => connection_type = McpConnectionType::Builtin,
+						_ => warnings.push(format!(
+							"unknown server type '{}', defaulting to HTTP",
+							value
+						)),
+					},
+					"timeout" | "timeout_seconds" => {
+						if let Ok(timeout) = value.parse::<u64>() {
+							timeout_seconds = timeout;
+						} else {
+							warnings.push(format!("invalid timeout '{}', using default", value));
 						}
 					}
+					_ => warnings.push(format!("unknown server config key '{}'", key)),
 				}
 			}
+		}
 
-			// Create the appropriate server configuration based on the collected data
-			let server = match connection_type {
-				McpConnectionType::Builtin => {
-					McpServerConfig::builtin(&name, timeout_seconds, Vec::new())
-				}
-				McpConnectionType::Http => {
-					if let Some(url) = url {
-						// HTTP server - just needs a URL
-						McpServerConfig::http(&name, &url, timeout_seconds, Vec::new())
-					} else {
-						println!("Error: URL must be specified for HTTP MCP server");
-						return Ok(());
+		let server = match connection_type {
+			McpConnectionType::Builtin => {
+				McpServerConfig::builtin(&name, timeout_seconds, Vec::new())
+			}
+			McpConnectionType::Http => match url {
+				Some(url) => McpServerConfig::http(&name, &url, timeout_seconds, Vec::new()),
+				None => {
+					block_open("config", None);
+					for w in &warnings {
+						block_line(&w.yellow().to_string());
 					}
+					block_close_err("config", "url required for HTTP MCP server");
+					println!();
+					return Ok(());
 				}
-				McpConnectionType::Stdin => {
-					if let Some(command) = command {
-						McpServerConfig::stdin(&name, &command, args, timeout_seconds, Vec::new())
-					} else {
-						println!("Error: Command must be specified for stdin MCP server");
-						return Ok(());
+			},
+			McpConnectionType::Stdin => match command {
+				Some(command) => {
+					McpServerConfig::stdin(&name, &command, args_vec, timeout_seconds, Vec::new())
+				}
+				None => {
+					block_open("config", None);
+					for w in &warnings {
+						block_line(&w.yellow().to_string());
 					}
+					block_close_err("config", "command required for stdin MCP server");
+					println!();
+					return Ok(());
 				}
-			};
-
-			// Enable MCP if not already enabled - REMOVED: MCP now controlled by server_refs
-			// The presence of servers in the registry doesn't automatically enable MCP
-
-			// Add the new server to registry
-			// Remove existing server with same name first
-			config.mcp.servers.retain(|s| s.name() != name);
-			// Add the server (name is already set during creation)
-			config.mcp.servers.push(server);
-
-			println!("Added/updated MCP server: {}", name);
-			modified = true;
+			},
+		};
+		config.mcp.servers.retain(|s| s.name() != name);
+		config.mcp.servers.push(server);
+		changes.push(("mcp server".to_string(), format!("{} added/updated", name)));
+		for w in warnings {
+			changes.push(("warning".to_string(), w));
 		}
 	}
 
-	// Update system prompt if specified
 	if let Some(system_prompt) = &args.system {
 		if system_prompt.to_lowercase() == "default" {
-			// Reset to default
 			config.system = None;
-			println!("Reset system prompt to default");
+			changes.push(("system prompt".to_string(), "default".to_string()));
 		} else {
-			// Set custom prompt
 			config.system = Some(system_prompt.clone());
-			println!("Set custom system prompt");
+			changes.push(("system prompt".to_string(), "custom".to_string()));
 		}
-		modified = true;
 	}
 
-	// If no modifications were made, create a default config
-	if !modified {
-		// Check if config file already exists
-		let config_path = directories::get_config_file_path()?;
+	let modified = !changes.is_empty();
 
-		if config_path.exists() {
-			println!(
-				"Configuration file already exists at: {}",
-				config_path.display()
-			);
-			println!("No changes were made to the configuration.");
-		} else {
-			let config_path = Config::create_default_config()?;
-			println!(
-				"Created default configuration file at: {}",
-				config_path.display()
-			);
+	// One unified /config block: changes + save status + current state.
+	block_open("config", None);
+
+	if modified {
+		block_section("changes");
+		let kw = key_width(changes.iter().map(|(k, _)| k.as_str()));
+		for (k, v) in &changes {
+			block_row(k, &v.bright_green().to_string(), kw);
 		}
-	} else {
-		// Save the updated configuration
 		if let Err(e) = config.save() {
-			octomind::log_error!("Error saving configuration: {}", e);
+			block_close_err("config", &format!("save failed: {}", e));
+			println!();
 			return Err(e);
 		}
-		println!("Configuration saved successfully");
+		block_section("status");
+		let kw = key_width(["saved"]);
+		block_row(
+			"saved",
+			&"configuration written".bright_green().to_string(),
+			kw,
+		);
+	} else {
+		let config_path = directories::get_config_file_path()?;
+		block_section("status");
+		let kw = key_width(["config file"]);
+		if config_path.exists() {
+			block_row(
+				"config file",
+				&format!("{} (no changes)", config_path.display())
+					.dimmed()
+					.to_string(),
+				kw,
+			);
+		} else {
+			let new_path = Config::create_default_config()?;
+			block_row(
+				"config file",
+				&format!("{} (created default)", new_path.display())
+					.bright_green()
+					.to_string(),
+				kw,
+			);
+		}
 	}
 
-	// Show current configuration
-	println!("\nCurrent configuration:");
+	// ── current state ─────────────────────────────────────────────────
+	block_section("current");
+	let cur_kw = key_width([
+		"root model",
+		"log level",
+		"markdown",
+		"theme",
+		"system prompt",
+	]);
+	block_row(
+		"root model",
+		&config.get_effective_model().bright_white().to_string(),
+		cur_kw,
+	);
+	block_row("log level", &format!("{:?}", config.log_level), cur_kw);
+	block_row(
+		"markdown",
+		if config.enable_markdown_rendering {
+			"enabled"
+		} else {
+			"disabled"
+		},
+		cur_kw,
+	);
+	block_row("theme", &config.markdown_theme, cur_kw);
+	block_row(
+		"system prompt",
+		if config.system.is_some() {
+			"custom"
+		} else {
+			"default"
+		},
+		cur_kw,
+	);
 
-	// Show root-level model
-	println!("Root model: {}", config.get_effective_model());
+	// ── env api keys ─────────────────────────────────────────────────
+	block_section("api keys");
+	render_env_api_key_row("OpenRouter", "OPENROUTER_API_KEY");
+	render_env_api_key_row("OpenAI", "OPENAI_API_KEY");
+	render_env_api_key_row("Anthropic", "ANTHROPIC_API_KEY");
+	render_env_api_key_row("Google", "GOOGLE_APPLICATION_CREDENTIALS");
+	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
+	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
 
-	// Show provider API keys (from environment variables only)
-	println!("Provider API keys (from environment variables):");
-	show_env_api_key_status("  OpenRouter", "OPENROUTER_API_KEY");
-	show_env_api_key_status("  OpenAI", "OPENAI_API_KEY");
-	show_env_api_key_status("  Anthropic", "ANTHROPIC_API_KEY");
-	show_env_api_key_status("  Google", "GOOGLE_APPLICATION_CREDENTIALS");
-	show_env_api_key_status("  Amazon", "AWS_ACCESS_KEY_ID");
-	show_env_api_key_status("  Cloudflare", "CLOUDFLARE_API_TOKEN");
-
-	// Show role configurations (models now use system-wide setting)
-	println!("Role configurations:");
-
-	// Show MCP status using the new structure
-	// MCP is enabled per-role based on server_refs, not a global flag
+	// ── mcp ───────────────────────────────────────────────────────────
 	let dev_mcp_enabled = config
 		.role_map
 		.get("developer")
@@ -391,92 +439,91 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		.get("assistant")
 		.map(|r| !r.mcp.server_refs.is_empty())
 		.unwrap_or(false);
-
-	println!("MCP status:");
-	println!(
-		"  Developer role: {}",
+	block_section("mcp");
+	let mcp_kw = key_width(["developer", "assistant"]);
+	block_row(
+		"developer",
 		if dev_mcp_enabled {
 			"enabled"
 		} else {
 			"disabled"
-		}
+		},
+		mcp_kw,
 	);
-	println!(
-		"  Assistant role: {}",
+	block_row(
+		"assistant",
 		if ass_mcp_enabled {
 			"enabled"
 		} else {
 			"disabled"
-		}
+		},
+		mcp_kw,
 	);
 
-	// Show MCP servers from global config
-	if !config.mcp.servers.is_empty() || dev_mcp_enabled || ass_mcp_enabled {
-		if !config.mcp.servers.is_empty() {
-			println!("MCP servers:");
-			for server in &config.mcp.servers {
-				let name = server.name();
-				// Note: enabled status is now determined by role server_refs, not individual server config
-				// Here we just show what's available in the registry
-
-				// Auto-detect server type for display
-				let effective_type = match name {
-					"core" | "agent" => McpConnectionType::Builtin,
-					_ => server.connection_type(),
-				};
-
-				match effective_type {
-					McpConnectionType::Builtin => match name {
-						"core" => {
-							println!("  - {} (built-in core tools) - available", name)
-						}
-						"agent" => println!("  - {} (built-in agent tool) - available", name),
-						_ => println!("  - {} (built-in tools) - available", name),
-					},
-					McpConnectionType::Http | McpConnectionType::Stdin => {
-						if let Some(url) = server.url() {
-							println!("  - {} (HTTP: {}) - available", name, url);
-						} else if let Some(command) = server.command() {
-							println!("  - {} (Command: {}) - available", name, command);
-						} else {
-							println!(
-								"  - {} (external, not configured) - needs configuration",
-								name
-							);
-						}
+	if !config.mcp.servers.is_empty() {
+		block_section("mcp servers");
+		for server in &config.mcp.servers {
+			let name = server.name();
+			let effective_type = match name {
+				"core" | "agent" => McpConnectionType::Builtin,
+				_ => server.connection_type(),
+			};
+			let detail = match effective_type {
+				McpConnectionType::Builtin => match name {
+					"core" => "built-in core tools".dimmed().to_string(),
+					"agent" => "built-in agent tool".dimmed().to_string(),
+					_ => "built-in tools".dimmed().to_string(),
+				},
+				McpConnectionType::Http | McpConnectionType::Stdin => {
+					if let Some(url) = server.url() {
+						format!("HTTP: {}", url).dimmed().to_string()
+					} else if let Some(command) = server.command() {
+						format!("Command: {}", command).dimmed().to_string()
+					} else {
+						"external (not configured)".yellow().to_string()
 					}
 				}
-			}
-		} else {
-			println!("MCP servers: None configured");
+			};
+			block_row_text(&format!("{}  {}", name.bright_white(), detail));
 		}
 	}
 
-	println!("Log level: {:?}", config.log_level);
-	println!(
-		"Markdown rendering: {}",
-		if config.enable_markdown_rendering {
-			"enabled"
-		} else {
-			"disabled"
-		}
-	);
-	println!("Markdown theme: {}", config.markdown_theme);
-
-	// Show system prompt status
-	if config.system.is_some() {
-		println!("System prompt: Custom");
+	let suffix = if modified {
+		Some(format!("{} change(s)", changes.len()))
 	} else {
-		println!("System prompt: Default");
-	}
-
+		Some("no changes".to_string())
+	};
+	block_close_ok("config", suffix.as_deref());
+	println!();
 	Ok(())
+}
+
+/// Render an env-var API key row under the current /config block.
+fn render_env_api_key_row(provider: &str, env_var: &str) {
+	match std::env::var(env_var) {
+		Ok(value) if !value.trim().is_empty() => {
+			let tracker = octomind::config::get_env_tracker();
+			let source_desc = tracker.lock().unwrap().get_source_description(env_var);
+			block_row_text(&format!(
+				"{}  {} {}",
+				format!("{:<11}", provider).bright_white(),
+				"✓".bright_green(),
+				format!("set via {}", source_desc).dimmed(),
+			));
+		}
+		_ => {
+			block_row_text(&format!(
+				"{}  {} {}",
+				format!("{:<11}", provider).bright_white(),
+				"✗".bright_red(),
+				format!("not set (export {})", env_var).dimmed(),
+			));
+		}
+	}
 }
 
 /// Display available markdown themes with descriptions
 fn list_markdown_themes() {
-	println!("🎨 Available Markdown Themes\n");
-
 	let themes = vec![
 		(
 			"default",
@@ -510,225 +557,219 @@ fn list_markdown_themes() {
 		),
 	];
 
-	for (name, description, best_for) in themes {
-		println!("📝 {}", name.to_uppercase());
-		println!("   Description: {}", description);
-		println!("   Best for:    {}", best_for);
-		println!("   Usage:       octomind config --markdown-theme {}", name);
-		println!();
+	block_open("config list-themes", None);
+	for (name, description, best_for) in &themes {
+		block_section_with(name, "");
+		let kw = key_width(["description", "best for", "usage"]);
+		block_row("description", &description.dimmed().to_string(), kw);
+		block_row("best for", &best_for.dimmed().to_string(), kw);
+		block_row(
+			"usage",
+			&format!("octomind config --markdown-theme {}", name).to_string(),
+			kw,
+		);
 	}
-
-	println!("💡 Tips:");
-	println!("   • Themes work in sessions, ask command, and multimode");
-	println!("   • Enable markdown rendering: octomind config --markdown-enable true");
-	println!("   • View current theme: octomind config --show");
+	block_section("tips");
+	block_row_text(
+		&"Themes work in sessions, ask command, and multimode"
+			.dimmed()
+			.to_string(),
+	);
+	block_row_text(
+		&"Enable markdown: octomind config --markdown-enable true"
+			.dimmed()
+			.to_string(),
+	);
+	block_row_text(
+		&"View current theme: octomind config --show"
+			.dimmed()
+			.to_string(),
+	);
+	block_close_ok(
+		"config list-themes",
+		Some(&format!("{} theme(s)", themes.len())),
+	);
+	println!();
 }
 
 /// Display comprehensive configuration information with defaults
 fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
-	println!("🔧 Octomind Configuration\n");
-
-	// Configuration file location
 	let config_path = directories::get_config_file_path()?;
-	if config_path.exists() {
-		println!("📁 Config file: {}", config_path.display());
+	let subtitle = if config_path.exists() {
+		config_path.display().to_string()
 	} else {
-		println!(
-			"📁 Config file: {} (not created yet)",
-			config_path.display()
-		);
-	}
-	println!();
+		format!("{} (not created yet)", config_path.display())
+	};
+	block_open("config", Some(&subtitle));
 
-	// Root-level configuration
-	println!("🌍 System-wide Settings");
-	println!(
-		"  Model (root):              {}",
-		if config.model.is_empty() || config.model == "openrouter:anthropic/claude-3.5-haiku" {
+	// ── system-wide ───────────────────────────────────────────────────
+	block_section("system");
+	let kw = key_width(["root model", "log level", "markdown", "theme", "max tokens"]);
+	block_row(
+		"root model",
+		&if config.model.is_empty() || config.model == "openrouter:anthropic/claude-3.5-haiku" {
 			format!("{} (default)", config.get_effective_model())
+				.bright_white()
+				.to_string()
 		} else {
-			config.model.clone()
-		}
+			config.model.bright_white().to_string()
+		},
+		kw,
 	);
-	println!("  Log level:                 {:?}", config.log_level);
-	println!(
-		"  Markdown rendering:        {}",
+	block_row("log level", &format!("{:?}", config.log_level), kw);
+	block_row(
+		"markdown",
 		if config.enable_markdown_rendering {
 			"enabled"
 		} else {
 			"disabled"
-		}
+		},
+		kw,
 	);
-	println!("  Markdown theme:            {}", config.markdown_theme);
-	println!(
-		"  Max session tokens:        {} tokens ({})",
-		config.max_session_tokens_threshold,
-		if config.max_session_tokens_threshold > 0 {
-			"enabled"
-		} else {
-			"disabled"
-		}
+	block_row("theme", &config.markdown_theme, kw);
+	block_row(
+		"max tokens",
+		&format!(
+			"{} ({})",
+			config.max_session_tokens_threshold,
+			if config.max_session_tokens_threshold > 0 {
+				"enabled"
+			} else {
+				"disabled"
+			}
+		),
+		kw,
 	);
-	println!();
 
-	// Provider API keys (from environment variables only)
-	println!("🔑 Provider API Keys (from environment variables)");
-	show_env_api_key_status("OpenRouter", "OPENROUTER_API_KEY");
-	show_env_api_key_status("OpenAI", "OPENAI_API_KEY");
-	show_env_api_key_status("Anthropic", "ANTHROPIC_API_KEY");
-	show_env_api_key_status("Google", "GOOGLE_APPLICATION_CREDENTIALS");
-	show_env_api_key_status("Amazon", "AWS_ACCESS_KEY_ID");
-	show_env_api_key_status("Cloudflare", "CLOUDFLARE_API_TOKEN");
-	println!();
+	// ── api keys ──────────────────────────────────────────────────────
+	block_section("api keys");
+	render_env_api_key_row("OpenRouter", "OPENROUTER_API_KEY");
+	render_env_api_key_row("OpenAI", "OPENAI_API_KEY");
+	render_env_api_key_row("Anthropic", "ANTHROPIC_API_KEY");
+	render_env_api_key_row("Google", "GOOGLE_APPLICATION_CREDENTIALS");
+	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
+	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
 
-	// Role configurations
-	println!("👤 Role Configurations");
-
-	// Developer role
-	println!("  Developer Role:");
+	// ── roles ─────────────────────────────────────────────────────────
 	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) =
 		config.get_role_config("developer");
-
-	println!(
-		"    Model:           {} (system-wide)",
-		config.get_effective_model()
-	);
-	println!("    System prompt:   {} chars", dev_system.len());
-
-	// Assistant role
-	println!("  Assistant Role:");
 	let (_ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
 		config.get_role_config("assistant");
-	println!(
-		"    Model:           {} (system-wide)",
-		config.get_effective_model()
+
+	block_section("roles");
+	let role_kw = key_width(["developer", "assistant"]);
+	block_row(
+		"developer",
+		&format!(
+			"{} (system-wide) {} {} char prompt",
+			config.get_effective_model(),
+			"·".bright_black(),
+			dev_system.len()
+		),
+		role_kw,
 	);
-	println!("    System prompt:   {} chars", ass_system.len());
-	println!();
-
-	// MCP Configuration
-	println!("🔧 MCP (Model Context Protocol) Configuration");
-
-	// Global MCP
-	println!("  Global MCP:");
-	println!(
-		"    Registry:        {} servers configured",
-		config.mcp.servers.len()
+	block_row(
+		"assistant",
+		&format!(
+			"{} (system-wide) {} {} char prompt",
+			config.get_effective_model(),
+			"·".bright_black(),
+			ass_system.len()
+		),
+		role_kw,
 	);
-	if !config.mcp.servers.is_empty() {
-		show_mcp_servers(&config.mcp.servers);
-	}
 
-	// Developer role MCP
-	println!("  Developer Role MCP:");
-	println!(
-		"    Server refs:     {}",
-		if dev_mcp.server_refs.is_empty() {
-			"None (MCP disabled)".to_string()
+	// ── mcp ───────────────────────────────────────────────────────────
+	block_section("mcp");
+	let mcp_kw = key_width(["registry", "developer", "assistant"]);
+	block_row(
+		"registry",
+		&format!("{} server(s)", config.mcp.servers.len()),
+		mcp_kw,
+	);
+	block_row(
+		"developer",
+		&if dev_mcp.server_refs.is_empty() {
+			"None (MCP disabled)".dimmed().to_string()
 		} else {
 			dev_mcp.server_refs.join(", ")
-		}
+		},
+		mcp_kw,
 	);
-
-	// Assistant role MCP
-	println!("  Assistant Role MCP:");
-	println!(
-		"    Server refs:     {}",
-		if ass_mcp.server_refs.is_empty() {
-			"None (MCP disabled)".to_string()
+	block_row(
+		"assistant",
+		&if ass_mcp.server_refs.is_empty() {
+			"None (MCP disabled)".dimmed().to_string()
 		} else {
 			ass_mcp.server_refs.join(", ")
-		}
+		},
+		mcp_kw,
 	);
-	println!();
 
-	// Layer configurations (used by workflows)
+	if !config.mcp.servers.is_empty() {
+		block_section("mcp servers");
+		for server in &config.mcp.servers {
+			let name = server.name();
+			let effective_type = match name {
+				"core" | "agent" => McpConnectionType::Builtin,
+				_ => server.connection_type(),
+			};
+			let detail = match effective_type {
+				McpConnectionType::Builtin => match name {
+					"core" => "built-in core tools".dimmed().to_string(),
+					"agent" => "built-in agent tool".dimmed().to_string(),
+					_ => "built-in tools".dimmed().to_string(),
+				},
+				McpConnectionType::Http | McpConnectionType::Stdin => {
+					if let Some(url) = server.url() {
+						format!("HTTP: {}", url).dimmed().to_string()
+					} else if let Some(command) = server.command() {
+						format!("Command: {}", command).dimmed().to_string()
+					} else {
+						"external (not configured)".yellow().to_string()
+					}
+				}
+			};
+			block_row_text(&format!("{}  {}", name.bright_white(), detail));
+			if server.timeout_seconds() != 30 {
+				block_row_text(
+					&format!("  timeout: {}s", server.timeout_seconds())
+						.dimmed()
+						.to_string(),
+				);
+			}
+			if !server.tools().is_empty() {
+				block_row_text(
+					&format!("  tools: {}", server.tools().join(", "))
+						.dimmed()
+						.to_string(),
+				);
+			}
+		}
+	}
+
+	// ── workflows / layers ────────────────────────────────────────────
 	let has_any_workflow = config.role_map.values().any(|r| r.workflow.is_some());
 	if has_any_workflow {
-		println!("📚 Layer Configurations (used by workflows)");
-
-		// Show available layers from global registry
+		block_section("workflows");
 		if let Some(layers) = &config.layers {
-			println!("  Configured Layers: {} available", layers.len());
 			for layer in layers {
-				println!("    ✅ {} → {}", layer.name, layer.command);
+				block_row_text(&format!(
+					"{} {} {}",
+					"✓".bright_green(),
+					layer.name.bright_white(),
+					format!("→ {}", layer.command).dimmed(),
+				));
 			}
 		}
-
-		// Show workflow assignments per role
-		println!("\n  Workflow Assignments:");
 		for (role_name, role_data) in &config.role_map {
 			if let Some(workflow) = &role_data.workflow {
-				println!("    {} → {}", role_name, workflow);
+				block_row_text(&format!("{} → {}", role_name, workflow).dimmed().to_string());
 			}
 		}
-
-		println!();
 	}
 
+	block_close_ok("config", Some(&config.get_effective_model()));
+	println!();
 	Ok(())
-}
-
-/// Show the status of an API key with environment variable fallback
-fn show_env_api_key_status(provider: &str, env_var: &str) {
-	match std::env::var(env_var) {
-		Ok(value) if !value.trim().is_empty() => {
-			// Use environment tracker to determine actual source
-			let tracker = octomind::config::get_env_tracker();
-			let source_desc = tracker.lock().unwrap().get_source_description(env_var);
-			println!("{:<15} ✅ Set via {}", provider, source_desc);
-		}
-		_ => {
-			// Either not set or empty value
-			println!(
-				"{:<15} ❌ Not set (export {}=your-key or add to .env)",
-				provider, env_var
-			);
-		}
-	}
-}
-
-/// Display MCP server configurations
-fn show_mcp_servers(servers: &[McpServerConfig]) {
-	if servers.is_empty() {
-		println!("    Servers:         None configured");
-		return;
-	}
-
-	println!("    Servers:");
-	for server in servers {
-		let name = server.name();
-		// Note: Individual servers no longer have enabled flag - determined by role server_refs
-
-		// Auto-detect server type for display
-		let effective_type = match name {
-			"core" | "agent" => McpConnectionType::Builtin,
-			_ => server.connection_type(),
-		};
-
-		match effective_type {
-			McpConnectionType::Builtin => match name {
-				"core" => println!("      📦 {} (built-in core tools)", name),
-				"agent" => println!("      🤖 {} (built-in agent tool)", name),
-				_ => println!("      📦 {} (built-in tools)", name),
-			},
-			McpConnectionType::Http | McpConnectionType::Stdin => {
-				if let Some(url) = server.url() {
-					println!("      🌐 {} (HTTP: {})", name, url);
-				} else if let Some(command) = server.command() {
-					println!("      ⚙️  {} (Command: {})", name, command);
-				} else {
-					println!("      ❓ {} (external, not configured)", name);
-				}
-			}
-		}
-
-		// Show additional server details if configured
-		if server.timeout_seconds() != 30 {
-			println!("        Timeout: {} seconds", server.timeout_seconds());
-		}
-		if !server.tools().is_empty() {
-			println!("        Tools: {}", server.tools().join(", "));
-		}
-	}
 }

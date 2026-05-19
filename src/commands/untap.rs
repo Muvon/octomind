@@ -14,7 +14,9 @@
 
 use anyhow::Result;
 use clap::Args;
+use colored::Colorize;
 use octomind::agent::taps;
+use octomind::session::chat::{block_close_ok, block_open, block_row, key_width};
 
 #[derive(Args, Debug)]
 pub struct UntapArgs {
@@ -25,6 +27,10 @@ pub struct UntapArgs {
 
 pub fn execute(args: &UntapArgs) -> Result<()> {
 	taps::remove_tap(&args.name)?;
-	println!("✓ Untapped: {}", args.name);
+	block_open("untap", None);
+	let kw = key_width(["removed"]);
+	block_row("removed", &args.name.bright_yellow().to_string(), kw);
+	block_close_ok("untap", Some(&args.name));
+	println!();
 	Ok(())
 }

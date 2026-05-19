@@ -19,6 +19,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
+use colored::Colorize;
+use octomind::session::chat::{block_close_ok, block_open, block_row, key_width};
 use std::io::{self, Read};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -55,7 +57,21 @@ pub async fn execute(args: &SendArgs) -> Result<()> {
 	}
 
 	send_message(&args.name, &message).await?;
-	println!("Sent to session '{}'.", args.name);
+	block_open("send", None);
+	let kw = key_width(["session", "chars"]);
+	block_row("session", &args.name.bright_green().to_string(), kw);
+	block_row(
+		"chars",
+		&message
+			.chars()
+			.count()
+			.to_string()
+			.bright_white()
+			.to_string(),
+		kw,
+	);
+	block_close_ok("send", Some(&args.name));
+	println!();
 	Ok(())
 }
 

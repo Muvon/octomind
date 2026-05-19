@@ -32,6 +32,45 @@ Display comprehensive session statistics:
 ### `/report`
 Generate a detailed usage report for the session with per-request breakdown.
 
+### `/share`
+Upload the current session's JSONL log to the share endpoint and print a permanent URL pointing at the web viewer (`octomind.run/r/<id>`). The full forensic trace — every user/assistant turn, every tool call with args and results, every cost update, every compression/truncation marker — renders in the browser exactly as it occurred on disk.
+
+The CLI **does not** open the URL automatically — clicking it is your choice.
+
+```
+/share
+```
+
+Output:
+```
+url    https://octomind.run/r/<8-char id>
+id     <8-char id>
+```
+
+Environment overrides:
+- `OCTOMIND_SHARE_URL` — point `/share` and `/analyze` at a different host (defaults to `https://octomind.run`). Use this only when pointing at a self-hosted instance or a local dev server.
+
+### `/analyze`
+Open the current session in the web viewer **without uploading anything**. A tiny HTTP server is bound to `127.0.0.1` on a random port; the printed URL points at `octomind.run/analyze?b=127.0.0.1:<port>&t=<token>` so the browser fetches the JSONL directly from your machine.
+
+The bridge:
+- listens on loopback only — unreachable from other machines,
+- gates every request with a single-use 24-char token sent in the `X-Bridge-Token` header,
+- aborts the previous bridge when `/analyze` is re-invoked (fresh port + fresh token each time),
+- shuts down with the `octomind` process — there is no persistent state and no upload.
+
+```
+/analyze
+```
+
+Output:
+```
+url    https://octomind.run/analyze?b=127.0.0.1:<port>&t=<token>
+port   127.0.0.1:<port> (loopback only)
+```
+
+Use `/analyze` for ephemeral, private review of an in-flight session; use `/share` when you want a permanent link to send to someone else.
+
 ### `/model [MODEL]`
 Show or change the current model. Without argument, displays current model. With argument, switches to specified model in `provider:model` format.
 

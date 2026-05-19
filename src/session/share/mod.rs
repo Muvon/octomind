@@ -22,6 +22,8 @@
 //! platform URL launcher — currently we use the `open` crate directly from
 //! the command handler).
 
+pub mod bridge;
 pub mod upload;
 
-pub use upload::{share_session, ShareResult};
+pub use bridge::{start_for_session as start_bridge, BridgeInfo};
+pub use upload::{share_session, web_host, ShareResult};

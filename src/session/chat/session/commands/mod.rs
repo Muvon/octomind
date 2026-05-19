@@ -20,6 +20,7 @@ mod copy;
 mod display;
 mod done;
 pub use done::handle_done;
+mod analyze;
 mod effort;
 mod exit;
 mod help;
@@ -194,6 +195,11 @@ pub enum CommandOutput {
 		id: String,
 		url: String,
 	},
+	Analyze {
+		url: String,
+		port: u16,
+		token: String,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -269,6 +275,7 @@ impl CommandOutput {
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
+			Self::Analyze { .. } => display::display_analyze(self),
 			Self::Error { error, .. } => {
 				block_open("/error", None);
 				block_close_err("error", error);
@@ -347,6 +354,7 @@ pub async fn process_command(
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
 		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
+		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

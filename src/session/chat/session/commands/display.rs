@@ -60,7 +60,11 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
 			(LEARNING_COMMAND, "Manage role/project lessons"),
 			(REPORT_COMMAND, "Generate detailed usage report"),
-			(SHARE_COMMAND, "Upload session and open shareable URL"),
+			(SHARE_COMMAND, "Upload session and print shareable URL"),
+			(
+				ANALYZE_COMMAND,
+				"Open this session in the web viewer (local-only)",
+			),
 			(EXIT_COMMAND, "Exit the session"),
 		];
 
@@ -2259,6 +2263,23 @@ pub fn display_share(output: &CommandOutput) {
 		block_row("url", &url.bright_cyan().underline().to_string(), kw);
 		block_row("id", &id.dimmed().to_string(), kw);
 		block_close_ok("/share", Some(id));
+		println!();
+	}
+}
+
+pub fn display_analyze(output: &CommandOutput) {
+	if let CommandOutput::Analyze { url, port, .. } = output {
+		block_open("/analyze", None);
+		let kw = key_width(["url", "port"]);
+		block_row("url", &url.bright_cyan().underline().to_string(), kw);
+		block_row(
+			"port",
+			&format!("127.0.0.1:{} (loopback only)", port)
+				.dimmed()
+				.to_string(),
+			kw,
+		);
+		block_close_ok("/analyze", Some(&format!(":{}", port)));
 		println!();
 	}
 }

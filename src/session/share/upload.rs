@@ -19,9 +19,9 @@
 //!      `X-Title` hint derived from the first user message.
 //!   4. Parse the `{ id, url }` reply.
 //!
-//! The host comes from `OCTOMIND_SHARE_URL`; the default is the local dev
-//! server while the share endpoint is in development. Flip to
-//! `https://octomind.run` before shipping.
+//! The host comes from `OCTOMIND_SHARE_URL`; the default is the production
+//! viewer at `https://octomind.run`. Override the env var when testing
+//! against a local dev server or self-hosted instance.
 
 use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
@@ -32,9 +32,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-/// Default upload host. Override at runtime via `OCTOMIND_SHARE_URL`.
-/// TODO(deploy): flip to `https://octomind.run` once the worker is on prod.
-const DEFAULT_SHARE_HOST: &str = "http://localhost:5173";
+/// Default upload host. Override at runtime via `OCTOMIND_SHARE_URL` — e.g.
+/// `OCTOMIND_SHARE_URL=http://localhost:5173` for local-dev testing.
+const DEFAULT_SHARE_HOST: &str = "https://octomind.run";
 
 /// What `/share` resolves to.
 #[derive(Debug, Clone, Deserialize)]
@@ -43,7 +43,9 @@ pub struct ShareResult {
 	pub url: String,
 }
 
-fn share_host() -> String {
+/// Resolved host for octomind-web routes (share API + analyze viewer).
+/// Override at runtime via `OCTOMIND_SHARE_URL`.
+pub fn web_host() -> String {
 	std::env::var("OCTOMIND_SHARE_URL")
 		.ok()
 		.filter(|s| !s.is_empty())
@@ -62,7 +64,7 @@ pub async fn share_session(session_file: &Path) -> Result<ShareResult> {
 	let title = extract_title(&raw);
 	let gzipped = gzip(&raw)?;
 
-	let host = share_host();
+	let host = web_host();
 	let endpoint = format!("{}/api/share", host.trim_end_matches('/'));
 
 	let client = reqwest::Client::builder()

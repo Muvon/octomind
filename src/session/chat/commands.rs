@@ -42,8 +42,9 @@ pub const EFFORT_COMMAND: &str = "/effort";
 pub const SCHEDULE_COMMAND: &str = "/schedule";
 pub const LEARNING_COMMAND: &str = "/learning";
 pub const SHARE_COMMAND: &str = "/share";
+pub const ANALYZE_COMMAND: &str = "/analyze";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 27] = [
+pub const COMMANDS: [&str; 28] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -71,4 +72,5 @@ pub const COMMANDS: [&str; 27] = [
 	SCHEDULE_COMMAND,
 	LEARNING_COMMAND,
 	SHARE_COMMAND,
+	ANALYZE_COMMAND,
 ];

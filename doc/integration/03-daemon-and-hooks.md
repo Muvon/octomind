@@ -110,11 +110,13 @@ All injected messages flow through a unified inbox system:
 **Message sources:**
 - **Schedule** -- scheduled messages from the `schedule` tool
 - **BackgroundAgent** -- completed async agent jobs
+- **TapRun** -- completed tap run (specialist agent) jobs
 - **Skill** -- skill activations requiring content injection
+- **SkillValidator** -- skill validation results
 - **Inject** -- external injection via `octomind send`
 - **Webhook** -- HTTP webhook requests
 
-Messages are drained in order: scheduled -> background -> skill -> inject -> webhook. Each session has an isolated queue with async notification support.
+Messages are drained in order: scheduled → background → tap run → skill → skill validator → inject → webhook. Each session has an isolated queue with async notification support.
 
 ## Use Cases
 

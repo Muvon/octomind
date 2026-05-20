@@ -14,8 +14,18 @@ ACP provides:
 ## Starting an ACP Agent
 
 ```bash
-octomind acp [TAG] [--sandbox]
+octomind acp [TAG] [OPTIONS]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `TAG` | Agent tag (e.g. `developer:general`) or role name. Omit for config default. |
+| `--name`, `-n` | Preferred session name for the next `new_session` |
+| `--resume`, `-r` | Resume a specific session by name on `new_session` |
+| `--resume-recent` | Resume the most recent session for the CWD on `new_session` |
+| `--model`, `-m` | Override the model for all sessions |
+| `--sandbox` | Restrict filesystem writes to CWD |
+| `--hook` | Activate a webhook hook by name (repeatable) |
 
 The agent reads JSON-RPC messages from stdin and writes responses to stdout. Stderr is reserved for logging (written to `~/.local/share/octomind/logs/acp-debug.log`).
 
@@ -23,9 +33,22 @@ The agent reads JSON-RPC messages from stdin and writes responses to stdout. Std
 
 1. **Host starts** `octomind acp <role>` as a subprocess
 2. **Initialization handshake**: host sends capabilities, agent responds with available features
-3. **Message exchange**: host sends user messages, agent streams responses
-4. **Tool execution**: agent announces tool calls, streams results
-5. **Shutdown**: host closes stdin or sends shutdown message
+3. **Authentication**: host authenticates (no-op by default)
+4. **Session creation**: host calls `new_session` or `load_session` (resume by ID)
+5. **Message exchange**: host sends user messages, agent streams responses
+6. **Tool execution**: agent announces tool calls, streams results
+7. **Cancellation**: host can cancel in-progress prompts via `cancel`
+8. **Shutdown**: host closes stdin or sends shutdown message
+
+## Agent Capabilities
+
+The agent advertises these capabilities during initialization:
+
+- **Session management**: `new_session`, `load_session` (resume by session ID)
+- **Prompt**: image support, embedded context
+- **MCP**: HTTP transport support (SSE is not supported)
+- **Cancellation**: cancel in-progress prompts
+- **Commands**: extension commands via `octomind/command` namespace
 
 ## Use Cases
 

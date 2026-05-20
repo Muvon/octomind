@@ -30,15 +30,33 @@ Executes the fix with full understanding
 
 ### Step 1: Define Layers
 
+Layers execute via ACP protocol. Each layer needs a matching role that defines the model, system prompt, and tools:
+
 ```toml
 # In config.toml
 
 [[layers]]
 name = "task_refiner"
 description = "Clarifies vague requests into actionable tasks"
+command = "octomind acp task_refiner"
+input_mode = "last"
+output_mode = "none"
+output_role = "assistant"
+
+[[layers]]
+name = "context_researcher"
+description = "Gathers codebase context for development tasks"
+command = "octomind acp context_researcher"
+input_mode = "last"
+output_mode = "append"
+output_role = "assistant"
+
+# Roles for the layers (model + prompt config lives here)
+[[roles]]
+name = "task_refiner"
 model = "openrouter:openai/gpt-4.1-mini"
 max_tokens = 2048
-system_prompt = """
+system = """
 Take the user's request and make it clearer:
 1. If vague, add specificity based on the project context
 2. Guess which files might be relevant
@@ -46,29 +64,20 @@ Take the user's request and make it clearer:
 
 If the request is already clear, return it unchanged.
 
-{{CONTEXT}}
-
 Respond ONLY with the refined task. No questions.
 """
 temperature = 0.3
 top_p = 0.7
 top_k = 20
-input_mode = "last"
-output_mode = "none"
-output_role = "assistant"
 
-[layers.mcp]
+[roles.mcp]
 server_refs = []
-allowed_tools = []
 
-[layers.parameters]
-
-[[layers]]
+[[roles]]
 name = "context_researcher"
-description = "Gathers codebase context for development tasks"
 model = "openrouter:google/gemini-2.5-flash-preview"
 max_tokens = 8192
-system_prompt = """
+system = """
 You are a research assistant. Gather the most important information for the task.
 
 Strategy:
@@ -82,22 +91,14 @@ Present findings as:
 - **Context**: Dependencies and related components
 
 Stay focused. Get starting points, not full implementations.
-
-{{SYSTEM}}
-{{CONTEXT}}
 """
 temperature = 0.3
 top_p = 0.7
 top_k = 20
-input_mode = "last"
-output_mode = "append"
-output_role = "assistant"
 
-[layers.mcp]
+[roles.mcp]
 server_refs = ["filesystem"]
 allowed_tools = ["view"]
-
-[layers.parameters]
 ```
 
 ### Step 2: Define the Workflow
@@ -179,31 +180,30 @@ exit_pattern = "READY"
 ```
 
 With a validator layer:
-
 ```toml
 [[layers]]
 name = "task_validator"
 description = "Validates whether enough context has been gathered"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 1024
-system_prompt = """
-Review the research output. Is there enough context to proceed?
-
-If yes: respond with READY
-If no: respond with what additional information is needed
-
-{{CONTEXT}}
-"""
-temperature = 0.2
+command = "octomind acp task_validator"
 input_mode = "last"
 output_mode = "none"
 output_role = "assistant"
 
-[layers.mcp]
-server_refs = []
-allowed_tools = []
+# Role for the validator
+[[roles]]
+name = "task_validator"
+model = "openrouter:openai/gpt-4.1-mini"
+max_tokens = 1024
+system = """
+Review the research output. Is there enough context to proceed?
 
-[layers.parameters]
+If yes: respond with READY
+If no: respond with what additional information is needed
+"""
+temperature = 0.2
+
+[roles.mcp]
+server_refs = []
 ```
 
 ## Cost Optimization

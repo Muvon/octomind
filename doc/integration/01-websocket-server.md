@@ -45,17 +45,27 @@ Communication uses JSON messages over WebSocket.
 {
   "type": "command",
   "session_id": "my-session",
-  "command": "/info"
+  "command": "mcp",
+  "args": ["list"]
 }
 ```
 
-**Session creation:**
+**Session creation** (auto-named):
+```json
+{
+  "type": "session"
+}
+```
+
+**Session creation** (named or resume):
 ```json
 {
   "type": "session",
   "session_id": "my-session"
 }
 ```
+
+`session_id` is optional — omit it to create an auto-named session, or provide a name to create or resume.
 
 ### Server to Client
 
@@ -81,9 +91,10 @@ Communication uses JSON messages over WebSocket.
 ```json
 {
   "type": "tool_use",
-  "tool_name": "view",
+  "tool": "view",
   "tool_id": "call_123",
-  "parameters": {"path": "src/auth.rs"},
+  "server": "core",
+  "params": {"path": "src/auth.rs"},
   "session_id": "my-session"
 }
 ```
@@ -92,9 +103,11 @@ Communication uses JSON messages over WebSocket.
 ```json
 {
   "type": "tool_result",
-  "tool_name": "view",
+  "tool": "view",
   "tool_id": "call_123",
-  "result": "file contents...",
+  "server": "core",
+  "content": "file contents...",
+  "success": true,
   "session_id": "my-session"
 }
 ```
@@ -118,7 +131,7 @@ Communication uses JSON messages over WebSocket.
 ```json
 {
   "type": "status",
-  "content": "Processing...",
+  "message": "Processing...",
   "session_id": "my-session"
 }
 ```
@@ -127,8 +140,7 @@ Communication uses JSON messages over WebSocket.
 ```json
 {
   "type": "error",
-  "content": "Invalid session ID",
-  "session_id": "my-session"
+  "message": "Invalid session ID"
 }
 ```
 
@@ -138,7 +150,28 @@ Communication uses JSON messages over WebSocket.
   "type": "mcp_notification",
   "server": "filesystem",
   "method": "notifications/tools/list_changed",
-  "params": {},
+  "params": {}
+}
+```
+
+**Skill lifecycle:**
+```json
+{
+  "type": "skill",
+  "action": "activate",
+  "name": "programming-rust",
+  "trigger": "file(Cargo.toml)",
+  "session_id": "my-session"
+}
+```
+
+**Injected message:**
+```json
+{
+  "type": "injected",
+  "source_kind": "schedule",
+  "source_label": "schedule abc12345",
+  "content": "Run the test suite",
   "session_id": "my-session"
 }
 ```
@@ -172,7 +205,7 @@ ws.onmessage = (event) => {
       console.log('AI:', msg.content);
       break;
     case 'tool_use':
-      console.log('Tool:', msg.tool_name, msg.parameters);
+      console.log('Tool:', msg.tool, msg.params);
       break;
     case 'cost':
       console.log(`Cost: $${msg.session_cost}`);
@@ -219,9 +252,10 @@ asyncio.run(main())
 
 ## Validation
 
-- `session_id` and `content` must be non-empty strings
+- `session_id` (when provided) and `content` must be non-empty strings
 - Message content is limited to 10MB
-- Commands must be non-empty strings
+- Commands must be non-empty strings (without leading `/`)
+- Command `args` is optional
 
 ## Security
 

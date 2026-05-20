@@ -161,17 +161,10 @@ Each workflow step references a layer. Layers must:
 [[layers]]
 name = "task_refiner"
 description = "Refines and clarifies user requests"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 2048
-system_prompt = "You are a query processor..."
-temperature = 0.3
+command = "octomind acp task_refiner"
 input_mode = "last"
 output_mode = "none"
 output_role = "assistant"
-
-[layers.mcp]
-server_refs = []
-allowed_tools = []
 ```
 
 See [Commands and Layers](10-commands-and-layers.md) for layer configuration details.

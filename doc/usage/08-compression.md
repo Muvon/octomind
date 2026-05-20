@@ -20,15 +20,15 @@ hints_min_interval = 5
 knowledge_retention = 10
 
 [[compression.pressure_levels]]
-threshold = 50000
+threshold = 60000
 target_ratio = 2.0    # Light: 50% reduction
 
 [[compression.pressure_levels]]
-threshold = 100000
+threshold = 120000
 target_ratio = 4.0    # Medium: 75% reduction
 
 [[compression.pressure_levels]]
-threshold = 150000
+threshold = 160000
 target_ratio = 8.0    # Aggressive: 87.5% reduction
 
 [compression.decision]
@@ -52,9 +52,9 @@ Compression triggers when the full context (messages + system prompt + tool defi
 
 | Token Count | Compression | Effect |
 |-------------|-------------|--------|
-| 50,000+ | 2.0x | 50% reduction |
-| 100,000+ | 4.0x | 75% reduction |
-| 150,000+ | 8.0x | 87.5% reduction |
+| 60,000+ | 2.0x | 50% reduction |
+| 120,000+ | 4.0x | 75% reduction |
+| 160,000+ | 8.0x | 87.5% reduction |
 
 ### Exponential Cooldown
 

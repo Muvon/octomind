@@ -84,16 +84,16 @@ octomind run octomind:developer
 
 ## Non-Interactive Mode
 
-Send a single message and get a response:
+Pipe a message via stdin and get a response:
 
 ```bash
-octomind run developer "Explain the auth module" --format plain
+echo "Explain the auth module" | octomind run developer --format plain
 ```
 
 Structured JSON output for pipelines:
 
 ```bash
-octomind run developer "List TODO items" --schema todos.json --format jsonl
+echo "List TODO items" | octomind run developer --format jsonl
 ```
 
 ## Next Steps

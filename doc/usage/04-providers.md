@@ -182,6 +182,6 @@ octomind run -m anthropic:claude-sonnet-4
 
 **"API key not found"**: Set the provider's environment variable. Use `octomind config --show` to check.
 
-**"Provider does not support structured output"**: Not all providers support `--schema`. Use OpenAI or Anthropic for structured output.
+**"Provider does not support structured output"**: Not all providers support structured output. Use OpenAI or Anthropic for structured output.
 
 **Google Vertex AI issues**: Ensure `GOOGLE_APPLICATION_CREDENTIALS` points to a valid JSON file and the Vertex AI API is enabled.

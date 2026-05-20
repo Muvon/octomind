@@ -26,7 +26,9 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | `max_retries` | u32 | `1` | Retry attempts for API calls. |
 | `retry_timeout` | u32 | `30` | Base timeout in seconds for exponential backoff. |
 | `request_timeout_seconds` | u32 | `300` | Per-request HTTP timeout in seconds. Hard limit on LLM provider API calls. `0` = no timeout. |
-
+| `reasoning_effort` | enum | `"medium"` | Thinking model effort: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Non-thinking models ignore it. |
+| `cache_keepalive_enabled` | bool | `false` | Keep prompt cache warm with periodic pings while session idles. Provider-aware (only pings providers that support refresh-on-read). |
+| `cache_keepalive_max_idle_seconds` | u64 | `1800` | Stop pinging this many seconds after last user activity. `0` = ping until session ends. |
 ## User Interface
 
 | Field | Type | Default | Description |
@@ -61,7 +63,7 @@ Map of tap agent tag to model override. Set a preferred model for specific tap a
 When you run `octomind run developer:general`, the model is resolved in this order:
 1. `--model` CLI flag (if provided)
 2. `[taps]` override for `"developer:general"` (if configured)
-4. Global `model` in config
+3. Global `model` in config
 
 Empty by default. Only applies to tap agents (tags with `:`). Plain role names use role.model or config.model.
 
@@ -289,6 +291,30 @@ output_mode = "append"
 output_role = "assistant"
 ```
 
+## `[[commands]]`
+
+Custom session commands triggered with `/run <name>`. Uses the same schema as `[[layers]]`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | required | Command identifier (used as `/run <name>`) |
+| `description` | string | required | Human-readable description (shown in help text) |
+| `command` | string | required | ACP command to execute: `"octomind acp <role_name>"` |
+| `workdir` | string | `"."` | Working directory (relative to session workdir) |
+| `input_mode` | string | no | How input is fed: `"last"`, `"all"`, `"summary"` |
+| `output_mode` | string | no | How output affects session: `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
+| `output_role` | string | no | Role for output messages: `"assistant"`, `"user"` |
+
+```toml
+[[commands]]
+name = "reduce"
+description = "Compress session history for cost optimization during ongoing work"
+command = "octomind acp reduce"
+input_mode = "all"
+output_mode = "replace"
+output_role = "assistant"
+```
+
 ## `[[agents]]`
 
 Specialized AI agents using ACP protocol. Each becomes an MCP tool (`agent_<name>`).
@@ -363,10 +389,16 @@ Automatic context compression system.
 ### `[[compression.pressure_levels]]`
 
 | Field | Type | Description |
-|-------|------|-------------|
 | `threshold` | u64 | Token count threshold to trigger compression |
 | `target_ratio` | f64 | Compression strength (2.0 = 50% reduction, 4.0 = 75%, 8.0 = 87.5%) |
 
+Default pressure levels:
+
+| Threshold | Target Ratio | Effect |
+|-----------|-------------|--------|
+| `60000` | `2.0` | Light: 50% reduction |
+| `120000` | `4.0` | Medium: 75% reduction |
+| `160000` | `8.0` | Aggressive: 87.5% reduction |
 ### `[compression.decision]`
 
 Model used for compression decisions and summary generation.
@@ -390,15 +422,15 @@ hints_min_interval = 5
 knowledge_retention = 10
 
 [[compression.pressure_levels]]
-threshold = 50000
+threshold = 60000
 target_ratio = 2.0
 
 [[compression.pressure_levels]]
-threshold = 100000
+threshold = 120000
 target_ratio = 4.0
 
 [[compression.pressure_levels]]
-threshold = 150000
+threshold = 160000
 target_ratio = 8.0
 
 [compression.decision]
@@ -469,7 +501,7 @@ This mechanism is used by the `mcp persist` command, which writes to `<config_di
 
 ## Template Variables
 
-Available in `system`, `welcome`, and `system_prompt` fields:
+Available in `system` and `welcome` fields:
 
 | Variable | Description |
 |----------|-------------|

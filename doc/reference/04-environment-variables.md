@@ -43,11 +43,11 @@ Variables used by `install.sh` for automated/CI environments.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENROUTER_APP_TITLE` | `"Octomind"` | Application title sent to OpenRouter |
-| `OPENROUTER_HTTP_REFERER` | `"https://octomind.muvon.io"` | HTTP referer sent to OpenRouter |
+| `OPENROUTER_HTTP_REFERER` | `"https://octomind.run"` | HTTP referer sent to OpenRouter |
 
 ## Template Variables
 
-Available in `system`, `welcome`, and `system_prompt` config fields. Use `octomind vars` to see current values.
+Available in `system` and `welcome` config fields. Use `octomind vars` to see current values.
 
 | Variable | Description |
 |----------|-------------|

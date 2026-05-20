@@ -15,49 +15,20 @@ Use non-interactive mode with structured output to get machine-readable results.
 ```bash
 # Feed a diff to Octomind and get a review
 git diff main..HEAD | octomind run developer \
-  "Review this diff for security issues, performance problems, and bugs. Be specific about file and line numbers." \
-  --format plain
+  --format plain <<< "Review this diff for security issues, performance problems, and bugs. Be specific about file and line numbers."
 ```
 
 ### Structured: JSON Output for Pipeline Decisions
 
-Define a schema (`review-schema.json`):
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "summary": { "type": "string" },
-    "issues": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "file": { "type": "string" },
-          "line": { "type": "integer" },
-          "severity": { "type": "string", "enum": ["info", "warning", "error"] },
-          "description": { "type": "string" }
-        },
-        "required": ["file", "severity", "description"]
-      }
-    },
-    "approval": { "type": "string", "enum": ["approve", "request_changes", "comment"] }
-  },
-  "required": ["summary", "issues", "approval"],
-  "additionalProperties": false
-}
-```
-
-Run in CI:
+Prompt the AI to return JSON directly:
 
 ```bash
 #!/bin/bash
 # ci-review.sh
 
 diff=$(git diff main..HEAD)
-result=$(echo "Review this diff for issues:\n\n$diff" | \
+result=$(echo "Review this diff for issues. Respond in JSON with: {summary, issues: [{file, line, severity, description}], approval}.\n\n$diff" | \
   octomind run developer \
-  --schema review-schema.json \
   --model openai:gpt-4o \
   --format plain)
 
@@ -71,9 +42,6 @@ if [ "$approval" = "request_changes" ] || [ "$errors" -gt 0 ]; then
   exit 1
 fi
 ```
-
-### GitHub Actions Integration
-
 ```yaml
 # .github/workflows/ai-review.yml
 name: AI Code Review
@@ -96,10 +64,7 @@ jobs:
         run: |
           diff=$(git diff origin/main..HEAD)
           result=$(echo "$diff" | octomind run developer \
-            "Review for security, performance, bugs" \
-            --schema review-schema.json \
-            --format plain)
-
+            --format plain <<< "Review for security, performance, bugs")
           echo "$result" >> $GITHUB_STEP_SUMMARY
 ```
 
@@ -118,8 +83,10 @@ octomind run -m openrouter:openai/gpt-4o-mini "Quick check for obvious bugs"
 ```
 
 ## Key Points
-
 - `--format plain` or `--format jsonl` for non-interactive output
-- `--schema` for machine-parseable JSON responses
+- Pipe input via stdin for non-interactive mode
 - `--model` to balance cost vs quality per pipeline step
 - Octomind has full tool access -- it can read files, not just the diff you pipe in
+
+> **Note:** Structured output with JSON schemas is available via the WebSocket and ACP
+> interfaces. See [Structured Output](../usage/11-structured-output.md) for details.

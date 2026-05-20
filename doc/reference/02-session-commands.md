@@ -234,3 +234,13 @@ Examples:
 /schedule edit abc12345 when="in 1h"
 /schedule remove abc12345
 ```
+
+### `/learning [ACTION]`
+
+Manage the cross-session learning system. See [Learning Guide](../usage/13-learning.md) for full details.
+
+| Usage | Description |
+|-------|-------------|
+| `/learning` or `/learning status` | Show learning system status and statistics |
+| `/learning extract` | Force lesson extraction from current session |
+| `/learning inject` | Force inject relevant lessons into current session |

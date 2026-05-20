@@ -196,7 +196,7 @@ validation_timeout = 60      # seconds per validate script, 0 = unlimited
 max_retries = 3              # max validation retries per skill before giving up
 ```
 
-All fields are required. The `[skills]` section must be present in the config file.
+All fields have defaults in `config-templates/default.toml`. The `[skills]` section can be omitted from user config if defaults are acceptable.
 
 ## Lint Validation
 

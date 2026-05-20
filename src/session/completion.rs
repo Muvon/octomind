@@ -232,7 +232,7 @@ pub async fn chat_completion_with_provider(
 	// Fail fast if schema requested but provider doesn't support structured output
 	if params.schema.is_some() && !provider.supports_structured_output(&actual_model) {
 		return Err(anyhow::anyhow!(
-			"Provider '{}' does not support structured output for model '{}'. Remove --schema or use a compatible provider.",
+			"Provider '{}' does not support structured output for model '{}'. Remove the schema parameter or use a compatible provider.",
 			provider.name(),
 			actual_model
 		));

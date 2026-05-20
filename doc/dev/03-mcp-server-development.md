@@ -15,7 +15,8 @@ For external tools, prefer configuring a `stdio` or `http` server in config.
 
 | Server | Location | Purpose |
 |--------|----------|---------|
-| `core` | `src/mcp/core/` | Plan, MCP management, agents, scheduling, skills |
+| `core` | `src/mcp/core/` | Plan, tap, capability, skills, scheduling, dynamic servers |
+| `runtime` | `src/mcp/runtime/` | MCP management, agent delegation, skills, scheduling, capability |
 | `agent` | `src/mcp/agent/` | Agent delegation via ACP |
 
 External:
@@ -83,15 +84,16 @@ pub async fn execute_tool(
             let param1 = match params.get("param1").and_then(|v| v.as_str()) {
                 Some(v) => v,
                 None => return McpToolResult::error(
-                    tool_id,
-                    "Missing required parameter: param1"
+                    "your_tool".to_string(),
+                    tool_id.to_string(),
+                    "Missing required parameter: param1".to_string()
                 ),
             };
 
             // Do work...
-            McpToolResult::success(tool_id, "Result text")
+            McpToolResult::success("your_tool".to_string(), tool_id.to_string(), "Result text".to_string())
         }
-        _ => McpToolResult::error(tool_id, &format!("Unknown tool: {tool_name}")),
+        _ => McpToolResult::error("your_tool".to_string(), tool_id.to_string(), format!("Unknown tool: {tool_name}")),
     }
 }
 ```

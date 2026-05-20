@@ -1,11 +1,13 @@
 # Structured Output
 
-Octomind supports enforcing structured JSON output via the `--schema` flag. Useful for automation, CI/CD pipelines, and machine-readable responses.
+Octomind supports enforcing structured JSON output via schemas. Useful for automation, CI/CD pipelines, and machine-readable responses.
+
+> **Note:** Schema-based structured output is available programmatically via the WebSocket server and ACP protocol. It is not exposed as a CLI `--schema` flag.
 
 ## How It Works
 
-When `--schema` is provided:
-1. Schema is loaded and validated as JSON at startup
+When a schema is provided (via WebSocket/ACP protocol):
+1. Schema is loaded and validated as JSON
 2. Schema is passed to the provider using its native structured output API
 3. AI is constrained to respond with JSON matching the schema
 4. Response is returned as raw JSON (markdown rendering disabled)
@@ -31,32 +33,22 @@ When `--schema` is provided:
 }
 ```
 
-### Non-Interactive Mode
+### Non-Interactive Mode (WebSocket/ACP)
 
 ```bash
-octomind run developer "Analyze the codebase and list all TODO items" \
-  --schema todos.json \
-  --format jsonl
+# Via WebSocket protocol — send schema in the session initialization message
+# See WebSocket server documentation for the protocol details
 ```
 
 ### Interactive Session
 
-```bash
-octomind run assistant --schema schema.json
-```
+Schema can be set programmatically via the WebSocket or ACP protocol during session initialization. It is not available as a CLI flag.
 
 ### Pipeline Integration
 
 ```bash
-result=$(octomind run developer "Summarize recent changes" \
-  --schema analysis.json \
-  --model openai:gpt-4o)
-
-severity=$(echo "$result" | jq -r '.severity')
-if [ "$severity" = "high" ]; then
-  echo "High severity issues found"
-  exit 1
-fi
+# Use --format jsonl for structured JSON output in pipelines
+echo "Summarize recent changes" | octomind run developer --format jsonl
 ```
 
 ## Provider Compatibility
@@ -65,7 +57,7 @@ Not all providers support structured output. Octomind fails fast with a clear er
 
 ```
 Provider 'cloudflare' does not support structured output for model 'llama-3.1-8b-instruct'.
-Remove --schema or use a compatible provider.
+Remove the schema parameter or use a compatible provider.
 ```
 
 | Provider | Support | Notes |

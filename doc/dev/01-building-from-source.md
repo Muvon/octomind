@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust** 1.82+ ([rustup.rs](https://rustup.rs/))
+- **Rust** 1.95+ ([rustup.rs](https://rustup.rs))
 - **Git**
 - **C compiler** (for native dependencies)
   - Linux: `build-essential` / `gcc`
@@ -90,6 +90,7 @@ git commit --no-verify
 The release profile in `Cargo.toml`:
 - LTO enabled (link-time optimization)
 - Single codegen unit
+- `opt-level = "z"` (optimize for size)
 - `panic = "abort"` (smaller binary)
 - Symbol stripping
 

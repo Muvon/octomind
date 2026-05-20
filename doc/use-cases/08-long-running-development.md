@@ -182,7 +182,7 @@ hints_enabled = true
 knowledge_retention = 10
 
 [[compression.pressure_levels]]
-threshold = 50000
+threshold = 60000
 target_ratio = 2.0
 ```
 

@@ -9,7 +9,6 @@ Start an interactive or non-interactive AI session.
 | Flag | Short | Description |
 |------|-------|-------------|
 | `TAG` | | Agent tag or role name (e.g., `developer`, `octomind:assistant`). Uses `default` from config if omitted. |
-| `MESSAGE` | | Optional message for non-interactive mode. When provided, sends message and exits. |
 | `--name` | `-n` | Named session identifier |
 | `--resume` | `-r` | Resume a specific session by name |
 | `--resume-recent` | | Resume the most recent session |
@@ -18,7 +17,6 @@ Start an interactive or non-interactive AI session.
 | `--daemon` | | Daemon mode: stay alive after message, accept injected messages |
 | `--sandbox` | | Restrict filesystem writes to working directory |
 | `--hook` | | Activate webhook hook(s) by name. Can be specified multiple times. |
-| `--schema` | | Path to JSON Schema file for structured output |
 
 **Examples:**
 ```bash
@@ -31,8 +29,8 @@ octomind run developer
 # Tap agent
 octomind run octomind:developer
 
-# Non-interactive: send message and exit
-octomind run developer "Explain the auth module"
+# Non-interactive: pipe message via stdin
+echo "Explain the auth module" | octomind run developer --format plain
 
 # Named session
 octomind run --name feature-auth
@@ -43,9 +41,6 @@ octomind run --resume-recent
 
 # Daemon mode with webhook
 octomind run --name ci-watcher --daemon --format jsonl --hook github-push
-
-# Structured output
-octomind run developer "List all TODO items" --schema todos.json --format jsonl
 
 # Model override
 octomind run -m anthropic:claude-sonnet-4
@@ -73,15 +68,21 @@ octomind server developer --sandbox
 
 Run as Agent Client Protocol agent over stdio (for editor integration).
 
-| Flag | Description |
-|------|-------------|
-| `TAG` | Agent tag or role name |
-| `--sandbox` | Restrict filesystem writes to working directory |
+| Flag | Short | Description |
+|------|-------|-------------|
+| `TAG` | | Agent tag or role name |
+| `--name` | `-n` | Session name (used when client creates a session) |
+| `--resume` | `-r` | Resume a specific session by name |
+| `--resume-recent` | | Resume the most recent session |
+| `--model` | `-m` | Override model (`provider:model` format) |
+| `--sandbox` | | Restrict filesystem writes to working directory |
+| `--hook` | | Activate webhook hook(s) by name. Can be specified multiple times. |
 
 **Examples:**
 ```bash
 octomind acp developer
 octomind acp context_gatherer --sandbox
+octomind acp developer:general -m openai:gpt-4o
 ```
 
 ## `octomind tap [TAP] [PATH]`
@@ -117,8 +118,15 @@ octomind untap myorg/my-tap
 
 Show all placeholder variables and their current values.
 
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--preview` | `-p` | Show preview of placeholder values (3 lines) |
+| `--expand` | `-e` | Show full expanded values for placeholders |
+
 ```bash
 octomind vars
+octomind vars --preview
+octomind vars --expand
 ```
 
 Displays: `{{CWD}}`, `{{ROLE}}`, `{{DATE}}`, `{{SHELL}}`, `{{OS}}`, `{{BINARIES}}`, `{{GIT_STATUS}}`, `{{README}}`, etc.
@@ -127,8 +135,14 @@ Displays: `{{CWD}}`, `{{ROLE}}`, `{{DATE}}`, `{{SHELL}}`, `{{OS}}`, `{{BINARIES}
 
 Send a message to a running daemon session by name.
 
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--name` | `-n` | Name of the running session to send to (required) |
+| `MESSAGE` | | Message text. If omitted, reads from stdin. |
+
 ```bash
 echo "Check build status" | octomind send --name ci-watcher
+octomind send --name ci-watcher "Check build status"
 ```
 
 ## `octomind config [OPTIONS]`
@@ -137,18 +151,18 @@ Generate, validate, or display configuration.
 
 | Flag | Description |
 |------|-------------|
-| `--show` | Display current configuration with defaults |
-| `--validate` | Validate configuration without making changes |
-| `--upgrade` | Upgrade config file to latest version |
-| `--list-themes` | List available markdown themes |
-| `--model` | Set root-level model |
+| `--model` | Set root-level model (`provider:model` format) |
 | `--api-key` | Set API key (`provider:key` format) |
 | `--log-level` | Set log level |
 | `--mcp-providers` | Set MCP providers |
 | `--mcp-server` | Add/configure MCP server |
-| `--system` | Set custom system prompt |
+| `--system` | Set custom system prompt (or `default` to reset) |
 | `--markdown-enable` | Enable/disable markdown rendering |
 | `--markdown-theme` | Set markdown theme |
+| `--list-themes` | List available markdown themes |
+| `--show` | Display current configuration with defaults |
+| `--validate` | Validate configuration without making changes |
+| `--upgrade` | Upgrade config file to latest version |
 
 **Examples:**
 ```bash
@@ -168,6 +182,10 @@ octomind config --list-themes
 ## `octomind completion <SHELL>`
 
 Generate shell completion scripts.
+
+| Argument | Description |
+|----------|-------------|
+| `SHELL` | Target shell: `bash`, `zsh`, `fish`, `powershell`, `elvish` |
 
 | Shell | Command |
 |-------|---------|

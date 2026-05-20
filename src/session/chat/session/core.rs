@@ -180,7 +180,7 @@ pub struct ChatSession {
 	// First user prompt index - compression NEVER goes below this (INCLUSIVE boundary)
 	// Set once when first user message is added, protects bootstrap/instructions forever
 	pub first_prompt_idx: Option<usize>,
-	/// Optional JSON schema for structured output (set via --schema CLI flag)
+	/// Optional JSON schema for structured output (set via WebSocket/ACP protocol)
 	pub schema: Option<serde_json::Value>,
 	/// Critical knowledge entries extracted from compressions — persisted across cycles.
 	/// Capped at `config.compression.knowledge_retention` entries (FIFO).

@@ -11,19 +11,19 @@ src/
   directories.rs             # Cross-platform directory paths
   branding.rs                # Branding assets
   proctitle.rs               # Process title management
-  state.rs                   # IndexState (current_directory, graphrag_blocks)
+  state.rs                   # IndexState (current_directory, indexed_files, embedding_calls, graphrag_blocks)
 
   commands/
     mod.rs                   # Command definitions (run, server, acp, tap, etc.)
     common.rs                # Shared: config resolution, tap fetching
-    run.rs                   # Interactive/non-interactive session
-    server.rs                # WebSocket server
-    acp.rs                   # ACP agent mode
-    config.rs                # Config generation/validation
-    tap.rs / untap.rs        # Tap management
-    send.rs                  # Send message to daemon session
-    vars.rs                  # Variable display
-    complete.rs              # Shell completion candidates
+    run.rs                    # Interactive/non-interactive session
+    server.rs                 # WebSocket server
+    acp.rs                    # ACP agent mode
+    config.rs                 # Config generation/validation
+    tap.rs / untap.rs         # Tap management
+    send.rs                   # Send message to daemon session
+    vars.rs                   # Variable display
+    complete.rs               # Shell completion candidates
 
   config/
     mod.rs                   # Config struct, LogLevel, log macros
@@ -43,7 +43,7 @@ src/
     runtime_overlay.rs       # Runtime config overlay for tap agents
 
   embeddings/
-    mod.rs                   # Local embedding engine (candle, muvon/octomind-embed)
+    mod.rs                   # Local embedding engine (octolib FastEmbedProviderImpl, muvon/octomind-embed)
 
   learning/
     mod.rs                   # LearningConfig, Lesson struct, public API
@@ -84,7 +84,7 @@ src/
 
     chat/
       mod.rs                 # Chat orchestration
-      commands.rs            # Command constants (25 entries, COMMANDS array)
+      commands.rs            # Command constants (28 entries, COMMANDS array)
       animation.rs / animation_manager.rs  # Spinner & animation
       status_prefix.rs       # Shared status formatting (prompt + spinner)
       assistant_output.rs    # Assistant output formatting
@@ -93,8 +93,15 @@ src/
       response/
         tool_execution.rs    # Tool execution orchestration
         tool_result_processor.rs  # Tool result post-processing
-      conversation_compression.rs  # Compression engine
-      context_truncation.rs  # Context trimming
+      conversation_compression/  # Compression engine
+        mod.rs               # Compression orchestration
+        ai.rs                # AI-based summarization
+        apply.rs             # Apply compression to messages
+        decision.rs          # Compression decision logic
+        knowledge.rs         # Knowledge retention across compressions
+        prompt.rs            # Compression prompts
+        range.rs             # Range selection for compression
+        tests.rs             # Compression tests
       cost_tracker.rs        # Token cost tracking
       edit_mode.rs           # Edit mode handling
       file_context.rs        # Active file tracking
@@ -114,7 +121,7 @@ src/
         core.rs              # ChatSession struct, SessionInitParams builder
         api_executor.rs      # API call execution
         api_prep.rs          # API call preparation (compression, auto-activation)
-        commands/            # 25 command handler modules
+        commands/            # 28 command handler modules
         display.rs           # Session display
         error_utils.rs       # Error utilities
         layer_processor.rs   # Layer processing in session context
@@ -124,11 +131,17 @@ src/
         prompt_setup.rs      # Prompt setup
         setup.rs             # Session setup & initialization
         utils.rs             # Session utilities
-      history/
-        mod.rs               # History management
+
+    share/
+      mod.rs                   # /share: upload session JSONL → octomind.run/r/<id>
+      bridge.rs                # HTTP bridge to octomind.run
+      upload.rs                # Upload logic
+
+    history/
+      mod.rs                   # Role-based history management (per-role files, legacy migration)
 
     layers/
-      mod.rs                 # Layer trait & processor
+      mod.rs                   # Layer trait & processor
     workflows/               # Workflow orchestrator (with step timing)
     pipelines/               # Deterministic script pipeline executor
 
@@ -279,4 +292,4 @@ Key external crates:
 - `hyper` -- HTTP server
 - `reedline` -- interactive readline
 - `syntect` -- syntax highlighting
-- `candle-core` / `tokenizers` / `hf-hub` -- local embedding engine
+- `octolib` -- local embedding engine (FastEmbedProviderImpl)

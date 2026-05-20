@@ -14,7 +14,7 @@ Lessons are scoped by **project first, then role** — project knowledge stays w
 
 ```toml
 [learning]
-enabled = false
+enabled = true
 model = "anthropic:claude-haiku-4-5"
 backend = "file"
 min_messages_for_intermediate = 3
@@ -23,7 +23,7 @@ max_inject = 5
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `enabled` | Enable the learning system. | `false` |
+| `enabled` | Enable the learning system. | `true` |
 | `model` | Model for extraction and retrieval LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5` |
 | `backend` | `"file"` (default) or `"mcp"` for external memory tools. | `"file"` |
 | `min_messages_for_intermediate` | Minimum user messages before intermediate learning triggers during auto-compaction. | `3` |

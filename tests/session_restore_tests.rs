@@ -772,6 +772,7 @@ mod session_restore_tests {
 				"name": "test",
 				"created_at": timestamp,
 				"model": "test-model",
+				"role": "developer:general",
 				"provider": "test",
 				"input_tokens": 100,
 				"output_tokens": 50,

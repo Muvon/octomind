@@ -962,7 +962,6 @@ mod tests {
 			name: name.to_string(),
 			created_at: timestamp,
 			model: "test/model".to_string(),
-			provider: "test".to_string(),
 			..Default::default()
 		};
 		serde_json::to_string(&json!({

@@ -678,7 +678,7 @@ mod tests {
 				name: "test".to_string(),
 				created_at: 0,
 				model: "openrouter:anthropic/claude-3.5-sonnet".to_string(),
-				provider: "openrouter".to_string(),
+				role: String::new(),
 				input_tokens: 0,
 				output_tokens: 0,
 				cache_read_tokens: 0,

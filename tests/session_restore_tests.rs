@@ -73,9 +73,9 @@ mod session_restore_tests {
 		// Write session info (SUMMARY)
 		let session_info = SessionInfo {
 			name: "test_session".to_string(),
+			role: String::new(),
 			created_at: timestamp,
 			model: "test-model".to_string(),
-			provider: "test-provider".to_string(),
 			input_tokens: 0,
 			output_tokens: 0,
 			cache_read_tokens: 0,

@@ -130,7 +130,6 @@ pub struct SessionInfo {
 	pub name: String,
 	pub created_at: u64,
 	pub model: String,
-	pub provider: String,
 	pub role: String, // Full role tag (e.g. "developer:general" or "developer")
 	pub input_tokens: u64,
 	pub output_tokens: u64,
@@ -268,7 +267,7 @@ pub struct Session {
 
 impl Session {
 	// Create a new session
-	pub fn new(name: String, model: String, provider: String) -> Self {
+	pub fn new(name: String, model: String) -> Self {
 		let timestamp = SystemTime::now()
 			.duration_since(UNIX_EPOCH)
 			.unwrap_or_default()
@@ -279,7 +278,6 @@ impl Session {
 				name,
 				created_at: timestamp,
 				model,
-				provider,
 				role: String::new(),
 				input_tokens: 0,
 				output_tokens: 0,

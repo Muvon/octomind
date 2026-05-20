@@ -691,22 +691,10 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		.map(|duration| duration.as_secs())
 		.unwrap_or_else(|_| crate::utils::time::now_secs());
 
-	let provider = if default_model.starts_with("openrouter:") {
-		"openrouter"
-	} else if default_model.starts_with("anthropic:") {
-		"anthropic"
-	} else if default_model.starts_with("openai:") {
-		"openai"
-	} else {
-		"unknown"
-	}
-	.to_string();
-
 	let mut info = SessionInfo {
 		name: session_name,
 		created_at,
 		model: default_model,
-		provider,
 		role: String::new(),
 		input_tokens: 0,
 		output_tokens: 0,
@@ -1253,7 +1241,6 @@ mod tests {
 			name: "stats-test".to_string(),
 			created_at: 1_700_000_000,
 			model: "test/model".to_string(),
-			provider: "test".to_string(),
 			input_tokens: 9999,
 			output_tokens: 8888,
 			..Default::default()
@@ -1288,7 +1275,6 @@ mod tests {
 			name: "stats-upward".to_string(),
 			created_at: 1_700_000_000,
 			model: "test/model".to_string(),
-			provider: "test".to_string(),
 			input_tokens: 100,
 			output_tokens: 200,
 			..Default::default()

@@ -241,7 +241,6 @@ impl ChatSession {
 			name: params.name.clone(),
 			created_at: timestamp,
 			model: model_name.clone(),
-			provider: "openrouter".to_string(),
 			role: params.role.to_string(),
 			input_tokens: 0,
 			output_tokens: 0,

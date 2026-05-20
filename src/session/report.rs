@@ -159,7 +159,7 @@ impl SessionReport {
 					});
 				}
 				"TOOL_CALL" => {
-					// Track tool usage
+					// Track tool usage (test-only log type)
 					if let Some(ref mut ctx) = current_context {
 						if let Some(tool_name) = log_entry.get("tool_name").and_then(|t| t.as_str())
 						{
@@ -168,6 +168,21 @@ impl SessionReport {
 					}
 				}
 				_ => {
+					// Assistant messages with tool_calls embedded (production format)
+					if role == "assistant" {
+						if let Some(ref mut ctx) = current_context {
+							if let Some(tool_calls) =
+								log_entry.get("tool_calls").and_then(|tc| tc.as_array())
+							{
+								for tc in tool_calls {
+									if let Some(tool_name) = tc.get("name").and_then(|n| n.as_str())
+									{
+										*ctx.tools.entry(tool_name.to_string()).or_insert(0) += 1;
+									}
+								}
+							}
+						}
+					}
 					// SUMMARY entries carry the running totals via `session_info`. STATS
 					// entries are only emitted in tests, so SUMMARY is the *only* place
 					// real sessions get their time/cost rollup from. Pull cost AND time

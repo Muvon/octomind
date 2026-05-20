@@ -25,6 +25,7 @@ use std::io::IsTerminal;
 impl ChatSession {
 	// Sync runtime state from ChatSession fields to session.info (for persistence)
 	fn sync_runtime_state(&mut self) {
+		self.session.info.role = self.role.clone();
 		self.session.info.cache_next_user_message = self.cache_next_user_message;
 		self.session.info.spending_threshold_checkpoint = self.spending_threshold_checkpoint;
 		self.session.info.compression_hint_count = self.compression_hint_count;

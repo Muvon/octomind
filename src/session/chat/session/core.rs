@@ -242,6 +242,7 @@ impl ChatSession {
 			created_at: timestamp,
 			model: model_name.clone(),
 			provider: "openrouter".to_string(),
+			role: params.role.to_string(),
 			input_tokens: 0,
 			output_tokens: 0,
 			cache_read_tokens: 0,
@@ -508,6 +509,8 @@ impl ChatSession {
 						learning_extracted: false,
 						reasoning_effort: None,
 					};
+					// Keep session.info.role in sync with the active role
+					chat_session.session.info.role = params.role.to_string();
 
 					// Apply runtime state from session log (legacy support)
 					if runtime_state.cache_next_message {

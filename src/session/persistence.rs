@@ -707,6 +707,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		created_at,
 		model: default_model,
 		provider,
+		role: String::new(),
 		input_tokens: 0,
 		output_tokens: 0,
 		cache_read_tokens: 0,

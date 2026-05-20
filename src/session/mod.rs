@@ -131,6 +131,7 @@ pub struct SessionInfo {
 	pub created_at: u64,
 	pub model: String,
 	pub provider: String,
+	pub role: String, // Full role tag (e.g. "developer:general" or "developer")
 	pub input_tokens: u64,
 	pub output_tokens: u64,
 	pub cache_read_tokens: u64,
@@ -279,6 +280,7 @@ impl Session {
 				created_at: timestamp,
 				model,
 				provider,
+				role: String::new(),
 				input_tokens: 0,
 				output_tokens: 0,
 				cache_read_tokens: 0,

@@ -1,0 +1,227 @@
+// Copyright 2026 Muvon Un Limited
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Session-scoped guardrail state.
+//!
+//! Two registries, both keyed by `SessionId`:
+//!
+//!   * `RULES`    — compiled `Guardrails` loaded from
+//!     `<workdir>/.agents/guardrails.toml` at session start.
+//!   * `CALL_LOG` — list of `(capability, params)` for every successful tool
+//!     call this session, used to evaluate `when = ["+/-..."]`.
+
+use crate::config::guardrails::{CallRecord, Guardrails};
+use crate::config::Config;
+use crate::session::context::SessionId;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+static RULES: RwLock<Option<HashMap<SessionId, Arc<Guardrails>>>> = RwLock::new(None);
+
+type CallLog = Vec<CallRecord>;
+
+static CALL_LOG: RwLock<Option<HashMap<SessionId, CallLog>>> = RwLock::new(None);
+
+/// `(server_name, tool_name) -> capability_name`. Built once per session
+/// from installed tap manifests (see `agent::registry::list_all_capabilities`)
+/// and consulted on every tool call to resolve the call's owning capability.
+/// `*` patterns in `allowed_tools` (e.g. `octofs:*`) map server-wide.
+type CapMap = HashMap<(String, String), String>;
+
+/// Map of server-name -> capability-name for `<server>:*` wildcard entries.
+type WildcardMap = HashMap<String, String>;
+
+#[derive(Default)]
+struct CapLookup {
+	exact: CapMap,
+	wildcard: WildcardMap,
+}
+
+static CAP_LOOKUP: RwLock<Option<HashMap<SessionId, Arc<CapLookup>>>> = RwLock::new(None);
+
+/// Load `.agents/guardrails.toml` from the session's working directory and
+/// install it for the current session. No-op when not in a session context.
+pub fn init_for_session() {
+	let Some(sid) = crate::session::context::current_session_id() else {
+		return;
+	};
+	let workdir = crate::session::context::get_current_workdir(&sid)
+		.or_else(|| std::env::current_dir().ok())
+		.unwrap_or_default();
+	let rules = Guardrails::load_from_workdir(&workdir);
+	let mut guard = RULES.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	registry.insert(sid, Arc::new(rules));
+}
+
+pub fn get_rules(session_id: &SessionId) -> Option<Arc<Guardrails>> {
+	let guard = RULES.read().ok()?;
+	guard.as_ref()?.get(session_id).cloned()
+}
+
+pub fn clear_for_session(session_id: &SessionId) {
+	if let Ok(mut guard) = RULES.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = CALL_LOG.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = CAP_LOOKUP.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+}
+
+/// Build the (server, tool) -> capability map from installed tap manifests.
+/// Called lazily on first guardrail check per session.
+fn build_cap_lookup(config: &Config) -> CapLookup {
+	let mut out = CapLookup::default();
+	let caps = match crate::agent::registry::list_all_capabilities(&config.capabilities) {
+		Ok(v) => v,
+		Err(_) => return out,
+	};
+	for cap in caps {
+		for entry in &cap.allowed_tools {
+			// Entries are "server:tool" or "server:*".
+			let Some((server, tool)) = entry.split_once(':') else {
+				continue;
+			};
+			if tool == "*" {
+				out.wildcard
+					.entry(server.to_string())
+					.or_insert_with(|| cap.name.clone());
+			} else {
+				out.exact
+					.entry((server.to_string(), tool.to_string()))
+					.or_insert_with(|| cap.name.clone());
+			}
+		}
+	}
+	out
+}
+
+fn get_or_build_lookup(session_id: &SessionId, config: &Config) -> Arc<CapLookup> {
+	{
+		let guard = CAP_LOOKUP.read().unwrap();
+		if let Some(registry) = guard.as_ref() {
+			if let Some(l) = registry.get(session_id) {
+				return l.clone();
+			}
+		}
+	}
+	let lookup = Arc::new(build_cap_lookup(config));
+	let mut guard = CAP_LOOKUP.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	registry.insert(session_id.clone(), lookup.clone());
+	lookup
+}
+
+/// Resolve a tool call to its capability name. Tries static taps first
+/// (exact `server:tool`, then `server:*`); falls back to the dynamic
+/// `runtime_overlay` for capabilities activated mid-session.
+pub fn resolve_capability(
+	session_id: &SessionId,
+	config: &Config,
+	server: Option<&str>,
+	tool: &str,
+) -> Option<String> {
+	let server = server?;
+	let lookup = get_or_build_lookup(session_id, config);
+	if let Some(name) = lookup.exact.get(&(server.to_string(), tool.to_string())) {
+		return Some(name.clone());
+	}
+	if let Some(name) = lookup.wildcard.get(server) {
+		return Some(name.clone());
+	}
+	// Dynamic activation: scan runtime overlay for this (server, tool).
+	for (cap_name, per_server) in crate::config::runtime_overlay::snapshot() {
+		if let Some(tools) = per_server.get(server) {
+			if tools.iter().any(|t| t == tool) {
+				return Some(cap_name);
+			}
+		}
+	}
+	None
+}
+
+/// Append a successful tool call to the session log.
+pub fn record_call(session_id: &SessionId, capability: Option<String>, params: Value) {
+	let mut guard = CALL_LOG.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	registry
+		.entry(session_id.clone())
+		.or_default()
+		.push((capability, params));
+}
+
+/// Sequentially evaluate guardrails for an ordered batch of tool calls,
+/// returning per-call deny messages (or `None` to allow). Allowed calls are
+/// recorded immediately so later calls in the same batch can see them via
+/// `+/-` history conditions. Blocked calls are NOT recorded — they don't
+/// run, so they shouldn't satisfy history requirements on retry.
+pub fn check_batch(
+	session_id: &SessionId,
+	config: &crate::config::Config,
+	calls: &[crate::mcp::McpToolCall],
+) -> Vec<Option<String>> {
+	let Some(rules) = get_rules(session_id) else {
+		return vec![None; calls.len()];
+	};
+	if rules.rules.is_empty() {
+		return vec![None; calls.len()];
+	}
+	let loaded: std::collections::HashSet<String> = config
+		.mcp
+		.servers
+		.iter()
+		.map(|s| s.name().to_string())
+		.collect();
+	let mut out = Vec::with_capacity(calls.len());
+	for call in calls {
+		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
+			.map(|s| s.name().to_string());
+		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
+		let log = get_call_log(session_id);
+		let msg = crate::config::guardrails::check(
+			&rules,
+			cap.as_deref(),
+			&call.parameters,
+			&log,
+			&loaded,
+		);
+		if msg.is_none() {
+			record_call(session_id, cap, call.parameters.clone());
+		}
+		out.push(msg);
+	}
+	out
+}
+
+pub fn get_call_log(session_id: &SessionId) -> CallLog {
+	let guard = match CALL_LOG.read() {
+		Ok(g) => g,
+		Err(_) => return Vec::new(),
+	};
+	guard
+		.as_ref()
+		.and_then(|r| r.get(session_id))
+		.cloned()
+		.unwrap_or_default()
+}

@@ -73,6 +73,18 @@ pub fn clear_capability_extras(cap_name: &str) {
 	}
 }
 
+/// Snapshot of the overlay: `cap_name -> server_name -> tool names`.
+/// Used by the guardrail capability resolver to find which dynamically
+/// activated capability owns a `(server, tool)` pair when the static tap
+/// map doesn't already cover it.
+pub fn snapshot() -> HashMap<String, HashMap<String, Vec<String>>> {
+	let reg = match registry().read() {
+		Ok(r) => r,
+		Err(_) => return HashMap::new(),
+	};
+	reg.clone()
+}
+
 /// Union of bare tool names contributed by every active capability for
 /// `server_name`. Order is insertion order across capabilities; duplicates
 /// are deduplicated. Empty when no capability has registered an extra for

@@ -29,6 +29,8 @@ pub fn get_env_tracker() -> &'static Mutex<env_source::EnvTracker> {
 pub mod agents;
 pub mod env_source;
 
+pub mod guardrails;
+
 pub mod hooks;
 
 pub mod layers;

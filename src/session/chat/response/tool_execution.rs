@@ -243,6 +243,19 @@ async fn execute_tools_with_context(
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	let mut tool_tasks = Vec::new();
 
+	// Guardrails run sequentially over the ordered batch before any tool is
+	// spawned. Tools arrive in the order the model emitted them, so `+/-`
+	// history conditions evaluate against the intent log — earlier allowed
+	// calls in the batch are visible to later ones. Blocked tools are NEVER
+	// spawned; they return an immediate error result, saving the execution
+	// roundtrip entirely.
+	let session_id_for_guardrails = context.session_name().to_string();
+	let block_messages: Vec<Option<String>> = crate::session::guardrails::check_batch(
+		&session_id_for_guardrails,
+		config,
+		&current_tool_calls,
+	);
+
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
 		context.increment_tool_calls();
@@ -265,10 +278,25 @@ async fn execute_tools_with_context(
 		// Get session ID for task-local propagation
 		let session_id = context.session_name().to_string();
 
-		// Create the appropriate execution task based on context
-		let task = match context {
-			ToolExecutionContext::MainSession { .. } => {
-				tokio::spawn(async move {
+		// Guardrail decided this tool is denied — return the error result
+		// directly without spawning the underlying executor.
+		let block_msg = block_messages.get(index).cloned().unwrap_or(None);
+		let task = if let Some(msg) = block_msg {
+			let tool_name_for_err = tool_name.clone();
+			let tool_id_for_err = original_tool_id.clone();
+			tokio::spawn(async move {
+				Ok::<_, anyhow::Error>((
+					crate::mcp::McpToolResult::error(
+						tool_name_for_err,
+						tool_id_for_err,
+						format!("[guardrail] {msg}"),
+					),
+					0u64,
+				))
+			})
+		} else {
+			match context {
+				ToolExecutionContext::MainSession { .. } => tokio::spawn(async move {
 					// Propagate session ID to spawned task for session-scoped state
 					crate::session::context::with_session_id(session_id, async move {
 						let mut call_with_id = tool_call_clone.clone();
@@ -282,21 +310,21 @@ async fn execute_tools_with_context(
 						.await
 					})
 					.await
-				})
-			}
-			ToolExecutionContext::Layer { .. } => tokio::spawn(async move {
-				crate::session::context::with_session_id(session_id, async move {
-					let mut call_with_id = tool_call_clone.clone();
-					call_with_id.tool_id = tool_id_for_task.clone();
-					crate::mcp::execute_layer_tool_call(
-						&call_with_id,
-						&config_clone,
-						cancel_token_for_task,
-					)
+				}),
+				ToolExecutionContext::Layer { .. } => tokio::spawn(async move {
+					crate::session::context::with_session_id(session_id, async move {
+						let mut call_with_id = tool_call_clone.clone();
+						call_with_id.tool_id = tool_id_for_task.clone();
+						crate::mcp::execute_layer_tool_call(
+							&call_with_id,
+							&config_clone,
+							cancel_token_for_task,
+						)
+						.await
+					})
 					.await
-				})
-				.await
-			}),
+				}),
+			}
 		};
 
 		tool_tasks.push((tool_name, task, original_tool_id, tool_index));

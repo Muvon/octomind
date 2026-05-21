@@ -51,6 +51,13 @@ struct CapLookup {
 
 static CAP_LOOKUP: RwLock<Option<HashMap<SessionId, Arc<CapLookup>>>> = RwLock::new(None);
 
+/// Per-session, per-validator cursor into the call log. Validators evaluate
+/// their `when` conditions against `call_log[cursor..]` — i.e. calls made
+/// since this validator last ran. When the validator runs, the cursor is
+/// advanced to `call_log.len()` so subsequent runs see a fresh slice.
+static VALIDATOR_CURSORS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> =
+	RwLock::new(None);
+
 /// Load `.agents/guardrails.toml` from the session's working directory and
 /// install it for the current session. No-op when not in a session context.
 pub fn init_for_session() {
@@ -87,6 +94,33 @@ pub fn clear_for_session(session_id: &SessionId) {
 			r.remove(session_id);
 		}
 	}
+	if let Ok(mut guard) = VALIDATOR_CURSORS.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+}
+
+/// Read the cursor for a validator (default 0 = "since session start").
+pub fn validator_cursor(session_id: &SessionId, name: &str) -> usize {
+	let guard = match VALIDATOR_CURSORS.read() {
+		Ok(g) => g,
+		Err(_) => return 0,
+	};
+	guard
+		.as_ref()
+		.and_then(|r| r.get(session_id))
+		.and_then(|m| m.get(name))
+		.copied()
+		.unwrap_or(0)
+}
+
+/// Advance the cursor for a validator to the given position.
+pub fn set_validator_cursor(session_id: &SessionId, name: &str, pos: usize) {
+	let mut guard = VALIDATOR_CURSORS.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let per_session = registry.entry(session_id.clone()).or_default();
+	per_session.insert(name.to_string(), pos);
 }
 
 /// Build the (server, tool) -> capability map from installed tap manifests.

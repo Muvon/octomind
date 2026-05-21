@@ -93,11 +93,25 @@ struct RawHook {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawValidator {
+	name: String,
+	#[serde(rename = "match", default)]
+	match_: Option<String>,
+	#[serde(default)]
+	when: Vec<String>,
+	#[serde(default)]
+	roles: Vec<String>,
+	script: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawFile {
 	#[serde(default, rename = "rule")]
 	rules: Vec<RawRule>,
 	#[serde(default, rename = "hook")]
 	hooks: Vec<RawHook>,
+	#[serde(default, rename = "validator")]
+	validators: Vec<RawValidator>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,10 +140,24 @@ pub struct CompiledHook {
 	pub script: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+pub struct CompiledValidator {
+	pub name: String,
+	/// Regex on assistant final message; `None` matches any message.
+	pub match_regex: Option<Regex>,
+	pub when_used: Vec<Target>,
+	pub when_unused: Vec<Target>,
+	/// Role filter; entries match exact role (`developer:general`) or domain
+	/// prefix (`developer` matches `developer:general` via `<name>:` check).
+	pub roles: Vec<String>,
+	pub script: PathBuf,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Guardrails {
 	pub rules: Vec<CompiledRule>,
 	pub hooks: Vec<CompiledHook>,
+	pub validators: Vec<CompiledValidator>,
 }
 
 impl Guardrails {
@@ -213,8 +241,83 @@ impl Guardrails {
 				script: PathBuf::from(h.script),
 			});
 		}
-		Ok(Self { rules, hooks })
+		let mut validators = Vec::with_capacity(raw.validators.len());
+		for v in raw.validators {
+			if v.name.trim().is_empty() {
+				return Err(anyhow!("validator missing `name`"));
+			}
+			if v.script.trim().is_empty() {
+				return Err(anyhow!("validator `{}` missing `script`", v.name));
+			}
+			let match_regex = match v.match_.as_deref() {
+				Some(s) if !s.is_empty() => Some(Regex::new(s).map_err(|e| {
+					anyhow!("validator `{}`: invalid match regex `{}`: {}", v.name, s, e)
+				})?),
+				_ => None,
+			};
+			let mut when_used = Vec::new();
+			let mut when_unused = Vec::new();
+			for item in v.when {
+				let trimmed = item.trim();
+				let mut chars = trimmed.chars();
+				let sign = chars.next();
+				let rest: &str = chars.as_str();
+				match sign {
+					Some('+') => when_used.push(
+						parse_target(rest)
+							.map_err(|e| anyhow!("validator `{}` when `{}`: {}", v.name, item, e))?,
+					),
+					Some('-') => when_unused.push(
+						parse_target(rest)
+							.map_err(|e| anyhow!("validator `{}` when `{}`: {}", v.name, item, e))?,
+					),
+					_ => {
+						return Err(anyhow!(
+							"validator `{}`: when entry must start with `+` or `-`: {}",
+							v.name,
+							item
+						));
+					}
+				}
+			}
+			validators.push(CompiledValidator {
+				name: v.name,
+				match_regex,
+				when_used,
+				when_unused,
+				roles: v.roles,
+				script: PathBuf::from(v.script),
+			});
+		}
+		Ok(Self {
+			rules,
+			hooks,
+			validators,
+		})
 	}
+}
+
+/// Cheap role filter: empty filter = always pass; otherwise pass when the
+/// current role is either an exact match or a domain prefix (e.g. filter
+/// `developer` passes for current `developer:general`).
+pub fn role_matches(filter: &[String], current: &str) -> bool {
+	if filter.is_empty() {
+		return true;
+	}
+	for f in filter {
+		if f == current {
+			return true;
+		}
+		// Domain prefix: filter "developer" passes "developer:..." but not
+		// "developer-foo" — require the `:` separator.
+		if current.len() > f.len()
+			&& current.starts_with(f.as_str())
+			&& current.as_bytes()[f.len()] == b':'
+		{
+			return true;
+		}
+	}
+	false
 }
 
 /// Parse one target. Forms:

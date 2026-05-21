@@ -683,6 +683,17 @@ pub async fn process_response<S: OutputSink>(
 		}
 	}
 
+	// Run guardrail `[[validator]]` scripts. Filters short-circuit in this
+	// order: role → `when` over call_log slice → `match` regex on assistant
+	// text. Survivors spawn their script in parallel; non-zero exits inject
+	// `<validation validator="…">…</validation>` into the inbox.
+	crate::session::hooks::run_turn_validators(
+		&session_id,
+		params.role,
+		&current_content,
+	)
+	.await;
+
 	// 🗜️ DEFERRED PLAN COMPRESSION: Process plan(done) compression after assistant message
 	// When plan(done) triggers compression, we defer it to here so the follow-up API call
 	// (which generates the "plan completed" response) benefits from cache hits on the

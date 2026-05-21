@@ -256,11 +256,7 @@ async fn run_one_hook(
 ///
 /// Only validators that pass all filters spawn their script and advance
 /// their cursor to `call_log.len()`.
-pub async fn run_turn_validators(
-	session_id: &SessionId,
-	role: &str,
-	assistant_text: &str,
-) {
+pub async fn run_turn_validators(session_id: &SessionId, role: &str, assistant_text: &str) {
 	let Some(rules) = crate::session::guardrails::get_rules(session_id) else {
 		return;
 	};
@@ -340,10 +336,7 @@ pub async fn run_turn_validators(
 }
 
 /// Evaluate `+used / -unused` against a slice of the call log.
-fn when_satisfied(
-	v: &CompiledValidator,
-	slice: &[(Option<String>, serde_json::Value)],
-) -> bool {
+fn when_satisfied(v: &CompiledValidator, slice: &[(Option<String>, serde_json::Value)]) -> bool {
 	let used_ok = v.when_used.iter().all(|t| {
 		slice
 			.iter()

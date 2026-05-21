@@ -215,12 +215,18 @@ pub fn check_batch(
 	config: &crate::config::Config,
 	calls: &[crate::mcp::McpToolCall],
 ) -> Vec<Option<String>> {
-	let Some(rules) = get_rules(session_id) else {
-		return vec![None; calls.len()];
-	};
-	if rules.rules.is_empty() {
-		return vec![None; calls.len()];
-	}
+	// Two reasons to traverse the batch:
+	//   1. Evaluate [[guard]] rules and produce per-call deny messages.
+	//   2. Append allowed calls to the session call log so later phases
+	//      (hooks via inspection, validators via `when`) see them.
+	// The log MUST be recorded even when no guards exist — validators read
+	// from the same log, and skipping recording would make `+used` checks
+	// fail on perfectly valid runs.
+	let rules_opt = get_rules(session_id);
+	let has_guards = rules_opt
+		.as_ref()
+		.map(|r| !r.guards.is_empty())
+		.unwrap_or(false);
 	let loaded: std::collections::HashSet<String> = config
 		.mcp
 		.servers
@@ -232,14 +238,18 @@ pub fn check_batch(
 		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
 			.map(|s| s.name().to_string());
 		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
-		let log = get_call_log(session_id);
-		let msg = crate::config::guardrails::check(
-			&rules,
-			cap.as_deref(),
-			&call.parameters,
-			&log,
-			&loaded,
-		);
+		let msg = if has_guards {
+			let log = get_call_log(session_id);
+			crate::config::guardrails::check(
+				rules_opt.as_ref().unwrap(),
+				cap.as_deref(),
+				&call.parameters,
+				&log,
+				&loaded,
+			)
+		} else {
+			None
+		};
 		if msg.is_none() {
 			record_call(session_id, cap, call.parameters.clone());
 		}

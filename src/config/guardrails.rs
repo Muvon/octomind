@@ -12,26 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Project-local guardrails — per-call deny rules loaded from
-//! `<workdir>/.agents/guardrails.toml`.
+//! Project-local guardrails — `.agents/guardrails.toml`.
 //!
-//! Rule DSL (used in `match` and inside `when` entries):
+//! Three section types, evaluated at different phases:
+//!
+//!   [[guard]]      — pre-call deny rule.       Blocks the tool from running.
+//!   [[hook]]       — post-result script.        Runs after each tool result.
+//!   [[validator]]  — end-of-turn script.        Runs after the assistant turn.
+//!
+//! Shared DSL (used in `match` for guards/hooks and inside `when` entries):
 //!
 //!   capability                       — any call to that capability
 //!   capability(regex)                — regex matched against full args JSON
 //!   capability(arg_name=regex)       — regex matched against a specific arg
 //!
-//! Rule file:
+//! Example:
 //!
-//!   [[rule]]
+//!   [[guard]]
 //!   match   = "shell(command=^rm\\s+-rf?)"
 //!   message = "rm -rf blocked."
 //!
-//!   [[rule]]
+//!   [[guard]]
 //!   match   = "shell(command=^ls\\b)"
-//!   has     = "filesystem"                    # string or list
-//!   when    = ["-filesystem(view)"]           # + = used, - = NOT used
-//!   message = "Use view instead of ls."
+//!   has     = "filesystem-read"               # string or list of capabilities
+//!   when    = ["-filesystem-read"]            # + = used since session start
+//!   message = "Use view instead of ls."        # - = NOT used since session start
 
 use anyhow::{anyhow, Result};
 use regex::Regex;
@@ -62,7 +67,7 @@ impl HasField {
 }
 
 #[derive(Debug, Deserialize)]
-struct RawRule {
+struct RawGuard {
 	#[serde(rename = "match")]
 	match_: String,
 	#[serde(default)]
@@ -106,8 +111,8 @@ struct RawValidator {
 
 #[derive(Debug, Deserialize)]
 struct RawFile {
-	#[serde(default, rename = "rule")]
-	rules: Vec<RawRule>,
+	#[serde(default, rename = "guard")]
+	guards: Vec<RawGuard>,
 	#[serde(default, rename = "hook")]
 	hooks: Vec<RawHook>,
 	#[serde(default, rename = "validator")]
@@ -122,7 +127,7 @@ pub struct Target {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompiledRule {
+pub struct CompiledGuard {
 	pub trigger: Target,
 	pub has: Vec<String>,
 	pub when_used: Vec<Target>,
@@ -155,7 +160,7 @@ pub struct CompiledValidator {
 
 #[derive(Debug, Clone, Default)]
 pub struct Guardrails {
-	pub rules: Vec<CompiledRule>,
+	pub guards: Vec<CompiledGuard>,
 	pub hooks: Vec<CompiledHook>,
 	pub validators: Vec<CompiledValidator>,
 }
@@ -172,8 +177,10 @@ impl Guardrails {
 		match Self::parse(&text) {
 			Ok(g) => {
 				crate::log_debug!(
-					"Loaded {} guardrail rule(s) from {}",
-					g.rules.len(),
+					"Loaded guardrails: {} guard(s), {} hook(s), {} validator(s) from {}",
+					g.guards.len(),
+					g.hooks.len(),
+					g.validators.len(),
 					path.display()
 				);
 				g
@@ -187,10 +194,10 @@ impl Guardrails {
 
 	pub fn parse(toml_str: &str) -> Result<Self> {
 		let raw: RawFile = toml::from_str(toml_str)?;
-		let mut rules = Vec::with_capacity(raw.rules.len());
-		for r in raw.rules {
+		let mut guards = Vec::with_capacity(raw.guards.len());
+		for r in raw.guards {
 			let trigger = parse_target(&r.match_)
-				.map_err(|e| anyhow!("rule `{}`: invalid match: {}", &r.match_, e))?;
+				.map_err(|e| anyhow!("guard `{}`: invalid match: {}", &r.match_, e))?;
 			let mut when_used = Vec::new();
 			let mut when_unused = Vec::new();
 			for item in r.when {
@@ -208,7 +215,7 @@ impl Guardrails {
 					}
 				}
 			}
-			rules.push(CompiledRule {
+			guards.push(CompiledGuard {
 				trigger,
 				has: r.has.into_vec(),
 				when_used,
@@ -263,14 +270,16 @@ impl Guardrails {
 				let sign = chars.next();
 				let rest: &str = chars.as_str();
 				match sign {
-					Some('+') => when_used.push(
-						parse_target(rest)
-							.map_err(|e| anyhow!("validator `{}` when `{}`: {}", v.name, item, e))?,
-					),
-					Some('-') => when_unused.push(
-						parse_target(rest)
-							.map_err(|e| anyhow!("validator `{}` when `{}`: {}", v.name, item, e))?,
-					),
+					Some('+') => {
+						when_used.push(parse_target(rest).map_err(|e| {
+							anyhow!("validator `{}` when `{}`: {}", v.name, item, e)
+						})?)
+					}
+					Some('-') => {
+						when_unused.push(parse_target(rest).map_err(|e| {
+							anyhow!("validator `{}` when `{}`: {}", v.name, item, e)
+						})?)
+					}
 					_ => {
 						return Err(anyhow!(
 							"validator `{}`: when entry must start with `+` or `-`: {}",
@@ -290,7 +299,7 @@ impl Guardrails {
 			});
 		}
 		Ok(Self {
-			rules,
+			guards,
 			hooks,
 			validators,
 		})
@@ -411,7 +420,7 @@ pub fn check(
 	call_log: &[CallRecord],
 	loaded: &HashSet<String>,
 ) -> Option<String> {
-	for rule in &rules.rules {
+	for rule in &rules.guards {
 		if !target_matches(&rule.trigger, capability, params) {
 			continue;
 		}
@@ -476,7 +485,7 @@ mod tests {
 	fn unconditional_block() {
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=^rm\\s+-rf?)"
 			message = "no"
 			"#,
@@ -495,7 +504,7 @@ mod tests {
 	fn has_capability_required() {
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=^ls\\b)"
 			has = "filesystem"
 			message = "use view"
@@ -513,7 +522,7 @@ mod tests {
 		// only while the user has not exercised the filesystem capability.
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=^ls\\b)"
 			when = ["-filesystem"]
 			message = "use filesystem first"
@@ -537,7 +546,7 @@ mod tests {
 		// already run". A `+` condition gates the rule on prior usage.
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=git push)"
 			when = ["+shell(command=git status)"]
 			message = "blocked because you ran git status"
@@ -559,7 +568,7 @@ mod tests {
 	fn arg_array_matches_via_json() {
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "filesystem(paths=secret\\.env)"
 			message = "no secrets"
 			"#,
@@ -578,7 +587,7 @@ mod tests {
 	fn arg_string_matched_unquoted() {
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=^ls$)"
 			message = "no bare ls"
 			"#,
@@ -592,10 +601,10 @@ mod tests {
 	fn first_match_wins() {
 		let g = Guardrails::parse(
 			r#"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=git)"
 			message = "first"
-			[[rule]]
+			[[guard]]
 			match = "shell(command=git push)"
 			message = "second"
 			"#,

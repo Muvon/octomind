@@ -241,6 +241,7 @@ System prompts and welcome messages support variables:
 | `{{ROLE}}` | Active role name |
 | `{{DATE}}` | Current date |
 | `{{SHELL}}` | User's shell |
+| `{{BINARIES}}` | Available binaries in PATH |
 | `{{OS}}` | Operating system |
 | `{{GIT_STATUS}}` | Git status |
 | `{{README}}` | Project README.md contents |

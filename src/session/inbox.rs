@@ -53,6 +53,8 @@ pub enum InboxSource {
 	Inject,
 	/// A webhook hook that received an HTTP request.
 	Webhook { hook: String },
+	/// A guardrail post-result hook script that exited non-zero.
+	GuardrailHook { script: String },
 }
 
 /// A message waiting to be injected into the session as a user turn.
@@ -75,6 +77,7 @@ impl InboxSource {
 			InboxSource::SkillValidator { name } => format!("skill-validator {name}"),
 			InboxSource::Inject => "inject".to_string(),
 			InboxSource::Webhook { hook } => format!("webhook {hook}"),
+			InboxSource::GuardrailHook { script } => format!("guardrail-hook {script}"),
 		}
 	}
 
@@ -89,6 +92,7 @@ impl InboxSource {
 			InboxSource::SkillValidator { .. } => "skill_validator",
 			InboxSource::Inject => "inject",
 			InboxSource::Webhook { .. } => "webhook",
+			InboxSource::GuardrailHook { .. } => "guardrail_hook",
 		}
 	}
 
@@ -102,6 +106,7 @@ impl InboxSource {
 			InboxSource::SkillValidator { .. } => "⚠️",
 			InboxSource::Inject => "💬",
 			InboxSource::Webhook { .. } => "🪝",
+			InboxSource::GuardrailHook { .. } => "🛡️",
 		}
 	}
 }
@@ -264,6 +269,9 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 		InboxSource::Inject => "external inject",
 		InboxSource::Webhook { hook } => {
 			return Some(format!("webhook '{hook}'"));
+		}
+		InboxSource::GuardrailHook { script } => {
+			return Some(format!("guardrail hook '{script}'"));
 		}
 	};
 	// Truncate content preview to first line, max 80 chars

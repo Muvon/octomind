@@ -35,6 +35,7 @@ pub mod video; // Video processing and attachment utilities // Project context c
 			   // Provider abstraction layer moved to src/providers
 pub mod background_jobs;
 pub mod guardrails; // Project-local deny rules evaluated before each tool call
+pub mod hooks; // Post-result hooks → inbox injection
 pub mod inbox; // Unified message injection queue for all session sources
 pub mod inject_listener; // Unix Domain Socket listener for external message injection
 pub mod pipelines; // Deterministic script pipeline system

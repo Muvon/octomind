@@ -579,6 +579,19 @@ async fn execute_tools_with_context(
 		}
 	}
 
+	// Post-result hooks: run AFTER all tool results are collected but BEFORE
+	// truncation, so hook scripts see full untruncated output. Hooks for
+	// guardrail-blocked tools are skipped (synthetic results aren't real).
+	let blocked_flags: Vec<bool> = block_messages.iter().map(|m| m.is_some()).collect();
+	crate::session::hooks::run_hooks(
+		&session_id_for_guardrails,
+		config,
+		&current_tool_calls,
+		&tool_results,
+		&blocked_flags,
+	)
+	.await;
+
 	// Handle large outputs with batched confirmation
 	let processed_results = handle_large_tool_results(tool_results, config, mode).await?;
 	Ok((processed_results, total_tool_time_ms))

@@ -38,7 +38,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const FILE_PATH: &str = ".agents/guardrails.toml";
 
@@ -72,10 +72,32 @@ struct RawRule {
 	message: String,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HookOn {
+	Success,
+	Error,
+	#[default]
+	Any,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawHook {
+	#[serde(rename = "match", default)]
+	match_: Option<String>,
+	#[serde(default)]
+	result: Option<String>,
+	#[serde(default)]
+	on: HookOn,
+	script: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawFile {
 	#[serde(default, rename = "rule")]
 	rules: Vec<RawRule>,
+	#[serde(default, rename = "hook")]
+	hooks: Vec<RawHook>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,9 +116,20 @@ pub struct CompiledRule {
 	pub message: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct CompiledHook {
+	/// Call-side filter; `None` matches any tool call.
+	pub trigger: Option<Target>,
+	/// Result-text filter; `None` matches any result content (incl. empty).
+	pub result_regex: Option<Regex>,
+	pub on: HookOn,
+	pub script: PathBuf,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Guardrails {
 	pub rules: Vec<CompiledRule>,
+	pub hooks: Vec<CompiledHook>,
 }
 
 impl Guardrails {
@@ -155,7 +188,32 @@ impl Guardrails {
 				message: r.message,
 			});
 		}
-		Ok(Self { rules })
+		let mut hooks = Vec::with_capacity(raw.hooks.len());
+		for h in raw.hooks {
+			let trigger = match h.match_.as_deref() {
+				Some(s) if !s.trim().is_empty() => Some(
+					parse_target(s).map_err(|e| anyhow!("hook `{}`: invalid match: {}", s, e))?,
+				),
+				_ => None,
+			};
+			let result_regex = match h.result.as_deref() {
+				Some(s) => Some(
+					Regex::new(s)
+						.map_err(|e| anyhow!("hook: invalid result regex `{}`: {}", s, e))?,
+				),
+				None => None,
+			};
+			if h.script.trim().is_empty() {
+				return Err(anyhow!("hook missing `script`"));
+			}
+			hooks.push(CompiledHook {
+				trigger,
+				result_regex,
+				on: h.on,
+				script: PathBuf::from(h.script),
+			});
+		}
+		Ok(Self { rules, hooks })
 	}
 }
 

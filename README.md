@@ -296,7 +296,7 @@ Detects OS and architecture, installs to `~/.local/bin/`. macOS and Linux suppor
 cargo install octomind
 ```
 
-Requires Rust 1.82+. See [Building from Source](doc/dev/01-building-from-source.md).
+Requires Rust 1.95+. See [Building from Source](doc/dev/01-building-from-source.md).
 
 ### Build from source
 

@@ -61,6 +61,8 @@ src/
     inbox.rs                 # Unified inbox (schedule, agent, skill, inject, webhook)
     inject_listener.rs       # Unix socket for message injection
     webhook_listener.rs      # HTTP webhook → inbox injection
+    guardrails.rs            # Project-local tool deny/hook/validator rules (.agents/guardrails.toml)
+    hooks.rs                 # Webhook hook listener management (--hook flag)
     completion.rs            # Chat completion orchestration
     chat_helper.rs           # CommandCompleter (fuzzy autocomplete for reedline)
     report.rs                # Session usage reporting

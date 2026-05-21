@@ -39,7 +39,7 @@ sudo mv octomind-darwin-arm64 /usr/local/bin/octomind
 cargo install octomind
 ```
 
-Requires Rust 1.82+. See [Building from Source](../dev/01-building-from-source.md) for development setup.
+Requires Rust 1.95+. See [Building from Source](../dev/01-building-from-source.md) for development setup.
 
 ## API Key Setup
 

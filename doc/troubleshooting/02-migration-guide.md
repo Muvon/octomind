@@ -84,14 +84,17 @@ enable_tools = true
 [[layers]]
 name = "task_refiner"
 description = "Refines and clarifies user requests"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 2048
+command = "octomind acp task_refiner"
+input_mode = "last"
+output_mode = "none"
+output_role = "assistant"
 ```
 
-The main AI uses these agents as tools:
-- `builtin`, `enabled`, `enable_tools` fields removed
-- `description` is now required
-- Layer is active when referenced by a workflow or command
+Key changes:
+- `builtin`, `enabled`, `enable_tools`, `model`, `max_tokens` fields removed
+- `description` and `command` are required
+- Model/system/MCP config lives in the `[[roles]]` entry that `command` references
+- Layer is active when referenced by a workflow or `/run` command
 
 ## Config File Location
 

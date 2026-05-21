@@ -348,19 +348,21 @@ mod tests {
 
 	#[test]
 	fn when_unused_lifts_after_use() {
+		// `-filesystem` = "no filesystem call in history yet" — fires (blocks)
+		// only while the user has not exercised the filesystem capability.
 		let g = Guardrails::parse(
 			r#"
 			[[rule]]
 			match = "shell(command=^ls\\b)"
-			when = ["-filesystem(view)"]
-			message = "use view"
+			when = ["-filesystem"]
+			message = "use filesystem first"
 			"#,
 		)
 		.unwrap();
 		let p = json!({ "command": "ls" });
-		// Empty log → unused condition holds → block
+		// Empty log → unused condition holds → block.
 		assert!(check(&g, Some("shell"), &p, &[], &loaded(&[])).is_some());
-		// After view used → unused condition fails → allow
+		// Any filesystem call in history → unused fails → allow.
 		let log: Vec<CallRecord> = vec![(
 			Some("filesystem".to_string()),
 			json!({ "path": "src/main.rs" }),
@@ -370,22 +372,26 @@ mod tests {
 
 	#[test]
 	fn when_used_requires_history() {
+		// `+shell(command=git status)` = "rule fires only after git status was
+		// already run". A `+` condition gates the rule on prior usage.
 		let g = Guardrails::parse(
 			r#"
 			[[rule]]
 			match = "shell(command=git push)"
 			when = ["+shell(command=git status)"]
-			message = "run status first"
+			message = "blocked because you ran git status"
 			"#,
 		)
 		.unwrap();
 		let p = json!({ "command": "git push" });
-		assert!(check(&g, Some("shell"), &p, &[], &loaded(&[])).is_some());
+		// Empty log → `+` condition unmet → rule doesn't fire → allow.
+		assert!(check(&g, Some("shell"), &p, &[], &loaded(&[])).is_none());
+		// History contains git status → `+` met → rule fires → block.
 		let log: Vec<CallRecord> = vec![(
 			Some("shell".to_string()),
 			json!({ "command": "git status" }),
 		)];
-		assert!(check(&g, Some("shell"), &p, &log, &loaded(&[])).is_none());
+		assert!(check(&g, Some("shell"), &p, &log, &loaded(&[])).is_some());
 	}
 
 	#[test]

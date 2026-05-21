@@ -383,53 +383,72 @@ pub async fn check_and_compress_conversation(
 	);
 
 	// COMPRESS-ALL: Extract user messages BEFORE compression.
-	// - Last user message → re-injected as raw session message after summary
-	// - Last 4 user messages (excluding the appended one) → USER TASKS section in summary
-	// No intersection: the appended message is NOT in USER TASKS.
-	// Skill messages are filtered out — they're preserved verbatim via
-	// preserved_skills and must never show up as "user tasks" or get
-	// re-injected as the raw user prompt after the summary.
+	//
+	// Two slots feed user intent into the post-compression session:
+	//   1. USER TASKS section inside the summary text — older real user
+	//      messages (excluding the most recent one), full text, never
+	//      truncated. The summary becomes input to the next compression
+	//      cycle's AI, so untruncated text is what makes intent durable
+	//      across multiple compressions.
+	//   2. Re-injected trailing user message right after the summary — a
+	//      synthetic <continuation> wrapper around the most recent real
+	//      user intent. Signals to the model that this is an in-progress
+	//      task, not a fresh start, and supplies the focus ask.
+	//
+	// The two slots are disjoint by design: the most recent user msg lives
+	// ONLY in slot 2, older ones live ONLY in slot 1. No duplication.
+	//
+	// Filters excluded from `all_user_msgs`:
+	//   - skill messages (`<skill name="…">…</skill>`) — preserved
+	//     verbatim via `preserved_skills`, never user intent.
+	//   - synthetic continuation messages from prior compression cycles
+	//     (`apply::is_continuation_message`) — they're conversation
+	//     plumbing, not real user asks. Including them would let the
+	//     "Please continue."-style degradation chain reappear.
+	let user_msg_filter = |m: &&crate::session::Message| -> bool {
+		m.role == "user"
+			&& !m.content.trim().is_empty()
+			&& !crate::mcp::core::skill::is_skill_message(&m.content)
+			&& !apply::is_continuation_message(&m.content)
+	};
+
 	let all_user_msgs: Vec<&crate::session::Message> = session.session.messages
 		[start_idx + 1..=end_idx]
 		.iter()
-		.filter(|m| {
-			m.role == "user"
-				&& !m.content.trim().is_empty()
-				&& !crate::mcp::core::skill::is_skill_message(&m.content)
-		})
+		.filter(user_msg_filter)
 		.collect();
 
-	// Last user message for raw re-injection after summary
-	let last_user_message = all_user_msgs.last().cloned().cloned();
+	// FALLBACK: if the drained range has no real user message (e.g. a long
+	// single-turn tool loop where the anchor at start_idx IS the user
+	// message), search backwards through the surviving prefix [..=start_idx]
+	// for the most recent one. This guarantees the continuation wrapper
+	// always gets real intent text and never falls back to a fabricated
+	// stub that overwrites the user's actual ask.
+	let last_user_message: Option<crate::session::Message> = match all_user_msgs.last() {
+		Some(m) => Some((*m).clone()),
+		None => session.session.messages[..=start_idx]
+			.iter()
+			.rev()
+			.find(user_msg_filter)
+			.cloned(),
+	};
 
-	// Last 4 user messages EXCLUDING the appended one → USER TASKS in summary
+	// USER TASKS: older real user requests, untruncated. The most recent
+	// one is excluded — it lives in the continuation wrapper (slot 2)
+	// instead. Take up to 4 to bound summary growth while preserving
+	// recent task history.
 	let user_tasks_msgs: Vec<String> = {
 		let exclude_last = if all_user_msgs.len() > 1 {
 			&all_user_msgs[..all_user_msgs.len() - 1]
 		} else {
-			&[]
+			&[][..]
 		};
 		exclude_last
 			.iter()
 			.rev()
 			.take(4)
 			.rev()
-			.map(|m| {
-				let content = m.content.trim();
-				if content.len() > 200 {
-					format!(
-						"{}…",
-						&content[..content
-							.char_indices()
-							.take_while(|&(i, _)| i <= 200)
-							.last()
-							.map(|(i, _)| i)
-							.unwrap_or(200)]
-					)
-				} else {
-					content.to_string()
-				}
-			})
+			.map(|m| m.content.trim().to_string())
 			.collect()
 	};
 
@@ -439,10 +458,22 @@ pub async fn check_and_compress_conversation(
 	// Skill messages are preserved verbatim (see preserved_skills above) —
 	// exclude them from the AI summarizer input so we don't burn tokens
 	// paraphrasing instructions we'll re-inject word-for-word.
+	//
+	// Continuation wrappers from prior compression cycles are also excluded:
+	// they're synthetic plumbing, not real user content. The real intent
+	// they wrap is already captured in the prior summary's USER TASKS (which
+	// IS in the drained range as an assistant message), so dropping the
+	// wrapper avoids confusing the summarizer with meta-instructions and
+	// prevents recursive "continuation of continuation" phrasing in the
+	// new summary text.
 	let messages_to_compress: Vec<crate::session::Message> = session.session.messages
 		[start_idx + 1..=end_idx]
 		.iter()
-		.filter(|m| !(m.role == "user" && crate::mcp::core::skill::is_skill_message(&m.content)))
+		.filter(|m| {
+			!(m.role == "user"
+				&& (crate::mcp::core::skill::is_skill_message(&m.content)
+					|| apply::is_continuation_message(&m.content)))
+		})
 		.cloned()
 		.collect();
 

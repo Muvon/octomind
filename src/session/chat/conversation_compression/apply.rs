@@ -25,6 +25,47 @@ use crate::session::chat::session::ChatSession;
 use crate::session::estimate_tokens;
 use anyhow::Result;
 
+/// Open tag for the synthetic post-compression continuation wrapper.
+/// Detected verbatim by `is_continuation_message` so the next compression
+/// cycle's user-msg filter excludes these from `all_user_msgs`.
+const CONTINUATION_TAG_OPEN: &str = "<continuation>";
+
+/// True if `content` is a synthetic continuation wrapper inserted by a
+/// prior compression cycle (not a real user ask). Mirrors the
+/// skill-message detection pattern used elsewhere in the session.
+pub(super) fn is_continuation_message(content: &str) -> bool {
+	content.trim_start().starts_with(CONTINUATION_TAG_OPEN)
+}
+
+/// Build the SOTA continuation wrapper for the trailing user turn after a
+/// compressed summary. `intent` is the most recent real user message
+/// content (already trimmed); when absent, the wrapper points the model
+/// at the summary itself as the source of truth.
+///
+/// Shape:
+/// ```text
+/// <continuation>
+/// The conversation summary above is the complete record of prior work
+/// on this task — partial progress, decisions, and findings are all
+/// captured there. Resume from where the previous turn left off; do not
+/// restart or re-discover what is already established.
+///
+/// <task>
+/// {intent OR "see summary above for the active task"}
+/// </task>
+/// </continuation>
+/// ```
+fn build_continuation_content(intent: Option<&str>) -> String {
+	let task_body = intent.unwrap_or("see summary above for the active task");
+	format!(
+		"<continuation>\n\
+		The conversation summary above is the complete record of prior work on this task — partial progress, decisions, and findings are all captured there. Resume from where the previous turn left off; do not restart or re-discover what is already established.\n\n\
+		<task>\n{}\n</task>\n\
+		</continuation>",
+		task_body
+	)
+}
+
 /// Apply compression: drain all messages, insert summary, re-inject recent user messages.
 /// Also parses and injects file contexts if given by AI.
 #[allow(clippy::too_many_arguments)]
@@ -208,27 +249,43 @@ pub(super) async fn apply_compression(
 		.messages
 		.insert(start_idx + 1 + skill_count, summary_msg);
 
-	// Marker #2: re-injected user message — full content cache boundary
-	let user_msg = match last_user_message {
-		Some(mut msg) => {
-			msg.cached = supports_caching;
-			msg
-		}
-		None => crate::session::Message {
-			role: "user".to_string(),
-			content: "Please continue.".to_string(),
-			timestamp: now,
-			cached: supports_caching,
-			..Default::default()
-		},
+	// Marker #2: re-injected continuation message — full content cache
+	// boundary. This is ALWAYS a synthetic <continuation> wrapper, never
+	// the raw user message verbatim. The wrapper:
+	//   - signals to the model that this is an in-progress task (the
+	//     summary above captures completed work), preventing "fresh
+	//     start" hallucinations after compression;
+	//   - carries the most recent real user intent inside <task> so the
+	//     model has a clear current focus;
+	//   - is tagged so the next compression cycle's user-msg filter skips
+	//     it (see `is_continuation_message`), keeping USER TASKS sourced
+	//     only from real user asks and preventing cross-cycle decay.
+	//
+	// `last_user_message = None` is only possible on a session with no
+	// real user message anywhere (pathological bootstrap-only state); the
+	// wrapper falls back to pointing at the summary itself.
+	let continuation_intent = last_user_message
+		.as_ref()
+		.map(|m| m.content.trim().to_string());
+	let continuation_msg = crate::session::Message {
+		role: "user".to_string(),
+		content: build_continuation_content(continuation_intent.as_deref()),
+		timestamp: now,
+		cached: supports_caching,
+		..Default::default()
 	};
 	session
 		.session
 		.messages
-		.insert(start_idx + 2 + skill_count, user_msg);
+		.insert(start_idx + 2 + skill_count, continuation_msg);
 	log_debug!(
-		"Re-injected last user message after compressed summary (USER TASKS: {})",
-		user_tasks_msgs.len()
+		"Inserted continuation wrapper after compressed summary (USER TASKS: {}, intent_source: {})",
+		user_tasks_msgs.len(),
+		if continuation_intent.is_some() {
+			"last_user_message"
+		} else {
+			"summary_fallback"
+		}
 	);
 
 	// Update first_prompt_idx to the actual anchor used for this compression.

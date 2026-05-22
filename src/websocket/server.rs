@@ -925,12 +925,6 @@ async fn handle_user_message(
 	)
 	.await?;
 
-	// Set first_prompt_idx BEFORE compression so the anchor is always correct.
-	// Compression uses first_prompt_idx as the lower boundary.
-	if !layers_modified_session && chat_session.first_prompt_idx.is_none() {
-		chat_session.first_prompt_idx = Some(chat_session.session.messages.len());
-	}
-
 	// Conversation compression: check if AI should compress older exchanges.
 	// Runs BEFORE user message is added to avoid breaking the new request.
 	let _compression_occurred =

@@ -74,7 +74,7 @@ fn preserves_active_skill_in_drain_range() {
 	// first_prompt_idx = 3 (first real user prompt).
 	// find_compression_range moves anchor to idx-1 = 2 (instructions).
 	// Drain range: 3..=9.
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(3), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 2, "anchor on instructions");
 	assert_eq!(end_idx, 9);
 
@@ -236,7 +236,7 @@ fn extends_range_to_include_tool_results() {
 	messages.push(msg("user")); // 8
 	messages.push(msg("assistant")); // 9
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Compress-all: end_idx = last message
 	assert_eq!(start_idx, 1);
@@ -266,7 +266,7 @@ fn extends_when_ending_on_assistant_with_tools() {
 	messages.push(msg("user")); // 8
 	messages.push(msg("assistant")); // 9
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Compress-all: end_idx = last message
 	assert_eq!(start_idx, 1);
@@ -308,7 +308,7 @@ fn handles_multiple_assistants_with_tools() {
 	messages.push(msg("assistant")); // 9
 	messages.push(msg("user")); // 10
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Compress-all: end_idx = last message, no preserved zone
 	assert_eq!(start_idx, 1);
@@ -339,35 +339,29 @@ fn start_boundary_must_not_orphan_initial_tool_sequence() {
 	messages.push(msg("assistant")); // 6
 	messages.push(msg("user")); // 7
 	messages.push(msg("assistant")); // 8
-								  // Test with first_prompt_idx set to index 3 (first real user message)
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(3), false).unwrap();
 
-	// Safety requirement: compression starts AFTER first_prompt_idx (INCLUSIVE boundary)
-	// first_prompt_idx=3 means index 3 is PROTECTED, compression starts at 4
-	assert_eq!(
-		start_idx, 3,
-		"start_idx must equal first_prompt_idx (INCLUSIVE boundary)"
-	);
+	// First user message lives at idx 3 — anchor lands there. The leading
+	// assistant+tool sequence at indices 1-2 stays in the surviving prefix
+	// (kept across compression cycles).
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
+
+	assert_eq!(start_idx, 3, "anchor = first user message at idx 3");
 	assert!(
 		end_idx >= 4,
-		"range should start compressing only after first_prompt_idx"
+		"compression range must include messages after anchor"
 	);
 }
 
 #[test]
-fn anchor_with_tool_calls_must_advance_past_tool_results() {
-	// Reproduces the exact bug from the session log:
-	// - Message 1: assistant with 2 tool_calls (view_signatures + view)
-	// - Message 2: tool result for view_signatures
-	// - Message 3: tool result for view (this one got orphaned)
-	// - Compression summary inserted at message 3
-	// - remove_messages_in_range drained start_idx+1..=end_idx
-	// - Result: assistant at index 1 still has tool_calls but tool results are gone
-	// - API error: "tool_use ids were found without tool_result blocks"
+fn leading_tool_exchange_stays_in_prefix_no_orphans() {
+	// When the session begins with an assistant+tool_calls turn BEFORE any
+	// user message (e.g. resumed/reconstructed history), anchor lands on the
+	// first user message that follows. The leading assistant + its tool
+	// results stay together in the surviving prefix — neither side of the
+	// pair can fall into the drain range, so no orphan tool_use blocks.
 	let mut messages = Vec::new();
 	messages.push(msg("system")); // 0
 
-	// Assistant with 2 tool calls (like the real session)
 	let mut assistant = msg("assistant"); // 1
 	assistant.tool_calls = Some(json!([
 		{"id": "call_A", "type": "function", "function": {"name": "view_signatures", "arguments": "{}"}},
@@ -385,56 +379,37 @@ fn anchor_with_tool_calls_must_advance_past_tool_results() {
 	tool_b.name = Some("view".to_string());
 	messages.push(tool_b);
 
-	// Enough conversation to trigger compression (need >4 user+assistant)
 	messages.push(msg("assistant")); // 4 (response after tools)
-	messages.push(msg("user")); // 5
+	messages.push(msg("user")); // 5 - first user message (anchor)
 	messages.push(msg("assistant")); // 6
 	messages.push(msg("user")); // 7
 	messages.push(msg("assistant")); // 8
 	messages.push(msg("user")); // 9
 	messages.push(msg("assistant")); // 10
 
-	// first_prompt_idx=None means start_idx defaults to system_idx+1 = 1
-	// Index 1 is the assistant with tool_calls.
-	// Without the fix: start_idx=1, drain removes indices 2..=end_idx,
-	// orphaning tool_calls at index 1.
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	// With the fix: start_idx must advance past the tool results (indices 2, 3)
-	// to index 4 (the next assistant message after tools).
-	assert!(
-			start_idx >= 4,
-			"start_idx must advance past tool results to avoid orphaning tool_calls. Got start_idx={start_idx}"
-		);
-	assert!(
-		end_idx > start_idx,
-		"end_idx must be after start_idx for a valid range. Got start={start_idx}, end={end_idx}"
-	);
+	assert_eq!(start_idx, 5, "anchor = first user message at idx 5");
+	assert!(end_idx > start_idx);
 
-	// Verify the drain range (start_idx+1..=end_idx) doesn't include any tool messages
-	// that belong to the assistant at index 1
-	for msg in messages.iter().take(end_idx + 1).skip(start_idx + 1) {
-		if msg.role == "tool" {
-			// Any tool message in the drain range must NOT belong to the anchor's tool_calls
-			if let Some(ref tc_id) = msg.tool_call_id {
-				assert!(
-						tc_id != "call_A" && tc_id != "call_B",
-						"Drain range must not include tool results for anchor's tool_calls. Found {tc_id}"
-					);
-			}
-		}
+	// Drain range [6..=10] contains no tool messages (all asst/user), so no
+	// orphan risk. Tools at 2,3 stay paired with their assistant at 1 in the
+	// preserved prefix.
+	for m in messages.iter().take(end_idx + 1).skip(start_idx + 1) {
+		assert_ne!(m.role, "tool", "drain range must not contain tool messages");
 	}
 }
 
 #[test]
-fn anchor_with_tool_calls_and_first_prompt_idx() {
-	// When first_prompt_idx points to an assistant with tool_calls,
-	// start_idx must still advance past its tool results.
+fn anchor_when_first_user_precedes_tool_calls_assistant() {
+	// First user message sits before an assistant-with-tool_calls turn.
+	// Anchor lands on the user message (idx 1); the entire tool exchange
+	// (assistant + its tool result) is inside the drain range. Anchor is
+	// user-role so no orphan tool_use blocks can form.
 	let mut messages = Vec::new();
 	messages.push(msg("system")); // 0
-	messages.push(msg("user")); // 1
+	messages.push(msg("user")); // 1 - first user (anchor)
 
-	// Assistant with tool calls at index 2
 	let mut assistant = msg("assistant"); // 2
 	assistant.tool_calls = Some(json!([
 		{"id": "call_X", "type": "function", "function": {"name": "shell", "arguments": "{}"}}
@@ -446,7 +421,6 @@ fn anchor_with_tool_calls_and_first_prompt_idx() {
 	tool_x.name = Some("shell".to_string());
 	messages.push(tool_x);
 
-	// More conversation
 	messages.push(msg("assistant")); // 4
 	messages.push(msg("user")); // 5
 	messages.push(msg("assistant")); // 6
@@ -455,18 +429,10 @@ fn anchor_with_tool_calls_and_first_prompt_idx() {
 	messages.push(msg("user")); // 9
 	messages.push(msg("assistant")); // 10
 
-	// first_prompt_idx=Some(2) points to the assistant with tool_calls.
-	// With the anchor-move-back fix, start_idx moves to idx-1=1 (user).
-	// The assistant with tool_calls and its tool result are both in the drain range.
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(2), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	assert_eq!(
-		start_idx, 1,
-		"anchor moves back to user at idx 1 — tool_calls asst at 2 is in drain range"
-	);
+	assert_eq!(start_idx, 1, "anchor = first user message at idx 1");
 	assert!(end_idx > start_idx, "must have valid range");
-	// Both the assistant with tool_calls (idx 2) and its tool result (idx 3) are
-	// in drain range [2..=end_idx] — no orphaned tool_use blocks.
 	assert!(end_idx >= 3, "drain must include tool result at idx 3");
 }
 
@@ -476,10 +442,10 @@ fn anchor_with_tool_calls_and_first_prompt_idx() {
 // ============================================================================
 
 #[test]
-fn bootstrap_preserved_when_first_prompt_idx_is_none_no_instructions() {
-	// Simulates resumed session without instructions file:
-	// [0] system, [1] assistant(welcome), [2+] conversation
-	// first_prompt_idx=None (resumed session)
+fn welcome_preserved_when_no_instructions_file() {
+	// Without an <instructions> message, anchor falls back to the first user
+	// message. System and welcome live BEFORE the anchor and are never in the
+	// drain range, regardless of session origin (fresh or resumed).
 	let messages = vec![
 		msg("system"),    // 0
 		msg("assistant"), // 1 - welcome message
@@ -493,32 +459,28 @@ fn bootstrap_preserved_when_first_prompt_idx_is_none_no_instructions() {
 		msg("assistant"), // 9
 	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	// System[0] and welcome[1] must be protected
-	assert!(
-		start_idx >= 2,
-		"start_idx must be >= 2 to protect system and welcome. Got {start_idx}"
-	);
+	assert_eq!(start_idx, 2, "anchor = first user message at idx 2");
 	assert!(end_idx > start_idx, "must have valid range");
-
-	// Drain range is start_idx+1..=end_idx — verify system and welcome are outside
 	assert!(
 		start_idx + 1 > 1,
-		"drain range must not include welcome message at index 1"
+		"drain range must not include welcome message at idx 1"
 	);
 }
 
 #[test]
-fn bootstrap_preserved_when_first_prompt_idx_is_none_with_instructions() {
-	// Simulates resumed session WITH instructions file:
-	// [0] system, [1] assistant(welcome), [2] user(instructions), [3+] conversation
-	// first_prompt_idx=None (resumed session)
+fn anchor_is_instructions_message_when_present() {
+	// When a user-role message wraps content in <instructions>…</instructions>,
+	// that message becomes the anchor — its content is never compressed away.
+	// Drain starts immediately after it.
+	let mut instructions = msg("user");
+	instructions.content = "<instructions>\nproject guidelines\n</instructions>".into();
 	let messages = vec![
 		msg("system"),    // 0
-		msg("assistant"), // 1 - welcome message
-		msg("user"),      // 2 - instructions file
-		msg("assistant"), // 3 - AI response to instructions
+		msg("assistant"), // 1 - welcome
+		instructions,     // 2 - instructions file (DETECTED via tag)
+		msg("assistant"), // 3
 		msg("user"),      // 4 - first real user prompt
 		msg("assistant"), // 5
 		msg("user"),      // 6
@@ -527,14 +489,10 @@ fn bootstrap_preserved_when_first_prompt_idx_is_none_with_instructions() {
 		msg("assistant"), // 9
 	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	// System[0], welcome[1], and instructions[2] must be protected
-	assert!(
-		start_idx >= 3,
-		"start_idx must be >= 3 to protect system, welcome, and instructions. Got {start_idx}"
-	);
-	assert!(end_idx > start_idx, "must have valid range");
+	assert_eq!(start_idx, 2, "anchor must be the <instructions> message");
+	assert_eq!(end_idx, 9, "compress-all: end_idx = last message");
 }
 
 #[test]
@@ -549,56 +507,54 @@ fn bootstrap_preserved_system_message_never_in_range() {
 	}
 
 	// Test with None
-	let (start_none, _end_none) = find_compression_range(&messages, None, false).unwrap();
+	let (start_none, _end_none) = find_compression_range(&messages, false).unwrap();
 	assert!(start_none > 0, "system message at 0 must not be start_idx");
 	// Drain is start_idx+1..=end_idx, so system at 0 is safe if start_idx > 0
 
 	// Test with Some(1)
-	let (start_some, end_some) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_some, end_some) = find_compression_range(&messages, false).unwrap();
 	assert!(start_some >= 1, "start_idx must be >= 1");
 	assert!(end_some > start_some);
 }
 
 #[test]
-fn bootstrap_with_tool_calls_in_welcome_response() {
-	// Edge case: welcome is followed by instructions, then AI responds with tool_calls
-	// [0] system, [1] assistant(welcome), [2] user(instructions),
-	// [3] assistant(tool_calls), [4] tool, [5+] conversation
-	let mut messages = Vec::new();
-	messages.push(msg("system")); // 0
-	messages.push(msg("assistant")); // 1 - welcome
-	messages.push(msg("user")); // 2 - instructions
+fn anchor_with_instructions_then_assistant_tool_calls() {
+	// Instructions message immediately followed by an assistant turn with
+	// tool_calls — anchor stays on the instructions message, everything
+	// after (including the tool_calls assistant and its tool results) is
+	// in the drain range. No tool-skip required: anchor is user-role, so
+	// no orphan tool_use blocks can form.
+	let mut instructions = msg("user");
+	instructions.content = "<instructions>\nrules\n</instructions>".into();
 
-	let mut assistant_tc = msg("assistant"); // 3
+	let mut assistant_tc = msg("assistant");
 	assistant_tc.tool_calls = Some(serde_json::json!([
 		{"id": "call_1", "type": "function", "function": {"name": "view", "arguments": "{}"}}
 	]));
-	messages.push(assistant_tc);
-
-	let mut tool = msg("tool"); // 4
+	let mut tool = msg("tool");
 	tool.tool_call_id = Some("call_1".to_string());
-	messages.push(tool);
 
-	messages.push(msg("assistant")); // 5
-	messages.push(msg("user")); // 6
-	messages.push(msg("assistant")); // 7
-	messages.push(msg("user")); // 8
-	messages.push(msg("assistant")); // 9
-	messages.push(msg("user")); // 10
-	messages.push(msg("assistant")); // 11
+	let messages = vec![
+		msg("system"),    // 0
+		msg("assistant"), // 1 welcome
+		instructions,     // 2 instructions
+		assistant_tc,     // 3 asst with tool_calls
+		tool,             // 4 tool result
+		msg("assistant"), // 5
+		msg("user"),      // 6
+		msg("assistant"), // 7
+		msg("user"),      // 8
+		msg("assistant"), // 9
+		msg("user"),      // 10
+		msg("assistant"), // 11
+	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	// Must protect: system[0], welcome[1], instructions[2]
-	// start_idx should be >= 3, and if 3 has tool_calls, advance past tool results
-	assert!(
-		start_idx >= 5,
-		"start_idx must advance past bootstrap AND tool results. Got {start_idx}"
-	);
-	assert!(
-		end_idx > start_idx,
-		"must have valid range. Got start={start_idx}, end={end_idx}"
-	);
+	assert_eq!(start_idx, 2, "anchor on <instructions> message");
+	assert_eq!(end_idx, 11, "compress-all: end_idx = last message");
+	// Drain range [3..=11] includes the assistant+tool_calls AND its tool result —
+	// both go together, no orphaning possible.
 }
 
 #[test]
@@ -661,7 +617,7 @@ fn calculate_range_tokens_must_match_removal_range() {
 	messages.push(msg("user")); // 7
 	messages.push(msg("assistant")); // 8
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Verify the range is valid
 	assert!(start_idx < end_idx, "Range must be valid");
@@ -733,7 +689,7 @@ fn bug_proof_token_mismatch_causes_zero_savings() {
 	messages.push(msg("user")); // 7
 	messages.push(msg("assistant")); // 8
 
-	let (start_idx, end_idx) = find_compression_range(&messages, None, false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 1); // Large message
 	assert_eq!(end_idx, 8); // compress-all: last message
 
@@ -1215,42 +1171,33 @@ fn test_estimate_incremental_rate_saturating_sub_prevents_underflow() {
 }
 
 // ============================================================================
-// SEQUENTIAL COMPRESSION TESTS: Verify first_prompt_idx stays at original
-// user message and old compressed summaries get re-compressed (not orphaned)
+// SEQUENTIAL COMPRESSION TESTS: Verify the anchor (re-derived from messages
+// every call) stays at the original first user message across cycles, and
+// old compressed summaries get re-compressed (not orphaned).
 // ============================================================================
 
 #[test]
-fn first_prompt_idx_never_changes_after_compression() {
-	// first_prompt_idx must always point to the original first user message.
-	// It is set once in main_loop.rs and never updated by compression.
-	// This ensures the anchor is always the original user prompt.
+fn anchor_stable_across_repeated_compressions() {
+	// Anchor is re-derived deterministically from messages every call.
+	// Without instructions, anchor = first user message and stays put
+	// across cycles because that user message remains at the same index.
 
 	let mut messages = Vec::new();
 	messages.push(msg("system")); // 0
-	messages.push(msg("user")); // 1 - first_prompt_idx
+	messages.push(msg("user")); // 1 - first user
 	for i in 0..8 {
 		messages.push(msg(if i % 2 == 0 { "assistant" } else { "user" }));
 	} // 2-9
 
-	let first_prompt_idx = Some(1usize);
-
 	// First compression
-	let (start1, end1) = find_compression_range(&messages, first_prompt_idx, false).unwrap();
-	assert_eq!(start1, 1, "start_idx must be first_prompt_idx");
+	let (start1, end1) = find_compression_range(&messages, false).unwrap();
+	assert_eq!(start1, 1, "anchor = first user message");
 	assert!(end1 >= 4);
-
-	// After compression, first_prompt_idx stays Some(1) — NOT updated.
-	// The compressed summary is inserted at index 2, but the anchor stays at 1.
-	assert_eq!(
-		first_prompt_idx,
-		Some(1),
-		"first_prompt_idx must not change"
-	);
 
 	// Simulate post-compression state: anchor at 1, summary at 2, preserved tail
 	let mut after = Vec::new();
 	after.push(msg("system")); // 0
-	after.push(msg("user")); // 1 - anchor (kept)
+	after.push(msg("user")); // 1 - first user (kept)
 	let mut comp = msg("assistant");
 	comp.name = Some("plan_compression".to_string());
 	after.push(comp); // 2 - compressed summary
@@ -1258,12 +1205,9 @@ fn first_prompt_idx_never_changes_after_compression() {
 		after.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
 	} // 3-10
 
-	// Second compression — first_prompt_idx is STILL Some(1)
-	let (start2, end2) = find_compression_range(&after, first_prompt_idx, false).unwrap();
-	assert_eq!(
-		start2, 1,
-		"second compression also starts at original anchor"
-	);
+	// Second compression — anchor is STILL idx 1 (re-derived, not cached)
+	let (start2, end2) = find_compression_range(&after, false).unwrap();
+	assert_eq!(start2, 1, "anchor re-derives to same index");
 	assert!(end2 >= 4);
 }
 
@@ -1285,7 +1229,7 @@ fn old_compressed_summary_is_recompressed_on_next_cycle() {
 		messages.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
 	} // 3-10
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 1, "start at permanent anchor");
 
 	// Drain range is start_idx+1..=end_idx = 2..=end_idx
@@ -1307,24 +1251,14 @@ fn old_compressed_summary_is_recompressed_on_next_cycle() {
 }
 
 #[test]
-fn bootstrap_messages_before_start_idx_dont_inflate_compress_count() {
-	// Reproduces the real-world bug: bootstrap messages (system, welcome, instructions)
-	// exist before first_prompt_idx. The old code collected ALL conversation messages
-	// including bootstrap ones, inflating compress_count and leaving end_idx too low.
-	//
-	// Layout from the log:
-	// 0: system
-	// 1: assistant (welcome)
-	// 2: user (instructions)
-	// 3: user (first real prompt) ← first_prompt_idx
-	// 4: assistant (compressed summary from prior cycle)
-	// 5: assistant (tool_calls)
-	// 6: tool
-	// 7: assistant (tool_calls)
-	// 8: tool
-	// 9: assistant (tool_calls)
-	// 10: tool
-	// 11: assistant (final response)
+fn bootstrap_messages_before_anchor_preserved() {
+	// Bootstrap messages (system, welcome, instructions) sit before the anchor
+	// and are NEVER touched by compression. Drain covers [anchor+1..=end] and
+	// keeps the entire prefix intact regardless of tool_calls / tool result
+	// content inside the drain range.
+	let mut instructions = msg("user");
+	instructions.content = "<instructions>\nrules\n</instructions>".into();
+
 	let mut comp = msg("assistant");
 	comp.name = Some("plan_compression".to_string());
 	let mut a5 = msg("assistant");
@@ -1335,47 +1269,27 @@ fn bootstrap_messages_before_start_idx_dont_inflate_compress_count() {
 	a7.tool_calls = Some(json!([{"id": "c2", "type": "function", "function": {"name": "shell"}}]));
 	let mut t8 = msg("tool");
 	t8.tool_call_id = Some("c2".to_string());
-	let mut a9 = msg("assistant");
-	a9.tool_calls = Some(json!([{"id": "c3", "type": "function", "function": {"name": "plan"}}]));
-	let mut t10 = msg("tool");
-	t10.tool_call_id = Some("c3".to_string());
 
 	let messages = vec![
 		msg("system"),    // 0
 		msg("assistant"), // 1 - welcome
-		msg("user"),      // 2 - instructions
-		msg("user"),      // 3 - first_prompt_idx
+		instructions,     // 2 - instructions (anchor)
+		msg("user"),      // 3 - first real prompt
 		comp,             // 4 - old compressed summary
 		a5,               // 5 - tool_calls
 		t6,               // 6 - tool result
 		a7,               // 7 - tool_calls
 		t8,               // 8 - tool result
-		a9,               // 9 - tool_calls
-		t10,              // 10 - tool result
-		msg("assistant"), // 11 - final response
+		msg("assistant"), // 9 - final response
 	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(3), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	assert_eq!(start_idx, 3, "start at first_prompt_idx");
-	// Conversation indices at/after start_idx=3: [3, 4, 5, 7, 9, 11] (6 items)
-	// Keep last 4: [5, 7, 9, 11]
-	// compress_count = 2, first preserved = index 5
-	// end_idx = 5 - 1 = 4
-	// Drain range: [4..=4] — removes old summary
-	// BUT the old bug would have: conversation_indices = [1, 2, 3, 4, 5, 7, 9, 11] (8 items)
-	// compress_count = 4, first preserved = conversation_indices[4] = 5
-	// end_idx = 5 - 1 = 4 — same result by coincidence in THIS case.
-	// The real difference shows when preserve_count adjustment kicks in.
-	assert!(
-		end_idx >= 4,
-		"end_idx must cover at least the old summary at index 4, got {end_idx}"
-	);
-	// The drain range must actually remove messages
-	assert!(
-		end_idx > start_idx,
-		"drain range must be non-empty: start={start_idx}, end={end_idx}"
-	);
+	assert_eq!(start_idx, 2, "anchor on <instructions> message");
+	assert_eq!(end_idx, 9, "compress-all: end_idx = last message");
+
+	// Bootstrap [0..=2] survives untouched; drain is [3..=9].
+	assert!(start_idx + 1 > 1, "welcome at idx 1 stays outside drain");
 }
 
 #[test]
@@ -1392,7 +1306,7 @@ fn bootstrap_with_many_messages_compresses_all() {
 		messages.push(msg(if i % 2 == 0 { "assistant" } else { "user" }));
 	} // 4-13
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(3), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 2, "anchor must be instructions file at idx 2");
 	assert_eq!(end_idx, 13, "compress-all: end_idx = last message");
 }
@@ -1421,7 +1335,7 @@ fn triple_compression_always_one_summary() {
 	} // 3-10
 
 	// 3rd compression — still starts at anchor (1)
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 1);
 
 	// Old summary at 2 is in drain range
@@ -1448,7 +1362,7 @@ fn anchor_message_never_included_in_drain_range() {
 		msg("assistant"), // 8
 	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// The drain range is start_idx+1..=end_idx
 	// The anchor at start_idx is NOT in this range
@@ -1491,7 +1405,7 @@ fn compression_preserves_message_count_consistency() {
 	}
 
 	let before_count = messages.len();
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Calculate expected removal count
 	let messages_to_remove = end_idx - start_idx; // drain removes start_idx+1..=end_idx
@@ -1532,7 +1446,7 @@ fn messages_to_compress_excludes_anchor_message() {
 	messages.push(msg("user")); // 7
 	messages.push(msg("assistant")); // 8
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 1);
 
 	let correct = &messages[start_idx + 1..=end_idx];
@@ -1575,7 +1489,7 @@ fn calculate_range_tokens_matches_actual_removal() {
 		messages.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
 	} // 6-9
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	let mut tokens_removed = 0u64;
 	for msg in messages.iter().take(end_idx + 1).skip(start_idx + 1) {
@@ -1634,15 +1548,14 @@ fn test_file_context_stripped_when_no_sentinel() {
 fn test_multiple_compression_cycles_anchor_never_moves() {
 	// Simulate 3 compression cycles on a growing conversation.
 	// After each cycle the old summary is at start_idx+1 and gets folded into the next.
-	// first_prompt_idx must always equal 1 (the original first user message).
+	// Anchor must always equal 1 (the original first user message), re-derived
+	// fresh every call from message structure — no cached state.
 	//
 	// Layout after each cycle:
 	//   [0] system
-	//   [1] user (anchor = first_prompt_idx)
+	//   [1] user (anchor — first user message)
 	//   [2] assistant (compressed summary, replaces old range)
 	//   [3..] new messages
-
-	let first_prompt_idx = Some(1usize);
 
 	// ── Cycle 1: 12 messages ──────────────────────────────────────────────
 	let mut messages: Vec<Message> = Vec::new();
@@ -1652,7 +1565,7 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 		messages.push(msg(if i % 2 == 0 { "assistant" } else { "user" }));
 	} // 2-11
 
-	let (s1, e1) = find_compression_range(&messages, first_prompt_idx, false).unwrap();
+	let (s1, e1) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(s1, 1, "Cycle 1: start must be anchor (1)");
 	assert!(e1 > s1, "Cycle 1: end must be after anchor");
 	assert!(
@@ -1672,7 +1585,7 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 		messages.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
 	}
 
-	let (s2, e2) = find_compression_range(&messages, first_prompt_idx, false).unwrap();
+	let (s2, e2) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(s2, 1, "Cycle 2: start must still be anchor (1)");
 	assert!(e2 > s2);
 
@@ -1687,7 +1600,7 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 		messages.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
 	}
 
-	let (s3, e3) = find_compression_range(&messages, first_prompt_idx, false).unwrap();
+	let (s3, e3) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(s3, 1, "Cycle 3: start must still be anchor (1)");
 	assert!(e3 > s3);
 
@@ -1708,7 +1621,7 @@ fn compress_all_includes_last_message() {
 	} // 2-21
 	messages.push(msg("user")); // 22
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 1);
 	assert_eq!(end_idx, 22, "compress-all: end_idx must be last message");
 }
@@ -1735,7 +1648,7 @@ fn compress_all_with_tool_loop_after_user_prompt() {
 		msg("assistant"), // 14 response
 	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(3), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 2, "anchor at instructions");
 	assert_eq!(end_idx, 14, "compress-all: end_idx = last message");
 }
@@ -1777,7 +1690,7 @@ fn compress_all_with_tool_cycles() {
 		msg("assistant"), // 8
 	];
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(start_idx, 1);
 	assert_eq!(end_idx, 8, "compress-all: end_idx = last message");
 
@@ -1844,7 +1757,7 @@ fn tool_loop_only_one_user_message_still_compresses() {
 	// Final assistant response (no tool_calls)
 	messages.push(msg("assistant")); // 22
 
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Must return a valid compression range, NOT (0, 0)
 	assert!(
@@ -1852,8 +1765,8 @@ fn tool_loop_only_one_user_message_still_compresses() {
 		"Tool-loop session must produce valid compression range, got ({start_idx}, {end_idx})"
 	);
 
-	// start_idx = first_prompt_idx = 1 (tool-loop: single user, no instructions)
-	assert_eq!(start_idx, 1, "start_idx must be first_prompt_idx = 1");
+	// Tool-loop: single user message, no instructions → anchor = first user (idx 1).
+	assert_eq!(start_idx, 1, "anchor = first user message at idx 1");
 
 	// compress-all: end_idx = last message
 	assert_eq!(
@@ -1868,7 +1781,6 @@ fn test_triple_compression_only_one_summary_in_drain() {
 	// After 3 compression cycles, the drain range must always contain exactly
 	// one prior compressed summary (the previous cycle's output), never zero or two.
 	// This verifies that old summaries are folded into new ones, not accumulated.
-	let first_prompt_idx = Some(1usize);
 
 	let mut messages: Vec<Message> = Vec::new();
 	messages.push(msg("system")); // 0
@@ -1883,7 +1795,7 @@ fn test_triple_compression_only_one_summary_in_drain() {
 			messages.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
 		}
 
-		let (s, e) = find_compression_range(&messages, first_prompt_idx, false).unwrap();
+		let (s, e) = find_compression_range(&messages, false).unwrap();
 
 		// Count compressed summaries in the drain range (s+1..=e)
 		let summaries_in_drain = messages[s + 1..=e]
@@ -1912,6 +1824,72 @@ fn test_triple_compression_only_one_summary_in_drain() {
 }
 
 #[test]
+fn regression_session_260521_no_stuck_first_turn_prefix() {
+	// Regression for the 260521-dk-1148-b53e bug: the OLD None-branch heuristic
+	// would advance past welcome + (any user followed by assistant) and then
+	// run a tool-skip over the resulting assistant's tool_calls — anchoring on
+	// the 2nd assistant turn and permanently stranding the first user message
+	// plus its 3-tool reply (5 extra prefix messages, forever).
+	//
+	// Exact layout from the broken session before the second /done:
+	//   0: system
+	//   1: assistant (welcome 🐙, no tool_calls)
+	//   2: user ("lets crawl...")              ← MUST be anchor
+	//   3: assistant ("Let me pull up...", has tool_calls)
+	//   4: tool (MEMORIES)
+	//   5: tool (MEMORIES)
+	//   6: tool (browser_get_current_tab)
+	//   7: assistant ("Got it, Don...")         ← OLD bug parked anchor here
+	//   8..N: rest of conversation
+	let mut a3 = msg("assistant");
+	a3.tool_calls = Some(json!([
+		{"id": "c1", "type": "function", "function": {"name": "remember"}},
+		{"id": "c2", "type": "function", "function": {"name": "remember"}},
+		{"id": "c3", "type": "function", "function": {"name": "browser_get_current_tab"}}
+	]));
+	let mut t4 = msg("tool");
+	t4.tool_call_id = Some("c1".to_string());
+	let mut t5 = msg("tool");
+	t5.tool_call_id = Some("c2".to_string());
+	let mut t6 = msg("tool");
+	t6.tool_call_id = Some("c3".to_string());
+
+	let mut messages = vec![
+		msg("system"),    // 0
+		msg("assistant"), // 1 welcome
+		msg("user"),      // 2 first user prompt
+		a3,               // 3 assistant + tool_calls
+		t4,               // 4 tool result
+		t5,               // 5 tool result
+		t6,               // 6 tool result
+		msg("assistant"), // 7 follow-up assistant
+	];
+	// Pad with enough conversation turns to satisfy min_conv.
+	for i in 0..6 {
+		messages.push(msg(if i % 2 == 0 { "user" } else { "assistant" }));
+	}
+
+	let (start_idx, end_idx) = find_compression_range(&messages, true).unwrap();
+
+	// New rule: anchor = first user message. NOT idx 7.
+	assert_eq!(
+		start_idx, 2,
+		"anchor MUST be the first user message, not parked past the bootstrap turn"
+	);
+	assert_eq!(end_idx, messages.len() - 1, "drain extends to last message");
+
+	// Stuck-prefix check: under the OLD bug, indices 3..=7 (assistant + 3 tools
+	// + follow-up assistant) were preserved across /done forever. The new
+	// behavior includes them in the drain range so each /done cleans them up.
+	for stuck_idx in 3..=7 {
+		assert!(
+			(start_idx + 1..=end_idx).contains(&stuck_idx),
+			"idx {stuck_idx} must be in drain range, not stuck in the prefix"
+		);
+	}
+}
+
+#[test]
 fn bug_proof_invalid_range_must_set_cooldown() {
 	// BUG SCENARIO: should_check_compression runs the full expensive path:
 	//   threshold exceeded → cooldown passed → cost analysis → find_compression_range
@@ -1936,7 +1914,7 @@ fn bug_proof_invalid_range_must_set_cooldown() {
 		msg("assistant"), // 4
 	];
 	// Only 4 conversation messages (user+assistant) — need >4 to compress
-	let (start_idx, end_idx) = find_compression_range(&messages, Some(1), false).unwrap();
+	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(
 		(start_idx, end_idx),
 		(0, 0),

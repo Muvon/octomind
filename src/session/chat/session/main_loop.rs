@@ -1067,17 +1067,6 @@ pub async fn run_interactive_session(
 					.unwrap_or_default()
 					.as_millis()
 			);
-			// CRITICAL: Set first_prompt_idx BEFORE compression runs so the anchor is always
-			// correct. Compression uses first_prompt_idx as the lower boundary — if it's None
-			// during the first compression, the system message index is used as fallback, which
-			// can allow compressing the very first user message.
-			// We use the current message count because that is exactly where the user message
-			// will be inserted after compression finishes (compression only removes/replaces
-			// older messages, never appends).
-			if !workflow_modified_session && chat_session.first_prompt_idx.is_none() {
-				chat_session.first_prompt_idx = Some(chat_session.session.messages.len());
-			}
-
 			// CONVERSATION COMPRESSION: Check if AI should compress older exchanges
 			// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
 			// AI decides if compression is beneficial based on conversation history

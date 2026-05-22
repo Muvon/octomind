@@ -195,11 +195,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 
 	if net_benefit > 0.0 {
 		// Verify compression will actually reduce context meaningfully
-		let (start_idx, end_idx) = match find_compression_range(
-			&session.session.messages,
-			session.first_prompt_idx,
-			false,
-		) {
+		let (start_idx, end_idx) = match find_compression_range(&session.session.messages, false) {
 			Ok(range) => range,
 			Err(e) => {
 				log_debug!("Failed to find compression range: {}", e);
@@ -344,8 +340,7 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)
 	// This allows us to send context chunks to AI in the same call as decision
-	let (start_idx, end_idx) =
-		find_compression_range(&session.session.messages, session.first_prompt_idx, force)?;
+	let (start_idx, end_idx) = find_compression_range(&session.session.messages, force)?;
 
 	// end_idx is already safe from find_compression_range
 

@@ -288,9 +288,6 @@ pub(super) async fn apply_compression(
 		}
 	);
 
-	// Update first_prompt_idx to the actual anchor used for this compression.
-	session.first_prompt_idx = Some(start_idx);
-
 	// Calculate metrics
 	let tokens_saved = tokens_before.saturating_sub(tokens_after);
 

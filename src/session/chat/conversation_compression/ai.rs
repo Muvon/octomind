@@ -123,17 +123,30 @@ pub(super) async fn call_ai_for_decision(
 		log_debug!("Compression decision cost ignored (ignore_cost=true)");
 	}
 
-	// Provider returns the validated JSON in `structured_output`. If absent
-	// the provider didn't honour the schema — treat as a hard error rather
-	// than silently falling back to text parsing. `completion.rs:233`
-	// already pre-validates that the model supports structured output, so
-	// reaching this branch means a runtime provider misbehaviour.
-	let raw = response.structured_output.ok_or_else(|| {
-		anyhow::anyhow!(
-			"Compression model '{}' returned no structured_output despite schema being attached",
-			decision_config.model
-		)
-	})?;
+	// Provider should return the validated JSON in `structured_output`. When
+	// it's absent, try a lenient recovery from `response.content` before
+	// erroring — some providers (notably OctoHub) ship a strict text-to-JSON
+	// extractor that misses valid JSON wrapped in markdown fences or with
+	// a chatty preamble, even when the model genuinely followed the schema.
+	// Native-structured-output models (GPT, Claude, Gemini direct) hit the
+	// happy path; the fallback covers cross-routing quirks for DeepSeek,
+	// Kimi, OctoHub-routed models, etc.
+	let raw = match response.structured_output {
+		Some(v) => v,
+		None => {
+			let recovered = extract_json_lenient(&response.content).ok_or_else(|| {
+				anyhow::anyhow!(
+					"Compression model '{}' returned no structured_output and no recoverable JSON in text content",
+					decision_config.model
+				)
+			})?;
+			log_debug!(
+				"Compression model '{}' omitted structured_output; recovered JSON from text content",
+				decision_config.model
+			);
+			recovered
+		}
+	};
 
 	let summary: CompressionSummary = serde_json::from_value(raw).map_err(|e| {
 		anyhow::anyhow!(
@@ -143,6 +156,101 @@ pub(super) async fn call_ai_for_decision(
 	})?;
 
 	Ok(summary)
+}
+
+/// Best-effort JSON extraction from a text response when the provider didn't
+/// populate `structured_output`. Handles three common provider patterns:
+///
+///   1. Bare JSON: `{"…": …}`
+///   2. Fenced JSON: <code>```json\n{…}\n```</code> or unlabeled fences
+///   3. Prose preamble: `"Here is the analysis: {…}"`
+///
+/// Returns `None` if no parseable JSON object/array can be located.
+fn extract_json_lenient(content: &str) -> Option<serde_json::Value> {
+	let trimmed = content.trim();
+	if trimmed.is_empty() {
+		return None;
+	}
+
+	// Direct parse — bare JSON or JSON-with-only-whitespace-padding.
+	if matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
+		if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+			return Some(v);
+		}
+	}
+
+	// Strip a single surrounding markdown fence (```json … ``` or ``` … ```)
+	// and retry direct parse on the inner body.
+	if let Some(inner) = strip_markdown_fence(trimmed) {
+		if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner.trim()) {
+			return Some(v);
+		}
+	}
+
+	// Last resort: scan for the first balanced JSON object or array anywhere
+	// in the text, respecting string literals so brackets inside strings
+	// don't fool the counter.
+	find_first_balanced_json(trimmed)
+}
+
+/// Strip an outer markdown code fence if the content is wrapped in one.
+/// Accepts ` ```json … ``` `, ` ```JSON … ``` `, or bare ` ``` … ``` `.
+/// Returns the inner body without the fence markers, or `None` if no fence
+/// envelope is present.
+fn strip_markdown_fence(s: &str) -> Option<&str> {
+	let s = s.trim();
+	let after_open = s.strip_prefix("```")?;
+	// Optional language tag on the opening fence — accept any letters then \n.
+	let body = match after_open.find('\n') {
+		Some(nl) => &after_open[nl + 1..],
+		None => after_open,
+	};
+	body.strip_suffix("```").map(str::trim)
+}
+
+/// Scan `s` for the first balanced JSON object (`{…}`) or array (`[…]`).
+/// Tracks bracket depth while skipping over string literals (with `\"` escape
+/// handling) so punctuation inside strings doesn't unbalance the counter.
+fn find_first_balanced_json(s: &str) -> Option<serde_json::Value> {
+	let bytes = s.as_bytes();
+	for start in 0..bytes.len() {
+		let open = bytes[start];
+		if open != b'{' && open != b'[' {
+			continue;
+		}
+		let close = if open == b'{' { b'}' } else { b']' };
+		let mut depth: i32 = 0;
+		let mut in_string = false;
+		let mut escape = false;
+		for (i, &b) in bytes.iter().enumerate().skip(start) {
+			if in_string {
+				if escape {
+					escape = false;
+				} else if b == b'\\' {
+					escape = true;
+				} else if b == b'"' {
+					in_string = false;
+				}
+				continue;
+			}
+			if b == b'"' {
+				in_string = true;
+			} else if b == open {
+				depth += 1;
+			} else if b == close {
+				depth -= 1;
+				if depth == 0 {
+					let candidate = &s[start..=i];
+					if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
+						return Some(v);
+					}
+					// Balanced but invalid — abandon this opener, outer loop continues.
+					break;
+				}
+			}
+		}
+	}
+	None
 }
 
 /// Orchestration entrypoint: build prompt + schema, invoke model, apply
@@ -200,4 +308,93 @@ pub(super) async fn ask_ai_decision_and_summary(
 	);
 
 	Ok((true, summary))
+}
+
+#[cfg(test)]
+mod extract_json_lenient_tests {
+	use super::extract_json_lenient;
+
+	#[test]
+	fn parses_bare_object() {
+		let v = extract_json_lenient(r#"{"should_compress": true, "x": 1}"#).unwrap();
+		assert_eq!(v["should_compress"], true);
+		assert_eq!(v["x"], 1);
+	}
+
+	#[test]
+	fn parses_bare_array() {
+		let v = extract_json_lenient(r#"[1, 2, 3]"#).unwrap();
+		assert_eq!(v.as_array().unwrap().len(), 3);
+	}
+
+	#[test]
+	fn strips_json_labeled_markdown_fence() {
+		let input = "```json\n{\"should_compress\": false}\n```";
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["should_compress"], false);
+	}
+
+	#[test]
+	fn strips_unlabeled_markdown_fence() {
+		let input = "```\n{\"k\": \"v\"}\n```";
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["k"], "v");
+	}
+
+	#[test]
+	fn recovers_from_chatty_preamble() {
+		let input = "Here is the analysis:\n{\"should_compress\": true, \"target\": 2.0}";
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["should_compress"], true);
+		assert_eq!(v["target"], 2.0);
+	}
+
+	#[test]
+	fn recovers_from_preamble_with_fence() {
+		let input = "Sure, here you go:\n```json\n{\"a\": 1}\n```\nDone!";
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["a"], 1);
+	}
+
+	#[test]
+	fn respects_braces_inside_strings() {
+		// Naive brace-counting would balance early on the `{` inside the string;
+		// the scanner must skip string contents.
+		let input = r#"text {"label": "value with } brace", "n": 7}"#;
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["label"], "value with } brace");
+		assert_eq!(v["n"], 7);
+	}
+
+	#[test]
+	fn handles_escaped_quotes_in_strings() {
+		let input = r#"prefix {"msg": "she said \"hi\""}"#;
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["msg"], "she said \"hi\"");
+	}
+
+	#[test]
+	fn returns_none_for_empty_input() {
+		assert!(extract_json_lenient("").is_none());
+		assert!(extract_json_lenient("   \n\t  ").is_none());
+	}
+
+	#[test]
+	fn returns_none_for_no_json() {
+		assert!(extract_json_lenient("just a plain text response with no JSON").is_none());
+	}
+
+	#[test]
+	fn returns_none_for_truncated_json() {
+		// Opener with no matching close — provider got cut off.
+		assert!(extract_json_lenient(r#"{"incomplete": "no closing brace"#).is_none());
+	}
+
+	#[test]
+	fn skips_invalid_object_finds_later_valid_one() {
+		// First {…} has a syntax error; scanner must keep going and find the second.
+		let input = r#"garbage {not valid json} more text {"ok": true}"#;
+		let v = extract_json_lenient(input).unwrap();
+		assert_eq!(v["ok"], true);
+	}
 }

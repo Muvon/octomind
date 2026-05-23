@@ -1,9 +1,7 @@
-use super::ai::{is_summary_valid, MIN_SUMMARY_LEN};
 use super::collect_preserved_skills;
-use super::knowledge::{
-	format_compressed_entry_with_context, strip_file_context_from_summary, strip_knowledge_tags,
-};
+use super::knowledge::{format_compressed_entry_with_context, strip_file_context_from_summary};
 use super::range::find_compression_range;
+use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
 use crate::session::Message;
 use serde_json::json;
 
@@ -1513,18 +1511,20 @@ fn calculate_range_tokens_matches_actual_removal() {
 
 #[test]
 fn test_file_context_stripped_from_recompression_input() {
-	// strip_file_context_from_summary must remove everything from the sentinel onward.
-	// This prevents stale file bytes from accumulating in every subsequent summary.
-	let summary_with_context = "## Conversation Summary [COMPRESSED: abc]\n\
-			Some important history here.\n\n\
-			**FILE CONTEXT** (auto-expanded):\n\
-			<content path=\"src/main.rs\">\nfn main() {}\n</content>";
+	// strip_file_context_from_summary must remove the entire <file_context>…</file_context>
+	// block. This prevents stale file bytes from accumulating in every subsequent summary.
+	let summary_with_context = "<conversation_summary id=\"abc\">\n\
+			<progress>Some important history here.</progress>\n\
+			<file_context>\n\
+			<content path=\"src/main.rs\">\nfn main() {}\n</content>\n\
+			</file_context>\n\
+			</conversation_summary>";
 
 	let stripped = strip_file_context_from_summary(summary_with_context);
 
 	assert!(
-		!stripped.contains("FILE CONTEXT"),
-		"FILE CONTEXT sentinel must be stripped"
+		!stripped.contains("<file_context>"),
+		"file_context tag must be stripped"
 	);
 	assert!(
 		!stripped.contains("fn main()"),
@@ -1532,14 +1532,14 @@ fn test_file_context_stripped_from_recompression_input() {
 	);
 	assert!(
 		stripped.contains("Some important history here."),
-		"Summary text before sentinel must be preserved"
+		"Summary text before file_context must be preserved"
 	);
 }
 
 #[test]
 fn test_file_context_stripped_when_no_sentinel() {
-	// When there is no FILE CONTEXT block, the function must return the text unchanged.
-	let plain = "## Conversation Summary [COMPRESSED: abc]\nJust a summary.";
+	// When there is no file_context block, the function returns the text unchanged.
+	let plain = "<conversation_summary id=\"abc\">\n<progress>Just a summary.</progress>\n</conversation_summary>";
 	let stripped = strip_file_context_from_summary(plain);
 	assert_eq!(stripped, plain.trim());
 }
@@ -1577,7 +1577,7 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 	let drained: Vec<Message> = messages.drain(s1 + 1..=e1).collect();
 	assert!(!drained.is_empty(), "Cycle 1: must drain something");
 	let mut summary1 = msg("assistant");
-	summary1.content = "## Conversation Summary [COMPRESSED: c1]\nCycle 1 summary.".to_string();
+	summary1.content = "<conversation_summary id=\"c1\"><progress>Cycle 1 summary.</progress></conversation_summary>".to_string();
 	messages.insert(s1 + 1, summary1);
 
 	// ── Cycle 2: grow then compress again ────────────────────────────────
@@ -1592,7 +1592,7 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 	let drained2: Vec<Message> = messages.drain(s2 + 1..=e2).collect();
 	assert!(!drained2.is_empty(), "Cycle 2: must drain something");
 	let mut summary2 = msg("assistant");
-	summary2.content = "## Conversation Summary [COMPRESSED: c2]\nCycle 2 summary.".to_string();
+	summary2.content = "<conversation_summary id=\"c2\"><progress>Cycle 2 summary.</progress></conversation_summary>".to_string();
 	messages.insert(s2 + 1, summary2);
 
 	// ── Cycle 3: grow then compress again ────────────────────────────────
@@ -1709,7 +1709,7 @@ fn compress_all_with_tool_cycles() {
 	let mut after = messages.clone();
 	after.drain(start_idx + 1..=end_idx);
 	let mut summary = msg("assistant");
-	summary.content = "## Conversation Summary [COMPRESSED: test]".to_string();
+	summary.content = "<conversation_summary id=\"test\"></conversation_summary>".to_string();
 	after.insert(start_idx + 1, summary);
 	// Re-inject recent user messages
 	for (i, user_msg) in recent_users.iter().enumerate() {
@@ -1800,10 +1800,7 @@ fn test_triple_compression_only_one_summary_in_drain() {
 		// Count compressed summaries in the drain range (s+1..=e)
 		let summaries_in_drain = messages[s + 1..=e]
 			.iter()
-			.filter(|m| {
-				m.content
-					.starts_with("## Conversation Summary [COMPRESSED:")
-			})
+			.filter(|m| m.content.starts_with("<conversation_summary"))
 			.count();
 
 		if cycle > 1 {
@@ -1818,7 +1815,7 @@ fn test_triple_compression_only_one_summary_in_drain() {
 		let _drained: Vec<Message> = messages.drain(s + 1..=e).collect();
 		let mut summary = msg("assistant");
 		summary.content =
-			format!("## Conversation Summary [COMPRESSED: c{cycle}]\nCycle {cycle} summary.");
+			format!("<conversation_summary id=\"c{cycle}\"><progress>Cycle {cycle} summary.</progress></conversation_summary>");
 		messages.insert(s + 1, summary);
 	}
 }
@@ -1994,106 +1991,127 @@ fn knowledge_log_entry_uses_content_key() {
 }
 
 // ───────────────────────────────────────────────────────────────────────
-// Empty-summary safety guard
+// Empty-summary safety guard (schema era)
 //
-// Background: AI responses can pass HTTP-200 yet yield a useless summary —
-// `"YES"` with no second line, `"YES\n<knowledge>...</knowledge>"` (knowledge
-// stripped → empty), or whitespace. Without a guard, `apply_compression`
-// drains all messages and replaces them with a header-only summary block.
-// `is_summary_valid` is the gate that prevents catastrophic context loss.
+// Background: schema validation guarantees the *shape* of the response,
+// but the model could still return `should_compress: true` with every
+// narrative field empty. Without a guard, `apply_compression` would drain
+// every message and replace them with a header-only block.
+// `is_summary_substantive` rejects that case. These tests pin the gate.
 // ───────────────────────────────────────────────────────────────────────
 
-#[test]
-fn is_summary_valid_rejects_empty_string() {
-	assert!(!is_summary_valid(""));
+fn empty_summary() -> CompressionSummary {
+	CompressionSummary::default()
+}
+
+fn summary_with_progress() -> CompressionSummary {
+	let mut s = empty_summary();
+	s.should_compress = true;
+	s.progress = "User asked about config loading, AI explained the merge order.".to_string();
+	s
 }
 
 #[test]
-fn is_summary_valid_rejects_whitespace_only() {
-	assert!(!is_summary_valid("   \n\t  "));
+fn substantive_rejects_default_summary() {
+	assert!(!is_summary_substantive(&empty_summary()));
 }
 
 #[test]
-fn is_summary_valid_rejects_below_min_length() {
-	// 19 chars = below the 20-char floor
-	let short = "a".repeat(MIN_SUMMARY_LEN - 1);
-	assert!(!is_summary_valid(&short));
+fn substantive_rejects_whitespace_narrative_fields() {
+	let mut s = empty_summary();
+	s.current_task = "   ".to_string();
+	s.progress = "\n\t".to_string();
+	s.session_context = "  ".to_string();
+	assert!(!is_summary_substantive(&s));
 }
 
 #[test]
-fn is_summary_valid_accepts_at_min_length() {
-	let exact = "a".repeat(MIN_SUMMARY_LEN);
-	assert!(is_summary_valid(&exact));
+fn substantive_accepts_progress_only() {
+	assert!(is_summary_substantive(&summary_with_progress()));
 }
 
 #[test]
-fn is_summary_valid_accepts_real_summary() {
-	assert!(is_summary_valid(
-		"User asked about config loading, AI explained the merge order."
-	));
+fn substantive_accepts_single_finding() {
+	let mut s = empty_summary();
+	s.analysis_findings = vec!["root cause: cache marker placement".to_string()];
+	assert!(is_summary_substantive(&s));
 }
 
 #[test]
-fn is_summary_valid_counts_after_trim() {
-	// Padded with whitespace but inner content is below the floor.
-	let padded = format!("   {}   ", "a".repeat(MIN_SUMMARY_LEN - 1));
-	assert!(!is_summary_valid(&padded));
+fn substantive_accepts_recent_exchange_only() {
+	let mut s = empty_summary();
+	s.recent_exchanges = vec!["user asked X; assistant answered Y".to_string()];
+	assert!(is_summary_substantive(&s));
 }
 
 #[test]
-fn is_summary_valid_counts_chars_not_bytes() {
-	// 20 multibyte chars — bytes would be 60 (each emoji is 4 bytes), but
-	// we count characters so this is exactly at the boundary.
-	let unicode = "🎯".repeat(MIN_SUMMARY_LEN);
-	assert!(is_summary_valid(&unicode));
+fn render_omits_empty_sections() {
+	let mut s = empty_summary();
+	s.session_context = "investigating compression quality".to_string();
+	s.current_task = "rewriting prompt to use JSON schema".to_string();
+	let rendered = render_summary(&s);
+	assert!(rendered.contains("<session_context>"));
+	assert!(rendered.contains("<current_task>"));
+	// Sections with no signal must NOT appear as empty tags.
+	assert!(!rendered.contains("<progress>"));
+	assert!(!rendered.contains("<analysis_findings>"));
+	assert!(!rendered.contains("<key_entities>"));
+	assert!(!rendered.contains("<next_steps>"));
 }
 
 #[test]
-fn knowledge_only_response_strips_to_empty() {
-	// Regression: AI response that is ONLY knowledge tags must strip to a
-	// summary that fails validation — guarding against the force-path bug
-	// where such input would have produced a header-only "summary".
-	let content = "<knowledge>some critical fact</knowledge>";
-	let stripped = strip_knowledge_tags(content);
+fn render_includes_original_request_when_set() {
+	let mut s = summary_with_progress();
+	s.original_request = "Build a session-based AI dev assistant.".to_string();
+	let rendered = render_summary(&s);
 	assert!(
-		!is_summary_valid(&stripped),
-		"knowledge-only content must not produce a valid summary (got: {:?})",
-		stripped
+		rendered.contains(
+			"<original_request>Build a session-based AI dev assistant.</original_request>"
+		),
+		"original_request must be rendered verbatim: {}",
+		rendered
 	);
 }
 
 #[test]
-fn yes_with_knowledge_only_strips_to_empty() {
-	// Regression: `"YES\n<knowledge>...</knowledge>"` after split + strip
-	// yields an empty summary — must fail validation.
-	let after_yes_line = "<knowledge>fact A</knowledge>\n<knowledge>fact B</knowledge>";
-	let stripped = strip_knowledge_tags(after_yes_line);
-	assert!(
-		!is_summary_valid(&stripped),
-		"YES + knowledge-only must not produce a valid summary (got: {:?})",
-		stripped
-	);
+fn render_includes_errors_and_corrections() {
+	let mut s = summary_with_progress();
+	s.errors_and_corrections = vec![
+		"user said: don't add fallbacks".to_string(),
+		"compile error: borrow of moved value at ai.rs:45".to_string(),
+	];
+	let rendered = render_summary(&s);
+	assert!(rendered.contains("<errors_and_corrections>"));
+	assert!(rendered.contains("<entry>user said: don't add fallbacks</entry>"));
+	assert!(rendered.contains("<entry>compile error: borrow of moved value at ai.rs:45</entry>"));
+	assert!(rendered.contains("</errors_and_corrections>"));
 }
 
 #[test]
-fn empty_summary_in_format_produces_header_only_block() {
-	// PROOF that the bug is real: without the validator, this is exactly
-	// what `apply_compression` would write back into the conversation
-	// after draining 50+ messages. The test exists as a permanent record
-	// of why `is_summary_valid` must gate every code path that calls
-	// `format_compressed_entry_with_context`.
+fn render_key_entities_nested_tags() {
+	let mut s = summary_with_progress();
+	s.key_entities = KeyEntities {
+		files: vec!["src/foo.rs:10:20".to_string()],
+		names: vec!["compress_summary".to_string()],
+		decisions: vec!["use JSON schema for compression".to_string()],
+	};
+	let rendered = render_summary(&s);
+	assert!(rendered.contains("<key_entities>"));
+	assert!(rendered.contains("<files>"));
+	assert!(rendered.contains("<file>src/foo.rs:10:20</file>"));
+	assert!(rendered.contains("<name>compress_summary</name>"));
+	assert!(rendered.contains("<decision>use JSON schema for compression</decision>"));
+	assert!(rendered.contains("</key_entities>"));
+}
+
+#[test]
+fn format_compressed_entry_with_empty_summary_still_renders_wrapper() {
+	// Belt-and-braces: even if `is_summary_substantive` failed to gate, an
+	// empty render still produces a clearly-tagged wrapper (used during the
+	// pathological-bootstrap branch in apply_compression). Pinned here so
+	// any future refactor that changes the wrapper tag breaks
+	// strip_file_context_from_summary's matching as well.
 	let formatted = format_compressed_entry_with_context("", "", "test-id".to_string());
-	assert!(
-		formatted.contains("## Conversation Summary [COMPRESSED: test-id]"),
-		"header always present"
-	);
-	// Body after the header is just the section join (empty) → trailing whitespace only.
-	let body = formatted
-		.trim_start_matches("## Conversation Summary [COMPRESSED: test-id]")
-		.trim();
-	assert!(
-		body.is_empty(),
-		"empty summary produces header-only block (proves catastrophic loss path); got body: {:?}",
-		body
-	);
+	assert!(formatted.contains("<conversation_summary id=\"test-id\">"));
+	assert!(formatted.contains("</conversation_summary>"));
 }

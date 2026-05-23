@@ -18,7 +18,8 @@
 // update anchor + token bookkeeping. Pure side-effects on `ChatSession`.
 
 use super::decision::estimate_future_turns;
-use super::knowledge::format_compressed_entry_with_context;
+use super::knowledge::{fold_critical_knowledge, format_compressed_entry_with_context};
+use super::schema::{render_summary, CompressionSummary};
 use crate::log_debug;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
@@ -67,23 +68,41 @@ fn build_continuation_content(intent: Option<&str>) -> String {
 }
 
 /// Apply compression: drain all messages, insert summary, re-inject recent user messages.
-/// Also parses and injects file contexts if given by AI.
+/// Pulls structured file contexts and critical knowledge directly from the
+/// typed summary — no markdown re-parsing.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn apply_compression(
 	session: &mut ChatSession,
 	start_idx: usize,
 	end_idx: usize,
-	context_summary: &str,
+	summary: &CompressionSummary,
 	tokens_before: u64,
 	current_context_tokens: u64,
 	user_tasks_msgs: Vec<String>,
 	last_user_message: Option<crate::session::Message>,
 	preserved_skills: Vec<crate::session::Message>,
+	config: &crate::config::Config,
 ) -> Result<()> {
-	// Parse file contexts from AI summary (AI may request specific file ranges to re-inject)
-	let file_contexts = file_context::parse_file_contexts(context_summary);
+	// Fold critical knowledge from the typed summary into the session.
+	// Done up-front so the session reflects the new knowledge before we
+	// insert the rendered markdown that omits the (already-folded) entries.
+	fold_critical_knowledge(session, config, &summary.critical_knowledge);
 
-	// Generate file context content if any contexts found
+	// Render the typed summary to the markdown body that gets inserted into
+	// the session as the compressed turn. Sections appear only when they
+	// carry signal so the body stays terse on early or sparse compressions.
+	let summary_body = render_summary(summary);
+
+	// File context: structured array → tuple form expected by the legacy
+	// renderer. Validate line ranges (start <= end, both > 0); drop invalid
+	// entries silently rather than failing compression.
+	let file_contexts: Vec<(String, usize, usize)> = summary
+		.file_context
+		.iter()
+		.filter(|fc| fc.start_line > 0 && fc.start_line <= fc.end_line)
+		.map(|fc| (fc.filepath.clone(), fc.start_line, fc.end_line))
+		.collect();
+
 	let file_context_content = if !file_contexts.is_empty() {
 		crate::log_debug!(
 			"Compression: AI requested {} file context(s) for continuation",
@@ -97,15 +116,11 @@ pub(super) async fn apply_compression(
 		String::new()
 	};
 
-	// Format compressed entry with file context
 	let compression_id = crate::mcp::core::plan::compression::get_compression_id()
 		.unwrap_or_else(|| "unknown".to_string());
 
-	let base_entry = format_compressed_entry_with_context(
-		context_summary,
-		&file_context_content,
-		compression_id,
-	);
+	let base_entry =
+		format_compressed_entry_with_context(&summary_body, &file_context_content, compression_id);
 
 	// Prepend USER TASKS section (last 4 user requests, excluding the appended one).
 	// These are raw user messages — not AI-rephrased — so intent is never lost.

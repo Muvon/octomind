@@ -659,9 +659,10 @@ fn format_compressed_summary(
 		.unwrap_or_else(|| "Unknown".to_string());
 
 	let mut output = format!(
-		"## Compressed Knowledge [COMPRESSED: {}]\n\n\
-		**Latest fold**: {} (completed {})\n\n",
-		compression_id, task.title, completed_at
+		"<task_compressed id=\"{}\" task=\"{}\" completed_at=\"{}\">\n",
+		compression_id,
+		escape_attr(&task.title),
+		escape_attr(&completed_at),
 	);
 
 	// Anchor is the primary content. It contains intent, decisions,
@@ -669,13 +670,15 @@ fn format_compressed_summary(
 	// before format runs), file_refs accumulated across compactions, and
 	// any errors / next_steps recorded so far.
 	if !anchor.is_empty() {
-		output.push_str(&anchor.to_markdown());
+		output.push_str("<anchor>\n");
+		output.push_str(&anchor.to_xml());
+		output.push_str("</anchor>\n");
 	} else {
 		// Defensive fallback — should not happen because the caller
 		// extends the anchor before calling format. Kept so the function
 		// is correct even if invoked out of band (e.g. tests).
 		output.push_str(&format!(
-			"**Task**: {}\n**Summary**: {}\n\n",
+			"<task>{}</task>\n<summary>{}</summary>\n",
 			task.title, summary
 		));
 	}
@@ -684,21 +687,28 @@ fn format_compressed_summary(
 	// still in progress and which task is current.
 	if let Some((plan_title, completed_count, total_tasks, current_task_title)) = plan_context {
 		output.push_str(&format!(
-			"\n🎯 **ACTIVE PLAN**: {}\n\
-			- Progress: {}/{} tasks completed\n\
-			- Current Task: {}\n\
-			- Status: IN PROGRESS (use plan commands to continue)\n\n",
-			plan_title, completed_count, total_tasks, current_task_title
+			"<active_plan title=\"{}\" progress=\"{}/{}\" status=\"in_progress\">\n\
+			<current_task>{}</current_task>\n\
+			</active_plan>\n",
+			escape_attr(plan_title),
+			completed_count,
+			total_tasks,
+			current_task_title,
 		));
 	}
 
-	output.push_str(&format!(
-		"---\n\
-		*Compressed [{}]. Decisions, file references, and changes are preserved above.*",
-		compression_id
-	));
-
+	output.push_str("</task_compressed>");
 	output
+}
+
+/// Escape characters that would break a double-quoted XML attribute value.
+/// Used only for attribute embedding (titles, ids, timestamps); body text
+/// stays unescaped since it's free-form prose the LLM tolerates as-is.
+fn escape_attr(s: &str) -> String {
+	s.replace('&', "&amp;")
+		.replace('"', "&quot;")
+		.replace('<', "&lt;")
+		.replace('>', "&gt;")
 }
 
 /// Calculate total tokens in message range using accurate token counting
@@ -768,7 +778,7 @@ async fn compress_phase(
 	// Look for task compressions that belong to this phase
 	for (i, msg) in session.session.messages.iter().enumerate() {
 		if let Some(name) = &msg.name {
-			if name == "plan_compression" && msg.content.contains("## Compressed Knowledge") {
+			if name == "plan_compression" && msg.content.contains("<task_compressed") {
 				// Check if this task belongs to the phase (by checking content or just take all recent ones)
 				task_summaries.push((i, msg.content.clone()));
 				if start_index.is_none() {
@@ -870,16 +880,13 @@ async fn compress_phase(
 fn format_phase_summary(phase_name: &str, summary: &str, task_count: usize) -> String {
 	let compression_id = get_compression_id().unwrap_or_else(|| "unknown".to_string());
 	format!(
-		"## Phase Completed: {} [COMPRESSED: {}]\n\n\
-		**Tasks Completed**: {}\n\n\
-		**Summary**: {}\n\n\
-		**Compression Info**:\n\
-		- ID: `{}`\n\
-		- Type: Phase-level compression\n\
-		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
-		---\n\
-		*Phase Compression - {} task summaries compressed into phase overview*",
-		phase_name, compression_id, task_count, summary, compression_id, compression_id, task_count
+		"<phase_compressed id=\"{}\" phase=\"{}\" task_count=\"{}\">\n\
+		<summary>{}</summary>\n\
+		</phase_compressed>",
+		compression_id,
+		escape_attr(phase_name),
+		task_count,
+		summary,
 	)
 }
 
@@ -1058,23 +1065,15 @@ fn format_project_summary(
 ) -> String {
 	let compression_id = get_compression_id().unwrap_or_else(|| "unknown".to_string());
 	format!(
-		"## Project Completed: {} [COMPRESSED: {}]\n\n\
-		**Scale**: {} tasks across {} phases\n\n\
-		**Summary**: {}\n\n\
-		**Compression Info**:\n\
-		- ID: `{}`\n\
-		- Type: Project-level compression\n\
-		- Retrievable: Use `/retrieve {}` to expand (future feature)\n\n\
-		---\n\
-		*Project Compression - {} summaries consolidated into final project overview*",
-		plan_title,
+		"<project_compressed id=\"{}\" plan=\"{}\" tasks=\"{}\" phases=\"{}\" summaries_folded=\"{}\">\n\
+		<summary>{}</summary>\n\
+		</project_compressed>",
 		compression_id,
+		escape_attr(plan_title),
 		total_tasks,
 		total_phases,
+		summaries_compressed,
 		summary,
-		compression_id,
-		compression_id,
-		summaries_compressed
 	)
 }
 
@@ -1123,10 +1122,11 @@ mod tests {
 			&[],
 			&empty_anchor,
 		);
-		assert!(formatted.contains("## Compressed Knowledge"));
-		assert!(formatted.contains("test_123"));
-		assert!(formatted.contains("Test Task"));
+		assert!(formatted.contains("<task_compressed"));
+		assert!(formatted.contains("id=\"test_123\""));
+		assert!(formatted.contains("task=\"Test Task\""));
 		assert!(formatted.contains("Task completed successfully"));
+		assert!(formatted.contains("</task_compressed>"));
 	}
 
 	#[test]
@@ -1152,11 +1152,14 @@ mod tests {
 			0,
 		);
 		let formatted = format_compressed_summary(&task, "ok", "id_xyz", None, &[], &anchor);
-		// Anchor content surfaces directly — no separate Session Anchor heading.
+		// Anchor content surfaces directly inside <anchor>…</anchor>.
+		assert!(formatted.contains("<anchor>"));
 		assert!(formatted.contains("Refactor auth layer"));
 		assert!(formatted.contains("use JWT not sessions"));
-		// The redundant per-task Summary block should be gone.
-		assert!(!formatted.contains("**Summary**: ok"));
+		assert!(formatted.contains("</anchor>"));
+		// The defensive per-task <summary> fallback must NOT appear when the
+		// anchor carries content (it's only used when the anchor is empty).
+		assert!(!formatted.contains("<summary>ok</summary>"));
 	}
 
 	#[test]

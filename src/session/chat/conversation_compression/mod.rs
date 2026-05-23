@@ -29,6 +29,7 @@ mod decision;
 mod knowledge;
 mod prompt;
 mod range;
+mod schema;
 
 // Submodule entrypoints used by this orchestrator file:
 // - `ai::ask_ai_decision_and_summary` runs the LLM round-trip (it builds the
@@ -473,7 +474,8 @@ pub async fn check_and_compress_conversation(
 		.collect();
 
 	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
-	let (should_compress, context_summary) = ask_ai_decision_and_summary(
+	// Response is schema-validated and arrives as a typed struct.
+	let (should_compress, summary) = ask_ai_decision_and_summary(
 		session,
 		config,
 		&messages_to_compress,
@@ -490,17 +492,18 @@ pub async fn check_and_compress_conversation(
 
 	log_info!("AI decided to compress older conversation exchanges");
 
-	// Apply compression with the summary we got from AI
+	// Apply compression with the typed summary
 	apply_compression(
 		session,
 		start_idx,
 		end_idx,
-		&context_summary,
+		&summary,
 		tokens_before,
 		current_context_tokens,
 		user_tasks_msgs,
 		last_user_message,
 		preserved_skills,
+		config,
 	)
 	.await?;
 

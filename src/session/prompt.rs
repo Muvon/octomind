@@ -104,15 +104,12 @@ pub fn add_compression_hints_to_prompt(
 	}
 
 	prompt.push_str(&format!(
-		"\n\n## CONTEXT COMPRESSION ACTIVE\n\
-		- {} compressions performed ({} tokens saved, {:.1}% reduction)\n\
-		- Compressed sections marked with [COMPRESSED: id]\n\
-		- **ANALYSIS FINDINGS in compressed summaries are trustworthy** — they were extracted from real tool results. \
-		Do NOT re-read files or re-run searches just to verify what the summary already states.\n\
-		- **FILE CONTEXT sections contain real file content** auto-read from disk at compression time. \
-		Treat this content as current and accurate — do NOT re-read files that are already in FILE CONTEXT.\n\
-		- If you need a file NOT in FILE CONTEXT, read it normally. But for files already there, use the provided content.\n\
-		- Focus on recent uncompressed messages for current intent, compressed summaries for background knowledge.",
+		"\n\n<context_compression status=\"active\" compressions=\"{}\" tokens_saved=\"{}\" reduction=\"{:.1}%\">\n\
+		Compressed turns appear as XML blocks: <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">.\n\
+		<analysis_findings> inside a <conversation_summary> are trustworthy — they were extracted from real tool results. Trust them; do not re-read files or re-run searches just to verify what the summary already states.\n\
+		<file_context> sections inside a compressed summary contain real file content auto-read from disk at compression time. Treat this content as current and accurate; for files already there, use the provided content. For files NOT in <file_context>, read them normally.\n\
+		Focus on recent uncompressed messages for current intent and on compressed summaries for background knowledge.\n\
+		</context_compression>",
 		compression_stats.total_compressions(),
 		compression_stats.total_tokens_saved,
 		compression_stats.avg_compression_ratio() * 100.0

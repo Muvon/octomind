@@ -14,39 +14,53 @@
 
 // LLM I/O for compression decision + summary generation.
 //
-// This submodule owns the request → response → parse cycle:
-// `ask_ai_decision_and_summary` is the orchestration entrypoint that builds
-// the prompt (via the `prompt` submodule), invokes the model
-// (`call_ai_for_decision`), parses the body (`parse_ai_response`), and
-// validates it (`is_summary_valid`). Side-effects on the session: cost
-// tracking and `<knowledge>` extraction routed through the `knowledge`
-// submodule.
+// `ask_ai_decision_and_summary` builds the prompt, invokes the model with a
+// strict JSON schema attached, deserialises the typed response, and applies
+// the substantive-content gate. Cost accounting and critical-knowledge
+// folding remain side-effects on the session.
 
-use super::knowledge::{extract_and_store_knowledge, strip_knowledge_tags};
 use super::prompt::build_compression_prompt;
+use super::schema::{build_compression_schema, is_summary_substantive, CompressionSummary};
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 
-/// Call the AI compression model and return the raw response content.
+/// Invoke the compression model with the JSON schema attached, return the
+/// parsed structured response.
 ///
-/// Tracks cost against the session unless `ignore_cost` is set in config.
+/// Cost tracking applies unless `decision.ignore_cost` is set.
+///
+/// The system message is marked cached with 1h TTL so it's amortised across
+/// every compression call in a session — the schema + behaviour rules are
+/// byte-identical between calls and benefit from prompt caching.
 pub(super) async fn call_ai_for_decision(
 	session: &mut ChatSession,
 	config: &Config,
 	system_content: String,
 	user_content: String,
+	schema: serde_json::Value,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
-) -> Result<String> {
+) -> Result<CompressionSummary> {
 	let now = crate::utils::time::now_secs();
+	let decision_config = &config.compression.decision;
+
+	// Cache the system prompt only if the compression model supports caching.
+	// The system content is stable across compression calls (only varies on
+	// `force`), so cache hits amortise the (still small) system tokens.
+	let supports_caching = crate::session::model_supports_caching(&decision_config.model);
+
 	let messages = vec![
 		crate::session::Message {
 			role: "system".to_string(),
 			content: system_content,
 			timestamp: now,
-			cached: false,
-			cache_ttl: None,
+			cached: supports_caching,
+			cache_ttl: if supports_caching {
+				Some("1h".to_string())
+			} else {
+				None
+			},
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
@@ -71,8 +85,6 @@ pub(super) async fn call_ai_for_decision(
 		},
 	];
 
-	let decision_config = &config.compression.decision;
-
 	crate::log_debug!(
 		"Using compression decision model '{}' (max_tokens={}, temp={}, ignore_cost={})",
 		decision_config.model,
@@ -92,6 +104,7 @@ pub(super) async fn call_ai_for_decision(
 	)
 	.with_max_retries(decision_config.max_retries)
 	.with_full_context_tokens(true)
+	.with_schema(schema)
 	.with_cancellation_token(operation_rx);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
@@ -110,102 +123,40 @@ pub(super) async fn call_ai_for_decision(
 		log_debug!("Compression decision cost ignored (ignore_cost=true)");
 	}
 
-	Ok(response.content)
+	// Provider returns the validated JSON in `structured_output`. If absent
+	// the provider didn't honour the schema — treat as a hard error rather
+	// than silently falling back to text parsing. `completion.rs:233`
+	// already pre-validates that the model supports structured output, so
+	// reaching this branch means a runtime provider misbehaviour.
+	let raw = response.structured_output.ok_or_else(|| {
+		anyhow::anyhow!(
+			"Compression model '{}' returned no structured_output despite schema being attached",
+			decision_config.model
+		)
+	})?;
+
+	let summary: CompressionSummary = serde_json::from_value(raw).map_err(|e| {
+		anyhow::anyhow!(
+			"Failed to deserialize compression schema response: {}. The provider returned JSON that does not match the expected shape.",
+			e
+		)
+	})?;
+
+	Ok(summary)
 }
 
-/// Minimum acceptable length (after trim + knowledge-tag strip) for a compression summary.
+/// Orchestration entrypoint: build prompt + schema, invoke model, apply
+/// substantive-content gate, return whether to compress and the typed summary.
 ///
-/// A 200-OK response from the AI is no guarantee the body is usable. The model can
-/// return:
-/// - bare `"YES"` with no summary line,
-/// - `"YES\n<knowledge>...</knowledge>"` (knowledge stripped → empty),
-/// - `force=true` response that is ONLY knowledge tags (also strips to empty),
-/// - whitespace, a stray punctuation, or other near-empty noise.
+/// Returns `(should_compress, summary)`:
+/// - `should_compress = false` → caller skips compression entirely; the
+///   returned `summary` is meaningless and must not be applied.
+/// - `should_compress = true` → caller proceeds with `apply_compression`
+///   using the returned typed summary.
 ///
-/// If we accept any of those, `apply_compression` would drain dozens of messages and
-/// insert a header-only "## Conversation Summary" block — wiping the entire context.
-/// This guard refuses to compress in that case so the caller sets a cooldown and the
-/// session keeps its real history.
-pub(super) const MIN_SUMMARY_LEN: usize = 20;
-
-/// True if a candidate summary is substantive enough to replace compressed messages.
-pub(super) fn is_summary_valid(summary: &str) -> bool {
-	summary.trim().chars().count() >= MIN_SUMMARY_LEN
-}
-
-/// Parse the AI response into a compression decision and optional summary text.
-///
-/// `force=true`: entire response is the summary (no YES/NO gate).
-/// `force=false`: first line must be YES to proceed; NO means skip compression.
-///
-/// SAFETY: A response that yields a too-short summary (after trim + knowledge-tag
-/// strip) is treated as a compression failure and returns `(false, "")` — even on
-/// the `force` path. Better to skip compression than to wipe the conversation with
-/// an empty summary. See `MIN_SUMMARY_LEN`.
-pub(super) fn parse_ai_response(
-	session: &mut ChatSession,
-	config: &Config,
-	content: &str,
-	force: bool,
-) -> Result<(bool, String)> {
-	let content = content.trim();
-	let lines: Vec<&str> = content.lines().collect();
-
-	if lines.is_empty() {
-		if force {
-			return Err(anyhow::anyhow!(
-				"AI returned empty summary during forced compression"
-			));
-		}
-		log_debug!("AI compression decision: NO (empty response)");
-		return Ok((false, String::new()));
-	}
-
-	// Extract and store critical knowledge from <knowledge> tags before returning summary
-	extract_and_store_knowledge(session, config, content);
-
-	if force {
-		// Entire response is the summary — no YES/NO prefix expected.
-		let summary = strip_knowledge_tags(content);
-		if !is_summary_valid(&summary) {
-			log_info!(
-				"Compression aborted: AI returned too-short summary ({} chars, force=true). Skipping compression to avoid context loss.",
-				summary.trim().chars().count()
-			);
-			return Ok((false, String::new()));
-		}
-		log_debug!("AI forced compression summary ({} chars)", summary.len());
-		return Ok((true, summary));
-	}
-
-	let first_line = lines[0].trim().to_uppercase();
-	let decision = first_line.contains("YES");
-
-	if decision {
-		let summary = if lines.len() > 1 {
-			let raw = lines[1..].join("\n").trim().to_string();
-			strip_knowledge_tags(&raw)
-		} else {
-			String::new()
-		};
-		if !is_summary_valid(&summary) {
-			log_info!(
-				"Compression aborted: AI said YES but summary is too short ({} chars). Skipping compression to avoid context loss.",
-				summary.trim().chars().count()
-			);
-			return Ok((false, String::new()));
-		}
-		log_debug!(
-			"AI compression decision: YES with summary ({} chars)",
-			summary.len()
-		);
-		Ok((true, summary))
-	} else {
-		log_debug!("AI compression decision: NO");
-		Ok((false, String::new()))
-	}
-}
-
+/// Substantive-content gate: if the model emits `should_compress: true` but
+/// every narrative field is empty, we refuse to compress. Better to skip
+/// than to wipe the session with a header-only summary.
 pub(super) async fn ask_ai_decision_and_summary(
 	session: &mut ChatSession,
 	config: &Config,
@@ -213,10 +164,40 @@ pub(super) async fn ask_ai_decision_and_summary(
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 	force: bool,
 	target_ratio: f64,
-) -> Result<(bool, String)> {
+) -> Result<(bool, CompressionSummary)> {
 	let (system_content, user_content) =
 		build_compression_prompt(session, messages_to_compress, force, target_ratio);
-	let response_content =
-		call_ai_for_decision(session, config, system_content, user_content, operation_rx).await?;
-	parse_ai_response(session, config, &response_content, force)
+	let schema = build_compression_schema(force);
+
+	let summary = call_ai_for_decision(
+		session,
+		config,
+		system_content,
+		user_content,
+		schema,
+		operation_rx,
+	)
+	.await?;
+
+	if !summary.should_compress {
+		log_debug!("AI compression decision: should_compress=false");
+		return Ok((false, summary));
+	}
+
+	if !is_summary_substantive(&summary) {
+		log_info!(
+			"Compression aborted: AI set should_compress=true but every narrative field is empty. Skipping compression to avoid context loss."
+		);
+		return Ok((false, summary));
+	}
+
+	log_debug!(
+		"AI compression decision: should_compress=true (findings={}, recent={}, knowledge={}, files={})",
+		summary.analysis_findings.len(),
+		summary.recent_exchanges.len(),
+		summary.critical_knowledge.len(),
+		summary.file_context.len()
+	);
+
+	Ok((true, summary))
 }

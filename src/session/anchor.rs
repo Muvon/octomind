@@ -137,22 +137,25 @@ impl Anchor {
 		self.last_compacted_at = now_unix;
 	}
 
-	/// Render the anchor as a compact markdown block suitable for
-	/// inclusion in compressed-knowledge messages.
-	pub fn to_markdown(&self) -> String {
+	/// Render the anchor as a compact XML block suitable for inclusion in
+	/// compressed-knowledge messages. XML over markdown: subsequent
+	/// compressions re-feed this body as transcript input, and Claude is
+	/// tuned to parse XML-delimited sections more reliably than markdown
+	/// headers across paraphrase cycles.
+	pub fn to_xml(&self) -> String {
 		let mut out = String::with_capacity(512);
 		if !self.intent.is_empty() {
-			out.push_str("**Intent**: ");
-			out.push_str(&self.intent);
-			out.push_str("\n\n");
+			out.push_str("<intent>");
+			out.push_str(self.intent.trim());
+			out.push_str("</intent>\n");
 		}
-		render_list(&mut out, "Decisions", &self.decisions);
-		render_list(&mut out, "Changes made", &self.changes_made);
-		render_list(&mut out, "Errors / resolutions", &self.errors_seen);
-		render_list(&mut out, "File references", &self.file_refs);
-		render_list(&mut out, "Next steps", &self.next_steps);
+		render_list(&mut out, "decisions", "decision", &self.decisions);
+		render_list(&mut out, "changes_made", "change", &self.changes_made);
+		render_list(&mut out, "errors_seen", "entry", &self.errors_seen);
+		render_list(&mut out, "file_references", "file", &self.file_refs);
+		render_list(&mut out, "next_steps", "step", &self.next_steps);
 		if self.compactions_folded > 0 {
-			out.push_str(&format!("_anchor folds: {}_\n", self.compactions_folded));
+			out.push_str(&format!("<folds>{}</folds>\n", self.compactions_folded));
 		}
 		out
 	}
@@ -170,19 +173,16 @@ fn extend_dedup(target: &mut Vec<String>, additions: Vec<String>) {
 	}
 }
 
-fn render_list(out: &mut String, heading: &str, items: &[String]) {
-	if items.is_empty() {
+fn render_list(out: &mut String, outer: &str, item: &str, items: &[String]) {
+	let non_empty: Vec<&String> = items.iter().filter(|s| !s.trim().is_empty()).collect();
+	if non_empty.is_empty() {
 		return;
 	}
-	out.push_str("**");
-	out.push_str(heading);
-	out.push_str("**:\n");
-	for item in items {
-		out.push_str("- ");
-		out.push_str(item);
-		out.push('\n');
+	out.push_str(&format!("<{outer}>\n"));
+	for v in non_empty {
+		out.push_str(&format!("<{item}>{}</{item}>\n", v.trim(), item = item));
 	}
-	out.push('\n');
+	out.push_str(&format!("</{outer}>\n"));
 }
 
 #[cfg(test)]
@@ -277,7 +277,7 @@ mod tests {
 	}
 
 	#[test]
-	fn to_markdown_renders_only_present_sections() {
+	fn to_xml_renders_only_present_sections() {
 		let mut a = Anchor::default();
 		a.extend(
 			AnchorUpdate {
@@ -287,20 +287,20 @@ mod tests {
 			},
 			0,
 		);
-		let md = a.to_markdown();
-		assert!(md.contains("**Intent**: Refactor auth"));
-		assert!(md.contains("**Decisions**"));
-		assert!(md.contains("- use JWT"));
+		let xml = a.to_xml();
+		assert!(xml.contains("<intent>Refactor auth</intent>"));
+		assert!(xml.contains("<decisions>"));
+		assert!(xml.contains("<decision>use JWT</decision>"));
 		// Empty sections are skipped.
-		assert!(!md.contains("**Errors"));
-		assert!(!md.contains("**Next steps"));
+		assert!(!xml.contains("<errors_seen"));
+		assert!(!xml.contains("<next_steps"));
 	}
 
 	#[test]
 	fn empty_anchor_renders_to_short_string() {
 		let a = Anchor::default();
-		let md = a.to_markdown();
-		assert!(md.is_empty() || md.len() < 50);
+		let xml = a.to_xml();
+		assert!(xml.is_empty() || xml.len() < 50);
 	}
 
 	#[test]

@@ -186,10 +186,6 @@ let hint = if crate::mcp::tool_map::get_server_for_tool("better_tool").is_some()
 ```
 See `src/mcp/hint_accumulator.rs` and `src/mcp/core/schedule/core.rs` for examples.
 
-### Formatting: hard tabs
-
-`rustfmt.toml` sets `hard_tabs = true`. Run `cargo fmt --all` before every commit.
-
 ## Adding a New MCP Tool
 
 1. **Define** in `src/mcp/core/functions.rs` → `get_all_functions()` (core server) **or** `src/mcp/runtime/mod.rs` → `get_all_functions()` (runtime server)
@@ -208,26 +204,9 @@ See `src/mcp/hint_accumulator.rs` and `src/mcp/core/schedule/core.rs` for exampl
 3. Add `CommandOutput` variant to the enum in `commands/mod.rs` if the command has a new result shape
 4. Add constant to `src/session/chat/commands.rs` and the `COMMANDS` array
 
-## Development Workflow
-
-```bash
-cargo build                                                  # dev build
-cargo build --release                                        # release build
-cargo fmt --all                                              # format (must pass CI)
-cargo clippy --all-targets --all-features -- -D warnings    # lint (must pass CI)
-cargo test --release                                         # tests
-make dev                                                     # fmt + clippy + test
-make pre-commit                                              # full pre-commit suite
-```
-
-CI checks (all must pass): `cargo check` → `fmt --check` → `clippy -D warnings` → `cargo test`.
-
 ## Validation Checklist
 
 Before any commit:
-- [ ] `cargo fmt --all` passes (hard tabs — zero diff)
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` — zero warnings
-- [ ] `cargo test --release` — all pass
 - [ ] Apache 2.0 copyright header on every new `.rs` file
 - [ ] No `std::println!` / `std::eprintln!` — use crate macros
 - [ ] No `unwrap_or_else(|_| ...)` that swallows real errors

@@ -16,168 +16,114 @@
 // string assembly — no LLM call, no session mutation. Kept apart from the
 // AI invocation in `mod.rs` so prompt tuning and AI orchestration can evolve
 // independently.
+//
+// Prompt design follows three proven techniques:
+//   1. XML-tag structure for the system prompt (Anthropic: Claude is tuned
+//      to attend to XML-delimited sections; reduces section drift).
+//   2. Longform-at-top, query-at-bottom layout in the user message
+//      (Anthropic: queries at the end can lift quality up to 30% on
+//      large/complex inputs).
+//   3. Positive phrasing throughout (multiple 2024–2026 studies on the
+//      "Pink Elephant" problem: "do not X" routinely degrades performance
+//      versus the equivalent "do Y").
+// Sentence/paragraph caps are kept (not word caps): models can plan to a
+// sentence but cannot reliably count tokens/words.
 
 use super::knowledge::strip_file_context_from_summary;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 
-/// This combines decision + summarization to reduce latency and cost by 50%
-/// Ask AI: should we compress AND get summary in ONE call (1-hop optimization)
-/// This combines decision + summarization to reduce latency and cost by 50%.
-/// When `force=true` the AI is only asked to summarize — it has no right to say NO.
 /// Build the system and user prompt for the compression AI call.
 ///
 /// Returns `(system_content, user_content)`.
-/// `force=true` produces a direct-summary prompt (no YES/NO gate).
+///
+/// Single prompt path — `force` only swaps the trailing `<response_directive>`
+/// line (direct summary vs. YES/NO gate). Everything else is identical, so
+/// prompt drift between the two paths is impossible.
 pub(super) fn build_compression_prompt(
 	session: &ChatSession,
 	messages_to_compress: &[crate::session::Message],
 	force: bool,
 	target_ratio: f64,
 ) -> (String, String) {
-	// SYSTEM: role identity + instructions (what the model must do and how to respond).
-	// Kept separate from the data so the model acts as a compressor, not a session participant.
-	//
-	// SINGLE PATH: always produce a full summary when compressing — no silent YES/NO-only fallback.
-	// The prompt encodes three priorities:
-	//   1. CURRENT TASK — the user's most recent request dominates; older tasks compress aggressively.
-	//   2. RECENCY — messages marked [RECENT] are preserved with highest fidelity.
-	//   3. TOOL CALLS — secondary context, reduced to one-liners.
-	let system_content = if force {
-		"You are a conversation compressor. \
-The user has explicitly requested compression. You MUST produce a summary — do NOT refuse. \
-Do not start with YES or NO. Just write the summary directly using the format below.\n\n\
-## CRITICAL PRIORITIES\n\n\
-**Priority 1 — CURRENT TASK**: The user's MOST RECENT task/request is what matters most. \
-If the user pivoted to a new topic mid-conversation, the new topic IS the current intent. \
-Older completed/abandoned tasks can be compressed to a single line each.\n\n\
-**Priority 2 — RECENCY**: Messages marked [RECENT] represent the current state of work. \
-Preserve them with the highest fidelity — quote or closely paraphrase. \
-Older messages can be compressed aggressively.\n\n\
-**Priority 3 — TOOL CALLS are secondary**: Summarize what was done in one line each.\n\n\
-## SUMMARY FORMAT\n\n\
-**SESSION CONTEXT** (1 sentence):\n\
-Brief overview of the session — what brought us here. Keep it short.\n\n\
-**CURRENT TASK** (1-2 sentences):\n\
-What is the user working on RIGHT NOW? This is the most recent request — highlight it as the primary focus.\n\n\
-**PROGRESS** (2-4 sentences):\n\
-What was completed for the current task? What is in progress? What was the outcome?\n\n\
-**ANALYSIS FINDINGS** (preserve conclusions — this prevents re-doing work):\n\
-Capture key findings from code analysis, debugging, or investigation. Include:\n\
-- What was discovered (root causes, patterns, behaviors)\n\
-- Specific code locations and what was found there\n\
-- Conclusions drawn from tool results\n\
-This section is CRITICAL — without it, the AI will re-read the same files to rediscover the same things.\n\n\
-**RECENT EXCHANGES** (preserve with high fidelity — the most recent [RECENT] messages):\n\
-For each recent user/assistant pair: quote or closely paraphrase.\n\n\
-**KEY ENTITIES** (preserve exactly — copy values verbatim):\n\
-- Files/paths: exact file paths, line numbers, code locations\n\
-- Names: identifiers, function names, variable names, config keys\n\
-- Errors/issues: problems encountered and their status\n\
-- Decisions: choices made with reasoning\n\n\
-**NEXT STEPS** (1-2 sentences):\n\
-What needs to happen next to continue the current task?\n\n\
-**FILE CONTEXT — files to auto-inject after compression (IMPORTANT):**\n\
-Files listed in <context> tags will be AUTO-READ from disk and injected verbatim into the compressed summary. \
-This is how the session retains real file content across compressions without re-reading. \
-Include any file the session is actively working on or needs to continue.\n\
-<context>\n\
-filepath:startline:endline\n\
-</context>\n\
-Rules: <context> tags required; one entry per line as filepath:N:N (no spaces); \
-paths from project root; line numbers 1–10000; max 5 ranges; prioritize files being edited or analyzed.\n\n\
-**CRITICAL KNOWLEDGE — survives all future compressions:**\n\
-If there is critical knowledge that MUST survive future compressions \
-(e.g., a key architectural decision, a non-obvious constraint, a user preference, \
-analysis conclusions, root cause findings), write it in a <knowledge> tag. \
-2-3 sentences MAX. Only include if truly critical — not routine progress.\n\
-<knowledge>\n\
-Your critical insight here (2-3 sentences max).\n\
-</knowledge>\n\n\
-"
+	// Response directive — the only branch between force / non-force.
+	// Phrased positively: state the desired action, not the forbidden one.
+	let response_directive = if force {
+		"Write the summary directly. Start your response with the SESSION CONTEXT section."
 	} else {
-		"You are a conversation compressor. \
-Your job is to produce a lossless summary of a conversation transcript so the session can continue \
-without losing any important context.\n\n\
-## CRITICAL PRIORITIES (read carefully before summarizing)\n\n\
-**Priority 1 — CURRENT TASK**: The user's MOST RECENT task/request is what matters most. \
-If the user pivoted to a new topic mid-conversation, the new topic IS the current intent. \
-Older completed/abandoned tasks can be compressed to a single line each.\n\n\
-**Priority 2 — RECENCY**: Messages marked [RECENT] represent the current state of work. \
-Preserve them with the highest fidelity — quote or closely paraphrase. \
-Older messages without [RECENT] can be compressed aggressively.\n\n\
-**Priority 3 — TOOL CALLS are secondary**: Summarize what was done in one line each \
-(e.g. 'read file X', 'ran shell command Y, got Z'). Never reproduce full tool output.\n\n\
-## WHEN TO ANSWER YES vs NO\n\n\
-Answer YES if there are older exchanges that can be compressed without losing information needed \
-to continue. Answer NO only if the transcript is already minimal and nothing can be safely reduced.\n\n\
-## SUMMARY FORMAT (use when answering YES)\n\n\
-**SESSION CONTEXT** (1 sentence):\n\
-Brief overview of the session — what brought us here. Keep it short.\n\n\
-**CURRENT TASK** (1-2 sentences):\n\
-What is the user working on RIGHT NOW? This is the most recent request — highlight it as the primary focus.\n\n\
-**PROGRESS** (2-4 sentences):\n\
-What was completed for the current task? What is in progress? What was the outcome?\n\n\
-**ANALYSIS FINDINGS** (preserve conclusions — this prevents re-doing work):\n\
-Capture key findings from code analysis, debugging, or investigation. Include:\n\
-- What was discovered (root causes, patterns, behaviors)\n\
-- Specific code locations and what was found there\n\
-- Conclusions drawn from tool results\n\
-This section is CRITICAL — without it, the AI will re-read the same files to rediscover the same things.\n\n\
-**RECENT EXCHANGES** (preserve with high fidelity — the most recent [RECENT] messages):\n\
-For each recent user/assistant pair: quote or closely paraphrase. Do not compress these.\n\n\
-**KEY ENTITIES** (preserve exactly — copy values verbatim):\n\
-- Files/paths: exact file paths, line numbers, code locations\n\
-- Names: identifiers, function names, variable names, config keys\n\
-- Errors/issues: problems encountered and their status\n\
-- Decisions: choices made with reasoning\n\n\
-**NEXT STEPS** (1-2 sentences):\n\
-What needs to happen next to continue the current task?\n\n\
-## RESPONSE FORMAT\n\n\
-Start with YES or NO on the first line.\n\
-If YES, follow immediately with the summary using the sections above:\n\n\
-YES\n\
-**SESSION CONTEXT**: ...\n\
-**CURRENT TASK**: ...\n\
-**PROGRESS**: ...\n\
-**ANALYSIS FINDINGS**:\n\
-- [finding 1]\n\
-- [finding 2]\n\
-**RECENT EXCHANGES**:\n\
-- User: [question] → Assistant: [answer]\n\
-**KEY ENTITIES**:\n\
-- Files/paths: ...\n\
-- Errors/issues: ...\n\
-- Decisions: ...\n\
-**NEXT STEPS**: ...\n\n\
-**FILE CONTEXT — files to auto-inject after compression (IMPORTANT):**\n\
-Files listed in <context> tags will be AUTO-READ from disk and injected verbatim into the compressed summary. \
-This is how the session retains real file content across compressions without re-reading. \
-Include any file the session is actively working on or needs to continue.\n\
-<context>\n\
-filepath:startline:endline\n\
-</context>\n\
-Rules: <context> tags required; one entry per line as filepath:N:N (no spaces); \
-paths from project root; line numbers 1–10000; max 5 ranges; prioritize files being edited or analyzed.\n\n\
-**CRITICAL KNOWLEDGE — survives all future compressions:**\n\
-If there is critical knowledge that MUST survive future compressions \
-(e.g., a key architectural decision, a non-obvious constraint, a user preference, \
-analysis conclusions, root cause findings), write it in a <knowledge> tag. \
-2-3 sentences MAX. Only include if truly critical — not routine progress.\n\
-<knowledge>\n\
-Your critical insight here (2-3 sentences max).\n\
-</knowledge>\n\n\
-If NO, respond with just: NO"
-	}
-	.to_string();
+		"If older exchanges can be compressed without losing information needed to continue, write YES on the first line, then the summary. \
+If the transcript is already minimal, respond with the single line: NO"
+	};
 
-	// USER: plain-text transcript of the range being compressed + semantic chunk hints.
-	// Building a transcript (not raw messages) prevents the model from continuing the
-	// tool-calling loop — it sees text to analyze, not a live conversation to participate in.
+	let system_content = format!(
+		"<role>
+You are a conversation compressor. Your job: read a conversation transcript and produce a faithful summary so the session can continue with full working context.
+</role>
+
+<priorities>
+1. The user's MOST RECENT request is the active task — preserve it precisely.
+2. Messages tagged [RECENT] reflect current state — paraphrase closely, keep concrete details.
+3. Older exchanges and tool activity are secondary — compress them aggressively into one-liners.
+4. Copy file paths, line numbers, identifiers, and error strings verbatim from the transcript.
+</priorities>
+
+<output_format>
+Write a document with these sections, in this order:
+
+SESSION CONTEXT (1 sentence): what brought the session to this point.
+
+CURRENT TASK (1–2 sentences): the user's most recent active request — highlight it as the primary focus.
+
+PROGRESS (2–4 sentences): what was completed for the current task, what is in progress, what was the outcome.
+
+ANALYSIS FINDINGS (3–6 bullets): conclusions from code analysis, debugging, or investigation. Cover what was discovered (root causes, patterns, behaviors), the specific code locations involved, and the conclusions drawn from tool results. Capture these so the next turn skips re-deriving them.
+
+RECENT EXCHANGES (one bullet per [RECENT] turn): closely paraphrase each [RECENT] user/assistant pair. Keep concrete details and decisions intact.
+
+KEY ENTITIES (copy values verbatim from the transcript):
+- Files/paths: exact paths with line numbers
+- Names: identifiers, function names, variable names, config keys
+- Errors/issues: error strings and current status
+- Decisions: choices made with their reasoning
+
+NEXT STEPS (1–2 sentences): the concrete action that advances the current task.
+</output_format>
+
+<file_context_rules>
+List the files the next turn will need to read. These are auto-loaded from disk and re-injected after the summary, so the session retains real file content across compressions.
+
+Format: one entry per line as filepath:startline:endline. Paths from project root. Line numbers between 1 and 10000. Maximum 5 ranges. Prioritize files actively being edited or analyzed.
+
+<context>
+filepath:N:N
+</context>
+</file_context_rules>
+
+<critical_knowledge_rules>
+Record insights that must survive future compressions — an architectural decision, a hidden constraint, a user preference, a root-cause finding. Include only truly critical knowledge (not routine progress). 2–3 sentences each.
+
+<knowledge>
+Critical insight here (2–3 sentences max).
+</knowledge>
+</critical_knowledge_rules>
+
+<response_directive>
+{response_directive}
+</response_directive>"
+	);
+
+	// USER: longform transcript first, task instruction last (Anthropic
+	// long-context best practice: query-at-bottom gains up to 30% on
+	// complex inputs).
 	//
-	// RECENCY MARKER: the last 8 messages (min 4, max 8) are tagged [RECENT] so the AI
-	// knows to preserve them with the highest fidelity. Capped at 8 to prevent the
-	// RECENT window from growing so large it defeats compression on long sessions.
+	// Building a transcript (not raw messages) prevents the model from
+	// continuing the tool-calling loop — it sees text to analyze, not a
+	// live conversation to participate in.
+	//
+	// RECENCY MARKER: the last 8 messages (min 4, max 8) are tagged [RECENT]
+	// so the AI knows to preserve them with the highest fidelity. Capped at
+	// 8 to prevent the RECENT window from growing so large it defeats
+	// compression on long sessions.
 	let total_msgs = messages_to_compress.len();
 	let recent_count = (total_msgs / 4).clamp(4, 8);
 	let recent_start = total_msgs.saturating_sub(recent_count);
@@ -190,25 +136,30 @@ If NO, respond with just: NO"
 	} else {
 		"gentle"
 	};
-	let mut user_content = format!(
-		"**COMPRESSION TARGET**: Reduce this transcript to ~{}% of its original size ({:.1}x compression). \
-Be {} in what you preserve.\n\n\
-**Conversation transcript to compress:**\n\
-NOTE: Messages marked [RECENT] are the most recent and most important — preserve them with \
-highest fidelity. [USER]/[ASSISTANT] pairs are primary signal; [TOOL CALL]/[TOOL RESULT] are \
-secondary context.\n\n",
-		reduction_pct, target_ratio, aggressiveness,
-	);
 
-	// Inject accumulated critical knowledge from prior compressions
+	let mut user_content = String::new();
+
+	// 1. Prior critical knowledge — short meta-context, placed before the
+	//    transcript so the model reads the transcript already aware of
+	//    must-preserve facts.
 	if !session.critical_knowledge.is_empty() {
+		user_content.push_str("<prior_knowledge>\n");
 		user_content
-			.push_str("**CRITICAL KNOWLEDGE (from prior compressions — MUST be preserved):**\n");
+			.push_str("From earlier compressions of this session — these facts must survive into the new summary:\n");
 		for (i, knowledge) in session.critical_knowledge.iter().enumerate() {
 			user_content.push_str(&format!("{}. {}\n", i + 1, knowledge));
 		}
-		user_content.push('\n');
+		user_content.push_str("</prior_knowledge>\n\n");
 	}
+
+	// 2. Transcript — the longform data, opens with a short reader hint then
+	//    the labelled exchanges. Wrapped in <transcript> so the model knows
+	//    exactly which span is the input to summarize.
+	user_content.push_str("<transcript>\n");
+	user_content.push_str(
+		"Messages tagged [RECENT] are the most recent and most important — preserve them with highest fidelity. \
+[USER] and [ASSISTANT] turns are primary signal. [TOOL CALL] and [TOOL RESULT] entries are secondary context.\n\n",
+	);
 
 	// Collect file references from tool calls for context preservation
 	// These can be re-read on demand after compression
@@ -354,19 +305,38 @@ secondary context.\n\n",
 		}
 	}
 
-	// Append file references extracted from tool calls
-	// These allow the model to re-read critical files after compression
+	// Close the <transcript> block.
+	user_content.push_str("</transcript>\n");
+
+	// 3. File references extracted from tool calls — candidate ranges the
+	//    next turn can re-read on demand. Placed between the transcript and
+	//    the task so the model sees them while deciding which files to
+	//    include under <file_context_rules>.
 	if !file_refs.is_empty() {
-		// Merge overlapping ranges and dedupe
 		let merged_refs = file_context::merge_file_refs(&file_refs);
 		if !merged_refs.is_empty() {
-			user_content.push_str("\n**File references (can be re-read on demand):**\n");
-			// Limit to prevent bloat
+			user_content.push_str("\n<file_references>\n");
+			user_content
+				.push_str("Files touched by tool calls in this transcript (candidates for the <context> tag in your output):\n");
 			for ref_str in merged_refs.iter().take(10) {
 				user_content.push_str(&format!("- {}\n", ref_str));
 			}
+			user_content.push_str("</file_references>\n");
 		}
 	}
+
+	// 4. Task instruction — placed at the BOTTOM of the user message
+	//    (Anthropic long-context guidance: query-at-end lifts quality on
+	//    complex inputs). Concrete compression target and writing posture.
+	user_content.push_str(&format!(
+		"\n<task>\n\
+Compress the transcript above to roughly {pct}% of its original size ({ratio:.1}x compression). Be {agg} in what you preserve.\n\
+Follow the output format from your instructions exactly. Apply the response directive verbatim.\n\
+</task>",
+		pct = reduction_pct,
+		ratio = target_ratio,
+		agg = aggressiveness,
+	));
 
 	(system_content, user_content)
 }

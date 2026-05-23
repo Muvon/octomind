@@ -18,6 +18,16 @@ use crate::config::Config;
 use crate::providers::ThinkingBlock;
 use crate::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
 use colored::Colorize;
+use regex::Regex;
+
+/// Strip `<system>...</system>` blocks (and surrounding blank lines) from
+/// content intended for user-facing display. Used for welcome messages that
+/// embed AI-only context inside `<system>` tags.
+pub fn strip_system_tags(content: &str) -> String {
+	// Match <system>...</system> (multiline, lazy) including any trailing newline
+	let re = Regex::new(r"(?is)\s*<system>.*?</system>\s*").unwrap();
+	re.replace_all(content, "\n").trim().to_string()
+}
 
 /// Check if assistant content was already displayed in thinking block
 /// Returns the content to display (either full content or trimmed content)

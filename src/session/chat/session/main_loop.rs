@@ -339,6 +339,27 @@ pub async fn run_interactive_session(
 					println!("> {}", msg.content.bright_blue());
 				}
 			}
+		} else {
+			// New interactive session: print the welcome message (assistant) as
+			// user-facing AI output, stripping any <system>...</system> AI-only
+			// blocks and rendering markdown when applicable.
+			if let Some(welcome_msg) = chat_session
+				.session
+				.messages
+				.iter()
+				.find(|m| m.role == "assistant")
+			{
+				let visible =
+					crate::session::chat::assistant_output::strip_system_tags(&welcome_msg.content);
+				if !visible.is_empty() {
+					crate::session::chat::assistant_output::print_assistant_response(
+						&visible,
+						&config_for_role,
+						&role,
+						&None,
+					);
+				}
+			}
 		}
 
 		// Set up advanced cancellation system for proper CTRL+C handling

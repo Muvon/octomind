@@ -908,13 +908,18 @@ pub async fn run_interactive_session(
 					animation_manager.stop_current().await;
 
 					match done_result {
-						Some(Ok((exit_flag, reset_first_message))) => {
-							if reset_first_message {
-								// Reset first_message_processed to false so that the next message goes through layers again
-								first_message_processed = false;
-							}
-							if exit_flag {
-								break;
+						Some(Ok(outcome)) => {
+							use crate::session::chat::session::commands::DoneOutcome;
+							match outcome {
+								DoneOutcome::Compressed => {
+									println!("{}", "✅ Conversation compressed.".bright_green());
+								}
+								DoneOutcome::NothingToCompress => {
+									println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
+								}
+								DoneOutcome::Failed(e) => {
+									println!("{}: {}", "❌ Compression failed".bright_red(), e);
+								}
 							}
 						}
 						Some(Err(e)) => {

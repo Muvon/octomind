@@ -704,6 +704,10 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				// intercepts, so without this branch the panic aborts the agent
 				// process (panic = "abort" in release → SIGABRT). Handle it here
 				// directly, mirroring the websocket server pattern.
+				// Override text for /done so the client sees the actual compression
+				// outcome instead of the generic "Command executed.". Captured here
+				// and threaded through to the AgentMessageChunk send below.
+				let mut done_status_override: Option<String> = None;
 				let result = if input.trim() == crate::session::chat::DONE_COMMAND {
 					let config_for_role = config.get_merged_config_for_role(&self.role);
 					match crate::session::chat::session::commands::handle_done(
@@ -713,10 +717,21 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					)
 					.await
 					{
-						Ok(_) => {
+						Ok(outcome) => {
 							if let Err(e) = chat_session.save() {
 								crate::log_debug!("session save failed: {}", e);
 							}
+							done_status_override = Some(match outcome {
+								crate::session::chat::session::commands::DoneOutcome::Compressed => {
+									"✅ Conversation compressed.".to_string()
+								}
+								crate::session::chat::session::commands::DoneOutcome::NothingToCompress => {
+									"ℹ️ Nothing to compress.".to_string()
+								}
+								crate::session::chat::session::commands::DoneOutcome::Failed(e) => {
+									format!("❌ Compression failed: {e}")
+								}
+							});
 							Ok(crate::session::chat::session::commands::CommandResult::Handled)
 						}
 						Err(e) => Err(e),
@@ -746,7 +761,9 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					) => serde_json::to_string_pretty(&output.to_json())
 						.unwrap_or_else(|_| "Command executed.".to_string()),
 					Ok(crate::session::chat::session::commands::CommandResult::Handled) => {
-						"Command executed.".to_string()
+						done_status_override
+							.take()
+							.unwrap_or_else(|| "Command executed.".to_string())
 					}
 					Ok(crate::session::chat::session::commands::CommandResult::Exit) => {
 						"Session exit requested.".to_string()

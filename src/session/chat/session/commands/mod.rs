@@ -19,7 +19,7 @@ mod context;
 mod copy;
 mod display;
 mod done;
-pub use done::handle_done;
+pub use done::{handle_done, DoneOutcome};
 mod analyze;
 mod effort;
 mod exit;

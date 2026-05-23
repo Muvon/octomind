@@ -17,7 +17,16 @@
 use super::super::core::ChatSession;
 use crate::config::Config;
 use anyhow::Result;
-use colored::Colorize;
+
+/// Outcome of a /done invocation. Callers (CLI, ACP, WebSocket) decide how to
+/// surface this — keep this layer transport-agnostic. Writing to stdout here
+/// corrupts the ACP JSON-RPC framing on stdio.
+#[derive(Debug, Clone)]
+pub enum DoneOutcome {
+	Compressed,
+	NothingToCompress,
+	Failed(String),
+}
 
 /// Force-compress conversation context, bypassing all automatic threshold/cooldown/cost guards.
 /// The user explicitly requested compression, so we always run it.
@@ -25,8 +34,8 @@ pub async fn handle_done(
 	session: &mut ChatSession,
 	config: &Config,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
-) -> Result<(bool, bool)> {
-	let compressed =
+) -> Result<DoneOutcome> {
+	let outcome =
 		match crate::session::chat::conversation_compression::check_and_compress_conversation(
 			session,
 			config,
@@ -35,21 +44,12 @@ pub async fn handle_done(
 		)
 		.await
 		{
-			Ok(true) => {
-				println!("{}", "✅ Conversation compressed.".bright_green());
-				true
-			}
-			Ok(false) => {
-				println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
-				false
-			}
-			Err(e) => {
-				println!("{}: {}", "❌ Compression failed".bright_red(), e);
-				false
-			}
+			Ok(true) => DoneOutcome::Compressed,
+			Ok(false) => DoneOutcome::NothingToCompress,
+			Err(e) => DoneOutcome::Failed(e.to_string()),
 		};
 
-	crate::log_debug!("/done: compression={}", compressed);
+	crate::log_debug!("/done: outcome={:?}", outcome);
 
 	// Fire-and-forget lesson extraction — do NOT block the prompt on the LLM round-trip.
 	// Same pattern as /exit and Ctrl+D in main_loop.rs.
@@ -62,6 +62,5 @@ pub async fn handle_done(
 		session.learning_injected = false;
 	}
 
-	// Returns (exit_flag, reset_first_message_processed)
-	Ok((false, false))
+	Ok(outcome)
 }

@@ -751,14 +751,25 @@ async fn handle_command_message(
 	// Handle /done specially — it hits unreachable!() in process_command
 	// because the CLI intercepts it before routing. We handle it here directly.
 	if command_name == "done" {
-		use crate::session::chat::session::commands::handle_done;
+		use crate::session::chat::session::commands::{handle_done, DoneOutcome};
 		match handle_done(&mut chat_session, &config_for_role, operation_rx).await {
-			Ok(_) => {
+			Ok(DoneOutcome::Compressed) => {
 				let status = ServerMessage::status(
 					"Conversation compressed".to_string(),
 					Some(session_id.clone()),
 				);
 				send_message(ws_sender, &status).await?;
+			}
+			Ok(DoneOutcome::NothingToCompress) => {
+				let status = ServerMessage::status(
+					"Nothing to compress".to_string(),
+					Some(session_id.clone()),
+				);
+				send_message(ws_sender, &status).await?;
+			}
+			Ok(DoneOutcome::Failed(e)) => {
+				let error = ServerMessage::error(format!("Compression failed: {}", e));
+				send_message(ws_sender, &error).await?;
 			}
 			Err(e) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));

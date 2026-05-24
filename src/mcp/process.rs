@@ -1519,11 +1519,62 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 			std::time::Duration::from_secs(timeout_seconds),
 			handle_opt.take().unwrap(),
 		) => {
-			// Handle completed (or timed out) — clear in_flight since there's nothing to await.
-			*in_flight_arc.lock().unwrap() = None;
 			match result {
-				Ok(task_result) => task_result?,
-			Err(_) => Err(anyhow::anyhow!("Timeout ({} seconds) communicating with stdin server: {}", timeout_seconds, server_name_for_error))
+				Ok(task_result) => {
+					// Task completed within the timeout — clean in_flight slot.
+					*in_flight_arc.lock().unwrap() = None;
+					task_result?
+				}
+				Err(_) => {
+					// Timeout elapsed. The spawn_blocking thread is still alive,
+					// holding the std::sync::Mutex on the server process while it
+					// waits for a response that may never come (e.g. the server
+					// is itself blocked running a long shell command). Without
+					// the teardown below, the NEXT tool call deadlocks trying to
+					// lock the same mutex. Mirror the cancellation branch: tell
+					// the blocking loop to exit, kill the server's process group
+					// so its read pipe EOFs immediately, and mark the server
+					// dead so the next call restarts a fresh process.
+					cancel_flag.store(true, Ordering::Relaxed);
+
+					#[cfg(unix)]
+					{
+						let pgid = child_pid as libc::pid_t;
+						// SAFETY: libc::kill is always safe to call with valid arguments.
+						unsafe {
+							libc::kill(-pgid, libc::SIGTERM);
+						}
+						crate::log_debug!(
+							"Sent SIGTERM to process group {} (server '{}') on timeout",
+							pgid,
+							server_name_for_error
+						);
+						tokio::spawn(async move {
+							tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+							unsafe {
+								libc::kill(-pgid, libc::SIGKILL);
+							}
+						});
+					}
+
+					{
+						let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+						let info = restart_info_guard
+							.entry(server_name_for_error.clone())
+							.or_default();
+						info.health_status = ServerHealth::Dead;
+					}
+
+					// in_flight already empty (handle_opt was consumed when the
+					// timeout future was constructed); clear defensively.
+					*in_flight_arc.lock().unwrap() = None;
+
+					Err(anyhow::anyhow!(
+						"Timeout ({} seconds) communicating with stdin server: {}",
+						timeout_seconds,
+						server_name_for_error
+					))
+				}
 			}
 		},
 		_ = cancellation_future => {

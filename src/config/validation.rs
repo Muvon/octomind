@@ -43,23 +43,25 @@ impl Config {
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
-		// STRICT: The compression model must support structured output —
-		// the compression call attaches a strict JSON schema and parses
-		// `response.structured_output`. Failing here at config-load time
-		// makes the requirement visible up front rather than surfacing
-		// mid-session at the first compression event.
-		self.validate_compression_provider()?;
+		// Compression model: must resolve to a known provider, but EITHER
+		// structured-output support (JSON path) OR no support (XML path)
+		// is acceptable — `ask_ai_decision_and_summary` dispatches on the
+		// provider's capability at call time.
+		self.validate_compression_model()?;
 
 		Ok(())
 	}
 
-	/// Verify the configured compression model is served by a provider
-	/// that supports structured (JSON-schema) output. Required because the
-	/// compression call path is schema-driven with no markdown fallback.
+	/// Verify the configured compression model resolves to a known
+	/// provider. The runtime picks JSON or XML wire mode from the
+	/// provider's `supports_structured_output(model)` capability, so
+	/// either capability is acceptable — we only fail when the model
+	/// string itself is missing or unresolvable.
 	///
-	/// Skipped when compression is effectively disabled (no pressure levels
-	/// configured) — there is no compression call to validate against.
-	fn validate_compression_provider(&self) -> Result<()> {
+	/// Skipped when compression is effectively disabled (no pressure
+	/// levels configured) — there is no compression call to validate
+	/// against.
+	fn validate_compression_model(&self) -> Result<()> {
 		if self.compression.pressure_levels.is_empty() {
 			return Ok(());
 		}
@@ -67,23 +69,12 @@ impl Config {
 		let model = &self.compression.decision.model;
 		if model.is_empty() {
 			return Err(anyhow!(
-				"compression.decision.model is empty — set it to a model that supports structured output (e.g. anthropic:claude-sonnet-4-6, openai:gpt-4.1)"
+				"compression.decision.model is empty — set it to a model resolvable by a configured provider (e.g. anthropic:claude-sonnet-4-6, openai:gpt-4.1)"
 			));
 		}
 
-		let (provider, actual_model) =
-			crate::providers::ProviderFactory::get_provider_for_model(model)
-				.map_err(|e| anyhow!("compression.decision.model '{}' is invalid: {}", model, e))?;
-
-		if !provider.supports_structured_output(&actual_model) {
-			return Err(anyhow!(
-				"compression.decision.model '{}' (provider '{}') does not support structured output. \
-				 Compression requires strict JSON schema responses. \
-				 Pick a model whose provider supports structured output (e.g. anthropic:claude-sonnet-4-6, openai:gpt-4.1).",
-				model,
-				provider.name()
-			));
-		}
+		crate::providers::ProviderFactory::get_provider_for_model(model)
+			.map_err(|e| anyhow!("compression.decision.model '{}' is invalid: {}", model, e))?;
 
 		Ok(())
 	}

@@ -17,43 +17,111 @@
 // AI invocation in `ai.rs` so prompt tuning and AI orchestration can evolve
 // independently.
 //
-// Output shape is enforced by JSON schema (see `schema::build_compression_schema`),
-// not by markdown templates embedded in the prompt. As a result this prompt
-// is dramatically shorter than the old free-form version — it only carries
-// *behavioural guidance* the schema cannot express (priorities, scaffold
-// rules, recency semantics).
+// Two prompt modes mirror the two AI-call modes in `ai.rs`:
+//   - JSON mode (`build_compression_prompt_json`): output shape is enforced
+//     by JSON schema (see `schema::build_compression_schema`); the prompt
+//     carries only behavioural guidance.
+//   - XML mode (`build_compression_prompt_xml`): for providers without
+//     structured-output support; the prompt additionally embeds the XML
+//     output specification (`schema::XML_OUTPUT_SPEC`) so the model knows
+//     the exact tag shape `schema::parse_xml_summary` will validate against.
+//
+// The user content (transcript + prior knowledge + file refs) is identical
+// across modes — only the system content and the closing task instruction
+// differ.
 
 use super::knowledge::{strip_file_context_from_summary, SUMMARY_TAG_OPEN_PREFIX};
+use super::schema::XML_OUTPUT_SPEC;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 
-/// Build the system and user prompt for the compression AI call.
+/// Output mode for the compression call. Decided up-front from the
+/// provider's `supports_structured_output(model)` capability in `ai.rs`.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum OutputMode {
+	/// Schema-driven JSON path (preferred). Provider receives the
+	/// `build_compression_schema(..)` value as `structured_output`.
+	Json,
+	/// XML path. No schema attached; the model is told to emit XML matching
+	/// `XML_OUTPUT_SPEC` and the response is parsed by `parse_xml_summary`.
+	Xml,
+}
+
+/// Build the system and user prompt for the JSON-mode compression call.
 ///
-/// Returns `(system_content, user_content)`.
-///
-/// The system content is byte-identical across every compression call that
-/// shares the same `force` value. `ai.rs` flags it as cached so the provider
-/// can amortise it across calls — a small but real cost win for sessions
-/// that compress multiple times.
-pub(super) fn build_compression_prompt(
+/// Output shape is governed by the JSON schema attached to the request; the
+/// prompt only carries behavioural guidance.
+pub(super) fn build_compression_prompt_json(
 	session: &ChatSession,
 	messages_to_compress: &[crate::session::Message],
 	force: bool,
 	target_ratio: f64,
 ) -> (String, String) {
-	// The response shape is defined by the JSON schema attached to the call.
-	// What this prompt provides is *behaviour*: how to choose what to put in
-	// each field, what to carry forward, what to drop. Field-level descriptions
-	// live in the schema; cross-field rules and priorities live here.
+	build_compression_prompt(
+		session,
+		messages_to_compress,
+		force,
+		target_ratio,
+		OutputMode::Json,
+	)
+}
+
+/// Build the system and user prompt for the XML-mode compression call.
+///
+/// Used when the provider does not support structured output. The system
+/// prompt embeds the XML output specification so the model knows the
+/// exact tag contract; the user-side task instruction directs raw-XML
+/// output (no fences, no prose).
+pub(super) fn build_compression_prompt_xml(
+	session: &ChatSession,
+	messages_to_compress: &[crate::session::Message],
+	force: bool,
+	target_ratio: f64,
+) -> (String, String) {
+	build_compression_prompt(
+		session,
+		messages_to_compress,
+		force,
+		target_ratio,
+		OutputMode::Xml,
+	)
+}
+
+/// Shared implementation. Returns `(system_content, user_content)`.
+///
+/// The system content is byte-identical across every compression call that
+/// shares the same `(force, mode)` pair. `ai.rs` flags it as cached so the
+/// provider can amortise it across calls — a small but real cost win for
+/// sessions that compress multiple times.
+fn build_compression_prompt(
+	session: &ChatSession,
+	messages_to_compress: &[crate::session::Message],
+	force: bool,
+	target_ratio: f64,
+	mode: OutputMode,
+) -> (String, String) {
+	// Behavioural guidance shared by both modes: how to choose what to put
+	// where, what to carry forward, what to drop. Mode-specific output
+	// contract is appended (schema reference for JSON, XML spec for XML).
 	let force_directive = if force {
 		"\n<forced>\nThe user has explicitly requested compression. Set should_compress to true and fill every field. Refusal is not an option.\n</forced>"
 	} else {
 		""
 	};
 
+	let role_line = match mode {
+		OutputMode::Json => "You are a conversation compressor. Read a conversation transcript and emit a faithful structured summary so the session can continue with full working context. Your output is validated against a strict JSON schema — field shapes and constraints are documented there.",
+		OutputMode::Xml => "You are a conversation compressor. Read a conversation transcript and emit a faithful structured summary so the session can continue with full working context. Your output is an XML document — the exact tag contract is specified in <output_format> below and is parsed by tag boundaries.",
+	};
+
+	let mode_appendix = match mode {
+		OutputMode::Json => String::new(),
+		OutputMode::Xml => format!("\n\n{XML_OUTPUT_SPEC}"),
+	};
+
 	let system_content = format!(
 		"<role>
-You are a conversation compressor. Read a conversation transcript and emit a faithful structured summary so the session can continue with full working context. Your output is validated against a strict JSON schema — field shapes and constraints are documented there.
+{role_line}
 </role>
 
 <priorities>
@@ -74,7 +142,7 @@ If the transcript contains a prior <conversation_summary id=\"…\">…</convers
 
 <recency>
 Messages tagged [RECENT] are the most recent and most important — preserve them with highest fidelity. [USER] and [ASSISTANT] turns are primary signal. [TOOL CALL] and [TOOL RESULT] entries are secondary context.
-</recency>{force_directive}",
+</recency>{force_directive}{mode_appendix}",
 	);
 
 	// USER message: longform transcript first, task instruction at the bottom
@@ -278,15 +346,26 @@ Messages tagged [RECENT] are the most recent and most important — preserve the
 	}
 
 	// 4. Task instruction — at the BOTTOM (Anthropic long-context guidance:
-	//    query-at-end lifts quality on complex inputs).
+	//    query-at-end lifts quality on complex inputs). The output-contract
+	//    line differs per mode: JSON cites the attached schema, XML cites
+	//    the <output_format> block embedded in the system prompt.
+	let output_directive = match mode {
+		OutputMode::Json => {
+			"Emit a single JSON object conforming to the structured-output schema attached to this request."
+		}
+		OutputMode::Xml => {
+			"Emit a single XML document with the exact tags defined in <output_format>. Output ONLY raw XML — no prose, no code fences."
+		}
+	};
 	user_content.push_str(&format!(
 		"\n<task>\n\
 Compress the transcript above to roughly {pct}% of its original size ({ratio:.1}x compression). Be {agg} in what you preserve.\n\
-Emit a single JSON object conforming to the structured-output schema attached to this request.\n\
+{out}\n\
 </task>",
 		pct = reduction_pct,
 		ratio = target_ratio,
 		agg = aggressiveness,
+		out = output_directive,
 	));
 
 	(system_content, user_content)

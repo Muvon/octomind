@@ -14,32 +14,48 @@
 
 // LLM I/O for compression decision + summary generation.
 //
-// `ask_ai_decision_and_summary` builds the prompt, invokes the model with a
-// strict JSON schema attached, deserialises the typed response, and applies
-// the substantive-content gate. Cost accounting and critical-knowledge
-// folding remain side-effects on the session.
+// `ask_ai_decision_and_summary` picks one of two equal paths up-front from
+// the provider's `supports_structured_output(model)` capability:
+//
+//   - JSON path: builds the JSON prompt + attaches the strict JSON schema;
+//     deserialises `response.structured_output` (with a small lenient
+//     recovery inside the JSON mode for providers that misroute valid JSON
+//     into `content` instead of `structured_output`).
+//   - XML path: builds the XML prompt (embedding the tag spec); parses the
+//     response with `parse_xml_summary`, which performs structural
+//     validation matching the JSON schema's bounds.
+//
+// Both paths return `CompressionSummary`; the substantive-content gate and
+// cost/knowledge side-effects are mode-agnostic.
 
-use super::prompt::build_compression_prompt;
-use super::schema::{build_compression_schema, is_summary_substantive, CompressionSummary};
+use super::prompt::{build_compression_prompt_json, build_compression_prompt_xml};
+use super::schema::{
+	build_compression_schema, is_summary_substantive, parse_xml_summary, CompressionSummary,
+};
 use crate::config::Config;
+use crate::providers::ProviderFactory;
 use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 
-/// Invoke the compression model with the JSON schema attached, return the
-/// parsed structured response.
+/// Invoke the compression model and return the parsed summary.
 ///
-/// Cost tracking applies unless `decision.ignore_cost` is set.
+/// `schema` decides the wire-mode:
+///   - `Some(schema)` → JSON path. Schema is attached to the request,
+///     `response.structured_output` is preferred and falls back to a
+///     lenient text-content recovery for providers that misroute it.
+///   - `None` → XML path. No schema attached, the model's textual
+///     response is fed through `parse_xml_summary`.
 ///
-/// The system message is marked cached with 1h TTL so it's amortised across
-/// every compression call in a session — the schema + behaviour rules are
-/// byte-identical between calls and benefit from prompt caching.
-pub(super) async fn call_ai_for_decision(
+/// Cost tracking applies unless `decision.ignore_cost` is set. The system
+/// message is marked cached with 1h TTL so it's amortised across every
+/// compression call in a session.
+async fn call_ai_for_decision(
 	session: &mut ChatSession,
 	config: &Config,
 	system_content: String,
 	user_content: String,
-	schema: serde_json::Value,
+	schema: Option<serde_json::Value>,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<CompressionSummary> {
 	let now = crate::utils::time::now_secs();
@@ -47,7 +63,7 @@ pub(super) async fn call_ai_for_decision(
 
 	// Cache the system prompt only if the compression model supports caching.
 	// The system content is stable across compression calls (only varies on
-	// `force`), so cache hits amortise the (still small) system tokens.
+	// `force` and mode), so cache hits amortise the system tokens.
 	let supports_caching = crate::session::model_supports_caching(&decision_config.model);
 
 	let messages = vec![
@@ -85,15 +101,17 @@ pub(super) async fn call_ai_for_decision(
 		},
 	];
 
-	crate::log_debug!(
-		"Using compression decision model '{}' (max_tokens={}, temp={}, ignore_cost={})",
+	let mode_label = if schema.is_some() { "json" } else { "xml" };
+	log_debug!(
+		"Using compression decision model '{}' mode={} (max_tokens={}, temp={}, ignore_cost={})",
 		decision_config.model,
+		mode_label,
 		decision_config.max_tokens,
 		decision_config.temperature,
 		decision_config.ignore_cost
 	);
 
-	let params = crate::session::ChatCompletionWithValidationParams::new(
+	let mut params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages,
 		&decision_config.model,
 		decision_config.temperature,
@@ -104,8 +122,11 @@ pub(super) async fn call_ai_for_decision(
 	)
 	.with_max_retries(decision_config.max_retries)
 	.with_full_context_tokens(true)
-	.with_schema(schema)
 	.with_cancellation_token(operation_rx);
+
+	if let Some(s) = schema.clone() {
+		params = params.with_schema(s);
+	}
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 
@@ -123,39 +144,51 @@ pub(super) async fn call_ai_for_decision(
 		log_debug!("Compression decision cost ignored (ignore_cost=true)");
 	}
 
-	// Provider should return the validated JSON in `structured_output`. When
-	// it's absent, try a lenient recovery from `response.content` before
-	// erroring — some providers (notably OctoHub) ship a strict text-to-JSON
-	// extractor that misses valid JSON wrapped in markdown fences or with
-	// a chatty preamble, even when the model genuinely followed the schema.
-	// Native-structured-output models (GPT, Claude, Gemini direct) hit the
-	// happy path; the fallback covers cross-routing quirks for DeepSeek,
-	// Kimi, OctoHub-routed models, etc.
-	let raw = match response.structured_output {
+	if schema.is_some() {
+		parse_json_response(&response, &decision_config.model)
+	} else {
+		parse_xml_summary(&response.content).map_err(|e| {
+			anyhow::anyhow!(
+				"Compression model '{}' (XML mode) produced an unparseable response: {}",
+				decision_config.model,
+				e
+			)
+		})
+	}
+}
+
+/// JSON-path response parser. Prefers `response.structured_output`; falls
+/// back to lenient extraction from `response.content` so providers that
+/// misroute valid JSON into the text body (notably some OctoHub-routed
+/// models) still succeed. The recovered value is then deserialized into
+/// the typed `CompressionSummary`.
+fn parse_json_response(
+	response: &crate::providers::ProviderResponse,
+	model: &str,
+) -> Result<CompressionSummary> {
+	let raw = match response.structured_output.clone() {
 		Some(v) => v,
 		None => {
 			let recovered = extract_json_lenient(&response.content).ok_or_else(|| {
 				anyhow::anyhow!(
 					"Compression model '{}' returned no structured_output and no recoverable JSON in text content",
-					decision_config.model
+					model
 				)
 			})?;
 			log_debug!(
 				"Compression model '{}' omitted structured_output; recovered JSON from text content",
-				decision_config.model
+				model
 			);
 			recovered
 		}
 	};
 
-	let summary: CompressionSummary = serde_json::from_value(raw).map_err(|e| {
+	serde_json::from_value(raw).map_err(|e| {
 		anyhow::anyhow!(
 			"Failed to deserialize compression schema response: {}. The provider returned JSON that does not match the expected shape.",
 			e
 		)
-	})?;
-
-	Ok(summary)
+	})
 }
 
 /// Best-effort JSON extraction from a text response when the provider didn't
@@ -253,8 +286,9 @@ fn find_first_balanced_json(s: &str) -> Option<serde_json::Value> {
 	None
 }
 
-/// Orchestration entrypoint: build prompt + schema, invoke model, apply
-/// substantive-content gate, return whether to compress and the typed summary.
+/// Orchestration entrypoint: pick the wire mode from the provider's
+/// `supports_structured_output(model)` capability, build the matching
+/// prompt, invoke the model, apply the substantive-content gate.
 ///
 /// Returns `(should_compress, summary)`:
 /// - `should_compress = false` → caller skips compression entirely; the
@@ -273,9 +307,28 @@ pub(super) async fn ask_ai_decision_and_summary(
 	force: bool,
 	target_ratio: f64,
 ) -> Result<(bool, CompressionSummary)> {
-	let (system_content, user_content) =
-		build_compression_prompt(session, messages_to_compress, force, target_ratio);
-	let schema = build_compression_schema(force);
+	let model = &config.compression.decision.model;
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	let use_json = provider.supports_structured_output(&actual_model);
+
+	let (system_content, user_content) = if use_json {
+		build_compression_prompt_json(session, messages_to_compress, force, target_ratio)
+	} else {
+		build_compression_prompt_xml(session, messages_to_compress, force, target_ratio)
+	};
+
+	let schema = if use_json {
+		Some(build_compression_schema(force))
+	} else {
+		None
+	};
+
+	log_debug!(
+		"Compression wire mode: {} (provider='{}', model='{}')",
+		if use_json { "json" } else { "xml" },
+		provider.name(),
+		actual_model
+	);
 
 	let summary = call_ai_for_decision(
 		session,

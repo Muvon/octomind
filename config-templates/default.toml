@@ -689,7 +689,7 @@ knowledge_retention = 10
 # Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
 # Cost comparison: Haiku ~$0.0003 vs Sonnet ~$0.003 per compression decision
 [compression.decision]
-model = "anthropic:claude-haiku-4-5"
+model = "openai:gpt-5-mini"
 max_tokens = 16000  # Enough for decision + summary
 temperature = 0.3  # Lower temperature for consistent decisions
 top_p = 1.0

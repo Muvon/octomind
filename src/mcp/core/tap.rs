@@ -61,13 +61,15 @@ When to use:
 - You want a long-running side task while continuing other work — call `run` with `background=true`; the specialist's reply lands in your next turn.
 - You want to keep a focused dialog with one specialist across multiple turns — keep the returned `session` id and pass it back on subsequent `run` calls.
 
+Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
+
 Discovery flow:
 - If you know the role: `tap(action="run", role="developer:general", prompt="…")`.
 - If you don't: `tap(action="discover", intent="<plain-English need>")` returns the closest 5 roles ranked by semantic match. Pick one, then `run`.
 - If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:
-- `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default false; true = return immediately, reply injected later).
+- `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default false; true = return immediately, reply injected later). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.

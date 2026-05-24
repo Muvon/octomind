@@ -64,8 +64,8 @@ When to use:
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
 
 Discovery flow:
-- If you know the role: `tap(action="run", role="developer:general", prompt="…")`.
-- If you don't: `tap(action="discover", intent="<plain-English need>")` returns the closest 5 roles ranked by semantic match. Pick one, then `run`.
+- ALWAYS start with `tap(action="discover", intent="<plain-English need>")` unless the role was already returned by a previous `discover` or `list` call in this session. Never guess a role name from context, documentation, or examples — role names are only valid after `discover` confirms they exist.
+- After `discover` returns matches, pick the best-fit role from the results, then call `run` with that exact role string.
 - If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:

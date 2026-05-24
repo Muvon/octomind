@@ -1095,8 +1095,13 @@ impl ChatSession {
 			);
 		}
 
-		// SIMPLIFIED: Use the same initialization logic as startup
-		// This handles both server initialization AND tool map update
+		// Mirror the session-startup boot sequence so /role swaps get the same
+		// tool surface a fresh session for the new role would get: static MCP
+		// init + env-driven skills + env-driven capabilities. Without the
+		// env-* steps, tools from OCTOMIND_SKILLS / OCTOMIND_CAPABILITIES
+		// (e.g. playwright's browser_*) wouldn't register for the new role,
+		// and the routing ownership check would reject calls with
+		// "belongs to another session".
 		if let Err(e) = crate::mcp::initialize_mcp_for_role(new_role, config).await {
 			println!(
 				"{}: {}",
@@ -1110,6 +1115,13 @@ impl ChatSession {
 				"✓ MCP servers and tools updated for new role".bright_green()
 			);
 		}
+
+		// Load env-driven skills and capabilities for the new role BEFORE the
+		// system prompt is rebuilt so the prompt reflects the resulting tool
+		// surface. Both calls are idempotent; the underlying registries guard
+		// against double activation.
+		crate::mcp::core::skill_auto::load_env_skills(self).await;
+		crate::mcp::core::capability::load_env_capabilities(&config_for_role, None).await;
 
 		// Create new system prompt for the role (AFTER MCP servers are initialized)
 		// This ensures the tools definition reflects the new role's available tools

@@ -124,7 +124,18 @@ pub async fn handle_role(
 	// Commit the merged config into the live session config BEFORE reinit so
 	// that downstream code (MCP init, system-prompt build, thread-local config)
 	// sees the new servers/roles/settings.
-	*config = resolved_config;
+	//
+	// We commit the *merged-for-new-role* view (filtered `mcp.servers`,
+	// patched `role_map`) — not the raw base config returned by the resolver.
+	// Reason: the chat loop's `current_config` (`main_loop.rs:395`) is
+	// initialized from `get_merged_config_for_role(...)` at startup, and the
+	// MCP routing ownership check in `src/mcp/mod.rs:769-783` inspects
+	// `config.mcp.servers` to decide whether a tool's server is owned by the
+	// current session. If we wrote the base config here, the new role's
+	// merged server list would silently regress to the full disk list,
+	// breaking that invariant and producing spurious "belongs to another
+	// session" errors after a role swap.
+	*config = resolved_config.get_merged_config_for_role(&target_role);
 
 	// Apply role-level settings (temperature, optional model override)
 	let (role_config, _, _, _, _) = config.get_role_config(&target_role);

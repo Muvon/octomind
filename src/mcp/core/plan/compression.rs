@@ -409,22 +409,48 @@ fn adjusted_task_compression_start_index(
 	}
 
 	let anchor = messages.get(start_index)?;
-	if anchor.role != "assistant" || anchor.tool_calls.is_none() {
-		return Some(start_index);
+
+	// Case 1: start_index is an assistant with tool_calls — advance past its results.
+	if anchor.role == "assistant" && anchor.tool_calls.is_some() {
+		let mut next = start_index + 1;
+		while next <= end_index && messages[next].role == "tool" {
+			next += 1;
+		}
+
+		return if next == start_index + 1 {
+			Some(start_index)
+		} else if next <= end_index {
+			Some(next)
+		} else {
+			None
+		};
 	}
 
-	let mut next = start_index + 1;
-	while next <= end_index && messages[next].role == "tool" {
-		next += 1;
+	// Case 2: start_index is a tool_result whose parent assistant (somewhere
+	// before start_index, past any earlier tool_results) has tool_calls. The
+	// drain removes start_index+1..=end, which may include sibling tool_results
+	// for the same assistant. Walk back past consecutive tool messages to find
+	// the parent, then advance forward past ALL consecutive tool messages from
+	// start_index so no sibling results are split by the drain boundary.
+	if anchor.role == "tool" {
+		let mut parent_idx = start_index;
+		while parent_idx > 0 && messages[parent_idx - 1].role == "tool" {
+			parent_idx -= 1;
+		}
+		if parent_idx > 0 {
+			let parent = &messages[parent_idx - 1];
+			if parent.role == "assistant" && parent.tool_calls.is_some() {
+				let mut next = start_index + 1;
+				while next <= end_index && messages[next].role == "tool" {
+					next += 1;
+				}
+
+				return if next <= end_index { Some(next) } else { None };
+			}
+		}
 	}
 
-	if next == start_index + 1 {
-		Some(start_index)
-	} else if next <= end_index {
-		Some(next)
-	} else {
-		None
-	}
+	Some(start_index)
 }
 
 /// Compress session history for a completed task
@@ -1336,5 +1362,97 @@ mod tests {
 		messages.push(tool);
 
 		assert_eq!(adjusted_task_compression_start_index(&messages, 1, 2), None);
+	}
+
+	#[test]
+	fn task_compression_start_in_middle_of_tool_results_orphans_tool_use() {
+		use crate::session::Message;
+		use serde_json::json;
+
+		fn msg(role: &str) -> Message {
+			Message {
+				role: role.to_string(),
+				content: format!("{} message", role),
+				timestamp: 1000,
+				cached: false,
+				cache_ttl: None,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+				images: None,
+				videos: None,
+				thinking: None,
+				id: None,
+			}
+		}
+
+		// Scenario: start_index lands on a tool_result that is NOT the last
+		// result for its parent assistant. The assistant at start_index-1 has
+		// multiple tool_calls; some results fall before start_index, some after.
+		// After drain, the assistant retains tool_use blocks whose results were
+		// removed — Anthropic rejects this ("tool_use ids were found without
+		// tool_result blocks immediately after").
+		let mut messages = Vec::new();
+		messages.push(msg("system")); // 0
+
+		let mut assistant = msg("assistant"); // 1
+		assistant.tool_calls = Some(json!([
+			{"id": "toolu_AAA", "type": "function", "function": {"name": "view", "arguments": "{}"}},
+			{"id": "toolu_BBB", "type": "function", "function": {"name": "edit", "arguments": "{}"}},
+			{"id": "toolu_CCC", "type": "function", "function": {"name": "shell", "arguments": "{}"}}
+		]));
+		messages.push(assistant);
+
+		let mut tool_a = msg("tool"); // 2
+		tool_a.tool_call_id = Some("toolu_AAA".to_string());
+		messages.push(tool_a);
+
+		let mut tool_b = msg("tool"); // 3  ← start_index lands here
+		tool_b.tool_call_id = Some("toolu_BBB".to_string());
+		messages.push(tool_b);
+
+		let mut tool_c = msg("tool"); // 4  ← this result will be drained
+		tool_c.tool_call_id = Some("toolu_CCC".to_string());
+		messages.push(tool_c);
+
+		messages.push(msg("assistant")); // 5
+		messages.push(msg("user")); // 6
+		messages.push(msg("assistant")); // 7
+
+		let start_index = 3usize; // tool_result for toolu_BBB
+		let end_index = 7usize;
+
+		// Current behaviour: adjusted_start does NOT advance past tool_c
+		// because start_index is a tool message, not an assistant.
+		let adjusted_start =
+			adjusted_task_compression_start_index(&messages, start_index, end_index).unwrap();
+
+		// Simulate the drain that compress_completed_task would do
+		let drain_range = adjusted_start + 1..=end_index;
+		let drained: Vec<Message> = messages.drain(drain_range).collect();
+		let _ = drained;
+
+		// Collect surviving tool_call ids from the assistant at index 1
+		let tool_call_ids: Vec<&str> = messages[1]
+			.tool_calls
+			.as_ref()
+			.unwrap()
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|tc| tc["id"].as_str().unwrap())
+			.collect();
+
+		// For every surviving tool_call, there MUST be a matching tool_result
+		for tc_id in &tool_call_ids {
+			let has_result = messages
+				.iter()
+				.any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some(tc_id));
+			assert!(
+				has_result,
+				"BUG: tool_call {tc_id} has no matching tool_result after compression — \
+				 Anthropic will reject with 'tool_use ids were found without tool_result blocks'"
+			);
+		}
 	}
 }

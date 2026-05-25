@@ -38,6 +38,15 @@ static LAST_DISPLAYED_COST: AtomicU64 = AtomicU64::new(0);
 static LAST_DISPLAYED_CTX: AtomicU64 = AtomicU64::new(u64::MAX);
 static LAST_DISPLAYED_MAX: AtomicU64 = AtomicU64::new(u64::MAX);
 
+/// Consecutive CPR (cursor-position-report) failures from reedline. CPR fails
+/// when the indicatif spinner or a terminal resize races reedline's `ESC[6n`
+/// at prompt start — a transient TTY contention, not a dead terminal. We
+/// re-prompt instead of exiting, but escalate to exit after several
+/// consecutive failures so a truly broken terminal doesn't spin forever.
+/// Reset to zero on any successful read.
+static CPR_FAILURE_COUNT: AtomicU64 = AtomicU64::new(0);
+const CPR_FAILURE_LIMIT: u64 = 5;
+
 /// Result of user input operation
 #[derive(Debug)]
 pub enum InputResult {
@@ -584,6 +593,9 @@ pub fn read_user_input(
 
 				// User message persistence handled by ChatSession::add_user_message.
 
+				// Successful read — clear the CPR transient-failure counter.
+				CPR_FAILURE_COUNT.store(0, Ordering::Relaxed);
+
 				return if add_without_sending {
 					Ok(InputResult::AddWithoutSending(line, clipboard_items))
 				} else {
@@ -623,14 +635,30 @@ pub fn read_user_input(
 			}
 			Err(err) => {
 				let msg = format!("{err:?}");
-				// Terminal is broken/detached (e.g. another shell took over, resize event
-				// while no TTY, or crossterm cursor-position timeout). Looping would spam
-				// the same error endlessly — exit cleanly instead.
-				if msg.contains("cursor position could not be read")
-					|| msg.contains("not a terminal")
-					|| msg.contains("inappropriate ioctl")
-				{
+				// Genuinely no TTY — looping would spam the same error endlessly,
+				// so exit cleanly.
+				if msg.contains("not a terminal") || msg.contains("inappropriate ioctl") {
 					return Ok(InputResult::Exit);
+				}
+				// CPR (ESC[6n) timed out — typically a transient race with the
+				// indicatif spinner's last redraw or a terminal resize. Killing
+				// the session here loses interactive work, so re-prompt instead.
+				// Escalate to exit only if it keeps failing in a row.
+				if msg.contains("cursor position could not be read") {
+					let n = CPR_FAILURE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+					if n >= CPR_FAILURE_LIMIT {
+						log_info!("Reedline CPR failed {} times in a row — exiting session", n);
+						return Ok(InputResult::Exit);
+					}
+					crate::log_debug!(
+						"Reedline CPR transient failure (attempt {}), re-prompting",
+						n
+					);
+					// Scrub any leaked `ESC[<r>;<c>R` fragment from the current line
+					// before reedline redraws the prompt.
+					print!("\r\x1B[2K");
+					let _ = std::io::stdout().flush();
+					return Ok(InputResult::Text(String::new(), Vec::new()));
 				}
 				log_info!("Reedline error: {}", msg);
 				return Ok(InputResult::Text(String::new(), Vec::new()));

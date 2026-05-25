@@ -48,7 +48,9 @@ pub async fn prepare_for_api_call(
 	// cosine over hand-authored triggers), enable its MCP servers
 	// directly — no LLM in the routing loop. Silent no-op if the model
 	// isn't ready or nothing clears the gate.
-	crate::mcp::core::capability::auto_activate_capabilities(chat_session, config).await;
+	if config.auto_capabilities {
+		crate::mcp::core::capability::auto_activate_capabilities(chat_session, config).await;
+	}
 
 	// Ensure system message is cached before making API calls
 	let mut system_message_cached = false;

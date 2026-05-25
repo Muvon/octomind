@@ -392,6 +392,10 @@ pub struct Config {
 	#[serde(default)]
 	pub taps: HashMap<String, String>,
 
+	// Enable automatic capability activation on each user message (semantic match against triggers).
+	// When disabled, capabilities must be activated manually via the `capability` tool.
+	pub auto_capabilities: bool,
+
 	// Skill auto-activation and validation configuration (required [skills] section)
 	pub skills: SkillsConfig,
 

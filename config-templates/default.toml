@@ -116,6 +116,15 @@ max_session_spending_threshold = 0.0
 # This tracks cost from user input until next user input or session end
 max_request_spending_threshold = 0.0
 
+# ═══════════════════════════════════════════════════════════════════════
+# CAPABILITY AUTO-ACTIVATION
+# Enable/disable automatic capability activation on each user message.
+# When enabled, capabilities whose triggers semantically match the user's
+# intent are activated automatically (no LLM routing turn needed).
+# Disable to require manual `capability(action="enable")` calls only.
+# ═══════════════════════════════════════════════════════════════════════
+auto_capabilities = true
+
 # Capability provider overrides for tap agents
 # Each key is a capability name, value is the provider to use instead of "default"
 # Example: codesearch = "octocode" → uses capabilities/codesearch/octocode.toml

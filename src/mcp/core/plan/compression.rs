@@ -410,16 +410,23 @@ fn adjusted_task_compression_start_index(
 
 	let anchor = messages.get(start_index)?;
 
-	// Case 1: start_index is an assistant with tool_calls — advance past its results.
+	// Case 1: start_index is an assistant with tool_calls. Whatever we return
+	// as adjusted_start becomes the LAST kept message in the prefix, and the
+	// inserted compression summary takes the next slot. An asst_with_tool_calls
+	// cannot legally be followed by another assistant message (Anthropic
+	// requires the immediate next message to be a tool_result), so we MUST
+	// advance past this asst together with all its tool_results. If there are
+	// no consecutive tool_results to skip past (the asst was already orphan
+	// before compression — e.g. its results were drained by an earlier cycle)
+	// or the tool run extends past end_index, skip compression rather than
+	// inserting the summary right after the orphan and corrupting the stream.
 	if anchor.role == "assistant" && anchor.tool_calls.is_some() {
 		let mut next = start_index + 1;
 		while next <= end_index && messages[next].role == "tool" {
 			next += 1;
 		}
 
-		return if next == start_index + 1 {
-			Some(start_index)
-		} else if next <= end_index {
+		return if next > start_index + 1 && next <= end_index {
 			Some(next)
 		} else {
 			None
@@ -1454,5 +1461,140 @@ mod tests {
 				 Anthropic will reject with 'tool_use ids were found without tool_result blocks'"
 			);
 		}
+	}
+
+	#[test]
+	fn task_compression_start_on_asst_with_tool_calls_whose_tool_result_was_already_drained() {
+		// Real-world bug observed in session 260525-octomind-1631-3fda.jsonl
+		// (lines 158-160): after multiple cascading compressions, an
+		// `assistant` message with `tool_calls` survives in the log while its
+		// matching `tool_result` was drained by an earlier compression
+		// cycle. The asst is now immediately followed by a non-tool message
+		// (here: a prior `<task_compressed>` summary, but it could be any
+		// non-tool: user, plain asst, etc.).
+		//
+		// When the next task compression picks this asst as `start_index`,
+		// Case 1 of `adjusted_task_compression_start_index` walks `next`
+		// past consecutive tool messages from start_index+1 — but there
+		// are none, so `next == start_index + 1` and the function returns
+		// `Some(start_index)` unchanged.
+		//
+		// `compress_completed_task` then drains `[start_index+1..=end_index]`
+		// and inserts a fresh `<task_compressed>` summary at start_index+1.
+		// The kept asst_with_tool_calls now has another assistant message
+		// (the new summary) as its immediate successor — no tool_result
+		// anywhere. Anthropic rejects:
+		//   "messages.N: tool_use ids were found without tool_result blocks
+		//    immediately after: <toolu_id>"
+		//
+		// The fix must guarantee that if `start_index` is an
+		// assistant_with_tool_calls whose tool_result is NOT immediately
+		// after, this asst is not left as a "tail" anchor — either advance
+		// past the asst (drain it too) or skip compression entirely.
+
+		use crate::session::Message;
+		use serde_json::json;
+
+		fn msg(role: &str) -> Message {
+			Message {
+				role: role.to_string(),
+				content: format!("{} message", role),
+				timestamp: 1000,
+				cached: false,
+				cache_ttl: None,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+				images: None,
+				videos: None,
+				thinking: None,
+				id: None,
+			}
+		}
+
+		let mut messages = Vec::new();
+		messages.push(msg("system")); // 0
+		messages.push(msg("user")); // 1
+
+		// Orphan asst_with_tool_calls — its tool_result was drained in a
+		// previous compression cycle, leaving this assistant adjacent to a
+		// non-tool message (the prior task's summary).
+		let mut orphan_asst = msg("assistant"); // 2 ← start_index
+		orphan_asst.tool_calls = Some(json!([
+			{"id": "toolu_01JUz8Fe23qdwA1gSH6zFm17", "type": "function",
+			 "function": {"name": "text_editor", "arguments": "{}"}}
+		]));
+		messages.push(orphan_asst);
+
+		// Prior compression's summary message — assistant role, no tool_calls.
+		// This is what makes messages[start_index+1] NOT a tool message.
+		let mut prior_summary = msg("assistant"); // 3
+		prior_summary.content =
+			"<task_compressed id=\"prior\">earlier task summary</task_compressed>".into();
+		messages.push(prior_summary);
+
+		messages.push(msg("user")); // 4
+		messages.push(msg("assistant")); // 5
+		messages.push(msg("user")); // 6
+		messages.push(msg("assistant")); // 7
+
+		let start_index = 2usize;
+		let end_index = 7usize;
+
+		// Fixed behavior: when start_index lands on an asst_with_tool_calls
+		// whose tool_result is NOT immediately following (already drained by
+		// a previous compression), the function must return None so the
+		// caller skips compression rather than inserting a summary right
+		// after the orphan asst and creating an Anthropic-rejected stream.
+		let adjusted = adjusted_task_compression_start_index(&messages, start_index, end_index);
+		assert!(
+			adjusted.is_none(),
+			"asst_with_tool_calls at start_index without an immediate tool_result \
+			 must skip compression (return None); got Some({:?}). Using this asst \
+			 as the kept anchor would orphan its tool_use blocks against the \
+			 inserted summary — Anthropic rejects with 'tool_use ids were found \
+			 without tool_result blocks immediately after'.",
+			adjusted
+		);
+
+		// Additionally verify the invariant the API requires: had we proceeded
+		// with the OLD buggy behavior (Some(start_index)), the resulting
+		// stream would have an asst_with_tool_calls followed by the summary.
+		// We assert here on the UNCHANGED message stream (no drain performed
+		// because compression was skipped) — every asst_with_tool_calls must
+		// still be followed by its tool_result, OR the test scenario itself
+		// must already be in the orphan state we're protecting against.
+		let mut found_orphan_in_input = false;
+		for (i, m) in messages.iter().enumerate() {
+			let Some(tcs) = m.tool_calls.as_ref().and_then(|v| v.as_array()) else {
+				continue;
+			};
+			if tcs.is_empty() {
+				continue;
+			}
+			let tc_ids: Vec<&str> = tcs.iter().filter_map(|tc| tc["id"].as_str()).collect();
+			let next = messages.get(i + 1);
+			let next_is_matching_tool_result = matches!(
+				next,
+				Some(n) if n.role == "tool"
+					&& n.tool_call_id.as_deref().is_some_and(|id| tc_ids.contains(&id))
+			);
+			if !next_is_matching_tool_result {
+				found_orphan_in_input = true;
+				// The orphan is in the INPUT — that's the precondition this
+				// test sets up. The fix doesn't repair it; it just prevents
+				// task compression from making it worse. A separate scrubber
+				// (out of scope here) is responsible for repairing existing
+				// orphan messages before they hit the API.
+				assert_eq!(
+					i, start_index,
+					"the only orphan in this fixture should be the one we deliberately constructed at start_index"
+				);
+			}
+		}
+		assert!(
+			found_orphan_in_input,
+			"test fixture should contain the orphan asst_with_tool_calls at start_index"
+		);
 	}
 }

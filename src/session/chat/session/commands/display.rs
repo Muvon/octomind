@@ -819,7 +819,6 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 	}
 }
 
-
 pub fn display_mcp(output: &CommandOutput) {
 	if let CommandOutput::Mcp { data, .. } = output {
 		let subcommand = data

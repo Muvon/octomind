@@ -91,9 +91,7 @@ fn collect_names(
 
 fn insert_unique(name: &str, names: &mut HashSet<String>) -> Result<()> {
 	if name == "input" {
-		bail!(
-			"step name 'input' is reserved (it's the substitution variable for stdin)"
-		);
+		bail!("step name 'input' is reserved (it's the substitution variable for stdin)");
 	}
 	if name.trim().is_empty() {
 		bail!("step name must be non-empty");
@@ -134,7 +132,11 @@ fn structural_check(step: &Step) -> Result<()> {
 			}
 			if let Some(pat) = &exit_when.matches {
 				Regex::new(pat).map_err(|e| {
-					anyhow::anyhow!("loop step '{}' exit_when.matches invalid regex: {}", name, e)
+					anyhow::anyhow!(
+						"loop step '{}' exit_when.matches invalid regex: {}",
+						name,
+						e
+					)
 				})?;
 			}
 			Ok(())

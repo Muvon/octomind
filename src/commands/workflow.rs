@@ -44,8 +44,8 @@ pub async fn execute(args: &WorkflowArgs) -> Result<()> {
 
 	let raw = std::fs::read_to_string(&args.file)
 		.with_context(|| format!("failed to read {}", args.file.display()))?;
-	let wf: WorkflowDef = toml::from_str(&raw)
-		.with_context(|| format!("failed to parse {}", args.file.display()))?;
+	let wf: WorkflowDef =
+		toml::from_str(&raw).with_context(|| format!("failed to parse {}", args.file.display()))?;
 
 	validate::validate(&wf)?;
 

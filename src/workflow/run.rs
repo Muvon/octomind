@@ -144,13 +144,8 @@ impl Executor {
 				templated_prompt.clone()
 			};
 
-			let outcome = run_step(
-				&s.role,
-				&prompt_for_run,
-				session_name.as_deref(),
-				s.timeout,
-			)
-			.await;
+			let outcome =
+				run_step(&s.role, &prompt_for_run, session_name.as_deref(), s.timeout).await;
 
 			match outcome {
 				RunOutcome::Ok(stats) => {
@@ -239,9 +234,8 @@ impl Executor {
 					match outcome {
 						RunOutcome::Ok(stats) => return Ok::<_, String>((sname, stats)),
 						RunOutcome::Empty(s) => {
-							last_err = Some(format!(
-								"empty output (attempt {attempt}/{max_attempts})"
-							));
+							last_err =
+								Some(format!("empty output (attempt {attempt}/{max_attempts})"));
 							let _ = s;
 						}
 						RunOutcome::NonZero { code, .. } => {
@@ -298,10 +292,7 @@ impl Executor {
 		let max = l.max_iterations;
 		for i in 1..=max {
 			for sub in &l.run {
-				let prefix = format!(
-					"  {name} [{i}/{max}] ",
-					name = l.name.bright_magenta()
-				);
+				let prefix = format!("  {name} [{i}/{max}] ", name = l.name.bright_magenta());
 				let stats = self.exec_sequential(sub, input, &prefix).await?;
 				self.outputs.insert(sub.name.clone(), stats.output);
 				self.last_step = Some(sub.name.clone());
@@ -357,7 +348,11 @@ impl Executor {
 			"  {arrow} {name:<14} condition {res} → running [{branch}]",
 			arrow = "►".bright_blue(),
 			name = c.name,
-			res = if matched { "true".green() } else { "false".yellow() },
+			res = if matched {
+				"true".green()
+			} else {
+				"false".yellow()
+			},
 			branch = branch_names.join(", "),
 		));
 
@@ -413,12 +408,23 @@ fn fmt_dur(d: Duration) -> String {
 }
 
 fn short_uuid() -> String {
-	Uuid::new_v4().to_string().split('-').next().unwrap_or("0000").to_string()
+	Uuid::new_v4()
+		.to_string()
+		.split('-')
+		.next()
+		.unwrap_or("0000")
+		.to_string()
 }
 
 fn sanitize(s: &str) -> String {
 	s.chars()
-		.map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+		.map(|c| {
+			if c.is_ascii_alphanumeric() || c == '-' {
+				c
+			} else {
+				'-'
+			}
+		})
 		.collect()
 }
 

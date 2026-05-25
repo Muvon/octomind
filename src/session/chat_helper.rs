@@ -83,7 +83,6 @@ impl<'a> CommandCompleter<'a> {
 		self.config.roles.iter().map(|r| r.name.clone()).collect()
 	}
 
-
 	/// Check if the given file extension is a supported image format
 	fn is_image_file(path: &str) -> bool {
 		let supported_extensions = [
@@ -620,7 +619,6 @@ impl<'a> CommandCompleter<'a> {
 			return Some(" <command_name>".to_string());
 		}
 
-
 		// Special hint for /context command
 		if line == "/context" {
 			return Some(" [all|assistant|user|tool|large]".to_string());
@@ -674,7 +672,6 @@ impl<'a> CommandCompleter<'a> {
 			}
 			return None; // Let command completer handle this
 		}
-
 
 		if line.starts_with("/context ") && line.len() > 9 {
 			let filter_part = &line[9..]; // "/context ".len() = 9

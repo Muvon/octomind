@@ -53,7 +53,6 @@ pub mod runtime_overlay;
 
 pub mod pipelines;
 
-
 // Tests removed - strict configuration mode doesn't support Default implementations
 // Tests should be rewritten to use complete config structures
 

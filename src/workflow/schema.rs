@@ -129,7 +129,10 @@ impl<'de> Deserialize<'de> for Step {
 			.and_then(|v| v.as_bool())
 			.unwrap_or(false);
 
-		let flags = [parallel, loop_, conditional].iter().filter(|b| **b).count();
+		let flags = [parallel, loop_, conditional]
+			.iter()
+			.filter(|b| **b)
+			.count();
 		if flags > 1 {
 			return Err(serde::de::Error::custom(
 				"step may set at most one of: parallel, loop, conditional",

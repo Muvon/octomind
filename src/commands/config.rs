@@ -748,7 +748,6 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		}
 	}
 
-
 	block_close_ok("config", Some(&config.get_effective_model()));
 	println!();
 	Ok(())

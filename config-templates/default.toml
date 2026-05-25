@@ -425,74 +425,15 @@ tools = []
 # timeout = 30  # seconds (default: 30)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WORKFLOWS (BRAIN-INSPIRED PLANNING SYSTEM)
-# Configure multi-step AI processing workflows with validation and feedback loops
-# Workflows act as PLANNERS that enhance user requests before execution
-# See doc/10-workflows.md for comprehensive documentation
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Example workflow: Developer workflow with task refinement and research
-# This workflow is active by default and serves as a working example
-[[workflows]]
-name = "developer_workflow"
-description = "Two-stage workflow: refine task, then research context"
-
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
-
-[[workflows.steps]]
-name = "research"
-type = "once"
-layer = "task_researcher"
-
-
-# Example workflow: Feedback loop with validation
-# [[workflows]]
-# name = "validated_development"
-# description = "Development with validation feedback loop"
+# LAYERS (ACP-BASED COMMAND BUILDING BLOCKS)
+# Layers are reusable ACP-invocable units. Each layer references a role (or
+# external ACP client) via the command field. Model, system prompt, temperature,
+# and MCP config live in the role — not here.
 #
-# [[workflows.steps]]
-# name = "validation_loop"
-# type = "loop"
-# max_iterations = 3
-# exit_pattern = "APPROVED"
-#
-#   [[workflows.steps.substeps]]
-#   name = "propose"
-#   type = "once"
-#   layer = "task_refiner"
-#
-#   [[workflows.steps.substeps]]
-#   name = "validate"
-#   type = "once"
-#   layer = "task_researcher"
-
+# NOTE: Multi-step workflow orchestration moved out of the session config.
+# Use the external `octomind workflow <file.toml>` CLI instead — see
+# doc/usage/09-workflows.md.
 # ═══════════════════════════════════════════════════════════════════════════════
-# LAYERS (ACP-BASED PROCESSING PIPELINE)
-# Layers are workflow building blocks that execute via ACP protocol.
-# Each layer references a role (or external ACP client) via the command field.
-# Model, system prompt, temperature, and MCP config live in the role — not here.
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Task refiner layer - used by workflows for query refinement
-[[layers]]
-name = "task_refiner"
-description = "Refines and clarifies user requests for better processing by subsequent layers"
-command = "octomind acp task_refiner"
-input_mode = "last"
-output_mode = "none"
-output_role = "assistant"
-
-# Task researcher layer - used by workflows for context gathering
-[[layers]]
-name = "task_researcher"
-description = "Gathers information and context needed for development tasks through code analysis and research"
-command = "octomind acp task_researcher"
-input_mode = "last"
-output_mode = "append"
-output_role = "assistant"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CUSTOM COMMANDS

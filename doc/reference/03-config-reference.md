@@ -80,8 +80,7 @@ Define custom roles that override or extend tap-provided agents.
 | `temperature` | f64 | no | Sampling temperature (0.0-2.0) |
 | `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
 | `top_k` | u32 | no | Top-k token limit (1-1000) |
-| `workflow` | string | no | Workflow name to activate for this role |
-| `pipeline` | string | no | Pipeline name to activate for this role (runs before workflow) |
+| `pipeline` | string | no | Pipeline name to activate for this role |
 
 ### `[roles.mcp]`
 
@@ -220,48 +219,11 @@ command = "./scripts/enrich-context.py"
 timeout = 60
 ```
 
-## `[[workflows]]`
-
-Multi-step AI processing workflows.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Workflow identifier |
-| `description` | string | yes | Human-readable description |
-
-### `[[workflows.steps]]`
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Step identifier |
-| `type` | string | yes | `"once"`, `"loop"`, `"foreach"`, `"conditional"`, `"parallel"` |
-| `layer` | string | conditional | Layer name (required for `once`, `conditional`) |
-| `exit_pattern` | string | conditional | Regex to stop loop (required for `loop`) |
-| `parse_pattern` | string | conditional | Regex to extract items (required for `foreach`) |
-| `max_iterations` | u32 | no | Max loop iterations |
-| `condition_pattern` | string | conditional | Regex for conditional branching |
-
-Substeps are nested as `[[workflows.steps.substeps]]` with the same schema.
-
-```toml
-[[workflows]]
-name = "developer_workflow"
-description = "Two-stage workflow: refine task, then research context"
-
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
-
-[[workflows.steps]]
-name = "research"
-type = "once"
-layer = "task_researcher"
-```
-
 ## `[[layers]]`
 
-AI processing layers used by workflows and commands. Layers delegate to roles via ACP protocol — the actual model, system prompt, and MCP configuration live in `[[roles]]`, not here.
+Reusable ACP-invocable units used by `[[commands]]`. Layers delegate to roles via the ACP protocol — the actual model, system prompt, and MCP configuration live in `[[roles]]`, not here.
+
+> **Multi-step AI workflows** are no longer defined in this config. Use the external CLI: `octomind workflow <file.toml>` — see [doc/usage/09-workflows.md](../usage/09-workflows.md).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -280,14 +242,6 @@ description = "Refines and clarifies user requests for better processing by subs
 command = "octomind acp task_refiner"
 input_mode = "last"
 output_mode = "none"
-output_role = "assistant"
-
-[[layers]]
-name = "task_researcher"
-description = "Gathers information and context needed for development tasks through code analysis"
-command = "octomind acp task_researcher"
-input_mode = "last"
-output_mode = "append"
 output_role = "assistant"
 ```
 

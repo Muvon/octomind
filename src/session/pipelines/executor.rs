@@ -13,13 +13,32 @@
 // limitations under the License.
 
 use crate::config::{PipelineStep, PipelineStepType};
-use crate::session::workflows::PatternParser;
 use anyhow::{anyhow, Result};
+use regex::Regex;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::watch;
+
+/// True iff `pattern` matches anywhere in `text`. Used by loop exit / conditional branching.
+fn pattern_matches(text: &str, pattern: &str) -> Result<bool> {
+	Ok(Regex::new(pattern)?.is_match(text))
+}
+
+/// Extract items from `text` using `pattern`. Returns the first capture group of
+/// each match, falling back to the full match when no groups are present.
+/// Used by foreach to split a step's output into per-item invocations.
+fn pattern_parse_items(text: &str, pattern: &str) -> Result<Vec<String>> {
+	let regex = Regex::new(pattern)?;
+	let mut items = Vec::new();
+	for cap in regex.captures_iter(text) {
+		if let Some(matched) = cap.get(1).or_else(|| cap.get(0)) {
+			items.push(matched.as_str().to_string());
+		}
+	}
+	Ok(items)
+}
 
 /// Context passed to each pipeline step during execution
 pub struct PipelineContext {
@@ -182,8 +201,7 @@ impl PipelineStepExecutor {
 				.await?;
 			}
 
-			// Check exit condition
-			if PatternParser::matches(&current_input, exit_pattern)? {
+			if pattern_matches(&current_input, exit_pattern)? {
 				break;
 			}
 		}
@@ -202,8 +220,7 @@ impl PipelineStepExecutor {
 			.parse_pattern
 			.as_ref()
 			.ok_or_else(|| anyhow!("Step '{}': missing parse_pattern", step.name))?;
-
-		let items = PatternParser::parse_items(input, parse_pattern)?;
+		let items = pattern_parse_items(input, parse_pattern)?;
 		let mut results = Vec::new();
 
 		for item in items {
@@ -258,8 +275,7 @@ impl PipelineStepExecutor {
 		// Run the condition command — non-zero exit = fatal
 		let output = Self::execute_command(command, input, step.timeout, context).await?;
 
-		// Check stdout against pattern
-		let matches = PatternParser::matches(&output, condition_pattern)?;
+		let matches = pattern_matches(&output, condition_pattern)?;
 
 		let commands_to_run = if matches {
 			&step.on_match

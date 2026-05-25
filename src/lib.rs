@@ -109,6 +109,3 @@ pub use config::Config;
 
 // Re-export logging types
 pub use logging::AcpErrorSink;
-
-// Re-export workflow types
-pub use session::workflows::{PatternParser, StepExecutor, WorkflowOrchestrator};

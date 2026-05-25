@@ -12,160 +12,64 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Layer processing utilities
+// Pipeline pre-processing — runs a role's configured deterministic
+// pipeline (if any) on the raw user input before the main model sees it.
+//
+// In-session AI workflows were removed; multi-step AI orchestration now
+// lives in the external `octomind workflow <file.toml>` command.
 
 use super::core::ChatSession;
 use crate::config::Config;
 use crate::log_info;
-use crate::session::chat::layered_response::process_layered_response;
 use crate::session::pipelines::PipelineOrchestrator;
 use anyhow::Result;
 use colored::*;
 use tokio::sync::watch;
 
-// Helper function to process layers if enabled
-pub async fn process_layers_if_enabled(
+/// Run the role's pipeline (if any) on `input` and return
+/// `(processed_input, cancelled)`. Pipelines never mutate the chat session.
+pub async fn process_pipeline_if_enabled(
 	input: &str,
-	chat_session: &mut ChatSession,
+	_chat_session: &mut ChatSession,
 	config: &Config,
 	role: &str,
 	first_message_processed: bool,
 	operation_rx: watch::Receiver<bool>,
-) -> Result<(String, bool, bool)> {
-	// Check if role uses pipeline and/or workflow
-	let has_pipeline = config
-		.role_map
-		.get(role)
-		.and_then(|r| r.pipeline.as_ref())
-		.is_some();
-	let has_workflow = config
-		.role_map
-		.get(role)
-		.and_then(|r| r.workflow.as_ref())
-		.is_some();
+) -> Result<(String, bool)> {
+	let pipeline_name = match config.role_map.get(role).and_then(|r| r.pipeline.as_ref()) {
+		Some(name) if !first_message_processed => name.clone(),
+		_ => return Ok((input.to_string(), false)),
+	};
 
-	if (!has_pipeline && !has_workflow) || first_message_processed {
-		return Ok((input.to_string(), false, false));
-	}
+	let pipeline_def = config
+		.pipelines
+		.iter()
+		.find(|p| p.name == pipeline_name)
+		.ok_or_else(|| anyhow::anyhow!("Pipeline '{}' not found", pipeline_name))?
+		.clone();
 
-	let mut current_input = input.to_string();
+	let working_dir = config.get_working_directory();
+	let orchestrator = PipelineOrchestrator::new(pipeline_def, pipeline_name.clone());
 
-	// Phase 1: Pipeline (deterministic scripts) — runs BEFORE workflow
-	if has_pipeline {
-		let pipeline_name = config
-			.role_map
-			.get(role)
-			.and_then(|r| r.pipeline.as_ref())
-			.unwrap();
+	log_info!("Running pipeline '{}'", pipeline_name);
 
-		let pipeline_def = config
-			.pipelines
-			.iter()
-			.find(|p| &p.name == pipeline_name)
-			.ok_or_else(|| anyhow::anyhow!("Pipeline '{}' not found", pipeline_name))?
-			.clone();
-
-		let working_dir = config.get_working_directory();
-		let orchestrator = PipelineOrchestrator::new(pipeline_def, pipeline_name.clone());
-
-		log_info!("Running pipeline '{}'", pipeline_name);
-
-		match orchestrator
-			.execute(&current_input, &working_dir, role, operation_rx.clone())
-			.await
-		{
-			Ok(output) => {
-				log_info!("Pipeline '{}' completed.", pipeline_name);
-				current_input = output;
+	match orchestrator
+		.execute(input, &working_dir, role, operation_rx)
+		.await
+	{
+		Ok(output) => {
+			log_info!("Pipeline '{}' completed.", pipeline_name);
+			Ok((output, false))
+		}
+		Err(e) => {
+			if crate::session::cancellation::is_cancelled(&e) {
+				crate::log_debug!("Pipeline cancelled by user.");
+				println!("{}", "Pipeline cancelled.".yellow());
+				return Ok((input.to_string(), true));
 			}
-			Err(e) => {
-				if crate::session::cancellation::is_cancelled(&e) {
-					crate::log_debug!("Pipeline cancelled by user.");
-					println!("{}", "Pipeline cancelled.".yellow());
-					return Ok((input.to_string(), false, true));
-				}
-				// Pipeline errors are fatal — non-zero exit code = hard stop
-				println!("\n{}: {}", "Pipeline failed".bright_red(), e);
-				return Err(e);
-			}
+			// Pipeline errors are fatal — non-zero exit code = hard stop
+			println!("\n{}: {}", "Pipeline failed".bright_red(), e);
+			Err(e)
 		}
 	}
-
-	// Phase 2: Workflow (agentic LLM processing) — uses pipeline output as input
-	if has_workflow {
-		// Track session message count before workflow processing
-		let messages_before_workflow = chat_session.session.messages.len();
-
-		// Process using workflow architecture to get improved input
-		let workflow_result =
-			process_layered_response(&current_input, chat_session, config, role, operation_rx)
-				.await;
-
-		match workflow_result {
-			Ok(processed_input) => {
-				// Check if workflow modified the session
-				let messages_after_workflow = chat_session.session.messages.len();
-				let workflow_modified_session = messages_after_workflow > messages_before_workflow;
-
-				if workflow_modified_session {
-					// Workflow used output_mode append/replace and added messages to session
-					log_info!(
-						"Workflow modified session ({} messages added).",
-						messages_after_workflow - messages_before_workflow
-					);
-					// Return indication that workflow modified session
-					return Ok((processed_input, true, false));
-				} else {
-					// Workflow didn't modify session (all had output_mode = none)
-					// Use the processed input from workflow instead of the original input
-					log_info!("Workflow processing complete. Using enhanced input for main model.");
-					return Ok((processed_input, false, false));
-				}
-			}
-			Err(e) => {
-				// Check if this is a cancellation error - if so, propagate it to main loop
-				if crate::session::cancellation::is_cancelled(&e) {
-					// This is a cancellation error - handle gracefully and continue session
-					crate::log_debug!("Operation cancelled by user.");
-					println!("{}", "Continuing with original input.".yellow());
-
-					// CRITICAL FIX: Clean up any partial workflow modifications to session
-					// When workflow is cancelled, it might have partially modified the session
-					// We need to restore the session to its state before workflow processing
-					let messages_after_cancellation = chat_session.session.messages.len();
-					if messages_after_cancellation > messages_before_workflow {
-						// Remove messages added by workflow before cancellation
-						let messages_to_remove =
-							messages_after_cancellation - messages_before_workflow;
-						for _ in 0..messages_to_remove {
-							chat_session.session.messages.pop();
-						}
-						println!(
-							"{}",
-							format!(
-								"Cleaned up {} messages added by cancelled layers",
-								messages_to_remove
-							)
-							.yellow()
-						);
-					}
-
-					// Return original input and continue session normally
-					return Ok((input.to_string(), false, true));
-				}
-
-				// Regular layer processing error - print message and continue with original input
-				println!(
-					"\n{}: {}",
-					"Error processing through layers".bright_red(),
-					e
-				);
-				println!("{}", "Continuing with original input.".yellow());
-				return Ok((input.to_string(), false, false));
-			}
-		}
-	}
-
-	// Pipeline ran but no workflow — return pipeline output
-	Ok((current_input, false, false))
 }

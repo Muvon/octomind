@@ -748,26 +748,6 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 		}
 	}
 
-	// ── workflows / layers ────────────────────────────────────────────
-	let has_any_workflow = config.role_map.values().any(|r| r.workflow.is_some());
-	if has_any_workflow {
-		block_section("workflows");
-		if let Some(layers) = &config.layers {
-			for layer in layers {
-				block_row_text(&format!(
-					"{} {} {}",
-					"✓".bright_green(),
-					layer.name.bright_white(),
-					format!("→ {}", layer.command).dimmed(),
-				));
-			}
-		}
-		for (role_name, role_data) in &config.role_map {
-			if let Some(workflow) = &role_data.workflow {
-				block_row_text(&format!("{} → {}", role_name, workflow).dimmed().to_string());
-			}
-		}
-	}
 
 	block_close_ok("config", Some(&config.get_effective_model()));
 	println!();

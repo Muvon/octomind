@@ -1,30 +1,30 @@
 # Pipelines
 
-Pipelines are deterministic script-driven processing steps that run **before** workflows. They execute external scripts (any language) with stdin/stdout piping between steps, providing reliable pre-processing without AI involvement.
+Pipelines are deterministic script-driven processing steps that run **before** the main AI session. They execute external scripts (any language) with stdin/stdout piping between steps, providing reliable pre-processing without AI involvement.
 
 ## Concept
 
 ```
-User Input --> [Pipeline (scripts)] --> [Workflow (AI)] --> Enhanced Input --> AI Session
+User Input --> [Pipeline (scripts)] --> Enhanced Input --> AI Session
                     |
                     +-- Step 1: detect files (bash)
                     +-- Step 2: gather context (python)
                     +-- Step 3: enrich metadata (ruby)
 ```
 
-Pipelines handle **deterministic** work: context gathering, file detection, validation, data transformation. Workflows handle **agentic** work: reasoning, code generation, planning.
+Pipelines handle **deterministic** work: context gathering, file detection, validation, data transformation.
 
-## When to Use Pipelines vs Workflows
+For multi-step **agentic** orchestration (reasoning, code generation, planning across multiple sessions), use the external [`octomind workflow`](09-workflows.md) CLI instead — it sits above sessions, not inside them.
 
-| Use Case | Pipeline | Workflow |
-|----------|----------|----------|
-| Run `rg` to find relevant files | Yes | |
-| Parse git history for context | Yes | |
-| Validate input format | Yes | |
-| Refine a vague user query | | Yes |
-| Reason about code architecture | | Yes |
-| Run linters/formatters | Yes | |
-| Classify task complexity | Yes | |
+## When to Use Pipelines
+
+| Use Case | Pipeline |
+|----------|----------|
+| Run `rg` to find relevant files | Yes |
+| Parse git history for context | Yes |
+| Validate input format | Yes |
+| Run linters/formatters | Yes |
+| Classify task complexity | Yes |
 
 ## Configuration
 
@@ -53,8 +53,7 @@ Activate a pipeline for a role:
 ```toml
 [[roles]]
 name = "developer"
-pipeline = "dev_pipeline"          # deterministic first
-workflow = "developer_workflow"     # then AI-driven
+pipeline = "dev_pipeline"          # deterministic pre-processing
 ```
 
 ## How It Works
@@ -62,10 +61,8 @@ workflow = "developer_workflow"     # then AI-driven
 1. User sends a message
 2. The message is piped as **stdin** to the first pipeline step
 3. Each step's **stdout** becomes the next step's **stdin** (Unix-style piping)
-4. The final step's stdout is used as the new input:
-   - If the role has a **workflow**: pipeline output replaces the user message as the workflow's input
-   - If the role has **no workflow**: pipeline output replaces the user message as the main model's input
-5. Runs on the **first message only** (same as workflows)
+4. The final step's stdout replaces the user message as the main model's input
+5. Runs on the **first message only**
 
 ```
 User: "fix the login bug"
@@ -77,7 +74,7 @@ User: "fix the login bug"
 [git-context.sh]   -->  stdout: "fix the login bug\n\nRelevant: src/auth/login.rs\n\nRecent: abc123 fix auth timeout"
     |
     v
-[Workflow or Model receives this enriched text as its input]
+[Main model receives this enriched text as its input]
 ```
 
 ### Exit Codes

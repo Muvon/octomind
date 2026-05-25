@@ -30,7 +30,6 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(SESSION_COMMAND.to_string());
 	commands.push(INFO_COMMAND.to_string());
 	commands.push(DONE_COMMAND.to_string());
-	commands.push(WORKFLOW_COMMAND.to_string());
 
 	commands.push(LOGLEVEL_COMMAND.to_string());
 

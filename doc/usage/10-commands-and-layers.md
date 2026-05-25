@@ -4,7 +4,7 @@ Octomind provides four mechanisms for extending AI capabilities beyond the base 
 
 ## Layers
 
-Layers execute via ACP (Agent Client Protocol). Model, system prompt, and MCP tool access live in `[[roles]]` config — layers reference roles via the `command` field. Layers are workflow building blocks; commands are interactive layer shortcuts.
+Layers execute via ACP (Agent Client Protocol). Model, system prompt, and MCP tool access live in `[[roles]]` config — layers reference roles via the `command` field. Layers back the `[[commands]]` slash-command system (`/run <name>`).
 
 ### Configuration
 
@@ -24,7 +24,7 @@ How the layer receives conversation input:
 
 | Mode | Description |
 |------|-------------|
-| `"last"` | Only the last assistant/message from the session (default for workflow stages) |
+| `"last"` | Only the last assistant/message from the session (default) |
 | `"all"` | Entire conversation history from the session |
 | `"summary"` | A summarized version of the conversation history |
 
@@ -34,7 +34,7 @@ How the layer's output affects the session:
 
 | Mode | Description |
 |------|-------------|
-| `"none"` | Intermediate processing, doesn't modify session (for workflow stages like task_refiner) |
+| `"none"` | Intermediate processing, doesn't modify session |
 | `"append"` | Adds output as a new message to the session |
 | `"replace"` | Replaces entire session content with layer output (reducer functionality) |
 | `"last"` | Append only the last response to session (ignore multiple outputs) |

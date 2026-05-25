@@ -21,7 +21,7 @@ use super::protocol::{
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
-	execute_api_call_and_process_response, prepare_for_api_call, process_layers_if_enabled,
+	execute_api_call_and_process_response, prepare_for_api_call, process_pipeline_if_enabled,
 	setup_and_initialize_session, setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
 use crate::session::output::{OutputMode, WebSocketSink};
@@ -919,14 +919,14 @@ async fn handle_user_message(
 		}
 	}
 
-	// Process through layers if enabled (first message)
+	// Run pipeline pre-processing if the role has one configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
 	log_debug!(
-		"Processing input through layers: first_message={}",
+		"Pipeline pre-processing: first_message={}",
 		!first_message_processed
 	);
 
-	let (processed_input, layers_modified_session, _layer_cancelled) = process_layers_if_enabled(
+	let (processed_input, _pipeline_cancelled) = process_pipeline_if_enabled(
 		&input,
 		&mut chat_session,
 		&config_for_role,
@@ -957,16 +957,14 @@ async fn handle_user_message(
 			}
 		};
 
-	// Add user message if layers didn't modify session
-	if !layers_modified_session {
-		let final_input_with_constraints =
-			crate::session::chat::session::utils::append_constraints_if_exists(
-				&processed_input,
-				&config_for_role.custom_constraints_file_name,
-				&current_dir,
-			);
-		chat_session.add_user_message(&final_input_with_constraints)?;
-	}
+	// Add user message
+	let final_input_with_constraints =
+		crate::session::chat::session::utils::append_constraints_if_exists(
+			&processed_input,
+			&config_for_role.custom_constraints_file_name,
+			&current_dir,
+		);
+	chat_session.add_user_message(&final_input_with_constraints)?;
 
 	// Prepare for API call
 	prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await?;

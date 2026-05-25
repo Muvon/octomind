@@ -34,7 +34,7 @@ use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
-	execute_api_call_and_process_response, prepare_for_api_call, process_layers_if_enabled,
+	execute_api_call_and_process_response, prepare_for_api_call, process_pipeline_if_enabled,
 	setup_and_initialize_session, setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
 use crate::session::output::{OutputMode, WebSocketSink};
@@ -921,12 +921,12 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				}
 			}
 
-			// Process through layers (pre-processing step).
+			// Pipeline pre-processing (deterministic scripts before the main model).
 			// On error we MUST re-insert chat_session before returning — otherwise the
 			// session is permanently lost from self.sessions and every subsequent
 			// prompt to this session_id fails with "session not found".
 			let first_message_processed = !chat_session.session.messages.is_empty();
-			let layer_result = process_layers_if_enabled(
+			let pipeline_result = process_pipeline_if_enabled(
 				&input,
 				&mut chat_session,
 				&config_for_role,
@@ -935,7 +935,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				operation_rx.clone(),
 			)
 			.await;
-			let (processed_input, layers_modified_session, layer_cancelled) = match layer_result {
+			let (processed_input, pipeline_cancelled) = match pipeline_result {
 				Ok(v) => v,
 				Err(e) => {
 					self.sessions
@@ -945,7 +945,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				}
 			};
 
-			if layer_cancelled {
+			if pipeline_cancelled {
 				self.sessions
 					.borrow_mut()
 					.insert(session_id.clone(), (chat_session, session_cwd.clone()));
@@ -960,20 +960,17 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				chat_session.pending_video = Some(first_video);
 			}
 
-			// Add user message if layers didn't modify session
-			if !layers_modified_session {
-				let final_input =
-					crate::session::chat::session::utils::append_constraints_if_exists(
-						&processed_input,
-						&config_for_role.custom_constraints_file_name,
-						&current_dir,
-					);
-				if let Err(e) = chat_session.add_user_message(&final_input) {
-					self.sessions
-						.borrow_mut()
-						.insert(session_id.clone(), (chat_session, session_cwd));
-					return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
-				}
+			// Add user message
+			let final_input = crate::session::chat::session::utils::append_constraints_if_exists(
+				&processed_input,
+				&config_for_role.custom_constraints_file_name,
+				&current_dir,
+			);
+			if let Err(e) = chat_session.add_user_message(&final_input) {
+				self.sessions
+					.borrow_mut()
+					.insert(session_id.clone(), (chat_session, session_cwd));
+				return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
 			}
 
 			// Prepare for API call

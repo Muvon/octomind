@@ -159,7 +159,7 @@ Manage MCP servers at runtime.
 | `/mcp disable <name>` | Disable a server |
 | `/mcp remove <name>` | Remove a server |
 
-## Commands & Workflows
+## Commands
 
 ### `/run [COMMAND]`
 Execute a custom command defined in `[[commands]]` config section. Without argument, lists available commands.
@@ -169,13 +169,7 @@ Execute a custom command defined in `[[commands]]` config section. Without argum
 /run estimate
 ```
 
-### `/workflow [NAME]`
-Execute a workflow. Without argument, lists available workflows.
-
-```
-/workflow developer_workflow
-```
-
+> **Multi-step workflows** are no longer a session command. Use the external CLI instead: `octomind workflow <file.toml>` — see [Workflows](../usage/09-workflows.md).
 ### `/prompt [NAME]`
 Inject a prompt template defined in `[[prompts]]` config section. Without argument, lists available prompts.
 

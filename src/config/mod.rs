@@ -53,7 +53,6 @@ pub mod runtime_overlay;
 
 pub mod pipelines;
 
-pub mod workflows;
 
 // Tests removed - strict configuration mode doesn't support Default implementations
 // Tests should be rewritten to use complete config structures
@@ -66,7 +65,6 @@ pub use pipelines::*;
 pub use providers::*;
 pub use registry::*;
 pub use roles::*;
-pub use workflows::*;
 
 // Agent configuration - removed, now uses LayerConfig directly
 
@@ -347,11 +345,7 @@ pub struct Config {
 	// Global layer configurations - array of layer definitions
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
 
-	// Workflows configuration - array of workflow definitions
-	#[serde(default)]
-	pub workflows: Vec<WorkflowDefinition>,
-
-	// Pipelines configuration - deterministic script steps before workflows
+	// Pipelines configuration - deterministic script steps before AI processing
 	#[serde(default)]
 	pub pipelines: Vec<PipelineDefinition>,
 

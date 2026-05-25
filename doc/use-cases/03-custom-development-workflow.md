@@ -1,6 +1,6 @@
 # Use Case: Custom Development Workflow
 
-Build a multi-stage AI pipeline that refines, researches, and validates tasks before the main AI executes them.
+Build a multi-stage AI pipeline that refines, researches, and validates a task before another agent executes the fix.
 
 ## The Problem
 
@@ -8,222 +8,150 @@ Asking an AI to "fix the login bug" often produces mediocre results because it s
 
 ## Solution
 
-Create a workflow with multiple layers, each handling a different stage.
+Use the external `octomind workflow <file.toml>` CLI to chain multiple independent `octomind run` invocations. Each step is its own session with its own role, model, and tools. Outputs flow between steps via `{{step_name}}` substitution.
+
+> The session-internal `[[workflows]]` system and `/workflow` command have been removed. Workflows now sit **above** sessions, not inside them. See [Workflows](../usage/09-workflows.md) for the full reference.
 
 ### Architecture
 
 ```
-User: "fix the login bug"
+echo "fix the login bug" | octomind workflow dev.toml
     |
     v
-[task_refiner] Clarify the request, guess relevant files
+[refine]        Clarify the request, guess relevant files (gpt-4.1-mini)
     |
     v
-[context_researcher] Read code, search patterns, gather context
+[research]      Read code, search patterns, gather context (gemini-flash)
     |
     v
-Main AI Session: now has refined task + gathered context
+[execute]       Produce the fix with full understanding (claude-sonnet)
     |
     v
-Executes the fix with full understanding
+stdout
 ```
 
-### Step 1: Define Layers
+### Workflow File
 
-Layers execute via ACP protocol. Each layer needs a matching role that defines the model, system prompt, and tools:
+Drop this at `dev.toml`:
 
 ```toml
-# In config.toml
+name   = "dev"
+result = "execute"
 
-[[layers]]
-name = "task_refiner"
-description = "Clarifies vague requests into actionable tasks"
-command = "octomind acp task_refiner"
-input_mode = "last"
-output_mode = "none"
-output_role = "assistant"
+[[steps]]
+name    = "refine"
+role    = "developer:general"
+session = "fresh"
+prompt  = """
+Refine this request into a clear, actionable task. Guess which files might
+be relevant. If already clear, return unchanged. Respond ONLY with the
+refined task.
 
-[[layers]]
-name = "context_researcher"
-description = "Gathers codebase context for development tasks"
-command = "octomind acp context_researcher"
-input_mode = "last"
-output_mode = "append"
-output_role = "assistant"
-
-# Roles for the layers (model + prompt config lives here)
-[[roles]]
-name = "task_refiner"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 2048
-system = """
-Take the user's request and make it clearer:
-1. If vague, add specificity based on the project context
-2. Guess which files might be relevant
-3. Keep it concise -- you're refining, not solving
-
-If the request is already clear, return it unchanged.
-
-Respond ONLY with the refined task. No questions.
-"""
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-
-[roles.mcp]
-server_refs = []
-
-[[roles]]
-name = "context_researcher"
-model = "openrouter:google/gemini-2.5-flash-preview"
-max_tokens = 8192
-system = """
-You are a research assistant. Gather the most important information for the task.
-
-Strategy:
-1. Search for relevant files and functions
-2. Read key interfaces and signatures (not full implementations)
-3. Note patterns and conventions used in the codebase
-
-Present findings as:
-- **Starting Points**: Key files and functions
-- **Patterns**: Relevant code conventions
-- **Context**: Dependencies and related components
-
-Stay focused. Get starting points, not full implementations.
-"""
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-
-[roles.mcp]
-server_refs = ["filesystem"]
-allowed_tools = ["view"]
-```
-
-### Step 2: Define the Workflow
-
-```toml
-[[workflows]]
-name = "dev_workflow"
-description = "Refine task, then research context before execution"
-
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
-
-[[workflows.steps]]
-name = "research"
-type = "once"
-layer = "context_researcher"
-```
-
-### Step 3: Bind to a Role
-
-```toml
-[[roles]]
-name = "developer"
-workflow = "dev_workflow"
-temperature = 0.3
-system = """
-You are an expert developer.
-Working directory: {{CWD}}
-Git status: {{GIT_STATUS}}
+Request:
+{{input}}
 """
 
-[roles.mcp]
-server_refs = ["core", "filesystem", "agent"]
-allowed_tools = ["core:*", "filesystem:*", "agent:*"]
+[[steps]]
+name    = "research"
+role    = "developer:general"
+session = "fresh"
+prompt  = """
+Gather the key context for this task. Search relevant files, read
+signatures (not full bodies), note conventions. Output:
+- Starting Points: key files/functions
+- Patterns: code conventions
+- Context: dependencies / related components
+
+Task:
+{{refine}}
+"""
+
+[[steps]]
+name    = "execute"
+role    = "developer:general"
+session = "fresh"
+prompt  = """
+Implement the task using the gathered context.
+
+Task:
+{{refine}}
+
+Context:
+{{research}}
+"""
 ```
 
-### Step 4: Use It
+### Run It
 
 ```bash
-octomind run developer
+echo "fix the login bug" | octomind workflow dev.toml
 ```
 
-Now when you type "fix the login bug":
-1. `task_refiner` (gpt-4.1-mini, cheap) clarifies: "Fix the authentication failure in src/auth/login.rs. Likely files: src/auth/login.rs, src/auth/mod.rs, tests/auth_test.rs"
-2. `context_researcher` (gemini-flash, fast) reads those files, finds the relevant functions and patterns
-3. Main session (claude-sonnet, powerful) receives the refined task + gathered context and produces a high-quality fix
+Per-step timing, cost, and tokens stream to stderr; the final `execute` step's output lands on stdout.
 
-### Advanced: Validation Loop
+## Advanced: Validation Loop
 
-Add validation before the main AI acts:
+Add an iterative validate-fix cycle. Researcher and tester each get their own continuing session via `session = "continue"`:
 
 ```toml
-[[workflows]]
-name = "validated_dev"
-description = "Refine, research, validate in a loop"
+name   = "validated_dev"
+result = "execute"
 
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
+[[steps]]
+name    = "refine"
+role    = "developer:general"
+session = "fresh"
+prompt  = "Refine: {{input}}"
 
-[[workflows.steps]]
-name = "validate_loop"
-type = "loop"
-max_iterations = 2
-exit_pattern = "READY"
+[[steps]]
+name           = "verify"
+loop           = true
+max_iterations = 3
+exit_when      = { output = "tester", contains = "READY" }
 
-  [[workflows.steps.substeps]]
-  name = "research"
-  type = "once"
-  layer = "context_researcher"
+  [[steps.run]]
+  name    = "research"
+  role    = "developer:general"
+  session = "continue"
+  prompt  = "Gather context for: {{refine}}"
 
-  [[workflows.steps.substeps]]
-  name = "validate"
-  type = "once"
-  layer = "task_validator"
-```
+  [[steps.run]]
+  name    = "tester"
+  role    = "developer:brief"
+  session = "continue"
+  prompt  = """
+Is the gathered context sufficient to proceed?
+- Yes  → reply READY
+- No   → state what's missing
 
-With a validator layer:
-```toml
-[[layers]]
-name = "task_validator"
-description = "Validates whether enough context has been gathered"
-command = "octomind acp task_validator"
-input_mode = "last"
-output_mode = "none"
-output_role = "assistant"
-
-# Role for the validator
-[[roles]]
-name = "task_validator"
-model = "openrouter:openai/gpt-4.1-mini"
-max_tokens = 1024
-system = """
-Review the research output. Is there enough context to proceed?
-
-If yes: respond with READY
-If no: respond with what additional information is needed
+Context:
+{{research}}
 """
-temperature = 0.2
 
-[roles.mcp]
-server_refs = []
+[[steps]]
+name    = "execute"
+role    = "developer:general"
+session = "fresh"
+prompt  = "Implement: {{refine}}\n\nContext:\n{{research}}"
 ```
 
 ## Cost Optimization
 
-Each layer can use a different model optimized for its task:
+Each step is a separate `octomind run` invocation, so you can give each one its own role with its own model:
 
-| Layer | Model | Cost | Why |
-|-------|-------|------|-----|
-| Refiner | gpt-4.1-mini | $0.001 | Simple text processing |
-| Researcher | gemini-flash | $0.002 | Fast, large context for code reading |
-| Validator | gpt-4.1-mini | $0.001 | Simple yes/no decision |
-| Main session | claude-sonnet | $0.01+ | Complex reasoning and code generation |
+| Step | Role | Why |
+|------|------|-----|
+| refine | cheap fast model | Simple text refinement |
+| research | fast model with large context | Code reading |
+| tester | small judge model | Yes/no decision |
+| execute | powerful model | Complex reasoning + code generation |
 
-Total pipeline overhead: ~$0.004 per task for much better results.
+Configure the per-role model in your normal `[[roles]]` config (or use `[taps]` overrides per agent tag). The workflow file just names the role; cost lives in role config.
 
 ## Key Points
 
-- `output_mode = "none"` for intermediate layers that don't show output
-- `output_mode = "append"` for layers that add context to the session
-- Each layer can have different models, tools, and prompts
-- Workflows run automatically when bound to a role via `workflow = "..."`
-- Use `/workflow` to trigger manually
-- Use cheap models for simple tasks, powerful models where it matters
+- Workflow steps are **separate sessions** — they don't share context unless `session = "continue"` is set
+- Loop step exits as soon as `exit_when.contains` matches the named output
+- Stdin → `{{input}}`; final stdout = the step named by `result =` (default: last step)
+- All progress, timing, cost, tokens print to **stderr** — stdout stays clean for piping
+- Use `--dry-run` to validate the file and print the execution plan without spawning any sessions

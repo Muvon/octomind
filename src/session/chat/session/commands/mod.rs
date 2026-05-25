@@ -42,7 +42,6 @@ mod share;
 mod skill;
 mod utils;
 mod video;
-mod workflow;
 
 use super::super::commands::*;
 use super::core::ChatSession;
@@ -166,10 +165,6 @@ pub enum CommandOutput {
 		command_executed: String,
 		data: serde_json::Value,
 	},
-	Workflow {
-		workflow_executed: String,
-		data: serde_json::Value,
-	},
 	Mcp {
 		mcp_command: String,
 		data: serde_json::Value,
@@ -267,7 +262,6 @@ impl CommandOutput {
 			Self::List { .. } => display::display_list(self, config),
 
 			Self::Run { .. } => display::display_run(self, config, &session.role),
-			Self::Workflow { .. } => display::display_workflow(self, config),
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),
 			Self::Session { .. } => display::display_session(self),
@@ -339,10 +333,6 @@ pub async fn process_command(
 		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,
 		RUN_COMMAND => {
 			run::handle_run(session, config, &current_role, params, operation_cancelled).await
-		}
-		WORKFLOW_COMMAND => {
-			workflow::handle_workflow(session, config, &current_role, params, operation_cancelled)
-				.await
 		}
 
 		IMAGE_COMMAND => image::handle_image(session, params).await,

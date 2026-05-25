@@ -22,7 +22,7 @@ use super::api_prep::prepare_for_api_call;
 use super::commands::CommandResult;
 use super::core::{ChatSession, SessionInitParams};
 use super::error_utils::{handle_api_error, handle_followup_api_error};
-use super::layer_processor::process_layers_if_enabled;
+use super::layer_processor::process_pipeline_if_enabled;
 use super::prompt_setup::setup_system_prompt_and_cache;
 use super::setup::setup_and_initialize_session;
 use crate::config::Config;
@@ -1050,40 +1050,30 @@ pub async fn run_interactive_session(
 				continue;
 			}
 
-			// Process layers if enabled using helper function
-			let (processed_input, workflow_modified_session, _layer_cancelled) =
-				process_layers_if_enabled(
-					&input,
-					&mut chat_session,
-					&current_config,
-					&role,
-					first_message_processed,
-					operation_rx.clone(),
-				)
-				.await?;
+			// Run pipeline pre-processing if the role has one configured.
+			let (processed_input, _pipeline_cancelled) = process_pipeline_if_enabled(
+				&input,
+				&mut chat_session,
+				&current_config,
+				&role,
+				first_message_processed,
+				operation_rx.clone(),
+			)
+			.await?;
 
-			// Check for cancellation after layer processing
+			// Check for cancellation after pipeline processing
 			if cancellation.is_cancelled() {
 				animation_manager.stop_current().await;
 				continue;
 			}
 
 			// Snapshot the user's original input for retry-on-failure (Ctrl+G with empty input).
-			// `input` itself is consumed by the workflow_modified_session branch below.
 			let original_input_for_retry = input.clone();
 
-			let final_input = if workflow_modified_session {
-				// Layers used output_mode append/replace and added messages to session
-				// Skip adding user message to avoid duplicates and continue with the user message
-				// to guarantee that the output from layer next processed with the main loop
-				first_message_processed = true;
-				input // Use original input
-			} else {
-				// Use the processed input from layers (or original if layers not enabled)
-				// Mark that we've processed the first message through layers
-				first_message_processed = true;
-				processed_input
-			};
+			// Mark first-message processing as complete and use pipeline output (or
+			// the original input if no pipeline is configured) for the rest of the loop.
+			first_message_processed = true;
+			let final_input = processed_input;
 
 			// Initialize operation context for smart tracking
 			let operation_id = format!(
@@ -1139,17 +1129,14 @@ pub async fn run_interactive_session(
 
 			let user_message_index = chat_session.session.messages.len();
 
-			// Add user message for standard processing flow
-			// Skip if layers already modified the session (to avoid duplicates)
-			if !workflow_modified_session {
-				// Append constraints if configured
-				let final_input_with_constraints = super::utils::append_constraints_if_exists(
-					&final_input,
-					&current_config.custom_constraints_file_name,
-					&current_dir,
-				);
-				chat_session.add_user_message(&final_input_with_constraints)?;
-			}
+			// Add user message for standard processing flow.
+			// Append constraints if configured.
+			let final_input_with_constraints = super::utils::append_constraints_if_exists(
+				&final_input,
+				&current_config.custom_constraints_file_name,
+				&current_dir,
+			);
+			chat_session.add_user_message(&final_input_with_constraints)?;
 
 			// Create operation context for tracking
 			*current_operation.lock().unwrap() = Some(OperationContext {
@@ -1500,8 +1487,8 @@ pub async fn run_interactive_session_with_input(
 	)
 	.await;
 
-	// Layer processing if enabled and first message using helper function
-	let (processed_input, workflow_modified_session, layer_cancelled) = process_layers_if_enabled(
+	// Pipeline pre-processing if the role has one configured.
+	let (processed_input, pipeline_cancelled) = process_pipeline_if_enabled(
 		&input,
 		&mut chat_session,
 		&current_config,
@@ -1511,49 +1498,33 @@ pub async fn run_interactive_session_with_input(
 	)
 	.await?;
 
-	// CRITICAL FIX: Reset cancellation state after layer cancellation
+	// CRITICAL FIX: Reset cancellation state after pipeline cancellation
 	// This prevents subsequent operations from failing due to stale cancellation signal
-	if layer_cancelled {
+	if pipeline_cancelled {
 		cancellation.reset();
 		log_info!(
-			"Cancellation state reset after layer cancellation - ready for main model processing"
+			"Cancellation state reset after pipeline cancellation - ready for main model processing"
 		);
 
-		// Save session after layer cancellation cleanup to persist the cleaned state
-		if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
-		log_info!("Session saved after layer cancellation cleanup");
+		if let Err(e) = chat_session.save() {
+			crate::log_debug!("session save failed: {}", e);
+		}
+		log_info!("Session saved after pipeline cancellation cleanup");
 
-		// Create new operation receiver with reset cancellation state
 		operation_rx = cancellation.new_operation();
 	}
 
-	if workflow_modified_session {
-		// Layers used output_mode append/replace and added messages to session
-		// Continue processing to ensure main model gets called (same as interactive mode)
-		log_info!("Layers modified session. Continuing with main model processing.");
-		// Use processed input from layers for main model
-		input = processed_input;
-	} else {
-		// Use processed input from layers (or original if layers not enabled)
-		input = processed_input;
-	}
+	input = processed_input;
 
-	// Add user message - same as interactive
+	// Add user message - same as interactive.
+	// Append constraints if configured.
 	let user_message_index = chat_session.session.messages.len();
-	let has_workflow = current_config
-		.role_map
-		.get(&role)
-		.and_then(|r| r.workflow.as_ref())
-		.is_some();
-	if !has_workflow {
-		// Append constraints if configured
-		let input_with_constraints = super::utils::append_constraints_if_exists(
-			&input,
-			&current_config.custom_constraints_file_name,
-			&current_dir,
-		);
-		chat_session.add_user_message(&input_with_constraints)?;
-	}
+	let input_with_constraints = super::utils::append_constraints_if_exists(
+		&input,
+		&current_config.custom_constraints_file_name,
+		&current_dir,
+	);
+	chat_session.add_user_message(&input_with_constraints)?;
 
 	// Prepare for API call using helper function
 	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;

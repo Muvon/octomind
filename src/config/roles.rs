@@ -50,11 +50,7 @@ pub struct Role {
 	#[serde(default)]
 	pub mcp: RoleMcpConfig,
 
-	// Workflow reference - name of workflow to use for this role
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub workflow: Option<String>,
-
-	// Pipeline reference - name of pipeline to use for this role (runs before workflow)
+	// Pipeline reference - name of pipeline to use for this role
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub pipeline: Option<String>,
 }

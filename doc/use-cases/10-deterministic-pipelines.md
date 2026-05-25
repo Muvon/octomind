@@ -4,11 +4,11 @@ Use pipelines to gather and prepare context deterministically before AI processi
 
 ## The Problem
 
-AI workflows (layers) are powerful but expensive and non-deterministic. Using an LLM to run `rg`, parse git logs, or detect file types wastes tokens on work that a simple script handles perfectly. You want deterministic, reliable pre-processing before the AI even starts.
+AI workflows are powerful but expensive and non-deterministic. Using an LLM to run `rg`, parse git logs, or detect file types wastes tokens on work that a simple script handles perfectly. You want deterministic, reliable pre-processing before the AI even starts.
 
 ## Solution
 
-Create a pipeline of scripts that gather context, then pass the enriched input to the workflow and main AI.
+Create a pipeline of scripts that gather context, then pass the enriched input to the AI session.
 
 ### Architecture
 
@@ -99,35 +99,23 @@ command = "./scripts/git-context.sh"
 timeout = 10
 ```
 
-### Step 3: Combine with a Workflow
-
-```toml
-[[workflows]]
-name = "enhanced_dev"
-description = "Refine task using pipeline-gathered context"
-
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
-```
-
-### Step 4: Bind to Role
+### Step 3: Bind the pipeline to a role
 
 ```toml
 [[roles]]
 name = "developer"
 pipeline = "context_pipeline"
-workflow = "enhanced_dev"
 temperature = 0.3
 # ...
 ```
 
-### Step 5: Use It
+### Step 4: Use It
 
 ```bash
 octomind run developer
 ```
+
+> **Multi-step AI orchestration** (the old `[[workflows]]` config) has moved out of the session. Use the external `octomind workflow <file.toml>` CLI to chain multiple roles into a pipeline — see [Workflows](../usage/09-workflows.md).
 
 ## Step Timing and Results
 
@@ -196,10 +184,10 @@ Pipelines save tokens by doing deterministic work that doesn't need AI.
 
 ## Key Points
 
-- Pipeline scripts run **before** workflows and the main AI
+- Pipeline scripts run **before** the AI session
 - Scripts can be written in **any language** (bash, python, ruby, etc.)
 - Stdin/stdout piping between steps -- Unix philosophy
 - Non-zero exit code = fatal stop (script errors are real problems)
 - Use pipelines for: file detection, git context, validation, data transformation
-- Use workflows for: reasoning, refinement, planning
+- Use the external `octomind workflow` CLI for: chaining multiple AI sessions, reasoning loops, refine/critic patterns
 - Combine both for the best results: deterministic preparation + AI reasoning

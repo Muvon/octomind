@@ -83,14 +83,6 @@ impl<'a> CommandCompleter<'a> {
 		self.config.roles.iter().map(|r| r.name.clone()).collect()
 	}
 
-	/// Get available workflows for /workflow command
-	fn get_available_workflows(&self) -> Vec<String> {
-		self.config
-			.workflows
-			.iter()
-			.map(|w| w.name.clone())
-			.collect()
-	}
 
 	/// Check if the given file extension is a supported image format
 	fn is_image_file(path: &str) -> bool {
@@ -443,30 +435,6 @@ impl<'a> CommandCompleter<'a> {
 				.collect();
 
 			(prefix_len, candidates)
-		} else if line.starts_with("/workflow ") {
-			// Handle /workflow command with workflow name completion
-			let workflow_prefix = "/workflow ";
-			let prefix_len = workflow_prefix.len();
-
-			// Extract the workflow name part up to cursor position
-			let workflow_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
-
-			// Get available workflows
-			let candidates: Vec<Pair> = self
-				.get_available_workflows()
-				.iter()
-				.filter(|workflow| workflow.starts_with(workflow_part))
-				.map(|workflow| Pair {
-					display: workflow.clone(),
-					replacement: workflow.clone(),
-				})
-				.collect();
-
-			(prefix_len, candidates)
 		} else if line.starts_with("/context ") {
 			// Handle /context command with filter completion
 			let context_prefix = "/context ";
@@ -652,10 +620,6 @@ impl<'a> CommandCompleter<'a> {
 			return Some(" <command_name>".to_string());
 		}
 
-		// Special hint for /workflow command
-		if line == "/workflow" {
-			return Some(" <workflow_name>".to_string());
-		}
 
 		// Special hint for /context command
 		if line == "/context" {
@@ -711,13 +675,6 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let command completer handle this
 		}
 
-		if line.starts_with("/workflow ") && line.len() > 10 {
-			let workflow_part = &line[10..]; // "/workflow ".len() = 10
-			if workflow_part.is_empty() {
-				return Some("Start typing workflow name...".to_string());
-			}
-			return None; // Let workflow completer handle this
-		}
 
 		if line.starts_with("/context ") && line.len() > 9 {
 			let filter_part = &line[9..]; // "/context ".len() = 9

@@ -46,7 +46,6 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(DONE_COMMAND, "Finalize task with memorize/summarize/commit"),
 			(LOGLEVEL_COMMAND, "Set logging level: none, info, debug"),
 			(RUN_COMMAND, "Execute a command layer"),
-			(WORKFLOW_COMMAND, "Execute a workflow"),
 			(CONTEXT_COMMAND, "Display session context (filterable)"),
 			(MODEL_COMMAND, "View or change current AI model"),
 			(EFFORT_COMMAND, "View or change reasoning effort"),
@@ -77,21 +76,11 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 					.collect()
 			})
 			.unwrap_or_default();
-		let workflow_cmds: Vec<(String, &str)> = config
-			.workflows
-			.iter()
-			.map(|w| (format!("/workflow {}", w.name), w.description.as_str()))
-			.collect();
 
 		// Column width: pad command names so descriptions align.
 		let builtins_width = builtins.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
 		let custom_width = custom_cmds.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
-		let workflow_width = workflow_cmds
-			.iter()
-			.map(|(c, _)| c.len())
-			.max()
-			.unwrap_or(0);
-		let pad = builtins_width.max(custom_width).max(workflow_width).min(24);
+		let pad = builtins_width.max(custom_width).min(24);
 
 		block_open("/help", None);
 		block_section("commands");
@@ -104,13 +93,7 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 				block_row(cmd, &desc.dimmed().to_string(), pad);
 			}
 		}
-		if !workflow_cmds.is_empty() {
-			block_section("workflows");
-			for (cmd, desc) in &workflow_cmds {
-				block_row(cmd, &desc.dimmed().to_string(), pad);
-			}
-		}
-		let total = builtins.len() + custom_cmds.len() + workflow_cmds.len();
+		let total = builtins.len() + custom_cmds.len();
 		block_close_ok("/help", Some(&format!("{} commands", total)));
 		println!();
 	}
@@ -836,85 +819,6 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 	}
 }
 
-pub fn display_workflow(output: &CommandOutput, _config: &Config) {
-	if let CommandOutput::Workflow {
-		workflow_executed: _,
-		data,
-	} = output
-	{
-		if let Some(action) = data.get("action").and_then(|v| v.as_str()) {
-			match action {
-				"list" => {
-					if let Some(workflows) = data.get("workflows").and_then(|v| v.as_array()) {
-						block_open("/workflow", None);
-						if workflows.is_empty() {
-							block_line(&"No workflows configured.".bright_yellow().to_string());
-							block_line(
-								&"Define in the [workflows] section of your config."
-									.dimmed()
-									.to_string(),
-							);
-							block_close_ok("/workflow", Some("empty"));
-						} else {
-							block_section("workflows");
-							let name_width = workflows
-								.iter()
-								.filter_map(|w| w.get(0).and_then(|v| v.as_str()))
-								.map(|n| n.len())
-								.max()
-								.unwrap_or(0)
-								.min(20);
-							for workflow in workflows {
-								if let (Some(name), Some(desc)) = (
-									workflow.get(0).and_then(|v| v.as_str()),
-									workflow.get(1).and_then(|v| v.as_str()),
-								) {
-									block_row(name, &desc.dimmed().to_string(), name_width);
-								}
-							}
-							block_line(
-								&"Usage: /workflow <workflow_name> [input]"
-									.dimmed()
-									.to_string(),
-							);
-							block_close_ok(
-								"/workflow",
-								Some(&format!("{} workflow(s)", workflows.len())),
-							);
-						}
-						println!();
-					}
-				}
-				"execute" => {
-					if let Some(false) = data.get("success").and_then(|v| v.as_bool()) {
-						block_open("/workflow", None);
-						if let Some(available) =
-							data.get("available_workflows").and_then(|v| v.as_array())
-						{
-							if !available.is_empty() {
-								block_section("available");
-								for workflow in available {
-									if let Some(name) = workflow.as_str() {
-										block_row_text(&name.dimmed().to_string());
-									}
-								}
-							}
-						}
-						let error = data
-							.get("error")
-							.and_then(|v| v.as_str())
-							.unwrap_or("unknown error");
-						block_close_err("/workflow", error);
-						println!();
-					}
-					// Success case: all output already displayed in real-time, nothing to show
-				}
-
-				_ => {}
-			}
-		}
-	}
-}
 
 pub fn display_mcp(output: &CommandOutput) {
 	if let CommandOutput::Mcp { data, .. } = output {

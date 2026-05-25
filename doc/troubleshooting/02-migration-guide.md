@@ -64,7 +64,7 @@ allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 Key changes:
 - Roles use `[[roles]]` array format (not `[role_name]` sections)
 - `enabled` field removed (roles are always available if defined)
-- `enable_layers` removed (layers are controlled by workflows)
+- `enable_layers` removed (legacy in-session workflow system is gone — use external `octomind workflow` instead)
 - Tool permissions use `allowed_tools` patterns
 - `runtime` builtin server is new — see "Runtime Namespace Move" below
 
@@ -94,7 +94,13 @@ Key changes:
 - `builtin`, `enabled`, `enable_tools`, `model`, `max_tokens` fields removed
 - `description` and `command` are required
 - Model/system/MCP config lives in the `[[roles]]` entry that `command` references
-- Layer is active when referenced by a workflow or `/run` command
+- Layer is active when referenced by a `/run` command
+
+## In-Session Workflows Removed
+
+The `[[workflows]]` config section and the `/workflow` session command have been removed. Multi-step AI orchestration is now an external CLI: `octomind workflow <file.toml>`.
+
+If you previously had `workflow = "..."` on a role, drop the field. To port an existing in-session workflow, rewrite it as an external workflow TOML — see [doc/usage/09-workflows.md](../usage/09-workflows.md).
 
 ## Config File Location
 

@@ -1,213 +1,277 @@
 # Workflows
 
-Workflows are multi-step AI processing pipelines that enhance user requests before the main AI processes them. They implement a planner-executor separation.
+`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step pipeline. Each step is an independent subprocess; outputs flow between steps by name; the final result goes to stdout — making workflows composable with shell pipes.
 
-> **See also:** [Pipelines](14-pipelines.md) -- deterministic script-driven steps that run *before* workflows. Use pipelines for context gathering and preparation, workflows for AI-driven reasoning.
+> **In-session pipelines** for deterministic pre-processing live separately — see [Pipelines](14-pipelines.md). Workflows sit *above* sessions; pipelines sit *inside* one.
 
 ## Concept
 
 ```
-User Input --> [Pipeline (scripts)] --> [Workflow (AI)] --> Enhanced Input --> AI Session
-                                             |
-                                             ├── Step 1: Refine query
-                                             ├── Step 2: Research context
-                                             └── Step 3: Validate plan
+stdin ─► octomind workflow file.toml ─► stdout (final step output)
+                    │
+                    ├── step "spec"      → octomind run (subprocess)
+                    ├── step "developer" → octomind run (subprocess)  ─┐
+                    └── step "tester"    → octomind run (subprocess)  ─┘  loop
+                                                                          │
+                                                                          ▼
+                                                              stderr: per-step
+                                                                progress, cost,
+                                                                tokens, totals
 ```
 
-The workflow acts as a **planner**: it enriches and clarifies the user's request. The session AI acts as the **executor**: it carries out the refined task.
+A workflow file is a portable TOML document — no edits to `default.toml` or any role config are needed. Each step invokes `octomind run --format jsonl`, streams the JSONL event log, accumulates assistant text and cost/token totals, then hands the captured output to the next step.
 
-## Configuration
+## CLI
 
-Define workflows in `[[workflows]]` and reference layers from `[[layers]]`:
+```bash
+echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml
 
-```toml
-[[workflows]]
-name = "developer_workflow"
-description = "Two-stage workflow: refine task, then research context"
-
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
-
-[[workflows.steps]]
-name = "research"
-type = "once"
-layer = "task_researcher"
+# Validate + print execution plan without spawning anything
+octomind workflow myflow.toml --dry-run
 ```
 
-Activate a workflow for a role:
+- stdin is required (unless `--dry-run`); empty stdin is a hard error.
+- stdout receives only the final result (the step named by `result`, or the last top-level step if unset).
+- stderr receives progress lines, per-step stats, warnings, and the final total.
+
+## File format
 
 ```toml
-[[roles]]
-name = "developer"
-workflow = "developer_workflow"
+name        = "my-workflow"
+description = "Optional human description"
+result      = "evaluator"   # which step's output goes to stdout; default: last step
+
+# ── Sequential step (the default) ─────────────────────────────────────
+[[steps]]
+name    = "spec"
+role    = "developer:general"   # any installed role or tap-agent tag
+prompt  = """
+User request:
+{{input}}
+
+Write a tight implementation spec.
+"""
+session = "fresh"               # "fresh" (default) | "continue"
+timeout = 0                     # seconds; 0 = no timeout (default)
+retries = 0                     # extra attempts on failure (default 0)
+
+# ── Parallel block — sub-steps run concurrently ───────────────────────
+[[steps]]
+name     = "review"
+parallel = true
+
+  [[steps.run]]
+  name   = "security"
+  role   = "security:owasp"
+  prompt = "Security review of:\n{{spec}}"
+
+  [[steps.run]]
+  name   = "performance"
+  role   = "developer:general"
+  prompt = "Performance review of:\n{{spec}}"
+
+# ── Loop block — generator/evaluator refine pattern ───────────────────
+[[steps]]
+name           = "refine"
+loop           = true
+max_iterations = 3                                       # default 10
+exit_when      = { output = "tester", contains = "NO ISSUES" }
+
+  [[steps.run]]
+  name    = "developer"
+  role    = "developer:general"
+  session = "continue"            # see "Session modes" below
+  prompt  = "Implement:\n{{spec}}"
+
+  [[steps.run]]
+  name    = "tester"
+  role    = "developer:brief"
+  session = "continue"
+  prompt  = "Verify against spec:\n{{spec}}\n\nCode:\n{{developer}}"
+
+# ── Conditional block — branch on a pattern match ─────────────────────
+[[steps]]
+name        = "route"
+conditional = true
+condition   = { output = "spec", contains = "security" }
+on_match    = ["deep-dive"]
+on_no_match = ["quick-summary"]
+
+  [[steps.run]]
+  name   = "deep-dive"
+  role   = "security:owasp"
+  prompt = "Deep analysis:\n{{spec}}"
+
+  [[steps.run]]
+  name   = "quick-summary"
+  role   = "developer:general"
+  prompt = "One-line summary:\n{{spec}}"
+
+# ── Final step ────────────────────────────────────────────────────────
+[[steps]]
+name   = "evaluator"
+role   = "developer:general"
+prompt = """
+Score 1-10:
+{{developer}}
+
+SCORE: <n>/10
+"""
 ```
 
-## Step Types
+## Variable substitution
 
-### Once
+Anywhere in a prompt, `{{name}}` is substituted with:
 
-Execute a layer once.
+| Variable           | Value                                                                  |
+|--------------------|------------------------------------------------------------------------|
+| `{{input}}`        | The raw stdin content                                                  |
+| `{{step_name}}`    | The full text output of a previously completed step (by name)          |
 
-```toml
-[[workflows.steps]]
-name = "refine"
-type = "once"
-layer = "task_refiner"
+Forward references (`{{later}}` from an earlier step) are rejected at pre-flight validation. Step names must be unique across the entire file, including all sub-steps.
+
+## Step types
+
+### Sequential (default)
+Runs `octomind run` once with the resolved prompt. No flag needed — any `[[steps]]` table without `parallel`/`loop`/`conditional = true` is sequential.
+
+### Parallel (`parallel = true`)
+Sub-steps run concurrently via `tokio::join_all`. The next top-level step starts only after every sub-step completes. Sub-steps cannot reference each other; only outer scope.
+
+### Loop (`loop = true`)
+Sub-steps run sequentially within each iteration. Between iterations, `exit_when` is checked against the named step's output:
+
+- `exit_when = { output = "tester", contains = "NO ISSUES" }` — substring match
+- `exit_when = { output = "tester", matches = "^PASS" }` — Rust regex match
+- omit `output` to test the most recent step's output
+
+If `max_iterations` is reached without exit, the loop exits with the last iteration's outputs and a warning to stderr (the workflow does **not** fail).
+
+### Conditional (`conditional = true`)
+`condition` tests a prior step output (same shape as `exit_when`). On match, the names in `on_match` run; otherwise `on_no_match` runs. Skipped sub-step names resolve to empty strings in later substitutions.
+
+## Session modes
+
+| Mode                          | Behaviour                                                              |
+|-------------------------------|------------------------------------------------------------------------|
+| `session = "fresh"` (default) | Brand-new session every invocation. No state persists.                 |
+| `session = "continue"`        | First run: new session, ID is remembered. Subsequent runs (loop iter 2+, or retry): the same session is resumed; `/done` is sent first to compress prior context. The session is ephemeral to a single `octomind workflow` invocation. |
+
+**Continue-session prompt rule:** on the *first* run of a continue-session, the templated prompt is sent. On *subsequent* runs, the templated prompt is **replaced** with the most recent prior step's raw output — the session already holds the full context, so it just needs the latest signal to react to. This is what makes the generator↔tester GAN pattern work without re-feeding the whole spec each iteration.
+
+Each step owns its own session ID. In a loop, `developer` and `tester` accumulate independent histories.
+
+## Retries and timeouts
+
+- `retries = N` — up to N additional attempts on failure (default 0 ≙ one attempt).
+- A step "fails" when the subprocess exits non-zero **or** produces no assistant output.
+- `timeout = S` — seconds before the subprocess is killed (default 0 ≙ no timeout). A timeout counts as a failure for retry logic.
+- All retries exhausted → workflow exits non-zero with `step '<name>' failed after <N> attempts`.
+
+## Progress output (stderr)
+
+```
+╭ workflow: my-workflow
+  ► spec           running...
+  ✓ spec           2.1s  $0.0042  1240 tok
+  ► refine [1/3]   developer    running...
+  ✓ refine [1/3]   developer    8.4s  $0.0156  3208 tok
+  ► refine [1/3]   tester       running...
+  ✓ refine [1/3]   tester       3.2s  $0.0078  1450 tok
+  ✓ exit condition matched at iteration 1
+  ► evaluator      running...
+  ✓ evaluator      1.8s  $0.0029  890 tok
+╰ Total: 15.5s  $0.0305  6788 tok
 ```
 
-### Loop
+Stats come from the `cost` events in the JSONL stream emitted by `octomind run --format jsonl`. Cost (`session_cost`), input/output/cache/reasoning tokens, and wall-clock duration are aggregated per step and totalled at the end.
 
-Repeat until an exit pattern is matched in the output.
+## --dry-run
+
+`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to stdout without spawning any `octomind run` processes or reading stdin. Use it to sanity-check a workflow before paying for tokens.
+
+## Validation
+
+Pre-flight checks (all hard-fail before any step runs):
+
+- File exists, valid TOML.
+- Step names unique across the whole file.
+- `'input'` is reserved (you can't name a step `input`).
+- Every `{{var}}` references either `input` or a step that completes before the referencing step.
+- A `parallel` step has at least 2 sub-steps; `loop` has ≥1 sub-step + `exit_when`; `conditional` has `condition` and at least one of `on_match` / `on_no_match`.
+- `result` must point at a sequential step that produces output (not a composite container name).
+- Regex patterns in `matches` compile.
+
+Role existence is validated at step execution time, not pre-flight (so a workflow can reference taps installed later).
+
+## End-to-end example
+
+A generator/tester GAN that builds, reviews, and scores:
 
 ```toml
-[[workflows.steps]]
-name = "validation_loop"
-type = "loop"
+name   = "gan"
+result = "evaluator"
+
+[[steps]]
+name   = "spec"
+role   = "developer:general"
+prompt = "User request:\n{{input}}\n\nWrite an implementation spec."
+
+[[steps]]
+name           = "refine"
+loop           = true
 max_iterations = 3
-exit_pattern = "APPROVED"
+exit_when      = { output = "tester", contains = "NO ISSUES" }
 
-  [[workflows.steps.substeps]]
-  name = "propose"
-  type = "once"
-  layer = "task_refiner"
+  [[steps.run]]
+  name    = "developer"
+  role    = "developer:general"
+  session = "continue"
+  prompt  = "Implement:\n{{spec}}"
 
-  [[workflows.steps.substeps]]
-  name = "validate"
-  type = "once"
-  layer = "task_researcher"
+  [[steps.run]]
+  name    = "tester"
+  role    = "developer:brief"
+  session = "continue"
+  prompt  = "Verify against spec:\n{{spec}}\n\nImplementation:\n{{developer}}"
+
+[[steps]]
+name   = "evaluator"
+role   = "developer:general"
+prompt = """
+Score this 1-10:
+Spec: {{spec}}
+Code: {{developer}}
+Verdict: {{tester}}
+
+SCORE: <n>/10
+VERDICT: <PASS|FAIL>
+"""
 ```
 
-### Foreach
+Run it:
 
-Parse output into items and process each.
-
-```toml
-[[workflows.steps]]
-name = "process_items"
-type = "foreach"
-parse_pattern = "\\d+\\. (.+)"
-layer = "item_processor"
+```bash
+echo "JSON-to-CSV CLI in Rust" | octomind workflow gan.toml
 ```
 
-### Conditional
+## Best practices
 
-Branch based on pattern matching. If `condition_pattern` matches the output, execute `on_match` commands; otherwise execute `on_no_match` commands.
+1. **Keep prompts focused.** Each step is its own session — don't try to cram a multi-stage task into one step.
+2. **Use `session = "continue"` for refine loops.** The auto-replacement of the prompt with the prior step's output is the whole point of the GAN pattern.
+3. **Always set `max_iterations`** on loops to bound spend.
+4. **Set `timeout`** when a step might hang on an external dependency.
+5. **`--dry-run` before every change** to catch unresolved variables and typos.
+6. **Pick cheap models for utility steps** (briefs, classifiers) via the role's `model` field; reserve expensive models for the main work.
+7. **Watch the totals.** Stats are right there on stderr — if a workflow runs hot, the per-step breakdown shows exactly where.
 
-```toml
-[[workflows.steps]]
-name = "route"
-type = "conditional"
-condition_pattern = "COMPLEX"
-on_match = ["echo 'Complex task detected'"]
-on_no_match = ["echo 'Simple task'"]
-```
+## Out of scope
 
-### Parallel
+Intentionally not supported (use shell composition or call `octomind run` directly):
 
-Execute multiple layers concurrently.
-
-```toml
-[[workflows.steps]]
-name = "gather"
-type = "parallel"
-parallel_layers = ["researcher_a", "researcher_b"]
-```
-
-## Pattern-Based Control
-
-Workflows use regex patterns for flow control:
-
-- **`exit_pattern`** (loop): Stop iterating when output matches
-- **`parse_pattern`** (foreach): Extract items from output using capture groups
-- **`condition_pattern`** (conditional): Branch when output matches
-
-## Brain-Inspired MAP Architecture
-
-The MAP (Modular Agentic Planner) system models cognitive processes:
-
-| Module | Brain Region | Role |
-|--------|-------------|------|
-| TaskDecomposer | aPFC | Break tasks into subtasks |
-| Actor | dlPFC | Execute actions |
-| Monitor | ACC | Track progress and errors |
-| Predictor | OFC | Estimate outcomes |
-| Evaluator | OFC | Assess quality |
-| Orchestrator | aPFC | Coordinate modules |
-
-MAP templates are available in `config-templates/map-planner.toml` and `config-templates/map-executor.toml`.
-
-## Usage
-
-### In Sessions
-
-```
-/workflow                        # List available workflows
-/workflow developer_workflow     # Execute specific workflow
-```
-
-### Via Role Binding
-
-When a role has `workflow = "developer_workflow"`, the workflow runs automatically on each user message before the AI processes it.
-
-## Layer Requirements
-
-Each workflow step references a layer. Layers must:
-- Have a `description` field (required)
-- Be defined in `[[layers]]` config
-
-```toml
-[[layers]]
-name = "task_refiner"
-description = "Refines and clarifies user requests"
-command = "octomind acp task_refiner"
-input_mode = "last"
-output_mode = "none"
-output_role = "assistant"
-```
-
-See [Commands and Layers](10-commands-and-layers.md) for layer configuration details.
-
-## Step Timing
-
-Each workflow step captures its execution duration. The orchestrator tracks both per-step and total workflow time:
-
-```
-── developer_workflow | refine | Step 1/2 | 1250ms ──
-── developer_workflow | research | Step 2/2 | 3400ms ──
-```
-
-Step outputs include:
-- `step_name` — which step ran
-- `step_index` / `total_steps` — progress indicator
-- `duration_ms` — per-step milliseconds
-- Total `duration_secs` — aggregate workflow time
-
-This is useful for profiling workflow efficiency and identifying slow steps.
-
-## Best Practices
-
-1. **Use appropriate output modes**: `"none"` for intermediate steps, `"append"` for final output
-2. **Keep patterns robust**: Use anchored regex where possible
-3. **Set `max_iterations`** on loops to prevent infinite cycles
-4. **Use cheap models** for refinement layers (e.g., `gpt-4.1-mini`)
-5. **Monitor costs**: Workflows add overhead -- ensure the improved output justifies it
-
-## Debugging
-
-Enable debug logging to see workflow execution:
-
-```
-/loglevel debug
-```
-
-Check workflow status:
-```
-/workflow
-```
-
-Common issues:
-- **Layer not found**: Ensure the `layer` name in step config matches a `[[layers]]` entry
-- **Pattern never matches**: Test regex patterns against expected output
-- **Loop runs forever**: Always set `max_iterations`
+- `--var key=value` CLI variable injection (stdin is the only input)
+- Workflow definitions inside `default.toml` (external file only)
+- Named workflow lookup by short name (explicit path only)
+- Cross-invocation session persistence for `continue` sessions
+- Step artifacts written to disk
+- Structured (JSON) output from the workflow command itself

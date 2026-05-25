@@ -675,8 +675,6 @@ tools = []
 
 		let tester_role = config.role_map.get("tester").unwrap();
 		assert_eq!(tester_role.mcp.server_refs, vec!["test_server", "clt"]);
-		// Workflow is not configured for tester role
-		assert!(tester_role.workflow.is_none());
 
 		// Test get_role_config for custom role
 		let (role_config, mcp_config, _, _, _) = config.get_role_config("tester");

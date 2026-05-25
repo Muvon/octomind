@@ -1,0 +1,110 @@
+name   = "develop"
+result = "evaluator"
+
+# ── 1. Spec ─────────────────────────────────────────────────────────────────
+[[steps]]
+name    = "context"
+role    = "developer:context"
+session = "fresh"
+retries = 1
+prompt  = """
+Take the user spec and try to gather most important context for beginning of development.
+
+<spec>
+{{input}}
+</spec>
+
+Produce pinpoints of files and lines to look at first place to gather right info to start for developer.
+"""
+
+# ── 2. Developer <-> tester refine loop ─────────────────────────────────────
+[[steps]]
+name           = "development"
+loop           = true
+max_iterations = 3
+exit_when      = { output = "evaluator", contains = "ALL GOOD" }
+
+  [[steps.run]]
+  name    = "developer"
+  role    = "developer:general"
+  session = "continue"
+  retries = 1
+  prompt  = """
+We are working on the following spec:
+<spec>
+{{input}}
+</spec>
+
+Take hints from initial harness in context:
+<context>
+{{context}}
+</context>
+
+Proceed with development fully autonomous.
+"""
+
+  [[steps.run]]
+  name    = "brief"
+  role    = "developer:brief"
+  session = "fresh"
+  retries = 1
+  prompt  = """
+Look at original spec and unstaged changes to provide a brief.
+
+<spec>
+{{input}}
+</spec>
+
+Developer response:
+<response>
+{{developer}}
+</response>
+"""
+
+	[[steps.run]]
+	name    = "evaluator"
+	role    = "developer:general"
+	session = "fresh"
+	prompt  = """
+Evaluate this code generation run.
+
+User spec provided:
+
+<spec>
+{{input}}
+</spec>
+
+Final developer response:
+<developer>
+{{developer}}
+</developer>
+
+Briefing:
+
+<brief>
+{{brief}}
+</brief>
+
+If anything worth to improve, change, fix or missing in spec. Provide detailed response with everything to fix.
+Make sure your response is detailed and concise in that case, it will go directly to the developer with all original context.
+
+If all good and we have no critical issue just respond ONLY with:
+
+ALL GOOD
+
+exactly as requested
+"""
+
+[[steps]]
+name    = "summary"
+role    = "developer:brief"
+session = "fresh"
+prompt  = """
+Look on user spec and our implementation in current unstaged git changes and provide concise briefing.
+
+User spec request:
+<spec>
+{{input}}
+</spec>
+"""
+

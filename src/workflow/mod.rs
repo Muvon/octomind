@@ -12,25 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod acp;
-pub mod common;
-pub mod complete;
-pub mod config;
-pub mod run;
-pub mod send;
-pub mod server;
-pub mod tap;
-pub mod untap;
-pub mod vars;
-pub mod workflow;
+//! External `octomind workflow` orchestrator.
+//!
+//! Drives a multi-step pipeline where each step shells out to
+//! `octomind run --format jsonl`. Distinct from `session::workflows`
+//! (in-session pattern-routed pipelines) — this module sits *above*
+//! sessions and stitches their outputs together.
 
-pub use acp::AcpArgs;
-pub use complete::CompleteArgs;
-pub use config::ConfigArgs;
-pub use run::RunArgs;
-pub use send::SendArgs;
-pub use server::ServerArgs;
-pub use tap::TapArgs;
-pub use untap::UntapArgs;
-pub use vars::VarsArgs;
-pub use workflow::WorkflowArgs;
+pub mod proc;
+pub mod run;
+pub mod schema;
+pub mod validate;
+
+pub use run::execute as execute_workflow;
+pub use schema::WorkflowDef;

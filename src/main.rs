@@ -61,6 +61,11 @@ enum Commands {
 	/// Send a message to a running session by name.
 	Send(commands::SendArgs),
 
+	/// Run a multi-step workflow defined in a TOML file.
+	/// Reads input from stdin; writes the final result to stdout; per-step
+	/// progress, cost, and tokens to stderr.
+	Workflow(commands::WorkflowArgs),
+
 	/// Generate shell completion scripts
 	Completion {
 		/// The shell to generate completion for
@@ -153,6 +158,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		Commands::Untap(untap_args) => commands::untap::execute(&untap_args)?,
 		Commands::Vars(vars_args) => commands::vars::execute(&vars_args, &config).await?,
 		Commands::Send(send_args) => commands::send::execute(&send_args).await?,
+		Commands::Workflow(wf_args) => commands::workflow::execute(&wf_args).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();
 			let name = app.get_name().to_string();

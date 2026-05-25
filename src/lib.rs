@@ -102,6 +102,7 @@ pub mod session;
 pub mod state;
 pub mod utils;
 pub mod websocket;
+pub mod workflow;
 
 // Re-export commonly used items for convenience
 pub use config::Config;

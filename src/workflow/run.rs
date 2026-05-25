@@ -94,7 +94,7 @@ impl Executor {
 		input: &str,
 		progress_prefix: &str,
 	) -> Result<StepStats> {
-		let prompt = self.substitute(&s.prompt, input);
+		let templated_prompt = self.substitute(&s.prompt, input);
 		let max_attempts = s.retries + 1;
 		let mut last_err: Option<String> = None;
 
@@ -125,9 +125,28 @@ impl Executor {
 				}
 			};
 
+			// Prompt selection:
+			//   - Fresh session OR first use of a Continue session → templated prompt.
+			//   - Subsequent invocation of a Continue session (loop iter 2+ or retry)
+			//     → the session already holds the full templated context; just feed it
+			//     the most recent prior step's output as a nudge to drive the next
+			//     turn. This matches the GAN-style refine pattern where the only
+			//     thing that needs to change between rounds is the reviewer's verdict.
+			let prompt_for_run = if s.session == SessionMode::Continue
+				&& *self.used_continue.get(&s.name).unwrap_or(&false)
+			{
+				self.last_step
+					.as_ref()
+					.and_then(|n| self.outputs.get(n))
+					.cloned()
+					.unwrap_or_else(|| templated_prompt.clone())
+			} else {
+				templated_prompt.clone()
+			};
+
 			let outcome = run_step(
 				&s.role,
-				&prompt,
+				&prompt_for_run,
 				session_name.as_deref(),
 				s.timeout,
 			)

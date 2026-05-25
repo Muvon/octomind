@@ -17,8 +17,10 @@
 
 use anyhow::{bail, Result};
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -56,6 +58,9 @@ struct Executor {
 	/// Last sequentially-completed step name (for unnamed condition output).
 	last_step: Option<String>,
 	wf_name: String,
+	/// True when stderr is a TTY — use animated spinner per step.
+	/// False when piped/redirected — stream one event per line.
+	interactive: bool,
 }
 
 impl Executor {
@@ -67,6 +72,7 @@ impl Executor {
 			totals: Totals::default(),
 			last_step: None,
 			wf_name,
+			interactive: std::io::stderr().is_terminal(),
 		}
 	}
 
@@ -86,24 +92,34 @@ impl Executor {
 
 	/// Drive one sequential step with retries / session handling.
 	///
-	/// `progress_prefix` is what gets stamped on each running/done line on
-	/// stderr (e.g. `"  "` for top-level, `"  refine-loop [2/5] "` for loop).
+	/// `header_suffix` is appended after the step name on the `► name` and
+	/// `✓ name` lines — empty for top-level, `"  [i/max] loop-name"` inside
+	/// a loop, etc. Both lines are railed via [`rail_println`].
 	async fn exec_sequential(
 		&mut self,
 		s: &Sequential,
 		input: &str,
-		progress_prefix: &str,
+		header_suffix: &str,
 	) -> Result<StepStats> {
 		let templated_prompt = self.substitute(&s.prompt, input);
 		let max_attempts = s.retries + 1;
 		let mut last_err: Option<String> = None;
 
 		for attempt in 1..=max_attempts {
-			eprintln_progress(&format!(
-				"{prefix}{arrow} {name:<14} running...",
-				prefix = progress_prefix,
+			let attempt_tag = if max_attempts > 1 {
+				format!(
+					"  {}",
+					format!("(attempt {attempt}/{max_attempts})").bright_black()
+				)
+			} else {
+				String::new()
+			};
+			rail_println(&format!(
+				"{arrow} {name}{suffix}{attempt}",
 				arrow = "►".bright_blue(),
-				name = s.name,
+				name = s.name.bright_white(),
+				suffix = header_suffix,
+				attempt = attempt_tag,
 			));
 
 			// Resolve session name policy.
@@ -144,23 +160,53 @@ impl Executor {
 				templated_prompt.clone()
 			};
 
-			let outcome =
-				run_step(&s.role, &prompt_for_run, session_name.as_deref(), s.timeout).await;
+			let event_prefix = format!("{}   ", "│".bright_black());
+			let spinner = if self.interactive {
+				let sp = ProgressBar::new_spinner();
+				sp.set_style(
+					ProgressStyle::default_spinner()
+						.template("{prefix} {spinner:.cyan} {msg}")
+						.unwrap()
+						.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
+				);
+				sp.set_prefix(format!("{}  ", "│".bright_black()));
+				sp.set_message("starting…".bright_black().to_string());
+				sp.enable_steady_tick(Duration::from_millis(80));
+				Some(sp)
+			} else {
+				None
+			};
+
+			let outcome = run_step(
+				&s.role,
+				&prompt_for_run,
+				session_name.as_deref(),
+				s.timeout,
+				if spinner.is_some() {
+					None
+				} else {
+					Some(&event_prefix)
+				},
+				spinner.as_ref(),
+			)
+			.await;
+
+			if let Some(sp) = &spinner {
+				sp.finish_and_clear();
+			}
 
 			match outcome {
 				RunOutcome::Ok(stats) => {
 					if s.session == SessionMode::Continue {
 						self.used_continue.insert(s.name.clone(), true);
 					}
-					eprintln_progress(&format!(
-						"{prefix}{tick} {name:<14} {dur:>5}  ${cost:.4}  {tok} tok",
-						prefix = progress_prefix,
+					rail_println(&format!(
+						"{tick} {name}  {stats}",
 						tick = "✓".green(),
-						name = s.name,
-						dur = fmt_dur(stats.duration),
-						cost = stats.cost,
-						tok = stats.total_tokens,
+						name = s.name.bright_white(),
+						stats = fmt_stats(&stats),
 					));
+					rail_blank();
 					self.totals.add(&stats);
 					return Ok(stats);
 				}
@@ -187,12 +233,11 @@ impl Executor {
 				}
 			}
 
-			eprintln_progress(&format!(
-				"{prefix}{cross} {name:<14} {msg}",
-				prefix = progress_prefix,
+			rail_println(&format!(
+				"{cross} {name}  {msg}",
 				cross = "✗".red(),
-				name = s.name,
-				msg = last_err.as_deref().unwrap_or("failed"),
+				name = s.name.bright_white(),
+				msg = last_err.as_deref().unwrap_or("failed").red(),
 			));
 		}
 
@@ -230,7 +275,7 @@ impl Executor {
 				let mut last_err: Option<String> = None;
 				let max_attempts = retries + 1;
 				for attempt in 1..=max_attempts {
-					let outcome = run_step(&role, &prompt, None, timeout).await;
+					let outcome = run_step(&role, &prompt, None, timeout, None, None).await;
 					match outcome {
 						RunOutcome::Ok(stats) => return Ok::<_, String>((sname, stats)),
 						RunOutcome::Empty(s) => {
@@ -258,24 +303,22 @@ impl Executor {
 			}));
 		}
 
-		eprintln_progress(&format!(
-			"  {arrow} {name:<14} running {n} sub-steps in parallel...",
+		rail_println(&format!(
+			"{arrow} {name}  {tag}",
 			arrow = "►".bright_blue(),
-			name = p.name,
-			n = p.run.len(),
+			name = p.name.bright_white(),
+			tag = format!("({} in parallel)", p.run.len()).bright_black(),
 		));
 
 		let results = futures::future::join_all(handles).await;
 		for r in results {
 			match r {
 				Ok(Ok((name, stats))) => {
-					eprintln_progress(&format!(
-						"  {tick} {name:<14} {dur:>5}  ${cost:.4}  {tok} tok",
+					rail_println(&format!(
+						"  {tick} {name}  {stats}",
 						tick = "✓".green(),
-						name = name,
-						dur = fmt_dur(stats.duration),
-						cost = stats.cost,
-						tok = stats.total_tokens,
+						name = name.bright_white(),
+						stats = fmt_stats(&stats),
 					));
 					self.totals.add(&stats);
 					self.outputs.insert(name.clone(), stats.output);
@@ -285,6 +328,7 @@ impl Executor {
 				Err(e) => bail!("parallel step '{}' panicked: {}", p.name, e),
 			}
 		}
+		rail_blank();
 		Ok(())
 	}
 
@@ -292,8 +336,11 @@ impl Executor {
 		let max = l.max_iterations;
 		for i in 1..=max {
 			for sub in &l.run {
-				let prefix = format!("  {name} [{i}/{max}] ", name = l.name.bright_magenta());
-				let stats = self.exec_sequential(sub, input, &prefix).await?;
+				let suffix = format!(
+					"  {tag}",
+					tag = format!("[{i}/{max}] {}", l.name).bright_magenta(),
+				);
+				let stats = self.exec_sequential(sub, input, &suffix).await?;
 				self.outputs.insert(sub.name.clone(), stats.output);
 				self.last_step = Some(sub.name.clone());
 			}
@@ -312,20 +359,23 @@ impl Executor {
 			};
 			if let Some(value) = self.outputs.get(&target) {
 				if condition_matches(exit_when, value) {
-					eprintln_progress(&format!(
-						"  {ok} exit condition matched at iteration {i}",
-						ok = "✓".green()
+					rail_println(&format!(
+						"{ok} {msg}",
+						ok = "✓".green(),
+						msg = format!("exit condition matched at iteration {i}").bright_black(),
 					));
+					rail_blank();
 					return Ok(());
 				}
 			}
 		}
-		eprintln!(
-			"  {warn} loop '{name}' reached max_iterations ({max}) without exit condition matching",
+		rail_println(&format!(
+			"{warn} loop '{name}' reached max_iterations ({max}) without exit condition matching",
 			warn = "⚠".yellow(),
 			name = l.name,
 			max = max,
-		);
+		));
+		rail_blank();
 		Ok(())
 	}
 
@@ -344,16 +394,16 @@ impl Executor {
 		let matched = condition_matches(&c.condition, &value);
 
 		let branch_names: &[String] = if matched { &c.on_match } else { &c.on_no_match };
-		eprintln_progress(&format!(
-			"  {arrow} {name:<14} condition {res} → running [{branch}]",
+		rail_println(&format!(
+			"{arrow} {name}  {info}",
 			arrow = "►".bright_blue(),
-			name = c.name,
-			res = if matched {
-				"true".green()
-			} else {
-				"false".yellow()
-			},
-			branch = branch_names.join(", "),
+			name = c.name.bright_white(),
+			info = format!(
+				"condition {res} → [{branch}]",
+				res = if matched { "true" } else { "false" },
+				branch = branch_names.join(", ")
+			)
+			.bright_black(),
 		));
 
 		let chosen: Vec<&Sequential> = c
@@ -368,7 +418,7 @@ impl Executor {
 			.collect();
 
 		for s in chosen {
-			let stats = self.exec_sequential(s, input, "    ").await?;
+			let stats = self.exec_sequential(s, input, "").await?;
 			self.outputs.insert(s.name.clone(), stats.output);
 			self.last_step = Some(s.name.clone());
 		}
@@ -428,10 +478,30 @@ fn sanitize(s: &str) -> String {
 		.collect()
 }
 
-/// `eprintln!` wrapper — workflow progress always goes to stderr so
-/// the final stdout stream is clean for piping.
-fn eprintln_progress(line: &str) {
-	eprintln!("{line}");
+/// Print one stderr line prefixed by the workflow's left rail `│ `.
+/// All in-progress workflow output goes through this so the rail is
+/// consistent and visually anchors each step inside the workflow box.
+fn rail_println(line: &str) {
+	eprintln!("{rail} {line}", rail = "│".bright_black());
+}
+
+/// Print a bare rail line — visual breathing room between steps.
+fn rail_blank() {
+	eprintln!("{}", "│".bright_black());
+}
+
+/// Compact one-line stats summary for a finished step: duration, cost,
+/// total tokens, and the count of tool calls observed on its JSONL stream.
+fn fmt_stats(s: &StepStats) -> String {
+	let bullet = "·".bright_black();
+	format!(
+		"{dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tc} tools",
+		dur = fmt_dur(s.duration),
+		cost = s.cost,
+		tok = s.total_tokens,
+		tc = s.tool_count,
+		b = bullet,
+	)
 }
 
 /// Public entry — runs a fully-validated workflow.
@@ -442,17 +512,19 @@ pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 	let mut ex = Executor::new(wf.name.clone());
 
 	eprintln!(
-		"{open} workflow: {name}",
+		"{open} workflow {sep} {name}",
 		open = "╭".bright_black(),
-		name = wf.name.bright_cyan()
+		sep = "·".bright_black(),
+		name = wf.name.bright_cyan(),
 	);
+	rail_blank();
 
 	let mut last_top_level: Option<String> = None;
 
 	for step in &wf.steps {
 		match step {
 			Step::Sequential(s) => {
-				let stats = ex.exec_sequential(s, input, "  ").await?;
+				let stats = ex.exec_sequential(s, input, "").await?;
 				ex.outputs.insert(s.name.clone(), stats.output);
 				ex.last_step = Some(s.name.clone());
 				last_top_level = Some(s.name.clone());
@@ -472,12 +544,15 @@ pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 		}
 	}
 
+	let bullet = "·".bright_black();
 	eprintln!(
-		"{close} Total: {dur}  ${cost:.4}  {tok} tok",
+		"{close} total {sep} {dur}  {b} ${cost:.4}  {b} {tok} tok",
 		close = "╰".bright_black(),
+		sep = "·".bright_black(),
 		dur = fmt_dur(ex.totals.duration),
 		cost = ex.totals.cost,
 		tok = ex.totals.tokens,
+		b = bullet,
 	);
 
 	// Resolve final output.

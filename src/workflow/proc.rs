@@ -16,6 +16,8 @@
 //! stream `ServerMessage` events, accumulate assistant text + costs.
 
 use anyhow::{anyhow, Context, Result};
+use colored::Colorize;
+use indicatif::ProgressBar;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -32,6 +34,8 @@ pub struct StepStats {
 	pub input_tokens: u64,
 	pub output_tokens: u64,
 	pub total_tokens: u64,
+	/// Number of tool calls observed on the JSONL stream for this step.
+	pub tool_count: u64,
 }
 
 /// Outcome categories surfaced to the executor (retry/timeout/etc).
@@ -53,6 +57,8 @@ pub async fn run_step(
 	prompt: &str,
 	session_name: Option<&str>,
 	timeout_secs: u64,
+	event_prefix: Option<&str>,
+	spinner: Option<&ProgressBar>,
 ) -> RunOutcome {
 	let started = Instant::now();
 	let exe = match std::env::current_exe() {
@@ -99,7 +105,7 @@ pub async fn run_step(
 				continue;
 			}
 			if let Ok(msg) = serde_json::from_str::<ServerMessage>(trimmed) {
-				match msg {
+				match &msg {
 					ServerMessage::Assistant(p) => {
 						if !stats.output.is_empty() {
 							stats.output.push('\n');
@@ -112,7 +118,17 @@ pub async fn run_step(
 						stats.output_tokens = c.output_tokens;
 						stats.total_tokens = c.session_tokens;
 					}
+					ServerMessage::ToolUse(_) => {
+						stats.tool_count += 1;
+					}
 					_ => {}
+				}
+				if let Some(sp) = spinner {
+					if let Some(line) = render_event_oneline(&msg) {
+						sp.set_message(line);
+					}
+				} else if let Some(prefix) = event_prefix {
+					render_event(prefix, &msg);
 				}
 			}
 		}
@@ -148,6 +164,144 @@ pub async fn run_step(
 			}
 		}
 		Err(e) => RunOutcome::SpawnError(e),
+	}
+}
+
+/// Render one JSONL stream event as a single compact line suitable for a
+/// spinner message (no newlines, fits typical terminal width). Returns
+/// `None` for events that shouldn't update the spinner (e.g. Assistant /
+/// Cost / Thinking).
+fn render_event_oneline(msg: &ServerMessage) -> Option<String> {
+	let line = match msg {
+		ServerMessage::ToolUse(p) => {
+			let head = format!(
+				"{arrow} {tool} {sep} {server}",
+				arrow = "▸".bright_cyan(),
+				tool = p.tool.bright_cyan(),
+				sep = "·".bright_black(),
+				server = p.server.bright_blue(),
+			);
+			match first_string_param(&p.params) {
+				Some((_, val)) => format!("{head}  {}", format!("\"{}\"", truncate(&val, 60))),
+				None => head,
+			}
+		}
+		ServerMessage::Skill(p) => format!(
+			"{glyph} skill {action} {name}",
+			glyph = "▪".bright_yellow(),
+			action = p.action.bright_black(),
+			name = p.name.bright_yellow(),
+		),
+		ServerMessage::Status(p) => {
+			let one = p.message.lines().next().unwrap_or("").trim();
+			if one.is_empty() {
+				return None;
+			}
+			format!(
+				"{glyph} {msg}",
+				glyph = "·".bright_black(),
+				msg = truncate(one, 100).bright_black(),
+			)
+		}
+		ServerMessage::McpNotification(p) => format!(
+			"{glyph} {srv} {sep} {method}",
+			glyph = "◆".bright_blue(),
+			srv = p.server.bright_blue(),
+			sep = "·".bright_black(),
+			method = p.method.bright_black(),
+		),
+		ServerMessage::Error(p) => format!(
+			"{glyph} {msg}",
+			glyph = "✗".bright_red(),
+			msg = truncate(&p.message, 120).red(),
+		),
+		_ => return None,
+	};
+	Some(line)
+}
+
+/// Render one JSONL stream event as a single compact stderr line under
+/// the current step's rail. `prefix` already carries the rail glyph and
+/// indentation; we just append the event-specific bit.
+fn render_event(prefix: &str, msg: &ServerMessage) {
+	match msg {
+		ServerMessage::ToolUse(p) => {
+			eprintln!(
+				"{prefix}{arrow} {tool} {sep} {server}",
+				arrow = "▸".bright_cyan(),
+				tool = p.tool.bright_cyan(),
+				sep = "·".bright_black(),
+				server = p.server.bright_blue(),
+			);
+			if let Some((key, val)) = first_string_param(&p.params) {
+				eprintln!(
+					"{prefix}   {key} {value}",
+					key = key.bright_black(),
+					value = format!("\"{}\"", truncate(&val, 80)),
+				);
+			}
+		}
+		ServerMessage::Skill(p) => {
+			eprintln!(
+				"{prefix}{glyph} skill {action} {name}",
+				glyph = "▪".bright_yellow(),
+				action = p.action.bright_black(),
+				name = p.name.bright_yellow(),
+			);
+		}
+		ServerMessage::Status(p) => {
+			let one = p.message.lines().next().unwrap_or("").trim();
+			if !one.is_empty() {
+				eprintln!(
+					"{prefix}{glyph} {msg}",
+					glyph = "·".bright_black(),
+					msg = truncate(one, 100).bright_black(),
+				);
+			}
+		}
+		ServerMessage::McpNotification(p) => {
+			eprintln!(
+				"{prefix}{glyph} {srv} {sep} {method}",
+				glyph = "◆".bright_blue(),
+				srv = p.server.bright_blue(),
+				sep = "·".bright_black(),
+				method = p.method.bright_black(),
+			);
+		}
+		ServerMessage::Error(p) => {
+			eprintln!(
+				"{prefix}{glyph} {msg}",
+				glyph = "✗".bright_red(),
+				msg = truncate(&p.message, 200).red(),
+			);
+		}
+		_ => {}
+	}
+}
+
+/// Pick the first non-empty string-valued field from a tool's params
+/// object. Returns `(key, value)`. Falls back to None for non-object
+/// params or all-empty/non-string values.
+fn first_string_param(params: &serde_json::Value) -> Option<(String, String)> {
+	let obj = params.as_object()?;
+	for (k, v) in obj {
+		if let Some(s) = v.as_str() {
+			let s = s.trim();
+			if !s.is_empty() {
+				return Some((k.clone(), s.to_string()));
+			}
+		}
+	}
+	None
+}
+
+fn truncate(s: &str, n: usize) -> String {
+	let one_line = s.replace('\n', " ");
+	if one_line.chars().count() <= n {
+		one_line
+	} else {
+		let head: String = one_line.chars().take(n.saturating_sub(1)).collect();
+		format!("{head}…")
 	}
 }
 

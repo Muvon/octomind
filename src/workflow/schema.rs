@@ -52,6 +52,9 @@ pub struct Sequential {
 	pub timeout: u64,
 	#[serde(default)]
 	pub retries: u32,
+	/// Optional model override forwarded as `--model` to the subprocess.
+	#[serde(default)]
+	pub model: Option<String>,
 }
 
 /// Pattern test against a step's output.

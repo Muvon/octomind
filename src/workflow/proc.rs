@@ -52,21 +52,39 @@ pub enum RunOutcome {
 	SpawnError(anyhow::Error),
 }
 
+/// Bundled arguments for [`run_step`].
+pub struct RunStepArgs {
+	pub role: String,
+	pub prompt: String,
+	pub session_name: Option<String>,
+	/// Optional model override forwarded as `--model` to the subprocess.
+	pub model: Option<String>,
+	pub timeout_secs: u64,
+	pub event_prefix: Option<String>,
+	pub spinner: Option<ProgressBar>,
+	pub wf_start: Instant,
+	pub prior_cost: f64,
+	pub prior_tools: u64,
+}
+
 /// Invoke `octomind run` with `prompt` on stdin, optional `--name` to
 /// resume or create a named session, and `--format jsonl`.
 ///
 /// `timeout_secs == 0` disables the timeout.
-pub async fn run_step(
-	role: &str,
-	prompt: &str,
-	session_name: Option<&str>,
-	timeout_secs: u64,
-	event_prefix: Option<&str>,
-	spinner: Option<&ProgressBar>,
-	wf_start: Instant,
-	prior_cost: f64,
-	prior_tools: u64,
-) -> RunOutcome {
+pub async fn run_step(args: RunStepArgs) -> RunOutcome {
+	let RunStepArgs {
+		role,
+		prompt,
+		session_name,
+		model,
+		timeout_secs,
+		event_prefix,
+		spinner,
+		wf_start,
+		prior_cost,
+		prior_tools,
+	} = args;
+
 	let started = Instant::now();
 	let exe = match std::env::current_exe() {
 		Ok(p) => p,
@@ -81,8 +99,11 @@ pub async fn run_step(
 		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::null());
-	if let Some(name) = session_name {
+	if let Some(name) = session_name.as_deref() {
 		cmd.arg("--name").arg(name);
+	}
+	if let Some(m) = &model {
+		cmd.arg("--model").arg(m);
 	}
 	cmd.kill_on_drop(true);
 
@@ -93,7 +114,7 @@ pub async fn run_step(
 
 	// Write the prompt to stdin and close it.
 	if let Some(mut stdin) = child.stdin.take() {
-		let payload = prompt.to_string();
+		let payload = prompt;
 		tokio::spawn(async move {
 			let _ = stdin.write_all(payload.as_bytes()).await;
 			let _ = stdin.shutdown().await;
@@ -128,14 +149,12 @@ pub async fn run_step(
 					ServerMessage::ToolUse(_) => {
 						stats.tool_count += 1;
 					}
-					ServerMessage::ToolResult(p) => {
-						if !p.success {
-							stats.tool_failed += 1;
-						}
+					ServerMessage::ToolResult(p) if !p.success => {
+						stats.tool_failed += 1;
 					}
 					_ => {}
 				}
-				if let Some(sp) = spinner {
+				if let Some(sp) = &spinner {
 					if let Some(line) = render_event_oneline(&msg) {
 						let agg = fmt_aggregate(
 							wf_start.elapsed(),
@@ -144,7 +163,7 @@ pub async fn run_step(
 						);
 						sp.set_message(format!("{line}   {agg}"));
 					}
-				} else if let Some(prefix) = event_prefix {
+				} else if let Some(prefix) = event_prefix.as_deref() {
 					render_event(prefix, &msg);
 				}
 			}
@@ -161,11 +180,17 @@ pub async fn run_step(
 		match tokio::time::timeout(Duration::from_secs(timeout_secs), collect).await {
 			Ok(r) => r,
 			Err(_) => {
-				// Best-effort kill; ignore errors (process may have just exited).
+				if let Some(sp) = &spinner {
+					sp.finish_and_clear();
+				}
 				return RunOutcome::Timeout(started.elapsed());
 			}
 		}
 	};
+
+	if let Some(sp) = &spinner {
+		sp.finish_and_clear();
+	}
 
 	match result {
 		Ok((status, stats)) => {

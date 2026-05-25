@@ -54,6 +54,7 @@ Write a tight implementation spec.
 session = "fresh"               # "fresh" (default) | "continue"
 timeout = 0                     # seconds; 0 = no timeout (default)
 retries = 0                     # extra attempts on failure (default 0)
+# model = "anthropic:claude-sonnet-4-6"  # optional: override the role's model for this step
 
 # ── Parallel block — sub-steps run concurrently ───────────────────────
 [[steps]]
@@ -135,6 +136,15 @@ Forward references (`{{later}}` from an earlier step) are rejected at pre-flight
 ### Sequential (default)
 Runs `octomind run` once with the resolved prompt. No flag needed — any `[[steps]]` table without `parallel`/`loop`/`conditional = true` is sequential.
 
+Optional fields on any sequential step (including sub-steps inside parallel/loop/conditional blocks):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `session` | `"fresh"` | Session reuse policy (see [Session modes](#session-modes)) |
+| `timeout` | `0` | Seconds before the subprocess is killed; 0 = no timeout |
+| `retries` | `0` | Extra attempts on non-zero exit or empty output |
+| `model` | _(role default)_ | Override the model for this step; use `provider:model` format (e.g. `anthropic:claude-sonnet-4-6`). Forwarded as `--model` to the subprocess. Must not be empty when specified. |
+
 ### Parallel (`parallel = true`)
 Sub-steps run concurrently via `tokio::join_all`. The next top-level step starts only after every sub-step completes. Sub-steps cannot reference each other; only outer scope.
 
@@ -201,8 +211,7 @@ Pre-flight checks (all hard-fail before any step runs):
 - A `parallel` step has at least 2 sub-steps; `loop` has ≥1 sub-step + `exit_when`; `conditional` has `condition` and at least one of `on_match` / `on_no_match`.
 - `result` must point at a sequential step that produces output (not a composite container name).
 - Regex patterns in `matches` compile.
-
-Role existence is validated at step execution time, not pre-flight (so a workflow can reference taps installed later).
+- `model`, when specified on any step, must not be an empty string.
 
 ## End-to-end example
 
@@ -262,7 +271,7 @@ echo "JSON-to-CSV CLI in Rust" | octomind workflow gan.toml
 3. **Always set `max_iterations`** on loops to bound spend.
 4. **Set `timeout`** when a step might hang on an external dependency.
 5. **`--dry-run` before every change** to catch unresolved variables and typos.
-6. **Pick cheap models for utility steps** (briefs, classifiers) via the role's `model` field; reserve expensive models for the main work.
+6. **Pick cheap models for utility steps** (briefs, classifiers) by setting `model` on individual steps in the workflow file; reserve expensive models for the main work.
 7. **Watch the totals.** Stats are right there on stderr — if a workflow runs hot, the per-step breakdown shows exactly where.
 
 ## Out of scope

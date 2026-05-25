@@ -104,10 +104,16 @@ fn insert_unique(name: &str, names: &mut HashSet<String>) -> Result<()> {
 
 fn structural_check(step: &Step) -> Result<()> {
 	match step {
-		Step::Sequential(_) => Ok(()),
+		Step::Sequential(s) => {
+			validate_model(&s.name, &s.model)?;
+			Ok(())
+		}
 		Step::Parallel(ParallelStep { name, run }) => {
 			if run.len() < 2 {
 				bail!("parallel step '{}' must have at least 2 sub-steps", name);
+			}
+			for s in run {
+				validate_model(&s.name, &s.model)?;
 			}
 			Ok(())
 		}
@@ -119,6 +125,9 @@ fn structural_check(step: &Step) -> Result<()> {
 		}) => {
 			if run.is_empty() {
 				bail!("loop step '{}' must have at least 1 sub-step", name);
+			}
+			for s in run {
+				validate_model(&s.name, &s.model)?;
 			}
 			let exit_when = match exit_when {
 				Some(c) => c,
@@ -179,9 +188,24 @@ fn structural_check(step: &Step) -> Result<()> {
 					);
 				}
 			}
+			for s in run {
+				validate_model(&s.name, &s.model)?;
+			}
 			Ok(())
 		}
 	}
+}
+
+fn validate_model(step_name: &str, model: &Option<String>) -> Result<()> {
+	if let Some(m) = model {
+		if m.trim().is_empty() {
+			bail!(
+				"step '{}': model must not be empty when specified",
+				step_name
+			);
+		}
+	}
+	Ok(())
 }
 
 fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {

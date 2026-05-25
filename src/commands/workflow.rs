@@ -105,10 +105,14 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 				kind = "[sequential]".bright_black(),
 			);
 			println!("{indent}   role: {}", s.role);
-			println!(
-				"{indent}   session: {:?}  timeout: {}s  retries: {}",
+			let mut meta = format!(
+				"session: {:?}  timeout: {}s  retries: {}",
 				s.session, s.timeout, s.retries
 			);
+			if let Some(m) = &s.model {
+				meta = format!("model: {m}  {meta}");
+			}
+			println!("{indent}   {meta}");
 			println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 		}
 		Step::Parallel(p) => {
@@ -163,14 +167,20 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 
 fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usize) {
 	let indent = "  ".repeat(depth + 1);
-	println!(
-		"{indent}{idx}. {name}  role={role}  session={sess:?}  timeout={t}s  retries={r}",
-		idx = idx,
-		name = s.name.bright_white(),
+	let mut meta = format!(
+		"role={role}  session={sess:?}  timeout={t}s  retries={r}",
 		role = s.role,
 		sess = s.session,
 		t = s.timeout,
 		r = s.retries,
+	);
+	if let Some(m) = &s.model {
+		meta = format!("model={m}  {meta}");
+	}
+	println!(
+		"{indent}{idx}. {name}  {meta}",
+		idx = idx,
+		name = s.name.bright_white(),
 	);
 	println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 }

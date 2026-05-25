@@ -24,7 +24,7 @@ use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-use super::proc::{run_step, send_done, RunOutcome, StepStats};
+use super::proc::{run_step, send_done, RunOutcome, RunStepArgs, StepStats};
 use super::schema::{
 	Condition, ConditionalStep, LoopStep, ParallelStep, Sequential, SessionMode, Step, WorkflowDef,
 };
@@ -185,26 +185,24 @@ impl Executor {
 				None
 			};
 
-			let outcome = run_step(
-				&s.role,
-				&prompt_for_run,
-				session_name.as_deref(),
-				s.timeout,
-				if spinner.is_some() {
+			let has_spinner = spinner.is_some();
+			let args = RunStepArgs {
+				role: s.role.clone(),
+				prompt: prompt_for_run,
+				session_name,
+				model: s.model.clone(),
+				timeout_secs: s.timeout,
+				event_prefix: if has_spinner {
 					None
 				} else {
-					Some(&event_prefix)
+					Some(event_prefix)
 				},
-				spinner.as_ref(),
-				self.started,
-				self.totals.cost,
-				self.totals.tools,
-			)
-			.await;
-
-			if let Some(sp) = &spinner {
-				sp.finish_and_clear();
-			}
+				spinner,
+				wf_start: self.started,
+				prior_cost: self.totals.cost,
+				prior_tools: self.totals.tools,
+			};
+			let outcome = run_step(args).await;
 
 			match outcome {
 				RunOutcome::Ok(stats) => {
@@ -279,6 +277,7 @@ impl Executor {
 			let role = s.role.clone();
 			let timeout = s.timeout;
 			let retries = s.retries;
+			let model = s.model.clone();
 			// Parallel sub-steps cannot use `session = "continue"` semantics
 			// across iterations of an outer loop because there is no outer
 			// loop concept here — they get fresh sessions per call.
@@ -286,18 +285,19 @@ impl Executor {
 				let mut last_err: Option<String> = None;
 				let max_attempts = retries + 1;
 				for attempt in 1..=max_attempts {
-					let outcome = run_step(
-						&role,
-						&prompt,
-						None,
-						timeout,
-						None,
-						None,
-						Instant::now(),
-						0.0,
-						0,
-					)
-					.await;
+					let args = RunStepArgs {
+						role: role.clone(),
+						prompt: prompt.clone(),
+						session_name: None,
+						model: model.clone(),
+						timeout_secs: timeout,
+						event_prefix: None,
+						spinner: None,
+						wf_start: Instant::now(),
+						prior_cost: 0.0,
+						prior_tools: 0,
+					};
+					let outcome = run_step(args).await;
 					match outcome {
 						RunOutcome::Ok(stats) => return Ok::<_, String>((sname, stats)),
 						RunOutcome::Empty(s) => {

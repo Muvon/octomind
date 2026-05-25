@@ -30,6 +30,7 @@
 
 #[cfg(unix)]
 pub struct CtrlCEchoGuard {
+	fd: libc::c_int,
 	saved_lflag: libc::tcflag_t,
 }
 
@@ -39,33 +40,36 @@ impl CtrlCEchoGuard {
 	/// the originals on Drop. Returns `None` if stdin isn't a tty or the
 	/// tcgetattr / tcsetattr calls fail.
 	pub fn install() -> Option<Self> {
-		let fd = libc::STDIN_FILENO;
+		Self::install_on(libc::STDIN_FILENO)
+	}
+
+	/// Same as [`install`] but operates on an arbitrary tty fd. Use this
+	/// when stdin isn't the controlling terminal — e.g. piped input — and
+	/// `STDERR_FILENO` / `STDOUT_FILENO` still points at the tty.
+	pub fn install_on(fd: libc::c_int) -> Option<Self> {
 		// SAFETY: passing a valid stack pointer to libc::tcgetattr.
 		let mut termios: libc::termios = unsafe { std::mem::zeroed() };
 		if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
 			return None;
 		}
 		let saved_lflag = termios.c_lflag;
-		// ECHO suppresses ordinary keypresses (incl. Enter `\n`); ECHOCTL
-		// suppresses the `^C` / `^V` etc. visualizations on signal keys.
 		termios.c_lflag &= !(libc::ECHO | libc::ECHOCTL);
 		// SAFETY: termios is fully initialized by tcgetattr above.
 		if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } != 0 {
 			return None;
 		}
-		Some(Self { saved_lflag })
+		Some(Self { fd, saved_lflag })
 	}
 }
 
 #[cfg(unix)]
 impl Drop for CtrlCEchoGuard {
 	fn drop(&mut self) {
-		let fd = libc::STDIN_FILENO;
 		// SAFETY: stack-allocated termios passed to libc.
 		let mut termios: libc::termios = unsafe { std::mem::zeroed() };
-		if unsafe { libc::tcgetattr(fd, &mut termios) } == 0 {
+		if unsafe { libc::tcgetattr(self.fd, &mut termios) } == 0 {
 			termios.c_lflag = self.saved_lflag;
-			unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) };
+			unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &termios) };
 		}
 	}
 }
@@ -76,7 +80,9 @@ pub struct CtrlCEchoGuard;
 #[cfg(not(unix))]
 impl CtrlCEchoGuard {
 	pub fn install() -> Option<Self> {
-		// Windows console does not echo `^C` for Ctrl+C events; no-op.
+		None
+	}
+	pub fn install_on(_fd: i32) -> Option<Self> {
 		None
 	}
 }
@@ -89,11 +95,18 @@ impl CtrlCEchoGuard {
 /// but the bytes still buffer in the tty's input queue — without this
 /// flush, reedline would pick them up on its next read.
 pub fn drain_stdin() {
+	drain_fd(0); // STDIN_FILENO
+}
+
+/// Like [`drain_stdin`] but for an arbitrary tty fd. On non-tty fds
+/// `tcflush` returns ENOTTY which we silently ignore — safe to call with
+/// any fd.
+pub fn drain_fd(_fd: i32) {
 	#[cfg(unix)]
 	{
-		// SAFETY: calling tcflush with a valid fd and known constant.
+		// SAFETY: calling tcflush with a caller-supplied fd and known constant.
 		unsafe {
-			libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH);
+			libc::tcflush(_fd as libc::c_int, libc::TCIFLUSH);
 		}
 	}
 }

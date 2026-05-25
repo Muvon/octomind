@@ -181,9 +181,19 @@ fn render_event_oneline(msg: &ServerMessage) -> Option<String> {
 				sep = "·".bright_black(),
 				server = p.server.bright_blue(),
 			);
-			match first_string_param(&p.params) {
-				Some((_, val)) => format!("{head}  {}", format!("\"{}\"", truncate(&val, 60))),
-				None => head,
+			let params = compact_params(&p.params);
+			if params.is_empty() {
+				head
+			} else {
+				let joined = params
+					.iter()
+					.map(|(k, v)| format!("{}={}", k.bright_black(), v))
+					.collect::<Vec<_>>()
+					.join(", ");
+				// Truncate based on visible chars, not ANSI bytes. `truncate` is
+				// char-aware but doesn't strip color codes, so the visible cap
+				// is approximate — fine for terminal width budgeting.
+				format!("{head}  {joined}")
 			}
 		}
 		ServerMessage::Skill(p) => format!(
@@ -233,12 +243,10 @@ fn render_event(prefix: &str, msg: &ServerMessage) {
 				sep = "·".bright_black(),
 				server = p.server.bright_blue(),
 			);
-			if let Some((key, val)) = first_string_param(&p.params) {
-				eprintln!(
-					"{prefix}   {key} {value}",
-					key = key.bright_black(),
-					value = format!("\"{}\"", truncate(&val, 80)),
-				);
+			// One line per param under the tool header — matches the
+			// `│   key value` style of the in-session tool preview block.
+			for (key, val) in compact_params(&p.params) {
+				eprintln!("{prefix}   {} {}", key.bright_black(), val);
 			}
 		}
 		ServerMessage::Skill(p) => {
@@ -279,20 +287,58 @@ fn render_event(prefix: &str, msg: &ServerMessage) {
 	}
 }
 
-/// Pick the first non-empty string-valued field from a tool's params
-/// object. Returns `(key, value)`. Falls back to None for non-object
-/// params or all-empty/non-string values.
-fn first_string_param(params: &serde_json::Value) -> Option<(String, String)> {
-	let obj = params.as_object()?;
-	for (k, v) in obj {
-		if let Some(s) = v.as_str() {
+/// Compact-format every non-empty param of a tool call as `(key, value)`
+/// pairs preserving the JSON object's iteration order. Empty strings,
+/// nulls, and empty containers are skipped. Each value is rendered as a
+/// short single-line form (`"text"`, `42`, `true`, `[N items]`,
+/// `{N keys}`) so both the spinner one-liner and the railed multi-line
+/// view can share the same source of truth.
+fn compact_params(params: &serde_json::Value) -> Vec<(String, String)> {
+	let Some(obj) = params.as_object() else {
+		return Vec::new();
+	};
+	obj.iter()
+		.filter_map(|(k, v)| format_value_short(v).map(|s| (k.clone(), s)))
+		.collect()
+}
+
+/// Render one JSON value as a short single-line string, or `None` if
+/// the value carries no information worth showing (null / empty).
+fn format_value_short(v: &serde_json::Value) -> Option<String> {
+	match v {
+		serde_json::Value::Null => None,
+		serde_json::Value::Bool(b) => Some(b.to_string()),
+		serde_json::Value::Number(n) => Some(n.to_string()),
+		serde_json::Value::String(s) => {
 			let s = s.trim();
-			if !s.is_empty() {
-				return Some((k.clone(), s.to_string()));
+			if s.is_empty() {
+				None
+			} else {
+				Some(format!("\"{}\"", truncate(s, 60)))
+			}
+		}
+		serde_json::Value::Array(arr) => {
+			if arr.is_empty() {
+				None
+			} else if arr.len() <= 2 {
+				let inner: Vec<String> = arr.iter().filter_map(format_value_short).collect();
+				if inner.is_empty() {
+					None
+				} else {
+					Some(format!("[{}]", inner.join(", ")))
+				}
+			} else {
+				Some(format!("[{} items]", arr.len()))
+			}
+		}
+		serde_json::Value::Object(o) => {
+			if o.is_empty() {
+				None
+			} else {
+				Some(format!("{{{} keys}}", o.len()))
 			}
 		}
 	}
-	None
 }
 
 fn truncate(s: &str, n: usize) -> String {

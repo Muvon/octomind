@@ -511,6 +511,19 @@ fn fmt_stats(s: &StepStats) -> String {
 pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 	let mut ex = Executor::new(wf.name.clone());
 
+	// In TTY mode, suppress the controlling terminal's keypress echo for
+	// the lifetime of the workflow so stray Enter / Ctrl-C presses don't
+	// ghost into the spinner row. stdin is typically piped here (we read
+	// `input` from it), so the tty fd lives on stderr.
+	#[cfg(unix)]
+	let _echo_guard = if ex.interactive {
+		crate::utils::term_echo::CtrlCEchoGuard::install_on(libc::STDERR_FILENO)
+	} else {
+		None
+	};
+	#[cfg(not(unix))]
+	let _echo_guard: Option<crate::utils::term_echo::CtrlCEchoGuard> = None;
+
 	eprintln!(
 		"{open} workflow {sep} {name}",
 		open = "╭".bright_black(),
@@ -554,6 +567,13 @@ pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 		tok = ex.totals.tokens,
 		b = bullet,
 	);
+
+	// Drop any keypresses the user typed during animation so they don't
+	// leak into the shell's input queue when control returns.
+	if ex.interactive {
+		#[cfg(unix)]
+		crate::utils::term_echo::drain_fd(libc::STDERR_FILENO);
+	}
 
 	// Resolve final output.
 	let result_name = wf

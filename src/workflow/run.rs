@@ -21,7 +21,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::IsTerminal;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use super::proc::{run_step, send_done, RunOutcome, StepStats};
@@ -36,6 +36,8 @@ struct Totals {
 	duration: Duration,
 	cost: f64,
 	tokens: u64,
+	tools: u64,
+	tools_failed: u64,
 }
 
 impl Totals {
@@ -43,6 +45,8 @@ impl Totals {
 		self.duration += s.duration;
 		self.cost += s.cost;
 		self.tokens += s.total_tokens;
+		self.tools += s.tool_count;
+		self.tools_failed += s.tool_failed;
 	}
 }
 
@@ -61,6 +65,9 @@ struct Executor {
 	/// True when stderr is a TTY — use animated spinner per step.
 	/// False when piped/redirected — stream one event per line.
 	interactive: bool,
+	/// Workflow start instant — passed to `run_step` so the spinner can
+	/// show total elapsed time across all completed + current steps.
+	started: Instant,
 }
 
 impl Executor {
@@ -73,6 +80,7 @@ impl Executor {
 			last_step: None,
 			wf_name,
 			interactive: std::io::stderr().is_terminal(),
+			started: Instant::now(),
 		}
 	}
 
@@ -188,6 +196,9 @@ impl Executor {
 					Some(&event_prefix)
 				},
 				spinner.as_ref(),
+				self.started,
+				self.totals.cost,
+				self.totals.tools,
 			)
 			.await;
 
@@ -275,7 +286,18 @@ impl Executor {
 				let mut last_err: Option<String> = None;
 				let max_attempts = retries + 1;
 				for attempt in 1..=max_attempts {
-					let outcome = run_step(&role, &prompt, None, timeout, None, None).await;
+					let outcome = run_step(
+						&role,
+						&prompt,
+						None,
+						timeout,
+						None,
+						None,
+						Instant::now(),
+						0.0,
+						0,
+					)
+					.await;
 					match outcome {
 						RunOutcome::Ok(stats) => return Ok::<_, String>((sname, stats)),
 						RunOutcome::Empty(s) => {
@@ -491,17 +513,26 @@ fn rail_blank() {
 }
 
 /// Compact one-line stats summary for a finished step: duration, cost,
-/// total tokens, and the count of tool calls observed on its JSONL stream.
+/// total tokens, total tool calls + any failures.
 fn fmt_stats(s: &StepStats) -> String {
 	let bullet = "·".bright_black();
+	let tools = fmt_tools(s.tool_count, s.tool_failed);
 	format!(
-		"{dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tc} tools",
+		"{dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tools}",
 		dur = fmt_dur(s.duration),
 		cost = s.cost,
 		tok = s.total_tokens,
-		tc = s.tool_count,
 		b = bullet,
 	)
+}
+
+/// `⚒N` if no failures, `⚒N ✗F` (✗ in red) when one or more tools failed.
+fn fmt_tools(count: u64, failed: u64) -> String {
+	if failed > 0 {
+		format!("⚒{count} {}", format!("✗{failed}").red())
+	} else {
+		format!("⚒{count}")
+	}
 }
 
 /// Public entry — runs a fully-validated workflow.
@@ -559,12 +590,13 @@ pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 
 	let bullet = "·".bright_black();
 	eprintln!(
-		"{close} total {sep} {dur}  {b} ${cost:.4}  {b} {tok} tok",
+		"{close} total {sep} {dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tools}",
 		close = "╰".bright_black(),
 		sep = "·".bright_black(),
 		dur = fmt_dur(ex.totals.duration),
 		cost = ex.totals.cost,
 		tok = ex.totals.tokens,
+		tools = fmt_tools(ex.totals.tools, ex.totals.tools_failed),
 		b = bullet,
 	);
 

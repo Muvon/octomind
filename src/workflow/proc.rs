@@ -34,8 +34,12 @@ pub struct StepStats {
 	pub input_tokens: u64,
 	pub output_tokens: u64,
 	pub total_tokens: u64,
-	/// Number of tool calls observed on the JSONL stream for this step.
+	/// Number of `ToolUse` events observed on the JSONL stream for this step.
 	pub tool_count: u64,
+	/// Of those, how many corresponding `ToolResult` events reported success=false.
+	/// Fails are counted as they arrive, so a step that crashes mid-execution
+	/// still reports the fails seen up to that point.
+	pub tool_failed: u64,
 }
 
 /// Outcome categories surfaced to the executor (retry/timeout/etc).
@@ -59,6 +63,9 @@ pub async fn run_step(
 	timeout_secs: u64,
 	event_prefix: Option<&str>,
 	spinner: Option<&ProgressBar>,
+	wf_start: Instant,
+	prior_cost: f64,
+	prior_tools: u64,
 ) -> RunOutcome {
 	let started = Instant::now();
 	let exe = match std::env::current_exe() {
@@ -121,11 +128,21 @@ pub async fn run_step(
 					ServerMessage::ToolUse(_) => {
 						stats.tool_count += 1;
 					}
+					ServerMessage::ToolResult(p) => {
+						if !p.success {
+							stats.tool_failed += 1;
+						}
+					}
 					_ => {}
 				}
 				if let Some(sp) = spinner {
 					if let Some(line) = render_event_oneline(&msg) {
-						sp.set_message(line);
+						let agg = fmt_aggregate(
+							wf_start.elapsed(),
+							prior_cost + stats.cost,
+							prior_tools + stats.tool_count,
+						);
+						sp.set_message(format!("{line}   {agg}"));
 					}
 				} else if let Some(prefix) = event_prefix {
 					render_event(prefix, &msg);
@@ -164,6 +181,32 @@ pub async fn run_step(
 			}
 		}
 		Err(e) => RunOutcome::SpawnError(e),
+	}
+}
+
+/// Workflow-level aggregate footer for the spinner: total elapsed time,
+/// running cost so far, and total tools (current step + everything
+/// finished before it). Dimmed so it doesn't fight with the live event.
+fn fmt_aggregate(wf_elapsed: Duration, total_cost: f64, total_tools: u64) -> String {
+	let bullet = "·".bright_black();
+	format!(
+		"{b} {dur} {b} ${cost:.4} {b} {tools_glyph}{tools}",
+		b = bullet,
+		dur = fmt_dur_compact(wf_elapsed).bright_black(),
+		cost = total_cost,
+		tools_glyph = "⚒".bright_black(),
+		tools = total_tools.to_string().bright_black(),
+	)
+}
+
+fn fmt_dur_compact(d: Duration) -> String {
+	let secs = d.as_secs();
+	if secs < 60 {
+		format!("{secs}s")
+	} else {
+		let m = secs / 60;
+		let s = secs % 60;
+		format!("{m}m{s:02}s")
 	}
 }
 

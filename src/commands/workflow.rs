@@ -20,6 +20,7 @@ use colored::Colorize;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
+use octomind::config::Config;
 use octomind::workflow::{
 	execute_workflow,
 	schema::{Step, WorkflowDef},
@@ -37,7 +38,7 @@ pub struct WorkflowArgs {
 	pub dry_run: bool,
 }
 
-pub async fn execute(args: &WorkflowArgs) -> Result<()> {
+pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 	if !args.file.exists() {
 		bail!("workflow file not found: {}", args.file.display());
 	}
@@ -67,7 +68,7 @@ pub async fn execute(args: &WorkflowArgs) -> Result<()> {
 		bail!("workflow requires input via stdin");
 	}
 
-	let result = execute_workflow(&wf, &input).await?;
+	let result = execute_workflow(&wf, &input, config).await?;
 	// Final output to stdout — clean for piping.
 	println!("{result}");
 	Ok(())

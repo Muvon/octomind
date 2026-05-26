@@ -29,6 +29,8 @@ use super::schema::{
 	Condition, ConditionalStep, LoopStep, ParallelStep, Sequential, SessionMode, Step, WorkflowDef,
 };
 use super::validate;
+use crate::config::Config;
+use crate::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
 
 /// Final summed totals printed once at the end.
 #[derive(Debug, Default, Clone, Copy)]
@@ -68,10 +70,14 @@ struct Executor {
 	/// Workflow start instant — passed to `run_step` so the spinner can
 	/// show total elapsed time across all completed + current steps.
 	started: Instant,
+	/// Honor `config.enable_markdown_rendering` when printing step responses.
+	markdown_enabled: bool,
+	/// Theme name from `config.markdown_theme` (parsed lazily).
+	markdown_theme: String,
 }
 
 impl Executor {
-	fn new(wf_name: String) -> Self {
+	fn new(wf_name: String, config: &Config) -> Self {
 		Self {
 			outputs: HashMap::new(),
 			session_ids: HashMap::new(),
@@ -81,6 +87,8 @@ impl Executor {
 			wf_name,
 			interactive: std::io::stderr().is_terminal(),
 			started: Instant::now(),
+			markdown_enabled: config.enable_markdown_rendering,
+			markdown_theme: config.markdown_theme.clone(),
 		}
 	}
 
@@ -210,7 +218,7 @@ impl Executor {
 						self.used_continue.insert(s.name.clone(), true);
 					}
 					box_close_ok(&s.name.bright_white(), &fmt_stats(&stats));
-					print_response(&stats.output);
+					print_response(&stats.output, self.markdown_enabled, &self.markdown_theme);
 					self.totals.add(&stats);
 					return Ok(stats);
 				}
@@ -354,7 +362,7 @@ impl Executor {
 			if !t.is_empty() {
 				eprintln!();
 				eprintln!("{}", format!("── {name} ──").bright_black());
-				eprintln!("{t}");
+				print_response(t, self.markdown_enabled, &self.markdown_theme);
 			}
 		}
 		eprintln!();
@@ -545,14 +553,28 @@ fn info_line(text: &str) {
 	eprintln!("{} {}", "·".bright_black(), text);
 }
 
-/// Emit a step's assistant response unwrapped (no markup, no rail) so
-/// the user can see what each step actually produced. Goes to stderr —
-/// stdout is reserved for the workflow's final result. Trailing blank
-/// line provides visual separation before the next step block.
-fn print_response(output: &str) {
+/// Emit a step's assistant response so the user can see what each step
+/// actually produced. Goes to stderr — stdout is reserved for the
+/// workflow's final result. When `markdown_enabled` and the content
+/// looks like markdown, render through the same `MarkdownRenderer` the
+/// interactive chat session uses (with the configured theme); falls
+/// back to plain text on render failure. Trailing blank line provides
+/// visual separation before the next step block.
+fn print_response(output: &str, markdown_enabled: bool, markdown_theme: &str) {
 	let t = output.trim();
-	if !t.is_empty() {
+	if t.is_empty() {
 		eprintln!();
+		return;
+	}
+	eprintln!();
+	if markdown_enabled && is_markdown_content(t) {
+		let theme = markdown_theme.parse().unwrap_or_default();
+		let renderer = MarkdownRenderer::with_theme(theme);
+		match renderer.render_and_print(t) {
+			Ok(_) => {}
+			Err(_) => eprintln!("{t}"),
+		}
+	} else {
 		eprintln!("{t}");
 	}
 	eprintln!();
@@ -585,8 +607,8 @@ fn fmt_tools(count: u64, failed: u64) -> String {
 ///
 /// Returns the text that should be written to stdout (the resolved
 /// `result` step's output, or the last step if `result` is unset).
-pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
-	let mut ex = Executor::new(wf.name.clone());
+pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<String> {
+	let mut ex = Executor::new(wf.name.clone(), config);
 
 	// In TTY mode, suppress the controlling terminal's keypress echo for
 	// the lifetime of the workflow so stray Enter / Ctrl-C presses don't

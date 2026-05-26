@@ -100,9 +100,10 @@ impl Executor {
 
 	/// Drive one sequential step with retries / session handling.
 	///
-	/// `header_suffix` is appended after the step name on the `► name` and
-	/// `✓ name` lines — empty for top-level, `"  [i/max] loop-name"` inside
-	/// a loop, etc. Both lines are railed via [`rail_println`].
+	/// `header_suffix` is appended after the step name in the `╭ name`
+	/// title and `╰ ✓ name` close — empty for top-level, `"  [i/max]
+	/// loop-name"` inside a loop, etc. The block is opened with
+	/// [`box_open`] and closed via [`box_close_ok`] / [`box_close_err`].
 	async fn exec_sequential(
 		&mut self,
 		s: &Sequential,
@@ -122,9 +123,8 @@ impl Executor {
 			} else {
 				String::new()
 			};
-			rail_println(&format!(
-				"{arrow} {name}{suffix}{attempt}",
-				arrow = "►".bright_blue(),
+			box_open(&format!(
+				"{name}{suffix}{attempt}",
 				name = s.name.bright_white(),
 				suffix = header_suffix,
 				attempt = attempt_tag,
@@ -168,7 +168,7 @@ impl Executor {
 				templated_prompt.clone()
 			};
 
-			let event_prefix = format!("{}   ", "│".bright_black());
+			let event_prefix = format!("{} ", "│".bright_black());
 			let spinner = if self.interactive {
 				let sp = ProgressBar::new_spinner();
 				sp.set_style(
@@ -177,7 +177,7 @@ impl Executor {
 						.unwrap()
 						.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
 				);
-				sp.set_prefix(format!("{}  ", "│".bright_black()));
+				sp.set_prefix(format!("{}", "│".bright_black()));
 				sp.set_message("starting…".bright_black().to_string());
 				sp.enable_steady_tick(Duration::from_millis(80));
 				Some(sp)
@@ -209,13 +209,8 @@ impl Executor {
 					if s.session == SessionMode::Continue {
 						self.used_continue.insert(s.name.clone(), true);
 					}
-					rail_println(&format!(
-						"{tick} {name}  {stats}",
-						tick = "✓".green(),
-						name = s.name.bright_white(),
-						stats = fmt_stats(&stats),
-					));
-					rail_blank();
+					box_close_ok(&s.name.bright_white(), &fmt_stats(&stats));
+					print_response(&stats.output);
 					self.totals.add(&stats);
 					return Ok(stats);
 				}
@@ -242,12 +237,11 @@ impl Executor {
 				}
 			}
 
-			rail_println(&format!(
-				"{cross} {name}  {msg}",
-				cross = "✗".red(),
-				name = s.name.bright_white(),
-				msg = last_err.as_deref().unwrap_or("failed").red(),
-			));
+			box_close_err(
+				&s.name.bright_white(),
+				last_err.as_deref().unwrap_or("failed"),
+			);
+			eprintln!();
 		}
 
 		bail!(
@@ -325,24 +319,25 @@ impl Executor {
 			}));
 		}
 
-		rail_println(&format!(
-			"{arrow} {name}  {tag}",
-			arrow = "►".bright_blue(),
+		box_open(&format!(
+			"{name}  {tag}",
 			name = p.name.bright_white(),
 			tag = format!("({} in parallel)", p.run.len()).bright_black(),
 		));
 
 		let results = futures::future::join_all(handles).await;
+		let mut sub_outputs: Vec<(String, String)> = Vec::new();
 		for r in results {
 			match r {
 				Ok(Ok((name, stats))) => {
-					rail_println(&format!(
-						"  {tick} {name}  {stats}",
+					box_line(&format!(
+						"{tick} {name}  {stats}",
 						tick = "✓".green(),
 						name = name.bright_white(),
 						stats = fmt_stats(&stats),
 					));
 					self.totals.add(&stats);
+					sub_outputs.push((name.clone(), stats.output.clone()));
 					self.outputs.insert(name.clone(), stats.output);
 					self.last_step = Some(name);
 				}
@@ -350,7 +345,19 @@ impl Executor {
 				Err(e) => bail!("parallel step '{}' panicked: {}", p.name, e),
 			}
 		}
-		rail_blank();
+		box_close_ok(&p.name.bright_white(), "done");
+		// Print each sub-step's response under a dim label so the user
+		// can see what each branch produced. Final blank line separates
+		// from the next top-level step.
+		for (name, out) in &sub_outputs {
+			let t = out.trim();
+			if !t.is_empty() {
+				eprintln!();
+				eprintln!("{}", format!("── {name} ──").bright_black());
+				eprintln!("{t}");
+			}
+		}
+		eprintln!();
 		Ok(())
 	}
 
@@ -381,23 +388,22 @@ impl Executor {
 			};
 			if let Some(value) = self.outputs.get(&target) {
 				if condition_matches(exit_when, value) {
-					rail_println(&format!(
-						"{ok} {msg}",
-						ok = "✓".green(),
-						msg = format!("exit condition matched at iteration {i}").bright_black(),
+					info_line(&format!(
+						"loop '{name}' exit at iteration {i}",
+						name = l.name
 					));
-					rail_blank();
+					eprintln!();
 					return Ok(());
 				}
 			}
 		}
-		rail_println(&format!(
+		info_line(&format!(
 			"{warn} loop '{name}' reached max_iterations ({max}) without exit condition matching",
 			warn = "⚠".yellow(),
 			name = l.name,
 			max = max,
 		));
-		rail_blank();
+		eprintln!();
 		Ok(())
 	}
 
@@ -416,16 +422,15 @@ impl Executor {
 		let matched = condition_matches(&c.condition, &value);
 
 		let branch_names: &[String] = if matched { &c.on_match } else { &c.on_no_match };
-		rail_println(&format!(
-			"{arrow} {name}  {info}",
-			arrow = "►".bright_blue(),
+		info_line(&format!(
+			"{name}: condition {res} → [{branch}]",
 			name = c.name.bright_white(),
-			info = format!(
-				"condition {res} → [{branch}]",
-				res = if matched { "true" } else { "false" },
-				branch = branch_names.join(", ")
-			)
-			.bright_black(),
+			res = if matched {
+				"true".green()
+			} else {
+				"false".yellow()
+			},
+			branch = branch_names.join(", "),
 		));
 
 		let chosen: Vec<&Sequential> = c
@@ -500,16 +505,57 @@ fn sanitize(s: &str) -> String {
 		.collect()
 }
 
-/// Print one stderr line prefixed by the workflow's left rail `│ `.
-/// All in-progress workflow output goes through this so the rail is
-/// consistent and visually anchors each step inside the workflow box.
-fn rail_println(line: &str) {
-	eprintln!("{rail} {line}", rail = "│".bright_black());
+/// Open a step block with `╭ title`. Title is caller-colored so the
+/// helper stays format-agnostic.
+fn box_open(title: &str) {
+	eprintln!("{} {}", "╭".bright_black(), title);
 }
 
-/// Print a bare rail line — visual breathing room between steps.
-fn rail_blank() {
-	eprintln!("{}", "│".bright_black());
+/// Close a step block with `╰ ✓ name  stats` on success.
+fn box_close_ok(name_colored: &str, stats: &str) {
+	eprintln!(
+		"{} {} {}  {}",
+		"╰".bright_black(),
+		"✓".green(),
+		name_colored,
+		stats,
+	);
+}
+
+/// Close a step block with `╰ ✗ name  msg` on failure.
+fn box_close_err(name_colored: &str, msg: &str) {
+	eprintln!(
+		"{} {} {}  {}",
+		"╰".bright_black(),
+		"✗".red(),
+		name_colored,
+		msg.red(),
+	);
+}
+
+/// Print one line inside an open step block — `│ text`. Used for
+/// per-sub-step results inside a parallel block.
+fn box_line(text: &str) {
+	eprintln!("{} {}", "│".bright_black(), text);
+}
+
+/// Plain `· text` info line — used between step blocks for things that
+/// don't belong inside any box (loop exits, conditional decisions).
+fn info_line(text: &str) {
+	eprintln!("{} {}", "·".bright_black(), text);
+}
+
+/// Emit a step's assistant response unwrapped (no markup, no rail) so
+/// the user can see what each step actually produced. Goes to stderr —
+/// stdout is reserved for the workflow's final result. Trailing blank
+/// line provides visual separation before the next step block.
+fn print_response(output: &str) {
+	let t = output.trim();
+	if !t.is_empty() {
+		eprintln!();
+		eprintln!("{t}");
+	}
+	eprintln!();
 }
 
 /// Compact one-line stats summary for a finished step: duration, cost,
@@ -556,12 +602,12 @@ pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 	let _echo_guard: Option<crate::utils::term_echo::CtrlCEchoGuard> = None;
 
 	eprintln!(
-		"{open} workflow {sep} {name}",
-		open = "╭".bright_black(),
+		"{label} {sep} {name}",
+		label = "workflow".bright_black(),
 		sep = "·".bright_black(),
 		name = wf.name.bright_cyan(),
 	);
-	rail_blank();
+	eprintln!();
 
 	let mut last_top_level: Option<String> = None;
 
@@ -590,8 +636,8 @@ pub async fn execute(wf: &WorkflowDef, input: &str) -> Result<String> {
 
 	let bullet = "·".bright_black();
 	eprintln!(
-		"{close} total {sep} {dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tools}",
-		close = "╰".bright_black(),
+		"{label} {sep} {dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tools}",
+		label = "total".bright_black(),
 		sep = "·".bright_black(),
 		dur = fmt_dur(ex.totals.duration),
 		cost = ex.totals.cost,

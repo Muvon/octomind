@@ -314,7 +314,7 @@ fn render_event(prefix: &str, msg: &ServerMessage) {
 			// One line per param under the tool header — matches the
 			// `│   key value` style of the in-session tool preview block.
 			for (key, val) in compact_params(&p.params) {
-				eprintln!("{prefix}   {} {}", key.bright_black(), val);
+				eprintln!("{prefix}  {} {}", key.bright_black(), val);
 			}
 		}
 		ServerMessage::Skill(p) => {

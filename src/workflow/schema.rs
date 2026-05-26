@@ -22,10 +22,6 @@ pub struct WorkflowDef {
 	pub name: String,
 	#[serde(default)]
 	pub description: Option<String>,
-	/// Step name whose output becomes stdout. Defaults to the last step
-	/// (resolved by the executor — None here means "use last").
-	#[serde(default)]
-	pub result: Option<String>,
 	#[serde(default)]
 	pub steps: Vec<Step>,
 }

@@ -1051,12 +1051,8 @@ pub async fn run_interactive_session(
 			}
 
 			// Run pipe pre-processing if a matching [[pipe]] is configured.
-			let processed_input = run_pipe_if_enabled(
-				&input,
-				&role,
-				first_message_processed,
-			)
-			.await?;
+			let processed_input =
+				run_pipe_if_enabled(&input, &role, first_message_processed).await?;
 
 			// Check for cancellation after pipe processing
 			if cancellation.is_cancelled() {

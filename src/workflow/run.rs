@@ -630,9 +630,10 @@ fn fmt_tools(count: u64, failed: u64) -> String {
 
 /// Public entry — runs a fully-validated workflow.
 ///
-/// Returns the text that should be written to stdout (the resolved
-/// `result` step's output, or the last step if `result` is unset).
-pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<String> {
+/// Each step's last assistant message is already printed (with markdown
+/// rendering when enabled) as it completes, so the workflow produces no
+/// stdout — callers consume per-step output from stderr instead.
+pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<()> {
 	let mut ex = Executor::new(wf.name.clone(), config);
 
 	// In TTY mode, suppress the controlling terminal's keypress echo for
@@ -656,27 +657,21 @@ pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<S
 	);
 	eprintln!();
 
-	let mut last_top_level: Option<String> = None;
-
 	for step in &wf.steps {
 		match step {
 			Step::Sequential(s) => {
 				let stats = ex.exec_sequential(s, input, "").await?;
 				ex.outputs.insert(s.name.clone(), stats.output);
 				ex.last_step = Some(s.name.clone());
-				last_top_level = Some(s.name.clone());
 			}
 			Step::Parallel(p) => {
 				ex.exec_parallel(p, input).await?;
-				last_top_level = Some(p.name.clone());
 			}
 			Step::Loop(l) => {
 				ex.exec_loop(l, input).await?;
-				last_top_level = Some(l.name.clone());
 			}
 			Step::Conditional(c) => {
 				ex.exec_conditional(c, input).await?;
-				last_top_level = Some(c.name.clone());
 			}
 		}
 	}
@@ -700,16 +695,5 @@ pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<S
 		crate::utils::term_echo::drain_fd(libc::STDERR_FILENO);
 	}
 
-	// Resolve final output.
-	let result_name = wf
-		.result
-		.clone()
-		.or(last_top_level)
-		.ok_or_else(|| anyhow::anyhow!("no steps produced output"))?;
-	let out = ex
-		.outputs
-		.get(&result_name)
-		.cloned()
-		.ok_or_else(|| anyhow::anyhow!("result step '{}' produced no output", result_name))?;
-	Ok(out)
+	Ok(())
 }

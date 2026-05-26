@@ -59,7 +59,8 @@ static VALIDATOR_CURSORS: RwLock<Option<HashMap<SessionId, HashMap<String, usize
 	RwLock::new(None);
 
 /// Per-session, per-pipe run counters. Keyed by (SessionId, pipe_name).
-static PIPE_RUN_COUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, u64>>>> = RwLock::new(None);
+static PIPE_RUN_COUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, u64>>>> =
+	RwLock::new(None);
 
 /// Per-session message counter (total user messages including current).
 static MESSAGE_COUNTS: RwLock<Option<HashMap<SessionId, u64>>> = RwLock::new(None);

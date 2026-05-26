@@ -68,9 +68,7 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 		bail!("workflow requires input via stdin");
 	}
 
-	let result = execute_workflow(&wf, &input, config).await?;
-	// Final output to stdout — clean for piping.
-	println!("{result}");
+	execute_workflow(&wf, &input, config).await?;
 	Ok(())
 }
 
@@ -78,15 +76,6 @@ fn print_plan(wf: &WorkflowDef) {
 	println!("{} {}", "workflow:".bright_black(), wf.name.bright_cyan());
 	if let Some(desc) = &wf.description {
 		println!("  {} {}", "description:".bright_black(), desc);
-	}
-	if let Some(r) = &wf.result {
-		println!("  {} {}", "result:".bright_black(), r);
-	} else {
-		println!(
-			"  {} {}",
-			"result:".bright_black(),
-			"(last step)".bright_black()
-		);
 	}
 	println!();
 

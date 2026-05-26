@@ -36,7 +36,6 @@ Drop this at `dev.toml`:
 
 ```toml
 name   = "dev"
-result = "execute"
 
 [[steps]]
 name    = "refine"
@@ -87,7 +86,7 @@ Context:
 echo "fix the login bug" | octomind workflow dev.toml
 ```
 
-Per-step timing, cost, and tokens stream to stderr; the final `execute` step's output lands on stdout.
+Each step's assistant message is rendered to stderr as it completes (with markdown rendering when enabled), alongside per-step timing, cost, and tokens.
 
 ## Advanced: Validation Loop
 
@@ -95,7 +94,6 @@ Add an iterative validate-fix cycle. Researcher and tester each get their own co
 
 ```toml
 name   = "validated_dev"
-result = "execute"
 
 [[steps]]
 name    = "refine"
@@ -152,6 +150,6 @@ Configure the per-role model in your normal `[[roles]]` config (or use `[taps]` 
 
 - Workflow steps are **separate sessions** — they don't share context unless `session = "continue"` is set
 - Loop step exits as soon as `exit_when.contains` matches the named output
-- Stdin → `{{input}}`; final stdout = the step named by `result =` (default: last step)
-- All progress, timing, cost, tokens print to **stderr** — stdout stays clean for piping
+- Stdin → `{{input}}`; each step's last assistant message prints to **stderr** as it completes (with markdown rendering when enabled)
+- All progress, timing, cost, tokens also print to **stderr**; the workflow produces no stdout
 - Use `--dry-run` to validate the file and print the execution plan without spawning any sessions

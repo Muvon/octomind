@@ -926,12 +926,8 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			// session is permanently lost from self.sessions and every subsequent
 			// prompt to this session_id fails with "session not found".
 			let first_message_processed = !chat_session.session.messages.is_empty();
-			let pipe_result = run_pipe_if_enabled(
-				&input,
-				&self.role,
-				first_message_processed,
-			)
-			.await;
+			let pipe_result =
+				run_pipe_if_enabled(&input, &self.role, first_message_processed).await;
 			let processed_input = match pipe_result {
 				Ok(v) => v,
 				Err(e) => {

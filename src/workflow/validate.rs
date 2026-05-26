@@ -26,13 +26,8 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 
 	// Collect names + uniqueness check (recurses into sub-steps).
 	let mut all_names: HashSet<String> = HashSet::new();
-	// Sequential step names (top-level + sub-steps) — these are the only
-	// names that produce a stored output addressable from `result` or
-	// `{{var}}` substitution. Composite step names (parallel/loop/conditional
-	// containers) live only in `all_names` for uniqueness checks.
-	let mut output_names: HashSet<String> = HashSet::new();
 	for step in &wf.steps {
-		collect_names(step, &mut all_names, &mut output_names)?;
+		collect_names(step, &mut all_names)?;
 	}
 
 	// Structural checks per step.
@@ -49,42 +44,19 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 		check_step_refs(step, &mut available)?;
 	}
 
-	// Result field must point at a step that actually produces output.
-	// Composite container names (parallel/loop/conditional) don't store
-	// output themselves — only their sub-steps do.
-	if let Some(r) = &wf.result {
-		if !all_names.contains(r) {
-			bail!("workflow result '{}' does not match any step name", r);
-		}
-		if !output_names.contains(r) {
-			bail!(
-				"workflow result '{}' refers to a composite step (parallel/loop/conditional) which has no output of its own; point `result` at a sub-step name",
-				r
-			);
-		}
-	}
-
 	Ok(())
 }
 
-fn collect_names(
-	step: &Step,
-	names: &mut HashSet<String>,
-	outputs: &mut HashSet<String>,
-) -> Result<()> {
+fn collect_names(step: &Step, names: &mut HashSet<String>) -> Result<()> {
 	insert_unique(step.name(), names)?;
-	let (subs, container_produces_output): (&[Sequential], bool) = match step {
-		Step::Sequential(_) => (&[], true),
-		Step::Parallel(p) => (&p.run, false),
-		Step::Loop(l) => (&l.run, false),
-		Step::Conditional(c) => (&c.run, false),
+	let subs: &[Sequential] = match step {
+		Step::Sequential(_) => &[],
+		Step::Parallel(p) => &p.run,
+		Step::Loop(l) => &l.run,
+		Step::Conditional(c) => &c.run,
 	};
-	if container_produces_output {
-		outputs.insert(step.name().to_string());
-	}
 	for s in subs {
 		insert_unique(&s.name, names)?;
-		outputs.insert(s.name.clone());
 	}
 	Ok(())
 }

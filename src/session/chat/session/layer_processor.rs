@@ -33,16 +33,13 @@ pub async fn run_pipe_if_enabled(
 		return Ok(input.to_string());
 	};
 
-	match crate::session::pipe::run_pipe(
-		&session_id,
-		role,
-		input,
-		first_message_processed,
-	)
-	.await
-	{
+	match crate::session::pipe::run_pipe(&session_id, role, input, first_message_processed).await {
 		Ok(Some(transformed)) => {
-			log_info!("Pipe transformed input ({} → {} bytes)", input.len(), transformed.len());
+			log_info!(
+				"Pipe transformed input ({} → {} bytes)",
+				input.len(),
+				transformed.len()
+			);
 			Ok(transformed)
 		}
 		Ok(None) => Ok(input.to_string()),

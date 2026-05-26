@@ -51,7 +51,6 @@ pub mod registry;
 
 pub mod runtime_overlay;
 
-
 // Tests removed - strict configuration mode doesn't support Default implementations
 // Tests should be rewritten to use complete config structures
 

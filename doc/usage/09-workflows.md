@@ -31,15 +31,13 @@ octomind workflow myflow.toml --dry-run
 ```
 
 - stdin is required (unless `--dry-run`); empty stdin is a hard error.
-- stdout receives only the final result (the step named by `result`, or the last top-level step if unset).
-- stderr receives progress lines, per-step stats, warnings, and the final total.
+- stderr receives each step's assistant message (rendered as markdown when enabled), progress lines, per-step stats, warnings, and the final total. stdout is unused.
 
 ## File format
 
 ```toml
 name        = "my-workflow"
 description = "Optional human description"
-result      = "evaluator"   # which step's output goes to stdout; default: last step
 
 # ── Sequential step (the default) ─────────────────────────────────────
 [[steps]]
@@ -209,7 +207,6 @@ Pre-flight checks (all hard-fail before any step runs):
 - `'input'` is reserved (you can't name a step `input`).
 - Every `{{var}}` references either `input` or a step that completes before the referencing step.
 - A `parallel` step has at least 2 sub-steps; `loop` has ≥1 sub-step + `exit_when`; `conditional` has `condition` and at least one of `on_match` / `on_no_match`.
-- `result` must point at a sequential step that produces output (not a composite container name).
 - Regex patterns in `matches` compile.
 - `model`, when specified on any step, must not be an empty string.
 
@@ -219,7 +216,6 @@ A generator/tester GAN that builds, reviews, and scores:
 
 ```toml
 name   = "gan"
-result = "evaluator"
 
 [[steps]]
 name   = "spec"

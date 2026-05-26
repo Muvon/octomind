@@ -922,12 +922,7 @@ async fn handle_user_message(
 	// Run pipe pre-processing if a matching [[pipe]] is configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
-	let processed_input = run_pipe_if_enabled(
-		&input,
-		role,
-		first_message_processed,
-	)
-	.await?;
+	let processed_input = run_pipe_if_enabled(&input, role, first_message_processed).await?;
 
 	// Conversation compression: check if AI should compress older exchanges.
 	// Runs BEFORE user message is added to avoid breaking the new request.

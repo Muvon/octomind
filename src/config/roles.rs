@@ -49,10 +49,6 @@ pub struct Role {
 	// MCP configuration for this role
 	#[serde(default)]
 	pub mcp: RoleMcpConfig,
-
-	// Pipeline reference - name of pipeline to use for this role
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub pipeline: Option<String>,
 }
 
 // REMOVED: Default implementations - all config must be explicit

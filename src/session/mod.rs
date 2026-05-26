@@ -37,8 +37,8 @@ pub mod background_jobs;
 pub mod guardrails; // Project-local deny rules evaluated before each tool call
 pub mod hooks; // Post-result hooks → inbox injection
 pub mod inbox; // Unified message injection queue for all session sources
+pub mod pipe; // Pre-model pipe execution from guardrails
 pub mod inject_listener; // Unix Domain Socket listener for external message injection
-pub mod pipelines; // Deterministic script pipeline system
 pub mod report; // Session usage reporting
 pub mod share; // /share: upload session JSONL → octomind.run/r/<id>
 pub mod smart_summarizer; // Smart text summarization for context management

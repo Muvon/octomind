@@ -18,7 +18,8 @@ src/
     chat/              # Response processing, tool execution, compression, display
     context.rs         # Session-scoped state (task-local SessionId propagation)
     layers/            # AI sub-agent execution
-    pipelines/         # Deterministic script pipelines
+    guardrails.rs      # Guardrails (pipe) loading and evaluation
+    pipe.rs             # Pipe execution logic
     workflows/         # AI-orchestrated multi-step workflows
     learning/          # Cross-session lesson extraction/injection
   acp/                 # ACP stdio server (agent-to-agent protocol)
@@ -44,7 +45,7 @@ config-templates/
 | Session main loop | `src/session/chat/session/main_loop.rs` |
 | Response / tool execution flow | `src/session/chat/response.rs` → `src/session/chat/response/tool_execution.rs` |
 | Skill auto-activation | `src/mcp/core/skill_auto.rs` |
-| Layer / pipeline / workflow | `src/session/layers/`, `src/session/pipelines/`, `src/session/workflows/` |
+| Layer / guardrails / workflow | `src/session/layers/`, `src/session/guardrails.rs`, `src/session/pipe.rs`, `src/session/workflows/` |
 | Learning system | `src/learning/` |
 | ACP server | `src/acp/agent.rs` |
 | Sandbox | `src/sandbox/mod.rs` |
@@ -102,7 +103,7 @@ crate::session::context::init_session_services(&role);
 User input
   → /command? → CommandResult (or TreatAsUserInput)
   → run_activation hook (main_loop.rs only)  [skill auto-activation on user input]
-  → pipelines (deterministic scripts)
+  → guardrails/pipe (pre-model input transform)
   → workflows (AI-orchestrated steps)
   → layers (AI sub-agents)
   → tool execution loop

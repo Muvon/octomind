@@ -1,8 +1,8 @@
 # Workflows
 
-`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step pipeline. Each step is an independent subprocess; outputs flow between steps by name; the final result goes to stdout — making workflows composable with shell pipes.
+`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; the final result goes to stdout — making workflows composable with shell pipes.
 
-> **In-session pipelines** for deterministic pre-processing live separately — see [Pipelines](14-pipelines.md). Workflows sit *above* sessions; pipelines sit *inside* one.
+> **In-session input preprocessing** via `[[pipe]]` in `.agents/guardrails.toml` runs before the model — see [Guardrails](18-guardrails.md#pipe--pre-model-input-transform). Workflows sit *above* sessions; pipes sit *inside* one.
 
 ## Concept
 

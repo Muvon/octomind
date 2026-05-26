@@ -9,7 +9,6 @@ Every session runs with a role. The role determines:
 - **MCP server access** -- which tool servers are available
 - **Tool permissions** -- which specific tools can be used
 - **Model parameters** -- temperature, top_p, top_k
-- **Pipeline** -- optional deterministic script pre-processing
 
 ## Built-in Roles
 
@@ -52,9 +51,6 @@ allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 | `temperature` | f64 | no | Sampling temperature (0.0-2.0) |
 | `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
 | `top_k` | u32 | no | Top-k token limit (1-1000) |
-| `pipeline` | string | no | Pipeline to activate for this role |
-
-When `pipeline` is set, the execution order is: **user message → pipeline (scripts) → main model**. The pipeline's output replaces the user message as the model's input. See [Pipelines](14-pipelines.md) for details.
 
 > **Multi-step AI workflows** are no longer bound to roles. Use the external `octomind workflow <file.toml>` CLI instead — see [Workflows](09-workflows.md).
 
@@ -150,18 +146,6 @@ server_refs = ["filesystem"]
 allowed_tools = ["filesystem:view", "filesystem:text_editor"]
 ```
 
-### Role with Pipeline
-
-```toml
-[[roles]]
-name = "planner"
-pipeline = "context_pipeline"
-system = "You are a planning assistant."
-
-[roles.mcp]
-server_refs = ["core", "filesystem"]
-allowed_tools = ["core:*", "filesystem:view"]
-```
 
 ## Using Roles
 

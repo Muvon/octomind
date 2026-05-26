@@ -33,7 +33,7 @@ src/
     mcp.rs                   # MCP server config (Builtin/Http/Stdio)
     hooks.rs                 # Webhook hook config
     workflows.rs             # Workflow + step definitions
-    pipelines.rs             # Pipeline step definitions and parsing
+    guardrails.rs           # Guardrails (pipe) configuration
     layers.rs                # Layer configuration
     agents.rs                # Agent (ACP) configuration
     providers.rs             # Provider token config
@@ -145,7 +145,8 @@ src/
     layers/
       mod.rs                   # Layer trait & processor
     workflows/               # Workflow orchestrator (with step timing)
-    pipelines/               # Deterministic script pipeline executor
+    guardrails.rs            # Guardrails loading/evaluation
+    pipe.rs                   # Pipe execution logic
 
   mcp/
     mod.rs                   # MCP coordinator, tool routing (try_execute_tool_call)

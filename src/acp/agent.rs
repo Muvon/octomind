@@ -34,7 +34,7 @@ use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
-	execute_api_call_and_process_response, prepare_for_api_call, process_pipeline_if_enabled,
+	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled,
 	setup_and_initialize_session, setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
 use crate::session::output::{OutputMode, WebSocketSink};
@@ -921,21 +921,18 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				}
 			}
 
-			// Pipeline pre-processing (deterministic scripts before the main model).
+			// Pipe pre-processing (runs matching [[pipe]] from guardrails before the main model).
 			// On error we MUST re-insert chat_session before returning — otherwise the
 			// session is permanently lost from self.sessions and every subsequent
 			// prompt to this session_id fails with "session not found".
 			let first_message_processed = !chat_session.session.messages.is_empty();
-			let pipeline_result = process_pipeline_if_enabled(
+			let pipe_result = run_pipe_if_enabled(
 				&input,
-				&mut chat_session,
-				&config_for_role,
 				&self.role,
 				first_message_processed,
-				operation_rx.clone(),
 			)
 			.await;
-			let (processed_input, pipeline_cancelled) = match pipeline_result {
+			let processed_input = match pipe_result {
 				Ok(v) => v,
 				Err(e) => {
 					self.sessions
@@ -944,13 +941,6 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					return Err(agent_client_protocol::Error::internal_error().data(e.to_string()));
 				}
 			};
-
-			if pipeline_cancelled {
-				self.sessions
-					.borrow_mut()
-					.insert(session_id.clone(), (chat_session, session_cwd.clone()));
-				return Ok(PromptResponse::new(StopReason::Cancelled));
-			}
 
 			// Attach ACP images/videos as pending so add_user_message picks them up
 			if let Some(first_image) = images.into_iter().next() {

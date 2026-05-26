@@ -1,14 +1,15 @@
 # Guardrails
 
-Per-project policy for tool use, defined in `.agents/guardrails.toml`. Three section types cover three phases of the tool-execution lifecycle:
+Per-project policy for tool use and input preprocessing, defined in `.agents/guardrails.toml`. Four section types cover four phases of the session lifecycle:
 
 | Section | Phase | What it does | Side effect |
 |---|---|---|---|
+| `[[pipe]]` | Pre-model | Transform or validate user input before the model sees it | Non-zero exit → hard stop; stdout replaces user message |
 | `[[guard]]` | Pre-call | Block a tool from running | Synthetic error result returned to the model |
 | `[[hook]]` | Post-result | Run a script against the tool result | Non-zero exit → script stdout injected as user message |
 | `[[validator]]` | End-of-turn | Run a script after the assistant's final message | Non-zero exit → `<validation>`-wrapped stdout injected |
 
-All three share the same matching DSL and live in the same file. Nothing is mandatory; missing file = no policy.
+All four live in the same file. Nothing is mandatory; missing file = no policy.
 
 ## File location
 
@@ -44,6 +45,90 @@ when = [
 
 All `when` items are AND'd. Cross-section: history is the **session call log**, accumulated as tool calls succeed; blocked calls don't enter the log.
 
+## `[[pipe]]` — pre-model input transform
+
+Runs a matching script on the raw user input **before the model sees it**. The script receives the user message on stdin; its stdout replaces the message sent to the model. Non-zero exit is a hard stop — the message is not sent to the model and an error is displayed.
+
+At most one `[[pipe]]` may match per user message; multiple matches are an error.
+
+```toml
+[[pipe]]
+name    = "prepare"                        # required: identifier
+command = "./scripts/prepare-input.sh"       # required: path relative to workdir
+match   = ".*"                              # optional: regex on user message text
+when    = "any"                             # optional: "first" | "any" (default)
+roles   = ["developer"]                    # optional: role filter
+```
+
+### Semantics
+
+- Evaluated on every user message (subject to filters).
+- Filter evaluation order (cheapest first): `roles` → `when` → `match`.
+- At most one pipe may match per message. If two or more pipes match, an error is displayed and the message is not sent to the model.
+- The pipe runs in the session's working directory.
+- Script timeout: 300 seconds (same as hooks and validators).
+
+### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | identifier, used in error messages and `PIPE_NAME` env var |
+| `command` | path | yes | script path, relative to workdir (or absolute) |
+| `match` | regex | no | regex on user message text; empty = matches all messages |
+| `when` | enum | no | `"first"` (first message only) or `"any"` (default, every message) |
+| `roles` | list of strings | no | role filter; exact (`developer:general`) or domain prefix (`developer` ≡ `developer:*`) |
+
+### Script contract
+
+| Channel | Use |
+|---|---|
+| **cwd** | session workdir |
+| **stdin** | raw user message text |
+| **env** | `OCTOMIND_ROLE`, `OCTOMIND_WORKDIR`, `PIPE_NAME`, `PIPE_RUN_COUNT`, `SESSION_MESSAGE_COUNT` |
+| **stdout** | replaces the user message (used as-is, no trimming) |
+| **stderr** | logged at debug level |
+| **exit 0** | stdout becomes the new user message |
+| **exit ≠ 0** | hard stop — error displayed, message not sent to model |
+| **timeout** | 300 s; killed → hard stop |
+
+### Environment variables
+
+| Variable | Description |
+|---|---|
+| `OCTOMIND_ROLE` | current session role (e.g. `developer:general`) |
+| `OCTOMIND_WORKDIR` | session working directory path |
+| `PIPE_NAME` | the `name` field from the `[[pipe]]` entry |
+| `PIPE_RUN_COUNT` | number of times this pipe has been invoked in this session (starts at `1`) |
+| `SESSION_MESSAGE_COUNT` | total number of user messages in the session so far (including the current one) |
+
+### Example: validate input format
+
+```toml
+[[pipe]]
+name    = "validate"
+command = "./scripts/validate-input.sh"
+```
+
+`validate-input.sh`:
+```bash
+#!/usr/bin/env bash
+input=$(cat)
+if [[ "$input" =~ ^/ ]]; then
+  echo "Commands must not start with /" >&2
+  exit 1
+fi
+echo "$input"
+```
+
+### Example: enrich first message with context
+
+```toml
+[[pipe]]
+name    = "context-enricher"
+command = "./scripts/add-context.sh"
+when    = "first"
+roles   = ["developer"]
+```
 ---
 
 ## `[[guard]]` — pre-call deny rules
@@ -250,9 +335,18 @@ This means the same DSL has consistent meaning everywhere; the difference is jus
 
 ---
 
-## Where it hooks in the pipeline
+## Execution order
 
 ```
+User sends message
+  ├── run_pipe (pre-model):
+  │     evaluate [[pipe]] rules (roles → when → match)
+  │     at most one pipe may match; multiple = error
+  │     if matched → spawn script, stdin = user message
+  │       exit 0 → stdout replaces user message
+  │       exit ≠ 0 → hard stop, error displayed
+  │     if no match → pass through unchanged
+LLM receives (possibly transformed) user message
 LLM emits tool calls [t0, t1, …]
   ├── check_batch (pre-call):
   │     for each ti in arrival order:
@@ -283,6 +377,13 @@ Inbox messages flow into the next API call as user messages
 ## Sample full file
 
 ```toml
+# Pre-model input transform
+[[pipe]]
+name    = "context-enricher"
+command = "./scripts/add-context.sh"
+when    = "first"
+roles   = ["developer"]
+
 # Pre-call denials
 [[guard]]
 match   = "shell(command=^rm\\s+-rf?)"

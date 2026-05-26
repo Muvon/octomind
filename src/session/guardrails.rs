@@ -58,6 +58,12 @@ static CAP_LOOKUP: RwLock<Option<HashMap<SessionId, Arc<CapLookup>>>> = RwLock::
 static VALIDATOR_CURSORS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> =
 	RwLock::new(None);
 
+/// Per-session, per-pipe run counters. Keyed by (SessionId, pipe_name).
+static PIPE_RUN_COUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, u64>>>> = RwLock::new(None);
+
+/// Per-session message counter (total user messages including current).
+static MESSAGE_COUNTS: RwLock<Option<HashMap<SessionId, u64>>> = RwLock::new(None);
+
 /// Load `.agents/guardrails.toml` from the session's working directory and
 /// install it for the current session. No-op when not in a session context.
 pub fn init_for_session() {
@@ -95,6 +101,16 @@ pub fn clear_for_session(session_id: &SessionId) {
 		}
 	}
 	if let Ok(mut guard) = VALIDATOR_CURSORS.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = PIPE_RUN_COUNTS.write() {
+		if let Some(r) = guard.as_mut() {
+			r.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = MESSAGE_COUNTS.write() {
 		if let Some(r) = guard.as_mut() {
 			r.remove(session_id);
 		}
@@ -268,4 +284,23 @@ pub fn get_call_log(session_id: &SessionId) -> CallLog {
 		.and_then(|r| r.get(session_id))
 		.cloned()
 		.unwrap_or_default()
+}
+
+/// Increment the message counter for this session and return the new count.
+pub fn increment_message_count(session_id: &SessionId) -> u64 {
+	let mut guard = MESSAGE_COUNTS.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let count = registry.entry(session_id.clone()).or_insert(0);
+	*count += 1;
+	*count
+}
+
+/// Increment the run counter for a specific pipe and return the new count.
+pub fn increment_pipe_run_count(session_id: &SessionId, pipe_name: &str) -> u64 {
+	let mut guard = PIPE_RUN_COUNTS.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let per_session = registry.entry(session_id.clone()).or_default();
+	let count = per_session.entry(pipe_name.to_string()).or_insert(0);
+	*count += 1;
+	*count
 }

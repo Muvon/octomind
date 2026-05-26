@@ -324,7 +324,7 @@ Create a compressed history that captures ESSENTIAL architectural knowledge and 
 
 **Core Architecture Elements:**
 - **Structures**: `CoreStruct`, `SystemConfig`, `InterfaceHandler`
-- **Functions/Methods**: `process_pipeline()`, `handle_request()`, `configure_system()`
+- **Functions/Methods**: `handle_request()`, `configure_system()`
 - **Traits/Interfaces**: `ProcessorTrait`, `ConfigurableInterface`
 - **Constants/Config**: `DEFAULT_TIMEOUT`, `MAX_CONNECTIONS`, `SYSTEM_VERSION`
 

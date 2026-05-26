@@ -22,7 +22,7 @@ use super::api_prep::prepare_for_api_call;
 use super::commands::CommandResult;
 use super::core::{ChatSession, SessionInitParams};
 use super::error_utils::{handle_api_error, handle_followup_api_error};
-use super::layer_processor::process_pipeline_if_enabled;
+use super::layer_processor::run_pipe_if_enabled;
 use super::prompt_setup::setup_system_prompt_and_cache;
 use super::setup::setup_and_initialize_session;
 use crate::config::Config;
@@ -1050,18 +1050,15 @@ pub async fn run_interactive_session(
 				continue;
 			}
 
-			// Run pipeline pre-processing if the role has one configured.
-			let (processed_input, _pipeline_cancelled) = process_pipeline_if_enabled(
+			// Run pipe pre-processing if a matching [[pipe]] is configured.
+			let processed_input = run_pipe_if_enabled(
 				&input,
-				&mut chat_session,
-				&current_config,
 				&role,
 				first_message_processed,
-				operation_rx.clone(),
 			)
 			.await?;
 
-			// Check for cancellation after pipeline processing
+			// Check for cancellation after pipe processing
 			if cancellation.is_cancelled() {
 				animation_manager.stop_current().await;
 				continue;
@@ -1070,8 +1067,11 @@ pub async fn run_interactive_session(
 			// Snapshot the user's original input for retry-on-failure (Ctrl+G with empty input).
 			let original_input_for_retry = input.clone();
 
-			// Mark first-message processing as complete and use pipeline output (or
-			// the original input if no pipeline is configured) for the rest of the loop.
+			// Mark first-message processing as complete. Note: if the pipe
+			// errors above (hard stop via `?`), this line is never reached and
+			// first_message_processed stays false — so a `when = "first"` pipe
+			// will retry on the next user message. This is intentional: the
+			// first message was never successfully processed.
 			first_message_processed = true;
 			let final_input = processed_input;
 
@@ -1487,32 +1487,13 @@ pub async fn run_interactive_session_with_input(
 	)
 	.await;
 
-	// Pipeline pre-processing if the role has one configured.
-	let (processed_input, pipeline_cancelled) = process_pipeline_if_enabled(
+	// Pipe pre-processing if a matching [[pipe]] is configured.
+	let processed_input = run_pipe_if_enabled(
 		&input,
-		&mut chat_session,
-		&current_config,
 		&role,
 		first_message_processed,
-		operation_rx.clone(),
 	)
 	.await?;
-
-	// CRITICAL FIX: Reset cancellation state after pipeline cancellation
-	// This prevents subsequent operations from failing due to stale cancellation signal
-	if pipeline_cancelled {
-		cancellation.reset();
-		log_info!(
-			"Cancellation state reset after pipeline cancellation - ready for main model processing"
-		);
-
-		if let Err(e) = chat_session.save() {
-			crate::log_debug!("session save failed: {}", e);
-		}
-		log_info!("Session saved after pipeline cancellation cleanup");
-
-		operation_rx = cancellation.new_operation();
-	}
 
 	input = processed_input;
 

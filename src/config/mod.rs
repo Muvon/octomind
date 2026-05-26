@@ -51,7 +51,6 @@ pub mod registry;
 
 pub mod runtime_overlay;
 
-pub mod pipelines;
 
 // Tests removed - strict configuration mode doesn't support Default implementations
 // Tests should be rewritten to use complete config structures
@@ -60,7 +59,6 @@ pub mod pipelines;
 pub use hooks::*;
 pub use layers::*;
 pub use mcp::*;
-pub use pipelines::*;
 pub use providers::*;
 pub use registry::*;
 pub use roles::*;
@@ -343,10 +341,6 @@ pub struct Config {
 
 	// Global layer configurations - array of layer definitions
 	pub layers: Option<Vec<crate::session::layers::LayerConfig>>,
-
-	// Pipelines configuration - deterministic script steps before AI processing
-	#[serde(default)]
-	pub pipelines: Vec<PipelineDefinition>,
 
 	// Prompt template configurations
 	pub prompts: Vec<PromptConfig>,

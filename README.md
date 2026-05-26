@@ -58,7 +58,7 @@ Octomind ships specialist agents ready to run — and a runtime that grows with 
 
 | Pillar | What it gives you |
 |---|---|
-| **Zero config, full flexibility** | `octomind run lawyer:sg` works out of the box. Need a different model, MCP server, or pipeline? Same TOML, no framework code. |
+| **Zero config, full flexibility** | `octomind run lawyer:sg` works out of the box. Need a different model, MCP server, or guardrail pipe? Same TOML, no framework code. |
 | **Sessions stay sharp at hour 4** | Adaptive compaction: cache-aware, structurally preserving. Smaller context = faster responses + lower cost. |
 | **Cost as a control plane** | Per-step model selection across many providers. Hard spending caps and cache-aware accounting come for free. |
 | **Guardrails: policy as code** | Govern autonomous agents with deterministic scripts — pre-call guards, post-result hooks, post-turn validators. No modal approval clicks. Fits CI. |
@@ -68,7 +68,7 @@ Octomind ships specialist agents ready to run — and a runtime that grows with 
 
 ## Pillar 1 — Zero Config, Full Flexibility
 
-Most agent tools force a tradeoff: zero-config (Lindy, no-code) or fully customizable (Mastra, LangGraph). Octomind gives you both. `octomind run lawyer:sg` works out of the box. Need a different model, a custom MCP server, a pipeline of agents — all live in TOML, no framework code.
+Most agent tools force a tradeoff: zero-config (Lindy, no-code) or fully customizable (Mastra, LangGraph). Octomind gives you both. `octomind run lawyer:sg` works out of the box. Need a different model, a custom MCP server, a guardrail pipe — all live in TOML, no framework code.
 
 ```bash
 octomind run developer            # general dev, language skills auto-activate
@@ -339,7 +339,7 @@ sandbox = true
 
 - **Roles** — model, temperature, system prompt, MCP servers, tool permissions per role.
 - **Layers** — chained AI sub-agents that run after each response.
-- **Pipelines** — deterministic script-driven pre-processing.
+- **Guardrails** — deterministic policy (guards, hooks, validators) and input pipes.
 - **Workflows** — multi-step orchestrated task runners with validation loops.
 
 See [Configuration Reference](doc/reference/03-config-reference.md) for everything.
@@ -436,7 +436,7 @@ Key areas:
 
 - **Roles** — model, temperature, system prompt, MCP servers, tool permissions
 - **Workflows** — multi-step AI processing with validation loops
-- **Pipelines** — deterministic script-driven pre-processing
+- **Guardrails** — deterministic policy (guards, hooks, validators) and input pipes
 - **MCP Servers** — external tools and capabilities
 - **Spending Limits** — per-request and per-session thresholds
 
@@ -460,7 +460,7 @@ Full list: [Session Commands](doc/reference/02-session-commands.md).
 
 ## Architecture
 
-One binary. The session is the unit of work. Around it: roles (who's talking), layers and workflows (multi-step orchestration), pipelines (deterministic pre-processing), adaptive compaction (long-session quality), guardrails (deterministic policy), and MCP servers (tools). All of it driven by a single resolved TOML config — no hardcoded behavior, no framework code to edit.
+One binary. The session is the unit of work. Around it: roles (who's talking), layers and workflows (multi-step orchestration), guardrails with pipes (deterministic pre-processing and policy), adaptive compaction (long-session quality), and MCP servers (tools). All of it driven by a single resolved TOML config — no hardcoded behavior, no framework code to edit.
 
 Embedders pick their surface: interactive CLI, ACP for multi-agent orchestration, WebSocket for IDEs and dashboards, daemon mode for long-running background agents.
 
@@ -490,7 +490,7 @@ Every domain expert who publishes a specialist makes Octomind useful for an enti
 - [Roles](doc/usage/06-roles.md)
 - [MCP Tools](doc/usage/07-mcp-tools.md)
 - [Workflows](doc/usage/09-workflows.md)
-- [Pipelines](doc/usage/14-pipelines.md)
+- [Guardrails](doc/usage/18-guardrails.md)
 - [Learning](doc/usage/13-learning.md)
 - [WebSocket & ACP](doc/integration/01-websocket-server.md)
 - [CLI Reference](doc/reference/01-cli-reference.md)

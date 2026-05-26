@@ -21,7 +21,7 @@ use super::protocol::{
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
 use crate::session::chat::session::{
-	execute_api_call_and_process_response, prepare_for_api_call, process_pipeline_if_enabled,
+	execute_api_call_and_process_response, prepare_for_api_call, run_pipe_if_enabled,
 	setup_and_initialize_session, setup_system_prompt_and_cache, ChatSession, GenericSessionArgs,
 };
 use crate::session::output::{OutputMode, WebSocketSink};
@@ -919,20 +919,13 @@ async fn handle_user_message(
 		}
 	}
 
-	// Run pipeline pre-processing if the role has one configured.
+	// Run pipe pre-processing if a matching [[pipe]] is configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
-	log_debug!(
-		"Pipeline pre-processing: first_message={}",
-		!first_message_processed
-	);
 
-	let (processed_input, _pipeline_cancelled) = process_pipeline_if_enabled(
+	let processed_input = run_pipe_if_enabled(
 		&input,
-		&mut chat_session,
-		&config_for_role,
 		role,
 		first_message_processed,
-		operation_rx.clone(),
 	)
 	.await?;
 

@@ -80,7 +80,6 @@ Define custom roles that override or extend tap-provided agents.
 | `temperature` | f64 | no | Sampling temperature (0.0-2.0) |
 | `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
 | `top_k` | u32 | no | Top-k token limit (1-1000) |
-| `pipeline` | string | no | Pipeline name to activate for this role |
 
 ### `[roles.mcp]`
 
@@ -175,49 +174,6 @@ script = "/path/to/process-github-push.sh"
 timeout = 30
 ```
 
-## `[[pipelines]]`
-
-Deterministic script-driven processing steps that run before workflows.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Pipeline identifier |
-| `description` | string | yes | Human-readable description |
-
-### `[[pipelines.steps]]`
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Step identifier |
-| `type` | string | yes | `"once"`, `"loop"`, `"foreach"`, `"conditional"` |
-| `command` | string | conditional | Script path to execute (required for `once`, `conditional`) |
-| `exit_pattern` | string | conditional | Regex to stop loop (required for `loop`) |
-| `parse_pattern` | string | conditional | Regex to extract items (required for `foreach`) |
-| `max_iterations` | u32 | no | Max loop iterations (default: 10) |
-| `condition_pattern` | string | conditional | Regex for conditional branching |
-| `on_match` | string[] | no | Commands to run when condition matches |
-| `on_no_match` | string[] | no | Commands to run when condition doesn't match |
-| `timeout` | u64 | no | Script timeout in seconds (default: 30, max: 3600) |
-
-Substeps are nested as `[[pipelines.steps.substeps]]` with the same schema.
-
-```toml
-[[pipelines]]
-name = "context_pipeline"
-description = "Gather context before AI processing"
-
-[[pipelines.steps]]
-name = "detect_files"
-type = "once"
-command = "./scripts/detect-files.sh"
-timeout = 30
-
-[[pipelines.steps]]
-name = "enrich"
-type = "once"
-command = "./scripts/enrich-context.py"
-timeout = 60
-```
 
 ## `[[layers]]`
 
@@ -432,6 +388,34 @@ backend = "file"
 min_messages_for_intermediate = 3
 max_inject = 5
 ```
+
+## Guardrails (`.agents/guardrails.toml`)
+
+Project-level guardrails are configured in `.agents/guardrails.toml` in the working directory, not in the main config file. See [Guardrails](../usage/18-guardrails.md) for full documentation.
+
+### `[[pipe]]` — Pre-Model Input Transform
+
+Preprocesses user input through an external script before the model sees it. At most one `[[pipe]]` may match per message.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | yes | — | Pipe identifier (used in errors and `PIPE_NAME` env var) |
+| `command` | string | yes | — | Script path (relative to workdir or absolute) |
+| `when` | string | no | `"any"` | `"first"` = first message only; `"any"` = every message |
+| `match` | string | no | — | Regex on user message text. Empty = match all. |
+| `roles` | string[] | no | — | Restrict to roles (exact or domain-prefix match). Empty = all roles. |
+
+```toml
+# .agents/guardrails.toml
+[[pipe]]
+name = "prepare"
+command = "./prepare.sh"
+when = "first"
+match = "^/deploy"
+roles = ["developer:general"]
+```
+
+Environment variables set when spawning: `OCTOMIND_ROLE`, `OCTOMIND_WORKDIR`, `PIPE_NAME`, `PIPE_RUN_COUNT`, `SESSION_MESSAGE_COUNT`. Timeout: 300 seconds.
 
 ## Multi-File Configuration
 

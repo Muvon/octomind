@@ -14,8 +14,9 @@
 
 //! Project-local guardrails — `.agents/guardrails.toml`.
 //!
-//! Three section types, evaluated at different phases:
+//! Four section types, evaluated at different phases:
 //!
+//!   [[pipe]]      — pre-model input transform.  Runs before the model sees user input.
 //!   [[guard]]      — pre-call deny rule.       Blocks the tool from running.
 //!   [[hook]]       — post-result script.        Runs after each tool result.
 //!   [[validator]]  — end-of-turn script.        Runs after the assistant turn.
@@ -66,6 +67,26 @@ impl HasField {
 	}
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PipeWhen {
+	First,
+	#[default]
+	Any,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPipe {
+	name: String,
+	command: String,
+	#[serde(rename = "match", default)]
+	match_: Option<String>,
+	#[serde(default)]
+	when: PipeWhen,
+	#[serde(default)]
+	roles: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawGuard {
 	#[serde(rename = "match")]
@@ -111,12 +132,27 @@ struct RawValidator {
 
 #[derive(Debug, Deserialize)]
 struct RawFile {
+	#[serde(default, rename = "pipe")]
+	pipes: Vec<RawPipe>,
 	#[serde(default, rename = "guard")]
 	guards: Vec<RawGuard>,
 	#[serde(default, rename = "hook")]
 	hooks: Vec<RawHook>,
 	#[serde(default, rename = "validator")]
 	validators: Vec<RawValidator>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompiledPipe {
+	pub name: String,
+	pub command: PathBuf,
+	/// Regex on user message text; `None` matches all messages.
+	pub match_regex: Option<Regex>,
+	/// `when = "first"` restricts to first message; `when = "any"` (default) applies to all.
+	pub when: PipeWhen,
+	/// Role filter; entries match exact role (`developer:general`) or domain
+	/// prefix (`developer` matches `developer:general` via `<name>:` check).
+	pub roles: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +196,7 @@ pub struct CompiledValidator {
 
 #[derive(Debug, Clone, Default)]
 pub struct Guardrails {
+	pub pipes: Vec<CompiledPipe>,
 	pub guards: Vec<CompiledGuard>,
 	pub hooks: Vec<CompiledHook>,
 	pub validators: Vec<CompiledValidator>,
@@ -177,7 +214,8 @@ impl Guardrails {
 		match Self::parse(&text) {
 			Ok(g) => {
 				crate::log_debug!(
-					"Loaded guardrails: {} guard(s), {} hook(s), {} validator(s) from {}",
+					"Loaded guardrails: {} pipe(s), {} guard(s), {} hook(s), {} validator(s) from {}",
+					g.pipes.len(),
 					g.guards.len(),
 					g.hooks.len(),
 					g.validators.len(),
@@ -194,6 +232,30 @@ impl Guardrails {
 
 	pub fn parse(toml_str: &str) -> Result<Self> {
 		let raw: RawFile = toml::from_str(toml_str)?;
+
+		let mut pipes = Vec::with_capacity(raw.pipes.len());
+		for p in raw.pipes {
+			if p.name.trim().is_empty() {
+				return Err(anyhow!("pipe missing `name`"));
+			}
+			if p.command.trim().is_empty() {
+				return Err(anyhow!("pipe `{}` missing `command`", p.name));
+			}
+			let match_regex = match p.match_.as_deref() {
+				Some(s) if !s.is_empty() => Some(Regex::new(s).map_err(|e| {
+					anyhow!("pipe `{}`: invalid match regex `{}`: {}", p.name, s, e)
+				})?),
+				_ => None,
+			};
+			pipes.push(CompiledPipe {
+				name: p.name,
+				command: PathBuf::from(p.command),
+				match_regex,
+				when: p.when,
+				roles: p.roles,
+			});
+		}
+
 		let mut guards = Vec::with_capacity(raw.guards.len());
 		for r in raw.guards {
 			let trigger = parse_target(&r.match_)
@@ -299,6 +361,7 @@ impl Guardrails {
 			});
 		}
 		Ok(Self {
+			pipes,
 			guards,
 			hooks,
 			validators,

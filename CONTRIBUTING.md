@@ -97,7 +97,7 @@ std::eprintln!("error");
 Config::load()  →  get_merged_config_for_role(role)  →  initialize_mcp_for_role()
                                                               └─ TOOL_MAP built
 
-User input  →  /command?  →  pipelines  →  workflows  →  layers
+User input  →  /command?  →  guardrails/pipe  →  workflows  →  layers
                                                              └─  tool execution loop  →  response
 ```
 

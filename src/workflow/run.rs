@@ -92,18 +92,41 @@ impl Executor {
 		}
 	}
 
-	/// Resolve `{{var}}` against current outputs (and `{{input}}`).
-	fn substitute(&self, prompt: &str, input: &str) -> String {
+	/// Resolve a step's prompt the same way chat sessions resolve user
+	/// input. Three passes, in order:
+	///
+	/// 1. Workflow-specific `{{var}}` — `{{input}}` and prior step names
+	///    from `self.outputs`. Unknown `{{var}}` are preserved literally
+	///    so the next pass can claim its built-ins.
+	/// 2. `process_placeholders_async` — the canonical chat helper that
+	///    expands `{{DATE}} {{CWD}} {{SHELL}} {{OS}} {{BINARIES}}
+	///    {{ROLE}} {{SYSTEM}} {{CONTEXT}} {{GIT_STATUS}} {{GIT_TREE}}
+	///    {{README}}`.
+	/// 3. `expand_context_blocks` — replaces any `<context>path</context>`
+	///    or `<context>path:start:end</context>` blocks with the actual
+	///    file contents rendered as XML, same as chat's compression /
+	///    file-context path. Lets a step emit a context block in its
+	///    response and have the next step receive the inlined file.
+	async fn substitute(&self, prompt: &str, input: &str) -> String {
 		let re = validate::var_regex();
-		re.replace_all(prompt, |caps: &regex::Captures| {
-			let var = &caps[1];
-			if var == "input" {
-				input.to_string()
-			} else {
-				self.outputs.get(var).cloned().unwrap_or_default()
-			}
-		})
-		.into_owned()
+		let after_wf = re
+			.replace_all(prompt, |caps: &regex::Captures| {
+				let var = &caps[1];
+				if var == "input" {
+					input.to_string()
+				} else if let Some(val) = self.outputs.get(var) {
+					val.clone()
+				} else {
+					caps.get(0).unwrap().as_str().to_string()
+				}
+			})
+			.into_owned();
+
+		let project_dir = crate::mcp::get_thread_working_directory();
+		let after_placeholders =
+			crate::session::helper_functions::process_placeholders_async(&after_wf, &project_dir)
+				.await;
+		crate::utils::file_renderer::expand_context_blocks(&after_placeholders)
 	}
 
 	/// Drive one sequential step with retries / session handling.
@@ -118,7 +141,7 @@ impl Executor {
 		input: &str,
 		header_suffix: &str,
 	) -> Result<StepStats> {
-		let templated_prompt = self.substitute(&s.prompt, input);
+		let templated_prompt = self.substitute(&s.prompt, input).await;
 		let max_attempts = s.retries + 1;
 		let mut last_err: Option<String> = None;
 
@@ -262,12 +285,14 @@ impl Executor {
 
 	async fn exec_parallel(&mut self, p: &ParallelStep, input: &str) -> Result<()> {
 		// Substitute every sub-step's prompt up-front against the SAME
-		// outer scope — sub-steps cannot reference each other.
-		let prepared: Vec<(Sequential, String)> = p
-			.run
-			.iter()
-			.map(|s| (s.clone(), self.substitute(&s.prompt, input)))
-			.collect();
+		// outer scope — sub-steps cannot reference each other. Each
+		// substitution may touch disk (project context placeholders), so
+		// we collect sequentially before kicking off the parallel tasks.
+		let mut prepared: Vec<(Sequential, String)> = Vec::with_capacity(p.run.len());
+		for s in &p.run {
+			let resolved = self.substitute(&s.prompt, input).await;
+			prepared.push((s.clone(), resolved));
+		}
 
 		// We can't borrow &mut self across the join, so run each sub-step
 		// in isolation here and collect into a tiny snapshot.

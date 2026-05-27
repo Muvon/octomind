@@ -561,7 +561,7 @@ async fn handle_session_message(
 			} else {
 				// Try disk: resume if exists, create with this name if not
 				let args = if crate::session::get_sessions_dir()
-					.map(|d| d.join(format!("{}.jsonl", session_id)).exists())
+					.map(|d| d.join(format!("{}.jsonl.zst", session_id)).exists())
 					.unwrap_or(false)
 				{
 					log_debug!("Resuming session from disk: {}", session_id);

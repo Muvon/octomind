@@ -155,7 +155,14 @@ pub fn restore_plan_for_session(session_name: &str) {
 	};
 
 	use std::io::{BufRead, BufReader};
-	let reader = BufReader::new(file);
+	let decoder = match zstd::stream::read::Decoder::new(file) {
+		Ok(d) => d,
+		Err(e) => {
+			crate::log_debug!("restore_plan_for_session: zstd decoder failed: {}", e);
+			return;
+		}
+	};
+	let reader = BufReader::new(decoder);
 	let mut latest_plan: Option<super::storage::ExecutionPlan> = None;
 
 	for line in reader.lines().map_while(Result::ok) {

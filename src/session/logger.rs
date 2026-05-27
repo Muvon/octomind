@@ -31,11 +31,12 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zstd::stream::write::Encoder as ZstdEncoder;
 
 /// Get the session file path for a specific session.
 pub fn get_session_log_file(session_name: &str) -> Result<PathBuf> {
 	let sessions_dir = crate::directories::get_sessions_dir()?;
-	Ok(sessions_dir.join(format!("{}.jsonl", session_name)))
+	Ok(sessions_dir.join(format!("{}.jsonl.zst", session_name)))
 }
 
 /// Public alias for external callers.
@@ -160,15 +161,23 @@ fn get_timestamp() -> u64 {
 		.as_secs()
 }
 
-/// Append a single-line entry to the session log file.
+/// Append a single-line entry to the session log file as an independent zstd frame.
+/// Each call produces one complete frame; the zstd decoder reads all frames
+/// sequentially on load (concatenated-frame format).
 fn append_to_log(log_file: &PathBuf, content: &str) -> Result<()> {
-	let mut file = OpenOptions::new()
+	let file = OpenOptions::new()
 		.create(true)
 		.append(true)
 		.open(log_file)?;
 
 	// Ensure content is on a single line — replace any newlines with spaces
 	let single_line = content.replace(['\n', '\r'], " ");
-	writeln!(file, "{}", single_line)?;
+
+	// Level 1 is fast and still gives good compression for JSONL lines.
+	// Each call writes one independent zstd frame; finish() flushes and closes the frame.
+	let mut encoder = ZstdEncoder::new(file, 1)?;
+	encoder.write_all(single_line.as_bytes())?;
+	encoder.write_all(b"\n")?;
+	encoder.finish()?;
 	Ok(())
 }

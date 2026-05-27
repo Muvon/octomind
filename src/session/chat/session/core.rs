@@ -354,7 +354,7 @@ impl ChatSession {
 			generate_session_name()
 		};
 
-		let session_file = sessions_dir.join(format!("{}.jsonl", session_name));
+		let session_file = sessions_dir.join(format!("{}.jsonl.zst", session_name));
 
 		// Get role config once — used for temperature, top_p, top_k, and optional model override
 		let (role_config, _, _, _, _) = params.config.get_role_config(params.role);
@@ -587,7 +587,8 @@ impl ChatSession {
 
 					// Generate a new unique session name using the new format
 					let new_session_name = generate_session_name();
-					let new_session_file = sessions_dir.join(format!("{}.jsonl", new_session_name));
+					let new_session_file =
+						sessions_dir.join(format!("{}.jsonl.zst", new_session_name));
 
 					// Skip CLI output in structured output modes
 					let suppress = crate::session::output::OutputMode::from_runtime_mode(

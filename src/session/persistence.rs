@@ -20,6 +20,8 @@ use std::fs::{self as std_fs, File, OpenOptions};
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use zstd::stream::read::Decoder as ZstdDecoder;
+use zstd::stream::write::Encoder as ZstdEncoder;
 
 // Get sessions directory path
 pub fn get_sessions_dir() -> Result<PathBuf, anyhow::Error> {
@@ -39,36 +41,39 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 		let entry = entry?;
 		let path = entry.path();
 
-		if path.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
+		if path.is_file() && path.extension().is_some_and(|ext| ext == "zst") {
 			// Scan first few lines for SUMMARY entry (may not be line 1 in older files)
 			if let Ok(file) = File::open(&path) {
-				let reader = BufReader::new(file);
-				let name = path
-					.file_stem()
-					.and_then(|s| s.to_str())
-					.unwrap_or_default()
-					.to_string();
+				if let Ok(decoder) = ZstdDecoder::new(file) {
+					let reader = BufReader::new(decoder);
+					// file_stem() gives "name.jsonl" for "name.jsonl.zst"; strip the .jsonl suffix
+					let stem = path
+						.file_stem()
+						.and_then(|s| s.to_str())
+						.unwrap_or_default();
+					let name = stem.strip_suffix(".jsonl").unwrap_or(stem).to_string();
 
-				for line in reader.lines().take(10) {
-					let Ok(line) = line else { break };
+					for line in reader.lines().take(10) {
+						let Ok(line) = line else { break };
 
-					// Try new JSON format first
-					if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
-						if json_value.get("type").and_then(|t| t.as_str()) == Some("SUMMARY") {
-							if let Some(session_info_value) = json_value.get("session_info") {
-								if let Ok(info) = serde_json::from_value::<SessionInfo>(
-									session_info_value.clone(),
-								) {
-									sessions.push((name.clone(), info));
-									break;
+						// Try new JSON format first
+						if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
+							if json_value.get("type").and_then(|t| t.as_str()) == Some("SUMMARY") {
+								if let Some(session_info_value) = json_value.get("session_info") {
+									if let Ok(info) = serde_json::from_value::<SessionInfo>(
+										session_info_value.clone(),
+									) {
+										sessions.push((name.clone(), info));
+										break;
+									}
 								}
 							}
-						}
-					} else if let Some(content) = line.strip_prefix("SUMMARY: ") {
-						// Fallback to legacy format
-						if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
-							sessions.push((name.clone(), info));
-							break;
+						} else if let Some(content) = line.strip_prefix("SUMMARY: ") {
+							// Fallback to legacy format
+							if let Ok(info) = serde_json::from_str::<SessionInfo>(content) {
+								sessions.push((name.clone(), info));
+								break;
+							}
 						}
 					}
 				}
@@ -109,11 +114,13 @@ pub fn find_most_recent_session_for_project(
 		let entry = entry?;
 		let path = entry.path();
 
-		if path.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
-			let name = path
+		if path.is_file() && path.extension().is_some_and(|ext| ext == "zst") {
+			// file_stem() gives "name.jsonl" for "name.jsonl.zst"; strip the .jsonl suffix
+			let stem = path
 				.file_stem()
 				.and_then(|s| s.to_str())
 				.unwrap_or_default();
+			let name = stem.strip_suffix(".jsonl").unwrap_or(stem);
 
 			// Session name format: YYMMDD-HHMMSS-basename-uuid
 			// Check if the session name contains the project basename
@@ -285,7 +292,7 @@ struct ParsedLogLines {
 ///
 /// Handles both the current JSON format and the legacy prefix-based format.
 /// Returns the raw parsed state — callers decide which messages to use.
-fn parse_log_lines(reader: BufReader<File>) -> Result<ParsedLogLines> {
+fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 	let mut session_info: Option<SessionInfo> = None;
 	let mut last_summary_timestamp: u64 = 0;
 	let mut messages: Vec<Message> = Vec::new();
@@ -732,7 +739,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 
 	// Apply any STATS entries found in the file (best-effort token/cost recovery)
 	let file = File::open(session_file)?;
-	let reader = BufReader::new(file);
+	let reader = BufReader::new(ZstdDecoder::new(file)?);
 	for line in reader.lines() {
 		let line = line?;
 		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -790,7 +797,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 		return Err(anyhow::anyhow!("Session file does not exist"));
 	}
 
-	let reader = BufReader::new(File::open(session_file)?);
+	let reader = BufReader::new(ZstdDecoder::new(File::open(session_file)?)?);
 	let parsed = parse_log_lines(reader)?;
 
 	let final_messages =
@@ -820,7 +827,7 @@ pub struct SessionRuntimeState {
 /// Extract runtime state from session log file
 pub fn extract_runtime_state_from_log(session_file: &PathBuf) -> Result<SessionRuntimeState> {
 	let file = File::open(session_file)?;
-	let reader = BufReader::new(file);
+	let reader = BufReader::new(ZstdDecoder::new(file)?);
 	let mut state = SessionRuntimeState::default();
 
 	for line in reader.lines() {
@@ -884,16 +891,21 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 	}
 }
 
-// Helper function to append to session file ensuring single lines
+// Helper function to append to session file as an independent zstd frame.
+// Each call writes one complete frame; the decoder reads all frames sequentially on load.
 pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(), anyhow::Error> {
-	let mut file = OpenOptions::new()
+	let file = OpenOptions::new()
 		.create(true)
 		.append(true)
 		.open(session_file)?;
 
 	// Ensure content is on a single line - replace any newlines with spaces
 	let single_line_content = content.replace(['\n', '\r'], " ");
-	writeln!(file, "{}", single_line_content)?;
+
+	let mut encoder = ZstdEncoder::new(file, 1)?;
+	encoder.write_all(single_line_content.as_bytes())?;
+	encoder.write_all(b"\n")?;
+	encoder.finish()?;
 	Ok(())
 }
 
@@ -1013,17 +1025,23 @@ mod tests {
 		.unwrap()
 	}
 
-	/// Write a session file with the provided line slice and return a TempFile
+	/// Write a session file with the provided line slice in zstd format and return a TempFile
 	/// keeping it alive for the test duration.
 	fn write_session(lines: &[&str]) -> NamedTempFile {
-		let mut file = tempfile::Builder::new()
-			.suffix(".jsonl")
+		let file = tempfile::Builder::new()
+			.suffix(".jsonl.zst")
 			.tempfile()
 			.expect("tempfile");
 		for line in lines {
-			writeln!(file, "{}", line).expect("write line");
+			let append_file = std::fs::OpenOptions::new()
+				.append(true)
+				.open(file.path())
+				.expect("open for append");
+			let mut encoder = zstd::stream::write::Encoder::new(append_file, 1).expect("encoder");
+			encoder.write_all(line.as_bytes()).expect("write");
+			encoder.write_all(b"\n").expect("newline");
+			encoder.finish().expect("finish");
 		}
-		file.flush().expect("flush");
 		file
 	}
 

@@ -29,6 +29,7 @@ use flate2::Compression;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
+use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 
@@ -55,11 +56,18 @@ pub fn web_host() -> String {
 /// Upload the given session log file to the share API. Reads the file, gzips,
 /// POSTs, returns the share URL.
 pub async fn share_session(session_file: &Path) -> Result<ShareResult> {
-	let raw = fs::read(session_file)
+	let compressed = fs::read(session_file)
 		.with_context(|| format!("failed to read session file {}", session_file.display()))?;
-	if raw.is_empty() {
+	if compressed.is_empty() {
 		anyhow::bail!("session file is empty — nothing to share");
 	}
+
+	// Decompress zstd to get plain JSONL for title extraction and gzip upload.
+	let mut raw = Vec::new();
+	zstd::stream::read::Decoder::new(compressed.as_slice())
+		.context("failed to create zstd decoder")?
+		.read_to_end(&mut raw)
+		.context("failed to decompress session file")?;
 
 	let title = extract_title(&raw);
 	let gzipped = gzip(&raw)?;

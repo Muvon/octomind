@@ -177,7 +177,14 @@ pub fn restore_schedule_for_session(session_name: &str) {
 	};
 
 	use std::io::{BufRead, BufReader};
-	let reader = BufReader::new(file);
+	let decoder = match zstd::stream::read::Decoder::new(file) {
+		Ok(d) => d,
+		Err(e) => {
+			crate::log_debug!("restore_schedule_for_session: zstd decoder failed: {}", e);
+			return;
+		}
+	};
+	let reader = BufReader::new(decoder);
 	let mut latest_entries: Option<Vec<ScheduleEntry>> = None;
 
 	for line in reader.lines().map_while(Result::ok) {

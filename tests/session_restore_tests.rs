@@ -236,7 +236,10 @@ mod session_restore_tests {
 		let session_file = create_test_session_file(&temp_dir, messages_before_compression, vec![]);
 
 		// Append compression marker
-		write_zstd_line(&session_file, &serde_json::to_string(&compression_marker).unwrap());
+		write_zstd_line(
+			&session_file,
+			&serde_json::to_string(&compression_marker).unwrap(),
+		);
 
 		// Messages after compression (written AFTER the marker)
 		let messages_after_compression = vec![
@@ -565,7 +568,10 @@ mod session_restore_tests {
 		});
 
 		// Append restoration marker
-		write_zstd_line(&session_file, &serde_json::to_string(&restoration_marker).unwrap());
+		write_zstd_line(
+			&session_file,
+			&serde_json::to_string(&restoration_marker).unwrap(),
+		);
 
 		// Write messages after restoration
 		let post_restoration_messages = vec![
@@ -585,7 +591,10 @@ mod session_restore_tests {
 			"reason": "ctrl_c_cleanup"
 		});
 
-		write_zstd_line(&session_file, &serde_json::to_string(&truncation_marker).unwrap());
+		write_zstd_line(
+			&session_file,
+			&serde_json::to_string(&truncation_marker).unwrap(),
+		);
 
 		let loaded_session =
 			octomind::session::load_session(&session_file).expect("Failed to load session");

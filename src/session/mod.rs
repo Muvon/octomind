@@ -646,17 +646,17 @@ mod tests {
 	#[test]
 	fn test_session_loading_preserves_stats_from_summary() {
 		// Test that SUMMARY is the source of truth and old STATS don't overwrite it
-		use std::io::Write;
+		use crate::session::persistence::append_to_session_file;
 		use tempfile::NamedTempFile;
 
 		// Create a temporary session file
-		let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		let path = temp_file.path().to_path_buf();
 
 		// Write initial SUMMARY with some stats
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "SUMMARY",
 				"timestamp": 1000,
 				"session_info": {
@@ -708,15 +708,14 @@ mod tests {
 					"last_compression_hint_shown": 0
 				}
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write SUMMARY");
 
 		// Write some STATS entries with OLDER timestamps (should be ignored)
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "STATS",
 				"timestamp": 900, // OLDER than SUMMARY
 				"total_cost": 0.0,
@@ -731,29 +730,27 @@ mod tests {
 				"model": "openrouter:anthropic/claude-sonnet-4",
 				"provider": "openrouter"
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write old STATS");
 
 		// Write a user message
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"role": "user",
 				"content": "Hello",
 				"timestamp": 1100,
 				"cached": false
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write message");
 
 		// Write final SUMMARY with updated stats (should be used)
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "SUMMARY",
 				"timestamp": 2000, // NEWER timestamp
 				"session_info": {
@@ -805,15 +802,12 @@ mod tests {
 					"last_compression_hint_shown": 0
 				}
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write final SUMMARY");
 
-		temp_file.flush().expect("Failed to flush temp file");
-
 		// Load the session
-		let session =
-			load_session(&temp_file.path().to_path_buf()).expect("Failed to load session");
+		let session = load_session(&path).expect("Failed to load session");
 
 		// Verify that the FINAL SUMMARY values are used, not the old STATS
 		assert_eq!(
@@ -885,16 +879,16 @@ mod tests {
 	#[test]
 	fn test_session_loading_restores_model_from_command() {
 		// Test that model changes via /model command are properly restored
-		use std::io::Write;
+		use crate::session::persistence::append_to_session_file;
 		use tempfile::NamedTempFile;
 
-		let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		let path = temp_file.path().to_path_buf();
 
 		// Write initial SUMMARY with original model
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "SUMMARY",
 				"timestamp": 1000,
 				"session_info": {
@@ -933,42 +927,39 @@ mod tests {
 					"last_compression_hint_shown": 0
 				}
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write SUMMARY");
 
 		// Write a /model command that changes the model
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "COMMAND",
 				"timestamp": 1500,
 				"command": "/model openrouter:openai/gpt-4o"
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write COMMAND");
 
 		// Write a user message
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"role": "user",
 				"content": "Hello with new model",
 				"timestamp": 1600,
 				"cached": false
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write message");
 
 		// Write final SUMMARY with the changed model
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "SUMMARY",
 				"timestamp": 2000,
 				"session_info": {
@@ -1007,15 +998,12 @@ mod tests {
 					"last_compression_hint_shown": 0
 				}
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write final SUMMARY");
 
-		temp_file.flush().expect("Failed to flush temp file");
-
 		// Load the session
-		let session =
-			load_session(&temp_file.path().to_path_buf()).expect("Failed to load session");
+		let session = load_session(&path).expect("Failed to load session");
 
 		// Verify that the changed model is restored
 		// The /model command should be detected and applied
@@ -1032,16 +1020,16 @@ mod tests {
 	#[test]
 	fn test_session_loading_model_without_command() {
 		// Test that model is restored from SUMMARY when no /model command was used
-		use std::io::Write;
+		use crate::session::persistence::append_to_session_file;
 		use tempfile::NamedTempFile;
 
-		let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		let path = temp_file.path().to_path_buf();
 
 		// Write SUMMARY with a specific model (no /model command in session)
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"type": "SUMMARY",
 				"timestamp": 1000,
 				"session_info": {
@@ -1080,29 +1068,25 @@ mod tests {
 					"last_compression_hint_shown": 0
 				}
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write SUMMARY");
 
 		// Write a user message (no /model command)
-		writeln!(
-			temp_file,
-			"{}",
-			serde_json::to_string(&json!({
+		append_to_session_file(
+			&path,
+			&serde_json::to_string(&json!({
 				"role": "user",
 				"content": "Hello",
 				"timestamp": 1100,
 				"cached": false
 			}))
-			.unwrap()
+			.unwrap(),
 		)
 		.expect("Failed to write message");
 
-		temp_file.flush().expect("Failed to flush temp file");
-
 		// Load the session
-		let session =
-			load_session(&temp_file.path().to_path_buf()).expect("Failed to load session");
+		let session = load_session(&path).expect("Failed to load session");
 
 		// Verify that the model from SUMMARY is preserved
 		assert_eq!(

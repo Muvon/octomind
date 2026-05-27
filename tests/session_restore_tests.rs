@@ -27,7 +27,7 @@
 #[cfg(test)]
 mod session_restore_tests {
 	use octomind::session::{Message, SessionInfo};
-	use std::fs::{self, OpenOptions};
+	use std::fs::OpenOptions;
 	use std::io::Write;
 	use std::path::PathBuf;
 	use std::time::{SystemTime, UNIX_EPOCH};
@@ -236,17 +236,7 @@ mod session_restore_tests {
 		let session_file = create_test_session_file(&temp_dir, messages_before_compression, vec![]);
 
 		// Append compression marker
-		let mut file = fs::OpenOptions::new()
-			.append(true)
-			.open(&session_file)
-			.expect("Failed to open session file");
-
-		writeln!(
-			file,
-			"{}",
-			serde_json::to_string(&compression_marker).unwrap()
-		)
-		.expect("Failed to write marker");
+		write_zstd_line(&session_file, &serde_json::to_string(&compression_marker).unwrap());
 
 		// Messages after compression (written AFTER the marker)
 		let messages_after_compression = vec![
@@ -256,8 +246,7 @@ mod session_restore_tests {
 		];
 
 		for msg in &messages_after_compression {
-			writeln!(file, "{}", serde_json::to_string(&msg).unwrap())
-				.expect("Failed to write message");
+			write_zstd_line(&session_file, &serde_json::to_string(&msg).unwrap());
 		}
 
 		let loaded_session =
@@ -569,24 +558,14 @@ mod session_restore_tests {
 		// Create session file with initial messages
 		let session_file = create_test_session_file(&temp_dir, messages, vec![]);
 
-		// Append restoration marker
-		let mut file = fs::OpenOptions::new()
-			.append(true)
-			.open(&session_file)
-			.expect("Failed to open session file");
-
 		let restoration_marker = serde_json::json!({
 			"type": "RESTORATION_POINT",
 			"timestamp": timestamp,
 			"reason": "done_command"
 		});
 
-		writeln!(
-			file,
-			"{}",
-			serde_json::to_string(&restoration_marker).unwrap()
-		)
-		.expect("Failed to write marker");
+		// Append restoration marker
+		write_zstd_line(&session_file, &serde_json::to_string(&restoration_marker).unwrap());
 
 		// Write messages after restoration
 		let post_restoration_messages = vec![
@@ -595,8 +574,7 @@ mod session_restore_tests {
 		];
 
 		for msg in &post_restoration_messages {
-			writeln!(file, "{}", serde_json::to_string(&msg).unwrap())
-				.expect("Failed to write message");
+			write_zstd_line(&session_file, &serde_json::to_string(&msg).unwrap());
 		}
 
 		// Then: Ctrl+C truncates
@@ -607,12 +585,7 @@ mod session_restore_tests {
 			"reason": "ctrl_c_cleanup"
 		});
 
-		writeln!(
-			file,
-			"{}",
-			serde_json::to_string(&truncation_marker).unwrap()
-		)
-		.expect("Failed to write marker");
+		write_zstd_line(&session_file, &serde_json::to_string(&truncation_marker).unwrap());
 
 		let loaded_session =
 			octomind::session::load_session(&session_file).expect("Failed to load session");

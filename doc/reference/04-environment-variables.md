@@ -56,9 +56,11 @@ Available in `system` and `welcome` config fields. Use `octomind vars` to see cu
 | `{{DATE}}` | Current date |
 | `{{SHELL}}` | User's shell (e.g., `bash`, `zsh`) |
 | `{{OS}}` | Operating system name |
-| `{{BINARIES}}` | Available binary tools on PATH |
+| `{{BINARIES}}` | Available development tools and their versions |
 | `{{GIT_STATUS}}` | Git repository status (branch, changes) |
+| `{{GIT_TREE}}` | Project file tree |
 | `{{README}}` | Contents of `README.md` in project root |
+| `{{HOME}}` | User's home directory path |
 | `{{CONTEXT}}` | Session context (for layer system prompts) |
 | `{{SYSTEM}}` | Parent system prompt (for layer system prompts) |
 

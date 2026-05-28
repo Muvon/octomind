@@ -15,7 +15,7 @@ For external tools, prefer configuring a `stdio` or `http` server in config.
 
 | Server | Location | Purpose |
 |--------|----------|---------|
-| `core` | `src/mcp/core/` | Plan, tap, capability, skills, scheduling, dynamic servers |
+| `core` | `src/mcp/core/` | Plan, tap |
 | `runtime` | `src/mcp/runtime/` | MCP management, agent delegation, skills, scheduling, capability |
 | `agent` | `src/mcp/agent/` | Agent delegation via ACP |
 

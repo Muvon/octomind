@@ -8,8 +8,8 @@ Octomind ships with five MCP servers:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | High-level day-to-day tools: planning, scheduling, capability discovery, tap-role launch |
-| `runtime` | builtin | Low-level harness reconfiguration: register MCP servers, manage dynamic agents, load skills |
+| `core` | builtin | High-level day-to-day tools: planning, tap-role launch |
+| `runtime` | builtin | Low-level harness reconfiguration: register MCP servers, manage dynamic agents, load skills, schedule, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
 | `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
 | `filesystem` | stdio (`octofs`) | File operations, shell commands, code analysis |

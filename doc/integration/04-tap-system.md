@@ -49,13 +49,13 @@ octomind untap myorg/my-agents
 
 ### Built-in Tap
 
-The default tap `muvon/octomind-tap` is always active and ships production-ready agents.
+The default tap `muvon/tap` is always active and ships production-ready agents.
 
 ## Tap Priority
 
 When multiple taps provide the same agent tag, priority is:
 1. User-added taps (in order added)
-2. Built-in default tap (`muvon/octomind-tap`)
+2. Built-in default tap (`muvon/tap`)
 
 ## Using Tap Agents
 

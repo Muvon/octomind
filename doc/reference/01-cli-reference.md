@@ -179,6 +179,22 @@ octomind config --validate
 octomind config --list-themes
 ```
 
+## `octomind workflow <FILE>`
+
+Run a multi-step workflow defined in a TOML file.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `FILE` | | Path to workflow TOML file (required) |
+| `--dry-run` | | Validate and print execution plan without spawning processes |
+
+Reads input from stdin. Per-step progress, cost, and token stats go to stderr. The final step's output goes to stdout.
+
+```bash
+echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml
+octomind workflow myflow.toml --dry-run
+```
+
 ## `octomind completion <SHELL>`
 
 Generate shell completion scripts.

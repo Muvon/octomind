@@ -292,6 +292,7 @@ You're in an interactive session with a specialist that can read your code, run 
 | `schedule` | Inject messages at future times |
 | `skill` | Inject reusable instruction packs from taps |
 | `tap` | Delegate to any specialist role from a tap registry |
+| `capability` | Auto-activate capabilities by semantic intent matching |
 
 ### Filesystem tools (via [octofs](https://github.com/muvon/octofs))
 
@@ -323,18 +324,14 @@ temperature = 0.2
 server_refs = ["filesystem", "github"]
 allowed_tools = ["view", "ast_grep", "create_pr"]
 
-# Workflows — multi-step, each step its own model and toolset
-[[workflows]]
-name = "deep_review"
-[[workflows.steps]]
-name = "analyze"
-layer = "context_researcher"     # gemini-flash, broad context
-[[workflows.steps]]
-name = "critique"
-layer = "senior_reviewer"        # claude-opus, precision
-
 # Sandbox — lock all writes to current directory
 sandbox = true
+```
+
+```bash
+# Workflows — multi-step, each step its own model and toolset
+# Defined in standalone TOML files, run via CLI
+octomind workflow deep_review.toml
 ```
 
 - **Roles** — model, temperature, system prompt, MCP servers, tool permissions per role.
@@ -366,7 +363,7 @@ octomind acp developer:general
 octomind run developer "Explain the auth module" --format plain
 
 # Structured JSON output for pipelines
-octomind run developer "List TODO items" --schema todos.json --format jsonl
+octomind run developer "List TODO items" --format jsonl
 ```
 
 One binary. Every workflow.

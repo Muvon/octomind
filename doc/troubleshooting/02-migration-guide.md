@@ -125,14 +125,14 @@ The `core` builtin server was split into two: high-level tools stay in `core`, l
 | Tool | Old server | New server |
 |------|------------|------------|
 | `plan` | `core` | `core` |
-| `schedule` | `core` | `core` |
-| `capability` | `core` | `core` |
 | `tap` *(new)* | -- | `core` |
 | `mcp` | `core` | **`runtime`** |
 | `agent` | `core` | **`runtime`** |
 | `skill` | `core` | **`runtime`** |
+| `schedule` | `core` | **`runtime`** |
+| `capability` | `core` | **`runtime`** |
 
-If your config or tap manifest has `server_refs = ["core", ...]` and the role calls any of `mcp`, `agent`, or `skill`, add `"runtime"` to the list:
+If your config or tap manifest has `server_refs = ["core", ...]` and the role calls any of `mcp`, `agent`, `skill`, `schedule`, or `capability`, add `"runtime"` to the list:
 
 ```diff
  [roles.mcp]
@@ -154,7 +154,7 @@ tools = []
 
 If you have a hand-rolled config without it, add the block.
 
-Roles that don't call `mcp`/`agent`/`skill` (most roles) don't need `"runtime"` at all — drop it from `server_refs` to keep the tool surface tighter.
+Roles that don't call `mcp`/`agent`/`skill`/`schedule`/`capability` (most roles) don't need `"runtime"` at all — drop it from `server_refs` to keep the tool surface tighter.
 
 ## Filesystem Is Now External
 

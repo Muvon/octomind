@@ -244,8 +244,9 @@ System prompts and welcome messages support variables:
 | `{{BINARIES}}` | Available binaries in PATH |
 | `{{OS}}` | Operating system |
 | `{{GIT_STATUS}}` | Git status |
+| `{{GIT_TREE}}` | Project file tree |
 | `{{README}}` | Project README.md contents |
-
+| `{{HOME}}` | User's home directory path |
 Use `octomind vars` to see all current values.
 
 ## Further Reading

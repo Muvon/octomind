@@ -73,7 +73,7 @@ server_refs = ["core", "filesystem"]  # Only core and filesystem servers
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
 allowed_tools = [
-  "core:*",              # plan, schedule, capability, tap
+  "core:*",              # plan, tap
   "runtime:mcp",         # only the mcp tool from runtime (skip agent / skill)
   "filesystem:view",     # Only view from filesystem
   "filesystem:shell",    # Only shell from filesystem
@@ -82,8 +82,8 @@ allowed_tools = [
 ```
 
 **Builtin servers:**
-- `core` -- high-level day-to-day tools: `plan`, `schedule`, `capability`, `tap`.
-- `runtime` -- low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills). Most roles don't need this.
+- `core` -- high-level day-to-day tools: `plan`, `tap`.
+- `runtime` -- low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills), `schedule`, `capability`. Most roles don't need this.
 - `agent` -- dispatches to `[[agents]]`-defined ACP sub-agents (`agent_<name>` per entry).
 
 **Pattern syntax:**

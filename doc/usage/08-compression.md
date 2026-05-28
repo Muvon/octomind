@@ -32,7 +32,7 @@ threshold = 160000
 target_ratio = 8.0    # Aggressive: 87.5% reduction
 
 [compression.decision]
-model = "anthropic:claude-haiku-4-5"
+model = "openai:gpt-5-mini"
 max_tokens = 16000
 temperature = 0.3
 top_p = 1.0
@@ -138,9 +138,9 @@ Use a fast, cheap model for compression decisions to minimize overhead:
 
 | Model | Cost per Decision | Recommendation |
 |-------|-------------------|----------------|
-| `anthropic:claude-haiku-4-5` | ~$0.0003 | Recommended (default) |
+| `openai:gpt-5-mini` | ~$0.0001 | Default (fast, cheap) |
+| `anthropic:claude-haiku-4-5` | ~$0.0003 | Alternative |
 | `anthropic:claude-sonnet-4` | ~$0.003 | 10x more expensive |
-
 Set `ignore_cost = true` in `[compression.decision]` to exclude compression decision costs from session cost tracking.
 
 ## Monitoring
@@ -187,7 +187,7 @@ Net benefit: -$0.055 --> SKIP (would cost money)
 ## Best Practices
 
 1. **Monitor effectiveness** with `/info` to verify compression saves money
-2. **Use a cheap decision model** -- `anthropic:claude-haiku-4-5` is 10x cheaper than Sonnet
+2. **Use a cheap decision model** -- `openai:gpt-5-mini` is the default; `anthropic:claude-haiku-4-5` is a good alternative
 3. **Start conservative** with default thresholds, adjust based on workflow
 4. **Disable for short sessions** if sessions rarely exceed 50k tokens
 5. **Increase thresholds** if compression triggers too frequently

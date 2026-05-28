@@ -32,7 +32,6 @@ src/
     roles.rs                 # Role configuration
     mcp.rs                   # MCP server config (Builtin/Http/Stdio)
     hooks.rs                 # Webhook hook config
-    workflows.rs             # Workflow + step definitions
     guardrails.rs           # Guardrails (pipe) configuration
     layers.rs                # Layer configuration
     agents.rs                # Agent (ACP) configuration
@@ -86,7 +85,7 @@ src/
 
     chat/
       mod.rs                 # Chat orchestration
-      commands.rs            # Command constants (28 entries, COMMANDS array)
+      commands.rs            # Command constants (27 entries, COMMANDS array)
       animation.rs / animation_manager.rs  # Spinner & animation
       status_prefix.rs       # Shared status formatting (prompt + spinner)
       assistant_output.rs    # Assistant output formatting
@@ -123,7 +122,7 @@ src/
         core.rs              # ChatSession struct, SessionInitParams builder
         api_executor.rs      # API call execution
         api_prep.rs          # API call preparation (compression, auto-activation)
-        commands/            # 28 command handler modules
+        commands/            # 26 command handler modules (28 files incl. mod.rs + utils.rs)
         display.rs           # Session display
         error_utils.rs       # Error utilities
         layer_processor.rs   # Layer processing in session context

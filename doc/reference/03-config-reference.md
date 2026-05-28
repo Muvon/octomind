@@ -16,6 +16,7 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | `custom_instructions_file_name` | string | `"INSTRUCTIONS.md"` | File auto-loaded as user message in new sessions. Empty string to disable. |
 | `custom_constraints_file_name` | string | `"CONSTRAINTS.md"` | File appended to each request in `<constraints>` tags. Empty string to disable. |
 | `sandbox` | bool | `false` | Restrict filesystem writes to working directory. Also available as `--sandbox` CLI flag. |
+| `auto_capabilities` | bool | `true` | Enable automatic capability activation on user messages. Disable to require manual `capability(action="enable")` calls. |
 
 ## Performance & Limits
 
@@ -121,10 +122,8 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 
 **Builtin servers** (always available, no external process):
 
-| Name | Tools | Purpose |
-|------|-------|---------|
-| `core` | `plan`, `schedule`, `capability`, `tap` | High-level day-to-day tools |
-| `runtime` | `mcp`, `agent`, `skill` | Low-level harness reconfiguration |
+| `core` | `plan`, `tap` | High-level planning and agent management |
+| `runtime` | `mcp`, `agent`, `skill`, `schedule`, `capability` | Harness reconfiguration and scheduling |
 | `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
 
 `filesystem` is no longer a builtin — it's an external `stdio` server backed by `octofs`. See [MCP Tools](../usage/07-mcp-tools.md) for the tool surface.
@@ -450,6 +449,8 @@ Available in `system` and `welcome` fields:
 | `{{OS}}` | Operating system |
 | `{{BINARIES}}` | Available binary tools |
 | `{{GIT_STATUS}}` | Git repository status |
+| `{{GIT_TREE}}` | Project file tree |
 | `{{README}}` | Contents of README.md in project root |
+| `{{HOME}}` | User's home directory path |
 | `{{CONTEXT}}` | Session context (for layers) |
 | `{{SYSTEM}}` | Parent system prompt (for layers) |

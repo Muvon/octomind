@@ -112,107 +112,6 @@ impl CacheManager {
 		}
 	}
 
-	/// Manage user content cache markers using 2-marker system
-	/// Returns true if a marker was added/moved, false otherwise
-	pub fn manage_content_cache_markers(
-		&self,
-		session: &mut Session,
-		target_message_index: Option<usize>,
-		_automatic: bool,
-	) -> Result<bool> {
-		let target_index = match target_message_index {
-			Some(idx) => idx,
-			None => {
-				// Find the last user or tool message
-				session
-					.messages
-					.iter()
-					.enumerate()
-					.rev()
-					.find(|(_, msg)| msg.role == "user" || msg.role == "tool")
-					.map(|(i, _)| i)
-					.ok_or_else(|| anyhow::anyhow!("No user or tool messages found for caching"))?
-			}
-		};
-
-		// Check if message exists and is eligible for caching
-		let msg = session
-			.messages
-			.get(target_index)
-			.ok_or_else(|| anyhow::anyhow!("Message index {} not found", target_index))?;
-
-		if msg.role != "user" && msg.role != "tool" {
-			return Err(anyhow::anyhow!(
-				"Only user and tool messages can be marked for content caching"
-			));
-		}
-
-		// Count existing content cache markers
-		let mut existing_markers: Vec<usize> = session
-			.messages
-			.iter()
-			.enumerate()
-			.filter_map(|(i, msg)| {
-				if msg.cached && (msg.role == "user" || msg.role == "tool") {
-					Some(i)
-				} else {
-					None
-				}
-			})
-			.collect();
-
-		existing_markers.sort();
-
-		// Check if this message is already cached
-		if existing_markers.contains(&target_index) {
-			return Ok(false); // Already cached
-		}
-
-		// Implement 2-marker system logic
-		match existing_markers.len().cmp(&self.max_content_markers) {
-			std::cmp::Ordering::Less => {
-				// We have space for another marker
-				if let Some(target_msg) = session.messages.get_mut(target_index) {
-					target_msg.cached = true;
-					return Ok(true);
-				}
-			}
-			std::cmp::Ordering::Equal => {
-				// We're at capacity, move the first marker to the new position
-				if let Some(first_marker_index) = existing_markers.first() {
-					// Remove cache from first marker
-					if let Some(first_msg) = session.messages.get_mut(*first_marker_index) {
-						first_msg.cached = false;
-					}
-					// Add cache to new position
-					if let Some(target_msg) = session.messages.get_mut(target_index) {
-						target_msg.cached = true;
-						return Ok(true);
-					}
-				}
-			}
-			std::cmp::Ordering::Greater => {
-				// This shouldn't happen in normal usage but handle gracefully
-				// Remove excess markers starting from the first
-				while existing_markers.len() > self.max_content_markers {
-					if let Some(first_marker_index) = existing_markers.first() {
-						if let Some(first_msg) = session.messages.get_mut(*first_marker_index) {
-							first_msg.cached = false;
-						}
-						existing_markers.remove(0);
-					}
-				}
-				// Now add the new marker
-				if let Some(target_msg) = session.messages.get_mut(target_index) {
-					target_msg.cached = true;
-					return Ok(true);
-				}
-			}
-		}
-
-		Ok(false)
-	}
-
 	/// Move cache marker to the latest tool/user message on every call.
 	/// Replaces the previous time/token threshold logic — the provider's
 	/// cache TTL governs lifetime; we just keep the marker fresh on every turn.
@@ -254,40 +153,6 @@ impl CacheManager {
 		Ok(false)
 	}
 
-	/// Move cache marker to a specific tool-result message.
-	/// Called after each tool result is appended so the cache window always
-	/// covers the freshest content.
-	pub fn check_and_apply_auto_cache_threshold_on_tool_result(
-		&self,
-		session: &mut Session,
-		_config: &Config,
-		supports_caching: bool,
-		tool_message_index: usize,
-		_role: &str,
-	) -> Result<bool> {
-		if !supports_caching {
-			return Ok(false);
-		}
-
-		if session.messages.len() <= tool_message_index {
-			return Ok(false);
-		}
-
-		if let Some(msg) = session.messages.get(tool_message_index) {
-			if msg.role != "tool" {
-				return Ok(false);
-			}
-		} else {
-			return Ok(false);
-		}
-
-		match self.apply_cache_to_message(session, tool_message_index, supports_caching) {
-			Ok(v) => Ok(v),
-			Err(_) => Ok(false),
-		}
-	}
-
-	/// Update token tracking after API response
 	/// Update token tracking after API response
 	/// This should be called after EVERY API request to accumulate token usage
 	/// for proper cache threshold calculations
@@ -395,7 +260,6 @@ impl CacheManager {
 				// If we have any input tokens but no tool calls yet, check if it's a cacheable model with system cached
 				session.info.tool_calls > 0 ||
 				(session.info.input_tokens > 0 && has_cached_system) ||
-				// For brand new sessions with cacheable models and cached system, assume tools are available
 				// For brand new sessions with cacheable models and cached system, assume tools are available
 				(session.info.input_tokens == 0 && session.info.cache_read_tokens == 0 && has_cached_system)
 			};
@@ -540,55 +404,6 @@ impl CacheManager {
 		Err(anyhow::anyhow!("No user message found to cache"))
 	}
 
-	/// Apply cache marker to the current tool message when auto-threshold is reached
-	/// This should be called immediately when threshold is reached during tool processing
-	pub fn apply_cache_to_current_tool_message(
-		&self,
-		session: &mut Session,
-		supports_caching: bool,
-	) -> Result<bool> {
-		if !supports_caching {
-			return Ok(false);
-		}
-
-		// Find the last tool message
-		for (i, msg) in session.messages.iter().enumerate().rev() {
-			if msg.role == "tool" {
-				return self.apply_cache_to_message(session, i, supports_caching);
-			}
-		}
-
-		// If no tool message found, fall back to last user message
-		for (i, msg) in session.messages.iter().enumerate().rev() {
-			if msg.role == "user" {
-				return self.apply_cache_to_message(session, i, supports_caching);
-			}
-		}
-
-		Err(anyhow::anyhow!("No suitable message found to cache"))
-	}
-
-	/// Validate cache configuration for a provider/model
-	pub fn validate_cache_support(&self, provider: &str, model: &str) -> bool {
-		match provider.to_lowercase().as_str() {
-			"openrouter" => {
-				// OpenRouter supports caching for Claude models (with or without "anthropic" prefix)
-				model.contains("claude") ||
-				// And also for Gemini models through OpenRouter
-				model.contains("gemini")
-			}
-			"anthropic" => {
-				// Anthropic supports caching for Claude 3.5 models
-				model.contains("claude-3-5") || model.contains("claude-3.5")
-			}
-			"google" => {
-				// Google Vertex AI supports caching for Gemini 1.5 models
-				model.contains("gemini-1.5")
-			}
-			// Do not use our markers, OpenAI uses implicit caching, for example
-			_ => false,
-		}
-	}
 }
 
 /// Cache statistics for display and monitoring
@@ -650,7 +465,6 @@ impl CacheStatistics {
 		}
 
 		// Show session-wide cache efficiency in a clearer way
-		// Show session-wide cache efficiency in a clearer way
 		if self.total_input_tokens > 0 {
 			let session_cached_pct =
 				(self.total_cache_read_tokens as f64 / self.total_input_tokens as f64) * 100.0;
@@ -670,116 +484,11 @@ impl CacheStatistics {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::session::{Session, SessionInfo};
-
-	fn create_test_session() -> Session {
-		Session {
-			info: SessionInfo {
-				name: "test".to_string(),
-				created_at: 0,
-				model: "openrouter:anthropic/claude-3.5-sonnet".to_string(),
-				role: String::new(),
-				input_tokens: 0,
-				output_tokens: 0,
-				cache_read_tokens: 0,
-				cache_write_tokens: 0,
-				reasoning_tokens: 0,
-				total_cost: 0.0,
-				duration_seconds: 0,
-				layer_stats: Vec::new(),
-				tool_calls: 0,
-				total_api_time_ms: 0,
-				total_layer_time_ms: 0,
-				total_tool_time_ms: 0,
-				compression_stats: crate::session::CompressionStats::default(),
-				anchor: crate::session::anchor::Anchor::default(),
-				total_api_calls: 0,
-				// Cache state (Phase 1)
-				current_non_cached_tokens: 0,
-				current_total_tokens: 0,
-				last_cache_checkpoint_time: 0,
-				// Runtime state (Phase 2)
-				cache_next_user_message: false,
-				spending_threshold_checkpoint: 0.0,
-				compression_hint_count: 0,
-				last_compression_hint_shown: 0,
-				context_tokens_after_last_compression: 0,
-				predicted_turns_at_last_compression: 0.0,
-				api_calls_at_last_compression: 0,
-				output_tokens_at_last_compression: 0,
-				consecutive_compressions: 0,
-			},
-
-			messages: Vec::new(),
-			session_file: None,
-		}
-	}
 
 	#[test]
 	fn test_cache_manager_creation() {
 		let manager = CacheManager::new();
 		assert_eq!(manager.max_content_markers, 2);
-	}
-
-	#[test]
-	fn test_two_marker_system() {
-		let manager = CacheManager::new();
-		let mut session = create_test_session();
-
-		// Add some messages
-		session.add_message("user", "First message");
-		session.add_message("assistant", "First response");
-		session.add_message("user", "Second message");
-		session.add_message("assistant", "Second response");
-		session.add_message("user", "Third message");
-
-		// Add first marker
-		let result = manager.manage_content_cache_markers(&mut session, Some(0), false);
-		assert!(result.is_ok());
-		assert!(result.unwrap());
-		assert!(session.messages[0].cached);
-
-		// Add second marker
-		let result = manager.manage_content_cache_markers(&mut session, Some(2), false);
-		assert!(result.is_ok());
-		assert!(result.unwrap());
-		assert!(session.messages[2].cached);
-
-		// Add third marker - should move first marker
-		let result = manager.manage_content_cache_markers(&mut session, Some(4), false);
-		assert!(result.is_ok());
-		assert!(result.unwrap());
-		assert!(!session.messages[0].cached); // First marker removed
-		assert!(session.messages[2].cached); // Second marker remains
-		assert!(session.messages[4].cached); // Third marker added
-	}
-
-	#[test]
-	fn test_cache_support_validation() {
-		let manager = CacheManager::new();
-
-		// Test OpenRouter with Claude models (should work with or without "anthropic" prefix)
-		assert!(manager.validate_cache_support("openrouter", "anthropic/claude-3.5-sonnet"));
-		assert!(manager.validate_cache_support("openrouter", "claude-3-opus"));
-
-		// Test OpenRouter with Gemini models
-		assert!(manager.validate_cache_support("openrouter", "google/gemini-1.5-pro"));
-		assert!(manager.validate_cache_support("openrouter", "gemini-1.5-flash"));
-
-		// Test OpenRouter with non-cacheable models
-		assert!(!manager.validate_cache_support("openrouter", "openai/gpt-4"));
-
-		// Test direct Anthropic (only Claude 3.5 models)
-		assert!(manager.validate_cache_support("anthropic", "claude-3.5-sonnet"));
-		assert!(manager.validate_cache_support("anthropic", "claude-3-5-haiku"));
-		assert!(!manager.validate_cache_support("anthropic", "claude-3-opus")); // Only 3.5 models
-
-		// Test direct Google (only Gemini 1.5 models)
-		assert!(manager.validate_cache_support("google", "gemini-1.5-pro"));
-		assert!(!manager.validate_cache_support("google", "gemini-pro")); // Only 1.5 models
-
-		// Test unsupported providers
-		assert!(!manager.validate_cache_support("openai", "gpt-4"));
 	}
 
 	#[test]

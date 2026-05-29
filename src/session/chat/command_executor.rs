@@ -19,6 +19,21 @@ use crate::session::chat::session::ChatSession;
 use crate::session::{layers::layer_trait::Layer, layers::LayerProcessor};
 use anyhow::Result;
 use colored::Colorize;
+use std::path::PathBuf;
+
+/// Persist a single message as a JSON line to the session log so `/run` command
+/// output survives session reload, mirroring the atomic-add path used for chat
+/// messages. Best-effort: failures are logged but never abort the command.
+fn persist_session_message(session_file: &PathBuf, message: &crate::session::Message) {
+	match serde_json::to_string(message) {
+		Ok(json) => {
+			if let Err(e) = crate::session::append_to_session_file(session_file, &json) {
+				crate::log_debug!("session message persist failed: {}", e);
+			}
+		}
+		Err(e) => crate::log_debug!("session message serialize failed: {}", e),
+	}
+}
 
 /// Execute a command layer without storing it in the session history
 pub async fn execute_command_layer(
@@ -138,11 +153,16 @@ pub async fn execute_command_layer(
 				"{}",
 				"Output mode: append (adding to session)".bright_cyan()
 			);
-			// Add all command outputs as messages with configured role
+			// Add all command outputs as messages with configured role, persisting each
+			// so they are restored on reload. OUTPUT_MODE_APPEND does not clear, so these
+			// lines are read back as-is.
 			for output_text in &result.outputs {
-				chat_session
+				let message = chat_session
 					.session
 					.add_message(command_config.output_role.as_str(), output_text);
+				if let Some(session_file) = &chat_session.session.session_file {
+					persist_session_message(session_file, &message);
+				}
 			}
 
 			// Log the append operation for session restoration
@@ -246,6 +266,14 @@ pub async fn execute_command_layer(
 			// Update session with final messages
 			chat_session.session.messages = final_messages;
 
+			// Persist the rebuilt message set so resume reconstructs it after the
+			// OUTPUT_MODE_REPLACE marker (which clears prior messages on reload).
+			if let Some(session_file) = &chat_session.session.session_file {
+				for message in &chat_session.session.messages {
+					persist_session_message(session_file, message);
+				}
+			}
+
 			// Save session to persist the replacement
 			if let Err(e) = chat_session.save() {
 				crate::log_debug!("session save failed: {}", e);
@@ -258,11 +286,15 @@ pub async fn execute_command_layer(
 				"Output mode: last (adding last response only to session)".bright_cyan()
 			);
 
-			// Add only the last output as message with configured role to session
+			// Add only the last output as message with configured role to session,
+			// persisting it so it is restored on reload (OUTPUT_MODE_LAST does not clear).
 			if let Some(last_output) = result.outputs.last() {
-				chat_session
+				let message = chat_session
 					.session
 					.add_message(command_config.output_role.as_str(), last_output);
+				if let Some(session_file) = &chat_session.session.session_file {
+					persist_session_message(session_file, &message);
+				}
 			}
 
 			// Log the last append operation for session restoration
@@ -324,6 +356,14 @@ pub async fn execute_command_layer(
 				chat_session
 					.session
 					.add_message(command_config.output_role.as_str(), last_output);
+			}
+
+			// Persist the single replacement message so resume reconstructs it after the
+			// OUTPUT_MODE_RESTART marker (which clears prior messages on reload).
+			if let Some(session_file) = &chat_session.session.session_file {
+				for message in &chat_session.session.messages {
+					persist_session_message(session_file, message);
+				}
 			}
 
 			// Save session to persist the replacement

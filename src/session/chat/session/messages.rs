@@ -181,14 +181,8 @@ impl ChatSession {
 	fn ensure_file_initialized(&mut self) -> Result<()> {
 		if let Some(session_file) = &self.session.session_file {
 			if !session_file.exists() {
-				let summary_entry = serde_json::json!({
-					"type": "SUMMARY",
-					"timestamp": std::time::SystemTime::now()
-						.duration_since(std::time::UNIX_EPOCH)
-						.unwrap_or_default()
-						.as_secs(),
-					"session_info": &self.session.info
-				});
+				let summary_entry =
+					crate::session::persistence::summary_log_entry(&self.session.info);
 				let session_file = session_file.clone();
 				crate::session::append_to_session_file(
 					&session_file,

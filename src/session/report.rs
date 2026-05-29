@@ -67,8 +67,9 @@ struct RequestContext {
 impl SessionReport {
 	/// Generate a session report from the session log file
 	pub fn generate_from_log(session_log_path: &str) -> Result<SessionReport> {
+		// Session logs are zstd-compressed JSONL — decode before reading lines.
 		let file = File::open(session_log_path)?;
-		let reader = BufReader::new(file);
+		let reader = BufReader::new(zstd::stream::read::Decoder::new(file)?);
 
 		let mut contexts: Vec<RequestContext> = Vec::new();
 		let mut current_context: Option<RequestContext> = None;

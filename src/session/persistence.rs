@@ -377,9 +377,10 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 						// Commands are processed separately in extract_runtime_state_from_log
 						continue;
 					}
-					"OUTPUT_MODE_REPLACE" => {
-						// Handle Replace mode operations during session restoration
-						// This clears messages like a restoration point but from a command
+					// Replace and Restart both rebuild the session from scratch: clear prior
+					// messages here so the rebuilt snapshot (persisted as message lines after
+					// this marker by command_executor) is the only state that survives reload.
+					"OUTPUT_MODE_REPLACE" | "OUTPUT_MODE_RESTART" => {
 						if restoration_point_found {
 							restoration_messages.clear();
 						} else {
@@ -387,20 +388,17 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 						}
 						pending_tool_calls.clear(); // Clear stale tool calls from before replace
 
-						// Log the replace operation for debugging
 						if let Some(command) = json_value.get("command").and_then(|c| c.as_str()) {
-							println!(
-								"Session restoration: Found OUTPUT_MODE_REPLACE from command '{}'",
+							crate::log_debug!(
+								"Session restoration: Found {} from command '{}'",
+								log_type,
 								command
 							);
 						}
 					}
-					"OUTPUT_MODE_APPEND" => {
-						// Handle Append mode operations during session restoration
-						// These are tracked but don't need special handling since the messages
-						// are already in the session file as regular assistant messages
-						continue;
-					}
+					// Append and Last only add messages; the appended message lines follow
+					// this marker in the log, so no clearing is needed.
+					"OUTPUT_MODE_APPEND" | "OUTPUT_MODE_LAST" => continue,
 					"STATS" => {
 						// STATS entries provide incremental updates during a session
 						// BUT: Only apply STATS that are NEWER than the last SUMMARY
@@ -505,15 +503,11 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 							}));
 						}
 					}
-					"API_REQUEST" | "API_RESPONSE" | "TOOL_RESULT" | "CACHE" | "ERROR"
-					| "SYSTEM" | "USER" | "ASSISTANT" => {
-						// Skip debug log entries during message parsing
-						continue;
-					}
-					_ => {
-						// Unknown log type, skip
-						continue;
-					}
+					// Everything else is irrelevant to message reconstruction: debug log
+					// entries (API_REQUEST/RESPONSE, TOOL_RESULT, CACHE, ERROR,
+					// SYSTEM/USER/ASSISTANT), command/plan/schedule markers consumed by
+					// other readers, and any unknown future types.
+					_ => continue,
 				}
 			} else if line.contains("\"role\":") && line.contains("\"content\":") {
 				// This is a regular message JSON line
@@ -889,6 +883,17 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 			// Unknown command, ignore
 		}
 	}
+}
+
+/// Build the SUMMARY log entry that snapshots full session metadata.
+/// SUMMARY is the source of truth for session state on reload, so every save
+/// path (initial file creation and incremental saves) writes one through here.
+pub fn summary_log_entry(info: &SessionInfo) -> serde_json::Value {
+	serde_json::json!({
+		"type": "SUMMARY",
+		"timestamp": crate::utils::time::now_secs(),
+		"session_info": info,
+	})
 }
 
 // Helper function to append to session file as an independent zstd frame.

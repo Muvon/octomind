@@ -435,17 +435,9 @@ impl Session {
 	// Save the session to a file - append-only approach
 	pub fn save(&self) -> Result<(), anyhow::Error> {
 		if let Some(session_file) = &self.session_file {
-			// In append-only design, individual messages are already saved when added
-			// This method just ensures session metadata is up to date
-			// We append an updated SUMMARY entry to reflect current session state
-			let summary_entry = serde_json::json!({
-				"type": "SUMMARY",
-				"timestamp": std::time::SystemTime::now()
-					.duration_since(std::time::UNIX_EPOCH)
-					.unwrap_or_default()
-					.as_secs(),
-				"session_info": &self.info
-			});
+			// Append-only design: individual messages are persisted when added.
+			// This just appends an updated SUMMARY snapshot of the current session state.
+			let summary_entry = persistence::summary_log_entry(&self.info);
 			append_to_session_file(session_file, &serde_json::to_string(&summary_entry)?)?;
 			Ok(())
 		} else {

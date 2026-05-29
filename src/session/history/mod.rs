@@ -123,8 +123,7 @@ fn migrate_legacy_history_if_needed(role: &str) -> Result<()> {
 		for line in legacy_content.lines() {
 			if !line.trim().is_empty() {
 				// Encode newlines to preserve multiline entries as single history records
-				let encoded_line = line.replace("\\", "\\\\").replace("\n", "\\n");
-				writeln!(role_file, "{}", encoded_line)?;
+				writeln!(role_file, "{}", escape_history_line(line))?;
 			}
 		}
 
@@ -147,6 +146,36 @@ fn migrate_legacy_history_if_needed(role: &str) -> Result<()> {
 	}
 
 	Ok(())
+}
+
+/// Encode a history line so multiline entries persist as a single record:
+/// `\` → `\\`, then newline → `\n`. Order matters — backslash is escaped first.
+fn escape_history_line(line: &str) -> String {
+	line.replace("\\", "\\\\").replace("\n", "\\n")
+}
+
+/// Reverse of `escape_history_line`: `\\` → `\`, `\n` → newline. A single
+/// left-to-right pass is required — chained `str::replace` would corrupt a
+/// literal `\n` (backslash + 'n') typed in the original command text.
+fn unescape_history_line(line: &str) -> String {
+	let mut out = String::with_capacity(line.len());
+	let mut chars = line.chars();
+	while let Some(c) = chars.next() {
+		if c == '\\' {
+			match chars.next() {
+				Some('n') => out.push('\n'),
+				Some('\\') => out.push('\\'),
+				Some(other) => {
+					out.push('\\');
+					out.push(other);
+				}
+				None => out.push('\\'),
+			}
+		} else {
+			out.push(c);
+		}
+	}
+	out
 }
 
 /// Load history from a role-specific file
@@ -176,9 +205,8 @@ pub fn load_session_history_from_file(role: &str) -> Result<Vec<String>> {
 			continue;
 		}
 
-		// Decode newlines to restore multiline entries
-		let decoded_line = line.replace("\\n", "\n").replace("\\\\", "\\");
-		history_lines.push(decoded_line);
+		// Decode escape sequences (reverse of escape_history_line).
+		history_lines.push(unescape_history_line(&line));
 	}
 
 	Ok(history_lines)
@@ -210,8 +238,7 @@ pub fn append_to_session_history_file(role: &str, line: &str) -> Result<()> {
 		.with_context(|| format!("Failed to open history file for append: {:?}", history_path))?;
 
 	// Encode newlines to preserve multiline entries as single history records
-	let encoded_line = line.replace("\\", "\\\\").replace("\n", "\\n");
-	writeln!(file, "{}", encoded_line)?;
+	writeln!(file, "{}", escape_history_line(line))?;
 	file.flush()?;
 
 	Ok(())

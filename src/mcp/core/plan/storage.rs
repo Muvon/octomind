@@ -38,26 +38,6 @@ pub struct MessageRange {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PhaseCompression {
-	pub phase_name: String,
-	pub task_range: (usize, usize),
-	pub summary: String,
-	pub compressed_at: DateTime<Utc>,
-	pub message_range: MessageRange,
-	pub metrics: super::compression::CompressionMetrics,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectCompression {
-	pub summary: String,
-	pub compressed_at: DateTime<Utc>,
-	pub message_range: MessageRange,
-	pub metrics: super::compression::CompressionMetrics,
-	pub total_tasks: usize,
-	pub total_phases: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanTask {
 	pub title: String,
 	pub description: String,     // Detailed explanation of what needs to be done

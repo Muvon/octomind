@@ -25,13 +25,11 @@
 
 use crate::mcp::core::plan::storage::ExecutionPlan;
 use crate::mcp::core::schedule::storage::ScheduleEntry;
+use crate::session::persistence::append_to_session_file;
 use crate::session::Message;
 use anyhow::Result;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use zstd::stream::write::Encoder as ZstdEncoder;
 
 /// Get the session file path for a specific session.
 pub fn get_session_log_file(session_name: &str) -> Result<PathBuf> {
@@ -57,7 +55,7 @@ pub fn log_restoration_point(
 		"user_message": user_message,
 		"assistant_response": assistant_response,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
 /// Log compression point — clears prior messages on reload (messages were compressed).
@@ -82,13 +80,13 @@ pub fn log_compression_point(
 		"messages_removed": messages_removed,
 		"tokens_saved": tokens_saved,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)?;
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)?;
 
 	// Snapshot the post-compression message state so resume can reconstruct it.
 	// The parser wipes `messages` at the marker and expects to re-read them below.
 	for msg in post_compression_messages {
 		let json = serde_json::to_string(msg)?;
-		append_to_log(&log_file, &json)?;
+		append_to_session_file(&log_file, &json)?;
 	}
 
 	Ok(())
@@ -103,7 +101,7 @@ pub fn log_knowledge_entry(session_name: &str, knowledge: &str) -> Result<()> {
 		"timestamp": get_timestamp(),
 		"content": knowledge,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
 /// Log runtime-only commands (`/model`, `/role`, `/layers`, `/cache`) so they
@@ -115,7 +113,7 @@ pub fn log_session_command(session_name: &str, command_line: &str) -> Result<()>
 		"timestamp": get_timestamp(),
 		"command": command_line,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
 /// Log a snapshot of the active plan so it can be restored on session resume.
@@ -127,7 +125,7 @@ pub fn log_plan_snapshot(session_name: &str, plan: &ExecutionPlan) -> Result<()>
 		"timestamp": get_timestamp(),
 		"plan": plan,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
 /// Log that the active plan has been cleared (done/reset).
@@ -138,7 +136,7 @@ pub fn log_plan_cleared(session_name: &str) -> Result<()> {
 		"type": "PLAN_CLEARED",
 		"timestamp": get_timestamp(),
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
 /// Log a full snapshot of the schedule store so it can be restored on session resume.
@@ -151,7 +149,7 @@ pub fn log_schedule_snapshot(session_name: &str, entries: &[ScheduleEntry]) -> R
 		"timestamp": get_timestamp(),
 		"entries": entries,
 	});
-	append_to_log(&log_file, &serde_json::to_string(&entry)?)
+	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
 fn get_timestamp() -> u64 {
@@ -159,25 +157,4 @@ fn get_timestamp() -> u64 {
 		.duration_since(UNIX_EPOCH)
 		.unwrap_or_default()
 		.as_secs()
-}
-
-/// Append a single-line entry to the session log file as an independent zstd frame.
-/// Each call produces one complete frame; the zstd decoder reads all frames
-/// sequentially on load (concatenated-frame format).
-fn append_to_log(log_file: &PathBuf, content: &str) -> Result<()> {
-	let file = OpenOptions::new()
-		.create(true)
-		.append(true)
-		.open(log_file)?;
-
-	// Ensure content is on a single line — replace any newlines with spaces
-	let single_line = content.replace(['\n', '\r'], " ");
-
-	// Level 1 is fast and still gives good compression for JSONL lines.
-	// Each call writes one independent zstd frame; finish() flushes and closes the frame.
-	let mut encoder = ZstdEncoder::new(file, 1)?;
-	encoder.write_all(single_line.as_bytes())?;
-	encoder.write_all(b"\n")?;
-	encoder.finish()?;
-	Ok(())
 }

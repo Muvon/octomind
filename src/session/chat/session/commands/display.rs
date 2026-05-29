@@ -2030,6 +2030,10 @@ pub fn display_learning(output: &CommandOutput) {
 					.get("confidence")
 					.and_then(|v| v.as_str())
 					.unwrap_or("");
+				let scope = lesson
+					.get("scope")
+					.and_then(|v| v.as_str())
+					.unwrap_or("scoped");
 				let tags = lesson
 					.get("tags")
 					.and_then(|v| v.as_array())
@@ -2056,7 +2060,12 @@ pub fn display_learning(output: &CommandOutput) {
 					content.to_string()
 				};
 
-				block_section(&format!("#{} {}", index, imp_indicator));
+				let scope_tag = if scope == "global" {
+					" (global)".bright_cyan().to_string()
+				} else {
+					String::new()
+				};
+				block_section(&format!("#{} {}{}", index, imp_indicator, scope_tag));
 				block_row_text(&content_display.bright_white().to_string());
 
 				let mut meta = Vec::new();

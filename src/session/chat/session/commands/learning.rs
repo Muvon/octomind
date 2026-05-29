@@ -114,7 +114,7 @@ async fn handle_list(
 
 	let (role, project) = role_and_project(session);
 	let backend = crate::learning::backend::create_backend(&config.learning);
-	let all = backend.retrieve_all(&role, &project, config).await?;
+	let all = all_lessons(&*backend, &role, &project, config).await?;
 
 	// Apply glob filter if present.
 	let filtered: Vec<_> = if let Some(pat) = pattern {
@@ -156,11 +156,12 @@ async fn handle_list(
 		.map(|(i, l)| {
 			json!({
 				"index": start + i + 1,
-				"id": lesson_id(l),
+				"id": l.file_id(),
 				"content": l.content,
 				"title": l.title,
 				"importance": l.importance,
 				"confidence": l.confidence,
+				"scope": l.scope,
 				"tags": l.tags,
 				"created": l.created,
 			})
@@ -190,7 +191,7 @@ async fn handle_delete(
 ) -> Result<CommandResult> {
 	let (role, project) = role_and_project(session);
 	let backend = crate::learning::backend::create_backend(&config.learning);
-	let all = backend.retrieve_all(&role, &project, config).await?;
+	let all = all_lessons(&*backend, &role, &project, config).await?;
 
 	if index > all.len() || all.is_empty() {
 		return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -204,7 +205,7 @@ async fn handle_delete(
 	}
 
 	let lesson = &all[index - 1];
-	let id = lesson_id(lesson);
+	let id = lesson.file_id();
 	let content_preview: String = lesson.content.chars().take(60).collect();
 
 	match backend.delete(&id, &role, &project, config).await {
@@ -232,7 +233,7 @@ async fn handle_delete(
 async fn handle_clear(session: &ChatSession, config: &Config) -> Result<CommandResult> {
 	let (role, project) = role_and_project(session);
 	let backend = crate::learning::backend::create_backend(&config.learning);
-	let all = backend.retrieve_all(&role, &project, config).await?;
+	let all = all_lessons(&*backend, &role, &project, config).await?;
 
 	if all.is_empty() {
 		return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -251,7 +252,7 @@ async fn handle_clear(session: &ChatSession, config: &Config) -> Result<CommandR
 	let mut errors: Vec<String> = Vec::new();
 
 	for lesson in &all {
-		let id = lesson_id(lesson);
+		let id = lesson.file_id();
 		match backend.delete(&id, &role, &project, config).await {
 			Ok(()) => deleted += 1,
 			Err(e) => errors.push(format!("{}: {}", id, e)),
@@ -270,44 +271,6 @@ async fn handle_clear(session: &ChatSession, config: &Config) -> Result<CommandR
 	)))
 }
 
-/// Derive a stable id for a lesson. For the file backend this is the filename
-/// stem (stored in `source` as the session name, but we reconstruct the slug
-/// from content + created timestamp the same way FileBackend does). Since we
-/// don't store the filename in the Lesson struct, we re-derive it here.
-///
-/// For the MCP backend the id is unused (delete returns Err), so any value works.
-fn lesson_id(lesson: &crate::learning::Lesson) -> String {
-	let slug: String = lesson
-		.content
-		.chars()
-		.filter_map(|c| {
-			if c.is_alphanumeric() {
-				Some(c.to_ascii_lowercase())
-			} else if c == ' ' || c == '_' || c == '-' {
-				Some('-')
-			} else {
-				None
-			}
-		})
-		.take(40)
-		.collect::<String>()
-		.trim_end_matches('-')
-		.to_string();
-
-	let ts: String = lesson
-		.created
-		.replace([':', '-', 'T'], "")
-		.chars()
-		.take(14)
-		.collect();
-
-	if slug.is_empty() {
-		ts
-	} else {
-		format!("{}-{}", ts, slug)
-	}
-}
-
 fn role_and_project(session: &ChatSession) -> (String, String) {
 	let role = session.role.clone();
 	let project = std::env::current_dir()
@@ -315,6 +278,20 @@ fn role_and_project(session: &ChatSession) -> (String, String) {
 		.and_then(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
 		.unwrap_or_else(|| "unknown".to_string());
 	(role, project)
+}
+
+/// All lessons the `/learning` command operates on: scoped (current
+/// role+project) followed by global (user-wide). Stable order so list/delete
+/// indices stay aligned across calls.
+async fn all_lessons(
+	backend: &dyn crate::learning::backend::LearningBackend,
+	role: &str,
+	project: &str,
+	config: &Config,
+) -> Result<Vec<crate::learning::Lesson>> {
+	let mut all = backend.retrieve_all(role, project, config).await?;
+	all.extend(backend.retrieve_global(config).await?);
+	Ok(all)
 }
 
 /// Simple glob matching: `*` matches any sequence of characters. Case-insensitive.

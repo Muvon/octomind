@@ -153,6 +153,13 @@ impl LearningBackend for McpBackend {
 			.await
 	}
 
+	async fn retrieve_global(&self, config: &Config) -> Result<Vec<Lesson>> {
+		// The MCP server owns scoping semantics; global lessons are queried with
+		// empty role/project. Mapping a `scope` field via field_map is optional.
+		self.retrieve("", &["*".to_string()], "", "", 100, config)
+			.await
+	}
+
 	async fn delete(&self, _id: &str, _role: &str, _project: &str, _config: &Config) -> Result<()> {
 		anyhow::bail!("deletion is not supported for the MCP backend — manage lessons through the MCP tool directly")
 	}

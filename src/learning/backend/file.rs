@@ -53,6 +53,7 @@ impl FileBackend {
 				"source" => lesson.source = val.to_string(),
 				"role" => lesson.role = val.to_string(),
 				"project" => lesson.project = val.to_string(),
+				"scope" => lesson.scope = val.to_string(),
 				"created" => lesson.created = val.to_string(),
 				_ => {}
 			}
@@ -65,44 +66,48 @@ impl FileBackend {
 		}
 	}
 
-	fn slugify(text: &str, max_len: usize) -> String {
-		text.chars()
-			.filter_map(|c| {
-				if c.is_alphanumeric() {
-					Some(c.to_ascii_lowercase())
-				} else if c == ' ' || c == '_' || c == '-' {
-					Some('-')
-				} else {
-					None
+	/// Read all lesson `.md` files from a directory, parsed and sorted by
+	/// importance descending. Missing dir or unreadable files → empty/skipped.
+	/// Shared by `retrieve_all` (scoped) and `retrieve_global`.
+	fn read_lessons_sorted(dir: &std::path::Path) -> Vec<Lesson> {
+		let Ok(entries) = std::fs::read_dir(dir) else {
+			return Vec::new();
+		};
+		let mut lessons = Vec::new();
+		for entry in entries.flatten() {
+			let path = entry.path();
+			if path.extension().is_some_and(|e| e == "md") {
+				if let Ok(content) = std::fs::read_to_string(&path) {
+					if let Some(lesson) = Self::parse_lesson_file(&content) {
+						lessons.push(lesson);
+					}
 				}
-			})
-			.take(max_len)
-			.collect::<String>()
-			.trim_end_matches('-')
-			.to_string()
+			}
+		}
+		lessons.sort_by(|a, b| {
+			b.importance
+				.partial_cmp(&a.importance)
+				.unwrap_or(std::cmp::Ordering::Equal)
+		});
+		lessons
 	}
 }
 
 #[async_trait]
 impl LearningBackend for FileBackend {
 	async fn store(&self, lesson: &Lesson, _config: &Config) -> Result<()> {
-		let dir = Self::learning_dir(&lesson.role, &lesson.project)?;
-		let slug = Self::slugify(&lesson.content, 40);
-		let ts = lesson
-			.created
-			.replace([':', '-', 'T'], "")
-			.chars()
-			.take(14)
-			.collect::<String>();
-		let filename = if slug.is_empty() {
-			format!("{}.md", ts)
+		// Global lessons live in the shared `learning/_/` dir; scoped lessons
+		// in `learning/{project}/{role}/`. Filename is the canonical file_id.
+		let dir = if lesson.scope == "global" {
+			crate::directories::get_global_learning_dir()?
 		} else {
-			format!("{}-{}.md", ts, slug)
+			Self::learning_dir(&lesson.role, &lesson.project)?
 		};
+		let filename = format!("{}.md", lesson.file_id());
 
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
-			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\ncreated: \"{}\"\n---\n",
+			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\n---\n",
 			lesson.title.replace('"', "\\\""),
 			lesson.content.replace('"', "\\\""),
 			lesson.memory_type,
@@ -112,6 +117,7 @@ impl LearningBackend for FileBackend {
 			lesson.source,
 			lesson.role,
 			lesson.project,
+			lesson.scope,
 			lesson.created,
 		);
 
@@ -167,7 +173,17 @@ impl LearningBackend for FileBackend {
 		if !cosine_ranking.is_empty() {
 			rankings.push(&cosine_ranking);
 		}
-		let fused = reciprocal_rank_fusion(all.len(), &rankings);
+		let mut fused = reciprocal_rank_fusion(all.len(), &rankings);
+
+		// Recency reweight: nudge recent lessons up *among the already-relevant*
+		// candidates. RRF has already dropped zero-signal items, so this only
+		// reorders things that matched — it never surfaces irrelevant-but-new
+		// lessons. Relevance still dominates; recency breaks ties and gives
+		// fresh context a mild edge over stale.
+		for (score, idx) in fused.iter_mut() {
+			*score *= 1.0 + RECENCY_WEIGHT * recency_factor(&all[*idx].created);
+		}
+		fused.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
 		Ok(fused
 			.into_iter()
@@ -177,16 +193,25 @@ impl LearningBackend for FileBackend {
 	}
 
 	async fn delete(&self, id: &str, role: &str, project: &str, _config: &Config) -> Result<()> {
-		let dir = Self::learning_dir(role, project)?;
-		// Find the .md file whose stem matches `id`.
-		for entry in std::fs::read_dir(&dir)? {
-			let entry = entry?;
-			let path = entry.path();
-			if path.extension().is_some_and(|e| e == "md")
-				&& path.file_stem().and_then(|s| s.to_str()) == Some(id)
-			{
-				std::fs::remove_file(&path)?;
-				return Ok(());
+		// A lesson id is unique across scopes (content slug + timestamp), so we
+		// search both the scoped dir and the global dir; first match wins.
+		let dirs = [
+			Self::learning_dir(role, project)?,
+			crate::directories::get_global_learning_dir()?,
+		];
+		for dir in dirs {
+			if !dir.exists() {
+				continue;
+			}
+			for entry in std::fs::read_dir(&dir)? {
+				let entry = entry?;
+				let path = entry.path();
+				if path.extension().is_some_and(|e| e == "md")
+					&& path.file_stem().and_then(|s| s.to_str()) == Some(id)
+				{
+					std::fs::remove_file(&path)?;
+					return Ok(());
+				}
 			}
 		}
 		anyhow::bail!("lesson '{}' not found", id)
@@ -199,31 +224,12 @@ impl LearningBackend for FileBackend {
 		_config: &Config,
 	) -> Result<Vec<Lesson>> {
 		let dir = Self::learning_dir(role, project)?;
-		if !dir.exists() {
-			return Ok(Vec::new());
-		}
+		Ok(Self::read_lessons_sorted(&dir))
+	}
 
-		let mut lessons = Vec::new();
-		for entry in std::fs::read_dir(&dir)? {
-			let entry = entry?;
-			let path = entry.path();
-			if path.extension().is_some_and(|e| e == "md") {
-				if let Ok(content) = std::fs::read_to_string(&path) {
-					if let Some(lesson) = Self::parse_lesson_file(&content) {
-						lessons.push(lesson);
-					}
-				}
-			}
-		}
-
-		// Sort by importance descending, then confidence
-		lessons.sort_by(|a, b| {
-			b.importance
-				.partial_cmp(&a.importance)
-				.unwrap_or(std::cmp::Ordering::Equal)
-		});
-
-		Ok(lessons)
+	async fn retrieve_global(&self, _config: &Config) -> Result<Vec<Lesson>> {
+		let dir = crate::directories::get_global_learning_dir()?;
+		Ok(Self::read_lessons_sorted(&dir))
 	}
 }
 
@@ -231,6 +237,25 @@ impl LearningBackend for FileBackend {
 /// canonical value — high enough that early ranks dominate without
 /// crushing later ranks completely.
 const RRF_K: f32 = 60.0;
+
+/// Recency reweight strength: a brand-new lesson gets at most +50% on its
+/// fused relevance score. Small enough that relevance still leads.
+const RECENCY_WEIGHT: f32 = 0.5;
+/// Recency half-life in days: a lesson this old gets a ~0.5 recency factor.
+const RECENCY_HALFLIFE_DAYS: f32 = 30.0;
+
+/// Map a lesson's `created` (RFC3339) to a recency factor in (0, 1]: ~1.0 for
+/// brand-new, decaying toward 0 with age. Unparseable/empty dates → 0 (no boost).
+fn recency_factor(created: &str) -> f32 {
+	match chrono::DateTime::parse_from_rfc3339(created) {
+		Ok(t) => {
+			let age_secs = (chrono::Utc::now().timestamp() - t.timestamp()).max(0) as f32;
+			let age_days = age_secs / 86_400.0;
+			1.0 / (1.0 + age_days / RECENCY_HALFLIFE_DAYS)
+		}
+		Err(_) => 0.0,
+	}
+}
 
 /// Rank lessons by sparse keyword hit count (descending). Returns indices
 /// into the input slice, in ranked order. Lessons with zero hits are
@@ -371,16 +396,21 @@ importance: 0.5
 	}
 
 	#[test]
-	fn test_slugify() {
-		assert_eq!(
-			FileBackend::slugify("Bearer token auth", 20),
-			"bearer-token-auth"
-		);
-		assert_eq!(
-			FileBackend::slugify("Use custom_types!", 15),
-			"use-custom-type"
-		);
-		assert_eq!(FileBackend::slugify("", 10), "");
+	fn test_file_id() {
+		let lesson = Lesson {
+			content: "Bearer token auth".into(),
+			created: "2026-04-05T14:30:00Z".into(),
+			..Default::default()
+		};
+		assert_eq!(lesson.file_id(), "20260405143000-bearer-token-auth");
+
+		let empty = Lesson {
+			content: "!!!".into(),
+			created: "2026-04-05T14:30:00Z".into(),
+			..Default::default()
+		};
+		// No alphanumerics → slug empty → id is just the timestamp.
+		assert_eq!(empty.file_id(), "20260405143000");
 	}
 
 	#[tokio::test]

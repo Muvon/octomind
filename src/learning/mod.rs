@@ -50,6 +50,10 @@ pub struct Lesson {
 	pub role: String,
 	#[serde(default)]
 	pub project: String,
+	/// Memory scope: "scoped" (project×role, contextual/short-lived) or
+	/// "global" (cross-project user preference, durable/long-lived).
+	#[serde(default = "default_scope")]
+	pub scope: String,
 	#[serde(default)]
 	pub created: String,
 }
@@ -62,6 +66,9 @@ fn default_importance() -> f64 {
 }
 fn default_confidence() -> String {
 	"medium".into()
+}
+fn default_scope() -> String {
+	"scoped".into()
 }
 
 impl Default for Lesson {
@@ -76,6 +83,7 @@ impl Default for Lesson {
 			source: String::new(),
 			role: String::new(),
 			project: String::new(),
+			scope: "scoped".into(),
 			created: String::new(),
 		}
 	}
@@ -101,8 +109,42 @@ impl Lesson {
 			"source" => Some(serde_json::Value::String(self.source.clone())),
 			"role" => Some(serde_json::Value::String(self.role.clone())),
 			"project" => Some(serde_json::Value::String(self.project.clone())),
+			"scope" => Some(serde_json::Value::String(self.scope.clone())),
 			"created" => Some(serde_json::Value::String(self.created.clone())),
 			_ => None,
+		}
+	}
+
+	/// Stable file id (filename stem) for the file backend: `{ts}-{slug}` of
+	/// content + created timestamp. Canonical — used by store, supersede, and
+	/// the `/learning` command so all three agree on identity.
+	pub fn file_id(&self) -> String {
+		let slug: String = self
+			.content
+			.chars()
+			.filter_map(|c| {
+				if c.is_alphanumeric() {
+					Some(c.to_ascii_lowercase())
+				} else if c == ' ' || c == '_' || c == '-' {
+					Some('-')
+				} else {
+					None
+				}
+			})
+			.take(40)
+			.collect::<String>()
+			.trim_end_matches('-')
+			.to_string();
+		let ts: String = self
+			.created
+			.replace([':', '-', 'T'], "")
+			.chars()
+			.take(14)
+			.collect();
+		if slug.is_empty() {
+			ts
+		} else {
+			format!("{}-{}", ts, slug)
 		}
 	}
 }

@@ -25,54 +25,74 @@ Given the user's request below, write a single concise semantic search query to 
 - Include key domain terms and intent.
 - Output ONLY the query — one line, no explanations."#;
 
-/// Retrieve relevant lessons and format them for system prompt injection.
+/// Retrieve relevant lessons for the current message and format them for
+/// injection. Two tiers:
+///   - global (user-wide): injected once at session start, ranked by importance,
+///     no semantic gating — they apply to every task;
+///   - scoped (project×role): retrieved by relevance to the current message.
 ///
-/// Returns the formatted string to append to the system prompt, or empty string if none.
+/// `first_call` is true for the first injection of the session (full hybrid
+/// retrieval + the one-time global tier); follow-up user messages pass false
+/// (embedding-only scoped recall, no LLM call). `injected` holds the contents
+/// already injected this session — anything in it is skipped to avoid repeats.
+///
+/// Returns `(block, new_contents)`: the text to inject (empty if nothing new)
+/// and the contents that should be recorded as injected by the caller.
 pub async fn retrieve_and_format(
 	config: &Config,
 	user_input: &str,
 	role: &str,
 	project: &str,
+	first_call: bool,
+	injected: &std::collections::HashSet<String>,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
-) -> String {
+) -> (String, Vec<String>) {
 	let learning = &config.learning;
 	if !learning.enabled {
-		return String::new();
+		return (String::new(), Vec::new());
 	}
 
 	let backend = create_backend(learning);
 	crate::log_debug!(
-		"Learning retrieval: backend={}, role={}, project={}",
+		"Learning retrieval: backend={}, role={}, project={}, first_call={}",
 		learning.backend,
 		role,
-		project
+		project,
+		first_call
 	);
 
-	// Prepare retrieval query via LLM (backend-adaptive)
-	let patterns = match prepare_retrieval_query(
-		config,
-		user_input,
-		&learning.backend,
-		&learning.model,
-		operation_rx,
-	)
-	.await
-	{
-		Ok(p) => {
-			crate::log_debug!("Learning retrieval patterns: {:?}", p);
-			p
-		}
-		Err(e) => {
-			crate::log_debug!("Learning retrieval prep failed: {}", e);
-			return String::new();
-		}
-	};
+	let mut candidates: Vec<crate::learning::Lesson> = Vec::new();
 
-	// Retrieve from backend — pass both the raw user input (for dense
-	// embedding scoring) and the LLM-extracted patterns (for sparse
-	// keyword scoring). The file backend fuses both via RRF; the MCP
-	// backend hands the patterns to the configured tool.
-	let lessons = match backend
+	// Global tier: durable user-wide preferences. Always relevant, so injected
+	// by importance with no semantic query — but only once per session (first
+	// call); afterwards they are already recorded in `injected`.
+	if first_call {
+		match backend.retrieve_global(config).await {
+			Ok(g) => candidates.extend(g.into_iter().take(learning.max_inject)),
+			Err(e) => crate::log_debug!("Learning: global retrieve failed: {}", e),
+		}
+	}
+
+	// Scoped tier: contextual lessons retrieved by relevance to this message.
+	// First call uses the full hybrid (LLM keywords + embedding); follow-up
+	// messages skip the LLM call and use embedding-only recall — free and fast.
+	let patterns = if first_call {
+		prepare_retrieval_query(
+			config,
+			user_input,
+			&learning.backend,
+			&learning.model,
+			operation_rx,
+		)
+		.await
+		.unwrap_or_else(|e| {
+			crate::log_debug!("Learning retrieval prep failed: {}", e);
+			Vec::new()
+		})
+	} else {
+		Vec::new()
+	};
+	match backend
 		.retrieve(
 			user_input,
 			&patterns,
@@ -83,28 +103,38 @@ pub async fn retrieve_and_format(
 		)
 		.await
 	{
-		Ok(l) => l,
-		Err(e) => {
-			crate::log_debug!("Learning retrieval failed: {}", e);
-			return String::new();
-		}
-	};
+		Ok(s) => candidates.extend(s),
+		Err(e) => crate::log_debug!("Learning: scoped retrieve failed: {}", e),
+	}
 
-	if lessons.is_empty() {
-		crate::log_debug!("Learning retrieval: no matching lessons found");
-		return String::new();
+	// Dedup: skip lessons already injected this session and any repeats within
+	// this batch (global + scoped can overlap). Identity is the lesson content.
+	let mut new_contents = Vec::new();
+	let mut block = String::new();
+	let mut batch_seen = std::collections::HashSet::new();
+	for lesson in &candidates {
+		if injected.contains(&lesson.content) || !batch_seen.insert(lesson.content.as_str()) {
+			continue;
+		}
+		block.push_str(&format!("- [{}] {}\n", lesson.confidence, lesson.content));
+		new_contents.push(lesson.content.clone());
+	}
+
+	if block.is_empty() {
+		crate::log_debug!("Learning retrieval: no new lessons to inject");
+		return (String::new(), Vec::new());
 	}
 	crate::log_debug!(
-		"Learning retrieval: {} lessons matched, injecting into context",
-		lessons.len()
+		"Learning retrieval: injecting {} new lesson(s)",
+		new_contents.len()
 	);
 
-	// Format for system prompt
-	let mut output = String::from("\n\n## Lessons from Past Sessions\n");
-	for lesson in &lessons {
-		output.push_str(&format!("- [{}] {}\n", lesson.confidence, lesson.content));
-	}
-	output
+	let header = if first_call {
+		"\n\n## Lessons from Past Sessions\n"
+	} else {
+		"\n\n## Additional Relevant Lessons\n"
+	};
+	(format!("{}{}", header, block), new_contents)
 }
 
 /// Call LLM to prepare retrieval patterns/query based on backend type.

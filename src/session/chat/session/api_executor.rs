@@ -97,17 +97,23 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// CRITICAL: Connect session cancellation to animation for INSTANT Ctrl+C response
 	animation_manager.set_cancel_receiver(operation_rx.clone());
 
-	// Inject learned lessons as user message on first API call (once per session, resets on /done)
-	if !chat_session.learning_injected && config.learning.enabled {
+	// Inject learned lessons. Two triggers:
+	//   - first call of the session → global tier + full hybrid scoped recall;
+	//   - a new user message (pending_recall) → embedding-only scoped recall.
+	// Already-injected lessons are skipped (no duplication), and tool follow-up
+	// rounds — which set neither flag — don't re-run recall.
+	if config.learning.enabled && (!chat_session.learning_injected || chat_session.pending_recall) {
+		let first_call = !chat_session.learning_injected;
 		chat_session.learning_injected = true;
-		crate::log_debug!("Learning injection triggered for this task");
+		chat_session.pending_recall = false;
+		crate::log_debug!("Learning injection triggered (first_call={})", first_call);
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let project = current_dir
 			.file_name()
 			.and_then(|n| n.to_str())
 			.unwrap_or("unknown")
 			.to_string();
-		// Extract user's input from the last user message for query-based retrieval
+		// Most recent user message drives query-based scoped retrieval.
 		let user_input = chat_session
 			.session
 			.messages
@@ -116,17 +122,21 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.find(|m| m.role == "user")
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
-		let learned_context = crate::learning::inject::retrieve_and_format(
+		let (block, new_contents) = crate::learning::inject::retrieve_and_format(
 			config,
 			&user_input,
 			role,
 			&project,
+			first_call,
+			&chat_session.injected_lessons,
 			operation_rx.clone(),
 		)
 		.await;
-		if !learned_context.is_empty() {
-			chat_session.add_user_message(&learned_context)?;
-			crate::log_debug!("Injected learning context as user message");
+		if !block.is_empty() {
+			chat_session.add_user_message(&block)?;
+			for c in new_contents {
+				chat_session.injected_lessons.insert(c);
+			}
 		}
 	}
 

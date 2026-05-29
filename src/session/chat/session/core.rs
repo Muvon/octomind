@@ -182,8 +182,15 @@ pub struct ChatSession {
 	/// Critical knowledge entries extracted from compressions — persisted across cycles.
 	/// Capped at `config.compression.knowledge_retention` entries (FIFO).
 	pub critical_knowledge: Vec<String>,
-	/// Whether learning lessons have been injected into the system prompt (once per session).
+	/// Whether the session-start learning injection has happened (global tier +
+	/// first hybrid scoped recall). Gates the once-per-session global injection.
 	pub learning_injected: bool,
+	/// Lesson contents already injected this session — dedup key for per-message
+	/// recall so the same lesson is never injected twice.
+	pub injected_lessons: std::collections::HashSet<String>,
+	/// Set when a new user message arrives; consumed by the API executor to run
+	/// per-message scoped lesson recall (embedding-only) for that turn.
+	pub pending_recall: bool,
 	/// Whether learning extraction already ran for this session (prevents double extraction on exit).
 	pub learning_extracted: bool,
 	/// Runtime override for reasoning effort (set via /effort). None = use config default.
@@ -303,6 +310,8 @@ impl ChatSession {
 			schema: None,                       // Schema set later via CLI override
 			critical_knowledge: Vec::new(),     // Populated from session log on resume
 			learning_injected: false,
+			injected_lessons: std::collections::HashSet::new(),
+			pending_recall: false,
 			learning_extracted: false,
 			reasoning_effort: None,
 		}
@@ -500,6 +509,8 @@ impl ChatSession {
 						schema: None,               // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						learning_injected: false,
+						injected_lessons: std::collections::HashSet::new(),
+						pending_recall: false,
 						learning_extracted: false,
 						reasoning_effort: None,
 					};
@@ -1238,6 +1249,8 @@ mod tests {
 			schema: None,
 			critical_knowledge: Vec::new(),
 			learning_injected: false,
+			injected_lessons: std::collections::HashSet::new(),
+			pending_recall: false,
 			learning_extracted: false,
 			reasoning_effort: None,
 		}

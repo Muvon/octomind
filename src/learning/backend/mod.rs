@@ -48,6 +48,11 @@ pub trait LearningBackend: Send + Sync {
 	async fn retrieve_all(&self, role: &str, project: &str, config: &Config)
 		-> Result<Vec<Lesson>>;
 
+	/// Retrieve ALL global (user-wide) lessons, sorted by importance descending.
+	/// These are injected unconditionally at session start — they apply to every
+	/// task — so there is no relevance query, just an importance ranking.
+	async fn retrieve_global(&self, config: &Config) -> Result<Vec<Lesson>>;
+
 	/// Delete a lesson by its id (file backend: filename stem; MCP backend: unsupported).
 	async fn delete(&self, id: &str, role: &str, project: &str, config: &Config) -> Result<()>;
 }

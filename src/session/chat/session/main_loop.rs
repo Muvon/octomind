@@ -1133,6 +1133,8 @@ pub async fn run_interactive_session(
 				&current_dir,
 			);
 			chat_session.add_user_message(&final_input_with_constraints)?;
+			// New user message → run per-message lesson recall on the next API call.
+			chat_session.pending_recall = true;
 
 			// Create operation context for tracking
 			*current_operation.lock().unwrap() = Some(OperationContext {
@@ -1502,6 +1504,8 @@ pub async fn run_interactive_session_with_input(
 		&current_dir,
 	);
 	chat_session.add_user_message(&input_with_constraints)?;
+	// New user message → run per-message lesson recall on the next API call.
+	chat_session.pending_recall = true;
 
 	// Prepare for API call using helper function
 	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;

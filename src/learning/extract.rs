@@ -33,17 +33,26 @@ If you cannot quote the user, you do not have a lesson — skip it.
 - Anything derivable by reading the codebase
 - Successful AI actions that received no user feedback
 
+# Scope (REQUIRED on every lesson)
+- scope="global": a durable preference about HOW THIS USER WORKS, true in EVERY
+  project and role (e.g. "always open a single PR", "never add silent fallbacks",
+  "the user runs build/test commands themselves"). Use ONLY when the rule is
+  clearly about the user's general way of working — NOT tied to this task, this
+  project, or this role.
+- scope="scoped" (default): a rule about THIS project, role, or task.
+Be conservative: most lessons are "scoped". When unsure, use "scoped".
+
 # Rules
 - Max 3 lessons. One strong lesson is better than three weak ones.
 - confidence=high: direct user correction ("no, do X instead")
 - confidence=medium: user-stated preference without direct correction
 - State each lesson as a reusable rule, not a narrative
 
-# Existing Lessons (DO NOT duplicate)
+# Existing Lessons (DO NOT duplicate; refine one only if the user changed their mind)
 {existing_lessons}
 
 # Output Format
-<lesson confidence="high|medium" tags="keyword1,keyword2" evidence="exact user quote here">
+<lesson scope="global|scoped" confidence="high|medium" tags="keyword1,keyword2" evidence="exact user quote here">
 Lesson text — what to do or avoid, stated as a rule.
 </lesson>"#;
 
@@ -72,24 +81,18 @@ async fn run_extraction(
 		project
 	);
 
-	// Retrieve existing lessons for dedup
-	let existing = backend
+	// Retrieve existing lessons (scoped + global) for dedup context and supersede.
+	let existing_scoped = backend
 		.retrieve_all(role, project, config)
 		.await
 		.unwrap_or_default();
+	let existing_global = backend.retrieve_global(config).await.unwrap_or_default();
 	crate::log_debug!(
-		"Learning extraction: {} existing lessons found for dedup",
-		existing.len()
+		"Learning extraction: {} scoped + {} global existing lessons",
+		existing_scoped.len(),
+		existing_global.len()
 	);
-	let existing_text = if existing.is_empty() {
-		"(none)".to_string()
-	} else {
-		existing
-			.iter()
-			.map(|l| format!("- [{}] {}", l.confidence, l.content))
-			.collect::<Vec<_>>()
-			.join("\n")
-	};
+	let existing_text = format_existing(&existing_scoped, &existing_global);
 
 	let transcript = build_transcript(messages);
 	if transcript.is_empty() {
@@ -114,19 +117,44 @@ async fn run_extraction(
 		return Ok(0);
 	}
 
-	// Store each, with content-based dedup against existing lessons
+	// Store each. Match within the same scope. Identical content is skipped;
+	// a refinement (high word overlap) supersedes the stale lesson — delete the
+	// old, write the new — so a correction to a previous correction wins instead
+	// of being silently dropped.
 	let mut stored = 0;
 	for lesson in &lessons {
-		if is_duplicate(&lesson.content, &existing) {
-			crate::log_debug!("Learning skipped (duplicate): {}", lesson.content);
+		let existing = if lesson.scope == "global" {
+			&existing_global
+		} else {
+			&existing_scoped
+		};
+
+		if existing
+			.iter()
+			.any(|e| e.content.trim() == lesson.content.trim())
+		{
+			crate::log_debug!("Learning skipped (identical): {}", lesson.content);
 			continue;
 		}
+
+		if let Some(old) = best_overlap(&lesson.content, existing) {
+			if let Err(e) = backend
+				.delete(&old.file_id(), &old.role, &old.project, config)
+				.await
+			{
+				crate::log_debug!("Learning supersede delete failed: {}", e);
+			} else {
+				crate::log_debug!("Learning superseded: {} → {}", old.content, lesson.content);
+			}
+		}
+
 		if let Err(e) = backend.store(lesson, config).await {
 			crate::log_debug!("Learning store failed: {}", e);
 		} else {
 			stored += 1;
 			crate::log_debug!(
-				"Learning stored: [{}] {}",
+				"Learning stored: [{}/{}] {}",
+				lesson.scope,
 				lesson.confidence,
 				lesson.content
 			);
@@ -200,6 +228,12 @@ fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) ->
 			}
 
 			let confidence = extract_attr(attrs, "confidence").unwrap_or("medium".into());
+			// Scope is "global" only when the model explicitly says so; anything
+			// else (missing, typo, "scoped") falls back to scoped.
+			let scope = match extract_attr(attrs, "scope").as_deref() {
+				Some("global") => "global".to_string(),
+				_ => "scoped".to_string(),
+			};
 			let tags_str = extract_attr(attrs, "tags").unwrap_or_default();
 			let tags: Vec<String> = tags_str
 				.split(',')
@@ -234,6 +268,7 @@ fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) ->
 				source: source.to_string(),
 				role: role.to_string(),
 				project: project.to_string(),
+				scope,
 				created: now.clone(),
 			});
 		}
@@ -244,30 +279,57 @@ fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) ->
 	lessons
 }
 
-/// Check if a new lesson is a duplicate of an existing one by word overlap.
-/// Returns true if >60% of words in the new content match any existing lesson.
-fn is_duplicate(new_content: &str, existing: &[Lesson]) -> bool {
+/// Word-overlap ratio (0..1): fraction of the new content's words that also
+/// appear in the existing content. Case-insensitive, whitespace-tokenized.
+fn word_overlap(new_content: &str, existing_content: &str) -> f64 {
 	let new_lower = new_content.to_lowercase();
-	let new_words: std::collections::HashSet<String> =
-		new_lower.split_whitespace().map(String::from).collect();
-
+	let new_words: std::collections::HashSet<&str> = new_lower.split_whitespace().collect();
 	if new_words.is_empty() {
-		return false;
+		return 0.0;
 	}
+	let existing_lower = existing_content.to_lowercase();
+	let existing_words: std::collections::HashSet<&str> =
+		existing_lower.split_whitespace().collect();
+	let overlap = new_words.intersection(&existing_words).count();
+	overlap as f64 / new_words.len() as f64
+}
 
-	for existing_lesson in existing {
-		let existing_lower = existing_lesson.content.to_lowercase();
-		let existing_words: std::collections::HashSet<String> = existing_lower
-			.split_whitespace()
-			.map(String::from)
-			.collect();
-		let overlap = new_words.intersection(&existing_words).count();
-		let similarity = overlap as f64 / new_words.len().max(1) as f64;
-		if similarity > 0.6 {
-			return true;
-		}
+/// Find the existing lesson most similar to `new_content` above the 0.6
+/// overlap threshold — the candidate to supersede. None if nothing is close.
+fn best_overlap<'a>(new_content: &str, existing: &'a [Lesson]) -> Option<&'a Lesson> {
+	existing
+		.iter()
+		.map(|l| (word_overlap(new_content, &l.content), l))
+		.filter(|(s, _)| *s > 0.6)
+		.max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+		.map(|(_, l)| l)
+}
+
+/// Format existing lessons (global + scoped) for the extraction prompt's
+/// dedup context, so the model neither duplicates nor wrongly re-scopes them.
+fn format_existing(scoped: &[Lesson], global: &[Lesson]) -> String {
+	let fmt = |ls: &[Lesson]| {
+		ls.iter()
+			.map(|l| format!("- [{}] {}", l.confidence, l.content))
+			.collect::<Vec<_>>()
+			.join("\n")
+	};
+	let mut out = String::new();
+	if !global.is_empty() {
+		out.push_str("## Global (user-wide)\n");
+		out.push_str(&fmt(global));
+		out.push('\n');
 	}
-	false
+	if !scoped.is_empty() {
+		out.push_str("## This project/role\n");
+		out.push_str(&fmt(scoped));
+		out.push('\n');
+	}
+	if out.is_empty() {
+		"(none)".to_string()
+	} else {
+		out
+	}
 }
 
 /// Extract an XML attribute value: `key="value"`.
@@ -522,27 +584,42 @@ Some lesson without confidence attr
 	}
 
 	#[test]
-	fn test_is_duplicate_high_overlap() {
+	fn test_best_overlap_finds_refinement() {
 		let existing = vec![Lesson {
 			content: "Bearer token auth is required for all API endpoints".into(),
 			..Default::default()
 		}];
-		assert!(is_duplicate(
+		// High overlap → returns the stale lesson to supersede.
+		assert!(best_overlap(
 			"Bearer token auth is required for all octofs API endpoints",
 			&existing
-		));
+		)
+		.is_some());
 	}
 
 	#[test]
-	fn test_is_duplicate_no_overlap() {
+	fn test_best_overlap_none_when_unrelated() {
 		let existing = vec![Lesson {
 			content: "Bearer token auth is required for all API endpoints".into(),
 			..Default::default()
 		}];
-		assert!(!is_duplicate(
-			"Use custom error types instead of anyhow",
-			&existing
-		));
+		assert!(best_overlap("Use custom error types instead of anyhow", &existing).is_none());
+	}
+
+	#[test]
+	fn test_parse_lesson_tags_scope() {
+		let response = r#"<decision>LEARN</decision>
+<lesson scope="global" confidence="high" tags="style" evidence="always single PR">
+Always open a single PR
+</lesson>
+<lesson confidence="medium" tags="proj" evidence="use X here">
+This project uses X
+</lesson>"#;
+		let lessons = parse_lesson_tags(response, "dev", "proj", "src");
+		assert_eq!(lessons.len(), 2);
+		assert_eq!(lessons[0].scope, "global");
+		// scope omitted → defaults to scoped.
+		assert_eq!(lessons[1].scope, "scoped");
 	}
 
 	#[test]

@@ -134,6 +134,21 @@ pub fn get_learning_dir(role: &str, project: &str) -> Result<PathBuf> {
 	Ok(learning_dir)
 }
 
+/// Get the global (user-wide) learning directory: `learning/_/`.
+/// Holds cross-project, cross-role lessons — durable user preferences that
+/// apply everywhere. The `_` sentinel cannot collide with a real project name
+/// because project dirs are basenames of working directories.
+pub fn get_global_learning_dir() -> Result<PathBuf> {
+	let data_dir = get_octomind_data_dir()?;
+	let global_dir = data_dir.join("learning").join("_");
+
+	if !global_dir.exists() {
+		fs::create_dir_all(&global_dir)?;
+	}
+
+	Ok(global_dir)
+}
+
 /// Get the default configuration file path
 pub fn get_config_file_path() -> Result<PathBuf> {
 	let config_dir = get_config_dir()?;

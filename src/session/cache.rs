@@ -403,7 +403,6 @@ impl CacheManager {
 
 		Err(anyhow::anyhow!("No user message found to cache"))
 	}
-
 }
 
 /// Cache statistics for display and monitoring

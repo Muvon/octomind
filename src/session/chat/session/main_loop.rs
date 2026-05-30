@@ -875,7 +875,14 @@ pub async fn run_interactive_session(
 			// Check if this is a command
 			if input.starts_with('/') {
 				// Handle special /done command separately
-				if input.trim() == "/done" {
+				if input.trim_start().starts_with("/done") {
+					// Extract any trailing instructions after "/done"
+					let done_instructions = input.trim()
+						.strip_prefix("/done")
+						.map(|s| s.trim())
+						.filter(|s| !s.is_empty())
+						.map(|s| s.to_owned());
+
 					// Wire cancellation to spinner so the watcher inside
 					// AnimationManager auto-clears on Ctrl+C, and race the
 					// handle_done future against operation_rx so a cancellation
@@ -929,7 +936,15 @@ pub async fn run_interactive_session(
 							// Cancelled — message already logged.
 						}
 					}
-					continue;
+
+					// If the user appended instructions, treat them as new user input
+					// so the model picks up the shifted focus immediately after compression.
+					if let Some(instructions) = done_instructions {
+						input = instructions;
+						// Fall through to normal user-input processing below.
+					} else {
+						continue;
+					}
 				}
 
 				// Try to process as command
@@ -1426,7 +1441,14 @@ pub async fn run_interactive_session_with_input(
 	// Check if this is a command (same logic as interactive session)
 	if input.starts_with('/') {
 		// Handle special /done command separately
-		if input.trim() == "/done" {
+		if input.trim_start().starts_with("/done") {
+			// Extract any trailing instructions after "/done"
+			let done_instructions = input.trim()
+				.strip_prefix("/done")
+				.map(|s| s.trim())
+				.filter(|s| !s.is_empty())
+				.map(|s| s.to_owned());
+
 			// Clear plan data
 			if let Err(e) = crate::mcp::core::plan::clear_plan_data().await {
 				log_debug!("Failed to clear plan data: {}", e);
@@ -1436,8 +1458,16 @@ pub async fn run_interactive_session_with_input(
 				"{}",
 				"✓ Session optimized and ready for next message".bright_green()
 			);
-			if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
-			return Ok(());
+
+			// If trailing instructions were provided, treat them as user input
+			// so the model picks up the shifted focus immediately after compression.
+			if let Some(instructions) = done_instructions {
+				input = instructions;
+				// Fall through to normal user-input processing below.
+			} else {
+				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
+				return Ok(());
+			}
 		}
 
 		// Try to process as command

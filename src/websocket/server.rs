@@ -752,32 +752,39 @@ async fn handle_command_message(
 	// because the CLI intercepts it before routing. We handle it here directly.
 	if command_name == "done" {
 		use crate::session::chat::session::commands::{handle_done, DoneOutcome};
-		match handle_done(&mut chat_session, &config_for_role, operation_rx).await {
-			Ok(DoneOutcome::Compressed) => {
-				let status = ServerMessage::status(
-					"Conversation compressed".to_string(),
-					Some(session_id.clone()),
-				);
-				send_message(ws_sender, &status).await?;
-			}
-			Ok(DoneOutcome::NothingToCompress) => {
-				let status = ServerMessage::status(
-					"Nothing to compress".to_string(),
-					Some(session_id.clone()),
-				);
-				send_message(ws_sender, &status).await?;
-			}
+		let status_msg = match handle_done(&mut chat_session, &config_for_role, operation_rx).await {
+			Ok(DoneOutcome::Compressed) => "Conversation compressed".to_string(),
+			Ok(DoneOutcome::NothingToCompress) => "Nothing to compress".to_string(),
 			Ok(DoneOutcome::Failed(e)) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
 				send_message(ws_sender, &error).await?;
+				chat_session.save()?;
+				sessions.lock().await.insert(session_id, chat_session);
+				return Ok(());
 			}
 			Err(e) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
 				send_message(ws_sender, &error).await?;
+				chat_session.save()?;
+				sessions.lock().await.insert(session_id, chat_session);
+				return Ok(());
 			}
-		}
+		};
+		// Send compression status.
+		let status = ServerMessage::status(status_msg, Some(session_id.clone()));
+		send_message(ws_sender, &status).await?;
 		chat_session.save()?;
-		sessions.lock().await.insert(session_id, chat_session);
+		sessions.lock().await.insert(session_id.clone(), chat_session);
+
+		// If args were provided, process them as a user message immediately after compression.
+		if !args.is_empty() {
+			let instructions = args.join(" ");
+			let user_msg = crate::websocket::protocol::UserMessage {
+				session_id: session_id.clone(),
+				content: instructions,
+			};
+			return handle_user_message(user_msg, ws_sender, config, role, sessions).await;
+		}
 		return Ok(());
 	}
 

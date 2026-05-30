@@ -656,7 +656,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 				_ => {} // Skip audio, resource links, etc.
 			}
 		}
-		let input: String = text_parts.join("\n");
+		let mut input: String = text_parts.join("\n");
 
 		if input.trim().is_empty() && images.is_empty() && videos.is_empty() {
 			return Ok(PromptResponse::new(StopReason::EndTurn));
@@ -674,6 +674,99 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			// surfaces as a disconnect).
 			let lock = self.session_lock(&session_id);
 			let _guard = lock.lock().await;
+
+			// /done <instructions>: compress then process instructions as a user message.
+			// Must be intercepted before the slash-command block because we need to
+			// fall through to the user-message pipeline after compression.
+			let done_instructions: Option<String> = if input.trim().starts_with(crate::session::chat::DONE_COMMAND) {
+				input.trim()
+					.strip_prefix(crate::session::chat::DONE_COMMAND)
+					.map(|s| s.trim())
+					.filter(|s| !s.is_empty())
+					.map(|s| s.to_owned())
+			} else {
+				None
+			};
+			if input.trim() == crate::session::chat::DONE_COMMAND || done_instructions.is_some() {
+				let (mut chat_session, session_cwd) =
+					match self.sessions.borrow_mut().remove(&session_id) {
+						Some(s) => s,
+						None => {
+							return Err(agent_client_protocol::Error::invalid_params()
+								.data(format!("session not found: {session_id}")));
+						}
+					};
+				crate::mcp::set_session_working_directory(session_cwd.clone());
+				let operation_rx = self
+					.cancellations
+					.borrow_mut()
+					.entry(session_id.clone())
+					.or_default()
+					.new_operation();
+				let config_for_role = self.config.borrow().get_merged_config_for_role(&self.role);
+				let status_text = match crate::session::chat::session::commands::handle_done(
+					&mut chat_session,
+					&config_for_role,
+					operation_rx,
+				)
+				.await
+				{
+					Ok(crate::session::chat::session::commands::DoneOutcome::Compressed) => {
+						"✅ Conversation compressed.".to_string()
+					}
+					Ok(crate::session::chat::session::commands::DoneOutcome::NothingToCompress) => {
+						"ℹ️ Nothing to compress.".to_string()
+					}
+					Ok(crate::session::chat::session::commands::DoneOutcome::Failed(e)) => {
+						format!("❌ Compression failed: {e}")
+					}
+					Err(e) => format!("❌ Compression failed: {e}"),
+				};
+				if let Some(instructions) = done_instructions {
+					// Send compression status then fall through to user-message processing.
+					let conn = self.conn.borrow().clone();
+					if let Some(conn) = conn {
+						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
+						let notif = SessionNotification::new(
+							std::sync::Arc::<str>::from(session_id.as_str()),
+							update,
+						);
+						if let Err(e) = conn.session_notification(notif).await {
+							crate::log_error!("ACP: failed to send /done status: {}", e);
+						}
+					}
+					// Put session back so the user-message code path can remove it again.
+					if let Err(e) = chat_session.save() {
+						crate::log_debug!("session save failed: {}", e);
+					}
+					self.sessions
+						.borrow_mut()
+						.insert(session_id.clone(), (chat_session, session_cwd));
+					// Rewrite input to the trailing instructions so the user-message
+					// block below processes them as the new prompt.
+					input = instructions;
+				} else {
+					// Plain /done: compress, send status, return.
+					if let Err(e) = chat_session.save() {
+						crate::log_debug!("session save failed: {}", e);
+					}
+					self.sessions
+						.borrow_mut()
+						.insert(session_id.clone(), (chat_session, session_cwd));
+					let conn = self.conn.borrow().clone();
+					if let Some(conn) = conn {
+						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
+						let notif = SessionNotification::new(
+							std::sync::Arc::<str>::from(session_id.as_str()),
+							update,
+						);
+						if let Err(e) = conn.session_notification(notif).await {
+							crate::log_error!("ACP: failed to send /done status: {}", e);
+						}
+					}
+					return Ok(PromptResponse::new(StopReason::EndTurn));
+				}
+			}
 
 			// Slash commands are sent as regular prompts per the ACP spec.
 			// Intercept them here before the AI pipeline, execute via process_command,
@@ -699,53 +792,15 @@ impl agent_client_protocol::Agent for OctomindAgent {
 
 				let mut config = self.config.borrow().clone();
 
-				// /done hits `unreachable!()` in process_command (it expects the CLI
-				// main loop to intercept first). In ACP/WebSocket modes nothing
-				// intercepts, so without this branch the panic aborts the agent
-				// process (panic = "abort" in release → SIGABRT). Handle it here
-				// directly, mirroring the websocket server pattern.
-				// Override text for /done so the client sees the actual compression
-				// outcome instead of the generic "Command executed.". Captured here
-				// and threaded through to the AgentMessageChunk send below.
-				let mut done_status_override: Option<String> = None;
-				let result = if input.trim() == crate::session::chat::DONE_COMMAND {
-					let config_for_role = config.get_merged_config_for_role(&self.role);
-					match crate::session::chat::session::commands::handle_done(
-						&mut chat_session,
-						&config_for_role,
-						operation_rx,
-					)
-					.await
-					{
-						Ok(outcome) => {
-							if let Err(e) = chat_session.save() {
-								crate::log_debug!("session save failed: {}", e);
-							}
-							done_status_override = Some(match outcome {
-								crate::session::chat::session::commands::DoneOutcome::Compressed => {
-									"✅ Conversation compressed.".to_string()
-								}
-								crate::session::chat::session::commands::DoneOutcome::NothingToCompress => {
-									"ℹ️ Nothing to compress.".to_string()
-								}
-								crate::session::chat::session::commands::DoneOutcome::Failed(e) => {
-									format!("❌ Compression failed: {e}")
-								}
-							});
-							Ok(crate::session::chat::session::commands::CommandResult::Handled)
-						}
-						Err(e) => Err(e),
-					}
-				} else {
-					crate::session::chat::session::commands::process_command(
-						&mut chat_session,
-						input.trim(),
-						&mut config,
-						&self.role,
-						operation_rx,
-					)
-					.await
-				};
+				// /done is now intercepted above; this branch handles all other slash commands.
+				let result = crate::session::chat::session::commands::process_command(
+					&mut chat_session,
+					input.trim(),
+					&mut config,
+					&self.role,
+					operation_rx,
+				)
+				.await;
 				// Write back any config mutations (e.g. model/role changes)
 				*self.config.borrow_mut() = config;
 
@@ -761,9 +816,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					) => serde_json::to_string_pretty(&output.to_json())
 						.unwrap_or_else(|_| "Command executed.".to_string()),
 					Ok(crate::session::chat::session::commands::CommandResult::Handled) => {
-						done_status_override
-							.take()
-							.unwrap_or_else(|| "Command executed.".to_string())
+						"Command executed.".to_string()
 					}
 					Ok(crate::session::chat::session::commands::CommandResult::Exit) => {
 						"Session exit requested.".to_string()

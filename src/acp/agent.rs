@@ -678,15 +678,17 @@ impl agent_client_protocol::Agent for OctomindAgent {
 			// /done <instructions>: compress then process instructions as a user message.
 			// Must be intercepted before the slash-command block because we need to
 			// fall through to the user-message pipeline after compression.
-			let done_instructions: Option<String> = if input.trim().starts_with(crate::session::chat::DONE_COMMAND) {
-				input.trim()
-					.strip_prefix(crate::session::chat::DONE_COMMAND)
-					.map(|s| s.trim())
-					.filter(|s| !s.is_empty())
-					.map(|s| s.to_owned())
-			} else {
-				None
-			};
+			let done_instructions: Option<String> =
+				if input.trim().starts_with(crate::session::chat::DONE_COMMAND) {
+					input
+						.trim()
+						.strip_prefix(crate::session::chat::DONE_COMMAND)
+						.map(|s| s.trim())
+						.filter(|s| !s.is_empty())
+						.map(|s| s.to_owned())
+				} else {
+					None
+				};
 			if input.trim() == crate::session::chat::DONE_COMMAND || done_instructions.is_some() {
 				let (mut chat_session, session_cwd) =
 					match self.sessions.borrow_mut().remove(&session_id) {
@@ -726,7 +728,8 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					// Send compression status then fall through to user-message processing.
 					let conn = self.conn.borrow().clone();
 					if let Some(conn) = conn {
-						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
+						let update =
+							SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
 						let notif = SessionNotification::new(
 							std::sync::Arc::<str>::from(session_id.as_str()),
 							update,
@@ -755,7 +758,8 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						.insert(session_id.clone(), (chat_session, session_cwd));
 					let conn = self.conn.borrow().clone();
 					if let Some(conn) = conn {
-						let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
+						let update =
+							SessionUpdate::AgentMessageChunk(ContentChunk::new(status_text.into()));
 						let notif = SessionNotification::new(
 							std::sync::Arc::<str>::from(session_id.as_str()),
 							update,

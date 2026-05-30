@@ -591,6 +591,17 @@ pub async fn run_interactive_session(
 			)
 			.await;
 
+			// Suspend animation before going idle at the prompt. This is the one
+			// unconditional teardown point: it covers every `continue` path that
+			// skips the turn-boundary stop_current (cancel-mid-API, follow-up retry)
+			// AND sets the suspended flag so a racing/background start_animation
+			// (e.g. a dropped API future's tool_result restart) can't repaint the
+			// spinner over reedline. Resumed once input is in hand, before the
+			// turn's animation legitimately starts.
+			crate::session::chat::get_animation_manager()
+				.suspend()
+				.await;
+
 			let input_result = if let Some(inbox_msg) = pending_msg {
 				// An inbox message is ready — inject it without waiting for user input.
 				log_debug!("Processing inbox message from {:?}", inbox_msg.source);
@@ -675,6 +686,9 @@ pub async fn run_interactive_session(
 
 				result
 			};
+
+			// Input is in hand — allow the turn's animation to start again.
+			crate::session::chat::get_animation_manager().resume();
 
 			// Handle the input result with proper error recovery
 			let mut input = match input_result {
@@ -877,7 +891,8 @@ pub async fn run_interactive_session(
 				// Handle special /done command separately
 				if input.trim_start().starts_with("/done") {
 					// Extract any trailing instructions after "/done"
-					let done_instructions = input.trim()
+					let done_instructions = input
+						.trim()
 						.strip_prefix("/done")
 						.map(|s| s.trim())
 						.filter(|s| !s.is_empty())

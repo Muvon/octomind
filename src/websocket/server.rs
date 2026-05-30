@@ -752,7 +752,8 @@ async fn handle_command_message(
 	// because the CLI intercepts it before routing. We handle it here directly.
 	if command_name == "done" {
 		use crate::session::chat::session::commands::{handle_done, DoneOutcome};
-		let status_msg = match handle_done(&mut chat_session, &config_for_role, operation_rx).await {
+		let status_msg = match handle_done(&mut chat_session, &config_for_role, operation_rx).await
+		{
 			Ok(DoneOutcome::Compressed) => "Conversation compressed".to_string(),
 			Ok(DoneOutcome::NothingToCompress) => "Nothing to compress".to_string(),
 			Ok(DoneOutcome::Failed(e)) => {
@@ -774,7 +775,10 @@ async fn handle_command_message(
 		let status = ServerMessage::status(status_msg, Some(session_id.clone()));
 		send_message(ws_sender, &status).await?;
 		chat_session.save()?;
-		sessions.lock().await.insert(session_id.clone(), chat_session);
+		sessions
+			.lock()
+			.await
+			.insert(session_id.clone(), chat_session);
 
 		// If args were provided, process them as a user message immediately after compression.
 		if !args.is_empty() {

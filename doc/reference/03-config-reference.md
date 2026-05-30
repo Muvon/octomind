@@ -314,7 +314,7 @@ Model used for compression decisions and summary generation.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `model` | string | `"anthropic:claude-haiku-4-5"` | Fast, cheap model recommended |
+| `model` | string | `"openai:gpt-5-mini"` | Fast, cheap model recommended |
 | `max_tokens` | u32 | `16000` | Max tokens for decision + summary |
 | `temperature` | f64 | `0.3` | Lower = more consistent decisions |
 | `top_p` | f64 | `1.0` | Nucleus sampling |
@@ -343,7 +343,7 @@ threshold = 160000
 target_ratio = 8.0
 
 [compression.decision]
-model = "anthropic:claude-haiku-4-5"
+model = "openai:gpt-5-mini"
 max_tokens = 16000
 temperature = 0.3
 top_p = 1.0

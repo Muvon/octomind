@@ -109,12 +109,7 @@ pub async fn fetch_manifest(tag: &str, registry: &RegistryConfig) -> Result<(Str
 	let (category, variant, _version) = parse_tag(tag)?;
 	let cache = cache_path(&category, &variant)?;
 
-	let taps = crate::agent::taps::load_taps().unwrap_or_else(|_| {
-		vec![crate::agent::taps::Tap {
-			name: crate::agent::taps::DEFAULT_TAP.to_string(),
-			local_path: None,
-		}]
-	});
+	let taps = crate::agent::taps::load_taps().context("Failed to load taps")?;
 
 	// Find the first tap that provides this manifest — this is always the tap root
 	// used for dep scripts, regardless of whether we serve TOML from cache.

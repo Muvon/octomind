@@ -378,23 +378,26 @@ pub fn remove_tap(name: &str) -> Result<()> {
 	Ok(())
 }
 
-/// Clone a Git repository.
-/// Clone a Git repository. Output is suppressed; only shown in debug mode.
+/// Clone a Git repository. Stderr is captured and included in the error on failure.
 fn git_clone(url: &str, dir: &std::path::Path) -> Result<()> {
 	let output = std::process::Command::new("git")
 		.args(["clone", "--depth", "1", url, &dir.to_string_lossy()])
 		.stdout(Stdio::null())
-		.stderr(Stdio::null())
+		.stderr(Stdio::piped())
 		.output()
 		.context("Failed to run git clone")?;
 
 	if !output.status.success() {
-		crate::log_debug!(
-			"git clone failed for {}: {}",
+		let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+		anyhow::bail!(
+			"Failed to clone tap from {}: {}",
 			url,
-			String::from_utf8_lossy(&output.stderr).trim()
+			if stderr.is_empty() {
+				"unknown git error".to_string()
+			} else {
+				stderr
+			}
 		);
-		anyhow::bail!("Failed to clone tap from {}", url);
 	}
 	Ok(())
 }

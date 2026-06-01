@@ -1464,15 +1464,33 @@ pub async fn run_interactive_session_with_input(
 				.filter(|s| !s.is_empty())
 				.map(|s| s.to_owned());
 
-			// Clear plan data
-			if let Err(e) = crate::mcp::core::plan::clear_plan_data().await {
-				log_debug!("Failed to clear plan data: {}", e);
+			// Force-compress the conversation and fire lesson extraction —
+			// same lifecycle as the interactive and ACP paths.
+			match super::commands::handle_done(
+				&mut chat_session,
+				&current_config,
+				operation_rx.clone(),
+			)
+			.await
+			{
+				Ok(outcome) => {
+					use crate::session::chat::session::commands::DoneOutcome;
+					match outcome {
+						DoneOutcome::Compressed => {
+							println!("{}", "✅ Conversation compressed.".bright_green());
+						}
+						DoneOutcome::NothingToCompress => {
+							println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
+						}
+						DoneOutcome::Failed(e) => {
+							println!("{}: {}", "❌ Compression failed".bright_red(), e);
+						}
+					}
+				}
+				Err(e) => {
+					println!("{}: {}", "❌ /done command failed".bright_red(), e);
+				}
 			}
-
-			println!(
-				"{}",
-				"✓ Session optimized and ready for next message".bright_green()
-			);
 
 			// If trailing instructions were provided, treat them as user input
 			// so the model picks up the shifted focus immediately after compression.

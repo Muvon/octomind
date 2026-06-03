@@ -1,20 +1,55 @@
 # Session Commands Reference
 
-All commands available within an interactive Octomind session. Type the command at the prompt.
+All interactive session commands. Type the command at the prompt. There are 25 distinct commands; the autocomplete list also includes the aliases `/quit` (= `/exit`) and `/?` (a non-functional help alias — see [`/help`](#help)). To discover commands at runtime, type `/help`, which lists the built-ins plus any custom `/run` commands defined in your config.
+
+## Command Summary
+
+| Command | Purpose |
+|---------|---------|
+| `/help` | List all commands (built-ins plus custom `/run` commands) |
+| `/exit` (`/quit`) | Exit the session |
+| `/clear` | Clear the terminal screen |
+| `/list [PAGE]` | List saved sessions |
+| `/session [NAME]` | Create a new session, or switch to/create one by name |
+| `/info` | Show session statistics (tokens, cost, cache, compression) |
+| `/report` | Detailed per-request usage report |
+| `/share` | Upload the session log and print a permanent share URL |
+| `/analyze` | Open the session in the web viewer locally, without uploading |
+| `/copy` | Copy the last assistant response to the clipboard |
+| `/model [MODEL]` | Show or switch the model (runtime + session file) |
+| `/role [ROLE]` | Show or switch the role |
+| `/effort [LEVEL]` | Show or set reasoning effort (runtime + session file) |
+| `/loglevel [LEVEL]` | Set the log level (runtime only) |
+| `/context [FILTER]` | Inspect the conversation context |
+| `/done` | Force-compress context and extract lessons |
+| `/image [PATH]` | Attach an image (from path or clipboard) |
+| `/video [PATH]` | Attach a video |
+| `/mcp [ACTION]` | Inspect MCP servers and tools |
+| `/run [COMMAND]` | Run a custom command from `[[commands]]` config |
+| `/prompt [NAME]` | Inject a prompt template from `[[prompts]]` config |
+| `/plan [show]` | Show the current structured plan |
+| `/skill [NAME\|PAGE\|PATTERN]` | List or toggle skills |
+| `/schedule [SUBCOMMAND]` | Schedule a future/recurring injected message |
+| `/learning [ACTION]` | Manage cross-session lessons |
 
 ## Session Management
 
 ### `/help`
-Show all available commands with descriptions.
+Show all available commands with descriptions, including any custom `/run` commands from your config.
+
+> **Note:** `/?` appears in autocomplete but is **not wired into the command dispatcher** — typing it sends `?` to the model as user input. Only `/help` shows help.
 
 ### `/exit` / `/quit`
-Exit the current session.
+Exit the current session. `/quit` is an alias of `/exit`.
 
 ### `/list [PAGE]`
 List all saved sessions. Optional page number for pagination.
 
 ### `/session [NAME]`
-Switch to a different session by name. Without argument, shows current session info.
+- `/session` (no argument) creates a **new** session named `session_<unix_timestamp>`.
+- `/session <name...>` switches to a session with the given name, creating it if it does not exist. The name may contain spaces (all arguments are joined).
+
+This command does **not** display current session info — use [`/info`](#info) for that.
 
 ### `/clear`
 Clear the terminal screen.
@@ -72,7 +107,7 @@ port   127.0.0.1:<port> (loopback only)
 Use `/analyze` for ephemeral, private review of an in-flight session; use `/share` when you want a permanent link to send to someone else.
 
 ### `/model [MODEL]`
-Show or change the current model. Without argument, displays current model. With argument, switches to specified model in `provider:model` format.
+Show or change the current model. Without argument, displays the current model. With argument, switches to the specified model in `provider:model` format. The change is **runtime + saved to the session file** — it does not modify your global config.
 
 ```
 /model openai:gpt-4o
@@ -80,14 +115,23 @@ Show or change the current model. Without argument, displays current model. With
 ```
 
 ### `/role [ROLE]`
-Show or change the current role. Without argument, displays current role.
+Show or change the current role. Without argument, displays the current role.
+
+The argument is either:
+- a **plain role name** defined in your config's `[[roles]]` (validated up front; an unknown name is rejected with `Invalid role`), or
+- a **tap agent tag** in `domain:spec` form (e.g. `developer:general`), which resolves the manifest, INPUT/ENV placeholders, and dependency scripts.
+
+On success the session is saved; on failure the previous role/model/temperature are reverted.
 
 ```
 /role assistant
-/role developer
+/role developer:general
 ```
+
+> The default config ships the roles `assistant`, `task_refiner`, `task_researcher`, and `reduce`. There is no built-in `developer` role — `developer:general` above is a tap agent tag.
+
 ### `/effort [LEVEL]`
-Show or change the reasoning effort level. Without argument, displays current level. With argument, sets the effort to one of: `low`, `medium`, `high`, `xhigh`, `max`.
+Show or change the reasoning effort level. Without argument, displays the current level. With argument, sets the effort to one of: `low`, `medium`, `high`, `xhigh`, `max`. The change is **saved to the session file** (not global config) and is ignored by non-thinking models.
 
 ```
 /effort high
@@ -95,7 +139,7 @@ Show or change the reasoning effort level. Without argument, displays current le
 ```
 
 ### `/loglevel [LEVEL]`
-Change the log level. Options: `none`, `info`, `debug`.
+Change the log level. Options: `none`, `info`, `debug`. This is **runtime-only** — it is never written to disk.
 
 ```
 /loglevel debug
@@ -109,7 +153,10 @@ View session context (message history). Filters:
 - `assistant` -- Only assistant messages
 - `user` -- Only user messages
 - `tool` -- Only tool calls and results
-- `large` -- Only messages exceeding a token threshold
+- `system` -- Only system messages
+- `large` -- Only messages whose content exceeds 1000 bytes
+
+An unrecognized filter value silently falls back to `all`.
 
 ```
 /context
@@ -117,24 +164,28 @@ View session context (message history). Filters:
 /context large
 ```
 
+## Lifecycle
+
 ### `/done`
-Mark the current task as complete. Triggers:
-- Plan completion (if a plan is active)
-- Force context compression (preserves only env-loaded skills, drops manually activated ones)
-- Lesson extraction and storage (when `[learning]` is enabled — see [Learning Guide](../usage/13-learning.md))
+Force-compress the conversation context **bypassing all automatic threshold, cooldown, and cost guards**, then (when `[learning].enabled`) spawn fire-and-forget lesson extraction. Use it to manually reclaim context after finishing a unit of work.
+
+- The forced compression preserves only env-loaded skills, dropping manually activated ones.
+- Lesson extraction runs in the background and stores lessons for the current role + project — see [Learning Guide](../usage/13-learning.md).
+- It does **not** touch any active plan, write to memory, or auto-commit.
 
 ## Media
 
-### `/image <PATH>`
-Attach an image for AI analysis. Supports PNG, JPEG, GIF, WebP.
+### `/image [PATH]`
+Attach an image for AI analysis. With a path, attaches the image file at that path; without a path, attaches an image from the clipboard (no-op if the clipboard holds no image). Requires a vision-capable model.
 
 ```
 /image screenshot.png
 /image /path/to/diagram.jpg
+/image            # attach from clipboard
 ```
 
-### `/video <PATH>`
-Attach a video for AI analysis.
+### `/video [PATH]`
+Attach a video for AI analysis. A path is required — invoking `/video` with no argument is a no-op.
 
 ```
 /video demo.mp4
@@ -145,24 +196,28 @@ Copy the last assistant response to the clipboard.
 
 ## MCP & Tools
 
-### `/mcp [ACTION] [ARGS]`
-Manage MCP servers at runtime.
+### `/mcp [ACTION]`
+Inspect MCP servers and their tools. The session `/mcp` command is **read-only**; it has exactly these six subcommands:
 
 | Action | Description |
 |--------|-------------|
-| `/mcp` or `/mcp list` | List all MCP servers with status |
-| `/mcp info` | Detailed server information |
-| `/mcp health` | Force health check on all servers |
-| `/mcp validate` | Validate MCP configuration |
-| `/mcp add <name> <url>` | Add HTTP server dynamically |
-| `/mcp enable <name>` | Enable a registered server |
-| `/mcp disable <name>` | Disable a server |
-| `/mcp remove <name>` | Remove a server |
+| `/mcp` or `/mcp info` | Default: server status plus tools with short descriptions |
+| `/mcp list` | Tool names grouped by server |
+| `/mcp full` | Full tool details, including parameters |
+| `/mcp health` | Force a health check on all servers |
+| `/mcp dump` | Dump all tools with name, description, and parameter schemas |
+| `/mcp validate` | Validate tool parameter schemas |
+
+Any other subcommand returns `Invalid MCP subcommand`.
+
+> Runtime server management — adding, enabling, disabling, or removing servers — is done by the `mcp` **MCP tool** (which the model can call), not by this slash command.
 
 ## Commands
 
 ### `/run [COMMAND]`
-Execute a custom command defined in `[[commands]]` config section. Without argument, lists available commands.
+Execute a custom command defined in the `[[commands]]` config section. Without argument, lists available commands.
+
+Before executing, `/run` checks both the **session** and **request** spending thresholds; if either is breached (or the check itself errors), execution is declined.
 
 ```
 /run reduce
@@ -171,7 +226,7 @@ Execute a custom command defined in `[[commands]]` config section. Without argum
 
 > **Multi-step workflows** are no longer a session command. Use the external CLI instead: `octomind workflow <file.toml>` — see [Workflows](../usage/09-workflows.md).
 ### `/prompt [NAME]`
-Inject a prompt template defined in `[[prompts]]` config section. Without argument, lists available prompts.
+Inject a prompt template defined in the `[[prompts]]` config section into the session inbox; it is delivered **verbatim** as a user message on the next loop iteration. Without argument, lists available prompts. There is currently no template variable substitution.
 
 ```
 /prompt review
@@ -188,7 +243,7 @@ Manage the structured task plan.
 
 **Note**: The `/plan` slash command only displays the current plan. To create, modify, or clear a plan, use the `plan` MCP tool directly with these commands:
 
-- `plan(command="start", title="...", tasks=[...])` — Create a new plan
+- `plan(command="start", content="<plan goal/title>", tasks=[{title, description}, ...])` — Create a new plan. The plan title comes from `content` (defaults to `Active Plan` if omitted); each task object requires non-empty `title` and `description`.
 - `plan(command="next", content="...")` — Mark current task complete, advance to next
 - `plan(command="step", content="...")` — Add progress note to current task
 - `plan(command="reset")` — **Clear/reset the current plan**
@@ -198,8 +253,8 @@ Manage skills from taps. Skills are reusable instruction packs that inject domai
 
 | Usage | Description |
 |-------|-------------|
-| `/skill` | List all skills (active first, then alphabetical) |
-| `/skill <name>` | Toggle a skill on/off |
+| `/skill` | List all skills (active first, then alphabetical), 15 per page |
+| `/skill <name>` | Toggle the skill: enable it if inactive (`use`), disable it if active (`forget`). Unknown names return `Skill not found`. |
 | `/skill <page>` | Show page N of the skill list |
 | `/skill *pattern*` | Filter skills by glob pattern |
 
@@ -209,7 +264,7 @@ Direct control over the built-in `schedule` MCP tool — schedule a message to b
 | Usage | Description |
 |-------|-------------|
 | `/schedule` or `/schedule list` | List all pending entries with IDs, trigger times, and countdown |
-| `/schedule remove <id>` | Cancel a scheduled entry |
+| `/schedule remove <id>` | Cancel a scheduled entry (aliases: `rm`, `delete`, `del`) |
 | `/schedule add message="<text>"` | Schedule a one-shot for the next idle (default `when="idle"`) |
 | `/schedule add when="<when>" message="<text>" [every="<interval>"] [description="<label>"]` | Schedule a new entry |
 | `/schedule edit <id> [when="..."] [message="..."] [every="..."] [description="..."]` | Update an existing entry (use `every="none"` to clear a repeat) |
@@ -231,10 +286,22 @@ Examples:
 
 ### `/learning [ACTION]`
 
-Manage the cross-session learning system. See [Learning Guide](../usage/13-learning.md) for full details.
+Browse and manage the lessons stored for the current role + project by the cross-session learning system. See [Learning Guide](../usage/13-learning.md) for full details.
 
 | Usage | Description |
 |-------|-------------|
-| `/learning` or `/learning status` | Show learning system status and statistics |
-| `/learning extract` | Force lesson extraction from current session |
-| `/learning inject` | Force inject relevant lessons into current session |
+| `/learning` or `/learning list` | List lessons for the current role + project, 15 per page |
+| `/learning list <page>` | Show page N of the lesson list |
+| `/learning list *pattern*` | Glob-filter lessons by content, title, or tags (combinable with a page number) |
+| `/learning delete <index>` | Delete the lesson at the 1-based `<index>` from the last list (aliases: `rm`, `remove`) |
+| `/learning clear` | Delete **all** lessons for the current role + project |
+
+Any other subcommand returns `unknown subcommand — use: list, delete, clear`.
+
+```
+/learning
+/learning list 2
+/learning list *commit*
+/learning delete 3
+/learning clear
+```

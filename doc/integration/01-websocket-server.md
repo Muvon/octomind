@@ -12,6 +12,8 @@ octomind server --host 127.0.0.1 --port 8080
 websocat ws://127.0.0.1:8080
 ```
 
+On connect, the server sends a single `status` frame (`"Connected to Octomind WebSocket server..."`). Nothing else happens until you send a `session` message — that must be the **first frame** you send. Only after a session is established will `message` and `command` frames work.
+
 ## Starting the Server
 
 ```bash
@@ -20,10 +22,10 @@ octomind server [TAG] [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `TAG` | config default | Agent tag or role name |
+| `TAG` | config default | Agent tag (e.g. `developer:general`) or role name (e.g. `developer`) |
 | `--host` | `127.0.0.1` | Bind address |
-| `--port` | `8080` | Port |
-| `--sandbox` | `false` | Restrict filesystem writes |
+| `--port`, `-p` | `8080` | Port |
+| `--sandbox` | `false` | Restrict all filesystem writes to the current working directory |
 
 ## Protocol
 
@@ -50,6 +52,10 @@ Communication uses JSON messages over WebSocket.
 }
 ```
 
+`command` is the slash-command name **without** the leading `/` (see [Session Commands](../reference/02-session-commands.md) for the full list). `args` is optional. The command channel only accepts recognized commands: an unknown command returns `{"type":"error","message":"Unknown command: '...'..."}` — it is **not** treated as free-text AI input. Use a `message` frame for that.
+
+The `done` command (`/done`) is special: it compresses the conversation and replies with a `status` frame (`"Conversation compressed"` or `"Nothing to compress"`). If you supply `args`, they are joined and immediately processed as a follow-up user message after compression.
+
 **Session creation** (auto-named):
 ```json
 {
@@ -65,9 +71,35 @@ Communication uses JSON messages over WebSocket.
 }
 ```
 
-`session_id` is optional — omit it to create an auto-named session, or provide a name to create or resume.
+`session_id` is optional. Omit it to create an auto-named session. If you provide a name, the server resumes the on-disk session at `~/.local/share/octomind/sessions/<session_id>.jsonl.zst` if it exists, otherwise it creates a new session with that name. The `status` reply distinguishes the two: `"Session created: <id>"` vs `"Session resumed: <id>"` (a `session` message never makes an AI call).
+
+`message` and `command` frames require an established session. Sending one for a `session_id` that is neither in memory nor on disk returns:
+
+```json
+{
+  "type": "error",
+  "message": "Session not found: my-session. Send a \"session\" message first to create or resume a session."
+}
+```
+
+The server never auto-creates a session from a `message`/`command` frame.
+
+#### Concurrency
+
+Each session is processed **serially**. While a session is busy handling a `message` or `command`, any concurrent `message`/`command` for that same session is rejected (not queued) with:
+
+```json
+{
+  "type": "error",
+  "message": "Session 'my-session' is busy processing another request. Please wait."
+}
+```
+
+Wait for the prior request to finish — i.e. for its terminating `cost` frame (see below) — before sending the next one. Different `session_id`s run independently.
 
 ### Server to Client
+
+Responses to a single `message` arrive as a **stream** of frames: zero or more `thinking`, `tool_use`, `tool_result`, and `assistant` frames, terminated by a final `cost` frame that marks the end of the turn.
 
 **Assistant response:**
 ```json
@@ -93,7 +125,7 @@ Communication uses JSON messages over WebSocket.
   "type": "tool_use",
   "tool": "view",
   "tool_id": "call_123",
-  "server": "core",
+  "server": "filesystem",
   "params": {"path": "src/auth.rs"},
   "session_id": "my-session"
 }
@@ -105,7 +137,7 @@ Communication uses JSON messages over WebSocket.
   "type": "tool_result",
   "tool": "view",
   "tool_id": "call_123",
-  "server": "core",
+  "server": "filesystem",
   "content": "file contents...",
   "success": true,
   "session_id": "my-session"
@@ -131,10 +163,13 @@ Communication uses JSON messages over WebSocket.
 ```json
 {
   "type": "status",
-  "message": "Processing...",
-  "session_id": "my-session"
+  "message": "Command 'mcp' executed successfully",
+  "session_id": "my-session",
+  "data": { "...": "structured command output" }
 }
 ```
+
+Both `session_id` and `data` are optional. The connection-time welcome status omits `session_id`. The `data` field is present only for commands that return structured output (e.g. `mcp list`, `info`) — it carries that command's JSON result.
 
 **Error:**
 ```json
@@ -165,7 +200,7 @@ Communication uses JSON messages over WebSocket.
 }
 ```
 
-**Injected message:**
+**Injected message** -- a message added to the session by something other than the user, emitted just before the AI processes it:
 ```json
 {
   "type": "injected",
@@ -175,6 +210,10 @@ Communication uses JSON messages over WebSocket.
   "session_id": "my-session"
 }
 ```
+
+`source_kind` is one of: `schedule`, `background_agent`, `tap_run`, `skill`, `skill_validator`, `inject`, `webhook`, `guardrail_hook`, `guardrail_validator`.
+
+After a session is established, the server runs a background monitor that watches the session inbox (schedules, background agents, webhooks). These can fire **asynchronously without any user prompt**, producing `injected` frames followed by the normal `thinking`/`tool_use`/`tool_result`/`assistant`/`cost` stream. Clients should handle server frames arriving at any time, not only in direct response to a `message`.
 
 ## Client Examples
 
@@ -211,7 +250,7 @@ ws.onmessage = (event) => {
       console.log(`Cost: $${msg.session_cost}`);
       break;
     case 'error':
-      console.error('Error:', msg.content);
+      console.error('Error:', msg.message);
       break;
   }
 };
@@ -245,7 +284,7 @@ async def main():
             if msg['type'] == 'assistant':
                 print(f"AI: {msg['content']}")
             elif msg['type'] == 'error':
-                print(f"Error: {msg['content']}")
+                print(f"Error: {msg['message']}")
 
 asyncio.run(main())
 ```
@@ -253,9 +292,19 @@ asyncio.run(main())
 ## Validation
 
 - `session_id` (when provided) and `content` must be non-empty strings
-- Message content is limited to 10MB
+- Message `content` is limited to 10MB
 - Commands must be non-empty strings (without leading `/`)
 - Command `args` is optional
+
+A malformed JSON frame returns `{"type":"error","message":"Invalid JSON: ..."}` and the connection **stays open** — the same is true for validation failures, so clients can recover and keep sending.
+
+### Transport limits
+
+Separate from content validation, the transport layer enforces:
+
+- **Max frame size: 10MB.** Frames larger than this are rejected by the WebSocket layer.
+- **Unmasked frames are rejected.** Per spec, client frames must be masked; standard clients do this automatically.
+- **Ping/Pong:** the server replies to client `Ping` frames with `Pong` to keep the connection alive.
 
 ## Security
 
@@ -278,4 +327,9 @@ location /ws {
 
 ## Logging
 
-WebSocket server logs to `~/.local/share/octomind/logs/websocket-debug.log` when `log_level = "debug"`.
+The WebSocket server writes file logs to `~/.local/share/octomind/logs/websocket-debug.log`. The file is always opened; verbosity follows the configured `log_level` (`none` / `info` / `debug`, default `info`). Set `log_level = "debug"` for full request/message tracing.
+
+## See also
+
+- [Structured Output](../usage/11-structured-output.md) — the JSONL output mode shares this same `ServerMessage` schema.
+- [Session Commands](../reference/02-session-commands.md) — the commands usable over the `command` channel.

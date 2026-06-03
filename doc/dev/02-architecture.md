@@ -38,7 +38,7 @@ src/
     providers.rs             # Provider token config
     migrations.rs            # Config format upgrades
     env_source.rs            # .env tracking
-    registry.rs              # Capability resolution
+    registry.rs              # RegistryConfig: [registry] manifest cache TTL
     runtime_overlay.rs       # Runtime config overlay for tap agents
 
   embeddings/
@@ -61,6 +61,7 @@ src/
     inject_listener.rs       # Unix socket for message injection
     webhook_listener.rs      # HTTP webhook → inbox injection
     guardrails.rs            # Project-local tool deny/hook/validator rules (.agents/guardrails.toml)
+    pipe.rs                  # Pipe execution (pre-model input transform)
     hooks.rs                 # Webhook hook listener management (--hook flag)
     completion.rs            # Chat completion orchestration
     chat_helper.rs           # CommandCompleter (fuzzy autocomplete for reedline)
@@ -85,7 +86,7 @@ src/
 
     chat/
       mod.rs                 # Chat orchestration
-      commands.rs            # Command constants (27 entries, COMMANDS array)
+      commands.rs            # COMMANDS array ([&str; 27]: 25 distinct commands + /? and /quit aliases)
       animation.rs / animation_manager.rs  # Spinner & animation
       status_prefix.rs       # Shared status formatting (prompt + spinner)
       assistant_output.rs    # Assistant output formatting
@@ -101,7 +102,8 @@ src/
         decision.rs          # Compression decision logic
         knowledge.rs         # Knowledge retention across compressions
         prompt.rs            # Compression prompts
-        range.rs             # Range selection for compression
+        range.rs             # Range selection for compression (find_compression_range)
+        schema.rs            # Typed compression summary schema (CompressionSummary, KeyEntities, FileContextEntry)
         tests.rs             # Compression tests
       cost_tracker.rs        # Token cost tracking
       edit_mode.rs           # Edit mode handling
@@ -122,7 +124,7 @@ src/
         core.rs              # ChatSession struct, SessionInitParams builder
         api_executor.rs      # API call execution
         api_prep.rs          # API call preparation (compression, auto-activation)
-        commands/            # 26 command handler modules (28 files incl. mod.rs + utils.rs)
+        commands/            # 25 command handler modules (28 files incl. mod.rs, utils.rs, display.rs)
         display.rs           # Session display
         error_utils.rs       # Error utilities
         layer_processor.rs   # Layer processing in session context
@@ -142,10 +144,9 @@ src/
       mod.rs                   # Role-based history management (per-role files, legacy migration)
 
     layers/
-      mod.rs                   # Layer trait & processor
-    workflows/               # Workflow orchestrator (with step timing)
-    guardrails.rs            # Guardrails loading/evaluation
-    pipe.rs                   # Pipe execution logic
+      mod.rs                   # Layer module root
+      layer_trait.rs           # Layer trait
+      processor.rs             # Layer processor
 
   mcp/
     mod.rs                   # MCP coordinator, tool routing (try_execute_tool_call)
@@ -168,14 +169,14 @@ src/
       skill.rs               # Skill management
       skill_auto.rs          # Skill auto-activation & validation hooks
       skill_tests.rs         # Skill unit tests
+      plan_tests.rs          # Plan tool unit tests
       plan/                  # Plan tool
         mod.rs, core.rs, compression.rs, storage.rs, memory_storage.rs
-        plan_tests.rs        # Plan tool unit tests
       schedule/              # Schedule tool (with persistence)
         mod.rs, core.rs, storage.rs
 
     runtime/
-      mod.rs                 # Runtime server: mcp, agent, skill tools
+      mod.rs                 # Runtime server: mcp, agent, skill, schedule, capability tools
 
     agent/
       mod.rs                 # Agent server: agent_* tools
@@ -201,6 +202,13 @@ src/
     mod.rs                   # ACP agent implementation
     agent.rs                 # ACP session handler
     commands.rs              # ACP command routing
+
+  workflow/
+    mod.rs                   # Module root, re-exports (execute_workflow, WorkflowDef)
+    schema.rs                # WorkflowDef, Step (enum), Condition, Sequential/Parallel/Loop steps
+    validate.rs              # Pre-flight validation (validate)
+    run.rs                   # Orchestrator: execute(), stats aggregation, progress to stderr
+    proc.rs                  # Per-step subprocess (octomind run --format jsonl), JSONL stream parsing
 
   websocket/
     mod.rs                   # WebSocket server
@@ -241,11 +249,22 @@ MCP server processes are managed via global statics:
 - `SERVER_STDERR` -- recent stderr per server
 - `SERVER_CAPABILITIES` -- parsed server capabilities
 
+### Tool Routing & Builtin Servers (`src/mcp/mod.rs`)
+
+A tool call flows `execute_tool_call` -> `try_execute_tool_call` (resolves the target server from `TOOL_MAP`) -> for builtin servers, `route_builtin_tool` dispatches by server name; for external servers it forwards to `server::execute_tool_call`. `execute_tool_calls` runs a batch.
+
+Builtin tools are split across three in-process servers:
+- `core` -- hosts `plan` and `tap`
+- `runtime` -- hosts `mcp`, `agent`, `skill`, `schedule`, `capability` (via `runtime::execute_runtime_tool`)
+- `agent` -- hosts the dynamic per-agent execution tools
+
+Dynamic per-agent tool: each registered agent yields a distinct runtime tool named `agent_<name>` (generated by `core/dynamic_agents.rs`) that EXECUTES that agent. It is separate from the `agent` management tool (which lists/enables/disables agents). Dynamic MCP servers and local shebang tools are similarly contributed at runtime (`core/dynamic.rs`, `core/local_tool.rs`).
+
 ### Session Context
 
-- `CLI_SESSION_CONTEXT` -- global (role, project) pair
+- `CLI_SESSION_CONTEXT` -- global (role, project, workdir) triple (set via `set_session_context`, `src/mcp/process.rs`)
 - `CLI_NOTIFICATION_SENDER` -- channel for MCP notifications
-- Session ID derived from SHA256 of git remote or CWD
+- Project ID derived from SHA-256 of the git remote origin URL (else CWD) via `derive_project_id()`; session NAMES are generated separately as `YYMMDD-basename-HHMM-uuid4short` (`generate_session_name`, `src/session/chat/session/core.rs`)
 
 ### Output Abstraction (`src/session/output.rs`)
 
@@ -264,26 +283,30 @@ Zero-sized types for zero-cost output routing:
 ### Config Loading (`src/config/loading.rs`)
 
 1. Load `config.toml` (TOML -> `toml::Value`)
-2. Load other `*.toml` files alphabetically
+2. Load other `*.toml` files alphabetically, EXCEPT `mcp-*.toml` (dash) files, which are loaded last as override files (`is_mcp_extension_file`); `mcp.toml` without a dash loads in normal alphabetical order
 3. Deep-merge tables, concatenate arrays of tables
 4. Deduplicate by `name` field (last wins)
 5. Deserialize to `Config` struct
 6. Validate all fields
 
-### Compression Pipeline
+### Compression Pipeline (`src/session/chat/conversation_compression/`)
 
-1. Token monitor checks pressure levels
+Entry points: `should_check_compression` gates whether a check runs (returns a pressure ratio); `check_and_compress_conversation` is the orchestrator (called from `api_prep.rs` before an API call and from the tool-result path); `apply_compression` rewrites the message list.
+
+1. Token monitor checks pressure levels (`should_check_compression`)
 2. Exponential cooldown prevents loops
 3. Cache-aware economics calculates net benefit
-4. Decision model (cheap AI) decides whether to compress
-5. Semantic chunking preserves conversation structure
-6. Summary replaces compressed content
+4. Decision model (cheap AI, separate from the main model: `[compression.decision] model`, default `openai:gpt-5-mini`) decides whether to compress
+5. Range selected by anchor (latest `<instructions>` user message, else first user message); messages after the anchor up to the end are drained and replaced (`find_compression_range`, `range.rs`)
+6. A typed summary (`CompressionSummary`, `schema.rs`) replaces the drained content
 7. Knowledge entries retained across compressions
+
+Persistence model (`src/session/logger.rs`, `src/session/persistence.rs`): the session JSONL log records `SUMMARY` (session metadata, source of truth on resume) plus marker entries `COMPRESSION_POINT`, `RESTORATION_POINT`, and `KNOWLEDGE_ENTRY`. On restore, `COMPRESSION_POINT` clears the corresponding messages to reflect the compressed state.
 
 ## Dependencies
 
 Key external crates:
-- `octolib` -- provider abstraction, LLM integration
+- `octolib` -- provider abstraction, LLM integration, and local embedding engine (FastEmbedProviderImpl)
 - `rmcp` -- MCP protocol implementation
 - `agent-client-protocol` -- ACP support
 - `tokio` -- async runtime
@@ -294,4 +317,3 @@ Key external crates:
 - `hyper` -- HTTP server
 - `reedline` -- interactive readline
 - `syntect` -- syntax highlighting
-- `octolib` -- local embedding engine (FastEmbedProviderImpl)

@@ -11,25 +11,28 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | `version` | u32 | `1` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `model` | string | `"openrouter:anthropic/claude-sonnet-4"` | Default model in `provider:model` format |
-| `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run` |
+| `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run`. See note below. |
 | `max_tokens` | u32 | `16384` | Global max tokens for all operations |
 | `custom_instructions_file_name` | string | `"INSTRUCTIONS.md"` | File auto-loaded as user message in new sessions. Empty string to disable. |
 | `custom_constraints_file_name` | string | `"CONSTRAINTS.md"` | File appended to each request in `<constraints>` tags. Empty string to disable. |
 | `sandbox` | bool | `false` | Restrict filesystem writes to working directory. Also available as `--sandbox` CLI flag. |
 | `auto_capabilities` | bool | `true` | Enable automatic capability activation on user messages. Disable to require manual `capability(action="enable")` calls. |
+| `system` | string (optional) | _none_ | Legacy global system-prompt override. When set, it applies as a fallback system prompt for roles that define none. Shown commented-out in `default.toml`; prefer per-role `system` instead. |
+
+> **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ## Performance & Limits
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mcp_response_tokens_threshold` | u32 | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
-| `max_session_tokens_threshold` | u32 | `200000` | Max tokens per session before truncation. `0` = disabled. |
+| `mcp_response_tokens_threshold` | usize | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
+| `max_session_tokens_threshold` | usize | `200000` | Max tokens per session before truncation. Also acts as the **hard compression ceiling** and the denominator for context-pressure hints (see `[compression]`). `0` = disabled. Validation fails if `> 2,000,000`. |
 | `max_retries` | u32 | `1` | Retry attempts for API calls. |
 | `retry_timeout` | u32 | `30` | Base timeout in seconds for exponential backoff. |
 | `request_timeout_seconds` | u32 | `300` | Per-request HTTP timeout in seconds. Hard limit on LLM provider API calls. `0` = no timeout. |
-| `reasoning_effort` | enum | `"medium"` | Thinking model effort: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Non-thinking models ignore it. |
-| `cache_keepalive_enabled` | bool | `false` | Keep prompt cache warm with periodic pings while session idles. Provider-aware (only pings providers that support refresh-on-read). |
-| `cache_keepalive_max_idle_seconds` | u64 | `1800` | Stop pinging this many seconds after last user activity. `0` = ping until session ends. |
+| `reasoning_effort` | enum | `"medium"` | Thinking model effort: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Non-thinking models ignore it. Mirrored at runtime by the `/effort <level>` session command. |
+| `cache_keepalive_enabled` | bool | `false` | Keep prompt cache warm with periodic pings while the session idles. Provider-aware: currently **only Anthropic** is pinged, and the ping interval comes from the provider's cache TTL (1h), not from this config. |
+| `cache_keepalive_max_idle_seconds` | u64 | `1800` | Stop pinging this many seconds after last user activity. `0` = ping until session ends. Validation fails if `> 86400` (24h). |
 ## User Interface
 
 | Field | Type | Default | Description |
@@ -60,13 +63,12 @@ Map of tap agent tag to model override. Set a preferred model for specific tap a
 "octomind:assistant" = "openai:gpt-4o"
 ```
 
-**Priority:** CLI `--model` > taps override > role.model > config.model
-When you run `octomind run developer:general`, the model is resolved in this order:
+**Priority (highest wins):** CLI `--model` > the active role's `model` > root `config.model` (resolved in `src/session/chat/session/core.rs`). For a tap agent, a `[taps]` entry overrides the `config.model` tier:
 1. `--model` CLI flag (if provided)
-2. `[taps]` override for `"developer:general"` (if configured)
-3. Global `model` in config
+2. The `model` the agent's role/manifest declares (for `developer:general`, the manifest's role model)
+3. Global `model` in config — which a `[taps]` entry for `"developer:general"` replaces when set
 
-Empty by default. Only applies to tap agents (tags with `:`). Plain role names use role.model or config.model.
+`[taps]` only applies to tap agents (tags with `:`); it acts at the `config.model` tier, so it takes effect only when neither `--model` nor the agent's role sets a model. Plain role names use their `[[roles]]` `model` if set, otherwise `config.model`.
 
 ## `[[roles]]`
 
@@ -101,7 +103,7 @@ system = """
 You are helpful and knowledgeable assistant.
 Working directory: {{CWD}}
 """
-welcome = "Hello! Ready to help. Working in {{CWD}} (Role: {{ROLE}})"
+welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
@@ -122,11 +124,13 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 
 **Builtin servers** (always available, no external process):
 
-| `core` | `plan`, `tap` | High-level planning and agent management |
+| Server | Tools | Description |
+|--------|-------|-------------|
+| `core` | `plan`, `tap` | High-level planning and tap (agent registry) management |
 | `runtime` | `mcp`, `agent`, `skill`, `schedule`, `capability` | Harness reconfiguration and scheduling |
 | `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
 
-`filesystem` is no longer a builtin — it's an external `stdio` server backed by `octofs`. See [MCP Tools](../usage/07-mcp-tools.md) for the tool surface.
+> **`filesystem` is not declared here.** Default roles reference a `filesystem` server in their `server_refs`, but it is **not** a builtin and is **not** defined in this config file's `[[mcp.servers]]`. It is an external `stdio` server backed by `octofs`, provided by the built-in tap. Its tools are `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `ast_grep`, `list_files`, and `workdir`. See [MCP Tools](../usage/07-mcp-tools.md) for the full surface.
 
 #### Common Fields
 
@@ -134,7 +138,7 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique server identifier |
 | `type` | string | yes | `"builtin"`, `"http"`, or `"stdio"` |
-| `timeout_seconds` | u32 | no | Response timeout (default: 30) |
+| `timeout_seconds` | u64 | no | Response timeout (default: 30) |
 | `tools` | string[] | no | Tool filter. Empty = all tools. Supports wildcards: `"github_*"` |
 | `auto_bind` | string[] | no | Role names to auto-include this server for |
 
@@ -163,7 +167,7 @@ Webhook HTTP listeners that pipe payloads through scripts and inject output into
 | `name` | string | required | Unique hook identifier |
 | `bind` | string | required | HTTP server address (e.g., `"0.0.0.0:9876"`) |
 | `script` | string | required | Path to executable script |
-| `timeout` | u32 | `30` | Script timeout in seconds (1-3600) |
+| `timeout` | u64 | `30` | Script timeout in seconds (1-3600) |
 
 ```toml
 [[hooks]]
@@ -185,10 +189,12 @@ Reusable ACP-invocable units used by `[[commands]]`. Layers delegate to roles vi
 | `name` | string | required | Layer identifier |
 | `description` | string | required | Human-readable description (used in help, MCP) |
 | `command` | string | required | ACP command to execute: `"octomind acp <role_name>"` |
-| `workdir` | string | `"."` | Working directory (relative to session workdir) |
-| `input_mode` | string | no | How input is fed: `"last"`, `"all"`, `"summary"` |
-| `output_mode` | string | no | How output affects session: `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
-| `output_role` | string | no | Role for output messages: `"assistant"`, `"user"` |
+| `workdir` | string | `"."` | Working directory (relative to session workdir). The only optional field. |
+| `input_mode` | string | **required** | How input is fed: `"last"`, `"all"`, `"summary"` |
+| `output_mode` | string | **required** | How output affects session: `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
+| `output_role` | string | **required** | Role for output messages: `"assistant"`, `"user"` |
+
+> `input_mode`, `output_mode`, and `output_role` have **no default** — config loading fails if any is omitted. Only `workdir` is optional.
 
 ```toml
 [[layers]]
@@ -202,17 +208,7 @@ output_role = "assistant"
 
 ## `[[commands]]`
 
-Custom session commands triggered with `/run <name>`. Uses the same schema as `[[layers]]`.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | string | required | Command identifier (used as `/run <name>`) |
-| `description` | string | required | Human-readable description (shown in help text) |
-| `command` | string | required | ACP command to execute: `"octomind acp <role_name>"` |
-| `workdir` | string | `"."` | Working directory (relative to session workdir) |
-| `input_mode` | string | no | How input is fed: `"last"`, `"all"`, `"summary"` |
-| `output_mode` | string | no | How output affects session: `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
-| `output_role` | string | no | Role for output messages: `"assistant"`, `"user"` |
+Custom session commands triggered with `/run <name>`. **Uses the exact same schema as `[[layers]]`** (same `LayerConfig` struct) — see the field table above, including the required `input_mode` / `output_mode` / `output_role` fields. The only difference is invocation: `[[commands]]` entries are run manually from a session via `/run <name>`, while `[[layers]]` are orchestration units invoked over ACP. For `[[commands]]`, `name` is the token you type after `/run`.
 
 ```toml
 [[commands]]
@@ -284,6 +280,8 @@ validation_timeout = 60
 max_retries = 3
 ```
 
+> **`auto_validation` scope:** this flag gates only the `validate` scripts declared inside `SKILL.md` files. It does **not** gate the separate guardrail `[[validator]]` system in `.agents/guardrails.toml` — those end-of-turn validators run unconditionally regardless of this setting.
+
 ## `[compression]`
 
 Automatic context compression system.
@@ -292,13 +290,16 @@ Automatic context compression system.
 |-------|------|---------|-------------|
 | `hints_enabled` | bool | `true` | Enable compression system |
 | `hints_pressure_threshold` | f64 | `0.7` | Context pressure threshold (0.0-1.0) to start showing hints |
-| `hints_min_interval` | u32 | `5` | Minimum tool executions between hints |
-| `knowledge_retention` | u32 | `10` | Max critical knowledge entries retained across compressions |
+| `hints_min_interval` | usize | `5` | Minimum tool executions between hints |
+| `knowledge_retention` | usize | `10` | Max critical knowledge entries retained across compressions |
+
+> **Disabling compression:** if `[[compression.pressure_levels]]` is empty, compression is disabled entirely and the compression-model validation is skipped. Independently, `max_session_tokens_threshold` (see Performance & Limits) acts as a hard token ceiling separate from these pressure levels.
 
 ### `[[compression.pressure_levels]]`
 
 | Field | Type | Description |
-| `threshold` | u64 | Token count threshold to trigger compression |
+|-------|------|-------------|
+| `threshold` | usize | Token count threshold to trigger compression |
 | `target_ratio` | f64 | Compression strength (2.0 = 50% reduction, 4.0 = 75%, 8.0 = 87.5%) |
 
 Default pressure levels:
@@ -320,7 +321,7 @@ Model used for compression decisions and summary generation.
 | `top_p` | f64 | `1.0` | Nucleus sampling |
 | `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
-| `retry_timeout` | u32 | `30` | Retry backoff base |
+| `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
 | `ignore_cost` | bool | `false` | When true, compression cost is not tracked |
 
 ```toml
@@ -362,8 +363,8 @@ Cross-session adaptive learning. Extracts lessons from sessions and injects them
 | `enabled` | bool | `true` | Enable the learning system |
 | `model` | string | `"anthropic:claude-haiku-4-5"` | Model for extraction and retrieval LLM calls |
 | `backend` | string | `"file"` | Backend: `"file"` or `"mcp"` |
-| `min_messages_for_intermediate` | u32 | `3` | Min user messages before intermediate learning triggers |
-| `max_inject` | u32 | `5` | Max lessons injected into system prompt |
+| `min_messages_for_intermediate` | usize | `3` | Min user messages before intermediate learning triggers |
+| `max_inject` | usize | `5` | Max lessons injected into system prompt |
 
 ### `[learning.store]` (MCP backend only)
 
@@ -388,9 +389,33 @@ min_messages_for_intermediate = 3
 max_inject = 5
 ```
 
+## `[registry]`
+
+Controls caching of agent manifests fetched from taps. Registry sources themselves are managed with `octomind tap <url> [path]` / `octomind untap <name>`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `cache_ttl_hours` | u64 | `24` | How long a fetched tap manifest is cached before re-checking. |
+
+Fetched manifests are cached at `<data>/agents/<category>/<variant>.toml`. Within the TTL the cached manifest is served immediately; once stale, the cached copy is still served (stale-serve) while a background refresh fetches the latest version. See [Tap System](../integration/04-tap-system.md) for the registry behavior.
+
+```toml
+[registry]
+cache_ttl_hours = 24
+```
+
 ## Guardrails (`.agents/guardrails.toml`)
 
-Project-level guardrails are configured in `.agents/guardrails.toml` in the working directory, not in the main config file. See [Guardrails](../usage/18-guardrails.md) for full documentation.
+Project-level guardrails are configured in `.agents/guardrails.toml` in the working directory, **not** in the main config file. That file holds four distinct mechanisms — `[[guard]]`, `[[hook]]`, `[[validator]]`, and `[[pipe]]`. Only `[[pipe]]` is detailed below; see [Guardrails](../usage/18-guardrails.md) for the full reference.
+
+> **Do not confuse** the guardrail `[[hook]]` (a post-result script in `.agents/guardrails.toml`) with the top-level `[[hooks]]` config above (webhook HTTP listeners for daemon mode). They are entirely separate concepts.
+
+| Table | Purpose |
+|-------|---------|
+| `[[guard]]` | Pre-call deny rule — blocks a tool call before it runs. |
+| `[[hook]]` | Post-result script run after a tool call (`on = "success"` or `"failure"`). |
+| `[[validator]]` | End-of-turn script run on the new call-log slice (cursor-based), with optional role filter. Runs regardless of `[skills].auto_validation`. |
+| `[[pipe]]` | Pre-model input transform (detailed below). |
 
 ### `[[pipe]]` — Pre-Model Input Transform
 
@@ -438,7 +463,7 @@ This mechanism is used by the `mcp persist` command, which writes to `<config_di
 
 ## Template Variables
 
-Available in `system` and `welcome` fields:
+These variables are substituted in role `system` and `welcome` fields at prompt-expansion time:
 
 | Variable | Description |
 |----------|-------------|
@@ -451,6 +476,7 @@ Available in `system` and `welcome` fields:
 | `{{GIT_STATUS}}` | Git repository status |
 | `{{GIT_TREE}}` | Project file tree |
 | `{{README}}` | Contents of README.md in project root |
-| `{{HOME}}` | User's home directory path |
 | `{{CONTEXT}}` | Session context (for layers) |
 | `{{SYSTEM}}` | Parent system prompt (for layers) |
+
+> **`{{HOME}}` is not substituted here.** It is only resolved by the `octomind vars` command listing, not in `system`/`welcome` prompts. Using `{{HOME}}` in a role prompt leaves the literal text in place — use an absolute path or `{{CWD}}` instead.

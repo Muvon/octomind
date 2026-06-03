@@ -25,15 +25,15 @@ chmod +x .agents/tools/echo
 octomind run developer:general
 ```
 
-In the session, the model now sees `echo` under server `local`.
+In the session, the model now sees `echo` under server `local`. Run `/mcp list` (or `/mcp full` for the parameter schemas) to confirm it was discovered.
 
 ## File Contract
 
 | Aspect | Rule |
 |---|---|
 | **Path** | `<workdir>/.agents/tools/<tool-name>` (no extension) |
-| **Tool name** | The filename. Must match `[A-Za-z0-9_-]+`. Hidden files and bad names skipped. |
-| **Executable** | Must be `chmod +x`. Non-executable files are skipped (logged at debug). |
+| **Tool name** | The filename. Must match `[A-Za-z0-9_-]+`. Names beginning with `-` or `.` are also skipped, along with any other invalid characters (e.g. a `.` extension). |
+| **Executable** | On Unix, must be `chmod +x`; non-executable files are skipped (logged at debug). On non-Unix platforms (e.g. Windows) the executable bit check is bypassed — any existing file is treated as runnable and the OS decides whether it can run. |
 | **Shebang** | Line 1 may be a `#!...` shebang. Skipped during header parsing. Required for the OS to actually run the file. |
 | **Header** | Leading comment block. Comment prefixes `#`, `//`, `--` are recognized. Parsing stops at the first non-comment, non-blank line, or after 80 lines. |
 
@@ -66,10 +66,12 @@ Unknown tags are ignored with a debug log so the format can grow without breakin
 @param [*]NAME TYPE DESCRIPTION...
 ```
 
-- **Required** — prefix the name with `*` (e.g. `*target`). Mirrors how octomind renders required params in `/tools` output.
+- **Required** — prefix the name with `*` (e.g. `*target`). Mirrors how octomind renders required params in `/mcp full` output. The `*` must be attached directly to the name: `*target`, not `* target`.
 - **Optional** — no prefix. This is the default.
-- **TYPE** — one of `string`, `number`, `integer`, `boolean`, `array`, `object`. Common aliases (`str`, `int`, `bool`, `list`, `obj`) are normalized. Unknown types fall back to `string`.
+- **TYPE** — one of `string`, `number`, `integer`, `boolean`, `array`, `object`. Common aliases (`str`→string, `int`→integer, `num`/`float`→number, `bool`→boolean, `list`→array, `obj`/`map`→object) are normalized. Unknown types fall back to `string`.
 - **DESCRIPTION** — everything after the type, joined with single spaces. Shown in the tool's parameter docs.
+
+A bare `*` with no name (e.g. `@param * string ...`), or any otherwise-malformed `@param` line, is silently skipped (logged at debug). If a parameter seems to vanish, check that the name is well-formed.
 
 Example with all flavors:
 
@@ -112,8 +114,8 @@ When the model invokes the tool, octomind spawns the script with:
 | **env `OCTOMIND_TOOL_NAME`** | The tool name, in case one binary handles multiple. |
 | **env `OCTOMIND_WORKDIR`** | The session's working directory (also `cwd`). |
 | **stdout** | Result content shown to the model. |
-| **stderr** | Appended to the result with an `[stderr]` marker. |
-| **exit code** | Non-zero → reported as a tool error (stderr + stdout included in the message). |
+| **stderr** | Non-empty stderr is appended to the result under an `[stderr]` marker — even on a successful (exit 0) run. Use stderr only for content you want the model to see; don't leak progress chatter there. |
+| **exit code** | Non-zero → tool error. The message is `local tool '<name>' exited with status <code>`, followed (when non-empty) by an `[stderr]` block and then a separate `[stdout]` block. |
 
 Pick whichever input style fits the language. Bash scripts usually read env vars; Python scripts often parse stdin JSON. Both arrive every call.
 
@@ -167,14 +169,14 @@ process.stdin.on('end', () => {
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Tool doesn't appear in `/tools` | Not executable | `chmod +x .agents/tools/<name>` |
-| Tool doesn't appear in `/tools` | Header missing `@description` | Add the line; debug log shows `parse … failed: missing @description` |
-| Tool doesn't appear in `/tools` | Filename has `.` (e.g. `mytool.sh`) | Drop the extension — `mytool` |
+| Tool doesn't appear under server `local` in `/mcp` | Not executable (Unix) | `chmod +x .agents/tools/<name>` |
+| Tool doesn't appear under server `local` in `/mcp` | Header missing `@description` | Add the line; debug log shows `parse … failed: missing @description` |
+| Tool doesn't appear under server `local` in `/mcp` | Filename has `.` (e.g. `mytool.sh`) or starts with `-`/`.` | Drop the extension and leading punctuation — `mytool` |
 | Tool returns non-JSON garbage | Script writes binary on stdout | Stick to text; or base64-encode |
-| Tool times out | Default 5-minute cap | Make the script faster or split into multiple calls |
+| Tool times out | Hard 5-minute (300s) cap — not configurable for local tools | Make the script faster or split into multiple calls |
 | Param values look wrong | Forgot `*` and the script assumed required | Add `*` to the name in the header |
 
-Enable `OCTOMIND_LOG=debug` to see why specific files were skipped during discovery.
+To see why specific files were skipped during discovery, raise the log level to debug — set config `log_level = "debug"`, use the `/loglevel debug` session command, pass `--log-level debug` on the CLI, or set `RUST_LOG`. The debug logs show non-executable files, header parse failures, and malformed or unknown tags.
 
 ## Security Notes
 

@@ -169,9 +169,9 @@ max_session_spending_threshold = 5.00    # USD per session
 - Mid-session model swap with `/model anthropic:claude-haiku-4-5`.
 - Real-time cost tracking per request and per session.
 - Cache-aware token accounting (`cache_read_tokens`, `cache_write_tokens` separated from input/output).
-- Hard spending thresholds with enforcement — agent stops, falls back, or warns before the bill.
+- Hard spending thresholds with enforcement. On a **session cap** Octomind prompts you to continue (interactive) or auto-stops (non-interactive); on a **request cap** it stops execution outright — before the bill, not after.
 
-> Cursor users get $7,000 surprise bills. Octomind agents trip a budget and stop, fall back, or warn — before the bill, not after.
+> Cursor users get $7,000 surprise bills. Octomind agents trip a budget and stop — interactive sessions ask before continuing, non-interactive runs halt automatically.
 
 ---
 
@@ -272,11 +272,15 @@ octomind run developer
 ```
 
 ```
-octomind v0.29.0 · role: developer · model: openrouter:...
+        Octomind v0.29.0
+        Role: developer · Model: openrouter:...
+        ~/your/project
 > _
 ```
 
 You're in an interactive session with a specialist that can read your code, run commands, edit files, and grow capabilities as needed.
+
+> `developer` (and `lawyer:sg`, `doctor:blood`, …) come from the built-in default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. The config's own default tag is `assistant:concierge`, so plain `octomind run` starts that. The banner above is illustrative (the real one renders a pixel icon to the left of the text block).
 
 ---
 
@@ -296,11 +300,13 @@ You're in an interactive session with a specialist that can read your code, run 
 
 ### Filesystem tools (via [octofs](https://github.com/muvon/octofs))
 
-`view`, `text_editor`, `batch_edit`, `shell`, `semantic_search`, `structural_search`, `workdir` — file operations come from the companion octofs MCP server, included by default in tap formulas that need them.
+`view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `ast_grep`, `list_files`, `workdir` — file operations come from the companion octofs MCP server (`ast_grep` is its AST-based code search). Included by default in tap formulas that need them.
 
 ### Brain (via [octobrain](https://github.com/muvon/octobrain))
 
 `memorize`, `remember`, `forget`, `knowledge`, `relate`, `memory_graph` — long-term memory, knowledge indexing, and relationship graphs. The companion octobrain MCP server is included by default in taps that need persistent context across sessions.
+
+> **Only `core`, `runtime`, and `agent` are built-in MCP servers** shipped in the default config. The `filesystem` (octofs) and `brain` (octobrain) servers are supplied by tap formulas — a freshly generated config won't list them.
 
 ### Providers
 
@@ -322,6 +328,7 @@ model = "anthropic:claude-opus-4-7"
 temperature = 0.2
 [roles.mcp]
 server_refs = ["filesystem", "github"]
+# view/ast_grep are octofs (filesystem) tools; create_pr comes from the github MCP server
 allowed_tools = ["view", "ast_grep", "create_pr"]
 
 # Sandbox — lock all writes to current directory
@@ -350,21 +357,29 @@ Octomind isn't just a CLI. It runs in every context an agent needs to live in:
 | Mode | Use for |
 |---|---|
 | Interactive CLI | Daily work, any domain |
-| `--format jsonl` pipe | CI/CD pipelines, shell scripts, automation |
-| `--daemon` + `send` | Background agents, continuous monitoring, long-running tasks |
-| WebSocket server | IDE plugins, web dashboards, external integrations |
-| ACP protocol | Multi-agent orchestration, being called by other agents |
+| `octomind run --format jsonl` pipe | CI/CD pipelines, shell scripts, automation |
+| `octomind run --daemon` + `octomind send` | Background agents, continuous monitoring, long-running tasks |
+| WebSocket server (`octomind server`) | IDE plugins, web dashboards, external integrations |
+| ACP protocol (`octomind acp`) | Multi-agent orchestration, being called by other agents |
 
 ```bash
 # ACP — drop into any multi-agent system as a sub-agent
 octomind acp developer:general
 
-# Non-interactive — single message, plain output
-octomind run developer "Explain the auth module" --format plain
+# Non-interactive — the message is read from stdin (pipe it in), output as plain text
+echo "Explain the auth module" | octomind run developer --format plain
 
-# Structured JSON output for pipelines
-octomind run developer "List TODO items" --format jsonl
+# Structured JSONL output for pipelines
+echo "List TODO items" | octomind run developer --format jsonl
+
+# Daemon — keep a session alive and inject messages into it from anywhere
+echo "first task" | octomind run --name watcher --daemon --format jsonl
+octomind send --name watcher "now run the test suite"
 ```
+
+`octomind run` has **no message argument** — when `--format` is set, input comes from piped stdin. `--format` is `run`-only (it accepts only `plain` or `jsonl`; `server` and `acp` do not take it). Setting `--format` triggers non-interactive mode only when stdin is *not* a terminal: `octomind run developer --format plain` typed at a TTY stays interactive, while piping into it runs once and exits.
+
+See [WebSocket Server](doc/integration/01-websocket-server.md), [ACP Protocol](doc/integration/02-acp-protocol.md), and [Daemon & Hooks](doc/integration/03-daemon-and-hooks.md) for the integration modes.
 
 One binary. Every workflow.
 
@@ -483,17 +498,19 @@ Every domain expert who publishes a specialist makes Octomind useful for an enti
 - [Quickstart](doc/usage/02-quickstart.md)
 - [Configuration](doc/usage/03-configuration.md)
 - [Providers & Models](doc/usage/04-providers.md)
-- [Sessions & Compression](doc/usage/05-sessions.md)
+- [Sessions](doc/usage/05-sessions.md)
+- [Compression](doc/usage/08-compression.md)
 - [Roles](doc/usage/06-roles.md)
 - [MCP Tools](doc/usage/07-mcp-tools.md)
 - [Workflows](doc/usage/09-workflows.md)
 - [Guardrails](doc/usage/18-guardrails.md)
 - [Learning](doc/usage/13-learning.md)
-- [WebSocket & ACP](doc/integration/01-websocket-server.md)
+- [WebSocket Server](doc/integration/01-websocket-server.md)
+- [ACP Protocol](doc/integration/02-acp-protocol.md)
 - [CLI Reference](doc/reference/01-cli-reference.md)
 - [Config Reference](doc/reference/03-config-reference.md)
 
-Full index: [doc/README.md](doc/README.md).
+Links above are local files in this repo; the [hosted docs site](https://octomind.run/docs/) mirrors them. Full index: [doc/README.md](doc/README.md).
 
 ---
 

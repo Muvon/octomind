@@ -30,6 +30,7 @@ For users working with Octomind day-to-day.
 | [Skills](usage/15-skills.md) | Auto-expanding skills, capabilities, validators |
 | [Token Efficiency](usage/16-token-efficiency.md) | Capabilities, auto-activation, LRU eviction |
 | [Local Tools](usage/17-local-tools.md) | Project-local shebang scripts auto-exposed as MCP tools |
+| [Guardrails](usage/18-guardrails.md) | Deterministic policy-as-code: pipes, guards, hooks, validators in .agents/guardrails.toml |
 
 ## Integration Guide
 
@@ -80,7 +81,7 @@ Real-world examples showing how to solve practical problems with Octomind.
 | Document | Description |
 |----------|-------------|
 | [CLI Reference](reference/01-cli-reference.md) | All CLI commands and flags |
-| [Session Commands](reference/02-session-commands.md) | All 27 interactive session commands |
+| [Session Commands](reference/02-session-commands.md) | All interactive session commands (25 distinct, plus /quit and /? aliases) |
 | [Config Reference](reference/03-config-reference.md) | Every configuration field documented |
 | [Environment Variables](reference/04-environment-variables.md) | API keys, overrides, template variables |
 

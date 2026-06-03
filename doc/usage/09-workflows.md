@@ -1,22 +1,23 @@
 # Workflows
 
-`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; the final result goes to stdout — making workflows composable with shell pipes.
+`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; everything you see — per-step responses, progress, costs, totals — is written to **stderr** for a human to watch.
+
+> **There is no machine-readable stdout result.** A real run prints nothing to stdout; stdout is used *only* by `--dry-run` to print the execution plan. Don't build shell pipelines that consume the workflow's stdout — they will get nothing. If you need a step's text downstream, read it from stderr or have the final step write to a file itself.
 
 > **In-session input preprocessing** via `[[pipe]]` in `.agents/guardrails.toml` runs before the model — see [Guardrails](18-guardrails.md#pipe--pre-model-input-transform). Workflows sit *above* sessions; pipes sit *inside* one.
 
 ## Concept
 
 ```
-stdin ─► octomind workflow file.toml ─► stdout (final step output)
+stdin ─► octomind workflow file.toml
                     │
                     ├── step "spec"      → octomind run (subprocess)
                     ├── step "developer" → octomind run (subprocess)  ─┐
                     └── step "tester"    → octomind run (subprocess)  ─┘  loop
-                                                                          │
-                                                                          ▼
-                                                              stderr: per-step
-                                                                progress, cost,
-                                                                tokens, totals
+                    │
+                    ▼
+        stderr: per-step responses + progress, cost, tokens, totals
+        stdout: (nothing — only --dry-run prints the plan here)
 ```
 
 A workflow file is a portable TOML document — no edits to `default.toml` or any role config are needed. Each step invokes `octomind run --format jsonl`, streams the JSONL event log, accumulates assistant text and cost/token totals, then hands the captured output to the next step.
@@ -30,8 +31,9 @@ echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml
 octomind workflow myflow.toml --dry-run
 ```
 
-- stdin is required (unless `--dry-run`); empty stdin is a hard error.
-- stderr receives each step's assistant message (rendered as markdown when enabled), progress lines, per-step stats, warnings, and the final total. stdout is unused.
+- The file is read, TOML-parsed, and fully validated **before** anything else — including before stdin is touched. `--dry-run` therefore never reads stdin.
+- stdin is required for a real run (not for `--dry-run`). Both a terminal stdin (nothing piped) and an empty piped stdin (empty after trimming) fail with the same error: `workflow requires input via stdin`.
+- stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress lines, per-step stats, warnings, and the final total. **stdout carries nothing except the `--dry-run` plan.**
 
 ## File format
 
@@ -120,14 +122,38 @@ SCORE: <n>/10
 
 ## Variable substitution
 
-Anywhere in a prompt, `{{name}}` is substituted with:
+Every step prompt is resolved in **three passes**, in order, exactly like the interactive chat resolves user input:
+
+**Pass 1 — workflow variables.** Anywhere in a prompt, `{{name}}` is substituted with:
 
 | Variable           | Value                                                                  |
 |--------------------|------------------------------------------------------------------------|
-| `{{input}}`        | The raw stdin content                                                  |
+| `{{input}}`        | The raw stdin content (trimmed)                                        |
 | `{{step_name}}`    | The full text output of a previously completed step (by name)          |
 
-Forward references (`{{later}}` from an earlier step) are rejected at pre-flight validation. Step names must be unique across the entire file, including all sub-steps.
+An unknown `{{var}}` is left **untouched** in this pass so the next pass can claim it as a built-in.
+
+**Pass 2 — built-in placeholders.** The same canonical chat helper then expands these built-ins (no quotes, used bare in the prompt):
+
+| Placeholder      | Expands to                                              |
+|------------------|---------------------------------------------------------|
+| `{{DATE}}`       | Current date/time                                       |
+| `{{CWD}}`        | Project working directory                               |
+| `{{SHELL}}`      | Detected shell                                          |
+| `{{OS}}`         | Operating system                                        |
+| `{{BINARIES}}`   | Available developer binaries on PATH                    |
+| `{{ROLE}}`       | The resolved role name                                  |
+| `{{SYSTEM}}`     | System info summary                                     |
+| `{{CONTEXT}}`    | Project context bundle                                  |
+| `{{GIT_STATUS}}` | `git status` of the working directory                   |
+| `{{GIT_TREE}}`   | Git-tracked file tree                                   |
+| `{{README}}`     | Project README contents                                 |
+
+> **Caveat — built-in placeholders are rejected by pre-flight validation today.** Validation (run for every workflow, including `--dry-run`, in `src/workflow/validate.rs`) flags **any** `{{var}}` that is not `{{input}}` or a declared step name as an *unknown variable* and aborts before the step runs. The built-ins above are not step names, so a step prompt that contains one (e.g. `{{DATE}}`) fails validation and never reaches this expansion pass. In practice, only `{{input}}` and `{{step_name}}` references are usable in workflow step prompts; put date/context information into the step prompt text directly instead.
+
+**Pass 3 — context file inlining.** Any `<context>path</context>` or `<context>path:start:end</context>` block is replaced with the named file's contents rendered as XML (the same file-context path chat uses). Use `path:start:end` to inline only a line range. Because this runs on every step prompt, a step can also emit a `<context>...</context>` block in *its own* response and the next step that interpolates `{{that_step}}` will receive the file inlined.
+
+Forward references (`{{later}}` from an earlier step) are rejected at pre-flight validation — which rejects **any** `{{var}}` that is not `{{input}}` or an already-defined step name (see the caveat above). Step names must be unique across the entire file, including all sub-steps. `<context>` blocks use angle brackets rather than `{{ }}`, so they are not treated as variable references.
 
 ## Step types
 
@@ -146,6 +172,8 @@ Optional fields on any sequential step (including sub-steps inside parallel/loop
 ### Parallel (`parallel = true`)
 Sub-steps run concurrently via `tokio::join_all`. The next top-level step starts only after every sub-step completes. Sub-steps cannot reference each other; only outer scope.
 
+A `session = "continue"` field on a parallel sub-step is **silently ignored** — parallel sub-steps always run with a fresh session. Continue-session state only makes sense across the sequential iterations of a loop.
+
 ### Loop (`loop = true`)
 Sub-steps run sequentially within each iteration. Between iterations, `exit_when` is checked against the named step's output:
 
@@ -158,6 +186,8 @@ If `max_iterations` is reached without exit, the loop exits with the last iterat
 ### Conditional (`conditional = true`)
 `condition` tests a prior step output (same shape as `exit_when`). On match, the names in `on_match` run; otherwise `on_no_match` runs. Skipped sub-step names resolve to empty strings in later substitutions.
 
+Omitting `output` in the `condition` tests the most recently completed step. If **no** step has completed yet (the conditional is the first step), the workflow fails with `conditional step '<name>': no prior step output to test`.
+
 ## Session modes
 
 | Mode                          | Behaviour                                                              |
@@ -167,36 +197,54 @@ If `max_iterations` is reached without exit, the loop exits with the last iterat
 
 **Continue-session prompt rule:** on the *first* run of a continue-session, the templated prompt is sent. On *subsequent* runs, the templated prompt is **replaced** with the most recent prior step's raw output — the session already holds the full context, so it just needs the latest signal to react to. This is what makes the generator↔tester GAN pattern work without re-feeding the whole spec each iteration.
 
-Each step owns its own session ID. In a loop, `developer` and `tester` accumulate independent histories.
+Each step owns its own session ID. In a loop, `developer` and `tester` accumulate independent histories. The generated session name has the form `wf-<sanitized-workflow-name>-<step-name>-<short-uuid>` (workflow name sanitized to ASCII alphanumerics and `-`; short-uuid is the first segment of a UUIDv4). These sessions are ephemeral to one `octomind workflow` invocation and are not reused across runs.
 
 ## Retries and timeouts
 
 - `retries = N` — up to N additional attempts on failure (default 0 ≙ one attempt).
 - A step "fails" when the subprocess exits non-zero **or** produces no assistant output.
 - `timeout = S` — seconds before the subprocess is killed (default 0 ≙ no timeout). A timeout counts as a failure for retry logic.
-- All retries exhausted → workflow exits non-zero with `step '<name>' failed after <N> attempts`.
+- All retries exhausted → workflow exits non-zero with `step '<name>' failed after <N> attempts: <reason>`, where `<reason>` is the last attempt's failure — e.g. `failed exit code Some(1) (attempt N/N)`, `timed out after Ss (attempt N/N)`, `produced no assistant output (attempt N/N)`, or `spawn error: ...`.
 
 ## Progress output (stderr)
 
+All progress goes to **stderr**. The exact rendering depends on whether stderr is a terminal:
+
+- **Interactive (stderr is a TTY):** each step opens a `╭ <name>` box and, while it runs, a live spinner shows the latest stream event plus a dimmed running aggregate (elapsed · cost · ⚒tools). When the step finishes the spinner clears and the box closes with `╰ ✓ <name>  …stats`.
+- **Piped / redirected:** no spinner — each JSONL event is streamed as one line under a `│ ` rail. The events surfaced are `ToolUse` (`▸ tool · server` plus params), `Skill`, `Status`, `McpNotification`, and `Error`. Assistant text, thinking, and cost events are not rendered as rail lines; failed tool calls are surfaced separately via the `⚒N ✗F` count in the per-step and total stats.
+
+A complete run looks like this (color stripped):
+
 ```
-╭ workflow: my-workflow
-  ► spec           running...
-  ✓ spec           2.1s  $0.0042  1240 tok
-  ► refine [1/3]   developer    running...
-  ✓ refine [1/3]   developer    8.4s  $0.0156  3208 tok
-  ► refine [1/3]   tester       running...
-  ✓ refine [1/3]   tester       3.2s  $0.0078  1450 tok
-  ✓ exit condition matched at iteration 1
-  ► evaluator      running...
-  ✓ evaluator      1.8s  $0.0029  890 tok
-╰ Total: 15.5s  $0.0305  6788 tok
+workflow · my-workflow
+
+╭ spec
+│ ▸ shell · octofs
+╰ ✓ spec  2.1s  · $0.0042  · 1240 tok  · ⚒3
+
+╭ developer  [1/3] refine
+╰ ✓ developer  8.4s  · $0.0156  · 3208 tok  · ⚒12
+
+╭ tester  [1/3] refine
+╰ ✓ tester  3.2s  · $0.0078  · 1450 tok  · ⚒2
+· loop 'refine' exit at iteration 1
+
+╭ evaluator
+╰ ✓ evaluator  1.8s  · $0.0029  · 890 tok  · ⚒0
+
+total · 15.5s  · $0.0305  · 6788 tok  · ⚒17
 ```
 
-Stats come from the `cost` events in the JSONL stream emitted by `octomind run --format jsonl`. Cost (`session_cost`), input/output/cache/reasoning tokens, and wall-clock duration are aggregated per step and totalled at the end.
+- The header is `workflow · <name>` and the footer is `total · <dur>  · $<cost>  · <tok> tok  · ⚒<tools>`.
+- Inside a loop, the box title carries a `[i/max] <loop-name>` suffix.
+- A failed attempt closes with `╰ ✗ <name>  <reason>` instead of `╰ ✓ …`.
+- The `⚒N` glyph is the tool-call count; on failures it becomes `⚒N ✗F` (F = failed tool calls).
+
+**Where the numbers come from.** Stats are sourced from the JSONL stream emitted by `octomind run --format jsonl`: cost, token totals, and per-event tool tracking. Per-step `cost`, `input_tokens`, and `output_tokens` come from the `cost` event's payload, and the **token total shown is `session_tokens`** (the session-wide total reported by the run), *not* `input + output`. Tool counts are tallied live: `⚒N` increments on each `ToolUse` event and `✗F` increments on each failed `ToolResult`. Duration is wall-clock time of the subprocess. The footer sums duration, cost, tokens, and tool counts across every step.
 
 ## --dry-run
 
-`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to stdout without spawning any `octomind run` processes or reading stdin. Use it to sanity-check a workflow before paying for tokens.
+`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout** — the one and only thing a workflow ever writes to stdout. It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.
 
 ## Validation
 
@@ -279,4 +327,4 @@ Intentionally not supported (use shell composition or call `octomind run` direct
 - Named workflow lookup by short name (explicit path only)
 - Cross-invocation session persistence for `continue` sessions
 - Step artifacts written to disk
-- Structured (JSON) output from the workflow command itself
+- Any machine-readable stdout result. Everything is human-facing on stderr; stdout only ever carries the `--dry-run` plan.

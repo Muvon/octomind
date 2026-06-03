@@ -4,7 +4,7 @@ Octomind uses the Model Context Protocol (MCP) to provide AI models with externa
 
 ## Architecture
 
-Octomind ships with five MCP servers:
+Octomind ships **three builtin MCP servers** declared in the default config (`core`, `runtime`, `agent`), plus an auto-discovered `local` server for project scripts:
 
 | Server | Type | Description |
 |--------|------|-------------|
@@ -12,23 +12,12 @@ Octomind ships with five MCP servers:
 | `runtime` | builtin | Low-level harness reconfiguration: register MCP servers, manage dynamic agents, load skills, schedule, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
 | `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
-| `filesystem` | stdio (`octofs`) | File operations, shell commands, code analysis |
+
+The filesystem tools (`view`, `text_editor`, `shell`, `ast_grep`, …) are **not** a builtin server. They are served by a separate `octofs` MCP server (a stdio subprocess: command `octofs`, args `["mcp"]`) that is **not declared in the default config**. It is delivered through the built-in default tap [`muvon/tap`](../integration/04-tap-system.md)'s capabilities `filesystem-read` and `filesystem-write`, and roles reach it via `server_refs`/capabilities under the `filesystem` capability name — never a hardcoded `[[mcp.servers]]` block named `filesystem`. See [Filesystem Server Tools (octofs)](#filesystem-server-tools-octofs) below for the prerequisites.
 
 `core` and `runtime` are the two split halves of what used to be a single `core` server. The split separates "what the agent uses to do work" (`core`) from "what reconfigures the harness mid-session" (`runtime`).
 
 Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio` types.
-
-### Why two builtin servers
-
-The split exists for two reasons: a clearer mental model, and a lower default token tax.
-
-**The taxonomy.** `runtime` answers *"what am I?"* — its tools mutate the agent's identity: register a new MCP server, define a dynamic-agent class, load a skill instruction-pack. `core` answers *"how do I get this done?"* — planning a multi-step task, deferring work, growing the toolset on intent, delegating to a specialist. Most roles always want the second. Only specialized harness-authoring roles want the first.
-
-**The token cost.** Every always-on tool is schema text the model stares at every turn, even when irrelevant. Splitting `runtime` out lets a typical role (`lawyer:sg`, `doctor:blood`, `developer:general`) drop those three tools from its surface entirely — they're never reached for during normal work, and exposing them just adds noise.
-
-**Where new tools go.** When adding a tool, ask: *does it change what the agent **is**, or help the agent **work**?* Identity-change → `runtime`. Work-help → `core`. If neither fits cleanly, it's probably a [capability](#capability----discover-and-activate-domain-bundles) — a domain bundle activated on demand rather than a built-in.
-
-**Direction of travel.** Even `core` is moving toward capability-gated rather than always-on. Today the essentials (`capability`, `tap`, `plan`) are always exposed because they're the bootstrap layer — `capability` loads everything else, `tap` is foundational delegation, `plan` is meta-cognition every role benefits from. Auxiliaries like `schedule`, and the entirety of `runtime`, are good candidates to migrate behind opt-in capability bundles authored in taps. The auto-activation pipeline already handles this for external capabilities; extending it to builtin tools is a tap-side authoring task.
 
 ## Core Server Tools
 
@@ -41,77 +30,23 @@ Break down large objectives into steps with progress tracking.
 
 | Command | Required Params | Description |
 |---------|----------------|-------------|
-| `start` | `title`, `tasks` (array of `{title, description}`) | Begin a new plan |
-| `step` | `content` | Add progress notes to current step |
-| `next` | `content` | Mark current step complete, advance |
-| `list` | -- | Show all steps with status |
-| `done` | `content` (optional) | Complete plan, trigger cleanup |
+| `start` | `content` (plan goal/title), `tasks` (array of `{title, description}`) | Begin a new plan (errors if a plan already exists — `done` or `reset` first) |
+| `step` | `content` | Add progress notes to current task (does not advance it) |
+| `next` | `content` | Mark current task done, advance |
+| `list` | -- | Show all tasks with status |
+| `done` | `content` | Complete plan, trigger cleanup |
 | `reset` | -- | Abort and clear plan |
 
+The plan title comes from the `content` parameter on `start` — there is **no** `title` property on the tool itself (only inside each `tasks` entry). The schema sets `additionalProperties: false`, so a stray top-level `title` key is rejected.
+
 ```json
-{"command": "start", "title": "Implement Auth", "tasks": [
+{"command": "start", "content": "Implement Auth", "tasks": [
   {"title": "Design API", "description": "Create endpoints"},
   {"title": "Write tests", "description": "Unit and integration"}
 ]}
 {"command": "next", "content": "API designed, moving to tests"}
 {"command": "done", "content": "Feature complete"}
 ```
-
-### `schedule` -- Scheduled Message Injection
-
-Schedule messages for future injection into the session — fire at a specific time, or the next time the session becomes idle. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for direct user control.
-
-**Parameters:**
-- `command` (string, required): `"add"`, `"list"`, `"remove"`, `"edit"`
-- `message` (string, required for `add`): exact text injected as a user message when the entry fires
-- `when` (string, optional for `add`): when to fire. Defaults to `"idle"` when both `when` and `every` are omitted.
-- `every` (string, optional): repeat interval — entry re-schedules itself after each firing until removed
-
-**`when` formats** (local timezone):
-- `"idle"` — fires the next time the session becomes idle (no running taps, no running background jobs)
-- `"now"` (fires immediately on the next scheduler tick)
-- Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`
-- Time today: `"15:30"`, `"3:30pm"`, `"9am"` (past times fire tomorrow)
-- Exact: `"2026-03-22 15:30"`
-
-**`every` format** (omit for one-shot):
-- `"idle"` — fires on every idle transition (pairs with `when="idle"` or omitted)
-- Same syntax as relative `when` without the `in` prefix — `"10m"`, `"1h"`, `"1h30m"`
-- Pass `"none"` (or `"off"`) in `edit` to clear an existing interval
-
-| Command | Required Params | Description |
-|---------|----------------|-------------|
-| `add` | `message` | Schedule a message. `when` defaults to `"idle"`. `description` and `every` optional. |
-| `list` | -- | Show pending entries with countdown |
-| `remove` | `id` | Cancel entry by ID |
-| `edit` | `id` | Update `when`, `message`, `description`, or `every` (time formats only — switch to/from idle by remove + add) |
-
-One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing. Idle entries fire only when the response loop is idle AND no tap-runs or background-agent jobs are running, so messages cannot interrupt in-flight work. Jobs cancelled on session exit.
-
-### `capability` -- Discover and Activate Domain Bundles
-
-Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-defined groups of MCP servers and tool filters distributed via taps (`<tap>/capabilities/<name>/<provider>.toml`).
-
-**Parameters:**
-- `action` (string, required): `"list"`, `"discover"`, `"enable"`, `"disable"`
-- `name` (string): Capability name (required for `enable` and `disable`)
-- `intent` (string): Free-text intent for `discover` (e.g., `"I need to query a database"`)
-
-| Action | Description |
-|--------|-------------|
-| `list` | Show every installed capability with active marker |
-| `discover` | Semantic search by intent — top 5 by trigger similarity |
-| `enable` | Register and connect a capability's MCP servers |
-| `disable` | Disconnect and unregister a capability's tools |
-
-```json
-{"action": "list"}
-{"action": "discover", "intent": "I need to query a Postgres database"}
-{"action": "enable", "name": "database-postgres"}
-{"action": "disable", "name": "database-postgres"}
-```
-
-**Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Active set is bounded by an LRU eviction policy (soft cap of 4). Multiple capabilities can safely share the same MCP server — eviction is per-(capability, server, tools), and the underlying server is only stopped when no other active capability references it. See [Token Efficiency](16-token-efficiency.md) for the algorithm and constants.
 
 ### `tap` -- Run Specialist Roles from Taps
 
@@ -128,10 +63,10 @@ Delegate work to a specialist role installed via a tap (e.g. `developer:general`
 
 | Action | Description |
 |--------|-------------|
-| `run` | Launch a role (or resume one). Foreground blocks for the reply; background returns the run id and injects the reply later. |
+| `run` | Launch a role (or resume one via `session`). Foreground blocks for the reply; background returns the run id and injects the reply later. Resuming a run that is still executing a prior turn is rejected with a busy error — wait for it to finish or `stop` it first. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
-| `discover` | Semantic match free-text intent against installed roles' `# Title:` / `# Description:` headers. Returns top 5. |
+| `discover` | Semantic match free-text intent against installed roles' titles/descriptions. Requires the local embedding model (errors if not ready). Returns roles scoring above 0.2 cosine, top 5. |
 
 ```json
 {"action": "discover", "intent": "review a Singapore employment contract"}
@@ -161,10 +96,10 @@ Manage MCP servers at runtime without editing config.
 |--------|-------------|
 | `list` | Show all servers with status and persistence info |
 | `add` | Register a new server (does not connect yet) |
-| `enable` | Connect and activate a registered server's tools |
+| `enable` | Connect and activate a registered server's tools. Accepts an optional `tools` array to apply a per-enable filter (overrides the registered filter; empty/omitted = all registered tools). |
 | `disable` | Deactivate server tools (config stays) |
 | `remove` | Unregister entirely |
-| `persist` | Save server to config directory |
+| `persist` | Save server config to config dir. If the server is enabled, auto-binds it to the current role (`auto_bind = [role]`); if disabled, clears `auto_bind` (file persists but won't auto-load). |
 | `unpersist` | Remove persisted config file |
 
 **Add parameters:**
@@ -174,7 +109,7 @@ Manage MCP servers at runtime without editing config.
 - `args` (array): Arguments (for stdio)
 - `url` (string): Endpoint (for http)
 - `timeout_seconds` (number): Timeout (default: 60)
-- `tools` (array): Tool filter (empty = all, supports wildcards like `"github_*"`)
+- `tools` (array): Tool filter (empty = all, supports wildcards like `"github_*"`). Also accepted by `enable` for a per-enable filter.
 
 ### `agent` -- Dynamic Agent Management
 
@@ -190,7 +125,7 @@ Manage in-process AI agents at runtime. Each registered agent becomes a tool pre
 - `welcome` (string): Optional welcome message
 - `model` (string): Model override
 - `temperature`, `top_p`, `top_k`: Sampling parameters
-- `server_refs` (array): MCP server references
+- `server_refs` (array): MCP server references — validated at add-time against config-defined and dynamic servers. When left empty, the needed servers are auto-derived from the `allowed_tools` patterns.
 - `allowed_tools` (array): Tool filter (supports wildcards)
 - `workdir` (string): Working directory (default: `"."`)
 
@@ -212,9 +147,80 @@ Manage skills (reusable instruction packs) from taps.
 
 **Skill resources:** Skills can include `scripts/`, `references/`, and `assets/` subdirectories. When activated, a resource catalog with absolute paths is provided.
 
+> **Internal note:** the dispatcher also accepts a `use_silent` action used for silent / auto-activation (env-loaded skills, `/skill` activation). It is not part of the JSON schema enum — the user/AI-facing actions are only `list`, `use`, and `forget`.
+
+### `schedule` -- Scheduled Message Injection
+
+Schedule messages for future injection into the session — fire at a specific time, or the next time the session becomes idle. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for direct user control.
+
+**Parameters:**
+- `command` (string, required): `"add"`, `"list"`, `"remove"`, `"edit"`
+- `message` (string, required for `add`): exact text injected as a user message when the entry fires
+- `when` (string, optional for `add`): when to fire. Defaults to `"idle"` when both `when` and `every` are omitted.
+- `every` (string, optional): repeat interval — entry re-schedules itself after each firing until removed
+
+**`when` formats** (local timezone):
+- `"idle"` — fires the next time the session becomes idle (no running taps, no running background jobs)
+- `"now"` (fires immediately on the next scheduler tick)
+- Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`
+- Time today: `"15:30"`, `"3:30pm"`, `"9am"` (past times fire tomorrow)
+- Exact: `"2026-03-22 15:30"`
+
+**`every` format** (omit for one-shot):
+- `"idle"` — fires on every idle transition (pairs with `when="idle"` or omitted)
+- Same syntax as relative `when` without the `in` prefix — `"10m"`, `"1h"`, `"1h30m"`
+- Pass `"none"` (or `"off"`) in `edit` to clear an existing interval
+
+| Command | Required Params | Description |
+|---------|----------------|-------------|
+| `add` | `message` | Schedule a message. `when` defaults to `"idle"`. `description` and `every` optional. |
+| `list` | -- | Show pending entries with countdown |
+| `remove` | `id` | Cancel entry by ID |
+| `edit` | `id` | Update `trigger_at` (via `when`), `message`, `description`, or interval (via `every`). Cannot switch an entry between idle and time modes — editing `when` on an idle entry has no firing effect (idle entries ignore `trigger_at`). Recreate the entry (remove + add) to change modes. |
+
+One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing. Idle entries fire only when the response loop is idle AND no tap-runs or background-agent jobs are running, so messages cannot interrupt in-flight work. Jobs cancelled on session exit.
+
+### `capability` -- Discover and Activate Domain Bundles
+
+Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-defined groups of MCP servers and tool filters distributed via taps (`<tap>/capabilities/<name>/<provider>.toml`).
+
+**Parameters:**
+- `action` (string, required): `"list"`, `"discover"`, `"enable"`, `"disable"`
+- `name` (string): Capability name (required for `enable` and `disable`)
+- `intent` (string): Free-text intent for `discover` (e.g., `"I need to query a database"`)
+
+| Action | Description |
+|--------|-------------|
+| `list` | Show every installed capability with active marker |
+| `discover` | Semantic search by intent — capabilities scoring above 0.2 cosine, top 5 returned |
+| `enable` | Register and connect a capability's MCP servers (domain-gated — see below) |
+| `disable` | Disconnect a capability's tools (refcount-aware — see below) |
+
+```json
+{"action": "list"}
+{"action": "discover", "intent": "I need to query a Postgres database"}
+{"action": "enable", "name": "database-postgres"}
+{"action": "disable", "name": "database-postgres"}
+```
+
+**`discover` requires the embedding model.** Semantic discovery embeds your intent with the local embedding model (muvon/octomind-embed). If that model is not yet initialized, `discover` returns an error rather than degrading — wait a moment after startup and retry. Results are filtered to cosine score > 0.2 and capped at the top 5.
+
+**`enable` is domain-gated.** A capability whose manifest binds it to specific domains can only be enabled when the session's current domain matches; enabling a cap bound to other domains is refused with an error. Capabilities with no `domains` list are universal and enable anywhere.
+
+**`disable` is refcount-aware.** When multiple active capabilities (or a role's static config) reference the same underlying MCP server, disabling one capability only strips *that* capability's tools — the server keeps running for its other consumers. The server process is fully shut down only when this was the last referencer and no static role config owns it.
+
+**Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Activation uses a similarity threshold of 0.45 with a 0.08 abstain-on-tie margin and considers the top 3 trigger scores; the active set is bounded by an LRU eviction policy (soft cap of 4). See [Token Efficiency](16-token-efficiency.md#deterministic-auto-activation) for the full algorithm.
+
+**Boot-time forcing.** Set `OCTOMIND_CAPABILITIES=cap1,cap2` to force-enable specific capabilities at startup — useful for non-interactive runs that need a deterministic tool surface (e.g. `OCTOMIND_CAPABILITIES=cron,docker octomind run -r ...`). Forced capabilities are still domain-gated.
+
 ## Filesystem Server Tools (octofs)
 
-These tools are provided by the external `octofs` MCP server running as a stdio subprocess.
+These tools are provided by the external `octofs` MCP server (command `octofs mcp`) running as a stdio subprocess. They are **not** a builtin — to have them you need:
+
+1. The `octofs` binary on your `PATH`.
+2. The built-in default tap [`muvon/tap`](../integration/04-tap-system.md) present (auto-cloned on first use), which ships the `filesystem-read` / `filesystem-write` capabilities that declare the `octofs` server.
+
+A role references these tools through its `server_refs` / capabilities under the `filesystem` capability name (the default `assistant` role does this) — there is no hardcoded `[[mcp.servers]]` entry named `filesystem`. Without the tap and binary, these tools will not be present.
 
 ### `view` -- Read Files and Directories
 
@@ -232,6 +238,17 @@ Read files, view directories, and search file content.
 - `lines` (array): `[start, end]` line range
 - `pattern` (string): Search pattern within file/directory
 - `content` (string): Content search query
+
+### `list_files` -- List Directory Entries
+
+List files and directories at a path. Complements `view` (which reads content) when you only need the file listing.
+
+**Parameters:**
+- `path` (string): Directory to list (defaults to the current working directory)
+
+```json
+{"path": "src/"}
+```
 
 ### `text_editor` -- File Editing
 
@@ -443,6 +460,18 @@ This server will automatically be available for the `developer` role on next sta
 MCP servers are monitored automatically:
 - Health checks every 120 seconds for external servers (HTTP + stdio)
 - Builtin servers are always considered healthy
-- Failed servers auto-restart up to 3 times with 30-second cooldown
-- Failed servers reset after 5-minute cooldown period
+- A failed server auto-restarts up to 3 times, waiting 30 seconds between restart attempts
+- The failed-state flag is cleared after a 5-minute cooldown, allowing the server to be retried again (distinct from the 30-second between-attempt wait)
 - Use `/mcp health` to force a health check
+
+## Design Notes: Why Two Builtin Servers
+
+The `core`/`runtime` split exists for two reasons: a clearer mental model, and a lower default token tax.
+
+**The taxonomy.** `runtime` answers *"what am I?"* — its tools mutate the agent's identity: register a new MCP server, define a dynamic-agent class, load a skill instruction-pack. `core` answers *"how do I get this done?"* — planning a multi-step task, deferring work, growing the toolset on intent, delegating to a specialist. Most roles always want the second. Only specialized harness-authoring roles want the first.
+
+**The token cost.** Every always-on tool is schema text the model stares at every turn, even when irrelevant. Splitting `runtime` out lets a typical role (`lawyer:sg`, `doctor:blood`, `developer:general`) drop those three tools from its surface entirely — they're never reached for during normal work, and exposing them just adds noise.
+
+**Where new tools go.** When adding a tool, ask: *does it change what the agent **is**, or help the agent **work**?* Identity-change → `runtime`. Work-help → `core`. If neither fits cleanly, it's probably a [capability](#capability----discover-and-activate-domain-bundles) — a domain bundle activated on demand rather than a built-in.
+
+**Direction of travel.** Even `core` is moving toward capability-gated rather than always-on. Today the essentials (`capability`, `tap`, `plan`) are always exposed because they're the bootstrap layer — `capability` loads everything else, `tap` is foundational delegation, `plan` is meta-cognition every role benefits from. Auxiliaries like `schedule`, and the entirety of `runtime`, are good candidates to migrate behind opt-in capability bundles authored in taps. The auto-activation pipeline already handles this for external capabilities; extending it to builtin tools is a tap-side authoring task.

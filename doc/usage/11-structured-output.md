@@ -1,78 +1,108 @@
 # Structured Output
 
-Octomind supports enforcing structured JSON output via schemas. Useful for automation, CI/CD pipelines, and machine-readable responses.
+Octomind can emit its session activity as machine-readable JSON instead of human-formatted terminal text. This is what you use for automation, CI/CD pipelines, and any program that needs to parse what the agent did.
 
-> **Note:** Schema-based structured output is available programmatically via the WebSocket server and ACP protocol. It is not exposed as a CLI `--schema` flag.
+> **Heads up:** Octomind does **not** currently let you enforce a JSON Schema on the assistant's *answer*. There is no `--schema` CLI flag, and no WebSocket or ACP protocol message accepts a schema. If you came here looking for "make the model reply with exactly this JSON shape," that is not a user-accessible feature today — see [Schema Enforcement](#schema-enforcement-not-user-accessible) below for the full picture. What *is* available is a structured **event stream** (`--format jsonl` and the WebSocket/ACP servers), described next.
 
-## How It Works
+## The Automation Surface: `--format jsonl`
 
-When a schema is provided (via WebSocket/ACP protocol):
-1. Schema is loaded and validated as JSON
-2. Schema is passed to the provider using its native structured output API
-3. AI is constrained to respond with JSON matching the schema
-4. Response is returned as raw JSON (markdown rendering disabled)
-5. Strict mode is always enabled: non-conforming responses are rejected
+The `run` command takes a `--format` flag. It accepts exactly two values:
 
-## Usage
+- `plain` — human-formatted terminal output (the default).
+- `jsonl` — one JSON object per line (JSON Lines) on stdout.
 
-### Define a Schema
+Setting `--format jsonl` switches Octomind into non-interactive mode: it reads the prompt from **stdin** and streams the session as JSONL.
+
+```bash
+echo "Summarize recent changes" | octomind run --format jsonl
+```
+
+Omitting the tag uses the default agent. You can also target a real default role, for example:
+
+```bash
+echo "Summarize recent changes" | octomind run assistant --format jsonl
+```
+
+Notes:
+
+- `--format` only exists on the `run` subcommand. The `server` and `acp` subcommands stream structured output by their own protocols (see below); they have no `--format` flag.
+- When `--format` is set, input always comes from stdin — there is no interactive prompt.
+- The default tag is `assistant:concierge` (a tap agent from the built-in default tap `muvon/tap`); the stock config also ships the local roles `assistant`, `task_refiner`, `task_researcher`, and `reduce`. (See [CLI Reference](../reference/01-cli-reference.md) for the full flag set and [Roles](06-roles.md) for tags.)
+
+## What the JSONL Stream Contains
+
+Each line is a single JSON object with a `"type"` field that tells you which kind of event it is. These are the same `ServerMessage` variants the WebSocket server emits, serialized one-per-line. The variants are:
+
+| `type` | Meaning | Key fields |
+|--------|---------|-----------|
+| `assistant` | Assistant response text | `content`, `session_id` |
+| `thinking` | Model reasoning/thinking content (separate from the answer) | `content`, `session_id` |
+| `tool_use` | The agent is about to call a tool | `tool`, `tool_id`, `server`, `params`, `session_id` |
+| `tool_result` | Result of a tool call | `tool`, `tool_id`, `server`, `content`, `success`, `session_id` |
+| `cost` | Token/cost accounting | `session_tokens`, `session_cost`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `session_id` |
+| `status` | Non-critical status/info (also carries command results in `data`) | `message`, `session_id?`, `data?` |
+| `error` | Error message | `message` |
+| `mcp_notification` | Notification forwarded from an MCP server | `server`, `method`, `params` |
+| `skill` | Skill lifecycle event (`activate` / `use` / `forget`) | `action`, `name`, `trigger?`, `session_id` |
+| `injected` | A non-user message injected into the loop (schedule, background agent, skill, webhook, …) | `source_kind`, `source_label`, `content`, `session_id` |
+
+Example of a few lines from a `jsonl` run (one object per physical line):
 
 ```json
-{
-  "type": "object",
-  "properties": {
-    "summary": { "type": "string" },
-    "issues": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "severity": { "type": "string", "enum": ["low", "medium", "high"] }
-  },
-  "required": ["summary", "issues", "severity"],
-  "additionalProperties": false
-}
+{"type":"status","message":"Session created: my-session","session_id":"my-session"}
+{"type":"tool_use","tool":"list_files","tool_id":"call_abc","server":"filesystem","params":{"directory":"src"},"session_id":"my-session"}
+{"type":"tool_result","tool":"list_files","tool_id":"call_abc","server":"filesystem","content":"src/main.rs\nsrc/lib.rs","success":true,"session_id":"my-session"}
+{"type":"assistant","content":"Recent changes refactored the session loop...","session_id":"my-session"}
+{"type":"cost","session_tokens":1234,"session_cost":0.0025,"input_tokens":1000,"output_tokens":200,"cache_read_tokens":30,"cache_write_tokens":4,"reasoning_tokens":0,"session_id":"my-session"}
 ```
 
-### Non-Interactive Mode (WebSocket/ACP)
+To get just the final answer text, filter for `assistant` lines, e.g. with `jq`:
 
 ```bash
-# Via WebSocket protocol — send schema in the session initialization message
-# See WebSocket server documentation for the protocol details
+echo "Summarize recent changes" | octomind run --format jsonl \
+  | jq -r 'select(.type == "assistant") | .content'
 ```
 
-### Interactive Session
+## Streaming Programmatically (WebSocket & ACP)
 
-Schema can be set programmatically via the WebSocket or ACP protocol during session initialization. It is not available as a CLI flag.
+If you want a live, bidirectional stream instead of a one-shot pipe, use one of the server modes:
 
-### Pipeline Integration
+- **WebSocket server** (`octomind server`) — emits the same `ServerMessage` event stream over a WebSocket. See [WebSocket Server](../integration/01-websocket-server.md) for the message protocol. Note that the session-init message (`session`) only carries an optional `session_id`; it does **not** accept a schema.
+- **ACP protocol** (`octomind acp`) — the Agent Client Protocol integration for editors/clients. See [ACP Protocol](../integration/02-acp-protocol.md).
 
-```bash
-# Use --format jsonl for structured JSON output in pipelines
-echo "Summarize recent changes" | octomind run developer --format jsonl
+Both stream the structured events listed above; neither accepts a schema on session creation.
+
+## Provider Compatibility (Structured Output Capability)
+
+Whether a provider *can* be asked for native structured output is exposed by each provider's `supports_structured_output(model)`. This capability is currently exercised internally (see [Schema Enforcement](#schema-enforcement-not-user-accessible)), not by a user-facing schema flag. For reference, against the active `octolib 0.21.6`:
+
+| Provider | `supports_structured_output` |
+|----------|------------------------------|
+| OpenAI | Yes (all models) |
+| Google (Vertex) | Yes |
+| Amazon (Bedrock) | Yes |
+| Cloudflare | Yes |
+| DeepSeek | Yes |
+| OpenRouter | Per model's reference capabilities, else Yes |
+| Anthropic | Trait default — per model's reference capabilities, else No |
+
+When code does request a schema from a provider that returns `false` for the given model, Octomind fails fast:
+
+```
+Provider 'anthropic' does not support structured output for model '<model-without-reference-capabilities>'. Remove the schema parameter or use a compatible provider.
 ```
 
-## Provider Compatibility
+## Schema Enforcement (Not User-Accessible)
 
-Not all providers support structured output. Octomind fails fast with a clear error if unsupported:
+There **is** a schema mechanism in the codebase, but it is not wired to any user entry point:
 
-```
-Provider 'cloudflare' does not support structured output for model 'llama-3.1-8b-instruct'.
-Remove the schema parameter or use a compatible provider.
-```
+- `ChatSession` has a `schema` field, but it is set to `None` at every construction site and the session-level `with_schema()` builder has no callers. In practice, per-session assistant output is **always** unconstrained — there is no CLI flag, WebSocket message, or ACP method that can populate it.
+- The `ProviderResponse.structured_output` field exists in the provider response type, but because no session sets a schema it is always `None` for normal sessions, and there is no display logic that prefers it over `content`.
 
-| Provider | Support | Notes |
-|----------|---------|-------|
-| OpenAI | Yes | `gpt-4o`, `gpt-4o-mini`, recent models |
-| Anthropic | Yes | Tool-based JSON mode |
-| OpenRouter | Varies | Depends on underlying model |
-| Google | No | |
-| Amazon | No | |
-| Cloudflare | No | |
-| DeepSeek | No | |
+The one place a schema is genuinely built and used today is **internal**: the conversation-compression decision call. When compression runs, it checks the *decision model's* provider via `supports_structured_output()`; if that returns true, it sends a generated compression schema (`build_compression_schema`) in strict mode to get a reliable decision/summary, otherwise it falls back to an XML-style prompt. This is invisible to your session output and uses the separate compression decision model, not your main model. (Default decision model: `openai:gpt-5-mini` — see [Context Compression](08-compression.md).)
 
-## Notes
+## Summary
 
-- Schema is used only for the top-level session response
-- Layers and compression always use `schema: None`
-- When structured output is present, it takes precedence over `content` for display
-- The `structured_output` field in provider response carries the parsed JSON value
+- For machine-readable output, use `--format jsonl` on `octomind run` (or the WebSocket/ACP servers for live streaming).
+- The JSONL/WebSocket/ACP streams emit typed `ServerMessage` events (`assistant`, `tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `injected`, `thinking`).
+- There is no user-facing way to enforce a JSON Schema on the assistant's answer. The internal schema mechanism is used only by the compression decision call.

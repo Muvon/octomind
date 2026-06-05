@@ -14,6 +14,7 @@
 
 // Session command processing - refactored into separate modules
 
+mod agents;
 mod clear;
 mod context;
 mod copy;
@@ -195,6 +196,16 @@ pub enum CommandOutput {
 		port: u16,
 		token: String,
 	},
+	Agents {
+		/// Currently-running runs, newest first (each with live `last_action`).
+		running: Vec<serde_json::Value>,
+		/// Recently finished/failed/cancelled runs, newest first.
+		finished: Vec<serde_json::Value>,
+		/// Single-run summary card when `/agents <id>` was requested.
+		detail: Option<serde_json::Value>,
+		/// Total runs tracked for this session (running + finished).
+		total: usize,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -270,6 +281,7 @@ impl CommandOutput {
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
 			Self::Analyze { .. } => display::display_analyze(self),
+			Self::Agents { .. } => display::display_agents(self),
 			Self::Error { error, .. } => {
 				block_open("/error", None);
 				block_close_err("error", error);
@@ -345,6 +357,7 @@ pub async fn process_command(
 		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
+		AGENTS_COMMAND => agents::handle_agents(params),
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

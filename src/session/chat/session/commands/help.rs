@@ -45,6 +45,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(PLAN_COMMAND.to_string());
 	commands.push(SKILL_COMMAND.to_string());
 	commands.push(SCHEDULE_COMMAND.to_string());
+	commands.push(AGENTS_COMMAND.to_string());
 	commands.push(REPORT_COMMAND.to_string());
 	commands.push(format!("{} | {}", EXIT_COMMAND, QUIT_COMMAND));
 

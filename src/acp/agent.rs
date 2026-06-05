@@ -265,6 +265,8 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		.input(unstructured(
 			"[list|add|remove|edit] [<id>] [when=...] [message=...] [every=...]",
 		)),
+		AvailableCommand::new("agents", "Show running/offloaded agents in this session")
+			.input(unstructured("[session]")),
 		AvailableCommand::new("exit", "Exit the session"),
 	]
 }

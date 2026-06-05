@@ -58,6 +58,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(SKILL_COMMAND, "List skills or toggle by name"),
 			(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
 			(LEARNING_COMMAND, "Manage role/project lessons"),
+			(
+				AGENTS_COMMAND,
+				"Show offloaded agents; /agents <id> for detail",
+			),
 			(REPORT_COMMAND, "Generate detailed usage report"),
 			(SHARE_COMMAND, "Upload session and print shareable URL"),
 			(
@@ -2210,4 +2214,163 @@ pub fn display_analyze(output: &CommandOutput) {
 		block_close_ok("/analyze", Some(&format!(":{}", port)));
 		println!();
 	}
+}
+
+/// Colored status glyph for a tap-run state.
+fn agent_status_icon(status: &str) -> colored::ColoredString {
+	match status {
+		"running" => "●".bright_green(),
+		"done" => "✓".bright_green(),
+		"failed" => "✗".bright_red(),
+		"cancelled" => "⊘".bright_yellow(),
+		_ => "•".dimmed(),
+	}
+}
+
+/// Compact token count: `"850"`, `"12.4k"`, `"3.0M"`.
+fn fmt_tokens(n: u64) -> String {
+	if n >= 1_000_000 {
+		format!("{:.1}M", n as f64 / 1_000_000.0)
+	} else if n >= 1_000 {
+		format!("{:.1}k", n as f64 / 1_000.0)
+	} else {
+		n.to_string()
+	}
+}
+
+pub fn display_agents(output: &CommandOutput) {
+	use crate::utils::time::{format_ago, format_duration_short};
+
+	let CommandOutput::Agents {
+		running,
+		finished,
+		detail,
+		total,
+	} = output
+	else {
+		return;
+	};
+
+	// Detail card: /agents <id>
+	if let Some(d) = detail {
+		let get_str = |k: &str| d.get(k).and_then(|v| v.as_str());
+		let id = get_str("id").unwrap_or("agent");
+		let status = get_str("status").unwrap_or("unknown");
+		block_open("/agents", Some(id));
+		let kw = key_width([
+			"role", "status", "workdir", "model", "tokens", "cost", "last",
+		]);
+		block_row(
+			"role",
+			&get_str("role").unwrap_or("?").bright_white().to_string(),
+			kw,
+		);
+		let elapsed = d.get("elapsed_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+		block_row(
+			"status",
+			&format!(
+				"{} {} · {}",
+				agent_status_icon(status),
+				status.bright_white(),
+				format_duration_short(elapsed).dimmed()
+			),
+			kw,
+		);
+		if let Some(wd) = get_str("workdir") {
+			block_row("workdir", &wd.dimmed().to_string(), kw);
+		}
+		if let Some(model) = get_str("model") {
+			block_row("model", &model.dimmed().to_string(), kw);
+		}
+		let ti = d.get("tokens_input").and_then(|v| v.as_u64());
+		let to = d.get("tokens_output").and_then(|v| v.as_u64());
+		if ti.is_some() || to.is_some() {
+			block_row(
+				"tokens",
+				&format!(
+					"{} in · {} out",
+					fmt_tokens(ti.unwrap_or(0)),
+					fmt_tokens(to.unwrap_or(0))
+				)
+				.bright_white()
+				.to_string(),
+				kw,
+			);
+		}
+		if let Some(cost) = d.get("cost").and_then(|v| v.as_f64()) {
+			block_row(
+				"cost",
+				&format!("${:.4}", cost).bright_green().to_string(),
+				kw,
+			);
+		}
+		match get_str("last_action") {
+			Some(la) => block_row("last", &la.bright_yellow().to_string(), kw),
+			None => block_row("last", &"(no activity yet)".dimmed().to_string(), kw),
+		}
+		block_close_ok("/agents", Some(status));
+		println!();
+		return;
+	}
+
+	// List view
+	let subtitle = format!("{} running · {} done", running.len(), finished.len());
+	block_open("/agents", Some(&subtitle));
+
+	if running.is_empty() && finished.is_empty() {
+		block_line(&"No agents offloaded in this session.".dimmed().to_string());
+		block_close_ok("/agents", Some("0 agents"));
+		println!();
+		return;
+	}
+
+	if !running.is_empty() {
+		block_section("running");
+		for a in running {
+			let role = a.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+			let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("");
+			let elapsed = a.get("elapsed_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+			let head = format!(
+				"{} {}  {}",
+				agent_status_icon("running"),
+				role.bright_white(),
+				format_duration_short(elapsed).dimmed()
+			);
+			block_row_text(&head);
+			block_row_text(&format!("  {}", id.dimmed()));
+			if let Some(la) = a.get("last_action").and_then(|v| v.as_str()) {
+				block_row_text(&format!("  ↳ {}", la.bright_yellow()));
+			}
+		}
+	}
+
+	if !finished.is_empty() {
+		block_section("recent");
+		for a in finished {
+			let role = a.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+			let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("");
+			let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+			let ago = a
+				.get("ago_secs")
+				.and_then(|v| v.as_u64())
+				.map(format_ago)
+				.unwrap_or_default();
+			let head = format!(
+				"{} {}  {} {}",
+				agent_status_icon(status),
+				role.dimmed(),
+				status.dimmed(),
+				if ago.is_empty() {
+					String::new()
+				} else {
+					format!("· {}", ago).dimmed().to_string()
+				}
+			);
+			block_row_text(&head);
+			block_row_text(&format!("  {}", id.dimmed()));
+		}
+	}
+
+	block_close_ok("/agents", Some(&format!("{} total", total)));
+	println!();
 }

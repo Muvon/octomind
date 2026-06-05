@@ -71,7 +71,7 @@ Octomind ships specialist agents ready to run — and a runtime that grows with 
 Most agent tools force a tradeoff: zero-config (Lindy, no-code) or fully customizable (Mastra, LangGraph). Octomind gives you both. `octomind run lawyer:sg` works out of the box. Need a different model, a custom MCP server, a guardrail pipe — all live in TOML, no framework code.
 
 ```bash
-octomind run developer            # general dev, language skills auto-activate
+octomind run developer:general    # general dev, language skills auto-activate
 octomind run doctor:blood         # blood-test interpretation specialist
 octomind run doctor:nutrition     # nutrition specialist
 ```
@@ -268,7 +268,7 @@ curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | 
 export OPENROUTER_API_KEY="your_key"
 
 # Start with a specialist — no setup required
-octomind run developer
+octomind run developer:general
 ```
 
 ```
@@ -367,17 +367,17 @@ Octomind isn't just a CLI. It runs in every context an agent needs to live in:
 octomind acp developer:general
 
 # Non-interactive — the message is read from stdin (pipe it in), output as plain text
-echo "Explain the auth module" | octomind run developer --format plain
+echo "Explain the auth module" | octomind run developer:general --format plain
 
 # Structured JSONL output for pipelines
-echo "List TODO items" | octomind run developer --format jsonl
+echo "List TODO items" | octomind run developer:general --format jsonl
 
 # Daemon — keep a session alive and inject messages into it from anywhere
 echo "first task" | octomind run --name watcher --daemon --format jsonl
 octomind send --name watcher "now run the test suite"
 ```
 
-`octomind run` has **no message argument** — when `--format` is set, input comes from piped stdin. `--format` is `run`-only (it accepts only `plain` or `jsonl`; `server` and `acp` do not take it). Setting `--format` triggers non-interactive mode only when stdin is *not* a terminal: `octomind run developer --format plain` typed at a TTY stays interactive, while piping into it runs once and exits.
+`octomind run` has **no message argument** — when `--format` is set, input comes from piped stdin. `--format` is `run`-only (it accepts only `plain` or `jsonl`; `server` and `acp` do not take it). Setting `--format` triggers non-interactive mode only when stdin is *not* a terminal: `octomind run developer:general --format plain` typed at a TTY stays interactive, while piping into it runs once and exits.
 
 See [WebSocket Server](doc/integration/01-websocket-server.md), [ACP Protocol](doc/integration/02-acp-protocol.md), and [Daemon & Hooks](doc/integration/03-daemon-and-hooks.md) for the integration modes.
 

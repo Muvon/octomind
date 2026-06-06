@@ -399,6 +399,53 @@ impl CompressionMetrics {
 	}
 }
 
+/// True if `m` is an assistant turn that issued at least one tool call.
+/// An empty `tool_calls` array (or absent field) means no calls were made,
+/// so the message can legally be followed by another assistant message.
+fn has_tool_calls(m: &crate::session::Message) -> bool {
+	matches!(m.tool_calls.as_ref(), Some(serde_json::Value::Array(a)) if !a.is_empty())
+}
+
+/// Advance a candidate compression boundary forward until it lands on a
+/// message that can legally precede the inserted `<task_compressed>` summary
+/// (an assistant message). The boundary is the LAST message KEPT before the
+/// summary, so it must NOT be an `assistant_with_tool_calls` — that assistant's
+/// tool results live at `boundary+1..`, which the drain removes, leaving the
+/// kept assistant's `tool_calls` orphaned (GitHub issue #84: DeepSeek/Anthropic
+/// reject with "tool_calls must be followed by tool messages").
+///
+/// While `next` points at an `assistant_with_tool_calls`, skip it together with
+/// its consecutive tool results and re-check — chained tool-calling turns are
+/// skipped one group at a time. Returns `None` when a tool run is incomplete
+/// (already-orphaned assistant) or extends past `end_index`, so the caller
+/// skips compression rather than emitting a corrupted stream.
+fn settle_boundary(
+	messages: &[crate::session::Message],
+	mut next: usize,
+	end_index: usize,
+) -> Option<usize> {
+	while next <= end_index && messages[next].role == "assistant" && has_tool_calls(&messages[next])
+	{
+		let after_asst = next + 1;
+		let mut after = after_asst;
+		while after <= end_index && messages[after].role == "tool" {
+			after += 1;
+		}
+		// No tool results immediately follow (already orphaned), or the tool
+		// run runs past end_index — either way there is no safe boundary.
+		if after == after_asst || after > end_index {
+			return None;
+		}
+		next = after;
+	}
+
+	if next > end_index {
+		None
+	} else {
+		Some(next)
+	}
+}
+
 fn adjusted_task_compression_start_index(
 	messages: &[crate::session::Message],
 	start_index: usize,
@@ -413,24 +460,15 @@ fn adjusted_task_compression_start_index(
 	// Case 1: start_index is an assistant with tool_calls. Whatever we return
 	// as adjusted_start becomes the LAST kept message in the prefix, and the
 	// inserted compression summary takes the next slot. An asst_with_tool_calls
-	// cannot legally be followed by another assistant message (Anthropic
-	// requires the immediate next message to be a tool_result), so we MUST
-	// advance past this asst together with all its tool_results. If there are
-	// no consecutive tool_results to skip past (the asst was already orphan
-	// before compression — e.g. its results were drained by an earlier cycle)
-	// or the tool run extends past end_index, skip compression rather than
-	// inserting the summary right after the orphan and corrupting the stream.
-	if anchor.role == "assistant" && anchor.tool_calls.is_some() {
-		let mut next = start_index + 1;
-		while next <= end_index && messages[next].role == "tool" {
-			next += 1;
-		}
-
-		return if next > start_index + 1 && next <= end_index {
-			Some(next)
-		} else {
-			None
-		};
+	// cannot legally be followed by another assistant message (the API requires
+	// the immediate next message to be a tool_result), so `settle_boundary`
+	// advances past this asst together with all its tool_results — and past any
+	// further chained tool-calling assistant turns — until it lands on a
+	// settled message. If the tool run is incomplete (the asst was already
+	// orphaned by an earlier cycle) or extends past end_index, it returns None
+	// so the caller skips compression rather than corrupting the stream.
+	if anchor.role == "assistant" && has_tool_calls(anchor) {
+		return settle_boundary(messages, start_index, end_index);
 	}
 
 	// Case 2: start_index is a tool_result whose parent assistant (somewhere
@@ -438,7 +476,9 @@ fn adjusted_task_compression_start_index(
 	// drain removes start_index+1..=end, which may include sibling tool_results
 	// for the same assistant. Walk back past consecutive tool messages to find
 	// the parent, then advance forward past ALL consecutive tool messages from
-	// start_index so no sibling results are split by the drain boundary.
+	// start_index so no sibling results are split by the drain boundary. The
+	// landed boundary is then settled the same way as Case 1 so it can never be
+	// a chained asst_with_tool_calls whose results would orphan.
 	if anchor.role == "tool" {
 		let mut parent_idx = start_index;
 		while parent_idx > 0 && messages[parent_idx - 1].role == "tool" {
@@ -446,13 +486,17 @@ fn adjusted_task_compression_start_index(
 		}
 		if parent_idx > 0 {
 			let parent = &messages[parent_idx - 1];
-			if parent.role == "assistant" && parent.tool_calls.is_some() {
+			if parent.role == "assistant" && has_tool_calls(parent) {
 				let mut next = start_index + 1;
 				while next <= end_index && messages[next].role == "tool" {
 					next += 1;
 				}
 
-				return if next <= end_index { Some(next) } else { None };
+				return if next <= end_index {
+					settle_boundary(messages, next, end_index)
+				} else {
+					None
+				};
 			}
 		}
 	}
@@ -1596,5 +1640,119 @@ mod tests {
 			found_orphan_in_input,
 			"test fixture should contain the orphan asst_with_tool_calls at start_index"
 		);
+	}
+
+	#[test]
+	fn task_compression_adjusted_start_lands_on_asst_with_tool_calls_orphans_it() {
+		// Reproduces GitHub issue #84:
+		//   "Session compression leaves orphaned tool_calls, causing DeepSeek
+		//    API 400 errors"
+		//
+		// Layout (start_index = 1, an assistant_with_tool_calls):
+		//   0 system
+		//   1 assistant  tool_calls=[call_A]   ← start_index (anchor)
+		//   2 tool       call_A                ← A1's result
+		//   3 assistant  tool_calls=[call_B]   ← A2 (another tool-calling turn)
+		//   4 tool       call_B                ← A2's result
+		//   5 assistant
+		//   6 user
+		//   7 assistant
+		//
+		// Case 1 of `adjusted_task_compression_start_index` walks `next`
+		// past A1's tool result (idx 2) and STOPS at idx 3 (assistant A2),
+		// returning Some(3). But idx 3 is ITSELF an assistant_with_tool_calls.
+		// The caller then drains `[adjusted_start+1..=end] = [4..=7]`, which
+		// removes A2's tool_result at idx 4 and inserts the <task_compressed>
+		// summary right after A2. A2's call_B now has no matching tool_result —
+		// the exact orphan pattern from issue #84 that DeepSeek/Anthropic reject:
+		//   "An assistant message with 'tool_calls' must be followed by tool
+		//    messages responding to each 'tool_call_id'."
+		//
+		// The adjusted start must NEVER be an assistant_with_tool_calls whose
+		// own tool results sit inside the drain range: either advance past
+		// A2 + its results too, or skip compression (return None).
+
+		use crate::session::Message;
+		use serde_json::json;
+
+		fn msg(role: &str) -> Message {
+			Message {
+				role: role.to_string(),
+				content: format!("{} message", role),
+				timestamp: 1000,
+				cached: false,
+				cache_ttl: None,
+				tool_call_id: None,
+				name: None,
+				tool_calls: None,
+				images: None,
+				videos: None,
+				thinking: None,
+				id: None,
+			}
+		}
+
+		let mut messages = Vec::new();
+		messages.push(msg("system")); // 0
+
+		let mut asst_a = msg("assistant"); // 1 ← start_index
+		asst_a.tool_calls = Some(json!([
+			{"id": "call_A", "type": "function", "function": {"name": "view", "arguments": "{}"}}
+		]));
+		messages.push(asst_a);
+
+		let mut tool_a = msg("tool"); // 2
+		tool_a.tool_call_id = Some("call_A".to_string());
+		messages.push(tool_a);
+
+		let mut asst_b = msg("assistant"); // 3 ← another tool-calling turn
+		asst_b.tool_calls = Some(json!([
+			{"id": "call_B", "type": "function", "function": {"name": "shell", "arguments": "{}"}}
+		]));
+		messages.push(asst_b);
+
+		let mut tool_b = msg("tool"); // 4
+		tool_b.tool_call_id = Some("call_B".to_string());
+		messages.push(tool_b);
+
+		messages.push(msg("assistant")); // 5
+		messages.push(msg("user")); // 6
+		messages.push(msg("assistant")); // 7
+
+		let start_index = 1usize;
+		let end_index = 7usize;
+
+		let adjusted = adjusted_task_compression_start_index(&messages, start_index, end_index);
+
+		// If the function returns Some(idx), the kept anchor at `idx` must NOT
+		// be an assistant_with_tool_calls whose results fall in the drain range.
+		if let Some(adjusted_start) = adjusted {
+			// Simulate the exact drain compress_completed_task performs.
+			let drain_range = adjusted_start + 1..=end_index;
+			messages.drain(drain_range);
+
+			// Every surviving assistant_with_tool_calls must still be followed
+			// by a matching tool_result somewhere — otherwise the API rejects it.
+			for (i, m) in messages.iter().enumerate() {
+				let Some(tcs) = m.tool_calls.as_ref().and_then(|v| v.as_array()) else {
+					continue;
+				};
+				if tcs.is_empty() {
+					continue;
+				}
+				for tc in tcs {
+					let tc_id = tc["id"].as_str().unwrap();
+					let has_result = messages
+						.iter()
+						.any(|r| r.role == "tool" && r.tool_call_id.as_deref() == Some(tc_id));
+					assert!(
+						has_result,
+						"issue #84: assistant at idx {i} kept tool_call {tc_id} but its \
+						 tool_result was drained — orphaned tool_calls cause the \
+						 DeepSeek/Anthropic 400 error"
+					);
+				}
+			}
+		}
 	}
 }

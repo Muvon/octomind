@@ -18,10 +18,10 @@
 //!
 //! - `run`      — launch a fresh tap-tag (e.g. `developer:general`) or resume
 //!   an existing run by `session` id. `prompt` is required.
-//!   `background=false` (default) waits for the assistant turn
-//!   and returns inline; `background=true` returns the id
-//!   immediately and pushes the result to the parent session
-//!   inbox when done.
+//!   `background=true` (default) returns the id immediately and
+//!   pushes the result to the parent session inbox when done;
+//!   `background=false` blocks until the specialist turn completes
+//!   and returns inline.
 //! - `list`     — show every tap-run in the current session with id, tag,
 //!   status, and start time.
 //! - `stop`     — cancel a running tap-run by id (sends the cancel watch).
@@ -69,7 +69,7 @@ Discovery flow:
 - If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:
-- `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default false; true = return immediately, reply injected later). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
+- `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default **true**; set false only when you need the reply inline before the next step). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
@@ -100,8 +100,8 @@ Actions:
 				},
 				"background": {
 					"type": "boolean",
-					"description": "When true, return immediately and inject the reply into this conversation when ready. Default: false (wait inline).",
-					"default": false
+					"description": "When true (default), return immediately and inject the reply into this conversation when ready. Set false only when you explicitly need the result inline before the next step.",
+					"default": true
 				},
 				"intent": {
 					"type": "string",
@@ -366,7 +366,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		.parameters
 		.get("background")
 		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+		.unwrap_or(true);
 
 	// Default workdir is the parent session's current cwd. Resolved early
 	// so resume picks up the original workdir from the existing job.

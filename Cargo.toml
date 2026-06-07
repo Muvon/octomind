@@ -33,7 +33,7 @@ overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
 # octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
-octolib = { version = "0.22.0", default-features = false, features = ["huggingface"] }
+octolib = { version = "0.23.0", default-features = false, features = ["huggingface"] }
 rmcp = { version = "1.7.0", default-features = false }
 
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }

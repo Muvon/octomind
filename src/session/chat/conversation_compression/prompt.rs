@@ -36,7 +36,7 @@ use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 
 /// Output mode for the compression call. Decided up-front from the
-/// provider's `supports_structured_output(model)` capability in `ai.rs`.
+/// provider's `enforces_response_schema(model)` capability in `ai.rs`.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum OutputMode {
 	/// Schema-driven JSON path (preferred). Provider receives the

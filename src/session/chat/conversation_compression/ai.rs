@@ -15,15 +15,18 @@
 // LLM I/O for compression decision + summary generation.
 //
 // `ask_ai_decision_and_summary` picks one of two equal paths up-front from
-// the provider's `supports_structured_output(model)` capability:
+// the provider's `enforces_response_schema(model)` capability:
 //
-//   - JSON path: builds the JSON prompt + attaches the strict JSON schema;
-//     deserialises `response.structured_output` (with a small lenient
-//     recovery inside the JSON mode for providers that misroute valid JSON
-//     into `content` instead of `structured_output`).
-//   - XML path: builds the XML prompt (embedding the tag spec); parses the
-//     response with `parse_xml_summary`, which performs structural
-//     validation matching the JSON schema's bounds.
+//   - JSON path (schema enforced): builds the JSON prompt + attaches the
+//     strict JSON schema; deserialises `response.structured_output` (with a
+//     small lenient recovery for providers that misroute valid JSON into
+//     `content` instead of `structured_output`).
+//   - XML path (no schema guarantee): builds the XML prompt (embedding the
+//     tag spec); parses the response with `parse_xml_summary`, which performs
+//     structural validation matching the JSON schema's bounds. Used for both
+//     providers with no structured-output support AND providers that only
+//     offer `json_object` mode (e.g. DeepSeek) where response shape is not
+//     guaranteed and typed JSON deserialization would be fragile.
 //
 // Both paths return `CompressionSummary`; the substantive-content gate and
 // cost/knowledge side-effects are mode-agnostic.
@@ -287,7 +290,7 @@ fn find_first_balanced_json(s: &str) -> Option<serde_json::Value> {
 }
 
 /// Orchestration entrypoint: pick the wire mode from the provider's
-/// `supports_structured_output(model)` capability, build the matching
+/// `enforces_response_schema(model)` capability, build the matching
 /// prompt, invoke the model, apply the substantive-content gate.
 ///
 /// Returns `(should_compress, summary)`:
@@ -309,7 +312,7 @@ pub(super) async fn ask_ai_decision_and_summary(
 ) -> Result<(bool, CompressionSummary)> {
 	let model = &config.compression.decision.model;
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
-	let use_json = provider.supports_structured_output(&actual_model);
+	let use_json = provider.enforces_response_schema(&actual_model);
 
 	let (system_content, user_content) = if use_json {
 		build_compression_prompt_json(session, messages_to_compress, force, target_ratio)

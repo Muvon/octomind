@@ -84,6 +84,8 @@ pub enum CommandOutput {
 		cache_markers_tool: u64,
 		cache_markers_content: u64,
 		cache_non_cached_tokens: u64,
+		/// Aggregated stats from all tap-offloaded agents this session.
+		agents_stats: Option<serde_json::Value>,
 	},
 	Model {
 		old_model: Option<String>,

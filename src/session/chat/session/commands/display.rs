@@ -380,6 +380,7 @@ pub fn display_info(output: &CommandOutput) {
 		cache_markers_tool,
 		cache_markers_content,
 		cache_non_cached_tokens,
+		agents_stats,
 		..
 	} = output
 	{
@@ -531,6 +532,55 @@ pub fn display_info(output: &CommandOutput) {
 				.to_string(),
 			kw,
 		);
+
+		// ── agents ─────────────────────────────────────────────────────
+		if let Some(astats) = agents_stats {
+			let get_u64 = |k: &str| astats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+			let get_f64 = |k: &str| astats.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+			let total_agents = get_u64("total");
+			let running = get_u64("running");
+			let done = get_u64("done");
+			let failed = get_u64("failed");
+			let ag_in = get_u64("tokens_input");
+			let ag_out = get_u64("tokens_output");
+			let ag_cached = get_u64("tokens_cached");
+			let ag_cost = get_f64("total_cost");
+			block_section("agents");
+			let kw_ag = key_width(["total", "tokens", "cost"]);
+			let mut status_parts = vec![format!("{} total", total_agents)];
+			if running > 0 {
+				status_parts.push(format!("{} running", running).bright_green().to_string());
+			}
+			if done > 0 {
+				status_parts.push(format!("{} done", done));
+			}
+			if failed > 0 {
+				status_parts.push(format!("{} failed", failed).bright_red().to_string());
+			}
+			block_row("total", &status_parts.join(" · "), kw_ag);
+			if ag_in > 0 || ag_out > 0 || ag_cached > 0 {
+				let dot = "·".bright_black();
+				block_row(
+					"tokens",
+					&format!(
+						"{} in {} {} out {} {} cache rd",
+						format_number(ag_in).bright_blue(),
+						dot,
+						format_number(ag_out).bright_green(),
+						dot,
+						format_number(ag_cached).bright_magenta(),
+					),
+					kw_ag,
+				);
+			}
+			if ag_cost > 0.0 {
+				block_row(
+					"cost",
+					&format!("${:.5}", ag_cost).bright_yellow().to_string(),
+					kw_ag,
+				);
+			}
+		}
 
 		block_close_ok("/info", Some(session_name));
 		println!();
@@ -2330,6 +2380,9 @@ pub fn display_agents(output: &CommandOutput) {
 			let role = a.get("role").and_then(|v| v.as_str()).unwrap_or("?");
 			let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("");
 			let elapsed = a.get("elapsed_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+			let ti = a.get("tokens_input").and_then(|v| v.as_u64()).unwrap_or(0);
+			let to = a.get("tokens_output").and_then(|v| v.as_u64()).unwrap_or(0);
+			let cost = a.get("cost").and_then(|v| v.as_f64());
 			let head = format!(
 				"{} {}  {}",
 				agent_status_icon("running"),
@@ -2338,6 +2391,17 @@ pub fn display_agents(output: &CommandOutput) {
 			);
 			block_row_text(&head);
 			block_row_text(&format!("  {}", id.dimmed()));
+			if ti > 0 || to > 0 || cost.is_some() {
+				let cost_str = cost.map(|c| format!(" · ${:.4}", c)).unwrap_or_default();
+				block_row_text(&format!(
+					"  {} {} {} {}{}",
+					fmt_tokens(ti).bright_blue(),
+					"in".dimmed(),
+					fmt_tokens(to).bright_green(),
+					"out".dimmed(),
+					cost_str.bright_yellow(),
+				));
+			}
 			if let Some(la) = a.get("last_action").and_then(|v| v.as_str()) {
 				block_row_text(&format!("  ↳ {}", la.bright_yellow()));
 			}
@@ -2355,6 +2419,9 @@ pub fn display_agents(output: &CommandOutput) {
 				.and_then(|v| v.as_u64())
 				.map(format_ago)
 				.unwrap_or_default();
+			let ti = a.get("tokens_input").and_then(|v| v.as_u64()).unwrap_or(0);
+			let to = a.get("tokens_output").and_then(|v| v.as_u64()).unwrap_or(0);
+			let cost = a.get("cost").and_then(|v| v.as_f64());
 			let head = format!(
 				"{} {}  {} {}",
 				agent_status_icon(status),
@@ -2368,6 +2435,17 @@ pub fn display_agents(output: &CommandOutput) {
 			);
 			block_row_text(&head);
 			block_row_text(&format!("  {}", id.dimmed()));
+			if ti > 0 || to > 0 || cost.is_some() {
+				let cost_str = cost.map(|c| format!(" · ${:.4}", c)).unwrap_or_default();
+				block_row_text(&format!(
+					"  {} {} {} {}{}",
+					fmt_tokens(ti).bright_blue(),
+					"in".dimmed(),
+					fmt_tokens(to).bright_green(),
+					"out".dimmed(),
+					cost_str.bright_yellow(),
+				));
+			}
 		}
 	}
 

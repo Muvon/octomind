@@ -105,14 +105,25 @@ pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
 				"workdir": j.workdir,
 				"elapsed_secs": elapsed_secs(j.started_at),
 				"last_action": snap.last_action,
+				"model": snap.info.as_ref().map(|i| i.model.clone()),
+				"tokens_input": snap.info.as_ref().map(|i| i.input_tokens),
+				"tokens_output": snap.info.as_ref().map(|i| i.output_tokens),
+				"tokens_cached": snap.info.as_ref().map(|i| i.cache_read_tokens),
+				"cost": snap.info.as_ref().map(|i| i.total_cost),
 			}));
 		} else {
+			let snap = read_agent_snapshot(&j.id);
 			finished.push(json!({
 				"id": j.id,
 				"role": j.role,
 				"status": j.status.as_str(),
 				"workdir": j.workdir,
 				"ago_secs": ago_secs(&j.id),
+				"model": snap.info.as_ref().map(|i| i.model.clone()),
+				"tokens_input": snap.info.as_ref().map(|i| i.input_tokens),
+				"tokens_output": snap.info.as_ref().map(|i| i.output_tokens),
+				"tokens_cached": snap.info.as_ref().map(|i| i.cache_read_tokens),
+				"cost": snap.info.as_ref().map(|i| i.total_cost),
 			}));
 		}
 	}
@@ -261,6 +272,47 @@ fn summarize_tool(name: &str, args: Option<&serde_json::Value>) -> String {
 		Some(h) => format!("{name} {h}"),
 		None => name.to_string(),
 	}
+}
+
+/// Aggregate token/cost stats across all agent runs for this session.
+/// Returns `None` when there are no runs. Used by `/info`.
+pub fn get_agents_stats() -> Option<serde_json::Value> {
+	let jobs = tap_runs::list_jobs();
+	if jobs.is_empty() {
+		return None;
+	}
+	let mut total_input: u64 = 0;
+	let mut total_output: u64 = 0;
+	let mut total_cached: u64 = 0;
+	let mut total_cost: f64 = 0.0;
+	let mut count_running: usize = 0;
+	let mut count_done: usize = 0;
+	let mut count_failed: usize = 0;
+	for j in &jobs {
+		match j.status {
+			TapJobStatus::Running => count_running += 1,
+			TapJobStatus::Done => count_done += 1,
+			TapJobStatus::Failed => count_failed += 1,
+			TapJobStatus::Cancelled => {}
+		}
+		let snap = read_agent_snapshot(&j.id);
+		if let Some(info) = snap.info {
+			total_input += info.input_tokens;
+			total_output += info.output_tokens;
+			total_cached += info.cache_read_tokens;
+			total_cost += info.total_cost;
+		}
+	}
+	Some(serde_json::json!({
+		"total": jobs.len(),
+		"running": count_running,
+		"done": count_done,
+		"failed": count_failed,
+		"tokens_input": total_input,
+		"tokens_output": total_output,
+		"tokens_cached": total_cached,
+		"total_cost": total_cost,
+	}))
 }
 
 /// Single-line, length-capped (ellipsis on overflow).

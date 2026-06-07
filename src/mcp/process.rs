@@ -146,6 +146,24 @@ lazy_static::lazy_static! {
 
 /// Derive a stable project identifier: SHA-256 of the git remote origin URL if available,
 /// otherwise SHA-256 of the absolute working directory path.
+/// Strip credentials from a git remote URL before hashing.
+/// `https://token@github.com/org/repo.git` → `https://github.com/org/repo.git`
+fn strip_git_credentials(url: &str) -> String {
+	let scheme = if url.starts_with("https://") {
+		"https"
+	} else if url.starts_with("http://") {
+		"http"
+	} else {
+		return url.to_string();
+	};
+	let rest = &url[scheme.len() + 3..]; // skip "scheme://"
+	if let Some(at) = rest.find('@') {
+		format!("{}://{}", scheme, &rest[at + 1..])
+	} else {
+		url.to_string()
+	}
+}
+
 pub fn derive_project_id() -> String {
 	use sha2::{Digest, Sha256};
 	let source = std::process::Command::new("git")
@@ -154,7 +172,7 @@ pub fn derive_project_id() -> String {
 		.ok()
 		.filter(|o| o.status.success())
 		.and_then(|o| String::from_utf8(o.stdout).ok())
-		.map(|s| s.trim().to_string())
+		.map(|s| strip_git_credentials(s.trim()))
 		.filter(|s| !s.is_empty())
 		.unwrap_or_else(|| {
 			std::env::current_dir()
@@ -176,7 +194,7 @@ pub fn derive_project_id_from_path(path: &std::path::Path) -> String {
 		.ok()
 		.filter(|o| o.status.success())
 		.and_then(|o| String::from_utf8(o.stdout).ok())
-		.map(|s| s.trim().to_string())
+		.map(|s| strip_git_credentials(s.trim()))
 		.filter(|s| !s.is_empty())
 		.unwrap_or_else(|| path.to_string_lossy().into_owned());
 	let hash = Sha256::digest(source.as_bytes());

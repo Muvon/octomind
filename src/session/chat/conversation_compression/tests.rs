@@ -2,6 +2,7 @@ use super::collect_preserved_skills;
 use super::knowledge::{format_compressed_entry_with_context, strip_file_context_from_summary};
 use super::range::find_compression_range;
 use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
+use super::select_compression_level_index;
 use crate::session::Message;
 use serde_json::json;
 
@@ -2114,4 +2115,54 @@ fn format_compressed_entry_with_empty_summary_still_renders_wrapper() {
 	let formatted = format_compressed_entry_with_context("", "", "test-id".to_string());
 	assert!(formatted.contains("<conversation_summary id=\"test-id\">"));
 	assert!(formatted.contains("</conversation_summary>"));
+}
+
+// ---------------------------------------------------------------------------
+// Pressure-level cursor: incremental + wrap (round-robin)
+//
+// CONTRACT:
+//   * Applied ratio level = consecutive_compressions mod num_levels.
+//   * First compression after a user message (consecutive=0) => lightest level 0.
+//   * Each autonomous compression advances one step: 0,1,2,...
+//   * After the strongest level it WRAPS back to 0 (round-robin), never clamps.
+//   * The token-count floor only gates WHETHER we compress, not which ratio.
+// ---------------------------------------------------------------------------
+#[test]
+fn level_cursor_first_compression_after_user_is_lightest() {
+	// consecutive=0 must always select level 0 (lightest), independent of token floor.
+	assert_eq!(
+		select_compression_level_index(3, 0),
+		0,
+		"first compression must be lightest level 0"
+	);
+}
+
+#[test]
+fn level_cursor_advances_one_step_per_autonomous_compression() {
+	// 3 levels: each autonomous compression advances one step.
+	assert_eq!(select_compression_level_index(3, 0), 0);
+	assert_eq!(select_compression_level_index(3, 1), 1);
+	assert_eq!(select_compression_level_index(3, 2), 2);
+}
+
+#[test]
+fn level_cursor_wraps_after_strongest_level() {
+	// After the strongest (index num_levels-1), the cursor returns to 0 and
+	// cycles — round-robin, never clamped at the top.
+	assert_eq!(
+		select_compression_level_index(3, 3),
+		0,
+		"wrap to 0 after top"
+	);
+	assert_eq!(select_compression_level_index(3, 4), 1);
+	assert_eq!(select_compression_level_index(3, 5), 2);
+	assert_eq!(select_compression_level_index(3, 6), 0, "second full wrap");
+}
+
+#[test]
+fn level_cursor_single_level_is_always_zero() {
+	// Degenerate ladder of one level: every compression maps to level 0.
+	for n in 0..5 {
+		assert_eq!(select_compression_level_index(1, n), 0);
+	}
 }

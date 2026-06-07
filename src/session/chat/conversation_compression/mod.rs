@@ -51,6 +51,23 @@ use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 
+/// Select which pressure level (ratio) to apply for THIS compression.
+///
+/// Pure incremental cursor with wrap-around. `consecutive_compressions` indexes
+/// the pressure-level ladder directly: 0 on the first compression after any user
+/// message (lightest ratio), advancing one step per *autonomous* (no-user-message)
+/// compression, wrapping back to 0 after the strongest level (round-robin).
+///
+/// The token-count floor (`base_idx`) decides WHETHER we compress (computed by the
+/// caller); it deliberately does NOT bias which ratio is applied — so the ladder is
+/// walked 0→1→2→0… deterministically instead of jumping to a token-derived level.
+///
+/// `num_levels` must be > 0 (caller guarantees a non-empty pressure_levels).
+fn select_compression_level_index(num_levels: usize, consecutive_compressions: u32) -> usize {
+	debug_assert!(num_levels > 0, "caller must guarantee at least one pressure level");
+	(consecutive_compressions as usize) % num_levels
+}
+
 /// Check if we should ask AI about compression
 /// Returns (should_compress, target_ratio) tuple
 ///
@@ -99,11 +116,9 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			.collect::<Vec<_>>()
 	);
 
-	// RATIO SELECTION: Find the highest matched pressure level, then escalate
-	// upward based on consecutive compressions (without user interaction).
-	// Escalation clamps at the last level — never wraps back to a lighter level.
-	// This prevents infinite loops when compress-all drops context hard and it
-	// grows back to the same threshold repeatedly.
+	// RATIO SELECTION: token count gates WHETHER to compress (find the highest
+	// matched pressure level); the ratio LEVEL itself is a pure incremental cursor
+	// driven by consecutive_compressions (see select_compression_level_index).
 	let num_levels = config.compression.pressure_levels.len();
 	if num_levels == 0 {
 		log_debug!("No pressure levels configured - compression disabled");
@@ -122,11 +137,9 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 
 	let (matched_idx, level) = match matched_idx {
 		Some(base_idx) => {
-			// Escalate UP from the matched level; clamp at the last level so we
-			// never de-escalate back to a lighter ratio under sustained pressure.
-			let n = session.session.info.consecutive_compressions as usize;
-			let escalated_idx = (base_idx + n).min(num_levels - 1);
-			(base_idx, &config.compression.pressure_levels[escalated_idx])
+			let n = session.session.info.consecutive_compressions;
+			let level_idx = select_compression_level_index(num_levels, n);
+			(base_idx, &config.compression.pressure_levels[level_idx])
 		}
 		None => {
 			log_debug!(
@@ -147,7 +160,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	let adjusted_ratio = calculate_adaptive_compression_ratio(session, level.target_ratio);
 
 	log_debug!(
-		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (matched threshold: {}, escalated level: {})",
+		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (matched threshold: {}, cursor level: {})",
 		current_tokens,
 		level.target_ratio,
 		adjusted_ratio,

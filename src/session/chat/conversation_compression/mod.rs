@@ -64,7 +64,10 @@ use anyhow::Result;
 ///
 /// `num_levels` must be > 0 (caller guarantees a non-empty pressure_levels).
 fn select_compression_level_index(num_levels: usize, consecutive_compressions: u32) -> usize {
-	debug_assert!(num_levels > 0, "caller must guarantee at least one pressure level");
+	debug_assert!(
+		num_levels > 0,
+		"caller must guarantee at least one pressure level"
+	);
 	(consecutive_compressions as usize) % num_levels
 }
 

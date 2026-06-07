@@ -72,10 +72,13 @@ pub async fn create_system_prompt(
 
 	prompt.push_str(
 		"\n<use_parallel_tool_calls>\n\
-		If multiple tool calls are independent and their arguments are known, emit all of them together in one assistant response. \
-		Do not call one tool and wait for results unless later tool arguments genuinely depend on earlier tool outputs. \
-		The runtime executes parallel tool calls concurrently and returns all results together. \
-		Never use placeholders or guess missing parameters.\n\
+		If you intend to call multiple tools and there are no dependencies between the tool calls, make all of the independent tool calls in parallel. \
+		Prioritize calling tools simultaneously whenever the actions can be done in parallel rather than sequentially. \
+		For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. \
+		Maximize use of parallel tool calls where possible to increase speed and efficiency. \
+		Do NOT call one tool, stop, and wait for results before deciding the next call — you do not need to yield control to observe intermediate results; the runtime returns all results together. \
+		However, if some tool calls depend on previous calls to inform dependent values like the parameters, do NOT call these tools in parallel and instead call them sequentially. \
+		Never use placeholders or guess missing parameters in tool calls.\n\
 		</use_parallel_tool_calls>",
 	);
 

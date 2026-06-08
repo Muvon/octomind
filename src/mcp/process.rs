@@ -661,7 +661,8 @@ async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String>
 				info.health_status = ServerHealth::Failed;
 				info.consecutive_failures += 1;
 			}
-			crate::log_error!("Failed to start server '{}': {}", server_id, e);
+			// Already logged with full detail by start_server_process; just
+			// propagate so callers (init / health monitor) can react.
 			Err(anyhow::anyhow!(
 				"Failed to start server '{}': {}",
 				server_id,
@@ -1373,31 +1374,11 @@ pub async fn communicate_with_stdin_server_extended_timeout(
 					let ended_with_newline = response_str.ends_with('\n');
 					if !ended_with_newline {
 						if read_result == 0 && response_str.len() == len_before {
-							// True EOF with no pending data — server closed.
-							let stderr_hint = {
-								let map = SERVER_STDERR.read().unwrap();
-								map.get(&server_name_for_closure)
-									.and_then(|buf| {
-										buf.lock().ok().and_then(|b| {
-											let last: Vec<_> =
-												b.iter().rev().take(10).cloned().collect();
-											if last.is_empty() {
-												None
-											} else {
-												let mut lines = last;
-												lines.reverse();
-												Some(format!(
-													"\nServer stderr:\n  {}",
-													lines.join("\n  ")
-												))
-											}
-										})
-									})
-									.unwrap_or_default()
-							};
+							// True EOF with no pending data — server closed. The caller
+							// (start_server_process) attaches captured stderr once; don't
+							// embed it here too or it prints twice.
 							return Err(anyhow::anyhow!(
-								"Server closed connection while reading response{}",
-								stderr_hint
+								"Server closed connection while reading response"
 							));
 						}
 						// Partial line — keep reading.

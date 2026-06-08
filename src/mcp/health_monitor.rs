@@ -221,6 +221,19 @@ async fn check_server_health_and_restart_if_dead(
 		restart_info.restart_count
 	);
 
+	// A server already in the terminal Failed state gave up on purpose — it
+	// failed its initial startup, or exhausted its restart budget. Don't
+	// recompute it to Dead and re-spawn it: "if it failed to start, leave it."
+	// Shutdown/death after a successful run is recorded as Dead (not Failed),
+	// so legitimate Ctrl+C recovery is unaffected.
+	if matches!(restart_info.health_status, ServerHealth::Failed) {
+		crate::log_debug!(
+			"Health monitor: server '{}' is in Failed state — not restarting",
+			server.name()
+		);
+		return Ok(());
+	}
+
 	// Update health status and last health check time
 	{
 		let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();

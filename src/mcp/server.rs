@@ -519,35 +519,17 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 			}
 		}
 	} else {
-		// Server is not running (stdin server without process)
+		// Server is not running (stdin server without process). We only know a
+		// server's real tool names after it starts and answers tools/list.
+		// `server.tools()` holds the role's allowed_tools *filter patterns*
+		// (e.g. `*`, `text_*`), not real tool names — fabricating functions
+		// from them leaks invalid names (failing `^[a-zA-Z0-9_-]{1,128}$`) to
+		// the provider. If the server didn't start, expose none of its tools.
 		crate::log_debug!(
-			"Server '{}' is not running - using fallback function definitions",
+			"Server '{}' is not running - exposing no tools (skipping)",
 			server_id
 		);
-		get_fallback_functions(server)
-	}
-}
-
-// Helper function to get fallback functions when server is not running
-fn get_fallback_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
-	if !server.tools().is_empty() {
-		// Return lightweight function entries based on configuration
-		Ok(server
-			.tools()
-			.iter()
-			.map(|tool_name| McpFunction {
-				name: tool_name.clone(),
-				description: format!(
-					"External tool '{}' from server '{}' (server not running)",
-					tool_name,
-					server.name()
-				),
-				parameters: serde_json::json!({}),
-			})
-			.collect())
-	} else {
-		// No specific tools configured and server not running
-		Ok(vec![])
+		Ok(Vec::new())
 	}
 }
 

@@ -140,6 +140,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.find(|m| m.role == "user")
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
+		animation_manager.set_phase("Recalling lessons …").await;
 		let (block, new_contents) = crate::supervisor::learning::inject::retrieve_and_format(
 			config,
 			&user_input,
@@ -150,9 +151,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			operation_rx.clone(),
 		)
 		.await;
+		animation_manager.clear_phase();
 		if !block.is_empty() {
 			chat_session.add_user_message(&block)?;
 			crate::supervisor::stats::recall();
+			crate::supervisor::notify(&format!(
+				"recalled {} lesson(s) into context",
+				new_contents.len()
+			));
 			for c in new_contents {
 				chat_session
 					.recalled_refs
@@ -304,20 +310,23 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let result = chat_session.last_response.clone();
 		let claim = chat_session.last_self_report_reason.clone();
 		crate::supervisor::stats::gate_run();
-		match crate::supervisor::gate::verify(
+		animation_manager.set_phase("Verifying completion …").await;
+		let verdict = crate::supervisor::gate::verify(
 			config,
 			&task,
 			&result,
 			claim.as_deref(),
 			operation_rx.clone(),
 		)
-		.await
-		{
+		.await;
+		animation_manager.clear_phase();
+		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
 				chat_session.gate_iterations = 0;
 				chat_session.gate_failed = false;
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!("Verify-gate: PASS");
+				crate::supervisor::notify("completion verified");
 				reinforce_recalled(chat_session, config, 0.05).await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
@@ -331,6 +340,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					chat_session.gate_iterations
 				);
 				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+					let mut msg = format!("verification found {} gap(s) — re-running", gaps.len());
+					for g in &gaps {
+						msg.push_str("\n- ");
+						msg.push_str(g);
+					}
+					crate::supervisor::notify(&msg);
 					return Box::pin(execute_api_call_and_process_response(
 						chat_session,
 						config,
@@ -344,6 +359,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.gate_failed = true;
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; gaps remain");
+				crate::supervisor::notify("verification gaps remain — iterations exhausted");
 				reinforce_recalled(chat_session, config, -0.15).await;
 			}
 		}

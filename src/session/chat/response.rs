@@ -385,6 +385,21 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 		let parsed = crate::supervisor::detect::parse_self_report(content);
 		chat_session.last_self_report = parsed.as_ref().map(|(s, _)| *s);
 		chat_session.last_self_report_reason = parsed.and_then(|(_, r)| r);
+
+		// Surface the agent's own "what I'm doing" on the spinner instead of
+		// the generic "Working …" — free feedback already paid for by the
+		// self-report token. Sticky until the next report or turn boundary.
+		use crate::supervisor::detect::SelfReport;
+		let label = match (
+			chat_session.last_self_report,
+			&chat_session.last_self_report_reason,
+		) {
+			(Some(SelfReport::Blocked), Some(r)) => Some(format!("blocked · {} …", r)),
+			(Some(_), Some(r)) => Some(format!("{} …", r)),
+			_ => None,
+		};
+		crate::session::chat::get_animation_manager().set_label(label);
+
 		crate::supervisor::detect::strip_self_report(content)
 	} else {
 		content.to_string()
@@ -596,6 +611,10 @@ pub async fn process_response<S: OutputSink>(
 								Some(crate::supervisor::detect::steer_note(signal).to_string());
 							params.chat_session.detectors.reset_streak();
 							crate::supervisor::stats::steer();
+							crate::supervisor::notify(&format!(
+								"steering — {}",
+								crate::supervisor::detect::signal_description(signal)
+							));
 							crate::log_debug!(
 								"Supervisor steer queued: {:?} (tool={}, self_report={:?})",
 								signal,

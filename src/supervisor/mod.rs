@@ -39,6 +39,32 @@ pub mod stats;
 
 use serde::{Deserialize, Serialize};
 
+/// Out-of-band notice (`· Supervisor: …`) so the user sees what the control
+/// plane is doing — mirrors the skill-activation notice: dim, stderr,
+/// interactive terminals only. Continuation lines (multi-line messages, e.g.
+/// gate gaps) are indented under the first.
+pub fn notify(message: &str) {
+	let suppress = crate::config::with_thread_config(|c| c.output_mode())
+		.map(|m| m.should_suppress_cli_output())
+		.unwrap_or(false);
+	if suppress || !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+		return;
+	}
+	use colored::Colorize;
+	for (i, line) in message.lines().enumerate() {
+		if i == 0 {
+			eprintln!(
+				"{} {} {}",
+				"·".bright_black(),
+				"Supervisor:".dimmed(),
+				line.dimmed()
+			);
+		} else {
+			eprintln!("  {}", line.dimmed());
+		}
+	}
+}
+
 /// Top-level supervisor configuration. Maps to the `[supervisor]` TOML section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorConfig {

@@ -276,6 +276,16 @@ pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool 
 	}
 }
 
+/// Short human description of a fired signal — for the user-facing
+/// `· Supervisor: steering — …` notice.
+pub fn signal_description(signal: DetectorSignal) -> &'static str {
+	match signal {
+		DetectorSignal::Loop => "repeated action without new results",
+		DetectorSignal::NoProgress => "no new information in recent steps",
+		DetectorSignal::None => "",
+	}
+}
+
 /// The advisory steer note for a fired signal. Out-of-band; the `<supervisor>`
 /// framing keeps it distinct from user content.
 pub fn steer_note(signal: DetectorSignal) -> &'static str {

@@ -40,11 +40,11 @@ tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "
 crossterm = "0.29.0"
 indicatif = "0.18.4"
 parking_lot = "0.12.5"
-chrono = { version = "0.4.44", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
-uuid = { version = "1.23.1", features = ["v4"] }
-tiktoken-rs = "0.11.0" # Token counter
-reqwest = { version = "0.13.3", features = ["json", "rustls", "gzip"], default-features = false }
+uuid = { version = "1.23.3", features = ["v4"] }
+tiktoken-rs = "0.12.0" # Token counter
+reqwest = { version = "0.13.4", features = ["json", "rustls", "gzip"], default-features = false }
 rustls-webpki = ">=0.103.12"
 flate2 = "1.1"
 zstd = "0.13"
@@ -56,7 +56,7 @@ toml = "1.1"
 lazy_static = "1.5.0"
 fuzzy-matcher = "0.3.7"
 tokio-util = { version = "0.7", features = ["rt", "compat"] }
-reedline = { version = "0.47", features = ["bashisms", "external_printer"] }
+reedline = { version = "0.48", features = ["bashisms", "external_printer"] }
 nu-ansi-term = "0.50"
 regex = "1.12.3"
 colored = "3.1.1"
@@ -67,7 +67,7 @@ syntect = { version = "5.3.0", default-features = false, features = ["default-fa
 url = "2.5.8"
 dirs = "6.0.0"
 glob = "0.3.3"
-ignore = "0.4.25"
+ignore = "0.4.26"
 futures = "0.3.32"
 dotenvy = "0.15.7"
 arboard = "3.6.1"
@@ -92,9 +92,9 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-agent-client-protocol = "0.10.4"
+agent-client-protocol = "0.14.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-which = "8.0.2"
+which = "8.0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -105,7 +105,7 @@ landlock = "0.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-serial_test = "3.4.0"
+serial_test = "3.5.0"
 
 [profile.dev]
 opt-level = 1          # Basic optimizations without slowing compilation too much

@@ -17,7 +17,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use agent_client_protocol::{Error, ExtRequest, ExtResponse};
+use agent_client_protocol::schema::{ExtRequest, ExtResponse};
+use agent_client_protocol::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 

@@ -20,11 +20,7 @@
 mod agent;
 pub mod commands;
 
-use agent::OctomindAgent;
 use anyhow::Result;
-use futures::future::LocalBoxFuture;
-
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::config::Config;
 
@@ -74,33 +70,9 @@ pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result
 		write_init_error(format!("Failed to initialize ACP error sink: {e}"));
 	}
 
+	// Run the actor and the ACP event loop together on a single-threaded LocalSet.
+	// The 0.14 SDK requires `Send` handlers while our session machinery is `!Send`;
+	// the bridge lives in `agent::serve` (see the module-level notes there).
 	let local = tokio::task::LocalSet::new();
-
-	local
-		.run_until(async move {
-			let agent = std::rc::Rc::new(OctomindAgent::new(config, role, options));
-
-			let stdin = tokio::io::stdin().compat();
-			let stdout = tokio::io::stdout().compat_write();
-
-			let (conn, io_task) = agent_client_protocol::AgentSideConnection::new(
-				std::rc::Rc::clone(&agent),
-				stdout,
-				stdin,
-				|fut: LocalBoxFuture<'static, ()>| {
-					tokio::task::spawn_local(fut);
-				},
-			);
-
-			let conn = std::rc::Rc::new(conn);
-			agent.set_connection(std::rc::Rc::clone(&conn));
-
-			// Drive the I/O loop — returns when stdin closes (client disconnected)
-			if let Err(e) = io_task.await {
-				crate::log_debug!("ACP: I/O loop ended: {}", e);
-			}
-
-			Ok(())
-		})
-		.await
+	local.run_until(agent::serve(config, role, options)).await
 }

@@ -19,16 +19,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use agent_client_protocol::{
-	AgentCapabilities, AgentSideConnection, AuthenticateRequest, AuthenticateResponse,
-	AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents,
-	CancelNotification, Client, ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest,
-	ExtResponse, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
-	LoadSessionResponse, McpCapabilities, McpServer, NewSessionRequest, NewSessionResponse,
-	PromptCapabilities, PromptRequest, PromptResponse, ProtocolVersion, SessionInfoUpdate,
-	SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
-	ToolCallUpdateFields, UnstructuredCommandInput,
+use agent_client_protocol::schema::{
+	AgentCapabilities, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
+	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification,
+	ClientRequest, ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest, ExtResponse,
+	Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+	McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse, PromptCapabilities,
+	PromptRequest, PromptResponse, ProtocolVersion, SessionInfoUpdate, SessionNotification,
+	SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+	UnstructuredCommandInput,
 };
+use agent_client_protocol::{Client, ConnectionTo, Responder};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
@@ -58,8 +60,10 @@ pub struct OctomindAgent {
 	session_locks: Rc<RefCell<HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
 	/// Active cancellation handles keyed by ACP session_id
 	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
-	/// Connection back to the client — used to send session/update notifications
-	conn: Rc<RefCell<Option<Rc<AgentSideConnection>>>>,
+	/// Connection back to the client — used to send session/update notifications.
+	/// `ConnectionTo<Client>` is `Clone` and channel-backed, so notifications can be
+	/// emitted from any task on the LocalSet (streaming forwarders, inbox monitor).
+	conn: Rc<RefCell<Option<ConnectionTo<Client>>>>,
 	/// Preferred session name for the next `new_session` (consumed once).
 	pending_name: RefCell<Option<String>>,
 	/// Resume target for the next `new_session` (consumed once).
@@ -89,8 +93,9 @@ impl OctomindAgent {
 		}
 	}
 
-	/// Inject the connection after it's created (chicken-and-egg: agent needs conn, conn needs agent).
-	pub fn set_connection(&self, conn: Rc<AgentSideConnection>) {
+	/// Inject the client connection once the ACP event loop starts serving. Supplied
+	/// by the `with_spawned` runner, which hands us a long-lived `ConnectionTo<Client>`.
+	pub fn set_connection(&self, conn: ConnectionTo<Client>) {
 		*self.conn.borrow_mut() = Some(conn);
 	}
 
@@ -272,13 +277,13 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 }
 
 /// Send the available commands list to the ACP client for the given session.
-async fn send_available_commands(conn: Option<std::rc::Rc<AgentSideConnection>>, session_id: &str) {
+async fn send_available_commands(conn: Option<ConnectionTo<Client>>, session_id: &str) {
 	if let Some(conn) = conn {
 		let update = SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(
 			build_available_commands(),
 		));
 		let notif = SessionNotification::new(std::sync::Arc::<str>::from(session_id), update);
-		if let Err(e) = conn.session_notification(notif).await {
+		if let Err(e) = conn.send_notification(notif) {
 			log_error!("ACP: failed to send available_commands_update: {}", e);
 		}
 	}
@@ -297,7 +302,7 @@ fn spawn_inbox_monitor(
 	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
 	config: RefCell<Config>,
 	role: String,
-	conn: Rc<RefCell<Option<Rc<AgentSideConnection>>>>,
+	conn: Rc<RefCell<Option<ConnectionTo<Client>>>>,
 ) {
 	tokio::task::spawn_local(async move {
 		log_debug!("ACP: inbox monitor started for session: {}", session_id);
@@ -372,7 +377,7 @@ fn spawn_inbox_monitor(
 						let update =
 							SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
 						let notif = SessionNotification::new(sid_arc, update);
-						if let Err(e) = c.session_notification(notif).await {
+						if let Err(e) = c.send_notification(notif) {
 							log_error!(
 								"ACP monitor: failed to send injected-message notification: {}",
 								e
@@ -414,7 +419,7 @@ fn spawn_inbox_monitor(
 								(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
 							{
 								let notif = SessionNotification::new(sid_arc.clone(), update);
-								if let Err(e) = c.session_notification(notif).await {
+								if let Err(e) = c.send_notification(notif) {
 									log_error!("ACP monitor: failed to send notification: {}", e);
 								}
 							}
@@ -484,8 +489,7 @@ fn spawn_inbox_monitor(
 	});
 }
 
-#[async_trait::async_trait(?Send)]
-impl agent_client_protocol::Agent for OctomindAgent {
+impl OctomindAgent {
 	async fn initialize(
 		&self,
 		args: InitializeRequest,
@@ -493,7 +497,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		log_debug!("ACP: initialize from {:?}", args.client_info);
 
 		// Advertise extension capabilities in _meta per ACP spec
-		let mut meta = agent_client_protocol::Meta::new();
+		let mut meta = Meta::new();
 		meta.insert(
 			"octomind.dev".to_string(),
 			serde_json::json!({
@@ -736,7 +740,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 							std::sync::Arc::<str>::from(session_id.as_str()),
 							update,
 						);
-						if let Err(e) = conn.session_notification(notif).await {
+						if let Err(e) = conn.send_notification(notif) {
 							crate::log_error!("ACP: failed to send /done status: {}", e);
 						}
 					}
@@ -766,7 +770,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 							std::sync::Arc::<str>::from(session_id.as_str()),
 							update,
 						);
-						if let Err(e) = conn.session_notification(notif).await {
+						if let Err(e) = conn.send_notification(notif) {
 							crate::log_error!("ACP: failed to send /done status: {}", e);
 						}
 					}
@@ -848,7 +852,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						std::sync::Arc::<str>::from(session_id.as_str()),
 						update,
 					);
-					if let Err(e) = conn.session_notification(notif).await {
+					if let Err(e) = conn.send_notification(notif) {
 						log_error!("ACP: failed to send command result: {}", e);
 					}
 				}
@@ -907,7 +911,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 						let update =
 							SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
 						let notif = SessionNotification::new(sid_arc, update);
-						if let Err(e) = c.session_notification(notif).await {
+						if let Err(e) = c.send_notification(notif) {
 							log_error!("ACP: failed to send injected-message notification: {}", e);
 						}
 					}
@@ -948,7 +952,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 								(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
 							{
 								let notif = SessionNotification::new(sid_arc.clone(), update);
-								if let Err(e) = c.session_notification(notif).await {
+								if let Err(e) = c.send_notification(notif) {
 									log_error!("ACP pre-user: failed to send notification: {}", e);
 								}
 							}
@@ -1100,7 +1104,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 									SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
 								)
 								.meta(meta);
-								if let Err(e) = conn.session_notification(notif).await {
+								if let Err(e) = conn.send_notification(notif) {
 									log_error!("ACP: failed to send usage notification: {}", e);
 								}
 							}
@@ -1110,7 +1114,7 @@ impl agent_client_protocol::Agent for OctomindAgent {
 					};
 					if let (Some(update), Some(conn)) = (update, conn_for_task.as_ref()) {
 						let notif = SessionNotification::new(session_id_for_task.clone(), update);
-						if let Err(e) = conn.session_notification(notif).await {
+						if let Err(e) = conn.send_notification(notif) {
 							log_error!("ACP: failed to send session notification: {}", e);
 						}
 					}
@@ -1280,4 +1284,257 @@ impl agent_client_protocol::Agent for OctomindAgent {
 		)
 		.await
 	}
+}
+
+// ============================================================================
+// ACP 0.14 bridge
+//
+// The 0.14 SDK requires every handler closure and its future to be `Send`, but
+// Octomind's session machinery (`ChatSession`, thread-local session context,
+// `spawn_local`, `Rc<RefCell<_>>`) is `!Send`. We therefore run a `!Send` actor
+// that owns `OctomindAgent` and reach it from thin `Send` handler shims over a
+// channel. Both the actor and the ACP event loop run on the same `LocalSet`, so
+// nothing crosses a thread boundary; `ConnectionTo<Client>` is channel-backed and
+// `Clone`, so the actor streams `session/update` notifications directly.
+// ============================================================================
+
+/// One request bridged from a `Send` handler shim to the `!Send` actor. Each
+/// request carries a `oneshot` for its typed reply.
+pub(super) enum Command {
+	SetConnection(ConnectionTo<Client>),
+	Initialize(
+		InitializeRequest,
+		oneshot::Sender<Result<InitializeResponse, agent_client_protocol::Error>>,
+	),
+	Authenticate(
+		AuthenticateRequest,
+		oneshot::Sender<Result<AuthenticateResponse, agent_client_protocol::Error>>,
+	),
+	NewSession(
+		NewSessionRequest,
+		oneshot::Sender<Result<NewSessionResponse, agent_client_protocol::Error>>,
+	),
+	LoadSession(
+		LoadSessionRequest,
+		oneshot::Sender<Result<LoadSessionResponse, agent_client_protocol::Error>>,
+	),
+	Prompt(
+		PromptRequest,
+		oneshot::Sender<Result<PromptResponse, agent_client_protocol::Error>>,
+	),
+	Ext(
+		ExtRequest,
+		oneshot::Sender<Result<ExtResponse, agent_client_protocol::Error>>,
+	),
+	Cancel(CancelNotification),
+}
+
+/// Actor loop: owns the `!Send` `OctomindAgent` and dispatches each command on its
+/// own `spawn_local` task, so a long `prompt` never blocks a concurrent `cancel`
+/// (mirrors the pre-0.14 concurrent trait-dispatch behaviour).
+async fn run_actor(agent: Rc<OctomindAgent>, mut rx: mpsc::UnboundedReceiver<Command>) {
+	while let Some(cmd) = rx.recv().await {
+		match cmd {
+			Command::SetConnection(cx) => agent.set_connection(cx),
+			// Cancel only flips the session's cancellation flag — instantaneous, so
+			// run it inline to take effect immediately even while a prompt is in flight.
+			Command::Cancel(n) => {
+				let _ = agent.cancel(n).await;
+			}
+			Command::Initialize(req, reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					let _ = reply.send(agent.initialize(req).await);
+				});
+			}
+			Command::Authenticate(req, reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					let _ = reply.send(agent.authenticate(req).await);
+				});
+			}
+			Command::NewSession(req, reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					let _ = reply.send(agent.new_session(req).await);
+				});
+			}
+			Command::LoadSession(req, reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					let _ = reply.send(agent.load_session(req).await);
+				});
+			}
+			Command::Prompt(req, reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					let _ = reply.send(agent.prompt(req).await);
+				});
+			}
+			Command::Ext(req, reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					let _ = reply.send(agent.ext_method(req).await);
+				});
+			}
+		}
+	}
+}
+
+/// Bridge one typed ACP request to the actor: offload onto a background task (so the
+/// dispatch loop stays free for `cancel`), forward the request, await the actor's
+/// reply, and deliver it through the `Responder`.
+fn forward<Resp>(
+	cmd_tx: &mpsc::UnboundedSender<Command>,
+	cx: &ConnectionTo<Client>,
+	responder: Responder<Resp>,
+	make: impl FnOnce(oneshot::Sender<Result<Resp, agent_client_protocol::Error>>) -> Command
+		+ Send
+		+ 'static,
+) -> Result<(), agent_client_protocol::Error>
+where
+	Resp: agent_client_protocol::JsonRpcResponse + Send + 'static,
+{
+	let cmd_tx = cmd_tx.clone();
+	cx.spawn(async move {
+		let (tx, rx) = oneshot::channel();
+		cmd_tx
+			.send(make(tx))
+			.map_err(|_| agent_client_protocol::util::internal_error("acp actor unavailable"))?;
+		let result = rx
+			.await
+			.map_err(|_| agent_client_protocol::util::internal_error("acp actor dropped reply"))?;
+		responder.respond_with_result(result)
+	})
+}
+
+/// Build and run the ACP agent over stdio until the client disconnects.
+pub(super) async fn serve(
+	config: Config,
+	role: String,
+	options: crate::acp::AcpRunOptions,
+) -> anyhow::Result<()> {
+	let agent = Rc::new(OctomindAgent::new(config, role, options));
+
+	let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
+	tokio::task::spawn_local(run_actor(Rc::clone(&agent), cmd_rx));
+
+	let result = agent_client_protocol::Agent
+		.builder()
+		.name("octomind")
+		// Hand the long-lived client connection to the actor once serving starts. The
+		// runner lives in the connection's background set and is cancelled on EOF.
+		.with_spawned({
+			let cmd_tx = cmd_tx.clone();
+			move |cx: ConnectionTo<Client>| async move {
+				let _ = cmd_tx.send(Command::SetConnection(cx));
+				std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+			}
+		})
+		.on_receive_request(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |req: InitializeRequest, responder, cx: ConnectionTo<Client>| {
+					forward(&cmd_tx, &cx, responder, move |tx| Command::Initialize(req, tx))
+				}
+			},
+			agent_client_protocol::on_receive_request!(),
+		)
+		.on_receive_request(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |req: AuthenticateRequest, responder, cx: ConnectionTo<Client>| {
+					forward(&cmd_tx, &cx, responder, move |tx| {
+						Command::Authenticate(req, tx)
+					})
+				}
+			},
+			agent_client_protocol::on_receive_request!(),
+		)
+		.on_receive_request(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |req: NewSessionRequest, responder, cx: ConnectionTo<Client>| {
+					forward(&cmd_tx, &cx, responder, move |tx| {
+						Command::NewSession(req, tx)
+					})
+				}
+			},
+			agent_client_protocol::on_receive_request!(),
+		)
+		.on_receive_request(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |req: LoadSessionRequest, responder, cx: ConnectionTo<Client>| {
+					forward(&cmd_tx, &cx, responder, move |tx| {
+						Command::LoadSession(req, tx)
+					})
+				}
+			},
+			agent_client_protocol::on_receive_request!(),
+		)
+		.on_receive_request(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |req: PromptRequest, responder, cx: ConnectionTo<Client>| {
+					forward(&cmd_tx, &cx, responder, move |tx| Command::Prompt(req, tx))
+				}
+			},
+			agent_client_protocol::on_receive_request!(),
+		)
+		// Custom `_octomind/command` extension methods. Registered after the typed
+		// handlers so they match their own methods first; only ext methods reach here.
+		.on_receive_request(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |req: ClientRequest,
+				            responder: Responder<serde_json::Value>,
+				            cx: ConnectionTo<Client>| {
+					match req {
+						ClientRequest::ExtMethodRequest(ext) => {
+							let cmd_tx = cmd_tx.clone();
+							cx.spawn(async move {
+								let (tx, rx) = oneshot::channel();
+								cmd_tx.send(Command::Ext(ext, tx)).map_err(|_| {
+									agent_client_protocol::util::internal_error("acp actor unavailable")
+								})?;
+								let value = rx
+									.await
+									.map_err(|_| {
+										agent_client_protocol::util::internal_error(
+											"acp actor dropped reply",
+										)
+									})?
+									.and_then(|resp| {
+										serde_json::to_value(resp).map_err(|e| {
+											agent_client_protocol::util::internal_error(e.to_string())
+										})
+									});
+								responder.respond_with_result(value)
+							})
+						}
+						_ => responder
+							.respond_with_error(agent_client_protocol::Error::method_not_found()),
+					}
+				}
+			},
+			agent_client_protocol::on_receive_request!(),
+		)
+		.on_receive_notification(
+			{
+				let cmd_tx = cmd_tx.clone();
+				async move |notif: CancelNotification, _cx: ConnectionTo<Client>| {
+					let _ = cmd_tx.send(Command::Cancel(notif));
+					Ok(())
+				}
+			},
+			agent_client_protocol::on_receive_notification!(),
+		)
+		.connect_to(agent_client_protocol::Stdio::new())
+		.await;
+
+	if let Err(e) = result {
+		log_debug!("ACP: connection ended: {}", e);
+	}
+	Ok(())
 }

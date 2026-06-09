@@ -110,6 +110,12 @@ pub struct AnimationManager {
 	cancel_watcher: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 	/// Suspended flag — prevents animation from starting during user prompts.
 	suspended: Arc<AtomicBool>,
+	/// Sticky activity label (the agent's self-reported "what I'm doing").
+	/// Shown instead of "Working …" until overwritten or the spinner stops.
+	label: Arc<Mutex<Option<String>>>,
+	/// Transient phase (compression, verify-gate, recall…). Overrides the
+	/// sticky label while set; `clear_phase` restores it.
+	phase: Arc<Mutex<Option<String>>>,
 }
 
 impl AnimationManager {
@@ -120,7 +126,33 @@ impl AnimationManager {
 			cancel_rx: Arc::new(Mutex::new(None)),
 			cancel_watcher: Arc::new(Mutex::new(None)),
 			suspended: Arc::new(AtomicBool::new(false)),
+			label: Arc::new(Mutex::new(None)),
+			phase: Arc::new(Mutex::new(None)),
 		}
+	}
+
+	/// Resolve the spinner label: transient phase > sticky label > "Working …".
+	fn resolved_label(&self) -> String {
+		if let Some(p) = self.phase.lock().unwrap().clone() {
+			return p;
+		}
+		if let Some(l) = self.label.lock().unwrap().clone() {
+			return l;
+		}
+		"Working …".to_string()
+	}
+
+	/// Rebuild and push the spinner message from current state + resolved label.
+	fn refresh_message(&self, pb: &ProgressBar) {
+		let cost_bits = self.state.cost.load(Ordering::Relaxed);
+		let ctx = self.state.context_tokens.load(Ordering::Relaxed);
+		let thresh = self.state.max_threshold.load(Ordering::Relaxed);
+		pb.set_message(build_spinner_message(
+			cost_bits,
+			ctx,
+			thresh,
+			&self.resolved_label(),
+		));
 	}
 
 	/// Get shared animation state for external updates.
@@ -260,10 +292,7 @@ impl AnimationManager {
 
 		let guard = self.spinner.lock().unwrap();
 		if let Some(ref pb) = *guard {
-			let cost_bits = self.state.cost.load(Ordering::Relaxed);
-			let ctx = self.state.context_tokens.load(Ordering::Relaxed);
-			let thresh = self.state.max_threshold.load(Ordering::Relaxed);
-			pb.set_message(build_base_message(cost_bits, ctx, thresh));
+			self.refresh_message(pb);
 		}
 	}
 
@@ -283,26 +312,29 @@ impl AnimationManager {
 			return;
 		}
 
+		*self.phase.lock().unwrap() = Some(phase.to_string());
 		self.ensure_started_internal();
+	}
 
+	/// Clear the phase label and restore the sticky activity label (or the
+	/// standard "Working …" message). No-op if the spinner isn't running.
+	pub fn clear_phase(&self) {
+		*self.phase.lock().unwrap() = None;
 		let guard = self.spinner.lock().unwrap();
 		if let Some(ref pb) = *guard {
-			let cost_bits = self.state.cost.load(Ordering::Relaxed);
-			let ctx = self.state.context_tokens.load(Ordering::Relaxed);
-			let thresh = self.state.max_threshold.load(Ordering::Relaxed);
-			pb.set_message(build_phase_message(cost_bits, ctx, thresh, phase));
+			self.refresh_message(pb);
 		}
 	}
 
-	/// Clear the phase label and restore the standard "Working …" message.
-	/// No-op if the spinner isn't running.
-	pub fn clear_phase(&self) {
+	/// Set (or clear with `None`) the sticky activity label — the agent's
+	/// self-reported "what I'm doing". Unlike `set_phase` this never starts
+	/// the spinner; it only refreshes a live one. Survives `update_state`
+	/// refreshes and `clear_phase`; cleared on `stop_current`.
+	pub fn set_label(&self, label: Option<String>) {
+		*self.label.lock().unwrap() = label;
 		let guard = self.spinner.lock().unwrap();
 		if let Some(ref pb) = *guard {
-			let cost_bits = self.state.cost.load(Ordering::Relaxed);
-			let ctx = self.state.context_tokens.load(Ordering::Relaxed);
-			let thresh = self.state.max_threshold.load(Ordering::Relaxed);
-			pb.set_message(build_base_message(cost_bits, ctx, thresh));
+			self.refresh_message(pb);
 		}
 	}
 
@@ -315,10 +347,7 @@ impl AnimationManager {
 
 		if let Some(ref pb) = *guard {
 			// Already running — just refresh the message from current state.
-			let cost_bits = self.state.cost.load(Ordering::Relaxed);
-			let ctx = self.state.context_tokens.load(Ordering::Relaxed);
-			let thresh = self.state.max_threshold.load(Ordering::Relaxed);
-			pb.set_message(build_base_message(cost_bits, ctx, thresh));
+			self.refresh_message(pb);
 			return;
 		}
 
@@ -346,10 +375,7 @@ impl AnimationManager {
 				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
 		);
 
-		let cost_bits = self.state.cost.load(Ordering::Relaxed);
-		let ctx = self.state.context_tokens.load(Ordering::Relaxed);
-		let thresh = self.state.max_threshold.load(Ordering::Relaxed);
-		pb.set_message(build_base_message(cost_bits, ctx, thresh));
+		self.refresh_message(&pb);
 		pb.enable_steady_tick(Duration::from_millis(100));
 
 		*guard = Some(pb.clone());
@@ -411,6 +437,10 @@ impl AnimationManager {
 		// Take the bar out of shared state first so print macros don't use it.
 		let pb = self.spinner.lock().unwrap().take();
 
+		// A new working period starts with a clean label/phase slate.
+		*self.label.lock().unwrap() = None;
+		*self.phase.lock().unwrap() = None;
+
 		// Abort the cancellation watcher if any.
 		if let Some(handle) = self.cancel_watcher.lock().unwrap().take() {
 			handle.abort();
@@ -464,14 +494,6 @@ fn build_spinner_message(cost_bits: u64, ctx: u64, thresh: u64, label: &str) -> 
 	} else {
 		format!("{} {}", body, label)
 	}
-}
-
-fn build_base_message(cost_bits: u64, ctx: u64, thresh: u64) -> String {
-	build_spinner_message(cost_bits, ctx, thresh, "Working …")
-}
-
-fn build_phase_message(cost_bits: u64, ctx: u64, thresh: u64, phase: &str) -> String {
-	build_spinner_message(cost_bits, ctx, thresh, phase)
 }
 
 /// Global animation manager instance.

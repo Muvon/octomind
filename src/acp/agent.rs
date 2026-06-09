@@ -1435,7 +1435,9 @@ pub(super) async fn serve(
 			{
 				let cmd_tx = cmd_tx.clone();
 				async move |req: InitializeRequest, responder, cx: ConnectionTo<Client>| {
-					forward(&cmd_tx, &cx, responder, move |tx| Command::Initialize(req, tx))
+					forward(&cmd_tx, &cx, responder, move |tx| {
+						Command::Initialize(req, tx)
+					})
 				}
 			},
 			agent_client_protocol::on_receive_request!(),
@@ -1496,7 +1498,9 @@ pub(super) async fn serve(
 							cx.spawn(async move {
 								let (tx, rx) = oneshot::channel();
 								cmd_tx.send(Command::Ext(ext, tx)).map_err(|_| {
-									agent_client_protocol::util::internal_error("acp actor unavailable")
+									agent_client_protocol::util::internal_error(
+										"acp actor unavailable",
+									)
 								})?;
 								let value = rx
 									.await
@@ -1507,7 +1511,9 @@ pub(super) async fn serve(
 									})?
 									.and_then(|resp| {
 										serde_json::to_value(resp).map_err(|e| {
-											agent_client_protocol::util::internal_error(e.to_string())
+											agent_client_protocol::util::internal_error(
+												e.to_string(),
+											)
 										})
 									});
 								responder.respond_with_result(value)

@@ -1,11 +1,19 @@
 // Copyright 2026 Muvon Un Limited
 //
 // Secure OAuth Token Storage
+//
+//! OAuth bearer-token storage for remote MCP servers (RFC 9728 discovery → PKCE
+//! flow). Backed by a single db-keystore SQLite store via the keyring-core API:
+//! cross-platform and works headless (no system keychain / dbus / Secret Service),
+//! which is the dominant environment for token *reuse* and *refresh* (ACP under an
+//! IDE, websocket server, CI). Tokens are keyed per MCP server name.
 
 use anyhow::{anyhow, Result};
+use keyring_core::Entry;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TokenMetadata {
@@ -32,20 +40,62 @@ pub enum TokenStoreError {
 	SerializationError(#[from] serde_json::Error),
 }
 
-fn credential_service() -> &'static str {
-	"octomind-oauth"
-}
+const CREDENTIAL_SERVICE: &str = "octomind-oauth";
 
 // Use server_name as the credential user to support multiple OAuth servers
 fn credential_user(server_name: &str) -> String {
 	format!("oauth-token-{}", server_name)
 }
 
-fn token_storage_dir() -> PathBuf {
+/// SQLite keystore file: `<data_dir>/octomind/keystore.db`.
+fn keystore_path() -> PathBuf {
 	let mut dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("~/.local/share"));
 	dir.push("octomind");
-	dir.push("tokens");
+	dir.push("keystore.db");
 	dir
+}
+
+/// Register the db-keystore SQLite store as the process-wide credential store,
+/// exactly once. A store registered earlier (e.g. by tests) takes precedence and
+/// short-circuits this. The registration result is cached, so a failure surfaces
+/// on every call rather than being silently retried.
+fn ensure_store() -> Result<()> {
+	// Honor a pre-registered store (tests inject an isolated one).
+	if keyring_core::get_default_store().is_some() {
+		return Ok(());
+	}
+
+	static INIT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+	INIT.get_or_init(|| {
+		let path = keystore_path();
+		let path_str = path.to_string_lossy().into_owned();
+		let modifiers = HashMap::from([("path", path_str.as_str())]);
+		let store = db_keystore::DbKeyStore::new_with_modifiers(&modifiers)
+			.map_err(|e| format!("failed to open keystore at {}: {e}", path.display()))?;
+		keyring_core::set_default_store(store);
+		// Restrict the keystore directory so other users can't read the db file.
+		harden_dir(path.parent());
+		Ok(())
+	})
+	.clone()
+	.map_err(|e| anyhow!(e))
+}
+
+#[cfg(unix)]
+fn harden_dir(dir: Option<&Path>) {
+	use std::os::unix::fs::PermissionsExt;
+	if let Some(dir) = dir {
+		let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+	}
+}
+#[cfg(not(unix))]
+fn harden_dir(_dir: Option<&Path>) {}
+
+/// Build a credential entry for a server, ensuring the store is registered.
+fn entry(server_name: &str) -> Result<Entry> {
+	ensure_store()?;
+	Entry::new(CREDENTIAL_SERVICE, &credential_user(server_name))
+		.map_err(|e| anyhow!("keyring entry error: {e}"))
 }
 
 pub async fn save_token(server_name: &str, metadata: &TokenMetadata) -> Result<()> {
@@ -55,75 +105,10 @@ pub async fn save_token(server_name: &str, metadata: &TokenMetadata) -> Result<(
 		server_name,
 		metadata.access_token.chars().take(10).collect::<String>()
 	);
-
-	// CRITICAL FIX: Save to fallback storage FIRST (more reliable than keyring)
-	crate::log_debug!("🔍 SAVE_TOKEN: Saving to encrypted file storage...");
-	save_token_fallback(server_name, &json).await?;
-	crate::log_debug!("✅ SAVE_TOKEN: Token saved successfully to file storage");
-
-	// Then try keyring as secondary storage (optional, may fail on some systems)
-	let entry = keyring::Entry::new(credential_service(), &credential_user(server_name))
-		.map_err(|e| anyhow!("Keyring error: {}", e))?;
-
-	match entry.set_password(&json) {
-		Ok(_) => {
-			// Verify the save immediately
-			match entry.get_password() {
-				Ok(read_back) if read_back == json => {
-					crate::log_debug!("✅ SAVE_TOKEN: Also saved to system keyring");
-				}
-				Ok(_) => {
-					crate::log_debug!(
-						"⚠️  SAVE_TOKEN: Keyring save verification failed (data mismatch)"
-					);
-				}
-				Err(_) => {
-					crate::log_debug!(
-						"⚠️  SAVE_TOKEN: Keyring save verification failed (cannot read back)"
-					);
-				}
-			}
-		}
-		Err(_) => {
-			crate::log_debug!(
-				"⚠️  SAVE_TOKEN: Keyring save failed (file storage is primary, this is OK)"
-			);
-		}
-	}
-
-	Ok(())
-}
-
-async fn save_token_fallback(server_name: &str, json: &str) -> Result<()> {
-	let dir = token_storage_dir();
-	crate::log_debug!(
-		"🔍 SAVE_TOKEN_FALLBACK: Creating directory: {}",
-		dir.display()
-	);
-	std::fs::create_dir_all(&dir)
-		.map_err(|e| anyhow!("Failed to create token directory: {}", e))?;
-
-	let path = dir.join(format!("{}.json", server_name));
-	crate::log_debug!(
-		"🔍 SAVE_TOKEN_FALLBACK: Encrypting data for server_name='{}'",
-		server_name
-	);
-	let encrypted = encrypt_data(server_name, json)?;
-
-	crate::log_debug!(
-		"🔍 SAVE_TOKEN_FALLBACK: Writing to path: {}",
-		path.display()
-	);
-	std::fs::write(&path, encrypted).map_err(|e| anyhow!("Failed to write token file: {}", e))?;
-	crate::log_debug!(
-		"✅ SAVE_TOKEN_FALLBACK: Successfully saved to: {}",
-		path.display()
-	);
-	crate::log_debug!(
-		"SAVE_TOKEN_FALLBACK: server_name='{}', path='{}'",
-		server_name,
-		path.display()
-	);
+	entry(server_name)?
+		.set_password(&json)
+		.map_err(|e| anyhow!("failed to save token: {e}"))?;
+	crate::log_debug!("✅ SAVE_TOKEN: stored token for server '{}'", server_name);
 	Ok(())
 }
 
@@ -133,105 +118,26 @@ pub async fn load_token(server_name: &str) -> TokenResult {
 		server_name,
 		credential_user(server_name)
 	);
-	crate::log_debug!(
-		"LOAD_TOKEN: server_name='{}', credential_user='{}'",
-		server_name,
-		credential_user(server_name)
-	);
-	let entry = keyring::Entry::new(credential_service(), &credential_user(server_name))
-		.map_err(|e| TokenStoreError::CredentialStoreError(anyhow!(e)))?;
-
-	crate::log_debug!("🔍 LOAD_TOKEN: Attempting to read from keyring...");
-	match entry.get_password() {
+	match entry(server_name)?.get_password() {
 		Ok(json) => {
+			let metadata: TokenMetadata = serde_json::from_str(&json)?;
 			crate::log_debug!(
-				"✅ LOAD_TOKEN: Keyring read SUCCESS for server: {}",
-				server_name
-			);
-			crate::log_debug!(
-				"LOAD_TOKEN: Keyring read SUCCESS for server: {}",
-				server_name
-			);
-			let metadata: TokenMetadata =
-				serde_json::from_str(&json).map_err(TokenStoreError::SerializationError)?;
-			crate::log_debug!(
-				"✅ LOAD_TOKEN: Token parsed successfully, token_prefix='{}...'",
+				"✅ LOAD_TOKEN: loaded token, token_prefix='{}...'",
 				metadata.access_token.chars().take(10).collect::<String>()
 			);
 			Ok(Some(metadata))
 		}
-		Err(e) => {
-			crate::log_debug!(
-				"⚠️  LOAD_TOKEN: Keyring read FAILED for server '{}': {:?}, trying fallback...",
-				server_name,
-				e
-			);
-			tracing::warn!(
-				"LOAD_TOKEN: Keyring read FAILED for server '{}': {:?}, trying fallback...",
-				server_name,
-				e
-			);
-			match load_token_fallback(server_name).await {
-				Ok(metadata) => {
-					crate::log_debug!(
-						"✅ LOAD_TOKEN: Fallback read SUCCESS for server: {}",
-						server_name
-					);
-					crate::log_debug!(
-						"✅ LOAD_TOKEN: Token parsed from fallback, token_prefix='{}...'",
-						metadata.access_token.chars().take(10).collect::<String>()
-					);
-					crate::log_debug!(
-						"LOAD_TOKEN: Fallback read SUCCESS for server: {}",
-						server_name
-					);
-					Ok(Some(metadata))
-				}
-				Err(e) => {
-					crate::log_debug!(
-						"❌ LOAD_TOKEN: Fallback read FAILED for server '{}': {:?}",
-						server_name,
-						e
-					);
-					tracing::warn!(
-						"LOAD_TOKEN: Fallback read FAILED for server '{}': {:?}",
-						server_name,
-						e
-					);
-					Ok(None)
-				}
-			}
+		// No stored credential for this server — not an error, just unauthenticated.
+		Err(keyring_core::Error::NoEntry) => {
+			crate::log_debug!("LOAD_TOKEN: no token stored for server '{}'", server_name);
+			Ok(None)
 		}
+		// A genuine store failure (corruption, no access) must surface, not silently
+		// degrade into an endless re-auth loop.
+		Err(e) => Err(TokenStoreError::CredentialStoreError(anyhow!(
+			"failed to load token for '{server_name}': {e}"
+		))),
 	}
-}
-
-async fn load_token_fallback(server_name: &str) -> Result<TokenMetadata> {
-	let path = token_storage_dir().join(format!("{}.json", server_name));
-	crate::log_debug!("🔍 LOAD_TOKEN_FALLBACK: Checking path: {}", path.display());
-	if !path.exists() {
-		crate::log_debug!(
-			"❌ LOAD_TOKEN_FALLBACK: Token file not found at: {}",
-			path.display()
-		);
-		return Err(anyhow!("Token file not found"));
-	}
-
-	crate::log_debug!("🔍 LOAD_TOKEN_FALLBACK: Reading encrypted file...");
-	let encrypted =
-		std::fs::read(&path).map_err(|e| anyhow!("Failed to read token file: {}", e))?;
-	crate::log_debug!(
-		"🔍 LOAD_TOKEN_FALLBACK: Read {} bytes, decrypting with server_name='{}'",
-		encrypted.len(),
-		server_name
-	);
-	// CRITICAL FIX: Pass server_name as the decryption key
-	let (_, json) = decrypt_data(server_name, &encrypted)?;
-
-	crate::log_debug!("✅ LOAD_TOKEN_FALLBACK: Decryption successful, parsing JSON...");
-	let metadata =
-		serde_json::from_str(&json).map_err(|e| anyhow!("Failed to parse token file: {}", e))?;
-	crate::log_debug!("✅ LOAD_TOKEN_FALLBACK: Successfully loaded token");
-	Ok(metadata)
 }
 
 pub async fn clear_token(
@@ -247,13 +153,10 @@ pub async fn clear_token(
 		}
 	}
 
-	let entry = keyring::Entry::new(credential_service(), &credential_user(server_name)).ok();
-	if let Some(e) = entry {
-		let _ = e.delete_credential();
+	match entry(server_name)?.delete_credential() {
+		Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+		Err(e) => crate::log_debug!("clear_token: delete failed for '{}': {}", server_name, e),
 	}
-
-	let path = token_storage_dir().join(format!("{}.json", server_name));
-	let _ = std::fs::remove_file(&path);
 
 	tracing::debug!("Cleared OAuth token for server: {}", server_name);
 	Ok(())
@@ -337,72 +240,48 @@ async fn revoke_token(
 	}
 }
 
-fn encrypt_data(key: &str, data: &str) -> Result<Vec<u8>> {
-	let key_bytes = Sha256::digest(key.as_bytes());
-	let key_slice: [u8; 32] = key_bytes.as_slice().try_into().unwrap();
-	let data_bytes = data.as_bytes();
-	let mut encrypted = Vec::with_capacity(data_bytes.len());
-
-	for (i, byte) in data_bytes.iter().enumerate() {
-		encrypted.push(byte ^ key_slice[i % 32]);
-	}
-
-	let mut result = b"OCTOMIND_TOKEN_V1".to_vec();
-	result.push(b':');
-	result.extend_from_slice(&encrypted.len().to_le_bytes());
-	result.push(b':');
-	result.extend(encrypted);
-	Ok(result)
-}
-
-fn decrypt_data(key: &str, encrypted: &[u8]) -> Result<(String, String)> {
-	if !encrypted.starts_with(b"OCTOMIND_TOKEN_V1:") {
-		return Err(anyhow!("Invalid token format"));
-	}
-
-	// Skip "OCTOMIND_TOKEN_V1:" (18 bytes)
-	let rest = &encrypted[18..];
-	let len_bytes: [u8; 8] = rest[..8]
-		.try_into()
-		.map_err(|_| anyhow!("Invalid token format"))?;
-	let len = u64::from_le_bytes(len_bytes) as usize;
-
-	// Skip length (8 bytes) + ':' (1 byte) = 9 bytes
-	if rest.len() < 9 + len {
-		return Err(anyhow!("Invalid token format: truncated data"));
-	}
-
-	let data_bytes = &rest[9..9 + len];
-	// CRITICAL FIX: Use the same key derivation as encrypt_data
-	let key_bytes = Sha256::digest(key.as_bytes());
-	let key_slice: [u8; 32] = key_bytes.as_slice().try_into().unwrap();
-
-	let mut decrypted = String::with_capacity(len);
-
-	for (i, byte) in data_bytes.iter().enumerate() {
-		decrypted.push((*byte ^ key_slice[i % 32]) as char);
-	}
-
-	let metadata: TokenMetadata = serde_json::from_str(&decrypted)
-		.map_err(|e| anyhow!("Failed to parse decrypted token: {}", e))?;
-
-	Ok((metadata.access_token.clone(), decrypted))
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::sync::Once;
 
-	#[test]
-	fn test_encrypt_decrypt() {
-		let key = "test-key";
-		let data =
-			r#"{"server_name":"test","access_token":"abc","expires_at":1234567890,"scopes":[]}"#;
+	// Register an isolated temp-file keystore as the process-wide store, once.
+	// File-backed (not :memory:) so it survives across separate store operations.
+	static TEST_STORE: Once = Once::new();
+	fn init_test_store() {
+		TEST_STORE.call_once(|| {
+			let path = std::env::temp_dir()
+				.join(format!("octomind-keystore-test-{}", std::process::id()))
+				.join("keystore.db");
+			let path_str = path.to_string_lossy().into_owned();
+			let modifiers = HashMap::from([("path", path_str.as_str())]);
+			let store = db_keystore::DbKeyStore::new_with_modifiers(&modifiers).unwrap();
+			keyring_core::set_default_store(store);
+		});
+	}
 
-		let encrypted = encrypt_data(key, data).unwrap();
-		// CRITICAL FIX: Pass the same key used for encryption
-		let (token, decrypted) = decrypt_data(key, &encrypted).unwrap();
-		assert_eq!(token, "abc");
-		assert_eq!(decrypted, data);
+	#[tokio::test]
+	async fn save_load_clear_roundtrip() {
+		init_test_store();
+		let server = "test-roundtrip";
+		let meta = TokenMetadata {
+			server_name: server.to_string(),
+			access_token: "abc123".to_string(),
+			refresh_token: Some("refresh".to_string()),
+			expires_at: 0,
+			scopes: vec!["read".to_string()],
+		};
+
+		save_token(server, &meta).await.unwrap();
+		assert_eq!(load_token(server).await.unwrap(), Some(meta));
+
+		clear_token(server, false, None, None, None).await.unwrap();
+		assert_eq!(load_token(server).await.unwrap(), None);
+	}
+
+	#[tokio::test]
+	async fn load_missing_is_none() {
+		init_test_store();
+		assert_eq!(load_token("never-saved-server").await.unwrap(), None);
 	}
 }

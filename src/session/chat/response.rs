@@ -376,6 +376,21 @@ fn add_assistant_message_with_tool_calls(
 	Ok(())
 }
 
+/// Supervisor: capture the agent's self-report (state + reason) from a freshly
+/// produced assistant message and strip the token so it is never shown or stored.
+/// Each call overwrites `last_self_report`, so across a multi-round turn it
+/// converges on the final message's state (None when no token was emitted).
+fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
+	if config.supervisor.enabled && config.supervisor.detectors.self_report {
+		let parsed = crate::supervisor::detect::parse_self_report(content);
+		chat_session.last_self_report = parsed.as_ref().map(|(s, _)| *s);
+		chat_session.last_self_report_reason = parsed.and_then(|(_, r)| r);
+		crate::supervisor::detect::strip_self_report(content)
+	} else {
+		content.to_string()
+	}
+}
+
 // Function to process response, handling tool calls recursively
 pub async fn process_response<S: OutputSink>(
 	mut params: ResponseProcessingParams<'_, S>,
@@ -383,14 +398,10 @@ pub async fn process_response<S: OutputSink>(
 	// Check if operation has been cancelled at the very start
 	check_cancellation(&params.operation_cancelled)?;
 
-	// Supervisor: capture the agent's self-report token, then strip it so it is
-	// never displayed or stored. Out-of-band — invisible to the user.
-	if params.config.supervisor.enabled && params.config.supervisor.detectors.self_report {
-		if let Some((state, _)) = crate::supervisor::detect::parse_self_report(&params.content) {
-			params.chat_session.last_self_report = Some(state);
-		}
-		params.content = crate::supervisor::detect::strip_self_report(&params.content);
-	}
+	// Supervisor: capture + strip the agent's self-report. Re-run for every
+	// response in the turn (here and after each tool round), so `last_self_report`
+	// reflects the final message and no token leaks to display or storage.
+	params.content = capture_self_report(&mut *params.chat_session, params.config, &params.content);
 
 	// Note: No explicit stop needed here. The spinner-aware print macros in
 	// src/lib.rs use pb.suspend() around every println!/print!, which is
@@ -564,15 +575,16 @@ pub async fn process_response<S: OutputSink>(
 					let loop_threshold = params.config.supervisor.detectors.loop_threshold;
 					let no_progress_window = params.config.supervisor.detectors.no_progress_window;
 					for call in &current_tool_calls {
-						let made_progress = tool_results
-							.iter()
-							.find(|r| r.tool_id == call.tool_id)
-							.map(|r| !r.is_error())
-							.unwrap_or(false);
+						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
+						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
+						let is_error = tr.map(|r| r.is_error()).unwrap_or(true);
+						let is_mutation =
+							crate::supervisor::detect::is_mutation_tool(&call.tool_name);
 						let signal = params.chat_session.detectors.record_action(
 							&call.tool_name,
-							&call.parameters.to_string(),
-							made_progress,
+							&result_content,
+							is_error,
+							is_mutation,
 							loop_threshold,
 							no_progress_window,
 						);
@@ -634,7 +646,11 @@ pub async fn process_response<S: OutputSink>(
 					.await?
 					{
 						// Update current content for next iteration
-						current_content = new_content;
+						current_content = capture_self_report(
+							&mut *params.chat_session,
+							params.config,
+							&new_content,
+						);
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 						current_response_id = new_response_id; // Update response_id from follow-up response

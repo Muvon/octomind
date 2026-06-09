@@ -43,10 +43,12 @@ When `[supervisor.detectors] self_report = true`, the agent is instructed to end
 
 Deterministic, free, every turn — they cost nothing and decide *when* (rarely) to spend a model call.
 
-- **Loop** — the same tool with the same arguments `loop_threshold` times in a row (default `3`). Unambiguous; no model needed.
-- **No-progress** — `no_progress_window` turns (default `5`) with no new information (no new file read, error signature unchanged, no edit applied).
+Both derive from one primitive — **information novelty**: did the action add new information? A mutation (edit/write) always advances state; a read/search advances only when its result is one not seen recently.
 
-The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. Agreement needs no model at all.
+- **Loop** — the same *result* repeats `loop_threshold` times in a row (default `3`). Keyed on the result, so reworded calls that return the same thing are caught too. Unambiguous; no model needed.
+- **No-progress** — `no_progress_window` actions (default `5`) with **zero novelty** — churn, not genuine work.
+
+The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate; no-progress while `exploring` waits; loop, or no-progress otherwise, steers. Agreement needs no model at all.
 
 ## Verify-gate
 
@@ -67,6 +69,8 @@ The supervisor keeps two kinds of cross-session memory in one backend:
 - **Orientation** — durable, descriptive understanding of the subject (architecture, decisions, constraints) that was expensive to discover and would otherwise be re-explored. Stored under `memory_type = "orientation"` and recalled as **working assumptions to verify**, never as truth.
 
 The rule for what to store: *cache what is expensive to re-derive, never what one search recovers.* A symbol's location is cheap (grep finds it); an architectural decision is not.
+
+**Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict: entries that were in context when a run **passes** get reinforced (importance up); entries present when a run **fails after retries** are decayed (importance down) and dropped once they fall below a floor. A distill-time pass additionally prunes entries that have gone both stale (older than `decay_days`) and weak. So memory is validated by *outcome*, not by assertion — useful knowledge strengthens, misleading or unused knowledge fades out.
 
 ## Configuration
 

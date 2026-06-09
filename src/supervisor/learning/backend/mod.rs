@@ -55,6 +55,34 @@ pub trait LearningBackend: Send + Sync {
 
 	/// Delete a lesson by its id (file backend: filename stem; MCP backend: unsupported).
 	async fn delete(&self, id: &str, role: &str, project: &str, config: &Config) -> Result<()>;
+
+	/// Outcome-driven reinforcement: nudge a recalled entry's importance after the
+	/// verify-gate labels the run that used it (+delta on pass, −delta on fail).
+	/// Entries falling to/below the floor are dropped. Default no-op (the MCP
+	/// backend owns its own scoring).
+	async fn reinforce(
+		&self,
+		_content: &str,
+		_role: &str,
+		_project: &str,
+		_delta: f64,
+		_config: &Config,
+	) -> Result<()> {
+		Ok(())
+	}
+
+	/// Grow-and-refine: drop scoped entries older than `decay_days` whose
+	/// importance has fallen to/below the prune threshold (stale and unproven or
+	/// misleading). Default no-op.
+	async fn prune_stale(
+		&self,
+		_role: &str,
+		_project: &str,
+		_decay_days: u64,
+		_config: &Config,
+	) -> Result<()> {
+		Ok(())
+	}
 }
 
 /// Create a backend based on config.

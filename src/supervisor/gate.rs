@@ -40,19 +40,33 @@ pub enum GateVerdict {
 	Gaps(Vec<String>),
 }
 
+/// True when a message is a supervisor-injected note (a `<supervisor>` advisory
+/// or a `<recall>` block), not a genuine user turn. Lets the gate find the real
+/// task instead of verifying against its own prior advisory.
+pub fn is_supervisor_injection(content: &str) -> bool {
+	let t = content.trim_start();
+	t.starts_with("<supervisor>") || t.starts_with("<recall>")
+}
+
 /// Verify a self-reported completion. `task` is the user's request, `result` is
-/// the agent's final answer. Fails open (PASS) on empty input or LLM error — a
-/// verifier outage must never block the agent.
+/// the agent's final answer, `claim` is the agent's own stated reason from its
+/// `done` self-report (checked against the result). Fails open (PASS) on empty
+/// input or LLM error — a verifier outage must never block the agent.
 pub async fn verify(
 	config: &Config,
 	task: &str,
 	result: &str,
+	claim: Option<&str>,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
 	if task.trim().is_empty() || result.trim().is_empty() {
 		return GateVerdict::Pass;
 	}
-	let user = format!("USER REQUEST:\n{task}\n\nAGENT FINAL RESULT:\n{result}");
+	let claim_line = match claim {
+		Some(c) if !c.trim().is_empty() => format!("\n\nAGENT'S STATED CLAIM: {c}"),
+		_ => String::new(),
+	};
+	let user = format!("USER REQUEST:\n{task}\n\nAGENT FINAL RESULT:\n{result}{claim_line}");
 	let model = config.supervisor.model.clone();
 	match crate::supervisor::learning::extract::call_learning_llm(
 		config,

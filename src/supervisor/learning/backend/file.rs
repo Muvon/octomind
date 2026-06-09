@@ -93,6 +93,12 @@ impl FileBackend {
 	}
 }
 
+/// Importance at/below which a reinforced entry is dropped entirely.
+const IMPORTANCE_FLOOR: f64 = 0.1;
+/// Stale entries are pruned only once their importance has fallen to/below this;
+/// entries bumped above it by reinforcement survive regardless of age.
+const PRUNE_THRESHOLD: f64 = 0.4;
+
 #[async_trait]
 impl LearningBackend for FileBackend {
 	async fn store(&self, lesson: &Lesson, _config: &Config) -> Result<()> {
@@ -230,6 +236,75 @@ impl LearningBackend for FileBackend {
 	async fn retrieve_global(&self, _config: &Config) -> Result<Vec<Lesson>> {
 		let dir = crate::directories::get_global_learning_dir()?;
 		Ok(Self::read_lessons_sorted(&dir))
+	}
+
+	async fn reinforce(
+		&self,
+		content: &str,
+		role: &str,
+		project: &str,
+		delta: f64,
+		config: &Config,
+	) -> Result<()> {
+		// Find the recalled entry (scoped first, then global) by content.
+		let mut entries = Self::read_lessons_sorted(&Self::learning_dir(role, project)?);
+		entries.extend(Self::read_lessons_sorted(
+			&crate::directories::get_global_learning_dir()?,
+		));
+		let Some(mut entry) = entries
+			.into_iter()
+			.find(|l| l.content.trim() == content.trim())
+		else {
+			return Ok(());
+		};
+		let new_importance = (entry.importance + delta).clamp(0.0, 1.0);
+		if new_importance <= IMPORTANCE_FLOOR {
+			self.delete(&entry.file_id(), &entry.role, &entry.project, config)
+				.await?;
+			crate::log_debug!(
+				"Reinforce: dropped (importance {:.2}): {}",
+				new_importance,
+				entry.content
+			);
+		} else {
+			entry.importance = new_importance;
+			self.store(&entry, config).await?; // same file_id → overwrites in place
+			crate::log_debug!(
+				"Reinforce: {} importance -> {:.2}",
+				entry.content,
+				new_importance
+			);
+		}
+		Ok(())
+	}
+
+	async fn prune_stale(
+		&self,
+		role: &str,
+		project: &str,
+		decay_days: u64,
+		config: &Config,
+	) -> Result<()> {
+		if decay_days == 0 {
+			return Ok(());
+		}
+		let cutoff_secs = (decay_days * 86_400) as i64;
+		let now = chrono::Utc::now();
+		for entry in Self::read_lessons_sorted(&Self::learning_dir(role, project)?) {
+			if entry.importance > PRUNE_THRESHOLD {
+				continue; // proven useful — keep regardless of age
+			}
+			let stale = chrono::DateTime::parse_from_rfc3339(&entry.created)
+				.map(|c| (now - c.with_timezone(&chrono::Utc)).num_seconds() > cutoff_secs)
+				.unwrap_or(false);
+			if stale {
+				let _ = self
+					.delete(&entry.file_id(), &entry.role, &entry.project, config)
+					.await;
+				crate::log_debug!("Decay: pruned stale weak entry: {}", entry.content);
+			}
+		}
+		Ok(())
 	}
 }
 

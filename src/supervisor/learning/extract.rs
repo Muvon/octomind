@@ -150,6 +150,16 @@ async fn run_extraction(
 		}
 	}
 
+	// Grow-and-refine: prune scoped entries that have gone stale and weak.
+	let _ = backend
+		.prune_stale(
+			role,
+			project,
+			config.supervisor.orientation.decay_days,
+			config,
+		)
+		.await;
+
 	// Lessons: gated by the model's decision; require user evidence. Orientation
 	// above is independent, so still return its count even when there are no lessons.
 	if !response.contains("<decision>LEARN</decision>") {

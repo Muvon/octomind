@@ -25,6 +25,22 @@ use tokio::sync::watch;
 
 use crate::session::output::{OutputMode, OutputSink};
 
+/// Apply the verify-gate's verdict back to the entries recalled this trajectory:
+/// positive `delta` reinforces (the recall helped); negative decays (it may have
+/// misled). Clears the recalled set either way.
+async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, delta: f64) {
+	let refs = std::mem::take(&mut chat_session.recalled_refs);
+	if refs.is_empty() {
+		return;
+	}
+	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
+	for (content, role, project) in &refs {
+		let _ = backend
+			.reinforce(content, role, project, delta, config)
+			.await;
+	}
+}
+
 // Helper function to execute API call and process response
 pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	chat_session: &mut ChatSession,
@@ -138,6 +154,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session.add_user_message(&block)?;
 			crate::supervisor::stats::recall();
 			for c in new_contents {
+				chat_session
+					.recalled_refs
+					.push((c.clone(), role.to_string(), project.clone()));
 				chat_session.injected_lessons.insert(c);
 			}
 		}
@@ -270,22 +289,36 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
 		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations
 	{
+		// The genuine task is the most recent user turn that is NOT a supervisor
+		// injection — so re-runs verify against the real request, not our advisory.
 		let task = chat_session
 			.session
 			.messages
 			.iter()
 			.rev()
-			.find(|m| m.role == "user")
+			.find(|m| {
+				m.role == "user" && !crate::supervisor::gate::is_supervisor_injection(&m.content)
+			})
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
 		let result = chat_session.last_response.clone();
+		let claim = chat_session.last_self_report_reason.clone();
 		crate::supervisor::stats::gate_run();
-		match crate::supervisor::gate::verify(config, &task, &result, operation_rx.clone()).await {
+		match crate::supervisor::gate::verify(
+			config,
+			&task,
+			&result,
+			claim.as_deref(),
+			operation_rx.clone(),
+		)
+		.await
+		{
 			crate::supervisor::gate::GateVerdict::Pass => {
 				chat_session.gate_iterations = 0;
 				chat_session.gate_failed = false;
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!("Verify-gate: PASS");
+				reinforce_recalled(chat_session, config, 0.05).await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				let note = crate::supervisor::gate::format_advisory(&gaps);
@@ -311,6 +344,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.gate_failed = true;
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; gaps remain");
+				reinforce_recalled(chat_session, config, -0.15).await;
 			}
 		}
 	}

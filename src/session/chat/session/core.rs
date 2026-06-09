@@ -208,6 +208,12 @@ pub struct ChatSession {
 	/// Supervisor: queued advisory steer note (loop / no-progress), injected at
 	/// the next request's safe pre-build point. None = nothing to steer.
 	pub steer_pending: Option<String>,
+	/// Supervisor: optional reason from the latest self-report token, fed to the
+	/// verify-gate so it checks what the agent claims it did.
+	pub last_self_report_reason: Option<String>,
+	/// Supervisor: entries recalled during the current trajectory (content, role,
+	/// project). The verify-gate reinforces (pass) or decays (fail) them, then clears.
+	pub recalled_refs: Vec<(String, String, String)>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -332,6 +338,8 @@ impl ChatSession {
 			gate_iterations: 0,
 			gate_failed: false,
 			steer_pending: None,
+			last_self_report_reason: None,
+			recalled_refs: Vec::new(),
 		}
 	}
 
@@ -536,6 +544,8 @@ impl ChatSession {
 						gate_iterations: 0,
 						gate_failed: false,
 						steer_pending: None,
+						last_self_report_reason: None,
+						recalled_refs: Vec::new(),
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
@@ -1281,6 +1291,8 @@ mod tests {
 			gate_iterations: 0,
 			gate_failed: false,
 			steer_pending: None,
+			last_self_report_reason: None,
+			recalled_refs: Vec::new(),
 		}
 	}
 

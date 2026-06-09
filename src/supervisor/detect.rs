@@ -17,7 +17,9 @@
 //! Two free signals are fused before any model is woken:
 //! 1. **Self-report** — the agent annotates each turn with a `<sup>state</sup>`
 //!    token (it already knows whether it is exploring / stuck / done).
-//! 2. **Counters** — identical tool+args repeats, and turns without new info.
+//! 2. **Novelty counters** — derived from a single primitive: did this action
+//!    add *new information* to the agent's state? Loop = the same result repeats;
+//!    no-progress = a window of actions with zero novelty.
 //!
 //! Agreement needs no model. Only a *conflict* (e.g. counter says "no progress"
 //! while the agent reports `progressing`) is worth the rare model confirmation.
@@ -64,7 +66,7 @@ This tag is for the system and is hidden from the user. Always include exactly o
 </supervisor>";
 
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
-/// an optional short reason. Tolerant of the `·` or `-` reason separator.
+/// an optional short reason. Tolerant of the `·` or `|` reason separator.
 pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
 	let close = "</sup>";
 	let open = "<sup>";
@@ -106,95 +108,137 @@ pub fn strip_self_report(text: &str) -> String {
 	out.trim_end().to_string()
 }
 
-/// Cheap markers of whether a turn actually advanced the task.
-#[derive(Debug, Default)]
-pub struct ProgressState {
-	pub files_seen: HashSet<String>,
-	pub last_error_sig: Option<u64>,
-	pub edits_applied: usize,
+/// Heuristic: does this tool change state, so a success is inherently progress?
+/// (Reads/searches only count as progress when they surface *new* content.)
+pub fn is_mutation_tool(tool: &str) -> bool {
+	let t = tool.to_ascii_lowercase();
+	[
+		"write",
+		"edit",
+		"create",
+		"str_replace",
+		"apply",
+		"insert",
+		"delete",
+		"remove",
+		"patch",
+		"mkdir",
+		"rename",
+		"move",
+	]
+	.iter()
+	.any(|k| t.contains(k))
 }
 
-/// Deterministic per-session detector state.
+const SEEN_CAP: usize = 128;
+
+/// Deterministic per-session detector state, built on a single novelty primitive.
 #[derive(Debug, Default)]
 pub struct Detectors {
-	/// Hashes of recent (tool, args) signatures — newest at back.
-	window: VecDeque<u64>,
-	pub progress: ProgressState,
-	/// Consecutive turns observed without new information.
-	no_progress_streak: usize,
+	/// Recent result hashes (loop detection), newest at back.
+	loop_window: VecDeque<u64>,
+	/// Recent novelty flags (no-progress detection), newest at back.
+	novelty_window: VecDeque<bool>,
+	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
+	seen: HashSet<u64>,
+	seen_order: VecDeque<u64>,
 }
 
-/// What the deterministic layer concluded for a turn.
+/// What the deterministic layer concluded for an action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectorSignal {
 	/// Nothing notable.
 	None,
-	/// Same tool+args repeated `loop_threshold` times — unambiguous loop.
+	/// The same result repeated `loop_threshold` times — even across reworded
+	/// args (keyed on result, so near-duplicate calls are caught too).
 	Loop,
-	/// `no_progress_window` turns elapsed with no new information.
+	/// `no_progress_window` actions elapsed with zero new information.
 	NoProgress,
 }
 
-fn sig(tool: &str, args: &str) -> u64 {
+fn hash2(a: &str, b: &str) -> u64 {
 	let mut h = DefaultHasher::new();
-	tool.hash(&mut h);
-	args.hash(&mut h);
+	a.hash(&mut h);
+	b.hash(&mut h);
 	h.finish()
 }
 
 impl Detectors {
-	/// Record one tool action and return the deterministic signal. `made_progress`
-	/// is true when this action surfaced new information (new file, changed error
-	/// signature, applied edit) — the caller computes it from the tool result.
+	/// Record one tool action and return the deterministic signal. Novelty is
+	/// computed internally: a mutation always advances state; a read/search only
+	/// advances when its (non-error) result is one we have not seen recently.
 	pub fn record_action(
 		&mut self,
 		tool: &str,
-		args: &str,
-		made_progress: bool,
+		result: &str,
+		is_error: bool,
+		is_mutation: bool,
 		loop_threshold: usize,
 		no_progress_window: usize,
 	) -> DetectorSignal {
-		let s = sig(tool, args);
-		self.window.push_back(s);
-		while self.window.len() > loop_threshold.max(no_progress_window) {
-			self.window.pop_front();
-		}
+		// Identity of this action's RESULT, keyed on tool+result so the same
+		// output from differently-worded calls still reads as a repeat.
+		let rhash = hash2(tool, result);
 
-		if made_progress {
-			self.no_progress_streak = 0;
-		} else {
-			self.no_progress_streak += 1;
-		}
-
-		// Loop: the last `loop_threshold` signatures are all identical.
-		if loop_threshold > 0 && self.window.len() >= loop_threshold {
-			let tail = self.window.len() - loop_threshold;
-			if self.window.iter().skip(tail).all(|&x| x == s) {
-				return DetectorSignal::Loop;
+		// Novelty: fresh = result content not seen in the recent window.
+		let fresh = self.seen.insert(rhash);
+		if fresh {
+			self.seen_order.push_back(rhash);
+			if self.seen_order.len() > SEEN_CAP {
+				if let Some(old) = self.seen_order.pop_front() {
+					self.seen.remove(&old);
+				}
 			}
 		}
+		let novel = is_mutation || (!is_error && fresh);
 
-		if no_progress_window > 0 && self.no_progress_streak >= no_progress_window {
-			return DetectorSignal::NoProgress;
+		// Loop window: identical result repeated.
+		self.loop_window.push_back(rhash);
+		while self.loop_window.len() > loop_threshold.max(1) {
+			self.loop_window.pop_front();
 		}
+		let looping = loop_threshold > 0
+			&& self.loop_window.len() >= loop_threshold
+			&& self.loop_window.iter().all(|&h| h == rhash);
 
-		DetectorSignal::None
+		// Novelty window: actions without any new information.
+		self.novelty_window.push_back(novel);
+		while self.novelty_window.len() > no_progress_window.max(1) {
+			self.novelty_window.pop_front();
+		}
+		let stalled = no_progress_window > 0
+			&& self.novelty_window.len() >= no_progress_window
+			&& self.novelty_window.iter().all(|&n| !n);
+
+		if looping {
+			DetectorSignal::Loop
+		} else if stalled {
+			DetectorSignal::NoProgress
+		} else {
+			DetectorSignal::None
+		}
 	}
 
-	/// Reset the no-progress streak (e.g. after a steer note or new user turn).
+	/// Reset the rolling windows (e.g. after a steer note or new user turn).
 	pub fn reset_streak(&mut self) {
-		self.no_progress_streak = 0;
+		self.novelty_window.clear();
+		self.loop_window.clear();
 	}
 }
 
-/// Decide whether a fired signal warrants a steer note, fusing the deterministic
-/// signal with the agent's free self-report (no model call). Loops always steer;
-/// no-progress steers unless the agent is legitimately still exploring.
+/// Fuse the deterministic signal with the agent's free self-report (no model
+/// call). The decision table:
+/// - any `done`                          → defer to the verify-gate (no steer)
+/// - no-progress while `exploring`       → wait (legitimate exploration)
+/// - loop, or no-progress otherwise      → steer
 pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool {
-	match signal {
-		DetectorSignal::Loop => true,
-		DetectorSignal::NoProgress => !matches!(report, Some(SelfReport::Exploring)),
-		DetectorSignal::None => false,
+	if signal == DetectorSignal::None {
+		return false;
+	}
+	match report {
+		Some(SelfReport::Done) => false,
+		Some(SelfReport::Exploring) if signal == DetectorSignal::NoProgress => false,
+		_ => true,
 	}
 }
 
@@ -243,27 +287,69 @@ mod tests {
 	}
 
 	#[test]
-	fn loop_fires_on_third_identical() {
+	fn loop_fires_on_repeated_result() {
 		let mut d = Detectors::default();
 		assert_eq!(
-			d.record_action("grep", "x", false, 3, 5),
+			d.record_action("grep", "same", false, false, 3, 9),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("grep", "x", false, 3, 5),
+			d.record_action("grep", "same", false, false, 3, 9),
 			DetectorSignal::None
 		);
+		// Third identical RESULT → loop.
 		assert_eq!(
-			d.record_action("grep", "x", false, 3, 5),
+			d.record_action("grep", "same", false, false, 3, 9),
 			DetectorSignal::Loop
 		);
 	}
 
 	#[test]
-	fn progress_resets_streak() {
+	fn no_progress_fires_on_zero_novelty_window() {
 		let mut d = Detectors::default();
-		d.record_action("a", "1", false, 9, 3);
-		d.record_action("b", "2", true, 9, 3); // progress resets
-		assert_eq!(d.record_action("c", "3", false, 9, 3), DetectorSignal::None);
+		d.record_action("a", "r", false, false, 9, 3); // first "r" → novel
+		d.record_action("a", "r", false, false, 9, 3); // seen → not novel
+		d.record_action("a", "r", false, false, 9, 3); // not novel
+		assert_eq!(
+			d.record_action("a", "r", false, false, 9, 3),
+			DetectorSignal::NoProgress
+		);
+	}
+
+	#[test]
+	fn mutation_counts_as_progress() {
+		let mut d = Detectors::default();
+		d.record_action("read", "same", false, false, 9, 2);
+		d.record_action("read", "same", false, false, 9, 2);
+		// An edit always advances state → breaks the stall.
+		assert_eq!(
+			d.record_action("edit", "ok", false, true, 9, 2),
+			DetectorSignal::None
+		);
+	}
+
+	#[test]
+	fn steer_defers_to_gate_on_done() {
+		assert!(!should_steer(
+			DetectorSignal::NoProgress,
+			Some(SelfReport::Done)
+		));
+		assert!(!should_steer(DetectorSignal::Loop, Some(SelfReport::Done)));
+	}
+
+	#[test]
+	fn steer_waits_while_exploring_but_fires_on_loop() {
+		assert!(!should_steer(
+			DetectorSignal::NoProgress,
+			Some(SelfReport::Exploring)
+		));
+		assert!(should_steer(
+			DetectorSignal::Loop,
+			Some(SelfReport::Exploring)
+		));
+		assert!(should_steer(
+			DetectorSignal::NoProgress,
+			Some(SelfReport::Progressing)
+		));
 	}
 }

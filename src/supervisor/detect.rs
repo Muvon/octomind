@@ -68,16 +68,27 @@ This tag is for the system and is hidden from the user. Always include exactly o
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
 /// an optional short reason. Tolerant of the `·` or `|` reason separator.
 pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
-	let close = "</sup>";
-	let open = "<sup>";
-	let end = text.rfind(close)?;
-	let start = text[..end].rfind(open)? + open.len();
+	let end = text.rfind("</sup>")?;
+	let start = text[..end].rfind("<sup>")? + "<sup>".len();
 	let inner = text[start..end].trim();
-	let (state_part, reason) = match inner.split_once(['·', '|']) {
-		Some((s, r)) => (s, Some(r.trim().to_string()).filter(|r| !r.is_empty())),
-		None => (inner, None),
-	};
-	SelfReport::from_token(state_part).map(|s| (s, reason))
+	// The state is the leading identifier; whatever follows (after any separator)
+	// is the reason. Robust to `·`, `|`, `:`, `-`, or just a space.
+	let lead: String = leading_state_token(inner);
+	let state = SelfReport::from_token(&lead)?;
+	let reason = inner[lead.len()..]
+		.trim_start_matches([' ', '·', '|', ':', '-', '\t'])
+		.trim();
+	Some((state, (!reason.is_empty()).then(|| reason.to_string())))
+}
+
+/// The leading identifier run (`[A-Za-z_-]+`) of a `<sup>` body — the candidate
+/// state token, separator-agnostic.
+fn leading_state_token(inner: &str) -> String {
+	inner
+		.trim_start()
+		.chars()
+		.take_while(|c| c.is_ascii_alphabetic() || *c == '_' || *c == '-')
+		.collect()
 }
 
 /// Remove only `<sup>…</sup>` tokens whose body parses as a known state, so
@@ -89,8 +100,7 @@ pub fn strip_self_report(text: &str) -> String {
 		match rest[start..].find("</sup>") {
 			Some(rel_end) => {
 				let inner = &rest[start + "<sup>".len()..start + rel_end];
-				let state_part = inner.split(['·', '|']).next().unwrap_or("").trim();
-				if SelfReport::from_token(state_part).is_some() {
+				if SelfReport::from_token(&leading_state_token(inner)).is_some() {
 					// Drop this token; keep text before it.
 					out.push_str(&rest[..start]);
 					rest = &rest[start + rel_end + "</sup>".len()..];
@@ -284,6 +294,34 @@ mod tests {
 	#[test]
 	fn strips_token_and_trailing_blank() {
 		assert_eq!(strip_self_report("answer\n\n<sup>done</sup>"), "answer");
+	}
+
+	#[test]
+	fn strips_and_parses_real_multiword_reason() {
+		let s = "answer\n<sup>need_input · Phase 1 complete, awaiting user direction</sup>";
+		assert_eq!(strip_self_report(s), "answer");
+		let (st, reason) = parse_self_report(s).unwrap();
+		assert_eq!(st, SelfReport::NeedInput);
+		assert_eq!(
+			reason.as_deref(),
+			Some("Phase 1 complete, awaiting user direction")
+		);
+	}
+
+	#[test]
+	fn handles_non_dot_separators() {
+		assert_eq!(strip_self_report("x <sup>done: all good</sup>"), "x");
+		assert_eq!(strip_self_report("x <sup>blocked - cannot proceed</sup>"), "x");
+		assert_eq!(
+			parse_self_report("<sup>done: all good</sup>").map(|(s, _)| s),
+			Some(SelfReport::Done)
+		);
+	}
+
+	#[test]
+	fn keeps_legitimate_superscript() {
+		// `<sup>2</sup>` (x squared) is not a state token — keep it verbatim.
+		assert_eq!(strip_self_report("x<sup>2</sup> + 1"), "x<sup>2</sup> + 1");
 	}
 
 	#[test]

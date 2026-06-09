@@ -32,6 +32,12 @@ pub fn strip_system_tags(content: &str) -> String {
 /// Check if assistant content was already displayed in thinking block
 /// Returns the content to display (either full content or trimmed content)
 pub fn get_content_to_display(content: &str, thinking: &Option<ThinkingBlock>) -> String {
+	// Defense in depth: strip the supervisor's internal status token
+	// (`<sup>state…</sup>`) so it can never reach the screen from any display path,
+	// independent of the parse/strip in process_response. Safe — only removes
+	// tokens whose body parses as a known self-report state.
+	let content_owned = crate::supervisor::detect::strip_self_report(content);
+	let content = content_owned.as_str();
 	if let Some(ref thinking_block) = thinking {
 		// Check if thinking content is a prefix of the full content
 		// If so, skip the thinking portion and only show the response portion

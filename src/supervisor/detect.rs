@@ -55,13 +55,15 @@ impl SelfReport {
 /// out-of-band; the resulting tags are stripped before display.
 pub const SELF_REPORT_INSTRUCTION: &str = "\
 <supervisor>
-At the very end of every response, on its own final line, emit a status tag:
-`<sup>STATE</sup>` where STATE is exactly one of: exploring, progressing, blocked, need_input, done.
-You may append a short reason: `<sup>STATE · brief reason</sup>`.
+End every response with a status tag on its own final line, in this exact form:
+`<sup>STATE · brief reason</sup>`
+Replace STATE with exactly one of these words — never write the literal text \"STATE\":
+exploring, progressing, blocked, need_input, done. The reason is a few words.
 - `done` only when the user's task is fully complete.
 - `need_input` when you are asking the user a question and waiting on them.
 - `blocked` when you are stuck and cannot proceed.
 - `exploring` while still gathering context; `progressing` while actively making changes.
+Examples: `<sup>progressing · wiring store registration</sup>` or `<sup>done · migration verified</sup>`
 This tag is for the system and is hidden from the user. Always include exactly one.
 </supervisor>";
 
@@ -71,11 +73,20 @@ pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
 	let end = text.rfind("</sup>")?;
 	let start = text[..end].rfind("<sup>")? + "<sup>".len();
 	let inner = text[start..end].trim();
-	// The state is the leading identifier; whatever follows (after any separator)
-	// is the reason. Robust to `·`, `|`, `:`, `-`, or just a space.
-	let lead: String = leading_state_token(inner);
-	let state = SelfReport::from_token(&lead)?;
-	let reason = inner[lead.len()..]
+	// Normal: the body leads with the state. Echo: a model copied the literal
+	// `STATE` placeholder from the instruction, so the real state is the next
+	// token (`<sup>STATE · done</sup>` → done). Robust to `·`, `|`, `:`, `-`, space.
+	let lead = leading_state_token(inner);
+	let (state, after) = match SelfReport::from_token(&lead) {
+		Some(s) => (s, &inner[lead.len()..]),
+		None if lead.eq_ignore_ascii_case("state") => {
+			let rest = inner[lead.len()..].trim_start_matches([' ', '·', '|', ':', '-', '\t']);
+			let next = leading_state_token(rest);
+			(SelfReport::from_token(&next)?, &rest[next.len()..])
+		}
+		None => return None,
+	};
+	let reason = after
 		.trim_start_matches([' ', '·', '|', ':', '-', '\t'])
 		.trim();
 	Some((state, (!reason.is_empty()).then(|| reason.to_string())))
@@ -91,8 +102,21 @@ fn leading_state_token(inner: &str) -> String {
 		.collect()
 }
 
-/// Remove only `<sup>…</sup>` tokens whose body parses as a known state, so
-/// legitimate superscript markup the agent might emit is left untouched.
+/// Does this `<sup>` body look like a self-report rather than legitimate
+/// superscript (`2`, `th`, `®`)? True when it leads with a known state, with the
+/// `STATE` placeholder a model may echo from the instruction, or carries the
+/// reason separator (`·`/`|`) that real superscript never contains. This is the
+/// safety net: an echoed or malformed report still never reaches the screen.
+fn is_self_report_body(inner: &str) -> bool {
+	let lead = leading_state_token(inner);
+	SelfReport::from_token(&lead).is_some()
+		|| lead.eq_ignore_ascii_case("state")
+		|| inner.contains('·')
+		|| inner.contains('|')
+}
+
+/// Remove `<sup>…</sup>` tokens that look like a self-report (see
+/// [`is_self_report_body`]), leaving legitimate superscript markup untouched.
 pub fn strip_self_report(text: &str) -> String {
 	let mut out = String::with_capacity(text.len());
 	let mut rest = text;
@@ -100,7 +124,7 @@ pub fn strip_self_report(text: &str) -> String {
 		match rest[start..].find("</sup>") {
 			Some(rel_end) => {
 				let inner = &rest[start + "<sup>".len()..start + rel_end];
-				if SelfReport::from_token(&leading_state_token(inner)).is_some() {
+				if is_self_report_body(inner) {
 					// Drop this token; keep text before it.
 					out.push_str(&rest[..start]);
 					rest = &rest[start + rel_end + "</sup>".len()..];
@@ -325,6 +349,36 @@ mod tests {
 	fn keeps_legitimate_superscript() {
 		// `<sup>2</sup>` (x squared) is not a state token — keep it verbatim.
 		assert_eq!(strip_self_report("x<sup>2</sup> + 1"), "x<sup>2</sup> + 1");
+		// A short non-state superscript with no separator stays too.
+		assert_eq!(
+			strip_self_report("the 5<sup>th</sup>"),
+			"the 5<sup>th</sup>"
+		);
+	}
+
+	#[test]
+	fn strips_echoed_state_placeholder() {
+		// The reported leak: a model copies the literal `STATE` placeholder.
+		// It must never reach the screen, and we recover the intended state.
+		assert_eq!(
+			strip_self_report("answer\n<sup>STATE · done</sup>"),
+			"answer"
+		);
+		assert_eq!(
+			parse_self_report("answer\n<sup>STATE · done</sup>"),
+			Some((SelfReport::Done, None))
+		);
+		// Bare echoed placeholder (no reason) is stripped as well.
+		assert_eq!(strip_self_report("answer <sup>STATE</sup>"), "answer");
+	}
+
+	#[test]
+	fn strips_report_with_unknown_lead_but_separator() {
+		// Even a malformed state word can't leak once the `·` separator is present.
+		assert_eq!(
+			strip_self_report("ok\n<sup>finished · all good</sup>"),
+			"ok"
+		);
 	}
 
 	#[test]

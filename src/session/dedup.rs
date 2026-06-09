@@ -33,6 +33,17 @@ use std::sync::{OnceLock, RwLock};
 type SessionSet = HashSet<u64>;
 type GlobalMap = HashMap<String, SessionSet>;
 
+/// Results shorter than this are never deduplicated. Below it the
+/// placeholder saves almost nothing, and short outputs are typically
+/// verdicts ("[OK] No errors") the model must see verbatim each time it
+/// re-runs a check — eliding them turns re-verification into a retry loop
+/// (the model never sees the confirmation, so it keeps re-running the
+/// command with variations).
+const MIN_DEDUP_CONTENT_LEN: usize = 500;
+
+/// Max chars of the original's first/last line quoted in the placeholder.
+const SNIPPET_CHARS: usize = 120;
+
 static DEDUP_STATE: OnceLock<RwLock<GlobalMap>> = OnceLock::new();
 
 fn state() -> &'static RwLock<GlobalMap> {
@@ -56,6 +67,9 @@ fn content_hash(tool_name: &str, content: &str) -> u64 {
 /// `placeholder()`; `false` means it is the first occurrence and the
 /// caller should call `record()` after adding it.
 pub fn is_duplicate(tool_name: &str, content: &str) -> bool {
+	if content.len() < MIN_DEDUP_CONTENT_LEN {
+		return false;
+	}
 	let key = content_hash(tool_name, content);
 	let sk = session_key();
 	state()
@@ -67,19 +81,53 @@ pub fn is_duplicate(tool_name: &str, content: &str) -> bool {
 }
 
 /// Mark this `(tool_name, content)` as seen so future identical results in
-/// this session are deduplicated.
+/// this session are deduplicated. Content below `MIN_DEDUP_CONTENT_LEN` is
+/// never recorded — it is always kept verbatim.
 pub fn record(tool_name: &str, content: &str) {
+	if content.len() < MIN_DEDUP_CONTENT_LEN {
+		return;
+	}
 	let key = content_hash(tool_name, content);
 	let sk = session_key();
 	state().write().unwrap().entry(sk).or_default().insert(key);
 }
 
-/// Stable replacement string for a deduplicated tool result. Kept short so
-/// we maximize the token saving.
-pub fn placeholder(tool_name: &str) -> String {
-	format!(
-		"[duplicate result for `{tool_name}` — identical content already in this session, body elided]"
-	)
+/// First `SNIPPET_CHARS` chars of a line, char-boundary safe.
+fn snippet(line: &str) -> String {
+	let line = line.trim();
+	if line.chars().count() > SNIPPET_CHARS {
+		let cut: String = line.chars().take(SNIPPET_CHARS).collect();
+		format!("{cut}…")
+	} else {
+		line.to_string()
+	}
+}
+
+/// Replacement string for a deduplicated tool result. Quotes the original's
+/// first and last non-empty lines so the model can tell WHICH earlier output
+/// this duplicates — and see its verdict (test/lint summaries end with the
+/// result line) — without re-paying for the full body.
+pub fn placeholder(tool_name: &str, content: &str) -> String {
+	let first = content
+		.lines()
+		.find(|l| !l.trim().is_empty())
+		.map(snippet)
+		.unwrap_or_default();
+	let last = content
+		.lines()
+		.rev()
+		.find(|l| !l.trim().is_empty())
+		.map(snippet)
+		.unwrap_or_default();
+	if first == last {
+		format!(
+			"[duplicate result for `{tool_name}` — identical content already in this session, body elided; it begins: {first}]"
+		)
+	} else {
+		format!(
+			"[duplicate result for `{tool_name}` — identical content already in this session, body elided; it begins: {first} — and ends: {last}]"
+		)
+	}
 }
 
 /// Drop the dedup state for one session (called on session reset/end).
@@ -120,10 +168,18 @@ mod tests {
 	}
 
 	#[test]
-	fn placeholder_includes_tool_name() {
-		let s = placeholder("view");
+	fn placeholder_includes_tool_name_and_snippets() {
+		let s = placeholder("view", "first line\nmiddle\n[OK] No errors\n");
 		assert!(s.contains("view"));
 		assert!(s.contains("duplicate"));
+		assert!(s.contains("first line"));
+		assert!(s.contains("[OK] No errors"));
+	}
+
+	#[test]
+	fn placeholder_single_line_quotes_it_once() {
+		let s = placeholder("view", "only line\n");
+		assert_eq!(s.matches("only line").count(), 1);
 	}
 
 	#[test]
@@ -133,13 +189,27 @@ mod tests {
 		// with other tests sharing the same bucket.
 		let tool = "test_view_42";
 		let sid = "_global_".to_string();
-		assert!(!is_duplicate(tool, "hello"));
-		record(tool, "hello");
-		assert!(is_duplicate(tool, "hello"));
-		assert!(!is_duplicate(tool, "different"));
-		assert!(!is_duplicate("shell_test_42", "hello"));
+		let content = "hello\n".repeat(100); // above MIN_DEDUP_CONTENT_LEN
+		let other = "different\n".repeat(100);
+		assert!(!is_duplicate(tool, &content));
+		record(tool, &content);
+		assert!(is_duplicate(tool, &content));
+		assert!(!is_duplicate(tool, &other));
+		assert!(!is_duplicate("shell_test_42", &content));
 		// Cleanup so re-runs of the test do not see stale state.
 		clear_session(&sid);
+	}
+
+	#[test]
+	fn short_content_is_never_deduplicated() {
+		// Verdict-style outputs ("[OK] No errors") must always reach the
+		// model verbatim — eliding them causes re-verification loops.
+		let tool = "test_shell_short";
+		let content = "[OK] No errors";
+		assert!(content.len() < MIN_DEDUP_CONTENT_LEN);
+		record(tool, content);
+		assert!(!is_duplicate(tool, content));
+		clear_session("_global_");
 	}
 
 	#[test]

@@ -104,7 +104,7 @@ pub async fn process_tool_results(
 				tool_result.tool_name,
 				raw_content.len()
 			);
-			crate::session::dedup::placeholder(&tool_result.tool_name)
+			crate::session::dedup::placeholder(&tool_result.tool_name, &raw_content)
 		} else {
 			crate::session::dedup::record(&tool_result.tool_name, &raw_content);
 			raw_content
@@ -384,11 +384,6 @@ pub async fn process_tool_results(
 	// If there are more tools to call, the animation should continue running
 	// Animation will be stopped after checking should_continue_conversation
 
-	// Show cost breakdown for intermediate results (after tool calls, before follow-up AI call)
-	// Always show simple cost line, detailed breakdown only at info log level
-	use crate::session::chat::cost_tracker::CostTracker;
-	CostTracker::display_intermediate_cost_breakdown(chat_session);
-
 	match follow_up_result {
 		Ok(response) => {
 			// Use structured tool_calls from the API response; the legacy
@@ -409,6 +404,14 @@ pub async fn process_tool_results(
 
 			// Handle cost tracking from follow-up API call
 			handle_follow_up_cost_tracking(chat_session, &response.exchange, config);
+
+			// Show the cost line for this follow-up round. Printed only on the
+			// success path and only after cost tracking: the Err path must NOT
+			// print (on Ctrl+C the main loop prints the cancellation snapshot —
+			// printing here too produced a doubled identical line), and printing
+			// before tracking showed the previous round's stale total.
+			use crate::session::chat::cost_tracker::CostTracker;
+			CostTracker::display_intermediate_cost_breakdown(chat_session);
 
 			// CRITICAL FIX: Update animation state after cost tracking
 			// This ensures the animation shows updated cost/tokens during multi-hop tool loops

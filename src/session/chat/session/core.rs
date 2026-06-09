@@ -195,6 +195,19 @@ pub struct ChatSession {
 	pub learning_extracted: bool,
 	/// Runtime override for reasoning effort (set via /effort). None = use config default.
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
+	/// Supervisor: agent's self-reported state for the latest turn, parsed from
+	/// its `<sup>…</sup>` token. Consumed by the verify-gate and detectors.
+	pub last_self_report: Option<crate::supervisor::detect::SelfReport>,
+	/// Supervisor: deterministic detector state (loop / no-progress streak).
+	pub detectors: crate::supervisor::detect::Detectors,
+	/// Supervisor: verify-gate re-entry counter for the current turn.
+	pub gate_iterations: u8,
+	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining;
+	/// suppresses distill so we never learn from an unverified trajectory.
+	pub gate_failed: bool,
+	/// Supervisor: queued advisory steer note (loop / no-progress), injected at
+	/// the next request's safe pre-build point. None = nothing to steer.
+	pub steer_pending: Option<String>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -314,6 +327,11 @@ impl ChatSession {
 			pending_recall: false,
 			learning_extracted: false,
 			reasoning_effort: None,
+			last_self_report: None,
+			detectors: crate::supervisor::detect::Detectors::default(),
+			gate_iterations: 0,
+			gate_failed: false,
+			steer_pending: None,
 		}
 	}
 
@@ -513,6 +531,11 @@ impl ChatSession {
 						pending_recall: false,
 						learning_extracted: false,
 						reasoning_effort: None,
+						last_self_report: None,
+						detectors: crate::supervisor::detect::Detectors::default(),
+						gate_iterations: 0,
+						gate_failed: false,
+						steer_pending: None,
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
@@ -1253,6 +1276,11 @@ mod tests {
 			pending_recall: false,
 			learning_extracted: false,
 			reasoning_effort: None,
+			last_self_report: None,
+			detectors: crate::supervisor::detect::Detectors::default(),
+			gate_iterations: 0,
+			gate_failed: false,
+			steer_pending: None,
 		}
 	}
 

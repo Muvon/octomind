@@ -185,7 +185,7 @@ The only recent context that survives is therefore carried by the **summary** an
 
 Each compression may extract critical knowledge (decisions, constraints, preferences). New entries are appended and the list is FIFO-trimmed to the most recent N (configurable via `knowledge_retention`, default: 10) — the oldest are dropped when the limit is exceeded. The retained entries are injected into every subsequent compression so the AI never loses essential context.
 
-**Intermediate learning.** When `learning.enabled = true` and the conversation has at least `learning.min_messages_for_intermediate` user messages (default 3), each automatic compaction also fires a fire-and-forget lesson-extraction pass. This is asynchronous and never blocks compression. See [Learning](13-learning.md).
+**Intermediate learning.** When `supervisor.learning.enabled = true` and the conversation has at least `supervisor.learning.min_messages_for_intermediate` user messages (default 3), each automatic compaction also fires a fire-and-forget lesson-extraction pass. This is asynchronous and never blocks compression. See [Learning](13-learning.md).
 
 ### Cache Keepalive
 

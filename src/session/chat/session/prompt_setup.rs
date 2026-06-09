@@ -36,7 +36,12 @@ pub async fn setup_system_prompt_and_cache(
 	// Initialize with system prompt if new session
 	if chat_session.session.messages.is_empty() {
 		// Create system prompt based on role - use merged config for role
-		let system_prompt = create_system_prompt(&current_dir, config_for_role, role).await;
+		let mut system_prompt = create_system_prompt(&current_dir, config_for_role, role).await;
+		// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
+		if config_for_role.supervisor.enabled && config_for_role.supervisor.detectors.self_report {
+			system_prompt.push_str("\n\n");
+			system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
+		}
 		chat_session.add_system_message(&system_prompt)?;
 
 		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions

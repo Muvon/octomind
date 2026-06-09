@@ -47,7 +47,7 @@ pub async fn retrieve_and_format(
 	injected: &std::collections::HashSet<String>,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> (String, Vec<String>) {
-	let learning = &config.learning;
+	let learning = &config.supervisor.learning;
 	if !learning.enabled {
 		return (String::new(), Vec::new());
 	}
@@ -61,7 +61,7 @@ pub async fn retrieve_and_format(
 		first_call
 	);
 
-	let mut candidates: Vec<crate::learning::Lesson> = Vec::new();
+	let mut candidates: Vec<crate::supervisor::learning::Lesson> = Vec::new();
 
 	// Global tier: durable user-wide preferences. Always relevant, so injected
 	// by importance with no semantic query — but only once per session (first
@@ -109,32 +109,57 @@ pub async fn retrieve_and_format(
 
 	// Dedup: skip lessons already injected this session and any repeats within
 	// this batch (global + scoped can overlap). Identity is the lesson content.
+	// Orientation entries (memory_type = "orientation") are split into their own
+	// block — injected as working assumptions to verify, never as truth.
 	let mut new_contents = Vec::new();
-	let mut block = String::new();
+	let mut lesson_block = String::new();
+	let mut orient_block = String::new();
+	let mut orient_count = 0usize;
+	let orient_enabled = config.supervisor.orientation.enabled;
+	let orient_max = config.supervisor.orientation.max_inject;
 	let mut batch_seen = std::collections::HashSet::new();
 	for lesson in &candidates {
 		if injected.contains(&lesson.content) || !batch_seen.insert(lesson.content.as_str()) {
 			continue;
 		}
-		block.push_str(&format!("- [{}] {}\n", lesson.confidence, lesson.content));
+		if lesson.memory_type == "orientation" {
+			if !orient_enabled || orient_count >= orient_max {
+				continue;
+			}
+			orient_block.push_str(&format!("- {}\n", lesson.content));
+			orient_count += 1;
+		} else {
+			lesson_block.push_str(&format!("- [{}] {}\n", lesson.confidence, lesson.content));
+		}
 		new_contents.push(lesson.content.clone());
 	}
 
-	if block.is_empty() {
-		crate::log_debug!("Learning retrieval: no new lessons to inject");
+	if lesson_block.is_empty() && orient_block.is_empty() {
+		crate::log_debug!("Learning retrieval: nothing new to inject");
 		return (String::new(), Vec::new());
 	}
 	crate::log_debug!(
-		"Learning retrieval: injecting {} new lesson(s)",
+		"Learning retrieval: injecting {} item(s)",
 		new_contents.len()
 	);
 
-	let header = if first_call {
-		"\n\n## Lessons from Past Sessions\n"
-	} else {
-		"\n\n## Additional Relevant Lessons\n"
-	};
-	(format!("{}{}", header, block), new_contents)
+	// Wrap recall in semantic XML so the model can clearly delimit it: lessons are
+	// rules; orientation is working assumptions to verify, never truth.
+	let mut inner = String::new();
+	if !lesson_block.is_empty() {
+		inner.push_str("<lessons>\n");
+		inner.push_str(&lesson_block);
+		inner.push_str("</lessons>\n");
+	}
+	if !orient_block.is_empty() {
+		inner.push_str(
+			"<orientation hint=\"working assumptions — verify before relying on them\">\n",
+		);
+		inner.push_str(&orient_block);
+		inner.push_str("</orientation>\n");
+	}
+	let out = format!("\n\n<recall>\n{inner}</recall>");
+	(out, new_contents)
 }
 
 /// Call LLM to prepare retrieval patterns/query based on backend type.

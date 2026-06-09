@@ -101,6 +101,7 @@ pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResu
 			cache_markers_content: cache_stats.content_markers as u64,
 			cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 			agents_stats: super::agents::get_agents_stats(),
+			supervisor_stats: crate::supervisor::stats::snapshot(),
 		},
 	)))
 }

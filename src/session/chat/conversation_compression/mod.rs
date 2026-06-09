@@ -53,16 +53,13 @@ use anyhow::Result;
 
 /// Select which pressure level (ratio) to apply for THIS compression.
 ///
-/// Pure incremental cursor with wrap-around. `consecutive_compressions` indexes
-/// the pressure-level ladder directly: 0 on the first compression after any user
-/// message (lightest ratio), advancing one step per *autonomous* (no-user-message)
-/// compression, wrapping back to 0 after the strongest level (round-robin).
+/// `consecutive_compressions` is a pure cursor into the pressure-level ladder —
+/// 0 on the first compression after any user message (lightest ratio), advancing
+/// one step per *autonomous* (no-user-message) compression and wrapping back to 0
+/// after the strongest level. The token-count floor (`base_idx`, computed by the
+/// caller) only gates WHETHER we compress; it deliberately does NOT pick the ratio.
 ///
-/// The token-count floor (`base_idx`) decides WHETHER we compress (computed by the
-/// caller); it deliberately does NOT bias which ratio is applied — so the ladder is
-/// walked 0→1→2→0… deterministically instead of jumping to a token-derived level.
-///
-/// `num_levels` must be > 0 (caller guarantees a non-empty pressure_levels).
+/// `num_levels` must be > 0 (caller guarantees a non-empty `pressure_levels`).
 fn select_compression_level_index(num_levels: usize, consecutive_compressions: u32) -> usize {
 	debug_assert!(
 		num_levels > 0,
@@ -163,7 +160,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	let adjusted_ratio = calculate_adaptive_compression_ratio(session, level.target_ratio);
 
 	log_debug!(
-		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (matched threshold: {}, cursor level: {})",
+		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (matched threshold: {}, escalated level: {})",
 		current_tokens,
 		level.target_ratio,
 		adjusted_ratio,
@@ -525,16 +522,18 @@ pub async fn check_and_compress_conversation(
 
 	// Intermediate learning: extract lessons during auto-compaction if enough user messages.
 	// Fire-and-forget — must NOT block compression on a second LLM round-trip.
-	if config.learning.enabled {
+	if config.supervisor.learning.enabled {
 		let user_msg_count = session
 			.session
 			.messages
 			.iter()
 			.filter(|m| m.role == "user")
 			.count();
-		if user_msg_count >= config.learning.min_messages_for_intermediate {
+		if user_msg_count >= config.supervisor.learning.min_messages_for_intermediate {
 			let role = crate::config::get_thread_role().unwrap_or_default();
-			crate::learning::extract::spawn_lesson_extraction(session, config, role, None);
+			crate::supervisor::learning::extract::spawn_lesson_extraction(
+				session, config, role, None,
+			);
 		}
 	}
 

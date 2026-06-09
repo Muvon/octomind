@@ -381,6 +381,7 @@ pub fn display_info(output: &CommandOutput) {
 		cache_markers_content,
 		cache_non_cached_tokens,
 		agents_stats,
+		supervisor_stats,
 		..
 	} = output
 	{
@@ -578,6 +579,86 @@ pub fn display_info(output: &CommandOutput) {
 					"cost",
 					&format!("${:.5}", ag_cost).bright_yellow().to_string(),
 					kw_ag,
+				);
+			}
+		}
+
+		// ── supervisor ─────────────────────────────────────────────────
+		if let Some(sstats) = supervisor_stats {
+			let get_u64 = |k: &str| sstats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+			let get_f64 = |k: &str| sstats.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+			let calls = get_u64("calls");
+			let sup_in = get_u64("input_tokens");
+			let sup_out = get_u64("output_tokens");
+			let sup_cost = get_f64("cost");
+			let gate_runs = get_u64("gate_runs");
+			let gate_pass = get_u64("gate_pass");
+			let gate_fail = get_u64("gate_fail");
+			let steers = get_u64("steers");
+			let lessons = get_u64("lessons_stored");
+			let orientation = get_u64("orientation_stored");
+			let recalls = get_u64("recalls_injected");
+			block_section("supervisor");
+			let kw_sv = key_width(["activity", "gate", "calls", "tokens", "total +sv"]);
+			let dot = "·".bright_black();
+
+			let mut activity = Vec::new();
+			if recalls > 0 {
+				activity.push(format!("{} recalls", recalls));
+			}
+			if steers > 0 {
+				activity.push(format!("{} steers", steers));
+			}
+			if lessons > 0 {
+				activity.push(format!("{} lessons", lessons));
+			}
+			if orientation > 0 {
+				activity.push(format!("{} orientation", orientation));
+			}
+			if !activity.is_empty() {
+				block_row("activity", &activity.join(&format!(" {} ", dot)), kw_sv);
+			}
+			if gate_runs > 0 {
+				let mut g = vec![format!("{} runs", gate_runs)];
+				if gate_pass > 0 {
+					g.push(format!("{} pass", gate_pass).bright_green().to_string());
+				}
+				if gate_fail > 0 {
+					g.push(format!("{} fail", gate_fail).bright_red().to_string());
+				}
+				block_row("gate", &g.join(" · "), kw_sv);
+			}
+			if calls > 0 {
+				block_row(
+					"calls",
+					&format_number(calls).bright_white().to_string(),
+					kw_sv,
+				);
+			}
+			if sup_in > 0 || sup_out > 0 {
+				block_row(
+					"tokens",
+					&format!(
+						"{} in {} {} out",
+						format_number(sup_in).bright_blue(),
+						dot,
+						format_number(sup_out).bright_green(),
+					),
+					kw_sv,
+				);
+			}
+			if sup_cost > 0.0 {
+				block_row(
+					"cost",
+					&format!("${:.5}", sup_cost).bright_yellow().to_string(),
+					kw_sv,
+				);
+				block_row(
+					"total +sv",
+					&format!("${:.5}", *total_cost + sup_cost)
+						.bright_yellow()
+						.to_string(),
+					kw_sv,
 				);
 			}
 		}

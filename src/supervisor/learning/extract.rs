@@ -56,6 +56,20 @@ Be conservative: most lessons are "scoped". When unsure, use "scoped".
 Lesson text — what to do or avoid, stated as a rule.
 </lesson>"#;
 
+/// Appended to the extraction prompt when orientation capture is enabled.
+const ORIENTATION_SECTION: &str = r#"
+
+# Orientation (separate from lessons — always consider, independent of the decision above)
+Capture up to 2 pieces of DURABLE UNDERSTANDING about the subject that took real work
+to discover and would save re-exploration next time: architecture, key decisions,
+structure, constraints, or non-obvious facts (e.g. "auth is delegated to octolib",
+"deploy runs on GitLab not GitHub", "the dataset's date column is epoch milliseconds").
+Do NOT capture transient state, exact line numbers, or anything one search recovers.
+These need no user quote.
+<orientation tags="keyword1,keyword2" confidence="high|medium">
+A durable, reusable fact about how the subject works.
+</orientation>"#;
+
 /// Shared extraction core: build transcript, call LLM, parse lessons, store with dedup.
 ///
 /// Used by both `extract_lessons_detached` (fire-and-forget) and any caller that wants
@@ -68,7 +82,7 @@ async fn run_extraction(
 	project: &str,
 	session_name: &str,
 ) -> Result<usize> {
-	let learning = &config.learning;
+	let learning = &config.supervisor.learning;
 	if !learning.enabled {
 		return Ok(0);
 	}
@@ -99,13 +113,48 @@ async fn run_extraction(
 		return Ok(0);
 	}
 
-	let system = EXTRACTION_SYSTEM_PROMPT.replace("{existing_lessons}", &existing_text);
+	let mut system = EXTRACTION_SYSTEM_PROMPT.replace("{existing_lessons}", &existing_text);
+	if config.supervisor.orientation.enabled {
+		system.push_str(ORIENTATION_SECTION);
+	}
 	let response = call_extraction_llm(config, &learning.model, system, transcript).await?;
 
-	// Gate: check <decision> tag first — if NONE, skip parsing entirely
+	let mut stored = 0;
+
+	// Orientation: durable subject understanding. Independent of the lesson
+	// decision gate; no user evidence required. Deduped vs existing orientation.
+	if config.supervisor.orientation.enabled {
+		let orientations = parse_orientation_tags(&response, role, project, session_name);
+		let existing_or: Vec<Lesson> = existing_scoped
+			.iter()
+			.filter(|l| l.memory_type == "orientation")
+			.cloned()
+			.collect();
+		for o in &orientations {
+			if existing_or
+				.iter()
+				.any(|e| e.content.trim() == o.content.trim())
+			{
+				continue;
+			}
+			if let Some(old) = best_overlap(&o.content, &existing_or) {
+				let _ = backend
+					.delete(&old.file_id(), &old.role, &old.project, config)
+					.await;
+			}
+			if backend.store(o, config).await.is_ok() {
+				stored += 1;
+				crate::supervisor::stats::orientation(1);
+				crate::log_debug!("Orientation stored: {}", o.content);
+			}
+		}
+	}
+
+	// Lessons: gated by the model's decision; require user evidence. Orientation
+	// above is independent, so still return its count even when there are no lessons.
 	if !response.contains("<decision>LEARN</decision>") {
-		crate::log_debug!("Learning extraction: model decided NONE — nothing to learn");
-		return Ok(0);
+		crate::log_debug!("Learning extraction: model decided NONE — no lessons");
+		return Ok(stored);
 	}
 
 	let lessons = parse_lesson_tags(&response, role, project, session_name);
@@ -114,19 +163,25 @@ async fn run_extraction(
 		lessons.len()
 	);
 	if lessons.is_empty() {
-		return Ok(0);
+		return Ok(stored);
 	}
 
 	// Store each. Match within the same scope. Identical content is skipped;
 	// a refinement (high word overlap) supersedes the stale lesson — delete the
 	// old, write the new — so a correction to a previous correction wins instead
 	// of being silently dropped.
-	let mut stored = 0;
+	// Dedup lessons against existing lessons only (exclude orientation entries
+	// that share the same store).
+	let existing_lessons_scoped: Vec<Lesson> = existing_scoped
+		.iter()
+		.filter(|l| l.memory_type != "orientation")
+		.cloned()
+		.collect();
 	for lesson in &lessons {
 		let existing = if lesson.scope == "global" {
 			&existing_global
 		} else {
-			&existing_scoped
+			&existing_lessons_scoped
 		};
 
 		if existing
@@ -152,6 +207,7 @@ async fn run_extraction(
 			crate::log_debug!("Learning store failed: {}", e);
 		} else {
 			stored += 1;
+			crate::supervisor::stats::lessons(1);
 			crate::log_debug!(
 				"Learning stored: [{}/{}] {}",
 				lesson.scope,
@@ -279,6 +335,57 @@ fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) ->
 	lessons
 }
 
+/// Parse `<orientation>` tags — durable subject understanding. No evidence
+/// required; stored with memory_type = "orientation", always scoped.
+fn parse_orientation_tags(response: &str, role: &str, project: &str, source: &str) -> Vec<Lesson> {
+	let mut out = Vec::new();
+	let now = chrono::Utc::now().to_rfc3339();
+	let mut remaining = response;
+	while let Some(start) = remaining.find("<orientation") {
+		let after_tag = &remaining[start..];
+		let Some(close_bracket) = after_tag.find('>') else {
+			break;
+		};
+		let attrs = &after_tag[12..close_bracket]; // between `<orientation` and `>`
+		let after_open = &after_tag[close_bracket + 1..];
+		let Some(end_tag) = after_open.find("</orientation>") else {
+			break;
+		};
+		let content = after_open[..end_tag].trim();
+		if !content.is_empty() {
+			let confidence = extract_attr(attrs, "confidence").unwrap_or("medium".into());
+			let tags: Vec<String> = extract_attr(attrs, "tags")
+				.unwrap_or_default()
+				.split(',')
+				.map(|t| t.trim().to_string())
+				.filter(|t| !t.is_empty())
+				.collect();
+			let importance = if confidence == "high" { 0.8 } else { 0.55 };
+			let title = if content.len() <= 80 {
+				content.to_string()
+			} else {
+				let end = crate::utils::truncation::floor_char_boundary(content, 80);
+				format!("{}...", &content[..end])
+			};
+			out.push(Lesson {
+				content: content.to_string(),
+				title,
+				memory_type: "orientation".into(),
+				importance,
+				confidence,
+				tags,
+				source: source.to_string(),
+				role: role.to_string(),
+				project: project.to_string(),
+				scope: "scoped".into(),
+				created: now.clone(),
+			});
+		}
+		remaining = &after_open[end_tag + 14..]; // skip past </orientation>
+	}
+	out
+}
+
 /// Word-overlap ratio (0..1): fraction of the new content's words that also
 /// appear in the existing content. Case-insensitive, whitespace-tokenized.
 fn word_overlap(new_content: &str, existing_content: &str) -> f64 {
@@ -364,7 +471,7 @@ pub fn extract_lessons_detached(
 /// Higher-level convenience wrapper that consolidates the common pre-call prep
 /// shared by /done, /exit, Ctrl+D and auto-compaction:
 ///
-/// - early-return when `config.learning.enabled` is false (matches existing site gates),
+/// - early-return when `config.supervisor.learning.enabled` is false (matches existing site gates),
 /// - derive `project` from the supplied `current_dir` (or process cwd when `None`),
 /// - snapshot `session.messages` for the detached task.
 ///
@@ -377,7 +484,11 @@ pub fn spawn_lesson_extraction(
 	role: String,
 	current_dir: Option<&std::path::Path>,
 ) {
-	if !config.learning.enabled {
+	if !config.supervisor.learning.enabled {
+		return;
+	}
+	if session.gate_failed {
+		crate::log_debug!("Distill skipped: trajectory failed verify-gate");
 		return;
 	}
 	let owned_cwd;
@@ -447,6 +558,13 @@ async fn call_extraction_llm(
 	.with_max_retries(1);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
+	if let Some(usage) = &response.exchange.usage {
+		crate::supervisor::stats::record_call(
+			usage.input_tokens,
+			usage.output_tokens,
+			usage.cost.unwrap_or(0.0),
+		);
+	}
 	Ok(response.content)
 }
 
@@ -502,6 +620,13 @@ pub(crate) async fn call_learning_llm(
 	.with_cancellation_token(operation_rx);
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
+	if let Some(usage) = &response.exchange.usage {
+		crate::supervisor::stats::record_call(
+			usage.input_tokens,
+			usage.output_tokens,
+			usage.cost.unwrap_or(0.0),
+		);
+	}
 	Ok(response.content)
 }
 

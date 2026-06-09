@@ -354,7 +354,16 @@ retry_timeout = 30
 ignore_cost = false
 ```
 
-## `[learning]`
+## `[supervisor]`
+
+The out-of-band control plane around the agent loop. It hosts learning (distill + recall), orientation memory, deterministic detectors, and the verify-gate. See the [Supervisor guide](../usage/14-supervisor.md) for how the mechanics fit together. **Strict:** the `[supervisor]` section and its required keys must be present — a missing section or key is a hard parse error, not a silent default. **Breaking change:** the former top-level `[learning]` table now lives at `[supervisor.learning]` — there is no migration.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Master switch for the whole control plane |
+| `model` | string | `"anthropic:claude-haiku-4-5"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
+
+### `[supervisor.learning]`
 
 Cross-session adaptive learning. Extracts lessons from sessions and injects them into future sessions. See [Learning Guide](../usage/13-learning.md) for full details.
 
@@ -366,27 +375,74 @@ Cross-session adaptive learning. Extracts lessons from sessions and injects them
 | `min_messages_for_intermediate` | usize | `3` | Min user messages before intermediate learning triggers |
 | `max_inject` | usize | `5` | Max lessons injected into system prompt |
 
-### `[learning.store]` (MCP backend only)
+#### `[supervisor.learning.store]` (MCP backend only)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `tool` | string | MCP tool name for storing lessons (e.g. `"memorize"`) |
 | `field_map` | table | Maps canonical fields to MCP argument names. Empty string = omit. |
 
-### `[learning.retrieve]` (MCP backend only)
+#### `[supervisor.learning.retrieve]` (MCP backend only)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `tool` | string | MCP tool name for retrieving lessons (e.g. `"remember"`) |
 | `field_map` | table | Maps canonical fields to MCP argument names. Empty string = omit. |
 
+### `[supervisor.orientation]`
+
+Durable understanding of the subject (decisions, structure, constraints), stored in the same backend as lessons under `memory_type = "orientation"` and recalled as **working assumptions to verify**, never as truth.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable orientation memory |
+| `max_inject` | usize | `5` | Max orientation entries injected per session |
+| `decay_days` | u64 | `90` | Entries unused this many days lose confidence (no git) |
+
+### `[supervisor.detectors]`
+
+Deterministic, free, every-turn signals that decide when (rarely) to wake the model. Fused with the agent's own `<sup>…</sup>` self-report token.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `loop_threshold` | usize | `3` | Identical tool+args this many times in a row → loop fired |
+| `no_progress_window` | usize | `5` | Turns without new information → drift candidate |
+| `self_report` | bool | `true` | Inject the self-report status-token instruction and parse it back |
+
+### `[supervisor.gate]`
+
+Verify-gate on self-reported completion.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable the verify-gate |
+| `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification) |
+
 ```toml
-[learning]
+[supervisor]
+enabled = true
+model = "anthropic:claude-haiku-4-5"
+
+[supervisor.learning]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
 backend = "file"
 min_messages_for_intermediate = 3
 max_inject = 5
+
+[supervisor.orientation]
+enabled = true
+max_inject = 5
+decay_days = 90
+
+[supervisor.detectors]
+loop_threshold = 3
+no_progress_window = 5
+self_report = true
+
+[supervisor.gate]
+enabled = true
+max_iterations = 2
 ```
 
 ## `[registry]`

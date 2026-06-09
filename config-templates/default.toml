@@ -649,14 +649,20 @@ retry_timeout = 30
 ignore_cost = false  # When true, compression decision API cost is not tracked (free)
 
 # ═══════════════════════════════════════════════════════════════════════
-# CROSS-SESSION ADAPTIVE LEARNING
+# SUPERVISOR - out-of-band control plane: learning, orientation, detectors, gate
 # Extracts generalizable lessons from conversations and injects relevant
 # ones into future sessions. Separate from memory — learning is narrower
 # and structured: actionable facts scored by confidence.
 # Storage: learning/{project}/{role}/ — project-scoped, role-filtered.
 # ═══════════════════════════════════════════════════════════════════════
 
-[learning]
+[supervisor]
+# Master switch for the whole control plane
+enabled = true
+# Shared cheap model for supervisor mechanics (a mechanic may override)
+model = "anthropic:claude-haiku-4-5"
+
+[supervisor.learning]
 # Enable the learning system
 enabled = true
 # Model for extraction and retrieval LLM calls (cheap model recommended)
@@ -668,15 +674,39 @@ min_messages_for_intermediate = 3
 # Maximum lessons to inject into the system prompt per session
 max_inject = 5
 
+# Orientation memory: durable understanding of the subject (decisions,
+# structure, constraints). Injected as working assumptions to verify.
+[supervisor.orientation]
+enabled = true
+max_inject = 5
+# Soft time-decay: entries unused this many days lose confidence (no git needed)
+decay_days = 90
+
+# Detectors: deterministic, free, every turn -- the cheap trigger that decides
+# when (rarely) to wake the model.
+[supervisor.detectors]
+# Identical tool+args this many times in a row -> loop fired
+loop_threshold = 3
+# Turns without new information -> drift candidate
+no_progress_window = 5
+# Inject the self-report status-token instruction and parse it back
+self_report = true
+
+# Verify-gate: on self-reported `done`, run a checklist before accepting.
+[supervisor.gate]
+enabled = true
+# Max gate re-entry iterations (bounds over-verification)
+max_iterations = 2
+
 # MCP backend configuration (uncomment to use instead of file backend):
 # Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.
 # Empty string = omit that field. Missing = omit.
 #
 # backend = "mcp"
 #
-# [learning.store]
+# [supervisor.learning.store]
 # tool = "memorize"
-# [learning.store.field_map]
+# [supervisor.learning.store.field_map]
 # content = "content"              # required by memorize
 # title = "title"                  # required by memorize (short summary)
 # memory_type = "memory_type"      # "learning" — valid octobrain category
@@ -686,9 +716,9 @@ max_inject = 5
 # role = "role"
 # project = "project"
 #
-# [learning.retrieve]
+# [supervisor.learning.retrieve]
 # tool = "remember"
-# [learning.retrieve.field_map]
+# [supervisor.learning.retrieve.field_map]
 # query = "query"                  # string or array of search terms
 # memory_type = "memory_types"     # passed as ["learning"] array to match octobrain schema
 # role = "role"

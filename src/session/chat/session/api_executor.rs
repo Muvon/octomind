@@ -102,7 +102,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	//   - a new user message (pending_recall) → embedding-only scoped recall.
 	// Already-injected lessons are skipped (no duplication), and tool follow-up
 	// rounds — which set neither flag — don't re-run recall.
-	if config.learning.enabled && (!chat_session.learning_injected || chat_session.pending_recall) {
+	if config.supervisor.learning.enabled
+		&& (!chat_session.learning_injected || chat_session.pending_recall)
+	{
 		let first_call = !chat_session.learning_injected;
 		chat_session.learning_injected = true;
 		chat_session.pending_recall = false;
@@ -122,7 +124,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.find(|m| m.role == "user")
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
-		let (block, new_contents) = crate::learning::inject::retrieve_and_format(
+		let (block, new_contents) = crate::supervisor::learning::inject::retrieve_and_format(
 			config,
 			&user_input,
 			role,
@@ -134,10 +136,18 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		.await;
 		if !block.is_empty() {
 			chat_session.add_user_message(&block)?;
+			crate::supervisor::stats::recall();
 			for c in new_contents {
 				chat_session.injected_lessons.insert(c);
 			}
 		}
+	}
+
+	// Supervisor: inject any queued steer note (advisory re-anchor) at the safe
+	// pre-request point — same message-ordering guarantees as recall above.
+	if let Some(note) = chat_session.steer_pending.take() {
+		chat_session.add_user_message(&note)?;
+		crate::log_debug!("Supervisor steer injected");
 	}
 
 	// Advance Anthropic-style content cache markers after all pre-call message injections
@@ -172,7 +182,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	)
 	.with_max_retries(max_retries)
 	.with_full_context_tokens(true)
-	.with_cancellation_token(operation_rx);
+	.with_cancellation_token(operation_rx.clone());
 	let validation_params = if let Some(schema) = schema {
 		validation_params.with_schema(schema)
 	} else {
@@ -232,11 +242,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				thinking: response.thinking,
 				finish_reason: response.finish_reason,
 				response_id: response.response_id,
-				chat_session,
+				chat_session: &mut *chat_session,
 				config,
 				role,
 				operation_cancelled: operation_rx_for_response.clone(),
-				sink,
+				sink: sink.clone(),
 				mode,
 			})
 			.await;
@@ -251,6 +261,57 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			// Stop animation on error before returning
 			animation_manager.stop_current().await;
 			return Err(e);
+		}
+	}
+
+	// Supervisor verify-gate: on self-reported completion, verify before accepting.
+	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
+	if config.supervisor.gate.enabled
+		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
+		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations
+	{
+		let task = chat_session
+			.session
+			.messages
+			.iter()
+			.rev()
+			.find(|m| m.role == "user")
+			.map(|m| m.content.clone())
+			.unwrap_or_default();
+		let result = chat_session.last_response.clone();
+		crate::supervisor::stats::gate_run();
+		match crate::supervisor::gate::verify(config, &task, &result, operation_rx.clone()).await {
+			crate::supervisor::gate::GateVerdict::Pass => {
+				chat_session.gate_iterations = 0;
+				chat_session.gate_failed = false;
+				crate::supervisor::stats::gate_pass();
+				crate::log_debug!("Verify-gate: PASS");
+			}
+			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
+				let note = crate::supervisor::gate::format_advisory(&gaps);
+				chat_session.add_user_message(&note)?;
+				chat_session.last_self_report = None; // force the re-run to re-evaluate
+				chat_session.gate_iterations += 1;
+				crate::log_debug!(
+					"Verify-gate: {} gap(s); re-running turn (iter {})",
+					gaps.len(),
+					chat_session.gate_iterations
+				);
+				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+					return Box::pin(execute_api_call_and_process_response(
+						chat_session,
+						config,
+						role,
+						operation_rx,
+						mode,
+						sink,
+					))
+					.await;
+				}
+				chat_session.gate_failed = true;
+				crate::supervisor::stats::gate_fail();
+				crate::log_debug!("Verify-gate: iterations exhausted; gaps remain");
+			}
 		}
 	}
 

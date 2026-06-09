@@ -347,8 +347,9 @@ pub struct Config {
 	// Plan-driven compression configuration
 	pub compression: CompressionHintConfig,
 
-	// Cross-session adaptive learning configuration
-	pub learning: crate::learning::LearningConfig,
+	// Supervisor: out-of-band control plane (learning, orientation, detectors, gate).
+	// Strict: required field — a missing [supervisor] section is a hard parse error.
+	pub supervisor: crate::supervisor::SupervisorConfig,
 
 	// Legacy system prompt field for backward compatibility
 	pub system: Option<String>,

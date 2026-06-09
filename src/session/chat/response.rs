@@ -378,10 +378,19 @@ fn add_assistant_message_with_tool_calls(
 
 // Function to process response, handling tool calls recursively
 pub async fn process_response<S: OutputSink>(
-	params: ResponseProcessingParams<'_, S>,
+	mut params: ResponseProcessingParams<'_, S>,
 ) -> Result<()> {
 	// Check if operation has been cancelled at the very start
 	check_cancellation(&params.operation_cancelled)?;
+
+	// Supervisor: capture the agent's self-report token, then strip it so it is
+	// never displayed or stored. Out-of-band — invisible to the user.
+	if params.config.supervisor.enabled && params.config.supervisor.detectors.self_report {
+		if let Some((state, _)) = crate::supervisor::detect::parse_self_report(&params.content) {
+			params.chat_session.last_self_report = Some(state);
+		}
+		params.content = crate::supervisor::detect::strip_self_report(&params.content);
+	}
 
 	// Note: No explicit stop needed here. The spinner-aware print macros in
 	// src/lib.rs use pb.suspend() around every println!/print!, which is
@@ -545,6 +554,44 @@ pub async fn process_response<S: OutputSink>(
 						session_id: session_id.clone(),
 					});
 					params.emit(tool_msg);
+				}
+
+				// Supervisor detectors (deterministic, free): record each tool action
+				// to maintain loop / no-progress state. Consumers — verify-gate (P2)
+				// and steer (P3) — are not wired yet; for now this keeps detector state
+				// live and emits a debug trace, fused with the agent's self-report.
+				if params.config.supervisor.enabled {
+					let loop_threshold = params.config.supervisor.detectors.loop_threshold;
+					let no_progress_window = params.config.supervisor.detectors.no_progress_window;
+					for call in &current_tool_calls {
+						let made_progress = tool_results
+							.iter()
+							.find(|r| r.tool_id == call.tool_id)
+							.map(|r| !r.is_error())
+							.unwrap_or(false);
+						let signal = params.chat_session.detectors.record_action(
+							&call.tool_name,
+							&call.parameters.to_string(),
+							made_progress,
+							loop_threshold,
+							no_progress_window,
+						);
+						if crate::supervisor::detect::should_steer(
+							signal,
+							params.chat_session.last_self_report,
+						) {
+							params.chat_session.steer_pending =
+								Some(crate::supervisor::detect::steer_note(signal).to_string());
+							params.chat_session.detectors.reset_streak();
+							crate::supervisor::stats::steer();
+							crate::log_debug!(
+								"Supervisor steer queued: {:?} (tool={}, self_report={:?})",
+								signal,
+								call.tool_name,
+								params.chat_session.last_self_report
+							);
+						}
+					}
 				}
 
 				// Check for cancellation BEFORE adding assistant message

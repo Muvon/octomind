@@ -17,8 +17,10 @@ So scoped lessons are organized **project first, then role** (project knowledge 
 
 ## Configuration
 
+Learning is one mechanic of the **supervisor** — the out-of-band control plane around the agent loop — so its config lives under `[supervisor.learning]`. (Earlier versions used a top-level `[learning]` table; that is a **breaking** rename with no migration.) See [`[supervisor]` in the config reference](../reference/03-config-reference.md#supervisor) for the sibling sections (orientation, detectors, gate).
+
 ```toml
-[learning]
+[supervisor.learning]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
 backend = "file"
@@ -34,7 +36,11 @@ max_inject = 5
 | `min_messages_for_intermediate` | Minimum user messages before intermediate learning triggers during auto-compaction. | `3` |
 | `max_inject` | Maximum lessons injected per tier per retrieval. | `5` |
 
-> **Defaults come from the shipped config, not the code.** The default `config.toml` template enables learning and sets the model shown above. If you *remove* the `[learning]` table (or omit a field), the underlying code default takes over: `enabled` falls back to `false` (learning OFF), and `model` falls back to the dated build `anthropic:claude-haiku-4-5-20251001`. In short: learning is on out of the box, but only because the default config turns it on explicitly.
+> **Strict config, template-provided values.** The supervisor config is strict: the `[supervisor]` section and its `[supervisor.learning]` table are **required** — removing them is a hard parse error, not a silent fall-back. Within `[supervisor.learning]`, an *omitted field* still takes the code default (e.g. `enabled` → `false` (learning OFF), `model` → the dated build `anthropic:claude-haiku-4-5-20251001`). Learning is on out of the box only because the shipped template sets `enabled = true` explicitly. See [Supervisor](14-supervisor.md) for the sibling mechanics.
+
+### Orientation memory
+
+Alongside lessons (the procedural *"do / avoid"*), the supervisor stores **orientation** — durable, descriptive understanding of the subject: how it works, key decisions, constraints. It rides the same backend under `memory_type = "orientation"` and is recalled as **working assumptions to verify**, never as truth, under its own `## Orientation` heading. Configure it under `[supervisor.orientation]` (`enabled`, `max_inject`, `decay_days`).
 
 ## How It Works
 
@@ -90,7 +96,7 @@ Files are human-readable and editable. Delete a file to remove a lesson — or u
 ### Extraction
 
 Extraction is triggered by:
-- **`/done`** — extracts (if `learning.enabled`) regardless of the compression result, and marks the session so `/exit` and Ctrl+D don't extract a second time.
+- **`/done`** — extracts (if `supervisor.learning.enabled`) regardless of the compression result, and marks the session so `/exit` and Ctrl+D don't extract a second time.
 - **Auto-compaction** — extracts during compression if the session has enough user messages (configurable via `min_messages_for_intermediate`).
 - **Session exit** — fire-and-forget extraction when the session ends naturally via `/exit`, `/quit`, or Ctrl+D. Skipped if `/done` already extracted during the session.
 
@@ -137,14 +143,14 @@ The list (and therefore delete indexing) covers the current scoped lessons follo
 For projects using external memory tools (e.g. octobrain), configure the MCP backend with field mapping:
 
 ```toml
-[learning]
+[supervisor.learning]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
 backend = "mcp"
 
-[learning.store]
+[supervisor.learning.store]
 tool = "memorize"
-[learning.store.field_map]
+[supervisor.learning.store.field_map]
 content = "content"        # required by memorize
 title = "title"            # required by memorize — short summary
 memory_type = "memory_type"
@@ -154,9 +160,9 @@ tags = "tags"
 role = "role"
 project = "project"
 
-[learning.retrieve]
+[supervisor.learning.retrieve]
 tool = "remember"
-[learning.retrieve.field_map]
+[supervisor.learning.retrieve.field_map]
 query = "query"            # the LLM-prepared search query (or raw intent)
 memory_type = "memory_types" # always sent as ["learning"] to match octobrain schema
 role = "role"

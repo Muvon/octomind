@@ -165,7 +165,7 @@ AI calls: agent_context_gatherer(task="Analyze test coverage for src/auth/. List
 ### Carrying Knowledge Across Separate Sessions
 
 Compression keeps a *single* session compact. The **learning system** is what carries
-knowledge between *separate* named sessions. When learning is enabled (`[learning]
+knowledge between *separate* named sessions. When learning is enabled (`[supervisor.learning]
 enabled = true`, on by default), `/done` and session exit fire a background lesson
 extraction: generalizable, project- and role-scoped lessons are saved and later injected
 into future sessions for the same project. So `auth-refactor` on Day 5 can benefit from a

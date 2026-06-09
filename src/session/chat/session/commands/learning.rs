@@ -113,7 +113,7 @@ async fn handle_list(
 	}
 
 	let (role, project) = role_and_project(session);
-	let backend = crate::learning::backend::create_backend(&config.learning);
+	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
 	let all = all_lessons(&*backend, &role, &project, config).await?;
 
 	// Apply glob filter if present.
@@ -190,7 +190,7 @@ async fn handle_delete(
 	index: usize,
 ) -> Result<CommandResult> {
 	let (role, project) = role_and_project(session);
-	let backend = crate::learning::backend::create_backend(&config.learning);
+	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
 	let all = all_lessons(&*backend, &role, &project, config).await?;
 
 	if index > all.len() || all.is_empty() {
@@ -232,7 +232,7 @@ async fn handle_delete(
 
 async fn handle_clear(session: &ChatSession, config: &Config) -> Result<CommandResult> {
 	let (role, project) = role_and_project(session);
-	let backend = crate::learning::backend::create_backend(&config.learning);
+	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
 	let all = all_lessons(&*backend, &role, &project, config).await?;
 
 	if all.is_empty() {
@@ -284,11 +284,11 @@ fn role_and_project(session: &ChatSession) -> (String, String) {
 /// role+project) followed by global (user-wide). Stable order so list/delete
 /// indices stay aligned across calls.
 async fn all_lessons(
-	backend: &dyn crate::learning::backend::LearningBackend,
+	backend: &dyn crate::supervisor::learning::backend::LearningBackend,
 	role: &str,
 	project: &str,
 	config: &Config,
-) -> Result<Vec<crate::learning::Lesson>> {
+) -> Result<Vec<crate::supervisor::learning::Lesson>> {
 	let mut all = backend.retrieve_all(role, project, config).await?;
 	all.extend(backend.retrieve_global(config).await?);
 	Ok(all)

@@ -27,6 +27,7 @@ For users working with Octomind day-to-day.
 | [Structured Output](usage/11-structured-output.md) | JSON Schema output for automation |
 | [Editor Integration](usage/12-editor-integration.md) | Neovim, Zed, JetBrains setup |
 | [Learning](usage/13-learning.md) | Cross-session adaptive learning |
+| [Supervisor](usage/14-supervisor.md) | Out-of-band control plane: self-report, detectors, verify-gate, learning, orientation |
 | [Skills](usage/15-skills.md) | Auto-expanding skills, capabilities, validators |
 | [Token Efficiency](usage/16-token-efficiency.md) | Capabilities, auto-activation, LRU eviction |
 | [Local Tools](usage/17-local-tools.md) | Project-local shebang scripts auto-exposed as MCP tools |

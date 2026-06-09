@@ -167,7 +167,7 @@ An unrecognized filter value silently falls back to `all`.
 ## Lifecycle
 
 ### `/done`
-Force-compress the conversation context **bypassing all automatic threshold, cooldown, and cost guards**, then (when `[learning].enabled`) spawn fire-and-forget lesson extraction. Use it to manually reclaim context after finishing a unit of work.
+Force-compress the conversation context **bypassing all automatic threshold, cooldown, and cost guards**, then (when `[supervisor.learning].enabled`) spawn fire-and-forget lesson extraction. Use it to manually reclaim context after finishing a unit of work.
 
 - The forced compression preserves only env-loaded skills, dropping manually activated ones.
 - Lesson extraction runs in the background and stores lessons for the current role + project — see [Learning Guide](../usage/13-learning.md).

@@ -57,6 +57,9 @@ use serde::Serialize;
 // Strongly-typed command outputs
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "command_type", rename_all = "snake_case")]
+// `Info` is a large display DTO, but every `CommandOutput` is returned boxed
+// (`HandledWithOutput(Box<CommandOutput>)`) so it always lives on the heap.
+#[allow(clippy::large_enum_variant)]
 pub enum CommandOutput {
 	Help {
 		commands: Vec<String>,
@@ -86,6 +89,8 @@ pub enum CommandOutput {
 		cache_non_cached_tokens: u64,
 		/// Aggregated stats from all tap-offloaded agents this session.
 		agents_stats: Option<serde_json::Value>,
+		/// Supervisor activity + usage tally this session.
+		supervisor_stats: Option<serde_json::Value>,
 	},
 	Model {
 		old_model: Option<String>,

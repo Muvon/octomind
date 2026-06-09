@@ -73,6 +73,7 @@ pub async fn verify(
 		&model,
 		GATE_PROMPT.to_string(),
 		user,
+		crate::supervisor::stats::CallKind::Gate,
 		operation_rx,
 	)
 	.await

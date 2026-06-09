@@ -311,7 +311,10 @@ mod tests {
 	#[test]
 	fn handles_non_dot_separators() {
 		assert_eq!(strip_self_report("x <sup>done: all good</sup>"), "x");
-		assert_eq!(strip_self_report("x <sup>blocked - cannot proceed</sup>"), "x");
+		assert_eq!(
+			strip_self_report("x <sup>blocked - cannot proceed</sup>"),
+			"x"
+		);
 		assert_eq!(
 			parse_self_report("<sup>done: all good</sup>").map(|(s, _)| s),
 			Some(SelfReport::Done)

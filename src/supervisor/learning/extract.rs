@@ -570,6 +570,7 @@ async fn call_extraction_llm(
 	let response = crate::session::chat_completion_with_validation(params).await?;
 	if let Some(usage) = &response.exchange.usage {
 		crate::supervisor::stats::record_call(
+			crate::supervisor::stats::CallKind::Distill,
 			usage.input_tokens,
 			usage.output_tokens,
 			usage.cost.unwrap_or(0.0),
@@ -584,6 +585,7 @@ pub(crate) async fn call_learning_llm(
 	model: &str,
 	system_content: String,
 	user_content: String,
+	kind: crate::supervisor::stats::CallKind,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
 	let now = crate::utils::time::now_secs();
@@ -632,6 +634,7 @@ pub(crate) async fn call_learning_llm(
 	let response = crate::session::chat_completion_with_validation(params).await?;
 	if let Some(usage) = &response.exchange.usage {
 		crate::supervisor::stats::record_call(
+			kind,
 			usage.input_tokens,
 			usage.output_tokens,
 			usage.cost.unwrap_or(0.0),

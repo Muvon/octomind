@@ -588,6 +588,9 @@ pub fn display_info(output: &CommandOutput) {
 			let get_u64 = |k: &str| sstats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
 			let get_f64 = |k: &str| sstats.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
 			let calls = get_u64("calls");
+			let recall_calls = get_u64("recall_calls");
+			let gate_calls = get_u64("gate_calls");
+			let distill_calls = get_u64("distill_calls");
 			let sup_in = get_u64("input_tokens");
 			let sup_out = get_u64("output_tokens");
 			let sup_cost = get_f64("cost");
@@ -629,11 +632,28 @@ pub fn display_info(output: &CommandOutput) {
 				block_row("gate", &g.join(" · "), kw_sv);
 			}
 			if calls > 0 {
-				block_row(
-					"calls",
-					&format_number(calls).bright_white().to_string(),
-					kw_sv,
-				);
+				// Break the opaque total down by mechanic so the flow is legible.
+				let mut parts = Vec::new();
+				if distill_calls > 0 {
+					parts.push(format!("{} distill", distill_calls));
+				}
+				if recall_calls > 0 {
+					parts.push(format!("{} recall", recall_calls));
+				}
+				if gate_calls > 0 {
+					parts.push(format!("{} gate", gate_calls));
+				}
+				let breakdown = if parts.is_empty() {
+					format_number(calls).bright_white().to_string()
+				} else {
+					format!(
+						"{} {} {}",
+						format_number(calls).bright_white(),
+						dot,
+						parts.join(&format!(" {} ", dot))
+					)
+				};
+				block_row("calls", &breakdown, kw_sv);
 			}
 			if sup_in > 0 || sup_out > 0 {
 				block_row(

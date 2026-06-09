@@ -23,9 +23,24 @@
 
 use std::sync::{Mutex, OnceLock};
 
+/// Which supervisor mechanic made a model call — so `/info` can break the count
+/// down instead of showing one opaque total.
+#[derive(Clone, Copy, Debug)]
+pub enum CallKind {
+	/// Recall keyword/query preparation.
+	Recall,
+	/// Verify-gate completion check.
+	Gate,
+	/// End-of-trajectory lesson/orientation extraction.
+	Distill,
+}
+
 #[derive(Default, Clone)]
 struct Stats {
 	calls: u64,
+	recall_calls: u64,
+	gate_calls: u64,
+	distill_calls: u64,
 	input_tokens: u64,
 	output_tokens: u64,
 	cost: f64,
@@ -49,10 +64,16 @@ fn with<F: FnOnce(&mut Stats)>(f: F) {
 	}
 }
 
-/// Record one supervisor model call's usage (verify-gate / distill / recall-prep).
-pub fn record_call(input_tokens: u64, output_tokens: u64, cost: f64) {
+/// Record one supervisor model call's usage, attributed to the mechanic that
+/// made it (verify-gate / distill / recall-prep).
+pub fn record_call(kind: CallKind, input_tokens: u64, output_tokens: u64, cost: f64) {
 	with(|s| {
 		s.calls += 1;
+		match kind {
+			CallKind::Recall => s.recall_calls += 1,
+			CallKind::Gate => s.gate_calls += 1,
+			CallKind::Distill => s.distill_calls += 1,
+		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
 		s.cost += cost;
@@ -103,6 +124,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	}
 	Some(serde_json::json!({
 		"calls": s.calls,
+		"recall_calls": s.recall_calls,
+		"gate_calls": s.gate_calls,
+		"distill_calls": s.distill_calls,
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
 		"cost": s.cost,

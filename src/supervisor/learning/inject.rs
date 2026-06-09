@@ -180,6 +180,7 @@ async fn prepare_retrieval_query(
 		model,
 		system.to_string(),
 		user_input.to_string(),
+		crate::supervisor::stats::CallKind::Recall,
 		operation_rx,
 	)
 	.await?;

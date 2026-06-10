@@ -105,7 +105,15 @@ async fn main() -> Result<(), anyhow::Error> {
 	// self-identifying in `ps` and terminal tabs. `Run` is handled later in
 	// the session main loop once the session ID is known.
 	match &args.command {
-		Commands::Acp(_) => octomind::proctitle::set_process_title("octomind-acp"),
+		Commands::Acp(a) => {
+			// Include the session name so individual runs are identifiable in
+			// `ps` (tap runs pass `--name tap-<role>-<id>`).
+			let title = match a.name.as_deref() {
+				Some(name) => format!("octomind-acp {name}"),
+				None => "octomind-acp".to_string(),
+			};
+			octomind::proctitle::set_process_title(&title);
+		}
 		Commands::Server(_) => {
 			octomind::proctitle::set_process_title("octomind-server");
 			octomind::proctitle::set_terminal_title("octomind-server");

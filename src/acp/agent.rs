@@ -29,8 +29,9 @@ use agent_client_protocol::schema::{
 	SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 	UnstructuredCommandInput,
 };
-use agent_client_protocol::{Client, ConnectionTo, Responder};
+use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::config::mcp::McpServerConfig;
 use crate::config::Config;
@@ -1419,18 +1420,24 @@ pub(super) async fn serve(
 	let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
 	tokio::task::spawn_local(run_actor(Rc::clone(&agent), cmd_rx));
 
+	// The SDK never resolves `connect_to` on a clean stdin EOF: its incoming
+	// actor returns Ok while the remaining background actors keep waiting, so
+	// the process would serve a dead pipe forever — with the parent that
+	// spawned us blocked in `child.wait()` and the tap-run stuck in `running`.
+	// Wrap stdin so EOF fires a oneshot, and use that as the foreground future
+	// of `connect_with` to shut the connection down deterministically.
+	let (eof_tx, eof_rx) = oneshot::channel::<()>();
+	let transport = ByteStreams::new(
+		tokio::io::stdout().compat_write(),
+		SignalOnEof {
+			inner: tokio::io::stdin().compat(),
+			eof_tx: Some(eof_tx),
+		},
+	);
+
 	let result = agent_client_protocol::Agent
 		.builder()
 		.name("octomind")
-		// Hand the long-lived client connection to the actor once serving starts. The
-		// runner lives in the connection's background set and is cancelled on EOF.
-		.with_spawned({
-			let cmd_tx = cmd_tx.clone();
-			move |cx: ConnectionTo<Client>| async move {
-				let _ = cmd_tx.send(Command::SetConnection(cx));
-				std::future::pending::<Result<(), agent_client_protocol::Error>>().await
-			}
-		})
 		.on_receive_request(
 			{
 				let cmd_tx = cmd_tx.clone();
@@ -1536,11 +1543,41 @@ pub(super) async fn serve(
 			},
 			agent_client_protocol::on_receive_notification!(),
 		)
-		.connect_to(agent_client_protocol::Stdio::new())
+		.connect_with(transport, async move |cx: ConnectionTo<Client>| {
+			// Hand the long-lived client connection to the actor once serving starts.
+			let _ = cmd_tx.send(Command::SetConnection(cx));
+			// Hold the connection open until the client closes our stdin.
+			let _ = eof_rx.await;
+			Ok(())
+		})
 		.await;
 
 	if let Err(e) = result {
 		log_debug!("ACP: connection ended: {}", e);
 	}
 	Ok(())
+}
+
+/// Stdin wrapper that fires a oneshot the moment the stream hits EOF — i.e.
+/// the client closed our stdin or died. `serve` awaits this signal to shut
+/// the connection down (see the comment there).
+struct SignalOnEof<R> {
+	inner: R,
+	eof_tx: Option<oneshot::Sender<()>>,
+}
+
+impl<R: futures::io::AsyncRead + Unpin> futures::io::AsyncRead for SignalOnEof<R> {
+	fn poll_read(
+		mut self: std::pin::Pin<&mut Self>,
+		cx: &mut std::task::Context<'_>,
+		buf: &mut [u8],
+	) -> std::task::Poll<std::io::Result<usize>> {
+		let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+		if matches!(poll, std::task::Poll::Ready(Ok(0))) {
+			if let Some(tx) = self.eof_tx.take() {
+				let _ = tx.send(());
+			}
+		}
+		poll
+	}
 }

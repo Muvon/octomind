@@ -811,9 +811,16 @@ pub async fn run_acp_command(
 		}
 	}
 
-	// Shut down the subprocess cleanly
+	// Shut down the subprocess: closing stdin signals it to exit. The response
+	// is already in hand, so a child that fails to exit must not wedge this
+	// run in `running` forever — grace-wait, then kill.
 	drop(stdin);
-	let _ = child.wait().await;
+	if tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+		.await
+		.is_err()
+	{
+		let _ = child.kill().await;
+	}
 
 	if let Some(err) = prompt_error {
 		let trimmed = output.trim();

@@ -962,3 +962,98 @@ async fn wait_for_response(
 		}
 	}
 }
+
+/// Lifecycle tests for `run_acp_command` — drive it against a fake ACP server
+/// (a `sh` script emitting canned JSON-RPC lines) to pin the contract that the
+/// tap/agent runner must never hang: collect streamed output, surface prompt
+/// errors, and kill a child that fails to exit after the response (the bug
+/// that left tap-runs in `running` forever).
+#[cfg(all(test, unix))]
+mod tests {
+	use super::*;
+	use std::time::{Duration, Instant};
+
+	/// initialize (id=1) + session/new (id=2) + one streamed message chunk.
+	const HANDSHAKE: &str = r#"
+echo '{"jsonrpc":"2.0","id":1,"result":{}}'
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s"}}'
+echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}'
+"#;
+
+	async fn run_fake_server(script: String, cancel_rx: watch::Receiver<bool>) -> Result<String> {
+		run_acp_command(
+			"sh",
+			&["-c", &script],
+			"task",
+			&std::env::temp_dir(),
+			cancel_rx,
+		)
+		.await
+	}
+
+	#[tokio::test]
+	async fn collects_output_and_returns_on_clean_exit() {
+		let script = format!(
+			"{HANDSHAKE}echo '{}'",
+			r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+		);
+		let started = Instant::now();
+		let out = run_fake_server(script, watch::channel(false).1)
+			.await
+			.expect("clean run succeeds");
+		assert_eq!(out, "hello");
+		// Child exited on its own — the kill grace period must not be consumed.
+		assert!(started.elapsed() < Duration::from_secs(4));
+	}
+
+	#[tokio::test]
+	async fn kills_child_that_does_not_exit_after_response() {
+		// `exec` keeps the same PID so the kill hits the sleeping process.
+		let script = format!(
+			"{HANDSHAKE}echo '{}'\nexec sleep 1000",
+			r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+		);
+		let started = Instant::now();
+		let out = run_fake_server(script, watch::channel(false).1)
+			.await
+			.expect("wedged child still yields the response");
+		assert_eq!(out, "hello");
+		let elapsed = started.elapsed();
+		// Returned via the grace-wait + kill path, not by hanging on wait().
+		assert!(
+			elapsed >= Duration::from_secs(5),
+			"kill fired too early: {elapsed:?}"
+		);
+		assert!(elapsed < Duration::from_secs(15), "run hung: {elapsed:?}");
+	}
+
+	#[tokio::test]
+	async fn surfaces_prompt_error_instead_of_empty_output() {
+		let script = format!(
+			"{HANDSHAKE}echo '{}'",
+			r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"boom"}}"#
+		);
+		let err = run_fake_server(script, watch::channel(false).1)
+			.await
+			.expect_err("prompt error must fail the run");
+		assert!(err.to_string().contains("boom"), "got: {err:#}");
+	}
+
+	#[tokio::test]
+	async fn cancellation_kills_child_mid_prompt() {
+		// Server never answers the prompt (no id=3) and never exits.
+		let script = format!("{HANDSHAKE}exec sleep 1000");
+		let (cancel_tx, cancel_rx) = watch::channel(false);
+		tokio::spawn(async move {
+			tokio::time::sleep(Duration::from_millis(200)).await;
+			let _ = cancel_tx.send(true);
+		});
+		let started = Instant::now();
+		let err = run_fake_server(script, cancel_rx)
+			.await
+			.expect_err("cancellation must fail the run");
+		assert!(err.to_string().contains("cancelled"), "got: {err:#}");
+		// Cancel must act immediately — not wait out any grace period.
+		assert!(started.elapsed() < Duration::from_secs(4));
+	}
+}

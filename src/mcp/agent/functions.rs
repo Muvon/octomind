@@ -1084,6 +1084,13 @@ echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s"}}'
 echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}'
 "#;
 
+	/// Keeps the fake server alive until the client closes stdin. A script
+	/// that exits the instant its echos finish races the client's pipelined
+	/// writes: once the process is gone the stdin pipe has no reader, so
+	/// write_all fails with EPIPE (seen on macOS) before the client reads
+	/// the id=3 response.
+	const WAIT_STDIN_EOF: &str = "\ncat >/dev/null";
+
 	async fn run_fake_server(script: String, cancel_rx: watch::Receiver<bool>) -> Result<String> {
 		run_acp_command(
 			"sh",
@@ -1115,7 +1122,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 			});
 
 			let script = format!(
-				"{HANDSHAKE}{}\n{}\n{}",
+				"{HANDSHAKE}{}\n{}\n{}{WAIT_STDIN_EOF}",
 				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"shell","rawInput":{"command":"ls -la"}}}}'"#,
 				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.usage":{"session_tokens":100,"session_cost":0.5,"input_tokens":80,"output_tokens":20,"cache_read_tokens":7,"cache_write_tokens":0,"reasoning_tokens":0}}}}'"#,
 				r#"echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'"#
@@ -1145,7 +1152,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 	#[tokio::test]
 	async fn collects_output_and_returns_on_clean_exit() {
 		let script = format!(
-			"{HANDSHAKE}echo '{}'",
+			"{HANDSHAKE}echo '{}'{WAIT_STDIN_EOF}",
 			r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
 		);
 		let started = Instant::now();
@@ -1181,7 +1188,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 	#[tokio::test]
 	async fn surfaces_prompt_error_instead_of_empty_output() {
 		let script = format!(
-			"{HANDSHAKE}echo '{}'",
+			"{HANDSHAKE}echo '{}'{WAIT_STDIN_EOF}",
 			r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"boom"}}"#
 		);
 		let err = run_fake_server(script, watch::channel(false).1)

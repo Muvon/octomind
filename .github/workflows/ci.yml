@@ -167,10 +167,16 @@ jobs:
     # (dynamic CRT). Rust on MSVC defaults to /MT (static CRT), causing
     # __imp_* unresolved-symbol link errors. Switch to dynamic CRT to match.
     # vcruntime140.dll is present on all GitHub Windows runners.
+    # esaxx-rs hardcodes static_crt(true) (/MT) while other C++ deps (mimalloc
+    # via turso) follow -crt-static and compile /MD — link.exe rejects the
+    # RuntimeLibrary mismatch (LNK2038). cc appends env flags last, so this
+    # forces /MD onto every MSVC C++ object. cc only reads the target-scoped
+    # var when building for that target, so it's inert elsewhere.
     - name: Run tests
       shell: bash
       env:
         RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=-crt-static' || '' }}
+        CXXFLAGS_x86_64_pc_windows_msvc: -MD
       run: cargo test --verbose
 
   musl-build:

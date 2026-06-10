@@ -55,6 +55,25 @@ impl TapJobStatus {
 	}
 }
 
+/// Live, in-flight view of a run — pushed from the child's ACP stream as it
+/// works (tool calls, message chunks, per-API-call usage), ahead of the
+/// on-disk session snapshot which only flushes per completed message.
+#[derive(Debug, Clone, Default)]
+pub struct TapLiveState {
+	/// Last streamed step — a tool call (`name hint`) or assistant text.
+	pub last_action: Option<String>,
+	/// Cumulative usage from the child's latest `octomind.usage` notification.
+	pub usage: Option<TapLiveUsage>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TapLiveUsage {
+	pub input_tokens: u64,
+	pub output_tokens: u64,
+	pub cache_read_tokens: u64,
+	pub cost: f64,
+}
+
 /// A single tap-run, tracked from spawn through completion.
 ///
 /// `cancel_tx` carries the abort signal — the ACP subprocess driver holds a
@@ -70,6 +89,7 @@ pub struct TapJob {
 	pub started_at: SystemTime,
 	pub status: Arc<RwLock<TapJobStatus>>,
 	pub cancel_tx: watch::Sender<bool>,
+	pub live: Arc<RwLock<TapLiveState>>,
 }
 
 /// Snapshot for read APIs — `Sender` isn't `Clone`.
@@ -80,6 +100,7 @@ pub struct TapJobInfo {
 	pub workdir: String,
 	pub started_at: SystemTime,
 	pub status: TapJobStatus,
+	pub live: TapLiveState,
 }
 
 struct Registry {
@@ -154,12 +175,14 @@ pub fn find_job(id: &str) -> Option<TapJobInfo> {
 	// the temporary RwLockReadGuard outlives `guard` in the struct
 	// initializer's drop order and the borrow-checker rejects.
 	let status = *job.status.read().ok()?;
+	let live = job.live.read().ok()?.clone();
 	Some(TapJobInfo {
 		id: job.id.clone(),
 		role: job.role.clone(),
 		workdir: job.workdir.clone(),
 		started_at: job.started_at,
 		status,
+		live,
 	})
 }
 
@@ -206,17 +229,50 @@ pub fn list_jobs() -> Vec<TapJobInfo> {
 		.iter()
 		.filter_map(|j| {
 			let status = *j.status.read().ok()?;
+			let live = j.live.read().ok()?.clone();
 			Some(TapJobInfo {
 				id: j.id.clone(),
 				role: j.role.clone(),
 				workdir: j.workdir.clone(),
 				started_at: j.started_at,
 				status,
+				live,
 			})
 		})
 		.collect();
 	out.sort_by_key(|b| std::cmp::Reverse(b.started_at));
 	out
+}
+
+/// Record the run's latest streamed step (tool call or assistant text).
+pub fn record_live_action(id: &str, action: String) {
+	with_live(id, |l| l.last_action = Some(action));
+}
+
+/// Record cumulative usage pushed by the run's `octomind.usage` notification.
+pub fn record_live_usage(id: &str, usage: TapLiveUsage) {
+	with_live(id, |l| l.usage = Some(usage));
+}
+
+fn with_live(id: &str, f: impl FnOnce(&mut TapLiveState)) {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	let Ok(guard) = REGISTRY.read() else {
+		return;
+	};
+	let Some(reg) = guard.as_ref() else {
+		return;
+	};
+	let Some(jobs) = reg.jobs.get(&session_id) else {
+		return;
+	};
+	let Some(job) = jobs.iter().find(|j| j.id == id) else {
+		return;
+	};
+	if let Ok(mut live) = job.live.write() {
+		f(&mut live);
+	};
 }
 
 /// Send the cancel signal to a running job. Returns the job's status after

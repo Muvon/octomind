@@ -45,7 +45,7 @@ use tokio::sync::watch;
 use crate::config::Config;
 use crate::mcp::agent::functions::run_acp_command;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
-use crate::session::tap_runs::{self, TapJob, TapJobInfo, TapJobStatus};
+use crate::session::tap_runs::{self, TapJob, TapJobInfo, TapJobStatus, TapLiveState};
 
 // ---------------------------------------------------------------------------
 // Tool definition
@@ -445,6 +445,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			started_at: SystemTime::now(),
 			status: Arc::clone(&status),
 			cancel_tx,
+			live: Arc::new(RwLock::new(TapLiveState::default())),
 		});
 		(id, role, workdir, status, cancel_rx)
 	};
@@ -495,6 +496,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 					&prompt_owned,
 					&workdir_owned,
 					cancel_rx,
+					Some(&id_owned),
 				)
 				.await;
 				let (terminal, content) = match outcome {
@@ -542,7 +544,15 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 
 	// Foreground — block until the ACP subprocess completes the prompt.
 	let arg_refs: Vec<&str> = acp_args.iter().map(|s| s.as_str()).collect();
-	let outcome = run_acp_command(&exe, &arg_refs, &prompt, &workdir_path, cancel_rx).await;
+	let outcome = run_acp_command(
+		&exe,
+		&arg_refs,
+		&prompt,
+		&workdir_path,
+		cancel_rx,
+		Some(&id),
+	)
+	.await;
 	match outcome {
 		Ok(text) => {
 			if let Ok(mut s) = status.write() {

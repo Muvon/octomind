@@ -38,7 +38,7 @@ use serde_json::json;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use super::{CommandOutput, CommandResult};
-use crate::session::tap_runs::{self, TapJobStatus};
+use crate::session::tap_runs::{self, TapJobStatus, TapLiveState};
 use crate::session::{Message, SessionInfo};
 
 /// What we can recover from a run's on-disk session file.
@@ -66,18 +66,26 @@ pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
 			}
 		};
 		let snap = read_agent_snapshot(id);
+		// For a running job the live stream (pushed per tool call / API call)
+		// is fresher than the disk snapshot; once finished the snapshot is
+		// authoritative.
+		let live = if info.status == TapJobStatus::Running {
+			info.live.clone()
+		} else {
+			TapLiveState::default()
+		};
 		let detail = json!({
 			"id": info.id,
 			"role": info.role,
 			"status": info.status.as_str(),
 			"workdir": info.workdir,
 			"elapsed_secs": elapsed_secs(info.started_at),
-			"last_action": snap.last_action,
+			"last_action": live.last_action.or(snap.last_action),
 			"model": snap.info.as_ref().map(|i| i.model.clone()),
-			"tokens_input": snap.info.as_ref().map(|i| i.input_tokens),
-			"tokens_output": snap.info.as_ref().map(|i| i.output_tokens),
-			"tokens_cached": snap.info.as_ref().map(|i| i.cache_read_tokens),
-			"cost": snap.info.as_ref().map(|i| i.total_cost),
+			"tokens_input": live.usage.map(|u| u.input_tokens).or_else(|| snap.info.as_ref().map(|i| i.input_tokens)),
+			"tokens_output": live.usage.map(|u| u.output_tokens).or_else(|| snap.info.as_ref().map(|i| i.output_tokens)),
+			"tokens_cached": live.usage.map(|u| u.cache_read_tokens).or_else(|| snap.info.as_ref().map(|i| i.cache_read_tokens)),
+			"cost": live.usage.map(|u| u.cost).or_else(|| snap.info.as_ref().map(|i| i.total_cost)),
 			"tool_calls": snap.info.as_ref().map(|i| i.tool_calls),
 		});
 		return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -98,18 +106,22 @@ pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
 	for j in &jobs {
 		if j.status == TapJobStatus::Running {
 			let snap = read_agent_snapshot(&j.id);
+			// Live state (pushed from the ACP stream) beats the disk snapshot —
+			// it updates on every streamed tool call / usage notification, while
+			// the snapshot only flushes per completed message.
+			let live = &j.live;
 			running.push(json!({
 				"id": j.id,
 				"role": j.role,
 				"status": j.status.as_str(),
 				"workdir": j.workdir,
 				"elapsed_secs": elapsed_secs(j.started_at),
-				"last_action": snap.last_action,
+				"last_action": live.last_action.clone().or(snap.last_action),
 				"model": snap.info.as_ref().map(|i| i.model.clone()),
-				"tokens_input": snap.info.as_ref().map(|i| i.input_tokens),
-				"tokens_output": snap.info.as_ref().map(|i| i.output_tokens),
-				"tokens_cached": snap.info.as_ref().map(|i| i.cache_read_tokens),
-				"cost": snap.info.as_ref().map(|i| i.total_cost),
+				"tokens_input": live.usage.map(|u| u.input_tokens).or_else(|| snap.info.as_ref().map(|i| i.input_tokens)),
+				"tokens_output": live.usage.map(|u| u.output_tokens).or_else(|| snap.info.as_ref().map(|i| i.output_tokens)),
+				"tokens_cached": live.usage.map(|u| u.cache_read_tokens).or_else(|| snap.info.as_ref().map(|i| i.cache_read_tokens)),
+				"cost": live.usage.map(|u| u.cost).or_else(|| snap.info.as_ref().map(|i| i.total_cost)),
 			}));
 		} else {
 			let snap = read_agent_snapshot(&j.id);

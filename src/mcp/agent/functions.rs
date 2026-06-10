@@ -232,13 +232,19 @@ async fn execute_config_agent(
 				let mut parts = command.split_whitespace();
 				let program = parts.next().unwrap_or("");
 				let args: Vec<&str> = parts.collect();
-				let output =
-					match run_acp_command(program, &args, &task_owned, &workdir_owned, cancel_rx)
-						.await
-					{
-						Ok(text) => text,
-						Err(e) => format!("ERROR: {e:#}"),
-					};
+				let output = match run_acp_command(
+					program,
+					&args,
+					&task_owned,
+					&workdir_owned,
+					cancel_rx,
+					None,
+				)
+				.await
+				{
+					Ok(text) => text,
+					Err(e) => format!("ERROR: {e:#}"),
+				};
 				mgr.release(CompletedJob {
 					agent_name: agent_name_owned,
 					output,
@@ -268,7 +274,16 @@ async fn execute_config_agent(
 	let mut parts = agent_config.command.split_whitespace();
 	let program = parts.next().unwrap_or("");
 	let args: Vec<&str> = parts.collect();
-	match run_acp_command(program, &args, task, &workdir, watch::channel(false).1).await {
+	match run_acp_command(
+		program,
+		&args,
+		task,
+		&workdir,
+		watch::channel(false).1,
+		None,
+	)
+	.await
+	{
 		Ok(output) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -663,12 +678,16 @@ fn run_dynamic_agent_in_process(
 /// `program` is the executable path; `args` are CLI arguments passed verbatim.
 /// Callers that have a single "program plus space-separated args" string should
 /// split it themselves (e.g. via `split_whitespace`) before calling.
+///
+/// `tap_run_id`, when set, mirrors streamed updates (tool calls, usage) into
+/// the tap-run live registry so `/agents` can show them while the run works.
 pub async fn run_acp_command(
 	program: &str,
 	args: &[&str],
 	task: &str,
 	workdir: &std::path::Path,
 	mut cancel_rx: watch::Receiver<bool>,
+	tap_run_id: Option<&str>,
 ) -> Result<String> {
 	let mut child = Command::new(program)
 		.args(args)
@@ -789,6 +808,9 @@ pub async fn run_acp_command(
 		// streamed live — the same shape the parent renders for its own
 		// in-process tool calls.
 		if msg.get("method").and_then(|m| m.as_str()) == Some("session/update") {
+			if let Some(run_id) = tap_run_id {
+				record_tap_live(run_id, &msg);
+			}
 			if let Some(update) = msg.pointer("/params/update") {
 				forward_session_update_to_parent(update);
 				if update.get("sessionUpdate").and_then(|u| u.as_str())
@@ -937,6 +959,88 @@ fn forward_session_update_to_parent(update: &Value) {
 	crate::mcp::process::send_notification_message(msg);
 }
 
+/// Mirror a subprocess `session/update` into the tap-run live registry so
+/// `/agents` shows what the run is doing right now — the on-disk snapshot
+/// only flushes after each completed message, which lags long calls.
+fn record_tap_live(run_id: &str, msg: &Value) {
+	// Usage rides in `_meta` next to a SessionInfoUpdate (see acp/agent.rs).
+	if let Some(usage) = msg.pointer("/params/_meta/octomind.usage") {
+		let n = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+		crate::session::tap_runs::record_live_usage(
+			run_id,
+			crate::session::tap_runs::TapLiveUsage {
+				input_tokens: n("input_tokens"),
+				output_tokens: n("output_tokens"),
+				cache_read_tokens: n("cache_read_tokens"),
+				cost: usage
+					.get("session_cost")
+					.and_then(|v| v.as_f64())
+					.unwrap_or(0.0),
+			},
+		);
+		return;
+	}
+	let Some(update) = msg.pointer("/params/update") else {
+		return;
+	};
+	let action = match update.get("sessionUpdate").and_then(|u| u.as_str()) {
+		Some("tool_call") => {
+			let title = update.get("title").and_then(|s| s.as_str()).unwrap_or("");
+			if title.is_empty() {
+				return;
+			}
+			match update.get("rawInput").and_then(tool_arg_hint) {
+				Some(hint) => Some(format!("{title} {hint}")),
+				None => Some(title.to_string()),
+			}
+		}
+		Some("agent_message_chunk") => update
+			.pointer("/content/text")
+			.and_then(|t| t.as_str())
+			.map(str::trim)
+			.filter(|t| !t.is_empty())
+			.map(|t| truncate_action(t, 60)),
+		_ => None,
+	};
+	if let Some(action) = action {
+		crate::session::tap_runs::record_live_action(run_id, action);
+	}
+}
+
+/// Most descriptive scalar argument of a tool call (path, command, query, …).
+fn tool_arg_hint(args: &Value) -> Option<String> {
+	for key in [
+		"file_path",
+		"path",
+		"command",
+		"pattern",
+		"query",
+		"url",
+		"intent",
+		"prompt",
+		"name",
+	] {
+		if let Some(s) = args.get(key).and_then(|x| x.as_str()) {
+			let s = s.trim();
+			if !s.is_empty() {
+				return Some(truncate_action(s, 48));
+			}
+		}
+	}
+	None
+}
+
+/// Single-line, length-capped (ellipsis on overflow).
+fn truncate_action(s: &str, max: usize) -> String {
+	let s = s.replace(['\n', '\r'], " ");
+	if s.chars().count() <= max {
+		s
+	} else {
+		let head: String = s.chars().take(max.saturating_sub(1)).collect();
+		format!("{head}…")
+	}
+}
+
 /// Read lines until we find a JSON-RPC response with the given id, return it.
 async fn wait_for_response(
 	lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
@@ -987,8 +1091,55 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 			"task",
 			&std::env::temp_dir(),
 			cancel_rx,
+			None,
 		)
 		.await
+	}
+
+	#[tokio::test]
+	async fn streams_live_updates_into_tap_registry() {
+		use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState};
+		use std::sync::{Arc, RwLock};
+		use std::time::SystemTime;
+
+		crate::session::context::with_session_id("tap-live-test-session".to_string(), async {
+			let (cancel_tx, _keep_alive) = watch::channel(false);
+			tap_runs::register_job(TapJob {
+				id: "tap-test-live-000001".to_string(),
+				role: "test:live".to_string(),
+				workdir: ".".to_string(),
+				started_at: SystemTime::now(),
+				status: Arc::new(RwLock::new(TapJobStatus::Running)),
+				cancel_tx,
+				live: Arc::new(RwLock::new(TapLiveState::default())),
+			});
+
+			let script = format!(
+				"{HANDSHAKE}{}\n{}\n{}",
+				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"shell","rawInput":{"command":"ls -la"}}}}'"#,
+				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.usage":{"session_tokens":100,"session_cost":0.5,"input_tokens":80,"output_tokens":20,"cache_read_tokens":7,"cache_write_tokens":0,"reasoning_tokens":0}}}}'"#,
+				r#"echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'"#
+			);
+			run_acp_command(
+				"sh",
+				&["-c", &script],
+				"task",
+				&std::env::temp_dir(),
+				watch::channel(false).1,
+				Some("tap-test-live-000001"),
+			)
+			.await
+			.expect("run succeeds");
+
+			let job = tap_runs::find_job("tap-test-live-000001").expect("job registered");
+			assert_eq!(job.live.last_action.as_deref(), Some("shell ls -la"));
+			let usage = job.live.usage.expect("usage recorded from _meta");
+			assert_eq!(usage.input_tokens, 80);
+			assert_eq!(usage.output_tokens, 20);
+			assert_eq!(usage.cache_read_tokens, 7);
+			assert!((usage.cost - 0.5).abs() < 1e-9);
+		})
+		.await;
 	}
 
 	#[tokio::test]

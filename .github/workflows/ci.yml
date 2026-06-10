@@ -9,6 +9,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Keep target/ small enough for the ~14GB runner disk: incremental
+  # compilation artifacts and debuginfo dominate debug-build size and
+  # are useless in CI.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   check:
@@ -29,20 +35,12 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep and ast-grep
-      run: |
-        cargo install ripgrep --locked
-        cargo install ast-grep --locked
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ripgrep,ast-grep
 
     - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      uses: Swatinem/rust-cache@v2
 
     - name: Run cargo check
       run: cargo check --all-targets --all-features
@@ -80,21 +78,13 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep and ast-grep
-      run: |
-        cargo install ripgrep --locked
-        cargo install ast-grep --locked
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ripgrep,ast-grep
 
 
     - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      uses: Swatinem/rust-cache@v2
 
     - name: Run cargo clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
@@ -128,21 +118,17 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep and ast-grep
-      run: |
-        cargo install ripgrep --locked
-        cargo install ast-grep --locked
-
-    - name: Cache dependencies
-      uses: actions/cache@v4
+      uses: taiki-e/install-action@v2
       with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.rust }}-cargo-
-          ${{ runner.os }}-cargo-
+        tool: ripgrep,ast-grep
+
+    # rust-cache keys by exact rustc version — no cross-toolchain fallback.
+    # The old restore-keys let beta restore stable's target/, which then got
+    # fully rebuilt alongside → doubled disk usage → ENOSPC.
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
 
     # Cache the HuggingFace model weights fetched by smoke tests
     # (`muvon/octomind-embed`, ~130MB safetensors). octolib stores them via
@@ -342,9 +328,9 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep and ast-grep
-      run: |
-        cargo install ripgrep --locked
-        cargo install ast-grep --locked
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ripgrep,ast-grep
 
     - name: Install cargo-audit
       run: cargo install cargo-audit --locked
@@ -368,24 +354,17 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install ripgrep and ast-grep
-      run: |
-        cargo install ripgrep --locked
-        cargo install ast-grep --locked
-
-    - name: Install cargo-tarpaulin
-      run: cargo install cargo-tarpaulin --locked
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ripgrep,ast-grep
 
     - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-coverage-
-          ${{ runner.os }}-cargo-
+      uses: Swatinem/rust-cache@v2
+
+    # After cache restore: rust-cache includes ~/.cargo/bin, so this is a
+    # no-op when the same tarpaulin version is already cached.
+    - name: Install cargo-tarpaulin
+      run: cargo install cargo-tarpaulin --locked
 
     - name: Generate code coverage
       run: cargo tarpaulin --engine llvm --verbose --workspace --timeout 120 --out xml

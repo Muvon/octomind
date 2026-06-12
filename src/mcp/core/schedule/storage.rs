@@ -307,12 +307,15 @@ pub(crate) fn parse_duration_secs(s: &str) -> Result<i64> {
 	let mut total: i64 = 0;
 	let mut num_buf = String::new();
 
+	const FORMAT_HINT: &str =
+		"units are single-letter h/m/s — e.g. \"35m\", \"2h\", \"90s\", \"1h30m\" (not \"min\"/\"sec\"/\"hr\")";
+
 	for ch in s.chars() {
 		if ch.is_ascii_digit() {
 			num_buf.push(ch);
 		} else {
 			let n: i64 = if num_buf.is_empty() {
-				bail!("expected number before '{}'", ch)
+				bail!("unexpected '{}' in duration '{}': {}", ch, s, FORMAT_HINT)
 			} else {
 				num_buf.parse()?
 			};
@@ -321,15 +324,17 @@ pub(crate) fn parse_duration_secs(s: &str) -> Result<i64> {
 				'h' => total += n * 3600,
 				'm' => total += n * 60,
 				's' => total += n,
-				_ => bail!("unknown unit '{}' — use h, m, or s", ch),
+				_ => bail!("unknown unit '{}' in duration '{}': {}", ch, s, FORMAT_HINT),
 			}
 		}
 	}
 
 	if !num_buf.is_empty() {
 		bail!(
-			"trailing number '{}' without unit (use h, m, or s)",
-			num_buf
+			"trailing number '{}' without unit in duration '{}': {}",
+			num_buf,
+			s,
+			FORMAT_HINT
 		);
 	}
 

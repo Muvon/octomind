@@ -31,6 +31,12 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Get version from Cargo.toml
+      id: version
+      run: |
+        VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
     - name: Build image (syntax + layer validation)
       uses: docker/build-push-action@v6
       with:
@@ -38,4 +44,4 @@ jobs:
         platforms: ${{ matrix.platform }}
         push: false
         build-args: |
-          OCTOMIND_VERSION=0.0.0
+          OCTOMIND_VERSION=${{ steps.version.outputs.version }}

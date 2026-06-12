@@ -21,6 +21,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -142,6 +143,7 @@ impl Executor {
 		header_suffix: &str,
 	) -> Result<StepStats> {
 		let templated_prompt = self.substitute(&s.prompt, input).await;
+		let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
 		let max_attempts = s.retries + 1;
 		let mut last_err: Option<String> = None;
 
@@ -174,7 +176,7 @@ impl Executor {
 						.clone();
 					// If this session has been used before, compress it with /done first.
 					if *self.used_continue.get(&s.name).unwrap_or(&false) {
-						let _ = send_done(&id).await;
+						let _ = send_done(&id, workdir.as_deref()).await;
 					}
 					Some(id)
 				}
@@ -222,6 +224,7 @@ impl Executor {
 				prompt: prompt_for_run,
 				session_name,
 				model: s.model.clone(),
+				workdir: workdir.clone(),
 				timeout_secs: s.timeout,
 				event_prefix: if has_spinner {
 					None
@@ -288,10 +291,14 @@ impl Executor {
 		// outer scope — sub-steps cannot reference each other. Each
 		// substitution may touch disk (project context placeholders), so
 		// we collect sequentially before kicking off the parallel tasks.
-		let mut prepared: Vec<(Sequential, String)> = Vec::with_capacity(p.run.len());
+		// Workdirs resolve here too — a bad one fails the whole parallel
+		// step before any subprocess spawns.
+		let mut prepared: Vec<(Sequential, String, Option<PathBuf>)> =
+			Vec::with_capacity(p.run.len());
 		for s in &p.run {
 			let resolved = self.substitute(&s.prompt, input).await;
-			prepared.push((s.clone(), resolved));
+			let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
+			prepared.push((s.clone(), resolved, workdir));
 		}
 
 		// We can't borrow &mut self across the join, so run each sub-step
@@ -299,7 +306,7 @@ impl Executor {
 		// Implementation: launch all in parallel using join_all, but each
 		// task owns its own Sequential copy and we DON'T touch self.
 		let mut handles = Vec::new();
-		for (s, prompt) in prepared {
+		for (s, prompt, workdir) in prepared {
 			let sname = s.name.clone();
 			let role = s.role.clone();
 			let timeout = s.timeout;
@@ -317,6 +324,7 @@ impl Executor {
 						prompt: prompt.clone(),
 						session_name: None,
 						model: model.clone(),
+						workdir: workdir.clone(),
 						timeout_secs: timeout,
 						event_prefix: None,
 						spinner: None,
@@ -488,6 +496,31 @@ impl Executor {
 		}
 		Ok(())
 	}
+}
+
+/// Resolve a step's optional `workdir` to an absolute path. Relative
+/// paths resolve against the orchestrator's cwd. Checked at execution
+/// time rather than pre-flight so a directory created by an earlier
+/// step is legal. A missing directory is a hard error — the subprocess
+/// would otherwise die with an opaque spawn failure.
+fn resolve_workdir(step_name: &str, workdir: Option<&str>) -> Result<Option<PathBuf>> {
+	let Some(w) = workdir else {
+		return Ok(None);
+	};
+	let p = Path::new(w);
+	let abs = if p.is_absolute() {
+		p.to_path_buf()
+	} else {
+		std::env::current_dir()?.join(p)
+	};
+	if !abs.is_dir() {
+		bail!(
+			"step '{}': workdir '{}' is not a directory",
+			step_name,
+			abs.display()
+		);
+	}
+	Ok(Some(abs))
 }
 
 fn condition_matches(cond: &Condition, value: &str) -> bool {

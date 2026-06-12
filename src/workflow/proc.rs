@@ -18,6 +18,7 @@
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use indicatif::ProgressBar;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -59,6 +60,8 @@ pub struct RunStepArgs {
 	pub session_name: Option<String>,
 	/// Optional model override forwarded as `--model` to the subprocess.
 	pub model: Option<String>,
+	/// Absolute working directory for the subprocess. None = inherit cwd.
+	pub workdir: Option<PathBuf>,
 	pub timeout_secs: u64,
 	pub event_prefix: Option<String>,
 	pub spinner: Option<ProgressBar>,
@@ -77,6 +80,7 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 		prompt,
 		session_name,
 		model,
+		workdir,
 		timeout_secs,
 		event_prefix,
 		spinner,
@@ -104,6 +108,9 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 	}
 	if let Some(m) = &model {
 		cmd.arg("--model").arg(m);
+	}
+	if let Some(dir) = &workdir {
+		cmd.current_dir(dir);
 	}
 	cmd.kill_on_drop(true);
 
@@ -420,21 +427,25 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 /// Send `/done` to a named session so its context is compressed before
-/// the next run. Best-effort: errors are logged-and-swallowed by the
-/// caller (executor) — a failed `/done` should not abort the workflow.
-pub async fn send_done(session_name: &str) -> Result<()> {
+/// the next run. Runs in the step's `workdir` so the resumed session
+/// sees the same project context as the step itself. Best-effort:
+/// errors are logged-and-swallowed by the caller (executor) — a failed
+/// `/done` should not abort the workflow.
+pub async fn send_done(session_name: &str, workdir: Option<&Path>) -> Result<()> {
 	let exe = std::env::current_exe().context("current_exe")?;
-	let mut child = Command::new(exe)
-		.arg("run")
+	let mut cmd = Command::new(exe);
+	cmd.arg("run")
 		.arg("--name")
 		.arg(session_name)
 		.arg("--format")
 		.arg("jsonl")
 		.stdin(Stdio::piped())
 		.stdout(Stdio::null())
-		.stderr(Stdio::null())
-		.spawn()
-		.context("spawn /done failed")?;
+		.stderr(Stdio::null());
+	if let Some(dir) = workdir {
+		cmd.current_dir(dir);
+	}
+	let mut child = cmd.spawn().context("spawn /done failed")?;
 
 	if let Some(mut stdin) = child.stdin.take() {
 		stdin.write_all(b"/done\n").await.ok();

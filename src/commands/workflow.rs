@@ -102,6 +102,9 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 			if let Some(m) = &s.model {
 				meta = format!("model: {m}  {meta}");
 			}
+			if let Some(w) = &s.workdir {
+				meta = format!("{meta}  workdir: {w}");
+			}
 			println!("{indent}   {meta}");
 			println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 		}
@@ -166,6 +169,9 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 	);
 	if let Some(m) = &s.model {
 		meta = format!("model={m}  {meta}");
+	}
+	if let Some(w) = &s.workdir {
+		meta = format!("{meta}  workdir={w}");
 	}
 	println!(
 		"{indent}{idx}. {name}  {meta}",

@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.31.0] - 2026-06-12
+
+### 📋 Release Summary
+
+This release introduces the Claude Fable 5 provider, secure SQLite-backed credential storage, and an `/agents` command for improved session monitoring (01c63ccb, 09d7b33a, 743cf434). Significant enhancements were made to the supervisor and MCP systems, including real-time task tracking, advanced loop detection, and more efficient parallel tool execution (3167d50f, fac5635e, fc6b2aba, a13ce968). Various bug fixes further improve system stability, cost tracking accuracy, and server reliability (fabbed65, 76eb378d, 42d4006f).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: implement real-time tracking for tap runs `3167d50f`
+- **chat**: enhance animation manager and status notifications `d368088c`
+- **anthropic**: add Claude Fable 5 provider `01c63ccb`
+- **auth**: implement SQLite-backed credential storage `09d7b33a`
+- **supervisor**: add detailed call statistics breakdown `11292f6d`
+- **supervisor**: enhance loop detection and reinforcement `fac5635e`
+- **supervisor**: implement out-of-band control plane `fc6b2aba`
+- **agents**: add token and cost tracking to views `74a5868e`
+- **mcp**: set background execution as default for run `f3a646a5`
+- **session**: improve parallel tool call instructions `a13ce968`
+- **agents**: implement /agents command for monitoring `743cf434`
+
+### 🔧 Improvements & Optimizations
+
+- **github**: migrate rust and release jobs to shared workflows `af044141`
+- **windows**: resolve MSVC runtime library mismatch `dc773b90`
+- **acp**: add lifecycle and EOF signaling tests `abb29d08`
+- **acp**: implement actor bridge and update deps `260bca75`
+- **docker**: implement multi-platform builds and optimization `b6b9ba14`
+- **mcp**: delegate project id derivation to octolib `6ee61f4a`
+- **compression**: use enforces_response_schema check `14825b62`
+- **session**: format debug_assert in compression logic `fba071b7`
+- **compression**: implement round-robin ratio selection `12de5c64`
+- **session**: simplify parallel tool call prompt `a92e4866`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: prevent EPIPE in fake server tests `465398f1`
+- **acp**: ensure deterministic shutdown on stdin EOF `903fbfd0`
+- **session**: improve tool result deduplication and cost logging `fabbed65`
+- **supervisor**: prevent leakage of echoed state placeholders `2232bf1a`
+- **supervisor**: improve self-report parsing and stripping `9b88440a`
+- **mcp**: prevent restart loop for failed servers `76eb378d`
+- **mcp**: stop exposing fallback tools for offline servers `42d4006f`
+- **mcp**: remove credentials from git remote URLs `05560b82`
+- **plan**: prevent orphaned tool calls during compression `e3ab7c7c`
+
+### 📚 Documentation & Examples
+
+- **readme**: correct developer agent command examples `d219e42e`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.30.0] - 2026-06-03
 
 ### 📋 Release Summary

@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
 		ca-certificates \
 		curl \
 		wget \
+		unzip \
 		ripgrep \
 		&& rm -rf /var/lib/apt/lists/* \
 		&& update-ca-certificates
@@ -48,21 +49,21 @@ RUN set -eu; \
 		rm /tmp/octomind.tar.gz
 
 # Install ast-grep (sg) from GitHub Releases
+# Release assets use the scheme: app-{target}.zip (gnu only — works on glibc base image)
 ARG AST_GREP_VERSION=0.38.6
 RUN set -eu; \
 		case "${TARGETARCH}" in \
-			amd64)  SG_TARGET="x86_64-unknown-linux-musl" ;; \
-			arm64)  SG_TARGET="aarch64-unknown-linux-musl" ;; \
+			amd64)  SG_TARGET="x86_64-unknown-linux-gnu" ;; \
+			arm64)  SG_TARGET="aarch64-unknown-linux-gnu" ;; \
 			*) echo "unsupported arch ${TARGETARCH}"; exit 1 ;; \
 		esac; \
-		ASSET="ast-grep-${AST_GREP_VERSION}-${SG_TARGET}.tar.gz"; \
-		URL="https://github.com/ast-grep/ast-grep/releases/download/${AST_GREP_VERSION}/${ASSET}"; \
+		URL="https://github.com/ast-grep/ast-grep/releases/download/${AST_GREP_VERSION}/app-${SG_TARGET}.zip"; \
 		echo "Downloading ${URL}"; \
-		curl -fsSL "${URL}" -o /tmp/ast-grep.tar.gz; \
-		tar xzf /tmp/ast-grep.tar.gz -C /tmp; \
-		mv /tmp/ast-grep /usr/local/bin/sg || mv /tmp/sg /usr/local/bin/sg || true; \
+		curl -fsSL "${URL}" -o /tmp/ast-grep.zip; \
+		unzip -q /tmp/ast-grep.zip sg -d /tmp/sg-bin; \
+		mv /tmp/sg-bin/sg /usr/local/bin/sg; \
 		chmod +x /usr/local/bin/sg; \
-		rm /tmp/ast-grep.tar.gz
+		rm -rf /tmp/ast-grep.zip /tmp/sg-bin
 
 # Install octocode via install script
 ENV OCTOCODE_INSTALL_DIR=/usr/local/bin

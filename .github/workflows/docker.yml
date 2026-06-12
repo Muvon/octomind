@@ -1,0 +1,41 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'Dockerfile'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'Dockerfile'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Docker image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-22.04-arm
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build image (syntax + layer validation)
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        platforms: ${{ matrix.platform }}
+        push: false
+        build-args: |
+          OCTOMIND_VERSION=0.0.0

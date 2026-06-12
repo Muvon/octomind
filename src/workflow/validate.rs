@@ -77,7 +77,7 @@ fn insert_unique(name: &str, names: &mut HashSet<String>) -> Result<()> {
 fn structural_check(step: &Step) -> Result<()> {
 	match step {
 		Step::Sequential(s) => {
-			validate_model(&s.name, &s.model)?;
+			validate_fields(s)?;
 			Ok(())
 		}
 		Step::Parallel(ParallelStep { name, run }) => {
@@ -85,7 +85,7 @@ fn structural_check(step: &Step) -> Result<()> {
 				bail!("parallel step '{}' must have at least 2 sub-steps", name);
 			}
 			for s in run {
-				validate_model(&s.name, &s.model)?;
+				validate_fields(s)?;
 			}
 			Ok(())
 		}
@@ -99,7 +99,7 @@ fn structural_check(step: &Step) -> Result<()> {
 				bail!("loop step '{}' must have at least 1 sub-step", name);
 			}
 			for s in run {
-				validate_model(&s.name, &s.model)?;
+				validate_fields(s)?;
 			}
 			let exit_when = match exit_when {
 				Some(c) => c,
@@ -161,19 +161,24 @@ fn structural_check(step: &Step) -> Result<()> {
 				}
 			}
 			for s in run {
-				validate_model(&s.name, &s.model)?;
+				validate_fields(s)?;
 			}
 			Ok(())
 		}
 	}
 }
 
-fn validate_model(step_name: &str, model: &Option<String>) -> Result<()> {
-	if let Some(m) = model {
+fn validate_fields(s: &Sequential) -> Result<()> {
+	if let Some(m) = &s.model {
 		if m.trim().is_empty() {
+			bail!("step '{}': model must not be empty when specified", s.name);
+		}
+	}
+	if let Some(w) = &s.workdir {
+		if w.trim().is_empty() {
 			bail!(
-				"step '{}': model must not be empty when specified",
-				step_name
+				"step '{}': workdir must not be empty when specified",
+				s.name
 			);
 		}
 	}

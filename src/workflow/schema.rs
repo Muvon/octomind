@@ -51,6 +51,11 @@ pub struct Sequential {
 	/// Optional model override forwarded as `--model` to the subprocess.
 	#[serde(default)]
 	pub model: Option<String>,
+	/// Optional working directory for the subprocess. Relative paths
+	/// resolve against the orchestrator's cwd at execution time.
+	/// None = inherit the orchestrator's cwd.
+	#[serde(default)]
+	pub workdir: Option<String>,
 }
 
 /// Pattern test against a step's output.

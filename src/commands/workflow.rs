@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `octomind workflow <file.toml>` — external workflow orchestrator CLI.
+//! `octomind workflow <name|file.toml>` — external workflow orchestrator CLI.
+//!
+//! Resolution mirrors `octomind run`: a bare NAME (e.g. `my-workflow`) is
+//! fetched from taps (`<tap>/workflows/<name>.toml`) and validated to use only
+//! public tap roles; an existing path / `*.toml` is loaded as a local file with
+//! no role restriction. With no argument, lists available tap workflows.
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use colored::Colorize;
+use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
+use octomind::agent::{registry, taps};
 use octomind::config::Config;
 use octomind::workflow::{
 	execute_workflow,
@@ -29,9 +36,10 @@ use octomind::workflow::{
 
 #[derive(Args, Debug)]
 pub struct WorkflowArgs {
-	/// Path to the workflow TOML file.
-	#[arg(value_name = "FILE")]
-	pub file: PathBuf,
+	/// Workflow to run: a tap workflow NAME (e.g. `my-workflow`, fetched from
+	/// taps) or a path to a local TOML file. Omit to list available tap workflows.
+	#[arg(value_name = "NAME")]
+	pub name: Option<String>,
 
 	/// Validate and print the execution plan to stdout without running any steps.
 	#[arg(long)]
@@ -45,16 +53,45 @@ pub struct WorkflowArgs {
 }
 
 pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
-	if !args.file.exists() {
-		bail!("workflow file not found: {}", args.file.display());
-	}
+	// No target → list available tap workflows (discovery).
+	let Some(target) = args.name.as_deref() else {
+		return list_workflows();
+	};
 
-	let raw = std::fs::read_to_string(&args.file)
-		.with_context(|| format!("failed to read {}", args.file.display()))?;
+	// Resolve source: an existing local file vs. a tap workflow name.
+	let path = PathBuf::from(target);
+	let (raw, from_tap) = if path.exists() {
+		let raw = std::fs::read_to_string(&path)
+			.with_context(|| format!("failed to read {}", path.display()))?;
+		(raw, false)
+	} else if looks_like_path(target) {
+		bail!("workflow file not found: {}", path.display());
+	} else {
+		let (raw, source_tap) = taps::fetch_workflow(target)
+			.with_context(|| format!("failed to fetch workflow '{target}' from taps"))?;
+		eprintln!(
+			"{} {} {} {}",
+			"workflow".bright_black(),
+			target.bright_cyan(),
+			"·".bright_black(),
+			format!("from {source_tap}").bright_black(),
+		);
+		(raw, true)
+	};
+
 	let wf: WorkflowDef =
-		toml::from_str(&raw).with_context(|| format!("failed to parse {}", args.file.display()))?;
+		toml::from_str(&raw).with_context(|| format!("failed to parse workflow '{target}'"))?;
 
 	validate::validate(&wf)?;
+
+	// Public workflows (fetched from taps) may only reference public tap roles.
+	if from_tap {
+		let public_roles: HashSet<String> = taps::list_agent_tags()
+			.context("failed to enumerate tap roles")?
+			.into_iter()
+			.collect();
+		validate::validate_public_roles(&wf, &public_roles)?;
+	}
 
 	if args.dry_run {
 		print_plan(&wf);
@@ -75,6 +112,48 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 	}
 
 	execute_workflow(&wf, &input, config, args.format.as_deref()).await?;
+	Ok(())
+}
+
+/// True when the argument is clearly meant as a filesystem path rather than a
+/// bare tap workflow name — contains a path separator or a `.toml` extension.
+fn looks_like_path(arg: &str) -> bool {
+	arg.contains('/') || arg.contains('\\') || arg.ends_with(".toml")
+}
+
+/// `octomind workflow` with no argument — list public workflows from taps.
+fn list_workflows() -> Result<()> {
+	let workflows =
+		registry::list_all_tap_workflows().context("failed to enumerate tap workflows")?;
+	if workflows.is_empty() {
+		println!(
+			"{}",
+			"No tap workflows installed. Add a tap with `octomind tap user/repo`.".bright_black()
+		);
+		return Ok(());
+	}
+	println!("{}", "available workflows".bright_black());
+	let name_width = workflows
+		.iter()
+		.map(|w| w.name.len())
+		.max()
+		.unwrap_or(0)
+		.min(40);
+	for w in &workflows {
+		// Pad the plain name before coloring so ANSI codes don't break alignment.
+		let padded = format!("{:<width$}", w.name, width = name_width);
+		let desc = if w.description.is_empty() {
+			String::new()
+		} else {
+			format!("  {}", w.description.bright_black())
+		};
+		println!(
+			"  {name}{desc}  {src}",
+			name = padded.bright_cyan(),
+			desc = desc,
+			src = format!("({})", w.source_tap).bright_black(),
+		);
+	}
 	Ok(())
 }
 

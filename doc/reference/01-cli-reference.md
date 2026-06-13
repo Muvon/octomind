@@ -275,14 +275,18 @@ Run a multi-step workflow defined in a TOML file.
 |------|-------|-------------|
 | `FILE` | | Path to workflow TOML file (required) |
 | `--dry-run` | | Validate and print the execution plan without running any steps |
+| `--format <FORMAT>` | | `jsonl` emits structured `assistant` (final result) + `cost` (aggregated totals) events to stdout |
 
-Reads input from stdin. **All** output — per-step assistant responses, progress, cost, and token stats — is
-written to **stderr**. **stdout** receives output only for `--dry-run` (the execution plan); the workflow itself
-produces no stdout result stream. To capture a step's text, consume stderr (e.g. `2>flow.log`). See
+Reads input from stdin. Per-step assistant responses, progress, cost, and token stats are written to **stderr**.
+By default **stdout** receives output only for `--dry-run` (the execution plan). With `--format jsonl`, stdout
+also receives one `{"type":"assistant",...}` line carrying the workflow's final result and one
+`{"type":"cost",...}` line with aggregated tokens/cost — the same event shapes `octomind run --format jsonl`
+emits (workflows have no single resumable session, so `session_id` is empty). See
 [Workflows](../usage/09-workflows.md).
 
 ```bash
 echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml
+echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml --format jsonl
 octomind workflow myflow.toml --dry-run
 ```
 

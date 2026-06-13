@@ -179,6 +179,8 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 			}));
 	}
 
+	append_local_server(&mut servers_data, &tools_by_server);
+
 	let json_output = serde_json::json!({
 		"subcommand": "info",
 		"servers": servers_data,
@@ -293,6 +295,8 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 				"parameters": func.parameters,
 			}));
 	}
+
+	append_local_server(&mut servers_data, &tools_by_server);
 
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Mcp {
@@ -464,6 +468,36 @@ async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResul
 			}),
 		},
 	)))
+}
+
+/// Synthesize a `local` server entry from the project-local `.agents/tools/*`
+/// scripts. They live in the tool map under a reserved synthetic name
+/// (`local_tool::SERVER_NAME`) and are never in `config.mcp.servers`, so
+/// without this they show up under "tools · local" but are invisible in the
+/// server status list. Rendered as a builtin (always running, no restarts).
+fn append_local_server(
+	servers_data: &mut Vec<serde_json::Value>,
+	tools_by_server: &std::collections::HashMap<String, Vec<serde_json::Value>>,
+) {
+	let server_name = crate::mcp::core::local_tool::SERVER_NAME;
+	let Some(local_tools) = tools_by_server.get(server_name) else {
+		return;
+	};
+	if local_tools.is_empty() {
+		return;
+	}
+	let tool_names: Vec<String> = local_tools
+		.iter()
+		.filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+		.collect();
+	servers_data.push(serde_json::json!({
+		"name": server_name,
+		"health": "running",
+		"connection_type": "builtin",
+		"tools": tool_names,
+		"restart_count": 0,
+		"consecutive_failures": 0,
+	}));
 }
 
 fn handle_mcp_invalid() -> Result<CommandResult> {

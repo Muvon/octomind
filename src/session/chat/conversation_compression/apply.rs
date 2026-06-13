@@ -31,11 +31,43 @@ use anyhow::Result;
 /// cycle's user-msg filter excludes these from `all_user_msgs`.
 const CONTINUATION_TAG_OPEN: &str = "<continuation>";
 
+/// Open/close tags for the `<task>` intent embedded in a continuation wrapper.
+const CONTINUATION_TASK_OPEN: &str = "<task>";
+const CONTINUATION_TASK_CLOSE: &str = "</task>";
+
+/// Placeholder used when a continuation wrapper carries no real user intent
+/// (points the model at the summary instead). Shared by the builder and the
+/// extractor so the two never drift.
+const CONTINUATION_FALLBACK_INTENT: &str = "see summary above for the active task";
+
 /// True if `content` is a synthetic continuation wrapper inserted by a
 /// prior compression cycle (not a real user ask). Mirrors the
 /// skill-message detection pattern used elsewhere in the session.
 pub(super) fn is_continuation_message(content: &str) -> bool {
 	content.trim_start().starts_with(CONTINUATION_TAG_OPEN)
+}
+
+/// Recover the `<task>…</task>` intent from a prior continuation wrapper.
+///
+/// A barren re-compaction (autonomous tool loop, no fresh user message in the
+/// drain range) leaves the active task living ONLY inside the previous cycle's
+/// continuation wrapper. Since that wrapper is excluded from `all_user_msgs`,
+/// without this the intent decays to the anchor/instructions. Extracting it
+/// here lets the active task propagate across compactions.
+///
+/// Returns None when `content` isn't a continuation wrapper, has no `<task>`,
+/// or carries only the synthetic fallback placeholder (no real intent).
+pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
+	if !is_continuation_message(content) {
+		return None;
+	}
+	let start = content.find(CONTINUATION_TASK_OPEN)? + CONTINUATION_TASK_OPEN.len();
+	let end = content[start..].find(CONTINUATION_TASK_CLOSE)? + start;
+	let task = content[start..end].trim();
+	if task.is_empty() || task == CONTINUATION_FALLBACK_INTENT {
+		return None;
+	}
+	Some(task.to_string())
 }
 
 /// Build the SOTA continuation wrapper for the trailing user turn after a
@@ -57,7 +89,7 @@ pub(super) fn is_continuation_message(content: &str) -> bool {
 /// </continuation>
 /// ```
 fn build_continuation_content(intent: Option<&str>) -> String {
-	let task_body = intent.unwrap_or("see summary above for the active task");
+	let task_body = intent.unwrap_or(CONTINUATION_FALLBACK_INTENT);
 	format!(
 		"<continuation>\n\
 		The conversation summary above is the complete record of prior work on this task — partial progress, decisions, and findings are all captured there. Resume from where the previous turn left off; do not restart or re-discover what is already established.\n\n\

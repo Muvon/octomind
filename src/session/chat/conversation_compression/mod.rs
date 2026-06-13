@@ -427,19 +427,35 @@ pub async fn check_and_compress_conversation(
 		.filter(user_msg_filter)
 		.collect();
 
-	// FALLBACK: if the drained range has no real user message (e.g. a long
-	// single-turn tool loop where the anchor at start_idx IS the user
-	// message), search backwards through the surviving prefix [..=start_idx]
-	// for the most recent one. This guarantees the continuation wrapper
-	// always gets real intent text and never falls back to a fabricated
-	// stub that overwrites the user's actual ask.
+	// FALLBACK: the drained range has no fresh real user message (e.g. a long
+	// autonomous tool loop, or a barren re-compaction after the last user ask
+	// was already folded into a continuation wrapper). Recover intent in order:
+	//   1. The most recent prior <continuation> wrapper's <task> — this is where
+	//      the active ask lives after it's been compacted once. Without this the
+	//      task DECAYS to the anchor and the model snaps back to the original
+	//      request across repeated compactions.
+	//   2. The most recent real user message in the surviving prefix
+	//      [..=start_idx] (covers a single-turn loop where the anchor IS the
+	//      user message).
 	let last_user_message: Option<crate::session::Message> = match all_user_msgs.last() {
 		Some(m) => Some((*m).clone()),
-		None => session.session.messages[..=start_idx]
+		None => session.session.messages[start_idx + 1..=end_idx]
 			.iter()
 			.rev()
-			.find(user_msg_filter)
-			.cloned(),
+			.find(|m| m.role == "user" && apply::is_continuation_message(&m.content))
+			.and_then(|m| apply::extract_continuation_task(&m.content))
+			.map(|task| crate::session::Message {
+				role: "user".to_string(),
+				content: task,
+				..Default::default()
+			})
+			.or_else(|| {
+				session.session.messages[..=start_idx]
+					.iter()
+					.rev()
+					.find(user_msg_filter)
+					.cloned()
+			}),
 	};
 
 	// USER TASKS: older real user requests, untruncated. The most recent

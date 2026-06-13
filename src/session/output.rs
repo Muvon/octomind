@@ -244,6 +244,7 @@ mod tests {
 		let msg = ServerMessage::Assistant(AssistantPayload {
 			content: "test".to_string(),
 			session_id: "session_123".to_string(),
+			step: None,
 		});
 
 		// Should not panic, should not output anything
@@ -256,6 +257,7 @@ mod tests {
 		let msg = ServerMessage::Assistant(AssistantPayload {
 			content: "test content".to_string(),
 			session_id: "session_123".to_string(),
+			step: None,
 		});
 
 		// Note: In real test, you'd capture stdout
@@ -271,6 +273,7 @@ mod tests {
 		let msg = ServerMessage::Assistant(AssistantPayload {
 			content: "test".to_string(),
 			session_id: "session_123".to_string(),
+			step: None,
 		});
 
 		sink.emit(msg);
@@ -293,6 +296,7 @@ mod tests {
 		let msg = ServerMessage::Assistant(AssistantPayload {
 			content: "test".to_string(),
 			session_id: "session_123".to_string(),
+			step: None,
 		});
 
 		// Should not panic when channel is closed

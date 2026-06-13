@@ -727,6 +727,7 @@ pub async fn process_response<S: OutputSink>(
 	params.emit(ServerMessage::Assistant(AssistantPayload {
 		content: current_content.clone(),
 		session_id: session_id.clone(),
+		step: None,
 	}));
 
 	handle_final_response(

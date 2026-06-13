@@ -886,6 +886,7 @@ fn forward_session_update_to_parent(update: &Value) {
 			crate::websocket::ServerMessage::Assistant(crate::websocket::AssistantPayload {
 				content: text.to_string(),
 				session_id,
+				step: None,
 			})
 		}
 		"agent_thought_chunk" => {

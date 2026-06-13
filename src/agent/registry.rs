@@ -391,6 +391,78 @@ pub fn list_all_tap_agents() -> Result<Vec<TapAgent>> {
 	Ok(out)
 }
 
+/// One public workflow enumerated from a tap. The invocable identifier is the
+/// file stem (what you pass to `octomind workflow <name>`); `description` comes
+/// from the workflow's top-level `description` field.
+#[derive(Debug, Clone)]
+pub struct TapWorkflow {
+	/// Invocable name = file stem of `<tap>/workflows/<name>.toml`.
+	pub name: String,
+	pub description: String,
+	/// Tap that provides this workflow (first-wins precedence).
+	pub source_tap: String,
+}
+
+/// Enumerate every public workflow installed across all configured taps.
+///
+/// Walks each tap's `workflows/` directory, reads `<name>.toml`, and extracts
+/// the top-level `description` field. First-tap-wins on duplicate names (same
+/// precedence as `taps::fetch_workflow`). Used to power `octomind workflow`
+/// (no arg) listing and shell completion.
+pub fn list_all_tap_workflows() -> Result<Vec<TapWorkflow>> {
+	let taps =
+		crate::agent::taps::get_taps().context("Failed to load taps for workflow enumeration")?;
+
+	let mut seen: HashSet<String> = HashSet::new();
+	let mut out: Vec<TapWorkflow> = Vec::new();
+
+	for tap in &taps {
+		let dir = match tap.workflows_dir() {
+			Ok(d) if d.is_dir() => d,
+			_ => continue,
+		};
+		let entries = match fs::read_dir(&dir) {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+		for entry in entries.flatten() {
+			let path = entry.path();
+			if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+				continue;
+			}
+			let name = match path.file_stem().and_then(|s| s.to_str()) {
+				Some(s) => s.to_string(),
+				None => continue,
+			};
+			if seen.contains(&name) {
+				continue;
+			}
+			let raw = match fs::read_to_string(&path) {
+				Ok(s) => s,
+				Err(_) => continue,
+			};
+			// Best-effort description; skip files that don't parse as TOML.
+			let description = match toml::from_str::<toml::Value>(&raw) {
+				Ok(v) => v
+					.get("description")
+					.and_then(|d| d.as_str())
+					.unwrap_or("")
+					.to_string(),
+				Err(_) => continue,
+			};
+			seen.insert(name.clone());
+			out.push(TapWorkflow {
+				name,
+				description,
+				source_tap: tap.name.clone(),
+			});
+		}
+	}
+
+	out.sort_by(|a, b| a.name.cmp(&b.name));
+	Ok(out)
+}
+
 /// A resolved capability — split across two files in the tap:
 ///
 /// - `<tap>/capabilities/<name>/config.toml` — capability-level metadata

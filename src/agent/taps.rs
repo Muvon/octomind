@@ -92,6 +92,11 @@ impl Tap {
 	pub fn skills_dir(&self) -> Result<PathBuf> {
 		Ok(self.local_dir()?.join("skills"))
 	}
+
+	/// Returns the workflows directory path for this tap.
+	pub fn workflows_dir(&self) -> Result<PathBuf> {
+		Ok(self.local_dir()?.join("workflows"))
+	}
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -267,6 +272,39 @@ pub fn list_agent_tags() -> Result<Vec<String>> {
 
 	tags.sort();
 	Ok(tags)
+}
+
+/// Fetch a public workflow definition by name from taps.
+///
+/// Reads `<tap>/workflows/<name>.toml`, first tap wins (user taps first,
+/// built-in default last). Auto-pulls GitHub taps (Homebrew-style) before
+/// reading so fetched workflows stay fresh — mirrors agent manifest fetch.
+///
+/// Returns `(raw_toml, source_tap_name)`.
+pub fn fetch_workflow(name: &str) -> Result<(String, String)> {
+	let taps = load_taps().context("Failed to load taps")?;
+	let mut errors: Vec<String> = Vec::new();
+	for tap in &taps {
+		let path = match tap.workflows_dir() {
+			Ok(d) => d.join(format!("{name}.toml")),
+			Err(_) => continue,
+		};
+		match fs::read_to_string(&path) {
+			Ok(content) => return Ok((content, tap.name.clone())),
+			Err(e) => errors.push(format!("  - {}: {}", tap.name, e)),
+		}
+	}
+	let detail = if errors.is_empty() {
+		"No taps configured".to_string()
+	} else {
+		errors.join("\n")
+	};
+	anyhow::bail!(
+		"Workflow '{}' not found in any tap (looked for workflows/{}.toml):\n{}",
+		name,
+		name,
+		detail
+	)
 }
 
 /// Add a tap. Clones from GitHub or creates a symlink for local taps.

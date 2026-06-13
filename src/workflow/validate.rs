@@ -277,3 +277,37 @@ pub fn var_regex() -> Regex {
 	// Allow word chars and dashes.
 	Regex::new(r"\{\{([A-Za-z_][A-Za-z0-9_\-]*)\}\}").expect("static regex")
 }
+
+/// Validate that every step role is a *public tap role* — a `category:variant`
+/// tag present in `public_roles` (built from `taps::list_agent_tags()`).
+///
+/// Applied to tap-fetched (public) workflows only: they may reference public
+/// roles installed via taps, never local config roles, so the workflow stays
+/// portable to anyone with the same taps. Local workflow files keep full
+/// freedom (they can use local roles).
+pub fn validate_public_roles(wf: &WorkflowDef, public_roles: &HashSet<String>) -> Result<()> {
+	for step in &wf.steps {
+		for s in step_sequentials(step) {
+			if !public_roles.contains(&s.role) {
+				bail!(
+					"step '{}': role '{}' is not a public tap role. \
+					 Public workflows may only use 'category:variant' roles available in taps \
+					 (run `octomind tap` to see installed taps).",
+					s.name,
+					s.role
+				);
+			}
+		}
+	}
+	Ok(())
+}
+
+/// All leaf `Sequential` steps reachable from a top-level step.
+fn step_sequentials(step: &Step) -> Vec<&Sequential> {
+	match step {
+		Step::Sequential(s) => vec![s],
+		Step::Parallel(p) => p.run.iter().collect(),
+		Step::Loop(l) => l.run.iter().collect(),
+		Step::Conditional(c) => c.run.iter().collect(),
+	}
+}

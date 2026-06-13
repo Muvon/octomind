@@ -36,6 +36,13 @@ pub fn execute(args: &CompleteArgs, config: &Config) -> Result<()> {
 				println!("{}", role.name);
 			}
 		}
+		"workflow" => {
+			// Public workflow names from all taps (cached locally, no network)
+			let workflows = octomind::agent::registry::list_all_tap_workflows().unwrap_or_default();
+			for w in &workflows {
+				println!("{}", w.name);
+			}
+		}
 		_ => {
 			// Unknown subcommand — emit nothing, let the shell fall back to file completion
 		}

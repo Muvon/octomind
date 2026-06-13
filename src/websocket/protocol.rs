@@ -105,6 +105,10 @@ impl ClientMessage {
 pub struct AssistantPayload {
 	pub content: String,
 	pub session_id: String,
+	/// Workflow step name this message originated from. Omitted for
+	/// single-session `run` output; set per step by `octomind workflow`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub step: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,6 +453,7 @@ mod tests {
 		let msg = ServerMessage::Assistant(AssistantPayload {
 			content: "Response".to_string(),
 			session_id: "sess_123".to_string(),
+			step: None,
 		});
 		let json = serde_json::to_string(&msg).unwrap();
 		assert!(json.contains("\"type\":\"assistant\""));

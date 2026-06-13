@@ -81,10 +81,13 @@ struct Executor {
 	markdown_enabled: bool,
 	/// Theme name from `config.markdown_theme` (parsed lazily).
 	markdown_theme: String,
+	/// `--format jsonl` — emit a per-step `assistant` event to stdout as each
+	/// step completes, plus an aggregated `cost` event at the end.
+	jsonl: bool,
 }
 
 impl Executor {
-	fn new(wf_name: String, config: &Config) -> Self {
+	fn new(wf_name: String, config: &Config, jsonl: bool) -> Self {
 		Self {
 			outputs: HashMap::new(),
 			session_ids: HashMap::new(),
@@ -96,6 +99,21 @@ impl Executor {
 			started: Instant::now(),
 			markdown_enabled: config.enable_markdown_rendering,
 			markdown_theme: config.markdown_theme.clone(),
+			jsonl,
+		}
+	}
+
+	/// Emit a completed step's result as a JSONL `assistant` event on stdout
+	/// when running with `--format jsonl`. Mirrors the per-step response the
+	/// human display writes to stderr, so machine consumers see each step's
+	/// outcome — not just the final one. `step` carries the step name.
+	fn emit_step(&self, name: &str, content: &str) {
+		if self.jsonl {
+			JsonlSink.emit(ServerMessage::Assistant(AssistantPayload {
+				content: content.to_string(),
+				session_id: String::new(),
+				step: Some(name.to_string()),
+			}));
 		}
 	}
 
@@ -251,6 +269,7 @@ impl Executor {
 					}
 					box_close_ok(&s.name.bright_white(), &fmt_stats(&stats));
 					print_response(&stats.output, self.markdown_enabled, &self.markdown_theme);
+					self.emit_step(&s.name, &stats.output);
 					self.totals.add(&stats);
 					return Ok(stats);
 				}
@@ -403,6 +422,7 @@ impl Executor {
 				eprintln!("{}", format!("── {name} ──").bright_black());
 				print_response(t, self.markdown_enabled, &self.markdown_theme);
 			}
+			self.emit_step(name, out);
 		}
 		eprintln!();
 		Ok(())
@@ -679,7 +699,7 @@ pub async fn execute(
 	format: Option<&str>,
 ) -> Result<()> {
 	let jsonl = matches!(format, Some("jsonl"));
-	let mut ex = Executor::new(wf.name.clone(), config);
+	let mut ex = Executor::new(wf.name.clone(), config, jsonl);
 
 	// In TTY mode, suppress the controlling terminal's keypress echo for
 	// the lifetime of the workflow so stray Enter / Ctrl-C presses don't
@@ -733,23 +753,12 @@ pub async fn execute(
 		b = bullet,
 	);
 
-	// In jsonl mode, emit structured events to stdout so callers (CI, the
-	// GitHub Action) can parse the final result and aggregated cost without
-	// scraping the human-readable stderr stream. There is no single resumable
-	// session for a workflow, so `session_id` is left empty.
+	// In jsonl mode, each step already emitted its own `assistant` event as it
+	// completed (so the final result is the last such event). Close the stream
+	// with one aggregated `cost` event. There is no single resumable session
+	// for a workflow, so `session_id` is left empty.
 	if jsonl {
-		let final_output = ex
-			.last_step
-			.as_ref()
-			.and_then(|n| ex.outputs.get(n))
-			.cloned()
-			.unwrap_or_default();
-		let sink = JsonlSink;
-		sink.emit(ServerMessage::Assistant(AssistantPayload {
-			content: final_output,
-			session_id: String::new(),
-		}));
-		sink.emit(ServerMessage::Cost(CostPayload {
+		JsonlSink.emit(ServerMessage::Cost(CostPayload {
 			session_tokens: ex.totals.tokens,
 			session_cost: ex.totals.cost,
 			input_tokens: ex.totals.input_tokens,

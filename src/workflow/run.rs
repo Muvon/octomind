@@ -32,6 +32,8 @@ use super::schema::{
 use super::validate;
 use crate::config::Config;
 use crate::session::chat::markdown::{is_markdown_content, MarkdownRenderer};
+use crate::session::{JsonlSink, OutputSink};
+use crate::websocket::{AssistantPayload, CostPayload, ServerMessage};
 
 /// Final summed totals printed once at the end.
 #[derive(Debug, Default, Clone, Copy)]
@@ -39,6 +41,8 @@ struct Totals {
 	duration: Duration,
 	cost: f64,
 	tokens: u64,
+	input_tokens: u64,
+	output_tokens: u64,
 	tools: u64,
 	tools_failed: u64,
 }
@@ -48,6 +52,8 @@ impl Totals {
 		self.duration += s.duration;
 		self.cost += s.cost;
 		self.tokens += s.total_tokens;
+		self.input_tokens += s.input_tokens;
+		self.output_tokens += s.output_tokens;
 		self.tools += s.tool_count;
 		self.tools_failed += s.tool_failed;
 	}
@@ -666,7 +672,13 @@ fn fmt_tools(count: u64, failed: u64) -> String {
 /// Each step's last assistant message is already printed (with markdown
 /// rendering when enabled) as it completes, so the workflow produces no
 /// stdout — callers consume per-step output from stderr instead.
-pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<()> {
+pub async fn execute(
+	wf: &WorkflowDef,
+	input: &str,
+	config: &Config,
+	format: Option<&str>,
+) -> Result<()> {
+	let jsonl = matches!(format, Some("jsonl"));
 	let mut ex = Executor::new(wf.name.clone(), config);
 
 	// In TTY mode, suppress the controlling terminal's keypress echo for
@@ -720,6 +732,34 @@ pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config) -> Result<(
 		tools = fmt_tools(ex.totals.tools, ex.totals.tools_failed),
 		b = bullet,
 	);
+
+	// In jsonl mode, emit structured events to stdout so callers (CI, the
+	// GitHub Action) can parse the final result and aggregated cost without
+	// scraping the human-readable stderr stream. There is no single resumable
+	// session for a workflow, so `session_id` is left empty.
+	if jsonl {
+		let final_output = ex
+			.last_step
+			.as_ref()
+			.and_then(|n| ex.outputs.get(n))
+			.cloned()
+			.unwrap_or_default();
+		let sink = JsonlSink;
+		sink.emit(ServerMessage::Assistant(AssistantPayload {
+			content: final_output,
+			session_id: String::new(),
+		}));
+		sink.emit(ServerMessage::Cost(CostPayload {
+			session_tokens: ex.totals.tokens,
+			session_cost: ex.totals.cost,
+			input_tokens: ex.totals.input_tokens,
+			output_tokens: ex.totals.output_tokens,
+			cache_read_tokens: 0,
+			cache_write_tokens: 0,
+			reasoning_tokens: 0,
+			session_id: String::new(),
+		}));
+	}
 
 	// Drop any keypresses the user typed during animation so they don't
 	// leak into the shell's input queue when control returns.

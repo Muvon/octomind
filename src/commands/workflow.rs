@@ -36,6 +36,12 @@ pub struct WorkflowArgs {
 	/// Validate and print the execution plan to stdout without running any steps.
 	#[arg(long)]
 	pub dry_run: bool,
+
+	/// Output format for the final result on stdout. With `jsonl`, emit
+	/// structured `assistant` (final result) and `cost` (aggregated totals)
+	/// events for machine parsing. Per-step progress always goes to stderr.
+	#[arg(long = "format")]
+	pub format: Option<String>,
 }
 
 pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
@@ -68,7 +74,7 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 		bail!("workflow requires input via stdin");
 	}
 
-	execute_workflow(&wf, &input, config).await?;
+	execute_workflow(&wf, &input, config, args.format.as_deref()).await?;
 	Ok(())
 }
 

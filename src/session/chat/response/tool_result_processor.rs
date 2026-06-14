@@ -104,7 +104,12 @@ pub async fn process_tool_results(
 				tool_result.tool_name,
 				raw_content.len()
 			);
-			crate::session::dedup::placeholder(&tool_result.tool_name, &raw_content)
+			// `raw_content` is post-truncation (the choke point ran upstream), so
+			// the tag marks a re-run of a truncated call — escalate the placeholder
+			// from "body elided" to a stop+narrow directive in that case.
+			let was_truncated =
+				raw_content.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG);
+			crate::session::dedup::placeholder(&tool_result.tool_name, &raw_content, was_truncated)
 		} else {
 			crate::session::dedup::record(&tool_result.tool_name, &raw_content);
 			raw_content
@@ -114,6 +119,7 @@ pub async fn process_tool_results(
 		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
 			&tool_content,
 			config.mcp_response_tokens_threshold,
+			&tool_result.tool_name,
 		);
 		// Truncation marker is rendered inline on each tool's close line in
 		// `display_tool_success` (e.g. `╰ ✓ view 55ms · 6.9K tokens · truncated

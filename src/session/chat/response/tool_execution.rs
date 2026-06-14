@@ -611,6 +611,7 @@ async fn handle_large_tool_results(
 			let (truncated, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
 				&content_str,
 				config.mcp_response_tokens_threshold,
+				&result.tool_name,
 			);
 			if was_truncated {
 				result.result =

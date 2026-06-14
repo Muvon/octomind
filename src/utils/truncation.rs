@@ -192,27 +192,6 @@ pub fn format_extracted_content_smart(
 	}
 }
 
-/// Truncate content based on token count with smart boundary detection
-///
-/// This is adapted from the shell module's truncation logic
-///
-/// # Arguments
-/// * `content` - The content to truncate
-/// * `max_tokens` - Maximum tokens allowed
-///
-/// # Returns
-/// Truncated content with clear indication if truncated
-pub fn truncate_content_smart(content: &str, max_tokens: usize) -> String {
-	let token_count = estimate_tokens(content);
-	if token_count <= max_tokens {
-		return content.to_string();
-	}
-	let truncated = crate::session::truncate_to_tokens(content, max_tokens);
-	format!(
-		"{truncated}\n\n[Content truncated - {token_count} tokens estimated, max {max_tokens} allowed. Use more specific commands to reduce output size]"
-	)
-}
-
 /// Simple line-based truncation for tool outputs
 ///
 /// This is adapted from the tool_display module's logic
@@ -251,14 +230,59 @@ pub fn truncate_tool_output_smart(content: &str, max_lines: usize, max_chars: us
 	}
 }
 
-/// Global MCP response truncation - simple and effective
+/// Sentinel marking an MCP tool response as truncated. Downstream code (the
+/// dedup escalation and the idempotency guard below) detects truncated content
+/// by this tag, so it MUST stay stable and distinctive.
+pub const TRUNCATION_NOTICE_TAG: &str = "⚠️ MCP RESPONSE TRUNCATED";
+
+/// Tool-specific, actionable advice for narrowing output when a response is
+/// truncated. The old generic tail ("use more specific commands") was ignored
+/// by the model; concrete per-tool knobs give it a deterministic next step
+/// instead of blindly re-running or tweaking arguments.
+pub fn truncation_hint(tool_name: &str) -> &'static str {
+	match tool_name {
+		"view" | "text_editor" | "read" | "extract_lines" => {
+			"request a specific line range (view_range / offset+limit) or a single symbol instead of the whole file"
+		}
+		"view_signatures" => "request fewer files — pass specific paths, one or a few at a time",
+		"shell" => {
+			"narrow the output: pipe through grep/head/tail, target a subpath, or redirect to a file and read ranges"
+		}
+		"list_files" | "workdir" => {
+			"target a specific subdirectory or add a name/glob filter instead of listing everything"
+		}
+		"ast_grep" => "tighten the pattern or restrict the search to a specific path",
+		name if name.contains("search") || name.contains("find") || name.contains("graphrag") => {
+			"use a more specific query and request fewer results"
+		}
+		_ => "narrow the request: target a specific subset, add a filter, or ask for fewer items",
+	}
+}
+
+/// Truncate an MCP tool response to fit within `max_tokens`.
 ///
-/// Applies consistent truncation across ALL MCP tools when responses exceed threshold.
-/// Uses 0 = unlimited, otherwise applies smart truncation with MCP-specific notice.
-/// Truncate MCP tool response content to fit within token limit.
-/// Returns `(content, was_truncated)` — callers should warn the user when `was_truncated` is true.
-pub fn truncate_mcp_response_global(content: &str, max_tokens: usize) -> (String, bool) {
+/// Truncation is NOT an error — the call succeeded and returned usable data, so
+/// the result stays a success. We keep the FIRST `max_tokens` tokens and append
+/// a prominent, actionable notice (recency: it sits right before the model's
+/// next turn). The notice states what was cut, the tool-specific way to get the
+/// rest, and that re-running with identical arguments returns the SAME output —
+/// the single biggest driver of truncation retry loops.
+///
+/// Returns `(content, was_truncated)`. `max_tokens == 0` disables truncation.
+pub fn truncate_mcp_response_global(
+	content: &str,
+	max_tokens: usize,
+	tool_name: &str,
+) -> (String, bool) {
 	if max_tokens == 0 {
+		return (content.to_string(), false);
+	}
+
+	// Idempotency guard: every executed result already flows through the single
+	// truncation choke point (`handle_large_tool_results`). Content carrying our
+	// tag was truncated there; re-truncating would chop the notice and report
+	// wrong token counts, so leave it untouched.
+	if content.contains(TRUNCATION_NOTICE_TAG) {
 		return (content.to_string(), false);
 	}
 
@@ -267,13 +291,15 @@ pub fn truncate_mcp_response_global(content: &str, max_tokens: usize) -> (String
 		return (content.to_string(), false);
 	}
 
-	// Use existing smart truncation and replace the marker with MCP-specific wording
-	let truncated = truncate_content_smart(content, max_tokens).replace(
-		"[Content truncated -",
-		"⚠️ **MCP RESPONSE TRUNCATED** - Original:",
+	let truncated = crate::session::truncate_to_tokens(content, max_tokens);
+	let omitted = token_count.saturating_sub(max_tokens);
+	let notice = format!(
+		"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). \
+Re-running this tool with the same arguments returns this SAME truncated output — do not repeat the call. To see the rest, {hint}.",
+		hint = truncation_hint(tool_name),
 	);
 
-	(truncated, true)
+	(format!("{truncated}{notice}"), true)
 }
 
 #[cfg(test)]
@@ -283,7 +309,7 @@ mod tests {
 	#[test]
 	fn test_mcp_truncation_unlimited() {
 		let content = "This is a test content";
-		let (result, was_truncated) = truncate_mcp_response_global(content, 0);
+		let (result, was_truncated) = truncate_mcp_response_global(content, 0, "view");
 		assert_eq!(result, content);
 		assert!(!was_truncated);
 	}
@@ -291,7 +317,7 @@ mod tests {
 	#[test]
 	fn test_mcp_truncation_under_limit() {
 		let content = "Short content";
-		let (result, was_truncated) = truncate_mcp_response_global(content, 1000);
+		let (result, was_truncated) = truncate_mcp_response_global(content, 1000, "view");
 		assert_eq!(result, content);
 		assert!(!was_truncated);
 	}
@@ -299,9 +325,23 @@ mod tests {
 	#[test]
 	fn test_mcp_truncation_over_limit() {
 		let content = "This is a very long content that should be truncated when it exceeds the token limit. ".repeat(100);
-		let (result, was_truncated) = truncate_mcp_response_global(&content, 50);
-		assert!(result.contains("⚠️ **MCP RESPONSE TRUNCATED**"));
+		let (result, was_truncated) = truncate_mcp_response_global(&content, 50, "shell");
+		assert!(result.contains(TRUNCATION_NOTICE_TAG));
+		// Notice carries the tool-specific hint (shell → grep/head/tail).
+		assert!(result.contains("grep"));
 		assert!(result.len() < content.len());
 		assert!(was_truncated);
+	}
+
+	#[test]
+	fn test_mcp_truncation_is_idempotent() {
+		// A result already truncated upstream carries the tag; re-truncating must
+		// leave it byte-for-byte intact (no double notice, no count corruption).
+		let content = "x ".repeat(1000);
+		let (once, t1) = truncate_mcp_response_global(&content, 50, "shell");
+		assert!(t1);
+		let (twice, t2) = truncate_mcp_response_global(&once, 50, "shell");
+		assert!(!t2);
+		assert_eq!(once, twice);
 	}
 }

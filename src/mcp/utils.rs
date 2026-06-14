@@ -71,6 +71,7 @@ pub fn tool_results_to_messages(
 		let (final_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
 			&content_str,
 			config.mcp_response_tokens_threshold,
+			&result.tool_name,
 		);
 		if was_truncated {
 			let is_terminal = crate::config::with_thread_config(|c| c.output_mode())

@@ -604,6 +604,7 @@ fn run_dynamic_agent_in_process(
 					let (tool_content, _) = crate::utils::truncation::truncate_mcp_response_global(
 						&raw_content,
 						agent_config.mcp_response_tokens_threshold,
+						&tool_result.tool_name,
 					);
 
 					conv_messages.push(Message {

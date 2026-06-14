@@ -107,7 +107,19 @@ fn snippet(line: &str) -> String {
 /// first and last non-empty lines so the model can tell WHICH earlier output
 /// this duplicates — and see its verdict (test/lint summaries end with the
 /// result line) — without re-paying for the full body.
-pub fn placeholder(tool_name: &str, content: &str) -> String {
+pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> String {
+	// A re-run of a call whose output was truncated is the classic retry loop:
+	// the model wants the part it could not see. Re-sending the (already
+	// truncated) body — or the neutral "body elided" placeholder — starves it
+	// and pushes it to tweak arguments and try again, which evades the
+	// supervisor's identical-result loop detector. Give a strong stop+narrow
+	// directive instead.
+	if was_truncated {
+		return format!(
+			"[`{tool_name}` already returned this TRUNCATED output earlier in this session — re-running with the same arguments yields the same truncated result, not more. Do not repeat it; to get the rest, {hint}.]",
+			hint = crate::utils::truncation::truncation_hint(tool_name),
+		);
+	}
 	let first = content
 		.lines()
 		.find(|l| !l.trim().is_empty())
@@ -169,7 +181,7 @@ mod tests {
 
 	#[test]
 	fn placeholder_includes_tool_name_and_snippets() {
-		let s = placeholder("view", "first line\nmiddle\n[OK] No errors\n");
+		let s = placeholder("view", "first line\nmiddle\n[OK] No errors\n", false);
 		assert!(s.contains("view"));
 		assert!(s.contains("duplicate"));
 		assert!(s.contains("first line"));
@@ -178,8 +190,20 @@ mod tests {
 
 	#[test]
 	fn placeholder_single_line_quotes_it_once() {
-		let s = placeholder("view", "only line\n");
+		let s = placeholder("view", "only line\n", false);
 		assert_eq!(s.matches("only line").count(), 1);
+	}
+
+	#[test]
+	fn placeholder_truncated_repeat_is_a_stop_directive() {
+		// A truncated repeat must NOT echo the body; it must tell the model to
+		// stop re-running and how to narrow instead.
+		let s = placeholder("shell", "huge output that was truncated\n", true);
+		assert!(s.contains("shell"));
+		assert!(s.contains("TRUNCATED"));
+		assert!(s.contains("Do not repeat"));
+		assert!(s.contains("grep")); // shell-specific narrowing hint
+		assert!(!s.contains("huge output")); // body is not echoed
 	}
 
 	#[test]

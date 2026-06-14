@@ -149,11 +149,11 @@ An unknown `{{var}}` is left **untouched** in this pass so the next pass can cla
 | `{{GIT_TREE}}`   | Git-tracked file tree                                   |
 | `{{README}}`     | Project README contents                                 |
 
-> **Caveat — built-in placeholders are rejected by pre-flight validation today.** Validation (run for every workflow, including `--dry-run`, in `src/workflow/validate.rs`) flags **any** `{{var}}` that is not `{{input}}` or a declared step name as an *unknown variable* and aborts before the step runs. The built-ins above are not step names, so a step prompt that contains one (e.g. `{{DATE}}`) fails validation and never reaches this expansion pass. In practice, only `{{input}}` and `{{step_name}}` references are usable in workflow step prompts; put date/context information into the step prompt text directly instead.
+> Built-in placeholders are recognized by pre-flight validation (`src/workflow/validate.rs`) and pass through to this expansion pass. Only genuinely unknown `{{var}}` references — not `{{input}}`, a declared step name, or a built-in above — are rejected as *unknown variable* before the step runs.
 
 **Pass 3 — context file inlining.** Any `<context>path</context>` or `<context>path:start:end</context>` block is replaced with the named file's contents rendered as XML (the same file-context path chat uses). Use `path:start:end` to inline only a line range. Because this runs on every step prompt, a step can also emit a `<context>...</context>` block in *its own* response and the next step that interpolates `{{that_step}}` will receive the file inlined.
 
-Forward references (`{{later}}` from an earlier step) are rejected at pre-flight validation — which rejects **any** `{{var}}` that is not `{{input}}` or an already-defined step name (see the caveat above). Step names must be unique across the entire file, including all sub-steps. `<context>` blocks use angle brackets rather than `{{ }}`, so they are not treated as variable references.
+Forward references (`{{later}}` from an earlier step) are rejected at pre-flight validation — which rejects **any** `{{var}}` that is not `{{input}}`, a built-in placeholder, or an already-defined step name. Step names must be unique across the entire file, including all sub-steps. `<context>` blocks use angle brackets rather than `{{ }}`, so they are not treated as variable references.
 
 ## Step types
 
@@ -253,7 +253,7 @@ Pre-flight checks (all hard-fail before any step runs):
 - File exists, valid TOML.
 - Step names unique across the whole file.
 - `'input'` is reserved (you can't name a step `input`).
-- Every `{{var}}` references either `input` or a step that completes before the referencing step.
+- Every `{{var}}` references either `input`, a built-in placeholder (`{{DATE}}`, `{{CWD}}`, `{{CONTEXT}}`, `{{GIT_STATUS}}`, …), or a step that completes before the referencing step.
 - A `parallel` step has at least 2 sub-steps; `loop` has ≥1 sub-step + `exit_when`; `conditional` has `condition` and at least one of `on_match` / `on_no_match`.
 - Regex patterns in `matches` compile.
 - `model`, when specified on any step, must not be an empty string.

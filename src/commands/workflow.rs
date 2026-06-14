@@ -162,6 +162,9 @@ fn print_plan(wf: &WorkflowDef) {
 	if let Some(desc) = &wf.description {
 		println!("  {} {}", "description:".bright_black(), desc);
 	}
+	if let Some(cap) = wf.max_cost {
+		println!("  {} ${cap:.4}", "max_cost:".bright_black());
+	}
 	println!();
 
 	for (i, step) in wf.steps.iter().enumerate() {

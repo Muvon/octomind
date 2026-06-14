@@ -24,6 +24,12 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 		bail!("workflow has no steps");
 	}
 
+	if let Some(cap) = wf.max_cost {
+		if !cap.is_finite() || cap <= 0.0 {
+			bail!("max_cost must be a positive number (got {cap})");
+		}
+	}
+
 	// Collect names + uniqueness check (recurses into sub-steps).
 	let mut all_names: HashSet<String> = HashSet::new();
 	for step in &wf.steps {
@@ -370,6 +376,33 @@ mod tests {
 		);
 		let err = validate(&wf).expect_err("unknown variable must fail");
 		assert!(err.to_string().contains("nope"), "got: {err}");
+	}
+
+	#[test]
+	fn max_cost_must_be_positive() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			max_cost = 0.0
+			[[steps]]
+			name = "s1"
+			role = "developer:general"
+			prompt = "{{input}}"
+			"#,
+		);
+		assert!(validate(&wf).is_err(), "zero max_cost must fail");
+
+		let ok = parse(
+			r#"
+			name = "wf"
+			max_cost = 1.5
+			[[steps]]
+			name = "s1"
+			role = "developer:general"
+			prompt = "{{input}}"
+			"#,
+		);
+		validate(&ok).expect("positive max_cost should pass");
 	}
 
 	#[test]

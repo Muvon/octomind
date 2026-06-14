@@ -84,10 +84,12 @@ struct Executor {
 	/// `--format jsonl` — emit a per-step `assistant` event to stdout as each
 	/// step completes, plus an aggregated `cost` event at the end.
 	jsonl: bool,
+	/// Optional hard spending cap (USD) for the whole workflow. None = no cap.
+	max_cost: Option<f64>,
 }
 
 impl Executor {
-	fn new(wf_name: String, config: &Config, jsonl: bool) -> Self {
+	fn new(wf_name: String, config: &Config, jsonl: bool, max_cost: Option<f64>) -> Self {
 		Self {
 			outputs: HashMap::new(),
 			session_ids: HashMap::new(),
@@ -100,7 +102,27 @@ impl Executor {
 			markdown_enabled: config.enable_markdown_rendering,
 			markdown_theme: config.markdown_theme.clone(),
 			jsonl,
+			max_cost,
 		}
+	}
+
+	/// Abort the workflow when the accumulated cost has crossed `max_cost`.
+	/// Called after a step's cost is folded into `totals` so the cap stops
+	/// spend before the NEXT step runs — the responsive guard a runaway loop
+	/// needs (per-session caps reset every subprocess and can't bound the
+	/// aggregate). `after_step` names the step that pushed it over.
+	fn enforce_budget(&self, after_step: &str) -> Result<()> {
+		if let Some(cap) = self.max_cost {
+			if self.totals.cost > cap {
+				bail!(
+					"workflow cost budget exceeded: spent ${:.4} exceeds max_cost ${:.4} (stopped after step '{}')",
+					self.totals.cost,
+					cap,
+					after_step,
+				);
+			}
+		}
+		Ok(())
 	}
 
 	/// Emit a completed step's result as a JSONL `assistant` event on stdout
@@ -277,6 +299,7 @@ impl Executor {
 					print_response(&stats.output, self.markdown_enabled, &self.markdown_theme);
 					self.emit_step(&s.name, &stats.output);
 					self.totals.add(&stats);
+					self.enforce_budget(&s.name)?;
 					return Ok(stats);
 				}
 				RunOutcome::Empty(stats) => {
@@ -431,6 +454,7 @@ impl Executor {
 			self.emit_step(name, out);
 		}
 		eprintln!();
+		self.enforce_budget(&p.name)?;
 		Ok(())
 	}
 
@@ -705,7 +729,7 @@ pub async fn execute(
 	format: Option<&str>,
 ) -> Result<()> {
 	let jsonl = matches!(format, Some("jsonl"));
-	let mut ex = Executor::new(wf.name.clone(), config, jsonl);
+	let mut ex = Executor::new(wf.name.clone(), config, jsonl, wf.max_cost);
 
 	// In TTY mode, suppress the controlling terminal's keypress echo for
 	// the lifetime of the workflow so stray Enter / Ctrl-C presses don't

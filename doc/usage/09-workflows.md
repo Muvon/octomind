@@ -40,6 +40,7 @@ octomind workflow myflow.toml --dry-run
 ```toml
 name        = "my-workflow"
 description = "Optional human description"
+max_cost    = 5.00              # optional USD cap for the whole run (abort if exceeded)
 
 # ── Sequential step (the default) ─────────────────────────────────────
 [[steps]]
@@ -199,6 +200,21 @@ Omitting `output` in the `condition` tests the most recently completed step. If 
 
 Each step owns its own session ID. In a loop, `developer` and `tester` accumulate independent histories. The generated session name has the form `wf-<sanitized-workflow-name>-<step-name>-<short-uuid>` (workflow name sanitized to ASCII alphanumerics and `-`; short-uuid is the first segment of a UUIDv4). These sessions are ephemeral to one `octomind workflow` invocation and are not reused across runs.
 
+## Cost budget (`max_cost`)
+
+Each step is a separate `octomind run` subprocess with its **own** session, so any per-request / per-session spending cap from your config resets on every step. A loop that runs 2 steps for 10 iterations can therefore spend up to ~20× a per-session cap. `max_cost` adds a single hard ceiling for the **entire** workflow:
+
+```toml
+name     = "gan"
+max_cost = 2.50    # USD; abort the workflow once total spend exceeds this
+```
+
+- Optional top-level field. Omit it for no cap (default).
+- Must be a positive number — validated pre-flight (`--dry-run` shows it in the plan).
+- The check runs **after each step's cost is added to the running total**, so it stops spend *before the next step* — including between loop iterations and after a parallel block. The step that crossed the line still completes; the workflow then exits non-zero with:
+  `workflow cost budget exceeded: spent $<x> exceeds max_cost $<cap> (stopped after step '<name>')`.
+- This is the workflow-level analogue of the per-session spending thresholds (see [Cost as a Control Plane](../../README.md#pillar-3--cost-as-a-control-plane)).
+
 ## Retries and timeouts
 
 - `retries = N` — up to N additional attempts on failure (default 0 ≙ one attempt).
@@ -257,6 +273,7 @@ Pre-flight checks (all hard-fail before any step runs):
 - A `parallel` step has at least 2 sub-steps; `loop` has ≥1 sub-step + `exit_when`; `conditional` has `condition` and at least one of `on_match` / `on_no_match`.
 - Regex patterns in `matches` compile.
 - `model`, when specified on any step, must not be an empty string.
+- `max_cost`, when set, is a positive finite number.
 
 ## End-to-end example
 

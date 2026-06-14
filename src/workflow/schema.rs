@@ -22,6 +22,12 @@ pub struct WorkflowDef {
 	pub name: String,
 	#[serde(default)]
 	pub description: Option<String>,
+	/// Optional hard spending cap (USD) for the whole workflow. Once the summed
+	/// cost across completed steps exceeds this, the workflow aborts before the
+	/// next step — bounds runaway loops where per-session caps reset each step.
+	/// None = no cap.
+	#[serde(default)]
+	pub max_cost: Option<f64>,
 	#[serde(default)]
 	pub steps: Vec<Step>,
 }

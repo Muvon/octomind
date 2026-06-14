@@ -258,17 +258,38 @@ fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 	Ok(())
 }
 
+/// Built-in placeholders expanded at run time by
+/// `helper_functions::process_placeholders_async` (pass 2 of step prompt
+/// substitution). They are not step outputs, so reference-checking must treat
+/// them as always-available — otherwise a prompt using `{{CONTEXT}}` etc. fails
+/// pre-flight and never reaches the expansion pass. Keep in sync with that
+/// function's `needs_*` checks (the source of truth).
+const BUILTIN_PLACEHOLDERS: &[&str] = &[
+	"DATE",
+	"SHELL",
+	"OS",
+	"BINARIES",
+	"CWD",
+	"ROLE",
+	"SYSTEM",
+	"CONTEXT",
+	"GIT_STATUS",
+	"GIT_TREE",
+	"README",
+];
+
 fn check_refs(step_name: &str, prompt: &str, available: &HashSet<String>) -> Result<()> {
 	let re = var_regex();
 	for cap in re.captures_iter(prompt) {
 		let var = &cap[1];
-		if !available.contains(var) {
-			bail!(
-				"step '{}' references unknown variable '{{{{{}}}}}",
-				step_name,
-				var
-			);
+		if BUILTIN_PLACEHOLDERS.contains(&var) || available.contains(var) {
+			continue;
 		}
+		bail!(
+			"step '{}' references unknown variable '{{{{{}}}}}",
+			step_name,
+			var
+		);
 	}
 	Ok(())
 }
@@ -309,5 +330,63 @@ fn step_sequentials(step: &Step) -> Vec<&Sequential> {
 		Step::Parallel(p) => p.run.iter().collect(),
 		Step::Loop(l) => l.run.iter().collect(),
 		Step::Conditional(c) => c.run.iter().collect(),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn parse(toml_src: &str) -> WorkflowDef {
+		toml::from_str(toml_src).expect("valid TOML")
+	}
+
+	#[test]
+	fn builtin_placeholders_pass_validation() {
+		// Built-ins are expanded at run time, not step outputs — they must not
+		// be rejected as unknown variables.
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "s1"
+			role = "developer:general"
+			prompt = "Today is {{DATE}} in {{CWD}}. Context:\n{{CONTEXT}}\n\nRequest: {{input}}"
+			"#,
+		);
+		validate(&wf).expect("built-in placeholders should validate");
+	}
+
+	#[test]
+	fn genuinely_unknown_variable_still_fails() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "s1"
+			role = "developer:general"
+			prompt = "Hello {{nope}}"
+			"#,
+		);
+		let err = validate(&wf).expect_err("unknown variable must fail");
+		assert!(err.to_string().contains("nope"), "got: {err}");
+	}
+
+	#[test]
+	fn step_output_reference_resolves() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "spec"
+			role = "developer:general"
+			prompt = "{{input}}"
+			[[steps]]
+			name = "build"
+			role = "developer:general"
+			prompt = "Build {{spec}} on {{DATE}}"
+			"#,
+		);
+		validate(&wf).expect("forward-valid step reference + built-in should pass");
 	}
 }

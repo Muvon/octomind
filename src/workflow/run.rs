@@ -123,7 +123,7 @@ impl Executor {
 	/// 1. Workflow-specific `{{var}}` — `{{input}}` and prior step names
 	///    from `self.outputs`. Unknown `{{var}}` are preserved literally
 	///    so the next pass can claim its built-ins.
-	/// 2. `process_placeholders_async` — the canonical chat helper that
+	/// 2. `process_placeholders_async_with_role` — the canonical chat helper that
 	///    expands `{{DATE}} {{CWD}} {{SHELL}} {{OS}} {{BINARIES}}
 	///    {{ROLE}} {{SYSTEM}} {{CONTEXT}} {{GIT_STATUS}} {{GIT_TREE}}
 	///    {{README}}`.
@@ -132,7 +132,7 @@ impl Executor {
 	///    file contents rendered as XML, same as chat's compression /
 	///    file-context path. Lets a step emit a context block in its
 	///    response and have the next step receive the inlined file.
-	async fn substitute(&self, prompt: &str, input: &str) -> String {
+	async fn substitute(&self, prompt: &str, input: &str, role: &str) -> String {
 		let re = validate::var_regex();
 		let after_wf = re
 			.replace_all(prompt, |caps: &regex::Captures| {
@@ -148,9 +148,15 @@ impl Executor {
 			.into_owned();
 
 		let project_dir = crate::mcp::get_thread_working_directory();
+		// Pass the step's role so `{{ROLE}}` resolves to the actual role rather
+		// than "unknown" — the step subprocess runs under this role.
 		let after_placeholders =
-			crate::session::helper_functions::process_placeholders_async(&after_wf, &project_dir)
-				.await;
+			crate::session::helper_functions::process_placeholders_async_with_role(
+				&after_wf,
+				&project_dir,
+				Some(role),
+			)
+			.await;
 		crate::utils::file_renderer::expand_context_blocks(&after_placeholders)
 	}
 
@@ -166,7 +172,7 @@ impl Executor {
 		input: &str,
 		header_suffix: &str,
 	) -> Result<StepStats> {
-		let templated_prompt = self.substitute(&s.prompt, input).await;
+		let templated_prompt = self.substitute(&s.prompt, input, &s.role).await;
 		let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
 		let max_attempts = s.retries + 1;
 		let mut last_err: Option<String> = None;
@@ -321,7 +327,7 @@ impl Executor {
 		let mut prepared: Vec<(Sequential, String, Option<PathBuf>)> =
 			Vec::with_capacity(p.run.len());
 		for s in &p.run {
-			let resolved = self.substitute(&s.prompt, input).await;
+			let resolved = self.substitute(&s.prompt, input, &s.role).await;
 			let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
 			prepared.push((s.clone(), resolved, workdir));
 		}

@@ -629,11 +629,15 @@ fn continue_delta(base: &mut StepStats, current: &StepStats) -> StepStats {
 		input_tokens: current.input_tokens.saturating_sub(base.input_tokens),
 		output_tokens: current.output_tokens.saturating_sub(base.output_tokens),
 		total_tokens: current.total_tokens.saturating_sub(base.total_tokens),
-		cache_read_tokens: current.cache_read_tokens.saturating_sub(base.cache_read_tokens),
+		cache_read_tokens: current
+			.cache_read_tokens
+			.saturating_sub(base.cache_read_tokens),
 		cache_write_tokens: current
 			.cache_write_tokens
 			.saturating_sub(base.cache_write_tokens),
-		reasoning_tokens: current.reasoning_tokens.saturating_sub(base.reasoning_tokens),
+		reasoning_tokens: current
+			.reasoning_tokens
+			.saturating_sub(base.reasoning_tokens),
 		tool_count: current.tool_count,
 		tool_failed: current.tool_failed,
 	};

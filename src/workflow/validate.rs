@@ -84,14 +84,37 @@ fn structural_check(step: &Step) -> Result<()> {
 	match step {
 		Step::Sequential(s) => {
 			validate_fields(s)?;
+			reject_expansion(s)?;
 			Ok(())
 		}
-		Step::Parallel(ParallelStep { name, run }) => {
+		Step::Parallel(ParallelStep {
+			name,
+			run,
+			min_success,
+			max_parallel,
+		}) => {
 			if run.len() < 2 {
 				bail!("parallel step '{}' must have at least 2 sub-steps", name);
 			}
 			for s in run {
 				validate_fields(s)?;
+				validate_expansion(s)?;
+			}
+			let total: u32 = run.iter().map(|s| s.replica_count()).sum();
+			if let Some(m) = min_success {
+				if *m == 0 || *m > total {
+					bail!(
+						"parallel step '{}': min_success {} must be between 1 and {} (total replicas)",
+						name,
+						m,
+						total
+					);
+				}
+			}
+			if let Some(mp) = max_parallel {
+				if *mp == 0 {
+					bail!("parallel step '{}': max_parallel must be >= 1", name);
+				}
 			}
 			Ok(())
 		}
@@ -106,6 +129,7 @@ fn structural_check(step: &Step) -> Result<()> {
 			}
 			for s in run {
 				validate_fields(s)?;
+				reject_expansion(s)?;
 			}
 			let exit_when = match exit_when {
 				Some(c) => c,
@@ -168,6 +192,7 @@ fn structural_check(step: &Step) -> Result<()> {
 			}
 			for s in run {
 				validate_fields(s)?;
+				reject_expansion(s)?;
 			}
 			Ok(())
 		}
@@ -184,6 +209,32 @@ fn validate_fields(s: &Sequential) -> Result<()> {
 		if w.trim().is_empty() {
 			bail!(
 				"step '{}': workdir must not be empty when specified",
+				s.name
+			);
+		}
+	}
+	Ok(())
+}
+
+/// `count` fans a sub-step into replicas — only meaningful inside a parallel
+/// block. Reject it anywhere else so the config fails loudly rather than
+/// silently ignoring the field.
+fn reject_expansion(s: &Sequential) -> Result<()> {
+	if s.count.is_some() {
+		bail!(
+			"step '{}': 'count' is only valid on parallel sub-steps",
+			s.name
+		);
+	}
+	Ok(())
+}
+
+/// Validate the `count` fan-out field on a parallel sub-step.
+fn validate_expansion(s: &Sequential) -> Result<()> {
+	if let Some(c) = s.count {
+		if c < 2 {
+			bail!(
+				"step '{}': count must be >= 2 (omit it for a single run)",
 				s.name
 			);
 		}
@@ -403,6 +454,123 @@ mod tests {
 			"#,
 		);
 		validate(&ok).expect("positive max_cost should pass");
+	}
+
+	#[test]
+	fn count_sweep_in_parallel_validates() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "candidates"
+			parallel = true
+			min_success = 2
+			  [[steps.run]]
+			  name = "candidate"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  count = 3
+			  [[steps.run]]
+			  name = "other"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			"#,
+		);
+		validate(&wf).expect("count sweep + min_success in range should pass");
+	}
+
+	#[test]
+	fn expansion_fields_rejected_outside_parallel() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "s1"
+			role = "developer:general"
+			prompt = "{{input}}"
+			count = 3
+			"#,
+		);
+		let err = validate(&wf).expect_err("count on a sequential step must fail");
+		assert!(
+			err.to_string().contains("only valid on parallel"),
+			"got: {err}"
+		);
+	}
+
+	#[test]
+	fn count_below_two_fails() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "p"
+			parallel = true
+			  [[steps.run]]
+			  name = "a"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  count = 1
+			  [[steps.run]]
+			  name = "b"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			"#,
+		);
+		assert!(validate(&wf).is_err(), "count = 1 must fail");
+	}
+
+	#[test]
+	fn min_success_out_of_range_fails() {
+		// One sub-step with count = 2 + one plain sub-step = 3 total replicas.
+		// min_success = 4 exceeds that.
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "p"
+			parallel = true
+			min_success = 4
+			  [[steps.run]]
+			  name = "a"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  count = 2
+			  [[steps.run]]
+			  name = "b"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			"#,
+		);
+		let err = validate(&wf).expect_err("min_success > total replicas must fail");
+		assert!(err.to_string().contains("min_success"), "got: {err}");
+	}
+
+	#[test]
+	fn parallel_block_name_reference_resolves() {
+		// The parallel block's own name is referenceable downstream (it now
+		// aggregates every sub-step's output at runtime).
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "candidates"
+			parallel = true
+			  [[steps.run]]
+			  name = "a"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  [[steps.run]]
+			  name = "b"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			[[steps]]
+			name = "judge"
+			role = "developer:general"
+			prompt = "Pick best:\n{{candidates}}"
+			"#,
+		);
+		validate(&wf).expect("reference to parallel block name should validate");
 	}
 
 	#[test]

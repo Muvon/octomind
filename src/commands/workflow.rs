@@ -197,14 +197,23 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 			println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 		}
 		Step::Parallel(p) => {
+			let kind = if p.match_pattern.is_some() {
+				"[parallel · dynamic]"
+			} else {
+				"[parallel]"
+			};
 			println!(
 				"{indent}{idx}. {name}  {kind}",
 				idx = idx,
 				name = p.name.bright_white(),
-				kind = "[parallel]".bright_magenta(),
+				kind = kind.bright_magenta(),
 			);
-			let total: u32 = p.run.iter().map(|s| s.replica_count()).sum();
-			let mut meta = format!("sub-steps={}  total_runs={total}", p.run.len());
+			let mut meta = if let Some(pat) = &p.match_pattern {
+				format!("match={pat:?}  runs=per-match (over previous step)")
+			} else {
+				let total: u32 = p.run.iter().map(|s| s.replica_count()).sum();
+				format!("sub-steps={}  total_runs={total}", p.run.len())
+			};
 			if let Some(m) = p.min_success {
 				meta = format!("{meta}  min_success={m}");
 			}

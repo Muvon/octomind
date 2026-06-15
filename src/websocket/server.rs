@@ -417,6 +417,8 @@ fn spawn_ws_inbox_monitor(
 						continue;
 					}
 
+					// Per-request spending boundary (see handle_user_message).
+					chat_session.start_request_spending_tracking();
 					if let Err(e) =
 						prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone())
 							.await
@@ -909,6 +911,8 @@ async fn handle_user_message(
 			.await?;
 			chat_session.add_user_message(&inbox_msg.content)?;
 			let op_rx = cancellation.new_operation();
+			// Per-request spending boundary (see handle_user_message).
+			chat_session.start_request_spending_tracking();
 			prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await?;
 			let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 			let sink = WebSocketSink::new(tx);
@@ -964,6 +968,11 @@ async fn handle_user_message(
 			&current_dir,
 		);
 	chat_session.add_user_message(&final_input_with_constraints)?;
+
+	// Reset the per-request spending checkpoint at the request boundary, like the
+	// interactive loop (main_loop.rs) — otherwise max_request_spending_threshold
+	// measures cost since session start and silently degrades into a session cap.
+	chat_session.start_request_spending_tracking();
 
 	// Prepare for API call
 	prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await?;

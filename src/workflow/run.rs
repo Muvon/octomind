@@ -43,6 +43,9 @@ struct Totals {
 	tokens: u64,
 	input_tokens: u64,
 	output_tokens: u64,
+	cache_read_tokens: u64,
+	cache_write_tokens: u64,
+	reasoning_tokens: u64,
 	tools: u64,
 	tools_failed: u64,
 }
@@ -54,6 +57,9 @@ impl Totals {
 		self.tokens += s.total_tokens;
 		self.input_tokens += s.input_tokens;
 		self.output_tokens += s.output_tokens;
+		self.cache_read_tokens += s.cache_read_tokens;
+		self.cache_write_tokens += s.cache_write_tokens;
+		self.reasoning_tokens += s.reasoning_tokens;
 		self.tools += s.tool_count;
 		self.tools_failed += s.tool_failed;
 	}
@@ -86,6 +92,11 @@ struct Executor {
 	jsonl: bool,
 	/// Optional hard spending cap (USD) for the whole workflow. None = no cap.
 	max_cost: Option<f64>,
+	/// Last cumulative stats snapshot per `session = "continue"` step (keyed by
+	/// step name, same key as `session_ids`). Used to fold per-invocation deltas
+	/// so a resumed session's cumulative cost/tokens aren't re-counted every
+	/// loop iteration / retry. Fresh and parallel steps never populate this.
+	cost_baseline: HashMap<String, StepStats>,
 }
 
 impl Executor {
@@ -103,7 +114,26 @@ impl Executor {
 			markdown_theme: config.markdown_theme.clone(),
 			jsonl,
 			max_cost,
+			cost_baseline: HashMap::new(),
 		}
+	}
+
+	/// Fold a step's reported stats into per-step deltas for accurate totals.
+	///
+	/// `octomind run --format jsonl` reports CUMULATIVE session figures (cost +
+	/// all token counts). A `continue` session resumed across loop iterations or
+	/// retries therefore re-reports the running total every invocation; summing
+	/// those raw would over-count quadratically and trip `max_cost` far too
+	/// early. For continue steps we subtract the per-step baseline (then advance
+	/// it), yielding just this turn's spend. Fresh steps are a brand-new session
+	/// each time and are returned unchanged. `tool_count`/`tool_failed`/
+	/// `duration` are per-invocation and never folded.
+	fn fold_stats(&mut self, step_name: &str, mode: SessionMode, stats: &StepStats) -> StepStats {
+		if mode != SessionMode::Continue {
+			return stats.clone();
+		}
+		let base = self.cost_baseline.entry(step_name.to_string()).or_default();
+		continue_delta(base, stats)
 	}
 
 	/// Abort the workflow when the accumulated cost has crossed `max_cost`.
@@ -295,6 +325,10 @@ impl Executor {
 					if s.session == SessionMode::Continue {
 						self.used_continue.insert(s.name.clone(), true);
 					}
+					// Fold cumulative continue-session figures into this turn's
+					// delta before display/emit/totals so the per-step line,
+					// the running total, and max_cost all count each turn once.
+					let stats = self.fold_stats(&s.name, s.session, &stats);
 					box_close_ok(&s.name.bright_white(), &fmt_stats(&stats));
 					print_response(&stats.output, self.markdown_enabled, &self.markdown_theme);
 					self.emit_step(&s.name, &stats.output);
@@ -303,12 +337,14 @@ impl Executor {
 					return Ok(stats);
 				}
 				RunOutcome::Empty(stats) => {
+					let stats = self.fold_stats(&s.name, s.session, &stats);
 					self.totals.add(&stats);
 					last_err = Some(format!(
 						"produced no assistant output (attempt {attempt}/{max_attempts})"
 					));
 				}
 				RunOutcome::NonZero { stats, code } => {
+					let stats = self.fold_stats(&s.name, s.session, &stats);
 					self.totals.add(&stats);
 					last_err = Some(format!(
 						"failed exit code {code:?} (attempt {attempt}/{max_attempts})"
@@ -579,6 +615,32 @@ fn resolve_workdir(step_name: &str, workdir: Option<&str>) -> Result<Option<Path
 	Ok(Some(abs))
 }
 
+/// Subtract `base` (the last cumulative snapshot for a continue-session step)
+/// from `current` to recover this turn's spend, then advance `base` to
+/// `current`. Cost/token figures from `octomind run` are cumulative session
+/// totals, so without this a resumed session's running total is re-counted
+/// every loop iteration / retry. `output`/`duration`/tool counts are
+/// per-invocation and pass through unchanged.
+fn continue_delta(base: &mut StepStats, current: &StepStats) -> StepStats {
+	let folded = StepStats {
+		output: current.output.clone(),
+		duration: current.duration,
+		cost: (current.cost - base.cost).max(0.0),
+		input_tokens: current.input_tokens.saturating_sub(base.input_tokens),
+		output_tokens: current.output_tokens.saturating_sub(base.output_tokens),
+		total_tokens: current.total_tokens.saturating_sub(base.total_tokens),
+		cache_read_tokens: current.cache_read_tokens.saturating_sub(base.cache_read_tokens),
+		cache_write_tokens: current
+			.cache_write_tokens
+			.saturating_sub(base.cache_write_tokens),
+		reasoning_tokens: current.reasoning_tokens.saturating_sub(base.reasoning_tokens),
+		tool_count: current.tool_count,
+		tool_failed: current.tool_failed,
+	};
+	*base = current.clone();
+	folded
+}
+
 fn condition_matches(cond: &Condition, value: &str) -> bool {
 	if let Some(needle) = &cond.contains {
 		if value.contains(needle) {
@@ -793,9 +855,9 @@ pub async fn execute(
 			session_cost: ex.totals.cost,
 			input_tokens: ex.totals.input_tokens,
 			output_tokens: ex.totals.output_tokens,
-			cache_read_tokens: 0,
-			cache_write_tokens: 0,
-			reasoning_tokens: 0,
+			cache_read_tokens: ex.totals.cache_read_tokens,
+			cache_write_tokens: ex.totals.cache_write_tokens,
+			reasoning_tokens: ex.totals.reasoning_tokens,
 			session_id: String::new(),
 		}));
 	}
@@ -808,4 +870,46 @@ pub async fn execute(
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn cumulative(cost: f64, tokens: u64) -> StepStats {
+		StepStats {
+			cost,
+			total_tokens: tokens,
+			input_tokens: tokens,
+			..Default::default()
+		}
+	}
+
+	#[test]
+	fn continue_delta_counts_each_turn_once() {
+		// A continue-session step reports CUMULATIVE session totals every
+		// iteration: 0.10 → 0.25 → 0.45 (turn costs 0.10 / 0.15 / 0.20).
+		let mut base = StepStats::default();
+		let d1 = continue_delta(&mut base, &cumulative(0.10, 100));
+		let d2 = continue_delta(&mut base, &cumulative(0.25, 250));
+		let d3 = continue_delta(&mut base, &cumulative(0.45, 450));
+		assert!((d1.cost - 0.10).abs() < 1e-9);
+		assert!((d2.cost - 0.15).abs() < 1e-9);
+		assert!((d3.cost - 0.20).abs() < 1e-9);
+		// Summed deltas equal the final cumulative — counted once, not the
+		// ~3x overcount that summing raw cumulative figures would produce.
+		let summed = d1.cost + d2.cost + d3.cost;
+		assert!((summed - 0.45).abs() < 1e-9, "summed={summed}");
+		assert_eq!(d1.total_tokens + d2.total_tokens + d3.total_tokens, 450);
+	}
+
+	#[test]
+	fn continue_delta_clamps_nonmonotonic_drop() {
+		// Cumulative figures should never drop, but guard against it anyway.
+		let mut base = StepStats::default();
+		let _ = continue_delta(&mut base, &cumulative(0.50, 500));
+		let d = continue_delta(&mut base, &cumulative(0.40, 400));
+		assert_eq!(d.cost, 0.0);
+		assert_eq!(d.total_tokens, 0);
+	}
 }

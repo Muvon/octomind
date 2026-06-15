@@ -1,0 +1,66 @@
+# Dynamic fan-out: a planner step emits a list, then ONE branch runs per item in
+# parallel, and a final step synthesizes. The number of branches is decided at
+# run time by the planner's output — not fixed in this file.
+#
+#   stdin ─► plan (list)  ─►  [ research item 1 | item 2 | … ]  ─►  summary
+#
+# How: the parallel block has a `match` regex applied to the PREVIOUS step's
+# output. `match` splits that output into items and loops the single sub-step
+# over them. The block's own name (`research`) is the loop variable: inside the
+# template `{{research}}` is THIS branch's one task. Each branch's output
+# accumulates under the SUB-STEP's name (`researcher`), so the summary reads
+# `{{researcher}}` to get every branch joined.
+#
+# Run:
+#   echo "the state of WASM component model in 2026" \
+#     | octomind workflow workflow-research.toml
+#   octomind workflow workflow-research.toml --dry-run   # validate, no spend
+#
+# See doc/usage/09-workflows.md#dynamic-fan-out-match for the reference.
+
+name        = "research"
+description = "Plan research tasks, run each in parallel, synthesize a report"
+max_cost    = 5.00   # branch count is dynamic — bound total spend here
+
+# ── 1. Plan: emit one task per <task>…</task> block ─────────────────────────
+[[steps]]
+name   = "plan"
+role   = "researcher:general"
+prompt = """
+Break this research request into 3–7 independent sub-questions.
+Output ONLY the sub-questions, each wrapped exactly as <task>…</task>:
+
+{{input}}
+"""
+
+# ── 2. Research: ONE branch per <task> match, in parallel ───────────────────
+# `match` flips this block to dynamic. The single sub-step is the per-item
+# template. Inside it, `{{research}}` (the block's own name = loop variable)
+# resolves to THIS branch's matched task. `max_parallel` caps concurrency,
+# `min_success` tolerates a flaky branch.
+[[steps]]
+name         = "research"
+parallel     = true
+match        = "(?s)<task>(.*?)</task>"
+max_parallel = 4
+min_success  = 1
+
+  [[steps.run]]
+  name    = "researcher"
+  role    = "researcher:general"
+  timeout = 600
+  prompt  = """
+Research this sub-question thoroughly and report findings with sources:
+
+{{research}}
+"""
+
+# ── 3. Summarize: every branch's output joined under {{researcher}} ─────────
+[[steps]]
+name   = "summary"
+role   = "developer:general"
+prompt = """
+Synthesize these independent findings into one coherent report:
+
+{{researcher}}
+"""

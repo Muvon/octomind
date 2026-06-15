@@ -186,8 +186,19 @@ impl Executor {
 	///    file contents rendered as XML, same as chat's compression /
 	///    file-context path. Lets a step emit a context block in its
 	///    response and have the next step receive the inlined file.
+	///
+	/// Substitution reads `self.outputs`; it does not mutate it. In a dynamic
+	/// `match` block the executor binds the block's own name to each branch's
+	/// matched item (the loop variable) for that branch's substitution; the
+	/// accumulated output lands under the sub-step's name. From this function's
+	/// perspective, all of that is just `self.outputs.get(name)`.
 	async fn substitute(&self, prompt: &str, input: &str, role: &str) -> String {
 		let re = validate::var_regex();
+		// `{{name}}` resolves against `self.outputs`; `{{input}}` resolves to the
+		// workflow stdin. That is the entire substitution contract. A dynamic
+		// `match` block manages `self.outputs` itself: the block name holds the
+		// per-branch item during fan-out; each branch's output accumulates under
+		// the sub-step's name. This function does not know about any of that.
 		let after_wf = re
 			.replace_all(prompt, |caps: &regex::Captures| {
 				let var = &caps[1];
@@ -379,23 +390,78 @@ impl Executor {
 	}
 
 	async fn exec_parallel(&mut self, p: &ParallelStep, input: &str) -> Result<()> {
-		// Substitute every sub-step's prompt up-front against the SAME outer
-		// scope — sub-steps cannot reference each other. Substitution may touch
-		// disk (project context placeholders) and workdirs resolve here too, so a
-		// bad one fails the whole block before any subprocess spawns. Each
-		// sub-step then expands into its replicas (`count` / `models`).
+		// Build the branch list, substituting prompts up-front against the SAME
+		// outer scope (sub-steps cannot reference each other). Substitution may
+		// touch disk and workdirs resolve here too, so a bad one fails the whole
+		// block before any subprocess spawns. Two sourcing modes:
+		//   - dynamic (`match` set): `match` splits the previous step's output
+		//     into items and loops the single listed sub-step over them. The
+		//     block's own name is the loop variable: for each branch the executor
+		//     binds `self.outputs[block_name]` to that branch's matched item, so
+		//     the template's `{{<block_name>}}` resolves to the one task. Each
+		//     branch's output accumulates under the sub-step's name — that is what
+		//     downstream steps read.
+		//   - static: each listed sub-step, expanded by its `count`.
+		let is_dynamic = p.match_pattern.is_some();
 		let mut replicas: Vec<PreparedReplica> = Vec::new();
-		for s in &p.run {
-			let prompt = self.substitute(&s.prompt, input, &s.role).await;
-			let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
-			for rep in expand_substep(s) {
+		if let Some(pattern) = &p.match_pattern {
+			// Pre-flight guarantees exactly one sub-step and a non-first step.
+			let template = &p.run[0];
+			let source_name = self
+				.last_step
+				.as_ref()
+				.expect("validator guarantees a preceding step for dynamic parallel");
+			let source = self
+				.outputs
+				.get(source_name)
+				.expect("preceding step output exists");
+			let re = Regex::new(pattern).map_err(|e| {
+				anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {e}", p.name)
+			})?;
+			let items = extract_items(&re, source);
+			if items.is_empty() {
+				bail!(
+					"dynamic parallel '{}': match pattern found 0 items in '{}' output",
+					p.name,
+					source_name,
+				);
+			}
+			let workdir = resolve_workdir(&template.name, template.workdir.as_deref())?;
+			for (i, item) in items.iter().enumerate() {
+				// The block's own name is the loop variable: bind it to this
+				// branch's matched item so the template's `{{<block_name>}}`
+				// resolves to the one task. The branch's output is collected and
+				// accumulated under the sub-step's name once all branches finish.
+				self.outputs.insert(p.name.clone(), item.clone());
+				let prompt = self
+					.substitute(&template.prompt, input, &template.role)
+					.await;
+				// One replica per match. `count` on the dynamic template is
+				// ignored — the number of replicas is exactly the number of
+				// matches, which is the user's knob for fan-out. Labels stay
+				// stable: "researcher #1", "researcher #2", ... regardless of
+				// `count`.
 				replicas.push(PreparedReplica {
-					base: s.name.clone(),
-					label: rep.label,
-					seq: rep.seq,
-					prompt: prompt.clone(),
+					base: template.name.clone(),
+					label: format!("{} #{}", template.name, i + 1),
+					seq: template.clone(),
+					prompt,
 					workdir: workdir.clone(),
 				});
+			}
+		} else {
+			for s in &p.run {
+				let prompt = self.substitute(&s.prompt, input, &s.role).await;
+				let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
+				for rep in expand_substep(s) {
+					replicas.push(PreparedReplica {
+						base: s.name.clone(),
+						label: rep.label,
+						seq: rep.seq,
+						prompt: prompt.clone(),
+						workdir: workdir.clone(),
+					});
+				}
 			}
 		}
 
@@ -466,7 +532,9 @@ impl Executor {
 			}));
 		}
 
-		let tag = if total == p.run.len() {
+		let tag = if is_dynamic {
+			format!("({total} items in parallel)")
+		} else if total == p.run.len() {
 			format!("({total} in parallel)")
 		} else {
 			format!("({} sub-steps → {total} runs in parallel)", p.run.len())
@@ -541,14 +609,13 @@ impl Executor {
 			&format!("{succeeded}/{total} succeeded"),
 		);
 
-		// Wire outputs. A base sub-step expanded into replicas (`count`/`models`)
-		// aggregates its replica outputs under `── label ──` headers; a single
-		// un-expanded sub-step maps straight to its raw output (legacy behaviour).
-		// The parallel step's own name aggregates every base — this is what makes
-		// `{{<parallel-step-name>}}` resolve (previously it leaked literally).
+		// Wire outputs. Each sub-step's OUTPUT is stored under its OWN name:
+		// replicas (`count`, or dynamic `match` items) accumulate with
+		// `── label ──` headers; a single un-expanded sub-step maps straight to
+		// its raw output.
 		let mut block_parts: Vec<(String, String)> = Vec::new();
 		for (i, (base, reps)) in by_base.iter().enumerate() {
-			let expanded = p.run[i].replica_count() > 1;
+			let expanded = is_dynamic || p.run[i].replica_count() > 1;
 			let agg = if reps.is_empty() {
 				String::new()
 			} else if expanded {
@@ -559,9 +626,23 @@ impl Executor {
 			self.outputs.insert(base.clone(), agg.clone());
 			block_parts.push((base.clone(), agg));
 		}
-		self.outputs
-			.insert(p.name.clone(), join_labeled(&block_parts));
-		self.last_step = Some(p.name.clone());
+		if is_dynamic {
+			// Dynamic `match`: the block's own name is the loop variable (each
+			// branch's matched item, bound per branch above) — NOT an output. The
+			// accumulated result lives under the sub-step's name, so downstream
+			// steps read that; `last_step` points there too.
+			self.last_step = Some(by_base[0].0.clone());
+		} else {
+			// Static: the block's own name aggregates every sub-step so
+			// `{{<block-name>}}` resolves to all of them joined.
+			let block_agg = if block_parts.len() == 1 {
+				block_parts[0].1.clone()
+			} else {
+				join_labeled(&block_parts)
+			};
+			self.outputs.insert(p.name.clone(), block_agg);
+			self.last_step = Some(p.name.clone());
+		}
 
 		// Print each base's aggregated response under a dim label + emit jsonl.
 		for (base, _) in &by_base {
@@ -743,6 +824,16 @@ fn expand_substep(s: &Sequential) -> Vec<Replica> {
 			seq: s.clone(),
 		}]
 	}
+}
+
+/// Extract dynamic-fan-out items from `source` with `re`: one per match, the
+/// first capture group (the regex must define one — `{{...}}`-style content).
+/// Trimmed; empty items dropped.
+fn extract_items(re: &Regex, source: &str) -> Vec<String> {
+	re.captures_iter(source)
+		.filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+		.filter(|s| !s.is_empty())
+		.collect()
 }
 
 /// Join labeled outputs with `── label ──` headers, blank-line separated.
@@ -1081,6 +1172,33 @@ mod tests {
 		assert_eq!(reps.len(), 1);
 		assert_eq!(reps[0].label, "solo");
 		assert!(reps[0].seq.model.is_none());
+	}
+
+	#[test]
+	fn extract_items_xml_capture_group() {
+		let re = Regex::new(r"(?s)<task>(.*?)</task>").unwrap();
+		let src = "Here are tasks:\n<task>research A\nspanning lines</task>\nnoise\n<task>research B</task>";
+		let items = extract_items(&re, src);
+		assert_eq!(items, vec!["research A\nspanning lines", "research B"]);
+	}
+
+	#[test]
+	fn extract_items_requires_capture_group() {
+		// No capture group → the regex matches but produces no items, because
+		// the caller has to express what part of the match is the item.
+		let re = Regex::new(r"\d+").unwrap();
+		assert!(extract_items(&re, "a1 b22 c333").is_empty());
+
+		// A capture group on a similar pattern yields the groups.
+		let re2 = Regex::new(r"(\d+)").unwrap();
+		assert_eq!(extract_items(&re2, "a1 b22 c333"), vec!["1", "22", "333"]);
+	}
+
+	#[test]
+	fn extract_items_skips_empty() {
+		let re = Regex::new(r"(?s)<t>(.*?)</t>").unwrap();
+		let items = extract_items(&re, "<t>keep</t><t>   </t><t>also</t>");
+		assert_eq!(items, vec!["keep", "also"]);
 	}
 
 	#[test]

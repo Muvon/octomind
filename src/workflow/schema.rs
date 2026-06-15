@@ -107,8 +107,18 @@ pub enum Step {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParallelStep {
 	pub name: String,
+	/// Dynamic fan-out: a regex applied to the PREVIOUS step's output, splitting
+	/// it into items (capture group 1 of each match; the regex must define one).
+	/// Each item becomes one branch running the single sub-step template. The
+	/// block's OWN name is the loop variable — within each branch it resolves to
+	/// that branch's item, so the template references `{{<block-name>}}` to get
+	/// the one task. The accumulated output lands under the sub-step's name.
+	/// Presence switches the block from static (the listed sub-steps) to dynamic
+	/// (one branch per match).
+	#[serde(default, rename = "match")]
+	pub match_pattern: Option<String>,
 	/// Minimum number of replicas (counted across the whole block, after
-	/// `count`/`models` expansion) that must succeed for the block to pass.
+	/// `count`/`match` expansion) that must succeed for the block to pass.
 	/// None = strict: every replica must succeed.
 	#[serde(default)]
 	pub min_success: Option<u32>,

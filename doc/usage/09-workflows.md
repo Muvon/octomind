@@ -131,7 +131,7 @@ Every step prompt is resolved in **three passes**, in order, exactly like the in
 |--------------------|------------------------------------------------------------------------|
 | `{{input}}`        | The raw stdin content (trimmed)                                        |
 | `{{step_name}}`    | The full text output of a previously completed step (by name)          |
-| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-parallel--true)) |
+| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-parallel--true)). In a **dynamic parallel block** (with `match`), the block's own name is the *loop variable* — inside the template it resolves to this branch's matched item; the accumulated output is read downstream via the **sub-step's** name (see [Dynamic fan-out](#dynamic-fan-out-match)). |
 
 An unknown `{{var}}` is left **untouched** in this pass so the next pass can claim it as a built-in.
 
@@ -223,6 +223,44 @@ min_success = 2          # tolerate one failed branch
 - `{{<parallel-step-name>}}` — resolves to **every sub-step's (aggregated) output joined**, so an aggregator can reference the whole block at once instead of listing each branch. (Previously this name validated but resolved to empty; it now carries the joined content.)
 
 Failed replicas (under `min_success`) are skipped in both joins.
+
+#### Dynamic fan-out (`match`)
+
+Everything above is **static** — branches are fixed in the file. To fan out a
+**runtime-determined** number of branches (e.g. a planner step emits a list, and
+you want one branch per item), add a `match` regex to the parallel block. Its
+presence flips the block to **dynamic** mode:
+
+- `match` is a regex applied to the **previous step's output**. Each match is one branch.
+- The block has **exactly one** sub-step — the per-item template.
+- The block's own name is the **loop variable**. Inside the template, `{{<block-name>}}` resolves to *this branch's matched item* (one task). Each branch's output accumulates under the **sub-step's name**, so a later step reads `{{<sub-step-name>}}` to get *all branches joined*.
+- Item text = **capture group 1** of the regex (the regex must define one — `{{...}}`-style content). Trimmed; empty matches dropped.
+- Branch count is unknown until runtime, so concurrency / spend are bounded by the existing `max_parallel` and top-level `max_cost`; `min_success` is an absolute count.
+
+```toml
+[[steps]]
+name   = "plan"
+role   = "researcher:general"
+prompt = "Break this into independent research tasks, each wrapped in <task>…</task>:\n{{input}}"
+
+[[steps]]
+name         = "research"
+parallel     = true
+match        = "(?s)<task>(.*?)</task>"   # one branch per <task> block
+max_parallel = 4
+min_success  = 1
+  [[steps.run]]
+  name   = "researcher"
+  role   = "researcher:general"
+  prompt = "Research this task thoroughly:\n{{research}}"     # {{research}} = THIS branch's one task
+
+[[steps]]
+name   = "summary"
+role   = "developer:general"
+prompt = "Synthesize all findings:\n\n{{researcher}}"         # {{researcher}} = every branch's output joined
+```
+
+`(?s)` lets a task body span lines; `(.*?)` is non-greedy so each `<task>…</task>` is its own item. The two names play distinct roles: `{{research}}` (the block) is the loop variable — one matched task per branch — while `{{researcher}}` (the sub-step) is every branch's output accumulated. Downstream steps read the sub-step name to get the joined result; the block name is scoped to the template only. A ready-to-run copy is at [`config-templates/workflow-research.toml`](../../config-templates/workflow-research.toml).
 
 ### Loop (`loop = true`)
 Sub-steps run sequentially within each iteration. Between iterations, `exit_when` is checked against the named step's output:
@@ -327,6 +365,7 @@ Pre-flight checks (all hard-fail before any step runs):
 - `max_cost`, when set, is a positive finite number.
 - `count` appears only on parallel sub-steps and is ≥ 2.
 - `min_success`, when set, is between 1 and the block's total replica count; `max_parallel`, when set, is ≥ 1.
+- A parallel block with `match` (dynamic): the regex compiles, it has **exactly one** sub-step, is **not** the first step, and its template does not use `count`. `min_success` (when set) is ≥ 1.
 
 ## End-to-end example
 

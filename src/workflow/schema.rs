@@ -62,6 +62,21 @@ pub struct Sequential {
 	/// None = inherit the orchestrator's cwd.
 	#[serde(default)]
 	pub workdir: Option<String>,
+	/// Parallel-only: run this sub-step `count` times unchanged — same role,
+	/// model, and prompt. The model is non-deterministic, so the runs differ
+	/// (best-of-N sampling); shorthand for copy-pasting an identical block.
+	/// Must be >= 2. Rejected on non-parallel steps. None = a single run. For
+	/// different models or different prompts, write explicit named sub-steps —
+	/// each carries its own `model`/`prompt`.
+	#[serde(default)]
+	pub count: Option<u32>,
+}
+
+impl Sequential {
+	/// How many parallel replicas this sub-step expands to (1 unless `count` set).
+	pub fn replica_count(&self) -> u32 {
+		self.count.unwrap_or(1)
+	}
 }
 
 /// Pattern test against a step's output.
@@ -92,6 +107,14 @@ pub enum Step {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParallelStep {
 	pub name: String,
+	/// Minimum number of replicas (counted across the whole block, after
+	/// `count`/`models` expansion) that must succeed for the block to pass.
+	/// None = strict: every replica must succeed.
+	#[serde(default)]
+	pub min_success: Option<u32>,
+	/// Cap on how many replicas run concurrently. None = unbounded (all at once).
+	#[serde(default)]
+	pub max_parallel: Option<usize>,
 	pub run: Vec<Sequential>,
 }
 

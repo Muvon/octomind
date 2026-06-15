@@ -203,6 +203,15 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 				name = p.name.bright_white(),
 				kind = "[parallel]".bright_magenta(),
 			);
+			let total: u32 = p.run.iter().map(|s| s.replica_count()).sum();
+			let mut meta = format!("sub-steps={}  total_runs={total}", p.run.len());
+			if let Some(m) = p.min_success {
+				meta = format!("{meta}  min_success={m}");
+			}
+			if let Some(mp) = p.max_parallel {
+				meta = format!("{meta}  max_parallel={mp}");
+			}
+			println!("{indent}   {meta}");
 			for (i, sub) in p.run.iter().enumerate() {
 				print_sub(i + 1, sub, depth + 1);
 			}
@@ -260,6 +269,9 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 	}
 	if let Some(w) = &s.workdir {
 		meta = format!("{meta}  workdir={w}");
+	}
+	if let Some(c) = s.count {
+		meta = format!("{meta}  count={c}");
 	}
 	println!(
 		"{indent}{idx}. {name}  {meta}",

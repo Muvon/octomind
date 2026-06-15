@@ -258,6 +258,8 @@ total · 15.5s  · $0.0305  · 6788 tok  · ⚒17
 
 **Where the numbers come from.** Stats are sourced from the JSONL stream emitted by `octomind run --format jsonl`: cost, token totals, and per-event tool tracking. Per-step `cost`, `input_tokens`, and `output_tokens` come from the `cost` event's payload, and the **token total shown is `session_tokens`** (the session-wide total reported by the run), *not* `input + output`. Tool counts are tallied live: `⚒N` increments on each `ToolUse` event and `✗F` increments on each failed `ToolResult`. Duration is wall-clock time of the subprocess. The footer sums duration, cost, tokens, and tool counts across every step.
 
+> **Continue-session steps report per-invocation deltas.** A `session = "continue"` step's subprocess reports *cumulative* session cost/tokens every time it resumes (each loop iteration or retry). The orchestrator subtracts the per-step running baseline so the per-step line, the footer total, and `max_cost` each count a turn's spend exactly once — without this, an N-iteration refine loop would over-count cost ~N× (compounding). Fresh and parallel steps are a new session each invocation and are reported as-is.
+
 ## --dry-run
 
 `octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout** — the one and only thing a workflow ever writes to stdout. It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.

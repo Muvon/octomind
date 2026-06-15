@@ -27,6 +27,13 @@ use tokio::process::Command;
 use crate::websocket::ServerMessage;
 
 /// Result of one `octomind run` invocation.
+///
+/// NOTE: `cost` and the four token totals are CUMULATIVE session figures as
+/// reported by the subprocess's final `cost` event (session.info.total_*). For
+/// a `session = "continue"` step resumed across loop iterations/retries each
+/// invocation reports the running total, so the executor folds per-step deltas
+/// before summing (see `Executor::fold_stats`). `tool_count`/`tool_failed`/
+/// `duration` are per-invocation (counted from this subprocess's own stream).
 #[derive(Debug, Clone, Default)]
 pub struct StepStats {
 	pub output: String,
@@ -35,6 +42,9 @@ pub struct StepStats {
 	pub input_tokens: u64,
 	pub output_tokens: u64,
 	pub total_tokens: u64,
+	pub cache_read_tokens: u64,
+	pub cache_write_tokens: u64,
+	pub reasoning_tokens: u64,
 	/// Number of `ToolUse` events observed on the JSONL stream for this step.
 	pub tool_count: u64,
 	/// Of those, how many corresponding `ToolResult` events reported success=false.
@@ -152,6 +162,9 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 						stats.input_tokens = c.input_tokens;
 						stats.output_tokens = c.output_tokens;
 						stats.total_tokens = c.session_tokens;
+						stats.cache_read_tokens = c.cache_read_tokens;
+						stats.cache_write_tokens = c.cache_write_tokens;
+						stats.reasoning_tokens = c.reasoning_tokens;
 					}
 					ServerMessage::ToolUse(_) => {
 						stats.tool_count += 1;

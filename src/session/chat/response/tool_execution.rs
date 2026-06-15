@@ -614,10 +614,19 @@ async fn handle_large_tool_results(
 				&result.tool_name,
 			);
 			if was_truncated {
-				result.result =
-					rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(
-						truncated,
-					)]);
+				// Preserve the error flag through truncation. Rebuilding every
+				// result as success() flipped failing tools to is_error()==false,
+				// which let truncated errors (a failing build/test easily exceeds
+				// the token cap) enter the dedup cache and get elided on the next
+				// identical failure — violating the "errors are never deduped"
+				// invariant exactly when the model needs the error text most.
+				let was_error = result.is_error();
+				let content = vec![rmcp::model::Content::text(truncated)];
+				result.result = if was_error {
+					rmcp::model::CallToolResult::error(content)
+				} else {
+					rmcp::model::CallToolResult::success(content)
+				};
 			}
 			result
 		})

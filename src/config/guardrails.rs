@@ -234,9 +234,15 @@ impl Guardrails {
 		let raw: RawFile = toml::from_str(toml_str)?;
 
 		let mut pipes = Vec::with_capacity(raw.pipes.len());
+		// Names key per-session run-count state (PIPE_RUN_COUNTS); duplicates would
+		// silently share/clobber it. Reject them loudly, like the schema's other checks.
+		let mut pipe_names = std::collections::HashSet::new();
 		for p in raw.pipes {
 			if p.name.trim().is_empty() {
 				return Err(anyhow!("pipe missing `name`"));
+			}
+			if !pipe_names.insert(p.name.clone()) {
+				return Err(anyhow!("duplicate pipe `name`: `{}`", p.name));
 			}
 			if p.command.trim().is_empty() {
 				return Err(anyhow!("pipe `{}` missing `command`", p.name));
@@ -311,9 +317,15 @@ impl Guardrails {
 			});
 		}
 		let mut validators = Vec::with_capacity(raw.validators.len());
+		// Names key per-session cursor state (VALIDATOR_CURSORS); duplicates would
+		// share one cursor so a validator silently never fires. Reject them loudly.
+		let mut validator_names = std::collections::HashSet::new();
 		for v in raw.validators {
 			if v.name.trim().is_empty() {
 				return Err(anyhow!("validator missing `name`"));
+			}
+			if !validator_names.insert(v.name.clone()) {
+				return Err(anyhow!("duplicate validator `name`: `{}`", v.name));
 			}
 			if v.script.trim().is_empty() {
 				return Err(anyhow!("validator `{}` missing `script`", v.name));
@@ -577,6 +589,40 @@ mod tests {
 		let p = json!({ "command": "ls -lt" });
 		assert!(check(&g, Some("shell"), &p, &[], &loaded(&[])).is_none());
 		assert!(check(&g, Some("shell"), &p, &[], &loaded(&["filesystem"])).is_some());
+	}
+
+	#[test]
+	fn duplicate_validator_name_rejected() {
+		// Two validators with the same name share one cursor → one silently
+		// never fires. Must fail loudly at load.
+		let err = Guardrails::parse(
+			r#"
+			[[validator]]
+			name = "tests"
+			script = "a.sh"
+			[[validator]]
+			name = "tests"
+			script = "b.sh"
+			"#,
+		)
+		.unwrap_err();
+		assert!(err.to_string().contains("duplicate validator"), "{err}");
+	}
+
+	#[test]
+	fn duplicate_pipe_name_rejected() {
+		let err = Guardrails::parse(
+			r#"
+			[[pipe]]
+			name = "x"
+			command = "a.sh"
+			[[pipe]]
+			name = "x"
+			command = "b.sh"
+			"#,
+		)
+		.unwrap_err();
+		assert!(err.to_string().contains("duplicate pipe"), "{err}");
 	}
 
 	#[test]

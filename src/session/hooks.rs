@@ -183,6 +183,8 @@ async fn run_one_hook(
 	cmd.stdin(std::process::Stdio::piped());
 	cmd.stdout(std::process::Stdio::piped());
 	cmd.stderr(std::process::Stdio::piped());
+	// Reap the child if we drop it on timeout; tokio does not kill on drop.
+	cmd.kill_on_drop(true);
 
 	let mut child = match cmd.spawn() {
 		Ok(c) => c,
@@ -195,9 +197,16 @@ async fn run_one_hook(
 			return None;
 		}
 	};
+	// Write the payload from a detached task so wait_with_output() below can
+	// drain the child's stdout/stderr concurrently. A blocking write here
+	// deadlocks once the payload (full untruncated tool result) exceeds the
+	// ~64KB pipe buffer and the script doesn't drain stdin — and because the
+	// write sits OUTSIDE the timeout, the turn would hang forever.
 	if let Some(mut stdin) = child.stdin.take() {
-		let _ = stdin.write_all(&payload_bytes).await;
-		let _ = stdin.shutdown().await;
+		tokio::spawn(async move {
+			let _ = stdin.write_all(&payload_bytes).await;
+			let _ = stdin.shutdown().await;
+		});
 	}
 
 	let output = match tokio::time::timeout(
@@ -389,6 +398,8 @@ async fn run_one_validator(
 	cmd.stdin(std::process::Stdio::piped());
 	cmd.stdout(std::process::Stdio::piped());
 	cmd.stderr(std::process::Stdio::piped());
+	// Reap the child if we drop it on timeout; tokio does not kill on drop.
+	cmd.kill_on_drop(true);
 
 	let mut child = match cmd.spawn() {
 		Ok(c) => c,
@@ -402,9 +413,13 @@ async fn run_one_validator(
 			return None;
 		}
 	};
+	// Detached write so wait_with_output() drains stdout/stderr concurrently —
+	// see run_one_hook for why a blocking write deadlocks on large payloads.
 	if let Some(mut stdin) = child.stdin.take() {
-		let _ = stdin.write_all(&payload_bytes).await;
-		let _ = stdin.shutdown().await;
+		tokio::spawn(async move {
+			let _ = stdin.write_all(&payload_bytes).await;
+			let _ = stdin.shutdown().await;
+		});
 	}
 
 	let output = match tokio::time::timeout(

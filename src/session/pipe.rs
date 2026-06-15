@@ -111,6 +111,8 @@ pub async fn run_pipe(
 	cmd.stdin(std::process::Stdio::piped());
 	cmd.stdout(std::process::Stdio::piped());
 	cmd.stderr(std::process::Stdio::piped());
+	// Reap the child if we drop it on timeout; tokio does not kill on drop.
+	cmd.kill_on_drop(true);
 
 	let mut child = match cmd.spawn() {
 		Ok(c) => c,
@@ -124,9 +126,15 @@ pub async fn run_pipe(
 		}
 	};
 
+	// Detached write so wait_with_output() drains stdout/stderr concurrently;
+	// a blocking write deadlocks once `input` exceeds the ~64KB pipe buffer and
+	// the script doesn't drain stdin (the write also sits outside the timeout).
 	if let Some(mut stdin) = child.stdin.take() {
-		let _ = stdin.write_all(input.as_bytes()).await;
-		let _ = stdin.shutdown().await;
+		let bytes = input.as_bytes().to_vec();
+		tokio::spawn(async move {
+			let _ = stdin.write_all(&bytes).await;
+			let _ = stdin.shutdown().await;
+		});
 	}
 
 	let output = match tokio::time::timeout(

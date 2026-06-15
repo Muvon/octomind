@@ -33,7 +33,7 @@ overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
 # octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
-octolib = { version = "0.23.0", default-features = false, features = ["huggingface"] }
+octolib = { version = "0.23.2", default-features = false, features = ["huggingface"] }
 rmcp = { version = "1.7.0", default-features = false }
 
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }
@@ -58,7 +58,7 @@ fuzzy-matcher = "0.3.7"
 tokio-util = { version = "0.7", features = ["rt", "compat"] }
 reedline = { version = "0.48", features = ["bashisms", "external_printer"] }
 nu-ansi-term = "0.50"
-regex = "1.12.3"
+regex = "1.12.4"
 colored = "3.1.1"
 async-trait = "0.1.89"
 termimad = "0.34.1"

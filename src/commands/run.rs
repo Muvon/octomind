@@ -60,6 +60,12 @@ pub struct RunArgs {
 	/// Can be specified multiple times for multiple hooks.
 	#[arg(long = "hook", value_name = "NAME")]
 	pub hooks: Vec<String>,
+
+	/// Enforce structured output: path to a JSON Schema file. The model's final
+	/// response is constrained to match it. Fails if the resolved model has no
+	/// structured-output support.
+	#[arg(long = "schema", value_name = "PATH")]
+	pub schema: Option<String>,
 }
 pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	// Daemon mode: no spinner, but still use readline if terminal input available.
@@ -78,6 +84,13 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		None
 	};
 
+	// Load + validate the structured-output schema file (if any) before init.
+	// Model-capability support is checked once the session resolves a model.
+	let schema = match &args.schema {
+		Some(path) => Some(session::load_structured_output_schema(path)?),
+		None => None,
+	};
+
 	// Resolve config and role (tap/dep resolution only — MCP init happens after session ID is set)
 	let (run_config, role) =
 		octomind::agent::resolver::resolve_config_and_role(args.tag.as_deref(), config, None)
@@ -92,6 +105,7 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		model: args.model.clone(),
 		daemon: args.daemon,
 		hooks: args.hooks.clone(),
+		schema,
 		..Default::default()
 	};
 

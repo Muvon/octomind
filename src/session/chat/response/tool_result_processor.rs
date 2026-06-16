@@ -497,6 +497,16 @@ async fn make_follow_up_api_call(
 	)
 	.with_max_retries(chat_session.max_retries)
 	.with_cancellation_token(cancellation_token);
+
+	// Carry the structured-output schema onto every follow-up turn too. Without
+	// this the schema only applies to the first call (which returns a tool call,
+	// not the answer), so the final post-tool reply is unconstrained. The schema
+	// is native `response_format` and coexists with tool calling.
+	let validation_params = if let Some(schema) = chat_session.schema.clone() {
+		validation_params.with_schema(schema)
+	} else {
+		validation_params
+	};
 	crate::session::chat_completion_with_validation(validation_params).await
 }
 

@@ -116,6 +116,12 @@ pub async fn setup_and_initialize_session(
 		.or(role_config.model.as_deref())
 		.unwrap_or(&config.model);
 
+	// Fail fast: --schema enforcement needs a model that supports structured output.
+	// Checked before the spinner starts so the error surfaces cleanly.
+	if args.schema.is_some() {
+		crate::session::ensure_structured_output_support(effective_model)?;
+	}
+
 	// Print startup banner before the spinner so the icon stays visible above the
 	// transient spinner line. Interactive TTY + plain output mode only.
 	let banner_printed = is_interactive
@@ -281,6 +287,12 @@ pub async fn setup_and_initialize_session(
 			"Using runtime max_retries override: {}",
 			runtime_max_retries
 		);
+	}
+
+	// Apply structured-output schema override (from `run --schema <path>`). The
+	// model's capability was already validated above before the session started.
+	if let Some(schema) = &args.schema {
+		chat_session.schema = Some(schema.clone());
 	}
 
 	// Track if the first message has been processed through layers

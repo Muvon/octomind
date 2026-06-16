@@ -456,7 +456,8 @@ pub mod prompt;
 pub use prompt::{add_compression_hints_to_prompt, create_system_prompt};
 pub mod completion;
 pub use completion::{
-	chat_completion_with_provider, chat_completion_with_validation, ChatCompletionProviderParams,
+	chat_completion_with_provider, chat_completion_with_validation,
+	ensure_structured_output_support, load_structured_output_schema, ChatCompletionProviderParams,
 	ChatCompletionWithValidationParams,
 };
 

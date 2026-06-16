@@ -45,9 +45,10 @@ pub struct WorkflowArgs {
 	#[arg(long)]
 	pub dry_run: bool,
 
-	/// Output format for the final result on stdout. With `jsonl`, emit
-	/// structured `assistant` (final result) and `cost` (aggregated totals)
-	/// events for machine parsing. Per-step progress always goes to stderr.
+	/// Machine-readable output on stdout. With `jsonl`, emit one structured
+	/// `assistant` event per step as it completes (the last is the final result)
+	/// plus a trailing aggregated `cost` event. Without it, stdout is empty
+	/// (except the `--dry-run` plan). Per-step progress always goes to stderr.
 	#[arg(long = "format")]
 	pub format: Option<String>,
 }

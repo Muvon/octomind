@@ -1,8 +1,8 @@
 # Workflows
 
-`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; everything you see — per-step responses, progress, costs, totals — is written to **stderr** for a human to watch.
+`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; per-step responses, progress, costs, and totals are written to **stderr** for a human to watch (stdout stays empty unless you pass `--format jsonl`).
 
-> **There is no machine-readable stdout result.** A real run prints nothing to stdout; stdout is used *only* by `--dry-run` to print the execution plan. Don't build shell pipelines that consume the workflow's stdout — they will get nothing. If you need a step's text downstream, read it from stderr or have the final step write to a file itself.
+> **By default a real run writes nothing to stdout** — the human view is on stderr, and stdout carries only the `--dry-run` plan. For a machine-readable result, pass **`--format jsonl`**: each step emits an `assistant` JSON line to stdout as it completes (the last is the final result), followed by an aggregated `cost` line (see [Machine-readable output](#machine-readable-output---format-jsonl)). Without that flag, a shell pipeline reading the workflow's stdout gets nothing — use `--format jsonl`, read stderr, or have the final step write a file itself.
 
 > **In-session input preprocessing** via `[[pipe]]` in `.agents/guardrails.toml` runs before the model — see [Guardrails](18-guardrails.md#pipe--pre-model-input-transform). Workflows sit *above* sessions; pipes sit *inside* one.
 
@@ -16,8 +16,8 @@ stdin ─► octomind workflow file.toml
                     └── step "tester"    → octomind run (subprocess)  ─┘  loop
                     │
                     ▼
-        stderr: per-step responses + progress, cost, tokens, totals
-        stdout: (nothing — only --dry-run prints the plan here)
+        stderr: per-step responses + progress, cost, tokens, totals (human)
+        stdout: empty by default · --format jsonl → per-step + cost events · --dry-run → plan
 ```
 
 A workflow file is a portable TOML document — no edits to `default.toml` or any role config are needed. Each step invokes `octomind run --format jsonl`, streams the JSONL event log, accumulates assistant text and cost/token totals, then hands the captured output to the next step.
@@ -33,7 +33,7 @@ octomind workflow myflow.toml --dry-run
 
 - The file is read, TOML-parsed, and fully validated **before** anything else — including before stdin is touched. `--dry-run` therefore never reads stdin.
 - stdin is required for a real run (not for `--dry-run`). Both a terminal stdin (nothing piped) and an empty piped stdin (empty after trimming) fail with the same error: `workflow requires input via stdin`.
-- stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress lines, per-step stats, warnings, and the final total. **stdout carries nothing except the `--dry-run` plan.**
+- stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress lines, per-step stats, warnings, and the final total — the human view. **stdout is empty by default**; pass `--format jsonl` for a machine-readable result on stdout (per-step `assistant` + final `cost` events — see [Machine-readable output](#machine-readable-output---format-jsonl)), or `--dry-run` to print the plan.
 
 ## File format
 
@@ -347,9 +347,24 @@ total · 15.5s  · $0.0305  · 6788 tok  · ⚒17
 
 > **Continue-session steps report per-invocation deltas.** A `session = "continue"` step's subprocess reports *cumulative* session cost/tokens every time it resumes (each loop iteration or retry). The orchestrator subtracts the per-step running baseline so the per-step line, the footer total, and `max_cost` each count a turn's spend exactly once — without this, an N-iteration refine loop would over-count cost ~N× (compounding). Fresh and parallel steps are a new session each invocation and are reported as-is.
 
+## Machine-readable output (`--format jsonl`)
+
+A plain run writes nothing to stdout — it is meant to be watched on stderr. To consume a workflow's result programmatically, pass `--format jsonl`:
+
+```bash
+echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml --format jsonl
+```
+
+stdout then carries newline-delimited JSON:
+
+- One `assistant` event **per step**, emitted as that step completes: `{"type":"assistant","content":"…","step":"<step-name>","session_id":""}`. The **last** `assistant` event is the workflow's final result. In a parallel block, one event is emitted per sub-step (keyed by sub-step name) carrying that sub-step's accumulated output; the block-level aggregate and a dynamic `match` block's loop variable are not emitted.
+- A single trailing `cost` event with the aggregated totals (`session_tokens`, `session_cost`, and the input/output/cache/reasoning token breakdown). Its `session_id` is empty — a workflow has no single resumable session.
+
+Per-step progress still goes to stderr in both modes. Only `jsonl` produces stdout output; any other `--format` value (or omitting it) leaves stdout empty.
+
 ## --dry-run
 
-`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout** — the one and only thing a workflow ever writes to stdout. It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.
+`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout**. (That plan is the only stdout a *default* run produces; `--format jsonl` additionally streams per-step `assistant` + `cost` events — see above.) It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.
 
 ## Validation
 
@@ -490,4 +505,3 @@ Intentionally not supported (use shell composition or call `octomind run` direct
 - Named workflow lookup by short name (explicit path only)
 - Cross-invocation session persistence for `continue` sessions
 - Step artifacts written to disk
-- Any machine-readable stdout result. Everything is human-facing on stderr; stdout only ever carries the `--dry-run` plan.

@@ -102,6 +102,10 @@ pub struct DetectorsConfig {
 	pub loop_threshold: usize,
 	/// Turns without new information → drift candidate.
 	pub no_progress_window: usize,
+	/// Consecutive truncated tool results this many times in a row → the model
+	/// is ignoring the truncation notice and re-querying without narrowing.
+	/// Tool-agnostic: keyed on the truncation sentinel, not on tool identity.
+	pub truncation_threshold: usize,
 	/// Inject the self-report status-token instruction and parse it back.
 	pub self_report: bool,
 }

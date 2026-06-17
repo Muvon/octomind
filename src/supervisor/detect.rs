@@ -176,6 +176,8 @@ pub struct Detectors {
 	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
 	seen: HashSet<u64>,
 	seen_order: VecDeque<u64>,
+	/// Truncated tool results in a row. Reset by any non-truncated result.
+	consecutive_truncations: usize,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -188,6 +190,11 @@ pub enum DetectorSignal {
 	Loop,
 	/// `no_progress_window` actions elapsed with zero new information.
 	NoProgress,
+	/// `truncation_threshold` truncated results in a row — the model is ignoring
+	/// the truncation notice and re-querying without narrowing. Tool-agnostic:
+	/// the model varies args so each truncated chunk differs (defeating Loop) and
+	/// reads as fresh (defeating NoProgress); the only invariant is truncation.
+	Truncation,
 }
 
 fn hash2(a: &str, b: &str) -> u64 {
@@ -201,15 +208,28 @@ impl Detectors {
 	/// Record one tool action and return the deterministic signal. Novelty is
 	/// computed internally: a mutation always advances state; a read/search only
 	/// advances when its (non-error) result is one we have not seen recently.
+	#[allow(clippy::too_many_arguments)]
 	pub fn record_action(
 		&mut self,
 		tool: &str,
 		result: &str,
 		is_error: bool,
 		is_mutation: bool,
+		is_truncated: bool,
 		loop_threshold: usize,
 		no_progress_window: usize,
+		truncation_threshold: usize,
 	) -> DetectorSignal {
+		// Truncation streak: count truncated results in a row, reset on a clean
+		// one (the model narrowed and got a full result). Checked first because it
+		// is the most specific, most actionable diagnosis — the model keeps hitting
+		// a capped output by tweaking args, which slips past Loop and NoProgress.
+		if is_truncated {
+			self.consecutive_truncations += 1;
+		} else {
+			self.consecutive_truncations = 0;
+		}
+
 		// Identity of this action's RESULT, keyed on tool+result so the same
 		// output from differently-worded calls still reads as a repeat.
 		let rhash = hash2(tool, result);
@@ -244,7 +264,12 @@ impl Detectors {
 			&& self.novelty_window.len() >= no_progress_window
 			&& self.novelty_window.iter().all(|&n| !n);
 
-		if looping {
+		let truncating =
+			truncation_threshold > 0 && self.consecutive_truncations >= truncation_threshold;
+
+		if truncating {
+			DetectorSignal::Truncation
+		} else if looping {
 			DetectorSignal::Loop
 		} else if stalled {
 			DetectorSignal::NoProgress
@@ -257,6 +282,7 @@ impl Detectors {
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
+		self.consecutive_truncations = 0;
 	}
 }
 
@@ -264,7 +290,11 @@ impl Detectors {
 /// call). The decision table:
 /// - any `done`                          → defer to the verify-gate (no steer)
 /// - no-progress while `exploring`       → wait (legitimate exploration)
-/// - loop, or no-progress otherwise      → steer
+/// - truncation, loop, or no-progress    → steer
+///
+/// Truncation steers even while `exploring`: re-hitting a capped output is waste
+/// regardless of intent, unlike a no-progress window which can be legitimate
+/// exploration.
 pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool {
 	if signal == DetectorSignal::None {
 		return false;
@@ -282,6 +312,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 	match signal {
 		DetectorSignal::Loop => "repeated action without new results",
 		DetectorSignal::NoProgress => "no new information in recent steps",
+		DetectorSignal::Truncation => "repeated truncated results — narrowing args ignored",
 		DetectorSignal::None => "",
 	}
 }
@@ -292,6 +323,7 @@ pub fn steer_note(signal: DetectorSignal) -> &'static str {
 	match signal {
 		DetectorSignal::Loop => "<supervisor>\nYou have repeated the same action without new results. Stop and try a different approach. If you cannot proceed, report `blocked`.\n</supervisor>",
 		DetectorSignal::NoProgress => "<supervisor>\nSeveral steps have passed without new progress. Re-anchor on the user's actual request: restate the goal, what is done, and the next concrete step — or report `blocked`.\n</supervisor>",
+		DetectorSignal::Truncation => "<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context.\nWork efficiently: read only what you actually need, not whole files or full listings. Each call costs context and attention, so spending it on output you won't use makes the rest of the task harder. Before each call, decide the smallest slice that answers your current question and target it with the tool's own parameters — a line range, limit, offset, filter, or a more specific query/pattern. Read broadly only when you genuinely need most of the content.\n</supervisor>",
 		DetectorSignal::None => "",
 	}
 }
@@ -395,16 +427,16 @@ mod tests {
 	fn loop_fires_on_repeated_result() {
 		let mut d = Detectors::default();
 		assert_eq!(
-			d.record_action("grep", "same", false, false, 3, 9),
+			d.record_action("grep", "same", false, false, false, 3, 9, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("grep", "same", false, false, 3, 9),
+			d.record_action("grep", "same", false, false, false, 3, 9, 0),
 			DetectorSignal::None
 		);
 		// Third identical RESULT → loop.
 		assert_eq!(
-			d.record_action("grep", "same", false, false, 3, 9),
+			d.record_action("grep", "same", false, false, false, 3, 9, 0),
 			DetectorSignal::Loop
 		);
 	}
@@ -412,11 +444,11 @@ mod tests {
 	#[test]
 	fn no_progress_fires_on_zero_novelty_window() {
 		let mut d = Detectors::default();
-		d.record_action("a", "r", false, false, 9, 3); // first "r" → novel
-		d.record_action("a", "r", false, false, 9, 3); // seen → not novel
-		d.record_action("a", "r", false, false, 9, 3); // not novel
+		d.record_action("a", "r", false, false, false, 9, 3, 0); // first "r" → novel
+		d.record_action("a", "r", false, false, false, 9, 3, 0); // seen → not novel
+		d.record_action("a", "r", false, false, false, 9, 3, 0); // not novel
 		assert_eq!(
-			d.record_action("a", "r", false, false, 9, 3),
+			d.record_action("a", "r", false, false, false, 9, 3, 0),
 			DetectorSignal::NoProgress
 		);
 	}
@@ -424,13 +456,69 @@ mod tests {
 	#[test]
 	fn mutation_counts_as_progress() {
 		let mut d = Detectors::default();
-		d.record_action("read", "same", false, false, 9, 2);
-		d.record_action("read", "same", false, false, 9, 2);
+		d.record_action("read", "same", false, false, false, 9, 2, 0);
+		d.record_action("read", "same", false, false, false, 9, 2, 0);
 		// An edit always advances state → breaks the stall.
 		assert_eq!(
-			d.record_action("edit", "ok", false, true, 9, 2),
+			d.record_action("edit", "ok", false, true, false, 9, 2, 0),
 			DetectorSignal::None
 		);
+	}
+
+	#[test]
+	fn truncation_fires_on_consecutive_truncated_results() {
+		let mut d = Detectors::default();
+		// Different content each time (model tweaks args) — defeats Loop/NoProgress,
+		// but both carry the truncation flag. Threshold 2 → fires on the second.
+		assert_eq!(
+			d.record_action("view", "chunk A", false, false, true, 9, 9, 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_action("view", "chunk B", false, false, true, 9, 9, 2),
+			DetectorSignal::Truncation
+		);
+	}
+
+	#[test]
+	fn clean_result_resets_truncation_streak() {
+		let mut d = Detectors::default();
+		d.record_action("view", "chunk A", false, false, true, 9, 9, 2);
+		// Model narrowed and got a full result → streak resets.
+		assert_eq!(
+			d.record_action("view", "full", false, false, false, 9, 9, 2),
+			DetectorSignal::None
+		);
+		// One truncation again is not yet at threshold.
+		assert_eq!(
+			d.record_action("view", "chunk B", false, false, true, 9, 9, 2),
+			DetectorSignal::None
+		);
+	}
+
+	#[test]
+	fn truncation_outranks_loop() {
+		let mut d = Detectors::default();
+		// Identical truncated result repeated: both Loop and Truncation conditions
+		// hold; the more actionable Truncation signal wins.
+		d.record_action("view", "same", false, false, true, 2, 9, 2);
+		assert_eq!(
+			d.record_action("view", "same", false, false, true, 2, 9, 2),
+			DetectorSignal::Truncation
+		);
+	}
+
+	#[test]
+	fn truncation_steers_even_while_exploring() {
+		assert!(should_steer(
+			DetectorSignal::Truncation,
+			Some(SelfReport::Exploring)
+		));
+		// But still defers to the gate on done.
+		assert!(!should_steer(
+			DetectorSignal::Truncation,
+			Some(SelfReport::Done)
+		));
 	}
 
 	#[test]

@@ -698,8 +698,24 @@ self_report = true
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 [supervisor.gate]
 enabled = true
-# Max gate re-entry iterations (bounds over-verification)
+# Max gate re-entry iterations (bounds over-verification). Shared budget across
+# the free pre-gate and the LLM verify-gate.
 max_iterations = 2
+# Model the gate verifies WITH. RECOMMENDED: a DIFFERENT family than your agent
+# model -- a same-family verifier inherits the same blind spots and rubber-stamps
+# them; cross-family catches far more (e.g. openai:gpt-5-mini, google:gemini-2.5-flash).
+# Defaults to the cheap supervisor model so it works out of the box; change it.
+verifier_model = "anthropic:claude-haiku-4-5"
+# Free deterministic pre-gate (no model call): refuse a `done` claim when code
+# was changed but no successful check (build/test/lint/etc.) ran since the change.
+require_check_after_mutation = true
+
+# Goal recitation: re-inject the live goal (anchor intent + next_steps) at the
+# context tail each turn on long (already-compacted) sessions, so it stays in the
+# high-attention recency window instead of buried in the mid-transcript summary.
+# Short sessions (no compaction yet -> empty anchor) pay nothing.
+[supervisor.recite]
+enabled = true
 
 # MCP backend configuration (uncomment to use instead of file backend):
 # Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.

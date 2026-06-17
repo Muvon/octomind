@@ -178,6 +178,11 @@ pub struct Detectors {
 	seen_order: VecDeque<u64>,
 	/// Truncated tool results in a row. Reset by any non-truncated result.
 	consecutive_truncations: usize,
+	/// A code change was made with no successful non-mutation check since — the
+	/// free pre-gate signal for a premature `done`. Trajectory state, NOT a
+	/// streak: it persists across turns until a clean check clears it, so
+	/// [`Detectors::reset_streak`] deliberately leaves it untouched.
+	unverified_mutation: bool,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -230,6 +235,16 @@ impl Detectors {
 			self.consecutive_truncations = 0;
 		}
 
+		// Mutation-verification tracking for the free pre-gate (premature `done`):
+		// a successful change sets the flag; a later successful non-mutation action
+		// (a check / build / test / read) clears it. Errors never clear it.
+		// Conservative by design — clearing on any clean non-mutation action
+		// under-fires rather than over-fires, so a false positive costs at most one
+		// extra turn. Tool-agnostic: we never name which tool verifies.
+		if !is_error {
+			self.unverified_mutation = is_mutation;
+		}
+
 		// Identity of this action's RESULT, keyed on tool+result so the same
 		// output from differently-worded calls still reads as a repeat.
 		let rhash = hash2(tool, result);
@@ -279,10 +294,18 @@ impl Detectors {
 	}
 
 	/// Reset the rolling windows (e.g. after a steer note or new user turn).
+	/// `unverified_mutation` is intentionally NOT reset — it is trajectory state
+	/// that only a successful check clears, not a per-streak counter.
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
 		self.consecutive_truncations = 0;
+	}
+
+	/// Free pre-gate signal: code was changed and no successful check has run
+	/// since. See [`Detectors::unverified_mutation`].
+	pub fn needs_verification(&self) -> bool {
+		self.unverified_mutation
 	}
 }
 
@@ -506,6 +529,31 @@ mod tests {
 			d.record_action("view", "same", false, false, true, 2, 9, 2),
 			DetectorSignal::Truncation
 		);
+	}
+
+	#[test]
+	fn needs_verification_after_mutation_until_clean_check() {
+		let mut d = Detectors::default();
+		assert!(!d.needs_verification());
+		// A successful edit → unverified.
+		d.record_action("edit", "ok", false, true, false, 9, 9, 0);
+		assert!(d.needs_verification());
+		// A failed check does NOT clear it.
+		d.record_action("shell", "error", true, false, false, 9, 9, 0);
+		assert!(d.needs_verification());
+		// A successful non-mutation check clears it.
+		d.record_action("shell", "tests pass", false, false, false, 9, 9, 0);
+		assert!(!d.needs_verification());
+	}
+
+	#[test]
+	fn reset_streak_keeps_unverified_mutation() {
+		let mut d = Detectors::default();
+		d.record_action("edit", "ok", false, true, false, 9, 9, 0);
+		assert!(d.needs_verification());
+		// reset_streak is for the rolling windows — trajectory state survives.
+		d.reset_streak();
+		assert!(d.needs_verification());
 	}
 
 	#[test]

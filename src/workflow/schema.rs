@@ -62,6 +62,21 @@ pub struct Sequential {
 	/// None = inherit the orchestrator's cwd.
 	#[serde(default)]
 	pub workdir: Option<String>,
+	/// Parallel-only: run this sub-step `count` times unchanged — same role,
+	/// model, and prompt. The model is non-deterministic, so the runs differ
+	/// (best-of-N sampling); shorthand for copy-pasting an identical block.
+	/// Must be >= 2. Rejected on non-parallel steps. None = a single run. For
+	/// different models or different prompts, write explicit named sub-steps —
+	/// each carries its own `model`/`prompt`.
+	#[serde(default)]
+	pub count: Option<u32>,
+}
+
+impl Sequential {
+	/// How many parallel replicas this sub-step expands to (1 unless `count` set).
+	pub fn replica_count(&self) -> u32 {
+		self.count.unwrap_or(1)
+	}
 }
 
 /// Pattern test against a step's output.
@@ -92,6 +107,24 @@ pub enum Step {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParallelStep {
 	pub name: String,
+	/// Dynamic fan-out: a regex applied to the PREVIOUS step's output, splitting
+	/// it into items (capture group 1 of each match; the regex must define one).
+	/// Each item becomes one branch running the single sub-step template. The
+	/// block's OWN name is the loop variable — within each branch it resolves to
+	/// that branch's item, so the template references `{{<block-name>}}` to get
+	/// the one task. The accumulated output lands under the sub-step's name.
+	/// Presence switches the block from static (the listed sub-steps) to dynamic
+	/// (one branch per match).
+	#[serde(default, rename = "match")]
+	pub match_pattern: Option<String>,
+	/// Minimum number of replicas (counted across the whole block, after
+	/// `count`/`match` expansion) that must succeed for the block to pass.
+	/// None = strict: every replica must succeed.
+	#[serde(default)]
+	pub min_success: Option<u32>,
+	/// Cap on how many replicas run concurrently. None = unbounded (all at once).
+	#[serde(default)]
+	pub max_parallel: Option<usize>,
 	pub run: Vec<Sequential>,
 }
 

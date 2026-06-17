@@ -375,9 +375,12 @@ echo "List TODO items" | octomind run developer:general --format jsonl
 # Daemon — keep a session alive and inject messages into it from anywhere
 echo "first task" | octomind run --name watcher --daemon --format jsonl
 octomind send --name watcher "now run the test suite"
+
+# Structured output — constrain replies to a JSON Schema (structured-output models only)
+echo "List TODO items as JSON" | octomind run developer:general --format jsonl --schema todos.schema.json
 ```
 
-`octomind run` has **no message argument** — when `--format` is set, input comes from piped stdin. `--format` is `run`-only (it accepts only `plain` or `jsonl`; `server` and `acp` do not take it). Setting `--format` triggers non-interactive mode only when stdin is *not* a terminal: `octomind run developer:general --format plain` typed at a TTY stays interactive, while piping into it runs once and exits.
+`octomind run` has **no message argument** — when `--format` is set, input comes from piped stdin. `--format` is `run`-only (it accepts only `plain` or `jsonl`; `server` and `acp` do not take it). Setting `--format` triggers non-interactive mode only when stdin is *not* a terminal: `octomind run developer:general --format plain` typed at a TTY stays interactive, while piping into it runs once and exits. Pass `--schema <file.json>` to force replies to match a JSON Schema (requires a structured-output-capable model — Anthropic models error out); see the [CLI reference](doc/reference/01-cli-reference.md).
 
 See [WebSocket Server](doc/integration/01-websocket-server.md), [ACP Protocol](doc/integration/02-acp-protocol.md), and [Daemon & Hooks](doc/integration/03-daemon-and-hooks.md) for the integration modes.
 

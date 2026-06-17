@@ -45,9 +45,10 @@ pub struct WorkflowArgs {
 	#[arg(long)]
 	pub dry_run: bool,
 
-	/// Output format for the final result on stdout. With `jsonl`, emit
-	/// structured `assistant` (final result) and `cost` (aggregated totals)
-	/// events for machine parsing. Per-step progress always goes to stderr.
+	/// Machine-readable output on stdout. With `jsonl`, emit one structured
+	/// `assistant` event per step as it completes (the last is the final result)
+	/// plus a trailing aggregated `cost` event. Without it, stdout is empty
+	/// (except the `--dry-run` plan). Per-step progress always goes to stderr.
 	#[arg(long = "format")]
 	pub format: Option<String>,
 }
@@ -197,12 +198,30 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 			println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 		}
 		Step::Parallel(p) => {
+			let kind = if p.match_pattern.is_some() {
+				"[parallel · dynamic]"
+			} else {
+				"[parallel]"
+			};
 			println!(
 				"{indent}{idx}. {name}  {kind}",
 				idx = idx,
 				name = p.name.bright_white(),
-				kind = "[parallel]".bright_magenta(),
+				kind = kind.bright_magenta(),
 			);
+			let mut meta = if let Some(pat) = &p.match_pattern {
+				format!("match={pat:?}  runs=per-match (over previous step)")
+			} else {
+				let total: u32 = p.run.iter().map(|s| s.replica_count()).sum();
+				format!("sub-steps={}  total_runs={total}", p.run.len())
+			};
+			if let Some(m) = p.min_success {
+				meta = format!("{meta}  min_success={m}");
+			}
+			if let Some(mp) = p.max_parallel {
+				meta = format!("{meta}  max_parallel={mp}");
+			}
+			println!("{indent}   {meta}");
 			for (i, sub) in p.run.iter().enumerate() {
 				print_sub(i + 1, sub, depth + 1);
 			}
@@ -260,6 +279,9 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 	}
 	if let Some(w) = &s.workdir {
 		meta = format!("{meta}  workdir={w}");
+	}
+	if let Some(c) = s.count {
+		meta = format!("{meta}  count={c}");
 	}
 	println!(
 		"{indent}{idx}. {name}  {meta}",

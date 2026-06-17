@@ -35,6 +35,10 @@ pub struct GenericSessionArgs {
 	pub daemon: bool,
 	/// Webhook hook names to activate for this session.
 	pub hooks: Vec<String>,
+	/// Optional JSON Schema for structured output (set via `run --schema <path>`).
+	/// When present, the session's completions are constrained to match it. The
+	/// resolved model must support structured output or session setup fails.
+	pub schema: Option<serde_json::Value>,
 }
 
 impl GenericSessionArgs {

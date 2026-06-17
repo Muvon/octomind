@@ -1,8 +1,8 @@
 # Workflows
 
-`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; everything you see — per-step responses, progress, costs, totals — is written to **stderr** for a human to watch.
+`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; per-step responses, progress, costs, and totals are written to **stderr** for a human to watch (stdout stays empty unless you pass `--format jsonl`).
 
-> **There is no machine-readable stdout result.** A real run prints nothing to stdout; stdout is used *only* by `--dry-run` to print the execution plan. Don't build shell pipelines that consume the workflow's stdout — they will get nothing. If you need a step's text downstream, read it from stderr or have the final step write to a file itself.
+> **By default a real run writes nothing to stdout** — the human view is on stderr, and stdout carries only the `--dry-run` plan. For a machine-readable result, pass **`--format jsonl`**: each step emits an `assistant` JSON line to stdout as it completes (the last is the final result), followed by an aggregated `cost` line (see [Machine-readable output](#machine-readable-output---format-jsonl)). Without that flag, a shell pipeline reading the workflow's stdout gets nothing — use `--format jsonl`, read stderr, or have the final step write a file itself.
 
 > **In-session input preprocessing** via `[[pipe]]` in `.agents/guardrails.toml` runs before the model — see [Guardrails](18-guardrails.md#pipe--pre-model-input-transform). Workflows sit *above* sessions; pipes sit *inside* one.
 
@@ -16,8 +16,8 @@ stdin ─► octomind workflow file.toml
                     └── step "tester"    → octomind run (subprocess)  ─┘  loop
                     │
                     ▼
-        stderr: per-step responses + progress, cost, tokens, totals
-        stdout: (nothing — only --dry-run prints the plan here)
+        stderr: per-step responses + progress, cost, tokens, totals (human)
+        stdout: empty by default · --format jsonl → per-step + cost events · --dry-run → plan
 ```
 
 A workflow file is a portable TOML document — no edits to `default.toml` or any role config are needed. Each step invokes `octomind run --format jsonl`, streams the JSONL event log, accumulates assistant text and cost/token totals, then hands the captured output to the next step.
@@ -33,7 +33,7 @@ octomind workflow myflow.toml --dry-run
 
 - The file is read, TOML-parsed, and fully validated **before** anything else — including before stdin is touched. `--dry-run` therefore never reads stdin.
 - stdin is required for a real run (not for `--dry-run`). Both a terminal stdin (nothing piped) and an empty piped stdin (empty after trimming) fail with the same error: `workflow requires input via stdin`.
-- stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress lines, per-step stats, warnings, and the final total. **stdout carries nothing except the `--dry-run` plan.**
+- stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress lines, per-step stats, warnings, and the final total — the human view. **stdout is empty by default**; pass `--format jsonl` for a machine-readable result on stdout (per-step `assistant` + final `cost` events — see [Machine-readable output](#machine-readable-output---format-jsonl)), or `--dry-run` to print the plan.
 
 ## File format
 
@@ -131,6 +131,7 @@ Every step prompt is resolved in **three passes**, in order, exactly like the in
 |--------------------|------------------------------------------------------------------------|
 | `{{input}}`        | The raw stdin content (trimmed)                                        |
 | `{{step_name}}`    | The full text output of a previously completed step (by name)          |
+| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-parallel--true)). In a **dynamic parallel block** (with `match`), the block's own name is the *loop variable* — inside the template it resolves to this branch's matched item; the accumulated output is read downstream via the **sub-step's** name (see [Dynamic fan-out](#dynamic-fan-out-match)). |
 
 An unknown `{{var}}` is left **untouched** in this pass so the next pass can claim it as a built-in.
 
@@ -174,6 +175,92 @@ Optional fields on any sequential step (including sub-steps inside parallel/loop
 Sub-steps run concurrently via `tokio::join_all`. The next top-level step starts only after every sub-step completes. Sub-steps cannot reference each other; only outer scope.
 
 A `session = "continue"` field on a parallel sub-step is **silently ignored** — parallel sub-steps always run with a fresh session. Continue-session state only makes sense across the sequential iterations of a loop.
+
+**Block fields** (on the `[[steps]]` table with `parallel = true`):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `min_success` | _(all)_ | Minimum replicas (counted across the whole block, after `count` expansion) that must succeed for the block to pass. Lets a fan-out tolerate a flaky branch. Out of range → pre-flight error. |
+| `max_parallel` | _(unbounded)_ | Cap on how many replicas run concurrently (semaphore-throttled). Omit to launch all at once. Must be ≥ 1. |
+
+**Different models / different prompts** are just plain named sub-steps — each carries its own `model` and `prompt`. There is no special "model sweep" field; copy a `[[steps.run]]` block per branch (names are unique, so each branch is referenceable). The only fan-out field is `count`, for repeating one identical sub-step:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `count` | _(1)_ | Run this sub-step N times **unchanged** — same `role`, `model`, and `prompt`. The model is non-deterministic, so the N runs differ; an aggregator then picks/merges the best (best-of-N sampling). Just shorthand for copy-pasting the same block N times. Must be ≥ 2. Valid **only** on a parallel sub-step; rejected elsewhere. |
+
+```toml
+[[steps]]
+name        = "candidates"
+parallel    = true
+min_success = 2          # tolerate one failed branch
+# max_parallel = 4       # optional concurrency cap
+
+  # Same task on two different models → two named sub-steps.
+  [[steps.run]]
+  name   = "opus"
+  role   = "developer:general"
+  model  = "anthropic:claude-opus-4-8"
+  prompt = "Solve:\n{{input}}"
+
+  [[steps.run]]
+  name   = "gpt"
+  role   = "developer:general"
+  model  = "openai:gpt-5"
+  prompt = "Solve:\n{{input}}"
+
+  # Best-of-3 with one model + prompt → use count instead of copy-pasting.
+  [[steps.run]]
+  name   = "sampler"
+  role   = "developer:general"
+  prompt = "Solve:\n{{input}}"
+  count  = 3
+```
+
+**Aggregation variables.** After a parallel block completes, two kinds of `{{var}}` become available to later steps:
+
+- `{{<sub-step-name>}}` — a sub-step with `count` resolves to **all its replica outputs joined** under `── <name> #N ──` headers. A plain sub-step resolves to its single raw output, exactly as before.
+- `{{<parallel-step-name>}}` — resolves to **every sub-step's (aggregated) output joined**, so an aggregator can reference the whole block at once instead of listing each branch. (Previously this name validated but resolved to empty; it now carries the joined content.)
+
+Failed replicas (under `min_success`) are skipped in both joins.
+
+#### Dynamic fan-out (`match`)
+
+Everything above is **static** — branches are fixed in the file. To fan out a
+**runtime-determined** number of branches (e.g. a planner step emits a list, and
+you want one branch per item), add a `match` regex to the parallel block. Its
+presence flips the block to **dynamic** mode:
+
+- `match` is a regex applied to the **previous step's output**. Each match is one branch.
+- The block has **exactly one** sub-step — the per-item template.
+- The block's own name is the **loop variable**. Inside the template, `{{<block-name>}}` resolves to *this branch's matched item* (one task). Each branch's output accumulates under the **sub-step's name**, so a later step reads `{{<sub-step-name>}}` to get *all branches joined*.
+- Item text = **capture group 1** of the regex (the regex must define one — `{{...}}`-style content). Trimmed; empty matches dropped.
+- Branch count is unknown until runtime, so concurrency / spend are bounded by the existing `max_parallel` and top-level `max_cost`; `min_success` is an absolute count.
+
+```toml
+[[steps]]
+name   = "plan"
+role   = "researcher:general"
+prompt = "Break this into independent research tasks, each wrapped in <task>…</task>:\n{{input}}"
+
+[[steps]]
+name         = "research"
+parallel     = true
+match        = "(?s)<task>(.*?)</task>"   # one branch per <task> block
+max_parallel = 4
+min_success  = 1
+  [[steps.run]]
+  name   = "researcher"
+  role   = "researcher:general"
+  prompt = "Research this task thoroughly:\n{{research}}"     # {{research}} = THIS branch's one task
+
+[[steps]]
+name   = "summary"
+role   = "developer:general"
+prompt = "Synthesize all findings:\n\n{{researcher}}"         # {{researcher}} = every branch's output joined
+```
+
+`(?s)` lets a task body span lines; `(.*?)` is non-greedy so each `<task>…</task>` is its own item. The two names play distinct roles: `{{research}}` (the block) is the loop variable — one matched task per branch — while `{{researcher}}` (the sub-step) is every branch's output accumulated. Downstream steps read the sub-step name to get the joined result; the block name is scoped to the template only. A ready-to-run copy is at [`config-templates/workflow-research.toml`](../../config-templates/workflow-research.toml).
 
 ### Loop (`loop = true`)
 Sub-steps run sequentially within each iteration. Between iterations, `exit_when` is checked against the named step's output:
@@ -260,9 +347,24 @@ total · 15.5s  · $0.0305  · 6788 tok  · ⚒17
 
 > **Continue-session steps report per-invocation deltas.** A `session = "continue"` step's subprocess reports *cumulative* session cost/tokens every time it resumes (each loop iteration or retry). The orchestrator subtracts the per-step running baseline so the per-step line, the footer total, and `max_cost` each count a turn's spend exactly once — without this, an N-iteration refine loop would over-count cost ~N× (compounding). Fresh and parallel steps are a new session each invocation and are reported as-is.
 
+## Machine-readable output (`--format jsonl`)
+
+A plain run writes nothing to stdout — it is meant to be watched on stderr. To consume a workflow's result programmatically, pass `--format jsonl`:
+
+```bash
+echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml --format jsonl
+```
+
+stdout then carries newline-delimited JSON:
+
+- One `assistant` event **per step**, emitted as that step completes: `{"type":"assistant","content":"…","step":"<step-name>","session_id":""}`. The **last** `assistant` event is the workflow's final result. In a parallel block, one event is emitted per sub-step (keyed by sub-step name) carrying that sub-step's accumulated output; the block-level aggregate and a dynamic `match` block's loop variable are not emitted.
+- A single trailing `cost` event with the aggregated totals (`session_tokens`, `session_cost`, and the input/output/cache/reasoning token breakdown). Its `session_id` is empty — a workflow has no single resumable session.
+
+Per-step progress still goes to stderr in both modes. Only `jsonl` produces stdout output; any other `--format` value (or omitting it) leaves stdout empty.
+
 ## --dry-run
 
-`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout** — the one and only thing a workflow ever writes to stdout. It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.
+`octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout**. (That plan is the only stdout a *default* run produces; `--format jsonl` additionally streams per-step `assistant` + `cost` events — see above.) It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.
 
 ## Validation
 
@@ -276,6 +378,9 @@ Pre-flight checks (all hard-fail before any step runs):
 - Regex patterns in `matches` compile.
 - `model`, when specified on any step, must not be an empty string.
 - `max_cost`, when set, is a positive finite number.
+- `count` appears only on parallel sub-steps and is ≥ 2.
+- `min_success`, when set, is between 1 and the block's total replica count; `max_parallel`, when set, is ≥ 1.
+- A parallel block with `match` (dynamic): the regex compiles, it has **exactly one** sub-step, is **not** the first step, and its template does not use `count`. `min_success` (when set) is ≥ 1.
 
 ## End-to-end example
 
@@ -327,6 +432,60 @@ Run it:
 echo "JSON-to-CSV CLI in Rust" | octomind workflow gan.toml
 ```
 
+### Fan-out → aggregate (across models)
+
+Run the same task on three models in parallel, tolerate one failure, then have an
+aggregator pick and synthesize the best answer. Each branch is a plain named
+sub-step with its own `model`. A ready-to-run copy lives at
+[`config-templates/workflow-fanout.toml`](../../config-templates/workflow-fanout.toml).
+
+```toml
+name        = "fan-out-aggregate"
+description = "Same task on three models in parallel, one judge synthesizes"
+
+[[steps]]
+name        = "candidates"
+parallel    = true
+min_success = 2                     # one model may fail; two is enough
+
+  [[steps.run]]
+  name   = "opus"
+  role   = "developer:general"
+  model  = "anthropic:claude-opus-4-8"
+  prompt = "Solve this. Be complete and correct:\n{{input}}"
+
+  [[steps.run]]
+  name   = "gpt"
+  role   = "developer:general"
+  model  = "openai:gpt-5"
+  prompt = "Solve this. Be complete and correct:\n{{input}}"
+
+  [[steps.run]]
+  name   = "gemini"
+  role   = "developer:general"
+  model  = "google:gemini-3-pro"
+  prompt = "Solve this. Be complete and correct:\n{{input}}"
+
+[[steps]]
+name   = "judge"
+role   = "developer:general"
+prompt = """
+Independent solutions to the same task, one per model:
+
+{{candidates}}
+
+Pick the strongest, fix any flaws, and produce one final answer.
+"""
+```
+
+`{{candidates}}` (the block name) expands to all three branch outputs joined under
+`── opus ──`, `── gpt ──`, `── gemini ──` headers; or reference each branch directly
+as `{{opus}}` / `{{gpt}}` / `{{gemini}}`. Run it:
+
+```bash
+echo "JSON-to-CSV CLI in Rust" | octomind workflow config-templates/workflow-fanout.toml
+```
+
 ## Best practices
 
 1. **Keep prompts focused.** Each step is its own session — don't try to cram a multi-stage task into one step.
@@ -346,4 +505,3 @@ Intentionally not supported (use shell composition or call `octomind run` direct
 - Named workflow lookup by short name (explicit path only)
 - Cross-invocation session persistence for `continue` sessions
 - Step artifacts written to disk
-- Any machine-readable stdout result. Everything is human-facing on stderr; stdout only ever carries the `--dry-run` plan.

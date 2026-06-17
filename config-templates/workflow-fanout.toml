@@ -1,0 +1,65 @@
+# Fan-out → aggregate: run the same task on several branches in parallel, then
+# have one step merge the results.
+#
+#   stdin ─► [ branch A | branch B | branch C ]  ─►  aggregator
+#
+# Branches are plain named sub-steps — each carries its own `model` and `prompt`,
+# so the SAME pattern covers both "same task, different models" and "same model,
+# different prompts". Names are unique, so the aggregator references each branch
+# (or the whole block) by name.
+#
+# Run:
+#   echo "build a JSON-to-CSV CLI in Rust" | octomind workflow workflow-fanout.toml
+#   octomind workflow workflow-fanout.toml --dry-run   # validate without spending
+#
+# See doc/usage/09-workflows.md for the full reference.
+
+name        = "fan-out-aggregate"
+description = "Same task on three models in parallel, one judge synthesizes the best"
+# max_cost  = 5.00   # optional hard USD ceiling for the whole run
+
+# ── Fan out: the SAME prompt, three different models, in parallel ─────────────
+# `min_success = 2` lets one branch fail without aborting the workflow.
+# (For SAME model + different prompts: keep one `model` and vary `prompt`.)
+[[steps]]
+name        = "candidates"
+parallel    = true
+min_success = 2
+# max_parallel = 2     # optional: cap how many branches run at once
+
+  [[steps.run]]
+  name    = "opus"
+  role    = "developer:general"
+  model   = "anthropic:claude-opus-4-8"
+  timeout = 600
+  prompt  = "Solve this task completely and correctly. Return only the solution.\n\n{{input}}"
+
+  [[steps.run]]
+  name    = "gpt"
+  role    = "developer:general"
+  model   = "openai:gpt-5"
+  timeout = 600
+  prompt  = "Solve this task completely and correctly. Return only the solution.\n\n{{input}}"
+
+  [[steps.run]]
+  name    = "gemini"
+  role    = "developer:general"
+  model   = "google:gemini-3-pro"
+  timeout = 600
+  prompt  = "Solve this task completely and correctly. Return only the solution.\n\n{{input}}"
+
+# ── Aggregate: one judge sees every branch and synthesizes the best ──────────
+# `{{candidates}}` (the block name) expands to all branch outputs joined under
+# `── opus ──`, `── gpt ──`, `── gemini ──` headers. You could instead reference
+# each branch by name: {{opus}}, {{gpt}}, {{gemini}}.
+[[steps]]
+name   = "judge"
+role   = "developer:general"
+prompt = """
+Independent solutions to the same task, one per model:
+
+{{candidates}}
+
+Compare them. Pick the strongest, correct any flaws, and produce a single final
+answer. Do not mention the comparison — output only the result.
+"""

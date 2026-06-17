@@ -104,7 +104,7 @@ A step **fails** when its `octomind run` subprocess exits non-zero, produces no 
 echo "fix the login bug" | octomind workflow dev.toml
 ```
 
-Each step's assistant message is rendered to **stderr** as it completes (with markdown rendering when enabled), alongside per-step timing, cost, and tokens. The run produces **no stdout** — see [Key Points](#key-points). A run looks like this (color stripped):
+Each step's assistant message is rendered to **stderr** as it completes (with markdown rendering when enabled), alongside per-step timing, cost, and tokens. A plain run produces **no stdout** (pass `--format jsonl` for a machine-readable result on stdout) — see [Key Points](#key-points). A run looks like this (color stripped):
 
 ```
 workflow · dev
@@ -204,7 +204,7 @@ Each step is a separate `octomind run` invocation, so you can match the model to
 - If a loop reaches `max_iterations` without `exit_when` matching, it prints a `⚠ … reached max_iterations` warning to stderr and continues with the last iteration's outputs — the workflow does **not** fail
 - A step **fails** on non-zero exit, empty assistant output, or `timeout`. `retries = N` gives `N+1` total attempts; when all are exhausted the workflow exits non-zero with `step '<name>' failed after <N> attempts: <reason>`
 - Stdin → `{{input}}`; each step's last assistant message prints to **stderr** as it completes (with markdown rendering when enabled)
-- All progress, timing, cost, tokens also print to **stderr**; a real run produces **no stdout**
-- `--dry-run` validates the file and prints the execution plan to **stdout** (the only stdout the command ever produces), then exits — it never reads stdin and spawns no sessions
+- All progress, timing, cost, tokens print to **stderr**; a plain run produces **no stdout** — pass `--format jsonl` to stream per-step `assistant` + a final `cost` event to stdout for machine parsing
+- `--dry-run` validates the file and prints the execution plan to **stdout** (the only stdout a *default* run produces; `--format jsonl` adds per-step + cost events), then exits — it never reads stdin and spawns no sessions
 - Pre-flight validation (before any step runs) rejects: empty workflows, duplicate step names, a step named `input` (reserved), forward references to a not-yet-completed step, parallel blocks with fewer than 2 sub-steps, loops missing `exit_when`, an invalid `matches` regex, and an empty `model` string
 - This page covers sequential and loop steps; for **parallel** and **conditional** steps see [Workflows](../usage/09-workflows.md#step-types)

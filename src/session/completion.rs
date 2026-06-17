@@ -145,6 +145,12 @@ pub async fn chat_completion_with_validation(
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(params.model)?;
 
+	// Fail fast if a schema is requested but the model can't enforce structured
+	// output. Covers mid-session model swaps that bypass the up-front setup check.
+	if params.schema.is_some() {
+		ensure_structured_output_support(params.model)?;
+	}
+
 	// Get maximum input tokens for this provider/model (actual context window)
 	let max_input_tokens = provider.get_max_input_tokens(&actual_model);
 
@@ -229,13 +235,9 @@ pub async fn chat_completion_with_provider(
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(params.model)?;
 
-	// Fail fast if schema requested but provider doesn't support structured output
-	if params.schema.is_some() && !provider.supports_structured_output(&actual_model) {
-		return Err(anyhow::anyhow!(
-			"Provider '{}' does not support structured output for model '{}'. Remove the schema parameter or use a compatible provider.",
-			provider.name(),
-			actual_model
-		));
+	// Fail fast if a schema is requested but the model can't enforce structured output
+	if params.schema.is_some() {
+		ensure_structured_output_support(params.model)?;
 	}
 
 	let chat_params = ChatCompletionParams::new(
@@ -267,4 +269,105 @@ pub async fn chat_completion_with_provider(
 	Ok(crate::providers::convert_response_from_octolib(
 		octolib_response,
 	))
+}
+
+/// Validate that the provider for `model` can enforce structured output (JSON
+/// schema). Fails fast with a clear, actionable error otherwise. The single
+/// source of truth for the capability gate — used by the CLI `run --schema`
+/// path (checked up front in session setup) and both completion entry points.
+pub fn ensure_structured_output_support(model: &str) -> Result<()> {
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	if !provider.supports_structured_output(&actual_model) {
+		return Err(anyhow::anyhow!(
+			"Model '{model}' (provider '{}') does not support structured output — a JSON schema cannot be enforced. Use a structured-output-capable model.",
+			provider.name()
+		));
+	}
+	Ok(())
+}
+
+/// Load and validate a JSON Schema document from `path` (for `run --schema`).
+/// Reads the file, parses it as JSON, and requires a top-level object — the only
+/// shape usable for structured output. Finer schema errors surface via the
+/// provider's strict-mode validation at request time.
+pub fn load_structured_output_schema(path: &str) -> Result<serde_json::Value> {
+	let raw = std::fs::read_to_string(path)
+		.map_err(|e| anyhow::anyhow!("Failed to read schema file '{path}': {e}"))?;
+	let schema: serde_json::Value = serde_json::from_str(&raw)
+		.map_err(|e| anyhow::anyhow!("Invalid JSON in schema file '{path}': {e}"))?;
+	if !schema.is_object() {
+		return Err(anyhow::anyhow!(
+			"Schema file '{path}' must contain a JSON object (a JSON Schema document)"
+		));
+	}
+	Ok(schema)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{ensure_structured_output_support, load_structured_output_schema};
+	use std::io::Write;
+
+	#[test]
+	fn structured_output_supported_for_openai() {
+		// OpenAI reports structured-output support for all of its models.
+		assert!(ensure_structured_output_support("openai:gpt-4.1").is_ok());
+	}
+
+	#[test]
+	fn structured_output_unsupported_for_anthropic() {
+		let err = ensure_structured_output_support("anthropic:claude-sonnet-4-6")
+			.expect_err("anthropic must be rejected")
+			.to_string();
+		assert!(
+			err.contains("does not support structured output"),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[test]
+	fn loads_valid_object_schema() {
+		let mut f = tempfile::NamedTempFile::new().unwrap();
+		f.write_all(br#"{"type":"object","properties":{"x":{"type":"string"}}}"#)
+			.unwrap();
+		f.flush().unwrap();
+		let schema = load_structured_output_schema(f.path().to_str().unwrap()).unwrap();
+		assert_eq!(schema["type"].as_str(), Some("object"));
+	}
+
+	#[test]
+	fn rejects_non_object_schema() {
+		let mut f = tempfile::NamedTempFile::new().unwrap();
+		f.write_all(b"[1, 2, 3]").unwrap();
+		f.flush().unwrap();
+		let err = load_structured_output_schema(f.path().to_str().unwrap())
+			.expect_err("array must be rejected")
+			.to_string();
+		assert!(
+			err.contains("must contain a JSON object"),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[test]
+	fn rejects_invalid_json() {
+		let mut f = tempfile::NamedTempFile::new().unwrap();
+		f.write_all(b"{not valid json").unwrap();
+		f.flush().unwrap();
+		let err = load_structured_output_schema(f.path().to_str().unwrap())
+			.expect_err("invalid json must be rejected")
+			.to_string();
+		assert!(err.contains("Invalid JSON"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn reports_missing_schema_file() {
+		let err = load_structured_output_schema("/nonexistent/path/schema-xyzzy.json")
+			.expect_err("missing file must error")
+			.to_string();
+		assert!(
+			err.contains("Failed to read schema file"),
+			"unexpected error: {err}"
+		);
+	}
 }

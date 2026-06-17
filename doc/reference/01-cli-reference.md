@@ -51,6 +51,7 @@ Start an interactive or non-interactive AI session.
 | `--daemon` | | Keep the session alive for injected messages. Implies non-interactive mode — pair with `--format` (e.g. `--format jsonl`) and deliver messages with `octomind send`. |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
 | `--hook` | | Activate webhook hook(s) by name (defined in `[[hooks]]` config). Repeatable. See [Daemon & Hooks](../integration/03-daemon-and-hooks.md). |
+| `--schema` | | Path to a JSON Schema **object** file. Constrains the model's output to match it (structured output). The resolved model must support structured output, or the run fails fast. See note below. |
 
 **Interactivity and `--format`:** `--format` is unset by default. If it is omitted and stdin is a TTY, the
 session runs **interactively**. If `--format` is given (`plain` or `jsonl`) **or** stdin is piped, the session
@@ -59,6 +60,14 @@ runs **non-interactively**, reading the input from stdin. Internally, an unset f
 **Daemon mode:** `--daemon` is non-interactive and effectively requires `--format` — when a daemon is launched
 attached to a terminal, the piped input is forced empty. While the session is alive, inject further messages with
 [`octomind send --name <name>`](#octomind-send). See [Daemon & Hooks](../integration/03-daemon-and-hooks.md).
+
+**Structured output (`--schema`):** pass a path to a JSON Schema **object** file to constrain the model's output.
+The schema applies to every assistant reply for the session's lifetime — across multi-turn sessions, resumes, and
+daemon mode — while tool calls still flow normally underneath (only the final text is constrained). If the
+resolved model lacks structured-output support (e.g. Anthropic models), the run fails fast with a clear error; use
+an OpenAI-family or other structured-output-capable model. The schema is a runtime override — like `--model`, it
+is not persisted, so pass it again when resuming. Most useful with `--format jsonl`. A ready-to-use example ships
+at [`config-templates/todos.schema.json`](../../config-templates/todos.schema.json).
 
 **Examples:**
 ```bash
@@ -86,6 +95,9 @@ octomind run --name ci-watcher --daemon --format jsonl --hook github-push
 
 # Model override
 octomind run -m anthropic:claude-sonnet-4
+
+# Structured output — constrain replies to a JSON Schema (structured-output models only)
+echo "List the top 3 TODOs" | octomind run developer:general --format jsonl --schema todos.schema.json
 ```
 
 ## `octomind server [TAG]`

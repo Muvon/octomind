@@ -37,8 +37,19 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 	}
 
 	// Structural checks per step.
-	for step in &wf.steps {
+	for (i, step) in wf.steps.iter().enumerate() {
 		structural_check(step)?;
+		// A dynamic parallel maps over the PREVIOUS step's output, so it needs one.
+		if i == 0 {
+			if let Step::Parallel(p) = step {
+				if p.match_pattern.is_some() {
+					bail!(
+						"dynamic parallel '{}': needs a preceding step to map over (cannot be the first step)",
+						p.name
+					);
+				}
+			}
+		}
 	}
 
 	// Reference resolution — walk in execution order, tracking what names
@@ -84,14 +95,60 @@ fn structural_check(step: &Step) -> Result<()> {
 	match step {
 		Step::Sequential(s) => {
 			validate_fields(s)?;
+			reject_expansion(s)?;
 			Ok(())
 		}
-		Step::Parallel(ParallelStep { name, run }) => {
-			if run.len() < 2 {
-				bail!("parallel step '{}' must have at least 2 sub-steps", name);
+		Step::Parallel(ParallelStep {
+			name,
+			match_pattern,
+			run,
+			min_success,
+			max_parallel,
+		}) => {
+			if let Some(pattern) = match_pattern {
+				// Dynamic: exactly one template sub-step; branches come from
+				// matching the previous step at run time (count unknown here).
+				if run.len() != 1 {
+					bail!(
+						"dynamic parallel '{}' (match set) must have exactly 1 sub-step (the per-item template)",
+						name
+					);
+				}
+				Regex::new(pattern).map_err(|e| {
+					anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {}", name, e)
+				})?;
+				let template = &run[0];
+				validate_fields(template)?;
+				validate_expansion(template)?;
+				if let Some(m) = min_success {
+					if *m == 0 {
+						bail!("dynamic parallel '{}': min_success must be >= 1", name);
+					}
+				}
+			} else {
+				if run.len() < 2 {
+					bail!("parallel step '{}' must have at least 2 sub-steps", name);
+				}
+				for s in run {
+					validate_fields(s)?;
+					validate_expansion(s)?;
+				}
+				let total: u32 = run.iter().map(|s| s.replica_count()).sum();
+				if let Some(m) = min_success {
+					if *m == 0 || *m > total {
+						bail!(
+							"parallel step '{}': min_success {} must be between 1 and {} (total replicas)",
+							name,
+							m,
+							total
+						);
+					}
+				}
 			}
-			for s in run {
-				validate_fields(s)?;
+			if let Some(mp) = max_parallel {
+				if *mp == 0 {
+					bail!("parallel step '{}': max_parallel must be >= 1", name);
+				}
 			}
 			Ok(())
 		}
@@ -106,6 +163,7 @@ fn structural_check(step: &Step) -> Result<()> {
 			}
 			for s in run {
 				validate_fields(s)?;
+				reject_expansion(s)?;
 			}
 			let exit_when = match exit_when {
 				Some(c) => c,
@@ -168,6 +226,7 @@ fn structural_check(step: &Step) -> Result<()> {
 			}
 			for s in run {
 				validate_fields(s)?;
+				reject_expansion(s)?;
 			}
 			Ok(())
 		}
@@ -191,6 +250,32 @@ fn validate_fields(s: &Sequential) -> Result<()> {
 	Ok(())
 }
 
+/// `count` fans a sub-step into replicas — only meaningful inside a parallel
+/// block. Reject it anywhere else so the config fails loudly rather than
+/// silently ignoring the field.
+fn reject_expansion(s: &Sequential) -> Result<()> {
+	if s.count.is_some() {
+		bail!(
+			"step '{}': 'count' is only valid on parallel sub-steps",
+			s.name
+		);
+	}
+	Ok(())
+}
+
+/// Validate the `count` fan-out field on a parallel sub-step.
+fn validate_expansion(s: &Sequential) -> Result<()> {
+	if let Some(c) = s.count {
+		if c < 2 {
+			bail!(
+				"step '{}': count must be >= 2 (omit it for a single run)",
+				s.name
+			);
+		}
+	}
+	Ok(())
+}
+
 fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 	match step {
 		Step::Sequential(s) => {
@@ -198,15 +283,30 @@ fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 			available.insert(s.name.clone());
 		}
 		Step::Parallel(p) => {
-			// Sub-step prompts may reference outer scope but not each other.
-			let outer = available.clone();
-			for s in &p.run {
-				check_refs(&s.name, &s.prompt, &outer)?;
+			if p.match_pattern.is_some() {
+				// Dynamic `match`: splits the previous step's output into items and
+				// loops the single template over them. The block's own name is the
+				// loop variable — in scope only for the template, bound to each
+				// item at run time. The accumulated OUTPUT lives under the
+				// sub-step's name, which is the only name visible downstream.
+				let mut scope = available.clone();
+				scope.insert(p.name.clone());
+				let tpl = &p.run[0];
+				check_refs(&tpl.name, &tpl.prompt, &scope)?;
+				available.insert(tpl.name.clone());
+			} else {
+				// Static: sub-step prompts may reference outer scope but not each
+				// other. Both the sub-step names and the block's own name (which
+				// aggregates them) become available downstream.
+				let outer = available.clone();
+				for s in &p.run {
+					check_refs(&s.name, &s.prompt, &outer)?;
+				}
+				for s in &p.run {
+					available.insert(s.name.clone());
+				}
+				available.insert(p.name.clone());
 			}
-			for s in &p.run {
-				available.insert(s.name.clone());
-			}
-			available.insert(p.name.clone());
 		}
 		Step::Loop(l) => {
 			// Inside the loop, sub-steps run sequentially; each iteration
@@ -403,6 +503,224 @@ mod tests {
 			"#,
 		);
 		validate(&ok).expect("positive max_cost should pass");
+	}
+
+	#[test]
+	fn count_sweep_in_parallel_validates() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "candidates"
+			parallel = true
+			min_success = 2
+			  [[steps.run]]
+			  name = "candidate"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  count = 3
+			  [[steps.run]]
+			  name = "other"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			"#,
+		);
+		validate(&wf).expect("count sweep + min_success in range should pass");
+	}
+
+	#[test]
+	fn expansion_fields_rejected_outside_parallel() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "s1"
+			role = "developer:general"
+			prompt = "{{input}}"
+			count = 3
+			"#,
+		);
+		let err = validate(&wf).expect_err("count on a sequential step must fail");
+		assert!(
+			err.to_string().contains("only valid on parallel"),
+			"got: {err}"
+		);
+	}
+
+	#[test]
+	fn count_below_two_fails() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "p"
+			parallel = true
+			  [[steps.run]]
+			  name = "a"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  count = 1
+			  [[steps.run]]
+			  name = "b"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			"#,
+		);
+		assert!(validate(&wf).is_err(), "count = 1 must fail");
+	}
+
+	#[test]
+	fn min_success_out_of_range_fails() {
+		// One sub-step with count = 2 + one plain sub-step = 3 total replicas.
+		// min_success = 4 exceeds that.
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "p"
+			parallel = true
+			min_success = 4
+			  [[steps.run]]
+			  name = "a"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  count = 2
+			  [[steps.run]]
+			  name = "b"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			"#,
+		);
+		let err = validate(&wf).expect_err("min_success > total replicas must fail");
+		assert!(err.to_string().contains("min_success"), "got: {err}");
+	}
+
+	#[test]
+	fn dynamic_parallel_validates() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "plan"
+			role = "researcher:general"
+			prompt = "List tasks in <task>..</task>:\n{{input}}"
+			[[steps]]
+			name = "research"
+			parallel = true
+			match = "(?s)<task>(.*?)</task>"
+			max_parallel = 4
+			min_success = 1
+			  [[steps.run]]
+			  name = "researcher"
+			  role = "researcher:general"
+			  prompt = "Research:\n{{research}}"
+			[[steps]]
+			name = "summary"
+			role = "developer:general"
+			prompt = "Summarize:\n{{researcher}}"
+			"#,
+		);
+		validate(&wf)
+			.expect("dynamic parallel referencing its own name in the template should pass");
+	}
+
+	#[test]
+	fn dynamic_parallel_requires_single_template() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "plan"
+			role = "researcher:general"
+			prompt = "{{input}}"
+			[[steps]]
+			name = "research"
+			parallel = true
+			match = "(.+)"
+			  [[steps.run]]
+			  name = "a"
+			  role = "researcher:general"
+			  prompt = "{{research}}"
+			  [[steps.run]]
+			  name = "b"
+			  role = "researcher:general"
+			  prompt = "{{research}}"
+			"#,
+		);
+		let err = validate(&wf).expect_err("dynamic parallel with 2 sub-steps must fail");
+		assert!(err.to_string().contains("exactly 1 sub-step"), "got: {err}");
+	}
+
+	#[test]
+	fn dynamic_parallel_cannot_be_first_step() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "research"
+			parallel = true
+			match = "(.+)"
+			  [[steps.run]]
+			  name = "researcher"
+			  role = "researcher:general"
+			  prompt = "Research the item"
+			"#,
+		);
+		let err = validate(&wf).expect_err("dynamic parallel as first step must fail");
+		assert!(err.to_string().contains("preceding step"), "got: {err}");
+	}
+
+	#[test]
+	fn dynamic_parallel_invalid_regex_fails() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "plan"
+			role = "researcher:general"
+			prompt = "{{input}}"
+			[[steps]]
+			name = "research"
+			parallel = true
+			match = "(unclosed"
+			  [[steps.run]]
+			  name = "researcher"
+			  role = "researcher:general"
+			  prompt = "Research:\n{{research}}"
+			"#,
+		);
+		let err = validate(&wf).expect_err("invalid match regex must fail");
+		assert!(
+			err.to_string().contains("invalid match regex"),
+			"got: {err}"
+		);
+	}
+
+	#[test]
+	fn parallel_block_name_reference_resolves() {
+		// The parallel block's own name is referenceable downstream (it now
+		// aggregates every sub-step's output at runtime).
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "candidates"
+			parallel = true
+			  [[steps.run]]
+			  name = "a"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			  [[steps.run]]
+			  name = "b"
+			  role = "developer:general"
+			  prompt = "{{input}}"
+			[[steps]]
+			name = "judge"
+			role = "developer:general"
+			prompt = "Pick best:\n{{candidates}}"
+			"#,
+		);
+		validate(&wf).expect("reference to parallel block name should validate");
 	}
 
 	#[test]

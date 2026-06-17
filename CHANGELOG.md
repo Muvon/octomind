@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.32.0] - 2026-06-17
+
+### 📋 Release Summary
+
+This release introduces advanced workflow capabilities, including parallel execution, dynamic fan-out, and structured JSON/JSONL output support (d9717687, 3155ca29, d4350ef5, acd7f390, f0c010ae). Users can now better manage costs with global spending caps and benefit from improved MCP tool reliability and session persistence (aa298801, 2cb52cf7, 864864b7, d5ddaf38). Additionally, several bug fixes enhance system stability, specifically regarding guardrail execution and resource handling (5f44be41, 5a99b98a, c0b3fe34).
+
+
+### ✨ New Features & Enhancements
+
+- **structured-output**: add JSON schema support `f0c010ae`
+- **workflow**: implement jsonl output for artifacts `d9717687`
+- **workflow**: implement dynamic parallel fan-out `3155ca29`
+- **workflow**: implement parallel fan-out and aggregation `d4350ef5`
+- **workflow**: add max_cost spending cap for the whole run `aa298801`
+- **mcp**: enhance tool response truncation handling `2cb52cf7`
+- **compression**: persist active task across compactions `d5ddaf38`
+- **workflow**: implement tap-based workflow discovery `48ae3b97`
+- **workflow**: implement per-step JSONL streaming `4664c03d`
+- **workflow**: add jsonl output format `acd7f390`
+- **mcp**: include local servers in info output `864864b7`
+- **workflow**: add working directory support for steps `80c73ae5`
+
+### 🔧 Improvements & Optimizations
+
+- **workflow**: format token subtraction logic `8d09fa7c`
+- **docker**: dynamicize image versioning fix(schedule): improve duration parsing errors `1e4e0840`
+- **docker**: add build workflow and fix sg installation `5392a1c8`
+
+### 🐛 Bug Fixes & Stability
+
+- **guardrails**: reject duplicate validator/pipe names at load `5f44be41`
+- **websocket**: reset per-request spending checkpoint each turn `c0b3fe34`
+- **workflow**: count continue-session cost/tokens once (fixes max_cost cap) `34d4798f`
+- **mcp**: preserve is_error through large tool-result truncation `7afc89e8`
+- **guardrails**: prevent turn hang and orphaned processes in hook/validator/pipe spawners `5a99b98a`
+- **workflow**: allow built-in placeholders in step prompts `a3c8b255`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.31.0] - 2026-06-12
 
 ### 📋 Release Summary

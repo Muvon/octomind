@@ -35,6 +35,7 @@
 pub mod detect;
 pub mod gate;
 pub mod learning;
+pub mod recite;
 pub mod stats;
 
 use serde::{Deserialize, Serialize};
@@ -80,6 +81,21 @@ pub struct SupervisorConfig {
 	pub detectors: DetectorsConfig,
 	/// Verify-gate on self-reported completion.
 	pub gate: GateConfig,
+	/// Goal recitation: re-anchor the live goal at the context tail.
+	pub recite: ReciteConfig,
+}
+
+/// Goal recitation. On long (already-compacted) sessions the durable goal lives
+/// in the `Anchor` but is only rendered inside the mid-transcript compressed
+/// summary, where attention is weak. Recitation re-emits a tiny goal block at
+/// the context *tail* each turn — the recency slot — so it stays salient. No
+/// model call, no new memory: pure reuse of the existing `Anchor`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReciteConfig {
+	/// Master switch. When on, recitation fires only once the anchor is
+	/// populated (i.e. the session has compacted at least once), so short
+	/// sessions pay nothing.
+	pub enabled: bool,
 }
 
 /// Orientation memory: durable, expensive-to-re-derive understanding of the
@@ -115,6 +131,17 @@ pub struct DetectorsConfig {
 pub struct GateConfig {
 	pub enabled: bool,
 	/// Max gate re-entry iterations before giving up (bounds the
-	/// self-verification dilemma).
+	/// self-verification dilemma). Shared budget across the free pre-gate and
+	/// the LLM verify-gate.
 	pub max_iterations: u8,
+	/// Model the gate verifies WITH (`provider:model`). Deliberately separate
+	/// from the generator: a same-family verifier inherits the same blind spots
+	/// and rubber-stamps them, so the strongest signal comes from a *different*
+	/// family. Required — no silent fallback to the generator model.
+	pub verifier_model: String,
+	/// Free deterministic pre-gate: refuse a self-reported `done` when code was
+	/// changed but no successful check (build/test/lint/etc.) ran since the last
+	/// change. Tool-agnostic — keyed on the mutation-without-clean-check pattern,
+	/// not on tool names. Runs before the LLM verify-gate (zero model calls).
+	pub require_check_after_mutation: bool,
 }

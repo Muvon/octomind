@@ -175,6 +175,20 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		crate::log_debug!("Supervisor steer injected");
 	}
 
+	// Supervisor: goal recitation. Once the session has compacted at least once
+	// the durable goal lives only in the mid-transcript compressed summary, where
+	// attention is weak. Re-emit a tiny goal block here — at the tail, in the
+	// recency window — and crucially BEFORE the cache-marker advance below, so the
+	// cached prefix stays intact (the recited block lands after it each turn).
+	if config.supervisor.enabled && config.supervisor.recite.enabled {
+		if let Some(note) =
+			crate::supervisor::recite::recite_note(&chat_session.session.info.anchor)
+		{
+			chat_session.add_user_message(&note)?;
+			crate::log_debug!("Supervisor goal recitation injected");
+		}
+	}
+
 	// Advance Anthropic-style content cache markers after all pre-call message injections
 	// (learning context, inbox hints, etc.) and immediately before building the request.
 	// This preserves the previous marker while moving the oldest marker to the latest
@@ -295,6 +309,36 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
 		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations
 	{
+		// Free pre-gate (no model call): the most common false-done is claiming
+		// completion right after a code change without re-running any check. Catch
+		// it deterministically before paying for the LLM verify-gate. Shares the
+		// gate_iterations budget, so it can't loop unbounded.
+		if config.supervisor.gate.require_check_after_mutation
+			&& chat_session.detectors.needs_verification()
+		{
+			let note = "<supervisor>\nYou reported done, but you changed code and have not run a successful check (build / test / lint / whatever this project uses to verify) since your last change. Run that check and confirm it passes — or, if no check applies here, say so explicitly. Then re-report your status.\n</supervisor>";
+			chat_session.add_user_message(note)?;
+			chat_session.last_self_report = None; // force the re-run to re-evaluate
+			chat_session.gate_iterations += 1;
+			crate::supervisor::notify("done claimed without a check after changes — re-running");
+			if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+				crate::log_debug!(
+					"Pre-gate: unverified mutation; re-running turn (iter {})",
+					chat_session.gate_iterations
+				);
+				return Box::pin(execute_api_call_and_process_response(
+					chat_session,
+					config,
+					role,
+					operation_rx,
+					mode,
+					sink,
+				))
+				.await;
+			}
+			// Budget exhausted — fall through to the LLM gate / acceptance.
+		}
+
 		// The genuine task is the most recent user turn that is NOT a supervisor
 		// injection — so re-runs verify against the real request, not our advisory.
 		let task = chat_session

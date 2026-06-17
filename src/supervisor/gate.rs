@@ -67,7 +67,10 @@ pub async fn verify(
 		_ => String::new(),
 	};
 	let user = format!("USER REQUEST:\n{task}\n\nAGENT FINAL RESULT:\n{result}{claim_line}");
-	let model = config.supervisor.model.clone();
+	// Verify with a deliberately separate (ideally different-family) model — a
+	// same-family verifier shares the generator's blind spots and rubber-stamps
+	// them. Strict config guarantees this is set; no fallback to the generator.
+	let model = config.supervisor.gate.verifier_model.clone();
 	match crate::supervisor::learning::extract::call_learning_llm(
 		config,
 		&model,

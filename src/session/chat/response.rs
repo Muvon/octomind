@@ -589,19 +589,27 @@ pub async fn process_response<S: OutputSink>(
 				if params.config.supervisor.enabled {
 					let loop_threshold = params.config.supervisor.detectors.loop_threshold;
 					let no_progress_window = params.config.supervisor.detectors.no_progress_window;
+					let truncation_threshold =
+						params.config.supervisor.detectors.truncation_threshold;
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
 						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
 						let is_error = tr.map(|r| r.is_error()).unwrap_or(true);
 						let is_mutation =
 							crate::supervisor::detect::is_mutation_tool(&call.tool_name);
+						// Tool-agnostic: detect truncation by the sentinel the global
+						// truncation choke point stamps, not by tool identity.
+						let is_truncated = result_content
+							.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG);
 						let signal = params.chat_session.detectors.record_action(
 							&call.tool_name,
 							&result_content,
 							is_error,
 							is_mutation,
+							is_truncated,
 							loop_threshold,
 							no_progress_window,
+							truncation_threshold,
 						);
 						if crate::supervisor::detect::should_steer(
 							signal,

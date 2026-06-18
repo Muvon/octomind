@@ -417,7 +417,7 @@ pub async fn check_and_compress_conversation(
 	let user_msg_filter = |m: &&crate::session::Message| -> bool {
 		m.role == "user"
 			&& !m.content.trim().is_empty()
-			&& !crate::mcp::core::skill::is_skill_message(&m.content)
+			&& !crate::mcp::runtime::skill::is_skill_message(&m.content)
 			&& !apply::is_continuation_message(&m.content)
 	};
 
@@ -496,7 +496,7 @@ pub async fn check_and_compress_conversation(
 		.iter()
 		.filter(|m| {
 			!(m.role == "user"
-				&& (crate::mcp::core::skill::is_skill_message(&m.content)
+				&& (crate::mcp::runtime::skill::is_skill_message(&m.content)
 					|| apply::is_continuation_message(&m.content)))
 		})
 		.cloned()

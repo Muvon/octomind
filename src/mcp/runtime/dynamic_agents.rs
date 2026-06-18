@@ -601,7 +601,7 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 	// Validate server_refs — accept both config-defined and dynamic servers
 	if !server_refs.is_empty() {
 		let dynamic_names: std::collections::HashSet<String> =
-			crate::mcp::core::dynamic::list_servers()
+			crate::mcp::runtime::dynamic::list_servers()
 				.into_iter()
 				.map(|(name, _, _)| name)
 				.collect();

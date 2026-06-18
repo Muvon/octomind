@@ -127,7 +127,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 	// `mcp add`) that aren't already in the static config — otherwise they'd
 	// show their tools under "Available Tools" but be invisible under
 	// "MCP Server Status".
-	for (name, tools, enabled) in crate::mcp::core::dynamic::list_servers() {
+	for (name, tools, enabled) in crate::mcp::runtime::dynamic::list_servers() {
 		if !enabled || seen_server_names.contains(&name) {
 			continue;
 		}
@@ -250,7 +250,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 
 	// Append dynamically-registered servers (capability activations, runtime
 	// `mcp add`) that aren't already in the static config.
-	for (name, tools, enabled) in crate::mcp::core::dynamic::list_servers() {
+	for (name, tools, enabled) in crate::mcp::runtime::dynamic::list_servers() {
 		if !enabled || seen_server_names.contains(&name) {
 			continue;
 		}

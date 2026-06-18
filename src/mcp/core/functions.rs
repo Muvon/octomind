@@ -18,11 +18,17 @@
 
 use super::super::McpFunction;
 use super::plan::get_plan_function;
+use super::schedule::get_schedule_function;
 use super::tap::get_tap_function;
 
-// Core builtin tools — high-level planning and delegation. Runtime control
-// tools (`mcp`, `agent`, `skill`, `schedule`, `capability`) live under the
-// `runtime` builtin server.
+// Core builtin tools — the session's own primitives: plan (track work),
+// tap (delegate work), schedule (time work). Runtime control tools that
+// reconfigure the tool surface (`mcp`, `agent`, `skill`, `capability`) live
+// under the `runtime` builtin server.
 pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![get_plan_function(), get_tap_function()]
+	vec![
+		get_plan_function(),
+		get_tap_function(),
+		get_schedule_function(),
+	]
 }

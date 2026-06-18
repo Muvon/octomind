@@ -463,10 +463,10 @@ pub(super) fn collect_preserved_skills(
 		if msg.role != "user" {
 			continue;
 		}
-		if !crate::mcp::core::skill::is_skill_message(&msg.content) {
+		if !crate::mcp::runtime::skill::is_skill_message(&msg.content) {
 			continue;
 		}
-		let name = match crate::mcp::core::skill::extract_skill_name(&msg.content) {
+		let name = match crate::mcp::runtime::skill::extract_skill_name(&msg.content) {
 			Some(n) => n.to_string(),
 			None => continue,
 		};

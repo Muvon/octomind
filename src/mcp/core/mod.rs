@@ -15,32 +15,20 @@
 // Core MCP provider - modular structure
 // Handles core tools: plan, tap
 
-pub mod capability;
-pub mod dynamic;
-pub mod dynamic_agents;
 pub mod functions;
 pub mod local_tool;
 pub mod plan;
 pub mod schedule;
-pub mod skill;
-pub mod skill_auto;
 pub mod tap;
 
 #[cfg(test)]
 mod plan_tests;
 
-#[cfg(test)]
-mod skill_tests;
-
 // Re-export main functionality
-pub use capability::execute_capability_command;
-pub use dynamic::execute_mcp_command;
-pub use dynamic_agents::execute_agent_tool_command;
 pub use functions::get_all_functions;
 pub use plan::{clear_plan_data, execute_plan};
 pub use schedule::{
 	execute_schedule_tool, flush_due_to_inbox, flush_idle_to_inbox, has_pending_idle_schedules,
 	has_pending_schedules, is_session_idle, next_schedule_sleep,
 };
-pub use skill::execute_skill_tool;
 pub use tap::execute_tap_command;

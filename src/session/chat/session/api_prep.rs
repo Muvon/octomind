@@ -49,7 +49,7 @@ pub async fn prepare_for_api_call(
 	// directly — no LLM in the routing loop. Silent no-op if the model
 	// isn't ready or nothing clears the gate.
 	if config.auto_capabilities {
-		crate::mcp::core::capability::auto_activate_capabilities(chat_session, config).await;
+		crate::mcp::runtime::capability::auto_activate_capabilities(chat_session, config).await;
 	}
 
 	// Ensure system message is cached before making API calls

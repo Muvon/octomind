@@ -592,8 +592,8 @@ impl OctomindAgent {
 			if let Some((mut session, cwd)) = entry {
 				let sid = session_id.clone();
 				crate::session::context::with_session_id(sid, async {
-					crate::mcp::core::skill_auto::load_env_skills(&mut session).await;
-					crate::mcp::core::capability::load_env_capabilities(&config_for_role, None)
+					crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
+					crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None)
 						.await;
 				})
 				.await;
@@ -1246,8 +1246,8 @@ impl OctomindAgent {
 			if let Some((mut session, cwd)) = entry {
 				let sid = actual_session_id.clone();
 				crate::session::context::with_session_id(sid, async {
-					crate::mcp::core::skill_auto::load_env_skills(&mut session).await;
-					crate::mcp::core::capability::load_env_capabilities(&config_for_role, None)
+					crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
+					crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None)
 						.await;
 				})
 				.await;

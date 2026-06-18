@@ -128,7 +128,7 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 		parameters: Value::Object(json_params),
 	};
 
-	match crate::mcp::core::schedule::execute_schedule_tool(&call).await {
+	match crate::mcp::orchestration::schedule::execute_schedule_tool(&call).await {
 		Ok(result) => {
 			let text = result.extract_content();
 			let is_error = result.is_error();

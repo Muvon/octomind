@@ -362,8 +362,8 @@ fn spawn_ws_inbox_monitor(
 			// Process phase: flush due schedules into inbox, then drain.
 			// Returns true to exit the monitor loop.
 			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
-				crate::mcp::core::flush_due_to_inbox();
-				crate::mcp::core::flush_idle_to_inbox();
+				crate::mcp::orchestration::flush_due_to_inbox();
+				crate::mcp::orchestration::flush_idle_to_inbox();
 
 				// Drain inbox only when session is available.
 				// If held by handle_user_message(), skip — it fires inbox_notify when done,
@@ -515,7 +515,7 @@ fn spawn_ws_inbox_monitor(
 			crate::session::context::with_session_id(session_id.clone(), async {
 				let inbox_notify = crate::session::inbox::get_inbox_notify();
 				tokio::select! {
-					_ = crate::mcp::core::next_schedule_sleep() => {}
+					_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 					_ = async {
 						if let Some(notify) = inbox_notify {
 							notify.notified().await;
@@ -626,7 +626,7 @@ async fn handle_session_message(
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
 		crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
-		crate::mcp::core::schedule::core::restore_schedule_for_session(&session_id);
+		crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id);
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 
@@ -891,8 +891,8 @@ async fn handle_user_message(
 	// silently prepended to the conversation.
 	{
 		// Flush due schedule entries first.
-		crate::mcp::core::flush_due_to_inbox();
-		crate::mcp::core::flush_idle_to_inbox();
+		crate::mcp::orchestration::flush_due_to_inbox();
+		crate::mcp::orchestration::flush_idle_to_inbox();
 		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
 			log_debug!(
 				"WebSocket pre-user: processing inbox message from {:?}",

@@ -59,6 +59,7 @@ pub mod oauth;
 pub mod agent;
 pub mod core;
 pub mod health_monitor;
+pub mod orchestration;
 pub mod process;
 pub mod runtime;
 pub mod server;
@@ -344,6 +345,11 @@ async fn server_functions_for(
 			"runtime" => {
 				get_filtered_server_functions("runtime", server.tools(), runtime::get_all_functions)
 			}
+			"orchestration" => get_filtered_server_functions(
+				"orchestration",
+				server.tools(),
+				orchestration::get_all_functions,
+			),
 			"agent" => {
 				let fns = agent::get_all_functions(config);
 				filter_tools_by_patterns(fns, server.tools())
@@ -659,15 +665,40 @@ async fn route_builtin_tool(
 				"plan" => core::execute_plan(call)
 					.await
 					.map_err(|e| format!("Plan execution failed: {}", e)),
-				"tap" => core::execute_tap_command(call, config)
+				other => {
+					return Err(anyhow::anyhow!(
+						"Tool '{}' not implemented in core server",
+						other
+					))
+				}
+			};
+			match result {
+				Ok(mut r) => {
+					r.tool_id = call.tool_id.clone();
+					Ok(r)
+				}
+				Err(msg) => Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					msg,
+				)),
+			}
+		}
+		"orchestration" => {
+			crate::log_debug!(
+				"Executing '{}' via orchestration builtin server",
+				call.tool_name
+			);
+			let result = match call.tool_name.as_str() {
+				"tap" => orchestration::execute_tap_command(call, config)
 					.await
 					.map_err(|e| format!("Tap tool failed: {}", e)),
-				"schedule" => core::execute_schedule_tool(call)
+				"schedule" => orchestration::execute_schedule_tool(call)
 					.await
 					.map_err(|e| format!("Schedule tool failed: {}", e)),
 				other => {
 					return Err(anyhow::anyhow!(
-						"Tool '{}' not implemented in core server",
+						"Tool '{}' not implemented in orchestration server",
 						other
 					))
 				}

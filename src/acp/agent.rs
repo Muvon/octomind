@@ -311,10 +311,10 @@ fn spawn_inbox_monitor(
 			// Process phase: flush due schedules into inbox, then drain.
 			// Returns true to exit the monitor loop.
 			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
-				crate::mcp::core::flush_due_to_inbox();
+				crate::mcp::orchestration::flush_due_to_inbox();
 				// Idle-mode entries fire here too — ACP monitor runs only when nothing
 				// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
-				crate::mcp::core::flush_idle_to_inbox();
+				crate::mcp::orchestration::flush_idle_to_inbox();
 
 				// Drain inbox while there are messages. Acquire the per-session
 				// exclusion lock BEFORE removing the session from the map so a
@@ -474,7 +474,7 @@ fn spawn_inbox_monitor(
 			crate::session::context::with_session_id(session_id.clone(), async {
 				let inbox_notify = crate::session::inbox::get_inbox_notify();
 				tokio::select! {
-					_ = crate::mcp::core::next_schedule_sleep() => {}
+					_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 					_ = async {
 						if let Some(notify) = inbox_notify {
 							notify.notified().await;
@@ -574,7 +574,9 @@ impl OctomindAgent {
 		crate::session::context::with_session_id(session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
 			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
-			crate::mcp::core::schedule::core::restore_schedule_for_session(&session_id_for_restore);
+			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(
+				&session_id_for_restore,
+			);
 		})
 		.await;
 
@@ -893,7 +895,7 @@ impl OctomindAgent {
 			// Flush any due schedule entries and process inbox messages that arrived
 			// before this user prompt (background agents, scheduled entries, skills).
 			{
-				crate::mcp::core::flush_due_to_inbox();
+				crate::mcp::orchestration::flush_due_to_inbox();
 				while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
 					log_debug!(
 						"ACP pre-user: processing inbox message from {:?}",
@@ -1229,7 +1231,9 @@ impl OctomindAgent {
 		crate::session::context::with_session_id(actual_session_id.clone(), async move {
 			crate::session::context::init_session_services(&role_for_pool);
 			crate::mcp::core::plan::core::restore_plan_for_session(&session_id_for_restore);
-			crate::mcp::core::schedule::core::restore_schedule_for_session(&session_id_for_restore);
+			crate::mcp::orchestration::schedule::core::restore_schedule_for_session(
+				&session_id_for_restore,
+			);
 		})
 		.await;
 

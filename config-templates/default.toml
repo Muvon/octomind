@@ -182,8 +182,8 @@ Working directory: {{CWD}}
 welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
 
 [roles.mcp]
-server_refs = ["core", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
 
 # Task refiner role - lightweight query refinement
 [[roles]]
@@ -379,6 +379,12 @@ tools = []
 
 [[mcp.servers]]
 name = "agent"
+type = "builtin"
+timeout_seconds = 30
+tools = []
+
+[[mcp.servers]]
+name = "orchestration"
 type = "builtin"
 timeout_seconds = 30
 tools = []

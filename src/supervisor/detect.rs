@@ -67,6 +67,18 @@ Examples: `<sup>progressing · wiring store registration</sup>` or `<sup>done ·
 This tag is for the system and is hidden from the user. Always include exactly one.
 </supervisor>";
 
+/// One-time system-side instruction enabling evidence-bound claims. The agent
+/// backs load-bearing factual claims about the codebase with a verbatim quote it
+/// actually saw in a tool result; [`unverified_citations`] then deterministically
+/// checks the quote really occurs in some tool output, catching fabricated
+/// citations for free (no model call).
+pub const EVIDENCE_INSTRUCTION: &str = "\
+<supervisor>
+When you assert a load-bearing fact about the code or repo (a path, signature, value, or concrete behavior), back it with text you actually saw in a tool result, quoted verbatim between guillemets, in this exact form:
+[evidence: <locator> «exact text copied verbatim from the tool output»]
+Quote verbatim — do not paraphrase inside « ». Tag only load-bearing factual claims; do NOT tag plans, reasoning, or general knowledge. A « » quote that is not found in any tool result you received will be flagged and you will be asked to re-ground it against real output or retract the claim.
+</supervisor>";
+
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
 /// an optional short reason. Tolerant of the `·` or `|` reason separator.
 pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
@@ -140,6 +152,58 @@ pub fn strip_self_report(text: &str) -> String {
 	}
 	out.push_str(rest);
 	out.trim_end().to_string()
+}
+
+/// Deterministic evidence check: return the verbatim `« »`-delimited quotes in
+/// `response` that do NOT appear in any of `tool_outputs`. Whitespace is
+/// normalized on both sides (models reflow quotes across lines), so the match
+/// tolerates reformatting but not fabrication. Empty result = every cited quote
+/// is grounded (or none were cited). No model call.
+pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<String> {
+	let quotes = extract_quotes(response);
+	if quotes.is_empty() {
+		return Vec::new();
+	}
+	let haystack = tool_outputs
+		.iter()
+		.map(|o| normalize_ws(o))
+		.collect::<Vec<_>>()
+		.join("\n");
+	quotes
+		.into_iter()
+		.filter(|q| {
+			let n = normalize_ws(q);
+			!n.is_empty() && !haystack.contains(&n)
+		})
+		.collect()
+}
+
+/// Extract the text inside each `«…»` pair (the evidence-tag quote delimiters).
+fn extract_quotes(text: &str) -> Vec<String> {
+	const OPEN: char = '«';
+	const CLOSE: char = '»';
+	let mut out = Vec::new();
+	let mut rest = text;
+	while let Some(s) = rest.find(OPEN) {
+		let after = &rest[s + OPEN.len_utf8()..];
+		match after.find(CLOSE) {
+			Some(e) => {
+				let q = after[..e].trim();
+				if !q.is_empty() {
+					out.push(q.to_string());
+				}
+				rest = &after[e + CLOSE.len_utf8()..];
+			}
+			None => break,
+		}
+	}
+	out
+}
+
+/// Collapse every run of whitespace to a single space and trim — the normal form
+/// both sides of the evidence check are compared in.
+fn normalize_ws(s: &str) -> String {
+	s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Heuristic: does this tool change state, so a success is inherently progress?
@@ -554,6 +618,36 @@ mod tests {
 		// reset_streak is for the rolling windows — trajectory state survives.
 		d.reset_streak();
 		assert!(d.needs_verification());
+	}
+
+	#[test]
+	fn evidence_grounded_quote_passes() {
+		let outputs = vec!["274:\t\tif (!in_array($deal_data['status'], ...))".to_string()];
+		// Quote is a contiguous (whitespace-normalized) substring of the output.
+		let resp =
+			"The guard is here [evidence: PayoutTaskService.php «in_array($deal_data['status']»].";
+		assert!(unverified_citations(resp, &outputs).is_empty());
+	}
+
+	#[test]
+	fn evidence_fabricated_quote_flagged() {
+		let outputs = vec!["fn record_action(&mut self) -> DetectorSignal".to_string()];
+		let resp = "It does [evidence: detect.rs «fn totally_made_up_symbol()»].";
+		let bad = unverified_citations(resp, &outputs);
+		assert_eq!(bad, vec!["fn totally_made_up_symbol()"]);
+	}
+
+	#[test]
+	fn evidence_tolerates_reflowed_whitespace() {
+		let outputs = vec!["let signal = detectors.record_action(tool, result);".to_string()];
+		// Model reflowed the quote across lines — normalization makes it match.
+		let resp = "see [evidence: x «let signal =\n   detectors.record_action(tool, result);»]";
+		assert!(unverified_citations(resp, &outputs).is_empty());
+	}
+
+	#[test]
+	fn no_citations_is_clean() {
+		assert!(unverified_citations("plain answer, no tags", &["x".to_string()]).is_empty());
 	}
 
 	#[test]

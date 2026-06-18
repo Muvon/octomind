@@ -310,7 +310,8 @@ async fn handle_capability(call: &McpToolCall, config: &Config) -> Result<McpToo
 	};
 
 	let activated =
-		crate::mcp::core::capability::auto_activate_capabilities_for_intent(&prompt, config).await;
+		crate::mcp::runtime::capability::auto_activate_capabilities_for_intent(&prompt, config)
+			.await;
 
 	let content = if activated.is_empty() {
 		json!({

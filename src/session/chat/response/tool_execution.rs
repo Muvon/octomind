@@ -192,12 +192,13 @@ async fn execute_tap_capability_inline(
 		.as_ref()
 		.map(crate::session::context::get_active_skills)
 		.unwrap_or_default();
-	let capabilities_before = crate::mcp::core::capability::list_active_names();
+	let capabilities_before = crate::mcp::runtime::capability::list_active_names();
 
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
-	crate::mcp::core::skill_auto::run_activation(&prompt, &workdir, chat_session).await;
+	crate::mcp::runtime::skill_auto::run_activation(&prompt, &workdir, chat_session).await;
 	let mut activated_capabilities =
-		crate::mcp::core::capability::auto_activate_capabilities_for_intent(&prompt, config).await;
+		crate::mcp::runtime::capability::auto_activate_capabilities_for_intent(&prompt, config)
+			.await;
 
 	let activated_skills = session_id
 		.as_ref()
@@ -207,7 +208,7 @@ async fn execute_tap_capability_inline(
 		.filter(|name| !skills_before.contains(name))
 		.collect::<Vec<_>>();
 
-	for name in crate::mcp::core::capability::list_active_names() {
+	for name in crate::mcp::runtime::capability::list_active_names() {
 		if !capabilities_before.contains(&name) && !activated_capabilities.contains(&name) {
 			activated_capabilities.push(name);
 		}

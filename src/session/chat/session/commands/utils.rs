@@ -24,12 +24,12 @@ pub async fn get_tool_server_name_async(tool_name: &str, _config: &Config) -> St
 	}
 
 	// Then check dynamic servers - returns actual server name
-	if let Some(name) = crate::mcp::core::dynamic::get_dynamic_server_name_by_tool(tool_name) {
+	if let Some(name) = crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(tool_name) {
 		return name;
 	}
 
 	// Then check dynamic agents - they use "agent" namespace
-	if crate::mcp::core::dynamic_agents::is_dynamic_by_tool(tool_name) {
+	if crate::mcp::runtime::dynamic_agents::is_dynamic_by_tool(tool_name) {
 		return "agent".to_string();
 	}
 

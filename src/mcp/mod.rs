@@ -414,10 +414,10 @@ pub async fn get_available_functions(config: &crate::config::Config) -> Vec<McpF
 	// Include functions from dynamically added servers and agents.
 	// Dynamic-side capability activation is responsible for not re-registering
 	// servers that are already in the role's static config (see
-	// `handle_enable` / `activate_capability_inline` in `core::capability`),
+	// `handle_enable` / `activate_capability_inline` in `runtime::capability`),
 	// so this extend doesn't double-count tools.
-	functions.extend(crate::mcp::core::dynamic::get_all_functions());
-	functions.extend(crate::mcp::core::dynamic_agents::get_all_functions());
+	functions.extend(crate::mcp::runtime::dynamic::get_all_functions());
+	functions.extend(crate::mcp::runtime::dynamic_agents::get_all_functions());
 
 	// Project-local tools (`<workdir>/.agents/tools/<name>`) — always-on,
 	// role-agnostic. Same shape as OCTOMIND_SKILLS but driven by disk presence.
@@ -558,9 +558,9 @@ pub async fn execute_tool_call(
 	// Cheap (one HashMap scan); only walks active capabilities.
 	if result.is_ok() {
 		if let Some(server_name) =
-			crate::mcp::core::dynamic::get_dynamic_server_name_by_tool(&call.tool_name)
+			crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(&call.tool_name)
 		{
-			crate::mcp::core::capability::touch_capability_for_server(&server_name);
+			crate::mcp::runtime::capability::touch_capability_for_server(&server_name);
 		}
 	}
 
@@ -662,6 +662,9 @@ async fn route_builtin_tool(
 				"tap" => core::execute_tap_command(call, config)
 					.await
 					.map_err(|e| format!("Tap tool failed: {}", e)),
+				"schedule" => core::execute_schedule_tool(call)
+					.await
+					.map_err(|e| format!("Schedule tool failed: {}", e)),
 				other => {
 					return Err(anyhow::anyhow!(
 						"Tool '{}' not implemented in core server",
@@ -749,7 +752,8 @@ async fn execute_tool_without_cancellation(
 			// Dynamic agent tools (agent_* prefix): allow if config-defined or owned by this session
 			if let Some(agent_name) = call.tool_name.strip_prefix("agent_") {
 				let is_config_agent = config.agents.iter().any(|a| a.name == agent_name);
-				if !is_config_agent && !core::dynamic_agents::is_dynamic_by_tool(&call.tool_name) {
+				if !is_config_agent && !runtime::dynamic_agents::is_dynamic_by_tool(&call.tool_name)
+				{
 					return Ok(McpToolResult::error(
 						call.tool_name.clone(),
 						call.tool_id.clone(),
@@ -763,7 +767,7 @@ async fn execute_tool_without_cancellation(
 			// Dynamic server tools: allow if from a config-defined server or owned by this session.
 			// Project-local tools live under the synthetic "local" server and are workdir-scoped,
 			// so they bypass this check (no session-ownership concept applies).
-			if !core::dynamic::is_dynamic_by_tool(&call.tool_name)
+			if !runtime::dynamic::is_dynamic_by_tool(&call.tool_name)
 				&& target_server.name() != core::local_tool::SERVER_NAME
 			{
 				let is_config_server = config

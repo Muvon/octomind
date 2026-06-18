@@ -217,7 +217,7 @@ fn evict_lru_if_full(config: &Config) {
 		let server_count = entries.len();
 		for (srv, tools, kill) in &entries {
 			if let Err(e) =
-				crate::mcp::core::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
+				crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
 			{
 				crate::log_debug!(
 					"capability LRU evict: failed to disable tools for server '{}' (kill={}, {} tools): {}",
@@ -566,8 +566,8 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		}
 
 		// Fully dynamic — register + enable.
-		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
-			if let Err(e) = crate::mcp::core::dynamic::register_server(server.clone()) {
+		if !crate::mcp::runtime::dynamic::is_dynamic(&server_name) {
+			if let Err(e) = crate::mcp::runtime::dynamic::register_server(server.clone()) {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
@@ -578,7 +578,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			}
 		}
 
-		match crate::mcp::core::dynamic::enable_server(&server_name, filter_for_this).await {
+		match crate::mcp::runtime::dynamic::enable_server(&server_name, filter_for_this).await {
 			Ok(functions) => {
 				let bare_names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
 				activated_tools.extend(bare_names.iter().cloned());
@@ -701,7 +701,7 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 		// `disable_server_tools`; static servers reach this branch via the
 		// `static_owned` rule above.
 		if let Err(e) =
-			crate::mcp::core::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
+			crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
 		{
 			// Re-insert the cap so the user can retry. Fail closed — partial
 			// disable is worse than reporting the error.
@@ -978,17 +978,17 @@ pub async fn auto_activate_capabilities(
 pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config) -> Vec<String> {
 	// Strip XML blocks (skill injections, <log> pastes, system tags, etc.)
 	// so pasted content doesn't drive false-positive capability matches.
-	let intent = crate::mcp::core::skill_auto::strip_xml_blocks(intent);
+	let intent = crate::mcp::runtime::skill_auto::strip_xml_blocks(intent);
 
 	// Skip embedding + scoring entirely for short/empty inputs. Short
 	// acknowledgments ("try", "ok", "do it") produce noisy embeddings that
 	// can clear the threshold against an unrelated trigger by coincidence;
 	// they also waste the embed call on no real intent. Mirrors the same
 	// gate applied in `skill_auto::run_activation`.
-	if !crate::mcp::core::skill_auto::intent_has_enough_signal(&intent) {
+	if !crate::mcp::runtime::skill_auto::intent_has_enough_signal(&intent) {
 		crate::log_debug!(
 			"capability auto-activate: skipping — intent below {} non-ws chars: {:?}",
-			crate::mcp::core::skill_auto::MIN_INTENT_NON_WS_CHARS,
+			crate::mcp::runtime::skill_auto::MIN_INTENT_NON_WS_CHARS,
 			intent
 		);
 		return Vec::new();
@@ -1221,10 +1221,10 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 			continue;
 		}
 
-		if !crate::mcp::core::dynamic::is_dynamic(&server_name) {
-			crate::mcp::core::dynamic::register_server(server.clone())?;
+		if !crate::mcp::runtime::dynamic::is_dynamic(&server_name) {
+			crate::mcp::runtime::dynamic::register_server(server.clone())?;
 		}
-		let functions = crate::mcp::core::dynamic::enable_server(&server_name, filter).await?;
+		let functions = crate::mcp::runtime::dynamic::enable_server(&server_name, filter).await?;
 		let bare_names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
 		activated_server_tools.push((server_name.clone(), bare_names));
 		activated_servers.push(server_name);
@@ -2406,7 +2406,7 @@ mod tests {
 			// + the matched trigger phrase) — speculating from trigger
 			// lists alone is rarely productive when the model surprises us.
 			let (outcome, ranked): (Option<String>, Vec<(f32, String)>) =
-				if !crate::mcp::core::skill_auto::intent_has_enough_signal(intent) {
+				if !crate::mcp::runtime::skill_auto::intent_has_enough_signal(intent) {
 					(None, Vec::new())
 				} else {
 					let intent_vec = crate::embeddings::embed(intent)

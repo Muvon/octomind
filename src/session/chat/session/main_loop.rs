@@ -234,7 +234,7 @@ pub async fn run_interactive_session(
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;
 
-		crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
+		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 
 		// Drive the same boot spinner used for static MCP init so env-loaded
 		// capabilities (which may start their own MCP servers) show progress
@@ -244,10 +244,10 @@ pub async fn run_interactive_session(
 			let pending: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 			let total: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
 			let sp_ref = spinner.clone();
-			let cb = move |progress: crate::mcp::core::capability::EnvCapabilityProgress| {
+			let cb = move |progress: crate::mcp::runtime::capability::EnvCapabilityProgress| {
 				let Some(sp) = sp_ref.as_ref() else { return };
 				match progress {
-					crate::mcp::core::capability::EnvCapabilityProgress::Starting {
+					crate::mcp::runtime::capability::EnvCapabilityProgress::Starting {
 						capabilities,
 					} => {
 						*total.lock().unwrap() = capabilities.len();
@@ -260,7 +260,7 @@ pub async fn run_interactive_session(
 							));
 						}
 					}
-					crate::mcp::core::capability::EnvCapabilityProgress::Completed {
+					crate::mcp::runtime::capability::EnvCapabilityProgress::Completed {
 						capability,
 						..
 					} => {
@@ -281,7 +281,8 @@ pub async fn run_interactive_session(
 					}
 				}
 			};
-			crate::mcp::core::capability::load_env_capabilities(&config_for_role, Some(&cb)).await;
+			crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, Some(&cb))
+				.await;
 		}
 
 		// Done initializing — clear spinner, print skills
@@ -304,7 +305,7 @@ pub async fn run_interactive_session(
 						));
 					}
 				}
-				for name in crate::mcp::core::capability::list_active_names() {
+				for name in crate::mcp::runtime::capability::list_active_names() {
 					sp.println(format!(
 						"{} {}",
 						"Using capability:".dimmed(),
@@ -1068,7 +1069,7 @@ pub async fn run_interactive_session(
 
 			// Run skill activation on user input
 			{
-				crate::mcp::core::skill_auto::run_activation(
+				crate::mcp::runtime::skill_auto::run_activation(
 					&input,
 					&current_dir,
 					&mut chat_session,
@@ -1411,10 +1412,10 @@ pub async fn run_interactive_session_with_input(
 	// Setup system prompt and cache using helper function (non-interactive mode)
 	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
 
-	crate::mcp::core::skill_auto::load_env_skills(&mut chat_session).await;
+	crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
 	// Non-interactive paths have no spinner — env-capability progress events
 	// would have nothing to drive, so pass None.
-	crate::mcp::core::capability::load_env_capabilities(&config_for_role, None).await;
+	crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 
 	// Clear spinner from setup
 	if let Some(sp) = spinner {
@@ -1536,7 +1537,7 @@ pub async fn run_interactive_session_with_input(
 	}
 
 	// Run skill activation on user input
-	crate::mcp::core::skill_auto::run_activation(
+	crate::mcp::runtime::skill_auto::run_activation(
 		&input,
 		&current_dir,
 		&mut chat_session,

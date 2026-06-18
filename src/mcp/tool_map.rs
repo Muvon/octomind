@@ -407,8 +407,8 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 	}
 
 	// Also include dynamically added servers
-	for server in crate::mcp::core::dynamic::get_all_configs() {
-		if let Some(functions) = crate::mcp::core::dynamic::get_functions(server.name()) {
+	for server in crate::mcp::runtime::dynamic::get_all_configs() {
+		if let Some(functions) = crate::mcp::runtime::dynamic::get_functions(server.name()) {
 			for function in functions {
 				// Dynamic servers have lower priority than config servers
 				tool_map
@@ -419,7 +419,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 	}
 
 	// Also include dynamically added agents
-	for agent_config in crate::mcp::core::dynamic_agents::get_all_configs() {
+	for agent_config in crate::mcp::runtime::dynamic_agents::get_all_configs() {
 		let tool_name = format!("agent_{}", agent_config.name);
 		let agent_server = McpServerConfig::Builtin {
 			name: "agent".to_string(),

@@ -176,12 +176,12 @@ pub async fn get_tool_server_name_async(tool_name: &str, _config: &Config) -> St
 	}
 
 	// Then check dynamic MCP servers - returns actual server name
-	if let Some(name) = crate::mcp::core::dynamic::get_dynamic_server_name_by_tool(tool_name) {
+	if let Some(name) = crate::mcp::runtime::dynamic::get_dynamic_server_name_by_tool(tool_name) {
 		return name;
 	}
 
 	// Then check dynamic agents - they use "agent" namespace
-	if crate::mcp::core::dynamic_agents::is_dynamic_by_tool(tool_name) {
+	if crate::mcp::runtime::dynamic_agents::is_dynamic_by_tool(tool_name) {
 		return "agent".to_string();
 	}
 
@@ -756,7 +756,7 @@ pub async fn process_response<S: OutputSink>(
 	{
 		let workdir = crate::mcp::get_thread_working_directory();
 		let failures =
-			crate::mcp::core::skill_auto::run_validators(&current_content, &workdir).await;
+			crate::mcp::runtime::skill_auto::run_validators(&current_content, &workdir).await;
 		for (skill_name, error) in &failures {
 			// Wrap in <validation> tags so skill auto-activation (strip_xml_blocks)
 			// ignores this injected message — it must not match user-intent skills.

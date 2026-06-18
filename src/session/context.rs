@@ -519,7 +519,7 @@ pub fn clear_hints_for_session(session_id: &SessionId) {
 
 /// Registry for dynamic agents, keyed by session ID.
 /// Each session has its own set of registered/enabled agents.
-use crate::mcp::core::dynamic_agents::DynamicAgentConfig;
+use crate::mcp::runtime::dynamic_agents::DynamicAgentConfig;
 
 /// Type alias for a session's dynamic agent state (agents map, enabled map).
 type DynamicAgentState = (HashMap<String, DynamicAgentConfig>, HashMap<String, bool>);
@@ -1119,7 +1119,7 @@ pub fn init_session_services(role: &str) {
 	crate::mcp::agent::functions::init_job_manager();
 	// Extract domain from role/tag (e.g., "developer:general" → "developer")
 	let domain = role.split(':').next().unwrap_or(role);
-	crate::mcp::core::skill_auto::init_pool(domain);
+	crate::mcp::runtime::skill_auto::init_pool(domain);
 }
 
 #[cfg(test)]

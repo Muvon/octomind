@@ -62,7 +62,7 @@ impl<'a> CommandCompleter<'a> {
 
 	/// Get available skill names for /skill completion (toggle by name).
 	fn get_skill_names() -> Vec<String> {
-		crate::mcp::core::skill::find_all_skills_with_details()
+		crate::mcp::runtime::skill::find_all_skills_with_details()
 			.iter()
 			.map(|(meta, _)| meta.name.clone())
 			.collect()

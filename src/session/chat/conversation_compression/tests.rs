@@ -91,7 +91,7 @@ fn preserves_active_skill_in_drain_range() {
 		.filter(|m| {
 			m.role == "user"
 				&& !m.content.trim().is_empty()
-				&& !crate::mcp::core::skill::is_skill_message(&m.content)
+				&& !crate::mcp::runtime::skill::is_skill_message(&m.content)
 		})
 		.map(|m| m.content.clone())
 		.collect();
@@ -137,7 +137,7 @@ fn preserves_active_skill_in_drain_range() {
 	assert_eq!(messages.len(), 6);
 	assert_eq!(messages[2].content, "instructions");
 	assert!(
-		crate::mcp::core::skill::is_skill_message(&messages[3].content),
+		crate::mcp::runtime::skill::is_skill_message(&messages[3].content),
 		"skill comes right after anchor"
 	);
 	assert_eq!(messages[4].content, "SUMMARY");

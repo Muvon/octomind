@@ -1055,7 +1055,7 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 
 						// New server — register + enable + refcount=1
 						if let Err(e) =
-							crate::mcp::core::dynamic::register_server(server_config.clone())
+							crate::mcp::runtime::dynamic::register_server(server_config.clone())
 						{
 							crate::log_debug!(
 								"skill: capability '{}' server '{}' register: {}",
@@ -1064,7 +1064,8 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 								e
 							);
 						}
-						match crate::mcp::core::dynamic::enable_server(&server_name, None).await {
+						match crate::mcp::runtime::dynamic::enable_server(&server_name, None).await
+						{
 							Ok(_) => {
 								crate::session::context::increment_capability_refcount(
 									&session_id,
@@ -1234,10 +1235,10 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 		let remaining =
 			crate::session::context::decrement_capability_refcount(&session_id, server_name);
 		if remaining == 0 {
-			if let Err(e) = crate::mcp::core::dynamic::disable_server(server_name, None) {
+			if let Err(e) = crate::mcp::runtime::dynamic::disable_server(server_name, None) {
 				crate::log_debug!("skill: offload disable '{}': {}", server_name, e);
 			}
-			crate::mcp::core::dynamic::remove_server(server_name);
+			crate::mcp::runtime::dynamic::remove_server(server_name);
 			offloaded.push(server_name.clone());
 		}
 	}

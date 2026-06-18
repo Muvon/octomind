@@ -1165,8 +1165,8 @@ impl ChatSession {
 		// system prompt is rebuilt so the prompt reflects the resulting tool
 		// surface. Both calls are idempotent; the underlying registries guard
 		// against double activation.
-		crate::mcp::core::skill_auto::load_env_skills(self).await;
-		crate::mcp::core::capability::load_env_capabilities(&config_for_role, None).await;
+		crate::mcp::runtime::skill_auto::load_env_skills(self).await;
+		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 
 		// Create new system prompt for the role (AFTER MCP servers are initialized)
 		// This ensures the tools definition reflects the new role's available tools

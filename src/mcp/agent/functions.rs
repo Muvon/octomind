@@ -150,7 +150,7 @@ pub async fn execute_agent_command(
 	let config_agent = config.agents.iter().find(|a| a.name == agent_name).cloned();
 
 	// Then check dynamic agents (in-process execution)
-	let dynamic_agent = crate::mcp::core::dynamic_agents::get_enabled_agent(agent_name);
+	let dynamic_agent = crate::mcp::runtime::dynamic_agents::get_enabled_agent(agent_name);
 
 	match (config_agent, dynamic_agent) {
 		(Some(agent), None) => {
@@ -304,7 +304,7 @@ async fn execute_config_agent(
 /// chat_completion_with_validation with a recursive tool call loop.
 async fn execute_dynamic_agent(
 	call: &McpToolCall,
-	agent_config: &crate::mcp::core::dynamic_agents::DynamicAgentConfig,
+	agent_config: &crate::mcp::runtime::dynamic_agents::DynamicAgentConfig,
 	task: &str,
 	config: &crate::config::Config,
 ) -> Result<McpToolResult> {
@@ -406,7 +406,7 @@ async fn execute_dynamic_agent(
 /// server registry, then overrides the model/temperature/top_p/top_k from
 /// the agent config.
 fn build_agent_config(
-	agent: &crate::mcp::core::dynamic_agents::DynamicAgentConfig,
+	agent: &crate::mcp::runtime::dynamic_agents::DynamicAgentConfig,
 	base_config: &crate::config::Config,
 ) -> crate::config::Config {
 	let mut merged = base_config.clone();
@@ -414,7 +414,7 @@ fn build_agent_config(
 	// Resolve server_refs: check static config servers first, then dynamic servers
 	if !agent.server_refs.is_empty() {
 		// Collect all available servers: static + dynamic
-		let dynamic_servers = crate::mcp::core::dynamic::get_all_configs();
+		let dynamic_servers = crate::mcp::runtime::dynamic::get_all_configs();
 		let mut all_servers = base_config.mcp.servers.clone();
 		for ds in dynamic_servers {
 			if !all_servers.iter().any(|s| s.name() == ds.name()) {
@@ -460,7 +460,7 @@ fn build_agent_config(
 /// Builds messages (system + user task), calls chat_completion_with_validation,
 /// then handles recursive tool calls.
 fn run_dynamic_agent_in_process(
-	agent: &crate::mcp::core::dynamic_agents::DynamicAgentConfig,
+	agent: &crate::mcp::runtime::dynamic_agents::DynamicAgentConfig,
 	task: &str,
 	agent_config: &crate::config::Config,
 	operation_cancelled: watch::Receiver<bool>,

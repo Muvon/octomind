@@ -53,7 +53,7 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 	}
 
 	// Otherwise → toggle skill by exact name
-	let all_skills = crate::mcp::core::skill::find_all_skills_with_details();
+	let all_skills = crate::mcp::runtime::skill::find_all_skills_with_details();
 	if !all_skills.iter().any(|(m, _)| m.name == arg) {
 		let data = json!({"subcommand": "error", "message": format!("Skill '{}' not found.", arg)});
 		return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -75,7 +75,7 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 }
 
 fn handle_list(pattern: Option<&str>, page: usize) -> Result<CommandResult> {
-	let all_skills = crate::mcp::core::skill::find_all_skills_with_details();
+	let all_skills = crate::mcp::runtime::skill::find_all_skills_with_details();
 	let active_skills = crate::session::context::current_session_id()
 		.map(|sid| crate::session::context::get_active_skills(&sid))
 		.unwrap_or_default();
@@ -91,8 +91,8 @@ fn handle_list(pattern: Option<&str>, page: usize) -> Result<CommandResult> {
 		}
 
 		let is_active = active_skills.contains(&meta.name);
-		let has_activate = crate::mcp::core::skill::has_activate_script(skill_dir);
-		let has_validate = crate::mcp::core::skill::has_validate_script(skill_dir);
+		let has_activate = crate::mcp::runtime::skill::has_activate_script(skill_dir);
+		let has_validate = crate::mcp::runtime::skill::has_validate_script(skill_dir);
 		let mut scripts = Vec::new();
 		if has_activate {
 			scripts.push("activate");
@@ -208,9 +208,9 @@ async fn handle_use(session: &mut ChatSession, name: &str) -> Result<CommandResu
 		parameters: json!({"action": "use_silent", "name": name}),
 	};
 
-	match crate::mcp::core::skill::execute_skill_tool(&call).await {
+	match crate::mcp::runtime::skill::execute_skill_tool(&call).await {
 		Ok(_) => {
-			if let Some(content) = crate::mcp::core::skill::take_silent_skill_content() {
+			if let Some(content) = crate::mcp::runtime::skill::take_silent_skill_content() {
 				let _ = session.add_user_message(&content);
 			}
 			// Emit structured lifecycle event for JSONL/WebSocket consumers
@@ -241,7 +241,7 @@ async fn handle_forget(name: &str) -> Result<CommandResult> {
 		parameters: json!({"action": "forget", "name": name}),
 	};
 
-	if let Err(e) = crate::mcp::core::skill::execute_skill_tool(&call).await {
+	if let Err(e) = crate::mcp::runtime::skill::execute_skill_tool(&call).await {
 		let data = json!({"subcommand": "error", "message": format!("Error: {}", e)});
 		return Ok(CommandResult::HandledWithOutput(Box::new(
 			CommandOutput::Skill { data },

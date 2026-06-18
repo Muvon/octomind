@@ -293,11 +293,23 @@ pub fn truncate_mcp_response_global(
 
 	let truncated = crate::session::truncate_to_tokens(content, max_tokens);
 	let omitted = token_count.saturating_sub(max_tokens);
-	let notice = format!(
-		"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). \
-Re-running this tool with the same arguments returns this SAME truncated output — do not repeat the call. To see the rest, {hint}.",
-		hint = truncation_hint(tool_name),
-	);
+	let hint = truncation_hint(tool_name);
+
+	// Lossless path: spill the full body to a session file and hand back a path
+	// handle so the model can read the exact span it needs instead of losing the
+	// tail. Falls back to the lossy notice when there is no session (CLI/tests) or
+	// the write fails — both still carry the tag + tool-specific narrowing hint.
+	let notice = match crate::utils::spill::write_spill(tool_name, content) {
+		Some(path) => format!(
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). \
+The FULL untruncated output was saved to:\n  {path}\nRead just the span you need from that file with your file/grep tool — do NOT re-run this call (same arguments return this same truncated output). To narrow at the source instead, {hint}.",
+			path = path.display(),
+		),
+		None => format!(
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). \
+Re-running this tool with the same arguments returns this SAME truncated output — do not repeat the call. To see the rest, {hint}."
+		),
+	};
 
 	(format!("{truncated}{notice}"), true)
 }

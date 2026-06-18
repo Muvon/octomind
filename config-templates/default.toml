@@ -661,6 +661,10 @@ ignore_cost = false  # When true, compression decision API cost is not tracked (
 enabled = true
 # Shared cheap model for supervisor mechanics (a mechanic may override)
 model = "anthropic:claude-haiku-4-5"
+# Evidence-bound claims: have the agent back load-bearing repo facts with a
+# verbatim «quote», then deterministically verify each quote occurs in a tool
+# result; fabricated citations are re-grounded via the verify-gate (needs gate.enabled).
+claim_check = true
 
 [supervisor.learning]
 # Enable the learning system

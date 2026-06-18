@@ -73,6 +73,11 @@ pub struct SupervisorConfig {
 	pub enabled: bool,
 	/// Shared cheap model for supervisor mechanics (e.g. the verify-gate).
 	pub model: String,
+	/// Evidence-bound claims: instruct the agent to back load-bearing repo facts
+	/// with a verbatim `« »` quote, then deterministically verify each quote
+	/// occurs in a tool result. Fabricated citations are re-grounded via the
+	/// verify-gate's bounded re-run (so this is effective only when `gate.enabled`).
+	pub claim_check: bool,
 	/// Cross-session learning mechanic (distill + recall).
 	pub learning: learning::LearningConfig,
 	/// Orientation memory (durable subject understanding).

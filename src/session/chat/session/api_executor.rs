@@ -339,6 +339,58 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			// Budget exhausted — fall through to the LLM gate / acceptance.
 		}
 
+		// Free evidence check (no model call): a `done` answer that cites « » quotes
+		// which appear in NO tool result is fabricating its support. Catch it
+		// deterministically and re-ground via the same bounded re-run.
+		if config.supervisor.claim_check {
+			let tool_outputs: Vec<String> = chat_session
+				.session
+				.messages
+				.iter()
+				.filter(|m| m.role == "tool")
+				.map(|m| m.content.clone())
+				.collect();
+			let unverified = crate::supervisor::detect::unverified_citations(
+				&chat_session.last_response,
+				&tool_outputs,
+			);
+			if !unverified.is_empty() {
+				let mut note = String::from(
+					"<supervisor>\nThese cited quotes do not appear in any tool result you received — re-ground each against actual tool output, or retract the claim:\n",
+				);
+				for q in &unverified {
+					note.push_str("- «");
+					note.push_str(q);
+					note.push_str("»\n");
+				}
+				note.push_str("</supervisor>");
+				chat_session.add_user_message(&note)?;
+				chat_session.last_self_report = None; // force the re-run to re-evaluate
+				chat_session.gate_iterations += 1;
+				crate::supervisor::notify(&format!(
+					"{} unverifiable citation(s) — re-running",
+					unverified.len()
+				));
+				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+					crate::log_debug!(
+						"Evidence check: {} unverified citation(s); re-running (iter {})",
+						unverified.len(),
+						chat_session.gate_iterations
+					);
+					return Box::pin(execute_api_call_and_process_response(
+						chat_session,
+						config,
+						role,
+						operation_rx,
+						mode,
+						sink,
+					))
+					.await;
+				}
+				// Budget exhausted — fall through to the LLM gate / acceptance.
+			}
+		}
+
 		// The genuine task is the most recent user turn that is NOT a supervisor
 		// injection — so re-runs verify against the real request, not our advisory.
 		let task = chat_session

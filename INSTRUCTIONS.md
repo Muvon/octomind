@@ -10,7 +10,8 @@ src/
   lib.rs               # Spinner-aware print macros (shadow std::println! etc.)
   config/              # Config types, loading, migrations, log macros
   mcp/                 # Tool routing, server lifecycle, all builtin tools
-    core/              # plan, tap, schedule, local_tool, functions
+    core/              # plan, local_tool, functions
+    orchestration/     # tap, schedule
     runtime/           # mcp, agent, skill, capability tools
     agent/             # agent_* tool routing → layer/subprocess
   session/
@@ -223,7 +224,7 @@ Before any commit:
 - **Five session entry points must stay in sync** — grep `init_session_services` before adding session-scoped state.
 - **`/done` bypasses `process_command`** — intercepted in `main_loop.rs`; the `DONE_COMMAND` arm in `process_command` is `unreachable!()`.
 - **Log macros live in `src/config/mod.rs`**, not `src/lib.rs`. `lib.rs` only has the print macros.
-- **Core vs runtime builtins** — `core` server: `plan`, `tap`, `schedule` (the session's own primitives). `runtime` server: `mcp`, `agent`, `skill`, `capability` (tool-surface reconfiguration). Separate match arms in `route_builtin_tool()`.
+- **Builtin servers** — `core`: `plan`. `orchestration`: `tap`, `schedule` (orchestrator-tier). `runtime`: `mcp`, `agent`, `skill`, `capability` (tool-surface reconfiguration). `agent`: `agent_*`. Each is its own match arm in `route_builtin_tool()` and `tool_map`.
 - **Dynamic tool session ownership** — tools registered by one session are rejected from another. Intentional isolation.
 - **Compression decision model** is separate from the main model — configured at `[compression.decision]` in config, not `model`.
 

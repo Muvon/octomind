@@ -24,7 +24,7 @@
 //! the loader needs to reconstruct session state.
 
 use crate::mcp::core::plan::storage::ExecutionPlan;
-use crate::mcp::core::schedule::storage::ScheduleEntry;
+use crate::mcp::orchestration::schedule::storage::ScheduleEntry;
 use crate::session::persistence::append_to_session_file;
 use crate::session::Message;
 use anyhow::Result;

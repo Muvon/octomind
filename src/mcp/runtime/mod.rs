@@ -20,8 +20,8 @@
 //! - `skill`      — load and activate skills from taps.
 //! - `capability` — discover/enable domain tool bundles at runtime.
 //!
-//! They live under the `runtime` builtin server. Core hosts the session
-//! primitives `plan`, `tap`, and `schedule`.
+//! They live under the `runtime` builtin server. The `core` server hosts
+//! `plan`; the `orchestration` server hosts `tap` and `schedule`.
 
 use crate::config::Config;
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};

@@ -18,8 +18,6 @@
 pub mod functions;
 pub mod local_tool;
 pub mod plan;
-pub mod schedule;
-pub mod tap;
 
 #[cfg(test)]
 mod plan_tests;
@@ -27,8 +25,3 @@ mod plan_tests;
 // Re-export main functionality
 pub use functions::get_all_functions;
 pub use plan::{clear_plan_data, execute_plan};
-pub use schedule::{
-	execute_schedule_tool, flush_due_to_inbox, flush_idle_to_inbox, has_pending_idle_schedules,
-	has_pending_schedules, is_session_idle, next_schedule_sleep,
-};
-pub use tap::execute_tap_command;

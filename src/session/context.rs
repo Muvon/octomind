@@ -385,7 +385,7 @@ pub fn clear_task_start_index(session_id: &SessionId) {
 // Session-keyed schedule storage
 // ---------------------------------------------------------------------------
 
-use crate::mcp::core::schedule::storage::ScheduleStore;
+use crate::mcp::orchestration::schedule::storage::ScheduleStore;
 
 /// Registry for schedule storage, keyed by session ID.
 static SCHEDULE_REGISTRIES: RwLock<Option<HashMap<SessionId, Arc<Mutex<ScheduleStore>>>>> =

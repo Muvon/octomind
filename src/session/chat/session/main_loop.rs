@@ -59,7 +59,9 @@ async fn init_session_runtime(
 ) -> Result<SessionRuntimeGuards> {
 	crate::session::context::init_session_services(role);
 	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
-	crate::mcp::core::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
+	crate::mcp::orchestration::schedule::core::restore_schedule_for_session(
+		&chat_session.session.info.name,
+	);
 	let inject =
 		crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	let webhooks = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
@@ -572,10 +574,10 @@ pub async fn run_interactive_session(
 
 			// Flush any due schedule entries into the inbox so all injection sources
 			// are unified — the loop only needs to drain the inbox from here on.
-			crate::mcp::core::flush_due_to_inbox();
+			crate::mcp::orchestration::flush_due_to_inbox();
 			// Now that the response loop is back to idle, fire any idle-mode entries
 			// (only if no taps / background jobs are still running).
-			crate::mcp::core::flush_idle_to_inbox();
+			crate::mcp::orchestration::flush_idle_to_inbox();
 
 			// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
 			// If one is ready, skip user input entirely and process it immediately.
@@ -632,7 +634,7 @@ pub async fn run_interactive_session(
 							// Wait for any event that might make the inbox non-empty:
 							// a schedule timer fires, or someone pushed to the inbox.
 							tokio::select! {
-								_ = crate::mcp::core::next_schedule_sleep() => {}
+								_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 								_ = async {
 									if let Some(ref notify) = inbox_notify {
 										notify.notified().await;
@@ -642,7 +644,7 @@ pub async fn run_interactive_session(
 								} => {}
 							}
 							// Flush any due schedule entries into the inbox.
-							crate::mcp::core::flush_due_to_inbox();
+							crate::mcp::orchestration::flush_due_to_inbox();
 							// Publish a preview if the inbox now has a message.
 							if let Some(preview) =
 								crate::session::inbox::peek_inbox_preview(&session_name_for_peek)
@@ -865,7 +867,7 @@ pub async fn run_interactive_session(
 			if input.trim().is_empty() {
 				// User pressed Enter on empty prompt. Check if an inbox
 				// message arrived while they were at the prompt.
-				crate::mcp::core::flush_due_to_inbox();
+				crate::mcp::orchestration::flush_due_to_inbox();
 				if crate::session::inbox::has_inbox_messages() {
 					if let Some(msg) = crate::session::inbox::try_pop_inbox_message() {
 						log_debug!("Processing inbox message from {:?}", msg.source);
@@ -1709,10 +1711,10 @@ pub async fn run_interactive_session_with_input(
 	// All injection sources (schedule, background agents) push to the inbox — drain it here.
 	loop {
 		// Flush any due schedule entries into the inbox first.
-		crate::mcp::core::flush_due_to_inbox();
+		crate::mcp::orchestration::flush_due_to_inbox();
 		// Idle-mode entries fire here too — non-interactive is "idle" between turns
 		// as long as nothing is in flight.
-		crate::mcp::core::flush_idle_to_inbox();
+		crate::mcp::orchestration::flush_idle_to_inbox();
 
 		// Process all messages currently in the inbox.
 		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
@@ -1842,7 +1844,7 @@ pub async fn run_interactive_session_with_input(
 		}
 
 		// Check if there's anything left to wait for.
-		let has_schedules = crate::mcp::core::has_pending_schedules();
+		let has_schedules = crate::mcp::orchestration::has_pending_schedules();
 		let active_jobs = crate::mcp::agent::functions::get_job_manager()
 			.map(|m| m.active_count())
 			.unwrap_or(0);
@@ -1854,7 +1856,7 @@ pub async fn run_interactive_session_with_input(
 		// Wait for the next event: either a schedule timer fires or an inbox message arrives.
 		let inbox_notify = crate::session::inbox::get_inbox_notify();
 		tokio::select! {
-			_ = crate::mcp::core::next_schedule_sleep() => {}
+			_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 			_ = async {
 				if let Some(notify) = inbox_notify {
 					notify.notified().await;

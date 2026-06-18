@@ -366,6 +366,11 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 						server.tools(),
 						crate::mcp::runtime::get_all_functions,
 					),
+					"orchestration" => crate::mcp::get_filtered_server_functions(
+						"orchestration",
+						server.tools(),
+						crate::mcp::orchestration::get_all_functions,
+					),
 					"agent" => {
 						// For agent server, get all agent functions based on config
 						// Don't cache agent functions since they depend on config

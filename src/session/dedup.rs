@@ -52,6 +52,11 @@ const MIN_DEDUP_CONTENT_LEN: usize = 500;
 /// Max chars of the original's first/last line quoted in the placeholder.
 const SNIPPET_CHARS: usize = 120;
 
+/// Sentinel embedded in every dedup placeholder (see [`placeholder`]). The
+/// supervisor's detector keys its consecutive-dedup streak on this substring,
+/// tool-agnostically — mirroring how truncation detection keys on its own tag.
+pub const DEDUP_NOTICE_TAG: &str = "duplicate tool call";
+
 static DEDUP_STATE: OnceLock<RwLock<GlobalMap>> = OnceLock::new();
 
 fn state() -> &'static RwLock<GlobalMap> {
@@ -194,6 +199,18 @@ mod tests {
 		assert!(s.contains("duplicate"));
 		assert!(s.contains("first line"));
 		assert!(s.contains("[OK] No errors"));
+	}
+
+	#[test]
+	fn every_placeholder_variant_carries_the_sentinel() {
+		// The supervisor's dedup detector keys on DEDUP_NOTICE_TAG; if any
+		// placeholder variant stops containing it, dedup steering goes silent.
+		let two_line = placeholder("view", "first\nlast\n", false);
+		let one_line = placeholder("view", "only\n", false);
+		let truncated = placeholder("shell", "huge\n", true);
+		for p in [&two_line, &one_line, &truncated] {
+			assert!(p.contains(DEDUP_NOTICE_TAG), "missing sentinel in: {p}");
+		}
 	}
 
 	#[test]

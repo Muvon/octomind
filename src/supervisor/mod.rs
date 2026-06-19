@@ -127,6 +127,10 @@ pub struct DetectorsConfig {
 	/// is ignoring the truncation notice and re-querying without narrowing.
 	/// Tool-agnostic: keyed on the truncation sentinel, not on tool identity.
 	pub truncation_threshold: usize,
+	/// Consecutive deduplicated tool results this many times in a row → the model
+	/// is re-issuing calls whose output it already received this session.
+	/// Tool-agnostic: keyed on the dedup sentinel, not on tool identity.
+	pub dedup_threshold: usize,
 	/// Inject the self-report status-token instruction and parse it back.
 	pub self_report: bool,
 }

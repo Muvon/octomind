@@ -332,6 +332,25 @@ pub async fn process_tool_results(
 		return Ok(None);
 	}
 
+	// Circuit-breaker: a steer is advisory, so a loop can ignore it forever. If the
+	// model has emitted a steer for `max_consecutive_steers` tool rounds in a row
+	// without breaking out, hard-stop the turn and return control to the user instead
+	// of burning more tokens. 0 = unlimited (off — delivery alone is relied on).
+	let steer_limit = config.supervisor.max_consecutive_steers;
+	if steer_limit > 0 && chat_session.consecutive_steers >= steer_limit {
+		chat_session.consecutive_steers = 0;
+		chat_session.steer_pending = None;
+		println!(
+			"{}",
+			format!(
+				"⚠ Supervisor stopped a runaway loop: {steer_limit} steered rounds in a row with no change — returning control to you."
+			)
+			.bright_yellow()
+		);
+		animation_manager.stop_current().await;
+		return Ok(None);
+	}
+
 	// Inject accumulated tool-misuse hints as a user message so the AI sees guidance
 	// without polluting individual tool result strings. Hints are deduplicated across
 	// all parallel tool calls in this round and cleared after injection.
@@ -350,6 +369,21 @@ pub async fn process_tool_results(
 			content: hint_message,
 			..Default::default()
 		});
+	}
+
+	// Supervisor: deliver any queued steer note HERE — during the tool loop, before
+	// the follow-up call — not only at the next user turn. The detector sets
+	// `steer_pending` mid-loop, but it was previously consumed only at the turn-start
+	// injection point (api_executor), so a runaway identical-call loop never actually
+	// saw the steer (it only landed when a real user message began a fresh turn). This
+	// is the round-by-round delivery that makes the steer reach the model in the loop.
+	if let Some(note) = chat_session.steer_pending.take() {
+		chat_session.session.messages.push(crate::session::Message {
+			role: "user".to_string(),
+			content: note,
+			..Default::default()
+		});
+		crate::log_debug!("Supervisor steer injected (tool loop)");
 	}
 
 	// Make follow-up API call

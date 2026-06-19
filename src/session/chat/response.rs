@@ -627,6 +627,8 @@ pub async fn process_response<S: OutputSink>(
 					// Results shorter than this aren't worth embedding — a few lines give a
 					// noisy cosine and verdict/placeholder cases carry no topical signal.
 					const MIN_DRIFT_LEN: usize = 200;
+					// Track whether this round emitted a steer (for the circuit-breaker).
+					let mut round_steered = false;
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -691,6 +693,7 @@ pub async fn process_response<S: OutputSink>(
 							signal,
 							params.chat_session.last_self_report,
 						) {
+							round_steered = true;
 							params.chat_session.steer_pending =
 								Some(crate::supervisor::detect::steer_note(signal).to_string());
 							params.chat_session.detectors.reset_streak();
@@ -711,6 +714,13 @@ pub async fn process_response<S: OutputSink>(
 								params.chat_session.last_self_report
 							);
 						}
+					}
+					// Circuit-breaker bookkeeping: a round that steered extends the streak;
+					// any round that did not (the model moved on) resets it.
+					if round_steered {
+						params.chat_session.consecutive_steers += 1;
+					} else {
+						params.chat_session.consecutive_steers = 0;
 					}
 				}
 

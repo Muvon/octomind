@@ -208,6 +208,10 @@ pub struct ChatSession {
 	/// Supervisor: queued advisory steer note (loop / no-progress), injected at
 	/// the next request's safe pre-build point. None = nothing to steer.
 	pub steer_pending: Option<String>,
+	/// Supervisor circuit-breaker: consecutive tool rounds that emitted a steer
+	/// without the model breaking out. Caps a runaway loop — a steer is advisory,
+	/// so the model can ignore it forever. Reset by any non-steering round.
+	pub consecutive_steers: usize,
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
@@ -338,6 +342,7 @@ impl ChatSession {
 			gate_iterations: 0,
 			gate_failed: false,
 			steer_pending: None,
+			consecutive_steers: 0,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 		}
@@ -544,6 +549,7 @@ impl ChatSession {
 						gate_iterations: 0,
 						gate_failed: false,
 						steer_pending: None,
+						consecutive_steers: 0,
 						last_self_report_reason: None,
 						recalled_refs: Vec::new(),
 					};
@@ -1291,6 +1297,7 @@ mod tests {
 			gate_iterations: 0,
 			gate_failed: false,
 			steer_pending: None,
+			consecutive_steers: 0,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 		}

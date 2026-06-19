@@ -285,6 +285,19 @@ pub enum CompressionTrigger {
 
 /// Main entry point: check if compression needed and perform if AI decides YES
 /// Returns true if compression was performed, false otherwise
+/// True when a USER-role message is one of OUR synthetic injections — a skill
+/// block, a continuation wrapper, or a supervisor `<supervisor>`/`<recall>`
+/// control-plane note (steers, goal recitation, recalled lessons) — rather than a
+/// genuine user request. These must NEVER be summarized or captured as USER TASKS:
+/// e.g. a steered loop would otherwise turn "<supervisor> your results were
+/// truncated…" into the recorded task and bury the real ask (the bug that ate the
+/// work). Centralized + unit-tested so the filter can't silently drift again.
+pub(super) fn is_synthetic_user_message(content: &str) -> bool {
+	crate::mcp::runtime::skill::is_skill_message(content)
+		|| apply::is_continuation_message(content)
+		|| crate::supervisor::gate::is_supervisor_injection(content)
+}
+
 pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
@@ -415,10 +428,7 @@ pub async fn check_and_compress_conversation(
 	//     plumbing, not real user asks. Including them would let the
 	//     "Please continue."-style degradation chain reappear.
 	let user_msg_filter = |m: &&crate::session::Message| -> bool {
-		m.role == "user"
-			&& !m.content.trim().is_empty()
-			&& !crate::mcp::runtime::skill::is_skill_message(&m.content)
-			&& !apply::is_continuation_message(&m.content)
+		m.role == "user" && !m.content.trim().is_empty() && !is_synthetic_user_message(&m.content)
 	};
 
 	let all_user_msgs: Vec<&crate::session::Message> = session.session.messages
@@ -494,11 +504,7 @@ pub async fn check_and_compress_conversation(
 	let messages_to_compress: Vec<crate::session::Message> = session.session.messages
 		[start_idx + 1..=end_idx]
 		.iter()
-		.filter(|m| {
-			!(m.role == "user"
-				&& (crate::mcp::runtime::skill::is_skill_message(&m.content)
-					|| apply::is_continuation_message(&m.content)))
-		})
+		.filter(|m| !(m.role == "user" && is_synthetic_user_message(&m.content)))
 		.cloned()
 		.collect();
 

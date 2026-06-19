@@ -26,6 +26,43 @@ fn skill_msg(name: &str) -> Message {
 }
 
 #[test]
+fn synthetic_user_messages_excluded_from_tasks() {
+	// Guards the bug that ate the work: supervisor steers / recall / skill /
+	// continuation are USER-role but must never be captured as user tasks or fed to
+	// the summarizer. The old test mirrored the filter inline (and lacked the
+	// supervisor check), so it passed while the real filter was broken — this calls
+	// the REAL predicate, so it fails if any wrapper stops being recognized.
+	use super::is_synthetic_user_message;
+	// Supervisor steer.
+	assert!(is_synthetic_user_message(
+		"<supervisor>\nSTOP — you are repeating the same call.\n</supervisor>"
+	));
+	// Goal recitation (also <supervisor>-wrapped).
+	assert!(is_synthetic_user_message(
+		"<supervisor>\nStay anchored to the goal:\n<intent>x</intent>\n</supervisor>"
+	));
+	// Recalled lessons.
+	assert!(is_synthetic_user_message(
+		"<recall>\n<lessons>...</lessons>\n</recall>"
+	));
+	// Skill block.
+	assert!(is_synthetic_user_message(
+		"<skill name=\"programming-rust\" description=\"x\">\nbody\n</skill>"
+	));
+	// Continuation wrapper.
+	assert!(is_synthetic_user_message(
+		"<continuation>\nThe conversation summary above…\n</continuation>"
+	));
+	// Genuine user requests — kept.
+	assert!(!is_synthetic_user_message(
+		"fix the dedup steering bug in response.rs"
+	));
+	assert!(!is_synthetic_user_message(
+		"why does compression drop the summary?"
+	));
+}
+
+#[test]
 fn preserves_active_skill_in_drain_range() {
 	// Layout: [system, welcome, instructions, user_req1, asst,
 	//         skill(rust), user_req2, asst, user_req3, asst]
@@ -84,14 +121,13 @@ fn preserves_active_skill_in_drain_range() {
 		.content
 		.contains("<skill name=\"programming-rust\""));
 
-	// Filter mirrors check_and_compress_conversation: user messages that are
-	// NOT skill messages, non-empty.
+	// Use the REAL predicate (not a mirror) so this test breaks if the filter drifts.
 	let user_tasks: Vec<String> = messages[start_idx + 1..=end_idx]
 		.iter()
 		.filter(|m| {
 			m.role == "user"
 				&& !m.content.trim().is_empty()
-				&& !crate::mcp::runtime::skill::is_skill_message(&m.content)
+				&& !super::is_synthetic_user_message(&m.content)
 		})
 		.map(|m| m.content.clone())
 		.collect();

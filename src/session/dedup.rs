@@ -140,7 +140,7 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 	// directive instead.
 	if was_truncated {
 		return format!(
-			"[duplicate tool call — `{tool_name}` was already called with these exact arguments and its output was TRUNCATED; retrying with the same arguments returns the same truncated result, never more. STOP repeating it — to see the part that was cut off, {hint}.]",
+			"[duplicate tool call — `{tool_name}`: same args, same TRUNCATED output as before — repeating returns no more. STOP; to see the cut-off part, {hint}.]",
 			hint = crate::utils::truncation::truncation_hint(tool_name),
 		);
 	}
@@ -161,7 +161,7 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 		format!("it begins: {first} — and ends: {last}")
 	};
 	format!(
-		"[duplicate tool call — `{tool_name}` was already called with these exact arguments and returned the SAME output ({fingerprint}), which is still in your context above; it was not re-sent. STOP: do not call `{tool_name}` with these arguments again — identical arguments produce byte-identical output, so a retry returns nothing new. Reuse the earlier result from your context above. To get different information, change the arguments (a different file/range) or use another tool.]"
+		"[duplicate tool call — `{tool_name}`: same args, same output as earlier ({fingerprint}), already in your context. Don't repeat it — reuse that result, or change the args/tool to get something new.]"
 	)
 }
 

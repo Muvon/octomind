@@ -88,6 +88,10 @@ pub struct SupervisorConfig {
 	pub gate: GateConfig,
 	/// Goal recitation: re-anchor the live goal at the context tail.
 	pub recite: ReciteConfig,
+	/// Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that
+	/// emitted a steer without the model breaking out (a steer is advisory, so a loop
+	/// can otherwise ignore it forever). `0` = unlimited (off).
+	pub max_consecutive_steers: usize,
 }
 
 /// Goal recitation. On long (already-compacted) sessions the durable goal lives

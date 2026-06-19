@@ -702,6 +702,9 @@ no_progress_window = 5
 # Consecutive truncated tool results in a row -> model is ignoring the truncation
 # notice and re-querying without narrowing (tool-agnostic, keyed on the sentinel)
 truncation_threshold = 2
+# Consecutive deduplicated tool results in a row -> model is re-issuing calls whose
+# output it already received (tool-agnostic, keyed on the dedup sentinel)
+dedup_threshold = 2
 # Inject the self-report status-token instruction and parse it back
 self_report = true
 

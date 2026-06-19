@@ -242,6 +242,8 @@ pub struct Detectors {
 	seen_order: VecDeque<u64>,
 	/// Truncated tool results in a row. Reset by any non-truncated result.
 	consecutive_truncations: usize,
+	/// Deduplicated results in a row. Reset by any non-dedup result.
+	consecutive_dedups: usize,
 	/// A code change was made with no successful non-mutation check since — the
 	/// free pre-gate signal for a premature `done`. Trajectory state, NOT a
 	/// streak: it persists across turns until a clean check clears it, so
@@ -264,6 +266,10 @@ pub enum DetectorSignal {
 	/// the model varies args so each truncated chunk differs (defeating Loop) and
 	/// reads as fresh (defeating NoProgress); the only invariant is truncation.
 	Truncation,
+	/// `dedup_threshold` deduplicated results in a row — the model is re-issuing
+	/// calls whose output it already received this session (the body was elided to
+	/// an error placeholder). The most precise loop there is: the exact same call.
+	Dedup,
 }
 
 fn hash2(a: &str, b: &str) -> u64 {
@@ -285,9 +291,11 @@ impl Detectors {
 		is_error: bool,
 		is_mutation: bool,
 		is_truncated: bool,
+		is_dedup: bool,
 		loop_threshold: usize,
 		no_progress_window: usize,
 		truncation_threshold: usize,
+		dedup_threshold: usize,
 	) -> DetectorSignal {
 		// Truncation streak: count truncated results in a row, reset on a clean
 		// one (the model narrowed and got a full result). Checked first because it
@@ -297,6 +305,16 @@ impl Detectors {
 			self.consecutive_truncations += 1;
 		} else {
 			self.consecutive_truncations = 0;
+		}
+
+		// Dedup streak: count deduplicated results in a row, reset on any
+		// non-dedup result. A dedup is the model re-issuing a call whose output it
+		// already has — the most precise loop there is, so it is diagnosed
+		// separately and fires on its own (low) threshold.
+		if is_dedup {
+			self.consecutive_dedups += 1;
+		} else {
+			self.consecutive_dedups = 0;
 		}
 
 		// Mutation-verification tracking for the free pre-gate (premature `done`):
@@ -345,8 +363,11 @@ impl Detectors {
 
 		let truncating =
 			truncation_threshold > 0 && self.consecutive_truncations >= truncation_threshold;
+		let deduping = dedup_threshold > 0 && self.consecutive_dedups >= dedup_threshold;
 
-		if truncating {
+		if deduping {
+			DetectorSignal::Dedup
+		} else if truncating {
 			DetectorSignal::Truncation
 		} else if looping {
 			DetectorSignal::Loop
@@ -364,6 +385,7 @@ impl Detectors {
 		self.novelty_window.clear();
 		self.loop_window.clear();
 		self.consecutive_truncations = 0;
+		self.consecutive_dedups = 0;
 	}
 
 	/// Free pre-gate signal: code was changed and no successful check has run
@@ -377,7 +399,7 @@ impl Detectors {
 /// call). The decision table:
 /// - any `done`                          → defer to the verify-gate (no steer)
 /// - no-progress while `exploring`       → wait (legitimate exploration)
-/// - truncation, loop, or no-progress    → steer
+/// - dedup, truncation, loop, or no-progress → steer
 ///
 /// Truncation steers even while `exploring`: re-hitting a capped output is waste
 /// regardless of intent, unlike a no-progress window which can be legitimate
@@ -400,6 +422,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::Loop => "repeated action without new results",
 		DetectorSignal::NoProgress => "no new information in recent steps",
 		DetectorSignal::Truncation => "repeated truncated results — narrowing args ignored",
+		DetectorSignal::Dedup => "repeated identical results — re-fetching output already received",
 		DetectorSignal::None => "",
 	}
 }
@@ -411,6 +434,7 @@ pub fn steer_note(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::Loop => "<supervisor>\nYou have repeated the same action without new results. Stop and try a different approach. If you cannot proceed, report `blocked`.\n</supervisor>",
 		DetectorSignal::NoProgress => "<supervisor>\nSeveral steps have passed without new progress. Re-anchor on the user's actual request: restate the goal, what is done, and the next concrete step — or report `blocked`.\n</supervisor>",
 		DetectorSignal::Truncation => "<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context.\nWork efficiently: read only what you actually need, not whole files or full listings. Each call costs context and attention, so spending it on output you won't use makes the rest of the task harder. Before each call, decide the smallest slice that answers your current question and target it with the tool's own parameters — a line range, limit, offset, filter, or a more specific query/pattern. Read broadly only when you genuinely need most of the content.\n</supervisor>",
+		DetectorSignal::Dedup => "<supervisor>\nYou re-issued a call whose output you already received this session — the duplicate result was elided, so re-running it gains you nothing and only burns context.\nReuse what you already have instead of re-fetching it. If you need something you do not have yet, change what you ask for — a different file, a narrower range, a more specific query — do not repeat the same call. If you cannot proceed, report `blocked`.\n</supervisor>",
 		DetectorSignal::None => "",
 	}
 }
@@ -514,16 +538,16 @@ mod tests {
 	fn loop_fires_on_repeated_result() {
 		let mut d = Detectors::default();
 		assert_eq!(
-			d.record_action("grep", "same", false, false, false, 3, 9, 0),
+			d.record_action("grep", "same", false, false, false, false, 3, 9, 0, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("grep", "same", false, false, false, 3, 9, 0),
+			d.record_action("grep", "same", false, false, false, false, 3, 9, 0, 0),
 			DetectorSignal::None
 		);
 		// Third identical RESULT → loop.
 		assert_eq!(
-			d.record_action("grep", "same", false, false, false, 3, 9, 0),
+			d.record_action("grep", "same", false, false, false, false, 3, 9, 0, 0),
 			DetectorSignal::Loop
 		);
 	}
@@ -531,11 +555,11 @@ mod tests {
 	#[test]
 	fn no_progress_fires_on_zero_novelty_window() {
 		let mut d = Detectors::default();
-		d.record_action("a", "r", false, false, false, 9, 3, 0); // first "r" → novel
-		d.record_action("a", "r", false, false, false, 9, 3, 0); // seen → not novel
-		d.record_action("a", "r", false, false, false, 9, 3, 0); // not novel
+		d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0); // first "r" → novel
+		d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0); // seen → not novel
+		d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0); // not novel
 		assert_eq!(
-			d.record_action("a", "r", false, false, false, 9, 3, 0),
+			d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0),
 			DetectorSignal::NoProgress
 		);
 	}
@@ -543,11 +567,11 @@ mod tests {
 	#[test]
 	fn mutation_counts_as_progress() {
 		let mut d = Detectors::default();
-		d.record_action("read", "same", false, false, false, 9, 2, 0);
-		d.record_action("read", "same", false, false, false, 9, 2, 0);
+		d.record_action("read", "same", false, false, false, false, 9, 2, 0, 0);
+		d.record_action("read", "same", false, false, false, false, 9, 2, 0, 0);
 		// An edit always advances state → breaks the stall.
 		assert_eq!(
-			d.record_action("edit", "ok", false, true, false, 9, 2, 0),
+			d.record_action("edit", "ok", false, true, false, false, 9, 2, 0, 0),
 			DetectorSignal::None
 		);
 	}
@@ -558,11 +582,11 @@ mod tests {
 		// Different content each time (model tweaks args) — defeats Loop/NoProgress,
 		// but both carry the truncation flag. Threshold 2 → fires on the second.
 		assert_eq!(
-			d.record_action("view", "chunk A", false, false, true, 9, 9, 2),
+			d.record_action("view", "chunk A", false, false, true, false, 9, 9, 2, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("view", "chunk B", false, false, true, 9, 9, 2),
+			d.record_action("view", "chunk B", false, false, true, false, 9, 9, 2, 0),
 			DetectorSignal::Truncation
 		);
 	}
@@ -570,15 +594,15 @@ mod tests {
 	#[test]
 	fn clean_result_resets_truncation_streak() {
 		let mut d = Detectors::default();
-		d.record_action("view", "chunk A", false, false, true, 9, 9, 2);
+		d.record_action("view", "chunk A", false, false, true, false, 9, 9, 2, 0);
 		// Model narrowed and got a full result → streak resets.
 		assert_eq!(
-			d.record_action("view", "full", false, false, false, 9, 9, 2),
+			d.record_action("view", "full", false, false, false, false, 9, 9, 2, 0),
 			DetectorSignal::None
 		);
 		// One truncation again is not yet at threshold.
 		assert_eq!(
-			d.record_action("view", "chunk B", false, false, true, 9, 9, 2),
+			d.record_action("view", "chunk B", false, false, true, false, 9, 9, 2, 0),
 			DetectorSignal::None
 		);
 	}
@@ -588,9 +612,9 @@ mod tests {
 		let mut d = Detectors::default();
 		// Identical truncated result repeated: both Loop and Truncation conditions
 		// hold; the more actionable Truncation signal wins.
-		d.record_action("view", "same", false, false, true, 2, 9, 2);
+		d.record_action("view", "same", false, false, true, false, 2, 9, 2, 0);
 		assert_eq!(
-			d.record_action("view", "same", false, false, true, 2, 9, 2),
+			d.record_action("view", "same", false, false, true, false, 2, 9, 2, 0),
 			DetectorSignal::Truncation
 		);
 	}
@@ -600,20 +624,31 @@ mod tests {
 		let mut d = Detectors::default();
 		assert!(!d.needs_verification());
 		// A successful edit → unverified.
-		d.record_action("edit", "ok", false, true, false, 9, 9, 0);
+		d.record_action("edit", "ok", false, true, false, false, 9, 9, 0, 0);
 		assert!(d.needs_verification());
 		// A failed check does NOT clear it.
-		d.record_action("shell", "error", true, false, false, 9, 9, 0);
+		d.record_action("shell", "error", true, false, false, false, 9, 9, 0, 0);
 		assert!(d.needs_verification());
 		// A successful non-mutation check clears it.
-		d.record_action("shell", "tests pass", false, false, false, 9, 9, 0);
+		d.record_action(
+			"shell",
+			"tests pass",
+			false,
+			false,
+			false,
+			false,
+			9,
+			9,
+			0,
+			0,
+		);
 		assert!(!d.needs_verification());
 	}
 
 	#[test]
 	fn reset_streak_keeps_unverified_mutation() {
 		let mut d = Detectors::default();
-		d.record_action("edit", "ok", false, true, false, 9, 9, 0);
+		d.record_action("edit", "ok", false, true, false, false, 9, 9, 0, 0);
 		assert!(d.needs_verification());
 		// reset_streak is for the rolling windows — trajectory state survives.
 		d.reset_streak();
@@ -686,5 +721,55 @@ mod tests {
 			DetectorSignal::NoProgress,
 			Some(SelfReport::Progressing)
 		));
+	}
+
+	#[test]
+	fn dedup_fires_on_consecutive_dedup_results() {
+		let mut d = Detectors::default();
+		// is_dedup=true, threshold 2 → fires on the second in a row.
+		assert_eq!(
+			d.record_action("view", "[dup A]", true, false, false, true, 9, 9, 0, 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_action("view", "[dup B]", true, false, false, true, 9, 9, 0, 2),
+			DetectorSignal::Dedup
+		);
+	}
+
+	#[test]
+	fn clean_result_resets_dedup_streak() {
+		let mut d = Detectors::default();
+		d.record_action("view", "[dup A]", true, false, false, true, 9, 9, 0, 2);
+		// A fresh, non-dedup result breaks the streak.
+		assert_eq!(
+			d.record_action("view", "full", false, false, false, false, 9, 9, 0, 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_action("view", "[dup B]", true, false, false, true, 9, 9, 0, 2),
+			DetectorSignal::None
+		);
+	}
+
+	#[test]
+	fn dedup_outranks_loop() {
+		let mut d = Detectors::default();
+		// Identical dedup placeholder repeated satisfies both Loop and Dedup;
+		// the more precise Dedup signal wins.
+		d.record_action("view", "[dup]", true, false, false, true, 2, 9, 0, 2);
+		assert_eq!(
+			d.record_action("view", "[dup]", true, false, false, true, 2, 9, 0, 2),
+			DetectorSignal::Dedup
+		);
+	}
+
+	#[test]
+	fn dedup_steers_even_while_exploring() {
+		assert!(should_steer(
+			DetectorSignal::Dedup,
+			Some(SelfReport::Exploring)
+		));
+		assert!(!should_steer(DetectorSignal::Dedup, Some(SelfReport::Done)));
 	}
 }

@@ -591,6 +591,7 @@ pub async fn process_response<S: OutputSink>(
 					let no_progress_window = params.config.supervisor.detectors.no_progress_window;
 					let truncation_threshold =
 						params.config.supervisor.detectors.truncation_threshold;
+					let dedup_threshold = params.config.supervisor.detectors.dedup_threshold;
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
 						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
@@ -601,15 +602,22 @@ pub async fn process_response<S: OutputSink>(
 						// truncation choke point stamps, not by tool identity.
 						let is_truncated = result_content
 							.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG);
+						// Likewise detect a deduped repeat by the sentinel the dedup
+						// placeholder carries (a successful duplicate arrives as an error
+						// result whose body is the placeholder).
+						let is_dedup =
+							result_content.contains(crate::session::dedup::DEDUP_NOTICE_TAG);
 						let signal = params.chat_session.detectors.record_action(
 							&call.tool_name,
 							&result_content,
 							is_error,
 							is_mutation,
 							is_truncated,
+							is_dedup,
 							loop_threshold,
 							no_progress_window,
 							truncation_threshold,
+							dedup_threshold,
 						);
 						if crate::supervisor::detect::should_steer(
 							signal,

@@ -244,6 +244,8 @@ pub struct Detectors {
 	consecutive_truncations: usize,
 	/// Deduplicated results in a row. Reset by any non-dedup result.
 	consecutive_dedups: usize,
+	/// Low-relevance (off-task) results in a row. Reset by any on-task result.
+	consecutive_low_relevance: usize,
 	/// A code change was made with no successful non-mutation check since — the
 	/// free pre-gate signal for a premature `done`. Trajectory state, NOT a
 	/// streak: it persists across turns until a clean check clears it, so
@@ -270,6 +272,12 @@ pub enum DetectorSignal {
 	/// calls whose output it already received this session (the body was elided to
 	/// an error placeholder). The most precise loop there is: the exact same call.
 	Dedup,
+	/// `distraction_threshold` off-task results in a row — tool output whose cosine
+	/// to the current task fell below `relevance_threshold` (a high-precision off-task
+	/// floor, NOT a relevance boundary: embeddings are trustworthy at "clearly
+	/// unrelated", not at "is this relevant"). The model is pulling in context that
+	/// does not bear on the goal, crowding out what does (the NoLiMa distractor mode).
+	Distraction,
 }
 
 fn hash2(a: &str, b: &str) -> u64 {
@@ -292,10 +300,12 @@ impl Detectors {
 		is_mutation: bool,
 		is_truncated: bool,
 		is_dedup: bool,
+		is_low_relevance: bool,
 		loop_threshold: usize,
 		no_progress_window: usize,
 		truncation_threshold: usize,
 		dedup_threshold: usize,
+		distraction_threshold: usize,
 	) -> DetectorSignal {
 		// Truncation streak: count truncated results in a row, reset on a clean
 		// one (the model narrowed and got a full result). Checked first because it
@@ -315,6 +325,16 @@ impl Detectors {
 			self.consecutive_dedups += 1;
 		} else {
 			self.consecutive_dedups = 0;
+		}
+
+		// Distraction streak: count off-task results in a row, reset on any
+		// on-task one. Relevance is scored upstream (async embedding); here we only
+		// count the boolean. The softest signal — context quality, not an active
+		// loop — so it is ranked last and stays silent while the agent is exploring.
+		if is_low_relevance {
+			self.consecutive_low_relevance += 1;
+		} else {
+			self.consecutive_low_relevance = 0;
 		}
 
 		// Mutation-verification tracking for the free pre-gate (premature `done`):
@@ -364,6 +384,8 @@ impl Detectors {
 		let truncating =
 			truncation_threshold > 0 && self.consecutive_truncations >= truncation_threshold;
 		let deduping = dedup_threshold > 0 && self.consecutive_dedups >= dedup_threshold;
+		let distracting =
+			distraction_threshold > 0 && self.consecutive_low_relevance >= distraction_threshold;
 
 		if deduping {
 			DetectorSignal::Dedup
@@ -373,6 +395,8 @@ impl Detectors {
 			DetectorSignal::Loop
 		} else if stalled {
 			DetectorSignal::NoProgress
+		} else if distracting {
+			DetectorSignal::Distraction
 		} else {
 			DetectorSignal::None
 		}
@@ -386,6 +410,7 @@ impl Detectors {
 		self.loop_window.clear();
 		self.consecutive_truncations = 0;
 		self.consecutive_dedups = 0;
+		self.consecutive_low_relevance = 0;
 	}
 
 	/// Free pre-gate signal: code was changed and no successful check has run
@@ -398,8 +423,8 @@ impl Detectors {
 /// Fuse the deterministic signal with the agent's free self-report (no model
 /// call). The decision table:
 /// - any `done`                          → defer to the verify-gate (no steer)
-/// - no-progress while `exploring`       → wait (legitimate exploration)
-/// - dedup, truncation, loop, or no-progress → steer
+/// - no-progress / distraction while `exploring` → wait (legitimate exploration)
+/// - dedup, truncation, loop, no-progress, distraction → steer
 ///
 /// Truncation steers even while `exploring`: re-hitting a capped output is waste
 /// regardless of intent, unlike a no-progress window which can be legitimate
@@ -410,7 +435,16 @@ pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool 
 	}
 	match report {
 		Some(SelfReport::Done) => false,
-		Some(SelfReport::Exploring) if signal == DetectorSignal::NoProgress => false,
+		// No-progress and distraction can be legitimate while exploring; every
+		// other signal steers regardless of intent.
+		Some(SelfReport::Exploring)
+			if matches!(
+				signal,
+				DetectorSignal::NoProgress | DetectorSignal::Distraction
+			) =>
+		{
+			false
+		}
 		_ => true,
 	}
 }
@@ -423,6 +457,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::NoProgress => "no new information in recent steps",
 		DetectorSignal::Truncation => "repeated truncated results — narrowing args ignored",
 		DetectorSignal::Dedup => "repeated identical results — re-fetching output already received",
+		DetectorSignal::Distraction => "off-task tool results — context drifting from the request",
 		DetectorSignal::None => "",
 	}
 }
@@ -435,6 +470,7 @@ pub fn steer_note(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::NoProgress => "<supervisor>\nSeveral steps have passed without new progress. Re-anchor on the user's actual request: restate the goal, what is done, and the next concrete step — or report `blocked`.\n</supervisor>",
 		DetectorSignal::Truncation => "<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context.\nWork efficiently: read only what you actually need, not whole files or full listings. Each call costs context and attention, so spending it on output you won't use makes the rest of the task harder. Before each call, decide the smallest slice that answers your current question and target it with the tool's own parameters — a line range, limit, offset, filter, or a more specific query/pattern. Read broadly only when you genuinely need most of the content.\n</supervisor>",
 		DetectorSignal::Dedup => "<supervisor>\nYou re-issued a call whose output you already received this session — the duplicate result was elided, so re-running it gains you nothing and only burns context.\nReuse what you already have instead of re-fetching it. If you need something you do not have yet, change what you ask for — a different file, a narrower range, a more specific query — do not repeat the same call. If you cannot proceed, report `blocked`.\n</supervisor>",
+		DetectorSignal::Distraction => "<supervisor>\nYour recent tool results look off-task relative to the user's request — you are spending context on material that does not bear on the current goal, which crowds out what does. Re-read the user's actual request, then target your next calls at exactly what it needs (the specific files, symbols, or behavior involved) instead of broad or tangential content.\n</supervisor>",
 		DetectorSignal::None => "",
 	}
 }
@@ -538,16 +574,16 @@ mod tests {
 	fn loop_fires_on_repeated_result() {
 		let mut d = Detectors::default();
 		assert_eq!(
-			d.record_action("grep", "same", false, false, false, false, 3, 9, 0, 0),
+			d.record_action("grep", "same", false, false, false, false, false, 3, 9, 0, 0, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("grep", "same", false, false, false, false, 3, 9, 0, 0),
+			d.record_action("grep", "same", false, false, false, false, false, 3, 9, 0, 0, 0),
 			DetectorSignal::None
 		);
 		// Third identical RESULT → loop.
 		assert_eq!(
-			d.record_action("grep", "same", false, false, false, false, 3, 9, 0, 0),
+			d.record_action("grep", "same", false, false, false, false, false, 3, 9, 0, 0, 0),
 			DetectorSignal::Loop
 		);
 	}
@@ -555,11 +591,11 @@ mod tests {
 	#[test]
 	fn no_progress_fires_on_zero_novelty_window() {
 		let mut d = Detectors::default();
-		d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0); // first "r" → novel
-		d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0); // seen → not novel
-		d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0); // not novel
+		d.record_action("a", "r", false, false, false, false, false, 9, 3, 0, 0, 0); // first "r" → novel
+		d.record_action("a", "r", false, false, false, false, false, 9, 3, 0, 0, 0); // seen → not novel
+		d.record_action("a", "r", false, false, false, false, false, 9, 3, 0, 0, 0); // not novel
 		assert_eq!(
-			d.record_action("a", "r", false, false, false, false, 9, 3, 0, 0),
+			d.record_action("a", "r", false, false, false, false, false, 9, 3, 0, 0, 0),
 			DetectorSignal::NoProgress
 		);
 	}
@@ -567,11 +603,15 @@ mod tests {
 	#[test]
 	fn mutation_counts_as_progress() {
 		let mut d = Detectors::default();
-		d.record_action("read", "same", false, false, false, false, 9, 2, 0, 0);
-		d.record_action("read", "same", false, false, false, false, 9, 2, 0, 0);
+		d.record_action(
+			"read", "same", false, false, false, false, false, 9, 2, 0, 0, 0,
+		);
+		d.record_action(
+			"read", "same", false, false, false, false, false, 9, 2, 0, 0, 0,
+		);
 		// An edit always advances state → breaks the stall.
 		assert_eq!(
-			d.record_action("edit", "ok", false, true, false, false, 9, 2, 0, 0),
+			d.record_action("edit", "ok", false, true, false, false, false, 9, 2, 0, 0, 0),
 			DetectorSignal::None
 		);
 	}
@@ -582,11 +622,11 @@ mod tests {
 		// Different content each time (model tweaks args) — defeats Loop/NoProgress,
 		// but both carry the truncation flag. Threshold 2 → fires on the second.
 		assert_eq!(
-			d.record_action("view", "chunk A", false, false, true, false, 9, 9, 2, 0),
+			d.record_action("view", "chunk A", false, false, true, false, false, 9, 9, 2, 0, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("view", "chunk B", false, false, true, false, 9, 9, 2, 0),
+			d.record_action("view", "chunk B", false, false, true, false, false, 9, 9, 2, 0, 0),
 			DetectorSignal::Truncation
 		);
 	}
@@ -594,15 +634,17 @@ mod tests {
 	#[test]
 	fn clean_result_resets_truncation_streak() {
 		let mut d = Detectors::default();
-		d.record_action("view", "chunk A", false, false, true, false, 9, 9, 2, 0);
+		d.record_action(
+			"view", "chunk A", false, false, true, false, false, 9, 9, 2, 0, 0,
+		);
 		// Model narrowed and got a full result → streak resets.
 		assert_eq!(
-			d.record_action("view", "full", false, false, false, false, 9, 9, 2, 0),
+			d.record_action("view", "full", false, false, false, false, false, 9, 9, 2, 0, 0),
 			DetectorSignal::None
 		);
 		// One truncation again is not yet at threshold.
 		assert_eq!(
-			d.record_action("view", "chunk B", false, false, true, false, 9, 9, 2, 0),
+			d.record_action("view", "chunk B", false, false, true, false, false, 9, 9, 2, 0, 0),
 			DetectorSignal::None
 		);
 	}
@@ -612,9 +654,11 @@ mod tests {
 		let mut d = Detectors::default();
 		// Identical truncated result repeated: both Loop and Truncation conditions
 		// hold; the more actionable Truncation signal wins.
-		d.record_action("view", "same", false, false, true, false, 2, 9, 2, 0);
+		d.record_action(
+			"view", "same", false, false, true, false, false, 2, 9, 2, 0, 0,
+		);
 		assert_eq!(
-			d.record_action("view", "same", false, false, true, false, 2, 9, 2, 0),
+			d.record_action("view", "same", false, false, true, false, false, 2, 9, 2, 0, 0),
 			DetectorSignal::Truncation
 		);
 	}
@@ -624,10 +668,14 @@ mod tests {
 		let mut d = Detectors::default();
 		assert!(!d.needs_verification());
 		// A successful edit → unverified.
-		d.record_action("edit", "ok", false, true, false, false, 9, 9, 0, 0);
+		d.record_action(
+			"edit", "ok", false, true, false, false, false, 9, 9, 0, 0, 0,
+		);
 		assert!(d.needs_verification());
 		// A failed check does NOT clear it.
-		d.record_action("shell", "error", true, false, false, false, 9, 9, 0, 0);
+		d.record_action(
+			"shell", "error", true, false, false, false, false, 9, 9, 0, 0, 0,
+		);
 		assert!(d.needs_verification());
 		// A successful non-mutation check clears it.
 		d.record_action(
@@ -637,8 +685,10 @@ mod tests {
 			false,
 			false,
 			false,
+			false,
 			9,
 			9,
+			0,
 			0,
 			0,
 		);
@@ -648,7 +698,9 @@ mod tests {
 	#[test]
 	fn reset_streak_keeps_unverified_mutation() {
 		let mut d = Detectors::default();
-		d.record_action("edit", "ok", false, true, false, false, 9, 9, 0, 0);
+		d.record_action(
+			"edit", "ok", false, true, false, false, false, 9, 9, 0, 0, 0,
+		);
 		assert!(d.needs_verification());
 		// reset_streak is for the rolling windows — trajectory state survives.
 		d.reset_streak();
@@ -728,11 +780,11 @@ mod tests {
 		let mut d = Detectors::default();
 		// is_dedup=true, threshold 2 → fires on the second in a row.
 		assert_eq!(
-			d.record_action("view", "[dup A]", true, false, false, true, 9, 9, 0, 2),
+			d.record_action("view", "[dup A]", true, false, false, true, false, 9, 9, 0, 2, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("view", "[dup B]", true, false, false, true, 9, 9, 0, 2),
+			d.record_action("view", "[dup B]", true, false, false, true, false, 9, 9, 0, 2, 0),
 			DetectorSignal::Dedup
 		);
 	}
@@ -740,14 +792,16 @@ mod tests {
 	#[test]
 	fn clean_result_resets_dedup_streak() {
 		let mut d = Detectors::default();
-		d.record_action("view", "[dup A]", true, false, false, true, 9, 9, 0, 2);
+		d.record_action(
+			"view", "[dup A]", true, false, false, true, false, 9, 9, 0, 2, 0,
+		);
 		// A fresh, non-dedup result breaks the streak.
 		assert_eq!(
-			d.record_action("view", "full", false, false, false, false, 9, 9, 0, 2),
+			d.record_action("view", "full", false, false, false, false, false, 9, 9, 0, 2, 0),
 			DetectorSignal::None
 		);
 		assert_eq!(
-			d.record_action("view", "[dup B]", true, false, false, true, 9, 9, 0, 2),
+			d.record_action("view", "[dup B]", true, false, false, true, false, 9, 9, 0, 2, 0),
 			DetectorSignal::None
 		);
 	}
@@ -757,9 +811,11 @@ mod tests {
 		let mut d = Detectors::default();
 		// Identical dedup placeholder repeated satisfies both Loop and Dedup;
 		// the more precise Dedup signal wins.
-		d.record_action("view", "[dup]", true, false, false, true, 2, 9, 0, 2);
+		d.record_action(
+			"view", "[dup]", true, false, false, true, false, 2, 9, 0, 2, 0,
+		);
 		assert_eq!(
-			d.record_action("view", "[dup]", true, false, false, true, 2, 9, 0, 2),
+			d.record_action("view", "[dup]", true, false, false, true, false, 2, 9, 0, 2, 0),
 			DetectorSignal::Dedup
 		);
 	}
@@ -771,5 +827,48 @@ mod tests {
 			Some(SelfReport::Exploring)
 		));
 		assert!(!should_steer(DetectorSignal::Dedup, Some(SelfReport::Done)));
+	}
+
+	#[test]
+	fn distraction_fires_on_consecutive_low_relevance() {
+		let mut d = Detectors::default();
+		// is_low_relevance=true, threshold 2 → fires on the second in a row.
+		assert_eq!(
+			d.record_action("view", "off", false, false, false, false, true, 9, 9, 0, 0, 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_action("view", "off2", false, false, false, false, true, 9, 9, 0, 0, 2),
+			DetectorSignal::Distraction
+		);
+	}
+
+	#[test]
+	fn on_task_result_resets_distraction_streak() {
+		let mut d = Detectors::default();
+		d.record_action(
+			"view", "off", false, false, false, false, true, 9, 9, 0, 0, 2,
+		);
+		// An on-task (high-relevance) result breaks the streak.
+		assert_eq!(
+			d.record_action("view", "rel", false, false, false, false, false, 9, 9, 0, 0, 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_action("view", "off2", false, false, false, false, true, 9, 9, 0, 0, 2),
+			DetectorSignal::None
+		);
+	}
+
+	#[test]
+	fn distraction_waits_while_exploring_but_fires_when_progressing() {
+		assert!(!should_steer(
+			DetectorSignal::Distraction,
+			Some(SelfReport::Exploring)
+		));
+		assert!(should_steer(
+			DetectorSignal::Distraction,
+			Some(SelfReport::Progressing)
+		));
 	}
 }

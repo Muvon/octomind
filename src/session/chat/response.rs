@@ -594,37 +594,39 @@ pub async fn process_response<S: OutputSink>(
 					let dedup_threshold = params.config.supervisor.detectors.dedup_threshold;
 					let distraction_threshold =
 						params.config.supervisor.detectors.distraction_threshold;
-					let relevance_threshold =
-						params.config.supervisor.detectors.relevance_threshold;
+					let drift_floor = params.config.supervisor.detectors.drift_floor;
 
-					// Relevance scoring is opt-in (distraction_threshold > 0): it costs one
-					// embedding per sizable tool result. Embed the current task once for the
-					// whole batch; each result is then scored by cosine against it. Best-effort
-					// — if embeddings are unavailable, skip silently (the signal just stays off).
-					let task_embedding = if distraction_threshold > 0 {
-						let task = params
-							.chat_session
-							.session
-							.messages
-							.iter()
-							.rev()
-							.find(|m| {
-								m.role == "user"
-									&& !crate::supervisor::gate::is_supervisor_injection(&m.content)
-							})
-							.map(|m| m.content.clone())
-							.unwrap_or_default();
-						if task.is_empty() {
-							None
-						} else {
-							crate::embeddings::embed(&task).await.ok()
-						}
-					} else {
-						None
-					};
-					// Results shorter than this aren't worth embedding — a few lines produce
-					// a noisy cosine and the placeholder/verdict cases are tiny.
-					const MIN_RELEVANCE_LEN: usize = 200;
+					// Drift detection is opt-in (distraction_threshold > 0): it costs one
+					// embedding per tool CALL. Reset the working-set centroid when the user's
+					// task changes — hash the latest real user message (NOT an embedding of it,
+					// so abstract/terse requests are fine here). The centroid is then the
+					// current task's calls, never carried across turns.
+					if distraction_threshold > 0 {
+						let task_hash = {
+							use std::hash::{Hash, Hasher};
+							let mut h = std::collections::hash_map::DefaultHasher::new();
+							params
+								.chat_session
+								.session
+								.messages
+								.iter()
+								.rev()
+								.find(|m| {
+									m.role == "user"
+										&& !crate::supervisor::gate::is_supervisor_injection(
+											&m.content,
+										)
+								})
+								.map(|m| m.content.as_str())
+								.unwrap_or_default()
+								.hash(&mut h);
+							h.finish()
+						};
+						params.chat_session.detectors.note_task(task_hash);
+					}
+					// Results shorter than this aren't worth embedding — a few lines give a
+					// noisy cosine and verdict/placeholder cases carry no topical signal.
+					const MIN_DRIFT_LEN: usize = 200;
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -641,30 +643,36 @@ pub async fn process_response<S: OutputSink>(
 						// result whose body is the placeholder).
 						let is_dedup =
 							result_content.contains(crate::session::dedup::DEDUP_NOTICE_TAG);
-						// Relevance: cosine(result, task) below the threshold = off-task. Only
-						// sizable, real-content results are scored (skip errors, dedup
-						// placeholders, and tiny outputs). Scores are logged so the cutoff can
-						// be tuned to the embedding model before it's relied on.
-						let is_low_relevance = match &task_embedding {
-							Some(task_emb)
-								if !is_error
-									&& !is_dedup && result_content.len() >= MIN_RELEVANCE_LEN =>
-							{
-								match crate::embeddings::embed(&result_content).await {
-									Ok(v) => {
-										let score = crate::embeddings::cosine(task_emb, &v);
-										crate::log_debug!(
-											"relevance {:.3} (tool={}, threshold={:.3})",
-											score,
-											call.tool_name,
-											relevance_threshold
-										);
-										score < relevance_threshold
-									}
-									Err(_) => false,
+						// Drift: embed the RESULT and score it against the working-set centroid
+						// of recent on-task results. We score the result, not the call: the call
+						// is the cleaner intent, but short call strings are format-dominated and
+						// don't embed with topical separation (measured — they overlap); results
+						// carry real content and separate cleanly. Skip errors, dedup
+						// placeholders, and tiny outputs (no topical signal, not folded in).
+						// Score logged so `drift_floor` can be tuned.
+						let is_drift = if distraction_threshold > 0
+							&& !is_error
+							&& !is_dedup
+							&& result_content.len() >= MIN_DRIFT_LEN
+						{
+							match crate::embeddings::embed(&result_content).await {
+								Ok(emb) => {
+									let drift = params
+										.chat_session
+										.detectors
+										.note_result(&emb, drift_floor);
+									crate::log_debug!(
+										"drift={} (tool={}, floor={:.3})",
+										drift,
+										call.tool_name,
+										drift_floor
+									);
+									drift
 								}
+								Err(_) => false,
 							}
-							_ => false,
+						} else {
+							false
 						};
 						let signal = params.chat_session.detectors.record_action(
 							&call.tool_name,
@@ -673,7 +681,7 @@ pub async fn process_response<S: OutputSink>(
 							is_mutation,
 							is_truncated,
 							is_dedup,
-							is_low_relevance,
+							is_drift,
 							loop_threshold,
 							no_progress_window,
 							truncation_threshold,
@@ -687,6 +695,11 @@ pub async fn process_response<S: OutputSink>(
 							params.chat_session.steer_pending =
 								Some(crate::supervisor::detect::steer_note(signal).to_string());
 							params.chat_session.detectors.reset_streak();
+							// A Distraction steer also drops the working set so a legitimate
+							// pivot re-seeds instead of being flagged again every round.
+							if signal == crate::supervisor::detect::DetectorSignal::Distraction {
+								params.chat_session.detectors.reset_working_set();
+							}
 							crate::supervisor::stats::steer();
 							crate::supervisor::notify(&format!(
 								"steering — {}",

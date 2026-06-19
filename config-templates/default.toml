@@ -705,17 +705,17 @@ truncation_threshold = 2
 # Consecutive deduplicated tool results in a row -> model is re-issuing calls whose
 # output it already received (tool-agnostic, keyed on the dedup sentinel)
 dedup_threshold = 2
-# Consecutive off-task tool results in a row -> model is pulling in context that
-# doesn't bear on the task. 0 = OFF (default; costs one embedding per sizable tool
-# result when enabled). Set e.g. 3 to enable; relevance scores are logged at debug
-# so you can tune relevance_threshold to your embedding model before relying on it.
+# Consecutive off-task RESULTS in a row -> model has drifted from the line of work it
+# was pursuing. Scores each result against a centroid of recent on-task results
+# (self-referential -> no task anchor, robust to abstract requests). 0 = OFF (default;
+# costs one embedding per sizable tool result when enabled). Set e.g. 3 to enable;
+# drift decisions are logged at debug so you can tune drift_floor before relying on it.
 distraction_threshold = 0
-# FLOOR (not a relevance boundary): a result is "off-task" only if its cosine to
-# the task falls BELOW this — set it under where on-task results bottom out, so only
-# blatantly off-track output trips it. Embeddings are reliable at "clearly unrelated"
-# (far-low tail), not at "is this relevant" — so keep this low. Lower = stricter /
-# fewer false fires. Model-dependent: read the logged `relevance N.NNN` scores to tune.
-relevance_threshold = 0.1
+# FLOOR (not a relevance boundary): a result is drift only if its cosine to the working
+# set falls BELOW this. Embeddings are reliable at "clearly unrelated", not at "is this
+# relevant" -> keep it in the tail. Lower = stricter. Model-dependent; tune from logs.
+# (Diagnostic on the default model: on-task ~0.79, off-task ~0.63-0.73 -> ~0.70 floor.)
+drift_floor = 0.7
 # Inject the self-report status-token instruction and parse it back
 self_report = true
 

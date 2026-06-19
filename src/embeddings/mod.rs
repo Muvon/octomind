@@ -605,75 +605,130 @@ mod tests {
 		);
 	}
 
-	/// On-demand diagnostic (NOT a pass/fail gate): does `muvon/octomind-embed`
-	/// separate ON-TASK tool results from clearly OFF-TASK ones well enough for the
-	/// supervisor's Distraction tail-catcher? For each scenario it prints the cosine
-	/// of (task ↔ result) for an on-task result, an unrelated-subsystem result, and
-	/// a lexical distractor (high word overlap, wrong topic — the NoLiMa failure
-	/// mode). This is the cheap pre-check before any score-first rollout.
+	/// On-demand diagnostic (NOT a pass/fail gate): how well does `muvon/octomind-embed`
+	/// separate ON-TASK from OFF-TASK for the supervisor's drift detector, and — the
+	/// false-positive test — do HARD on-task items (terse logs, asserts, JSON, different
+	/// modality) stay above the floor? Builds a centroid of on-task seed items, then
+	/// scores several held-out on-task items (clean + hard), an off-task item (different
+	/// subsystem), and a lexical distractor (shared words, wrong target).
 	///
-	/// Run it explicitly and read the table:
-	///   cargo test -p octomind embeddings::relevance_separation_diagnostic -- --ignored --nocapture
+	/// Run it explicitly and read the tables:
+	///   cargo test -p octomind embeddings::drift_separation_diagnostic -- --ignored --nocapture
 	///
-	/// Verdict: if the SMALLEST on-task cosine sits clearly above the LARGEST
-	/// off-task/distractor cosine, the base model's tail is clean → no training
-	/// needed; set `relevance_threshold` in the gap. If they overlap, the capability
-	/// fine-tune is too out-of-distribution for this task → a relevance lens helps.
+	/// Verdict: with drift_floor between (max off/lex) and (min on-task) there is a clean
+	/// gap and NO false positives. If a hard on-task item dips below off/lex, that is a
+	/// false-positive risk to know about (mitigated by requiring N drift results in a row).
 	#[tokio::test]
 	#[serial_test::serial(embed_model)]
-	#[ignore = "diagnostic: runs the embed model and prints a table; not a gate"]
-	async fn relevance_separation_diagnostic() {
-		// (task, on-task result, off-task result [unrelated subsystem], lexical
-		// distractor [shares words with the task but answers a different topic]).
-		let scenarios: [(&str, &str, &str, &str); 3] = [
+	#[ignore = "diagnostic: runs the embed model and prints tables; not a gate"]
+	async fn drift_separation_diagnostic() {
+		// (on-task seed items -> centroid, held-out ON-TASK items [clean + hard],
+		// off-task item [different subsystem], lexical distractor [shared words]).
+		async fn measure(label: &str, scenarios: &[(&[&str], &[&str], &str, &str)]) {
+			println!("\n=== {label} (cosine ↔ on-task centroid) ===");
+			println!(
+				"{:<5} {:>8} {:>8} {:>9} {:>10}",
+				"scen", "on_min", "on_max", "off_task", "lex_distr"
+			);
+			let mut g_min_on = f32::INFINITY;
+			let mut g_max_off = f32::NEG_INFINITY;
+			for (i, (seed, on_items, off, lex)) in scenarios.iter().enumerate() {
+				let mut centroid = vec![0.0f32; EMBED_DIM];
+				for item in seed.iter() {
+					let v = embed(item).await.unwrap();
+					for (c, x) in centroid.iter_mut().zip(&v) {
+						*c += x;
+					}
+				}
+				for c in centroid.iter_mut() {
+					*c /= seed.len() as f32;
+				}
+				let mut on_min = f32::INFINITY;
+				let mut on_max = f32::NEG_INFINITY;
+				for o in on_items.iter() {
+					let sc = cosine(&centroid, &embed(o).await.unwrap());
+					on_min = on_min.min(sc);
+					on_max = on_max.max(sc);
+				}
+				let off_s = cosine(&centroid, &embed(off).await.unwrap());
+				let lex_s = cosine(&centroid, &embed(lex).await.unwrap());
+				println!("{:<5} {on_min:>8.3} {on_max:>8.3} {off_s:>9.3} {lex_s:>10.3}", i + 1);
+				g_min_on = g_min_on.min(on_min);
+				g_max_off = g_max_off.max(off_s).max(lex_s);
+			}
+			println!(
+				"min on-task = {g_min_on:.3}   max off/lex = {g_max_off:.3}   gap = {:.3}",
+				g_min_on - g_max_off
+			);
+		}
+
+		let calls: [(&[&str], &[&str], &str, &str); 3] = [
 			(
-				"Fix the dedup steering: a deduplicated tool result must be surfaced as an error, not a success.",
-				r#"if tool_result.is_error() { raw_content } else if dedup::is_duplicate(&name, &raw) { let ph = dedup::placeholder(&name, &raw, was_truncated); McpToolResult::error(name, id, ph) }"#,
-				r#"fn check_request_spending_threshold(&self, config: &Config) -> Result<bool> { let spent = self.session.info.total_cost; Ok(spent < config.max_request_spending_threshold) }"#,
-				r#"match response.status_code { 200 => Ok(success_body), 409 => Err("duplicate request rejected"), 500 => Err("internal error"), _ => Err("unexpected") }"#,
+				&["view src/session/dedup.rs", "grep is_duplicate placeholder"],
+				&["edit src/session/dedup.rs placeholder is_error"],
+				"view src/billing/invoice_pdf.rs",
+				"grep duplicate request rejected http status handler",
 			),
 			(
-				"Add limit/offset pagination to the list_users API endpoint.",
-				r#"async fn list_users(Query(p): Query<Page>) -> Json<Vec<User>> { let rows = sqlx::query_as("SELECT * FROM users ORDER BY id LIMIT $1 OFFSET $2").bind(p.limit).bind(p.offset).fetch_all(&db).await?; Json(rows) }"#,
-				r#".sidebar { display: flex; flex-direction: column; gap: 8px; } .sidebar .item:hover { background: var(--accent); }"#,
-				r#"function Pagination({ page, perPage, onChange }) { return <div className="pager">{pages.map(n => <button onClick={() => onChange(n)}>{n}</button>)}</div> }"#,
+				&["view src/api/users.rs", "grep list_users endpoint"],
+				&["edit src/api/users.rs add limit offset pagination"],
+				"view src/ui/sidebar.css",
+				"view src/ui/Pagination.tsx component props",
 			),
 			(
-				"Investigate why the websocket connection drops after about 30 seconds of idle.",
-				r#"loop { tokio::select! { _ = interval.tick() => { if ws.send(Message::Ping(vec![])).await.is_err() { break; } } _ = ws.next() => { /* reset idle timer */ } } }"#,
-				r#"CREATE TABLE products (id BIGSERIAL PRIMARY KEY, sku TEXT UNIQUE NOT NULL, price_cents INT NOT NULL, created_at TIMESTAMPTZ DEFAULT now());"#,
-				r#"Configure the load balancer idle timeout: set idle_timeout_seconds = 60 so connections are not closed after 30s during slow upstream responses."#,
+				&["view src/ws/connection.rs", "grep ping keepalive idle"],
+				&["edit src/ws/connection.rs reset idle timer"],
+				"view migrations/0003_create_products.sql",
+				"view config/load_balancer.yaml idle_timeout_seconds",
 			),
 		];
 
-		println!("\n=== relevance separation (cosine of task ↔ result) ===");
-		println!(
-			"{:<5} {:>9} {:>9} {:>11}",
-			"scen", "on_task", "off_task", "lex_distr"
-		);
-		let mut min_on = f32::INFINITY;
-		let mut max_off = f32::NEG_INFINITY;
-		for (i, (task, on, off, lex)) in scenarios.iter().enumerate() {
-			let t = embed(task).await.unwrap();
-			let on_s = cosine(&t, &embed(on).await.unwrap());
-			let off_s = cosine(&t, &embed(off).await.unwrap());
-			let lex_s = cosine(&t, &embed(lex).await.unwrap());
-			println!("{:<5} {on_s:>9.3} {off_s:>9.3} {lex_s:>11.3}", i + 1);
-			min_on = min_on.min(on_s);
-			max_off = max_off.max(off_s).max(lex_s);
-		}
-		println!("------");
-		println!("min on-task            = {min_on:.3}");
-		println!("max off-task / lexical = {max_off:.3}");
-		if min_on > max_off {
-			println!(
-				"VERDICT: clean tail — base model is good enough. Put relevance_threshold in ({max_off:.3}, {min_on:.3})."
-			);
-		} else {
-			println!(
-				"VERDICT: OVERLAP — off-task/distractor reaches into on-task range; the capability fine-tune is too out-of-distribution here, a relevance lens would help."
-			);
-		}
-		println!();
+		let results: [(&[&str], &[&str], &str, &str); 3] = [
+			(
+				&[
+					r#"fn placeholder(tool_name: &str, content: &str) -> String { format!("[duplicate result for {tool_name}, body elided]") }"#,
+					r#"if dedup::is_duplicate(&tool_result.tool_name, &raw) { McpToolResult::error(name, id, placeholder) } else { dedup::record(&name, &raw); raw }"#,
+					r#"fn is_duplicate(tool_name: &str, content: &str) -> bool { self.seen.contains(&content_hash(tool_name, content)) }"#,
+				],
+				&[
+					r#"let dup = McpToolResult::error(tool_name.clone(), tool_id.clone(), placeholder); tool_results.push(dup);"#,
+					r#"deduplicated tool result for `view` (6912 chars elided)"#,
+					r#"assert!(placeholder("view", "x", false).contains("duplicate"));"#,
+				],
+				r#"fn check_request_spending_threshold(&self, config: &Config) -> Result<bool> { Ok(self.session.info.total_cost < config.max_request_spending_threshold) }"#,
+				r#"match response.status_code { 200 => Ok(body), 409 => Err("duplicate request rejected"), 500 => Err("internal error") }"#,
+			),
+			(
+				&[
+					r#"async fn list_users(Query(p): Query<Page>) -> Json<Vec<User>> { sqlx::query_as("SELECT * FROM users ORDER BY id LIMIT $1 OFFSET $2") }"#,
+					r#"struct Page { limit: i64, offset: i64 }"#,
+					r#"CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL)"#,
+				],
+				&[
+					r#"let rows = query.bind(p.limit).bind(p.offset).fetch_all(&db).await?; Json(rows)"#,
+					r#"EXPLAIN ANALYZE SELECT * FROM users ORDER BY id LIMIT 20 OFFSET 40; -- Index Scan rows=20"#,
+					r#"{ "users": [ {"id":41}, {"id":42} ], "page": 3, "per_page": 20, "total": 412 }"#,
+				],
+				r#".sidebar { display: flex; flex-direction: column; gap: 8px; } .item:hover { background: var(--accent); }"#,
+				r#"function Pagination({ page, perPage, onChange }) { return <div className="pager">{pages}</div> }"#,
+			),
+			(
+				&[
+					r#"loop { tokio::select! { _ = interval.tick() => { ws.send(Message::Ping(vec![])).await? } _ = ws.next() => {} } }"#,
+					r#"fn on_pong(&mut self) { self.last_seen = Instant::now(); }"#,
+					r#"if self.last_seen.elapsed() > IDLE_TIMEOUT { ws.close().await; }"#,
+				],
+				&[
+					r#"interval = tokio::time::interval(Duration::from_secs(15)); // keepalive ping"#,
+					r#"WARN ws: no pong received in 30s, closing connection conn_id=8f3a2c"#,
+					r#"const IDLE_TIMEOUT: Duration = Duration::from_secs(30);"#,
+				],
+				r#"CREATE TABLE products (id BIGSERIAL PRIMARY KEY, sku TEXT UNIQUE NOT NULL, price_cents INT NOT NULL)"#,
+				r#"Configure the load balancer idle timeout: idle_timeout_seconds = 60 so connections are not closed after 30s."#,
+			),
+		];
+
+		measure("calls (intent)", &calls).await;
+		measure("results (outcome)", &results).await;
 	}
 }

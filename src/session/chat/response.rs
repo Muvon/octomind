@@ -651,8 +651,7 @@ pub async fn process_response<S: OutputSink>(
 						// placeholders, and tiny outputs (no topical signal, not folded in).
 						// Score logged so `drift_floor` can be tuned.
 						let is_drift = if distraction_threshold > 0
-							&& !is_error
-							&& !is_dedup
+							&& !is_error && !is_dedup
 							&& result_content.len() >= MIN_DRIFT_LEN
 						{
 							match crate::embeddings::embed(&result_content).await {

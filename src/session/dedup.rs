@@ -14,9 +14,15 @@
 
 //! Tool result deduplication.
 //!
-//! Tracks `(tool_name, content)` pairs seen within a session and replaces
-//! exact-duplicate tool results with a small placeholder so the model does
-//! not re-pay tokens for identical content.
+//! Tracks `(tool_name, args, content)` triples seen within a session and
+//! replaces exact-duplicate tool results with a small placeholder so the model
+//! does not re-pay tokens for identical content.
+//!
+//! `args` (the serialized call parameters) is part of the key so that two
+//! genuinely different requests are never collapsed just because the tool
+//! returned the same bytes — e.g. a `view` that ignores its `start`/`end`
+//! window and returns the whole file would otherwise make every read of that
+//! file look like a duplicate of the first.
 //!
 //! The dedup state is keyed by session id (so concurrent sessions stay
 //! isolated) and falls back to a `_global_` bucket when there is no session
@@ -67,23 +73,28 @@ fn session_key() -> String {
 	crate::session::context::current_session_id().unwrap_or_else(|| "_global_".to_string())
 }
 
-fn content_hash(tool_name: &str, content: &str) -> u64 {
+fn content_hash(tool_name: &str, args: &str, content: &str) -> u64 {
 	let mut h = std::collections::hash_map::DefaultHasher::new();
 	tool_name.hash(&mut h);
 	0u8.hash(&mut h); // separator so "ab"+"cd" != "abc"+"d"
+	args.hash(&mut h);
+	0u8.hash(&mut h);
 	content.hash(&mut h);
 	h.finish()
 }
 
-/// Has this exact `(tool_name, content)` already been recorded in the
-/// current session? `true` means the caller should swap the body for
-/// `placeholder()`; `false` means it is the first occurrence and the
-/// caller should call `record()` after adding it.
-pub fn is_duplicate(tool_name: &str, content: &str) -> bool {
+/// Has this exact `(tool_name, args, content)` triple already been recorded in
+/// the current session? `true` means the caller should swap the body for
+/// `placeholder()`; `false` means it is the first occurrence and the caller
+/// should call `record()` after adding it. `args` is the serialized call
+/// parameters, so a different request (a new range/path) never collides even
+/// when the tool returns the same bytes, and the same request whose output has
+/// CHANGED (e.g. re-reading a file after editing it) is not falsely elided.
+pub fn is_duplicate(tool_name: &str, args: &str, content: &str) -> bool {
 	if content.len() < MIN_DEDUP_CONTENT_LEN {
 		return false;
 	}
-	let key = content_hash(tool_name, content);
+	let key = content_hash(tool_name, args, content);
 	let sk = session_key();
 	state()
 		.read()
@@ -93,14 +104,14 @@ pub fn is_duplicate(tool_name: &str, content: &str) -> bool {
 		.unwrap_or(false)
 }
 
-/// Mark this `(tool_name, content)` as seen so future identical results in
-/// this session are deduplicated. Content below `MIN_DEDUP_CONTENT_LEN` is
-/// never recorded — it is always kept verbatim.
-pub fn record(tool_name: &str, content: &str) {
+/// Mark this `(tool_name, args, content)` triple as seen so a future identical
+/// call (same tool, same args, same output) is deduplicated. Content below
+/// `MIN_DEDUP_CONTENT_LEN` is never recorded — it is always kept verbatim.
+pub fn record(tool_name: &str, args: &str, content: &str) {
 	if content.len() < MIN_DEDUP_CONTENT_LEN {
 		return;
 	}
-	let key = content_hash(tool_name, content);
+	let key = content_hash(tool_name, args, content);
 	let sk = session_key();
 	state().write().unwrap().entry(sk).or_default().insert(key);
 }
@@ -129,7 +140,7 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 	// directive instead.
 	if was_truncated {
 		return format!(
-			"[ERROR: duplicate tool call — `{tool_name}` already returned this TRUNCATED output earlier in this session. Re-running with the same arguments yields the same truncated result, not more. Do not repeat it; to get the rest, {hint}.]",
+			"[duplicate tool call — `{tool_name}` was already called with these exact arguments and its output was TRUNCATED; retrying with the same arguments returns the same truncated result, never more. STOP repeating it — to see the part that was cut off, {hint}.]",
 			hint = crate::utils::truncation::truncation_hint(tool_name),
 		);
 	}
@@ -144,15 +155,14 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 		.find(|l| !l.trim().is_empty())
 		.map(snippet)
 		.unwrap_or_default();
-	if first == last {
-		format!(
-			"[ERROR: duplicate tool call — `{tool_name}` already returned this exact output earlier in this session, so the body was elided. Do not re-run with the same arguments; reuse the earlier result. It begins: {first}]"
-		)
+	let fingerprint = if first == last {
+		format!("it begins: {first}")
 	} else {
-		format!(
-			"[ERROR: duplicate tool call — `{tool_name}` already returned this exact output earlier in this session, so the body was elided. Do not re-run with the same arguments; reuse the earlier result. It begins: {first} — and ends: {last}]"
-		)
-	}
+		format!("it begins: {first} — and ends: {last}")
+	};
+	format!(
+		"[duplicate tool call — `{tool_name}` was already called with these exact arguments and returned the SAME output ({fingerprint}), which is still in your context above; it was not re-sent. STOP: do not call `{tool_name}` with these arguments again — identical arguments produce byte-identical output, so a retry returns nothing new. Reuse the earlier result from your context above. To get different information, change the arguments (a different file/range) or use another tool.]"
+	)
 }
 
 /// Drop the dedup state for one session (called on session reset/end).
@@ -186,10 +196,11 @@ mod tests {
 
 	#[test]
 	fn separator_prevents_concatenation_collision() {
-		// "ab" + "cd" must hash differently than "abc" + "d".
-		let h1 = content_hash("ab", "cd");
-		let h2 = content_hash("abc", "d");
-		assert_ne!(h1, h2);
+		// A field boundary must not be ambiguous: shifting a char across any
+		// boundary (tool_name | args | content) must change the hash.
+		assert_ne!(content_hash("ab", "x", "cd"), content_hash("abc", "x", "d"));
+		assert_ne!(content_hash("t", "ab", "cd"), content_hash("t", "abc", "d"));
+		assert_ne!(content_hash("t", "a", "bc"), content_hash("t", "ab", "c"));
 	}
 
 	#[test]
@@ -226,7 +237,7 @@ mod tests {
 		let s = placeholder("shell", "huge output that was truncated\n", true);
 		assert!(s.contains("shell"));
 		assert!(s.contains("TRUNCATED"));
-		assert!(s.contains("Do not repeat"));
+		assert!(s.contains("STOP")); // strong stop directive
 		assert!(s.contains("grep")); // shell-specific narrowing hint
 		assert!(!s.contains("huge output")); // body is not echoed
 	}
@@ -238,15 +249,42 @@ mod tests {
 		// with other tests sharing the same bucket.
 		let tool = "test_view_42";
 		let sid = "_global_".to_string();
+		let args = "{\"path\":\"a.rs\"}";
 		let content = "hello\n".repeat(100); // above MIN_DEDUP_CONTENT_LEN
 		let other = "different\n".repeat(100);
-		assert!(!is_duplicate(tool, &content));
-		record(tool, &content);
-		assert!(is_duplicate(tool, &content));
-		assert!(!is_duplicate(tool, &other));
-		assert!(!is_duplicate("shell_test_42", &content));
+		assert!(!is_duplicate(tool, args, &content));
+		record(tool, args, &content);
+		assert!(is_duplicate(tool, args, &content));
+		assert!(!is_duplicate(tool, args, &other));
+		assert!(!is_duplicate("shell_test_42", args, &content));
 		// Cleanup so re-runs of the test do not see stale state.
 		clear_session(&sid);
+	}
+
+	#[test]
+	fn different_args_same_content_not_deduplicated() {
+		// The reported bug: two views of the same file at different ranges
+		// return identical bytes; they must NOT collide.
+		let tool = "test_view_ranges";
+		let content = "x\n".repeat(300); // above MIN_DEDUP_CONTENT_LEN
+		record(tool, "{\"start\":1,\"end\":100}", &content);
+		assert!(is_duplicate(tool, "{\"start\":1,\"end\":100}", &content));
+		assert!(!is_duplicate(tool, "{\"start\":100,\"end\":200}", &content));
+		clear_session("_global_");
+	}
+
+	#[test]
+	fn same_args_changed_content_not_deduplicated() {
+		// Re-reading a file after editing it: same args, different bytes must
+		// reach the model — no stale elision.
+		let tool = "test_view_edited";
+		let args = "{\"path\":\"a.rs\"}";
+		let before = "old\n".repeat(300);
+		let after = "new\n".repeat(300);
+		record(tool, args, &before);
+		assert!(is_duplicate(tool, args, &before));
+		assert!(!is_duplicate(tool, args, &after));
+		clear_session("_global_");
 	}
 
 	#[test]
@@ -256,8 +294,8 @@ mod tests {
 		let tool = "test_shell_short";
 		let content = "[OK] No errors";
 		assert!(content.len() < MIN_DEDUP_CONTENT_LEN);
-		record(tool, content);
-		assert!(!is_duplicate(tool, content));
+		record(tool, "{}", content);
+		assert!(!is_duplicate(tool, "{}", content));
 		clear_session("_global_");
 	}
 

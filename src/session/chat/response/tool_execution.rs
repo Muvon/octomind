@@ -428,7 +428,15 @@ async fn execute_tools_with_context(
 						None
 					} else {
 						let content = res.extract_content();
-						if crate::session::dedup::is_duplicate(&tool_name, &content) {
+						// Key dedup on (tool_name, args, content): identical args with
+						// CHANGED output (re-reading a file after editing it) must reach
+						// the model, and different args that return the same bytes (a
+						// `view` that ignores its range) must not collide.
+						let args = stored_tool_call
+							.as_ref()
+							.map(|tc| tc.parameters.to_string())
+							.unwrap_or_default();
+						if crate::session::dedup::is_duplicate(&tool_name, &args, &content) {
 							// `was_truncated` selects the stronger stop+narrow message.
 							// Truncation runs later (handle_large_tool_results), so detect
 							// it directly here on the full content.
@@ -445,7 +453,7 @@ async fn execute_tools_with_context(
 								was_truncated,
 							))
 						} else {
-							crate::session::dedup::record(&tool_name, &content);
+							crate::session::dedup::record(&tool_name, &args, &content);
 							None
 						}
 					};

@@ -652,7 +652,10 @@ mod tests {
 				}
 				let off_s = cosine(&centroid, &embed(off).await.unwrap());
 				let lex_s = cosine(&centroid, &embed(lex).await.unwrap());
-				println!("{:<5} {on_min:>8.3} {on_max:>8.3} {off_s:>9.3} {lex_s:>10.3}", i + 1);
+				println!(
+					"{:<5} {on_min:>8.3} {on_max:>8.3} {off_s:>9.3} {lex_s:>10.3}",
+					i + 1
+				);
 				g_min_on = g_min_on.min(on_min);
 				g_max_off = g_max_off.max(off_s).max(lex_s);
 			}

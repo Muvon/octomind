@@ -604,4 +604,76 @@ mod tests {
 			"cosine should rank identical text higher than unrelated text (same={same_score:.3}, diff={diff_score:.3})"
 		);
 	}
+
+	/// On-demand diagnostic (NOT a pass/fail gate): does `muvon/octomind-embed`
+	/// separate ON-TASK tool results from clearly OFF-TASK ones well enough for the
+	/// supervisor's Distraction tail-catcher? For each scenario it prints the cosine
+	/// of (task ↔ result) for an on-task result, an unrelated-subsystem result, and
+	/// a lexical distractor (high word overlap, wrong topic — the NoLiMa failure
+	/// mode). This is the cheap pre-check before any score-first rollout.
+	///
+	/// Run it explicitly and read the table:
+	///   cargo test -p octomind embeddings::relevance_separation_diagnostic -- --ignored --nocapture
+	///
+	/// Verdict: if the SMALLEST on-task cosine sits clearly above the LARGEST
+	/// off-task/distractor cosine, the base model's tail is clean → no training
+	/// needed; set `relevance_threshold` in the gap. If they overlap, the capability
+	/// fine-tune is too out-of-distribution for this task → a relevance lens helps.
+	#[tokio::test]
+	#[serial_test::serial(embed_model)]
+	#[ignore = "diagnostic: runs the embed model and prints a table; not a gate"]
+	async fn relevance_separation_diagnostic() {
+		// (task, on-task result, off-task result [unrelated subsystem], lexical
+		// distractor [shares words with the task but answers a different topic]).
+		let scenarios: [(&str, &str, &str, &str); 3] = [
+			(
+				"Fix the dedup steering: a deduplicated tool result must be surfaced as an error, not a success.",
+				r#"if tool_result.is_error() { raw_content } else if dedup::is_duplicate(&name, &raw) { let ph = dedup::placeholder(&name, &raw, was_truncated); McpToolResult::error(name, id, ph) }"#,
+				r#"fn check_request_spending_threshold(&self, config: &Config) -> Result<bool> { let spent = self.session.info.total_cost; Ok(spent < config.max_request_spending_threshold) }"#,
+				r#"match response.status_code { 200 => Ok(success_body), 409 => Err("duplicate request rejected"), 500 => Err("internal error"), _ => Err("unexpected") }"#,
+			),
+			(
+				"Add limit/offset pagination to the list_users API endpoint.",
+				r#"async fn list_users(Query(p): Query<Page>) -> Json<Vec<User>> { let rows = sqlx::query_as("SELECT * FROM users ORDER BY id LIMIT $1 OFFSET $2").bind(p.limit).bind(p.offset).fetch_all(&db).await?; Json(rows) }"#,
+				r#".sidebar { display: flex; flex-direction: column; gap: 8px; } .sidebar .item:hover { background: var(--accent); }"#,
+				r#"function Pagination({ page, perPage, onChange }) { return <div className="pager">{pages.map(n => <button onClick={() => onChange(n)}>{n}</button>)}</div> }"#,
+			),
+			(
+				"Investigate why the websocket connection drops after about 30 seconds of idle.",
+				r#"loop { tokio::select! { _ = interval.tick() => { if ws.send(Message::Ping(vec![])).await.is_err() { break; } } _ = ws.next() => { /* reset idle timer */ } } }"#,
+				r#"CREATE TABLE products (id BIGSERIAL PRIMARY KEY, sku TEXT UNIQUE NOT NULL, price_cents INT NOT NULL, created_at TIMESTAMPTZ DEFAULT now());"#,
+				r#"Configure the load balancer idle timeout: set idle_timeout_seconds = 60 so connections are not closed after 30s during slow upstream responses."#,
+			),
+		];
+
+		println!("\n=== relevance separation (cosine of task ↔ result) ===");
+		println!(
+			"{:<5} {:>9} {:>9} {:>11}",
+			"scen", "on_task", "off_task", "lex_distr"
+		);
+		let mut min_on = f32::INFINITY;
+		let mut max_off = f32::NEG_INFINITY;
+		for (i, (task, on, off, lex)) in scenarios.iter().enumerate() {
+			let t = embed(task).await.unwrap();
+			let on_s = cosine(&t, &embed(on).await.unwrap());
+			let off_s = cosine(&t, &embed(off).await.unwrap());
+			let lex_s = cosine(&t, &embed(lex).await.unwrap());
+			println!("{:<5} {on_s:>9.3} {off_s:>9.3} {lex_s:>11.3}", i + 1);
+			min_on = min_on.min(on_s);
+			max_off = max_off.max(off_s).max(lex_s);
+		}
+		println!("------");
+		println!("min on-task            = {min_on:.3}");
+		println!("max off-task / lexical = {max_off:.3}");
+		if min_on > max_off {
+			println!(
+				"VERDICT: clean tail — base model is good enough. Put relevance_threshold in ({max_off:.3}, {min_on:.3})."
+			);
+		} else {
+			println!(
+				"VERDICT: OVERLAP — off-task/distractor reaches into on-task range; the capability fine-tune is too out-of-distribution here, a relevance lens would help."
+			);
+		}
+		println!();
+	}
 }

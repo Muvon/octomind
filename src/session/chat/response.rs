@@ -592,6 +592,40 @@ pub async fn process_response<S: OutputSink>(
 					let truncation_threshold =
 						params.config.supervisor.detectors.truncation_threshold;
 					let dedup_threshold = params.config.supervisor.detectors.dedup_threshold;
+					let distraction_threshold =
+						params.config.supervisor.detectors.distraction_threshold;
+					let relevance_threshold =
+						params.config.supervisor.detectors.relevance_threshold;
+
+					// Relevance scoring is opt-in (distraction_threshold > 0): it costs one
+					// embedding per sizable tool result. Embed the current task once for the
+					// whole batch; each result is then scored by cosine against it. Best-effort
+					// — if embeddings are unavailable, skip silently (the signal just stays off).
+					let task_embedding = if distraction_threshold > 0 {
+						let task = params
+							.chat_session
+							.session
+							.messages
+							.iter()
+							.rev()
+							.find(|m| {
+								m.role == "user"
+									&& !crate::supervisor::gate::is_supervisor_injection(&m.content)
+							})
+							.map(|m| m.content.clone())
+							.unwrap_or_default();
+						if task.is_empty() {
+							None
+						} else {
+							crate::embeddings::embed(&task).await.ok()
+						}
+					} else {
+						None
+					};
+					// Results shorter than this aren't worth embedding — a few lines produce
+					// a noisy cosine and the placeholder/verdict cases are tiny.
+					const MIN_RELEVANCE_LEN: usize = 200;
+
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
 						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
@@ -607,6 +641,31 @@ pub async fn process_response<S: OutputSink>(
 						// result whose body is the placeholder).
 						let is_dedup =
 							result_content.contains(crate::session::dedup::DEDUP_NOTICE_TAG);
+						// Relevance: cosine(result, task) below the threshold = off-task. Only
+						// sizable, real-content results are scored (skip errors, dedup
+						// placeholders, and tiny outputs). Scores are logged so the cutoff can
+						// be tuned to the embedding model before it's relied on.
+						let is_low_relevance = match &task_embedding {
+							Some(task_emb)
+								if !is_error
+									&& !is_dedup && result_content.len() >= MIN_RELEVANCE_LEN =>
+							{
+								match crate::embeddings::embed(&result_content).await {
+									Ok(v) => {
+										let score = crate::embeddings::cosine(task_emb, &v);
+										crate::log_debug!(
+											"relevance {:.3} (tool={}, threshold={:.3})",
+											score,
+											call.tool_name,
+											relevance_threshold
+										);
+										score < relevance_threshold
+									}
+									Err(_) => false,
+								}
+							}
+							_ => false,
+						};
 						let signal = params.chat_session.detectors.record_action(
 							&call.tool_name,
 							&result_content,
@@ -614,10 +673,12 @@ pub async fn process_response<S: OutputSink>(
 							is_mutation,
 							is_truncated,
 							is_dedup,
+							is_low_relevance,
 							loop_threshold,
 							no_progress_window,
 							truncation_threshold,
 							dedup_threshold,
+							distraction_threshold,
 						);
 						if crate::supervisor::detect::should_steer(
 							signal,

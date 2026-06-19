@@ -131,6 +131,18 @@ pub struct DetectorsConfig {
 	/// is re-issuing calls whose output it already received this session.
 	/// Tool-agnostic: keyed on the dedup sentinel, not on tool identity.
 	pub dedup_threshold: usize,
+	/// Consecutive off-task tool results this many times in a row → the model is
+	/// pulling in context that doesn't bear on the task (distractor failure mode).
+	/// `0` disables the signal entirely (no embedding cost). Costs one embedding
+	/// per sizable tool result when enabled.
+	pub distraction_threshold: usize,
+	/// Off-task FLOOR (not a relevance boundary): a result counts as off-task only
+	/// when its cosine to the task falls BELOW this. Embeddings are reliable at
+	/// "clearly unrelated" (the far-low tail), not at "is this relevant", so this is
+	/// a high-precision tail cutoff — keep it under where on-task results bottom out.
+	/// Model-dependent; scores are logged at debug when the signal is on, so tune
+	/// from real data. Lower = stricter / fewer false fires.
+	pub relevance_threshold: f32,
 	/// Inject the self-report status-token instruction and parse it back.
 	pub self_report: bool,
 }

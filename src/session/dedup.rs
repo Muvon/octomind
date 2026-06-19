@@ -22,6 +22,14 @@
 //! isolated) and falls back to a `_global_` bucket when there is no session
 //! context (CLI/test paths).
 //!
+//! Errors are NEVER deduped (the caller skips them): identical error text
+//! often comes from independent failures the model must see each time, and
+//! recording errors could poison the cache for a later successful call whose
+//! body happens to match. A *successful* duplicate, by contrast, is surfaced
+//! by the caller as an error result carrying [`placeholder`] — so the user
+//! (terminal/UI) and the model both see the elision instead of a silent
+//! success (see `tool_execution::execute_tools_in_context`).
+//!
 //! Hashing uses the standard library's default hasher — collisions are
 //! astronomically unlikely for the size of typical sessions, and we are not
 //! relying on cryptographic strength.
@@ -116,7 +124,7 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 	// directive instead.
 	if was_truncated {
 		return format!(
-			"[`{tool_name}` already returned this TRUNCATED output earlier in this session — re-running with the same arguments yields the same truncated result, not more. Do not repeat it; to get the rest, {hint}.]",
+			"[ERROR: duplicate tool call — `{tool_name}` already returned this TRUNCATED output earlier in this session. Re-running with the same arguments yields the same truncated result, not more. Do not repeat it; to get the rest, {hint}.]",
 			hint = crate::utils::truncation::truncation_hint(tool_name),
 		);
 	}
@@ -133,11 +141,11 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 		.unwrap_or_default();
 	if first == last {
 		format!(
-			"[duplicate result for `{tool_name}` — identical content already in this session, body elided; it begins: {first}]"
+			"[ERROR: duplicate tool call — `{tool_name}` already returned this exact output earlier in this session, so the body was elided. Do not re-run with the same arguments; reuse the earlier result. It begins: {first}]"
 		)
 	} else {
 		format!(
-			"[duplicate result for `{tool_name}` — identical content already in this session, body elided; it begins: {first} — and ends: {last}]"
+			"[ERROR: duplicate tool call — `{tool_name}` already returned this exact output earlier in this session, so the body was elided. Do not re-run with the same arguments; reuse the earlier result. It begins: {first} — and ends: {last}]"
 		)
 	}
 }

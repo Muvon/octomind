@@ -79,41 +79,11 @@ pub async fn process_tool_results(
 	let mut cache_check_time = 0u128;
 
 	for tool_result in &tool_results {
-		// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper
-		let raw_content = extract_tool_content(tool_result);
-
-		// Tool result deduplication: if the same (tool_name, content) pair has
-		// already been seen in this session, replace the body with a small
-		// placeholder. The first occurrence is kept verbatim so the model can
-		// still reason about the original output.
-		//
-		// Errors are NEVER deduped: we neither record them nor replace them
-		// with a placeholder. Two reasons:
-		//   1. Identical error text often comes from independent failures the
-		//      model needs to see each time (e.g. repeated parameter mistakes,
-		//      transient tool failures). Hiding the body behind a placeholder
-		//      strips the actionable feedback.
-		//   2. Recording errors would also poison the cache for a later
-		//      successful call whose body happens to match an earlier error
-		//      string — extremely unlikely, but trivially avoided by skipping.
-		let tool_content = if tool_result.is_error() {
-			raw_content
-		} else if crate::session::dedup::is_duplicate(&tool_result.tool_name, &raw_content) {
-			log_debug!(
-				"deduplicated tool result for `{}` ({} chars elided)",
-				tool_result.tool_name,
-				raw_content.len()
-			);
-			// `raw_content` is post-truncation (the choke point ran upstream), so
-			// the tag marks a re-run of a truncated call — escalate the placeholder
-			// from "body elided" to a stop+narrow directive in that case.
-			let was_truncated =
-				raw_content.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG);
-			crate::session::dedup::placeholder(&tool_result.tool_name, &raw_content, was_truncated)
-		} else {
-			crate::session::dedup::record(&tool_result.tool_name, &raw_content);
-			raw_content
-		};
+		// CRITICAL FIX: Extract ONLY the actual tool output, not our custom JSON wrapper.
+		// Deduplication already ran upstream in execute_tools_parallel (before display),
+		// where a duplicate was converted into an error result carrying the placeholder.
+		// Here we just extract and pass the body through.
+		let tool_content = extract_tool_content(tool_result);
 
 		// Apply global MCP response token truncation before adding to session
 		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(

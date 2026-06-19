@@ -416,8 +416,62 @@ async fn execute_tools_with_context(
 		match task_result {
 			Ok(result) => match result {
 				Ok((res, tool_time_ms)) => {
+					// Deduplication runs HERE, before display — so the terminal block,
+					// the sink emission (response.rs), and the AI's session message all
+					// show the SAME thing. Errors are never deduped. A successful
+					// duplicate becomes an ERROR result carrying the placeholder: it
+					// renders as a ✗ block, emits success=false to the UI, and reaches
+					// the model as an error instead of a silent "success" only the model
+					// could tell was elided. It does NOT count as a tool failure (the
+					// tool ran fine — it's a repeat), so error_tracker is left untouched.
+					let dedup_placeholder = if res.is_error() {
+						None
+					} else {
+						let content = res.extract_content();
+						if crate::session::dedup::is_duplicate(&tool_name, &content) {
+							// `was_truncated` selects the stronger stop+narrow message.
+							// Truncation runs later (handle_large_tool_results), so detect
+							// it directly here on the full content.
+							let was_truncated =
+								crate::utils::truncation::truncate_mcp_response_global(
+									&content,
+									config.mcp_response_tokens_threshold,
+									&tool_name,
+								)
+								.1;
+							Some(crate::session::dedup::placeholder(
+								&tool_name,
+								&content,
+								was_truncated,
+							))
+						} else {
+							crate::session::dedup::record(&tool_name, &content);
+							None
+						}
+					};
+
 					// CRITICAL MCP PROTOCOL FIX: Check if result is actually an error
-					if res.is_error() {
+					if let Some(placeholder) = dedup_placeholder {
+						// Duplicate: shown + sent as an error, but not counted as a
+						// tool failure — leave error_tracker untouched.
+						let dup_err = anyhow::anyhow!("{}", placeholder);
+						display_tool_error(
+							&stored_tool_call,
+							&tool_name,
+							&dup_err,
+							tool_index,
+							config,
+							mode,
+							context.execution_context(),
+						)
+						.await;
+						tool_results.push(crate::mcp::McpToolResult::error(
+							tool_name.clone(),
+							tool_id.clone(),
+							placeholder,
+						));
+						total_tool_time_ms += tool_time_ms;
+					} else if res.is_error() {
 						// This is an MCP error result (isError: true) - treat as error
 						_has_error = true;
 

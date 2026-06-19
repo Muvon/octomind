@@ -230,6 +230,13 @@ pub fn is_mutation_tool(tool: &str) -> bool {
 
 const SEEN_CAP: usize = 128;
 
+/// Calls used to seed the working-set centroid before drift scoring begins —
+/// too few and the first off-task call would define the baseline.
+const CENTROID_WARMUP: usize = 3;
+/// EMA weight for folding a new on-task call into the centroid. Higher tracks
+/// topic shifts faster but is noisier; lower is stabler but lags.
+const CENTROID_ALPHA: f32 = 0.3;
+
 /// Deterministic per-session detector state, built on a single novelty primitive.
 #[derive(Debug, Default)]
 pub struct Detectors {
@@ -244,8 +251,16 @@ pub struct Detectors {
 	consecutive_truncations: usize,
 	/// Deduplicated results in a row. Reset by any non-dedup result.
 	consecutive_dedups: usize,
-	/// Low-relevance (off-task) results in a row. Reset by any on-task result.
-	consecutive_low_relevance: usize,
+	/// Off-task results in a row (drift). Reset by an on-task result or new task.
+	consecutive_drift: usize,
+	/// EMA centroid of recent ON-TASK result embeddings — the "working set". A
+	/// result far from it (low cosine) is drift. Empty until the first one seeds it.
+	centroid: Vec<f32>,
+	/// Calls folded into `centroid` since the last reset (cold-start gate + EMA).
+	centroid_count: usize,
+	/// Hash of the user task the `centroid` belongs to; a change resets it so the
+	/// working set never carries across turns (see [`Detectors::note_task`]).
+	task_hash: Option<u64>,
 	/// A code change was made with no successful non-mutation check since — the
 	/// free pre-gate signal for a premature `done`. Trajectory state, NOT a
 	/// streak: it persists across turns until a clean check clears it, so
@@ -272,11 +287,11 @@ pub enum DetectorSignal {
 	/// calls whose output it already received this session (the body was elided to
 	/// an error placeholder). The most precise loop there is: the exact same call.
 	Dedup,
-	/// `distraction_threshold` off-task results in a row — tool output whose cosine
-	/// to the current task fell below `relevance_threshold` (a high-precision off-task
-	/// floor, NOT a relevance boundary: embeddings are trustworthy at "clearly
-	/// unrelated", not at "is this relevant"). The model is pulling in context that
-	/// does not bear on the goal, crowding out what does (the NoLiMa distractor mode).
+	/// `distraction_threshold` off-task RESULTS in a row — results whose cosine to
+	/// the working-set centroid (recent on-task results) fell below `drift_floor`.
+	/// Self-referential, so no task anchor is needed (robust to abstract requests).
+	/// We score the result, not the call: short call strings are format-dominated
+	/// and don't separate by topic (measured); results carry real content and do.
 	Distraction,
 }
 
@@ -300,7 +315,7 @@ impl Detectors {
 		is_mutation: bool,
 		is_truncated: bool,
 		is_dedup: bool,
-		is_low_relevance: bool,
+		is_drift: bool,
 		loop_threshold: usize,
 		no_progress_window: usize,
 		truncation_threshold: usize,
@@ -327,14 +342,15 @@ impl Detectors {
 			self.consecutive_dedups = 0;
 		}
 
-		// Distraction streak: count off-task results in a row, reset on any
-		// on-task one. Relevance is scored upstream (async embedding); here we only
-		// count the boolean. The softest signal — context quality, not an active
-		// loop — so it is ranked last and stays silent while the agent is exploring.
-		if is_low_relevance {
-			self.consecutive_low_relevance += 1;
+		// Drift streak: count off-task results in a row, reset on any on-task one.
+		// Drift is scored upstream against the working-set centroid (async embedding,
+		// see `note_result`); here we only count the boolean. The softest signal —
+		// context quality, not an active loop — so it is ranked last and stays silent
+		// while the agent is exploring.
+		if is_drift {
+			self.consecutive_drift += 1;
 		} else {
-			self.consecutive_low_relevance = 0;
+			self.consecutive_drift = 0;
 		}
 
 		// Mutation-verification tracking for the free pre-gate (premature `done`):
@@ -385,7 +401,7 @@ impl Detectors {
 			truncation_threshold > 0 && self.consecutive_truncations >= truncation_threshold;
 		let deduping = dedup_threshold > 0 && self.consecutive_dedups >= dedup_threshold;
 		let distracting =
-			distraction_threshold > 0 && self.consecutive_low_relevance >= distraction_threshold;
+			distraction_threshold > 0 && self.consecutive_drift >= distraction_threshold;
 
 		if deduping {
 			DetectorSignal::Dedup
@@ -410,7 +426,52 @@ impl Detectors {
 		self.loop_window.clear();
 		self.consecutive_truncations = 0;
 		self.consecutive_dedups = 0;
-		self.consecutive_low_relevance = 0;
+		self.consecutive_drift = 0;
+	}
+
+	/// Update the working-set centroid with this result's embedding and return
+	/// whether the result drifted off it (cosine below `floor`). Self-referential:
+	/// it scores the result against what the agent has recently worked with, so it
+	/// needs no task anchor and is robust to abstract requests. Only NON-drift
+	/// results are folded in, so a sustained wander can't pull the centroid with it;
+	/// the first `CENTROID_WARMUP` results seed it and never count as drift.
+	pub fn note_result(&mut self, emb: &[f32], floor: f32) -> bool {
+		if self.centroid.len() != emb.len() {
+			// First result since a reset (or a dimension change): seed, never drift.
+			self.centroid = emb.to_vec();
+			self.centroid_count = 1;
+			return false;
+		}
+		let sim = crate::embeddings::cosine(&self.centroid, emb);
+		let warming = self.centroid_count < CENTROID_WARMUP;
+		let is_drift = !warming && sim < floor;
+		if !is_drift {
+			for (c, &e) in self.centroid.iter_mut().zip(emb) {
+				*c = (1.0 - CENTROID_ALPHA) * *c + CENTROID_ALPHA * e;
+			}
+			self.centroid_count = self.centroid_count.saturating_add(1);
+		}
+		is_drift
+	}
+
+	/// Reset the working-set centroid when the user's task changes (a new turn):
+	/// the centroid is the CURRENT task's calls and must not carry across. `h` is a
+	/// cheap hash of the latest real user message — NOT an embedding, so this never
+	/// hits the abstract-request problem the scoring side avoids by construction.
+	pub fn note_task(&mut self, h: u64) {
+		if self.task_hash != Some(h) {
+			self.task_hash = Some(h);
+			self.reset_working_set();
+		}
+	}
+
+	/// Drop the working set so the next calls re-seed it. Called on a task change
+	/// and after a Distraction steer — a legit pivot then re-seeds instead of being
+	/// flagged forever (drift results are never folded into the stale centroid).
+	pub fn reset_working_set(&mut self) {
+		self.centroid.clear();
+		self.centroid_count = 0;
+		self.consecutive_drift = 0;
 	}
 
 	/// Free pre-gate signal: code was changed and no successful check has run
@@ -457,7 +518,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::NoProgress => "no new information in recent steps",
 		DetectorSignal::Truncation => "repeated truncated results — narrowing args ignored",
 		DetectorSignal::Dedup => "repeated identical results — re-fetching output already received",
-		DetectorSignal::Distraction => "off-task tool results — context drifting from the request",
+		DetectorSignal::Distraction => "off-task results — drifting from the current line of work",
 		DetectorSignal::None => "",
 	}
 }
@@ -470,7 +531,7 @@ pub fn steer_note(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::NoProgress => "<supervisor>\nSeveral steps have passed without new progress. Re-anchor on the user's actual request: restate the goal, what is done, and the next concrete step — or report `blocked`.\n</supervisor>",
 		DetectorSignal::Truncation => "<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context.\nWork efficiently: read only what you actually need, not whole files or full listings. Each call costs context and attention, so spending it on output you won't use makes the rest of the task harder. Before each call, decide the smallest slice that answers your current question and target it with the tool's own parameters — a line range, limit, offset, filter, or a more specific query/pattern. Read broadly only when you genuinely need most of the content.\n</supervisor>",
 		DetectorSignal::Dedup => "<supervisor>\nYou re-issued a call whose output you already received this session — the duplicate result was elided, so re-running it gains you nothing and only burns context.\nReuse what you already have instead of re-fetching it. If you need something you do not have yet, change what you ask for — a different file, a narrower range, a more specific query — do not repeat the same call. If you cannot proceed, report `blocked`.\n</supervisor>",
-		DetectorSignal::Distraction => "<supervisor>\nYour recent tool results look off-task relative to the user's request — you are spending context on material that does not bear on the current goal, which crowds out what does. Re-read the user's actual request, then target your next calls at exactly what it needs (the specific files, symbols, or behavior involved) instead of broad or tangential content.\n</supervisor>",
+		DetectorSignal::Distraction => "<supervisor>\nYour recent work has drifted away from the line you were pursuing — you are pulling in content unrelated to what you have been doing, which crowds out what matters. Refocus on the current goal: make your next calls target exactly what it needs (the specific files, symbols, or behavior involved). If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
 		DetectorSignal::None => "",
 	}
 }
@@ -830,9 +891,9 @@ mod tests {
 	}
 
 	#[test]
-	fn distraction_fires_on_consecutive_low_relevance() {
+	fn distraction_fires_on_consecutive_drift() {
 		let mut d = Detectors::default();
-		// is_low_relevance=true, threshold 2 → fires on the second in a row.
+		// is_drift=true, threshold 2 → fires on the second in a row.
 		assert_eq!(
 			d.record_action("view", "off", false, false, false, false, true, 9, 9, 0, 0, 2),
 			DetectorSignal::None
@@ -849,7 +910,7 @@ mod tests {
 		d.record_action(
 			"view", "off", false, false, false, false, true, 9, 9, 0, 0, 2,
 		);
-		// An on-task (high-relevance) result breaks the streak.
+		// An on-task call breaks the streak.
 		assert_eq!(
 			d.record_action("view", "rel", false, false, false, false, false, 9, 9, 0, 0, 2),
 			DetectorSignal::None
@@ -870,5 +931,48 @@ mod tests {
 			DetectorSignal::Distraction,
 			Some(SelfReport::Progressing)
 		));
+	}
+
+	#[test]
+	fn note_result_seeds_then_flags_drift() {
+		let mut d = Detectors::default();
+		let a = vec![1.0, 0.0, 0.0];
+		let b = vec![0.9, 0.1, 0.0];
+		// Warmup seeds the centroid with similar results — never drift.
+		assert!(!d.note_result(&a, 0.5));
+		assert!(!d.note_result(&b, 0.5));
+		assert!(!d.note_result(&b, 0.5));
+		// A call orthogonal to the working set is drift; an aligned one is not.
+		let off = vec![0.0, 0.0, 1.0];
+		assert!(d.note_result(&off, 0.5));
+		assert!(!d.note_result(&a, 0.5));
+	}
+
+	#[test]
+	fn drift_calls_do_not_pull_the_centroid() {
+		let mut d = Detectors::default();
+		let on = vec![1.0, 0.0, 0.0];
+		for _ in 0..3 {
+			d.note_result(&on, 0.5);
+		}
+		// Repeated drift is never folded in, so it keeps reading as drift.
+		let off = vec![0.0, 0.0, 1.0];
+		assert!(d.note_result(&off, 0.5));
+		assert!(d.note_result(&off, 0.5));
+		// And an on-task call is still recognised.
+		assert!(!d.note_result(&on, 0.5));
+	}
+
+	#[test]
+	fn note_task_change_resets_working_set() {
+		let mut d = Detectors::default();
+		let on = vec![1.0, 0.0, 0.0];
+		for _ in 0..3 {
+			d.note_result(&on, 0.5);
+		}
+		// New task → working set cleared → next call re-seeds (never drift).
+		d.note_task(42);
+		let off = vec![0.0, 0.0, 1.0];
+		assert!(!d.note_result(&off, 0.5));
 	}
 }

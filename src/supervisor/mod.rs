@@ -131,18 +131,18 @@ pub struct DetectorsConfig {
 	/// is re-issuing calls whose output it already received this session.
 	/// Tool-agnostic: keyed on the dedup sentinel, not on tool identity.
 	pub dedup_threshold: usize,
-	/// Consecutive off-task tool results this many times in a row → the model is
-	/// pulling in context that doesn't bear on the task (distractor failure mode).
-	/// `0` disables the signal entirely (no embedding cost). Costs one embedding
-	/// per sizable tool result when enabled.
+	/// Consecutive off-task RESULTS this many times in a row → the model has drifted
+	/// from the line of work it was pursuing (distractor failure mode). `0` disables
+	/// the signal entirely (no embedding cost). When enabled it costs one embedding
+	/// per sizable result and scores it against a centroid of recent on-task results
+	/// — self-referential, so no task anchor is needed (robust to abstract requests).
 	pub distraction_threshold: usize,
-	/// Off-task FLOOR (not a relevance boundary): a result counts as off-task only
-	/// when its cosine to the task falls BELOW this. Embeddings are reliable at
-	/// "clearly unrelated" (the far-low tail), not at "is this relevant", so this is
-	/// a high-precision tail cutoff — keep it under where on-task results bottom out.
-	/// Model-dependent; scores are logged at debug when the signal is on, so tune
-	/// from real data. Lower = stricter / fewer false fires.
-	pub relevance_threshold: f32,
+	/// Off-task FLOOR (not a relevance boundary): a result is drift only when its
+	/// cosine to the working-set centroid falls BELOW this. Embeddings are reliable
+	/// at "clearly unrelated" (the far-low tail), not at "is this relevant", so this
+	/// is a high-precision tail cutoff. Model-dependent; the drift decision is logged
+	/// at debug when the signal is on, so tune from real data. Lower = stricter.
+	pub drift_floor: f32,
 	/// Inject the self-report status-token instruction and parse it back.
 	pub self_report: bool,
 }

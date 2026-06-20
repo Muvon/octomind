@@ -718,6 +718,7 @@ pub async fn process_response<S: OutputSink>(
 						params.chat_session.steer_pending = Some(
 							crate::supervisor::detect::steer_note(
 								round_signal,
+								params.chat_session.last_self_report,
 								params.chat_session.steer_attempt,
 							)
 							.to_string(),

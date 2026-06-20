@@ -286,10 +286,10 @@ pub enum CompressionTrigger {
 /// Main entry point: check if compression needed and perform if AI decides YES
 /// Returns true if compression was performed, false otherwise
 /// True when a USER-role message is one of OUR synthetic injections — a skill
-/// block, a continuation wrapper, or a supervisor `<supervisor>`/`<recall>`
+/// block, a continuation wrapper, or a supervisor `<system-reminder>`/`<recall>`
 /// control-plane note (steers, goal recitation, recalled lessons) — rather than a
 /// genuine user request. These must NEVER be summarized or captured as USER TASKS:
-/// e.g. a steered loop would otherwise turn "<supervisor> your results were
+/// e.g. a steered loop would otherwise turn "<system-reminder> your results were
 /// truncated…" into the recorded task and bury the real ask (the bug that ate the
 /// work). Centralized + unit-tested so the filter can't silently drift again.
 pub(super) fn is_synthetic_user_message(content: &str) -> bool {

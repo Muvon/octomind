@@ -140,7 +140,7 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 	// directive instead.
 	if was_truncated {
 		return format!(
-			"[duplicate tool call — `{tool_name}`: same args, same TRUNCATED output as before — repeating returns no more. STOP; to see the cut-off part, {hint}.]",
+			"[duplicate tool call — `{tool_name}`: identical args returned the same truncated output already in your context — re-running yields no more. To reach the cut-off part, {hint}.]",
 			hint = crate::utils::truncation::truncation_hint(tool_name),
 		);
 	}
@@ -161,7 +161,7 @@ pub fn placeholder(tool_name: &str, content: &str, was_truncated: bool) -> Strin
 		format!("it begins: {first} — and ends: {last}")
 	};
 	format!(
-		"[duplicate tool call — `{tool_name}`: same args, same output as earlier ({fingerprint}), already in your context. Don't repeat it — reuse that result, or change the args/tool to get something new.]"
+		"[duplicate tool call — `{tool_name}`: identical args returned the same output you already have ({fingerprint}). Reuse that earlier result; only call again with different args or a different tool if you need something it does not contain.]"
 	)
 }
 
@@ -231,13 +231,13 @@ mod tests {
 	}
 
 	#[test]
-	fn placeholder_truncated_repeat_is_a_stop_directive() {
-		// A truncated repeat must NOT echo the body; it must tell the model to
-		// stop re-running and how to narrow instead.
+	fn placeholder_truncated_repeat_redirects_without_echoing_body() {
+		// A truncated repeat must NOT echo the body; it must tell the model the
+		// re-run yields no more and how to reach the cut-off part instead.
 		let s = placeholder("shell", "huge output that was truncated\n", true);
 		assert!(s.contains("shell"));
-		assert!(s.contains("TRUNCATED"));
-		assert!(s.contains("STOP")); // strong stop directive
+		assert!(s.contains("truncated"));
+		assert!(s.contains("yields no more")); // positive-forward deterrent
 		assert!(s.contains("grep")); // shell-specific narrowing hint
 		assert!(!s.contains("huge output")); // body is not echoed
 	}

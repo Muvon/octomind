@@ -10,20 +10,31 @@ use crate::config::Config;
 use anyhow::Result;
 
 const FILE_RETRIEVAL_PROMPT: &str = r#"# Task
-Given the user's request below, output 3-5 search keywords (one per line) to find relevant lessons from past sessions.
+Given the user's request below, output 3-5 search keywords to recall relevant lessons from past sessions.
 
-# Rules
-- Focus on: tool names, error names, domain terms, API names, action verbs.
-- One keyword per line, lowercase.
-- Output ONLY the keywords — no explanations, no numbering, no punctuation."#;
+# Output format
+Write each keyword on its own line, lowercase, a single word or short term. Output only the keywords — no numbering, no surrounding punctuation, no explanations (each line is used verbatim as a search term).
+
+Example output:
+rate limit
+retry backoff
+http client
+reqwest
+
+# What makes a good keyword
+Draw from the request's tool names, error names, domain terms, API names, and action verbs."#;
 
 const MCP_RETRIEVAL_PROMPT: &str = r#"# Task
-Given the user's request below, write a single concise semantic search query to find relevant lessons from past sessions.
+Given the user's request below, write one semantic search query to recall relevant lessons from past sessions.
 
-# Rules
-- Natural language, optimized for embedding similarity search.
-- Include key domain terms and intent.
-- Output ONLY the query — one line, no explanations."#;
+# Output format
+Return exactly one line of natural language — output that line only (every extra line becomes a separate spurious query).
+
+Example output:
+retry logic and backoff for rate-limited http requests in the api client
+
+# What makes a good query
+State the core intent in plain language and include the key domain terms, optimized for embedding similarity."#;
 
 /// Retrieve relevant lessons for the current message and format them for
 /// injection. Two tiers:
@@ -147,18 +158,18 @@ pub async fn retrieve_and_format(
 	// rules; orientation is working assumptions to verify, never truth.
 	let mut inner = String::new();
 	if !lesson_block.is_empty() {
-		inner.push_str("<lessons>\n");
+		inner.push_str("<lessons>\nRules learned in past sessions — follow them. [n] is confidence in [0,1]; weight your adherence by it.\n");
 		inner.push_str(&lesson_block);
 		inner.push_str("</lessons>\n");
 	}
 	if !orient_block.is_empty() {
 		inner.push_str(
-			"<orientation hint=\"working assumptions — verify before relying on them\">\n",
+			"<orientation hint=\"working assumptions — verify before relying on them\">\nUnverified guesses, not facts. Before acting on one, open the relevant code and confirm it; if the code doesn't back it, drop it.\n",
 		);
 		inner.push_str(&orient_block);
 		inner.push_str("</orientation>\n");
 	}
-	let out = format!("\n\n<recall>\n{inner}</recall>");
+	let out = format!("\n\n<recall>\nRecall from past sessions, relevant to the current task — apply it now.\n{inner}</recall>");
 	(out, new_contents)
 }
 

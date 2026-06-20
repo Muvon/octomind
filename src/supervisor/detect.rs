@@ -295,6 +295,30 @@ pub enum DetectorSignal {
 	Distraction,
 }
 
+impl DetectorSignal {
+	/// Severity rank — higher wins when merging signals from a parallel batch.
+	/// Mirrors the priority in `record_action`'s return cascade.
+	fn priority(self) -> u8 {
+		match self {
+			Self::None => 0,
+			Self::Distraction => 1,
+			Self::NoProgress => 2,
+			Self::Loop => 3,
+			Self::Truncation => 4,
+			Self::Dedup => 5,
+		}
+	}
+
+	/// Merge two signals from the same parallel batch — keep the higher-priority one.
+	pub fn merge(self, other: Self) -> Self {
+		if other.priority() > self.priority() {
+			other
+		} else {
+			self
+		}
+	}
+}
+
 fn hash2(a: &str, b: &str) -> u64 {
 	let mut h = DefaultHasher::new();
 	a.hash(&mut h);
@@ -418,7 +442,7 @@ impl Detectors {
 		}
 	}
 
-	/// Reset the rolling windows (e.g. after a steer note or new user turn).
+	/// Reset the rolling windows (e.g. on a new user turn).
 	/// `unverified_mutation` is intentionally NOT reset — it is trajectory state
 	/// that only a successful check clears, not a per-streak counter.
 	pub fn reset_streak(&mut self) {

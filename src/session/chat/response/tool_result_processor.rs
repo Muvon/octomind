@@ -339,6 +339,8 @@ pub async fn process_tool_results(
 	let steer_limit = config.supervisor.max_consecutive_steers;
 	if steer_limit > 0 && chat_session.consecutive_steers >= steer_limit {
 		chat_session.consecutive_steers = 0;
+		chat_session.steer_attempt = 0;
+		chat_session.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		chat_session.steer_pending = None;
 		println!(
 			"{}",

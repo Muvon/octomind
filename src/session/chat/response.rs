@@ -702,8 +702,21 @@ pub async fn process_response<S: OutputSink>(
 						params.chat_session.last_self_report,
 					) {
 						round_steered = true;
-						params.chat_session.steer_pending =
-							Some(crate::supervisor::detect::steer_note(round_signal).to_string());
+						// Rotate framing: same signal as last steer → advance the angle;
+						// a different signal starts a fresh run at the diagnostic frame.
+						if round_signal == params.chat_session.steer_last_signal {
+							params.chat_session.steer_attempt += 1;
+						} else {
+							params.chat_session.steer_attempt = 0;
+							params.chat_session.steer_last_signal = round_signal;
+						}
+						params.chat_session.steer_pending = Some(
+							crate::supervisor::detect::steer_note(
+								round_signal,
+								params.chat_session.steer_attempt,
+							)
+							.to_string(),
+						);
 						// A Distraction steer drops the working set so a legitimate pivot
 						// re-seeds instead of being flagged again every round.
 						if round_signal == crate::supervisor::detect::DetectorSignal::Distraction {
@@ -728,6 +741,11 @@ pub async fn process_response<S: OutputSink>(
 						// Only reset when detectors see genuinely new work — not on the
 						// intermediate rounds where the window is refilling after a prior steer.
 						params.chat_session.consecutive_steers = 0;
+						// Model broke out — reset framing rotation so the next steer (if any)
+						// starts fresh at the diagnostic frame rather than the firmest one.
+						params.chat_session.steer_attempt = 0;
+						params.chat_session.steer_last_signal =
+							crate::supervisor::detect::DetectorSignal::None;
 					}
 				}
 

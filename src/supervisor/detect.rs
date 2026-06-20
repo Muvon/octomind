@@ -549,15 +549,46 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 
 /// The advisory steer note for a fired signal. Out-of-band; the `<supervisor>`
 /// framing keeps it distinct from user content.
-pub fn steer_note(signal: DetectorSignal) -> &'static str {
-	match signal {
-		DetectorSignal::Loop => "<supervisor>\nYou have repeated the same action without new results. Stop and try a different approach. If you cannot proceed, report `blocked`.\n</supervisor>",
-		DetectorSignal::NoProgress => "<supervisor>\nSeveral steps have passed without new progress. Re-anchor on the user's actual request: restate the goal, what is done, and the next concrete step — or report `blocked`.\n</supervisor>",
-		DetectorSignal::Truncation => "<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context. You are narrowing your args but the results keep getting truncated.\n\nNarrow smart, not small:\n  • If a more specific tool exists (signatures, structural search, semantic search, grep), use it instead of reading raw content.\n  • If you need several specific parts, request them all in parallel — never one tiny chunk at a time.\n  • If you need only one specific part, target it with the tool's parameters (line range, limit, offset, filter, query/pattern).\n\nMany tiny sequential reads of the same file waste more context than fewer, better-targeted calls. Narrow means fewer, better-targeted calls — not more calls.\n</supervisor>",
-		DetectorSignal::Dedup => "<supervisor>\nSTOP — you are repeating the same call(s) and getting the same output you already have. This is a loop; it adds nothing and wastes context. Do NOT repeat them. Act on the results already in context, or change the args/tool to get something new. If you truly cannot proceed, report `blocked`.\n</supervisor>",
-		DetectorSignal::Distraction => "<supervisor>\nYour recent work has drifted away from the line you were pursuing — you are pulling in content unrelated to what you have been doing, which crowds out what matters. Refocus on the current goal: make your next calls target exactly what it needs (the specific files, symbols, or behavior involved). If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
-		DetectorSignal::None => "",
-	}
+///
+/// `attempt` rotates the *framing* when the same signal re-fires without the
+/// model breaking out. Re-sending identical text loses salience (instruction
+/// habituation), so each retry reframes the same constraint from a different
+/// angle — one will land where another bounced:
+///   0 → diagnostic (what is happening and why it wastes context)
+///   1 → directive  (the concrete alternative action to take instead)
+///   2 → stop       (blunt: this is a loop, change or report `blocked`)
+/// Advance-then-clamp, not modulo: never soften once the model has proven it is
+/// stuck — hold the firmest frame.
+pub fn steer_note(signal: DetectorSignal, attempt: usize) -> &'static str {
+	let variants: &[&str] = match signal {
+		DetectorSignal::Loop => &[
+			"<supervisor>\nThe last action produced a result you have already seen — it is not advancing the task. This usually means the current approach has stalled. Step back and reconsider what is actually blocking progress.\n</supervisor>",
+			"<supervisor>\nYou are still repeating the same action. Change something concrete on the next call — a different tool, different arguments, or a different sub-goal. Do not re-issue the same call expecting a different result.\n</supervisor>",
+			"<supervisor>\nYou have repeated the same action without new results. Stop and try a different approach. If you cannot proceed, report `blocked`.\n</supervisor>",
+		],
+		DetectorSignal::NoProgress => &[
+			"<supervisor>\nSeveral steps have passed without surfacing new information. The current line of inquiry may be exhausted — consider whether it is still the right one.\n</supervisor>",
+			"<supervisor>\nStill no new progress. Restate the goal in one line, list what is already known, then pick a single concrete next step that moves toward it — not another exploratory call.\n</supervisor>",
+			"<supervisor>\nSeveral steps have passed without new progress. Re-anchor on the user's actual request: restate the goal, what is done, and the next concrete step — or report `blocked`.\n</supervisor>",
+		],
+		DetectorSignal::Truncation => &[
+			"<supervisor>\nYour recent tool results were truncated — the output is capped. Re-running the same kind of broad call returns no more content, only more wasted context.\n</supervisor>",
+			"<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context. You are narrowing your args but the results keep getting truncated.\n\nNarrow smart, not small:\n  • If a more specific tool exists (signatures, structural search, semantic search, grep), use it instead of reading raw content.\n  • If you need several specific parts, request them all in parallel — never one tiny chunk at a time.\n  • If you need only one specific part, target it with the tool's parameters (line range, limit, offset, filter, query/pattern).\n\nMany tiny sequential reads of the same file waste more context than fewer, better-targeted calls. Narrow means fewer, better-targeted calls — not more calls.\n</supervisor>",
+			"<supervisor>\nSTOP re-issuing broad calls that keep truncating — you are burning context for nothing. Use a more specific tool (signatures, structural/semantic search, grep) or target the exact span you need (line range, limit, offset, filter). If you cannot, report `blocked`.\n</supervisor>",
+		],
+		DetectorSignal::Dedup => &[
+			"<supervisor>\nThe call(s) you just made returned output you already received earlier this session — the body was elided because it is a duplicate. You already have this information in context.\n</supervisor>",
+			"<supervisor>\nStop re-fetching what you already have. Act on the results already in context, or change the arguments/tool to obtain something genuinely new.\n</supervisor>",
+			"<supervisor>\nSTOP — you are repeating the same call(s) and getting the same output you already have. This is a loop; it adds nothing and wastes context. Do NOT repeat them. Act on the results already in context, or change the args/tool to get something new. If you truly cannot proceed, report `blocked`.\n</supervisor>",
+		],
+		DetectorSignal::Distraction => &[
+			"<supervisor>\nYour recent results have drifted away from the line of work you were pursuing — they are unrelated to the current goal and crowd out what matters.\n</supervisor>",
+			"<supervisor>\nRefocus on the current goal: make your next calls target exactly what it needs — the specific files, symbols, or behavior involved. If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
+			"<supervisor>\nYour recent work has drifted away from the line you were pursuing — you are pulling in content unrelated to what you have been doing, which crowds out what matters. Refocus on the current goal: make your next calls target exactly what it needs (the specific files, symbols, or behavior involved). If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
+		],
+		DetectorSignal::None => return "",
+	};
+	variants[attempt.min(variants.len() - 1)]
 }
 
 #[cfg(test)]

@@ -212,6 +212,14 @@ pub struct ChatSession {
 	/// without the model breaking out. Caps a runaway loop — a steer is advisory,
 	/// so the model can ignore it forever. Reset by any non-steering round.
 	pub consecutive_steers: usize,
+	/// Supervisor: framing-rotation index for the steer note. When the *same*
+	/// signal re-fires without breakout, this advances so `steer_note` reframes the
+	/// constraint from a new angle instead of repeating identical (habituated) text.
+	/// Reset when the fired signal differs from the last one or on a clean round.
+	pub steer_attempt: usize,
+	/// Supervisor: the signal that drove the last steer, used to decide whether the
+	/// current steer continues the same run (advance framing) or starts fresh (reset).
+	pub steer_last_signal: crate::supervisor::detect::DetectorSignal,
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
@@ -343,6 +351,8 @@ impl ChatSession {
 			gate_failed: false,
 			steer_pending: None,
 			consecutive_steers: 0,
+			steer_attempt: 0,
+			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 		}
@@ -550,6 +560,8 @@ impl ChatSession {
 						gate_failed: false,
 						steer_pending: None,
 						consecutive_steers: 0,
+						steer_attempt: 0,
+						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 						last_self_report_reason: None,
 						recalled_refs: Vec::new(),
 					};
@@ -1298,6 +1310,8 @@ mod tests {
 			gate_failed: false,
 			steer_pending: None,
 			consecutive_steers: 0,
+			steer_attempt: 0,
+			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 		}

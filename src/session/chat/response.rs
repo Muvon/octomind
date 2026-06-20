@@ -629,6 +629,9 @@ pub async fn process_response<S: OutputSink>(
 					const MIN_DRIFT_LEN: usize = 200;
 					// Track whether this round emitted a steer (for the circuit-breaker).
 					let mut round_steered = false;
+					// Accumulate the highest-priority signal across the parallel batch;
+					// parallel calls share one AI feedback turn so only one steer fires.
+					let mut round_signal = crate::supervisor::detect::DetectorSignal::None;
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -689,37 +692,41 @@ pub async fn process_response<S: OutputSink>(
 							dedup_threshold,
 							distraction_threshold,
 						);
-						if crate::supervisor::detect::should_steer(
-							signal,
-							params.chat_session.last_self_report,
-						) {
-							round_steered = true;
-							params.chat_session.steer_pending =
-								Some(crate::supervisor::detect::steer_note(signal).to_string());
-							params.chat_session.detectors.reset_streak();
-							// A Distraction steer also drops the working set so a legitimate
-							// pivot re-seeds instead of being flagged again every round.
-							if signal == crate::supervisor::detect::DetectorSignal::Distraction {
-								params.chat_session.detectors.reset_working_set();
-							}
-							crate::supervisor::stats::steer();
-							crate::supervisor::notify(&format!(
-								"steering — {}",
-								crate::supervisor::detect::signal_description(signal)
-							));
-							crate::log_debug!(
-								"Supervisor steer queued: {:?} (tool={}, self_report={:?})",
-								signal,
-								call.tool_name,
-								params.chat_session.last_self_report
-							);
+						// Merge: keep the highest-priority signal across parallel calls.
+						round_signal = round_signal.merge(signal);
+					}
+
+					// Fire at most once per round with the winning signal.
+					if crate::supervisor::detect::should_steer(
+						round_signal,
+						params.chat_session.last_self_report,
+					) {
+						round_steered = true;
+						params.chat_session.steer_pending =
+							Some(crate::supervisor::detect::steer_note(round_signal).to_string());
+						// A Distraction steer drops the working set so a legitimate pivot
+						// re-seeds instead of being flagged again every round.
+						if round_signal == crate::supervisor::detect::DetectorSignal::Distraction {
+							params.chat_session.detectors.reset_working_set();
 						}
+						crate::supervisor::stats::steer();
+						crate::supervisor::notify(&format!(
+							"steering — {}",
+							crate::supervisor::detect::signal_description(round_signal)
+						));
+						crate::log_debug!(
+							"Supervisor steer queued: {:?} (self_report={:?})",
+							round_signal,
+							params.chat_session.last_self_report
+						);
 					}
 					// Circuit-breaker bookkeeping: a round that steered extends the streak;
-					// any round that did not (the model moved on) resets it.
+					// a round with novel action (model broke out) resets it.
 					if round_steered {
 						params.chat_session.consecutive_steers += 1;
-					} else {
+					} else if round_signal == crate::supervisor::detect::DetectorSignal::None {
+						// Only reset when detectors see genuinely new work — not on the
+						// intermediate rounds where the window is refilling after a prior steer.
 						params.chat_session.consecutive_steers = 0;
 					}
 				}

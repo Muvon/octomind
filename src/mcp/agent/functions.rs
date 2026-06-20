@@ -119,6 +119,11 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 /// Execute an agent tool call.
 /// For config-defined agents: spawns subprocess via ACP command.
 /// For dynamic agents: executes in-process using ChatSession.
+/// Appended to every subagent task. Children return free-text, so without a
+/// contract a child can dump raw output verbatim into the parent's context. The
+/// compact handoff keeps fan-out cheap — the SOTA sub-agent rule.
+const AGENT_OUTPUT_CONTRACT: &str = "Return format: reply with a concise summary (≤2000 tokens) of what you did and what you found, plus the exact file paths involved. Do not paste full file contents or raw command output — the caller can open the files by path if it needs them.";
+
 pub async fn execute_agent_command(
 	call: &McpToolCall,
 	config: &crate::config::Config,
@@ -145,6 +150,8 @@ pub async fn execute_agent_command(
 			));
 		}
 	};
+	let augmented_task = format!("{}\n\n---\n{AGENT_OUTPUT_CONTRACT}", task.trim_end());
+	let task = augmented_task.as_str();
 
 	// Check config-defined agents first (subprocess execution)
 	let config_agent = config.agents.iter().find(|a| a.name == agent_name).cloned();

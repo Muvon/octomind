@@ -866,6 +866,42 @@ pub fn get_completed_task_count() -> Result<usize> {
 	storage.get_completed_task_count()
 }
 
+/// Compact live checklist for goal recitation: status icon + title only (no
+/// descriptions), the active task marked. Sync — safe at the pre-request
+/// injection point. Returns None when no plan is active.
+pub fn render_plan_checklist() -> Option<String> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return None;
+	}
+	let task_list = storage.get_task_list().ok()?;
+	if task_list.is_empty() {
+		return None;
+	}
+	let current = storage
+		.get_current_task_info()
+		.map(|(c, _, _, _)| c)
+		.unwrap_or(0);
+	let completed = task_list
+		.iter()
+		.filter(|(_, _, status)| matches!(status, TaskStatus::Completed))
+		.count();
+
+	let mut s = format!("Live plan ({completed}/{} done):\n", task_list.len());
+	for (i, (title, _desc, status)) in task_list.iter().enumerate() {
+		let num = i + 1;
+		let icon = match status {
+			TaskStatus::Completed => "✅",
+			TaskStatus::InProgress if num == current => "🔄",
+			TaskStatus::InProgress => "⏳",
+		};
+		let marker = if num == current { " ← current" } else { "" };
+		s.push_str(&format!("{icon} {title}{marker}\n"));
+	}
+	Some(s)
+}
+
 /// Get current plan display for session commands
 pub async fn get_current_plan_display() -> Result<String> {
 	let storage = get_storage();

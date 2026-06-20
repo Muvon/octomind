@@ -1338,6 +1338,24 @@ mod tests {
 			.collect()
 	}
 
+	#[test]
+	fn real_user_turn_resets_steer_streak() {
+		let mut cs = make_session(vec![msg("system", false)]);
+		cs.consecutive_steers = 3;
+		cs.steer_attempt = 2;
+		cs.steer_last_signal = crate::supervisor::detect::DetectorSignal::Loop;
+
+		cs.add_user_message("new task after prior loop stopped")
+			.unwrap();
+
+		assert_eq!(cs.consecutive_steers, 0);
+		assert_eq!(cs.steer_attempt, 0);
+		assert_eq!(
+			cs.steer_last_signal,
+			crate::supervisor::detect::DetectorSignal::None
+		);
+	}
+
 	// ── Case 1: no cache markers anywhere ────────────────────────────────────────
 	// Compressed block gets cached=true (marker #1) and the last eligible user/tool
 	// message in the preserved zone gets marker #2 automatically.

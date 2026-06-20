@@ -126,6 +126,29 @@ impl Default for Message {
 	}
 }
 
+pub fn is_system_managed_user_content(content: &str) -> bool {
+	let trimmed = content.trim_start();
+	trimmed.starts_with("<instructions>")
+		|| trimmed.starts_with("<continuation>")
+		|| crate::mcp::runtime::skill::is_skill_message(content)
+		|| crate::supervisor::gate::is_supervisor_injection(content)
+}
+
+pub fn is_real_user_task_message(message: &Message) -> bool {
+	if message.role != "user" || message.content.trim().is_empty() {
+		return false;
+	}
+	!is_system_managed_user_content(&message.content)
+}
+
+pub fn latest_real_user_task_content(messages: &[Message]) -> Option<&str> {
+	messages
+		.iter()
+		.rev()
+		.find(|m| is_real_user_task_message(m))
+		.map(|m| m.content.as_str())
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionInfo {
 	pub name: String,

@@ -598,6 +598,8 @@ pub fn display_info(output: &CommandOutput) {
 			let gate_pass = get_u64("gate_pass");
 			let gate_fail = get_u64("gate_fail");
 			let steers = get_u64("steers");
+			let pregate_blocks = get_u64("pregate_blocks");
+			let claim_blocks = get_u64("claim_blocks");
 			let lessons = get_u64("lessons_stored");
 			let orientation = get_u64("orientation_stored");
 			let recalls = get_u64("recalls_injected");
@@ -611,6 +613,12 @@ pub fn display_info(output: &CommandOutput) {
 			}
 			if steers > 0 {
 				activity.push(format!("{} steers", steers));
+			}
+			if pregate_blocks > 0 {
+				activity.push(format!("{} check-blocks", pregate_blocks));
+			}
+			if claim_blocks > 0 {
+				activity.push(format!("{} claim-blocks", claim_blocks));
 			}
 			if lessons > 0 {
 				activity.push(format!("{} lessons", lessons));

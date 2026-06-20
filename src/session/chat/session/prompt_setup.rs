@@ -92,7 +92,7 @@ pub async fn setup_system_prompt_and_cache(
 						)?;
 					}
 					"user" => {
-						chat_session.add_user_message(&msg.content)?;
+						chat_session.add_system_managed_user_message(&msg.content)?;
 					}
 					_ => {} // Should not happen
 				}
@@ -153,7 +153,7 @@ pub async fn setup_system_prompt_and_cache(
 									"<instructions>\n{}\n</instructions>",
 									processed_instructions
 								);
-								chat_session.add_user_message(&wrapped)?;
+								chat_session.add_system_managed_user_message(&wrapped)?;
 
 								if supports_caching {
 									let cache_manager = CacheManager::new();

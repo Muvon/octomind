@@ -366,11 +366,7 @@ pub async fn process_tool_results(
 		let hint_message = format!(
 			"⚠️ Tool usage notice:\n{bullet_list}\n\nPlease prefer the recommended tools going forward."
 		);
-		chat_session.session.messages.push(crate::session::Message {
-			role: "user".to_string(),
-			content: hint_message,
-			..Default::default()
-		});
+		chat_session.add_system_managed_user_message(&hint_message)?;
 	}
 
 	// Supervisor: deliver any queued steer note HERE — during the tool loop, before
@@ -380,11 +376,7 @@ pub async fn process_tool_results(
 	// saw the steer (it only landed when a real user message began a fresh turn). This
 	// is the round-by-round delivery that makes the steer reach the model in the loop.
 	if let Some(note) = chat_session.steer_pending.take() {
-		chat_session.session.messages.push(crate::session::Message {
-			role: "user".to_string(),
-			content: note,
-			..Default::default()
-		});
+		chat_session.add_system_managed_user_message(&note)?;
 		crate::log_debug!("Supervisor steer injected (tool loop)");
 	}
 

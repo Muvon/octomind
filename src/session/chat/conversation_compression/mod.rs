@@ -293,9 +293,7 @@ pub enum CompressionTrigger {
 /// truncated…" into the recorded task and bury the real ask (the bug that ate the
 /// work). Centralized + unit-tested so the filter can't silently drift again.
 pub(super) fn is_synthetic_user_message(content: &str) -> bool {
-	crate::mcp::runtime::skill::is_skill_message(content)
-		|| apply::is_continuation_message(content)
-		|| crate::supervisor::gate::is_supervisor_injection(content)
+	crate::session::is_system_managed_user_content(content)
 }
 
 pub async fn check_and_compress_conversation(
@@ -427,9 +425,8 @@ pub async fn check_and_compress_conversation(
 	//     (`apply::is_continuation_message`) — they're conversation
 	//     plumbing, not real user asks. Including them would let the
 	//     "Please continue."-style degradation chain reappear.
-	let user_msg_filter = |m: &&crate::session::Message| -> bool {
-		m.role == "user" && !m.content.trim().is_empty() && !is_synthetic_user_message(&m.content)
-	};
+	let user_msg_filter =
+		|m: &&crate::session::Message| -> bool { crate::session::is_real_user_task_message(m) };
 
 	let all_user_msgs: Vec<&crate::session::Message> = session.session.messages
 		[start_idx + 1..=end_idx]
@@ -549,7 +546,7 @@ pub async fn check_and_compress_conversation(
 			.session
 			.messages
 			.iter()
-			.filter(|m| m.role == "user")
+			.filter(|m| crate::session::is_real_user_task_message(m))
 			.count();
 		if user_msg_count >= config.supervisor.learning.min_messages_for_intermediate {
 			let role = crate::config::get_thread_role().unwrap_or_default();

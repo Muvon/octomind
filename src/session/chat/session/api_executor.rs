@@ -25,6 +25,9 @@ use tokio::sync::watch;
 
 use crate::session::output::{OutputMode, OutputSink};
 
+const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
+const PREGATE_NOTE: &str = "<supervisor>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou reported done, but you changed code and have not run a successful check (build / test / lint / whatever this project uses to verify) since your last change. Run that check and confirm it passes, or if no check applies here, say so explicitly. Then re-report your status.\n</supervisor>";
+
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
 /// positive `delta` reinforces (the recall helped); negative decays (it may have
 /// misled). Clears the recalled set either way.
@@ -132,14 +135,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.unwrap_or("unknown")
 			.to_string();
 		// Most recent user message drives query-based scoped retrieval.
-		let user_input = chat_session
-			.session
-			.messages
-			.iter()
-			.rev()
-			.find(|m| m.role == "user")
-			.map(|m| m.content.clone())
-			.unwrap_or_default();
+		let user_input =
+			crate::session::latest_real_user_task_content(&chat_session.session.messages)
+				.unwrap_or_default()
+				.to_string();
 		animation_manager.set_phase("Recalling lessons …").await;
 		let (block, new_contents) = crate::supervisor::learning::inject::retrieve_and_format(
 			config,
@@ -153,7 +152,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		.await;
 		animation_manager.clear_phase();
 		if !block.is_empty() {
-			chat_session.add_user_message(&block)?;
+			chat_session.add_system_managed_user_message(&block)?;
 			crate::supervisor::stats::recall();
 			crate::supervisor::notify(&format!(
 				"recalled {} lesson(s) into context",
@@ -171,7 +170,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// Supervisor: inject any queued steer note (advisory re-anchor) at the safe
 	// pre-request point — same message-ordering guarantees as recall above.
 	if let Some(note) = chat_session.steer_pending.take() {
-		chat_session.add_user_message(&note)?;
+		chat_session.add_system_managed_user_message(&note)?;
 		crate::log_debug!("Supervisor steer injected");
 	}
 
@@ -184,7 +183,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		if let Some(note) =
 			crate::supervisor::recite::recite_note(&chat_session.session.info.anchor)
 		{
-			chat_session.add_user_message(&note)?;
+			chat_session.add_system_managed_user_message(&note)?;
 			crate::log_debug!("Supervisor goal recitation injected");
 		}
 	}
@@ -313,13 +312,21 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// completion right after a code change without re-running any check. Catch
 		// it deterministically before paying for the LLM verify-gate. Shares the
 		// gate_iterations budget, so it can't loop unbounded.
+		let already_nudged = chat_session
+			.session
+			.messages
+			.iter()
+			.rev()
+			.find(|m| m.role == "user")
+			.is_some_and(|m| m.content.contains(PREGATE_MARKER));
 		if config.supervisor.gate.require_check_after_mutation
 			&& chat_session.detectors.needs_verification()
+			&& !already_nudged
 		{
-			let note = "<supervisor>\nYou reported done, but you changed code and have not run a successful check (build / test / lint / whatever this project uses to verify) since your last change. Run that check and confirm it passes — or, if no check applies here, say so explicitly. Then re-report your status.\n</supervisor>";
-			chat_session.add_user_message(note)?;
+			chat_session.add_system_managed_user_message(PREGATE_NOTE)?;
 			chat_session.last_self_report = None; // force the re-run to re-evaluate
 			chat_session.gate_iterations += 1;
+			crate::supervisor::stats::pregate_block();
 			crate::supervisor::notify("done claimed without a check after changes — re-running");
 			if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
 				crate::log_debug!(
@@ -364,9 +371,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					note.push_str("»\n");
 				}
 				note.push_str("</supervisor>");
-				chat_session.add_user_message(&note)?;
+				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
 				chat_session.gate_iterations += 1;
+				crate::supervisor::stats::claim_block();
 				crate::supervisor::notify(&format!(
 					"{} unverifiable citation(s) — re-running",
 					unverified.len()
@@ -398,9 +406,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.messages
 			.iter()
 			.rev()
-			.find(|m| {
-				m.role == "user" && !crate::supervisor::gate::is_supervisor_injection(&m.content)
-			})
+			.find(|m| crate::session::is_real_user_task_message(m))
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
 		let result = chat_session.last_response.clone();
@@ -427,7 +433,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				let note = crate::supervisor::gate::format_advisory(&gaps);
-				chat_session.add_user_message(&note)?;
+				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
 				chat_session.gate_iterations += 1;
 				crate::log_debug!(

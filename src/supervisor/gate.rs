@@ -20,12 +20,20 @@
 use crate::config::Config;
 use tokio::sync::watch;
 
-const GATE_PROMPT: &str = r#"You are a strict completion verifier. The agent claims a task is COMPLETE.
-Check the agent's final result against the user's request. Identify concrete, checkable gaps
-that mean the task is NOT actually done: missing steps, unmet requirements, or claims stated
-without evidence.
+const GATE_PROMPT: &str = r#"You are a strict completion verifier. A different agent claims its task is COMPLETE.
+Judge the END STATE, not the agent's story: ignore its self-report and stated claim, and
+check only what the AGENT FINAL RESULT actually evidences against the USER REQUEST.
 
-If the task is genuinely complete, output exactly:
+Work through every part of the request, one at a time. For each, find the concrete proof it
+was done — a file path, line or code excerpt, command output, or named test in the result. A
+part counts as done only if such evidence is present; a confident or well-formatted assertion
+with no locatable artifact does NOT count. Reason first, then decide. Do not reward length,
+formatting, or tone — only verifiable substance.
+
+Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
+claim has no supporting evidence. Each gap must name the specific unmet item.
+
+If every part is evidenced — or you cannot point to a concrete unmet item — output exactly:
 <verdict>PASS</verdict>
 
 Otherwise output one line per gap (and nothing else):
@@ -40,12 +48,12 @@ pub enum GateVerdict {
 	Gaps(Vec<String>),
 }
 
-/// True when a message is a supervisor-injected note (a `<supervisor>` advisory
+/// True when a message is a supervisor-injected note (a `<system-reminder>` advisory
 /// or a `<recall>` block), not a genuine user turn. Lets the gate find the real
 /// task instead of verifying against its own prior advisory.
 pub fn is_supervisor_injection(content: &str) -> bool {
 	let t = content.trim_start();
-	t.starts_with("<supervisor>") || t.starts_with("<recall>")
+	t.starts_with("<system-reminder>") || t.starts_with("<recall>")
 }
 
 /// Verify a self-reported completion. `task` is the user's request, `result` is
@@ -116,7 +124,7 @@ fn parse_verdict(resp: &str) -> GateVerdict {
 /// Build the out-of-band advisory injected back into the loop on gaps.
 pub fn format_advisory(gaps: &[String]) -> String {
 	let mut s = String::from(
-		"<supervisor>\nBefore accepting completion, a verification pass found gaps:\n",
+		"<system-reminder>\nYou reported this task complete, but a verification pass found gaps before it can be accepted as done:\n",
 	);
 	for g in gaps {
 		s.push_str("- ");
@@ -124,7 +132,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"Address them, then re-report your status. If they are already handled, explain why.\n</supervisor>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the file and line, the passing test, or the command output. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</system-reminder>",
 	);
 	s
 }

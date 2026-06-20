@@ -29,18 +29,17 @@ use crate::session::anchor::Anchor;
 ///
 /// Recites `intent` verbatim — it is immutable (first-write-wins) so it never
 /// drifts — and the last-known `next_steps`, explicitly labelled stale because
-/// they only refresh at compaction. Wrapped in `<supervisor>` so
+/// they only refresh at compaction. Wrapped in `<system-reminder>` so
 /// [`crate::supervisor::gate::is_supervisor_injection`] excludes it from the
 /// verify-gate's real-task search.
 pub fn recite_note(anchor: &Anchor) -> Option<String> {
 	if anchor.intent.is_empty() && anchor.next_steps.is_empty() {
 		return None;
 	}
-	let mut s = String::from(
-		"<supervisor>\nStay anchored to the goal — keep it in view across this long session:\n",
-	);
+	let mut s =
+		String::from("<system-reminder>\nYou are deep in this session — re-anchor on your goal:\n");
 	if !anchor.intent.is_empty() {
-		s.push_str("<intent>");
+		s.push_str("Goal (fixed): <intent>");
 		s.push_str(anchor.intent.trim());
 		s.push_str("</intent>\n");
 	}
@@ -55,7 +54,7 @@ pub fn recite_note(anchor: &Anchor) -> Option<String> {
 			}
 		}
 	}
-	s.push_str("</supervisor>");
+	s.push_str("</system-reminder>");
 	Some(s)
 }
 

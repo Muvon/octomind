@@ -11,44 +11,47 @@ use crate::config::Config;
 use anyhow::Result;
 
 const EXTRACTION_SYSTEM_PROMPT: &str = r#"# Step 1: Decision
-First, decide: does this conversation contain any USER corrections or USER-stated rules?
-Output your decision:
+Scan for a USER turn that either (a) corrects the AI and states the fix, or (b) declares a
+project convention, preference, or constraint. The test is mechanical: can you copy a verbatim
+user line that supports a rule?
+Output your decision on its own line:
 <decision>LEARN</decision> or <decision>NONE</decision>
 
 If NONE, stop here. Do not output anything else.
 
 # Step 2: Extract (only if LEARN)
-For each lesson, you MUST provide the exact user quote as evidence.
-If you cannot quote the user, you do not have a lesson — skip it.
+Work quote-first, one lesson at a time:
+1. Copy the supporting USER line VERBATIM — exact characters from the transcript, no paraphrase or summary. This goes in evidence="...".
+2. ONLY THEN write the reusable rule it supports.
+If you cannot copy a verbatim user line for a candidate rule, drop it — a lesson with no real user quote is not a lesson. Never invent or stretch a quote to fill evidence.
 
 # What qualifies as a lesson
-- User correction: user explicitly said something is wrong and stated the fix
-- User-stated rule: user declared a project convention, preference, or constraint
-- Repeated failure: user corrected the same type of mistake more than once
+- User correction: the user said something is wrong and stated the fix
+- User-stated rule: the user declared a project convention, preference, or constraint
+- Repeated failure: the user corrected the same kind of mistake more than once
 
-# What does NOT qualify
+# What does NOT qualify (these have no user quote)
 - Anything the AI discovered, debugged, or figured out without user input
-- One-time implementation details or debugging steps
+- A successful AI action that received no user feedback
+- One-off implementation details or debugging steps
 - Generic knowledge any developer would know
-- Anything derivable by reading the codebase
-- Successful AI actions that received no user feedback
+- Anything recoverable by reading the codebase
 
 # Scope (REQUIRED on every lesson)
-- scope="global": a durable preference about HOW THIS USER WORKS, true in EVERY
-  project and role (e.g. "always open a single PR", "never add silent fallbacks",
-  "the user runs build/test commands themselves"). Use ONLY when the rule is
-  clearly about the user's general way of working — NOT tied to this task, this
-  project, or this role.
+- scope="global": a durable fact about HOW THIS USER WORKS, true in EVERY project and role
+  (e.g. "always open a single PR", "never add silent fallbacks", "the user runs build/test
+  commands themselves"). Use ONLY when the quote is clearly about the user's general way of
+  working — NOT tied to this task, this project, or this role.
 - scope="scoped" (default): a rule about THIS project, role, or task.
-Be conservative: most lessons are "scoped". When unsure, use "scoped".
+Most lessons are scoped. When unsure, use "scoped".
 
 # Rules
-- Max 3 lessons. One strong lesson is better than three weak ones.
-- confidence=high: direct user correction ("no, do X instead")
-- confidence=medium: user-stated preference without direct correction
+- Max 3 lessons; copy a distinct verbatim quote for each. One strong lesson beats three weak ones.
+- confidence=high: the quote is a direct correction ("no, do X instead")
+- confidence=medium: the quote states a preference without a direct correction
 - State each lesson as a reusable rule, not a narrative
 
-# Existing Lessons (DO NOT duplicate; refine one only if the user changed their mind)
+# Existing Lessons (DO NOT duplicate; refine one only if a new user quote shows they changed their mind)
 {existing_lessons}
 
 # Output Format
@@ -64,8 +67,9 @@ Capture up to 2 pieces of DURABLE UNDERSTANDING about the subject that took real
 to discover and would save re-exploration next time: architecture, key decisions,
 structure, constraints, or non-obvious facts (e.g. "auth is delegated to octolib",
 "deploy runs on GitLab not GitHub", "the dataset's date column is epoch milliseconds").
-Do NOT capture transient state, exact line numbers, or anything one search recovers.
-These need no user quote.
+Capture a fact ONLY if you can point to where in this work it was established; if you cannot,
+omit it — capturing 0 is fine. Skip transient state, exact line numbers, and anything one
+search recovers. These need no user quote.
 <orientation tags="keyword1,keyword2" confidence="high|medium">
 A durable, reusable fact about how the subject works.
 </orientation>"#;

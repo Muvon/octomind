@@ -301,11 +301,11 @@ pub fn truncate_mcp_response_global(
 	// the write fails — both still carry the tag + tool-specific narrowing hint.
 	let notice = match crate::utils::spill::write_spill(tool_name, content) {
 		Some(path) => format!(
-			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). The FULL untruncated output was saved to:\n  {path}\nDo NOT re-run this call — identical arguments return this same truncated output. Instead, either:\n- Read a specific span from the spill file above (line range or symbol).\n- Use a search tool to locate the exact symbol or pattern without re-reading the whole output.\nTo narrow at the source instead, {hint}.",
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). Identical arguments return this same truncated output, so re-running wastes a turn. The full output was saved here:\n  {path}\nTo get the rest, read the span you need from that file (a line range or a single symbol), or run a search tool against it to jump to the exact pattern. To return less at the source next time, {hint}.",
 			path = path.display(),
 		),
 		None => format!(
-			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). Do NOT re-run this call — identical arguments return this same truncated output. Instead, use a search tool to locate the exact symbol or pattern without re-running. To narrow at the source instead, {hint}."
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). The cut tail is not in this result, and identical arguments return this same truncated output, so re-running wastes a turn. To get the rest, re-issue a narrower call that returns less — {hint}. If what you need is in the shown portion above, read or search it there instead of re-fetching."
 		),
 	};
 

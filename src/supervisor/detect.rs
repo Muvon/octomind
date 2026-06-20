@@ -253,6 +253,10 @@ pub struct Detectors {
 	consecutive_dedups: usize,
 	/// Off-task results in a row (drift). Reset by an on-task result or new task.
 	consecutive_drift: usize,
+	/// Single-tool-call rounds in a row. A round is a full AI turn's tool batch;
+	/// when it carries exactly one call and the model could have batched independent
+	/// calls, the streak grows. Reset by any multi-call (parallel) round.
+	consecutive_singletons: usize,
 	/// EMA centroid of recent ON-TASK result embeddings — the "working set". A
 	/// result far from it (low cosine) is drift. Empty until the first one seeds it.
 	centroid: Vec<f32>,
@@ -293,6 +297,12 @@ pub enum DetectorSignal {
 	/// We score the result, not the call: short call strings are format-dominated
 	/// and don't separate by topic (measured); results carry real content and do.
 	Distraction,
+	/// `sequential_threshold` single-tool-call ROUNDS in a row — the model is
+	/// issuing one call per turn where independent calls could be batched into one
+	/// parallel round. Round-level (not per-call); recorded once per turn via
+	/// [`Detectors::record_round_arity`]. Off by default — single calls are often
+	/// legitimate, so this is the softest, most conservative signal.
+	Sequential,
 }
 
 impl DetectorSignal {
@@ -301,11 +311,12 @@ impl DetectorSignal {
 	fn priority(self) -> u8 {
 		match self {
 			Self::None => 0,
-			Self::Distraction => 1,
-			Self::NoProgress => 2,
-			Self::Loop => 3,
-			Self::Truncation => 4,
-			Self::Dedup => 5,
+			Self::Sequential => 1,
+			Self::Distraction => 2,
+			Self::NoProgress => 3,
+			Self::Loop => 4,
+			Self::Truncation => 5,
+			Self::Dedup => 6,
 		}
 	}
 
@@ -451,6 +462,26 @@ impl Detectors {
 		self.consecutive_truncations = 0;
 		self.consecutive_dedups = 0;
 		self.consecutive_drift = 0;
+		self.consecutive_singletons = 0;
+	}
+
+	/// Record the arity of a completed tool round (one AI turn's batch) and return
+	/// the sequential-batching signal. `call_count` is how many tool calls the round
+	/// carried; a round of exactly one grows the singleton streak, any parallel round
+	/// (>= 2) resets it. Fires `Sequential` once the streak reaches `threshold`.
+	/// `threshold == 0` disables the signal entirely (the default). Round-level, so
+	/// it is recorded once per turn — separately from per-call [`record_action`].
+	pub fn record_round_arity(&mut self, call_count: usize, threshold: usize) -> DetectorSignal {
+		if call_count == 1 {
+			self.consecutive_singletons += 1;
+		} else {
+			self.consecutive_singletons = 0;
+		}
+		if threshold > 0 && self.consecutive_singletons >= threshold {
+			DetectorSignal::Sequential
+		} else {
+			DetectorSignal::None
+		}
 	}
 
 	/// Update the working-set centroid with this result's embedding and return
@@ -520,12 +551,14 @@ pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool 
 	}
 	match report {
 		Some(SelfReport::Done) => false,
-		// No-progress and distraction can be legitimate while exploring; every
-		// other signal steers regardless of intent.
+		// No-progress, distraction, and sequential-batching can be legitimate while
+		// exploring; every other signal steers regardless of intent.
 		Some(SelfReport::Exploring)
 			if matches!(
 				signal,
-				DetectorSignal::NoProgress | DetectorSignal::Distraction
+				DetectorSignal::NoProgress
+					| DetectorSignal::Distraction
+					| DetectorSignal::Sequential
 			) =>
 		{
 			false
@@ -543,6 +576,9 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::Truncation => "repeated truncated results — narrowing args ignored",
 		DetectorSignal::Dedup => "repeated identical results — re-fetching output already received",
 		DetectorSignal::Distraction => "off-task results — drifting from the current line of work",
+		DetectorSignal::Sequential => {
+			"single tool calls in a row — independent calls could be batched"
+		}
 		DetectorSignal::None => "",
 	}
 }
@@ -563,7 +599,7 @@ pub fn steer_note(signal: DetectorSignal, attempt: usize) -> &'static str {
 	let variants: &[&str] = match signal {
 		DetectorSignal::Loop => &[
 			"<supervisor>\nThe last action produced a result you have already seen — it is not advancing the task. This usually means the current approach has stalled. Step back and reconsider what is actually blocking progress.\n</supervisor>",
-			"<supervisor>\nYou are still repeating the same action. Change something concrete on the next call — a different tool, different arguments, or a different sub-goal. Do not re-issue the same call expecting a different result.\n</supervisor>",
+			"<supervisor>\nYou are still repeating the same action. First, in one sentence: why did the last attempt fail to make progress? Then change something concrete on the next call — a different tool, different arguments, or a different sub-goal. Do not re-issue the same call expecting a different result.\n</supervisor>",
 			"<supervisor>\nYou have repeated the same action without new results. Stop and try a different approach. If you cannot proceed, report `blocked`.\n</supervisor>",
 		],
 		DetectorSignal::NoProgress => &[
@@ -573,18 +609,23 @@ pub fn steer_note(signal: DetectorSignal, attempt: usize) -> &'static str {
 		],
 		DetectorSignal::Truncation => &[
 			"<supervisor>\nYour recent tool results were truncated — the output is capped. Re-running the same kind of broad call returns no more content, only more wasted context.\n</supervisor>",
-			"<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context. You are narrowing your args but the results keep getting truncated.\n\nNarrow smart, not small:\n  • If a more specific tool exists (signatures, structural search, semantic search, grep), use it instead of reading raw content.\n  • If you need several specific parts, request them all in parallel — never one tiny chunk at a time.\n  • If you need only one specific part, target it with the tool's parameters (line range, limit, offset, filter, query/pattern).\n\nMany tiny sequential reads of the same file waste more context than fewer, better-targeted calls. Narrow means fewer, better-targeted calls — not more calls.\n</supervisor>",
+			"<supervisor>\nYour recent tool results were truncated — the output is capped, so re-running the same kind of broad call returns no more, just more wasted context. You are narrowing your args but the results keep getting truncated. First, in one sentence: what are you actually trying to find in this output?\n\nThen narrow smart, not small:\n  • If a more specific tool exists (signatures, structural search, semantic search, grep), use it instead of reading raw content.\n  • If you need several specific parts, request them all in parallel — never one tiny chunk at a time.\n  • If you need only one specific part, target it with the tool's parameters (line range, limit, offset, filter, query/pattern).\n\nMany tiny sequential reads of the same file waste more context than fewer, better-targeted calls. Narrow means fewer, better-targeted calls — not more calls.\n</supervisor>",
 			"<supervisor>\nSTOP re-issuing broad calls that keep truncating — you are burning context for nothing. Use a more specific tool (signatures, structural/semantic search, grep) or target the exact span you need (line range, limit, offset, filter). If you cannot, report `blocked`.\n</supervisor>",
 		],
 		DetectorSignal::Dedup => &[
 			"<supervisor>\nThe call(s) you just made returned output you already received earlier this session — the body was elided because it is a duplicate. You already have this information in context.\n</supervisor>",
-			"<supervisor>\nStop re-fetching what you already have. Act on the results already in context, or change the arguments/tool to obtain something genuinely new.\n</supervisor>",
+			"<supervisor>\nStop re-fetching what you already have. First, in one sentence: what are you still missing that these repeated calls aren't giving you? Then either act on the results already in context, or change the arguments/tool to obtain something genuinely new.\n</supervisor>",
 			"<supervisor>\nSTOP — you are repeating the same call(s) and getting the same output you already have. This is a loop; it adds nothing and wastes context. Do NOT repeat them. Act on the results already in context, or change the args/tool to get something new. If you truly cannot proceed, report `blocked`.\n</supervisor>",
 		],
 		DetectorSignal::Distraction => &[
 			"<supervisor>\nYour recent results have drifted away from the line of work you were pursuing — they are unrelated to the current goal and crowd out what matters.\n</supervisor>",
-			"<supervisor>\nRefocus on the current goal: make your next calls target exactly what it needs — the specific files, symbols, or behavior involved. If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
+			"<supervisor>\nRefocus on the current goal. First, in one sentence: how do your recent calls connect to the user's actual request? If they don't, make your next calls target exactly what the goal needs — the specific files, symbols, or behavior involved. If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
 			"<supervisor>\nYour recent work has drifted away from the line you were pursuing — you are pulling in content unrelated to what you have been doing, which crowds out what matters. Refocus on the current goal: make your next calls target exactly what it needs (the specific files, symbols, or behavior involved). If you have deliberately moved on to a new sub-task, ignore this.\n</supervisor>",
+		],
+		DetectorSignal::Sequential => &[
+			"<supervisor>\nYou have made several single-tool-call turns in a row. If the next calls are independent (they don't need each other's results), issue them together in one parallel batch instead of one per turn — it is faster and wastes less context.\n</supervisor>",
+			"<supervisor>\nYou keep issuing one tool call per turn. Before the next turn: list the calls you know you need. Any that don't depend on a prior result — fire them in the SAME batch, not sequentially. Only chain calls whose arguments genuinely depend on an earlier result.\n</supervisor>",
+			"<supervisor>\nStill one call per turn. Stop serializing independent work: name your next 2+ calls and send every call that doesn't depend on another's output in a single parallel batch. If each call truly depends on the previous result, this is fine — otherwise batch them now.\n</supervisor>",
 		],
 		DetectorSignal::None => return "",
 	};

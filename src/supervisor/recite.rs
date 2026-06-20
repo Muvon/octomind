@@ -25,15 +25,18 @@
 use crate::session::anchor::Anchor;
 
 /// Build the recitation note for the context tail, or `None` when there is
-/// nothing durable to recite yet (no compaction has populated the anchor).
+/// nothing durable to recite yet.
 ///
 /// Recites `intent` verbatim — it is immutable (first-write-wins) so it never
-/// drifts — and the last-known `next_steps`, explicitly labelled stale because
-/// they only refresh at compaction. Wrapped in `<system-reminder>` so
-/// [`crate::supervisor::gate::is_supervisor_injection`] excludes it from the
-/// verify-gate's real-task search.
-pub fn recite_note(anchor: &Anchor) -> Option<String> {
-	if anchor.intent.is_empty() && anchor.next_steps.is_empty() {
+/// drifts. For the "what to do now" part it prefers the LIVE plan checklist
+/// (`plan_checklist`, re-read every turn from the plan tool's storage) over the
+/// `next_steps` snapshot, which only refreshes at compaction and is stale
+/// between. With an active plan it recites even before the first compaction —
+/// that is exactly when goal drift on a long task is most expensive. Wrapped in
+/// `<system-reminder>` so [`crate::supervisor::gate::is_supervisor_injection`]
+/// excludes it from the verify-gate's real-task search.
+pub fn recite_note(anchor: &Anchor, plan_checklist: Option<&str>) -> Option<String> {
+	if anchor.intent.is_empty() && anchor.next_steps.is_empty() && plan_checklist.is_none() {
 		return None;
 	}
 	let mut s =
@@ -43,7 +46,12 @@ pub fn recite_note(anchor: &Anchor) -> Option<String> {
 		s.push_str(anchor.intent.trim());
 		s.push_str("</intent>\n");
 	}
-	if !anchor.next_steps.is_empty() {
+	// Prefer the live plan checklist (current every turn) over the stale
+	// next_steps snapshot; fall back to next_steps only when no plan is active.
+	if let Some(checklist) = plan_checklist.map(str::trim).filter(|c| !c.is_empty()) {
+		s.push_str(checklist);
+		s.push('\n');
+	} else if !anchor.next_steps.is_empty() {
 		s.push_str("Last-known next steps (may be stale — re-check against current state):\n");
 		for step in &anchor.next_steps {
 			let step = step.trim();
@@ -65,7 +73,7 @@ mod tests {
 
 	#[test]
 	fn empty_anchor_recites_nothing() {
-		assert!(recite_note(&Anchor::default()).is_none());
+		assert!(recite_note(&Anchor::default(), None).is_none());
 	}
 
 	#[test]
@@ -79,7 +87,7 @@ mod tests {
 			},
 			0,
 		);
-		let note = recite_note(&a).expect("should recite");
+		let note = recite_note(&a, None).expect("should recite");
 		// Excluded from the gate's real-task search.
 		assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 		assert!(note.contains("<intent>Add the truncation detector</intent>"));
@@ -96,8 +104,42 @@ mod tests {
 			},
 			0,
 		);
-		let note = recite_note(&a).expect("should recite");
+		let note = recite_note(&a, None).expect("should recite");
 		assert!(note.contains("<intent>Refactor auth</intent>"));
 		assert!(!note.contains("Last-known next steps"));
+	}
+
+	#[test]
+	fn live_plan_checklist_preferred_over_stale_next_steps() {
+		let mut a = Anchor::default();
+		a.extend(
+			AnchorUpdate {
+				intent: Some("Ship the feature".to_string()),
+				next_steps: vec!["STALE step".to_string()],
+				..Default::default()
+			},
+			0,
+		);
+		let note = recite_note(
+			&a,
+			Some("Live plan (1/2 done):\n✅ done it\n🔄 do this ← current"),
+		)
+		.expect("should recite");
+		assert!(note.contains("<intent>Ship the feature</intent>"));
+		assert!(note.contains("🔄 do this ← current"));
+		// The live checklist replaces the stale snapshot entirely.
+		assert!(!note.contains("STALE step"));
+		assert!(!note.contains("Last-known next steps"));
+	}
+
+	#[test]
+	fn live_plan_recites_even_with_empty_anchor() {
+		let note = recite_note(
+			&Anchor::default(),
+			Some("Live plan (0/1 done):\n🔄 first ← current"),
+		)
+		.expect("active plan recites pre-compaction");
+		assert!(crate::supervisor::gate::is_supervisor_injection(&note));
+		assert!(note.contains("🔄 first ← current"));
 	}
 }

@@ -180,9 +180,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// recency window — and crucially BEFORE the cache-marker advance below, so the
 	// cached prefix stays intact (the recited block lands after it each turn).
 	if config.supervisor.enabled && config.supervisor.recite.enabled {
-		if let Some(note) =
-			crate::supervisor::recite::recite_note(&chat_session.session.info.anchor)
-		{
+		// Prefer the live plan checklist (refreshed every turn from plan storage)
+		// over the anchor's stale next_steps snapshot for the recency-slot block.
+		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
+		if let Some(note) = crate::supervisor::recite::recite_note(
+			&chat_session.session.info.anchor,
+			plan_checklist.as_deref(),
+		) {
 			chat_session.add_system_managed_user_message(&note)?;
 			crate::log_debug!("Supervisor goal recitation injected");
 		}

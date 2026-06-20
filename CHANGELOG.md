@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.33.0] - 2026-06-20
+
+### 📋 Release Summary
+
+This release introduces advanced supervisor intelligence to improve goal tracking, tool execution accuracy, and distraction detection (f4578584, 3d113677, 4ac1db0b, cbdd8e1a, 807587d8, 4b80a8f1, 63a58570), alongside an orchestration MCP server and token efficiency benchmarking (9efbee9a, 69c8156a). User session management has been enhanced through improved message handling and refined tool response deduplication (7881570b, 0659f81b, cd425077). Additionally, several updates optimize system steering, data formatting, and overall stability (24164258, 53de784b, 4bb231bf, be51537a, 735ddaf6).
+
+
+### ✨ New Features & Enhancements
+
+- **bench**: add token efficiency benchmarking suite `69c8156a`
+- **session**: implement system-managed user messages `7881570b`
+- **supervisor**: add sequential tool call detection `f4578584`
+- **steering**: implement rotating framing for signals `24164258`
+- **supervisor**: implement steer circuit-breaker `3d113677`
+- **supervisor**: implement distraction detection logic `4ac1db0b`
+- **supervisor**: implement tool call deduplication `cbdd8e1a`
+- **session**: move tool deduplication upstream `0659f81b`
+- **config**: add orchestration MCP server `9efbee9a`
+- **supervisor**: implement deterministic claim verification `807587d8`
+- **supervisor**: implement goal recitation and mutation gating `4b80a8f1`
+- **supervisor**: implement tool truncation detection `63a58570`
+
+### 🔧 Improvements & Optimizations
+
+- **supervisor**: refine steering and gating logic `ece19ae5`
+- **utils**: improve truncation notice clarity `f531eaa6`
+- **supervisor**: improve truncation guidance note `ffe4631c`
+- **supervisor**: replace relevance with drift detection `10c1fd56`
+- **mcp**: migrate tap and schedule to orchestration `6edfc7cb`
+- **mcp**: migrate core tools to runtime module `bc7278b4`
+- **schedule**: clarify recurring loop behavior `db15f6cf`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: prevent greedy quote stripping `53de784b`
+- **supervisor**: resolve YAML escaping asymmetry `4bb231bf`
+- **supervisor**: consolidate steering signals in parallel batches `be51537a`
+- **compression**: exclude synthetic user messages from tasks `735ddaf6`
+- **session**: refine tool response deduplication `cd425077`
+
 ## [0.32.0] - 2026-06-17
 
 ### 📋 Release Summary

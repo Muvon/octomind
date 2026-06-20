@@ -149,6 +149,11 @@ pub struct DetectorsConfig {
 	pub drift_floor: f32,
 	/// Inject the self-report status-token instruction and parse it back.
 	pub self_report: bool,
+	/// Consecutive single-tool-call ROUNDS this many times in a row → the model is
+	/// issuing one tool call per turn when independent calls could be batched into a
+	/// single parallel round. `0` = OFF: single calls are often legitimate (genuinely
+	/// dependent calls, or one real action), so this is advisory and conservative.
+	pub sequential_threshold: usize,
 }
 
 /// Verify-gate configuration.

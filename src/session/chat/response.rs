@@ -595,6 +595,8 @@ pub async fn process_response<S: OutputSink>(
 					let distraction_threshold =
 						params.config.supervisor.detectors.distraction_threshold;
 					let drift_floor = params.config.supervisor.detectors.drift_floor;
+					let sequential_threshold =
+						params.config.supervisor.detectors.sequential_threshold;
 
 					// Drift detection is opt-in (distraction_threshold > 0): it costs one
 					// embedding per tool CALL. Reset the working-set centroid when the user's
@@ -695,6 +697,14 @@ pub async fn process_response<S: OutputSink>(
 						// Merge: keep the highest-priority signal across parallel calls.
 						round_signal = round_signal.merge(signal);
 					}
+
+					// Round-level: a turn of exactly one tool call grows the singleton
+					// streak; a parallel round resets it. Off by default (threshold 0).
+					let seq_signal = params
+						.chat_session
+						.detectors
+						.record_round_arity(current_tool_calls.len(), sequential_threshold);
+					round_signal = round_signal.merge(seq_signal);
 
 					// Fire at most once per round with the winning signal.
 					if crate::supervisor::detect::should_steer(

@@ -722,6 +722,12 @@ distraction_threshold = 0
 drift_floor = 0.7
 # Inject the self-report status-token instruction and parse it back
 self_report = true
+# Consecutive single-tool-call ROUNDS in a row -> the model is issuing one tool call
+# per turn where independent calls could be batched into one parallel round. Scores
+# round arity (calls per turn), not call content. 0 = OFF (default): single calls are
+# often legitimate (dependent calls, or one real action), so this stays advisory and
+# off unless over-sequencing is hurting you. Set e.g. 3 to enable.
+sequential_threshold = 0
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 [supervisor.gate]

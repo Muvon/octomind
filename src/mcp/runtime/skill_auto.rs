@@ -115,7 +115,7 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		match super::skill::execute_skill_tool(&call).await {
 			Ok(_) => {
 				if let Some(content) = super::skill::take_silent_skill_content() {
-					let _ = session.add_user_message(&content);
+					let _ = session.add_system_managed_user_message(&content);
 				}
 				// Emit structured event for JSONL/WebSocket consumers
 				if let Some(sid) = &session_id {
@@ -598,7 +598,7 @@ async fn auto_activate_skill(
 	match super::skill::execute_skill_tool(&call).await {
 		Ok(_) => {
 			if let Some(content) = super::skill::take_silent_skill_content() {
-				let _ = session.add_user_message(&content);
+				let _ = session.add_system_managed_user_message(&content);
 			}
 
 			// Emit structured event for JSONL/WebSocket consumers

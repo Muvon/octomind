@@ -139,9 +139,8 @@ fn extract_title(raw: &[u8]) -> Option<String> {
 		if stripped.is_empty() {
 			continue;
 		}
-		// Skip bootstrap-looking entries (skill / identity / role-doc injections).
-		let first_char = stripped.chars().next()?;
-		if first_char == '<' {
+		// Skip system-managed user-role entries.
+		if crate::session::is_system_managed_user_content(stripped) {
 			continue;
 		}
 		if stripped.starts_with("# Octomind") || stripped.starts_with("## Lessons") {

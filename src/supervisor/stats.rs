@@ -48,6 +48,8 @@ struct Stats {
 	gate_pass: u64,
 	gate_fail: u64,
 	steers: u64,
+	pregate_blocks: u64,
+	claim_blocks: u64,
 	lessons_stored: u64,
 	orientation_stored: u64,
 	recalls_injected: u64,
@@ -96,6 +98,14 @@ pub fn gate_fail() {
 pub fn steer() {
 	with(|s| s.steers += 1);
 }
+/// The deterministic pre-gate refused a `done` (code changed, no check ran).
+pub fn pregate_block() {
+	with(|s| s.pregate_blocks += 1);
+}
+/// The evidence check refused a `done` (cited quotes absent from tool output).
+pub fn claim_block() {
+	with(|s| s.claim_blocks += 1);
+}
 /// `n` lessons were stored by distill.
 pub fn lessons(n: u64) {
 	with(|s| s.lessons_stored += n);
@@ -116,6 +126,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	let idle = s.calls == 0
 		&& s.gate_runs == 0
 		&& s.steers == 0
+		&& s.pregate_blocks == 0
+		&& s.claim_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
 		&& s.recalls_injected == 0;
@@ -134,6 +146,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"gate_pass": s.gate_pass,
 		"gate_fail": s.gate_fail,
 		"steers": s.steers,
+		"pregate_blocks": s.pregate_blocks,
+		"claim_blocks": s.claim_blocks,
 		"lessons_stored": s.lessons_stored,
 		"orientation_stored": s.orientation_stored,
 		"recalls_injected": s.recalls_injected,

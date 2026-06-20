@@ -74,7 +74,7 @@ pub async fn handle_run(
 			.session
 			.messages
 			.iter()
-			.rfind(|m| m.role == "user")
+			.rfind(|m| crate::session::is_real_user_task_message(m))
 			.map(|m| m.content.clone())
 			.unwrap_or_else(|| "No recent user input found".to_string())
 	};

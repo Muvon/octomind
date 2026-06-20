@@ -55,7 +55,11 @@ pub(super) fn find_compression_range(
 			m.role == "user" && m.content.trim_start().starts_with(INSTRUCTIONS_TAG_OPEN)
 		})
 		.map(|(i, _)| i)
-		.or_else(|| messages.iter().position(|m| m.role == "user"));
+		.or_else(|| {
+			messages
+				.iter()
+				.position(crate::session::is_real_user_task_message)
+		});
 
 	let start_idx = match anchor {
 		Some(i) => i,

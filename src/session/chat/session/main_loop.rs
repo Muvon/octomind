@@ -1748,7 +1748,11 @@ pub async fn run_interactive_session_with_input(
 			)
 			.await;
 
-			chat_session.add_user_message(&inbox_msg.content)?;
+			if inbox_msg.source.is_system_managed() {
+				chat_session.add_system_managed_user_message(&inbox_msg.content)?;
+			} else {
+				chat_session.add_user_message(&inbox_msg.content)?;
+			}
 			prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
 			let is_jsonl = current_config.runtime_output_mode.as_deref() == Some("jsonl");

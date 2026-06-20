@@ -7,9 +7,18 @@ use crate::session::Message;
 use serde_json::json;
 
 fn msg(role: &str) -> Message {
+	// Real user turns always carry content — empty user messages never occur in
+	// production, and `is_real_user_task_message` (used for anchor selection)
+	// rejects empty content. Give user-role fixtures a generic task string so
+	// they model a genuine user request; other roles may stay empty.
+	let content = if role == "user" {
+		"user request".to_string()
+	} else {
+		String::new()
+	};
 	Message {
 		role: role.to_string(),
-		content: String::new(),
+		content,
 		..Default::default()
 	}
 }
@@ -44,6 +53,10 @@ fn synthetic_user_messages_excluded_from_tasks() {
 	// Recalled lessons.
 	assert!(is_synthetic_user_message(
 		"<recall>\n<lessons>...</lessons>\n</recall>"
+	));
+	// Custom instructions file content.
+	assert!(is_synthetic_user_message(
+		"<instructions>\nFollow project conventions.\n</instructions>"
 	));
 	// Skill block.
 	assert!(is_synthetic_user_message(

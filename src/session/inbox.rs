@@ -114,6 +114,18 @@ impl InboxSource {
 			InboxSource::GuardValidator { .. } => "🛡️",
 		}
 	}
+
+	pub fn is_system_managed(&self) -> bool {
+		matches!(
+			self,
+			InboxSource::BackgroundAgent { .. }
+				| InboxSource::TapRun { .. }
+				| InboxSource::Skill { .. }
+				| InboxSource::SkillValidator { .. }
+				| InboxSource::GuardrailHook { .. }
+				| InboxSource::GuardValidator { .. }
+		)
+	}
 }
 
 /// Render an injected inbox message to stdout so the user sees what the AI

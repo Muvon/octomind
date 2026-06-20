@@ -613,12 +613,7 @@ pub async fn process_response<S: OutputSink>(
 								.messages
 								.iter()
 								.rev()
-								.find(|m| {
-									m.role == "user"
-										&& !crate::supervisor::gate::is_supervisor_injection(
-											&m.content,
-										)
-								})
+								.find(|m| crate::session::is_real_user_task_message(m))
 								.map(|m| m.content.as_str())
 								.unwrap_or_default()
 								.hash(&mut h);

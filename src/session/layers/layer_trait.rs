@@ -234,7 +234,7 @@ pub trait Layer {
 							session
 								.messages
 								.iter()
-								.rfind(|m| m.role == "user")
+								.rfind(|m| crate::session::is_real_user_task_message(m))
 								.map(|m| m.content.clone())
 								.unwrap_or_else(|| "No previous messages found".to_string())
 						})

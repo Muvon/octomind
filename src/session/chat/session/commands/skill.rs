@@ -211,7 +211,7 @@ async fn handle_use(session: &mut ChatSession, name: &str) -> Result<CommandResu
 	match crate::mcp::runtime::skill::execute_skill_tool(&call).await {
 		Ok(_) => {
 			if let Some(content) = crate::mcp::runtime::skill::take_silent_skill_content() {
-				let _ = session.add_user_message(&content);
+				let _ = session.add_system_managed_user_message(&content);
 			}
 			// Emit structured lifecycle event for JSONL/WebSocket consumers
 			if let Some(sid) = crate::session::context::current_session_id() {

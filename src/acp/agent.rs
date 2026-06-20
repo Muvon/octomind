@@ -386,7 +386,12 @@ fn spawn_inbox_monitor(
 						}
 					}
 
-					if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
+					let add_result = if inbox_msg.source.is_system_managed() {
+						chat_session.add_system_managed_user_message(&inbox_msg.content)
+					} else {
+						chat_session.add_user_message(&inbox_msg.content)
+					};
+					if let Err(e) = add_result {
 						log_error!("ACP monitor: failed to add inbox message: {}", e);
 						sessions
 							.borrow_mut()
@@ -918,7 +923,12 @@ impl OctomindAgent {
 							log_error!("ACP: failed to send injected-message notification: {}", e);
 						}
 					}
-					if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
+					let add_result = if inbox_msg.source.is_system_managed() {
+						chat_session.add_system_managed_user_message(&inbox_msg.content)
+					} else {
+						chat_session.add_user_message(&inbox_msg.content)
+					};
+					if let Err(e) = add_result {
 						log_error!("ACP: failed to add inbox message: {}", e);
 						continue;
 					}

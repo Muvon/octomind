@@ -243,6 +243,10 @@ impl ChatSession {
 		}
 		self.session.messages.push(message);
 
+		self.consecutive_steers = 0;
+		self.steer_attempt = 0;
+		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
+
 		// Check if we should cache this user message (after push, so the message exists
 		// at a known index and the cache manager can enforce the 2-marker limit).
 		if self.cache_next_user_message {
@@ -264,6 +268,19 @@ impl ChatSession {
 			// Reset the flag after applying (or attempting to apply) cache
 			self.cache_next_user_message = false;
 		}
+
+		Ok(())
+	}
+
+	// Add a system-managed user-role message. Provider APIs still see role=user,
+	// but task/compression/learning logic must not treat it as a user request.
+	pub fn add_system_managed_user_message(&mut self, content: &str) -> Result<()> {
+		let message = crate::session::Session::build_message("user", content);
+		if let Some(session_file) = &self.session.session_file {
+			let message_json = serde_json::to_string(&message)?;
+			crate::session::append_to_session_file(session_file, &message_json)?;
+		}
+		self.session.messages.push(message);
 
 		Ok(())
 	}

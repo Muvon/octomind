@@ -408,7 +408,12 @@ fn spawn_ws_inbox_monitor(
 						},
 					));
 
-					if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
+					let add_result = if inbox_msg.source.is_system_managed() {
+						chat_session.add_system_managed_user_message(&inbox_msg.content)
+					} else {
+						chat_session.add_user_message(&inbox_msg.content)
+					};
+					if let Err(e) = add_result {
 						log_error!("WS monitor: failed to add inbox message: {}", e);
 						sessions
 							.lock()
@@ -909,7 +914,11 @@ async fn handle_user_message(
 				}),
 			)
 			.await?;
-			chat_session.add_user_message(&inbox_msg.content)?;
+			if inbox_msg.source.is_system_managed() {
+				chat_session.add_system_managed_user_message(&inbox_msg.content)?;
+			} else {
+				chat_session.add_user_message(&inbox_msg.content)?;
+			}
 			let op_rx = cancellation.new_operation();
 			// Per-request spending boundary (see handle_user_message).
 			chat_session.start_request_spending_tracking();

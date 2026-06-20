@@ -964,7 +964,7 @@ pub async fn auto_activate_capabilities(
 ) {
 	// Fire only on a fresh user message. Tool-loop iterations are skipped.
 	let intent = match session.session.messages.last() {
-		Some(m) if m.role == "user" => m.content.clone(),
+		Some(m) if crate::session::is_real_user_task_message(m) => m.content.clone(),
 		_ => return,
 	};
 

@@ -11,6 +11,32 @@ use std::path::PathBuf;
 
 pub struct FileBackend;
 
+/// Reverse the `store` escaping of the quoted `title`/`content` YAML values:
+/// `\\"` -> `"` and `\\\\` -> `\\`. Single-pass so an escaped backslash is never
+/// re-interpreted as an escape (which is exactly the runaway-backslash bug:
+/// reinforce read-modify-writes a lesson every importance bump, so any
+/// store/parse asymmetry compounds one level per recall).
+fn unescape(s: &str) -> String {
+	let mut out = String::with_capacity(s.len());
+	let mut chars = s.chars();
+	while let Some(c) = chars.next() {
+		if c == '\\' {
+			match chars.next() {
+				Some('"') => out.push('"'),
+				Some('\\') => out.push('\\'),
+				Some(other) => {
+					out.push('\\');
+					out.push(other);
+				}
+				None => out.push('\\'),
+			}
+		} else {
+			out.push(c);
+		}
+	}
+	out
+}
+
 impl FileBackend {
 	fn learning_dir(role: &str, project: &str) -> Result<PathBuf> {
 		crate::directories::get_learning_dir(role, project)
@@ -36,8 +62,8 @@ impl FileBackend {
 			let key = key.trim();
 			let val = val.trim().trim_matches('"');
 			match key {
-				"title" => lesson.title = val.to_string(),
-				"content" => lesson.content = val.to_string(),
+				"title" => lesson.title = unescape(val),
+				"content" => lesson.content = unescape(val),
 				"memory_type" => lesson.memory_type = val.to_string(),
 				"importance" => lesson.importance = val.parse().unwrap_or(0.5),
 				"confidence" => lesson.confidence = val.to_string(),
@@ -114,8 +140,8 @@ impl LearningBackend for FileBackend {
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
 			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\n---\n",
-			lesson.title.replace('"', "\\\""),
-			lesson.content.replace('"', "\\\""),
+			lesson.title.replace('\\', "\\\\").replace('"', "\\\""),
+			lesson.content.replace('\\', "\\\\").replace('"', "\\\""),
 			lesson.memory_type,
 			lesson.importance,
 			lesson.confidence,

@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "date": "2026-06-20",
+    "model": "glm-5.1",
+    "judge": "octohub:minimax",
+    "suite": "swe-bench-live lite pilot (7 instances)",
+    "k": 2,
+    "refs": {
+      "base": "0.32.0",
+      "head": "HEAD@09455b5f"
+    },
+    "runs": 28,
+    "executor": "docker",
+    "octocode": "off (capability times out in ephemeral repos; same both arms)",
+    "note": "pilot; jupyter-ai-1125 base failed all reps; base instructlab r2 hung (0.32.0 lacks circuit-breaker) -> counted unsolved"
+  },
+  "arms": {
+    "base": {
+      "n": 14,
+      "solved": 10,
+      "success_rate": 0.714,
+      "median_tokens": 1172203.5,
+      "median_tokens_solved": 1763220.0,
+      "cost_per_solved": 3.237,
+      "avg_judge": 67.9,
+      "median_sec": 315
+    },
+    "head": {
+      "n": 14,
+      "solved": 13,
+      "success_rate": 0.929,
+      "median_tokens": 1992553.0,
+      "median_tokens_solved": 2209453,
+      "cost_per_solved": 2.901,
+      "avg_judge": 86.4,
+      "median_sec": 300
+    }
+  },
+  "per_task": {
+    "instructlab__instructlab-2526": {
+      "base": { "solved": 1, "n": 2, "median_tokens": 1233096, "avg_judge": 47.5 },
+      "head": { "solved": 2, "n": 2, "median_tokens": 1393467.0, "avg_judge": 93.5 }
+    },
+    "jupyterlab__jupyter-ai-1022": {
+      "base": { "solved": 2, "n": 2, "median_tokens": 7067440.5, "avg_judge": 88.5 },
+      "head": { "solved": 2, "n": 2, "median_tokens": 4273860.5, "avg_judge": 93.5 }
+    },
+    "jupyterlab__jupyter-ai-1125": {
+      "base": { "solved": 0, "n": 2, "median_tokens": 0, "avg_judge": 27.5 },
+      "head": { "solved": 1, "n": 2, "median_tokens": 8051073, "avg_judge": 72.5 }
+    },
+    "run-llama__llama_deploy-330": {
+      "base": { "solved": 2, "n": 2, "median_tokens": 3929124.0, "avg_judge": 92 },
+      "head": { "solved": 2, "n": 2, "median_tokens": 2024084.0, "avg_judge": 93.5 }
+    },
+    "run-llama__llama_deploy-356": {
+      "base": { "solved": 2, "n": 2, "median_tokens": 640641.5, "avg_judge": 88.5 },
+      "head": { "solved": 2, "n": 2, "median_tokens": 203435.0, "avg_judge": 91 }
+    },
+    "run-llama__llama_deploy-372": {
+      "base": { "solved": 1, "n": 2, "median_tokens": 3561502, "avg_judge": 48.5 },
+      "head": { "solved": 2, "n": 2, "median_tokens": 6010042.0, "avg_judge": 87.5 }
+    },
+    "run-llama__llama_deploy-384": {
+      "base": { "solved": 2, "n": 2, "median_tokens": 318083.0, "avg_judge": 83 },
+      "head": { "solved": 2, "n": 2, "median_tokens": 370991.5, "avg_judge": 73.5 }
+    }
+  }
+}

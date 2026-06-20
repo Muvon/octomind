@@ -1,0 +1,46 @@
+# octomind benchmark — baseline config (reviewable / adjustable).
+#
+# Purpose: measure TOKEN-EFFICIENCY-WITH-SUCCESS as octomind changes.
+#   - success rate  : guardrail — must not regress
+#   - cost-per-solved: the win    — total tokens (or $) / tasks solved
+#   - turns         : diagnostic
+#
+# Runs via octobench (../octobench) on the box (x86_64, docker, native).
+# octobench is the instrument; THIS file + the frozen baseline live with octomind.
+
+# ── Agent under test ────────────────────────────────────────────────────────
+model: glm-5.1                 # octobench name for octohub:glm — the frozen bench agent
+judge_model: octohub:minimax   # judge role (only used by non-test-graded cases)
+
+# ── Refs to compare ─────────────────────────────────────────────────────────
+# A ref is built/fetched into the agent image: released tag -> download,
+# unreleased (branch/commit) -> glibc build on the box (ORT ships prebuilt glibc,
+# so a plain `cargo build --release`; SWE-bench images are glibc).
+refs:
+  baseline: "0.32.0"           # the "before" (last release, downloaded) — the reference
+  candidate: "HEAD"            # current branch (steering rework) — the "now"
+
+# ── Statistics ──────────────────────────────────────────────────────────────
+repeats: 5                     # k per (task, ref) — captures the noise band
+pilot_repeats: 2               # smaller k for the de-risking pilot
+
+# ── Networking (container-reachable octohub) ────────────────────────────────
+octohub_api_url: https://octohub.muvon.dev   # public endpoint; 127.0.0.1:9595 is host-only
+
+# ── Suite ───────────────────────────────────────────────────────────────────
+# Full baseline = SWE-bench-Live ~30 + dev cases. Pilot = the instances whose
+# images are already built on the box (zero pull/build), to prove the pipeline.
+executor: docker
+suite:
+  swe_bench_live_split: lite
+  swe_bench_live_count: 30
+  include_dev_cases: true
+
+pilot_instances:               # already-cached images on the box
+  - instructlab__instructlab-2526
+  - jupyterlab__jupyter-ai-1022
+  - jupyterlab__jupyter-ai-1125
+  - run-llama__llama_deploy-330
+  - run-llama__llama_deploy-356
+  - run-llama__llama_deploy-372
+  - run-llama__llama_deploy-384

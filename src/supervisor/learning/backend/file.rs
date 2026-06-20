@@ -60,7 +60,14 @@ impl FileBackend {
 				continue;
 			};
 			let key = key.trim();
-			let val = val.trim().trim_matches('"');
+			// Strip exactly one surrounding quote pair (store wraps in one).
+			// `trim_matches('"')` would greedily eat an escaped trailing quote
+			// (`"…\""`) and leave a dangling backslash for `unescape` to mangle.
+			let val = val.trim();
+			let val = val
+				.strip_prefix('"')
+				.and_then(|v| v.strip_suffix('"'))
+				.unwrap_or(val);
 			match key {
 				"title" => lesson.title = unescape(val),
 				"content" => lesson.content = unescape(val),

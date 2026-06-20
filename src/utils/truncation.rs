@@ -301,13 +301,11 @@ pub fn truncate_mcp_response_global(
 	// the write fails — both still carry the tag + tool-specific narrowing hint.
 	let notice = match crate::utils::spill::write_spill(tool_name, content) {
 		Some(path) => format!(
-			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). \
-The FULL untruncated output was saved to:\n  {path}\nRead just the span you need from that file with your file/grep tool — do NOT re-run this call (same arguments return this same truncated output). To narrow at the source instead, {hint}.",
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). The FULL untruncated output was saved to:\n  {path}\nDo NOT re-run this call — identical arguments return this same truncated output. Instead, either:\n- Read a specific span from the spill file above (line range or symbol).\n- Use a search tool to locate the exact symbol or pattern without re-reading the whole output.\nTo narrow at the source instead, {hint}.",
 			path = path.display(),
 		),
 		None => format!(
-			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). \
-Re-running this tool with the same arguments returns this SAME truncated output — do not repeat the call. To see the rest, {hint}."
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). Do NOT re-run this call — identical arguments return this same truncated output. Instead, use a search tool to locate the exact symbol or pattern without re-running. To narrow at the source instead, {hint}."
 		),
 	};
 

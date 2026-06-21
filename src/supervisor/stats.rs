@@ -48,6 +48,13 @@ struct Stats {
 	gate_pass: u64,
 	gate_fail: u64,
 	steers: u64,
+	// Per-signal steer breakdown — which detector signal fired each steer.
+	steer_loop: u64,
+	steer_no_progress: u64,
+	steer_truncation: u64,
+	steer_dedup: u64,
+	steer_distraction: u64,
+	steer_sequential: u64,
 	pregate_blocks: u64,
 	claim_blocks: u64,
 	lessons_stored: u64,
@@ -94,9 +101,22 @@ pub fn gate_pass() {
 pub fn gate_fail() {
 	with(|s| s.gate_fail += 1);
 }
-/// A steer (advisory re-anchor) was queued.
-pub fn steer() {
-	with(|s| s.steers += 1);
+/// A steer (advisory re-anchor) was queued, attributed to the detector signal
+/// that fired it so `/info` can break the total down by signal.
+pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
+	use crate::supervisor::detect::DetectorSignal;
+	with(|s| {
+		s.steers += 1;
+		match signal {
+			DetectorSignal::Loop => s.steer_loop += 1,
+			DetectorSignal::NoProgress => s.steer_no_progress += 1,
+			DetectorSignal::Truncation => s.steer_truncation += 1,
+			DetectorSignal::Dedup => s.steer_dedup += 1,
+			DetectorSignal::Distraction => s.steer_distraction += 1,
+			DetectorSignal::Sequential => s.steer_sequential += 1,
+			DetectorSignal::None => {}
+		}
+	});
 }
 /// The deterministic pre-gate refused a `done` (code changed, no check ran).
 pub fn pregate_block() {
@@ -134,6 +154,19 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	if idle {
 		return None;
 	}
+	// Steer breakdown by signal — ordered, non-zero only, so display stays generic.
+	let steer_signals: Vec<serde_json::Value> = [
+		("loop", s.steer_loop),
+		("no-progress", s.steer_no_progress),
+		("truncation", s.steer_truncation),
+		("dedup", s.steer_dedup),
+		("drift", s.steer_distraction),
+		("sequential", s.steer_sequential),
+	]
+	.into_iter()
+	.filter(|(_, n)| *n > 0)
+	.map(|(label, n)| serde_json::json!({ "label": label, "count": n }))
+	.collect();
 	Some(serde_json::json!({
 		"calls": s.calls,
 		"recall_calls": s.recall_calls,
@@ -146,6 +179,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"gate_pass": s.gate_pass,
 		"gate_fail": s.gate_fail,
 		"steers": s.steers,
+		"steer_signals": steer_signals,
 		"pregate_blocks": s.pregate_blocks,
 		"claim_blocks": s.claim_blocks,
 		"lessons_stored": s.lessons_stored,

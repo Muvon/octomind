@@ -14,15 +14,15 @@
 
 //! Embedding infrastructure — internal model, no user config.
 //!
-//! Wraps octolib's `FastEmbedProviderImpl` (gated behind octolib's `fastembed`
-//! feature) with a process-global model singleton and an in-memory cache. Used
-//! by capability discovery and tool gating to score natural-language intent
-//! against tool/capability descriptions.
+//! Wraps octolib's HuggingFace provider (candle backend, gated behind octolib's
+//! `huggingface` feature) with a process-global model singleton and an in-memory
+//! cache. Used by capability discovery and tool gating to score natural-language
+//! intent against tool/capability descriptions.
 //!
 //! The model identity is an implementation detail. Users do not configure it
-//! and cannot change it. Default: `BAAI/bge-small-en-v1.5` (33M params,
-//! 384-dim, CPU-only). Weights are downloaded on first use to fastembed's
-//! cache directory and reused across runs.
+//! and cannot change it: `muvon/octomind-embed`, an all-MiniLM-L6-v2 fine-tune
+//! (22M params, 384-dim, CPU-only). Weights are downloaded on first use to the
+//! HuggingFace cache directory and reused across runs.
 //!
 //! No behavior change in this commit — this is the substrate. Capability
 //! discovery and tool gating wire it up in subsequent commits.
@@ -37,20 +37,32 @@ use tokio::sync::Mutex as TokioMutex;
 
 /// Hardcoded internal embedding model.
 ///
-/// `muvon/octomind-embed` is a BGE-small-en-v1.5 fine-tune trained on the
+/// `muvon/octomind-embed` is an all-MiniLM-L6-v2 fine-tune trained on the
 /// octomind-tap capability triggers with paraphrase + hard-negative
-/// augmentation (see `octomind-tap/model/`). 33M params, 384-dim, same
-/// size/latency as base BGE-small but sharpened on the capability-routing
+/// augmentation (see `octomind-tap/model/`). 22M params, 384-dim, same
+/// size/latency as base MiniLM-L6 but sharpened on the capability-routing
 /// task: confusable clusters (shell vs programming-rust, etc.) clear the
 /// margin gate where the base model abstains.
 ///
-/// Loaded via octolib's HuggingFace provider — downloads ONNX weights from
+/// MiniLM-L6 is a symmetric sentence-transformer: trained WITHOUT query/document
+/// instruction prefixes and capped at 256 tokens. Embed both sides bare
+/// (`InputType::None`) and keep inputs under the cap.
+///
+/// Loaded via octolib's HuggingFace (candle) provider — downloads weights from
 /// `https://huggingface.co/<MODEL_NAME>` to the standard HF cache on first
 /// use and reuses them thereafter.
 const MODEL_NAME: &str = "muvon/octomind-embed";
 
-/// Embedding dimension. BGE-small family is 384.
+/// Embedding dimension. MiniLM-L6 is 384.
 pub const EMBED_DIM: usize = 384;
+
+/// Max input length, in characters, before callers must truncate. MiniLM-L6
+/// caps at 256 tokens and the candle backend errors (not truncates) past its
+/// 512-position ceiling, so over-long text would drop from the dense signal
+/// entirely. ~1000 chars ≈ 250-330 tokens — a safe char proxy for the token
+/// limit without pulling a tokenizer in. A model fact, not config: the model is
+/// fixed, so its cap is too.
+pub const EMBED_MAX_INPUT_CHARS: usize = 1000;
 
 static PROVIDER: OnceLock<Box<dyn EmbeddingProvider>> = OnceLock::new();
 // Serialize provider init across all callers — `#[tokio::test]` creates
@@ -404,16 +416,34 @@ pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 	}
 
 	if !to_compute.is_empty() {
+		// Dedup identical inputs: an overlapping/repeated text is embedded ONCE
+		// and fanned out to every position that needs it. Embedding is a pure
+		// function of text — two equal texts must map to the same vector — so
+		// computing each occurrence separately only wastes inference.
+		let mut unique: Vec<String> = Vec::new();
+		let mut seen = std::collections::HashSet::new();
+		for (_, t) in &to_compute {
+			if seen.insert(cache_key(t)) {
+				unique.push(t.clone());
+			}
+		}
+
 		let p = provider().await?;
-		let raw: Vec<String> = to_compute.iter().map(|(_, t)| t.clone()).collect();
+		// MiniLM-L6 is symmetric — embed bare, no query/document prefix. The
+		// query side (`embed`) is already prefix-free; keep both consistent.
 		let computed = p
-			.generate_embeddings_batch(raw, InputType::Document)
+			.generate_embeddings_batch(unique.clone(), InputType::None)
 			.await?;
 		{
 			let mut cache_w = cache().write().unwrap();
-			for ((idx, text), vec) in to_compute.into_iter().zip(computed) {
-				cache_w.insert(cache_key(&text), vec.clone());
-				result[idx] = Some(vec);
+			for (text, vec) in unique.into_iter().zip(computed) {
+				cache_w.insert(cache_key(&text), vec);
+			}
+			// Fill every slot from the now-populated cache — repeated texts
+			// resolve to the same shared vector by key, so the output stays
+			// 1-to-1 with the input by position.
+			for (idx, text) in to_compute {
+				result[idx] = cache_w.get(&cache_key(&text)).cloned();
 			}
 		}
 		// Persist after the write lock is released so the snapshot inside

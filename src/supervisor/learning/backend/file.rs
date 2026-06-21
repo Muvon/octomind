@@ -189,7 +189,7 @@ impl LearningBackend for FileBackend {
 		// Sparse signal: LLM-extracted keywords → substring count → ranked by hits.
 		let keyword_ranking = rank_by_keywords(&all, patterns);
 
-		// Dense signal: BGE-small cosine. Skip silently if the model isn't
+		// Dense signal: MiniLM-L6 cosine. Skip silently if the model isn't
 		// ready yet (warmup pending, no network, etc.) — keyword ranking
 		// alone still produces a result. Same fall-through pattern as
 		// capability auto-activation.
@@ -396,29 +396,125 @@ fn rank_by_keywords(lessons: &[Lesson], patterns: &[String]) -> Vec<usize> {
 	scored.into_iter().map(|(_, i)| i).collect()
 }
 
-/// Rank lessons by BGE-small cosine vs the user intent (descending).
-/// Each lesson is embedded as `title + content + tags` (cached by content
-/// hash, so repeat retrievals in the same session are free). Lessons with
-/// cosine ≤ 0.2 are excluded as noise — too far from the intent to be
-/// worth surfacing, even via fusion. Returns indices into the input slice.
+/// Recursively split `text` into chunks each within `max_chars`, preferring
+/// natural boundaries (paragraph → line → sentence → word) and hard-cutting
+/// only when a single token still exceeds the cap. Nothing is dropped — every
+/// part of the input lands in some chunk. A text already within the cap returns
+/// as ONE chunk, the common case for short lessons (zero overhead).
+fn chunk_text(text: &str, max_chars: usize) -> Vec<String> {
+	let trimmed = text.trim();
+	if trimmed.is_empty() {
+		return Vec::new();
+	}
+	if trimmed.chars().count() <= max_chars {
+		return vec![trimmed.to_string()];
+	}
+	const SEPARATORS: [&str; 4] = ["\n\n", "\n", ". ", " "];
+	let Some(sep) = SEPARATORS.iter().copied().find(|s| trimmed.contains(s)) else {
+		// No separator left: hard-cut on char boundaries so we never exceed cap.
+		return trimmed
+			.chars()
+			.collect::<Vec<_>>()
+			.chunks(max_chars)
+			.map(|c| c.iter().collect())
+			.collect();
+	};
+	// Greedily merge parts up to the cap; recurse into any single part that is
+	// still too large on its own (e.g. a paragraph longer than the cap).
+	let mut chunks = Vec::new();
+	let mut buf = String::new();
+	for part in trimmed.split(sep) {
+		if part.chars().count() > max_chars {
+			if !buf.is_empty() {
+				chunks.push(std::mem::take(&mut buf));
+			}
+			chunks.extend(chunk_text(part, max_chars));
+			continue;
+		}
+		let joined = buf.chars().count() + usize::from(!buf.is_empty()) + part.chars().count();
+		if joined > max_chars && !buf.is_empty() {
+			chunks.push(std::mem::take(&mut buf));
+		}
+		if !buf.is_empty() {
+			buf.push(' ');
+		}
+		buf.push_str(part);
+	}
+	if !buf.is_empty() {
+		chunks.push(buf);
+	}
+	chunks
+}
+
+/// Fold a lesson's chunk vectors into ONE vector by mean-pooling +
+/// L2-renormalizing — the standard way to represent a long text as a single
+/// embedding. A single chunk (the common case) is already normalized and
+/// returned as-is. Mean (not median: a component-wise median of unit vectors is
+/// not a meaningful aggregate) is right here because a lesson is single-topic,
+/// so its chunks are coherent and the average represents the whole rule.
+fn pool_normalize(chunk_vecs: &[&[f32]]) -> Vec<f32> {
+	if chunk_vecs.len() == 1 {
+		return chunk_vecs[0].to_vec();
+	}
+	let dim = chunk_vecs.first().map_or(0, |v| v.len());
+	let mut acc = vec![0.0_f32; dim];
+	for v in chunk_vecs {
+		for (a, x) in acc.iter_mut().zip(*v) {
+			*a += x;
+		}
+	}
+	let norm: f32 = acc.iter().map(|x| x * x).sum::<f32>().sqrt();
+	if norm > 0.0 {
+		for a in acc.iter_mut() {
+			*a /= norm;
+		}
+	}
+	acc
+}
+
+/// Rank lessons by MiniLM-L6 cosine vs the user intent (descending). Each lesson
+/// becomes exactly one vector — embedded directly if it fits the cap, or
+/// recursively chunked and mean-pooled if oversized, so no text is lost while
+/// ranking stays 1-to-1. Lessons with cosine ≤ 0.2 are excluded as noise.
+/// Returns indices into the input slice.
 async fn rank_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<usize>> {
-	let intent_vec = crate::embeddings::embed(intent).await?;
-	let lesson_texts: Vec<String> = lessons
-		.iter()
-		.map(|l| {
-			// BGE-small handles ~512 tokens. Embed a representative slice
-			// (title + content + tags); fastembed truncates at the model
-			// limit so we don't strictly need to pre-cap, but a 4KB cap
-			// avoids embedding multi-megabyte lessons unnecessarily.
-			let combined = format!("{} {} {}", l.title, l.content, l.tags.join(" "));
-			combined.chars().take(4000).collect()
-		})
+	let intent_capped: String = intent
+		.chars()
+		.take(crate::embeddings::EMBED_MAX_INPUT_CHARS)
 		.collect();
-	let lesson_vecs = crate::embeddings::embed_many(&lesson_texts).await?;
-	let mut scored: Vec<(f32, usize)> = lesson_vecs
+	let intent_vec = crate::embeddings::embed(&intent_capped).await?;
+
+	// Flatten lessons into chunks, remembering which lesson each came from.
+	// Short lessons yield one chunk; long ones yield several. No truncation.
+	let mut chunk_texts: Vec<String> = Vec::new();
+	let mut chunk_owner: Vec<usize> = Vec::new();
+	for (i, l) in lessons.iter().enumerate() {
+		let combined = format!("{} {} {}", l.title, l.content, l.tags.join(" "));
+		for chunk in chunk_text(&combined, crate::embeddings::EMBED_MAX_INPUT_CHARS) {
+			chunk_texts.push(chunk);
+			chunk_owner.push(i);
+		}
+	}
+	let chunk_vecs = crate::embeddings::embed_many(&chunk_texts).await?;
+	debug_assert_eq!(
+		chunk_vecs.len(),
+		chunk_owner.len(),
+		"chunk vec/owner misalignment"
+	);
+
+	// Group each lesson's chunk vectors, then fold to one vector per lesson.
+	let mut per_lesson: Vec<Vec<&[f32]>> = vec![Vec::new(); lessons.len()];
+	for (owner, v) in chunk_owner.iter().zip(&chunk_vecs) {
+		per_lesson[*owner].push(v.as_slice());
+	}
+	let mut scored: Vec<(f32, usize)> = per_lesson
 		.iter()
 		.enumerate()
-		.map(|(i, v)| (crate::embeddings::cosine(&intent_vec, v), i))
+		.filter(|(_, chunks)| !chunks.is_empty())
+		.map(|(i, chunks)| {
+			let vec = pool_normalize(chunks);
+			(crate::embeddings::cosine(&intent_vec, &vec), i)
+		})
 		.filter(|(s, _)| *s > 0.2)
 		.collect();
 	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -519,6 +615,34 @@ importance: 0.5
 		};
 		// No alphanumerics → slug empty → id is just the timestamp.
 		assert_eq!(empty.file_id(), "20260405143000");
+	}
+
+	#[test]
+	fn test_chunk_text_fits_and_preserves() {
+		// Short text → single chunk, unchanged (the common case).
+		assert_eq!(
+			chunk_text("short lesson", 100),
+			vec!["short lesson".to_string()]
+		);
+
+		// Long text → multiple chunks, each within cap, all words preserved.
+		let long = "alpha beta gamma. delta epsilon zeta. eta theta iota kappa lambda mu nu xi.";
+		let max = 20;
+		let chunks = chunk_text(long, max);
+		assert!(chunks.len() > 1, "should split");
+		for c in &chunks {
+			assert!(c.chars().count() <= max, "chunk over cap: {c:?}");
+		}
+		let joined = chunks.join(" ");
+		for word in long.split_whitespace().map(|w| w.trim_end_matches('.')) {
+			assert!(joined.contains(word), "lost word: {word}");
+		}
+
+		// A single token longer than the cap is hard-cut, never dropped.
+		let blob = "x".repeat(50);
+		let hard = chunk_text(&blob, 10);
+		assert!(hard.iter().all(|c| c.chars().count() <= 10));
+		assert_eq!(hard.concat().matches('x').count(), 50);
 	}
 
 	#[tokio::test]

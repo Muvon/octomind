@@ -9,8 +9,9 @@ image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
 [target.x86_64-unknown-linux-musl]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
 pre-build = [
-    # ONNX Runtime build (via fastembed/ort) uses /workspace as build dir.
-    # Cross containers don't have this dir. Pre-create it (runs as root).
+    # Vestigial from the old fastembed/ONNX (ort) backend, which built into
+    # /workspace. The candle backend doesn't need it — safe to drop once a musl
+    # cross build confirms nothing else writes there.
     "mkdir -p /workspace",
 ]
 

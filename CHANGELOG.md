@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.33.1] - 2026-06-21
+
+### 📋 Release Summary
+
+This release improves agent coordination through enhanced subagent handoffs and clearer plan recitations (3f038c09). Additionally, the supervisor now provides more detailed tracking of steering signals to optimize AI guidance (fd4b1360).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: track steer breakdown by signal `fd4b1360`
+- **mcp**: enhance subagent handoff and plan recitation `3f038c09`
+
 ## [0.33.0] - 2026-06-20
 
 ### 📋 Release Summary

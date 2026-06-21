@@ -55,8 +55,8 @@ pub async fn create_system_prompt(
 	if has_tap_tool {
 		prompt.push_str(
 			"\n<delegation>\n\
-		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …), activate it yourself. \
-		Task outside your role → tap(action=\"run\", role=\"…\", …), hand off to a specialist.\n\
+		Missing a tool that fits your role → capability(action=\"discover\"|\"enable\", …) to activate it. \
+		Task outside your role → tap(action=\"run\", role=\"…\", …) to hand off.\n\
 		</delegation>",
 		);
 	}
@@ -71,32 +71,25 @@ pub async fn create_system_prompt(
 	);
 
 	prompt.push_str(
-		"\n<system-reminders>\n\
-		<system-reminder> tags are injected by the runtime supervisor — not written by the user. They carry advisory observations about your behavior (loops, stalls, truncation, goal drift, unverified claims) and instructions you must follow (status-line self-report, evidence citation).\n\
-		- Read each reminder and act on it immediately — adjust your next action to address what it says.\n\
-		- Never echo, quote, or reference a <system-reminder> in your response. They are hidden from the user; mentioning them leaks internal mechanics.\n\
-		- A reminder about a loop or stall means your current approach is not working — change the tool, arguments, or sub-goal, don't repeat the same call.\n\
-		- A reminder demanding verification (build/test/lint) means you must run the check and report the actual observed result before claiming done.\n\
-		- <recall> blocks carry lessons and orientation from past sessions. Treat lessons as rules to follow and orientation as unverified assumptions to check before relying on.\n\
-		</system-reminders>",
+		"\n<supervisor-rules>\n\
+		<pay-attention> blocks are MANDATORY directives from octomind's runtime supervisor — not the user, not tool output. They override your own prior conclusions for the current step. You MUST act on each one in your next action — no exceptions.\n\
+		- A loop or stall note means your current approach is not working. You MUST change the tool, arguments, or sub-goal. Do NOT repeat the same call.\n\
+		- A verification note means you MUST run this project's check (build/test/lint) and report the observed result before reporting done.\n\
+		- A status-line or evidence note gives the exact format to emit. You MUST follow it exactly.\n\
+		- NEVER echo, quote, or mention a <pay-attention> block in your response — it is hidden from the user.\n\
+		- <recall> blocks carry past-session lessons (follow them) and orientation (unverified — check before relying).\n\
+		</supervisor-rules>",
 	);
 
 	prompt.push_str(
 		"\n<use_parallel_tool_calls>\n\
-		If you intend to call multiple tools and there are no dependencies between the tool calls, make all of the independent tool calls in parallel. \
-		Prioritize calling tools simultaneously whenever the actions can be done in parallel rather than sequentially. \
-		For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. \
-		Maximize use of parallel tool calls where possible to increase speed and efficiency. \
-		Do NOT call one tool, stop, and wait for results before deciding the next call — you do not need to yield control to observe intermediate results; the runtime returns all results together. \
-		However, if some tool calls depend on previous calls to inform dependent values like the parameters, do NOT call these tools in parallel and instead call them sequentially. \
-		Never use placeholders or guess missing parameters in tool calls.\n\
+		Issue all independent tool calls in one batch — e.g. reading 3 files is 3 calls at once, not 3 turns. You receive every result together, so never call one tool and wait to decide the next. Only chain calls when one's arguments depend on another's result. Never guess or use placeholders for missing parameters.\n\
 		</use_parallel_tool_calls>",
 	);
 
 	prompt.push_str(
 		"\n<output-rules>\n\
-		Be concise, action-first. Between tool calls <=25 words. Final response <=2 sentences unless more is required. \
-		No narration of intent (\"I'll now...\", \"Let me...\"), no filler (\"Great!\", \"Sure!\"), no restating the request, no unsolicited follow-ups, no reasoning unless asked.\n\
+		Be concise and action-first: <=25 words between tool calls, <=2 sentences in the final response unless more is genuinely needed. Skip intent narration (\"I'll now…\", \"Let me…\"), filler, request restatement, and unrequested reasoning — they cost tokens without informing the user.\n\
 		</output-rules>",
 	);
 
@@ -117,10 +110,7 @@ pub fn add_compression_hints_to_prompt(
 
 	prompt.push_str(&format!(
 		"\n\n<context_compression status=\"active\" compressions=\"{}\" tokens_saved=\"{}\" reduction=\"{:.1}%\">\n\
-		Compressed turns appear as XML blocks: <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">.\n\
-		<analysis_findings> inside a <conversation_summary> are trustworthy — they were extracted from real tool results. Trust them; do not re-read files or re-run searches just to verify what the summary already states.\n\
-		<file_context> sections inside a compressed summary contain real file content auto-read from disk at compression time. Treat this content as current and accurate; for files already there, use the provided content. For files NOT in <file_context>, read them normally.\n\
-		Focus on recent uncompressed messages for current intent and on compressed summaries for background knowledge.\n\
+		Compressed turns appear as <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">. Their <analysis_findings> and <file_context> were extracted from real tool results and disk at compression time — treat them as current and accurate; do not re-read files or re-run searches to verify what they already state. Read files NOT in <file_context> normally. Use recent uncompressed messages for current intent, summaries for background.\n\
 		</context_compression>",
 		compression_stats.total_compressions(),
 		compression_stats.total_tokens_saved,

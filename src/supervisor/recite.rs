@@ -33,14 +33,14 @@ use crate::session::anchor::Anchor;
 /// `next_steps` snapshot, which only refreshes at compaction and is stale
 /// between. With an active plan it recites even before the first compaction —
 /// that is exactly when goal drift on a long task is most expensive. Wrapped in
-/// `<system-reminder>` so [`crate::supervisor::gate::is_supervisor_injection`]
+/// `<pay-attention>` so [`crate::supervisor::gate::is_supervisor_injection`]
 /// excludes it from the verify-gate's real-task search.
 pub fn recite_note(anchor: &Anchor, plan_checklist: Option<&str>) -> Option<String> {
 	if anchor.intent.is_empty() && anchor.next_steps.is_empty() && plan_checklist.is_none() {
 		return None;
 	}
 	let mut s =
-		String::from("<system-reminder>\nYou are deep in this session — re-anchor on your goal:\n");
+		String::from("<pay-attention>\nYou are deep in this session — re-anchor on your goal:\n");
 	if !anchor.intent.is_empty() {
 		s.push_str("Goal (fixed): <intent>");
 		s.push_str(anchor.intent.trim());
@@ -62,7 +62,7 @@ pub fn recite_note(anchor: &Anchor, plan_checklist: Option<&str>) -> Option<Stri
 			}
 		}
 	}
-	s.push_str("</system-reminder>");
+	s.push_str("</pay-attention>");
 	Some(s)
 }
 

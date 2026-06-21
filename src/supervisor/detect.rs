@@ -54,7 +54,6 @@ impl SelfReport {
 /// One-time system-side instruction that makes the agent self-annotate. Injected
 /// out-of-band; the resulting tags are stripped before display.
 pub const SELF_REPORT_INSTRUCTION: &str = "\
-<system-reminder>
 Finish every response with one status line — the last line, nothing after it:
 `<sup>STATE · brief reason</sup>`
 Start the tag with one state word, then ` · `, then a few words of reason. Use exactly one of these words (write the word itself, not the placeholder STATE):
@@ -64,8 +63,7 @@ Start the tag with one state word, then ` · `, then a few words of reason. Use 
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
 Examples: `<sup>progressing · wiring store registration</sup>` or `<sup>done · migration verified</sup>`
-This line is read by the system and hidden from the user. Emit exactly one, leading with the state word.
-</system-reminder>";
+This line is read by the system and hidden from the user. Emit exactly one, leading with the state word.";
 
 /// One-time system-side instruction enabling evidence-bound claims. The agent
 /// backs load-bearing factual claims about the codebase with a verbatim quote it
@@ -73,11 +71,9 @@ This line is read by the system and hidden from the user. Emit exactly one, lead
 /// checks the quote really occurs in some tool output, catching fabricated
 /// citations for free (no model call).
 pub const EVIDENCE_INSTRUCTION: &str = "\
-<system-reminder>
 Before you assert a load-bearing fact about the code or repo (a path, signature, value, or concrete behavior), copy the supporting text you actually saw in a tool result, character-for-character, between guillemets, in this exact form:
 [evidence: <locator> «exact text copied verbatim from the tool output»]
-The text inside « » must be a literal copy that string-matches the tool output — rewording, summarizing, or trimming it breaks the match. Tag only load-bearing factual claims about the code, not plans, reasoning, or general knowledge. If you cannot find a line that supports a claim, say so and drop it — do not invent a quote. A « » quote not found in any tool result you received will be flagged to re-ground against real output or retract.
-</system-reminder>";
+The text inside « » must be a literal copy that string-matches the tool output — rewording, summarizing, or trimming it breaks the match. Tag only load-bearing factual claims about the code, not plans, reasoning, or general knowledge. If you cannot find a line that supports a claim, say so and drop it — do not invent a quote. A « » quote not found in any tool result you received will be flagged to re-ground against real output or retract.";
 
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
 /// an optional short reason. Tolerant of the `·` or `|` reason separator.
@@ -587,19 +583,19 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 /// 0→1→2 ladder on a *stuck* signal and still has not broken out, so small tweaks
 /// are clearly not working. Signal-agnostic and held on clamp. Only `Sequential`
 /// (advisory, false-positive-prone) never reaches it.
-const PERSISTENT_STEER: &str = "<system-reminder>\nYou have been steered several times here and have not broken out — small adjustments are not working. Stop iterating on the same approach: either take a fundamentally different path to the goal, or report `blocked` and name the single obstacle in your way.\n</system-reminder>";
+const PERSISTENT_STEER: &str = "<pay-attention>\nYou have been steered several times here and have not broken out — small adjustments are not working. Stop iterating on the same approach: either take a fundamentally different path to the goal, or report `blocked` and name the single obstacle in your way.\n</pay-attention>";
 
 /// Conflict framing: a no-progress signal while the agent self-reports
 /// `progressing`. The counters and the self-assessment disagree — the canonical
 /// reason the supervisor escalates at all — so name the contradiction directly
 /// instead of the generic no-progress note. Same 0→1→2 escalation.
 const CONFLICT_VARIANTS: &[&str] = &[
-	"<system-reminder>\nYou reported you are making progress, but the last several actions added nothing new — your self-assessment and what the actions show disagree. Check which is right before continuing.\n</system-reminder>",
-	"<system-reminder>\nYou report progressing, yet no new information has appeared. Name in one line the concrete result your recent steps produced. If you cannot, the work has stalled — take a single different step that visibly moves the goal, not another like the ones that yielded nothing.\n</system-reminder>",
-	"<system-reminder>\nYour actions are not advancing the task despite a `progressing` report. Re-anchor: state the goal, what is actually done, and the one next step that moves it — then take it. If nothing does, report `blocked` with what is missing.\n</system-reminder>",
+	"<pay-attention>\nYou reported you are making progress, but the last several actions added nothing new — your self-assessment and what the actions show disagree. Check which is right before continuing.\n</pay-attention>",
+	"<pay-attention>\nYou report progressing, yet no new information has appeared. Name in one line the concrete result your recent steps produced. If you cannot, the work has stalled — take a single different step that visibly moves the goal, not another like the ones that yielded nothing.\n</pay-attention>",
+	"<pay-attention>\nYour actions are not advancing the task despite a `progressing` report. Re-anchor: state the goal, what is actually done, and the one next step that moves it — then take it. If nothing does, report `blocked` with what is missing.\n</pay-attention>",
 ];
 
-/// The advisory steer note for a fired signal. Out-of-band; the `<system-reminder>`
+/// The advisory steer note for a fired signal. Out-of-band; the `<pay-attention>`
 /// framing keeps it distinct from user content. Wording is positive-forward (the
 /// concrete action to take, not a bare prohibition) and puts that action last, in
 /// the recency slot — negation and buried directives are the empirically weakest
@@ -638,34 +634,34 @@ pub fn steer_note(
 	}
 	let variants: &[&str] = match signal {
 		DetectorSignal::Loop => &[
-			"<system-reminder>\nThis result is identical to one already in your context — the last call added nothing, so the current approach has stalled. Reconsider what is actually blocking progress before the next call.\n</system-reminder>",
-			"<system-reminder>\nSame result again — you are repeating a call that already failed to advance the task. In one sentence, name why it failed. Then change one concrete thing on the next call — a different tool, different arguments, or a different sub-goal — that approaches the goal a new way.\n</system-reminder>",
-			"<system-reminder>\nThis is a loop: the same call keeps returning the same result. Make a different call that approaches the goal another way — a different tool, scope, or sub-goal — or report `blocked` with the one obstacle stopping you.\n</system-reminder>",
+			"<pay-attention>\nThis result is identical to one already in your context — the last call added nothing, so the current approach has stalled. Reconsider what is actually blocking progress before the next call.\n</pay-attention>",
+			"<pay-attention>\nSame result again — you are repeating a call that already failed to advance the task. In one sentence, name why it failed. Then change one concrete thing on the next call — a different tool, different arguments, or a different sub-goal — that approaches the goal a new way.\n</pay-attention>",
+			"<pay-attention>\nThis is a loop: the same call keeps returning the same result. Make a different call that approaches the goal another way — a different tool, scope, or sub-goal — or report `blocked` with the one obstacle stopping you.\n</pay-attention>",
 		],
 		DetectorSignal::NoProgress => &[
-			"<system-reminder>\nThe last few steps surfaced nothing new — this line of inquiry looks exhausted. Consider whether it can still reach what you need.\n</system-reminder>",
-			"<system-reminder>\nStill nothing new. Name in one line what you still need but have not found, then take a single concrete step toward the goal using what you already know — a decision or an action, not another exploratory probe.\n</system-reminder>",
-			"<system-reminder>\nThis exploration has stalled. Re-anchor on the user's actual request: state the goal in one line, what is done, and the one next step that delivers it — then take it. If no such step exists, report `blocked` with what is missing.\n</system-reminder>",
+			"<pay-attention>\nThe last few steps surfaced nothing new — this line of inquiry looks exhausted. Consider whether it can still reach what you need.\n</pay-attention>",
+			"<pay-attention>\nStill nothing new. Name in one line what you still need but have not found, then take a single concrete step toward the goal using what you already know — a decision or an action, not another exploratory probe.\n</pay-attention>",
+			"<pay-attention>\nThis exploration has stalled. Re-anchor on the user's actual request: state the goal in one line, what is done, and the one next step that delivers it — then take it. If no such step exists, report `blocked` with what is missing.\n</pay-attention>",
 		],
 		DetectorSignal::Truncation => &[
-			"<system-reminder>\nYour recent tool results were truncated — the output is capped. Re-running the same broad call returns no new content, only more wasted context.\n</system-reminder>",
-			"<system-reminder>\nThe output is capped — broadening the call adds nothing. First, what are you trying to find in it? Then narrow smart, not small — fewer, better-targeted calls:\n  • Prefer a specific tool over raw reads: signatures, structural search, semantic search, or grep.\n  • Need several parts? Request them in one parallel batch, not one chunk per turn.\n  • Need one part? Target it with the tool's parameters (line range, limit, offset, filter, query/pattern).\n</system-reminder>",
-			"<system-reminder>\nThese broad calls keep truncating and will not return more. Switch now to a specific tool (signatures, structural/semantic search, grep) or target the exact span with parameters (line range, limit, offset, filter). If you cannot, report `blocked`.\n</system-reminder>",
+			"<pay-attention>\nYour recent tool results were truncated — the output is capped. Re-running the same broad call returns no new content, only more wasted context.\n</pay-attention>",
+			"<pay-attention>\nThe output is capped — broadening the call adds nothing. First, what are you trying to find in it? Then narrow smart, not small — fewer, better-targeted calls:\n  • Prefer a specific tool over raw reads: signatures, structural search, semantic search, or grep.\n  • Need several parts? Request them in one parallel batch, not one chunk per turn.\n  • Need one part? Target it with the tool's parameters (line range, limit, offset, filter, query/pattern).\n</pay-attention>",
+			"<pay-attention>\nThese broad calls keep truncating and will not return more. Switch now to a specific tool (signatures, structural/semantic search, grep) or target the exact span with parameters (line range, limit, offset, filter). If you cannot, report `blocked`.\n</pay-attention>",
 		],
 		DetectorSignal::Dedup => &[
-			"<system-reminder>\nThese call(s) returned output you already received this session — the body was elided as a duplicate, so you already have it in context.\n</system-reminder>",
-			"<system-reminder>\nThese calls keep returning output you already hold — re-fetching adds no new information. Ask yourself what you are still missing, then act on the result already in context, or change the tool or arguments to get something genuinely new.\n</system-reminder>",
-			"<system-reminder>\nThis is a loop: the same call(s), the same output you already hold, no new information. Act on what is already in context, or switch to a different tool or arguments that returns something new. If neither moves the task, report `blocked`.\n</system-reminder>",
+			"<pay-attention>\nThese call(s) returned output you already received this session — the body was elided as a duplicate, so you already have it in context.\n</pay-attention>",
+			"<pay-attention>\nThese calls keep returning output you already hold — re-fetching adds no new information. Ask yourself what you are still missing, then act on the result already in context, or change the tool or arguments to get something genuinely new.\n</pay-attention>",
+			"<pay-attention>\nThis is a loop: the same call(s), the same output you already hold, no new information. Act on what is already in context, or switch to a different tool or arguments that returns something new. If neither moves the task, report `blocked`.\n</pay-attention>",
 		],
 		DetectorSignal::Distraction => &[
-			"<system-reminder>\nYour recent results have drifted off the work you were pursuing — they no longer serve the current goal.\n</system-reminder>",
-			"<system-reminder>\nPull back to the goal. In one line: what does the task actually need, and do your recent calls serve it? If not, make your next calls target exactly that — the specific files, symbols, or behavior the goal involves. If you deliberately moved on to a new sub-task, ignore this.\n</system-reminder>",
-			"<system-reminder>\nRe-anchor now: state the goal in one line and the single next step it needs, then make your next calls hit exactly that — and nothing unrelated. If you cannot tie the next step to the goal, report `blocked`. If you deliberately moved on to a new sub-task, ignore this.\n</system-reminder>",
+			"<pay-attention>\nYour recent results have drifted off the work you were pursuing — they no longer serve the current goal.\n</pay-attention>",
+			"<pay-attention>\nPull back to the goal. In one line: what does the task actually need, and do your recent calls serve it? If not, make your next calls target exactly that — the specific files, symbols, or behavior the goal involves. If you deliberately moved on to a new sub-task, ignore this.\n</pay-attention>",
+			"<pay-attention>\nRe-anchor now: state the goal in one line and the single next step it needs, then make your next calls hit exactly that — and nothing unrelated. If you cannot tie the next step to the goal, report `blocked`. If you deliberately moved on to a new sub-task, ignore this.\n</pay-attention>",
 		],
 		DetectorSignal::Sequential => &[
-			"<system-reminder>\nYou have made several single-call turns in a row. For maximum efficiency, when your next operations are independent (none needs another's result), invoke them all in one parallel batch rather than one per turn — e.g. reading 3 files is 3 calls in one batch. It is faster and uses less context.\n</system-reminder>",
-			"<system-reminder>\nYou keep issuing one tool call per turn. Name the calls you need next, then send every one that does not depend on a prior result together in a single parallel batch — three independent reads go out as three calls at once. Only chain calls whose arguments genuinely depend on an earlier result.\n</system-reminder>",
-			"<system-reminder>\nStill one call per turn — stop serializing independent work. Name your next 2+ calls and send every independent one in a single parallel batch this turn. If each call truly depends on the previous result, serial is correct — keep it.\n</system-reminder>",
+			"<pay-attention>\nYou have made several single-call turns in a row. For maximum efficiency, when your next operations are independent (none needs another's result), invoke them all in one parallel batch rather than one per turn — e.g. reading 3 files is 3 calls in one batch. It is faster and uses less context.\n</pay-attention>",
+			"<pay-attention>\nYou keep issuing one tool call per turn. Name the calls you need next, then send every one that does not depend on a prior result together in a single parallel batch — three independent reads go out as three calls at once. Only chain calls whose arguments genuinely depend on an earlier result.\n</pay-attention>",
+			"<pay-attention>\nStill one call per turn — stop serializing independent work. Name your next 2+ calls and send every independent one in a single parallel batch this turn. If each call truly depends on the previous result, serial is correct — keep it.\n</pay-attention>",
 		],
 		DetectorSignal::None => return "",
 	};

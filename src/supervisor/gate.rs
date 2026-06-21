@@ -48,12 +48,12 @@ pub enum GateVerdict {
 	Gaps(Vec<String>),
 }
 
-/// True when a message is a supervisor-injected note (a `<system-reminder>` advisory
+/// True when a message is a supervisor-injected note (a `<pay-attention>` advisory
 /// or a `<recall>` block), not a genuine user turn. Lets the gate find the real
 /// task instead of verifying against its own prior advisory.
 pub fn is_supervisor_injection(content: &str) -> bool {
 	let t = content.trim_start();
-	t.starts_with("<system-reminder>") || t.starts_with("<recall>")
+	t.starts_with("<pay-attention>") || t.starts_with("<recall>")
 }
 
 /// Verify a self-reported completion. `task` is the user's request, `result` is
@@ -124,7 +124,7 @@ fn parse_verdict(resp: &str) -> GateVerdict {
 /// Build the out-of-band advisory injected back into the loop on gaps.
 pub fn format_advisory(gaps: &[String]) -> String {
 	let mut s = String::from(
-		"<system-reminder>\nYou reported this task complete, but a verification pass found gaps before it can be accepted as done:\n",
+		"<pay-attention>\nYou reported this task complete, but a verification pass found gaps before it can be accepted as done:\n",
 	);
 	for g in gaps {
 		s.push_str("- ");
@@ -132,7 +132,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the file and line, the passing test, or the command output. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</system-reminder>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the file and line, the passing test, or the command output. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }

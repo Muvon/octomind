@@ -44,11 +44,11 @@ fn synthetic_user_messages_excluded_from_tasks() {
 	use super::is_synthetic_user_message;
 	// Supervisor steer.
 	assert!(is_synthetic_user_message(
-		"<system-reminder>\nThis is a loop: the same call keeps returning the same result.\n</system-reminder>"
+		"<pay-attention>\nThis is a loop: the same call keeps returning the same result.\n</pay-attention>"
 	));
-	// Goal recitation (also <system-reminder>-wrapped).
+	// Goal recitation (also <pay-attention>-wrapped).
 	assert!(is_synthetic_user_message(
-		"<system-reminder>\nYou are deep in this session — re-anchor on your goal:\nGoal (fixed): <intent>x</intent>\n</system-reminder>"
+		"<pay-attention>\nYou are deep in this session — re-anchor on your goal:\nGoal (fixed): <intent>x</intent>\n</pay-attention>"
 	));
 	// Recalled lessons.
 	assert!(is_synthetic_user_message(

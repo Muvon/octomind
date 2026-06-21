@@ -26,7 +26,7 @@ use tokio::sync::watch;
 use crate::session::output::{OutputMode, OutputSink};
 
 const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
-const PREGATE_NOTE: &str = "<system-reminder>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run this project's check (build / test / lint — whatever it uses), watch the result, and report the actual outcome: pass, fail, or — if this project has no such check — which command you tried and why none applies. Base the report on the observed result, not on what you expect.\n</system-reminder>";
+const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run this project's check (build / test / lint — whatever it uses), watch the result, and report the actual outcome: pass, fail, or — if this project has no such check — which command you tried and why none applies. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
 /// positive `delta` reinforces (the recall helped); negative decays (it may have
@@ -367,14 +367,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			);
 			if !unverified.is_empty() {
 				let mut note = String::from(
-					"<system-reminder>\nEach quote below was presented as «verbatim» from a tool result, but none string-matches any output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
+					"<pay-attention>\nEach quote below was presented as «verbatim» from a tool result, but none string-matches any output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
 				);
 				for q in &unverified {
 					note.push_str("- «");
 					note.push_str(q);
 					note.push_str("»\n");
 				}
-				note.push_str("</system-reminder>");
+				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
 				chat_session.gate_iterations += 1;

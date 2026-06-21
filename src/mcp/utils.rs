@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{McpToolCall, McpToolResult};
+use super::McpToolResult;
 
 // Guess the category of a tool based on its name
 pub fn guess_tool_category(tool_name: &str) -> &'static str {
@@ -99,13 +99,4 @@ pub fn tool_results_to_messages(
 	}
 
 	messages
-}
-
-// Ensure tool calls have valid IDs
-pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
-	for call in calls.iter_mut() {
-		if call.tool_id.is_empty() {
-			call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
-		}
-	}
 }

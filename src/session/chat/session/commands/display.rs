@@ -612,7 +612,28 @@ pub fn display_info(output: &CommandOutput) {
 				activity.push(format!("{} recalls", recalls));
 			}
 			if steers > 0 {
-				activity.push(format!("{} steers", steers));
+				let by_signal: Vec<String> = sstats
+					.get("steer_signals")
+					.and_then(|v| v.as_array())
+					.map(|a| {
+						a.iter()
+							.filter_map(|e| {
+								let label = e.get("label")?.as_str()?;
+								let count = e.get("count")?.as_u64()?;
+								Some(format!("{} {}", count, label))
+							})
+							.collect()
+					})
+					.unwrap_or_default();
+				if by_signal.is_empty() {
+					activity.push(format!("{} steers", steers));
+				} else {
+					activity.push(format!(
+						"{} steers ({})",
+						steers,
+						by_signal.join(&format!(" {} ", dot))
+					));
+				}
 			}
 			if pregate_blocks > 0 {
 				activity.push(format!("{} check-blocks", pregate_blocks));

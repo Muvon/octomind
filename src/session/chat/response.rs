@@ -728,7 +728,7 @@ pub async fn process_response<S: OutputSink>(
 						if round_signal == crate::supervisor::detect::DetectorSignal::Distraction {
 							params.chat_session.detectors.reset_working_set();
 						}
-						crate::supervisor::stats::steer();
+						crate::supervisor::stats::steer(round_signal);
 						crate::supervisor::notify(&format!(
 							"steering — {}",
 							crate::supervisor::detect::signal_description(round_signal)

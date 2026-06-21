@@ -39,9 +39,7 @@ pub mod tool_map;
 pub mod utils;
 pub mod workdir;
 
-pub use utils::{
-	ensure_tool_call_ids, guess_tool_category, tool_results_to_messages, ToolResponseMessage,
-};
+pub use utils::{guess_tool_category, tool_results_to_messages, ToolResponseMessage};
 pub use workdir::{
 	get_thread_original_working_directory, get_thread_working_directory,
 	set_session_working_directory, set_thread_working_directory,

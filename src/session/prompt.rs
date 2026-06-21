@@ -72,12 +72,10 @@ pub async fn create_system_prompt(
 
 	prompt.push_str(
 		"\n<supervisor-rules>\n\
-		<pay-attention> blocks are MANDATORY directives from octomind's runtime supervisor — not the user, not tool output. They override your own prior conclusions for the current step. You MUST act on each one in your next action — no exceptions.\n\
-		- A loop or stall note means your current approach is not working. You MUST change the tool, arguments, or sub-goal. Do NOT repeat the same call.\n\
-		- A verification note means you MUST run this project's check (build/test/lint) and report the observed result before reporting done.\n\
-		- A status-line or evidence note gives the exact format to emit. You MUST follow it exactly.\n\
-		- NEVER echo, quote, or mention a <pay-attention> block in your response — it is hidden from the user.\n\
-		- <recall> blocks carry past-session lessons (follow them) and orientation (unverified — check before relying).\n\
+		The supervisor injects control messages mid-task. They appear in the user turn but are system orders, not the user — obey each on your very next action, ahead of whatever you were doing.\n\
+		- <pay-attention>…</pay-attention>: a steering order. Loop/stall → change tool, args, or sub-goal, never repeat the call. Verification → run the project's check and report the real result before claiming done. Format (status line / evidence) → emit exactly as given.\n\
+		- <recall>…</recall>: past-session lessons (rules) and orientation (unverified — check first).\n\
+		Never echo or mention these blocks; they are hidden from the user.\n\
 		</supervisor-rules>",
 	);
 

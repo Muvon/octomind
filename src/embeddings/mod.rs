@@ -33,6 +33,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::{Mutex, OnceLock, RwLock};
+use tokenizers::Tokenizer;
 use tokio::sync::Mutex as TokioMutex;
 
 /// Hardcoded internal embedding model.
@@ -56,13 +57,12 @@ const MODEL_NAME: &str = "muvon/octomind-embed";
 /// Embedding dimension. MiniLM-L6 is 384.
 pub const EMBED_DIM: usize = 384;
 
-/// Max input length, in characters, before callers must truncate. MiniLM-L6
-/// caps at 256 tokens and the candle backend errors (not truncates) past its
-/// 512-position ceiling, so over-long text would drop from the dense signal
-/// entirely. ~1000 chars ≈ 250-330 tokens — a safe char proxy for the token
-/// limit without pulling a tokenizer in. A model fact, not config: the model is
-/// fixed, so its cap is too.
-pub const EMBED_MAX_INPUT_CHARS: usize = 1000;
+/// MiniLM-L6's input window in tokens — its sentence-transformers training cap.
+/// The model-exact budget: the candle backend errors past the 512-position
+/// ceiling and quality degrades past the 256 trained window. Enforced precisely
+/// via the model's own tokenizer (`chunk_to_token_limit`). A model fact, not
+/// config: the model is fixed, so its cap is too.
+pub const EMBED_MAX_INPUT_TOKENS: usize = 256;
 
 static PROVIDER: OnceLock<Box<dyn EmbeddingProvider>> = OnceLock::new();
 // Serialize provider init across all callers — `#[tokio::test]` creates
@@ -476,9 +476,130 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 	}
 }
 
+/// The model's own WordPiece tokenizer, lazily loaded from the SAME HF cache
+/// files octolib's candle provider uses — so our token counts match the model
+/// exactly. `None` (logged) if the cache files aren't resolvable (offline,
+/// layout change); callers then fall back to a char estimate.
+fn tokenizer() -> Option<&'static Tokenizer> {
+	static TOKENIZER: OnceLock<Option<Tokenizer>> = OnceLock::new();
+	TOKENIZER
+		.get_or_init(|| {
+			let path = model_file_path("tokenizer.json")?;
+			match Tokenizer::from_file(&path) {
+				Ok(t) => Some(t),
+				Err(e) => {
+					crate::log_debug!(
+						"embeddings: tokenizer load failed ({}); estimating tokens",
+						e
+					);
+					None
+				}
+			}
+		})
+		.as_ref()
+}
+
+/// Path to a file inside the loaded model's HF snapshot
+/// (`<hf_home>/models--<org>--<name>/snapshots/<sha>/<filename>`), or `None`
+/// if the cache layout can't be resolved.
+fn model_file_path(filename: &str) -> Option<std::path::PathBuf> {
+	let hf_home = octolib::storage::get_huggingface_cache_dir().ok()?;
+	let repo_dir = format!("models--{}", MODEL_NAME.replace('/', "--"));
+	let sha = std::fs::read_to_string(hf_home.join(&repo_dir).join("refs").join("main"))
+		.ok()?
+		.trim()
+		.to_string();
+	if sha.is_empty() {
+		return None;
+	}
+	let path = hf_home
+		.join(&repo_dir)
+		.join("snapshots")
+		.join(&sha)
+		.join(filename);
+	path.exists().then_some(path)
+}
+
+/// Split `text` into chunks that each fit MiniLM-L6's token window, cutting at
+/// exact token boundaries via the model's own tokenizer (reserving 2 tokens for
+/// the [CLS]/[SEP] the model adds at embed time). Text within the window returns
+/// as one chunk; nothing is dropped. Falls back to a char window only if the
+/// tokenizer can't be loaded.
+pub fn chunk_to_token_limit(text: &str, max_tokens: usize) -> Vec<String> {
+	let trimmed = text.trim();
+	if trimmed.is_empty() {
+		return Vec::new();
+	}
+	let content_cap = max_tokens.saturating_sub(2).max(1);
+	let fallback_chars = content_cap.saturating_mul(4).max(1);
+	let Some(tok) = tokenizer() else {
+		return chunk_by_chars(trimmed, fallback_chars);
+	};
+	let Ok(enc) = tok.encode(trimmed, false) else {
+		return chunk_by_chars(trimmed, fallback_chars);
+	};
+	let n = enc.len();
+	if n <= content_cap {
+		return vec![trimmed.to_string()];
+	}
+	// `offsets[i]` is the byte span of token i in `trimmed`; cut at the start
+	// byte of each window's first token so chunks tile the text with no gap.
+	let offsets = enc.get_offsets();
+	let mut chunks = Vec::new();
+	let mut start = 0usize;
+	while start < n {
+		let end = (start + content_cap).min(n);
+		let start_byte = offsets[start].0;
+		let end_byte = if end < n {
+			offsets[end].0
+		} else {
+			trimmed.len()
+		};
+		let piece = trimmed
+			.get(start_byte..end_byte)
+			.map(str::trim)
+			.unwrap_or("");
+		if !piece.is_empty() {
+			chunks.push(piece.to_string());
+		}
+		start = end;
+	}
+	if chunks.is_empty() {
+		return chunk_by_chars(trimmed, fallback_chars);
+	}
+	chunks
+}
+
+/// Simple char-window splitter — the tokenizer-unavailable fallback. A text
+/// within budget returns as one chunk; nothing is dropped.
+fn chunk_by_chars(text: &str, max_chars: usize) -> Vec<String> {
+	let trimmed = text.trim();
+	let chars: Vec<char> = trimmed.chars().collect();
+	if chars.is_empty() {
+		return Vec::new();
+	}
+	if chars.len() <= max_chars {
+		return vec![trimmed.to_string()];
+	}
+	chars
+		.chunks(max_chars)
+		.map(|c| c.iter().collect())
+		.collect()
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn chunk_by_chars_windows_and_preserves() {
+		assert_eq!(chunk_by_chars("short", 100), vec!["short".to_string()]);
+		let blob = "x".repeat(50);
+		let parts = chunk_by_chars(&blob, 10);
+		assert_eq!(parts.len(), 5);
+		assert!(parts.iter().all(|c| c.chars().count() <= 10));
+		assert_eq!(parts.concat().matches('x').count(), 50);
+	}
 
 	#[test]
 	fn cosine_identical_vectors_one() {

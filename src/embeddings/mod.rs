@@ -70,9 +70,12 @@ static DISK_CACHE_LOADED: OnceLock<()> = OnceLock::new();
 /// trigger text, so the cost of a lost write is one extra embed per text.
 static DISK_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-/// On-disk cache file format magic. Changing the layout below means bumping
-/// this so old files are rejected on load (re-embedded fresh).
-const CACHE_MAGIC: &[u8; 4] = b"OEC1";
+/// On-disk cache **file-format** version. Bump this only when the cache
+/// *layout* below changes in code (fields added/reordered, encoding changed)
+/// so old files are rejected instead of misparsed. This is orthogonal to the
+/// *model*: a weights change is caught separately by the HF commit SHA stored
+/// in the header (`model_revision`). OEC2 = the layout that carries that SHA.
+const CACHE_MAGIC: &[u8; 4] = b"OEC2";
 
 fn cache() -> &'static RwLock<HashMap<u64, Vec<f32>>> {
 	CACHE.get_or_init(|| RwLock::new(HashMap::new()))
@@ -89,6 +92,29 @@ fn disk_cache_path() -> Result<std::path::PathBuf> {
 	std::fs::create_dir_all(&dir)?;
 	let safe_name = MODEL_NAME.replace('/', "_");
 	Ok(dir.join(format!("triggers-{safe_name}.bin")))
+}
+
+/// Content fingerprint of the currently-loaded weights: the HF commit SHA
+/// that hf_hub resolved for `MODEL_NAME`, read from its ref file
+/// (`<hf_home>/models--<org>--<name>/refs/main`).
+///
+/// This is what makes the trigger cache self-invalidate on a *same-name*
+/// model swap. `disk_cache_path()` keys the file by MODEL_NAME, so it only
+/// notices a *renamed* retrain; when we re-publish new weights under the SAME
+/// repo, hf_hub fetches the new commit and updates `refs/main`, so the SHA
+/// here changes and `load_disk_cache` drops the now-stale vectors.
+///
+/// Returns "" when unresolvable (offline, ref file absent, layout change); in
+/// that case the cache falls back to name + dim validation only.
+fn model_revision() -> String {
+	let Ok(hf_home) = octolib::storage::get_huggingface_cache_dir() else {
+		return String::new();
+	};
+	let repo_dir = format!("models--{}", MODEL_NAME.replace('/', "--"));
+	let ref_file = hf_home.join(repo_dir).join("refs").join("main");
+	std::fs::read_to_string(ref_file)
+		.map(|s| s.trim().to_string())
+		.unwrap_or_default()
 }
 
 /// Read the on-disk cache into the given map, merging without overwriting.
@@ -124,6 +150,18 @@ fn load_disk_cache() -> Result<usize> {
 
 	let dim = read_u32(&mut r)? as usize;
 	if dim != EMBED_DIM {
+		return Ok(0);
+	}
+
+	// Model content fingerprint. If we can resolve the current weights' commit
+	// SHA and it differs from the one that produced these vectors, the model
+	// was swapped under the same name — drop the stale cache and re-embed.
+	let rev_len = read_u32(&mut r)? as usize;
+	let mut rev_bytes = vec![0u8; rev_len];
+	r.read_exact(&mut rev_bytes)?;
+	let cached_rev = std::str::from_utf8(&rev_bytes)?;
+	let current_rev = model_revision();
+	if !current_rev.is_empty() && cached_rev != current_rev {
 		return Ok(0);
 	}
 
@@ -178,6 +216,12 @@ fn save_disk_cache_locked() {
 		w.write_all(&(name_bytes.len() as u32).to_le_bytes())?;
 		w.write_all(name_bytes)?;
 		w.write_all(&(EMBED_DIM as u32).to_le_bytes())?;
+		// Model content fingerprint (HF commit SHA) — lets the cache
+		// self-invalidate when new weights are published under the same name.
+		let rev_bytes = model_revision();
+		let rev_bytes = rev_bytes.as_bytes();
+		w.write_all(&(rev_bytes.len() as u32).to_le_bytes())?;
+		w.write_all(rev_bytes)?;
 		w.write_all(&(snapshot.len() as u32).to_le_bytes())?;
 		for (key, vec) in &snapshot {
 			w.write_all(&key.to_le_bytes())?;

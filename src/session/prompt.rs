@@ -71,6 +71,17 @@ pub async fn create_system_prompt(
 	);
 
 	prompt.push_str(
+		"\n<system-reminders>\n\
+		<system-reminder> tags are injected by the runtime supervisor — not written by the user. They carry advisory observations about your behavior (loops, stalls, truncation, goal drift, unverified claims) and instructions you must follow (status-line self-report, evidence citation).\n\
+		- Read each reminder and act on it immediately — adjust your next action to address what it says.\n\
+		- Never echo, quote, or reference a <system-reminder> in your response. They are hidden from the user; mentioning them leaks internal mechanics.\n\
+		- A reminder about a loop or stall means your current approach is not working — change the tool, arguments, or sub-goal, don't repeat the same call.\n\
+		- A reminder demanding verification (build/test/lint) means you must run the check and report the actual observed result before claiming done.\n\
+		- <recall> blocks carry lessons and orientation from past sessions. Treat lessons as rules to follow and orientation as unverified assumptions to check before relying on.\n\
+		</system-reminders>",
+	);
+
+	prompt.push_str(
 		"\n<use_parallel_tool_calls>\n\
 		If you intend to call multiple tools and there are no dependencies between the tool calls, make all of the independent tool calls in parallel. \
 		Prioritize calling tools simultaneously whenever the actions can be done in parallel rather than sequentially. \

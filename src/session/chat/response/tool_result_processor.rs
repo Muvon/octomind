@@ -341,6 +341,7 @@ pub async fn process_tool_results(
 		chat_session.consecutive_steers = 0;
 		chat_session.steer_attempt = 0;
 		chat_session.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
+		chat_session.last_steered_calls = None;
 		chat_session.steer_pending = None;
 		println!(
 			"{}",

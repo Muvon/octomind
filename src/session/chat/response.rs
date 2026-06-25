@@ -715,66 +715,124 @@ pub async fn process_response<S: OutputSink>(
 					};
 					round_signal = round_signal.merge(seq_signal);
 
-					// Fire at most once per round with the winning signal.
+					// Steer at most once per round with the winning signal — but adapt the
+					// steer to whether the model is HEEDING it. "Ignored" is free to detect:
+					// the model's CHOSEN call-set (tool+params hash) repeating byte-for-byte
+					// after a delivered steer is provable non-compliance; a different call-set
+					// is the model TRYING, and keeps the escalation ladder running.
 					if crate::supervisor::detect::should_steer(
 						round_signal,
 						params.chat_session.last_self_report,
 					) {
-						round_steered = true;
-						// Rotate framing: same signal as last steer → advance the angle;
-						// a different signal starts a fresh run at the diagnostic frame.
+						// Rotate framing: same signal → advance the angle; a different signal
+						// starts a fresh run at the diagnostic frame.
 						if round_signal == params.chat_session.steer_last_signal {
 							params.chat_session.steer_attempt += 1;
 						} else {
 							params.chat_session.steer_attempt = 0;
 							params.chat_session.steer_last_signal = round_signal;
+							params.chat_session.last_steered_calls = None;
 						}
-						params.chat_session.steer_pending = Some(
-							crate::supervisor::detect::steer_note(
+						let attempt = params.chat_session.steer_attempt;
+						let advisory =
+							round_signal == crate::supervisor::detect::DetectorSignal::Sequential;
+						let calls_hash =
+							crate::supervisor::detect::call_set_hash(&current_tool_calls);
+						// Critical: a repeated byte-identical call-set is the model IGNORING the
+						// steer (a different call-set is it TRYING). Advisory (Sequential) is about
+						// arity — still single-calling IS ignoring the batch nudge whatever the
+						// call — so it does not use the call-set gate.
+						let ignoring =
+							advisory || Some(calls_hash) == params.chat_session.last_steered_calls;
+
+						// Parameter-free adaptive backoff — no thresholds, no periods. Derived
+						// purely from the escalation ladder length + whether the model is ignoring:
+						//   • advisory → deliver every distinct frame once, then hard-mute (a
+						//     batching hint repeated adds nothing).
+						//   • critical → deliver the full ladder + persistent frame, then while it
+						//     keeps ignoring, re-emit on a DOUBLING schedule (gaps 1,2,4,8…): never
+						//     fully silent, self-scaling to how persistently it is ignored.
+						// A model that is TRYING (different call-set) is never throttled.
+						// This is TCP's retransmission backoff (RFC 6298 §5.5: ×2 on no-progress)
+						// gated by Karn's algorithm (only an unambiguous change resets the timer —
+						// our call-set hash). Deliberately NO jitter: jitter only decorrelates N>1
+						// retriers against a shared resource; we have one agent on one channel.
+						// The doubling is intentionally UNCAPPED — emissions are O(log N)→0, so an
+						// ignored run is cheap, not silently expensive; the opt-in circuit-breaker
+						// (max_consecutive_steers) is the single terminal stop.
+						let emit = if advisory {
+							attempt < crate::supervisor::detect::PERSISTENT_ATTEMPT
+						} else if ignoring
+							&& attempt >= crate::supervisor::detect::PERSISTENT_ATTEMPT
+						{
+							(attempt - crate::supervisor::detect::PERSISTENT_ATTEMPT + 1)
+								.is_power_of_two()
+						} else {
+							true
+						};
+
+						if emit {
+							params.chat_session.steer_pending = Some(
+								crate::supervisor::detect::steer_note(
+									round_signal,
+									params.chat_session.last_self_report,
+									attempt,
+								)
+								.to_string(),
+							);
+							params.chat_session.last_steered_calls = Some(calls_hash);
+							// Reset the fired signal's streak so it must re-accumulate before
+							// nudging again: Distraction drops the working set (a legitimate
+							// pivot then re-seeds); Sequential resets its singleton streak.
+							match round_signal {
+								crate::supervisor::detect::DetectorSignal::Distraction => {
+									params.chat_session.detectors.reset_working_set();
+								}
+								crate::supervisor::detect::DetectorSignal::Sequential => {
+									params.chat_session.detectors.reset_sequential_streak();
+								}
+								_ => {}
+							}
+							crate::supervisor::stats::steer(round_signal);
+							crate::supervisor::notify(&format!(
+								"steering — {}",
+								crate::supervisor::detect::signal_description(round_signal)
+							));
+							crate::log_debug!(
+								"Supervisor steer queued: {:?} attempt={} (self_report={:?})",
 								round_signal,
-								params.chat_session.last_self_report,
-								params.chat_session.steer_attempt,
-							)
-							.to_string(),
-						);
-						// Reset the fired signal's streak so it must re-accumulate before
-						// nudging again (no every-turn spam): Distraction drops the working
-						// set (a legitimate pivot then re-seeds); Sequential resets its
-						// singleton streak (the advisory nudge waits `sequential_threshold`
-						// single-call rounds again instead of firing every turn).
-						match round_signal {
-							crate::supervisor::detect::DetectorSignal::Distraction => {
-								params.chat_session.detectors.reset_working_set();
-							}
-							crate::supervisor::detect::DetectorSignal::Sequential => {
-								params.chat_session.detectors.reset_sequential_streak();
-							}
-							_ => {}
+								attempt,
+								params.chat_session.last_self_report
+							);
+						} else {
+							crate::log_debug!(
+								"Supervisor steer suppressed ({}): {:?} attempt={}",
+								if advisory {
+									"advisory muted — ignored"
+								} else {
+									"critical backoff — de-spam"
+								},
+								round_signal,
+								attempt
+							);
 						}
-						crate::supervisor::stats::steer(round_signal);
-						crate::supervisor::notify(&format!(
-							"steering — {}",
-							crate::supervisor::detect::signal_description(round_signal)
-						));
-						crate::log_debug!(
-							"Supervisor steer queued: {:?} (self_report={:?})",
-							round_signal,
-							params.chat_session.last_self_report
-						);
+
+						// A critical signal DOMINATES the round whether or not we emitted (a
+						// backoff-silent round is de-spam, not a breakout), so it keeps feeding the
+						// circuit-breaker — the hard ceiling stays armed under the backoff. An
+						// advisory signal must never reach the hard-stop, so it never counts.
+						round_steered = !advisory;
 					}
-					// Circuit-breaker bookkeeping: a round that steered extends the streak;
-					// a round with novel action (model broke out) resets it.
+					// A steered (or still-dominant critical-cooldown) round extends the streak;
+					// a genuine breakout (no signal fired) resets all steer state.
 					if round_steered {
 						params.chat_session.consecutive_steers += 1;
 					} else if round_signal == crate::supervisor::detect::DetectorSignal::None {
-						// Only reset when detectors see genuinely new work — not on the
-						// intermediate rounds where the window is refilling after a prior steer.
 						params.chat_session.consecutive_steers = 0;
-						// Model broke out — reset framing rotation so the next steer (if any)
-						// starts fresh at the diagnostic frame rather than the firmest one.
 						params.chat_session.steer_attempt = 0;
 						params.chat_session.steer_last_signal =
 							crate::supervisor::detect::DetectorSignal::None;
+						params.chat_session.last_steered_calls = None;
 					}
 				}
 

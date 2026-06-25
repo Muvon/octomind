@@ -220,6 +220,11 @@ pub struct ChatSession {
 	/// Supervisor: the signal that drove the last steer, used to decide whether the
 	/// current steer continues the same run (advance framing) or starts fresh (reset).
 	pub steer_last_signal: crate::supervisor::detect::DetectorSignal,
+	/// Supervisor: order-independent hash (tool name + parameters, NOT result) of the
+	/// last round we EMITTED a steer for. An identical hash next round ⇒ the model
+	/// re-issued the same calls ⇒ it is IGNORING the steer (vs. a different call-set =
+	/// trying). Drives the critical-signal adaptive backoff (ignore-vs-trying gate).
+	pub last_steered_calls: Option<u64>,
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
@@ -353,6 +358,7 @@ impl ChatSession {
 			consecutive_steers: 0,
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
+			last_steered_calls: None,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 		}
@@ -562,6 +568,7 @@ impl ChatSession {
 						consecutive_steers: 0,
 						steer_attempt: 0,
 						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
+						last_steered_calls: None,
 						last_self_report_reason: None,
 						recalled_refs: Vec::new(),
 					};
@@ -1312,6 +1319,7 @@ mod tests {
 			consecutive_steers: 0,
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
+			last_steered_calls: None,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 		}

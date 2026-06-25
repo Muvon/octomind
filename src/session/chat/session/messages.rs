@@ -246,6 +246,7 @@ impl ChatSession {
 		self.consecutive_steers = 0;
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
+		self.last_steered_calls = None;
 
 		// Check if we should cache this user message (after push, so the message exists
 		// at a known index and the cache manager can enforce the 2-marker limit).

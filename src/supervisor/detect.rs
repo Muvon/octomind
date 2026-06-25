@@ -588,10 +588,23 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 }
 
 /// Shared persistent-failure frame: the model has been steered through the full
-/// 0→1→2 ladder on a *stuck* signal and still has not broken out, so small tweaks
-/// are clearly not working. Signal-agnostic and held on clamp. Only `Sequential`
-/// (advisory, false-positive-prone) never reaches it.
-const PERSISTENT_STEER: &str = "<pay-attention>\nYou have been steered several times here and have not broken out — small adjustments are not working. Stop iterating on the same approach: either take a fundamentally different path to the goal, or report `blocked` and name the single obstacle in your way.\n</pay-attention>";
+/// 0→1→2 ladder on a *stuck* signal and still has not broken out, so small tweaks are
+/// clearly not working. Signal-agnostic and held on clamp. Only `Sequential` (advisory,
+/// false-positive-prone) never reaches it.
+///
+/// POLYMORPHIC by design: the persistent frame is re-emitted on the backoff schedule
+/// (attempts 3,4,6,10,…), and a *verbatim* repeat of a warning loses effect within 2-3
+/// exposures (habituation / repetition-suppression — Ancker 2017 measures ~30% drop in
+/// acceptance per identical repeat; Anderson 2015 CHI shows polymorphic warnings resist
+/// it). So we rotate equally-firm rephrasings by attempt index — each re-emit is a fresh
+/// stimulus that re-recruits attention. Derived from the counter, so still parameter-free.
+/// All variants carry the same firm ask (a fundamentally different path, or report
+/// `blocked`) so callers/tests can rely on the invariant content.
+const PERSISTENT_VARIANTS: &[&str] = &[
+	"<pay-attention>\nYou have been steered several times here and have not broken out — small adjustments are not working. Stop iterating on the same approach: either take a fundamentally different path to the goal, or report `blocked` and name the single obstacle in your way.\n</pay-attention>",
+	"<pay-attention>\nSame approach, same wall — the repeated nudges have not changed the outcome. Do not retry a near-identical call again. Either switch to a fundamentally different strategy (a different tool, scope, or sub-goal), or stop and report `blocked` with the one concrete thing standing in your way.\n</pay-attention>",
+	"<pay-attention>\nYou are repeating work that has not moved the task despite several course-corrections. Pause and decide, in one line, the single obstacle in your way. If a fundamentally different path to the goal exists, take it now; if it does not, report `blocked` instead of trying the same thing again.\n</pay-attention>",
+];
 
 /// Conflict framing: a no-progress signal while the agent self-reports
 /// `progressing`. The counters and the self-assessment disagree — the canonical
@@ -615,7 +628,7 @@ const CONFLICT_VARIANTS: &[&str] = &[
 ///   0 → diagnostic (what is happening; soft reconsider)
 ///   1 → directive  (a grounded one-line self-check + the concrete alternative)
 ///   2 → stop       (firm: a different approach now, or report `blocked`)
-///  3+ → persistent ([`PERSISTENT_STEER`]: fundamentally different path or `blocked`)
+///  3+ → persistent ([`PERSISTENT_VARIANTS`]: fundamentally different path or `blocked`)
 /// Advance-then-clamp, not modulo: never soften once the model has proven it is
 /// stuck — hold the firmest frame. `report` lets a no-progress signal switch to
 /// [`CONFLICT_VARIANTS`] when the agent insists it is `progressing`.
@@ -624,17 +637,11 @@ pub fn steer_note(
 	report: Option<SelfReport>,
 	attempt: usize,
 ) -> &'static str {
-	let stuck = matches!(
-		signal,
-		DetectorSignal::Loop
-			| DetectorSignal::NoProgress
-			| DetectorSignal::Truncation
-			| DetectorSignal::Dedup
-			| DetectorSignal::Distraction
-	);
-	// Ladder exhausted on a stuck signal without breakout → hold the firmest frame.
-	if stuck && attempt >= 3 {
-		return PERSISTENT_STEER;
+	// Ladder exhausted on a stuck signal without breakout → hold the firmest frame, but
+	// rotate its phrasing each re-emit so the repeated nudge does not habituate (see
+	// PERSISTENT_VARIANTS), keyed on how far past the ladder we are.
+	if is_stuck(signal) && attempt >= PERSISTENT_ATTEMPT {
+		return PERSISTENT_VARIANTS[(attempt - PERSISTENT_ATTEMPT) % PERSISTENT_VARIANTS.len()];
 	}
 	// Counters say no-progress while the agent reports progressing: name the conflict.
 	if signal == DetectorSignal::NoProgress && report == Some(SelfReport::Progressing) {
@@ -674,6 +681,50 @@ pub fn steer_note(
 		DetectorSignal::None => return "",
 	};
 	variants[attempt.min(variants.len() - 1)]
+}
+
+/// The "stuck" signal class — every real-waste failure mode (loop / no-progress /
+/// truncation / dedup / distraction), i.e. everything except the advisory `Sequential`.
+/// These escalate to [`PERSISTENT_VARIANTS`]; factored so the steer loop and the
+/// escalation ladder classify signals the same way.
+pub fn is_stuck(signal: DetectorSignal) -> bool {
+	matches!(
+		signal,
+		DetectorSignal::Loop
+			| DetectorSignal::NoProgress
+			| DetectorSignal::Truncation
+			| DetectorSignal::Dedup
+			| DetectorSignal::Distraction
+	)
+}
+
+/// The escalation rung at which a stuck signal stops reframing and holds the firmest
+/// [`PERSISTENT_VARIANTS`] frame — and the earliest rung at which the critical-signal
+/// de-spam cooldown may begin (the full 0→1→2 ladder plus one persistent frame have all
+/// been delivered by then).
+pub const PERSISTENT_ATTEMPT: usize = 3;
+
+/// Order-independent hash of a round's tool calls, keyed on each call's CHOSEN identity
+/// (`tool_name` + `parameters`) — NOT its result. This is the discriminator between a
+/// model IGNORING a steer (re-issues the byte-identical call-set) and one TRYING (a
+/// different call, even if it still trips the same detector). `tool_id` is a per-call
+/// unique id and is excluded so the same calls hash equal across rounds. Parameter JSON
+/// is key-order-canonical (serde_json `Value` is BTreeMap-backed here), so equal calls
+/// always hash equal.
+///
+/// Known limit (accepted): cosmetic param churn — a model thrashing to *look* like it is
+/// trying — evades the THROTTLE but not the same-signal frame escalation nor the
+/// circuit-breaker ceiling. Closing it would need an LLM judge, which violates the
+/// free/deterministic contract, so we keep the cheap exact gate and let the breaker backstop.
+pub fn call_set_hash(calls: &[crate::mcp::McpToolCall]) -> u64 {
+	let mut per_call: Vec<u64> = calls
+		.iter()
+		.map(|c| hash2(&c.tool_name, &c.parameters.to_string()))
+		.collect();
+	per_call.sort_unstable();
+	let mut h = DefaultHasher::new();
+	per_call.hash(&mut h);
+	h.finish()
 }
 
 #[cfg(test)]
@@ -1140,10 +1191,42 @@ mod tests {
 	}
 
 	#[test]
+	fn call_set_hash_ignores_order_and_id_but_tracks_params() {
+		use crate::mcp::McpToolCall;
+		let mk = |name: &str, p: serde_json::Value| McpToolCall {
+			tool_name: name.into(),
+			parameters: p,
+			tool_id: "per-call-unique".into(),
+		};
+		let read = mk("read", serde_json::json!({"path": "x"}));
+		let grep = mk("grep", serde_json::json!({"q": "y"}));
+		// Same calls, any order, any tool_id → equal hash (re-issuing them = ignoring).
+		assert_eq!(
+			call_set_hash(&[read.clone(), grep.clone()]),
+			call_set_hash(&[
+				mk("grep", serde_json::json!({"q": "y"})),
+				mk("read", serde_json::json!({"path": "x"})),
+			])
+		);
+		// A changed parameter → different hash (the model trying a different call).
+		assert_ne!(
+			call_set_hash(&[read]),
+			call_set_hash(&[mk("read", serde_json::json!({"path": "z"}))])
+		);
+	}
+
+	#[test]
 	fn persistent_frame_clamps_stuck_signals_past_the_ladder() {
-		// A stuck signal re-firing past the 0→1→2 ladder holds the persistent frame.
-		assert!(steer_note(DetectorSignal::Loop, None, 5).contains("not working"));
+		// A stuck signal re-firing past the 0→1→2 ladder holds the firmest frame: every
+		// persistent variant carries the same firm ask (a different path, or `blocked`).
+		assert!(steer_note(DetectorSignal::Loop, None, 5).contains("blocked"));
+		// …but the phrasing ROTATES each re-emit so the repeated nudge does not habituate
+		// (polymorphic warnings resist habituation — Anderson 2015 / Ancker 2017).
+		assert_ne!(
+			steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT),
+			steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT + 1)
+		);
 		// Advisory Sequential never escalates to the persistent frame.
-		assert!(!steer_note(DetectorSignal::Sequential, None, 5).contains("not working"));
+		assert!(!steer_note(DetectorSignal::Sequential, None, 5).contains("blocked"));
 	}
 }

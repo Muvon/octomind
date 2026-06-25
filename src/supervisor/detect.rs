@@ -480,6 +480,14 @@ impl Detectors {
 		}
 	}
 
+	/// Reset the single-call streak. Called after a `Sequential` steer — so the
+	/// advisory nudge waits a full `sequential_threshold` single-call rounds before
+	/// firing again instead of every turn (spam) — and on a final message to the user
+	/// (need_input / done): a hand-back is not a silent drip-feed of independent calls.
+	pub fn reset_sequential_streak(&mut self) {
+		self.consecutive_singletons = 0;
+	}
+
 	/// Update the working-set centroid with this result's embedding and return
 	/// whether the result drifted off it (cosine below `floor`). Self-referential:
 	/// it scores the result against what the agent has recently worked with, so it
@@ -1116,6 +1124,19 @@ mod tests {
 		// Without the progressing claim it stays the generic no-progress note.
 		let generic = steer_note(DetectorSignal::NoProgress, None, 0);
 		assert!(!generic.contains("disagree"));
+	}
+
+	#[test]
+	fn sequential_streak_resets_after_steer() {
+		let mut d = Detectors::default();
+		// threshold 2: two single-call rounds in a row → Sequential.
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
+		// Reset on steer → it must re-accumulate, so the very next single-call round
+		// is silent instead of nudging again every turn (the spam being fixed).
+		d.reset_sequential_streak();
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
 	}
 
 	#[test]

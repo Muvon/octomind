@@ -693,12 +693,26 @@ pub async fn process_response<S: OutputSink>(
 						round_signal = round_signal.merge(signal);
 					}
 
-					// Round-level: a turn of exactly one tool call grows the singleton
-					// streak; a parallel round resets it. Off by default (threshold 0).
-					let seq_signal = params
-						.chat_session
-						.detectors
-						.record_round_arity(current_tool_calls.len(), sequential_threshold);
+					// Round-level Sequential: a turn of exactly one tool call grows the
+					// singleton streak; a parallel round resets it. Off by default
+					// (threshold 0). A final message to the user — the model handing back
+					// (need_input) or wrapping up (done) — is not a silent drip-feed of
+					// independent calls, so it does not count toward the streak (and resets
+					// it). Only the Sequential component is suppressed: real stuck signals
+					// (loop / dedup / …) still fire on such a round.
+					let seq_signal = if matches!(
+						params.chat_session.last_self_report,
+						Some(crate::supervisor::detect::SelfReport::NeedInput)
+							| Some(crate::supervisor::detect::SelfReport::Done)
+					) {
+						params.chat_session.detectors.reset_sequential_streak();
+						crate::supervisor::detect::DetectorSignal::None
+					} else {
+						params
+							.chat_session
+							.detectors
+							.record_round_arity(current_tool_calls.len(), sequential_threshold)
+					};
 					round_signal = round_signal.merge(seq_signal);
 
 					// Fire at most once per round with the winning signal.
@@ -723,10 +737,19 @@ pub async fn process_response<S: OutputSink>(
 							)
 							.to_string(),
 						);
-						// A Distraction steer drops the working set so a legitimate pivot
-						// re-seeds instead of being flagged again every round.
-						if round_signal == crate::supervisor::detect::DetectorSignal::Distraction {
-							params.chat_session.detectors.reset_working_set();
+						// Reset the fired signal's streak so it must re-accumulate before
+						// nudging again (no every-turn spam): Distraction drops the working
+						// set (a legitimate pivot then re-seeds); Sequential resets its
+						// singleton streak (the advisory nudge waits `sequential_threshold`
+						// single-call rounds again instead of firing every turn).
+						match round_signal {
+							crate::supervisor::detect::DetectorSignal::Distraction => {
+								params.chat_session.detectors.reset_working_set();
+							}
+							crate::supervisor::detect::DetectorSignal::Sequential => {
+								params.chat_session.detectors.reset_sequential_streak();
+							}
+							_ => {}
 						}
 						crate::supervisor::stats::steer(round_signal);
 						crate::supervisor::notify(&format!(

@@ -2368,16 +2368,19 @@ mod tests {
 				Some("maps"),
 			),
 			// --- Ambiguous: only *truly* balanced cross-domain prompts.
-			// Cases like "fetch the postgres release notes from the web"
-			// were removed — the embedding sees a 0.86+ postgres signal
-			// because "postgres release notes" is a strong noun phrase,
-			// regardless of the "from the web" suffix. That's not the
-			// gate guessing; the model has clear info and there's no
-			// honest way to abstain on it without crippling real postgres
-			// intents.
+			// "send the docker container logs to our slack channel" genuinely
+			// splits between docker (the logs) and slack (the send target) —
+			// neither dominates (both ~0.62, gap <0.01), so the margin gate
+			// correctly abstains. Prompts where ONE cap is the clear action
+			// target are NOT ambiguous and were removed: "deploy this docker
+			// image to my kubernetes cluster" routes to kubernetes (the deploy
+			// target wins cleanly), and "fetch the postgres release notes from
+			// the web" routes to postgres (strong noun phrase) — a good model
+			// answers both, and forcing abstention there would cripple real
+			// single-cap intents.
 			(
 				"ambiguous",
-				"deploy this docker image to my kubernetes cluster",
+				"send the docker container logs to our slack channel",
 				None,
 			),
 			// --- Short: mid-session acks (most common false-positive class) ---

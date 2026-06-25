@@ -119,14 +119,44 @@ fn disk_cache_path() -> Result<std::path::PathBuf> {
 /// Returns "" when unresolvable (offline, ref file absent, layout change); in
 /// that case the cache falls back to name + dim validation only.
 fn model_revision() -> String {
-	let Ok(hf_home) = octolib::storage::get_huggingface_cache_dir() else {
-		return String::new();
-	};
-	let repo_dir = format!("models--{}", MODEL_NAME.replace('/', "--"));
-	let ref_file = hf_home.join(repo_dir).join("refs").join("main");
-	std::fs::read_to_string(ref_file)
-		.map(|s| s.trim().to_string())
-		.unwrap_or_default()
+	for dir in model_repo_dirs() {
+		if let Ok(s) = std::fs::read_to_string(dir.join("refs").join("main")) {
+			let s = s.trim().to_string();
+			if !s.is_empty() {
+				return s;
+			}
+		}
+	}
+	String::new()
+}
+
+/// Candidate `models--<org>--<name>` cache directories, ordered by likelihood.
+/// hf_hub (which octolib wraps) resolves its cache from different roots
+/// depending on env, and octolib's own downloads use a different on-disk layout
+/// than a model pre-fetched into the standard hub by an external tool. Probing
+/// all of them makes the SHA and snapshot-file lookups robust instead of
+/// guessing a single path that silently returns "" — and thereby disables cache
+/// invalidation — whenever the weights happen to live elsewhere.
+fn model_repo_dirs() -> Vec<std::path::PathBuf> {
+	let repo = format!("models--{}", MODEL_NAME.replace('/', "--"));
+	let mut roots: Vec<std::path::PathBuf> = Vec::new();
+	if let Ok(octo) = octolib::storage::get_huggingface_cache_dir() {
+		// octolib's own downloads land directly here: <octo>/models--...
+		roots.push(octo.clone());
+		// hf_hub nests repos under <HF_HOME>/hub when HF_HOME=<octo>.
+		roots.push(octo.join("hub"));
+		// Standard hub (<cache>/huggingface/hub) — octo is <cache>/octolib/huggingface.
+		if let Some(cache) = octo.parent().and_then(|p| p.parent()) {
+			roots.push(cache.join("huggingface").join("hub"));
+		}
+	}
+	if let Ok(c) = std::env::var("HF_HUB_CACHE") {
+		roots.push(std::path::PathBuf::from(c));
+	}
+	if let Ok(h) = std::env::var("HF_HOME") {
+		roots.push(std::path::PathBuf::from(h).join("hub"));
+	}
+	roots.into_iter().map(|r| r.join(&repo)).collect()
 }
 
 /// Read the on-disk cache into the given map, merging without overwriting.
@@ -503,21 +533,20 @@ fn tokenizer() -> Option<&'static Tokenizer> {
 /// (`<hf_home>/models--<org>--<name>/snapshots/<sha>/<filename>`), or `None`
 /// if the cache layout can't be resolved.
 fn model_file_path(filename: &str) -> Option<std::path::PathBuf> {
-	let hf_home = octolib::storage::get_huggingface_cache_dir().ok()?;
-	let repo_dir = format!("models--{}", MODEL_NAME.replace('/', "--"));
-	let sha = std::fs::read_to_string(hf_home.join(&repo_dir).join("refs").join("main"))
-		.ok()?
-		.trim()
-		.to_string();
-	if sha.is_empty() {
-		return None;
+	for dir in model_repo_dirs() {
+		let Ok(sha) = std::fs::read_to_string(dir.join("refs").join("main")) else {
+			continue;
+		};
+		let sha = sha.trim();
+		if sha.is_empty() {
+			continue;
+		}
+		let path = dir.join("snapshots").join(sha).join(filename);
+		if path.exists() {
+			return Some(path);
+		}
 	}
-	let path = hf_home
-		.join(&repo_dir)
-		.join("snapshots")
-		.join(&sha)
-		.join(filename);
-	path.exists().then_some(path)
+	None
 }
 
 /// Split `text` into chunks that each fit MiniLM-L6's token window, cutting at

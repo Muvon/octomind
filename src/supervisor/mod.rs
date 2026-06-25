@@ -89,8 +89,9 @@ pub struct SupervisorConfig {
 	/// Goal recitation: re-anchor the live goal at the context tail.
 	pub recite: ReciteConfig,
 	/// Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that
-	/// emitted a steer without the model breaking out (a steer is advisory, so a loop
-	/// can otherwise ignore it forever). `0` = unlimited (off).
+	/// emitted (or backed-off-but-still-dominant) a steer without the model breaking out.
+	/// `0` = unlimited (off). The terminal hard ceiling under the adaptive steer backoff,
+	/// which is itself parameter-free (see the steer loop in `response.rs`).
 	pub max_consecutive_steers: usize,
 }
 

@@ -12,8 +12,9 @@ Headline metrics:
 - **octobench** (`../octobench`, runs on the box) is the *instrument*: builds/fetches
   octomind for a ref, runs the suite in isolated Debian-12 containers (SWE-bench-Live —
   the instance's own tests are the objective oracle), emits normalized token telemetry.
-- **this dir** (`octomind/bench/`) holds the *committed truth*: `config.yaml`, the frozen
-  `baseline.json`, and `suite.txt`. The git history of `baseline.json` IS the trend.
+- **this dir** (`octomind/bench/`) holds the *committed truth*: `config.yaml`, `baseline.json`
+  (the current reference), `run-head.sh` + `compare_to_baseline.py` (the routine HEAD-only check),
+  and `aggregate.py` (the paired base-vs-head view). The git history of `baseline.json` IS the trend.
 
 ## An "arm" = `{ref} × {config}`
 - **released tag** (e.g. `0.32.0`) → octobench image bakes it (downloaded). The pilot
@@ -23,34 +24,47 @@ Headline metrics:
   glibc so it's a plain `cargo build --release`), then **mount it** over the image's
   binary via `OCTOMIND_BIN` (executor honors it — no image rebuilds).
 
-Build HEAD for the SWE images:
+Build HEAD for the SWE images (`$OCTOMIND` = octomind checkout, `$OUT` = a build dir on the build box):
 ```
-docker run --rm -v /home/box/work/muvon/octomind:/src:ro -v /tmp/oct-head-out:/out \
-  -e CARGO_TARGET_DIR=/out rust:bookworm \
+docker run --rm -v "$OCTOMIND":/src:ro -v "$OUT":/out -e CARGO_TARGET_DIR=/out rust:bookworm \
   bash -c "cargo build --release --locked --manifest-path /src/Cargo.toml && cp /out/release/octomind /out/octomind-head"
-# -> /tmp/oct-head-out/octomind-head  (glibc 2.36, runs in SWE images)
+# -> $OUT/octomind-head  (glibc 2.36, runs in the SWE images)
 ```
 
-## Running (on the box)
+## Routine check: HEAD-only vs the baseline
+The baseline (`arms.base` in `baseline.json`) is the **current verified-good version** — a moving
+reference, not a fixed release. A routine check runs **only the new build (HEAD)** and compares to
+it; do NOT re-run a base arm each time (the reference is already recorded).
+
+1. Build the HEAD glibc binary (above) → `$OUT/octomind-head`.
+2. Run HEAD over the suite, k reps per instance, with `OCTOMIND_BIN` pointed at that binary, into
+   `<dir>/head/<instance>-r<rep>`. Each run writes `results.json` (`swebench.resolved`, `tokens.*`,
+   `cost_usd`, `elapsed_ms`). The driver `run-head.sh` does the loop + concurrency + fresh-repeat;
+   run it from the octobench instrument dir with `HEAD_BIN=$OUT/octomind-head`.
+3. Compare: `python bench/compare_to_baseline.py <dir>/head bench/baseline.json` →
+   **guardrail (HEAD success ≥ baseline)**, cost-per-solved, and a per-instance regression flag
+   (any instance the baseline solved that HEAD did not). Infra-failed reps are excluded.
+
+## Clean measurement: fresh-repeat on any provider error
+A provider hiccup (HTTP 5xx/524, 429, an aborted run, an empty completion) must **not** count as a
+task failure — it corrupts the measure. The bench detects it and **repeats the whole test fresh**
+(new container, fresh process), up to ~3 retries, then excludes it if still failing. A result is
+accepted only if it is a **clean completion**:
 ```
-cd /home/box/work/muvon/octobench
-eval "$(grep '^export ' ~/.zshrc)"          # all API keys (BRAVE, OCTOHUB, ...)
-export OCTOHUB_API_URL=https://octohub.muvon.dev   # PUBLIC (127.0.0.1:9595 is host-only, unreachable in containers)
-
-# baseline arm (stock 0.32.0 in the image):
-python -m cli.swebench --instance <id> --config configs/run-matrix.octomind-glm.swebench.yaml --out results-baseline
-
-# candidate arm (HEAD mounted over the baked binary):
-OCTOMIND_BIN=/tmp/oct-head-out/octomind-head \
-python -m cli.swebench --instance <id> --config configs/run-matrix.octomind-glm.swebench.yaml --out results-head
+exit_code == 0  AND  tokens.total > 0  AND  non-empty final turn  AND  no "OctoHub API error" in stderr
 ```
-Each run writes `results.json` with `swebench.resolved`, `tokens.*`, `cost_usd`, `elapsed_ms`.
-Repeat k× per (instance, arm); compare paired-by-instance.
+(`exit_code != 0` is the catch-all for any aborting provider/runtime error.)
 
-## Updating the baseline
-Re-run the suite for the new ref, aggregate, and commit `bench/baseline.json` (old one stays
-in git history). Compare with the paired-delta aggregator (success rate, cost-per-solved, turns,
-+ a regression watchlist of instances the baseline solved but the candidate didn't).
+**This retry lives in the bench, NOT in octomind.** An in-loop retry inside octomind would add
+tokens/partial state to the very run being measured and corrupt cost-per-solved — octomind stays a
+clean single-shot under measurement.
+
+## Advancing the baseline
+After a build is **verified good** (success ≥ baseline, no per-instance regressions), advance the
+baseline to it: rebuild `baseline.json` from the HEAD results and commit it (the old one stays in
+git history — that history IS the trend). Exclude non-representative outliers (e.g. a rare runaway
+rep) and record them in `meta.note`. Re-run a full paired base+head pass (`aggregate.py`) only to
+re-anchor from scratch.
 
 ## Known notes
 - **GLM doesn't report prompt caching** (`cached: 0`). We do **not** rely on caching — metric

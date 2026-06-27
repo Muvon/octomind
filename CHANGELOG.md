@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.34.0] - 2026-06-27
+
+### 📋 Release Summary
+
+This release enhances codebase interaction through improved embedding strategies and more efficient text chunking (bc4a4f03, b5b66c2d, d890d98a). The AI supervisor is now more refined with adaptive steering and updated system reminders for better focus and reliability (2054d424, ab6a69d5, ac83c711, bc94f535). Additional updates include new regression testing tools and general stability improvements across the platform (acc39bce, 82884dd8, f38a5256, b05dda05).
+
+
+### ✨ New Features & Enhancements
+
+- **bench**: add baseline regression testing tools `acc39bce`
+- **supervisor**: implement adaptive steer backoff `2054d424`
+- **session**: add system reminders to prompt `ab6a69d5`
+- **embeddings**: implement token-based text chunking `bc4a4f03`
+- **embeddings**: implement recursive chunking and optimize inference `b5b66c2d`
+- **embeddings**: invalidate cache on model revision change `d890d98a`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: remove unused id utility and refine prompt `b05dda05`
+- **supervisor**: update system reminders to pay-attention `bc94f535`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: prevent sequential steer spam `ac83c711`
+- **embeddings**: resolve model cache path lookup `82884dd8`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.33.1] - 2026-06-21
 
 ### 📋 Release Summary

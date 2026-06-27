@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.34.1] - 2026-06-27
+
+### 📋 Release Summary
+
+This release improves session stability by optimizing how AI plans are processed and managed (a5fca6bf). Additionally, general system updates and dependency upgrades enhance overall performance and reliability (be4e7761, df9c10c8).
+
+
+### 🔧 Improvements & Optimizations
+
+- **session**: format instruction content string `df9c10c8`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: defer plan compression until turn acceptance `a5fca6bf`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.34.0] - 2026-06-27
 
 ### 📋 Release Summary

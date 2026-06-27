@@ -108,7 +108,11 @@ pub async fn get_initial_messages(
 
 					let instructions_msg = crate::session::Message {
 						role: "user".to_string(),
-						content: processed_instructions,
+						// Wrap in <instructions> so task/compression/learning logic treats
+						// this as system-managed (is_real_user_task_message) and never
+						// mistakes the project instructions for a genuine user task. Mirrors
+						// the non-interactive path in prompt_setup.rs.
+						content: format!("<instructions>\n{}\n</instructions>", processed_instructions),
 						timestamp: std::time::SystemTime::now()
 							.duration_since(std::time::UNIX_EPOCH)
 							.unwrap_or_default()

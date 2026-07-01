@@ -417,6 +417,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.unwrap_or_default();
 		let result = chat_session.last_response.clone();
 		let claim = chat_session.last_self_report_reason.clone();
+		let actions = chat_session.evidence.render();
 		crate::supervisor::stats::gate_run();
 		animation_manager.set_phase("Verifying completion …").await;
 		let verdict = crate::supervisor::gate::verify(
@@ -424,6 +425,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			&task,
 			&result,
 			claim.as_deref(),
+			&actions,
 			operation_rx.clone(),
 		)
 		.await;

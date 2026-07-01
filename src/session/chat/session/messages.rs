@@ -247,6 +247,9 @@ impl ChatSession {
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		self.last_steered_calls = None;
+		// New genuine task: the verify-gate's evidence ledger starts fresh (gate and
+		// steer re-runs arrive as system-managed messages and keep accumulating).
+		self.evidence.reset();
 
 		// Check if we should cache this user message (after push, so the message exists
 		// at a known index and the cache manager can enforce the 2-marker limit).

@@ -356,11 +356,16 @@ impl Executor {
 						"produced no assistant output (attempt {attempt}/{max_attempts})"
 					));
 				}
-				RunOutcome::NonZero { stats, code } => {
+				RunOutcome::NonZero {
+					stats,
+					code,
+					stderr_tail,
+				} => {
 					let stats = self.fold_stats(&s.name, s.session, &stats);
 					self.totals.add(&stats);
-					last_err = Some(format!(
-						"failed exit code {code:?} (attempt {attempt}/{max_attempts})"
+					last_err = Some(with_stderr(
+						format!("failed exit code {code:?} (attempt {attempt}/{max_attempts})"),
+						&stderr_tail,
 					));
 				}
 				RunOutcome::Timeout(elapsed) => {
@@ -369,8 +374,11 @@ impl Executor {
 						elapsed.as_secs()
 					));
 				}
-				RunOutcome::SpawnError(e) => {
-					last_err = Some(format!("spawn error: {e}"));
+				RunOutcome::SpawnError {
+					source: e,
+					stderr_tail,
+				} => {
+					last_err = Some(with_stderr(format!("spawn error: {e}"), &stderr_tail));
 				}
 			}
 
@@ -508,9 +516,14 @@ impl Executor {
 							last_err =
 								Some(format!("empty output (attempt {attempt}/{max_attempts})"));
 						}
-						RunOutcome::NonZero { code, .. } => {
-							last_err = Some(format!(
-								"non-zero exit {code:?} (attempt {attempt}/{max_attempts})"
+						RunOutcome::NonZero {
+							code, stderr_tail, ..
+						} => {
+							last_err = Some(with_stderr(
+								format!(
+									"non-zero exit {code:?} (attempt {attempt}/{max_attempts})"
+								),
+								&stderr_tail,
 							));
 						}
 						RunOutcome::Timeout(e) => {
@@ -519,8 +532,11 @@ impl Executor {
 								e.as_secs()
 							));
 						}
-						RunOutcome::SpawnError(e) => {
-							last_err = Some(format!("spawn error: {e}"));
+						RunOutcome::SpawnError {
+							source: e,
+							stderr_tail,
+						} => {
+							last_err = Some(with_stderr(format!("spawn error: {e}"), &stderr_tail));
 						}
 					}
 				}
@@ -963,6 +979,19 @@ fn box_line(text: &str) {
 /// don't belong inside any box (loop exits, conditional decisions).
 fn info_line(text: &str) {
 	eprintln!("{} {}", "·".bright_black(), text);
+}
+
+/// Append a captured stderr tail to a failure message, if any was
+/// captured — the subprocess may die before emitting a structured
+/// `ServerMessage::Error` on its stdout stream, in which case this is
+/// the only diagnostic available (see `proc::RunOutcome::NonZero` /
+/// `SpawnError`).
+fn with_stderr(msg: String, stderr_tail: &str) -> String {
+	if stderr_tail.trim().is_empty() {
+		msg
+	} else {
+		format!("{msg}\n  stderr: {stderr_tail}")
+	}
 }
 
 /// Emit a step's assistant response so the user can see what each step

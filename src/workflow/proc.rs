@@ -58,10 +58,27 @@ pub struct StepStats {
 pub enum RunOutcome {
 	Ok(StepStats),
 	Empty(StepStats),
-	NonZero { stats: StepStats, code: Option<i32> },
+	/// `stderr_tail` is a truncated tail of the subprocess's stderr, captured
+	/// for diagnostics — the child may die before emitting a structured
+	/// `ServerMessage::Error` on stdout (startup failure, panic, upstream
+	/// gateway error, etc.), in which case this is the only clue available.
+	NonZero {
+		stats: StepStats,
+		code: Option<i32>,
+		stderr_tail: String,
+	},
 	Timeout(Duration),
-	SpawnError(anyhow::Error),
+	/// `stderr_tail` is empty when the failure happened before the child was
+	/// spawned (e.g. `current_exe()` lookup failed).
+	SpawnError {
+		source: anyhow::Error,
+		stderr_tail: String,
+	},
 }
+
+/// Max chars of stderr kept for diagnostics — enough to show a panic
+/// message or an upstream HTTP error without dumping a full log.
+const STDERR_TAIL_CHARS: usize = 800;
 
 /// Bundled arguments for [`run_step`].
 pub struct RunStepArgs {
@@ -102,7 +119,12 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 	let started = Instant::now();
 	let exe = match std::env::current_exe() {
 		Ok(p) => p,
-		Err(e) => return RunOutcome::SpawnError(e.into()),
+		Err(e) => {
+			return RunOutcome::SpawnError {
+				source: e.into(),
+				stderr_tail: String::new(),
+			}
+		}
 	};
 
 	let mut cmd = Command::new(&exe);
@@ -112,7 +134,7 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 		.arg("jsonl")
 		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
-		.stderr(Stdio::null());
+		.stderr(Stdio::piped());
 	if let Some(name) = session_name.as_deref() {
 		cmd.arg("--name").arg(name);
 	}
@@ -126,7 +148,12 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 
 	let mut child = match cmd.spawn() {
 		Ok(c) => c,
-		Err(e) => return RunOutcome::SpawnError(anyhow!("spawn failed: {e}")),
+		Err(e) => {
+			return RunOutcome::SpawnError {
+				source: anyhow!("spawn failed: {e}"),
+				stderr_tail: String::new(),
+			}
+		}
 	};
 
 	// Write the prompt to stdin and close it.
@@ -140,6 +167,22 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 
 	let stdout = child.stdout.take().expect("stdout piped");
 	let reader = BufReader::new(stdout);
+
+	// Read stderr concurrently with stdout so neither pipe's OS buffer can
+	// fill up and block the child — only used for diagnostics on failure,
+	// the stdout JSONL stream remains the sole data contract.
+	let stderr = child.stderr.take().expect("stderr piped");
+	let stderr_task = tokio::spawn(async move {
+		let mut buf = String::new();
+		let mut lines = BufReader::new(stderr).lines();
+		while let Ok(Some(line)) = lines.next_line().await {
+			if !buf.is_empty() {
+				buf.push('\n');
+			}
+			buf.push_str(&line);
+		}
+		buf
+	});
 
 	let collect = async {
 		let mut stats = StepStats::default();
@@ -203,10 +246,16 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 				if let Some(sp) = &spinner {
 					sp.finish_and_clear();
 				}
+				stderr_task.abort();
 				return RunOutcome::Timeout(started.elapsed());
 			}
 		}
 	};
+
+	// By the time `collect` resolves, the child has exited (or `wait`
+	// failed), so its stderr pipe has already hit EOF — this returns
+	// promptly rather than blocking on more output.
+	let stderr_text = stderr_task.await.unwrap_or_default();
 
 	if let Some(sp) = &spinner {
 		sp.finish_and_clear();
@@ -218,6 +267,7 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 				RunOutcome::NonZero {
 					stats,
 					code: status.code(),
+					stderr_tail: truncate_tail(&stderr_text, STDERR_TAIL_CHARS),
 				}
 			} else if stats.output.trim().is_empty() {
 				RunOutcome::Empty(stats)
@@ -225,7 +275,10 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 				RunOutcome::Ok(stats)
 			}
 		}
-		Err(e) => RunOutcome::SpawnError(e),
+		Err(e) => RunOutcome::SpawnError {
+			source: e,
+			stderr_tail: truncate_tail(&stderr_text, STDERR_TAIL_CHARS),
+		},
 	}
 }
 
@@ -436,6 +489,19 @@ fn truncate(s: &str, n: usize) -> String {
 	} else {
 		let head: String = one_line.chars().take(n.saturating_sub(1)).collect();
 		format!("{head}…")
+	}
+}
+
+/// Keep the last `max_chars` of `s` (panics/fatal errors usually land at
+/// the end of stderr), prefixed with `…` if anything was cut.
+fn truncate_tail(s: &str, max_chars: usize) -> String {
+	let s = s.trim();
+	let count = s.chars().count();
+	if count <= max_chars {
+		s.to_string()
+	} else {
+		let kept: String = s.chars().skip(count - max_chars).collect();
+		format!("…{kept}")
 	}
 }
 

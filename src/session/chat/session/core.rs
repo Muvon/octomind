@@ -231,6 +231,10 @@ pub struct ChatSession {
 	/// Supervisor: entries recalled during the current trajectory (content, role,
 	/// project). The verify-gate reinforces (pass) or decays (fail) them, then clears.
 	pub recalled_refs: Vec<(String, String, String)>,
+	/// Supervisor: runtime-recorded tool log for the current task — ground truth
+	/// the verify-gate checks completion claims against. Reset on each genuine
+	/// user turn; gate/steer re-runs (system-managed messages) keep accumulating.
+	pub evidence: crate::supervisor::gate::EvidenceLedger,
 }
 
 /// Parameters for creating a new ChatSession
@@ -361,6 +365,7 @@ impl ChatSession {
 			last_steered_calls: None,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
+			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 		}
 	}
 
@@ -571,6 +576,7 @@ impl ChatSession {
 						last_steered_calls: None,
 						last_self_report_reason: None,
 						recalled_refs: Vec::new(),
+						evidence: crate::supervisor::gate::EvidenceLedger::default(),
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
@@ -1322,6 +1328,7 @@ mod tests {
 			last_steered_calls: None,
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
+			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 		}
 	}
 

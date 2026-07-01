@@ -636,6 +636,15 @@ pub async fn process_response<S: OutputSink>(
 						let is_error = tr.map(|r| r.is_error()).unwrap_or(true);
 						let is_mutation =
 							crate::supervisor::detect::is_mutation_tool(&call.tool_name);
+						// Verify-gate evidence ledger: record what actually executed —
+						// completion claims are checked against this, not the narrative.
+						params.chat_session.evidence.record(
+							&call.tool_name,
+							&call.parameters,
+							is_mutation,
+							is_error,
+							result_content.len(),
+						);
 						// Tool-agnostic: detect truncation by the sentinel the global
 						// truncation choke point stamps, not by tool identity.
 						let is_truncated = result_content

@@ -248,8 +248,13 @@ impl ChatSession {
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		self.last_steered_calls = None;
 		// New genuine task: the verify-gate's evidence ledger starts fresh (gate and
-		// steer re-runs arrive as system-managed messages and keep accumulating).
+		// steer re-runs arrive as system-managed messages and keep accumulating), and
+		// the gate's per-turn re-entry budget resets — a previous turn's exhaustion
+		// must not latch the gate off for the rest of the session. `gate_failed` is
+		// deliberately NOT reset: it labels the trajectory for distill and is cleared
+		// only by a later PASS.
 		self.evidence.reset();
+		self.gate_iterations = 0;
 
 		// Check if we should cache this user message (after push, so the message exists
 		// at a known index and the cache manager can enforce the 2-marker limit).

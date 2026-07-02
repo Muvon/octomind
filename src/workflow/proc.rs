@@ -89,6 +89,10 @@ pub struct RunStepArgs {
 	pub model: Option<String>,
 	/// Absolute working directory for the subprocess. None = inherit cwd.
 	pub workdir: Option<PathBuf>,
+	/// Forwarded as `OCTOMIND_SKILLS` env var (comma-joined). None = unset.
+	pub skills: Option<Vec<String>>,
+	/// Forwarded as `OCTOMIND_CAPABILITIES` env var (comma-joined). None = unset.
+	pub capabilities: Option<Vec<String>>,
 	pub timeout_secs: u64,
 	pub event_prefix: Option<String>,
 	pub spinner: Option<ProgressBar>,
@@ -108,6 +112,8 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 		session_name,
 		model,
 		workdir,
+		skills,
+		capabilities,
 		timeout_secs,
 		event_prefix,
 		spinner,
@@ -143,6 +149,16 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 	}
 	if let Some(dir) = &workdir {
 		cmd.current_dir(dir);
+	}
+	if let Some(skills) = &skills {
+		if !skills.is_empty() {
+			cmd.env("OCTOMIND_SKILLS", skills.join(","));
+		}
+	}
+	if let Some(capabilities) = &capabilities {
+		if !capabilities.is_empty() {
+			cmd.env("OCTOMIND_CAPABILITIES", capabilities.join(","));
+		}
 	}
 	cmd.kill_on_drop(true);
 

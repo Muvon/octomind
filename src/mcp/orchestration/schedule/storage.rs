@@ -342,9 +342,7 @@ pub(crate) fn parse_duration_secs(s: &str) -> Result<i64> {
 			total = add
 				.and_then(|a| total.checked_add(a))
 				.filter(|t| *t <= MAX_DURATION_SECS)
-				.ok_or_else(|| {
-					anyhow::anyhow!("duration '{}' too large (max 10 years)", s)
-				})?;
+				.ok_or_else(|| anyhow::anyhow!("duration '{}' too large (max 10 years)", s))?;
 		}
 	}
 

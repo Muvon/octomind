@@ -1708,7 +1708,10 @@ pub async fn execute_stdin_tool_call(
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					format!("Malformed tool result from server '{}': {}", call.tool_name, e),
+					format!(
+						"Malformed tool result from server '{}': {}",
+						call.tool_name, e
+					),
 				));
 			}
 		},

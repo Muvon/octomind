@@ -550,6 +550,7 @@ fn spawn_ws_inbox_monitor(
 
 /// Handle a "session" type message: create new or resume existing session.
 /// No AI call is made — just session setup. Responds with session_id.
+#[allow(clippy::too_many_arguments)]
 async fn handle_session_message(
 	msg: SessionMessage,
 	ws_sender: &mut futures_util::stream::SplitSink<

@@ -327,7 +327,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			let msgs = &chat_session.session.messages;
 			let turn_start = msgs
 				.iter()
-				.rposition(|m| crate::session::is_real_user_task_message(m))
+				.rposition(crate::session::is_real_user_task_message)
 				.unwrap_or(0);
 			msgs[turn_start..]
 				.iter()

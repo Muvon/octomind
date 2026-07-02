@@ -629,6 +629,14 @@ pub async fn process_response<S: OutputSink>(
 					// Accumulate the highest-priority signal across the parallel batch;
 					// parallel calls share one AI feedback turn so only one steer fires.
 					let mut round_signal = crate::supervisor::detect::DetectorSignal::None;
+					// Per-ROUND detector inputs: a parallel batch is ONE model decision, so the
+					// whole round is observed as one unit. Per-call state is folded via note_call;
+					// the round verdict comes from record_round_signals after the loop.
+					let mut call_hashes: Vec<u64> = Vec::with_capacity(current_tool_calls.len());
+					let mut round_novel = false;
+					let mut round_truncated = false;
+					let mut round_dedup = false;
+					let mut round_drift = false;
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -684,23 +692,36 @@ pub async fn process_response<S: OutputSink>(
 						} else {
 							false
 						};
-						let signal = params.chat_session.detectors.record_action(
+						// Fold this call's per-result state in; aggregate the rest for the round.
+						let (rhash, novel) = params.chat_session.detectors.note_call(
 							&call.tool_name,
 							&result_content,
 							is_error,
 							is_mutation,
-							is_truncated,
-							is_dedup,
-							is_drift,
-							loop_threshold,
-							no_progress_window,
-							truncation_threshold,
-							dedup_threshold,
-							distraction_threshold,
 						);
-						// Merge: keep the highest-priority signal across parallel calls.
-						round_signal = round_signal.merge(signal);
+						call_hashes.push(rhash);
+						round_novel |= novel;
+						round_truncated |= is_truncated;
+						round_dedup |= is_dedup;
+						round_drift |= is_drift;
 					}
+
+					// One verdict per ROUND: the whole parallel batch is a single model decision,
+					// so identical / truncated / deduped / off-task calls in one shot count once,
+					// not once per call.
+					let batch_signal = params.chat_session.detectors.record_round_signals(
+						&call_hashes,
+						round_novel,
+						round_truncated,
+						round_dedup,
+						round_drift,
+						loop_threshold,
+						no_progress_window,
+						truncation_threshold,
+						dedup_threshold,
+						distraction_threshold,
+					);
+					round_signal = round_signal.merge(batch_signal);
 
 					// Round-level Sequential: a turn of exactly one tool call grows the
 					// singleton streak; a parallel round resets it. Off by default

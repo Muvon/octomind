@@ -58,7 +58,7 @@ pub struct OctomindAgent {
 	/// processing — otherwise a user prompt arriving while the inbox monitor is
 	/// mid-API-call (or vice versa) would find the map empty and respond with
 	/// `session not found`, which the client interprets as a disconnect.
-	session_locks: Rc<RefCell<HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
+	session_locks: super::SessionLocks,
 	/// Active cancellation handles keyed by ACP session_id
 	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
 	/// Connection back to the client — used to send session/update notifications.
@@ -299,7 +299,7 @@ async fn send_available_commands(conn: Option<ConnectionTo<Client>>, session_id:
 fn spawn_inbox_monitor(
 	session_id: String,
 	sessions: Rc<RefCell<HashMap<String, (ChatSession, PathBuf)>>>,
-	session_locks: Rc<RefCell<HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
+	session_locks: super::SessionLocks,
 	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
 	config: RefCell<Config>,
 	role: String,

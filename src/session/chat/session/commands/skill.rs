@@ -214,8 +214,7 @@ async fn handle_use(session: &mut ChatSession, name: &str) -> Result<CommandResu
 				// Injection failure means the skill's instructions never reached the
 				// session — do not report success, surface it.
 				if let Err(e) = session.add_system_managed_user_message(&content) {
-					let data =
-						json!({"subcommand": "error", "message": format!("Failed to inject skill '{name}': {e}")});
+					let data = json!({"subcommand": "error", "message": format!("Failed to inject skill '{name}': {e}")});
 					return Ok(CommandResult::HandledWithOutput(Box::new(
 						CommandOutput::Skill { data },
 					)));

@@ -55,13 +55,26 @@ pub struct CommandResponse {
 	pub error: Option<String>,
 }
 /// Execute an ACP extension command
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_command(
 	request: &CommandRequest,
 	sessions: &Rc<RefCell<std::collections::HashMap<String, (ChatSession, std::path::PathBuf)>>>,
+	session_locks: &Rc<RefCell<std::collections::HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
 ) -> CommandResponse {
+	// Acquire the same per-session exclusion lock prompt() and the inbox monitor
+	// use. Without it this path removes the session from the map with no lock, so
+	// a concurrent prompt() finds the map empty and reports "session not found"
+	// (read by the client as a disconnect), and vice versa.
+	let lock = session_locks
+		.borrow_mut()
+		.entry(request.session_id.clone())
+		.or_default()
+		.clone();
+	let _guard = lock.lock().await;
+
 	// Take session out of map for exclusive access
 	let (mut chat_session, session_cwd) = match sessions.borrow_mut().remove(&request.session_id) {
 		Some(s) => s,
@@ -112,10 +125,19 @@ pub async fn execute_command(
 	)
 	.await;
 
-	// Put session back
+	// Persist any config mutation the command made (e.g. /role, /model) back to
+	// the shared config — dropping config_clone would silently discard it. Safe:
+	// single-threaded ACP, no RefCell borrow held across the await above.
+	*config.borrow_mut() = config_clone;
+
+	// Put session back and wake the inbox monitor for anything it pushed back
+	// while the session was out (mirrors prompt()).
 	sessions
 		.borrow_mut()
 		.insert(request.session_id.clone(), (chat_session, session_cwd));
+	if let Some(notify) = crate::session::inbox::get_inbox_notify() {
+		notify.notify_one();
+	}
 
 	match result {
 		Ok(CommandResult::Handled) => CommandResponse {
@@ -147,9 +169,11 @@ pub async fn execute_command(
 }
 
 /// Handle ACP ext_method requests for commands
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_ext_method(
 	request: ExtRequest,
 	sessions: &Rc<RefCell<std::collections::HashMap<String, (ChatSession, std::path::PathBuf)>>>,
+	session_locks: &Rc<RefCell<std::collections::HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
@@ -174,7 +198,9 @@ pub async fn handle_ext_method(
 	};
 
 	// Execute the command
-	let response = execute_command(&command_request, sessions, config, role, cancellations).await;
+	let response =
+		execute_command(&command_request, sessions, session_locks, config, role, cancellations)
+			.await;
 
 	// Convert to ExtResponse
 	let raw = RawValue::from_string(serde_json::to_string(&response).unwrap()).unwrap();

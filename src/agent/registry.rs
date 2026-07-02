@@ -658,10 +658,15 @@ pub fn parse_capability_toml(
 		{
 			for server_val in servers {
 				let server_str = toml::to_string(server_val).unwrap_or_default();
-				if let Ok(server_config) =
-					toml::from_str::<crate::config::McpServerConfig>(&server_str)
-				{
-					resolved.mcp_servers.push(server_config);
+				match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
+					Ok(server_config) => resolved.mcp_servers.push(server_config),
+					// Don't silently drop — a malformed block means the capability
+					// activates without the server it needs. Surface it.
+					Err(e) => crate::log_error!(
+						"Capability '{}': skipping malformed [[mcp.servers]] block: {}",
+						cap_name,
+						e
+					),
 				}
 			}
 		}

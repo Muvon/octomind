@@ -304,23 +304,27 @@ pub async fn check_and_compress_conversation(
 ) -> Result<bool> {
 	let (should_check, computed_ratio) = should_check_compression(session, config).await;
 
-	let force = matches!(trigger, CompressionTrigger::Done);
+	let force_done = matches!(trigger, CompressionTrigger::Done);
 
-	if !force && !should_check {
+	if !force_done && !should_check {
 		return Ok(false);
 	}
 
 	// When max_session_tokens_threshold is exceeded, force compression — AI cannot refuse.
 	// This is the user's explicit safety ceiling; the decision model has no veto here.
-	let force = force
-		|| (config.max_session_tokens_threshold > 0 && {
-			let current_tokens = session.get_full_context_tokens(config).await;
-			current_tokens >= config.max_session_tokens_threshold
-		});
+	let force_ceiling = config.max_session_tokens_threshold > 0 && {
+		let current_tokens = session.get_full_context_tokens(config).await;
+		current_tokens >= config.max_session_tokens_threshold
+	};
+	let force = force_done || force_ceiling;
 
-	// When force=true (/done or skill-forget), use fixed level 1 pressure ratio (no adaptive adjustment).
-	// Regular automatic compressions use the adaptive ratio from should_check_compression.
-	let target_ratio = if force {
+	// /done uses the fixed level-1 pressure ratio (no adaptive adjustment). The
+	// hard-ceiling force must NOT fall into that branch: should_check_compression
+	// already computed the STRONGEST configured ratio for the ceiling case, and
+	// substituting the gentlest one would under-compress a session that is over
+	// the user's explicit safety limit, looping gentle forced compressions.
+	// Regular automatic compressions use the adaptive ratio as computed.
+	let target_ratio = if force_done {
 		config
 			.compression
 			.pressure_levels
@@ -550,7 +554,8 @@ pub async fn check_and_compress_conversation(
 			.count();
 		if user_msg_count >= config.supervisor.learning.min_messages_for_intermediate {
 			let role = crate::config::get_thread_role().unwrap_or_default();
-			crate::supervisor::learning::extract::spawn_lesson_extraction(
+			// Mid-session: the process keeps living, dropping the handle is safe.
+			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction(
 				session, config, role, None,
 			);
 		}

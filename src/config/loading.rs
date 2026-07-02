@@ -111,18 +111,21 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 		.filter(|p| p.is_file() && p.extension().map(|e| e == "toml").unwrap_or(false))
 		.collect();
 
-	// Load order: all regular files first (alphabetical), then `mcp-*.toml` files last.
-	// `mcp-*.toml` are special overrides — they must merge AFTER the base so their
-	// fields (e.g. `auto_bind`) win when a server with the same name exists in `mcp.toml`.
-	files.sort_by(|a, b| {
-		let a_is_mcp_ext = is_mcp_extension_file(a);
-		let b_is_mcp_ext = is_mcp_extension_file(b);
-		match (a_is_mcp_ext, b_is_mcp_ext) {
-			(true, false) => std::cmp::Ordering::Greater,
-			(false, true) => std::cmp::Ordering::Less,
-			_ => a.cmp(b),
+	// Load order (documented contract, doc/usage/03-configuration.md): `config.toml`
+	// first as the base, then other regular files alphabetically, then `mcp-*.toml`
+	// overrides last (so their fields win over a same-named server in `mcp.toml`).
+	// Merge is last-wins, so `config.toml` MUST sort first — plain alphabetical
+	// order would let e.g. `aliases.toml` load before it and invert the contract.
+	fn load_rank(path: &Path) -> u8 {
+		if path.file_name().and_then(|n| n.to_str()) == Some("config.toml") {
+			0
+		} else if is_mcp_extension_file(path) {
+			2
+		} else {
+			1
 		}
-	});
+	}
+	files.sort_by(|a, b| load_rank(a).cmp(&load_rank(b)).then_with(|| a.cmp(b)));
 
 	for file in &files {
 		let content = fs::read_to_string(file)
@@ -215,8 +218,16 @@ impl Config {
 			crate::directories::get_config_file_path()?
 		};
 
-		// Get the config directory (config file's parent)
-		let config_dir = config_path.parent().unwrap_or(Path::new("."));
+		// Get the config directory (config file's parent). A relative single-
+		// component path like "myconfig.toml" has a parent of Some("") — treat
+		// that empty path as "." so we look in the current dir instead of
+		// deciding the directory "doesn't exist" and overwriting the file with
+		// the default template.
+		let parent = config_path.parent();
+		let config_dir = match parent {
+			Some(p) if !p.as_os_str().is_empty() => p,
+			_ => Path::new("."),
+		};
 
 		if !config_dir.exists() {
 			// Directory doesn't exist, create default config
@@ -504,25 +515,36 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 	let mut base_value: toml::Value =
 		toml::from_str(&base_str).context("Failed to re-parse base config")?;
 
-	// Concatenate mcp.servers (additive, skip duplicates by name)
-	if let (Some(toml::Value::Table(base_mcp)), Some(toml::Value::Table(agent_mcp))) =
-		(base_value.get_mut("mcp"), agent_value.get("mcp"))
-	{
-		if let (Some(toml::Value::Array(base_servers)), Some(toml::Value::Array(agent_servers))) =
-			(base_mcp.get_mut("servers"), agent_mcp.get("servers"))
-		{
-			let existing_names: std::collections::HashSet<String> = base_servers
-				.iter()
-				.filter_map(|s| {
-					s.get("name")
-						.and_then(|n| n.as_str())
-						.map(|n| n.to_string())
-				})
-				.collect();
-			for server in agent_servers {
-				let name = server.get("name").and_then(|n| n.as_str()).unwrap_or("");
-				if !existing_names.contains(name) {
-					base_servers.push(server.clone());
+	// Concatenate mcp.servers (additive, skip duplicates by name). The base may
+	// have no [mcp] table or no servers array at all (common — many user configs
+	// declare no MCP servers); create them so the agent's servers are still
+	// merged instead of silently dropped.
+	if let Some(toml::Value::Table(agent_mcp)) = agent_value.get("mcp") {
+		if let Some(toml::Value::Array(agent_servers)) = agent_mcp.get("servers") {
+			let base_mcp = base_value
+				.as_table_mut()
+				.expect("base config serializes to a TOML table")
+				.entry("mcp")
+				.or_insert_with(|| toml::Value::Table(Default::default()));
+			let base_servers = base_mcp
+				.as_table_mut()
+				.expect("mcp is a table")
+				.entry("servers")
+				.or_insert_with(|| toml::Value::Array(Vec::new()));
+			if let toml::Value::Array(base_servers) = base_servers {
+				let existing_names: std::collections::HashSet<String> = base_servers
+					.iter()
+					.filter_map(|s| {
+						s.get("name")
+							.and_then(|n| n.as_str())
+							.map(|n| n.to_string())
+					})
+					.collect();
+				for server in agent_servers {
+					let name = server.get("name").and_then(|n| n.as_str()).unwrap_or("");
+					if !existing_names.contains(name) {
+						base_servers.push(server.clone());
+					}
 				}
 			}
 		}

@@ -255,6 +255,10 @@ impl ChatSession {
 		// only by a later PASS.
 		self.evidence.reset();
 		self.gate_iterations = 0;
+		// Reset the detector rolling windows (loop / no-progress / truncation /
+		// dedup / drift streaks) so a new task doesn't inherit the previous task's
+		// streaks. Trajectory state (unverified_mutation) is intentionally kept.
+		self.detectors.reset_streak();
 
 		// Check if we should cache this user message (after push, so the message exists
 		// at a known index and the cache manager can enforce the 2-marker limit).

@@ -91,7 +91,9 @@ async fn main() -> Result<(), anyhow::Error> {
 		.unwrap()
 		.load_dotenv_override()
 	{
-		octomind::log_debug!("Failed to load .env file: {}", e);
+		// Logging isn't configured this early, so log_debug! would vanish. A real
+		// .env parse error (missing file is not an error) must reach the user.
+		eprintln!("Warning: failed to load .env file: {e}");
 	}
 
 	// Seed the thread-local working directory with the real launch cwd immediately,

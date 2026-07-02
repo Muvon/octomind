@@ -310,6 +310,21 @@ pub fn get_status_and_cancel(
 	Some((Arc::clone(&job.status), job.cancel_tx.subscribe()))
 }
 
+/// Replace a job's cancellation channel with a fresh one (value `false`) and
+/// return a receiver for it. Used when resuming a stopped tap-run: `stop`
+/// latched the old channel to `true`, so a receiver subscribed to it would
+/// cancel the resumed turn before it began.
+pub fn reset_cancel(id: &str) -> Option<watch::Receiver<bool>> {
+	let session_id = crate::session::context::current_session_id()?;
+	let mut guard = REGISTRY.write().ok()?;
+	let reg = guard.as_mut()?;
+	let jobs = reg.jobs.get_mut(&session_id)?;
+	let job = jobs.iter_mut().find(|j| j.id == id)?;
+	let (tx, rx) = watch::channel(false);
+	job.cancel_tx = tx;
+	Some(rx)
+}
+
 /// Generate a fresh tap-run id from a role tag — `tap-<role-with-dash>-<6hex>`.
 ///
 /// The hash component is taken from process id + monotonic counter to

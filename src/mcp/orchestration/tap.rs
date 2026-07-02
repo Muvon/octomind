@@ -369,11 +369,13 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		.and_then(|v| v.as_bool())
 		.unwrap_or(true);
 
-	// Default workdir is the parent session's current cwd. Resolved early
-	// so resume picks up the original workdir from the existing job.
-	let cwd_default = std::env::current_dir()
-		.map(|p| p.to_string_lossy().to_string())
-		.unwrap_or_else(|_| ".".to_string());
+	// Default workdir is the parent session's current cwd. Use the thread-local
+	// session working directory (not the process cwd, which is wrong under the
+	// server/daemon where all sessions share one process). Resolved early so
+	// resume picks up the original workdir from the existing job.
+	let cwd_default = crate::mcp::get_thread_working_directory()
+		.to_string_lossy()
+		.to_string();
 
 	// Resolve (id, role, workdir, status, cancel_rx) for resume vs. fresh.
 	// Conversation history is persisted on disk by the ACP subprocess under
@@ -423,6 +425,9 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		if let Ok(mut s) = status.write() {
 			*s = TapJobStatus::Running;
 		}
+		// Fresh cancel channel: a prior `stop` latched the old one to `true`, so
+		// the subscribed receiver would cancel this resumed turn immediately.
+		let cancel_rx = tap_runs::reset_cancel(&sid).unwrap_or(cancel_rx);
 		(sid, info.role, info.workdir, status, cancel_rx)
 	} else {
 		let role = match role_param {

@@ -19,6 +19,10 @@ struct CallbackServerState {
 	result_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<OAuthCallbackResult>>>>,
 	shutdown: Arc<AtomicBool>,
 	config: OAuthConfig,
+	/// MCP config server name — the token-store key. Tokens are looked up by
+	/// server name (get_valid_token), so they MUST be saved under it too; the
+	/// client_id is ephemeral (CIMD URL / DCR-assigned) and never matches.
+	server_name: String,
 	code_verifier: String,
 	redirect_uri: String,
 }
@@ -41,6 +45,7 @@ pub enum OAuthCallbackResult {
 
 pub async fn start_callback_server(
 	config: &OAuthConfig,
+	server_name: &str,
 	auth_state: String,
 	code_verifier: String,
 ) -> Result<OAuthCallbackResult> {
@@ -90,6 +95,7 @@ pub async fn start_callback_server(
 		result_tx: Arc::new(Mutex::new(None)),
 		shutdown: Arc::new(AtomicBool::new(false)),
 		config: config.clone(),
+		server_name: server_name.to_string(),
 		code_verifier,
 		redirect_uri: redirect_uri.clone(),
 	};
@@ -353,13 +359,21 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 			};
 
 			let metadata = TokenMetadata {
-				server_name: state.config.client_id.clone(),
+				server_name: state.server_name.clone(),
 				access_token: access_token.clone(),
 				refresh_token: refresh_token.clone(),
 				expires_at,
 				scopes: scopes.clone(),
 			};
-			let _ = save_token(&state.config.client_id, &metadata).await;
+			// Save under the server name — the key get_valid_token looks up.
+			// A failed save means re-auth next time; say so instead of hiding it.
+			if let Err(e) = save_token(&state.server_name, &metadata).await {
+				crate::log_error!(
+					"Failed to persist OAuth token for '{}' (re-auth will be required): {}",
+					state.server_name,
+					e
+				);
+			}
 
 			OAuthCallbackResult::Success {
 				access_token,

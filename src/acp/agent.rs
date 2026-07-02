@@ -891,7 +891,11 @@ impl OctomindAgent {
 				.remove(&session_id)
 				.unwrap_or_default();
 			cancellation.reset();
-			let operation_rx = cancellation.new_operation();
+			// NOTE: the main-call `operation_rx` is created AFTER the pre-user
+			// inbox drain below. The drain calls new_operation() per message,
+			// each of which drops the previous watch sender — creating the
+			// receiver here would leave the main call holding a closed channel,
+			// which tool execution treats as instant cancellation.
 			// Re-insert cancellation so cancel() can find it during prompt execution
 			self.cancellations
 				.borrow_mut()
@@ -996,6 +1000,15 @@ impl OctomindAgent {
 					}
 				}
 			}
+
+			// Create the main call's cancellation receiver NOW — after the inbox
+			// drain, so it points at the live watch channel (see note above).
+			let operation_rx = self
+				.cancellations
+				.borrow_mut()
+				.entry(session_id.to_string())
+				.or_default()
+				.new_operation();
 
 			// Pipe pre-processing (runs matching [[pipe]] from guardrails before the main model).
 			// On error we MUST re-insert chat_session before returning — otherwise the
@@ -1293,6 +1306,7 @@ impl OctomindAgent {
 		super::commands::handle_ext_method(
 			args,
 			&self.sessions,
+			&self.session_locks,
 			&self.config,
 			&self.role,
 			&self.cancellations,

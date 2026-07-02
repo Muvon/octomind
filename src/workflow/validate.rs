@@ -323,7 +323,10 @@ fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 			for s in &l.run {
 				available.insert(s.name.clone());
 			}
-			available.insert(l.name.clone());
+			// The loop's own name is deliberately NOT referenceable: the executor
+			// never stores an aggregate under it (unlike parallel blocks), so a
+			// `{{loop-name}}` reference or exit_when.output = "loop-name" would
+			// silently resolve to nothing at runtime. Fail here instead.
 
 			// exit_when.output must be a known step (or omitted → last).
 			if let Some(cond) = &l.exit_when {
@@ -358,7 +361,8 @@ fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 			for s in &c.run {
 				available.insert(s.name.clone());
 			}
-			available.insert(c.name.clone());
+			// Like loops, the conditional's own name is NOT referenceable — the
+			// executor only stores branch sub-step outputs, never c.name itself.
 		}
 	}
 	Ok(())

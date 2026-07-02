@@ -231,8 +231,7 @@ async fn handle_connection(
 	// INVARIANT: Do NOT call stop_all_servers() here. MCP server processes are shared
 	// across all active sessions. Killing them on disconnect would break other sessions
 	// that are still using the same servers. stop_all_servers() is only called on
-	// process shutdown (main.rs) or role switch (CLI only). Use release_server() for
-	// per-session server teardown when reference counting is needed.
+	// process shutdown (main.rs) or role switch (CLI only).
 	for sid in &active_session_ids {
 		crate::session::context::clear_notification_sender_for_session(sid);
 	}
@@ -267,6 +266,7 @@ async fn process_client_message(
 				config,
 				role,
 				sessions,
+				session_locks,
 				active_session_ids,
 				bg_tx,
 			)
@@ -349,6 +349,7 @@ async fn get_or_create_session_lock(
 fn spawn_ws_inbox_monitor(
 	session_id: String,
 	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
+	session_locks: SessionLocks,
 	config: Config,
 	role: String,
 	bg_tx: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
@@ -365,12 +366,20 @@ fn spawn_ws_inbox_monitor(
 				crate::mcp::orchestration::flush_due_to_inbox();
 				crate::mcp::orchestration::flush_idle_to_inbox();
 
-				// Drain inbox only when session is available.
-				// If held by handle_user_message(), skip — it fires inbox_notify when done,
-				// which wakes us from the wait section to retry.
-				while crate::session::inbox::has_inbox_messages()
-					&& sessions.lock().await.contains_key(&session_id)
-				{
+				// Drain inbox while messages remain. Take the SAME per-session lock
+				// process_client_message uses, held across take→process→reinsert:
+				// otherwise a concurrent client message try_locks it (free, because
+				// removing the session from the map is not the lock), misses memory,
+				// and reloads a stale copy from disk — two live sessions racing the
+				// same file. If the client holds the lock, stop this pass; it fires
+				// inbox_notify on return and wakes us from the wait section.
+				while crate::session::inbox::has_inbox_messages() {
+					let lock = get_or_create_session_lock(&session_id, &session_locks).await;
+					let guard = match lock.try_lock() {
+						Ok(g) => g,
+						Err(_) => return false,
+					};
+
 					let inbox_msg = match crate::session::inbox::try_pop_inbox_message() {
 						Some(msg) => msg,
 						None => break,
@@ -382,13 +391,13 @@ fn spawn_ws_inbox_monitor(
 						session_id
 					);
 
-					// Take session for exclusive access.
+					// Take session for exclusive access (lock guarantees no client race).
 					let mut chat_session = match sessions.lock().await.remove(&session_id) {
 						Some(s) => s,
 						None => {
-							// Taken between check and remove. Put message back —
-							// handle_user_message() will fire inbox_notify when it returns the session.
+							// Session genuinely gone (cleanup). Put message back and stop.
 							crate::session::inbox::push_inbox_message(inbox_msg);
+							drop(guard);
 							return false;
 						}
 					};
@@ -550,6 +559,7 @@ async fn handle_session_message(
 	config: &Config,
 	role: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
+	session_locks: &SessionLocks,
 	active_session_ids: &mut HashSet<String>,
 	bg_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
 ) -> Result<()> {
@@ -666,6 +676,7 @@ async fn handle_session_message(
 	spawn_ws_inbox_monitor(
 		session_id,
 		Arc::clone(sessions),
+		Arc::clone(session_locks),
 		config.clone(),
 		role.to_string(),
 		bg_tx.clone(),
@@ -888,7 +899,10 @@ async fn handle_user_message(
 	let current_dir = crate::mcp::get_thread_working_directory();
 	let config_for_role = config.get_merged_config_for_role(role);
 	let mut cancellation = SessionCancellation::new();
-	let operation_rx = cancellation.new_operation();
+	// The main-call `operation_rx` is created AFTER the pre-user inbox drain
+	// below: the drain calls new_operation() per message, each dropping the
+	// previous watch sender, so a receiver made here would be closed by the
+	// time the main call runs — which tool execution reads as instant cancel.
 
 	// Process any inbox messages that arrived before this user message
 	// (background agents, scheduled entries, skills) — each gets its own
@@ -943,6 +957,10 @@ async fn handle_user_message(
 		}
 	}
 
+	// Create the main call's cancellation receiver NOW — after the inbox drain,
+	// so it points at the live watch channel (see note above).
+	let operation_rx = cancellation.new_operation();
+
 	// Run pipe pre-processing if a matching [[pipe]] is configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
@@ -993,18 +1011,37 @@ async fn handle_user_message(
 	// Forward MCP server notifications through the WebSocket channel
 	crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
 
-	// Execute API call — events stream in real-time via WebSocketSink
-	let api_result = execute_api_call_and_process_response(
-		&mut chat_session,
-		&config_for_role,
-		role,
-		operation_rx.clone(),
-		OutputMode::WebSocket,
-		ws_sink,
-	)
-	.await;
+	// Execute the API call while concurrently forwarding sink events to the
+	// client, so chunks stream in real-time. Draining only after the call
+	// returned (the previous behavior) buffered a whole multi-minute turn and
+	// delivered it as one burst — the "real-time" claim was false. ws_rx.recv()
+	// stays open for the call's duration (ws_tx clone + notification sender hold
+	// senders), so its branch only yields real messages; the api future is what
+	// ends the loop.
+	// Scope the future so its `&mut chat_session` borrow is released the moment
+	// the loop ends — otherwise the pinned future lives to end-of-fn and blocks
+	// every later use of chat_session (cost read, save, move back into the map).
+	let api_result = {
+		let api_fut = execute_api_call_and_process_response(
+			&mut chat_session,
+			&config_for_role,
+			role,
+			operation_rx.clone(),
+			OutputMode::WebSocket,
+			ws_sink,
+		);
+		tokio::pin!(api_fut);
+		loop {
+			tokio::select! {
+				res = &mut api_fut => break res,
+				Some(msg) = ws_rx.recv() => {
+					send_message(ws_sender, &msg).await?;
+				}
+			}
+		}
+	};
 
-	// Drain any remaining queued stream messages after API completion
+	// Drain any messages queued between the last poll and completion.
 	while let Ok(msg) = ws_rx.try_recv() {
 		send_message(ws_sender, &msg).await?;
 	}

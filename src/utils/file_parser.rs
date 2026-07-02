@@ -132,22 +132,21 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 	// If no code blocks found, fall back to looking for patterns in REQUIRED FILE CONTEXTS section
 	if file_refs.is_empty() {
 		if let Some(section_start) = content.find("## REQUIRED FILE CONTEXTS") {
-			// UTF-8 safe: get substring from section start to end
-			let content_after_header = content.chars().skip(section_start).collect::<String>();
+			// `find` returns BYTE offsets, which are always valid char boundaries —
+			// slice by bytes. The previous code fed the byte offset to
+			// chars().skip()/take() as if it were a char count, corrupting section
+			// extraction whenever earlier content contained non-ASCII.
+			let content_after_header = &content[section_start..];
 
 			// Find the end of this section (next ## header or end of text)
 			let section_end = content_after_header
 				.find("\n## ")
-				.unwrap_or(content_after_header.chars().count());
+				.unwrap_or(content_after_header.len());
 
-			// UTF-8 safe: get substring from start to section end
-			let section_content = content_after_header
-				.chars()
-				.take(section_end)
-				.collect::<String>();
+			let section_content = &content_after_header[..section_end];
 
 			// More flexible pattern for general text (handles paths with spaces/special chars)
-			for captures in general_file_pattern.captures_iter(&section_content) {
+			for captures in general_file_pattern.captures_iter(section_content) {
 				if let Some((filepath, range)) = extract_file_range(&captures) {
 					file_refs
 						.entry(filepath)

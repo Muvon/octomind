@@ -88,19 +88,6 @@ lazy_static::lazy_static! {
 	static ref SERVER_IN_FLIGHT: Arc<RwLock<HashMap<String, InFlightHandle>>> =
 		Arc::new(RwLock::new(HashMap::new()));
 
-	// Reference counts for shared MCP server processes.
-	// Each call to ensure_server_running() increments the count; release_server() decrements it.
-	// cleanup_server_process() only kills the OS process when the count reaches zero,
-	// preventing one session from tearing down a server that another session is still using.
-	// stop_all_servers() bypasses ref counts — it is only called on process shutdown.
-	// Reference counts for shared MCP server processes.
-	// Each call to ensure_server_running() increments the count; release_server() decrements it.
-	// cleanup_server_process() only kills the OS process when the count reaches zero,
-	// preventing one session from tearing down a server that another session is still using.
-	// stop_all_servers() bypasses ref counts — it is only called on process shutdown.
-	static ref SERVER_REF_COUNTS: Arc<RwLock<HashMap<String, usize>>> =
-		Arc::new(RwLock::new(HashMap::new()));
-
 	/// Recent stderr lines per server — background reader threads push lines here
 	/// so that initialization/runtime errors can be surfaced to the user.
 	static ref SERVER_STDERR: Arc<RwLock<HashMap<String, StderrBuffer>>> =
@@ -498,14 +485,6 @@ pub async fn ensure_server_running(server: &McpServerConfig) -> Result<String> {
 	crate::log_debug!("Checking server '{}' status for potential start", server_id);
 
 	let result = start_server_once_if_needed(server).await;
-
-	// Increment ref count on success so cleanup_server_process() knows how many
-	// sessions are actively using this server.
-	if result.is_ok() {
-		let mut counts = SERVER_REF_COUNTS.write().unwrap();
-		*counts.entry(server_id.to_string()).or_insert(0) += 1;
-		crate::log_debug!("Server '{}' ref count: {}", server_id, counts[server_id]);
-	}
 
 	crate::log_debug!("Completed server '{}' check", server_id);
 
@@ -1718,14 +1697,29 @@ pub async fn execute_stdin_tool_call(
 		));
 	}
 
-	// Deserialize the result directly into CallToolResult
-	let call_tool_result = response
-		.get("result")
-		.cloned()
-		.and_then(|v| serde_json::from_value::<rmcp::model::CallToolResult>(v).ok())
-		.unwrap_or_else(|| {
-			rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text("No result")])
-		});
+	// Deserialize the result directly into CallToolResult. A response with
+	// neither "error" (handled above) nor a deserializable "result" is a broken
+	// server reply — surface it as an error, not a fake "No result" success that
+	// masks the failure as if the tool ran fine.
+	let call_tool_result = match response.get("result") {
+		Some(v) => match serde_json::from_value::<rmcp::model::CallToolResult>(v.clone()) {
+			Ok(r) => r,
+			Err(e) => {
+				return Ok(McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					format!("Malformed tool result from server '{}': {}", call.tool_name, e),
+				));
+			}
+		},
+		None => {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				"MCP response contained neither 'result' nor 'error'".to_string(),
+			));
+		}
+	};
 
 	let tool_result = McpToolResult {
 		tool_name: call.tool_name.clone(),
@@ -1805,12 +1799,6 @@ pub fn stop_all_servers() -> Result<()> {
 		crate::log_debug!("Cleared all server restart mutexes");
 	}
 
-	// Clear ref counts — process is shutting down, counts no longer meaningful
-	{
-		let mut counts = SERVER_REF_COUNTS.write().unwrap();
-		counts.clear();
-	}
-
 	// Clear stderr buffers
 	{
 		let mut stderr_map = SERVER_STDERR.write().unwrap();
@@ -1827,25 +1815,12 @@ pub fn stop_all_servers() -> Result<()> {
 }
 
 // Cleanup a specific server process (helper function).
-// Respects reference counting: if other sessions are still using this server,
-// the OS process is kept alive and only the caller's ref is decremented.
-// Use release_server() for normal session teardown; this function is for
-// error recovery paths (init failure) where the ref was never fully established.
+// Kills the OS process and removes every registry entry for the server. Used
+// on init failure (the just-spawned process must die regardless of who else
+// references the name — it never completed its handshake) and on dynamic
+// server removal. A concurrent session that still needs the server gets it
+// back automatically via the start-once path in ensure_server_running().
 pub fn cleanup_server_process(server_name: &str) -> Result<()> {
-	// Check ref count — skip kill if other sessions still hold references.
-	{
-		let counts = SERVER_REF_COUNTS.read().unwrap();
-		let refs = counts.get(server_name).copied().unwrap_or(0);
-		if refs > 0 {
-			crate::log_debug!(
-				"Skipping cleanup of server '{}': {} session(s) still using it",
-				server_name,
-				refs
-			);
-			return Ok(());
-		}
-	}
-
 	let mut processes = SERVER_PROCESSES.write().unwrap();
 
 	if let Some(process_arc) = processes.remove(server_name) {
@@ -1930,45 +1905,6 @@ pub fn cleanup_server_process(server_name: &str) -> Result<()> {
 			"Server '{}' not found in registry",
 			server_name
 		))
-	}
-}
-
-/// Decrement the ref count for a server and clean it up when the count reaches zero.
-///
-/// Call this when a session is done with a server (e.g., on dynamic server disable/remove
-/// or session teardown). The OS process is only killed when no sessions hold references.
-pub fn release_server(server_name: &str) {
-	let should_cleanup = {
-		let mut counts = SERVER_REF_COUNTS.write().unwrap();
-		if let Some(count) = counts.get_mut(server_name) {
-			if *count > 0 {
-				*count -= 1;
-			}
-			let remaining = *count;
-			crate::log_debug!(
-				"Server '{}' ref count after release: {}",
-				server_name,
-				remaining
-			);
-			if remaining == 0 {
-				counts.remove(server_name);
-				true
-			} else {
-				false
-			}
-		} else {
-			false
-		}
-	};
-
-	if should_cleanup {
-		if let Err(e) = cleanup_server_process(server_name) {
-			crate::log_debug!(
-				"Failed to cleanup server '{}' after release: {}",
-				server_name,
-				e
-			);
-		}
 	}
 }
 

@@ -701,15 +701,23 @@ impl Executor {
 					.clone()
 					.unwrap_or_else(|| l.run.last().unwrap().name.clone()),
 			};
-			if let Some(value) = self.outputs.get(&target) {
-				if condition_matches(exit_when, value) {
-					info_line(&format!(
-						"loop '{name}' exit at iteration {i}",
-						name = l.name
-					));
-					eprintln!();
-					return Ok(());
-				}
+			// Pre-flight guarantees the target is a known step; a miss here is an
+			// executor bug — fail loudly instead of silently burning iterations.
+			let value = self.outputs.get(&target).ok_or_else(|| {
+				anyhow::anyhow!(
+					"loop '{}': exit_when target '{}' has no output at iteration {}",
+					l.name,
+					target,
+					i
+				)
+			})?;
+			if condition_matches(exit_when, value) {
+				info_line(&format!(
+					"loop '{name}' exit at iteration {i}",
+					name = l.name
+				));
+				eprintln!();
+				return Ok(());
 			}
 		}
 		info_line(&format!(
@@ -733,7 +741,16 @@ impl Executor {
 				),
 			},
 		};
-		let value = self.outputs.get(&target).cloned().unwrap_or_default();
+		// Skipped-branch steps resolve to empty entries (inserted below), so a
+		// genuine miss means the target never ran — an executor bug, not a
+		// condition that should silently evaluate against "".
+		let value = self.outputs.get(&target).cloned().ok_or_else(|| {
+			anyhow::anyhow!(
+				"conditional step '{}': condition target '{}' has no output",
+				c.name,
+				target
+			)
+		})?;
 		let matched = condition_matches(&c.condition, &value);
 
 		let branch_names: &[String] = if matched { &c.on_match } else { &c.on_no_match };

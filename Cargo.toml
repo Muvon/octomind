@@ -63,7 +63,9 @@ regex = "1.12.3"
 colored = "3.1.1"
 async-trait = "0.1.89"
 termimad = "0.34.1"
-syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+# No plist-load/yaml-load: only bundled dumps are used (ThemeSet::load_defaults),
+# and plist pulls quick-xml with open RUSTSEC advisories (2026-0194/0195).
+syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
 url = "2.5.8"
 dirs = "6.0.0"

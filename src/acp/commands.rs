@@ -55,7 +55,6 @@ pub struct CommandResponse {
 	pub error: Option<String>,
 }
 /// Execute an ACP extension command
-#[allow(clippy::too_many_arguments)]
 pub async fn execute_command(
 	request: &CommandRequest,
 	sessions: &Rc<RefCell<std::collections::HashMap<String, (ChatSession, std::path::PathBuf)>>>,
@@ -169,7 +168,6 @@ pub async fn execute_command(
 }
 
 /// Handle ACP ext_method requests for commands
-#[allow(clippy::too_many_arguments)]
 pub async fn handle_ext_method(
 	request: ExtRequest,
 	sessions: &Rc<RefCell<std::collections::HashMap<String, (ChatSession, std::path::PathBuf)>>>,

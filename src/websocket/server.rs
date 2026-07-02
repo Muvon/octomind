@@ -39,6 +39,19 @@ use tokio_tungstenite::WebSocketStream;
 /// Per-session processing locks to prevent concurrent access to the same session.
 type SessionLocks = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 
+/// Per-connection shared state, built once per WebSocket connection and passed to
+/// the message handlers as one value instead of a parameter per field.
+#[derive(Clone)]
+struct ConnCtx {
+	config: Arc<Config>,
+	role: String,
+	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
+	session_locks: SessionLocks,
+	/// Background tasks (schedule/inbox monitors) push client-bound messages here;
+	/// the connection loop forwards them to the WebSocket.
+	bg_tx: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+}
+
 /// WebSocket server for handling AI sessions
 pub struct WebSocketServer {
 	addr: SocketAddr,
@@ -140,6 +153,14 @@ async fn handle_connection(
 	// ServerMessages here and the connection loop forwards them.
 	let (bg_tx, mut bg_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
 
+	let ctx = ConnCtx {
+		config,
+		role,
+		sessions,
+		session_locks,
+		bg_tx,
+	};
+
 	// Process messages from both WebSocket and background tasks
 	loop {
 		tokio::select! {
@@ -178,12 +199,8 @@ async fn handle_connection(
 						if let Err(e) = process_client_message(
 							client_msg,
 							&mut ws_sender,
-							&config,
-							&role,
-							&sessions,
-							&session_locks,
+							&ctx,
 							&mut active_session_ids,
-							&bg_tx,
 						)
 						.await
 						{
@@ -244,40 +261,25 @@ async fn handle_connection(
 }
 
 /// Process a client message and send responses
-#[allow(clippy::too_many_arguments)]
 async fn process_client_message(
 	client_msg: ClientMessage,
 	ws_sender: &mut futures_util::stream::SplitSink<
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
 	>,
-	config: &Config,
-	role: &str,
-	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
-	session_locks: &SessionLocks,
+	ctx: &ConnCtx,
 	active_session_ids: &mut HashSet<String>,
-	bg_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
 ) -> Result<()> {
 	match client_msg {
 		ClientMessage::Session(msg) => {
-			handle_session_message(
-				msg,
-				ws_sender,
-				config,
-				role,
-				sessions,
-				session_locks,
-				active_session_ids,
-				bg_tx,
-			)
-			.await
+			handle_session_message(msg, ws_sender, ctx, active_session_ids).await
 		}
 		ClientMessage::Message(msg) => {
 			let session_id = msg.session_id.clone();
 			active_session_ids.insert(session_id.clone());
 
 			// Acquire per-session lock to prevent concurrent access
-			let lock = get_or_create_session_lock(&session_id, session_locks).await;
+			let lock = get_or_create_session_lock(&session_id, &ctx.session_locks).await;
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
 				Err(_) => {
@@ -291,7 +293,7 @@ async fn process_client_message(
 			};
 
 			let result = crate::session::context::with_session_id(session_id, async {
-				handle_user_message(msg, ws_sender, config, role, sessions).await
+				handle_user_message(msg, ws_sender, &ctx.config, &ctx.role, &ctx.sessions).await
 			})
 			.await;
 
@@ -303,7 +305,7 @@ async fn process_client_message(
 			active_session_ids.insert(session_id.clone());
 
 			// Acquire per-session lock to prevent concurrent access
-			let lock = get_or_create_session_lock(&session_id, session_locks).await;
+			let lock = get_or_create_session_lock(&session_id, &ctx.session_locks).await;
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
 				Err(_) => {
@@ -317,7 +319,7 @@ async fn process_client_message(
 			};
 
 			let result = crate::session::context::with_session_id(session_id, async {
-				handle_command_message(msg, ws_sender, config, role, sessions).await
+				handle_command_message(msg, ws_sender, &ctx.config, &ctx.role, &ctx.sessions).await
 			})
 			.await;
 
@@ -346,14 +348,7 @@ async fn get_or_create_session_lock(
 /// through the full AI pipeline, sends results through `bg_tx` for the connection
 /// loop to forward to the client, and puts the session back.
 /// Exits when the session is removed from the map or the bg_tx channel is closed.
-fn spawn_ws_inbox_monitor(
-	session_id: String,
-	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
-	session_locks: SessionLocks,
-	config: Config,
-	role: String,
-	bg_tx: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
-) {
+fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 	tokio::spawn(async move {
 		log_debug!(
 			"WebSocket: inbox monitor started for session: {}",
@@ -374,7 +369,7 @@ fn spawn_ws_inbox_monitor(
 				// same file. If the client holds the lock, stop this pass; it fires
 				// inbox_notify on return and wakes us from the wait section.
 				while crate::session::inbox::has_inbox_messages() {
-					let lock = get_or_create_session_lock(&session_id, &session_locks).await;
+					let lock = get_or_create_session_lock(&session_id, &ctx.session_locks).await;
 					let guard = match lock.try_lock() {
 						Ok(g) => g,
 						Err(_) => return false,
@@ -392,7 +387,7 @@ fn spawn_ws_inbox_monitor(
 					);
 
 					// Take session for exclusive access (lock guarantees no client race).
-					let mut chat_session = match sessions.lock().await.remove(&session_id) {
+					let mut chat_session = match ctx.sessions.lock().await.remove(&session_id) {
 						Some(s) => s,
 						None => {
 							// Session genuinely gone (cleanup). Put message back and stop.
@@ -402,13 +397,13 @@ fn spawn_ws_inbox_monitor(
 						}
 					};
 
-					let config_for_role = config.get_merged_config_for_role(&role);
+					let config_for_role = ctx.config.get_merged_config_for_role(&ctx.role);
 					let mut cancellation = crate::session::cancellation::SessionCancellation::new();
 					let op_rx = cancellation.new_operation();
 
 					// Notify the client what's about to drive the AI, before we kick off
 					// the API call. Mirrors `display_injected_input` in CLI mode.
-					let _ = bg_tx.send(ServerMessage::Injected(
+					let _ = ctx.bg_tx.send(ServerMessage::Injected(
 						crate::websocket::protocol::InjectedPayload {
 							source_kind: inbox_msg.source.display_kind().to_string(),
 							source_label: inbox_msg.source.display_label(),
@@ -424,7 +419,7 @@ fn spawn_ws_inbox_monitor(
 					};
 					if let Err(e) = add_result {
 						log_error!("WS monitor: failed to add inbox message: {}", e);
-						sessions
+						ctx.sessions
 							.lock()
 							.await
 							.insert(session_id.clone(), chat_session);
@@ -438,7 +433,7 @@ fn spawn_ws_inbox_monitor(
 							.await
 					{
 						log_error!("WS monitor: failed to prepare API call: {}", e);
-						sessions
+						ctx.sessions
 							.lock()
 							.await
 							.insert(session_id.clone(), chat_session);
@@ -452,7 +447,7 @@ fn spawn_ws_inbox_monitor(
 
 					crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
 
-					let bg_tx_fwd = bg_tx.clone();
+					let bg_tx_fwd = ctx.bg_tx.clone();
 					let forward_task = tokio::spawn(async move {
 						while let Some(msg) = ws_rx.recv().await {
 							if bg_tx_fwd.send(msg).is_err() {
@@ -464,7 +459,7 @@ fn spawn_ws_inbox_monitor(
 					let result = execute_api_call_and_process_response(
 						&mut chat_session,
 						&config_for_role,
-						&role,
+						&ctx.role,
 						op_rx,
 						OutputMode::WebSocket,
 						ws_sink,
@@ -484,7 +479,7 @@ fn spawn_ws_inbox_monitor(
 						+ chat_session.session.info.cache_read_tokens
 						+ chat_session.session.info.cache_write_tokens
 						+ chat_session.session.info.reasoning_tokens;
-					let _ = bg_tx.send(ServerMessage::Cost(CostPayload {
+					let _ = ctx.bg_tx.send(ServerMessage::Cost(CostPayload {
 						session_tokens: total_tokens,
 						session_cost: chat_session.session.info.total_cost,
 						input_tokens: chat_session.session.info.input_tokens,
@@ -499,7 +494,7 @@ fn spawn_ws_inbox_monitor(
 					if let Err(e) = chat_session.save() {
 						log_error!("WS monitor: failed to save session: {}", e);
 					}
-					sessions
+					ctx.sessions
 						.lock()
 						.await
 						.insert(session_id.clone(), chat_session);
@@ -509,7 +504,7 @@ fn spawn_ws_inbox_monitor(
 			})
 			.await;
 
-			if should_exit || bg_tx.is_closed() {
+			if should_exit || ctx.bg_tx.is_closed() {
 				break;
 			}
 
@@ -550,19 +545,14 @@ fn spawn_ws_inbox_monitor(
 
 /// Handle a "session" type message: create new or resume existing session.
 /// No AI call is made — just session setup. Responds with session_id.
-#[allow(clippy::too_many_arguments)]
 async fn handle_session_message(
 	msg: SessionMessage,
 	ws_sender: &mut futures_util::stream::SplitSink<
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
 	>,
-	config: &Config,
-	role: &str,
-	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
-	session_locks: &SessionLocks,
+	ctx: &ConnCtx,
 	active_session_ids: &mut HashSet<String>,
-	bg_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
 ) -> Result<()> {
 	log_debug!("Handling session message: session_id={:?}", msg.session_id);
 
@@ -570,12 +560,11 @@ async fn handle_session_message(
 		Some(session_id) => {
 			// session_id present: create-or-resume
 			// Check memory first
-			let existing = sessions.lock().await.remove(session_id);
+			let existing = ctx.sessions.lock().await.remove(session_id);
 			if let Some(session) = existing {
 				log_debug!("Resumed session from memory: {}", session_id);
-				let cfg = config.get_merged_config_for_role(role);
-				let role_name = role.to_string();
-				(session, cfg, role_name, false)
+				let cfg = ctx.config.get_merged_config_for_role(&ctx.role);
+				(session, cfg, ctx.role.clone(), false)
 			} else {
 				// Try disk: resume if exists, create with this name if not
 				let args = if crate::session::get_sessions_dir()
@@ -585,7 +574,7 @@ async fn handle_session_message(
 					log_debug!("Resuming session from disk: {}", session_id);
 					GenericSessionArgs {
 						resume: Some(session_id.clone()),
-						role: role.to_string(),
+						role: ctx.role.clone(),
 						mode: "websocket".into(),
 						..Default::default()
 					}
@@ -593,13 +582,13 @@ async fn handle_session_message(
 					log_debug!("Creating named session: {}", session_id);
 					GenericSessionArgs {
 						name: Some(session_id.clone()),
-						role: role.to_string(),
+						role: ctx.role.clone(),
 						mode: "websocket".into(),
 						..Default::default()
 					}
 				};
 
-				match setup_and_initialize_session(&args, config).await {
+				match setup_and_initialize_session(&args, &ctx.config).await {
 					Ok((session, cfg, role_name, _, _)) => {
 						let is_new = !session.was_resumed;
 						(session, cfg, role_name, is_new)
@@ -615,13 +604,13 @@ async fn handle_session_message(
 		}
 		None => {
 			// No session_id: create new auto-named session
-			log_debug!("Creating new auto-named session with role: {}", role);
+			log_debug!("Creating new auto-named session with role: {}", ctx.role);
 			let args = GenericSessionArgs {
-				role: role.to_string(),
+				role: ctx.role.clone(),
 				mode: "websocket".into(),
 				..Default::default()
 			};
-			match setup_and_initialize_session(&args, config).await {
+			match setup_and_initialize_session(&args, &ctx.config).await {
 				Ok((session, cfg, role_name, _, _)) => (session, cfg, role_name, true),
 				Err(e) => {
 					let error = ServerMessage::error(format!("Failed to create session: {}", e));
@@ -658,7 +647,7 @@ async fn handle_session_message(
 		log_info!("{}", status_msg);
 
 		chat_session.save()?;
-		sessions
+		ctx.sessions
 			.lock()
 			.await
 			.insert(session_id.clone(), chat_session);
@@ -674,14 +663,7 @@ async fn handle_session_message(
 
 	// Spawn independent background task that monitors schedules/inbox
 	// and processes messages automatically without waiting for user prompts.
-	spawn_ws_inbox_monitor(
-		session_id,
-		Arc::clone(sessions),
-		Arc::clone(session_locks),
-		config.clone(),
-		role.to_string(),
-		bg_tx.clone(),
-	);
+	spawn_ws_inbox_monitor(session_id, ctx.clone());
 
 	Ok(())
 }

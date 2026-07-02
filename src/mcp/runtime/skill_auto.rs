@@ -115,7 +115,12 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		match super::skill::execute_skill_tool(&call).await {
 			Ok(_) => {
 				if let Some(content) = super::skill::take_silent_skill_content() {
-					let _ = session.add_system_managed_user_message(&content);
+					// Don't silently mark the skill active if its instructions never
+					// made it into the session — at least surface the failure.
+					if let Err(e) = session.add_system_managed_user_message(&content) {
+						crate::log_error!("Failed to inject auto-activated skill '{}': {}", name_str, e);
+						continue;
+					}
 				}
 				// Emit structured event for JSONL/WebSocket consumers
 				if let Some(sid) = &session_id {
@@ -791,6 +796,9 @@ async fn run_validate_script(
 		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
+		// Kill the validator if this future is dropped (timeout below) — otherwise
+		// each timed-out validation leaks one orphaned script process.
+		.kill_on_drop(true)
 		.spawn()
 		.map_err(|e| anyhow::anyhow!("Failed to spawn {}: {}", script_path.display(), e))?;
 

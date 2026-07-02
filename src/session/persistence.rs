@@ -122,9 +122,10 @@ pub fn find_most_recent_session_for_project(
 				.unwrap_or_default();
 			let name = stem.strip_suffix(".jsonl").unwrap_or(stem);
 
-			// Session name format: YYMMDD-HHMMSS-basename-uuid
-			// Check if the session name contains the project basename
-			if name.contains(project_basename) {
+			// Session name format: YYMMDD-HHMMSS-basename-uuid. Match the basename
+			// as a dash-delimited segment, not a raw substring — otherwise project
+			// "app" also matches sessions of "myapp"/"application".
+			if name.contains(&format!("-{project_basename}-")) {
 				// Get file modification time for sorting
 				if let Ok(metadata) = std_fs::metadata(&path) {
 					if let Ok(modified) = metadata.modified() {
@@ -511,7 +512,14 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 				}
 			} else if line.contains("\"role\":") && line.contains("\"content\":") {
 				// This is a regular message JSON line
-				if let Ok(message) = serde_json::from_str::<Message>(&line) {
+				let parsed = serde_json::from_str::<Message>(&line);
+				if let Err(ref e) = parsed {
+					// Don't silently drop — a lost line is silent history loss on
+					// resume. Best-effort skip (one bad line must not nuke the whole
+					// session) but make it visible.
+					crate::log_error!("Skipping unparseable session message line on resume: {}", e);
+				}
+				if let Ok(message) = parsed {
 					// If this is the first tool message and we have pending tool calls,
 					// reconstruct the assistant message with tool_calls ONLY if not already present
 					if message.role == "tool" && !pending_tool_calls.is_empty() {
@@ -669,11 +677,14 @@ fn reconstruct_messages(
 /// Synthesises a default SessionInfo from the file path and any STATS entries,
 /// then applies runtime state overrides.
 fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) -> Result<Session> {
-	let session_name = session_file
+	// file_stem() on "name.jsonl.zst" yields "name.jsonl" — strip the residual
+	// .jsonl so the session name matches what the logger writes under. Leaving it
+	// forks all subsequent log writes to a differently-named file.
+	let stem = session_file
 		.file_stem()
 		.and_then(|s| s.to_str())
-		.unwrap_or("unknown")
-		.to_string();
+		.unwrap_or("unknown");
+	let session_name = stem.strip_suffix(".jsonl").unwrap_or(stem).to_string();
 
 	let default_model = "openrouter:anthropic/claude-sonnet-4".to_string();
 

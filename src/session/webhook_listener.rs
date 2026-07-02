@@ -143,7 +143,15 @@ async fn run_listener(
 	timeout_secs: u64,
 ) -> anyhow::Result<()> {
 	loop {
-		let (stream, remote_addr) = listener.accept().await?;
+		// A single accept() error (e.g. transient EMFILE) must not permanently
+		// kill the listener while the session keeps running — log and retry.
+		let (stream, remote_addr) = match listener.accept().await {
+			Ok(pair) => pair,
+			Err(e) => {
+				log_debug!("Webhook '{}' accept error: {}", hook_name, e);
+				continue;
+			}
+		};
 		let io = TokioIo::new(stream);
 
 		let session = session_name.to_string();
@@ -224,6 +232,9 @@ async fn handle_request(
 	cmd.stdin(std::process::Stdio::piped())
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::piped())
+		// Kill the script if the wait future is dropped (timeout) — otherwise a
+		// timed-out webhook script keeps running indefinitely.
+		.kill_on_drop(true)
 		.env("HOOK_NAME", hook_name)
 		.env("HOOK_METHOD", &method)
 		.env("HOOK_PATH", &path)
@@ -246,15 +257,26 @@ async fn handle_request(
 		}
 	};
 
-	// Write body to stdin, then close it.
-	if let Some(mut stdin) = child.stdin.take() {
-		let _ = stdin.write_all(&body_bytes).await;
-		drop(stdin);
-	}
+	// Write body to stdin CONCURRENTLY with reading the child's output. Writing
+	// it all before wait_with_output deadlocks on bodies larger than the pipe
+	// buffer (~64KB): the child blocks writing stdout that nobody is draining
+	// yet, so it stops reading stdin, so our write blocks — outside the timeout,
+	// so the timeout can't break it. Draining output via wait_with_output while
+	// writing avoids the deadlock.
+	let stdin = child.stdin.take();
+	let write_fut = async move {
+		if let Some(mut stdin) = stdin {
+			let _ = stdin.write_all(&body_bytes).await;
+			let _ = stdin.shutdown().await;
+		}
+	};
 
 	// Wait for script with timeout.
-	let result =
-		tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
+	let result = tokio::time::timeout(Duration::from_secs(timeout_secs), async {
+		let (_, output) = tokio::join!(write_fut, child.wait_with_output());
+		output
+	})
+	.await;
 
 	match result {
 		Ok(Ok(output)) => {

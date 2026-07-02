@@ -466,20 +466,25 @@ fn extract_attr(attrs: &str, key: &str) -> Option<String> {
 /// This is the canonical extraction entry point: used by `/done`, `/exit`, Ctrl+D, and
 /// auto-compaction. Lessons are extracted and stored in the background; the user is never
 /// blocked on the LLM call. Errors are logged at debug level.
+///
+/// Returns the JoinHandle: paths that end the process right after (exit paths)
+/// MUST await it — a detached task is aborted at its next await point when the
+/// tokio runtime drops with `main`, silently losing the lessons. Long-lived
+/// paths (/done, auto-compaction) may drop the handle.
 pub fn extract_lessons_detached(
 	messages: Vec<crate::session::Message>,
 	config: Config,
 	role: String,
 	project: String,
 	session_name: String,
-) {
+) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		match run_extraction(&messages, &config, &role, &project, &session_name).await {
 			Ok(0) => crate::log_debug!("Learning detached: no lessons extracted"),
 			Ok(n) => crate::log_debug!("Learning detached: {} lessons extracted", n),
 			Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
 		}
-	});
+	})
 }
 
 /// Higher-level convenience wrapper that consolidates the common pre-call prep
@@ -497,13 +502,13 @@ pub fn spawn_lesson_extraction(
 	config: &Config,
 	role: String,
 	current_dir: Option<&std::path::Path>,
-) {
+) -> Option<tokio::task::JoinHandle<()>> {
 	if !config.supervisor.learning.enabled {
-		return;
+		return None;
 	}
 	if session.gate_failed {
 		crate::log_debug!("Distill skipped: trajectory failed verify-gate");
-		return;
+		return None;
 	}
 	let owned_cwd;
 	let resolved_dir: Option<&std::path::Path> = match current_dir {
@@ -518,13 +523,36 @@ pub fn spawn_lesson_extraction(
 		.and_then(|n| n.to_str())
 		.map(String::from)
 		.unwrap_or_else(|| "unknown".to_string());
-	extract_lessons_detached(
+	Some(extract_lessons_detached(
 		session.session.messages.clone(),
 		config.clone(),
 		role,
 		project,
 		session.session.info.name.clone(),
-	);
+	))
+}
+
+/// Exit-path variant: awaits the extraction (bounded) so the store completes
+/// before the process exits — a detached task would be aborted mid-flight by
+/// the runtime drop when `main` returns, silently losing the lessons.
+pub async fn extract_lessons_before_exit(
+	session: &crate::session::chat::session::ChatSession,
+	config: &Config,
+	role: String,
+	current_dir: Option<&std::path::Path>,
+) {
+	// Generous bound: two backend retrievals + one LLM call; exit proceeds
+	// regardless once it elapses.
+	const EXIT_EXTRACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+	if let Some(handle) = spawn_lesson_extraction(session, config, role, current_dir) {
+		crate::supervisor::notify("distilling lessons before exit …");
+		if tokio::time::timeout(EXIT_EXTRACTION_TIMEOUT, handle)
+			.await
+			.is_err()
+		{
+			crate::log_debug!("Exit lesson extraction timed out; exiting anyway");
+		}
+	}
 }
 
 /// LLM call for lesson extraction — no `ChatSession` reference, no cost tracking.

@@ -91,7 +91,14 @@ pub fn build_authorization_url(
 }
 
 pub fn generate_pkce_pair() -> PkcePair {
-	let bytes = [0u8; PKCE_CODE_VERIFIER_LENGTH];
+	// RFC 7636 requires a cryptographically random verifier — a constant one
+	// defeats PKCE entirely (anyone intercepting the code can complete the
+	// exchange). Fill from UUIDv4s: CSPRNG-backed, already a dependency.
+	let mut bytes = [0u8; PKCE_CODE_VERIFIER_LENGTH];
+	for chunk in bytes.chunks_mut(16) {
+		let id = Uuid::new_v4();
+		chunk.copy_from_slice(&id.as_bytes()[..chunk.len()]);
+	}
 	let code_verifier = URL_SAFE_NO_PAD.encode(bytes);
 	// sha2 0.10 API: use Digest trait's digest method
 	let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));

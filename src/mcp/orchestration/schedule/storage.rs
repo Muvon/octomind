@@ -95,7 +95,16 @@ impl ScheduleEntry {
 				let secs = self
 					.interval_secs
 					.expect("reschedule called on non-repeating entry");
-				self.trigger_at + Duration::seconds(secs)
+				let interval = Duration::seconds(secs);
+				let now = Local::now();
+				// Normally advance one interval from the last trigger. But if we
+				// fell behind (session busy past several intervals), don't emit a
+				// catch-up burst of identical messages — skip to one interval from
+				// now. Also guards against DateTime overflow.
+				self.trigger_at
+					.checked_add_signed(interval)
+					.filter(|next| *next > now)
+					.unwrap_or_else(|| now + interval)
 			}
 		};
 		Self {
@@ -307,6 +316,10 @@ pub(crate) fn parse_duration_secs(s: &str) -> Result<i64> {
 	let mut total: i64 = 0;
 	let mut num_buf = String::new();
 
+	// Cap at ~10 years. Bigger values are always mistakes and, unchecked, would
+	// overflow i64 / chrono's Duration and panic the scheduler on a model-supplied
+	// string like "999999999999h".
+	const MAX_DURATION_SECS: i64 = 10 * 365 * 24 * 3600;
 	const FORMAT_HINT: &str =
 		"units are single-letter h/m/s — e.g. \"35m\", \"2h\", \"90s\", \"1h30m\" (not \"min\"/\"sec\"/\"hr\")";
 
@@ -320,12 +333,18 @@ pub(crate) fn parse_duration_secs(s: &str) -> Result<i64> {
 				num_buf.parse()?
 			};
 			num_buf.clear();
-			match ch {
-				'h' => total += n * 3600,
-				'm' => total += n * 60,
-				's' => total += n,
+			let add = match ch {
+				'h' => n.checked_mul(3600),
+				'm' => n.checked_mul(60),
+				's' => Some(n),
 				_ => bail!("unknown unit '{}' in duration '{}': {}", ch, s, FORMAT_HINT),
-			}
+			};
+			total = add
+				.and_then(|a| total.checked_add(a))
+				.filter(|t| *t <= MAX_DURATION_SECS)
+				.ok_or_else(|| {
+					anyhow::anyhow!("duration '{}' too large (max 10 years)", s)
+				})?;
 		}
 	}
 

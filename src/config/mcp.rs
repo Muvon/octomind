@@ -323,21 +323,30 @@ impl RoleMcpConfig {
 				// Apply role-specific tool filtering if specified
 				if !self.allowed_tools.is_empty() {
 					// Convert patterns to actual tool names for this server.
-					let mut filtered_tools = self.expand_patterns_for_server(server_name);
-					// Union runtime capability extras when the role applies a
-					// restrictive filter (non-empty result). When the role
-					// already grants `<server>:*` for this server,
-					// `expand_patterns_for_server` returns an empty Vec to mean
-					// "all tools" — leave it untouched, since extras are
-					// already implicitly allowed.
-					if !filtered_tools.is_empty() {
-						for extra in crate::config::runtime_overlay::extras_for_server(server_name)
-						{
-							if !filtered_tools.iter().any(|t| t == &extra) {
-								filtered_tools.push(extra);
-							}
+					let filtered_tools = match self.expand_patterns_for_server(server_name) {
+						// `<server>:*` — all tools allowed. Empty list is read
+						// downstream as "expose all"; extras are implicitly allowed.
+						None => Vec::new(),
+						// No pattern matched this server: the restrictive role grants
+						// it nothing, so drop it entirely rather than exposing an
+						// empty (= all) list. This is the inverted-default fix.
+						Some(tools) if tools.is_empty() => {
+							crate::log_debug!(
+								"Role filter excludes server '{server_name}': no allowed_tools pattern matches it"
+							);
+							continue;
 						}
-					}
+						// Concrete allow-list — union runtime capability extras.
+						Some(mut tools) => {
+							for extra in crate::config::runtime_overlay::extras_for_server(server_name)
+							{
+								if !tools.iter().any(|t| t == &extra) {
+									tools.push(extra);
+								}
+							}
+							tools
+						}
+					};
 					// Update tools based on server type
 					server = match server {
 						McpServerConfig::Builtin {
@@ -404,9 +413,20 @@ impl RoleMcpConfig {
 		result
 	}
 
-	/// Expand allowed_tools patterns into actual tool names for a specific server
-	/// This converts patterns like "filesystem:*" or "filesystem:text_*" into concrete tool lists
-	fn expand_patterns_for_server(&self, server_name: &str) -> Vec<String> {
+	/// Expand allowed_tools patterns into actual tool names for a specific server.
+	/// Converts patterns like "filesystem:*" or "filesystem:text_*" into concrete
+	/// tool lists.
+	///
+	/// Returns:
+	/// - `None` — `<server>:*` matched: ALL tools of this server are allowed.
+	/// - `Some(vec![])` — NO pattern matched this server: it is allowed NOTHING.
+	/// - `Some(non-empty)` — a concrete allow-list (exact names / prefixes).
+	///
+	/// The None-vs-empty distinction is critical: an empty tool list is read
+	/// downstream as "expose all tools", so collapsing "nothing matched" to an
+	/// empty Vec would silently grant a restricted role full access to every
+	/// server it did not explicitly filter.
+	fn expand_patterns_for_server(&self, server_name: &str) -> Option<Vec<String>> {
 		let mut expanded_tools = Vec::new();
 
 		for pattern in &self.allowed_tools {
@@ -415,8 +435,8 @@ impl RoleMcpConfig {
 				// Check if server matches
 				if server_prefix == server_name {
 					if tool_pattern == "*" {
-						// All tools from this server - return empty to indicate "all tools"
-						return Vec::new();
+						// All tools from this server.
+						return None;
 					} else if tool_pattern.ends_with('*') {
 						// Prefix matching (e.g., "text_*") - we'll need to get actual tools and filter
 						// For now, store the pattern and let the existing filtering handle it
@@ -432,7 +452,7 @@ impl RoleMcpConfig {
 			}
 		}
 
-		expanded_tools
+		Some(expanded_tools)
 	}
 }
 

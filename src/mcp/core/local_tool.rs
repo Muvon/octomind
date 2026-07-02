@@ -189,6 +189,9 @@ pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 	cmd.stdin(std::process::Stdio::piped());
 	cmd.stdout(std::process::Stdio::piped());
 	cmd.stderr(std::process::Stdio::piped());
+	// Kill the child if this future is dropped (e.g. the timeout below elapses) —
+	// otherwise a runaway tool process is orphaned and keeps running.
+	cmd.kill_on_drop(true);
 
 	let mut child = cmd
 		.spawn()

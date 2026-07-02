@@ -510,11 +510,10 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 					server_id,
 					e
 				);
-				// Cache empty result to avoid repeated attempts
-				{
-					let mut cache = FUNCTION_CACHE.write().unwrap();
-					cache.insert(server_id.to_string(), Vec::new());
-				}
+				// Do NOT cache the empty result: the cache is never invalidated, so
+				// a single transient fetch failure would make the server appear to
+				// have zero tools forever. Returning empty without caching lets the
+				// next tools/list refresh retry once the server recovers.
 				Ok(Vec::new())
 			}
 		}

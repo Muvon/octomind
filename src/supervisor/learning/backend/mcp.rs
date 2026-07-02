@@ -65,6 +65,13 @@ impl McpBackend {
 	}
 
 	fn parse_retrieve_result(result: &crate::mcp::McpToolResult) -> Vec<Lesson> {
+		// An error result carries a diagnostic string, not memories. Without this
+		// guard the line-split fallback below turns "error: ..." / "no results"
+		// text into bogus injected lessons.
+		if result.is_error() {
+			crate::log_debug!("Learning MCP retrieve returned error result; no lessons parsed");
+			return Vec::new();
+		}
 		let content = result.extract_content();
 		if let Ok(lessons) = serde_json::from_str::<Vec<Lesson>>(&content) {
 			return lessons;

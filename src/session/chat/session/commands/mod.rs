@@ -315,9 +315,13 @@ pub async fn process_command(
 	_role: &str, // Original role - now unused, keeping for API compatibility
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<CommandResult> {
-	// Extract command and potential parameters
+	// Extract command and potential parameters. Empty/whitespace-only input is
+	// not a command — reachable from the ACP/WebSocket command paths, where
+	// indexing [0] would panic the connection task.
 	let input_parts: Vec<&str> = input.split_whitespace().collect();
-	let command = input_parts[0];
+	let Some(&command) = input_parts.first() else {
+		return Ok(CommandResult::TreatAsUserInput);
+	};
 	let params = if input_parts.len() > 1 {
 		&input_parts[1..]
 	} else {
@@ -341,9 +345,16 @@ pub async fn process_command(
 		CONTEXT_COMMAND => context::handle_context(session, params),
 		LOGLEVEL_COMMAND => loglevel::handle_loglevel(config, params),
 		DONE_COMMAND => {
-			// /done is handled directly in runner.rs main loop for session lifecycle management
-			// This case should not be reached as /done is intercepted before process_command
-			unreachable!("/done command should be handled in runner.rs main loop")
+			// The CLI main loop and the ACP prompt path intercept /done before
+			// dispatch, but the ACP `octomind/command` ext-method and WebSocket
+			// command messages route it straight here — so handle it for real
+			// instead of panicking the connection task. handle_done is
+			// transport-agnostic; the CLI still uses its own lifecycle path.
+			match done::handle_done(session, config, operation_cancelled).await? {
+				done::DoneOutcome::Compressed => Ok(CommandResult::Handled),
+				done::DoneOutcome::NothingToCompress => Ok(CommandResult::Handled),
+				done::DoneOutcome::Failed(e) => Err(anyhow::anyhow!("/done failed: {}", e)),
+			}
 		}
 		LIST_COMMAND => list::handle_list(session, config, params),
 		MODEL_COMMAND => model::handle_model(session, config, params),

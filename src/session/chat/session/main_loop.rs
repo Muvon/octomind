@@ -821,16 +821,19 @@ pub async fn run_interactive_session(
 				}
 				InputResult::Exit => {
 					// Ctrl+D pressed - graceful exit handled in input.rs
-					// Fire-and-forget learning extraction on exit (skip if /done already extracted)
+					// Learning extraction on exit (skip if /done already extracted).
+					// Awaited: the process exits right after this loop breaks, and a
+					// detached task would be aborted before storing anything.
 					if current_config.supervisor.learning.enabled
 						&& !chat_session.learning_extracted
 					{
-						crate::supervisor::learning::extract::spawn_lesson_extraction(
+						crate::supervisor::learning::extract::extract_lessons_before_exit(
 							&chat_session,
 							&current_config,
 							role.clone(),
 							Some(&current_dir),
-						);
+						)
+						.await;
 					}
 					// Kill any running async jobs
 					crate::mcp::agent::functions::kill_all_jobs();
@@ -844,14 +847,16 @@ pub async fn run_interactive_session(
 
 			// Check if the input is an exit command
 			if input == "/exit" || input == "/quit" {
-				// Fire-and-forget learning extraction on exit (skip if /done already extracted)
+				// Learning extraction on exit (skip if /done already extracted).
+				// Awaited: see the Ctrl+D path above — detaching here loses lessons.
 				if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
-					crate::supervisor::learning::extract::spawn_lesson_extraction(
+					crate::supervisor::learning::extract::extract_lessons_before_exit(
 						&chat_session,
 						&current_config,
 						role.clone(),
 						Some(&current_dir),
-					);
+					)
+					.await;
 				}
 				// Kill any running async jobs before exiting
 				crate::mcp::agent::functions::kill_all_jobs();

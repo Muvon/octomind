@@ -102,13 +102,16 @@ pub fn flush_idle_to_inbox() {
 	if !store.lock().unwrap().has_idle() {
 		return;
 	}
-	let mut mutated = false;
-	loop {
-		let entry = match store.lock().unwrap().pop_idle() {
-			Some(e) => e,
-			None => break,
-		};
-		mutated = true;
+	// Drain ALL idle entries first, then process: pop_idle pops unconditionally
+	// (unlike pop_due there is no trigger_at gate), so re-adding a repeating
+	// entry inside the drain loop would pop it right back — an infinite loop
+	// that hangs the session and grows the inbox unboundedly.
+	let mut drained = Vec::new();
+	while let Some(entry) = store.lock().unwrap().pop_idle() {
+		drained.push(entry);
+	}
+	let mutated = !drained.is_empty();
+	for entry in drained {
 		if entry.interval_secs.is_some() {
 			let next = entry.reschedule();
 			store.lock().unwrap().add(next);

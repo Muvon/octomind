@@ -52,10 +52,12 @@ pub async fn handle_done(
 	crate::log_debug!("/done: outcome={:?}", outcome);
 
 	// Fire-and-forget lesson extraction — do NOT block the prompt on the LLM round-trip.
-	// Same pattern as /exit and Ctrl+D in main_loop.rs.
+	// The process keeps living after /done, so dropping the handle is safe here
+	// (unlike the /exit and Ctrl+D paths, which must await it).
 	if config.supervisor.learning.enabled {
 		let role = crate::config::get_thread_role().unwrap_or_default();
-		crate::supervisor::learning::extract::spawn_lesson_extraction(session, config, role, None);
+		let _ =
+			crate::supervisor::learning::extract::spawn_lesson_extraction(session, config, role, None);
 		// Mark as extracted so /exit and Ctrl+D don't double-extract.
 		session.learning_extracted = true;
 		// Reset so next user message triggers fresh injection with new query.

@@ -318,13 +318,21 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// completion right after a code change without re-running any check. Catch
 		// it deterministically before paying for the LLM verify-gate. Shares the
 		// gate_iterations budget, so it can't loop unbounded.
-		let already_nudged = chat_session
-			.session
-			.messages
-			.iter()
-			.rev()
-			.find(|m| m.role == "user")
-			.is_some_and(|m| m.content.contains(PREGATE_MARKER));
+		// Check every message since the current turn's real user task, not just
+		// the newest user-role message: recite/steer/recall inject their own
+		// user-role notes after the pre-gate note, which would hide it and cause
+		// a duplicate nudge that burns the gate budget. Scoping to the current
+		// turn also avoids matching a pre-gate note left in earlier history.
+		let already_nudged = {
+			let msgs = &chat_session.session.messages;
+			let turn_start = msgs
+				.iter()
+				.rposition(|m| crate::session::is_real_user_task_message(m))
+				.unwrap_or(0);
+			msgs[turn_start..]
+				.iter()
+				.any(|m| m.content.contains(PREGATE_MARKER))
+		};
 		if config.supervisor.gate.require_check_after_mutation
 			&& chat_session.detectors.needs_verification()
 			&& !already_nudged

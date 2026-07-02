@@ -303,6 +303,11 @@ pub fn remove_server(name: &str) -> Option<McpServerConfig> {
 			crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
 			// Clear the global function cache so stale definitions don't linger
 			crate::mcp::server::clear_function_cache_for_server(name);
+			// Kill the OS process too — otherwise a removed stdin server keeps
+			// running until app exit. Err is normal for HTTP/never-started servers.
+			if let Err(e) = crate::mcp::process::cleanup_server_process(name) {
+				crate::log_debug!("No process to cleanup for removed server '{}': {}", name, e);
+			}
 		}
 		return removed;
 	}
@@ -325,6 +330,11 @@ pub fn remove_server(name: &str) -> Option<McpServerConfig> {
 		crate::mcp::tool_map::unregister_dynamic_server_tools(name, &tool_names);
 		// Clear the global function cache so stale definitions don't linger
 		crate::mcp::server::clear_function_cache_for_server(name);
+		// Kill the OS process too — otherwise a removed stdin server keeps
+		// running until app exit. Err is normal for HTTP/never-started servers.
+		if let Err(e) = crate::mcp::process::cleanup_server_process(name) {
+			crate::log_debug!("No process to cleanup for removed server '{}': {}", name, e);
+		}
 	}
 	removed
 }

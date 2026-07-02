@@ -152,8 +152,12 @@ lazy_static::lazy_static! {
 	static ref OAUTH_LOCKS: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
-/// Starts the complete OAuth authorization flow.
-pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthCallbackResult, anyhow::Error> {
+/// Starts the complete OAuth authorization flow. `server_name` keys the token
+/// store — it must be the MCP config server name that lookups use.
+pub async fn start_oauth_flow(
+	config: &OAuthConfig,
+	server_name: &str,
+) -> Result<OAuthCallbackResult, anyhow::Error> {
 	config
 		.validate()
 		.map_err(|e| anyhow::anyhow!("OAuth config validation failed: {}", e))?;
@@ -162,7 +166,7 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthCallbackResul
 	let state = generate_state();
 
 	// Start callback server using the configured callback_url
-	let result = start_callback_server(config, state, pkce.code_verifier).await?;
+	let result = start_callback_server(config, server_name, state, pkce.code_verifier).await?;
 
 	Ok(result)
 }
@@ -213,7 +217,7 @@ pub async fn get_access_token(
 	}
 
 	// No valid token - start standard web OAuth flow (PKCE + callback)
-	let result = start_oauth_flow(config).await?;
+	let result = start_oauth_flow(config, server_name).await?;
 
 	match result {
 		OAuthCallbackResult::Success { access_token, .. } => Ok(Some(access_token)),

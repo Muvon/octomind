@@ -252,12 +252,16 @@ async fn check_server_health_and_restart_if_dead(
 				server.name()
 			);
 
-			// Check if we should attempt restart (respect max attempts)
-			if restart_info.restart_count >= 3 {
+			// Check if we should give up. Use consecutive_failures (failed starts
+			// in a row, reset to 0 on any successful start) — NOT restart_count,
+			// which counts every lifetime start including deliberate restarts and
+			// role switches, and would wrongly mark a healthy-but-often-restarted
+			// server as Failed.
+			if restart_info.consecutive_failures >= 3 {
 				crate::log_debug!(
-					"Server '{}' has exceeded max restart attempts ({}), marking as failed",
+					"Server '{}' has exceeded max restart attempts ({} consecutive failures), marking as failed",
 					server.name(),
-					restart_info.restart_count
+					restart_info.consecutive_failures
 				);
 
 				// Mark as failed to prevent further restart attempts

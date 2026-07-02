@@ -265,18 +265,17 @@ pub(super) fn get_model_pricing(
 	model: &str,
 	_config: &crate::config::Config,
 ) -> Option<crate::providers::ModelPricing> {
-	// Parse model string (format: "provider:model")
-	let parts: Vec<&str> = model.split(':').collect();
-	if parts.len() != 2 {
+	// Parse model string (format: "provider:model"). Split on the FIRST colon
+	// only — model names legitimately contain colons (e.g. "ollama:llama3:8b"),
+	// and splitting on all of them wrongly rejected such ids, silently disabling
+	// compression for tagged local models.
+	let Some((provider_name, model_name)) = model.split_once(':') else {
 		log_debug!(
 			"Invalid model format: '{}' (expected 'provider:model')",
 			model
 		);
 		return None;
-	}
-
-	let provider_name = parts[0];
-	let model_name = parts[1];
+	};
 
 	// Get provider instance and query pricing
 	let provider = crate::providers::ProviderFactory::create_provider(provider_name).ok()?;

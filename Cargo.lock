@@ -2263,9 +2263,9 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "humantime"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
 
 [[package]]
 name = "humantime-serde"
@@ -3276,9 +3276,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.23.7"
+version = "0.23.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce700f4da7c47feaa3a58c4913a158026612c7ca4e0346a8006ce0fb3731ea13"
+checksum = "ca1d9d1946d1df8b56326fa1a0215f2df49d09946fab84413527e1c7c510efe4"
 dependencies = [
  "anyhow",
  "arc-swap",

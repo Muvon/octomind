@@ -338,7 +338,8 @@ impl RoleMcpConfig {
 						}
 						// Concrete allow-list — union runtime capability extras.
 						Some(mut tools) => {
-							for extra in crate::config::runtime_overlay::extras_for_server(server_name)
+							for extra in
+								crate::config::runtime_overlay::extras_for_server(server_name)
 							{
 								if !tools.iter().any(|t| t == &extra) {
 									tools.push(extra);

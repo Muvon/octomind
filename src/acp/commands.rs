@@ -59,7 +59,7 @@ pub struct CommandResponse {
 pub async fn execute_command(
 	request: &CommandRequest,
 	sessions: &Rc<RefCell<std::collections::HashMap<String, (ChatSession, std::path::PathBuf)>>>,
-	session_locks: &Rc<RefCell<std::collections::HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
+	session_locks: &super::SessionLocks,
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
@@ -173,7 +173,7 @@ pub async fn execute_command(
 pub async fn handle_ext_method(
 	request: ExtRequest,
 	sessions: &Rc<RefCell<std::collections::HashMap<String, (ChatSession, std::path::PathBuf)>>>,
-	session_locks: &Rc<RefCell<std::collections::HashMap<String, Rc<tokio::sync::Mutex<()>>>>>,
+	session_locks: &super::SessionLocks,
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
@@ -198,9 +198,15 @@ pub async fn handle_ext_method(
 	};
 
 	// Execute the command
-	let response =
-		execute_command(&command_request, sessions, session_locks, config, role, cancellations)
-			.await;
+	let response = execute_command(
+		&command_request,
+		sessions,
+		session_locks,
+		config,
+		role,
+		cancellations,
+	)
+	.await;
 
 	// Convert to ExtResponse
 	let raw = RawValue::from_string(serde_json::to_string(&response).unwrap()).unwrap();

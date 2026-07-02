@@ -21,8 +21,15 @@ mod agent;
 pub mod commands;
 
 use anyhow::Result;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::config::Config;
+
+/// Per-session async exclusion locks shared by `prompt()`, the inbox monitor,
+/// and ext commands (single-threaded LocalSet, hence `Rc`/`RefCell`).
+pub type SessionLocks = Rc<RefCell<HashMap<String, Rc<tokio::sync::Mutex<()>>>>>;
 
 /// Runtime options for the ACP server, mirroring the relevant subset of `octomind run` flags.
 ///

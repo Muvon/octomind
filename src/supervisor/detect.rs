@@ -303,7 +303,7 @@ pub enum DetectorSignal {
 
 impl DetectorSignal {
 	/// Severity rank — higher wins when merging signals from a parallel batch.
-	/// Mirrors the priority in `record_action`'s return cascade.
+	/// Mirrors the priority in `record_round_signals`'s return cascade.
 	fn priority(self) -> u8 {
 		match self {
 			Self::None => 0,
@@ -334,56 +334,18 @@ fn hash2(a: &str, b: &str) -> u64 {
 }
 
 impl Detectors {
-	/// Record one tool action and return the deterministic signal. Novelty is
-	/// computed internally: a mutation always advances state; a read/search only
-	/// advances when its (non-error) result is one we have not seen recently.
-	#[allow(clippy::too_many_arguments)]
-	pub fn record_action(
+	/// Fold ONE call's result into per-call state and return `(result_hash, novel)`
+	/// for the caller to aggregate into the round. Updates only genuinely per-result
+	/// state: the seen-set (novelty memory across time) and the mutation-verification
+	/// flag. It decides NO signal — every signal is a per-ROUND verdict, because a
+	/// parallel batch is one model decision (see [`Detectors::record_round_signals`]).
+	pub fn note_call(
 		&mut self,
 		tool: &str,
 		result: &str,
 		is_error: bool,
 		is_mutation: bool,
-		is_truncated: bool,
-		is_dedup: bool,
-		is_drift: bool,
-		loop_threshold: usize,
-		no_progress_window: usize,
-		truncation_threshold: usize,
-		dedup_threshold: usize,
-		distraction_threshold: usize,
-	) -> DetectorSignal {
-		// Truncation streak: count truncated results in a row, reset on a clean
-		// one (the model narrowed and got a full result). Checked first because it
-		// is the most specific, most actionable diagnosis — the model keeps hitting
-		// a capped output by tweaking args, which slips past Loop and NoProgress.
-		if is_truncated {
-			self.consecutive_truncations += 1;
-		} else {
-			self.consecutive_truncations = 0;
-		}
-
-		// Dedup streak: count deduplicated results in a row, reset on any
-		// non-dedup result. A dedup is the model re-issuing a call whose output it
-		// already has — the most precise loop there is, so it is diagnosed
-		// separately and fires on its own (low) threshold.
-		if is_dedup {
-			self.consecutive_dedups += 1;
-		} else {
-			self.consecutive_dedups = 0;
-		}
-
-		// Drift streak: count off-task results in a row, reset on any on-task one.
-		// Drift is scored upstream against the working-set centroid (async embedding,
-		// see `note_result`); here we only count the boolean. The softest signal —
-		// context quality, not an active loop — so it is ranked last and stays silent
-		// while the agent is exploring.
-		if is_drift {
-			self.consecutive_drift += 1;
-		} else {
-			self.consecutive_drift = 0;
-		}
-
+	) -> (u64, bool) {
 		// Mutation-verification tracking for the free pre-gate (premature `done`):
 		// a successful change sets the flag; a later successful non-mutation action
 		// (a check / build / test / read) clears it. Errors never clear it.
@@ -398,7 +360,8 @@ impl Detectors {
 		// output from differently-worded calls still reads as a repeat.
 		let rhash = hash2(tool, result);
 
-		// Novelty: fresh = result content not seen in the recent window.
+		// Novelty: fresh = result content not seen in the recent window. Recorded
+		// per result (memory is per-result), but the novelty SIGNAL is per round.
 		let fresh = self.seen.insert(rhash);
 		if fresh {
 			self.seen_order.push_back(rhash);
@@ -409,18 +372,54 @@ impl Detectors {
 			}
 		}
 		let novel = is_mutation || (!is_error && fresh);
+		(rhash, novel)
+	}
 
-		// Loop window: identical result repeated.
-		self.loop_window.push_back(rhash);
+	/// Decide the deterministic signal for ONE completed tool round. A parallel batch
+	/// is ONE model decision, so the whole round is observed as a single unit — N
+	/// identical / truncated / deduped / off-task calls in one shot count once, not N
+	/// (the model has not yet seen the notices it is being asked to act on). Inputs
+	/// are aggregated across the round by the caller: `call_hashes` are the per-call
+	/// result hashes (from [`Detectors::note_call`]); the booleans are OR-folded over
+	/// the round. Returns the highest-priority fired signal.
+	#[allow(clippy::too_many_arguments)]
+	pub fn record_round_signals(
+		&mut self,
+		call_hashes: &[u64],
+		round_novel: bool,
+		round_truncated: bool,
+		round_dedup: bool,
+		round_drift: bool,
+		loop_threshold: usize,
+		no_progress_window: usize,
+		truncation_threshold: usize,
+		dedup_threshold: usize,
+		distraction_threshold: usize,
+	) -> DetectorSignal {
+		// Round identity for Loop: the multiset of result hashes, order-independent
+		// (parallel call order carries no meaning). The same batch re-issued round
+		// after round hashes identically; 3 identical calls in ONE round are a single
+		// entry, so they can't trip the loop threshold on their own.
+		let round_hash = {
+			let mut hs = call_hashes.to_vec();
+			hs.sort_unstable();
+			let mut h = DefaultHasher::new();
+			hs.hash(&mut h);
+			h.finish()
+		};
+
+		// Loop window: identical ROUND repeated.
+		self.loop_window.push_back(round_hash);
 		while self.loop_window.len() > loop_threshold.max(1) {
 			self.loop_window.pop_front();
 		}
 		let looping = loop_threshold > 0
 			&& self.loop_window.len() >= loop_threshold
-			&& self.loop_window.iter().all(|&h| h == rhash);
+			&& self.loop_window.iter().all(|&h| h == round_hash);
 
-		// Novelty window: actions without any new information.
-		self.novelty_window.push_back(novel);
+		// Novelty window: ROUNDS without any new information (a round is novel if any
+		// of its calls produced something fresh).
+		self.novelty_window.push_back(round_novel);
 		while self.novelty_window.len() > no_progress_window.max(1) {
 			self.novelty_window.pop_front();
 		}
@@ -428,12 +427,41 @@ impl Detectors {
 			&& self.novelty_window.len() >= no_progress_window
 			&& self.novelty_window.iter().all(|&n| !n);
 
+		// Truncation streak: consecutive ROUNDS hitting a capped output. The most
+		// specific, most actionable diagnosis — the model keeps re-querying without
+		// narrowing, which slips past Loop and NoProgress.
+		if round_truncated {
+			self.consecutive_truncations += 1;
+		} else {
+			self.consecutive_truncations = 0;
+		}
+
+		// Dedup streak: consecutive ROUNDS re-issuing a call whose output the model
+		// already has — the most precise loop there is, so it fires on its own (low)
+		// threshold.
+		if round_dedup {
+			self.consecutive_dedups += 1;
+		} else {
+			self.consecutive_dedups = 0;
+		}
+
+		// Drift streak: consecutive off-task ROUNDS. Scored upstream against the
+		// working-set centroid (see `note_result`); the softest signal — context
+		// quality, not an active loop — so it is ranked last.
+		if round_drift {
+			self.consecutive_drift += 1;
+		} else {
+			self.consecutive_drift = 0;
+		}
+
+		let deduping = dedup_threshold > 0 && self.consecutive_dedups >= dedup_threshold;
 		let truncating =
 			truncation_threshold > 0 && self.consecutive_truncations >= truncation_threshold;
-		let deduping = dedup_threshold > 0 && self.consecutive_dedups >= dedup_threshold;
 		let distracting =
 			distraction_threshold > 0 && self.consecutive_drift >= distraction_threshold;
 
+		// Priority cascade — mirrors DetectorSignal::priority (Dedup > Truncation >
+		// Loop > NoProgress > Distraction).
 		if deduping {
 			DetectorSignal::Dedup
 		} else if truncating {
@@ -466,7 +494,8 @@ impl Detectors {
 	/// carried; a round of exactly one grows the singleton streak, any parallel round
 	/// (>= 2) resets it. Fires `Sequential` once the streak reaches `threshold`.
 	/// `threshold == 0` disables the signal entirely (the default). Round-level, so
-	/// it is recorded once per turn — separately from per-call [`record_action`].
+	/// it is recorded once per turn — separately from the per-round
+	/// [`Detectors::record_round_signals`].
 	pub fn record_round_arity(&mut self, call_count: usize, threshold: usize) -> DetectorSignal {
 		if call_count == 1 {
 			self.consecutive_singletons += 1;
@@ -730,6 +759,91 @@ pub fn call_set_hash(calls: &[crate::mcp::McpToolCall]) -> u64 {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	impl Detectors {
+		/// Test shim: run ONE call through the real two-phase path as a single-call
+		/// round (note_call → record_round_signals) and return the round signal. Lets
+		/// the existing per-call tests exercise the new per-round code unchanged.
+		#[allow(clippy::too_many_arguments)]
+		fn record_action(
+			&mut self,
+			tool: &str,
+			result: &str,
+			is_error: bool,
+			is_mutation: bool,
+			is_truncated: bool,
+			is_dedup: bool,
+			is_drift: bool,
+			loop_threshold: usize,
+			no_progress_window: usize,
+			truncation_threshold: usize,
+			dedup_threshold: usize,
+			distraction_threshold: usize,
+		) -> DetectorSignal {
+			let (rhash, novel) = self.note_call(tool, result, is_error, is_mutation);
+			self.record_round_signals(
+				&[rhash],
+				novel,
+				is_truncated,
+				is_dedup,
+				is_drift,
+				loop_threshold,
+				no_progress_window,
+				truncation_threshold,
+				dedup_threshold,
+				distraction_threshold,
+			)
+		}
+	}
+
+	#[test]
+	fn parallel_batch_counts_as_one_round() {
+		// A single parallel round of THREE truncated calls is ONE model decision:
+		// it must NOT trip truncation_threshold=3 on its own — the model has not yet
+		// seen the truncation notices it is being asked to act on.
+		let mut d = Detectors::default();
+		let hashes: Vec<u64> = ["chunk A", "chunk B", "chunk C"]
+			.iter()
+			.map(|r| hash2("view", r))
+			.collect();
+		let sig = d.record_round_signals(&hashes, true, true, false, false, 9, 9, 3, 0, 0);
+		assert_eq!(
+			sig,
+			DetectorSignal::None,
+			"one round counts once, not thrice"
+		);
+		assert_eq!(d.consecutive_truncations, 1);
+		// Two further truncated ROUNDS are what actually reach the streak.
+		d.record_round_signals(
+			&[hash2("view", "chunk D")],
+			true,
+			true,
+			false,
+			false,
+			9,
+			9,
+			3,
+			0,
+			0,
+		);
+		let sig = d.record_round_signals(
+			&[hash2("view", "chunk E")],
+			true,
+			true,
+			false,
+			false,
+			9,
+			9,
+			3,
+			0,
+			0,
+		);
+		assert_eq!(
+			sig,
+			DetectorSignal::Truncation,
+			"three truncated ROUNDS trip it"
+		);
+	}
 
 	#[test]
 	fn parses_state_only() {

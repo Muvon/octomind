@@ -118,7 +118,11 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 					// Don't silently mark the skill active if its instructions never
 					// made it into the session — at least surface the failure.
 					if let Err(e) = session.add_system_managed_user_message(&content) {
-						crate::log_error!("Failed to inject auto-activated skill '{}': {}", name_str, e);
+						crate::log_error!(
+							"Failed to inject auto-activated skill '{}': {}",
+							name_str,
+							e
+						);
 						continue;
 					}
 				}

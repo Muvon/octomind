@@ -320,6 +320,8 @@ impl Executor {
 				session_name,
 				model: s.model.clone(),
 				workdir: workdir.clone(),
+				skills: s.skills.clone(),
+				capabilities: s.capabilities.clone(),
 				timeout_secs: s.timeout,
 				event_prefix: if has_spinner {
 					None
@@ -497,6 +499,8 @@ impl Executor {
 						session_name: None,
 						model: r.seq.model.clone(),
 						workdir: r.workdir.clone(),
+						skills: r.seq.skills.clone(),
+						capabilities: r.seq.capabilities.clone(),
 						timeout_secs: r.seq.timeout,
 						event_prefix: None,
 						spinner: None,
@@ -1196,6 +1200,8 @@ mod tests {
 			model: None,
 			workdir: None,
 			count: None,
+			skills: None,
+			capabilities: None,
 		}
 	}
 

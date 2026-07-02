@@ -56,6 +56,8 @@ session = "fresh"               # "fresh" (default) | "continue"
 timeout = 0                     # seconds; 0 = no timeout (default)
 retries = 0                     # extra attempts on failure (default 0)
 # model = "anthropic:claude-sonnet-4-6"  # optional: override the role's model for this step
+# skills = ["skill-a", "skill-b"]        # optional: force-load these skills (OCTOMIND_SKILLS)
+# capabilities = ["cron", "docker"]      # optional: force-load these capabilities (OCTOMIND_CAPABILITIES)
 
 # ── Parallel block — sub-steps run concurrently ───────────────────────
 [[steps]]
@@ -170,6 +172,8 @@ Optional fields on any sequential step (including sub-steps inside parallel/loop
 | `timeout` | `0` | Seconds before the subprocess is killed; 0 = no timeout |
 | `retries` | `0` | Extra attempts on non-zero exit or empty output |
 | `model` | _(role default)_ | Override the model for this step; use `provider:model` format (e.g. `anthropic:claude-sonnet-4-6`). Forwarded as `--model` to the subprocess. Must not be empty when specified. |
+| `skills` | _(none)_ | List of skill names to force-load in the subprocess before its first turn. Forwarded as `OCTOMIND_SKILLS` (comma-joined) — same env-loading mechanism an interactive session uses. |
+| `capabilities` | _(none)_ | List of capability names to force-load in the subprocess before its first turn. Forwarded as `OCTOMIND_CAPABILITIES` (comma-joined) — same env-loading mechanism an interactive session uses. |
 
 ### Parallel (`parallel = true`)
 Sub-steps run concurrently via `tokio::join_all`. The next top-level step starts only after every sub-step completes. Sub-steps cannot reference each other; only outer scope.

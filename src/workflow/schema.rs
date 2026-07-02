@@ -70,6 +70,17 @@ pub struct Sequential {
 	/// each carries its own `model`/`prompt`.
 	#[serde(default)]
 	pub count: Option<u32>,
+	/// Skills to force-load in the subprocess before its first turn, forwarded
+	/// as `OCTOMIND_SKILLS` (comma-joined) — same mechanism an interactive
+	/// session uses when that env var is set. None = no env-loaded skills.
+	#[serde(default)]
+	pub skills: Option<Vec<String>>,
+	/// Capabilities to force-load in the subprocess before its first turn,
+	/// forwarded as `OCTOMIND_CAPABILITIES` (comma-joined) — same mechanism an
+	/// interactive session uses when that env var is set. None = no env-loaded
+	/// capabilities.
+	#[serde(default)]
+	pub capabilities: Option<Vec<String>>,
 }
 
 impl Sequential {

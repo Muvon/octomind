@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.35.0] - 2026-07-03
+
+### 📋 Release Summary
+
+This release enhances the supervisor's intelligence through improved agent profiling, tool output condensation, and a new evidence ledger for better verification (236df27a, 0b969d55, a749e87c). Workflow capabilities have been expanded to allow forced skill assignments and more detailed failure reporting (94004648, 2e83c179). Additionally, several updates improve overall system stability, concurrency, and session management (01d686df, fbc97d0e, fe8dad9d).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: implement cached agent profile distillation `236df27a`
+- **supervisor**: implement task-aware tool output condensation `0b969d55`
+- **workflow**: allow forcing skills and capabilities `94004648`
+- **supervisor**: implement evidence ledger for verification `a749e87c`
+- **workflow**: capture stderr for process failures `2e83c179`
+
+### 🔧 Improvements & Optimizations
+
+- **bench**: refresh baseline metrics for v0.35.0 `0d399de6`
+- **websocket**: simplify connection state management `77eac971`
+- **supervisor**: implement round-based signal aggregation `fc04a525`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: handle newlines in file backend storage `fe8dad9d`
+- **core**: resolve stability, leak, and concurrency issues `01d686df`
+- **session**: reset gate iterations on new task `fbc97d0e`
+
+### 🔄 Other Changes
+
+4 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.34.1] - 2026-06-27
 
 ### 📋 Release Summary

@@ -1,84 +1,84 @@
 {
  "meta": {
-  "date": "2026-06-26",
+  "date": "2026-07-03",
   "model": "glm-5.1",
   "judge": "octohub:minimax",
   "suite": "swe-bench-live lite pilot (7 instances)",
-  "k": "2 (instructlab 3)",
-  "ref": "HEAD 0.33.1 steering rework - new reference, advanced from 0.32.0 after verification",
-  "runs": 15,
+  "k": "2",
+  "ref": "0.35.0 condense (threshold 5000) + supervisor on octohub:qwen - advanced from 0.33.1 after verification",
+  "runs": 14,
   "executor": "docker",
   "octocode": "off (capability times out in ephemeral repos; same as prior baseline)",
-  "harness": "HEAD-only vs this frozen ref; bench fresh-repeat on provider error (exit!=0 / null-tokens / 5xx / 429); 0 infra in this run",
-  "note": "instructlab from a clean k=3 run; one 70M-token outlier (~1/5 runaway; max_consecutive_steers=0 so uncapped) excluded as non-representative. jupyter-1125 unsolved here and historically (hard instance). Prior 0.32.0-vs-09455b5f baseline is in git history."
+  "harness": "HEAD-only vs this frozen ref; bench fresh-repeat on provider error (exit!=0 / null-tokens / 5xx / 429); llama_deploy-372 r1 took 3 attempts (2 infra flakes), 0 infra in final tally",
+  "note": "First baseline with [supervisor.condense] enabled (5000 tok, octohub:qwen) and all supervisor models on octohub:qwen. jupyter-1125 solved 1/2 - first time ever. Median solved tokens up vs 0.33.1 (2.3M vs 1.2M) while $/solved down 34% - baseline spend was tail-heavy, this run has no runaways. Prior 0.33.1 baseline is in git history."
  },
  "arms": {
   "base": {
-   "n": 15,
+   "n": 14,
    "solved": 13,
-   "success_rate": 0.867,
-   "median_tokens": 1206852,
-   "median_tokens_solved": 1206852,
-   "cost_per_solved": 5.009,
-   "avg_judge": 83.1,
-   "median_sec": 254
+   "success_rate": 0.929,
+   "median_tokens": 2069619,
+   "median_tokens_solved": 2315839,
+   "cost_per_solved": 3.31,
+   "avg_judge": 87.3,
+   "median_sec": 420
   }
  },
  "per_task": {
   "instructlab__instructlab-2526": {
    "base": {
-    "solved": 3,
-    "n": 3,
-    "median_tokens": 1108937,
-    "avg_judge": 94
+    "solved": 2,
+    "n": 2,
+    "median_tokens": 1608108,
+    "avg_judge": 95
    }
   },
   "jupyterlab__jupyter-ai-1022": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 4072873,
-    "avg_judge": 92
+    "median_tokens": 7759658,
+    "avg_judge": 95
    }
   },
   "jupyterlab__jupyter-ai-1125": {
    "base": {
-    "solved": 0,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 0,
-    "avg_judge": 25
+    "median_tokens": 6012208,
+    "avg_judge": 68.5
    }
   },
   "run-llama__llama_deploy-330": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 2814962,
-    "avg_judge": 92.5
+    "median_tokens": 3447088,
+    "avg_judge": 92
    }
   },
   "run-llama__llama_deploy-356": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 772838,
-    "avg_judge": 88
+    "median_tokens": 653476,
+    "avg_judge": 88.5
    }
   },
   "run-llama__llama_deploy-372": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 7762776,
-    "avg_judge": 95
+    "median_tokens": 3954734,
+    "avg_judge": 91
    }
   },
   "run-llama__llama_deploy-384": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 616600,
-    "avg_judge": 90
+    "median_tokens": 475342,
+    "avg_judge": 81
    }
   }
  }

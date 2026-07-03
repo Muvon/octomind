@@ -11,11 +11,11 @@ use std::path::PathBuf;
 
 pub struct FileBackend;
 
-/// Reverse the `store` escaping of the quoted `title`/`content` YAML values:
-/// `\\"` -> `"` and `\\\\` -> `\\`. Single-pass so an escaped backslash is never
+/// Reverse the `store` escaping of the quoted YAML string values: `\"` -> `"`,
+/// `\\` -> `\`, `\n` -> newline. Single-pass so an escaped backslash is never
 /// re-interpreted as an escape (which is exactly the runaway-backslash bug:
 /// reinforce read-modify-writes a lesson every importance bump, so any
-/// store/parse asymmetry compounds one level per recall).
+/// store/parse asymmetry compounds one level per recall). Inverse of `escape`.
 fn unescape(s: &str) -> String {
 	let mut out = String::with_capacity(s.len());
 	let mut chars = s.chars();
@@ -24,6 +24,7 @@ fn unescape(s: &str) -> String {
 			match chars.next() {
 				Some('"') => out.push('"'),
 				Some('\\') => out.push('\\'),
+				Some('n') => out.push('\n'),
 				Some(other) => {
 					out.push('\\');
 					out.push(other);
@@ -35,6 +36,17 @@ fn unescape(s: &str) -> String {
 		}
 	}
 	out
+}
+
+/// Escape a value for a double-quoted YAML string: `\` -> `\\`, `"` -> `\"`,
+/// newline -> `\n`. Backslash MUST be escaped first, so the backslashes
+/// introduced for `"` and newline are not themselves doubled. The parser is
+/// line-based, so an unescaped newline would split one value across lines and
+/// corrupt the record. Exact inverse of `unescape`.
+fn escape(s: &str) -> String {
+	s.replace('\\', "\\\\")
+		.replace('"', "\\\"")
+		.replace('\n', "\\n")
 }
 
 impl FileBackend {
@@ -83,11 +95,11 @@ impl FileBackend {
 						.filter(|t| !t.is_empty())
 						.collect();
 				}
-				"source" => lesson.source = val.to_string(),
-				"role" => lesson.role = val.to_string(),
-				"project" => lesson.project = val.to_string(),
+				"source" => lesson.source = unescape(val),
+				"role" => lesson.role = unescape(val),
+				"project" => lesson.project = unescape(val),
 				"scope" => lesson.scope = val.to_string(),
-				"created" => lesson.created = val.to_string(),
+				"created" => lesson.created = unescape(val),
 				_ => {}
 			}
 		}
@@ -147,17 +159,17 @@ impl LearningBackend for FileBackend {
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
 			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\n---\n",
-			lesson.title.replace('\\', "\\\\").replace('"', "\\\""),
-			lesson.content.replace('\\', "\\\\").replace('"', "\\\""),
+			escape(&lesson.title),
+			escape(&lesson.content),
 			lesson.memory_type,
 			lesson.importance,
 			lesson.confidence,
 			tags_str,
-			lesson.source,
-			lesson.role,
-			lesson.project,
+			escape(&lesson.source),
+			escape(&lesson.role),
+			escape(&lesson.project),
 			lesson.scope,
-			lesson.created,
+			escape(&lesson.created),
 		);
 
 		std::fs::write(dir.join(filename), content)?;
@@ -520,6 +532,42 @@ fn reciprocal_rank_fusion(total: usize, rankings: &[&[usize]]) -> Vec<(f32, usiz
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn test_escaping_roundtrip() {
+		// `unescape` is the exact inverse of `escape` on adversarial inputs —
+		// backslashes, quotes, the trailing-quote case, newlines, and already-
+		// escaped-looking sequences. This is the store/parse cycle that
+		// `reinforce` runs on every importance bump, so any asymmetry compounds.
+		for s in [
+			"plain",
+			"has \"quotes\"",
+			"back\\slash",
+			"trailing quote\\\"",
+			"embedded\nnewline",
+			"C:\\tmp and a \" quote",
+			"\\\\already\\\\escaped",
+		] {
+			assert_eq!(unescape(&escape(s)), s, "round-trip failed for {s:?}");
+		}
+
+		// A full record whose quoted fields contain a quote and a newline
+		// survives the store-format -> parse cycle without corruption or the
+		// newline truncating the line-based parser.
+		let title = "say \"hi\"\nthen bye";
+		let content = "path C:\\tmp and a \" quote";
+		let project = "weird\\proj\"name";
+		let record = format!(
+			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: learning\nimportance: 0.5\nconfidence: high\ntags: []\nsource: \"s\"\nrole: \"r\"\nproject: \"{}\"\nscope: scoped\ncreated: \"c\"\n---\n",
+			escape(title),
+			escape(content),
+			escape(project),
+		);
+		let lesson = FileBackend::parse_lesson_file(&record).unwrap();
+		assert_eq!(lesson.title, title);
+		assert_eq!(lesson.content, content);
+		assert_eq!(lesson.project, project);
+	}
 
 	#[test]
 	fn test_parse_lesson_file_valid() {

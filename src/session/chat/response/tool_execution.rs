@@ -673,6 +673,15 @@ async fn execute_tools_with_context(
 		if let Some(plan) = crate::mcp::core::plan::render_plan_checklist() {
 			task.push_str(&plan);
 		}
+		// Agent-objective conditioning: the condenser distills a short profile
+		// from this on its first call and caches it for the session.
+		let system_prompt = chat_session
+			.session
+			.messages
+			.iter()
+			.find(|m| m.role == "system")
+			.map(|m| m.content.as_str())
+			.unwrap_or_default();
 		let cancel_rx = operation_cancelled
 			.clone()
 			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
@@ -681,6 +690,7 @@ async fn execute_tools_with_context(
 			&current_tool_calls,
 			config,
 			&task,
+			system_prompt,
 			cancel_rx,
 		)
 		.await;

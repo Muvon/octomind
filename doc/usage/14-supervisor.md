@@ -71,6 +71,8 @@ When a tool round returns oversized results (over `[supervisor.condense] tokens_
 
 It is lossless: the full original is spilled to a session file first, and every condensed result carries the path, so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the ceiling. Fail-open: any condenser error leaves results untouched. Main session only (layers/agents are not condensed).
 
+Relevance is conditioned on the running agent, not just the current request: the first condense call of a session includes the head of the agent's system prompt and distills a short **agent profile** ("what this agent is for, what output it must never lose"), which is cached for the session (re-distilled automatically if the system prompt changes) and prepended to every later call. Internal mechanic — no config.
+
 ## Memory: lessons + orientation
 
 The supervisor keeps two kinds of cross-session memory in one backend:

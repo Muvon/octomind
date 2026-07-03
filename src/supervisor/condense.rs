@@ -35,6 +35,8 @@ use crate::config::Config;
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::{estimate_tokens, truncate_to_tokens};
 use serde::Deserialize;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 
 /// Sentinel marking a condensed result (mirrors `TRUNCATION_NOTICE_TAG`):
 /// stable + distinctive so downstream code and humans can key on it.
@@ -49,6 +51,29 @@ const INPUT_CAP_TOKENS: usize = 32_000;
 const TASK_CAP_TOKENS: usize = 2_000;
 /// Cap on the rendered tool args line in the prompt.
 const ARGS_CAP_CHARS: usize = 300;
+/// Head slice of the agent's system prompt sent while no profile is cached —
+/// the identity/mission lives at the top; tool lists further down are noise.
+const SYSTEM_HEAD_CAP_TOKENS: usize = 4_000;
+/// Defensive cap on a distilled profile we cache (the prompt asks for ≤150 words).
+const PROFILE_CAP_TOKENS: usize = 400;
+
+/// Session-scoped agent-profile cache (process == session, same convention as
+/// `stats`): hash of the agent's system prompt → profile distilled by the
+/// condenser itself on the first call (ACON-style objective conditioning,
+/// piggybacked — no extra API call). A system-prompt change (skill/capability
+/// injection) changes the hash, so the next call re-sends the head slice and
+/// re-distills once. Deliberately NOT persisted across sessions: re-distilling
+/// costs one slightly larger first call, invalidation machinery would cost more.
+fn profile_cache() -> &'static Mutex<Option<(u64, String)>> {
+	static P: OnceLock<Mutex<Option<(u64, String)>>> = OnceLock::new();
+	P.get_or_init(|| Mutex::new(None))
+}
+
+fn hash_str(s: &str) -> u64 {
+	let mut h = DefaultHasher::new();
+	s.hash(&mut h);
+	h.finish()
+}
 
 const SYSTEM_PROMPT: &str = r#"You are a context-pruning filter that sits between an AI coding agent and its tool outputs. The agent issued tool calls while working on a task; some outputs are large. You decide, per output, what the agent needs to see to continue the task. Whatever you drop, the agent will not see inline (a full copy is saved to a file it can read on demand).
 
@@ -78,11 +103,13 @@ Output: optionally one brief rationale line per result, then EXACTLY ONE fenced 
 ]}
 ```
 
-Every input result id MUST appear exactly once in the json."#;
+Every input result id MUST appear exactly once in the json. When the input asks for an "agent_profile", include it as an additional top-level string field in the same json."#;
 
 #[derive(Deserialize)]
 struct CondenseResponse {
 	results: Vec<Entry>,
+	#[serde(default)]
+	agent_profile: String,
 }
 
 #[derive(Deserialize)]
@@ -103,6 +130,7 @@ pub async fn condense_round(
 	calls: &[McpToolCall],
 	config: &Config,
 	task: &str,
+	system_prompt: &str,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) {
 	let cfg = &config.supervisor.condense;
@@ -126,7 +154,30 @@ pub async fn condense_round(
 	} else {
 		truncate_to_tokens(task.trim(), TASK_CAP_TOKENS)
 	};
-	let mut user = format!("TASK CONTEXT (what the agent is working on):\n{task_block}\n\nTOOL RESULTS TO PRUNE ({} oversized of {} in this round):\n", oversized.len(), results.len());
+
+	// Agent-objective conditioning: cached distilled profile when we have one
+	// for THIS system prompt, otherwise the raw head slice + a request to
+	// distill the profile as part of the same call.
+	let sys_hash = hash_str(system_prompt);
+	let cached_profile: Option<String> = profile_cache().lock().ok().and_then(|p| {
+		p.as_ref()
+			.filter(|(h, _)| *h == sys_hash)
+			.map(|(_, s)| s.clone())
+	});
+	let mut user = String::new();
+	let mut want_profile = false;
+	if let Some(profile) = &cached_profile {
+		user.push_str(&format!(
+			"AGENT PROFILE (what the agent is for — condition relevance on this):\n{profile}\n\n"
+		));
+	} else if !system_prompt.trim().is_empty() {
+		want_profile = true;
+		user.push_str(&format!(
+			"AGENT SYSTEM PROMPT (head — the agent's role and objectives; condition relevance on this):\n{}\n\n",
+			truncate_to_tokens(system_prompt.trim(), SYSTEM_HEAD_CAP_TOKENS)
+		));
+	}
+	user.push_str(&format!("TASK CONTEXT (what the agent is working on):\n{task_block}\n\nTOOL RESULTS TO PRUNE ({} oversized of {} in this round):\n", oversized.len(), results.len()));
 	for &idx in &oversized {
 		let r = &results[idx];
 		let content = r.extract_content();
@@ -140,7 +191,10 @@ pub async fn condense_round(
 			.unwrap_or_default();
 		let status = if r.is_error() { "error" } else { "ok" };
 		let capped_note = if total_lines > shown_lines {
-			format!(", {} more lines capped from prompt", total_lines - shown_lines)
+			format!(
+				", {} more lines capped from prompt",
+				total_lines - shown_lines
+			)
 		} else {
 			String::new()
 		};
@@ -152,8 +206,27 @@ pub async fn condense_round(
 		));
 	}
 
+	if want_profile {
+		user.push_str("\nAdditionally return a top-level \"agent_profile\" string field: at most 150 words distilling what this agent is for and which kinds of tool output it must never lose (from the AGENT SYSTEM PROMPT above). It will be cached and reused to condition future pruning in this session.\n");
+	}
+
+	// Name the culprits: the notice fires once per round, so without sizes a
+	// small result sitting next to it looks like the trigger.
+	let culprits = oversized
+		.iter()
+		.map(|&i| {
+			format!(
+				"{} {}",
+				results[i].tool_name,
+				crate::session::chat::format_number(
+					estimate_tokens(&results[i].extract_content()) as u64
+				)
+			)
+		})
+		.collect::<Vec<_>>()
+		.join(" · ");
 	crate::supervisor::notify(&format!(
-		"condensing {} oversized tool result(s) …",
+		"condensing {} oversized tool result(s): {culprits}",
 		oversized.len()
 	));
 
@@ -179,6 +252,16 @@ pub async fn condense_round(
 		crate::log_debug!("Condense: unparseable response, leaving results as-is");
 		return;
 	};
+
+	// Cache the distilled profile for the rest of the session (fail-open: no
+	// field returned → we simply re-send the head slice next round).
+	if want_profile && !parsed.agent_profile.trim().is_empty() {
+		let profile = truncate_to_tokens(parsed.agent_profile.trim(), PROFILE_CAP_TOKENS);
+		if let Ok(mut p) = profile_cache().lock() {
+			*p = Some((sys_hash, profile));
+		}
+		crate::log_debug!("Condense: agent profile distilled and cached");
+	}
 
 	let mut summary = Vec::new();
 	let mut n_condensed = 0u64;
@@ -413,7 +496,8 @@ mod tests {
 
 	#[test]
 	fn response_parses_fenced_and_bare_json() {
-		let fenced = "rationale line\n```json\n{\"results\":[{\"id\":\"t1\",\"verdict\":\"keep\"}]}\n```";
+		let fenced =
+			"rationale line\n```json\n{\"results\":[{\"id\":\"t1\",\"verdict\":\"keep\"}]}\n```";
 		let p = parse_response(fenced).unwrap();
 		assert_eq!(p.results[0].id, "t1");
 		assert_eq!(p.results[0].verdict, "keep");
@@ -425,10 +509,25 @@ mod tests {
 	}
 
 	#[test]
+	fn response_parses_optional_agent_profile() {
+		let with = "{\"agent_profile\":\"code reviewer — diffs are the payload\",\"results\":[{\"id\":\"t1\",\"verdict\":\"keep\"}]}";
+		let p = parse_response(with).unwrap();
+		assert_eq!(p.agent_profile, "code reviewer — diffs are the payload");
+		// Absent field defaults to empty — never a parse failure.
+		let without = "{\"results\":[{\"id\":\"t1\",\"verdict\":\"keep\"}]}";
+		assert_eq!(parse_response(without).unwrap().agent_profile, "");
+	}
+
+	#[test]
 	fn number_lines_aligns_width() {
 		let n = number_lines("a\nb");
 		assert_eq!(n, "1| a\n2| b");
-		let ten = number_lines(&(0..10).map(|i| i.to_string()).collect::<Vec<_>>().join("\n"));
+		let ten = number_lines(
+			&(0..10)
+				.map(|i| i.to_string())
+				.collect::<Vec<_>>()
+				.join("\n"),
+		);
 		assert!(ten.starts_with(" 1| 0"));
 		assert!(ten.ends_with("10| 9"));
 	}

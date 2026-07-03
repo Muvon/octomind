@@ -33,6 +33,8 @@ pub enum CallKind {
 	Gate,
 	/// End-of-trajectory lesson/orientation extraction.
 	Distill,
+	/// Tool-output condensation (task-aware narrowing).
+	Condense,
 }
 
 #[derive(Default, Clone)]
@@ -41,6 +43,9 @@ struct Stats {
 	recall_calls: u64,
 	gate_calls: u64,
 	distill_calls: u64,
+	condense_calls: u64,
+	condensed_results: u64,
+	condense_saved_tokens: u64,
 	input_tokens: u64,
 	output_tokens: u64,
 	cost: f64,
@@ -82,6 +87,7 @@ pub fn record_call(kind: CallKind, input_tokens: u64, output_tokens: u64, cost: 
 			CallKind::Recall => s.recall_calls += 1,
 			CallKind::Gate => s.gate_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
+			CallKind::Condense => s.condense_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -138,6 +144,14 @@ pub fn orientation(n: u64) {
 pub fn recall() {
 	with(|s| s.recalls_injected += 1);
 }
+/// `results` tool outputs were condensed this round, saving `saved_tokens`
+/// estimated tokens of agent-model context.
+pub fn condensed(results: u64, saved_tokens: u64) {
+	with(|s| {
+		s.condensed_results += results;
+		s.condense_saved_tokens += saved_tokens;
+	});
+}
 
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
@@ -172,6 +186,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"recall_calls": s.recall_calls,
 		"gate_calls": s.gate_calls,
 		"distill_calls": s.distill_calls,
+		"condense_calls": s.condense_calls,
+		"condensed_results": s.condensed_results,
+		"condense_saved_tokens": s.condense_saved_tokens,
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
 		"cost": s.cost,

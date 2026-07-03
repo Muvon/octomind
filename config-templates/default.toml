@@ -751,6 +751,23 @@ require_check_after_mutation = true
 [supervisor.recite]
 enabled = true
 
+# Condense: task-aware narrowing of oversized tool outputs. When a tool result
+# exceeds tokens_threshold, ONE cheap-model call per round decides what the
+# agent needs to see: all relevant -> kept in full; partly relevant -> only the
+# needed lines (selected by LINE RANGES over a numbered copy and reconstructed
+# verbatim -- never rewritten); irrelevant -> replaced with a short note. The
+# full original is spilled to a session file first, so nothing is lost -- the
+# agent can read any cut span on demand. Runs BEFORE the blunt
+# mcp_response_tokens_threshold prefix-cut, which still applies as the ceiling.
+[supervisor.condense]
+enabled = true
+# Per-result trigger (estimated tokens). 0 = off. Keep well below
+# mcp_response_tokens_threshold: that cap is the backstop, this is the smart
+# path that fires earlier.
+tokens_threshold = 5000
+# Model that does the narrowing (cheap + fast recommended).
+model = "anthropic:claude-haiku-4-5"
+
 # MCP backend configuration (uncomment to use instead of file backend):
 # Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.
 # Empty string = omit that field. Missing = omit.

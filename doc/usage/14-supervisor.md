@@ -61,6 +61,16 @@ When the agent self-reports `done` and `[supervisor.gate] enabled = true`, an in
 
 When a detector fires (loop, or no-progress that the self-report doesn't excuse), the supervisor queues an advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report `blocked`"* — injected at the next request's safe point. It nudges; it never forces.
 
+## Condense
+
+When a tool round returns oversized results (over `[supervisor.condense] tokens_threshold`), one cheap-model call decides per result what the agent actually needs to see for the current task:
+
+- **All relevant** → kept in full, byte-for-byte.
+- **Partly relevant** → only the needed lines. The condenser sees a line-numbered copy and answers with **line ranges**; the kept lines are reconstructed verbatim from the original — the model never retypes content, so nothing can be mis-copied.
+- **Irrelevant** → replaced with a short note saying what the output was and why it doesn't help.
+
+It is lossless: the full original is spilled to a session file first, and every condensed result carries the path, so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the ceiling. Fail-open: any condenser error leaves results untouched. Main session only (layers/agents are not condensed).
+
 ## Memory: lessons + orientation
 
 The supervisor keeps two kinds of cross-session memory in one backend:
@@ -99,6 +109,11 @@ self_report = true
 [supervisor.gate]          # verify on self-reported `done`
 enabled = true
 max_iterations = 2
+
+[supervisor.condense]      # task-aware narrowing of oversized tool outputs
+enabled = true
+tokens_threshold = 2000
+model = "anthropic:claude-haiku-4-5"
 ```
 
 Every field is documented in [`[supervisor]` — Config Reference](../reference/03-config-reference.md#supervisor).
@@ -116,6 +131,7 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 | Self-report | Every turn | Free | `[supervisor.detectors] self_report` |
 | Detectors (loop / no-progress) | Every turn | Free | `[supervisor.detectors]` |
 | Verify-gate | On self-reported `done` | Model (rare) | `[supervisor.gate]` |
+| Condense | On oversized tool results | Model (cheap) | `[supervisor.condense]` |
 | Steer | On loop / no-progress | Free | `[supervisor.detectors]` |
 | Distill (learn) | End of a verified run | Model (cheap) | `[supervisor.learning]`, `[supervisor.orientation]` |
 | Recall | Session start + per turn | Embedding | `[supervisor.learning]`, `[supervisor.orientation]` |

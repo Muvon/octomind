@@ -591,6 +591,9 @@ pub fn display_info(output: &CommandOutput) {
 			let recall_calls = get_u64("recall_calls");
 			let gate_calls = get_u64("gate_calls");
 			let distill_calls = get_u64("distill_calls");
+			let condense_calls = get_u64("condense_calls");
+			let condensed_results = get_u64("condensed_results");
+			let condense_saved = get_u64("condense_saved_tokens");
 			let sup_in = get_u64("input_tokens");
 			let sup_out = get_u64("output_tokens");
 			let sup_cost = get_f64("cost");
@@ -647,6 +650,13 @@ pub fn display_info(output: &CommandOutput) {
 			if orientation > 0 {
 				activity.push(format!("{} orientation", orientation));
 			}
+			if condensed_results > 0 {
+				activity.push(format!(
+					"{} condensed (saved {} tok)",
+					condensed_results,
+					format_number(condense_saved)
+				));
+			}
 			if !activity.is_empty() {
 				block_row("activity", &activity.join(&format!(" {} ", dot)), kw_sv);
 			}
@@ -671,6 +681,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if gate_calls > 0 {
 					parts.push(format!("{} gate", gate_calls));
+				}
+				if condense_calls > 0 {
+					parts.push(format!("{} condense", condense_calls));
 				}
 				let breakdown = if parts.is_empty() {
 					format_number(calls).bright_white().to_string()

@@ -21,6 +21,8 @@
 //! - detectors — deterministic, free, every turn: loop / no-progress / stop-intent.
 //!   Fused with the agent's own self-report token before any model is woken.
 //! - gate — verify-gate on self-reported `done`; labels the run for learning.
+//! - condense — task-aware narrowing of oversized tool outputs (line-range
+//!   selection, never retyping) so the agent model sees only what the task needs.
 //!
 //! Invariants:
 //! 1. Free signals (counters + self-report) gate the model; model calls are rare.
@@ -32,6 +34,7 @@
 //! section or any missing key is a hard parse error — we own the schema, so we
 //! fail loudly instead of degrading to silent defaults.
 
+pub mod condense;
 pub mod detect;
 pub mod gate;
 pub mod learning;
@@ -88,6 +91,8 @@ pub struct SupervisorConfig {
 	pub gate: GateConfig,
 	/// Goal recitation: re-anchor the live goal at the context tail.
 	pub recite: ReciteConfig,
+	/// Task-aware condensation of oversized tool outputs.
+	pub condense: CondenseConfig,
 	/// Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that
 	/// emitted (or backed-off-but-still-dominant) a steer without the model breaking out.
 	/// `0` = unlimited (off). The terminal hard ceiling under the adaptive steer backoff,
@@ -106,6 +111,22 @@ pub struct ReciteConfig {
 	/// populated (i.e. the session has compacted at least once), so short
 	/// sessions pay nothing.
 	pub enabled: bool,
+}
+
+/// Condense: task-aware narrowing of oversized tool outputs. When a round
+/// returns results over `tokens_threshold`, one cheap-model call selects per
+/// result what the current task needs — by LINE RANGES over a numbered copy,
+/// reconstructed verbatim (never retyped). Full originals are spilled to
+/// session files first, so it is lossless; the hard
+/// `mcp_response_tokens_threshold` cap still applies after as the ceiling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CondenseConfig {
+	pub enabled: bool,
+	/// Per-result trigger (estimated tokens); results above this are condensed.
+	/// `0` disables. Keep well below `mcp_response_tokens_threshold`.
+	pub tokens_threshold: usize,
+	/// Model that does the narrowing (cheap + fast recommended).
+	pub model: String,
 }
 
 /// Orientation memory: durable, expensive-to-re-derive understanding of the

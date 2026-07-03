@@ -655,6 +655,37 @@ async fn execute_tools_with_context(
 	)
 	.await;
 
+	// Supervisor condense: task-aware narrowing of oversized results — runs
+	// AFTER hooks (they must see full output) and BEFORE the hard truncation
+	// cap below, which still applies to whatever survives as the ceiling.
+	// Main-session only: layers have no anchor/user-request to condition on.
+	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
+		let mut task = String::new();
+		let intent = chat_session.session.info.anchor.intent.trim();
+		if !intent.is_empty() {
+			task.push_str(&format!("Goal: {intent}\n"));
+		}
+		if let Some(req) =
+			crate::session::latest_real_user_task_content(&chat_session.session.messages)
+		{
+			task.push_str(&format!("Current request: {req}\n"));
+		}
+		if let Some(plan) = crate::mcp::core::plan::render_plan_checklist() {
+			task.push_str(&plan);
+		}
+		let cancel_rx = operation_cancelled
+			.clone()
+			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+		crate::supervisor::condense::condense_round(
+			&mut tool_results,
+			&current_tool_calls,
+			config,
+			&task,
+			cancel_rx,
+		)
+		.await;
+	}
+
 	// Handle large outputs with batched confirmation
 	let processed_results = handle_large_tool_results(tool_results, config, mode).await?;
 	Ok((processed_results, total_tool_time_ms))

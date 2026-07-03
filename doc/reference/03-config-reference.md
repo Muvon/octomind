@@ -418,6 +418,16 @@ Verify-gate on self-reported completion.
 | `enabled` | bool | `true` | Enable the verify-gate |
 | `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification) |
 
+### `[supervisor.condense]`
+
+Task-aware narrowing of oversized tool outputs. One cheap-model call per round selects, by line ranges over a numbered copy, what the current task needs; kept lines are reconstructed verbatim (never rewritten). Full originals are spilled to session files first (lossless — the condensed result carries the path). The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard ceiling.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable condensation |
+| `tokens_threshold` | usize | `2000` | Per-result trigger (estimated tokens); `0` = off. Keep well below `mcp_response_tokens_threshold` |
+| `model` | string | `anthropic:claude-haiku-4-5` | Model that does the narrowing (cheap + fast recommended) |
+
 ```toml
 [supervisor]
 enabled = true
@@ -443,6 +453,11 @@ self_report = true
 [supervisor.gate]
 enabled = true
 max_iterations = 2
+
+[supervisor.condense]
+enabled = true
+tokens_threshold = 2000
+model = "anthropic:claude-haiku-4-5"
 ```
 
 ## `[registry]`

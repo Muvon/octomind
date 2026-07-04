@@ -130,6 +130,21 @@ pub struct ChatCompletionProviderParams<'a> {
 	pub schema: Option<serde_json::Value>,
 }
 
+/// A successful completion that carries nothing actionable — no text, no tool
+/// calls, and no structured output. This is a provider fault, not a real
+/// end-of-turn, so the caller surfaces it as an error. Extracted + unit-tested
+/// so the classification can't silently drift into treating a tool-only or
+/// structured-output response as empty (which would error out real turns).
+fn is_empty_completion(
+	content: &str,
+	tool_calls: Option<&Vec<crate::mcp::McpToolCall>>,
+	structured_output: Option<&serde_json::Value>,
+) -> bool {
+	content.trim().is_empty()
+		&& tool_calls.is_none_or(|c| c.is_empty())
+		&& structured_output.is_none()
+}
+
 /// High-level function to send a chat completion with input validation and context management.
 /// Checks input size and returns an error when limits are exceeded.
 pub async fn chat_completion_with_validation(
@@ -213,18 +228,35 @@ pub async fn chat_completion_with_validation(
 		chat_params
 	};
 
-	// Convert to octolib params and call provider
+	// Convert to octolib params and call provider.
 	let octolib_params = chat_params
 		.to_octolib_params()
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
 
 	let octolib_response = provider.chat_completion(octolib_params).await?;
+	let response = crate::providers::convert_response_from_octolib(octolib_response);
 
-	// Convert response back to Octomind format
-	Ok(crate::providers::convert_response_from_octolib(
-		octolib_response,
-	))
+	// An empty completion — a successful HTTP response with no content, no tool
+	// calls, and no structured output — is a provider fault (e.g. some providers
+	// return finish_reason=stop with an empty body). Surface it as an error: if we
+	// returned it, the response loop would read it as a normal end-of-turn, render
+	// nothing, and silently strand the user at the prompt. Transport retries
+	// already live in the provider's own max_retries — we do not add another layer.
+	if is_empty_completion(
+		&response.content,
+		response.tool_calls.as_ref(),
+		response.structured_output.as_ref(),
+	) {
+		return Err(anyhow::anyhow!(
+			"Provider '{}' returned an empty response (finish_reason={:?}, no content or tool calls) for model '{}'",
+			provider.name(),
+			response.finish_reason,
+			actual_model
+		));
+	}
+
+	Ok(response)
 }
 
 /// High-level function to send a chat completion using the provider abstraction.
@@ -301,6 +333,50 @@ pub fn load_structured_output_schema(path: &str) -> Result<serde_json::Value> {
 		));
 	}
 	Ok(schema)
+}
+
+#[cfg(test)]
+mod empty_completion_tests {
+	use super::is_empty_completion;
+	use crate::mcp::McpToolCall;
+	use serde_json::json;
+
+	fn call() -> McpToolCall {
+		McpToolCall {
+			tool_name: "view".into(),
+			parameters: json!({}),
+			tool_id: "t1".into(),
+		}
+	}
+
+	#[test]
+	fn blank_content_no_tools_no_schema_is_empty() {
+		assert!(is_empty_completion("", None, None));
+		assert!(is_empty_completion("   \n\t ", None, None));
+	}
+
+	#[test]
+	fn empty_tool_vec_is_still_empty() {
+		// Some providers hand back `Some([])` rather than `None`.
+		assert!(is_empty_completion("", Some(&vec![]), None));
+	}
+
+	#[test]
+	fn text_response_is_not_empty() {
+		assert!(!is_empty_completion("hello", None, None));
+	}
+
+	#[test]
+	fn tool_only_response_is_not_empty() {
+		// Tool calls with no prose is a valid turn — must NOT be flagged as empty.
+		assert!(!is_empty_completion("", Some(&vec![call()]), None));
+	}
+
+	#[test]
+	fn structured_output_is_not_empty() {
+		// Structured-output replies carry empty content by design — not empty.
+		assert!(!is_empty_completion("", None, Some(&json!({"ok": true}))));
+	}
 }
 
 #[cfg(test)]

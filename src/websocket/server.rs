@@ -772,8 +772,14 @@ async fn handle_command_message(
 				return Ok(());
 			}
 		};
-		// Send compression status.
-		let status = ServerMessage::status(status_msg, Some(session_id.clone()));
+		// Send compression status as a command result (data-carrying) so clients finalize
+		// the turn — a data-less status is indistinguishable from the connection handshake
+		// and would leave an interactive session hung on "working".
+		let status = ServerMessage::command_status(
+			status_msg.clone(),
+			Some(session_id.clone()),
+			serde_json::json!({ "command_type": "done", "message": status_msg }),
+		);
 		send_message(ws_sender, &status).await?;
 		chat_session.save()?;
 		sessions
@@ -806,9 +812,12 @@ async fn handle_command_message(
 	match command_result {
 		CommandResult::Handled => {
 			log_debug!("Command '{}' executed successfully", slash_command);
-			let status = ServerMessage::status(
+			// Data-carrying status (see command_status) so the client finalizes the turn
+			// instead of misreading a data-less status as the handshake ack.
+			let status = ServerMessage::command_status(
 				format!("Command '{}' executed successfully", slash_command),
 				Some(session_id.clone()),
+				serde_json::json!({ "command_type": command_name }),
 			);
 			send_message(ws_sender, &status).await?;
 		}

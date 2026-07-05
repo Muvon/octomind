@@ -248,6 +248,19 @@ impl ServerMessage {
 		})
 	}
 
+	/// A command-completion status. Unlike `status()` (which is also used for the
+	/// connection handshake), this carries `data` — clients distinguish a finished
+	/// command from a data-less handshake ack purely by the presence of `data`. Without
+	/// it, an interactive `/done` (and any plain `Handled` command) is misread as the
+	/// handshake and the client hangs on "working" because the turn never finalizes.
+	pub fn command_status(message: String, session_id: Option<String>, data: Value) -> Self {
+		ServerMessage::Status(StatusPayload {
+			message,
+			session_id,
+			data: Some(data),
+		})
+	}
+
 	pub fn skill(
 		action: impl Into<String>,
 		name: impl Into<String>,

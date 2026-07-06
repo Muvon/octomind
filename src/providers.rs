@@ -73,6 +73,11 @@ pub struct ChatCompletionParams<'a> {
 	pub schema: Option<serde_json::Value>,
 	/// Optional reasoning effort override (falls back to `config.reasoning_effort`)
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
+	/// Attach MCP tools to the request (default true). Text-only internal
+	/// calls (compression, learning extraction) disable this: the model never
+	/// calls tools there, the definitions waste input tokens, and their
+	/// presence blocks schema enforcement on proxy providers.
+	pub tools: bool,
 }
 
 impl<'a> ChatCompletionParams<'a> {
@@ -99,6 +104,7 @@ impl<'a> ChatCompletionParams<'a> {
 			cancellation_token: None,
 			schema: None,
 			reasoning_effort: None,
+			tools: true,
 		}
 	}
 
@@ -123,6 +129,12 @@ impl<'a> ChatCompletionParams<'a> {
 	/// Override reasoning effort for this call (otherwise inherits from config).
 	pub fn with_reasoning_effort(mut self, effort: crate::config::ReasoningEffortConfig) -> Self {
 		self.reasoning_effort = Some(effort);
+		self
+	}
+
+	/// Don't attach MCP tools — for text-only calls (compression, learning).
+	pub fn without_tools(mut self) -> Self {
+		self.tools = false;
 		self
 	}
 
@@ -196,7 +208,7 @@ impl<'a> ChatCompletionParams<'a> {
 		}
 
 		// Fetch and add MCP tools if MCP is configured
-		if !self.config.mcp.servers.is_empty() {
+		if self.tools && !self.config.mcp.servers.is_empty() {
 			let mcp_functions = crate::mcp::get_available_functions(self.config).await;
 			if !mcp_functions.is_empty() {
 				// Convert MCP functions to octolib FunctionDefinitions

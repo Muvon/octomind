@@ -597,7 +597,8 @@ async fn call_extraction_llm(
 	let params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages, model, 0.3, 1.0, 0, 4096, config,
 	)
-	.with_max_retries(1);
+	.with_max_retries(1)
+	.without_tools();
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 	if let Some(usage) = &response.exchange.usage {
@@ -661,7 +662,8 @@ pub(crate) async fn call_learning_llm(
 	)
 	.with_max_retries(1)
 	.with_full_context_tokens(true)
-	.with_cancellation_token(operation_rx);
+	.with_cancellation_token(operation_rx)
+	.without_tools();
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 	if let Some(usage) = &response.exchange.usage {

@@ -52,6 +52,10 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub schema: Option<serde_json::Value>,
 	/// Optional reasoning effort override (falls back to `config.reasoning_effort`)
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
+	/// Attach MCP tools to the request (default true). Text-only internal
+	/// calls (compression, learning extraction) disable this — see
+	/// `crate::providers::ChatCompletionParams::tools`.
+	pub tools: bool,
 }
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
@@ -78,6 +82,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			cancellation_token: None,
 			schema: None,
 			reasoning_effort: None,
+			tools: true,
 		}
 	}
 
@@ -111,6 +116,12 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 	/// Override reasoning effort for this call (otherwise inherits from config).
 	pub fn with_reasoning_effort(mut self, effort: crate::config::ReasoningEffortConfig) -> Self {
 		self.reasoning_effort = Some(effort);
+		self
+	}
+
+	/// Don't attach MCP tools — for text-only calls (compression, learning).
+	pub fn without_tools(mut self) -> Self {
+		self.tools = false;
 		self
 	}
 }
@@ -171,8 +182,14 @@ pub async fn chat_completion_with_validation(
 
 	// Calculate EXACTLY what we're about to send to the API using enhanced token counting
 	let total_input_tokens = if params.full_context_tokens {
-		// Use enhanced token counting that includes system prompt + tools
-		let tools = crate::mcp::get_available_functions(params.config).await;
+		// Use enhanced token counting that includes system prompt + tools.
+		// Skip the tool fetch when tools are disabled — they won't be sent,
+		// so counting them would overestimate and reject valid requests.
+		let tools = if params.tools {
+			crate::mcp::get_available_functions(params.config).await
+		} else {
+			Vec::new()
+		};
 		estimate_full_context_tokens(
 			params.messages,
 			if tools.is_empty() { None } else { Some(&tools) },
@@ -199,7 +216,7 @@ pub async fn chat_completion_with_validation(
 	}
 
 	// Input size is acceptable, proceed with API call
-	let chat_params = ChatCompletionParams::new(
+	let mut chat_params = ChatCompletionParams::new(
 		params.messages,
 		&actual_model,
 		params.temperature,
@@ -209,6 +226,10 @@ pub async fn chat_completion_with_validation(
 		params.config,
 	)
 	.with_max_retries(params.max_retries);
+
+	if !params.tools {
+		chat_params = chat_params.without_tools();
+	}
 
 	let chat_params = if let Some(schema) = params.schema {
 		chat_params.with_schema(schema)

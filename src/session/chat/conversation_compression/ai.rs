@@ -125,7 +125,11 @@ async fn call_ai_for_decision(
 	)
 	.with_max_retries(decision_config.max_retries)
 	.with_full_context_tokens(true)
-	.with_cancellation_token(operation_rx);
+	.with_cancellation_token(operation_rx)
+	// Text-only summarization: no tools. Sending the MCP toolset here wastes
+	// input tokens and makes proxy providers (octohub) skip schema
+	// enforcement, breaking the JSON wire mode.
+	.without_tools();
 
 	if let Some(s) = schema.clone() {
 		params = params.with_schema(s);

@@ -190,10 +190,16 @@ async fn handle_connection(
 						// Validate message
 						if let Err(e) = client_msg.validate() {
 							log_error!("Message validation failed from {}: {}", peer_addr, e);
-							let error = ServerMessage::error(e);
+							let error = ServerMessage::error_for_request(
+								e,
+								client_msg.request_id().map(ToOwned::to_owned),
+							);
 							send_message(&mut ws_sender, &error).await?;
 							continue;
 						}
+
+						send_message(&mut ws_sender, &ServerMessage::ack(&client_msg)).await?;
+						let request_id = client_msg.request_id().map(ToOwned::to_owned);
 
 						// Process the message
 						if let Err(e) = process_client_message(
@@ -205,9 +211,18 @@ async fn handle_connection(
 						.await
 						{
 							log_error!("Message processing failed for {}: {}", peer_addr, e);
-							let error = ServerMessage::error(format!("Internal error: {}", e));
+							let error = ServerMessage::error_for_request(
+								format!("Internal error: {}", e),
+								request_id,
+							);
 							send_message(&mut ws_sender, &error).await?;
 						}
+					}
+					Ok(Message::Binary(_)) => {
+						let error = ServerMessage::error(
+							"Unsupported WebSocket message type: send JSON text frames".to_string(),
+						);
+						send_message(&mut ws_sender, &error).await?;
 					}
 					Ok(Message::Close(_)) => {
 						log_info!("Client {} closed connection", peer_addr);
@@ -221,9 +236,10 @@ async fn handle_connection(
 							break;
 						}
 					}
-					Ok(_) => {
-						// Ignore other message types (binary, pong, etc.)
+					Ok(Message::Pong(_)) => {
+						// Ignore pong replies; they are transport-level control frames.
 					}
+					Ok(_) => {}
 					Err(e) => {
 						log_error!("WebSocket protocol error from {}: {}", peer_addr, e);
 						break;
@@ -759,16 +775,32 @@ async fn handle_command_message(
 			Ok(DoneOutcome::NothingToCompress) => "Nothing to compress".to_string(),
 			Ok(DoneOutcome::Failed(e)) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
-				send_message(ws_sender, &error).await?;
-				chat_session.save()?;
+				let save_result = chat_session.save();
 				sessions.lock().await.insert(session_id, chat_session);
+				if let Err(save_err) = save_result {
+					send_message(
+						ws_sender,
+						&ServerMessage::error(format!("Failed to save session: {}", save_err)),
+					)
+					.await?;
+					return Ok(());
+				}
+				send_message(ws_sender, &error).await?;
 				return Ok(());
 			}
 			Err(e) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
-				send_message(ws_sender, &error).await?;
-				chat_session.save()?;
+				let save_result = chat_session.save();
 				sessions.lock().await.insert(session_id, chat_session);
+				if let Err(save_err) = save_result {
+					send_message(
+						ws_sender,
+						&ServerMessage::error(format!("Failed to save session: {}", save_err)),
+					)
+					.await?;
+					return Ok(());
+				}
+				send_message(ws_sender, &error).await?;
 				return Ok(());
 			}
 		};
@@ -780,17 +812,26 @@ async fn handle_command_message(
 			Some(session_id.clone()),
 			serde_json::json!({ "command_type": "done", "message": status_msg }),
 		);
-		send_message(ws_sender, &status).await?;
-		chat_session.save()?;
+		let save_result = chat_session.save();
 		sessions
 			.lock()
 			.await
 			.insert(session_id.clone(), chat_session);
+		if let Err(e) = save_result {
+			send_message(
+				ws_sender,
+				&ServerMessage::error(format!("Failed to save session: {}", e)),
+			)
+			.await?;
+			return Ok(());
+		}
+		send_message(ws_sender, &status).await?;
 
 		// If args were provided, process them as a user message immediately after compression.
 		if !args.is_empty() {
 			let instructions = args.join(" ");
 			let user_msg = crate::websocket::protocol::UserMessage {
+				request_id: None,
 				session_id: session_id.clone(),
 				content: instructions,
 			};
@@ -800,59 +841,98 @@ async fn handle_command_message(
 	}
 
 	use crate::session::chat::session::commands::CommandResult;
-	let command_result = chat_session
+	let command_result = match chat_session
 		.process_command(
 			&slash_command,
 			&mut config_for_role.clone(),
 			role,
 			operation_rx,
 		)
-		.await?;
+		.await
+	{
+		Ok(result) => result,
+		Err(e) => {
+			let error = ServerMessage::error(format!("Command failed: {}", e));
+			let save_result = chat_session.save();
+			sessions.lock().await.insert(session_id, chat_session);
+			if let Err(save_err) = save_result {
+				send_message(
+					ws_sender,
+					&ServerMessage::error(format!("Failed to save session: {}", save_err)),
+				)
+				.await?;
+				return Ok(());
+			}
+			send_message(ws_sender, &error).await?;
+			return Ok(());
+		}
+	};
 
-	match command_result {
+	let terminal = match command_result {
 		CommandResult::Handled => {
 			log_debug!("Command '{}' executed successfully", slash_command);
 			// Data-carrying status (see command_status) so the client finalizes the turn
 			// instead of misreading a data-less status as the handshake ack.
-			let status = ServerMessage::command_status(
+			ServerMessage::command_status(
 				format!("Command '{}' executed successfully", slash_command),
 				Some(session_id.clone()),
 				serde_json::json!({ "command_type": command_name }),
-			);
-			send_message(ws_sender, &status).await?;
+			)
 		}
 		CommandResult::HandledWithOutput(command_output) => {
 			log_debug!(
 				"Command '{}' executed with structured output",
 				slash_command
 			);
-			let response = ServerMessage::Status(StatusPayload {
+			ServerMessage::Status(StatusPayload {
 				message: format!("Command '{}' executed successfully", slash_command),
 				session_id: Some(session_id.clone()),
 				data: Some(command_output.to_json()),
-			});
-			send_message(ws_sender, &response).await?;
+			})
 		}
 		CommandResult::Exit => {
 			log_info!("Session ended by command '{}'", slash_command);
-			let status =
-				ServerMessage::status("Session ended".to_string(), Some(session_id.clone()));
-			send_message(ws_sender, &status).await?;
+			let status = ServerMessage::command_status(
+				"Session ended".to_string(),
+				Some(session_id.clone()),
+				serde_json::json!({ "command_type": command_name, "action": "exit" }),
+			);
 			// Don't store session back — it's ended
+			if let Err(e) = chat_session.save() {
+				sessions
+					.lock()
+					.await
+					.insert(session_id.clone(), chat_session);
+				send_message(
+					ws_sender,
+					&ServerMessage::error(format!("Failed to save session: {}", e)),
+				)
+				.await?;
+				return Ok(());
+			}
+			send_message(ws_sender, &status).await?;
 			return Ok(());
 		}
 		CommandResult::TreatAsUserInput => {
 			// Command not recognised — return error rather than silently treating as AI input
-			let error = ServerMessage::error(format!(
+			ServerMessage::error(format!(
 				"Unknown command: '{}'. Use type \"message\" to send user input.",
 				slash_command
-			));
-			send_message(ws_sender, &error).await?;
+			))
 		}
-	}
+	};
 
-	chat_session.save()?;
+	let save_result = chat_session.save();
 	sessions.lock().await.insert(session_id, chat_session);
+	if let Err(e) = save_result {
+		send_message(
+			ws_sender,
+			&ServerMessage::error(format!("Failed to save session: {}", e)),
+		)
+		.await?;
+		return Ok(());
+	}
+	send_message(ws_sender, &terminal).await?;
 	Ok(())
 }
 
@@ -921,14 +1001,40 @@ async fn handle_user_message(
 			)
 			.await?;
 			if inbox_msg.source.is_system_managed() {
-				chat_session.add_system_managed_user_message(&inbox_msg.content)?;
+				if let Err(e) = chat_session.add_system_managed_user_message(&inbox_msg.content) {
+					log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
+					send_message(
+						ws_sender,
+						&ServerMessage::error(format!("Error processing injected message: {}", e)),
+					)
+					.await?;
+					continue;
+				}
 			} else {
-				chat_session.add_user_message(&inbox_msg.content)?;
+				if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
+					log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
+					send_message(
+						ws_sender,
+						&ServerMessage::error(format!("Error processing injected message: {}", e)),
+					)
+					.await?;
+					continue;
+				}
 			}
 			let op_rx = cancellation.new_operation();
 			// Per-request spending boundary (see handle_user_message).
 			chat_session.start_request_spending_tracking();
-			prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await?;
+			if let Err(e) =
+				prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone()).await
+			{
+				log_error!("WebSocket pre-user: failed to prepare API call: {}", e);
+				send_message(
+					ws_sender,
+					&ServerMessage::error(format!("Error processing injected message: {}", e)),
+				)
+				.await?;
+				continue;
+			}
 			let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 			let sink = WebSocketSink::new(tx);
 			let result = execute_api_call_and_process_response(
@@ -945,6 +1051,11 @@ async fn handle_user_message(
 			}
 			if let Err(e) = result {
 				log_debug!("Error processing pre-user inbox message (websocket): {}", e);
+				send_message(
+					ws_sender,
+					&ServerMessage::error(format!("Error processing injected message: {}", e)),
+				)
+				.await?;
 			}
 		}
 	}
@@ -956,7 +1067,17 @@ async fn handle_user_message(
 	// Run pipe pre-processing if a matching [[pipe]] is configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
-	let processed_input = run_pipe_if_enabled(&input, role, first_message_processed).await?;
+	let processed_input = match run_pipe_if_enabled(&input, role, first_message_processed).await {
+		Ok(input) => input,
+		Err(e) => {
+			sessions
+				.lock()
+				.await
+				.insert(session_id.clone(), chat_session);
+			send_message(ws_sender, &ServerMessage::error(format!("Error: {}", e))).await?;
+			return Ok(());
+		}
+	};
 
 	// Conversation compression: check if AI should compress older exchanges.
 	// Runs BEFORE user message is added to avoid breaking the new request.
@@ -986,7 +1107,14 @@ async fn handle_user_message(
 			&config_for_role.custom_constraints_file_name,
 			&current_dir,
 		);
-	chat_session.add_user_message(&final_input_with_constraints)?;
+	if let Err(e) = chat_session.add_user_message(&final_input_with_constraints) {
+		sessions
+			.lock()
+			.await
+			.insert(session_id.clone(), chat_session);
+		send_message(ws_sender, &ServerMessage::error(format!("Error: {}", e))).await?;
+		return Ok(());
+	}
 
 	// Reset the per-request spending checkpoint at the request boundary, like the
 	// interactive loop (main_loop.rs) — otherwise max_request_spending_threshold
@@ -994,7 +1122,16 @@ async fn handle_user_message(
 	chat_session.start_request_spending_tracking();
 
 	// Prepare for API call
-	prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await?;
+	if let Err(e) =
+		prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await
+	{
+		sessions
+			.lock()
+			.await
+			.insert(session_id.clone(), chat_session);
+		send_message(ws_sender, &ServerMessage::error(format!("Error: {}", e))).await?;
+		return Ok(());
+	}
 
 	// Create channel for WebSocket sink to stream messages
 	let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1038,36 +1175,24 @@ async fn handle_user_message(
 		send_message(ws_sender, &msg).await?;
 	}
 
-	match api_result {
-		Ok(_) => {
-			// Cost message (events already emitted via sink — no reconstruction needed)
-			let total_tokens = chat_session.session.info.input_tokens
-				+ chat_session.session.info.output_tokens
-				+ chat_session.session.info.cache_read_tokens
-				+ chat_session.session.info.cache_write_tokens
-				+ chat_session.session.info.reasoning_tokens;
-			let cost_msg = ServerMessage::Cost(CostPayload {
-				session_tokens: total_tokens,
-				session_cost: chat_session.session.info.total_cost,
-				input_tokens: chat_session.session.info.input_tokens,
-				output_tokens: chat_session.session.info.output_tokens,
-				cache_read_tokens: chat_session.session.info.cache_read_tokens,
-				cache_write_tokens: chat_session.session.info.cache_write_tokens,
-				reasoning_tokens: chat_session.session.info.reasoning_tokens,
-				session_id: session_id.clone(),
-			});
-			send_message(ws_sender, &cost_msg).await?;
-		}
-		Err(e) => {
-			log_error!("API call failed: {}", e);
-			let error = ServerMessage::error(format!("Error: {}", e));
-			send_message(ws_sender, &error).await?;
-		}
-	}
-
 	// Save session
 	log_debug!("Saving session: {}", session_id);
-	chat_session.save()?;
+	let save_result = chat_session.save();
+	let total_tokens = chat_session.session.info.input_tokens
+		+ chat_session.session.info.output_tokens
+		+ chat_session.session.info.cache_read_tokens
+		+ chat_session.session.info.cache_write_tokens
+		+ chat_session.session.info.reasoning_tokens;
+	let cost_msg = ServerMessage::Cost(CostPayload {
+		session_tokens: total_tokens,
+		session_cost: chat_session.session.info.total_cost,
+		input_tokens: chat_session.session.info.input_tokens,
+		output_tokens: chat_session.session.info.output_tokens,
+		cache_read_tokens: chat_session.session.info.cache_read_tokens,
+		cache_write_tokens: chat_session.session.info.cache_write_tokens,
+		reasoning_tokens: chat_session.session.info.reasoning_tokens,
+		session_id: session_id.clone(),
+	});
 
 	// Clear the notification sender now that this request is done
 	crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
@@ -1081,6 +1206,27 @@ async fn handle_user_message(
 		notify.notify_one();
 	}
 	log_debug!("Session stored back in memory: {}", session_id);
+
+	if let Err(e) = save_result {
+		send_message(
+			ws_sender,
+			&ServerMessage::error(format!("Failed to save session: {}", e)),
+		)
+		.await?;
+		return Ok(());
+	}
+
+	match api_result {
+		Ok(_) => {
+			// Cost message (events already emitted via sink — no reconstruction needed)
+			send_message(ws_sender, &cost_msg).await?;
+		}
+		Err(e) => {
+			log_error!("API call failed: {}", e);
+			let error = ServerMessage::error(format!("Error: {}", e));
+			send_message(ws_sender, &error).await?;
+		}
+	}
 
 	Ok(())
 }

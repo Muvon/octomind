@@ -77,6 +77,10 @@ class OctomindClient {
           // canonical end-of-turn signal.
           this.handlers.onCost(msg.session_cost);
           break;
+        case 'ack':
+          // Optional immediate receipt signal. Use request_id if you need
+          // per-input correlation.
+          break;
         case 'error':
           this.handlers.onError(msg.message);
           break;
@@ -190,13 +194,14 @@ answer = asyncio.run(ask_octomind("What does the login function do?"))
 | Client -> Server | `session` | Create or resume a session (no AI call). With no `session_id` the server creates an auto-named session; with a `session_id` it resumes that session if it exists on disk, otherwise creates one with that name. |
 | Client -> Server | `message` | Send user input (field `content`, max 10 MB) |
 | Client -> Server | `command` | Execute a session command (field `command`, bare name without the leading `/`; optional `args` array) |
+| Server -> Client | `ack` | Immediate receipt acknowledgement for each valid JSON text input (`message_type`, optional `request_id`, optional `session_id`, `status = "received"`). Malformed/invalid input returns `error` instead. |
 | Server -> Client | `assistant` | AI response text (`content`) |
 | Server -> Client | `thinking` | Extended thinking (`content`, if the model supports it) |
 | Server -> Client | `tool_use` | Tool being called (`tool`, `tool_id`, `server`, `params`) |
 | Server -> Client | `tool_result` | Tool execution result (`tool`, `tool_id`, `server`, `content`, `success`) |
 | Server -> Client | `cost` | Token usage and cost; emitted once after each completed AI turn (use it as the end-of-turn signal) |
-| Server -> Client | `status` | Free-form status text in `message` (e.g. the connection welcome, `Session created: <id>` / `Session resumed: <id>`, command-executed notices, `Session ended`, `Conversation compressed`). Not a machine-readable completion marker -- use `cost` for that. May carry an optional `session_id` and structured `data`. |
-| Server -> Client | `error` | Error text in `message` |
+| Server -> Client | `status` | Free-form status text in `message` (e.g. the connection welcome, `Session created: <id>` / `Session resumed: <id>`, command-executed notices, `Session ended`, `Conversation compressed`). Command completion statuses carry `data`; AI turns still end with `cost`. May carry an optional `session_id`. |
+| Server -> Client | `error` | Error text in `message`, with optional `request_id` when the failed input provided one |
 | Server -> Client | `mcp_notification` | Notification forwarded from an MCP server (`server`, `method`, `params`) |
 | Server -> Client | `skill` | Skill lifecycle event (`action` = activate/use/forget, `name`, optional `trigger`) |
 | Server -> Client | `injected` | Non-user input being added to the conversation (`source_kind` = schedule/background_agent/tap_run/skill/skill_validator/inject/webhook/guardrail_hook/guardrail_validator, `source_label`, `content`); emitted just before the AI responds so the UI can show what triggered it |
@@ -224,6 +229,7 @@ Concurrency is across **different** `session_id`s. Requests to the **same** `ses
 - Sessions are stateful -- context persists across messages
 - Tool execution (file reading, shell commands) is streamed in real-time
 - A `cost` message is emitted once after each completed AI turn -- use it as the end-of-turn signal, not the free-form `status` text
+- Every valid JSON input gets an immediate `ack`; use optional client `request_id` values if the UI needs correlation
 - User `message` `content` is capped at 10 MB, and the WebSocket frame/message size limit is also 10 MB; larger input returns a validation error
 - The server has no built-in authentication, authorization, or TLS -- use a reverse proxy with TLS for production and never expose the server directly to the internet
 - Cost tracking is per-session via `cost` messages

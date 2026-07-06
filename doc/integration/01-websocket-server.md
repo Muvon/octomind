@@ -33,10 +33,11 @@ Communication uses JSON messages over WebSocket.
 
 ### Client to Server
 
-**Session message** -- send user input:
+**Message** -- send user input:
 ```json
 {
   "type": "message",
+  "request_id": "req-001",
   "session_id": "my-session",
   "content": "Explain the auth module"
 }
@@ -46,20 +47,24 @@ Communication uses JSON messages over WebSocket.
 ```json
 {
   "type": "command",
+  "request_id": "req-002",
   "session_id": "my-session",
   "command": "mcp",
   "args": ["list"]
 }
 ```
 
+`request_id` is optional on every client frame. When present, the server echoes it in the immediate `ack` frame and in validation errors, so clients can correlate accepted/rejected inputs without relying only on ordering.
+
 `command` is the slash-command name **without** the leading `/` (see [Session Commands](../reference/02-session-commands.md) for the full list). `args` is optional. The command channel only accepts recognized commands: an unknown command returns `{"type":"error","message":"Unknown command: '...'..."}` — it is **not** treated as free-text AI input. Use a `message` frame for that.
 
-The `done` command (`/done`) is special: it compresses the conversation and replies with a `status` frame (`"Conversation compressed"` or `"Nothing to compress"`). If you supply `args`, they are joined and immediately processed as a follow-up user message after compression.
+The `done` command (`/done`) is special: it compresses the conversation and replies with a data-carrying `status` frame (`"Conversation compressed"` or `"Nothing to compress"`). If you supply `args`, they are joined and immediately processed as a follow-up user message after compression.
 
 **Session creation** (auto-named):
 ```json
 {
-  "type": "session"
+  "type": "session",
+  "request_id": "req-003"
 }
 ```
 
@@ -67,6 +72,7 @@ The `done` command (`/done`) is special: it compresses the conversation and repl
 ```json
 {
   "type": "session",
+  "request_id": "req-004",
   "session_id": "my-session"
 }
 ```
@@ -98,6 +104,20 @@ Each session is processed **serially**. While a session is busy handling a `mess
 Wait for the prior request to finish — i.e. for its terminating `cost` frame (see below) — before sending the next one. Different `session_id`s run independently.
 
 ### Server to Client
+
+For every valid JSON text input frame (`session`, `message`, or `command`), the server first sends an immediate acknowledgement before doing any longer work:
+
+```json
+{
+  "type": "ack",
+  "request_id": "req-001",
+  "message_type": "message",
+  "session_id": "my-session",
+  "status": "received"
+}
+```
+
+`request_id` and `session_id` are omitted when the input did not include them. Malformed JSON and validation failures do not produce `ack`; they produce an `error` frame instead. If a validation failure includes a `request_id`, the error echoes it.
 
 Responses to a single `message` arrive as a **stream** of frames: zero or more `thinking`, `tool_use`, `tool_result`, and `assistant` frames, terminated by a final `cost` frame that marks the end of the turn.
 
@@ -165,19 +185,22 @@ Responses to a single `message` arrive as a **stream** of frames: zero or more `
   "type": "status",
   "message": "Command 'mcp' executed successfully",
   "session_id": "my-session",
-  "data": { "...": "structured command output" }
+  "data": { "command_type": "mcp" }
 }
 ```
 
-Both `session_id` and `data` are optional. The connection-time welcome status omits `session_id`. The `data` field is present only for commands that return structured output (e.g. `mcp list`, `info`) — it carries that command's JSON result.
+Both `session_id` and `data` are optional. The connection-time welcome status omits `session_id`. Command completion statuses always include `data`, either with command metadata (for plain handled commands) or the command's structured JSON result (e.g. `mcp list`, `info`). This lets clients distinguish command completion from the connection/session status frames.
 
 **Error:**
 ```json
 {
   "type": "error",
-  "message": "Invalid session ID"
+  "message": "Invalid session ID",
+  "request_id": "req-001"
 }
 ```
+
+`request_id` appears only when the server can associate the error with a client-supplied ID.
 
 **MCP notification:**
 ```json
@@ -292,6 +315,7 @@ asyncio.run(main())
 ## Validation
 
 - `session_id` (when provided) and `content` must be non-empty strings
+- `request_id` is optional, but when provided must be non-empty and no more than 256 bytes
 - Message `content` is limited to 10MB
 - Commands must be non-empty strings (without leading `/`)
 - Command `args` is optional

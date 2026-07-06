@@ -26,6 +26,10 @@ use serde_json::Value;
 /// - `session_id` present → resume if exists on disk, else create with that name
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMessage {
+	/// Optional client-supplied correlation ID. Echoed by the server in the ack.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+
 	/// Session name / ID. Absent = auto-named, present = create-or-resume.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
@@ -34,6 +38,10 @@ pub struct SessionMessage {
 /// Send user input to an existing session and receive an AI response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMessage {
+	/// Optional client-supplied correlation ID. Echoed by the server in the ack.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+
 	/// Session name / ID — must refer to an established session.
 	pub session_id: String,
 
@@ -44,6 +52,10 @@ pub struct UserMessage {
 /// Execute a session command (equivalent to `/command [args…]` in the CLI).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMessage {
+	/// Optional client-supplied correlation ID. Echoed by the server in the ack.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+
 	/// Session name / ID — must refer to an established session.
 	pub session_id: String,
 
@@ -70,6 +82,24 @@ pub enum ClientMessage {
 impl ClientMessage {
 	/// Semantic validation beyond what serde already enforces structurally.
 	pub fn validate(&self) -> Result<(), String> {
+		fn validate_request_id(request_id: &Option<String>) -> Result<(), String> {
+			if let Some(id) = request_id {
+				if id.trim().is_empty() {
+					return Err("request_id cannot be empty when provided".to_string());
+				}
+				if id.len() > 256 {
+					return Err("request_id exceeds maximum size (256 bytes)".to_string());
+				}
+			}
+			Ok(())
+		}
+
+		match self {
+			ClientMessage::Session(m) => validate_request_id(&m.request_id)?,
+			ClientMessage::Message(m) => validate_request_id(&m.request_id)?,
+			ClientMessage::Command(c) => validate_request_id(&c.request_id)?,
+		}
+
 		match self {
 			ClientMessage::Session(_) => Ok(()),
 
@@ -95,6 +125,30 @@ impl ClientMessage {
 				}
 				Ok(())
 			}
+		}
+	}
+
+	pub fn request_id(&self) -> Option<&str> {
+		match self {
+			ClientMessage::Session(m) => m.request_id.as_deref(),
+			ClientMessage::Message(m) => m.request_id.as_deref(),
+			ClientMessage::Command(c) => c.request_id.as_deref(),
+		}
+	}
+
+	pub fn message_type(&self) -> &'static str {
+		match self {
+			ClientMessage::Session(_) => "session",
+			ClientMessage::Message(_) => "message",
+			ClientMessage::Command(_) => "command",
+		}
+	}
+
+	pub fn session_id(&self) -> Option<&str> {
+		match self {
+			ClientMessage::Session(m) => m.session_id.as_deref(),
+			ClientMessage::Message(m) => Some(m.session_id.as_str()),
+			ClientMessage::Command(c) => Some(c.session_id.as_str()),
 		}
 	}
 }
@@ -161,6 +215,21 @@ pub struct StatusPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorPayload {
 	pub message: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckPayload {
+	/// Echo of the client-supplied request_id, when present.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+	/// Client frame type being acknowledged: session, message, or command.
+	pub message_type: String,
+	/// Session ID from the input frame when it is known.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub session_id: Option<String>,
+	pub status: String,
 }
 
 /// Skill lifecycle event (activate via auto-activation, explicit use, or forget).
@@ -211,6 +280,8 @@ pub struct McpNotificationPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
+	/// Immediate acknowledgement that a valid client input frame was received.
+	Ack(AckPayload),
 	/// AI assistant response text
 	Assistant(AssistantPayload),
 	/// AI thinking/reasoning content (separate from assistant response)
@@ -237,7 +308,26 @@ pub enum ServerMessage {
 
 impl ServerMessage {
 	pub fn error(message: String) -> Self {
-		ServerMessage::Error(ErrorPayload { message })
+		ServerMessage::Error(ErrorPayload {
+			message,
+			request_id: None,
+		})
+	}
+
+	pub fn error_for_request(message: String, request_id: Option<String>) -> Self {
+		ServerMessage::Error(ErrorPayload {
+			message,
+			request_id,
+		})
+	}
+
+	pub fn ack(client_msg: &ClientMessage) -> Self {
+		ServerMessage::Ack(AckPayload {
+			request_id: client_msg.request_id().map(ToOwned::to_owned),
+			message_type: client_msg.message_type().to_string(),
+			session_id: client_msg.session_id().map(ToOwned::to_owned),
+			status: "received".to_string(),
+		})
 	}
 
 	pub fn status(message: String, session_id: Option<String>) -> Self {
@@ -290,7 +380,10 @@ mod tests {
 		let msg: ClientMessage = serde_json::from_str(json).unwrap();
 		assert!(matches!(
 			msg,
-			ClientMessage::Session(SessionMessage { session_id: None })
+			ClientMessage::Session(SessionMessage {
+				session_id: None,
+				..
+			})
 		));
 		assert!(msg.validate().is_ok());
 	}
@@ -302,7 +395,8 @@ mod tests {
 		assert!(matches!(
 			msg,
 			ClientMessage::Session(SessionMessage {
-				session_id: Some(_)
+				session_id: Some(_),
+				..
 			})
 		));
 		assert!(msg.validate().is_ok());
@@ -311,6 +405,7 @@ mod tests {
 	#[test]
 	fn test_session_roundtrip() {
 		let msg = ClientMessage::Session(SessionMessage {
+			request_id: None,
 			session_id: Some("my-session".to_string()),
 		});
 		let json = serde_json::to_string(&msg).unwrap();
@@ -343,6 +438,7 @@ mod tests {
 	#[test]
 	fn test_message_empty_session_id_fails_validate() {
 		let msg = ClientMessage::Message(UserMessage {
+			request_id: None,
 			session_id: "  ".to_string(),
 			content: "Fix the bug".to_string(),
 		});
@@ -352,6 +448,7 @@ mod tests {
 	#[test]
 	fn test_message_empty_content_fails_validate() {
 		let msg = ClientMessage::Message(UserMessage {
+			request_id: None,
 			session_id: "sess_123".to_string(),
 			content: "  ".to_string(),
 		});
@@ -361,6 +458,7 @@ mod tests {
 	#[test]
 	fn test_message_content_too_large_fails_validate() {
 		let msg = ClientMessage::Message(UserMessage {
+			request_id: None,
 			session_id: "sess_123".to_string(),
 			content: "x".repeat(11 * 1024 * 1024),
 		});
@@ -370,6 +468,7 @@ mod tests {
 	#[test]
 	fn test_message_roundtrip() {
 		let msg = ClientMessage::Message(UserMessage {
+			request_id: None,
 			session_id: "sess_123".to_string(),
 			content: "Hello".to_string(),
 		});
@@ -416,6 +515,7 @@ mod tests {
 	#[test]
 	fn test_command_empty_session_id_fails_validate() {
 		let msg = ClientMessage::Command(CommandMessage {
+			request_id: None,
 			session_id: "  ".to_string(),
 			command: "info".to_string(),
 			args: vec![],
@@ -426,6 +526,7 @@ mod tests {
 	#[test]
 	fn test_command_empty_command_fails_validate() {
 		let msg = ClientMessage::Command(CommandMessage {
+			request_id: None,
 			session_id: "sess_123".to_string(),
 			command: "  ".to_string(),
 			args: vec![],
@@ -436,6 +537,7 @@ mod tests {
 	#[test]
 	fn test_command_roundtrip() {
 		let msg = ClientMessage::Command(CommandMessage {
+			request_id: None,
 			session_id: "sess_123".to_string(),
 			command: "model".to_string(),
 			args: vec!["openrouter:anthropic/claude-sonnet-4".to_string()],
@@ -451,6 +553,7 @@ mod tests {
 	#[test]
 	fn test_command_args_omitted_when_empty() {
 		let msg = ClientMessage::Command(CommandMessage {
+			request_id: None,
 			session_id: "sess_123".to_string(),
 			command: "info".to_string(),
 			args: vec![],
@@ -480,6 +583,48 @@ mod tests {
 		let json = serde_json::to_string(&msg).unwrap();
 		assert!(json.contains("\"type\":\"error\""));
 		assert!(json.contains("something went wrong"));
+	}
+
+	#[test]
+	fn test_request_id_validation_and_ack_serialization() {
+		let msg: ClientMessage = serde_json::from_str(
+			r#"{"type":"message","request_id":"req-1","session_id":"sess_123","content":"Hello"}"#,
+		)
+		.unwrap();
+		assert!(msg.validate().is_ok());
+		assert_eq!(msg.request_id(), Some("req-1"));
+		assert_eq!(msg.message_type(), "message");
+		assert_eq!(msg.session_id(), Some("sess_123"));
+
+		let ack = ServerMessage::ack(&msg);
+		let json = serde_json::to_string(&ack).unwrap();
+		assert!(json.contains("\"type\":\"ack\""));
+		assert!(json.contains("\"request_id\":\"req-1\""));
+		assert!(json.contains("\"message_type\":\"message\""));
+		assert!(json.contains("\"session_id\":\"sess_123\""));
+		assert!(json.contains("\"status\":\"received\""));
+	}
+
+	#[test]
+	fn test_empty_request_id_fails_validate() {
+		let msg = ClientMessage::Command(CommandMessage {
+			request_id: Some(" ".to_string()),
+			session_id: "sess_123".to_string(),
+			command: "info".to_string(),
+			args: vec![],
+		});
+		assert!(msg.validate().is_err());
+	}
+
+	#[test]
+	fn test_error_for_request_serialization() {
+		let msg = ServerMessage::error_for_request(
+			"content cannot be empty".to_string(),
+			Some("req-2".to_string()),
+		);
+		let json = serde_json::to_string(&msg).unwrap();
+		assert!(json.contains("\"type\":\"error\""));
+		assert!(json.contains("\"request_id\":\"req-2\""));
 	}
 
 	#[test]

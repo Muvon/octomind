@@ -18,6 +18,9 @@ use crate::config::Config;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 
+/// Standard project instructions file, auto-loaded at session start when present
+pub const AGENTS_FILE: &str = "AGENTS.md";
+
 // Utility function to format numbers in a human-readable format
 pub fn format_number(number: u64) -> String {
 	if number == 0 {
@@ -89,100 +92,49 @@ pub async fn get_initial_messages(
 	};
 	initial_messages.push(welcome_msg);
 
-	// 2. Generate instructions message if file exists (user role)
-	let instructions_filename = &config.custom_instructions_file_name;
-	if !instructions_filename.is_empty() {
-		let instructions_path = current_dir.join(instructions_filename);
-		if instructions_path.exists() {
-			if let Ok(instructions_content) = std::fs::read_to_string(&instructions_path) {
-				if instructions_content.trim().is_empty() {
-					log_debug!("Skipping empty instructions file {}", instructions_filename);
-				} else {
-					let processed_instructions =
-						crate::session::helper_functions::process_placeholders_async_with_role(
-							&instructions_content,
-							current_dir,
-							Some(role),
-						)
-						.await;
-
-					let instructions_msg = crate::session::Message {
-						role: "user".to_string(),
-						// Wrap in <instructions> so task/compression/learning logic treats
-						// this as system-managed (is_real_user_task_message) and never
-						// mistakes the project instructions for a genuine user task. Mirrors
-						// the non-interactive path in prompt_setup.rs.
-						content: format!(
-							"<instructions>\n{}\n</instructions>",
-							processed_instructions
-						),
-						timestamp: std::time::SystemTime::now()
-							.duration_since(std::time::UNIX_EPOCH)
-							.unwrap_or_default()
-							.as_secs(),
-						cached: false,
-						..Default::default()
-					};
-					initial_messages.push(instructions_msg);
-
-					log_info!(
-						"Added {} content as user message with variable processing",
-						instructions_filename
-					);
-				}
+	// 2. Generate instructions message if AGENTS.md exists (user role)
+	let instructions_path = current_dir.join(AGENTS_FILE);
+	if instructions_path.exists() {
+		if let Ok(instructions_content) = std::fs::read_to_string(&instructions_path) {
+			if instructions_content.trim().is_empty() {
+				log_debug!("Skipping empty instructions file {}", AGENTS_FILE);
 			} else {
-				log_debug!("Failed to read {}", instructions_filename);
+				let processed_instructions =
+					crate::session::helper_functions::process_placeholders_async_with_role(
+						&instructions_content,
+						current_dir,
+						Some(role),
+					)
+					.await;
+
+				let instructions_msg = crate::session::Message {
+					role: "user".to_string(),
+					// Wrap in <instructions> so task/compression/learning logic treats
+					// this as system-managed (is_real_user_task_message) and never
+					// mistakes the project instructions for a genuine user task. Mirrors
+					// the non-interactive path in prompt_setup.rs.
+					content: format!(
+						"<instructions>\n{}\n</instructions>",
+						processed_instructions
+					),
+					timestamp: std::time::SystemTime::now()
+						.duration_since(std::time::UNIX_EPOCH)
+						.unwrap_or_default()
+						.as_secs(),
+					cached: false,
+					..Default::default()
+				};
+				initial_messages.push(instructions_msg);
+
+				log_info!(
+					"Added {} content as user message with variable processing",
+					AGENTS_FILE
+				);
 			}
+		} else {
+			log_debug!("Failed to read {}", AGENTS_FILE);
 		}
 	}
 
 	Ok(initial_messages)
-}
-
-/// Append constraints from file to user input if file exists
-/// Returns the input with constraints appended in <constraints>...</constraints> tags
-/// If file doesn't exist or is empty, returns input unchanged
-pub fn append_constraints_if_exists(
-	input: &str,
-	constraints_filename: &str,
-	current_dir: &std::path::Path,
-) -> String {
-	// If constraints filename is empty, return input unchanged
-	if constraints_filename.trim().is_empty() {
-		return input.to_string();
-	}
-
-	// Build path to constraints file
-	let constraints_path = current_dir.join(constraints_filename);
-
-	// If file doesn't exist, return input unchanged
-	if !constraints_path.exists() {
-		return input.to_string();
-	}
-
-	// Try to read constraints file
-	match std::fs::read_to_string(&constraints_path) {
-		Ok(constraints_content) => {
-			let trimmed_constraints = constraints_content.trim();
-			// If file is empty, return input unchanged
-			if trimmed_constraints.is_empty() {
-				return input.to_string();
-			}
-
-			// Append constraints in XML tags
-			format!(
-				"{}\n\n<constraints>\n{}\n</constraints>",
-				input.trim_end(),
-				trimmed_constraints
-			)
-		}
-		Err(e) => {
-			log_debug!(
-				"Failed to read constraints file {}: {}",
-				constraints_filename,
-				e
-			);
-			input.to_string()
-		}
-	}
 }

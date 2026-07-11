@@ -32,16 +32,6 @@ default = "assistant:concierge"
 # Default max_tokens for all operations
 max_tokens = 16384
 
-# Custom instructions file name (relative to project root)
-# This file will be automatically loaded as a user message in new sessions
-# Set to empty string to disable: custom_instructions_file_name = ""
-custom_instructions_file_name = "INSTRUCTIONS.md"
-
-# Custom constraints file name (relative to project root)
-# This file content will be automatically appended to EACH user request in <constraints>...</constraints> tags
-# Set to empty string to disable: custom_constraints_file_name = ""
-custom_constraints_file_name = "CONSTRAINTS.md"
-
 # Sandbox mode: restrict all filesystem writes to the current working directory
 # When enabled, the process and all child processes (shell, MCP servers) cannot
 # write outside the directory where octomind was launched.

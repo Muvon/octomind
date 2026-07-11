@@ -13,8 +13,6 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | `model` | string | `"openrouter:anthropic/claude-sonnet-4"` | Default model in `provider:model` format |
 | `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run`. See note below. |
 | `max_tokens` | u32 | `16384` | Global max tokens for all operations |
-| `custom_instructions_file_name` | string | `"INSTRUCTIONS.md"` | File auto-loaded as user message in new sessions. Empty string to disable. |
-| `custom_constraints_file_name` | string | `"CONSTRAINTS.md"` | File appended to each request in `<constraints>` tags. Empty string to disable. |
 | `sandbox` | bool | `false` | Restrict filesystem writes to working directory. Also available as `--sandbox` CLI flag. |
 | `auto_capabilities` | bool | `true` | Enable automatic capability activation on user messages. Disable to require manual `capability(action="enable")` calls. |
 | `system` | string (optional) | _none_ | Legacy global system-prompt override. When set, it applies as a fallback system prompt for roles that define none. Shown commented-out in `default.toml`; prefer per-role `system` instead. |

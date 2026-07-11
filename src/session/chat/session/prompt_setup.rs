@@ -129,50 +129,52 @@ pub async fn setup_system_prompt_and_cache(
 				);
 			}
 
-			// Check for custom instructions file
-			let instructions_filename = &config_for_role.custom_instructions_file_name;
-			if !instructions_filename.is_empty() {
-				let instructions_path = current_dir.join(instructions_filename);
-				if instructions_path.exists() {
-					match std::fs::read_to_string(&instructions_path) {
-						Ok(instructions_content) => {
-							if instructions_content.trim().is_empty() {
-								log_debug!(
-									"Skipping empty instructions file {}",
-									instructions_filename
-								);
-							} else {
-								let processed_instructions = process_placeholders_async_with_role(
-									&instructions_content,
-									&current_dir,
-									Some(role),
-								)
-								.await;
+			// Check for AGENTS.md instructions file
+			let instructions_path =
+				current_dir.join(crate::session::chat::session::utils::AGENTS_FILE);
+			if instructions_path.exists() {
+				match std::fs::read_to_string(&instructions_path) {
+					Ok(instructions_content) => {
+						if instructions_content.trim().is_empty() {
+							log_debug!(
+								"Skipping empty instructions file {}",
+								crate::session::chat::session::utils::AGENTS_FILE
+							);
+						} else {
+							let processed_instructions = process_placeholders_async_with_role(
+								&instructions_content,
+								&current_dir,
+								Some(role),
+							)
+							.await;
 
-								let wrapped = format!(
-									"<instructions>\n{}\n</instructions>",
-									processed_instructions
-								);
-								chat_session.add_system_managed_user_message(&wrapped)?;
+							let wrapped = format!(
+								"<instructions>\n{}\n</instructions>",
+								processed_instructions
+							);
+							chat_session.add_system_managed_user_message(&wrapped)?;
 
-								if supports_caching {
-									let cache_manager = CacheManager::new();
-									cache_manager.add_automatic_cache_markers(
-										&mut chat_session.session.messages,
-										has_tools,
-										supports_caching,
-									);
-								}
-
-								log_info!(
-									"Added {} content as user message with variable processing",
-									instructions_filename
+							if supports_caching {
+								let cache_manager = CacheManager::new();
+								cache_manager.add_automatic_cache_markers(
+									&mut chat_session.session.messages,
+									has_tools,
+									supports_caching,
 								);
 							}
+
+							log_info!(
+								"Added {} content as user message with variable processing",
+								crate::session::chat::session::utils::AGENTS_FILE
+							);
 						}
-						Err(e) => {
-							log_debug!("Failed to read {}: {}", instructions_filename, e);
-						}
+					}
+					Err(e) => {
+						log_debug!(
+							"Failed to read {}: {}",
+							crate::session::chat::session::utils::AGENTS_FILE,
+							e
+						);
 					}
 				}
 			}

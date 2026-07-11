@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.36.0] - 2026-07-11
+
+### 📋 Release Summary
+
+This release introduces standardized agent instructions via AGENTS.md and provides greater control over MCP tool usage during completions (f57c4091, d371a023). WebSocket reliability has been improved through better request tracking and synchronization (92e77c50, 278bfdd7). Additionally, several updates enhance overall system stability, dependency performance, and session error handling (06d2f211, 0b77195a, e70e9dc0, 877344fe).
+
+
+### ✨ New Features & Enhancements
+
+- **config**: adopt AGENTS.md standard for instructions `f57c4091`
+- **providers**: allow disabling MCP tools in completions `d371a023`
+- **ws**: implement request correlation and acknowledgments `92e77c50`
+
+### 🐛 Bug Fixes & Stability
+
+- **websocket**: prevent client hang on command completion `278bfdd7`
+- **session**: error on empty provider completions `06d2f211`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.35.0] - 2026-07-03
 
 ### 📋 Release Summary

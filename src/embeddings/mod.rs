@@ -413,7 +413,7 @@ pub async fn embed(text: &str) -> Result<Vec<f32>> {
 		return Ok(v.clone());
 	}
 	let p = provider().await?;
-	let v = p.generate_embedding(text).await?;
+	let (v, _usage) = p.generate_embedding(text).await?;
 	cache().write().unwrap().insert(key, v.clone());
 	Ok(v)
 }
@@ -461,7 +461,7 @@ pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 		let p = provider().await?;
 		// MiniLM-L6 is symmetric — embed bare, no query/document prefix. The
 		// query side (`embed`) is already prefix-free; keep both consistent.
-		let computed = p
+		let (computed, _usage) = p
 			.generate_embeddings_batch(unique.clone(), InputType::None)
 			.await?;
 		{

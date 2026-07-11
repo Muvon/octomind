@@ -91,20 +91,9 @@ The default tag `assistant:concierge` is a **tap agent** (`category:variant`) pr
 
 `reasoning_effort` is a system-wide hint mapped by each provider to its native thinking knob (effort string, budget tokens, etc.); models without thinking support silently ignore it. You can also change it per-session at runtime with the `/effort` command, which persists the choice in the session file.
 
-## Custom Instructions
+## Project Instructions
 
-Octomind auto-loads two project-level files:
-
-| File | Default | Behavior |
-|------|---------|----------|
-| `INSTRUCTIONS.md` | `custom_instructions_file_name` | Loaded as user message in new sessions |
-| `CONSTRAINTS.md` | `custom_constraints_file_name` | Appended to each request in `<constraints>` tags |
-
-Set to empty string to disable:
-```toml
-custom_instructions_file_name = ""
-custom_constraints_file_name = ""
-```
+Octomind auto-loads `AGENTS.md` from the project root as a user message in new sessions, following the [AGENTS.md standard](https://agents.md). No configuration needed — the file is loaded whenever it exists.
 
 ## Performance Settings
 

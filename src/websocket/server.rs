@@ -967,8 +967,6 @@ async fn handle_user_message(
 
 	let session_id = session_id.to_string();
 
-	// Get current directory for file operations
-	let current_dir = crate::mcp::get_thread_working_directory();
 	let config_for_role = config.get_merged_config_for_role(role);
 	let mut cancellation = SessionCancellation::new();
 	// The main-call `operation_rx` is created AFTER the pre-user inbox drain
@@ -1101,13 +1099,7 @@ async fn handle_user_message(
 		};
 
 	// Add user message
-	let final_input_with_constraints =
-		crate::session::chat::session::utils::append_constraints_if_exists(
-			&processed_input,
-			&config_for_role.custom_constraints_file_name,
-			&current_dir,
-		);
-	if let Err(e) = chat_session.add_user_message(&final_input_with_constraints) {
+	if let Err(e) = chat_session.add_user_message(&processed_input) {
 		sessions
 			.lock()
 			.await

@@ -1159,13 +1159,7 @@ pub async fn run_interactive_session(
 			let user_message_index = chat_session.session.messages.len();
 
 			// Add user message for standard processing flow.
-			// Append constraints if configured.
-			let final_input_with_constraints = super::utils::append_constraints_if_exists(
-				&final_input,
-				&current_config.custom_constraints_file_name,
-				&current_dir,
-			);
-			chat_session.add_user_message(&final_input_with_constraints)?;
+			chat_session.add_user_message(&final_input)?;
 			// New user message → run per-message lesson recall on the next API call.
 			chat_session.pending_recall = true;
 
@@ -1562,14 +1556,8 @@ pub async fn run_interactive_session_with_input(
 	input = processed_input;
 
 	// Add user message - same as interactive.
-	// Append constraints if configured.
 	let user_message_index = chat_session.session.messages.len();
-	let input_with_constraints = super::utils::append_constraints_if_exists(
-		&input,
-		&current_config.custom_constraints_file_name,
-		&current_dir,
-	);
-	chat_session.add_user_message(&input_with_constraints)?;
+	chat_session.add_user_message(&input)?;
 	// New user message → run per-message lesson recall on the next API call.
 	chat_session.pending_recall = true;
 

@@ -882,7 +882,6 @@ impl OctomindAgent {
 			crate::mcp::set_session_working_directory(session_cwd.clone());
 
 			let config_for_role = self.config.borrow().get_merged_config_for_role(&self.role);
-			let current_dir = session_cwd.clone();
 
 			// Get or create cancellation for this session
 			let mut cancellation = self
@@ -1036,12 +1035,7 @@ impl OctomindAgent {
 			}
 
 			// Add user message
-			let final_input = crate::session::chat::session::utils::append_constraints_if_exists(
-				&processed_input,
-				&config_for_role.custom_constraints_file_name,
-				&current_dir,
-			);
-			if let Err(e) = chat_session.add_user_message(&final_input) {
+			if let Err(e) = chat_session.add_user_message(&processed_input) {
 				self.sessions
 					.borrow_mut()
 					.insert(session_id.clone(), (chat_session, session_cwd));

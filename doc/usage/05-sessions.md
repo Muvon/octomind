@@ -163,18 +163,9 @@ An unrecognized filter silently falls back to showing all messages.
 
 Automatic compression also runs as sessions grow. See [Compression](08-compression.md).
 
-## Custom Instructions
+## Project Instructions
 
-Octomind auto-loads project files into sessions:
-
-- **`INSTRUCTIONS.md`** -- loaded as a user message at session start
-- **`CONSTRAINTS.md`** -- appended to every user request in `<constraints>` tags
-
-Configure in `config.toml`:
-```toml
-custom_instructions_file_name = "INSTRUCTIONS.md"
-custom_constraints_file_name = "CONSTRAINTS.md"
-```
+Octomind auto-loads `AGENTS.md` from the project root as a user message at session start, following the [AGENTS.md standard](https://agents.md). The file is loaded whenever it exists — no configuration needed.
 
 ## Session Storage
 

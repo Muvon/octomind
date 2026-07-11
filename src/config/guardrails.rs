@@ -265,7 +265,7 @@ impl Guardrails {
 		let mut guards = Vec::with_capacity(raw.guards.len());
 		for r in raw.guards {
 			let trigger = parse_target(&r.match_)
-				.map_err(|e| anyhow!("guard `{}`: invalid match: {}", &r.match_, e))?;
+				.map_err(|e| anyhow!("guard `{}`: invalid match: {}", r.match_, e))?;
 			let mut when_used = Vec::new();
 			let mut when_unused = Vec::new();
 			for item in r.when {

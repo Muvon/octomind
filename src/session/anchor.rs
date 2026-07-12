@@ -113,12 +113,15 @@ impl Anchor {
 
 	/// Merge an update into this anchor. Append-only fields (`changes_made`,
 	/// `decisions`, `file_refs`, `errors_seen`) are deduplicated on insert.
-	/// `intent` is filled in on first set; subsequent updates only refine
-	/// it if it was empty. `next_steps` always replaces (latest wins).
+	/// `intent` replaces when the update supplies one — suppliers decide when
+	/// that is right (most guard with `is_empty()` so the first write sticks;
+	/// conversation compaction supplies the summarizer's ORIGINAL REQUEST,
+	/// which carries forward verbatim and moves only on an explicit user
+	/// pivot, so a stale goal can heal). `next_steps` always replaces.
 	pub fn extend(&mut self, update: AnchorUpdate, now_unix: u64) {
 		if let Some(intent) = update.intent {
 			let trimmed = intent.trim();
-			if !trimmed.is_empty() && self.intent.is_empty() {
+			if !trimmed.is_empty() {
 				self.intent = trimmed.to_string();
 			}
 		}
@@ -198,7 +201,7 @@ mod tests {
 	}
 
 	#[test]
-	fn extend_records_first_intent_only() {
+	fn extend_replaces_intent_when_supplied() {
 		let mut a = Anchor::default();
 		a.extend(
 			AnchorUpdate {
@@ -207,6 +210,10 @@ mod tests {
 			},
 			100,
 		);
+		// No intent in the update — the existing one is kept.
+		a.extend(AnchorUpdate::default(), 150);
+		assert_eq!(a.intent, "Add feature X");
+		// A supplied intent replaces (pivot sanctioned by the supplier).
 		a.extend(
 			AnchorUpdate {
 				intent: Some("Now do feature Y instead".to_string()),
@@ -214,9 +221,8 @@ mod tests {
 			},
 			200,
 		);
-		// First-write-wins for intent — later updates don't overwrite.
-		assert_eq!(a.intent, "Add feature X");
-		assert_eq!(a.compactions_folded, 2);
+		assert_eq!(a.intent, "Now do feature Y instead");
+		assert_eq!(a.compactions_folded, 3);
 		assert_eq!(a.last_compacted_at, 200);
 	}
 

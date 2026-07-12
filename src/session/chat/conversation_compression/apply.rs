@@ -398,10 +398,18 @@ pub(super) async fn apply_compression(
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs();
-		let intent_seed = if session.session.info.anchor.intent.is_empty() {
-			Some("Free-form conversation session".to_string())
-		} else {
-			None
+		// Prefer the summarizer's ORIGINAL REQUEST (verbatim user words, carried
+		// forward across compactions, refreshed only on an explicit user pivot)
+		// so the anchor goal tracks the real task instead of going stale.
+		let intent_seed = {
+			let orig = summary.original_request.trim();
+			if !orig.is_empty() {
+				Some(orig.to_string())
+			} else if session.session.info.anchor.intent.is_empty() {
+				Some("Free-form conversation session".to_string())
+			} else {
+				None
+			}
 		};
 		session.session.info.anchor.extend(
 			crate::session::anchor::AnchorUpdate {

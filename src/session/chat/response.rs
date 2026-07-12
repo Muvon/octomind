@@ -653,6 +653,19 @@ pub async fn process_response<S: OutputSink>(
 							is_error,
 							result_content.len(),
 						);
+						// Ground truth for the gate: keep the last successful shell
+						// output — the decisive check normally runs right before `done`.
+						if call.tool_name == "shell" && !is_error {
+							let cmd = call
+								.parameters
+								.get("command")
+								.and_then(|v| v.as_str())
+								.unwrap_or_default();
+							params
+								.chat_session
+								.evidence
+								.record_command_output(cmd, &result_content);
+						}
 						// Tool-agnostic: detect truncation by the sentinel the global
 						// truncation choke point stamps, not by tool identity.
 						let is_truncated = result_content

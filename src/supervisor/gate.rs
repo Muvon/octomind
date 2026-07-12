@@ -42,6 +42,17 @@ what it refers to using this context, and verify against the resolved meaning. A
 item is a gap only when the request (so resolved) asks for it — do not demand work beyond
 the request's own scope.
 
+You may also receive GROUND TRUTH — runtime-gathered state (the working-tree diff of the
+files the agent changed, current content of new files, and the last command's recorded
+output). The agent cannot edit this either, and it outranks everything else: a claimed change
+that does not appear in the diff is a gap; a file reported written but marked MISSING is a
+gap; a "tests pass" claim is judged against the recorded command output, not the narrative.
+
+You may also receive PREVIOUSLY FLAGGED GAPS — gaps a prior verification pass found in this
+same task. Check each one first: it must now be closed with concrete evidence, or credibly
+rebutted as wrong or out of scope. A previously flagged gap that is neither closed nor
+rebutted stays a gap.
+
 Work through every part of the request, one at a time. For each, find the concrete proof it
 was done — a recorded action, file path, line or code excerpt, command output, or named test
 in the result. A part counts as done only if such evidence is present; a confident or
@@ -79,6 +90,12 @@ pub fn is_supervisor_injection(content: &str) -> bool {
 const LEDGER_CAP: usize = 128;
 /// Args locate the object of an action (path, command, url) — not replay it.
 const LEDGER_ARGS_MAX: usize = 120;
+/// Cap on distinct mutated paths tracked for ground truth (a task touching more
+/// files than this gets diff coverage for the first N; the ledger still lists all).
+const MUTATED_PATHS_CAP: usize = 16;
+/// Tail of the last command's output kept for ground truth — the tail is where
+/// test/build summaries land.
+const LAST_COMMAND_TAIL: usize = 2_000;
 
 /// One executed tool call (or a run of identical consecutive successful calls).
 #[derive(Debug)]
@@ -100,6 +117,12 @@ struct LedgerEntry {
 pub struct EvidenceLedger {
 	entries: VecDeque<LedgerEntry>,
 	dropped: usize,
+	/// Paths touched by successful mutation calls this task — the ground-truth
+	/// diff is scoped to these.
+	mutated_paths: Vec<String>,
+	/// Command + output tail of the last successful shell call this task — the
+	/// decisive check is normally the last command run before claiming done.
+	last_command: Option<(String, String)>,
 }
 
 impl EvidenceLedger {
@@ -107,6 +130,31 @@ impl EvidenceLedger {
 	pub fn reset(&mut self) {
 		self.entries.clear();
 		self.dropped = 0;
+		self.mutated_paths.clear();
+		self.last_command = None;
+	}
+
+	/// Record the output of a successful shell call; only the latest is kept.
+	pub fn record_command_output(&mut self, command: &str, output: &str) {
+		let tail: String = if output.chars().count() > LAST_COMMAND_TAIL {
+			let skip = output.chars().count() - LAST_COMMAND_TAIL;
+			format!("…{}", output.chars().skip(skip).collect::<String>())
+		} else {
+			output.to_string()
+		};
+		self.last_command = Some((command.to_string(), tail));
+	}
+
+	/// Paths touched by successful mutations this task (insertion order).
+	pub fn mutated_paths(&self) -> &[String] {
+		&self.mutated_paths
+	}
+
+	/// Command + output tail of the last successful shell call, if any.
+	pub fn last_command(&self) -> Option<(&str, &str)> {
+		self.last_command
+			.as_ref()
+			.map(|(c, o)| (c.as_str(), o.as_str()))
 	}
 
 	/// Record one executed tool call. Only an identical consecutive repeat of a
@@ -121,6 +169,20 @@ impl EvidenceLedger {
 		error: bool,
 		bytes: usize,
 	) {
+		// Track which files successful mutations touched, so ground truth can
+		// diff exactly those. Keyed on the conventional path parameter names.
+		if mutation && !error {
+			for key in ["path", "file_path"] {
+				if let Some(p) = parameters.get(key).and_then(|v| v.as_str()) {
+					if self.mutated_paths.len() < MUTATED_PATHS_CAP
+						&& !p.trim().is_empty()
+						&& !self.mutated_paths.iter().any(|e| e == p)
+					{
+						self.mutated_paths.push(p.to_string());
+					}
+				}
+			}
+		}
 		let mut args = parameters.to_string();
 		if args.chars().count() > LEDGER_ARGS_MAX {
 			args = args.chars().take(LEDGER_ARGS_MAX).collect();
@@ -201,6 +263,97 @@ pub fn render_session_context(intent: &str, plan: Option<&str>) -> String {
 	s
 }
 
+/// Cap on the git diff inside the ground-truth block.
+const GT_DIFF_MAX: usize = 10_000;
+/// Overall cap on the ground-truth block.
+const GT_TOTAL_MAX: usize = 14_000;
+/// Head of a new/untracked mutated file attached when the diff can't cover it.
+const GT_FILE_HEAD_LINES: usize = 80;
+
+/// Runtime-gathered GROUND TRUTH for the verifier: the working-tree diff of the
+/// files successful mutations touched (vs HEAD, when inside a git repo), the
+/// current head of mutated files the diff does not cover (new/untracked), a
+/// MISSING note for mutated files that no longer exist, and the last command's
+/// recorded output tail. Deterministic — the agent's narrative cannot alter it.
+/// Empty when nothing was mutated and no command ran.
+pub fn render_ground_truth(mutated_paths: &[String], last_command: Option<(&str, &str)>) -> String {
+	let mut s = String::new();
+	if !mutated_paths.is_empty() {
+		let diff = git_diff(mutated_paths);
+		if !diff.is_empty() {
+			s.push_str("Working-tree diff of files changed this task (vs HEAD):\n");
+			s.push_str(&diff);
+			if !diff.ends_with('\n') {
+				s.push('\n');
+			}
+		}
+		for p in mutated_paths {
+			if s.len() > GT_TOTAL_MAX {
+				break;
+			}
+			if diff.contains(p.as_str()) {
+				continue;
+			}
+			if !std::path::Path::new(p).exists() {
+				s.push_str(&format!(
+					"MISSING: {p} — mutated this task but does not exist now (deleted or never written)\n"
+				));
+			} else if let Ok(content) = std::fs::read_to_string(p) {
+				s.push_str(&format!(
+					"Current content of {p} (new or untracked — not in diff; first {GT_FILE_HEAD_LINES} lines):\n"
+				));
+				for line in content.lines().take(GT_FILE_HEAD_LINES) {
+					s.push_str(line);
+					s.push('\n');
+				}
+			}
+			// Unreadable-as-text (binary) files are skipped: existence is already
+			// proven and content would not help a text verifier.
+		}
+	}
+	if let Some((cmd, out)) = last_command {
+		s.push_str("Last command run (runtime-recorded output tail):\n$ ");
+		s.push_str(cmd);
+		s.push('\n');
+		s.push_str(out);
+		s.push('\n');
+	}
+	if s.len() > GT_TOTAL_MAX {
+		let mut end = GT_TOTAL_MAX;
+		while !s.is_char_boundary(end) {
+			end -= 1;
+		}
+		s.truncate(end);
+		s.push_str("\n(ground truth truncated)\n");
+	}
+	s
+}
+
+/// `git diff HEAD -- <paths>` in the current directory, capped. Empty on any
+/// failure (not a repo, no git, no HEAD yet) — ground truth is additive
+/// evidence, so absence degrades to the file-head path, never blocks.
+fn git_diff(paths: &[String]) -> String {
+	let out = std::process::Command::new("git")
+		.args(["diff", "HEAD", "--"])
+		.args(paths)
+		.output();
+	match out {
+		Ok(o) if o.status.success() => {
+			let mut d = String::from_utf8_lossy(&o.stdout).into_owned();
+			if d.len() > GT_DIFF_MAX {
+				let mut end = GT_DIFF_MAX;
+				while !d.is_char_boundary(end) {
+					end -= 1;
+				}
+				d.truncate(end);
+				d.push_str("\n(diff truncated)\n");
+			}
+			d
+		}
+		_ => String::new(),
+	}
+}
+
 /// Marker embedded in the plan pre-gate advisory so re-runs within the same
 /// turn don't nudge twice (mirrors the mutation pre-gate marker).
 pub const PLAN_GATE_MARKER: &str = "octomind:pre_gate_open_plan";
@@ -232,41 +385,69 @@ fn fmt_size(bytes: usize) -> String {
 	}
 }
 
-/// Verify a self-reported completion. `task` is the user's request, `result` is
-/// the agent's final answer, `claim` is the agent's own stated reason from its
-/// `done` self-report (checked against the result), `actions` is the rendered
-/// [`EvidenceLedger`] (empty when no tools ran — pure-reasoning tasks),
-/// `context` is the rendered [`render_session_context`] block (empty when the
-/// session has no durable goal or plan yet). Fails open (PASS) on empty input
-/// or LLM error — a verifier outage must never block the agent.
+/// Everything the verify-gate judges a completion claim against. All fields
+/// but `task`/`result` are optional context — empty means absent.
+pub struct GateInput<'a> {
+	/// The user's request (latest genuine user turn).
+	pub task: &'a str,
+	/// The agent's final answer.
+	pub result: &'a str,
+	/// The agent's own stated reason from its `done` self-report.
+	pub claim: Option<&'a str>,
+	/// Rendered [`EvidenceLedger`] (empty when no tools ran — pure reasoning).
+	pub actions: &'a str,
+	/// Rendered [`render_session_context`] block (durable goal + live plan).
+	pub context: &'a str,
+	/// Rendered [`render_ground_truth`] block (diff + last command output).
+	pub ground_truth: &'a str,
+	/// Gaps the previous verification pass found this task, so the re-verify
+	/// confirms each is closed instead of judging from scratch.
+	pub prior_gaps: &'a [String],
+}
+
+/// Verify a self-reported completion against [`GateInput`]. Fails open (PASS)
+/// on empty input or LLM error — a verifier outage must never block the agent.
 pub async fn verify(
 	config: &Config,
-	task: &str,
-	result: &str,
-	claim: Option<&str>,
-	actions: &str,
-	context: &str,
+	input: GateInput<'_>,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
-	if task.trim().is_empty() || result.trim().is_empty() {
+	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Pass;
 	}
-	let claim_line = match claim {
+	let claim_line = match input.claim {
 		Some(c) if !c.trim().is_empty() => format!("\n\nAGENT'S STATED CLAIM: {c}"),
 		_ => String::new(),
 	};
-	let actions_block = if actions.trim().is_empty() {
+	let actions_block = if input.actions.trim().is_empty() {
 		String::new()
 	} else {
-		format!("\n\nRECORDED ACTIONS:\n{actions}")
+		format!("\n\nRECORDED ACTIONS:\n{}", input.actions)
 	};
-	let context_block = if context.trim().is_empty() {
+	let context_block = if input.context.trim().is_empty() {
 		String::new()
 	} else {
-		format!("\n\nSESSION CONTEXT:\n{context}")
+		format!("\n\nSESSION CONTEXT:\n{}", input.context)
 	};
+	let ground_truth_block = if input.ground_truth.trim().is_empty() {
+		String::new()
+	} else {
+		format!("\n\nGROUND TRUTH:\n{}", input.ground_truth)
+	};
+	let prior_gaps_block = if input.prior_gaps.is_empty() {
+		String::new()
+	} else {
+		let mut b = String::from("\n\nPREVIOUSLY FLAGGED GAPS:\n");
+		for g in input.prior_gaps {
+			b.push_str("- ");
+			b.push_str(g);
+			b.push('\n');
+		}
+		b
+	};
+	let (task, result) = (input.task, input.result);
 	let user = format!(
-		"USER REQUEST:\n{task}{context_block}\n\nAGENT FINAL RESULT:\n{result}{claim_line}{actions_block}"
+		"USER REQUEST:\n{task}{context_block}\n\nAGENT FINAL RESULT:\n{result}{claim_line}{actions_block}{ground_truth_block}{prior_gaps_block}"
 	);
 	// Verify with a deliberately separate (ideally different-family) model — a
 	// same-family verifier shares the generator's blind spots and rubber-stamps
@@ -459,5 +640,76 @@ mod tests {
 		l.record("view", &serde_json::json!({}), false, false, 1);
 		l.reset();
 		assert_eq!(l.render(), "");
+	}
+
+	#[test]
+	fn ledger_tracks_mutated_paths_and_last_command() {
+		let mut l = EvidenceLedger::default();
+		l.record(
+			"text_editor",
+			&serde_json::json!({"path":"src/a.rs"}),
+			true,
+			false,
+			1,
+		);
+		// Duplicate path and failed mutation don't add entries.
+		l.record(
+			"text_editor",
+			&serde_json::json!({"path":"src/a.rs"}),
+			true,
+			false,
+			1,
+		);
+		l.record(
+			"write",
+			&serde_json::json!({"file_path":"src/b.rs"}),
+			true,
+			true,
+			1,
+		);
+		// Reads never add paths.
+		l.record(
+			"view",
+			&serde_json::json!({"path":"src/c.rs"}),
+			false,
+			false,
+			1,
+		);
+		assert_eq!(l.mutated_paths(), &["src/a.rs".to_string()][..]);
+
+		l.record_command_output("cargo test", "ok. 12 passed");
+		assert_eq!(l.last_command(), Some(("cargo test", "ok. 12 passed")));
+		l.record_command_output("cargo clippy", "clean");
+		assert_eq!(l.last_command(), Some(("cargo clippy", "clean")));
+
+		l.reset();
+		assert!(l.mutated_paths().is_empty());
+		assert!(l.last_command().is_none());
+	}
+
+	#[test]
+	fn command_output_keeps_tail() {
+		let mut l = EvidenceLedger::default();
+		let long = format!("{}FAILED at the end", "x".repeat(3000));
+		l.record_command_output("cargo test", &long);
+		let (_, out) = l.last_command().expect("recorded");
+		assert!(out.starts_with('…'));
+		assert!(out.ends_with("FAILED at the end"));
+		assert!(out.chars().count() <= 2_001); // tail + ellipsis
+	}
+
+	#[test]
+	fn ground_truth_empty_when_nothing_recorded() {
+		assert_eq!(render_ground_truth(&[], None), "");
+	}
+
+	#[test]
+	fn ground_truth_reports_missing_file_and_command() {
+		let gt = render_ground_truth(
+			&["definitely/not/a/real/file.xyz".to_string()],
+			Some(("cargo test", "12 passed")),
+		);
+		assert!(gt.contains("MISSING: definitely/not/a/real/file.xyz"));
+		assert!(gt.contains("$ cargo test\n12 passed"));
 	}
 }

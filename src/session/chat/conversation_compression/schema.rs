@@ -187,7 +187,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 			},
 			"original_request": {
 				"type": "string",
-				"description": "The user's original task statement. Quote verbatim from the very first user turn in the transcript; OR, if a prior **ORIGINAL REQUEST** exists in a previous summary inside the transcript, carry it forward unchanged. Never paraphrase."
+				"description": "The user's original task statement. Quote verbatim from the very first user turn in the transcript; OR, if a prior **ORIGINAL REQUEST** exists in a previous summary inside the transcript, carry it forward unchanged. EXCEPTION: if the user has since explicitly abandoned that task for an unrelated one, quote the pivot request verbatim instead — the abandoned task must not linger as the goal. Never paraphrase."
 			},
 			"session_context": {
 				"type": "string",

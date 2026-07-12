@@ -659,7 +659,8 @@ enabled = true
 model = "anthropic:claude-haiku-4-5"
 # Evidence-bound claims: have the agent back load-bearing repo facts with a
 # verbatim «quote», then deterministically verify each quote occurs in a tool
-# result; fabricated citations are re-grounded via the verify-gate (needs gate.enabled).
+# result -- and that each file:line reference in the answer holds on disk;
+# fabricated citations are re-grounded via the verify-gate (needs gate.enabled).
 claim_check = true
 # Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that emitted
 # a steer without the model breaking out (a steer is advisory, so a loop can otherwise

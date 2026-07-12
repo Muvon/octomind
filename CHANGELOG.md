@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.37.0] - 2026-07-12
+
+### 📋 Release Summary
+
+This release improves session management through enhanced conversation compression and more reliable plan completion verification (c8515976, e2f75144). Additionally, general system stability and performance have been upgraded via dependency updates and internal refactoring (8749f30d).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: enhance session compression and verification `c8515976`
+- **supervisor**: implement plan completion verification `e2f75144`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.36.1] - 2026-07-12
 
 ### 📋 Release Summary

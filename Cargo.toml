@@ -33,7 +33,7 @@ overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
 # octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
-octolib = { version = "0.25.0", default-features = false, features = ["huggingface"] }
+octolib = { version = "0.25.1", default-features = false, features = ["huggingface"] }
 tokenizers = { version = "0.22.2", default-features = false } # model's own tokenizer for exact token counts
 rmcp = { version = "1.7.0", default-features = false }
 

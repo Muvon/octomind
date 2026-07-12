@@ -884,7 +884,7 @@ async fn execute_tool_with_cancellation(
 					output,
 				)
 				.unwrap_or_else(|_| {
-					rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(
+					rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
 						"No result",
 					)])
 				});

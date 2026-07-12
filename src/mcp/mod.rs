@@ -85,7 +85,9 @@ impl McpToolResult {
 		Self {
 			tool_name,
 			tool_id,
-			result: rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(content)]),
+			result: rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+				content,
+			)]),
 		}
 	}
 
@@ -101,7 +103,9 @@ impl McpToolResult {
 			tool_id,
 			result: {
 				let mut r =
-					rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(content)]);
+					rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+						content,
+					)]);
 				r.structured_content = Some(metadata);
 				r
 			},
@@ -113,7 +117,7 @@ impl McpToolResult {
 		Self {
 			tool_name,
 			tool_id,
-			result: rmcp::model::CallToolResult::error(vec![rmcp::model::Content::text(
+			result: rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
 				error_message,
 			)]),
 		}
@@ -126,13 +130,13 @@ impl McpToolResult {
 
 	// Extract plain text content from all text items in the result
 	pub fn extract_content(&self) -> String {
-		use rmcp::model::RawContent;
+		use rmcp::model::ContentBlock;
 		let main_content = self
 			.result
 			.content
 			.iter()
-			.filter_map(|item| match &item.raw {
-				RawContent::Text(t) => Some(t.text.as_str()),
+			.filter_map(|item| match item {
+				ContentBlock::Text(t) => Some(t.text.as_str()),
 				_ => None,
 			})
 			.collect::<Vec<_>>()

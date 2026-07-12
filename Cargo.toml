@@ -34,8 +34,9 @@ overflow-checks = false # Disable overflow checks in release mode
 [dependencies]
 # octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
 octolib = { version = "0.25.1", default-features = false, features = ["huggingface"] }
-tokenizers = { version = "0.22.2", default-features = false } # model's own tokenizer for exact token counts
-rmcp = { version = "1.8.0", default-features = false }
+# fancy-regex: 0.23+ requires an explicit regex backend; pure-Rust over onig (C)
+tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] } # model's own tokenizer for exact token counts
+rmcp = { version = "2.2.0", default-features = false }
 
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }
 crossterm = "0.29.0"
@@ -57,12 +58,12 @@ toml = "1.1"
 lazy_static = "1.5.0"
 fuzzy-matcher = "0.3.7"
 tokio-util = { version = "0.7", features = ["rt", "compat"] }
-reedline = { version = "0.48", features = ["bashisms", "external_printer"] }
+reedline = { version = "0.49", features = ["bashisms", "external_printer"] }
 nu-ansi-term = "0.50"
 regex = "1.13.0"
 colored = "3.1.1"
 async-trait = "0.1.89"
-termimad = "0.34.1"
+termimad = "0.35.1"
 # No plist-load/yaml-load: only bundled dumps are used (ThemeSet::load_defaults),
 # and plist pulls quick-xml with open RUSTSEC advisories (2026-0194/0195).
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
@@ -79,7 +80,7 @@ viuer = "0.11.0"
 base64 = "0.22"
 urlencoding = "2.1.3"
 humantime-serde = "1.1.1"
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 futures-util = "0.3"
 
 # OAuth 2.1 + PKCE authentication
@@ -98,7 +99,7 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-agent-client-protocol = "0.14.0"
+agent-client-protocol = "1.2.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 which = "8.0.4"
 

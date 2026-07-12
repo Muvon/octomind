@@ -19,16 +19,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use agent_client_protocol::schema::{
+use agent_client_protocol::schema::v1::{
 	AgentCapabilities, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
 	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification,
 	ClientRequest, ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest, ExtResponse,
 	Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
 	McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse, PromptCapabilities,
-	PromptRequest, PromptResponse, ProtocolVersion, SessionInfoUpdate, SessionNotification,
-	SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+	PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification, SessionUpdate,
+	StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 	UnstructuredCommandInput,
 };
+use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -1325,8 +1326,9 @@ impl OctomindAgent {
 /// request carries a `oneshot` for its typed reply.
 pub(super) enum Command {
 	SetConnection(ConnectionTo<Client>),
+	// Boxed: ACP 1.x InitializeRequest is ~600 bytes, dwarfing every other variant.
 	Initialize(
-		InitializeRequest,
+		Box<InitializeRequest>,
 		oneshot::Sender<Result<InitializeResponse, agent_client_protocol::Error>>,
 	),
 	Authenticate(
@@ -1367,7 +1369,7 @@ async fn run_actor(agent: Rc<OctomindAgent>, mut rx: mpsc::UnboundedReceiver<Com
 			Command::Initialize(req, reply) => {
 				let agent = Rc::clone(&agent);
 				tokio::task::spawn_local(async move {
-					let _ = reply.send(agent.initialize(req).await);
+					let _ = reply.send(agent.initialize(*req).await);
 				});
 			}
 			Command::Authenticate(req, reply) => {
@@ -1465,7 +1467,7 @@ pub(super) async fn serve(
 				let cmd_tx = cmd_tx.clone();
 				async move |req: InitializeRequest, responder, cx: ConnectionTo<Client>| {
 					forward(&cmd_tx, &cx, responder, move |tx| {
-						Command::Initialize(req, tx)
+						Command::Initialize(Box::new(req), tx)
 					})
 				}
 			},

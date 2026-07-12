@@ -196,4 +196,9 @@ pub struct GateConfig {
 	/// change. Tool-agnostic — keyed on the mutation-without-clean-check pattern,
 	/// not on tool names. Runs before the LLM verify-gate (zero model calls).
 	pub require_check_after_mutation: bool,
+	/// Free deterministic pre-gate: refuse a self-reported `done` while the live
+	/// plan checklist still has open items — the drift-by-omission failure. The
+	/// agent must finish them or close them out via the plan tool first. Runs
+	/// before the LLM verify-gate (zero model calls).
+	pub require_plan_complete: bool,
 }

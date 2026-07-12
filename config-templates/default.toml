@@ -733,6 +733,10 @@ verifier_model = "anthropic:claude-haiku-4-5"
 # Free deterministic pre-gate (no model call): refuse a `done` claim when code
 # was changed but no successful check (build/test/lint/etc.) ran since the change.
 require_check_after_mutation = true
+# Free deterministic pre-gate (no model call): refuse a `done` claim while the
+# live plan checklist still has open items -- finish them or close them out via
+# the plan tool (mark complete / done / reset) first.
+require_plan_complete = true
 
 # Goal recitation: re-inject the live goal (anchor intent + next_steps) at the
 # context tail each turn on long (already-compacted) sessions, so it stays in the

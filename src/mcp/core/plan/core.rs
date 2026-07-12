@@ -902,6 +902,30 @@ pub fn render_plan_checklist() -> Option<String> {
 	Some(s)
 }
 
+/// Titles of not-yet-completed tasks. Pure filter so it is testable without
+/// touching the process-global plan storage.
+fn open_titles(task_list: Vec<(String, String, TaskStatus)>) -> Vec<String> {
+	task_list
+		.into_iter()
+		.filter(|(_, _, status)| !matches!(status, TaskStatus::Completed))
+		.map(|(title, _, _)| title)
+		.collect()
+}
+
+/// Free pre-gate signal: titles of open items in the active plan. Empty when
+/// no active plan or every task is completed.
+pub fn open_plan_tasks() -> Vec<String> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return Vec::new();
+	}
+	match storage.get_task_list() {
+		Ok(list) => open_titles(list),
+		Err(_) => Vec::new(),
+	}
+}
+
 /// Get current plan display for session commands
 pub async fn get_current_plan_display() -> Result<String> {
 	let storage = get_storage();
@@ -997,4 +1021,28 @@ pub async fn get_current_plan_json() -> Result<serde_json::Value> {
 			})
 		}).collect::<Vec<_>>()
 	}))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn open_titles_keeps_only_uncompleted() {
+		let list = vec![
+			("done one".to_string(), String::new(), TaskStatus::Completed),
+			(
+				"open one".to_string(),
+				String::new(),
+				TaskStatus::InProgress,
+			),
+			(
+				"open two".to_string(),
+				String::new(),
+				TaskStatus::InProgress,
+			),
+		];
+		assert_eq!(open_titles(list), vec!["open one", "open two"]);
+		assert!(open_titles(vec![]).is_empty());
+	}
 }

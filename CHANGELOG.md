@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.36.1] - 2026-07-12
+
+### 📋 Release Summary
+
+This release includes an update to the core library to ensure improved system stability and performance (93440965). Additionally, internal configuration refinements have been made to streamline overall efficiency (6c4f4f0a).
+
+
+### 🔧 Improvements & Optimizations
+
+- **config**: remove unnecessary reference to match string `6c4f4f0a`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.36.0] - 2026-07-11
 
 ### 📋 Release Summary

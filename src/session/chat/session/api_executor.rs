@@ -360,6 +360,53 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			// Budget exhausted — fall through to the LLM gate / acceptance.
 		}
 
+		// Free plan pre-gate (no model call): a self-reported `done` while the live
+		// plan still has open items is drift-by-omission — parts of the decomposed
+		// task silently dropped. The agent must finish them or close them out via
+		// the plan tool. Same marker/budget pattern as the mutation pre-gate above.
+		if config.supervisor.gate.require_plan_complete {
+			let open = crate::mcp::core::plan::open_plan_tasks();
+			let already_nudged_plan = {
+				let msgs = &chat_session.session.messages;
+				let turn_start = msgs
+					.iter()
+					.rposition(crate::session::is_real_user_task_message)
+					.unwrap_or(0);
+				msgs[turn_start..].iter().any(|m| {
+					m.content
+						.contains(crate::supervisor::gate::PLAN_GATE_MARKER)
+				})
+			};
+			if !open.is_empty() && !already_nudged_plan {
+				let note = crate::supervisor::gate::format_plan_advisory(&open);
+				chat_session.add_system_managed_user_message(&note)?;
+				chat_session.last_self_report = None; // force the re-run to re-evaluate
+				chat_session.gate_iterations += 1;
+				crate::supervisor::stats::plan_block();
+				crate::supervisor::notify(&format!(
+					"done claimed with {} open plan item(s) — re-running",
+					open.len()
+				));
+				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+					crate::log_debug!(
+						"Plan pre-gate: {} open item(s); re-running turn (iter {})",
+						open.len(),
+						chat_session.gate_iterations
+					);
+					return Box::pin(execute_api_call_and_process_response(
+						chat_session,
+						config,
+						role,
+						operation_rx,
+						mode,
+						sink,
+					))
+					.await;
+				}
+				// Budget exhausted — fall through to the LLM gate / acceptance.
+			}
+		}
+
 		// Free evidence check (no model call): a `done` answer that cites « » quotes
 		// which appear in NO tool result is fabricating its support. Catch it
 		// deterministically and re-ground via the same bounded re-run.
@@ -426,6 +473,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let result = chat_session.last_response.clone();
 		let claim = chat_session.last_self_report_reason.clone();
 		let actions = chat_session.evidence.render();
+		// Durable goal + live plan for the verifier: a terse follow-up turn
+		// ("continue") is only verifiable against what it refers to.
+		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
+		let context = crate::supervisor::gate::render_session_context(
+			&chat_session.session.info.anchor.intent,
+			plan_checklist.as_deref(),
+		);
 		crate::supervisor::stats::gate_run();
 		animation_manager.set_phase("Verifying completion …").await;
 		let verdict = crate::supervisor::gate::verify(
@@ -434,6 +488,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			&result,
 			claim.as_deref(),
 			&actions,
+			&context,
 			operation_rx.clone(),
 		)
 		.await;

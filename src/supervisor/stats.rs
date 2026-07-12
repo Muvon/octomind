@@ -62,6 +62,7 @@ struct Stats {
 	steer_sequential: u64,
 	pregate_blocks: u64,
 	claim_blocks: u64,
+	plan_blocks: u64,
 	lessons_stored: u64,
 	orientation_stored: u64,
 	recalls_injected: u64,
@@ -132,6 +133,10 @@ pub fn pregate_block() {
 pub fn claim_block() {
 	with(|s| s.claim_blocks += 1);
 }
+/// The plan pre-gate refused a `done` (live plan still has open items).
+pub fn plan_block() {
+	with(|s| s.plan_blocks += 1);
+}
 /// `n` lessons were stored by distill.
 pub fn lessons(n: u64) {
 	with(|s| s.lessons_stored += n);
@@ -162,6 +167,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.steers == 0
 		&& s.pregate_blocks == 0
 		&& s.claim_blocks == 0
+		&& s.plan_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
 		&& s.recalls_injected == 0;
@@ -199,6 +205,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"steer_signals": steer_signals,
 		"pregate_blocks": s.pregate_blocks,
 		"claim_blocks": s.claim_blocks,
+		"plan_blocks": s.plan_blocks,
 		"lessons_stored": s.lessons_stored,
 		"orientation_stored": s.orientation_stored,
 		"recalls_injected": s.recalls_injected,

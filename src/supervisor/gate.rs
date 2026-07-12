@@ -36,6 +36,12 @@ outranks the narrative:
 - When RECORDED ACTIONS is absent or empty, the task may be pure reasoning — judge the result
   text on its own terms.
 
+You may also receive SESSION CONTEXT — the durable goal this session is pursuing and/or the
+live plan checklist. The request may be terse ("continue", "finish it", "fix that"): resolve
+what it refers to using this context, and verify against the resolved meaning. An open plan
+item is a gap only when the request (so resolved) asks for it — do not demand work beyond
+the request's own scope.
+
 Work through every part of the request, one at a time. For each, find the concrete proof it
 was done — a recorded action, file path, line or code excerpt, command output, or named test
 in the result. A part counts as done only if such evidence is present; a confident or
@@ -171,6 +177,52 @@ impl EvidenceLedger {
 	}
 }
 
+/// Render the SESSION CONTEXT block for the verifier: the durable goal (anchor
+/// intent) and the live plan checklist. This is what lets the gate verify a
+/// terse follow-up turn ("continue") against the real goal instead of the
+/// fragment. Empty when neither exists — short single-task sessions hand the
+/// gate nothing extra.
+pub fn render_session_context(intent: &str, plan: Option<&str>) -> String {
+	let intent = intent.trim();
+	let plan = plan.map(str::trim).filter(|p| !p.is_empty());
+	if intent.is_empty() && plan.is_none() {
+		return String::new();
+	}
+	let mut s = String::new();
+	if !intent.is_empty() {
+		s.push_str("Session goal: ");
+		s.push_str(intent);
+		s.push('\n');
+	}
+	if let Some(p) = plan {
+		s.push_str(p);
+		s.push('\n');
+	}
+	s
+}
+
+/// Marker embedded in the plan pre-gate advisory so re-runs within the same
+/// turn don't nudge twice (mirrors the mutation pre-gate marker).
+pub const PLAN_GATE_MARKER: &str = "octomind:pre_gate_open_plan";
+
+/// Advisory injected when `done` is self-reported while the live plan still
+/// has open items — the drift-by-omission failure: parts of the decomposed
+/// task silently dropped. Free and deterministic; shares the gate budget.
+pub fn format_plan_advisory(open: &[String]) -> String {
+	let mut s = format!(
+		"<pay-attention>\n<!-- {PLAN_GATE_MARKER} -->\nYou reported done, but your plan still has open items:\n"
+	);
+	for t in open {
+		s.push_str("- ");
+		s.push_str(t);
+		s.push('\n');
+	}
+	s.push_str(
+		"The task is not done while its plan is open. For each item: do the work and mark it complete (plan `next`), or — if it is already covered or no longer applies — close it out via the plan tool (`next` with a one-line reason, or `done`/`reset` for the whole plan if it is obsolete). Then re-report your status.\n</pay-attention>",
+	);
+	s
+}
+
 /// Compact byte-size hint for a tool result (`412b`, `2.3k`).
 fn fmt_size(bytes: usize) -> String {
 	if bytes >= 1024 {
@@ -183,15 +235,17 @@ fn fmt_size(bytes: usize) -> String {
 /// Verify a self-reported completion. `task` is the user's request, `result` is
 /// the agent's final answer, `claim` is the agent's own stated reason from its
 /// `done` self-report (checked against the result), `actions` is the rendered
-/// [`EvidenceLedger`] (empty when no tools ran — pure-reasoning tasks). Fails
-/// open (PASS) on empty input or LLM error — a verifier outage must never block
-/// the agent.
+/// [`EvidenceLedger`] (empty when no tools ran — pure-reasoning tasks),
+/// `context` is the rendered [`render_session_context`] block (empty when the
+/// session has no durable goal or plan yet). Fails open (PASS) on empty input
+/// or LLM error — a verifier outage must never block the agent.
 pub async fn verify(
 	config: &Config,
 	task: &str,
 	result: &str,
 	claim: Option<&str>,
 	actions: &str,
+	context: &str,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
 	if task.trim().is_empty() || result.trim().is_empty() {
@@ -206,8 +260,13 @@ pub async fn verify(
 	} else {
 		format!("\n\nRECORDED ACTIONS:\n{actions}")
 	};
+	let context_block = if context.trim().is_empty() {
+		String::new()
+	} else {
+		format!("\n\nSESSION CONTEXT:\n{context}")
+	};
 	let user = format!(
-		"USER REQUEST:\n{task}\n\nAGENT FINAL RESULT:\n{result}{claim_line}{actions_block}"
+		"USER REQUEST:\n{task}{context_block}\n\nAGENT FINAL RESULT:\n{result}{claim_line}{actions_block}"
 	);
 	// Verify with a deliberately separate (ideally different-family) model — a
 	// same-family verifier shares the generator's blind spots and rubber-stamps
@@ -360,6 +419,37 @@ mod tests {
 			1,
 		);
 		assert!(l.render().contains('…'));
+	}
+
+	#[test]
+	fn session_context_empty_when_no_goal_or_plan() {
+		assert_eq!(render_session_context("", None), "");
+		assert_eq!(render_session_context("  ", Some("  ")), "");
+	}
+
+	#[test]
+	fn session_context_renders_goal_and_plan() {
+		let c = render_session_context(
+			"Ship the feature",
+			Some("Live plan (1/2 done):\n✅ a\n🔄 b ← current"),
+		);
+		assert!(c.starts_with("Session goal: Ship the feature\n"));
+		assert!(c.contains("🔄 b ← current"));
+		// Each part also renders alone.
+		assert_eq!(
+			render_session_context("Ship it", None),
+			"Session goal: Ship it\n"
+		);
+		assert_eq!(render_session_context("", Some("plan")), "plan\n");
+	}
+
+	#[test]
+	fn plan_advisory_lists_items_and_carries_marker() {
+		let a = format_plan_advisory(&["wire it up".into(), "add tests".into()]);
+		assert!(is_supervisor_injection(&a));
+		assert!(a.contains(PLAN_GATE_MARKER));
+		assert!(a.contains("- wire it up\n"));
+		assert!(a.contains("- add tests\n"));
 	}
 
 	#[test]

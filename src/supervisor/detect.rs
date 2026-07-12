@@ -202,6 +202,56 @@ fn normalize_ws(s: &str) -> String {
 	s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Deterministic evidence check: `file:line` references in `response` that do
+/// not hold on disk — the file is missing, or the line number is beyond EOF.
+/// High-precision by construction: only paths containing a `/` and an extension
+/// starting with a letter are checked (bare `x.rs:3` or version-like `1.2:3`
+/// never match), and URL interiors are excluded by the preceding-char guard.
+/// Relative paths resolve against the process cwd (the project dir in a
+/// session). No model call.
+pub fn unverified_file_refs(response: &str) -> Vec<String> {
+	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+	let re = RE.get_or_init(|| {
+		regex::Regex::new(
+			r"(?:^|[^A-Za-z0-9_./:-])(/?(?:[A-Za-z0-9_@~.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]{0,7}):([0-9]+)",
+		)
+		.expect("static pattern")
+	});
+	// Bound-check only files we can cheaply read as text.
+	const MAX_CHECKED_FILE: u64 = 2_000_000;
+	let mut flagged = Vec::new();
+	let mut seen = std::collections::HashSet::new();
+	for cap in re.captures_iter(response) {
+		let path = &cap[1];
+		let Ok(line) = cap[2].parse::<usize>() else {
+			continue;
+		};
+		let key = format!("{path}:{line}");
+		if !seen.insert(key.clone()) {
+			continue;
+		}
+		let p = std::path::Path::new(path);
+		if !p.exists() {
+			flagged.push(format!("{key} (file not found)"));
+			continue;
+		}
+		let Ok(meta) = p.metadata() else {
+			continue;
+		};
+		if meta.len() > MAX_CHECKED_FILE {
+			continue;
+		}
+		let Ok(content) = std::fs::read_to_string(p) else {
+			continue;
+		};
+		let count = content.lines().count();
+		if line == 0 || line > count {
+			flagged.push(format!("{key} (file has only {count} lines)"));
+		}
+	}
+	flagged
+}
+
 /// Heuristic: does this tool change state, so a success is inherently progress?
 /// (Reads/searches only count as progress when they surface *new* content.)
 pub fn is_mutation_tool(tool: &str) -> bool {
@@ -1101,6 +1151,39 @@ mod tests {
 	#[test]
 	fn no_citations_is_clean() {
 		assert!(unverified_citations("plain answer, no tags", &["x".to_string()]).is_empty());
+	}
+
+	#[test]
+	fn file_refs_existing_line_is_clean() {
+		// cargo test runs with the crate root as cwd, so this very file resolves.
+		assert!(unverified_file_refs("see src/supervisor/detect.rs:1 for it").is_empty());
+	}
+
+	#[test]
+	fn file_refs_missing_file_flagged() {
+		let bad = unverified_file_refs("fixed in src/supervisor/zz_no_such_file.rs:5 now");
+		assert_eq!(
+			bad,
+			vec!["src/supervisor/zz_no_such_file.rs:5 (file not found)"]
+		);
+	}
+
+	#[test]
+	fn file_refs_line_beyond_eof_flagged() {
+		let bad = unverified_file_refs("look at src/supervisor/mod.rs:999999");
+		assert_eq!(bad.len(), 1);
+		assert!(bad[0].starts_with("src/supervisor/mod.rs:999999 (file has only "));
+	}
+
+	#[test]
+	fn file_refs_urls_and_versions_not_matched() {
+		assert!(unverified_file_refs("see https://x.com/a/b.rs:12 and v1.2/3.4:56").is_empty());
+	}
+
+	#[test]
+	fn file_refs_deduplicated() {
+		let bad = unverified_file_refs("a/missing.rs:1 and again a/missing.rs:1 twice");
+		assert_eq!(bad.len(), 1);
 	}
 
 	#[test]

@@ -205,6 +205,10 @@ pub struct ChatSession {
 	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining;
 	/// suppresses distill so we never learn from an unverified trajectory.
 	pub gate_failed: bool,
+	/// Supervisor: gaps the last verify-gate pass found this task, handed to the
+	/// next pass so it confirms each is closed instead of judging from scratch.
+	/// Cleared on PASS and on each genuine user turn.
+	pub last_gate_gaps: Vec<String>,
 	/// Supervisor: queued advisory steer note (loop / no-progress), injected at
 	/// the next request's safe pre-build point. None = nothing to steer.
 	pub steer_pending: Option<String>,
@@ -358,6 +362,7 @@ impl ChatSession {
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
 			gate_failed: false,
+			last_gate_gaps: Vec::new(),
 			steer_pending: None,
 			consecutive_steers: 0,
 			steer_attempt: 0,
@@ -569,6 +574,7 @@ impl ChatSession {
 						detectors: crate::supervisor::detect::Detectors::default(),
 						gate_iterations: 0,
 						gate_failed: false,
+						last_gate_gaps: Vec::new(),
 						steer_pending: None,
 						consecutive_steers: 0,
 						steer_attempt: 0,
@@ -1321,6 +1327,7 @@ mod tests {
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
 			gate_failed: false,
+			last_gate_gaps: Vec::new(),
 			steer_pending: None,
 			consecutive_steers: 0,
 			steer_attempt: 0,

@@ -78,7 +78,8 @@ pub struct SupervisorConfig {
 	pub model: String,
 	/// Evidence-bound claims: instruct the agent to back load-bearing repo facts
 	/// with a verbatim `« »` quote, then deterministically verify each quote
-	/// occurs in a tool result. Fabricated citations are re-grounded via the
+	/// occurs in a tool result — and that each `file:line` reference in the
+	/// final answer holds on disk. Fabricated citations are re-grounded via the
 	/// verify-gate's bounded re-run (so this is effective only when `gate.enabled`).
 	pub claim_check: bool,
 	/// Cross-session learning mechanic (distill + recall).

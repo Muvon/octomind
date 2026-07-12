@@ -408,8 +408,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 
 		// Free evidence check (no model call): a `done` answer that cites « » quotes
-		// which appear in NO tool result is fabricating its support. Catch it
-		// deterministically and re-ground via the same bounded re-run.
+		// which appear in NO tool result, or `file:line` references that do not
+		// hold on disk, is fabricating its support. Catch both deterministically
+		// and re-ground via the same bounded re-run.
 		if config.supervisor.claim_check {
 			let tool_outputs: Vec<String> = chat_session
 				.session
@@ -422,14 +423,29 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				&chat_session.last_response,
 				&tool_outputs,
 			);
-			if !unverified.is_empty() {
-				let mut note = String::from(
-					"<pay-attention>\nEach quote below was presented as «verbatim» from a tool result, but none string-matches any output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
-				);
-				for q in &unverified {
-					note.push_str("- «");
-					note.push_str(q);
-					note.push_str("»\n");
+			let bad_refs =
+				crate::supervisor::detect::unverified_file_refs(&chat_session.last_response);
+			if !unverified.is_empty() || !bad_refs.is_empty() {
+				let mut note = String::from("<pay-attention>\n");
+				if !unverified.is_empty() {
+					note.push_str(
+						"Each quote below was presented as «verbatim» from a tool result, but none string-matches any output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
+					);
+					for q in &unverified {
+						note.push_str("- «");
+						note.push_str(q);
+						note.push_str("»\n");
+					}
+				}
+				if !bad_refs.is_empty() {
+					note.push_str(
+						"Each file:line reference below does not hold on disk — the file is missing or the line is beyond its end. Re-check the real location and cite the correct file and line; if the reference was illustrative or the file was intentionally deleted, say so instead of citing it as a location. Invalid references:\n",
+					);
+					for r in &bad_refs {
+						note.push_str("- ");
+						note.push_str(r);
+						note.push('\n');
+					}
 				}
 				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
@@ -437,13 +453,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.gate_iterations += 1;
 				crate::supervisor::stats::claim_block();
 				crate::supervisor::notify(&format!(
-					"{} unverifiable citation(s) — re-running",
-					unverified.len()
+					"{} unverifiable citation(s), {} invalid file reference(s) — re-running",
+					unverified.len(),
+					bad_refs.len()
 				));
 				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
 					crate::log_debug!(
-						"Evidence check: {} unverified citation(s); re-running (iter {})",
+						"Evidence check: {} unverified citation(s), {} bad file ref(s); re-running (iter {})",
 						unverified.len(),
+						bad_refs.len(),
 						chat_session.gate_iterations
 					);
 					return Box::pin(execute_api_call_and_process_response(
@@ -480,15 +498,26 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			&chat_session.session.info.anchor.intent,
 			plan_checklist.as_deref(),
 		);
+		// Runtime-gathered ground truth: the diff of what actually changed and
+		// the last command's recorded output — the verifier judges state, not story.
+		let ground_truth = crate::supervisor::gate::render_ground_truth(
+			chat_session.evidence.mutated_paths(),
+			chat_session.evidence.last_command(),
+		);
+		let prior_gaps = chat_session.last_gate_gaps.clone();
 		crate::supervisor::stats::gate_run();
 		animation_manager.set_phase("Verifying completion …").await;
 		let verdict = crate::supervisor::gate::verify(
 			config,
-			&task,
-			&result,
-			claim.as_deref(),
-			&actions,
-			&context,
+			crate::supervisor::gate::GateInput {
+				task: &task,
+				result: &result,
+				claim: claim.as_deref(),
+				actions: &actions,
+				context: &context,
+				ground_truth: &ground_truth,
+				prior_gaps: &prior_gaps,
+			},
 			operation_rx.clone(),
 		)
 		.await;
@@ -497,6 +526,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::supervisor::gate::GateVerdict::Pass => {
 				chat_session.gate_iterations = 0;
 				chat_session.gate_failed = false;
+				chat_session.last_gate_gaps.clear();
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!("Verify-gate: PASS");
 				crate::supervisor::notify("completion verified");
@@ -507,6 +537,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
 				chat_session.gate_iterations += 1;
+				chat_session.last_gate_gaps = gaps.clone();
 				crate::log_debug!(
 					"Verify-gate: {} gap(s); re-running turn (iter {})",
 					gaps.len(),

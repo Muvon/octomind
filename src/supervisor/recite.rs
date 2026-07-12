@@ -27,8 +27,9 @@ use crate::session::anchor::Anchor;
 /// Build the recitation note for the context tail, or `None` when there is
 /// nothing durable to recite yet.
 ///
-/// Recites `intent` verbatim — it is immutable (first-write-wins) so it never
-/// drifts. For the "what to do now" part it prefers the LIVE plan checklist
+/// Recites `intent` verbatim — it only moves when a compaction carries a
+/// sanctioned user pivot, so it never drifts through paraphrase. For the
+/// "what to do now" part it prefers the LIVE plan checklist
 /// (`plan_checklist`, re-read every turn from the plan tool's storage) over the
 /// `next_steps` snapshot, which only refreshes at compaction and is stale
 /// between. With an active plan it recites even before the first compaction —

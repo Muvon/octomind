@@ -725,7 +725,7 @@ async fn handle_large_tool_results(
 				// identical failure — violating the "errors are never deduped"
 				// invariant exactly when the model needs the error text most.
 				let was_error = result.is_error();
-				let content = vec![rmcp::model::Content::text(truncated)];
+				let content = vec![rmcp::model::ContentBlock::text(truncated)];
 				result.result = if was_error {
 					rmcp::model::CallToolResult::error(content)
 				} else {

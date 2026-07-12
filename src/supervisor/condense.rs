@@ -336,7 +336,7 @@ fn apply_verdict(entry: &Entry, r: &McpToolResult, original: &str) -> Option<Str
 /// truncation: a condensed failing tool must stay an error).
 fn set_content(r: &mut McpToolResult, content: String) {
 	let was_error = r.is_error();
-	let c = vec![rmcp::model::Content::text(content)];
+	let c = vec![rmcp::model::ContentBlock::text(content)];
 	r.result = if was_error {
 		rmcp::model::CallToolResult::error(c)
 	} else {

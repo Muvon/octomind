@@ -252,6 +252,29 @@ pub fn unverified_file_refs(response: &str) -> Vec<String> {
 	flagged
 }
 
+/// Shape-based: is this call a candidate VERIFIER — something that executes a
+/// command whose outcome can genuinely check a prior change? Judged from what
+/// the runtime actually knows, not from the tool's name: the call must carry a
+/// string `command` parameter (the execution signature — shells, runners,
+/// remote executors all take one), and the tool must not belong to one of
+/// octomind's own builtin control-plane servers (authoritative: resolved via
+/// the same registry the dispatcher routes with — `plan` takes a `command`
+/// parameter too, but the runtime knows it executes nothing). Whether the
+/// round actually verified is then decided OBSERVATIONALLY in
+/// [`Detectors::note_round_verification`]: a candidate that dirtied the tree
+/// is a mutator, not a verifier.
+pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
+	if !parameters.get("command").is_some_and(|v| v.is_string()) {
+		return false;
+	}
+	match crate::mcp::tool_map::get_tool_server_name(tool) {
+		Some(server) => !matches!(server.as_str(), "core" | "runtime" | "orchestration" | "agent"),
+		// Unregistered tool with a command param: treat as a candidate — the
+		// observational tree check still guards against false verification.
+		None => true,
+	}
+}
+
 /// Heuristic: does this tool change state, so a success is inherently progress?
 /// (Reads/searches only count as progress when they surface *new* content.)
 pub fn is_mutation_tool(tool: &str) -> bool {
@@ -311,11 +334,18 @@ pub struct Detectors {
 	/// Hash of the user task the `centroid` belongs to; a change resets it so the
 	/// working set never carries across turns (see [`Detectors::note_task`]).
 	task_hash: Option<u64>,
-	/// A code change was made with no successful non-mutation check since — the
-	/// free pre-gate signal for a premature `done`. Trajectory state, NOT a
-	/// streak: it persists across turns until a clean check clears it, so
-	/// [`Detectors::reset_streak`] deliberately leaves it untouched.
-	unverified_mutation: bool,
+	/// Observational verification state (see `supervisor::workdir::fingerprint`):
+	/// the working-tree fingerprint at the last clean verification — a
+	/// verifier-shaped call that succeeded on an UNCHANGED tree. Seeded from the
+	/// first observed round's pre-fingerprint (the task-start tree). The pre-gate
+	/// compares the live fingerprint against this: any difference, made through
+	/// ANY tool, means unverified change. Trajectory state, NOT a streak: it
+	/// persists across turns, so [`Detectors::reset_streak`] leaves it untouched.
+	verified_fp: Option<u64>,
+	/// Fallback verification state for when fingerprints are unavailable (not a
+	/// git repo): a mutation-shaped success was seen with no verifier-shaped
+	/// success since.
+	dirty_shape: bool,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -386,9 +416,9 @@ fn hash2(a: &str, b: &str) -> u64 {
 impl Detectors {
 	/// Fold ONE call's result into per-call state and return `(result_hash, novel)`
 	/// for the caller to aggregate into the round. Updates only genuinely per-result
-	/// state: the seen-set (novelty memory across time) and the mutation-verification
-	/// flag. It decides NO signal — every signal is a per-ROUND verdict, because a
-	/// parallel batch is one model decision (see [`Detectors::record_round_signals`]).
+	/// state: the seen-set (novelty memory across time). It decides NO signal —
+	/// every signal is a per-ROUND verdict, because a parallel batch is one model
+	/// decision (see [`Detectors::record_round_signals`]).
 	pub fn note_call(
 		&mut self,
 		tool: &str,
@@ -396,16 +426,6 @@ impl Detectors {
 		is_error: bool,
 		is_mutation: bool,
 	) -> (u64, bool) {
-		// Mutation-verification tracking for the free pre-gate (premature `done`):
-		// a successful change sets the flag; a later successful non-mutation action
-		// (a check / build / test / read) clears it. Errors never clear it.
-		// Conservative by design — clearing on any clean non-mutation action
-		// under-fires rather than over-fires, so a false positive costs at most one
-		// extra turn. Tool-agnostic: we never name which tool verifies.
-		if !is_error {
-			self.unverified_mutation = is_mutation;
-		}
-
 		// Identity of this action's RESULT, keyed on tool+result so the same
 		// output from differently-worded calls still reads as a repeat.
 		let rhash = hash2(tool, result);
@@ -527,9 +547,49 @@ impl Detectors {
 		}
 	}
 
+	/// Fold one completed tool ROUND into the observational verification state.
+	/// `fp_before`/`fp_after` are workdir fingerprints measured around the round
+	/// (`None` = unavailable, e.g. not a git repo). `verifier_ok` = some
+	/// successful call in the round was verifier-shaped ([`is_verifier_shaped`]);
+	/// `mutation_ok` = some successful call was mutation-shaped (the
+	/// no-fingerprint fallback signal).
+	///
+	/// A round VERIFIES only when a verifier ran on an unchanged tree — a
+	/// "verifier" that also dirtied the tree (or ran in the same parallel batch
+	/// as an edit) checked an ambiguous state and proves nothing.
+	pub fn note_round_verification(
+		&mut self,
+		fp_before: Option<u64>,
+		fp_after: Option<u64>,
+		verifier_ok: bool,
+		mutation_ok: bool,
+	) {
+		// First observation seeds the baseline: the task-start tree is, by
+		// definition, the last state the user accepted.
+		if self.verified_fp.is_none() {
+			if let Some(b) = fp_before {
+				self.verified_fp = Some(b);
+			}
+		}
+		let tree_unchanged = match (fp_before, fp_after) {
+			(Some(a), Some(b)) => a == b,
+			// No fingerprints: fall back to call shape.
+			_ => !mutation_ok,
+		};
+		if verifier_ok && tree_unchanged {
+			if let Some(a) = fp_after {
+				self.verified_fp = Some(a);
+			}
+			self.dirty_shape = false;
+		} else if mutation_ok {
+			self.dirty_shape = true;
+		}
+	}
+
 	/// Reset the rolling windows (e.g. on a new user turn).
-	/// `unverified_mutation` is intentionally NOT reset — it is trajectory state
-	/// that only a successful check clears, not a per-streak counter.
+	/// Verification state (`verified_fp`/`dirty_shape`) is intentionally NOT
+	/// reset — it is trajectory state that only a clean verification clears,
+	/// not a per-streak counter.
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
@@ -612,10 +672,15 @@ impl Detectors {
 		self.consecutive_drift = 0;
 	}
 
-	/// Free pre-gate signal: code was changed and no successful check has run
-	/// since. See [`Detectors::unverified_mutation`].
-	pub fn needs_verification(&self) -> bool {
-		self.unverified_mutation
+	/// Free pre-gate signal: the working tree differs from its state at the last
+	/// clean verification — something changed (through ANY tool) and nothing has
+	/// been run since to check it. `fp_now` is the live fingerprint measured at
+	/// decision time; without fingerprints the shape-based fallback answers.
+	pub fn needs_verification(&self, fp_now: Option<u64>) -> bool {
+		match (fp_now, self.verified_fp) {
+			(Some(now), Some(verified)) => now != verified,
+			_ => self.dirty_shape,
+		}
 	}
 }
 
@@ -1080,47 +1145,61 @@ mod tests {
 	}
 
 	#[test]
-	fn needs_verification_after_mutation_until_clean_check() {
+	fn verification_shape_fallback_without_fingerprints() {
 		let mut d = Detectors::default();
-		assert!(!d.needs_verification());
-		// A successful edit → unverified.
-		d.record_action(
-			"edit", "ok", false, true, false, false, false, 9, 9, 0, 0, 0,
-		);
-		assert!(d.needs_verification());
-		// A failed check does NOT clear it.
-		d.record_action(
-			"shell", "error", true, false, false, false, false, 9, 9, 0, 0, 0,
-		);
-		assert!(d.needs_verification());
-		// A successful non-mutation check clears it.
-		d.record_action(
-			"shell",
-			"tests pass",
-			false,
-			false,
-			false,
-			false,
-			false,
-			9,
-			9,
-			0,
-			0,
-			0,
-		);
-		assert!(!d.needs_verification());
+		assert!(!d.needs_verification(None));
+		// Mutation-shaped round, no verifier → unverified.
+		d.note_round_verification(None, None, false, true);
+		assert!(d.needs_verification(None));
+		// A read-only round changes nothing — looking is not verifying.
+		d.note_round_verification(None, None, false, false);
+		assert!(d.needs_verification(None));
+		// A round where the verifier ran alongside a mutation proves nothing.
+		d.note_round_verification(None, None, true, true);
+		assert!(d.needs_verification(None));
+		// A clean verifier round clears it.
+		d.note_round_verification(None, None, true, false);
+		assert!(!d.needs_verification(None));
 	}
 
 	#[test]
-	fn reset_streak_keeps_unverified_mutation() {
+	fn verification_tracks_tree_fingerprint() {
 		let mut d = Detectors::default();
-		d.record_action(
-			"edit", "ok", false, true, false, false, false, 9, 9, 0, 0, 0,
-		);
-		assert!(d.needs_verification());
+		// Round 1 seeds the baseline (10 = task-start tree); the round's edit
+		// moved the tree to 11 → unverified.
+		d.note_round_verification(Some(10), Some(11), false, true);
+		assert!(d.needs_verification(Some(11)));
+		// Verifier ran but the same round dirtied the tree (11→12): ambiguous
+		// state, proves nothing.
+		d.note_round_verification(Some(11), Some(12), true, true);
+		assert!(d.needs_verification(Some(12)));
+		// Clean verifier on an unchanged tree → verified at 12.
+		d.note_round_verification(Some(12), Some(12), true, false);
+		assert!(!d.needs_verification(Some(12)));
+		// Out-of-band change (e.g. an edit made through `shell sed -i`, which no
+		// name table could classify) — the fingerprint moves → unverified again.
+		assert!(d.needs_verification(Some(13)));
+	}
+
+	#[test]
+	fn verifier_shape_requires_command_string_param() {
+		use serde_json::json;
+		// Command-string param → candidate (tool_map is empty in unit tests, so
+		// the control-plane exclusion is exercised in integration, not here).
+		assert!(is_verifier_shaped("shell", &json!({"command": "cargo test"})));
+		assert!(!is_verifier_shaped("view", &json!({"path": "a.rs"})));
+		assert!(!is_verifier_shaped("shell", &json!({"command": 42})));
+		assert!(!is_verifier_shaped("shell", &json!({})));
+	}
+
+	#[test]
+	fn reset_streak_keeps_verification_state() {
+		let mut d = Detectors::default();
+		d.note_round_verification(None, None, false, true);
+		assert!(d.needs_verification(None));
 		// reset_streak is for the rolling windows — trajectory state survives.
 		d.reset_streak();
-		assert!(d.needs_verification());
+		assert!(d.needs_verification(None));
 	}
 
 	#[test]

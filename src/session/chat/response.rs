@@ -637,6 +637,20 @@ pub async fn process_response<S: OutputSink>(
 					let mut round_truncated = false;
 					let mut round_dedup = false;
 					let mut round_drift = false;
+					// Observational verification (free pre-gate): fingerprint the working
+					// tree around the round — a changed tree IS the mutation signal,
+					// whatever tool made the change. Only measured when the pre-gate
+					// consumes it (one git spawn per round).
+					let track_verification = params.config.supervisor.enabled
+						&& params.config.supervisor.gate.enabled
+						&& params.config.supervisor.gate.require_check_after_mutation;
+					let fp_before = if track_verification {
+						crate::supervisor::workdir::fingerprint()
+					} else {
+						None
+					};
+					let mut round_verifier = false;
+					let mut round_mutation = false;
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -717,6 +731,26 @@ pub async fn process_response<S: OutputSink>(
 						round_truncated |= is_truncated;
 						round_dedup |= is_dedup;
 						round_drift |= is_drift;
+						if !is_error {
+							round_mutation |= is_mutation;
+							round_verifier |= crate::supervisor::detect::is_verifier_shaped(
+								&call.tool_name,
+								&call.parameters,
+							);
+						}
+					}
+
+					// Fold the round into the observational verification state: a round
+					// verifies only when a verifier-shaped call succeeded on a tree the
+					// round itself did not change.
+					if track_verification {
+						let fp_after = crate::supervisor::workdir::fingerprint();
+						params.chat_session.detectors.note_round_verification(
+							fp_before,
+							fp_after,
+							round_verifier,
+							round_mutation,
+						);
 					}
 
 					// One verdict per ROUND: the whole parallel batch is a single model decision,

@@ -185,9 +185,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// Prefer the live plan checklist (refreshed every turn from plan storage)
 		// over the anchor's stale next_steps snapshot for the recency-slot block.
 		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
+		// Explicit prohibitions from the genuine request, recited verbatim —
+		// these are the instructions models abandon first as attention decays.
+		let constraints = crate::session::latest_real_user_task_content(
+			&chat_session.session.messages,
+		)
+		.map(crate::supervisor::recite::extract_constraints)
+		.unwrap_or_default();
 		if let Some(note) = crate::supervisor::recite::recite_note(
 			&chat_session.session.info.anchor,
 			plan_checklist.as_deref(),
+			&constraints,
 		) {
 			chat_session.add_system_managed_user_message(&note)?;
 			crate::log_debug!("Supervisor goal recitation injected");
@@ -334,7 +342,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				.any(|m| m.content.contains(PREGATE_MARKER))
 		};
 		if config.supervisor.gate.require_check_after_mutation
-			&& chat_session.detectors.needs_verification()
+			&& chat_session
+				.detectors
+				.needs_verification(crate::supervisor::workdir::fingerprint())
 			&& !already_nudged
 		{
 			chat_session.add_system_managed_user_message(PREGATE_NOTE)?;

@@ -60,9 +60,7 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 				continue;
 			}
 			let lower = unit.to_lowercase();
-			if MARKERS.iter().any(|m| lower.contains(m))
-				&& !out.iter().any(|e| e == unit)
-			{
+			if MARKERS.iter().any(|m| lower.contains(m)) && !out.iter().any(|e| e == unit) {
 				out.push(unit.to_string());
 				if out.len() >= CONSTRAINTS_MAX {
 					return out;

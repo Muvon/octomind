@@ -44,7 +44,7 @@ indicatif = "0.18.6"
 parking_lot = "0.12.5"
 chrono = { version = "0.4.45", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
-uuid = { version = "1.23.4", features = ["v4"] }
+uuid = { version = "1.23.5", features = ["v4"] }
 tiktoken-rs = "0.12.0" # Token counter
 reqwest = { version = "0.13.4", features = ["json", "rustls", "gzip"], default-features = false }
 rustls-webpki = ">=0.103.12"

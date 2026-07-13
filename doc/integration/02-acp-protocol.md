@@ -194,7 +194,7 @@ workdir = "."
 
 When the AI calls `agent_context_gatherer(task="...")`, Octomind acts as the **ACP client**:
 1. Spawns `octomind acp context_gatherer` as a subprocess.
-2. Sends `initialize` (with `protocolVersion: "0.1.0"`) — it does **not** call `authenticate`.
+2. Sends `initialize` (with `protocolVersion: 1`) — it does **not** call `authenticate`.
 3. Sends `session/new` with an empty `mcpServers` list.
 4. Sends `session/prompt` carrying the task as a single text block.
 5. Accumulates every `agent_message_chunk` text into the result, and forwards intermediate `session/update` events (thinking, tool calls, tool results) up to the parent's notification sink so the user sees the sub-agent's progress live.

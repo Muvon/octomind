@@ -725,10 +725,7 @@ pub async fn run_acp_command(
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize",
-				"params": {
-					"protocolVersion": "0.1.0",
-					"clientInfo": {"name": "octomind-agent-tool", "version": "1.0"}
-				}
+				"params": acp_initialize_params()
 			}))
 			.as_bytes(),
 		)
@@ -736,14 +733,13 @@ pub async fn run_acp_command(
 	wait_for_response(&mut lines, 1).await?;
 
 	// 2. session/new
-	let cwd_str = workdir.to_string_lossy();
 	stdin
 		.write_all(
 			msg_line(json!({
 				"jsonrpc": "2.0",
 				"id": 2,
 				"method": "session/new",
-				"params": {"cwd": cwd_str, "mcpServers": []}
+				"params": acp_new_session_params(workdir)
 			}))
 			.as_bytes(),
 		)
@@ -764,10 +760,7 @@ pub async fn run_acp_command(
 				"jsonrpc": "2.0",
 				"id": 3,
 				"method": "session/prompt",
-				"params": {
-					"sessionId": session_id,
-					"prompt": [{"type": "text", "text": task}]
-				}
+				"params": acp_prompt_params(&session_id, task)
 			}))
 			.as_bytes(),
 		)
@@ -1050,6 +1043,27 @@ fn truncate_action(s: &str, max: usize) -> String {
 	}
 }
 
+/// Outgoing ACP request params, kept as functions so tests can validate them
+/// against the `agent-client-protocol` schema types the octomind ACP server
+/// deserializes with.
+fn acp_initialize_params() -> Value {
+	json!({
+		"protocolVersion": 1,
+		"clientInfo": {"name": "octomind-agent-tool", "version": "1.0"}
+	})
+}
+
+fn acp_new_session_params(workdir: &std::path::Path) -> Value {
+	json!({"cwd": workdir.to_string_lossy(), "mcpServers": []})
+}
+
+fn acp_prompt_params(session_id: &str, task: &str) -> Value {
+	json!({
+		"sessionId": session_id,
+		"prompt": [{"type": "text", "text": task}]
+	})
+}
+
 /// Read lines until we find a JSON-RPC response with the given id, return it.
 async fn wait_for_response(
 	lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
@@ -1085,6 +1099,27 @@ async fn wait_for_response(
 mod tests {
 	use super::*;
 	use std::time::{Duration, Instant};
+
+	/// The tap/agent client speaks raw JSON while the octomind ACP server
+	/// deserializes with the `agent-client-protocol` schema — pin every
+	/// outgoing params shape against those types so a crate upgrade that
+	/// changes the wire format fails here instead of at runtime (e.g. the
+	/// protocolVersion string → u16 break).
+	#[test]
+	fn outgoing_params_match_acp_schema() {
+		use agent_client_protocol::schema::v1::{
+			InitializeRequest, NewSessionRequest, PromptRequest,
+		};
+
+		serde_json::from_value::<InitializeRequest>(acp_initialize_params())
+			.expect("initialize params must match ACP v1 schema");
+		serde_json::from_value::<NewSessionRequest>(acp_new_session_params(std::path::Path::new(
+			"/tmp",
+		)))
+		.expect("session/new params must match ACP v1 schema");
+		serde_json::from_value::<PromptRequest>(acp_prompt_params("sess", "task"))
+			.expect("session/prompt params must match ACP v1 schema");
+	}
 
 	/// initialize (id=1) + session/new (id=2) + one streamed message chunk.
 	const HANDSHAKE: &str = r#"

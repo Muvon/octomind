@@ -56,7 +56,7 @@ get_response() { grep "\"id\":$1" "$TMPOUT" 2>/dev/null | tail -1; }
 
 # ── 1. initialize ─────────────────────────────────────────────────────────────
 info "Test 1: initialize"
-send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"0.1.0","clientInfo":{"name":"test","version":"0.1"}}}'
+send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"test","version":"0.1"}}}'
 if wait_for_id 1 10; then
   R=$(get_response 1)
   NAME=$(echo "$R" | jq -r '.result.agentInfo.name // empty' 2>/dev/null)

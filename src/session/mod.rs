@@ -235,6 +235,14 @@ pub struct CompressionStats {
 	pub conversation_compressions: usize,
 	pub total_messages_removed: usize,
 	pub total_tokens_saved: u64,
+	// The compression decision model's own spend — a separate model from the
+	// agent, so `/info` can break it out while total_cost stays the overall sum.
+	#[serde(default)]
+	pub input_tokens: u64,
+	#[serde(default)]
+	pub output_tokens: u64,
+	#[serde(default)]
+	pub cost: f64,
 }
 
 impl CompressionStats {

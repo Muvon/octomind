@@ -137,6 +137,16 @@ async fn call_ai_for_decision(
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 
+	// Per-component spend for `/info` — recorded even when the decision ends up
+	// "don't compress" (the call happened) and even with ignore_cost (which only
+	// controls whether the spend counts toward the session total).
+	if let Some(usage) = &response.exchange.usage {
+		let stats = &mut session.session.info.compression_stats;
+		stats.input_tokens += usage.input_tokens;
+		stats.output_tokens += usage.output_tokens;
+		stats.cost += usage.cost.unwrap_or(0.0);
+	}
+
 	if !decision_config.ignore_cost {
 		if let Some(cost) = response.exchange.usage.as_ref().and_then(|u| u.cost) {
 			session.session.info.total_cost += cost;

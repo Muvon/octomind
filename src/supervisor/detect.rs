@@ -268,7 +268,10 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 		return false;
 	}
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
-		Some(server) => !matches!(server.as_str(), "core" | "runtime" | "orchestration" | "agent"),
+		Some(server) => !matches!(
+			server.as_str(),
+			"core" | "runtime" | "orchestration" | "agent"
+		),
 		// Unregistered tool with a command param: treat as a candidate — the
 		// observational tree check still guards against false verification.
 		None => true,
@@ -1186,7 +1189,10 @@ mod tests {
 		use serde_json::json;
 		// Command-string param → candidate (tool_map is empty in unit tests, so
 		// the control-plane exclusion is exercised in integration, not here).
-		assert!(is_verifier_shaped("shell", &json!({"command": "cargo test"})));
+		assert!(is_verifier_shaped(
+			"shell",
+			&json!({"command": "cargo test"})
+		));
 		assert!(!is_verifier_shaped("view", &json!({"path": "a.rs"})));
 		assert!(!is_verifier_shaped("shell", &json!({"command": 42})));
 		assert!(!is_verifier_shaped("shell", &json!({})));

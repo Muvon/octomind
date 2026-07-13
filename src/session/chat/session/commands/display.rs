@@ -473,6 +473,8 @@ pub fn display_info(output: &CommandOutput) {
 				"messages removed",
 				"tokens saved",
 				"avg ratio",
+				"tokens",
+				"cost",
 			]);
 			if stats.conversation_compressions > 0 {
 				block_row(
@@ -500,6 +502,26 @@ pub fn display_info(output: &CommandOutput) {
 			let avg_ratio = stats.avg_compression_ratio() * 100.0;
 			if avg_ratio > 0.0 {
 				block_row("avg ratio", &format!("{:.1}%", avg_ratio), kw);
+			}
+			// Compression model's own spend — separate model, so break it out.
+			if stats.input_tokens > 0 || stats.output_tokens > 0 {
+				block_row(
+					"tokens",
+					&format!(
+						"{} in {} {} out",
+						format_number(stats.input_tokens).bright_blue(),
+						dot,
+						format_number(stats.output_tokens).bright_green(),
+					),
+					kw,
+				);
+			}
+			if stats.cost > 0.0 {
+				block_row(
+					"cost",
+					&format!("${:.5}", stats.cost).bright_yellow().to_string(),
+					kw,
+				);
 			}
 		}
 

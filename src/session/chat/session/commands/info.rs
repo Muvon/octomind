@@ -66,7 +66,9 @@ pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResu
 			0.0
 		};
 
-	let compression_stats = if info.compression_stats.total_compressions() > 0 {
+	let compression_stats = if info.compression_stats.total_compressions() > 0
+		|| info.compression_stats.input_tokens > 0
+	{
 		Some(info.compression_stats.clone())
 	} else {
 		None

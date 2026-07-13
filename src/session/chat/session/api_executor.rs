@@ -187,11 +187,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
 		// Explicit prohibitions from the genuine request, recited verbatim —
 		// these are the instructions models abandon first as attention decays.
-		let constraints = crate::session::latest_real_user_task_content(
-			&chat_session.session.messages,
-		)
-		.map(crate::supervisor::recite::extract_constraints)
-		.unwrap_or_default();
+		let constraints =
+			crate::session::latest_real_user_task_content(&chat_session.session.messages)
+				.map(crate::supervisor::recite::extract_constraints)
+				.unwrap_or_default();
 		if let Some(note) = crate::supervisor::recite::recite_note(
 			&chat_session.session.info.anchor,
 			plan_checklist.as_deref(),

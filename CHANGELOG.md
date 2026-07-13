@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.37.1] - 2026-07-13
+
+### 📋 Release Summary
+
+This release introduces observational verification for the supervisor and adds detailed spending tracking for compression models (d9614d2c, baf3e1d5). Additionally, updates to MCP tool parameters and refreshed performance benchmarks ensure improved system reliability and accuracy (cd5c9065, 862bca89).
+
+
+### ✨ New Features & Enhancements
+
+- **session**: track compression model spending `baf3e1d5`
+- **supervisor**: implement observational verification `d9614d2c`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: extract ACP params to validated functions `cd5c9065`
+- **bench**: refresh baseline results for 15 instances `862bca89`
+
 ## [0.37.0] - 2026-07-12
 
 ### 📋 Release Summary

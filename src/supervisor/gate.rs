@@ -53,6 +53,13 @@ same task. Check each one first: it must now be closed with concrete evidence, o
 rebutted as wrong or out of scope. A previously flagged gap that is neither closed nor
 rebutted stays a gap.
 
+The request may also contain PROHIBITIONS — things it explicitly forbids ("do not X",
+"never Y", "without changing Z"). Treat each prohibition as a requirement in its own right:
+check RECORDED ACTIONS and the GROUND TRUTH diff for evidence the forbidden thing was done
+(a [mut] action on something the request said not to touch, a forbidden change visible in
+the diff). A violated prohibition is a gap even when all requested work is complete — name
+the prohibition and the violating action.
+
 Work through every part of the request, one at a time. For each, find the concrete proof it
 was done — a recorded action, file path, line or code excerpt, command output, or named test
 in the result. A part counts as done only if such evidence is present; a confident or

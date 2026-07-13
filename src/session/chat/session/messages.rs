@@ -258,7 +258,7 @@ impl ChatSession {
 		self.last_gate_gaps.clear();
 		// Reset the detector rolling windows (loop / no-progress / truncation /
 		// dedup / drift streaks) so a new task doesn't inherit the previous task's
-		// streaks. Trajectory state (unverified_mutation) is intentionally kept.
+		// streaks. Verification state (verified fingerprint) is intentionally kept.
 		self.detectors.reset_streak();
 
 		// Check if we should cache this user message (after push, so the message exists

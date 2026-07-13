@@ -40,6 +40,7 @@ pub mod gate;
 pub mod learning;
 pub mod recite;
 pub mod stats;
+pub mod workdir;
 
 use serde::{Deserialize, Serialize};
 

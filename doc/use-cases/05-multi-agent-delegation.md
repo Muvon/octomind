@@ -42,7 +42,7 @@ Use tools to search and read code. Be thorough but focused.
 
 [roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["filesystem:view", "filesystem:ast_grep"]
+allowed_tools = ["filesystem:view", "filesystem:workdir"]
 
 [[roles]]
 name = "code_reviewer"
@@ -66,7 +66,7 @@ server_refs = ["filesystem"]
 allowed_tools = ["filesystem:view"]
 ```
 
-> **Note:** `filesystem` is **not** a built-in server. The default config declares only `core`, `runtime`, and `agent` as MCP servers — the `filesystem` tools (`view`, `text_editor`, `ast_grep`, `shell`, …) are supplied by the default tap (`muvon/tap`). With MCP disabled or that tap not installed, `server_refs = ["filesystem"]` resolves to nothing. See [Tap System](../integration/04-tap-system.md) and [MCP Tools](../usage/07-mcp-tools.md) for how filesystem tools become available.
+> **Note:** `filesystem` is **not** a built-in server. The default config declares only `core`, `runtime`, and `agent` as MCP servers — the `filesystem` tools (`view`, `text_editor`, `shell`, …) are supplied by the default tap (`muvon/tap`). With MCP disabled or that tap not installed, `server_refs = ["filesystem"]` resolves to nothing. See [Tap System](../integration/04-tap-system.md) and [MCP Tools](../usage/07-mcp-tools.md) for how filesystem tools become available.
 
 ### Step 2: Configure Agents
 
@@ -231,7 +231,7 @@ model = "anthropic:claude-sonnet-4"  # Best reasoning
 # Read-only agent (can't modify files)
 [roles.mcp]
 server_refs = ["filesystem"]
-allowed_tools = ["filesystem:view", "filesystem:ast_grep"]
+allowed_tools = ["filesystem:view", "filesystem:workdir"]
 
 # Full-access agent (can edit and run commands)
 [roles.mcp]

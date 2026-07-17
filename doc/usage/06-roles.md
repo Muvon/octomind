@@ -120,7 +120,7 @@ allowed_tools = [
 - `runtime` -- low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills), `schedule`, `capability`. Most roles don't need this.
 - `agent` -- dispatches to `[[agents]]`-defined ACP sub-agents (`agent_<name>` per entry).
 
-> **`filesystem` is not a built-in declared server.** The filesystem tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `ast_grep`, `list_files`, `workdir`) come from the **octofs** companion server supplied by the tap/capability layer, not from a `[[mcp.servers]]` entry. If you copy the examples below into a bare standalone config that has no tap/capability providing `filesystem`, the reference is silently dropped and no filesystem tools appear. To see exactly which tools a server exposes, run `/mcp list` (or `/mcp full`) in a session.
+> **`filesystem` is not a built-in declared server.** The filesystem tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `workdir`) come from the **octofs** companion server supplied by the tap/capability layer, not from a `[[mcp.servers]]` entry. If you copy the examples below into a bare standalone config that has no tap/capability providing `filesystem`, the reference is silently dropped and no filesystem tools appear. To see exactly which tools a server exposes, run `/mcp list` (or `/mcp full`) in a session.
 
 **Pattern syntax:**
 - `"server:*"` -- all tools from a server (e.g. `agent:*` grants every `agent_<name>` execution tool on the `agent` server)

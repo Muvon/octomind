@@ -128,7 +128,7 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 | `runtime` | `mcp`, `agent`, `skill`, `schedule`, `capability` | Harness reconfiguration and scheduling |
 | `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
 
-> **`filesystem` is not declared here.** Default roles reference a `filesystem` server in their `server_refs`, but it is **not** a builtin and is **not** defined in this config file's `[[mcp.servers]]`. It is an external `stdio` server backed by `octofs`, provided by the built-in tap. Its tools are `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `ast_grep`, `list_files`, and `workdir`. See [MCP Tools](../usage/07-mcp-tools.md) for the full surface.
+> **`filesystem` is not declared here.** Default roles reference a `filesystem` server in their `server_refs`, but it is **not** a builtin and is **not** defined in this config file's `[[mcp.servers]]`. It is an external `stdio` server backed by `octofs`, provided by the built-in tap. Its tools are `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, and `workdir`. See [MCP Tools](../usage/07-mcp-tools.md) for the full surface.
 
 #### Common Fields
 

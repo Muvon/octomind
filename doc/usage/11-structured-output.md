@@ -2,7 +2,7 @@
 
 Octomind can emit its session activity as machine-readable JSON instead of human-formatted terminal text. This is what you use for automation, CI/CD pipelines, and any program that needs to parse what the agent did.
 
-> **Heads up:** Octomind does **not** currently let you enforce a JSON Schema on the assistant's *answer*. There is no `--schema` CLI flag, and no WebSocket or ACP protocol message accepts a schema. If you came here looking for "make the model reply with exactly this JSON shape," that is not a user-accessible feature today — see [Schema Enforcement](#schema-enforcement-not-user-accessible) below for the full picture. What *is* available is a structured **event stream** (`--format jsonl` and the WebSocket/ACP servers), described next.
+> **Heads up:** "structured output" covers two different features here. To make the model's *answer* conform to a JSON Schema, pass `--schema <file>` to `octomind run` — see [Schema Enforcement](#schema-enforcement---schema) below. Independent of that, the session's *activity* is available as a structured **event stream** (`--format jsonl` and the WebSocket/ACP servers), described next. Note the WebSocket and ACP protocols do not accept a schema — `--schema` exists only on `octomind run`.
 
 ## The Automation Surface: `--format jsonl`
 
@@ -50,8 +50,8 @@ Example of a few lines from a `jsonl` run (one object per physical line):
 
 ```json
 {"type":"status","message":"Session created: my-session","session_id":"my-session"}
-{"type":"tool_use","tool":"list_files","tool_id":"call_abc","server":"filesystem","params":{"directory":"src"},"session_id":"my-session"}
-{"type":"tool_result","tool":"list_files","tool_id":"call_abc","server":"filesystem","content":"src/main.rs\nsrc/lib.rs","success":true,"session_id":"my-session"}
+{"type":"tool_use","tool":"view","tool_id":"call_abc","server":"filesystem","params":{"path":"src/"},"session_id":"my-session"}
+{"type":"tool_result","tool":"view","tool_id":"call_abc","server":"filesystem","content":"src/main.rs\nsrc/lib.rs","success":true,"session_id":"my-session"}
 {"type":"assistant","content":"Recent changes refactored the session loop...","session_id":"my-session"}
 {"type":"cost","session_tokens":1234,"session_cost":0.0025,"input_tokens":1000,"output_tokens":200,"cache_read_tokens":30,"cache_write_tokens":4,"reasoning_tokens":0,"session_id":"my-session"}
 ```
@@ -74,7 +74,7 @@ Both stream the structured events listed above; neither accepts a schema on sess
 
 ## Provider Compatibility (Structured Output Capability)
 
-Whether a provider *can* be asked for native structured output is exposed by each provider's `supports_structured_output(model)`. This capability is currently exercised internally (see [Schema Enforcement](#schema-enforcement-not-user-accessible)), not by a user-facing schema flag. For reference, against the active `octolib 0.21.6`:
+Whether a provider *can* be asked for native structured output is exposed by each provider's `supports_structured_output(model)`. This capability gates the `--schema` flag on `octomind run` (see [Schema Enforcement](#schema-enforcement---schema)) and the internal compression decision call. For reference, against the active `octolib 0.21.6`:
 
 | Provider | `supports_structured_output` |
 |----------|------------------------------|
@@ -86,23 +86,30 @@ Whether a provider *can* be asked for native structured output is exposed by eac
 | OpenRouter | Per model's reference capabilities, else Yes |
 | Anthropic | Trait default — per model's reference capabilities, else No |
 
-When code does request a schema from a provider that returns `false` for the given model, Octomind fails fast:
+When a schema is requested from a provider that returns `false` for the given model, Octomind fails fast:
 
 ```
 Provider 'anthropic' does not support structured output for model '<model-without-reference-capabilities>'. Remove the schema parameter or use a compatible provider.
 ```
 
-## Schema Enforcement (Not User-Accessible)
+## Schema Enforcement (`--schema`)
 
-There **is** a schema mechanism in the codebase, but it is not wired to any user entry point:
+Pass a JSON Schema **object** file to `octomind run` to constrain the assistant's replies:
 
-- `ChatSession` has a `schema` field, but it is set to `None` at every construction site and the session-level `with_schema()` builder has no callers. In practice, per-session assistant output is **always** unconstrained — there is no CLI flag, WebSocket message, or ACP method that can populate it.
-- The `ProviderResponse.structured_output` field exists in the provider response type, but because no session sets a schema it is always `None` for normal sessions, and there is no display logic that prefers it over `content`.
+```bash
+echo "List the top 3 TODOs" | octomind run developer:general --format jsonl --schema todos.schema.json
+```
 
-The one place a schema is genuinely built and used today is **internal**: the conversation-compression decision call. When compression runs, it checks the *decision model's* provider via `supports_structured_output()`; if that returns true, it sends a generated compression schema (`build_compression_schema`) in strict mode to get a reliable decision/summary, otherwise it falls back to an XML-style prompt. This is invisible to your session output and uses the separate compression decision model, not your main model. (Default decision model: `openai:gpt-5-mini` — see [Context Compression](08-compression.md).)
+- The schema applies to **every assistant reply** for the session's lifetime — across multi-turn sessions, resumes, and daemon mode. Tool calls still flow normally underneath; only the final text is constrained.
+- The resolved model must support structured output (see the provider table above), or the run fails fast with the error shown there.
+- Like `--model`, the schema is a **runtime override** — it is not persisted with the session, so pass it again when resuming.
+- The file must contain a JSON Schema object; it is loaded and validated before session init. A ready-to-use example ships at [`config-templates/todos.schema.json`](../../config-templates/todos.schema.json).
+- `--schema` exists only on `octomind run` — the WebSocket and ACP session-init messages do not accept a schema.
+
+The same mechanism is also used **internally** by the conversation-compression decision call: when compression runs, it checks the *decision model's* provider via `supports_structured_output()`; if true, it sends a generated compression schema in strict mode to get a reliable decision/summary, otherwise it falls back to an XML-style prompt. This is invisible to your session output and uses the separate compression decision model, not your main model. (Default decision model: `openai:gpt-5-mini` — see [Context Compression](08-compression.md).)
 
 ## Summary
 
 - For machine-readable output, use `--format jsonl` on `octomind run` (or the WebSocket/ACP servers for live streaming).
 - The JSONL/WebSocket/ACP streams emit typed `ServerMessage` events (`assistant`, `tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `injected`, `thinking`).
-- There is no user-facing way to enforce a JSON Schema on the assistant's answer. The internal schema mechanism is used only by the compression decision call.
+- To enforce a JSON Schema on the assistant's answer, pass `--schema <file>` to `octomind run` (structured-output-capable models only). The compression decision call uses the same mechanism internally.

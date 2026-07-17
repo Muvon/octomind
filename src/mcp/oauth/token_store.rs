@@ -3,17 +3,19 @@
 // Secure OAuth Token Storage
 //
 //! OAuth bearer-token storage for remote MCP servers (RFC 9728 discovery → PKCE
-//! flow). Backed by a single db-keystore SQLite store via the keyring-core API:
-//! cross-platform and works headless (no system keychain / dbus / Secret Service),
-//! which is the dominant environment for token *reuse* and *refresh* (ACP under an
-//! IDE, websocket server, CI). Tokens are keyed per MCP server name.
+//! flow). Tokens live in a single plain JSON file (`<data_dir>/keystore.json`,
+//! mode 0600) replaced atomically via temp-file + rename: cross-platform, works
+//! headless (no system keychain / dbus / Secret Service), and — unlike SQLite
+//! in WAL mode — safe on an NFS-mounted home. Tokens are keyed per MCP server
+//! name. Cross-process writes are last-writer-wins: the rename keeps the file
+//! always valid, and a lost update at worst forces one extra re-auth.
 
-use anyhow::{anyhow, Result};
-use keyring_core::Entry;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TokenMetadata {
@@ -40,103 +42,96 @@ pub enum TokenStoreError {
 	SerializationError(#[from] serde_json::Error),
 }
 
-const CREDENTIAL_SERVICE: &str = "octomind-oauth";
+/// Serializes in-process read-modify-write cycles on the keystore file.
+static FILE_LOCK: Mutex<()> = Mutex::new(());
 
-// Use server_name as the credential user to support multiple OAuth servers
-fn credential_user(server_name: &str) -> String {
-	format!("oauth-token-{}", server_name)
-}
-
-/// SQLite keystore file: `<data_dir>/octomind/keystore.db`.
-fn keystore_path() -> PathBuf {
-	let mut dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("~/.local/share"));
-	dir.push("octomind");
-	dir.push("keystore.db");
-	dir
-}
-
-/// Register the db-keystore SQLite store as the process-wide credential store,
-/// exactly once. A store registered earlier (e.g. by tests) takes precedence and
-/// short-circuits this. The registration result is cached, so a failure surfaces
-/// on every call rather than being silently retried.
-fn ensure_store() -> Result<()> {
-	// Honor a pre-registered store (tests inject an isolated one).
-	if keyring_core::get_default_store().is_some() {
-		return Ok(());
+/// Plain JSON keystore file: `<data_dir>/keystore.json`, map of server name →
+/// [`TokenMetadata`], mode 0600.
+fn keystore_path() -> Result<PathBuf> {
+	#[cfg(test)]
+	{
+		Ok(tests::test_keystore_path())
 	}
-
-	static INIT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
-	INIT.get_or_init(|| {
-		let path = keystore_path();
-		let path_str = path.to_string_lossy().into_owned();
-		let modifiers = HashMap::from([("path", path_str.as_str())]);
-		let store = db_keystore::DbKeyStore::new_with_modifiers(&modifiers)
-			.map_err(|e| format!("failed to open keystore at {}: {e}", path.display()))?;
-		keyring_core::set_default_store(store);
-		// Restrict the keystore directory so other users can't read the db file.
-		harden_dir(path.parent());
-		Ok(())
-	})
-	.clone()
-	.map_err(|e| anyhow!(e))
-}
-
-#[cfg(unix)]
-fn harden_dir(dir: Option<&Path>) {
-	use std::os::unix::fs::PermissionsExt;
-	if let Some(dir) = dir {
-		let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+	#[cfg(not(test))]
+	{
+		Ok(crate::directories::get_octomind_data_dir()?.join("keystore.json"))
 	}
 }
-#[cfg(not(unix))]
-fn harden_dir(_dir: Option<&Path>) {}
 
-/// Build a credential entry for a server, ensuring the store is registered.
-fn entry(server_name: &str) -> Result<Entry> {
-	ensure_store()?;
-	Entry::new(CREDENTIAL_SERVICE, &credential_user(server_name))
-		.map_err(|e| anyhow!("keyring entry error: {e}"))
+fn read_all(path: &Path) -> Result<HashMap<String, TokenMetadata>, TokenStoreError> {
+	match std::fs::read_to_string(path) {
+		// A corrupt file surfaces as SerializationError — it must not silently
+		// degrade into an endless re-auth loop.
+		Ok(json) => Ok(serde_json::from_str(&json)?),
+		// No file yet — not an error, just no tokens stored.
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+		Err(e) => Err(TokenStoreError::CredentialStoreError(anyhow!(
+			"failed to read keystore {}: {e}",
+			path.display()
+		))),
+	}
+}
+
+/// Atomically replace the keystore: write a private (0600) temp file in the
+/// same directory, then rename over the target. Rename is atomic on POSIX and
+/// on NFS, so readers never observe a partial file.
+fn write_all(path: &Path, tokens: &HashMap<String, TokenMetadata>) -> Result<()> {
+	let json = serde_json::to_string_pretty(tokens)?;
+	let dir = path.parent().context("keystore path has no parent")?;
+	std::fs::create_dir_all(dir)?;
+	let tmp = dir.join(format!(".keystore.{}.tmp", std::process::id()));
+
+	let mut opts = std::fs::OpenOptions::new();
+	opts.write(true).create_new(true);
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::OpenOptionsExt;
+		opts.mode(0o600);
+	}
+	// create_new never follows a pre-existing symlink; a leftover temp file
+	// from a crashed process is removed first.
+	let _ = std::fs::remove_file(&tmp);
+	let mut file = opts
+		.open(&tmp)
+		.with_context(|| format!("failed to create {}", tmp.display()))?;
+	file.write_all(json.as_bytes())?;
+	file.sync_all()?;
+	drop(file);
+	std::fs::rename(&tmp, path)
+		.with_context(|| format!("failed to replace keystore {}", path.display()))?;
+	Ok(())
 }
 
 pub async fn save_token(server_name: &str, metadata: &TokenMetadata) -> Result<()> {
-	let json = serde_json::to_string(metadata).map_err(TokenStoreError::SerializationError)?;
 	crate::log_debug!(
 		"🔍 SAVE_TOKEN: server_name='{}', token_prefix='{}...'",
 		server_name,
 		metadata.access_token.chars().take(10).collect::<String>()
 	);
-	entry(server_name)?
-		.set_password(&json)
-		.map_err(|e| anyhow!("failed to save token: {e}"))?;
+	let path = keystore_path()?;
+	let _guard = FILE_LOCK.lock().unwrap();
+	let mut tokens = read_all(&path)?;
+	tokens.insert(server_name.to_string(), metadata.clone());
+	write_all(&path, &tokens)?;
 	crate::log_debug!("✅ SAVE_TOKEN: stored token for server '{}'", server_name);
 	Ok(())
 }
 
 pub async fn load_token(server_name: &str) -> TokenResult {
-	crate::log_debug!(
-		"🔍 LOAD_TOKEN: server_name='{}', credential_user='{}'",
-		server_name,
-		credential_user(server_name)
-	);
-	match entry(server_name)?.get_password() {
-		Ok(json) => {
-			let metadata: TokenMetadata = serde_json::from_str(&json)?;
+	let path = keystore_path().map_err(TokenStoreError::CredentialStoreError)?;
+	match read_all(&path)?.get(server_name).cloned() {
+		Some(metadata) => {
 			crate::log_debug!(
-				"✅ LOAD_TOKEN: loaded token, token_prefix='{}...'",
+				"✅ LOAD_TOKEN: loaded token for '{}', token_prefix='{}...'",
+				server_name,
 				metadata.access_token.chars().take(10).collect::<String>()
 			);
 			Ok(Some(metadata))
 		}
-		// No stored credential for this server — not an error, just unauthenticated.
-		Err(keyring_core::Error::NoEntry) => {
+		None => {
 			crate::log_debug!("LOAD_TOKEN: no token stored for server '{}'", server_name);
 			Ok(None)
 		}
-		// A genuine store failure (corruption, no access) must surface, not silently
-		// degrade into an endless re-auth loop.
-		Err(e) => Err(TokenStoreError::CredentialStoreError(anyhow!(
-			"failed to load token for '{server_name}': {e}"
-		))),
 	}
 }
 
@@ -153,9 +148,11 @@ pub async fn clear_token(
 		}
 	}
 
-	match entry(server_name)?.delete_credential() {
-		Ok(()) | Err(keyring_core::Error::NoEntry) => {}
-		Err(e) => crate::log_debug!("clear_token: delete failed for '{}': {}", server_name, e),
+	let path = keystore_path()?;
+	let _guard = FILE_LOCK.lock().unwrap();
+	let mut tokens = read_all(&path)?;
+	if tokens.remove(server_name).is_some() {
+		write_all(&path, &tokens)?;
 	}
 
 	tracing::debug!("Cleared OAuth token for server: {}", server_name);
@@ -243,26 +240,16 @@ async fn revoke_token(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use std::sync::Once;
 
-	// Register an isolated temp-file keystore as the process-wide store, once.
-	// File-backed (not :memory:) so it survives across separate store operations.
-	static TEST_STORE: Once = Once::new();
-	fn init_test_store() {
-		TEST_STORE.call_once(|| {
-			let path = std::env::temp_dir()
-				.join(format!("octomind-keystore-test-{}", std::process::id()))
-				.join("keystore.db");
-			let path_str = path.to_string_lossy().into_owned();
-			let modifiers = HashMap::from([("path", path_str.as_str())]);
-			let store = db_keystore::DbKeyStore::new_with_modifiers(&modifiers).unwrap();
-			keyring_core::set_default_store(store);
-		});
+	// Isolated per-process keystore file so tests never touch the real one.
+	pub(super) fn test_keystore_path() -> PathBuf {
+		std::env::temp_dir()
+			.join(format!("octomind-keystore-test-{}", std::process::id()))
+			.join("keystore.json")
 	}
 
 	#[tokio::test]
 	async fn save_load_clear_roundtrip() {
-		init_test_store();
 		let server = "test-roundtrip";
 		let meta = TokenMetadata {
 			server_name: server.to_string(),
@@ -281,7 +268,6 @@ mod tests {
 
 	#[tokio::test]
 	async fn load_missing_is_none() {
-		init_test_store();
 		assert_eq!(load_token("never-saved-server").await.unwrap(), None);
 	}
 }

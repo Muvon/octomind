@@ -160,7 +160,7 @@ echo "Summarize what happened in the last hour" | octomind send --name ops-agent
 ```
 
 `octomind send` connects to the running session over a per-session Unix socket
-(`<data>/run/<name>.sock`) or, on Windows, a named pipe (`\\.\pipe\octomind-<name>`). It
+(`<run_dir>/<name>.sock`) or, on Windows, a named pipe (`\\.\pipe\octomind-<name>`). It
 only works **while a daemon/session with that name is live** -- if no such session is
 running, it fails with `no running session named '<name>'`. The message must be non-empty,
 and `send` reads back `ok` on success or an error string. (You can pass the message as an

@@ -54,7 +54,7 @@ Each running session exposes one per-name IPC endpoint that `octomind send` conn
 
 | Platform | Endpoint | Extra |
 |----------|----------|-------|
-| Unix (macOS/Linux) | Unix socket at `~/.local/share/octomind/run/<name>.sock` | PID written to `<name>.pid` |
+| Unix (macOS/Linux) | Unix socket at `$XDG_RUNTIME_DIR/octomind/<name>.sock` (fallback: `<system tmp>/octomind-<uid>/<name>.sock`) | PID written to `<name>.pid` |
 | Windows | Named pipe `\\.\pipe\octomind-<name>` | — |
 
 These files are created on session start and auto-cleaned when the session exits (a stale socket from a crash is removed on next bind). The injected message is trimmed; an empty message is rejected with `error: empty message`.

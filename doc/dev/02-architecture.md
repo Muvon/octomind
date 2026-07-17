@@ -313,7 +313,6 @@ Key external crates:
 - `clap` -- CLI argument parsing
 - `serde` / `toml` -- serialization
 - `oauth2` -- OAuth 2.1 + PKCE
-- `keyring` -- secure token storage
 - `hyper` -- HTTP server
 - `reedline` -- interactive readline
 - `syntect` -- syntax highlighting

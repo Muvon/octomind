@@ -268,8 +268,8 @@ max_session_spending_threshold = 0.0    # Disable the check (<= 0.0 disables)
 ### Cannot Send to a Running Session
 
 `octomind send -n NAME "message"` talks to a session over a Unix domain socket
-(`~/.local/share/octomind/run/<name>.sock`; a named pipe `\\.\pipe\octomind-<name>`
-on Windows). If you get an error like:
+(`$XDG_RUNTIME_DIR/octomind/<name>.sock`, or `<system tmp>/octomind-<uid>/<name>.sock`
+when that variable is unset; a named pipe `\\.\pipe\octomind-<name>` on Windows). If you get an error like:
 
 ```
 no running session named 'NAME' (socket not found ...)

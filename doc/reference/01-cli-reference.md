@@ -197,7 +197,7 @@ Inject a message into a running named session.
 Works against any running session that has started its inject listener (typically a session launched with
 `--daemon`, but not exclusively). The message reaches the session over a per-OS transport:
 
-- **Unix:** a Unix domain socket at `<run_dir>/<name>.sock` (run dir is `~/.local/share/octomind/run/`).
+- **Unix:** a Unix domain socket at `<run_dir>/<name>.sock` (run dir is `$XDG_RUNTIME_DIR/octomind/`, or `<system tmp>/octomind-<uid>/` when that variable is unset).
 - **Windows:** a named pipe `\\.\pipe\octomind-<name>`.
 
 The session replies `ok` on successful delivery; any other reply is treated as an error and reported.

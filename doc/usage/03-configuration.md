@@ -21,7 +21,7 @@ Full directory structure:
   sessions/               # Saved sessions
   logs/                   # Debug and error logs
   cache/                  # Cached data
-  run/                    # Per-session Unix sockets and PID files (used by `send` / --daemon)
+  keystore.json           # OAuth tokens for remote MCP servers (mode 0600)
   learning/               # Cross-session adaptive learning (lessons), scoped by project/role
   agents/                 # Cached tap agent manifests (<category>/<variant>.toml)
 ```

@@ -14,8 +14,9 @@
 
 //! Unix Domain Socket listener for external message injection.
 //!
-//! Each running session binds a UDS at `~/.local/share/octomind/run/<name>.sock`
-//! and writes its PID to `~/.local/share/octomind/run/<name>.pid`.
+//! Each running session binds a UDS at `<run_dir>/<name>.sock` and writes its
+//! PID to `<run_dir>/<name>.pid`, where the run dir is `$XDG_RUNTIME_DIR/octomind`
+//! or `<system tmp>/octomind-<uid>` (see `directories::get_run_dir`).
 //!
 //! The `octomind send` command connects to this socket, sends a UTF-8 message,
 //! shuts down the write half, and reads back `"ok\n"` or `"error: ...\n"`.

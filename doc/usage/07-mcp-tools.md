@@ -13,7 +13,7 @@ Octomind ships **three builtin MCP servers** declared in the default config (`co
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
 | `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
 
-The filesystem tools (`view`, `text_editor`, `shell`, `ast_grep`, …) are **not** a builtin server. They are served by a separate `octofs` MCP server (a stdio subprocess: command `octofs`, args `["mcp"]`) that is **not declared in the default config**. It is delivered through the built-in default tap [`muvon/tap`](../integration/04-tap-system.md)'s capabilities `filesystem-read` and `filesystem-write`, and roles reach it via `server_refs`/capabilities under the `filesystem` capability name — never a hardcoded `[[mcp.servers]]` block named `filesystem`. See [Filesystem Server Tools (octofs)](#filesystem-server-tools-octofs) below for the prerequisites.
+The filesystem tools (`view`, `text_editor`, `shell`, …) are **not** a builtin server. They are served by a separate `octofs` MCP server (a stdio subprocess: command `octofs`, args `["mcp"]`) that is **not declared in the default config**. It is delivered through the built-in default tap [`muvon/tap`](../integration/04-tap-system.md)'s capabilities `filesystem-read` and `filesystem-write`, and roles reach it via `server_refs`/capabilities under the `filesystem` capability name — never a hardcoded `[[mcp.servers]]` block named `filesystem`. See [Filesystem Server Tools (octofs)](#filesystem-server-tools-octofs) below for the prerequisites.
 
 `core` and `runtime` are the two split halves of what used to be a single `core` server. The split separates "what the agent uses to do work" (`core`) from "what reconfigures the harness mid-session" (`runtime`).
 
@@ -239,17 +239,6 @@ Read files, view directories, and search file content.
 - `pattern` (string): Search pattern within file/directory
 - `content` (string): Content search query
 
-### `list_files` -- List Directory Entries
-
-List files and directories at a path. Complements `view` (which reads content) when you only need the file listing.
-
-**Parameters:**
-- `path` (string): Directory to list (defaults to the current working directory)
-
-```json
-{"path": "src/"}
-```
-
 ### `text_editor` -- File Editing
 
 Comprehensive file manipulation with multiple commands.
@@ -341,25 +330,6 @@ Get or set the working directory for file and shell operations.
 ```
 
 Thread-local: changes only affect the current session.
-
-### `ast_grep` -- AST-Based Code Search
-
-Search and refactor code using AST patterns with ast-grep (sg).
-
-**Parameters:**
-- `pattern` (string, required): AST pattern using ast-grep syntax
-- `language` (string): `"rust"`, `"javascript"`, `"typescript"`, `"python"`, `"go"`, `"java"`, `"c"`, `"cpp"`, `"php"`
-- `paths` (array): File paths or glob patterns (default: current directory)
-- `rewrite` (string): Rewrite pattern for refactoring
-- `json_output` (boolean, default: false): JSON format output
-- `context` (integer, default: 0): Context lines around matches
-- `update_all` (boolean, default: false): Apply rewrites to all matches
-
-```json
-{"pattern": "console.log($$$)", "language": "javascript"}
-{"pattern": "oldFunc($ARGS)", "rewrite": "newFunc($ARGS)", "language": "javascript"}
-{"pattern": "class $NAME", "language": "php", "paths": ["src/**/*.php"], "context": 2}
-```
 
 ## Agent Server Tools
 

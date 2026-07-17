@@ -28,7 +28,7 @@ Three built-in servers are shipped as `[[mcp.servers]]` entries in `config-templ
 External:
 | Server | Type | Purpose |
 |--------|------|---------|
-| `filesystem` (octofs) | stdio | `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `ast_grep`, `list_files`, `workdir` |
+| `filesystem` (octofs) | stdio | `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `workdir` |
 
 > `filesystem` is **not** declared in `default.toml`'s `[[mcp.servers]]`. It is supplied by a tap and referenced by name in roles' `server_refs` / `allowed_tools`. Only `core`, `runtime`, and `agent` are shipped as built-in server entries.
 

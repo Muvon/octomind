@@ -113,7 +113,7 @@ workflow · dev
 ╰ ✓ refine  1.4s  · $0.0009  · 420 tok  · ⚒0
 
 ╭ research
-│ ▸ ast_grep · octofs
+│ ▸ view · octofs
 ╰ ✓ research  6.2s  · $0.0071  · 2980 tok  · ⚒5
 
 ╭ execute

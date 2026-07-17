@@ -16,7 +16,7 @@
 
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get the system-wide data directory for octomind
 ///
@@ -82,15 +82,79 @@ pub fn get_sessions_dir() -> Result<PathBuf> {
 }
 
 /// Get the run directory path — holds per-session Unix socket and PID files.
+///
+/// Runtime state is host-local: Unix sockets can't be bound on NFS and PIDs are
+/// meaningless across hosts, so this lives in system runtime/temp storage
+/// (wiped on reboot), never in the data dir:
+/// - `$XDG_RUNTIME_DIR/octomind` when set (per-user tmpfs, cleaned on logout)
+/// - otherwise `<system tmp>/octomind-<uid>` (macOS `$TMPDIR` is already
+///   per-user; the uid suffix disambiguates a shared `/tmp` on Linux)
 pub fn get_run_dir() -> Result<PathBuf> {
-	let data_dir = get_octomind_data_dir()?;
-	let run_dir = data_dir.join("run");
+	let run_dir = runtime_base_dir();
+	ensure_private_dir(&run_dir)?;
 
-	if !run_dir.exists() {
-		fs::create_dir_all(&run_dir)?;
+	// Run files used to live in the data dir, where nothing wiped them after a
+	// crash or reboot; clear the legacy location so stale sockets don't linger.
+	let legacy = get_octomind_data_dir()?.join("run");
+	if legacy.exists() {
+		let _ = fs::remove_dir_all(&legacy);
 	}
 
 	Ok(run_dir)
+}
+
+#[cfg(unix)]
+fn runtime_base_dir() -> PathBuf {
+	match std::env::var_os("XDG_RUNTIME_DIR") {
+		Some(dir) if !dir.is_empty() => PathBuf::from(dir).join("octomind"),
+		_ => {
+			let uid = unsafe { libc::getuid() };
+			std::env::temp_dir().join(format!("octomind-{uid}"))
+		}
+	}
+}
+
+#[cfg(not(unix))]
+fn runtime_base_dir() -> PathBuf {
+	std::env::temp_dir().join("octomind")
+}
+
+/// Create `dir` with mode 0700, or validate a pre-existing one. A dir in shared
+/// tmp can be squatted by another user: reject symlinks and foreign owners, and
+/// repair permissions that leak to other users.
+#[cfg(unix)]
+fn ensure_private_dir(dir: &Path) -> Result<()> {
+	use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+	match fs::DirBuilder::new().mode(0o700).create(dir) {
+		Ok(()) => Ok(()),
+		Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+			let meta = fs::symlink_metadata(dir)?;
+			if !meta.is_dir() {
+				anyhow::bail!("run dir {} exists but is not a directory", dir.display());
+			}
+			let uid = unsafe { libc::getuid() };
+			if meta.uid() != uid {
+				anyhow::bail!(
+					"run dir {} is owned by uid {} (expected {}) — refusing to use it",
+					dir.display(),
+					meta.uid(),
+					uid
+				);
+			}
+			if meta.permissions().mode() & 0o077 != 0 {
+				fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+			}
+			Ok(())
+		}
+		Err(e) => Err(e).context(format!("failed to create run dir {}", dir.display())),
+	}
+}
+
+#[cfg(not(unix))]
+fn ensure_private_dir(dir: &Path) -> Result<()> {
+	fs::create_dir_all(dir)?;
+	Ok(())
 }
 
 /// Get the logs directory path
@@ -191,6 +255,23 @@ mod tests {
 		assert!(get_sessions_dir().is_ok());
 		assert!(get_logs_dir().is_ok());
 		assert!(get_cache_dir().is_ok());
+	}
+
+	#[test]
+	fn test_run_dir_is_private_and_outside_data_dir() {
+		let run = get_run_dir().unwrap();
+		assert!(run.exists());
+		assert!(!run.starts_with(get_octomind_data_dir().unwrap()));
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			let mode = fs::metadata(&run).unwrap().permissions().mode();
+			assert_eq!(
+				mode & 0o077,
+				0,
+				"run dir must not be group/world accessible"
+			);
+		}
 	}
 
 	#[test]

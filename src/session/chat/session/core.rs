@@ -216,6 +216,9 @@ pub struct ChatSession {
 	/// without the model breaking out. Caps a runaway loop — a steer is advisory,
 	/// so the model can ignore it forever. Reset by any non-steering round.
 	pub consecutive_steers: usize,
+	/// Supervisor: tool rounds since the last recitation reached the model —
+	/// drives the mid-turn plan re-showing (see `recite::INTERVAL_ROUNDS`).
+	pub rounds_since_recite: usize,
 	/// Supervisor: framing-rotation index for the steer note. When the *same*
 	/// signal re-fires without breakout, this advances so `steer_note` reframes the
 	/// constraint from a new angle instead of repeating identical (habituated) text.
@@ -365,6 +368,7 @@ impl ChatSession {
 			last_gate_gaps: Vec::new(),
 			steer_pending: None,
 			consecutive_steers: 0,
+			rounds_since_recite: 0,
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
@@ -577,6 +581,7 @@ impl ChatSession {
 						last_gate_gaps: Vec::new(),
 						steer_pending: None,
 						consecutive_steers: 0,
+						rounds_since_recite: 0,
 						steer_attempt: 0,
 						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 						last_steered_calls: None,
@@ -1333,6 +1338,7 @@ mod tests {
 			last_gate_gaps: Vec::new(),
 			steer_pending: None,
 			consecutive_steers: 0,
+			rounds_since_recite: 0,
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,

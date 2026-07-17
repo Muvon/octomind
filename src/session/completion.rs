@@ -156,6 +156,12 @@ fn is_empty_completion(
 		&& structured_output.is_none()
 }
 
+/// Extra attempts when a provider returns an empty completion — an infra flake
+/// (HTTP 200, empty body) that the provider's transport-level retries never
+/// see, so it gets its own bounded retry before surfacing an error.
+const EMPTY_COMPLETION_RETRIES: usize = 2;
+const EMPTY_COMPLETION_RETRY_DELAY_MS: u64 = 500;
+
 /// High-level function to send a chat completion with input validation and context management.
 /// Checks input size and returns an error when limits are exceeded.
 pub async fn chat_completion_with_validation(
@@ -237,6 +243,7 @@ pub async fn chat_completion_with_validation(
 		chat_params
 	};
 
+	let cancellation_token = params.cancellation_token.clone();
 	let chat_params = if let Some(token) = params.cancellation_token {
 		chat_params.with_cancellation_token(token)
 	} else {
@@ -249,35 +256,57 @@ pub async fn chat_completion_with_validation(
 		chat_params
 	};
 
-	// Convert to octolib params and call provider.
-	let octolib_params = chat_params
-		.to_octolib_params()
-		.await
-		.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
-
-	let octolib_response = provider.chat_completion(octolib_params).await?;
-	let response = crate::providers::convert_response_from_octolib(octolib_response);
-
 	// An empty completion — a successful HTTP response with no content, no tool
 	// calls, and no structured output — is a provider fault (e.g. some providers
-	// return finish_reason=stop with an empty body). Surface it as an error: if we
-	// returned it, the response loop would read it as a normal end-of-turn, render
-	// nothing, and silently strand the user at the prompt. Transport retries
-	// already live in the provider's own max_retries — we do not add another layer.
-	if is_empty_completion(
-		&response.content,
-		response.tool_calls.as_ref(),
-		response.structured_output.as_ref(),
-	) {
-		return Err(anyhow::anyhow!(
-			"Provider '{}' returned an empty response (finish_reason={:?}, no content or tool calls) for model '{}'",
+	// return finish_reason=stop with an empty body). The provider's own
+	// max_retries covers transport failures only and never sees these, so empty
+	// completions get their own bounded retry. If every attempt comes back
+	// empty, surface an error: if we returned it, the response loop would read
+	// it as a normal end-of-turn, render nothing, and silently strand the user
+	// at the prompt.
+	let mut last_finish_reason = None;
+	for attempt in 0..=EMPTY_COMPLETION_RETRIES {
+		if attempt > 0 {
+			if let Some(ref token) = cancellation_token {
+				if *token.borrow() {
+					return Err(anyhow::anyhow!(
+						"Request cancelled during empty-completion retry"
+					));
+				}
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(
+				EMPTY_COMPLETION_RETRY_DELAY_MS,
+			))
+			.await;
+		}
+		let octolib_params = chat_params
+			.to_octolib_params()
+			.await
+			.map_err(|e| anyhow::anyhow!("Failed to convert message parameters: {}", e))?;
+		let octolib_response = provider.chat_completion(octolib_params).await?;
+		let response = crate::providers::convert_response_from_octolib(octolib_response);
+		if !is_empty_completion(
+			&response.content,
+			response.tool_calls.as_ref(),
+			response.structured_output.as_ref(),
+		) {
+			return Ok(response);
+		}
+		last_finish_reason = response.finish_reason.clone();
+		crate::log_debug!(
+			"Provider '{}' returned an empty completion (attempt {}/{})",
 			provider.name(),
-			response.finish_reason,
-			actual_model
-		));
+			attempt + 1,
+			EMPTY_COMPLETION_RETRIES + 1
+		);
 	}
-
-	Ok(response)
+	Err(anyhow::anyhow!(
+		"Provider '{}' returned an empty response (finish_reason={:?}, no content or tool calls) for model '{}' after {} attempts",
+		provider.name(),
+		last_finish_reason,
+		actual_model,
+		EMPTY_COMPLETION_RETRIES + 1
+	))
 }
 
 /// High-level function to send a chat completion using the provider abstraction.

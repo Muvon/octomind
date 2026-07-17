@@ -25,14 +25,25 @@ const GATE_PROMPT: &str = r#"You are a strict completion verifier. A different a
 Judge the END STATE, not the agent's story: ignore its self-report and stated claim, and
 check only what the AGENT FINAL RESULT actually evidences against the USER REQUEST.
 
+First classify what the USER REQUEST asks for: CHANGING state (create, edit, fix, run, send),
+or only OBSERVING existing state and reporting on it (review, audit, analyze, investigate,
+explain, summarize). For an observe-only request the report itself is the deliverable:
+files, diffs, or changes described in the result are what the agent FOUND, not work it claims
+to have performed — do not demand [mut] evidence for them; successful [read] actions covering
+the inspected artifacts are the supporting evidence.
+
 You may also receive RECORDED ACTIONS — the runtime's own log of every tool call the agent
 actually executed for this task ([mut] = state-changing, [read] = inspection; each line shows
 the arguments and an ok/ERROR outcome). The agent cannot edit this log; when present it
 outranks the narrative:
-- A claim of performed work (created, edited, ran, posted, sent, fixed…) is evidenced only by
-  a matching successful recorded action — narrative with no matching action is a gap.
+- A claim of work the agent itself performed (created, edited, ran, posted, sent, fixed…) is
+  evidenced only by a matching successful recorded action — narrative with no matching action
+  is a gap.
 - A claim of verification ("tests pass", "checked X") needs a matching successful recorded
   action; an ERROR outcome on the decisive check is a gap.
+- The log shows calls, arguments, and outcomes — never full outputs. A successful [read]
+  whose content is not visible in the log is still evidence the agent inspected that
+  artifact; the invisible content is not a gap.
 - When RECORDED ACTIONS is absent or empty, the task may be pure reasoning — judge the result
   text on its own terms.
 

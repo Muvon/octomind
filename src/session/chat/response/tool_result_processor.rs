@@ -118,7 +118,10 @@ pub async fn process_tool_results(
 	// keeps the originals (see session::mask module docs).
 	let masked = crate::session::mask::mask_stale_tool_results(&mut chat_session.session.messages);
 	if masked > 0 {
-		crate::log_debug!("Observation masking: {} stale tool result(s) masked", masked);
+		crate::log_debug!(
+			"Observation masking: {} stale tool result(s) masked",
+			masked
+		);
 	}
 
 	// Mid-turn recitation: the turn-entry recite block ages out of the recency

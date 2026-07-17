@@ -421,13 +421,16 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// hold on disk, is fabricating its support. Catch both deterministically
 		// and re-ground via the same bounded re-run.
 		if config.supervisor.claim_check {
-			let tool_outputs: Vec<String> = chat_session
+			let mut tool_outputs: Vec<String> = chat_session
 				.session
 				.messages
 				.iter()
 				.filter(|m| m.role == "tool")
 				.map(|m| m.content.clone())
 				.collect();
+			// A quote may cite an output whose body observation-masking has since
+			// aged out — verify against the retained originals, not the placeholders.
+			tool_outputs.extend(crate::session::mask::masked_originals());
 			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&tool_outputs,

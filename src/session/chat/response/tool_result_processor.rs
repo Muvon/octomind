@@ -113,6 +113,14 @@ pub async fn process_tool_results(
 		)?;
 	}
 
+	// Observation masking: with this round's results landed, age out stale tool
+	// result bodies beyond the recent window. In-memory only — the session file
+	// keeps the originals (see session::mask module docs).
+	let masked = crate::session::mask::mask_stale_tool_results(&mut chat_session.session.messages);
+	if masked > 0 {
+		crate::log_debug!("Observation masking: {} stale tool result(s) masked", masked);
+	}
+
 	// 🗜️ PLAN-DRIVEN COMPRESSION: Process any pending compression requests
 	// This happens after tool results are added but before the follow-up API call
 	// Compression can significantly reduce context before the next request

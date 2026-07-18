@@ -126,11 +126,17 @@ pub async fn process_tool_results(
 
 	// Mid-turn recitation: the turn-entry recite block ages out of the recency
 	// window as tool rounds pile up, and a plan the model no longer sees is one
-	// it silently drifts from. Re-emit the live recite block every few rounds.
+	// it silently drifts from. Re-emit the live recite block every few rounds —
+	// but ONLY while the plan has open items. That is the measured mechanism
+	// (remind of the next open step); reciting goal/constraints with nothing
+	// open reads as wrap-up affirmation and tips near-greedy models into
+	// premature completion (observed: aiogram bench reps collapsed to 6-round
+	// sprints, recovered with this injection gone).
 	chat_session.rounds_since_recite += 1;
 	if config.supervisor.enabled
 		&& config.supervisor.recite.enabled
 		&& chat_session.rounds_since_recite >= crate::supervisor::recite::INTERVAL_ROUNDS
+		&& !crate::mcp::core::plan::open_plan_tasks().is_empty()
 	{
 		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
 		let constraints =

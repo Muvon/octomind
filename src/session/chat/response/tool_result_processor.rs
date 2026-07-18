@@ -113,15 +113,19 @@ pub async fn process_tool_results(
 		)?;
 	}
 
-	// Observation masking: with this round's results landed, age out stale tool
-	// result bodies beyond the recent window. In-memory only — the session file
-	// keeps the originals (see session::mask module docs).
-	let masked = crate::session::mask::mask_stale_tool_results(&mut chat_session.session.messages);
-	if masked > 0 {
-		crate::log_debug!(
-			"Observation masking: {} stale tool result(s) masked",
-			masked
-		);
+	// Observation masking (opt-in, see SupervisorConfig::mask_stale_results —
+	// busts the prompt-cache prefix, so it only pays without cache-discounted
+	// pricing): age out stale tool result bodies beyond the recent window.
+	// In-memory only — the session file keeps the originals (session::mask docs).
+	if config.supervisor.enabled && config.supervisor.mask_stale_results {
+		let masked =
+			crate::session::mask::mask_stale_tool_results(&mut chat_session.session.messages);
+		if masked > 0 {
+			crate::log_debug!(
+				"Observation masking: {} stale tool result(s) masked",
+				masked
+			);
+		}
 	}
 
 	// 🗜️ PLAN-DRIVEN COMPRESSION: Process any pending compression requests

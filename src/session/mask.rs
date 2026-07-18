@@ -147,6 +147,12 @@ pub fn mask_stale_tool_results(messages: &mut [Message]) -> usize {
 		{
 			continue;
 		}
+		// Subagent/layer results are distilled conclusions, not raw observations
+		// — they ARE the working brief the layer exists to produce, and the agent
+		// acts on them for the rest of the task. Never mask them.
+		if msg.name.as_deref().is_some_and(|n| n.starts_with("agent_")) {
+			continue;
+		}
 		let tool = msg.name.as_deref().unwrap_or("tool");
 		let masked = placeholder(tool, &msg.content);
 		originals.push(std::mem::replace(&mut msg.content, masked));
@@ -245,6 +251,16 @@ mod tests {
 		assert!(originals[0].contains("needle-quote-42"));
 		clear_current_session();
 		assert!(masked_originals().is_empty());
+	}
+
+	#[test]
+	fn subagent_results_never_masked() {
+		let body = "conclusion line\n".repeat(60);
+		let mut msgs = rounds(KEEP_RECENT_ROUNDS + 1, &body);
+		msgs[1].name = Some("agent_context_gatherer".to_string());
+		assert_eq!(mask_stale_tool_results(&mut msgs), 0);
+		assert!(!msgs[1].content.contains(MASK_NOTICE_TAG));
+		clear_current_session();
 	}
 
 	#[test]

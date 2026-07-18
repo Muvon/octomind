@@ -247,9 +247,6 @@ impl ChatSession {
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		self.last_steered_calls = None;
-		// New genuine turn re-recites at its own entry point, so the mid-turn
-		// recitation cadence starts over.
-		self.rounds_since_recite = 0;
 		// New genuine task: the verify-gate's evidence ledger starts fresh (gate and
 		// steer re-runs arrive as system-managed messages and keep accumulating), and
 		// the gate's per-turn re-entry budget resets — a previous turn's exhaustion

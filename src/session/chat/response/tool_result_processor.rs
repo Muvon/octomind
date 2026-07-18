@@ -124,30 +124,6 @@ pub async fn process_tool_results(
 		);
 	}
 
-	// Mid-turn recitation: the turn-entry recite block ages out of the recency
-	// window as tool rounds pile up, and a plan the model no longer sees is one
-	// it silently drifts from. Re-emit the live recite block every few rounds.
-	chat_session.rounds_since_recite += 1;
-	if config.supervisor.enabled
-		&& config.supervisor.recite.enabled
-		&& chat_session.rounds_since_recite >= crate::supervisor::recite::INTERVAL_ROUNDS
-	{
-		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
-		let constraints =
-			crate::session::latest_real_user_task_content(&chat_session.session.messages)
-				.map(crate::supervisor::recite::extract_constraints)
-				.unwrap_or_default();
-		if let Some(note) = crate::supervisor::recite::recite_note(
-			&chat_session.session.info.anchor,
-			plan_checklist.as_deref(),
-			&constraints,
-		) {
-			chat_session.add_system_managed_user_message(&note)?;
-			chat_session.rounds_since_recite = 0;
-			crate::log_debug!("Supervisor mid-turn recitation injected");
-		}
-	}
-
 	// 🗜️ PLAN-DRIVEN COMPRESSION: Process any pending compression requests
 	// This happens after tool results are added but before the follow-up API call
 	// Compression can significantly reduce context before the next request

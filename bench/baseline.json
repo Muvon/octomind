@@ -1,74 +1,149 @@
 {
  "meta": {
-  "date": "2026-07-13",
+  "date": "2026-07-18",
   "model": "glm-5.1",
   "judge": "octohub:minimax",
   "suite": "swe-bench-live lite pilot (15 instances)",
   "k": "4",
-  "ref": "upcoming 0.37.0 - supervisor upgrades on top of 0.36.1: goal-aware verify-gate (durable goal + live plan in the gate), runtime ground truth (mutated-file diff + last-command output), plan pre-gate (no done while plan open), claim file:line check, and self-healing anchor intent. All supervisor models on octohub:qwen, condense @5000.",
+  "ref": "0.37.1 + 2026-07-17/18 supervisor work: observation masking of stale tool results (subagent briefs exempt), mid-turn plan recitation gated on open plan items, empty-completion bounded retry at the completion choke point, observe-only task classification in the verify-gate prompt. First baseline with octocode ENABLED (0.18.1, --no-git, host-mounted octolib model cache; MCP handshake 2s).",
   "runs": 60,
   "executor": "docker",
-  "octocode": "off (capability times out in ephemeral repos; same as prior baselines)",
-  "harness": "HEAD-only k=4 over 4 legs, same binary/config/day; bench fresh-repeat on provider error (exit!=0 / null-tokens / 5xx / 429 / subscription-403); all 60 runs clean (0 infra-excluded in final tally). Suite expanded from the 7-instance pilot to 15 (added aiogram-1594, cfn-lint-3749, conan-17366, xarray-9586, matplotlib-29007, streamlink-6242, tox-3409, falcon-2366) for broader repo coverage and headroom.",
-  "note": "First 15-instance, k=4 baseline. Overall 42/60 = 70% solved, $3.39/solved, median 1.95M tokens (solved), avg judge 68.2. Perfect 4/4: instructlab-2526, jupyter-1022, llama 330/356/372/384, streamlink-6242, tox-3409, falcon-2366. Borderline (headroom): cfn-lint-3749 3/4, aiogram-1594 2/4, jupyter-1125 1/4. Currently unsolved 0/4: conan-17366 (requirement-softening: warning instead of required error), matplotlib-29007 & xarray-9586 (correct target fix but collateral PASS_TO_PASS regressions). Lower headline success vs the old 93% 7-instance baseline is by design - the added instances are harder and give room to show future gains, not just regressions. Regression guardrail for future HEAD checks is per-instance (any base-solved instance going 0/N), plus overall success and cost/solved. Prior 7-instance 0.35.0 baseline is in git history."
+  "octocode": "ON (first era; prior baselines ran with octocode init-timing-out, documented as off)",
+  "harness": "HEAD-only k=4 over 2 legs same day/binary/config; infra-exclusion rules per compare_to_baseline.py; all 60 runs clean (0 infra-excluded; empty-completion retry now recovers provider flakes in-binary).",
+  "note": "40/60 = 66.7% solved, $3.50/solved, median 1.99M tokens (solved), avg judge 60.2. Era break vs 2026-07-13 (70%, judge 68.2): provider drifted \u2014 same-day control with the PRE-change binary scored 68% solve / judge 54.2 (with octocode) and judge 43 on the aiogram-only zero-delta control, so the solve/judge decline vs 07-13 is environmental (glm/minimax drift), not harness. New stack vs old stack same-day: parity on solve (67% vs 68%), higher judge (60.2 vs 54.2), and 0 vs 2 infra-lost reps. Perfect 4/4: cfn-lint-3749 (up from 3/4), falcon-2366, instructlab-2526, jupyter-1022, llama 330/356/384, streamlink-6242, tox-3409. Borderline: llama-372 3/4, aiogram-1594 1/4 (drifted glm sprint-fails it; solved reps go long). Unsolved 0/4: conan-17366, jupyter-ai-1125, matplotlib-29007, xarray-9586. Guardrail for future HEAD checks: per-instance (any base-solved instance going 0/N), overall success, cost/solved, and per-instance avg_judge slide."
  },
  "arms": {
   "base": {
    "n": 60,
-   "solved": 42,
-   "success_rate": 0.7,
-   "median_tokens": 1950402,
-   "median_tokens_solved": 1950402,
-   "cost_per_solved": 3.39,
-   "avg_judge": 68.2,
-   "median_sec": 342
+   "solved": 40,
+   "success_rate": 0.667,
+   "median_tokens": 1679785,
+   "median_tokens_solved": 1986812,
+   "cost_per_solved": 3.5,
+   "avg_judge": 60.2,
+   "median_sec": 322
   }
  },
  "per_task": {
-  "instructlab__instructlab-2526": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 2680160, "avg_judge": 92 }
-  },
-  "jupyterlab__jupyter-ai-1022": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 6482763, "avg_judge": 91 }
-  },
-  "jupyterlab__jupyter-ai-1125": {
-   "base": { "solved": 1, "n": 4, "median_tokens": 1501090, "avg_judge": 50.5 }
-  },
-  "run-llama__llama_deploy-330": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 3038504, "avg_judge": 94.8 }
-  },
-  "run-llama__llama_deploy-356": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 923986, "avg_judge": 83.8 }
-  },
-  "run-llama__llama_deploy-372": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 3354651, "avg_judge": 88 }
-  },
-  "run-llama__llama_deploy-384": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 521715, "avg_judge": 80.2 }
-  },
   "aiogram__aiogram-1594": {
-   "base": { "solved": 2, "n": 4, "median_tokens": 302279, "avg_judge": 60 }
+   "base": {
+    "solved": 1,
+    "n": 4,
+    "median_tokens": 583272,
+    "avg_judge": 38
+   }
   },
   "aws-cloudformation__cfn-lint-3749": {
-   "base": { "solved": 3, "n": 4, "median_tokens": 4017435, "avg_judge": 67.5 }
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 2646035,
+    "avg_judge": 53
+   }
   },
   "conan-io__conan-17366": {
-   "base": { "solved": 0, "n": 4, "median_tokens": 3341989, "avg_judge": 5 }
-  },
-  "pydata__xarray-9586": {
-   "base": { "solved": 0, "n": 4, "median_tokens": 2310275, "avg_judge": 22.5 }
-  },
-  "matplotlib__matplotlib-29007": {
-   "base": { "solved": 0, "n": 4, "median_tokens": 1109088, "avg_judge": 16.2 }
-  },
-  "streamlink__streamlink-6242": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 86581, "avg_judge": 90.5 }
-  },
-  "tox-dev__tox-3409": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 2306470, "avg_judge": 94.2 }
+   "base": {
+    "solved": 0,
+    "n": 4,
+    "median_tokens": 2030278,
+    "avg_judge": 20
+   }
   },
   "falconry__falcon-2366": {
-   "base": { "solved": 4, "n": 4, "median_tokens": 1665803, "avg_judge": 86.8 }
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 890016,
+    "avg_judge": 81
+   }
+  },
+  "instructlab__instructlab-2526": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 1149351,
+    "avg_judge": 93
+   }
+  },
+  "jupyterlab__jupyter-ai-1022": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 6338648,
+    "avg_judge": 90
+   }
+  },
+  "jupyterlab__jupyter-ai-1125": {
+   "base": {
+    "solved": 0,
+    "n": 4,
+    "median_tokens": 1192222,
+    "avg_judge": 30
+   }
+  },
+  "matplotlib__matplotlib-29007": {
+   "base": {
+    "solved": 0,
+    "n": 4,
+    "median_tokens": 1141998,
+    "avg_judge": 12
+   }
+  },
+  "pydata__xarray-9586": {
+   "base": {
+    "solved": 0,
+    "n": 4,
+    "median_tokens": 2034428,
+    "avg_judge": 16
+   }
+  },
+  "run-llama__llama_deploy-330": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 3756446,
+    "avg_judge": 90
+   }
+  },
+  "run-llama__llama_deploy-356": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 1353435,
+    "avg_judge": 64
+   }
+  },
+  "run-llama__llama_deploy-372": {
+   "base": {
+    "solved": 3,
+    "n": 4,
+    "median_tokens": 3139246,
+    "avg_judge": 63
+   }
+  },
+  "run-llama__llama_deploy-384": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 614568,
+    "avg_judge": 77
+   }
+  },
+  "streamlink__streamlink-6242": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 94602,
+    "avg_judge": 86
+   }
+  },
+  "tox-dev__tox-3409": {
+   "base": {
+    "solved": 4,
+    "n": 4,
+    "median_tokens": 3453973,
+    "avg_judge": 89
+   }
   }
  }
 }

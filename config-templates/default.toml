@@ -662,6 +662,11 @@ model = "anthropic:claude-haiku-4-5"
 # result -- and that each file:line reference in the answer holds on disk;
 # fabricated citations are re-grounded via the verify-gate (needs gate.enabled).
 claim_check = true
+# Observation masking: age out tool-result bodies beyond the recent rounds into
+# short fingerprint placeholders. Keep OFF for models with cache-discounted
+# input pricing (masking rewrites history and busts the prompt-cache prefix);
+# enable only when input bills at full price and long turns need compressing.
+mask_stale_results = false
 # Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that emitted
 # a steer without the model breaking out (a steer is advisory, so a loop can otherwise
 # ignore it forever and burn tokens). 0 = unlimited (off).

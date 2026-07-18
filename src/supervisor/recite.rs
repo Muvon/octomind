@@ -24,12 +24,6 @@
 
 use crate::session::anchor::Anchor;
 
-/// Tool rounds between mid-turn recitations. A plan recited only at turn
-/// start is advisory — on long tool loops the model drifts from it silently
-/// (skipping phases it planned); re-showing the live plan at this interval
-/// measurably raises both plan compliance and solve rate (arXiv 2604.12147).
-pub const INTERVAL_ROUNDS: usize = 5;
-
 /// Cap on recited constraints — precision over recall; a wall of lines would
 /// dilute the recency slot this block exists to exploit.
 const CONSTRAINTS_MAX: usize = 8;

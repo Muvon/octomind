@@ -113,14 +113,6 @@ pub fn save_session(s: &Session) -> Result<PathBuf> {
 	Ok(path)
 }
 
-pub fn clear_session() -> Result<()> {
-	let path = session_path()?;
-	if path.exists() {
-		std::fs::remove_file(&path)?;
-	}
-	Ok(())
-}
-
 fn client() -> Result<reqwest::Client> {
 	Ok(reqwest::Client::builder().timeout(TIMEOUT).build()?)
 }

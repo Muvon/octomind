@@ -27,7 +27,6 @@ pub mod history; // Role-based history management
 pub mod image; // Image processing and attachment utilities
 pub mod layers; // Layered architecture implementation
 pub mod logger; // Request/response logging utilities
-pub mod mask; // Observation masking of stale tool results
 pub mod modal; // Terminal modal overlay system
 mod model_utils; // Model-specific utility functions
 pub mod output; // Output abstraction for streaming messages

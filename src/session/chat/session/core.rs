@@ -958,9 +958,6 @@ impl ChatSession {
 		// truncate, manual summarize, future paths) gets it for free
 		// without needing to remember a separate cleanup call.
 		crate::session::dedup::clear_current_session();
-		// Mask store follows the same rule: quotes against drained messages are
-		// already unverifiable, so retaining their originals would only grow.
-		crate::session::mask::clear_current_session();
 
 		crate::log_debug!(
 			"Compressed {} messages (range {}-{}), had_cached={}",

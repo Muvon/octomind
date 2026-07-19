@@ -48,6 +48,8 @@ struct Stats {
 	condense_saved_tokens: u64,
 	input_tokens: u64,
 	output_tokens: u64,
+	/// Wall time of the supervisor's own API requests, for throughput.
+	api_time_ms: u64,
 	cost: f64,
 	gate_runs: u64,
 	gate_pass: u64,
@@ -81,7 +83,13 @@ fn with<F: FnOnce(&mut Stats)>(f: F) {
 
 /// Record one supervisor model call's usage, attributed to the mechanic that
 /// made it (verify-gate / distill / recall-prep).
-pub fn record_call(kind: CallKind, input_tokens: u64, output_tokens: u64, cost: f64) {
+pub fn record_call(
+	kind: CallKind,
+	input_tokens: u64,
+	output_tokens: u64,
+	api_time_ms: u64,
+	cost: f64,
+) {
 	with(|s| {
 		s.calls += 1;
 		match kind {
@@ -92,6 +100,7 @@ pub fn record_call(kind: CallKind, input_tokens: u64, output_tokens: u64, cost: 
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
+		s.api_time_ms += api_time_ms;
 		s.cost += cost;
 	});
 }
@@ -197,6 +206,11 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"condense_saved_tokens": s.condense_saved_tokens,
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
+		"tokens_per_second": if s.api_time_ms > 0 {
+			s.output_tokens as f64 / (s.api_time_ms as f64 / 1000.0)
+		} else {
+			0.0
+		},
 		"cost": s.cost,
 		"gate_runs": s.gate_runs,
 		"gate_pass": s.gate_pass,

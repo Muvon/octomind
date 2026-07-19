@@ -618,6 +618,7 @@ pub fn display_info(output: &CommandOutput) {
 			let condense_saved = get_u64("condense_saved_tokens");
 			let sup_in = get_u64("input_tokens");
 			let sup_out = get_u64("output_tokens");
+			let sup_tps = get_f64("tokens_per_second");
 			let sup_cost = get_f64("cost");
 			let gate_runs = get_u64("gate_runs");
 			let gate_pass = get_u64("gate_pass");
@@ -630,7 +631,14 @@ pub fn display_info(output: &CommandOutput) {
 			let orientation = get_u64("orientation_stored");
 			let recalls = get_u64("recalls_injected");
 			block_section("supervisor");
-			let kw_sv = key_width(["activity", "gate", "calls", "tokens", "total +sv"]);
+			let kw_sv = key_width([
+				"activity",
+				"gate",
+				"calls",
+				"tokens",
+				"throughput",
+				"total +sv",
+			]);
 			let dot = "·".bright_black();
 
 			let mut activity = Vec::new();
@@ -734,6 +742,9 @@ pub fn display_info(output: &CommandOutput) {
 					),
 					kw_sv,
 				);
+			}
+			if sup_tps > 0.0 {
+				block_row("throughput", &format!("{:.1} tok/s", sup_tps), kw_sv);
 			}
 			if sup_cost > 0.0 {
 				block_row(

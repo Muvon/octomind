@@ -606,6 +606,7 @@ async fn call_extraction_llm(
 			crate::supervisor::stats::CallKind::Distill,
 			usage.input_tokens,
 			usage.output_tokens,
+			usage.request_time_ms.unwrap_or(0),
 			usage.cost.unwrap_or(0.0),
 		);
 	}
@@ -671,6 +672,7 @@ pub(crate) async fn call_learning_llm(
 			kind,
 			usage.input_tokens,
 			usage.output_tokens,
+			usage.request_time_ms.unwrap_or(0),
 			usage.cost.unwrap_or(0.0),
 		);
 	}

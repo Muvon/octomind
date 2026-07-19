@@ -42,7 +42,7 @@ enum Commands {
 	/// Use --format to run non-interactively.
 	Run(commands::RunArgs),
 
-	/// Sign in to Octomind Cloud — confirm a code in the browser and the CLI
+	/// Sign in to your Octomind account — confirm a code in the browser and the CLI
 	/// stores the hub key it mints.
 	Login(commands::LoginArgs),
 

@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `octomind login` — sign in to Octomind Cloud from the terminal.
+//! `octomind login` — sign in to your Octomind account from the terminal.
 //!
 //! Device-authorization flow (the shape of `gh auth login`, RFC 8628): the CLI
 //! asks the API to start a login, shows a short code, and the user confirms that
-//! code in the browser where they are already signed in. Nothing here ever
-//! handles a password or a browser session; the CLI polls until it can collect
-//! the hub key the confirmation minted.
+//! code in the browser where they are already signed in. Nothing here handles a
+//! password.
 //!
-//! The key lands in the user-scope `.env` as `OCTOHUB_API_KEY`, which every
-//! octomind process already loads at startup — so the next command just works.
+//! It collects a hub key (written to the user-scope `.env` as `OCTOHUB_API_KEY`,
+//! which every octomind process loads at startup) and a panel session (stored by
+//! [`crate::account`], refreshed automatically from then on).
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
@@ -29,21 +29,19 @@ use colored::Colorize;
 use serde::Deserialize;
 use std::time::Duration;
 
+use octomind::account;
 use octomind::directories::get_config_dir;
 use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, key_width};
 
-/// Control-plane API. Override for local development.
-const API_URL_ENV: &str = "OCTOMIND_API_URL";
-const DEFAULT_API_URL: &str = "https://api.octomind.run";
-/// Panel origin for the browser step. Only needed when testing a panel that
-/// isn't the one the API points at (e.g. a local dev server).
-const PANEL_URL_ENV: &str = "OCTOMIND_PANEL_URL";
-const KEY_ENV: &str = "OCTOHUB_API_KEY";
 /// Stop polling well after the server's own TTL rather than hanging forever.
 const MAX_POLL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Args, Debug)]
 pub struct LoginArgs {
+	/// Sign in again even if this machine already has a session.
+	#[arg(long)]
+	pub force: bool,
+
 	/// Print the URL instead of opening a browser.
 	#[arg(long)]
 	pub no_browser: bool,
@@ -59,37 +57,10 @@ struct Start {
 }
 
 #[derive(Deserialize)]
-struct Token {
+struct Claim {
 	api_key: String,
-}
-
-fn api_url() -> String {
-	let raw = std::env::var(API_URL_ENV).unwrap_or_else(|_| DEFAULT_API_URL.to_string());
-	raw.trim_end_matches('/').to_string()
-}
-
-/// kisscore answers `[err, data]`. A non-2xx still carries that envelope, so the
-/// error code is what we surface — not an HTTP number nobody can act on.
-async fn call<T: for<'de> Deserialize<'de>>(
-	client: &reqwest::Client,
-	path: &str,
-	body: serde_json::Value,
-) -> Result<std::result::Result<T, String>> {
-	let res = client
-		.post(format!("{}/api/v1{path}", api_url()))
-		.json(&body)
-		.send()
-		.await
-		.with_context(|| format!("could not reach {}", api_url()))?;
-	let envelope: (Option<String>, Option<serde_json::Value>) = res
-		.json()
-		.await
-		.context("unexpected response from the API (not an Octomind endpoint?)")?;
-	match envelope {
-		(Some(err), _) => Ok(Err(err)),
-		(None, Some(data)) => Ok(Ok(serde_json::from_value(data)?)),
-		(None, None) => bail!("empty response from the API"),
-	}
+	jwt: String,
+	refresh_token: String,
 }
 
 /// Swap the origin of a server-supplied verification URL for the local panel.
@@ -101,12 +72,22 @@ fn repoint(url: &str, panel: &str) -> String {
 }
 
 pub async fn execute(args: &LoginArgs) -> Result<()> {
-	let client = reqwest::Client::builder()
-		.timeout(Duration::from_secs(20))
-		.build()?;
+	// Already signed in is worth saying out loud rather than silently minting a
+	// second set of credentials and killing the ones that were working.
+	if !args.force {
+		if let Some(account) = account::whoami().await? {
+			block_open("login", Some("octomind account"));
+			let kw = key_width(["account", "plan"]);
+			block_row("account", &account.email.bright_green().to_string(), kw);
+			block_row("plan", &account.plan, kw);
+			block_close_ok("login", Some("already signed in"));
+			println!();
+			println!("Use `octomind login --force` to sign in as someone else.");
+			return Ok(());
+		}
+	}
 
-	let start: Start = call(
-		&client,
+	let start: Start = account::post_public(
 		"/auth/cli",
 		serde_json::json!({
 			"client": format!("octomind/{} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS),
@@ -115,24 +96,27 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 	.await?
 	.map_err(|e| anyhow::anyhow!("could not start login: {e}"))?;
 
-	let panel = std::env::var(PANEL_URL_ENV).ok();
-	let confirm_url = match &panel {
-		Some(p) => repoint(&start.verification_url_complete, p),
-		None => start.verification_url_complete.clone(),
+	let panel = std::env::var(account::PANEL_URL_ENV).ok();
+	let repoint_for = |url: &str| match &panel {
+		Some(p) => repoint(url, p),
+		None => url.to_string(),
 	};
-	let base_url = match &panel {
-		Some(p) => repoint(&start.verification_url, p),
-		None => start.verification_url.clone(),
-	};
+	let confirm_url = repoint_for(&start.verification_url_complete);
 
-	block_open("login", Some("octomind cloud"));
+	block_open("login", Some("octomind account"));
 	let kw = key_width(["code", "url"]);
 	block_row(
 		"code",
 		&start.user_code.bright_yellow().bold().to_string(),
 		kw,
 	);
-	block_row("url", &base_url.bright_cyan().to_string(), kw);
+	block_row(
+		"url",
+		&repoint_for(&start.verification_url)
+			.bright_cyan()
+			.to_string(),
+		kw,
+	);
 	block_line("");
 	block_line("Confirm the code in your browser to finish signing in.");
 
@@ -146,32 +130,40 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 
 	let interval = Duration::from_secs(start.interval.clamp(1, 30));
 	let deadline = std::time::Instant::now() + MAX_POLL;
-	let key = loop {
+	let claim = loop {
 		if std::time::Instant::now() >= deadline {
 			bail!("login timed out — run `octomind login` again");
 		}
 		tokio::time::sleep(interval).await;
-		match call::<Token>(
-			&client,
+		match account::post_public::<Claim>(
 			"/auth/cli/token",
 			serde_json::json!({ "device_code": start.device_code }),
 		)
 		.await?
 		{
-			Ok(t) => break t.api_key,
+			Ok(c) => break c,
 			Err(e) if e == "pending" => continue,
 			Err(e) if e == "expired" => bail!("that code expired — run `octomind login` again"),
 			Err(e) => bail!("login failed: {e}"),
 		}
 	};
 
-	let path = write_key(&key)?;
-	// Same process, later commands in the same shell: make it usable right now.
-	std::env::set_var(KEY_ENV, &key);
+	let env_path = write_hub_key(&claim.api_key)?;
+	account::save_session(&account::Session {
+		jwt: claim.jwt,
+		refresh_token: claim.refresh_token,
+		api_url: account::api_url(),
+	})?;
+	// Same process, so anything later in this run picks it up without a restart.
+	std::env::set_var(account::HUB_KEY_ENV, &claim.api_key);
 
-	let kw = key_width(["key", "stored"]);
+	let who = account::whoami().await.ok().flatten();
+	let kw = key_width(["account", "key", "stored"]);
+	if let Some(a) = &who {
+		block_row("account", &a.email.bright_green().to_string(), kw);
+	}
 	block_row("key", "octomind-cli", kw);
-	block_row("stored", &path.display().to_string(), kw);
+	block_row("stored", &env_path.display().to_string(), kw);
 	block_close_ok("login", Some("signed in"));
 	println!();
 	Ok(())
@@ -180,7 +172,7 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 /// Upsert `OCTOHUB_API_KEY` in the user-scope `.env` — the one every octomind
 /// process loads at startup. Other variables in that file are left alone; a new
 /// login replaces the previous key rather than appending a second line.
-fn write_key(key: &str) -> Result<std::path::PathBuf> {
+fn write_hub_key(key: &str) -> Result<std::path::PathBuf> {
 	let path = get_config_dir()?.join(".env");
 	let existing = std::fs::read_to_string(&path).unwrap_or_default();
 	std::fs::write(&path, upsert(&existing, key))
@@ -197,7 +189,7 @@ fn write_key(key: &str) -> Result<std::path::PathBuf> {
 
 /// Replace any existing `OCTOHUB_API_KEY` line, keep every other line as-is.
 fn upsert(existing: &str, key: &str) -> String {
-	let prefix = format!("{KEY_ENV}=");
+	let prefix = format!("{}=", account::HUB_KEY_ENV);
 	let mut out: Vec<&str> = existing
 		.lines()
 		.filter(|l| {

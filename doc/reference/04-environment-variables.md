@@ -141,7 +141,7 @@ Available to hook scripts when processing incoming webhooks.
 
 ## .env File Support
 
-Octomind automatically loads a `.env` file from the working directory at startup, as an alternative to exporting variables in your shell. This is useful for project-specific API keys:
+Octomind automatically loads `.env` files at startup, as an alternative to exporting variables in your shell. This is useful for API keys:
 
 ```bash
 # .env
@@ -149,8 +149,16 @@ OPENROUTER_API_KEY=sk-or-v1-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+Two `.env` locations are loaded, in precedence order (later wins):
+
+1. **User-scope** — `<config_dir>/.env` in the shared config directory (alongside `config.toml`). Shared across all projects.
+2. **Project-local** — `./.env` in the current working directory. Overrides the user-scope file.
+
+System environment variables are the base; both `.env` files override them.
+
 Key behaviors:
 
 - **`.env` overrides the system environment.** When a variable is defined in both, the `.env` value wins.
+- **Project-local `.env` overrides user-scope `.env`.** A key set in the working directory wins over the same key in the shared config directory.
 - **Empty values are treated as "not set."** A variable whose value is empty (or only whitespace) is reported as `NotFound` for API-key source detection — so leaving `OPENROUTER_API_KEY=` empty is the same as not defining it.
 - **Source tracking.** The `EnvTracker` records whether each variable came from the system environment (`System`) or the `.env` file (`DotEnv`); this source is shown in debug mode.

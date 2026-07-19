@@ -22,6 +22,8 @@ use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 
+use crate::directories::get_config_dir;
+
 /// Represents the source of an environment variable
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvSource {
@@ -51,8 +53,22 @@ impl EnvTracker {
 		}
 	}
 
-	/// Load .env file with override and track that it was loaded
+	/// Load .env files with override, in precedence order (later wins):
+	/// 1. user-scope `<config_dir>/.env` (shared across projects)
+	/// 2. cwd `.env` (project-local, overrides user-scope)
+	/// System environment variables are the base; both .env files override them.
 	pub fn load_dotenv_override(&mut self) -> Result<(), dotenvy::Error> {
+		// 1. User-scope .env from the shared config directory.
+		if let Ok(config_dir) = get_config_dir() {
+			let user_env = config_dir.join(".env");
+			if user_env.exists() {
+				dotenvy::from_filename_override(&user_env)?;
+				self.dotenv_loaded = true;
+				crate::log_debug!("Loaded user-scope .env: {}", user_env.display());
+			}
+		}
+
+		// 2. Project-local .env from the current working directory (overrides user-scope).
 		if Path::new(".env").exists() {
 			dotenvy::from_filename_override(".env")?;
 			self.dotenv_loaded = true;

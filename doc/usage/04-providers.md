@@ -35,6 +35,14 @@ ANTHROPIC_API_KEY=your_key
 
 Octomind loads `.env` on startup and it **overrides** the process environment. An **empty** value is treated as "not set", so a blank `KEY=` line will not satisfy a required key. `octomind config --show` reports whether each detected key came from the system environment or from `.env`.
 
+In addition to the project-local `.env`, Octomind also loads a **user-scope** `.env` from the shared config directory (the same directory holding your `config.toml` and other `*.toml` files). This lets you set keys once for all projects. Load order, later wins:
+
+1. System environment variables (base)
+2. User-scope `<config_dir>/.env` (shared across projects)
+3. Project-local `./.env` (overrides user-scope)
+
+A key set in the project `.env` therefore wins over the user-scope `.env`, which wins over the system environment.
+
 ## Supported Providers
 
 The most common providers are documented in detail below. The full set of provider prefixes octolib recognizes is:
@@ -154,7 +162,6 @@ The following providers also work via the same `<PROVIDER>_API_KEY` pattern. Eac
 | Provider | Format | Env var(s) |
 |----------|--------|------------|
 | Cerebras | `cerebras:model` | `CEREBRAS_API_KEY` |
-| Groq | `groq:model` | `GROQ_API_KEY` |
 | Together | `together:model` | `TOGETHER_API_KEY` |
 | Fireworks | `fireworks:model` | `FIREWORKS_API_KEY` |
 | NVIDIA | `nvidia:model` | `NVIDIA_API_KEY` |

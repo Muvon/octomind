@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.38.0] - 2026-07-19
+
+### 📋 Release Summary
+
+This release introduces a new device-authorization login flow and comprehensive account and usage management (9d2dc723, 8f90d4d9, 5745e3c0, 06fd829a). The AI supervisor has been enhanced with improved task planning, throughput tracking, and refined tool result handling (3405bf03, 5dc82b17, e2653e22, 0ef7d22c). Additionally, several updates improve session stability, provider reliability, and documentation for MCP tools (e4b3ef40, 80c9e71a, 31f48f6e, e59ea8fa).
+
+
+### ✨ New Features & Enhancements
+
+- **auth**: implement machine-specific device IDs `9d2dc723`
+- **account**: implement account and usage management `8f90d4d9`
+- **auth**: implement device-authorization login flow `5745e3c0`
+- **config**: add user-scope .env file support `06fd829a`
+- **supervisor**: add throughput tracking to stats `3405bf03`
+- **supervisor**: make tool result masking optional `5dc82b17`
+- **supervisor**: add mid-turn plan recitation `e2653e22`
+- **session**: implement stale tool result masking `661855cc`
+- **supervisor**: refine gate prompt for observe-only tasks `0ef7d22c`
+
+### 🔧 Improvements & Optimizations
+
+- **config**: fix doc comment formatting `0e620c2c`
+- **account**: remove unused clear_session function `81cc5a12`
+- **session**: reuse max_retries for empty completions `ffb082cd`
+- **bench**: advance baseline to the masking-free build (70%, $3.28) `9d7592d8`
+- **session**: remove stale tool result masking `d91bc213`
+- **supervisor**: remove mid-turn recitation logic `007aa694`
+- **bench**: update baseline results for 0.37.1 `d00b8b8f`
+- **oauth**: migrate to file-based token storage `66f18c6b`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: recite plan regardless of open tasks `e4b3ef40`
+- **supervisor**: stop reciting plan when no tasks open `218c1e87`
+- **session**: prevent masking of subagent results `80c9e71a`
+- **session**: retry empty provider completions `31f48f6e`
+
+### 📚 Documentation & Examples
+
+- update mcp tools and structured output guide `e59ea8fa`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.37.1] - 2026-07-13
 
 ### 📋 Release Summary

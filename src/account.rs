@@ -67,6 +67,30 @@ pub fn session_path() -> Result<PathBuf> {
 	Ok(get_config_dir()?.join("auth.json"))
 }
 
+/// A stable id for THIS machine, created once and kept next to the config.
+///
+/// It names the key a login mints (`octomind-cli-<id>`), so signing in here only
+/// ever supersedes this machine's key and other machines keep working. Not a
+/// secret and not a credential — it only has to be stable and unique-ish. It
+/// deliberately does not live in `auth.json`: it must outlive signing out.
+pub fn machine_id() -> Result<String> {
+	let path = get_config_dir()?.join("machine-id");
+	if let Ok(existing) = std::fs::read_to_string(&path) {
+		let id = existing.trim().to_string();
+		if !id.is_empty() {
+			return Ok(id);
+		}
+	}
+	let id: String = uuid::Uuid::new_v4()
+		.simple()
+		.to_string()
+		.chars()
+		.take(12)
+		.collect();
+	std::fs::write(&path, &id).with_context(|| format!("could not write {}", path.display()))?;
+	Ok(id)
+}
+
 /// The current session, if a login left one for THIS api_url.
 pub fn session() -> Option<Session> {
 	let raw = std::fs::read_to_string(session_path().ok()?).ok()?;

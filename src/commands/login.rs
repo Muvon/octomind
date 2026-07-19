@@ -61,6 +61,13 @@ struct Claim {
 	api_key: String,
 	jwt: String,
 	refresh_token: String,
+	/// What the key ended up called in the Keys page.
+	#[serde(default = "default_key_name")]
+	key_name: String,
+}
+
+fn default_key_name() -> String {
+	"octomind-cli".to_string()
 }
 
 /// Swap the origin of a server-supplied verification URL for the local panel.
@@ -87,10 +94,14 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 		}
 	}
 
+	// The device id scopes the key this login mints, so signing in here supersedes
+	// only this machine's key and every other machine keeps working.
+	let device_id = account::machine_id()?;
 	let start: Start = account::post_public(
 		"/auth/cli",
 		serde_json::json!({
 			"client": format!("octomind/{} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS),
+			"device_id": device_id,
 		}),
 	)
 	.await?
@@ -162,7 +173,9 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 	if let Some(a) = &who {
 		block_row("account", &a.email.bright_green().to_string(), kw);
 	}
-	block_row("key", "octomind-cli", kw);
+	// The server names the key; echo ITS answer so the row always matches what the
+	// Keys page shows, including for older servers that ignore the device id.
+	block_row("key", &claim.key_name, kw);
 	block_row("stored", &env_path.display().to_string(), kw);
 	block_close_ok("login", Some("signed in"));
 	println!();

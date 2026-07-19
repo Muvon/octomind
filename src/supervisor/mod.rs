@@ -83,14 +83,6 @@ pub struct SupervisorConfig {
 	/// final answer holds on disk. Fabricated citations are re-grounded via the
 	/// verify-gate's bounded re-run (so this is effective only when `gate.enabled`).
 	pub claim_check: bool,
-	/// Observation masking: replace tool-result bodies older than the recent
-	/// window with a short fingerprint placeholder (see `session::mask`). OFF by
-	/// default: masking rewrites a message at the moving frontier each round,
-	/// which invalidates the prompt-cache prefix from that point — on
-	/// cache-priced providers the aged bodies would have been ~10x cheaper as
-	/// cache reads than the re-encoding masking forces. Enable only for models
-	/// without cache-discounted input pricing.
-	pub mask_stale_results: bool,
 	/// Cross-session learning mechanic (distill + recall).
 	pub learning: learning::LearningConfig,
 	/// Orientation memory (durable subject understanding).

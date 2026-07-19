@@ -42,6 +42,10 @@ enum Commands {
 	/// Use --format to run non-interactively.
 	Run(commands::RunArgs),
 
+	/// Sign in to Octomind Cloud — confirm a code in the browser and the CLI
+	/// stores the hub key it mints.
+	Login(commands::LoginArgs),
+
 	/// Start WebSocket server for remote AI sessions
 	Server(commands::ServerArgs),
 
@@ -162,6 +166,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 	match args.command {
 		Commands::Config(config_args) => commands::config::execute(&config_args, config)?,
 		Commands::Run(run_args) => commands::run::execute(&run_args, &config).await?,
+		Commands::Login(login_args) => commands::login::execute(&login_args).await?,
 		Commands::Server(server_args) => commands::server::execute(&server_args, &config).await?,
 		Commands::Acp(acp_args) => commands::acp::execute(&acp_args, &config).await?,
 		Commands::Tap(tap_args) => commands::tap::execute(&tap_args)?,

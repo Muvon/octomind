@@ -427,6 +427,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	render_env_api_key_row("Google", "GOOGLE_APPLICATION_CREDENTIALS");
 	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
 	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
+	render_octomind_cloud_row();
 
 	// ── mcp ───────────────────────────────────────────────────────────
 	let dev_mcp_enabled = config
@@ -496,6 +497,26 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	block_close_ok("config", suffix.as_deref());
 	println!();
 	Ok(())
+}
+
+/// Octomind sits in the same list, but its key isn't something you export
+/// — it arrives from `octomind login`, so the row says that instead.
+fn render_octomind_cloud_row() {
+	let signed_in = octomind::account::session().is_some();
+	let has_key = std::env::var(octomind::account::HUB_KEY_ENV).is_ok_and(|k| !k.trim().is_empty());
+	let (mark, note) = match (signed_in, has_key) {
+		(true, _) => ("✓".bright_green(), "signed in".dimmed()),
+		// A key with no session was exported by hand (or predates login): models
+		// work, the account commands don't.
+		(false, true) => ("✓".bright_green(), "key set, not signed in".dimmed()),
+		(false, false) => ("✗".bright_red(), "not set (octomind login)".dimmed()),
+	};
+	block_row_text(&format!(
+		"{}  {} {}",
+		format!("{:<11}", "Octomind").bright_white(),
+		mark,
+		note,
+	));
 }
 
 /// Render an env-var API key row under the current /config block.
@@ -649,6 +670,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	render_env_api_key_row("Google", "GOOGLE_APPLICATION_CREDENTIALS");
 	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
 	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
+	render_octomind_cloud_row();
 
 	// ── roles ─────────────────────────────────────────────────────────
 	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) =

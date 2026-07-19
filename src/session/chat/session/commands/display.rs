@@ -2402,6 +2402,111 @@ pub fn display_learning(output: &CommandOutput) {
 	}
 }
 
+/// Width of the usage bars. Short enough to sit inside a narrow terminal.
+const BAR_W: usize = 24;
+
+/// Draw a proportion, coloured by how close it is to the limit — the point of
+/// `/usage` is seeing "am I about to be cut off" without reading the numbers.
+fn bar(used: f64, limit: f64, render: impl Fn(f64, f64) -> String) -> String {
+	if limit <= 0.0 {
+		return "unlimited".dimmed().to_string();
+	}
+	let frac = (used / limit).clamp(0.0, 1.0);
+	let filled = (frac * BAR_W as f64).round() as usize;
+	let drawn = "█".repeat(filled);
+	let coloured = if frac >= 0.9 {
+		drawn.bright_red()
+	} else if frac >= 0.7 {
+		drawn.bright_yellow()
+	} else {
+		drawn.bright_green()
+	};
+	format!(
+		"{}{} {:>5.1}%  {}",
+		coloured,
+		"░".repeat(BAR_W - filled).dimmed(),
+		frac * 100.0,
+		render(used, limit)
+	)
+}
+
+fn money_bar(used: f64, limit: f64) -> String {
+	bar(used, limit, |u, l| format!("${u:.2} / ${l:.2}"))
+}
+
+fn gb_bar(used: f64, limit: f64) -> String {
+	if limit <= 0.0 {
+		return format!("{used:.2} GB").dimmed().to_string();
+	}
+	bar(used, limit, |u, l| format!("{u:.2} / {l:.0} GB"))
+}
+
+pub fn display_usage(output: &CommandOutput) {
+	let CommandOutput::Usage {
+		signed_in,
+		account,
+		windows,
+		balance_usd,
+		storage_gb,
+		storage_quota_gb,
+		network_used_gb,
+		network_included_gb,
+	} = output
+	else {
+		return;
+	};
+
+	block_open("/usage", None);
+	if !signed_in {
+		block_line(&"Not signed in to Octomind.".yellow().to_string());
+		block_line(
+			&"Run `octomind login` to see your allowances."
+				.dimmed()
+				.to_string(),
+		);
+		block_close_ok("/usage", Some("signed out"));
+		println!();
+		return;
+	}
+
+	if let Some(a) = account {
+		block_row(
+			"account",
+			&a.bright_green().to_string(),
+			key_width(["account"]),
+		);
+	}
+
+	block_section("spend");
+	let kw = key_width(windows.iter().map(|w| w.label.as_str()));
+	for w in windows {
+		block_row(&w.label, &money_bar(w.spent_usd, w.cap_usd), kw);
+	}
+
+	block_section("resources");
+	let kw = key_width(["balance", "storage", "network"]);
+	block_row(
+		"balance",
+		&format!("${balance_usd:.2}").bright_cyan().to_string(),
+		kw,
+	);
+	block_row("storage", &gb_bar(*storage_gb, *storage_quota_gb), kw);
+	block_row(
+		"network",
+		&gb_bar(*network_used_gb, *network_included_gb),
+		kw,
+	);
+
+	// Summarise with the tightest window — that's the one that will bite first.
+	let peak = windows
+		.iter()
+		.filter(|w| w.cap_usd > 0.0)
+		.map(|w| w.spent_usd / w.cap_usd)
+		.fold(0.0_f64, f64::max);
+	block_close_ok("/usage", Some(&format!("{:.0}% of cap", peak * 100.0)));
+	println!();
+}
+
 pub fn display_share(output: &CommandOutput) {
 	if let CommandOutput::Share { id, url } = output {
 		block_open("/share", None);

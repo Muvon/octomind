@@ -41,6 +41,8 @@ mod schedule;
 mod session;
 mod share;
 mod skill;
+mod usage;
+pub use usage::UsageWindow;
 mod utils;
 mod video;
 
@@ -198,6 +200,18 @@ pub enum CommandOutput {
 		id: String,
 		url: String,
 	},
+	/// Octomind account spend + quotas. `signed_in: false` is the normal not-logged-in
+	/// state, with every number left at zero — there is nothing to report.
+	Usage {
+		signed_in: bool,
+		account: Option<String>,
+		windows: Vec<UsageWindow>,
+		balance_usd: f64,
+		storage_gb: f64,
+		storage_quota_gb: f64,
+		network_used_gb: f64,
+		network_included_gb: f64,
+	},
 	Analyze {
 		url: String,
 		port: u16,
@@ -287,6 +301,7 @@ impl CommandOutput {
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
+			Self::Usage { .. } => display::display_usage(self),
 			Self::Analyze { .. } => display::display_analyze(self),
 			Self::Agents { .. } => display::display_agents(self),
 			Self::Error { error, .. } => {
@@ -376,6 +391,7 @@ pub async fn process_command(
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
 		AGENTS_COMMAND => agents::handle_agents(params),
+		USAGE_COMMAND => usage::handle_usage().await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

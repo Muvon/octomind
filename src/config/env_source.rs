@@ -56,6 +56,7 @@ impl EnvTracker {
 	/// Load .env files with override, in precedence order (later wins):
 	/// 1. user-scope `<config_dir>/.env` (shared across projects)
 	/// 2. cwd `.env` (project-local, overrides user-scope)
+	///
 	/// System environment variables are the base; both .env files override them.
 	pub fn load_dotenv_override(&mut self) -> Result<(), dotenvy::Error> {
 		// 1. User-scope .env from the shared config directory.

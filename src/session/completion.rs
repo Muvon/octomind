@@ -156,10 +156,10 @@ fn is_empty_completion(
 		&& structured_output.is_none()
 }
 
-/// Extra attempts when a provider returns an empty completion — an infra flake
-/// (HTTP 200, empty body) that the provider's transport-level retries never
-/// see, so it gets its own bounded retry before surfacing an error.
-const EMPTY_COMPLETION_RETRIES: usize = 2;
+/// Delay between empty-completion retries. The retry COUNT is the request's own
+/// `max_retries` (0 = no retry): an empty completion is an infra flake the
+/// provider's transport retries never see, so it reuses the same budget the
+/// caller already set for flaky requests rather than inventing its own.
 const EMPTY_COMPLETION_RETRY_DELAY_MS: u64 = 500;
 
 /// High-level function to send a chat completion with input validation and context management.
@@ -258,14 +258,15 @@ pub async fn chat_completion_with_validation(
 
 	// An empty completion — a successful HTTP response with no content, no tool
 	// calls, and no structured output — is a provider fault (e.g. some providers
-	// return finish_reason=stop with an empty body). The provider's own
-	// max_retries covers transport failures only and never sees these, so empty
-	// completions get their own bounded retry. If every attempt comes back
-	// empty, surface an error: if we returned it, the response loop would read
-	// it as a normal end-of-turn, render nothing, and silently strand the user
-	// at the prompt.
+	// return finish_reason=stop with an empty body), so it is treated exactly
+	// like a transport error: retried under the request's own `max_retries`
+	// budget (0 = no retry), then surfaced as an error. The provider's transport
+	// retries never see these because the HTTP call succeeded. Erroring is what
+	// keeps the turn honest: returning an empty response would read as a normal
+	// end-of-turn, render nothing, and silently strand the user at the prompt.
+	let attempts = params.max_retries as usize + 1;
 	let mut last_finish_reason = None;
-	for attempt in 0..=EMPTY_COMPLETION_RETRIES {
+	for attempt in 0..attempts {
 		if attempt > 0 {
 			if let Some(ref token) = cancellation_token {
 				if *token.borrow() {
@@ -297,15 +298,15 @@ pub async fn chat_completion_with_validation(
 			"Provider '{}' returned an empty completion (attempt {}/{})",
 			provider.name(),
 			attempt + 1,
-			EMPTY_COMPLETION_RETRIES + 1
+			attempts
 		);
 	}
 	Err(anyhow::anyhow!(
-		"Provider '{}' returned an empty response (finish_reason={:?}, no content or tool calls) for model '{}' after {} attempts",
+		"Provider '{}' returned an empty response (finish_reason={:?}, no content or tool calls) for model '{}' after {} attempt(s)",
 		provider.name(),
 		last_finish_reason,
 		actual_model,
-		EMPTY_COMPLETION_RETRIES + 1
+		attempts
 	))
 }
 

@@ -33,26 +33,26 @@ overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
 # octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
-octolib = { version = "0.25.1", default-features = false, features = ["huggingface"] }
+octolib = { version = "0.25.2", default-features = false, features = ["huggingface"] }
 # fancy-regex: 0.23+ requires an explicit regex backend; pure-Rust over onig (C)
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] } # model's own tokenizer for exact token counts
 rmcp = { version = "2.2.0", default-features = false }
 
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }
+tokio = { version = "1.53.0", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }
 crossterm = "0.29.0"
 indicatif = "0.18.6"
 parking_lot = "0.12.5"
 chrono = { version = "0.4.45", features = ["serde"] }
-serde = { version = "1.0.228", features = ["derive"] }
-uuid = { version = "1.23.4", features = ["v4"] }
+serde = { version = "1.0.229", features = ["derive"] }
+uuid = { version = "1.24.0", features = ["v4"] }
 tiktoken-rs = "0.12.0" # Token counter
 reqwest = { version = "0.13.4", features = ["json", "rustls", "gzip"], default-features = false }
 rustls-webpki = ">=0.103.12"
 flate2 = "1.1"
 zstd = "0.13"
-anyhow = "1.0.103"
-serde_json = "1.0.150"
-clap = { version = "4.6.1", features = ["derive"] }
+anyhow = "1.0.104"
+serde_json = "1.0.151"
+clap = { version = "4.6.2", features = ["derive"] }
 clap_complete = "4.6.7"
 toml = "1.1"
 lazy_static = "1.5.0"
@@ -60,9 +60,9 @@ fuzzy-matcher = "0.3.7"
 tokio-util = { version = "0.7", features = ["rt", "compat"] }
 reedline = { version = "0.49", features = ["bashisms", "external_printer"] }
 nu-ansi-term = "0.50"
-regex = "1.13.0"
+regex = "1.13.1"
 colored = "3.1.1"
-async-trait = "0.1.89"
+async-trait = "0.1.91"
 termimad = "0.35.1"
 # No plist-load/yaml-load: only bundled dumps are used (ThemeSet::load_defaults),
 # and plist pulls quick-xml with open RUSTSEC advisories (2026-0194/0195).
@@ -71,8 +71,8 @@ syntect = { version = "5.3.0", default-features = false, features = ["default-sy
 url = "2.5.8"
 dirs = "6.0.0"
 glob = "0.3.3"
-ignore = "0.4.28"
-futures = "0.3.32"
+ignore = "0.4.30"
+futures = "0.3.33"
 dotenvy = "0.15.7"
 arboard = "3.6.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
@@ -97,7 +97,7 @@ http-body-util = "0.1"
 bytes = "1"
 agent-client-protocol = "1.2.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-which = "8.0.4"
+which = "8.0.5"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

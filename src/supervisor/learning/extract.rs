@@ -598,6 +598,7 @@ async fn call_extraction_llm(
 		&messages, model, 0.3, 1.0, 0, 4096, config,
 	)
 	.with_max_retries(1)
+	.with_purpose(crate::providers::ModelPurpose::Supervisor)
 	.without_tools();
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
@@ -664,6 +665,7 @@ pub(crate) async fn call_learning_llm(
 	.with_max_retries(1)
 	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx)
+	.with_purpose(crate::providers::ModelPurpose::Supervisor)
 	.without_tools();
 
 	let response = crate::session::chat_completion_with_validation(params).await?;

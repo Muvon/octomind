@@ -56,6 +56,9 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	/// calls (compression, learning extraction) disable this — see
 	/// `crate::providers::ChatCompletionParams::tools`.
 	pub tools: bool,
+	/// Call origin for purpose-based routing (octohub `auto`). Defaults to
+	/// Main; supervisor and compression call sites tag themselves.
+	pub purpose: crate::providers::ModelPurpose,
 }
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
@@ -83,6 +86,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			schema: None,
 			reasoning_effort: None,
 			tools: true,
+			purpose: crate::providers::ModelPurpose::default(),
 		}
 	}
 
@@ -122,6 +126,12 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 	/// Don't attach MCP tools — for text-only calls (compression, learning).
 	pub fn without_tools(mut self) -> Self {
 		self.tools = false;
+		self
+	}
+
+	/// Tag this call's origin for purpose-based routing (octohub `auto`).
+	pub fn with_purpose(mut self, purpose: crate::providers::ModelPurpose) -> Self {
+		self.purpose = purpose;
 		self
 	}
 }
@@ -231,7 +241,8 @@ pub async fn chat_completion_with_validation(
 		params.max_tokens,
 		params.config,
 	)
-	.with_max_retries(params.max_retries);
+	.with_max_retries(params.max_retries)
+	.with_purpose(params.purpose);
 
 	if !params.tools {
 		chat_params = chat_params.without_tools();

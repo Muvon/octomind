@@ -43,6 +43,37 @@ pub struct ProviderResponse {
 	pub structured_output: Option<serde_json::Value>,
 }
 
+/// The header carrying [`ModelPurpose`] to the octohub proxy.
+pub const MODEL_PURPOSE_HEADER: &str = "X-Model-Purpose";
+
+/// Where in octomind a model call originates. Sent on every completion as the
+/// `X-Model-Purpose` header so octohub's virtual `auto` model can route each
+/// purpose to a different real model; providers that aren't octohub ignore it.
+///
+/// This set is a CONTRACT with the control plane (the panel renders a model
+/// picker per purpose) — extend it deliberately, never rename values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModelPurpose {
+	/// The session's own conversation turns — also cache keepalive pings,
+	/// which must hit the same model they are keeping warm.
+	#[default]
+	Main,
+	/// Supervisor mechanics: verify-gate, condense, learning extract/recall.
+	Supervisor,
+	/// Conversation-compression decisions and summaries.
+	Compression,
+}
+
+impl ModelPurpose {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Self::Main => "main",
+			Self::Supervisor => "supervisor",
+			Self::Compression => "compression",
+		}
+	}
+}
+
 // Keep the original ChatCompletionParams for backward compatibility
 /// Parameters for chat completion requests (Octomind version)
 ///
@@ -78,6 +109,9 @@ pub struct ChatCompletionParams<'a> {
 	/// calls tools there, the definitions waste input tokens, and their
 	/// presence blocks schema enforcement on proxy providers.
 	pub tools: bool,
+	/// Where this call originates (main | supervisor | compression) — becomes
+	/// the `X-Model-Purpose` header. Defaults to Main.
+	pub purpose: ModelPurpose,
 }
 
 impl<'a> ChatCompletionParams<'a> {
@@ -105,6 +139,7 @@ impl<'a> ChatCompletionParams<'a> {
 			schema: None,
 			reasoning_effort: None,
 			tools: true,
+			purpose: ModelPurpose::default(),
 		}
 	}
 
@@ -135,6 +170,12 @@ impl<'a> ChatCompletionParams<'a> {
 	/// Don't attach MCP tools — for text-only calls (compression, learning).
 	pub fn without_tools(mut self) -> Self {
 		self.tools = false;
+		self
+	}
+
+	/// Tag this call's origin for purpose-based routing (octohub `auto`).
+	pub fn with_purpose(mut self, purpose: ModelPurpose) -> Self {
+		self.purpose = purpose;
 		self
 	}
 
@@ -201,7 +242,13 @@ impl<'a> ChatCompletionParams<'a> {
 			self.reasoning_effort
 				.unwrap_or(self.config.reasoning_effort)
 				.to_octolib(),
-		);
+		)
+		// Sent on every request: only the octohub proxy interprets it (for the
+		// virtual `auto` model); other providers ignore an unknown X- header.
+		.with_extra_headers(std::collections::HashMap::from([(
+			MODEL_PURPOSE_HEADER.to_string(),
+			self.purpose.as_str().to_string(),
+		)]));
 
 		if let Some(token) = &self.cancellation_token {
 			params = params.with_cancellation_token(token.clone());
@@ -501,6 +548,20 @@ pub mod retry {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn test_model_purpose_contract_strings() {
+		// These exact strings are a cross-repo CONTRACT: octohub routes by them
+		// and the panel renders a picker per purpose. Renaming one silently
+		// breaks purpose routing for every deployed CLI — this test is the tripwire.
+		assert_eq!(MODEL_PURPOSE_HEADER, "X-Model-Purpose");
+		assert_eq!(ModelPurpose::Main.as_str(), "main");
+		assert_eq!(ModelPurpose::Supervisor.as_str(), "supervisor");
+		assert_eq!(ModelPurpose::Compression.as_str(), "compression");
+		// Untagged calls are MAIN traffic — session turns must never silently
+		// become something a cheaper purpose route would catch.
+		assert_eq!(ModelPurpose::default(), ModelPurpose::Main);
+	}
 
 	#[test]
 	fn test_thinking_block_conversion() {

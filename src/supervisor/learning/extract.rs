@@ -598,7 +598,7 @@ async fn call_extraction_llm(
 		&messages, model, 0.3, 1.0, 0, 4096, config,
 	)
 	.with_max_retries(1)
-	.with_purpose(crate::providers::ModelPurpose::Supervisor)
+	.with_purpose(crate::providers::ModelPurpose::SupervisorDistill)
 	.without_tools();
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
@@ -615,6 +615,19 @@ async fn call_extraction_llm(
 }
 
 /// Call the learning LLM (cheap model) for extraction or retrieval prep.
+/// Each supervisor mechanic reports its own routing purpose, so the hub (and
+/// the panel) can redefine any one of them without touching the others.
+fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::ModelPurpose {
+	use crate::providers::ModelPurpose;
+	use crate::supervisor::stats::CallKind;
+	match kind {
+		CallKind::Gate => ModelPurpose::SupervisorGate,
+		CallKind::Condense => ModelPurpose::SupervisorCondense,
+		CallKind::Distill => ModelPurpose::SupervisorDistill,
+		CallKind::Recall => ModelPurpose::SupervisorRecall,
+	}
+}
+
 pub(crate) async fn call_learning_llm(
 	config: &Config,
 	model: &str,
@@ -665,7 +678,7 @@ pub(crate) async fn call_learning_llm(
 	.with_max_retries(1)
 	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx)
-	.with_purpose(crate::providers::ModelPurpose::Supervisor)
+	.with_purpose(purpose_for(kind))
 	.without_tools();
 
 	let response = crate::session::chat_completion_with_validation(params).await?;

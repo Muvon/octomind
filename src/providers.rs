@@ -52,14 +52,24 @@ pub const MODEL_PURPOSE_HEADER: &str = "X-Model-Purpose";
 ///
 /// This set is a CONTRACT with the control plane (the panel renders a model
 /// picker per purpose) — extend it deliberately, never rename values.
+/// Purposes are HIERARCHICAL on the octohub side, split on `-`: a map entry
+/// for `supervisor` covers every `supervisor-*` purpose until a specific one
+/// (e.g. `supervisor-gate`) is pinned. That's why each supervisor mechanic
+/// sends its own purpose — redefinable individually, one row covers the family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModelPurpose {
 	/// The session's own conversation turns — also cache keepalive pings,
 	/// which must hit the same model they are keeping warm.
 	#[default]
 	Main,
-	/// Supervisor mechanics: verify-gate, condense, learning extract/recall.
-	Supervisor,
+	/// Verify-gate completion checks.
+	SupervisorGate,
+	/// Tool-output condensation (task-aware narrowing).
+	SupervisorCondense,
+	/// End-of-trajectory lesson/orientation extraction.
+	SupervisorDistill,
+	/// Recall keyword/query preparation.
+	SupervisorRecall,
 	/// Conversation-compression decisions and summaries.
 	Compression,
 }
@@ -68,7 +78,10 @@ impl ModelPurpose {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			Self::Main => "main",
-			Self::Supervisor => "supervisor",
+			Self::SupervisorGate => "supervisor-gate",
+			Self::SupervisorCondense => "supervisor-condense",
+			Self::SupervisorDistill => "supervisor-distill",
+			Self::SupervisorRecall => "supervisor-recall",
 			Self::Compression => "compression",
 		}
 	}
@@ -556,8 +569,20 @@ mod tests {
 		// breaks purpose routing for every deployed CLI — this test is the tripwire.
 		assert_eq!(MODEL_PURPOSE_HEADER, "X-Model-Purpose");
 		assert_eq!(ModelPurpose::Main.as_str(), "main");
-		assert_eq!(ModelPurpose::Supervisor.as_str(), "supervisor");
 		assert_eq!(ModelPurpose::Compression.as_str(), "compression");
+		// Supervisor purposes share the `supervisor-` prefix ON PURPOSE: octohub
+		// resolves hierarchically on `-`, so one `supervisor` map row covers all
+		// of these until a specific one is pinned.
+		assert_eq!(ModelPurpose::SupervisorGate.as_str(), "supervisor-gate");
+		assert_eq!(
+			ModelPurpose::SupervisorCondense.as_str(),
+			"supervisor-condense"
+		);
+		assert_eq!(
+			ModelPurpose::SupervisorDistill.as_str(),
+			"supervisor-distill"
+		);
+		assert_eq!(ModelPurpose::SupervisorRecall.as_str(), "supervisor-recall");
 		// Untagged calls are MAIN traffic — session turns must never silently
 		// become something a cheaper purpose route would catch.
 		assert_eq!(ModelPurpose::default(), ModelPurpose::Main);

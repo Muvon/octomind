@@ -22,7 +22,7 @@ log_level = "info"
 
 # Default model for all operations (provider:model format)
 # Examples: "openrouter:anthropic/claude-3.5-sonnet", "openai:gpt-4o", "deepseek:deepseek-chat"
-model = "openrouter:anthropic/claude-sonnet-4"
+model = "octohub:auto"
 
 # Default tag used when no TAG is passed to `octomind run` (and acp/server).
 # Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").
@@ -178,7 +178,7 @@ allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agen
 # Task refiner role - lightweight query refinement
 [[roles]]
 name = "task_refiner"
-model = "openrouter:openai/gpt-4.1-mini"
+model = "octohub:auto"
 temperature = 0.3
 top_p = 0.7
 top_k = 20
@@ -219,7 +219,7 @@ allowed_tools = []
 # Task researcher role - context gathering with tool access
 [[roles]]
 name = "task_researcher"
-model = "openrouter:google/gemini-2.5-flash-preview"
+model = "octohub:auto"
 temperature = 0.3
 top_p = 0.7
 top_k = 20
@@ -273,7 +273,7 @@ allowed_tools = ["view"]
 # Reduce role - session history compression
 [[roles]]
 name = "reduce"
-model = "openrouter:openai/o4-mini"
+model = "octohub:auto"
 temperature = 0.3
 top_p = 0.7
 top_k = 20
@@ -635,7 +635,7 @@ knowledge_retention = 10
 # Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
 # Cost comparison: Haiku ~$0.0003 vs Sonnet ~$0.003 per compression decision
 [compression.decision]
-model = "openai:gpt-5-mini"
+model = "octohub:auto"
 max_tokens = 16000  # Enough for decision + summary
 temperature = 0.3  # Lower temperature for consistent decisions
 top_p = 1.0
@@ -656,7 +656,7 @@ ignore_cost = false  # When true, compression decision API cost is not tracked (
 # Master switch for the whole control plane
 enabled = true
 # Shared cheap model for supervisor mechanics (a mechanic may override)
-model = "anthropic:claude-haiku-4-5"
+model = "octohub:auto"
 # Evidence-bound claims: have the agent back load-bearing repo facts with a
 # verbatim «quote», then deterministically verify each quote occurs in a tool
 # result -- and that each file:line reference in the answer holds on disk;
@@ -671,7 +671,7 @@ max_consecutive_steers = 0
 # Enable the learning system
 enabled = true
 # Model for extraction and retrieval LLM calls (cheap model recommended)
-model = "anthropic:claude-haiku-4-5"
+model = "octohub:auto"
 # Backend: "file" (default, zero deps) or "mcp" (external tool with field mapping)
 backend = "file"
 # Minimum user messages before intermediate learning triggers during auto-compaction
@@ -730,7 +730,7 @@ max_iterations = 2
 # model -- a same-family verifier inherits the same blind spots and rubber-stamps
 # them; cross-family catches far more (e.g. openai:gpt-5-mini, google:gemini-2.5-flash).
 # Defaults to the cheap supervisor model so it works out of the box; change it.
-verifier_model = "anthropic:claude-haiku-4-5"
+verifier_model = "octohub:auto"
 # Free deterministic pre-gate (no model call): refuse a `done` claim when code
 # was changed but no successful check (build/test/lint/etc.) ran since the change.
 require_check_after_mutation = true

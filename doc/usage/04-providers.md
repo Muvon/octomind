@@ -176,6 +176,19 @@ The following providers also work via the same `<PROVIDER>_API_KEY` pattern. Eac
 
 `moonshot` and `kimi` are aliases for the same provider.
 
+### OctoHub purpose routing (`octohub:auto`)
+
+When your [OctoHub](https://github.com/Muvon/octohub) deployment configures an `[auto]` section, the model `octohub:auto` routes **by purpose** instead of naming a model. Octomind tags every request with where it came from — `main` (session turns), `supervisor` (verify-gate, condense, learning), or `compression` — via the `X-Model-Purpose` header, and the hub picks the real model for each purpose from its config (or a per-owner override set through the hub's admin API).
+
+```toml
+model = "octohub:auto"
+
+[compression.decision]
+model = "octohub:auto"   # the hub routes this to its `compression` choice
+```
+
+One model string everywhere; the hub decides what each purpose actually runs — and can retune it without you touching config. Providers other than OctoHub ignore the header, and a hub without `[auto]` treats `auto` as an unknown model.
+
 ### Local CLI-backed models (`cli`)
 
 The special `cli` meta-provider runs a **local command-line agent** instead of calling a network API. The model string is `cli:<backend>/<model>`, where `<backend>` is one of `codex`, `claude`, `cursor`, `gemini`, or a generic command.

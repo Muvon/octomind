@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.38.1] - 2026-07-21
+
+### 📋 Release Summary
+
+This release introduces purpose-based routing for OctoHub, enabling more precise AI model selection based on the specific task at hand (579f9084, 055c5a65). Additionally, the system now defaults to `octohub:auto` for a more streamlined setup experience, supported by updated dependencies and clarified documentation (7c5915e3, bcca4738, da402296, f6083bb1).
+
+
+### ✨ New Features & Enhancements
+
+- **providers**: split supervisor into granular purposes `579f9084`
+- **providers**: implement purpose-based routing for octohub `055c5a65`
+
+### 🔧 Improvements & Optimizations
+
+- **config**: set default models to octohub:auto `7c5915e3`
+
+### 📚 Documentation & Examples
+
+- **providers**: clarify OctoHub purpose routing `bcca4738`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.38.0] - 2026-07-19
 
 ### 📋 Release Summary

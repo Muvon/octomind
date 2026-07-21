@@ -178,7 +178,7 @@ The following providers also work via the same `<PROVIDER>_API_KEY` pattern. Eac
 
 ### OctoHub purpose routing (`octohub:auto`)
 
-When your [OctoHub](https://github.com/Muvon/octohub) deployment configures an `[auto]` section, the model `octohub:auto` routes **by purpose** instead of naming a model. Octomind tags every request with where it came from — `main` (session turns), `supervisor` (verify-gate, condense, learning), or `compression` — via the `X-Model-Purpose` header, and the hub picks the real model for each purpose from its config (or a per-owner override set through the hub's admin API).
+When your [OctoHub](https://github.com/Muvon/octohub) deployment configures an `[auto]` section, the model `octohub:auto` routes **by purpose** instead of naming a model. Octomind tags every request with where it came from via the `X-Model-Purpose` header — `main` (session turns), `compression`, or a supervisor mechanic (`supervisor-gate`, `supervisor-condense`, `supervisor-distill`, `supervisor-recall`) — and the hub picks the real model for each purpose from its config (or a per-owner override set through the hub's admin API). Purposes fall back hierarchically on `-`: one `supervisor` map entry covers every supervisor mechanic until a specific one is pinned.
 
 ```toml
 model = "octohub:auto"

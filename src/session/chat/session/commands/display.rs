@@ -2480,7 +2480,13 @@ pub fn display_usage(output: &CommandOutput) {
 	block_section("spend");
 	let kw = key_width(windows.iter().map(|w| w.label.as_str()));
 	for w in windows {
-		block_row(&w.label, &money_bar(w.spent_usd, w.cap_usd), kw);
+		// Machines pre-claim their future burn from the caps — show the committed
+		// part next to real spend so the free headroom reads honestly.
+		let mut bar = money_bar(w.spent_usd, w.cap_usd);
+		if let Some(r) = w.reserved_usd.filter(|r| *r > 0.0) {
+			bar.push_str(&format!(" +${r:.2} reserved").dimmed().to_string());
+		}
+		block_row(&w.label, &bar, kw);
 	}
 
 	block_section("resources");
@@ -2498,10 +2504,11 @@ pub fn display_usage(output: &CommandOutput) {
 	);
 
 	// Summarise with the tightest window — that's the one that will bite first.
+	// Committed (spent + reserved) is what actually bounds new work.
 	let peak = windows
 		.iter()
 		.filter(|w| w.cap_usd > 0.0)
-		.map(|w| w.spent_usd / w.cap_usd)
+		.map(|w| (w.spent_usd + w.reserved_usd.unwrap_or(0.0)) / w.cap_usd)
 		.fold(0.0_f64, f64::max);
 	block_close_ok("/usage", Some(&format!("{:.0}% of cap", peak * 100.0)));
 	println!();

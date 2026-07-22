@@ -215,6 +215,10 @@ pub struct Account {
 #[derive(Deserialize, Debug, Clone)]
 pub struct Window {
 	pub spent_usd: f64,
+	/// Pre-claimed by cloud machines' future burn until this window's reset
+	/// (spec/plan-slots.md). Absent on servers that predate reservations.
+	#[serde(default)]
+	pub reserved_usd: Option<f64>,
 	pub cap_usd: f64,
 	pub resets_at: String,
 }
@@ -236,12 +240,54 @@ pub struct Usage {
 	pub network: Network,
 }
 
-/// Who the stored session belongs to. `None` = not signed in.
+/// Who this process is signed in as. `None` = not signed in. Two credentials
+/// count: a stored panel session (from `octomind login`), or — inside a cloud
+/// machine — the injected hub key, which the control plane accepts for the
+/// read-only usage surface. Holding the hub key IS being signed in there; no
+/// login flow runs inside a container.
 pub async fn whoami() -> Result<Option<Account>> {
-	get::<Account>("/auth/me").await
+	if let Some(account) = get::<Account>("/auth/me").await? {
+		return Ok(Some(account));
+	}
+	Ok(hub_usage().await?.map(|r| r.account))
 }
 
 /// Account usage. `None` = not signed in; nothing to show and nothing wrong.
 pub async fn usage() -> Result<Option<Usage>> {
-	get::<Usage>("/account/usage").await
+	if let Some(u) = get::<Usage>("/account/usage").await? {
+		return Ok(Some(u));
+	}
+	Ok(hub_usage().await?.map(|r| r.usage))
+}
+
+/// The hub-key response: the usage payload plus who the key belongs to.
+#[derive(Deserialize)]
+struct HubUsageResponse {
+	#[serde(flatten)]
+	usage: Usage,
+	account: Account,
+}
+
+/// The one control-plane read a bare hub key opens: GET /hub/usage. `None`
+/// when there is no key, or the server rejects/predates it — a self-hosted
+/// octohub key means nothing to this API and must degrade silently.
+async fn hub_usage() -> Result<Option<HubUsageResponse>> {
+	let Some(key) = std::env::var(HUB_KEY_ENV)
+		.ok()
+		.filter(|k| !k.trim().is_empty())
+	else {
+		return Ok(None);
+	};
+	let res = client()?
+		.get(format!("{}/api/v1/hub/usage", api_url()))
+		.bearer_auth(key)
+		.send()
+		.await;
+	// A transport failure here stays quiet: the session path already surfaced
+	// real errors, and this fallback must not turn "no cloud" into noise.
+	let Ok(res) = res else { return Ok(None) };
+	match envelope::<HubUsageResponse>(res).await {
+		Ok(Ok(r)) => Ok(Some(r)),
+		_ => Ok(None),
+	}
 }

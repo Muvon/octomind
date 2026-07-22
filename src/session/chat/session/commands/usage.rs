@@ -81,6 +81,7 @@ fn window(label: &str, w: &account::Window) -> UsageWindow {
 	UsageWindow {
 		label: label.to_string(),
 		spent_usd: w.spent_usd,
+		reserved_usd: w.reserved_usd,
 		cap_usd: w.cap_usd,
 		resets_at: w.resets_at.clone(),
 	}
@@ -90,6 +91,8 @@ fn window(label: &str, w: &account::Window) -> UsageWindow {
 pub struct UsageWindow {
 	pub label: String,
 	pub spent_usd: f64,
+	/// Committed by running machines until the reset — None on older servers.
+	pub reserved_usd: Option<f64>,
 	pub cap_usd: f64,
 	pub resets_at: String,
 }

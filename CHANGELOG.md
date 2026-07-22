@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.38.2] - 2026-07-22
+
+### 📋 Release Summary
+
+This release introduces hub key authentication and new tracking for reserved spend to improve account management (b823f66c).
+
+
+### ✨ New Features & Enhancements
+
+- **account**: add hub key auth and reserved spend tracking `b823f66c`
+
 ## [0.38.1] - 2026-07-21
 
 ### 📋 Release Summary

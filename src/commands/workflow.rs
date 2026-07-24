@@ -166,10 +166,37 @@ fn print_plan(wf: &WorkflowDef) {
 	if let Some(cap) = wf.max_cost {
 		println!("  {} ${cap:.4}", "max_cost:".bright_black());
 	}
+	if wf.is_graph() {
+		println!("  {} graph", "mode:".bright_black());
+		println!(
+			"  {} {}",
+			"entry:".bright_black(),
+			wf.entry.as_deref().expect("validated graph entry")
+		);
+		println!(
+			"  {} {}",
+			"max_transitions:".bright_black(),
+			wf.graph_max_transitions()
+		);
+	}
 	println!();
 
 	for (i, step) in wf.steps.iter().enumerate() {
 		print_step(i + 1, step, 0);
+	}
+	if wf.is_graph() {
+		println!();
+		println!("{}", "routes:".bright_black());
+		for edge in &wf.edges {
+			let condition = match &edge.when {
+				Some(c) => format!(
+					"  when output={:?} contains={:?} matches={:?}",
+					c.output, c.contains, c.matches
+				),
+				None => "  default".to_string(),
+			};
+			println!("  {} -> {}{}", edge.from, edge.to, condition.bright_black());
+		}
 	}
 }
 
@@ -210,7 +237,8 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 				kind = kind.bright_magenta(),
 			);
 			let mut meta = if let Some(pat) = &p.match_pattern {
-				format!("match={pat:?}  runs=per-match (over previous step)")
+				let source = p.source.as_deref().expect("validated dynamic source");
+				format!("source={source:?}  match={pat:?}  runs=per-match")
 			} else {
 				let total: u32 = p.run.iter().map(|s| s.replica_count()).sum();
 				format!("sub-steps={}  total_runs={total}", p.run.len())

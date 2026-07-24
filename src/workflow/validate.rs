@@ -14,10 +14,12 @@
 
 //! Pre-flight validation: name uniqueness and `{{var}}` reference resolution.
 
-use super::schema::{ConditionalStep, LoopStep, ParallelStep, Sequential, Step, WorkflowDef};
+use super::schema::{
+	Condition, ConditionalStep, LoopStep, ParallelStep, Sequential, Step, WorkflowDef, END_NODE,
+};
 use anyhow::{bail, Result};
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub fn validate(wf: &WorkflowDef) -> Result<()> {
 	if wf.steps.is_empty() {
@@ -29,6 +31,12 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 			bail!("max_cost must be a positive number (got {cap})");
 		}
 	}
+	if matches!(wf.max_transitions, Some(0)) {
+		bail!("max_transitions must be >= 1");
+	}
+	if !wf.is_graph() && wf.max_transitions.is_some() {
+		bail!("max_transitions requires graph mode (set entry and [[edges]])");
+	}
 
 	// Collect names + uniqueness check (recurses into sub-steps).
 	let mut all_names: HashSet<String> = HashSet::new();
@@ -37,19 +45,12 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 	}
 
 	// Structural checks per step.
-	for (i, step) in wf.steps.iter().enumerate() {
+	for step in &wf.steps {
 		structural_check(step)?;
-		// A dynamic parallel maps over the PREVIOUS step's output, so it needs one.
-		if i == 0 {
-			if let Step::Parallel(p) = step {
-				if p.match_pattern.is_some() {
-					bail!(
-						"dynamic parallel '{}': needs a preceding step to map over (cannot be the first step)",
-						p.name
-					);
-				}
-			}
-		}
+	}
+
+	if wf.is_graph() {
+		validate_graph(wf, &all_names)?;
 	}
 
 	// Reference resolution — walk in execution order, tracking what names
@@ -57,10 +58,144 @@ pub fn validate(wf: &WorkflowDef) -> Result<()> {
 	let mut available: HashSet<String> = HashSet::new();
 	available.insert("input".into());
 
-	for step in &wf.steps {
-		check_step_refs(step, &mut available)?;
+	if wf.is_graph() {
+		available.extend(all_names);
+		for step in &wf.steps {
+			check_graph_step_refs(step, &available)?;
+		}
+	} else {
+		for step in &wf.steps {
+			check_step_refs(step, &mut available)?;
+		}
 	}
 
+	Ok(())
+}
+
+fn validate_graph(wf: &WorkflowDef, all_names: &HashSet<String>) -> Result<()> {
+	let entry = wf
+		.entry
+		.as_deref()
+		.ok_or_else(|| anyhow::anyhow!("graph mode requires entry"))?;
+	if wf.edges.is_empty() {
+		bail!("graph mode requires at least one [[edges]] route");
+	}
+	if wf.max_transitions.is_none() {
+		bail!("graph mode requires max_transitions");
+	}
+
+	let top_names: HashSet<&str> = wf.steps.iter().map(Step::name).collect();
+	if !top_names.contains(entry) {
+		bail!("graph entry references unknown top-level step '{}'", entry);
+	}
+	for step in &wf.steps {
+		if let Step::Parallel(p) = step {
+			if let Some(source) = &p.source {
+				if !all_names.contains(source) {
+					bail!(
+						"dynamic parallel '{}' source references unknown output '{}'",
+						p.name,
+						source
+					);
+				}
+			}
+		}
+	}
+
+	let mut outgoing: HashMap<&str, Vec<&super::schema::Edge>> = HashMap::new();
+	for edge in &wf.edges {
+		if !top_names.contains(edge.from.as_str()) {
+			bail!(
+				"edge.from references unknown top-level step '{}'",
+				edge.from
+			);
+		}
+		if edge.to != END_NODE && !top_names.contains(edge.to.as_str()) {
+			bail!("edge.to references unknown top-level step '{}'", edge.to);
+		}
+		if let Some(cond) = &edge.when {
+			validate_condition(&format!("edge '{} -> {}'", edge.from, edge.to), cond)?;
+			if let Some(output) = &cond.output {
+				if !all_names.contains(output) {
+					bail!(
+						"edge '{} -> {}' condition references unknown output '{}'",
+						edge.from,
+						edge.to,
+						output
+					);
+				}
+			}
+		}
+		outgoing.entry(&edge.from).or_default().push(edge);
+	}
+
+	for name in &top_names {
+		let routes = outgoing.get(name).ok_or_else(|| {
+			anyhow::anyhow!(
+				"graph node '{}' has no outgoing route to another node or $end",
+				name
+			)
+		})?;
+		let unconditional: Vec<usize> = routes
+			.iter()
+			.enumerate()
+			.filter_map(|(i, edge)| edge.when.is_none().then_some(i))
+			.collect();
+		if unconditional.len() != 1 {
+			bail!(
+				"graph node '{}' must have exactly one unconditional default edge (found {})",
+				name,
+				unconditional.len()
+			);
+		}
+		if unconditional[0] + 1 != routes.len() {
+			bail!(
+				"graph node '{}' unconditional default edge must be declared last",
+				name
+			);
+		}
+	}
+
+	let mut reached: HashSet<&str> = HashSet::new();
+	let mut queue = VecDeque::from([entry]);
+	let mut reaches_end = false;
+	while let Some(name) = queue.pop_front() {
+		if !reached.insert(name) {
+			continue;
+		}
+		if let Some(routes) = outgoing.get(name) {
+			for edge in routes {
+				if edge.to == END_NODE {
+					reaches_end = true;
+				} else {
+					queue.push_back(edge.to.as_str());
+				}
+			}
+		}
+	}
+	let mut unreachable: Vec<&str> = top_names.difference(&reached).copied().collect();
+	unreachable.sort_unstable();
+	if !unreachable.is_empty() {
+		bail!(
+			"graph has unreachable top-level steps: {}",
+			unreachable.join(", ")
+		);
+	}
+	if !reaches_end {
+		bail!("graph has no reachable route to $end");
+	}
+
+	Ok(())
+}
+
+fn validate_condition(context: &str, condition: &Condition) -> Result<()> {
+	if condition.contains.is_none() && condition.matches.is_none() {
+		bail!("{context} condition must set 'contains' or 'matches'");
+	}
+	if let Some(pattern) = &condition.matches {
+		Regex::new(pattern)
+			.map_err(|e| anyhow::anyhow!("{context} condition.matches invalid regex: {e}"))?;
+	}
 	Ok(())
 }
 
@@ -82,6 +217,9 @@ fn insert_unique(name: &str, names: &mut HashSet<String>) -> Result<()> {
 	if name == "input" {
 		bail!("step name 'input' is reserved (it's the substitution variable for stdin)");
 	}
+	if name == END_NODE {
+		bail!("step name '$end' is reserved for graph termination");
+	}
 	if name.trim().is_empty() {
 		bail!("step name must be non-empty");
 	}
@@ -100,18 +238,29 @@ fn structural_check(step: &Step) -> Result<()> {
 		}
 		Step::Parallel(ParallelStep {
 			name,
+			source,
 			match_pattern,
 			run,
 			min_success,
 			max_parallel,
 		}) => {
 			if let Some(pattern) = match_pattern {
+				let source = source
+					.as_deref()
+					.ok_or_else(|| anyhow::anyhow!("dynamic parallel '{name}' requires source"))?;
 				// Dynamic: exactly one template sub-step; branches come from
-				// matching the previous step at run time (count unknown here).
+				// matching the named source output at run time (count unknown here).
 				if run.len() != 1 {
 					bail!(
 						"dynamic parallel '{}' (match set) must have exactly 1 sub-step (the per-item template)",
 						name
+					);
+				}
+				if source == name || run.iter().any(|step| step.name == source) {
+					bail!(
+						"dynamic parallel '{}' source '{}' must refer to an output outside the block",
+						name,
+						source
 					);
 				}
 				Regex::new(pattern).map_err(|e| {
@@ -126,6 +275,9 @@ fn structural_check(step: &Step) -> Result<()> {
 					}
 				}
 			} else {
+				if source.is_some() {
+					bail!("parallel step '{}': source requires match", name);
+				}
 				if run.len() < 2 {
 					bail!("parallel step '{}' must have at least 2 sub-steps", name);
 				}
@@ -169,21 +321,7 @@ fn structural_check(step: &Step) -> Result<()> {
 				Some(c) => c,
 				None => bail!("loop step '{}' requires exit_when", name),
 			};
-			if exit_when.contains.is_none() && exit_when.matches.is_none() {
-				bail!(
-					"loop step '{}' exit_when must set 'contains' or 'matches'",
-					name
-				);
-			}
-			if let Some(pat) = &exit_when.matches {
-				Regex::new(pat).map_err(|e| {
-					anyhow::anyhow!(
-						"loop step '{}' exit_when.matches invalid regex: {}",
-						name,
-						e
-					)
-				})?;
-			}
+			validate_condition(&format!("loop step '{name}' exit_when"), exit_when)?;
 			Ok(())
 		}
 		Step::Conditional(ConditionalStep {
@@ -193,21 +331,7 @@ fn structural_check(step: &Step) -> Result<()> {
 			on_no_match,
 			run,
 		}) => {
-			if condition.contains.is_none() && condition.matches.is_none() {
-				bail!(
-					"conditional step '{}' condition must set 'contains' or 'matches'",
-					name
-				);
-			}
-			if let Some(pat) = &condition.matches {
-				Regex::new(pat).map_err(|e| {
-					anyhow::anyhow!(
-						"conditional step '{}' condition.matches invalid regex: {}",
-						name,
-						e
-					)
-				})?;
-			}
+			validate_condition(&format!("conditional step '{name}'"), condition)?;
 			if on_match.is_empty() && on_no_match.is_empty() {
 				bail!(
 					"conditional step '{}' requires on_match and/or on_no_match",
@@ -284,16 +408,26 @@ fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 		}
 		Step::Parallel(p) => {
 			if p.match_pattern.is_some() {
-				// Dynamic `match`: splits the previous step's output into items and
+				if let Some(source) = &p.source {
+					if !available.contains(source) {
+						bail!(
+							"dynamic parallel '{}': source references unavailable output '{}'",
+							p.name,
+							source
+						);
+					}
+				}
+				// Dynamic `match`: splits the named source output into items and
 				// loops the single template over them. The block's own name is the
 				// loop variable — in scope only for the template, bound to each
-				// item at run time. The accumulated OUTPUT lives under the
-				// sub-step's name, which is the only name visible downstream.
+				// item at run time. After the join, both the sub-step name and the
+				// block's canonical name expose the accumulated output downstream.
 				let mut scope = available.clone();
 				scope.insert(p.name.clone());
 				let tpl = &p.run[0];
 				check_refs(&tpl.name, &tpl.prompt, &scope)?;
 				available.insert(tpl.name.clone());
+				available.insert(p.name.clone());
 			} else {
 				// Static: sub-step prompts may reference outer scope but not each
 				// other. Both the sub-step names and the block's own name (which
@@ -368,6 +502,42 @@ fn check_step_refs(step: &Step, available: &mut HashSet<String>) -> Result<()> {
 	Ok(())
 }
 
+/// Graph routes define execution order, so declarations may reference outputs
+/// from nodes written later in the TOML. We still preserve block-local scope:
+/// parallel siblings cannot consume each other because they start together.
+fn check_graph_step_refs(step: &Step, known: &HashSet<String>) -> Result<()> {
+	match step {
+		Step::Sequential(s) => check_refs(&s.name, &s.prompt, known),
+		Step::Parallel(p) => {
+			let mut scope = known.clone();
+			for sub in &p.run {
+				scope.remove(&sub.name);
+			}
+			scope.remove(&p.name);
+			if p.match_pattern.is_some() {
+				// During dynamic fan-out the block name is the per-item loop variable.
+				scope.insert(p.name.clone());
+			}
+			for sub in &p.run {
+				check_refs(&sub.name, &sub.prompt, &scope)?;
+			}
+			Ok(())
+		}
+		Step::Loop(l) => {
+			for sub in &l.run {
+				check_refs(&sub.name, &sub.prompt, known)?;
+			}
+			Ok(())
+		}
+		Step::Conditional(c) => {
+			for sub in &c.run {
+				check_refs(&sub.name, &sub.prompt, known)?;
+			}
+			Ok(())
+		}
+	}
+}
+
 /// Built-in placeholders expanded at run time by
 /// `helper_functions::process_placeholders_async` (pass 2 of step prompt
 /// substitution). They are not step outputs, so reference-checking must treat
@@ -388,11 +558,15 @@ const BUILTIN_PLACEHOLDERS: &[&str] = &[
 	"README",
 ];
 
+pub(crate) fn is_builtin_placeholder(name: &str) -> bool {
+	BUILTIN_PLACEHOLDERS.contains(&name)
+}
+
 fn check_refs(step_name: &str, prompt: &str, available: &HashSet<String>) -> Result<()> {
 	let re = var_regex();
 	for cap in re.captures_iter(prompt) {
 		let var = &cap[1];
-		if BUILTIN_PLACEHOLDERS.contains(&var) || available.contains(var) {
+		if is_builtin_placeholder(var) || available.contains(var) {
 			continue;
 		}
 		bail!(
@@ -611,6 +785,7 @@ mod tests {
 			[[steps]]
 			name = "research"
 			parallel = true
+			source = "plan"
 			match = "(?s)<task>(.*?)</task>"
 			max_parallel = 4
 			min_success = 1
@@ -640,6 +815,7 @@ mod tests {
 			[[steps]]
 			name = "research"
 			parallel = true
+			source = "plan"
 			match = "(.+)"
 			  [[steps.run]]
 			  name = "a"
@@ -656,7 +832,7 @@ mod tests {
 	}
 
 	#[test]
-	fn dynamic_parallel_cannot_be_first_step() {
+	fn dynamic_parallel_requires_source() {
 		let wf = parse(
 			r#"
 			name = "wf"
@@ -670,8 +846,28 @@ mod tests {
 			  prompt = "Research the item"
 			"#,
 		);
-		let err = validate(&wf).expect_err("dynamic parallel as first step must fail");
-		assert!(err.to_string().contains("preceding step"), "got: {err}");
+		let err = validate(&wf).expect_err("dynamic parallel without source must fail");
+		assert!(err.to_string().contains("requires source"), "got: {err}");
+	}
+
+	#[test]
+	fn dynamic_parallel_rejects_its_own_output_as_source() {
+		let wf = parse(
+			r#"
+			name = "wf"
+			[[steps]]
+			name = "research"
+			parallel = true
+			source = "research"
+			match = "(.+)"
+			  [[steps.run]]
+			  name = "researcher"
+			  role = "researcher:general"
+			  prompt = "{{research}}"
+			"#,
+		);
+		let err = validate(&wf).expect_err("dynamic source must come from another node");
+		assert!(err.to_string().contains("outside the block"), "got: {err}");
 	}
 
 	#[test]
@@ -686,6 +882,7 @@ mod tests {
 			[[steps]]
 			name = "research"
 			parallel = true
+			source = "plan"
 			match = "(unclosed"
 			  [[steps.run]]
 			  name = "researcher"
@@ -743,5 +940,153 @@ mod tests {
 			"#,
 		);
 		validate(&wf).expect("forward-valid step reference + built-in should pass");
+	}
+
+	#[test]
+	fn bounded_graph_with_cycle_validates() {
+		let wf = parse(
+			r#"
+			name = "graph"
+			entry = "plan"
+			max_transitions = 12
+
+			[[steps]]
+			name = "plan"
+			role = "developer:general"
+			prompt = "{{input}}"
+
+			[[steps]]
+			name = "review"
+			role = "developer:general"
+			prompt = "Review {{plan}}"
+
+			[[steps]]
+			name = "fix"
+			role = "developer:general"
+			prompt = "Fix {{review}}"
+
+			[[edges]]
+			from = "plan"
+			to = "review"
+
+			[[edges]]
+			from = "review"
+			to = "$end"
+			when = { contains = "PASS" }
+
+			[[edges]]
+			from = "review"
+			to = "fix"
+
+			[[edges]]
+			from = "fix"
+			to = "review"
+			"#,
+		);
+		validate(&wf).expect("explicit bounded graph should validate");
+	}
+
+	#[test]
+	fn graph_requires_explicit_transition_bound() {
+		let wf = parse(
+			r#"
+			name = "graph"
+			entry = "only"
+			[[steps]]
+			name = "only"
+			role = "developer:general"
+			prompt = "{{input}}"
+			[[edges]]
+			from = "only"
+			to = "$end"
+			"#,
+		);
+		let err = validate(&wf).expect_err("graph must declare max_transitions");
+		assert!(err.to_string().contains("max_transitions"), "got: {err}");
+	}
+
+	#[test]
+	fn graph_requires_last_unconditional_edge() {
+		let wf = parse(
+			r#"
+			name = "graph"
+			entry = "only"
+			max_transitions = 2
+			[[steps]]
+			name = "only"
+			role = "developer:general"
+			prompt = "{{input}}"
+			[[edges]]
+			from = "only"
+			to = "$end"
+			[[edges]]
+			from = "only"
+			to = "$end"
+			when = { contains = "PASS" }
+			"#,
+		);
+		let err = validate(&wf).expect_err("default route must be last");
+		assert!(err.to_string().contains("declared last"), "got: {err}");
+	}
+
+	#[test]
+	fn graph_dynamic_parallel_requires_named_source() {
+		let wf = parse(
+			r#"
+			name = "graph"
+			entry = "fanout"
+			max_transitions = 2
+			[[steps]]
+			name = "fanout"
+			parallel = true
+			match = "<task>(.*?)</task>"
+			  [[steps.run]]
+			  name = "worker"
+			  role = "developer:general"
+			  prompt = "{{fanout}}"
+			[[edges]]
+			from = "fanout"
+			to = "$end"
+			"#,
+		);
+		let err = validate(&wf).expect_err("graph fan-out source must be explicit");
+		assert!(err.to_string().contains("requires source"), "got: {err}");
+	}
+
+	#[test]
+	fn graph_dynamic_parallel_uses_named_source_independent_of_declaration_order() {
+		let wf = parse(
+			r#"
+			name = "graph"
+			entry = "plan"
+			max_transitions = 3
+			[[steps]]
+			name = "fanout"
+			parallel = true
+			source = "plan"
+			match = "<task>(.*?)</task>"
+			  [[steps.run]]
+			  name = "worker"
+			  role = "developer:general"
+			  prompt = "{{fanout}}"
+			[[steps]]
+			name = "plan"
+			role = "developer:general"
+			prompt = "{{input}}"
+			[[edges]]
+			from = "plan"
+			to = "fanout"
+			[[edges]]
+			from = "fanout"
+			to = "$end"
+			"#,
+		);
+		validate(&wf).expect("named source should make declaration order irrelevant");
+	}
+
+	#[test]
+	fn graph_template_validates() {
+		let wf = parse(include_str!("../../config-templates/workflow-graph.toml"));
+		validate(&wf).expect("shipped graph template should validate");
 	}
 }

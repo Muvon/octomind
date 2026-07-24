@@ -1,0 +1,69 @@
+# Bounded graph workflow: implement, review in parallel, evaluate, and route
+# back through fixes until the evaluator passes or max_transitions stops it.
+#
+# Run:
+#   echo "implement the requested change" \
+#     | octomind workflow config-templates/workflow-graph.toml
+#   octomind workflow config-templates/workflow-graph.toml --dry-run
+
+name            = "develop-graph"
+description     = "Implementation with parallel review and a bounded fix cycle"
+entry           = "implement"
+max_transitions = 12
+max_cost        = 5.00
+
+[[steps]]
+name    = "implement"
+role    = "developer:general"
+session = "continue"
+retries = 1
+prompt  = "Implement this request completely and verify the result:\n\n{{input}}"
+
+[[steps]]
+name         = "reviews"
+parallel     = true
+min_success  = 2
+max_parallel = 2
+
+  [[steps.run]]
+  name   = "correctness"
+  role   = "developer:brief"
+  prompt = "Review the current worktree for correctness against:\n\n{{input}}"
+
+  [[steps.run]]
+  name   = "maintainability"
+  role   = "developer:brief"
+  prompt = "Review the current worktree for maintainability and unnecessary complexity. Request:\n\n{{input}}"
+
+[[steps]]
+name   = "verdict"
+role   = "developer:brief"
+prompt = "Return PASS only if both reviews have no actionable issue. Otherwise give a concise fix list:\n\n{{reviews}}"
+
+[[steps]]
+name    = "fix"
+role    = "developer:general"
+session = "continue"
+retries = 1
+prompt  = "Apply every valid issue from this verdict, then verify the result:\n\n{{verdict}}"
+
+[[edges]]
+from = "implement"
+to   = "reviews"
+
+[[edges]]
+from = "reviews"
+to   = "verdict"
+
+[[edges]]
+from = "verdict"
+to   = "$end"
+when = { matches = "(?m)^PASS\\s*$" }
+
+[[edges]]
+from = "verdict"
+to   = "fix"
+
+[[edges]]
+from = "fix"
+to   = "reviews"

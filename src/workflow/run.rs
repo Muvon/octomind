@@ -19,7 +19,7 @@ use anyhow::{bail, Result};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,7 +29,8 @@ use uuid::Uuid;
 
 use super::proc::{run_step, send_done, RunOutcome, RunStepArgs, StepStats};
 use super::schema::{
-	Condition, ConditionalStep, LoopStep, ParallelStep, Sequential, SessionMode, Step, WorkflowDef,
+	Condition, ConditionalStep, Edge, LoopStep, ParallelStep, Sequential, SessionMode, Step,
+	WorkflowDef, END_NODE,
 };
 use super::validate;
 use crate::config::Config;
@@ -94,6 +95,13 @@ struct Executor {
 	jsonl: bool,
 	/// Optional hard spending cap (USD) for the whole workflow. None = no cap.
 	max_cost: Option<f64>,
+	/// Graph mode uses explicit routes rather than declaration order. Kept here
+	/// so block executors can preserve legacy `last_step` semantics exactly.
+	graph_mode: bool,
+	/// Every declared top-level and sub-step output name. In graph mode this
+	/// lets prompt resolution fail clearly when a route reaches a node before a
+	/// referenced producer has run.
+	known_outputs: HashSet<String>,
 	/// Last cumulative stats snapshot per `session = "continue"` step (keyed by
 	/// step name, same key as `session_ids`). Used to fold per-invocation deltas
 	/// so a resumed session's cumulative cost/tokens aren't re-counted every
@@ -102,7 +110,14 @@ struct Executor {
 }
 
 impl Executor {
-	fn new(wf_name: String, config: &Config, jsonl: bool, max_cost: Option<f64>) -> Self {
+	fn new(
+		wf_name: String,
+		config: &Config,
+		jsonl: bool,
+		max_cost: Option<f64>,
+		graph_mode: bool,
+		known_outputs: HashSet<String>,
+	) -> Self {
 		Self {
 			outputs: HashMap::new(),
 			session_ids: HashMap::new(),
@@ -116,6 +131,8 @@ impl Executor {
 			markdown_theme: config.markdown_theme.clone(),
 			jsonl,
 			max_cost,
+			graph_mode,
+			known_outputs,
 			cost_baseline: HashMap::new(),
 		}
 	}
@@ -192,8 +209,20 @@ impl Executor {
 	/// matched item (the loop variable) for that branch's substitution; the
 	/// accumulated output lands under the sub-step's name. From this function's
 	/// perspective, all of that is just `self.outputs.get(name)`.
-	async fn substitute(&self, prompt: &str, input: &str, role: &str) -> String {
+	async fn substitute(&self, prompt: &str, input: &str, role: &str) -> Result<String> {
 		let re = validate::var_regex();
+		if self.graph_mode {
+			for captures in re.captures_iter(prompt) {
+				let name = &captures[1];
+				if name != "input"
+					&& !validate::is_builtin_placeholder(name)
+					&& self.known_outputs.contains(name)
+					&& !self.outputs.contains_key(name)
+				{
+					bail!("workflow output '{{{{{name}}}}}' is unavailable on the current route");
+				}
+			}
+		}
 		// `{{name}}` resolves against `self.outputs`; `{{input}}` resolves to the
 		// workflow stdin. That is the entire substitution contract. A dynamic
 		// `match` block manages `self.outputs` itself: the block name holds the
@@ -222,7 +251,9 @@ impl Executor {
 				Some(role),
 			)
 			.await;
-		crate::utils::file_renderer::expand_context_blocks(&after_placeholders)
+		Ok(crate::utils::file_renderer::expand_context_blocks(
+			&after_placeholders,
+		))
 	}
 
 	/// Drive one sequential step with retries / session handling.
@@ -237,7 +268,7 @@ impl Executor {
 		input: &str,
 		header_suffix: &str,
 	) -> Result<StepStats> {
-		let templated_prompt = self.substitute(&s.prompt, input, &s.role).await;
+		let templated_prompt = self.substitute(&s.prompt, input, &s.role).await?;
 		let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
 		let max_attempts = s.retries + 1;
 		let mut last_err: Option<String> = None;
@@ -404,7 +435,7 @@ impl Executor {
 		// outer scope (sub-steps cannot reference each other). Substitution may
 		// touch disk and workdirs resolve here too, so a bad one fails the whole
 		// block before any subprocess spawns. Two sourcing modes:
-		//   - dynamic (`match` set): `match` splits the previous step's output
+		//   - dynamic (`match` set): `match` splits the named source output
 		//     into items and loops the single listed sub-step over them. The
 		//     block's own name is the loop variable: for each branch the executor
 		//     binds `self.outputs[block_name]` to that branch's matched item, so
@@ -417,14 +448,17 @@ impl Executor {
 		if let Some(pattern) = &p.match_pattern {
 			// Pre-flight guarantees exactly one sub-step and a non-first step.
 			let template = &p.run[0];
-			let source_name = self
-				.last_step
+			let source_name = p
+				.source
 				.as_ref()
-				.expect("validator guarantees a preceding step for dynamic parallel");
-			let source = self
-				.outputs
-				.get(source_name)
-				.expect("preceding step output exists");
+				.expect("validation requires dynamic fan-out source");
+			let source = self.outputs.get(source_name).ok_or_else(|| {
+				anyhow::anyhow!(
+					"dynamic parallel '{}' source output '{}' is unavailable on the current route",
+					p.name,
+					source_name
+				)
+			})?;
 			let re = Regex::new(pattern).map_err(|e| {
 				anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {e}", p.name)
 			})?;
@@ -445,7 +479,7 @@ impl Executor {
 				self.outputs.insert(p.name.clone(), item.clone());
 				let prompt = self
 					.substitute(&template.prompt, input, &template.role)
-					.await;
+					.await?;
 				// One replica per match. `count` on the dynamic template is
 				// ignored — the number of replicas is exactly the number of
 				// matches, which is the user's knob for fan-out. Labels stay
@@ -461,7 +495,7 @@ impl Executor {
 			}
 		} else {
 			for s in &p.run {
-				let prompt = self.substitute(&s.prompt, input, &s.role).await;
+				let prompt = self.substitute(&s.prompt, input, &s.role).await?;
 				let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
 				for rep in expand_substep(s) {
 					replicas.push(PreparedReplica {
@@ -646,22 +680,21 @@ impl Executor {
 			self.outputs.insert(base.clone(), agg.clone());
 			block_parts.push((base.clone(), agg));
 		}
-		if is_dynamic {
-			// Dynamic `match`: the block's own name is the loop variable (each
-			// branch's matched item, bound per branch above) — NOT an output. The
-			// accumulated result lives under the sub-step's name, so downstream
-			// steps read that; `last_step` points there too.
-			self.last_step = Some(by_base[0].0.clone());
+		// Every top-level node exposes a canonical output under its own name.
+		// During dynamic fan-out `p.name` is temporarily the per-item variable;
+		// once all branches join it becomes their aggregate like any other block.
+		let block_agg = if block_parts.len() == 1 {
+			block_parts[0].1.clone()
 		} else {
-			// Static: the block's own name aggregates every sub-step so
-			// `{{<block-name>}}` resolves to all of them joined.
-			let block_agg = if block_parts.len() == 1 {
-				block_parts[0].1.clone()
-			} else {
-				join_labeled(&block_parts)
-			};
-			self.outputs.insert(p.name.clone(), block_agg);
+			join_labeled(&block_parts)
+		};
+		self.outputs.insert(p.name.clone(), block_agg);
+		if self.graph_mode || !is_dynamic {
 			self.last_step = Some(p.name.clone());
+		} else {
+			// Preserve ordered-workflow behavior: a dynamic block's last output was
+			// historically its one expanded sub-step.
+			self.last_step = Some(by_base[0].0.clone());
 		}
 
 		// Print each base's aggregated response under a dim label + emit jsonl.
@@ -721,6 +754,16 @@ impl Executor {
 					name = l.name
 				));
 				eprintln!();
+				let canonical = self
+					.last_step
+					.as_ref()
+					.and_then(|name| self.outputs.get(name))
+					.cloned()
+					.unwrap_or_default();
+				self.outputs.insert(l.name.clone(), canonical);
+				if self.graph_mode {
+					self.last_step = Some(l.name.clone());
+				}
 				return Ok(());
 			}
 		}
@@ -731,6 +774,16 @@ impl Executor {
 			max = max,
 		));
 		eprintln!();
+		let canonical = self
+			.last_step
+			.as_ref()
+			.and_then(|name| self.outputs.get(name))
+			.cloned()
+			.unwrap_or_default();
+		self.outputs.insert(l.name.clone(), canonical);
+		if self.graph_mode {
+			self.last_step = Some(l.name.clone());
+		}
 		Ok(())
 	}
 
@@ -780,8 +833,10 @@ impl Executor {
 			.filter(|s| !branch_names.iter().any(|n| n == &s.name))
 			.collect();
 
+		let mut selected_output = String::new();
 		for s in chosen {
 			let stats = self.exec_sequential(s, input, "").await?;
+			selected_output = stats.output.clone();
 			self.outputs.insert(s.name.clone(), stats.output);
 			self.last_step = Some(s.name.clone());
 		}
@@ -789,7 +844,29 @@ impl Executor {
 		for s in skipped {
 			self.outputs.entry(s.name.clone()).or_default();
 		}
+		self.outputs.insert(c.name.clone(), selected_output);
+		if self.graph_mode {
+			self.last_step = Some(c.name.clone());
+		}
 		Ok(())
+	}
+
+	async fn exec_node(&mut self, step: &Step, input: &str) -> Result<()> {
+		match step {
+			Step::Sequential(s) => {
+				let stats = self.exec_sequential(s, input, "").await?;
+				self.outputs.insert(s.name.clone(), stats.output);
+				self.last_step = Some(s.name.clone());
+			}
+			Step::Parallel(p) => self.exec_parallel(p, input).await?,
+			Step::Loop(l) => self.exec_loop(l, input).await?,
+			Step::Conditional(c) => self.exec_conditional(c, input).await?,
+		}
+		Ok(())
+	}
+
+	fn next_graph_node(&self, wf: &WorkflowDef, current: &str) -> Result<String> {
+		select_graph_edge(&wf.edges, &self.outputs, current)
 	}
 }
 
@@ -930,6 +1007,34 @@ fn condition_matches(cond: &Condition, value: &str) -> bool {
 	false
 }
 
+fn select_graph_edge(
+	edges: &[Edge],
+	outputs: &HashMap<String, String>,
+	current: &str,
+) -> Result<String> {
+	for edge in edges.iter().filter(|edge| edge.from == current) {
+		let selected = match &edge.when {
+			None => true,
+			Some(condition) => {
+				let output_name = condition.output.as_deref().unwrap_or(current);
+				let value = outputs.get(output_name).ok_or_else(|| {
+					anyhow::anyhow!(
+						"edge '{} -> {}' condition output '{}' is unavailable",
+						edge.from,
+						edge.to,
+						output_name
+					)
+				})?;
+				condition_matches(condition, value)
+			}
+		};
+		if selected {
+			return Ok(edge.to.clone());
+		}
+	}
+	bail!("graph node '{}' has no matching route", current)
+}
+
 fn fmt_dur(d: Duration) -> String {
 	let secs = d.as_secs_f64();
 	if secs < 60.0 {
@@ -1065,6 +1170,23 @@ fn fmt_tools(count: u64, failed: u64) -> String {
 	}
 }
 
+fn workflow_output_names(wf: &WorkflowDef) -> HashSet<String> {
+	let mut names = HashSet::new();
+	for step in &wf.steps {
+		names.insert(step.name().to_string());
+		let sub_steps: &[Sequential] = match step {
+			Step::Sequential(_) => &[],
+			Step::Parallel(p) => &p.run,
+			Step::Loop(l) => &l.run,
+			Step::Conditional(c) => &c.run,
+		};
+		for sub in sub_steps {
+			names.insert(sub.name.clone());
+		}
+	}
+	names
+}
+
 /// Public entry — runs a fully-validated workflow.
 ///
 /// Each step's last assistant message is already printed (with markdown
@@ -1077,7 +1199,14 @@ pub async fn execute(
 	format: Option<&str>,
 ) -> Result<()> {
 	let jsonl = matches!(format, Some("jsonl"));
-	let mut ex = Executor::new(wf.name.clone(), config, jsonl, wf.max_cost);
+	let mut ex = Executor::new(
+		wf.name.clone(),
+		config,
+		jsonl,
+		wf.max_cost,
+		wf.is_graph(),
+		workflow_output_names(wf),
+	);
 
 	// In TTY mode, suppress the controlling terminal's keypress echo for
 	// the lifetime of the workflow so stray Enter / Ctrl-C presses don't
@@ -1100,22 +1229,35 @@ pub async fn execute(
 	);
 	eprintln!();
 
-	for step in &wf.steps {
-		match step {
-			Step::Sequential(s) => {
-				let stats = ex.exec_sequential(s, input, "").await?;
-				ex.outputs.insert(s.name.clone(), stats.output);
-				ex.last_step = Some(s.name.clone());
+	if wf.is_graph() {
+		let mut current = wf
+			.entry
+			.clone()
+			.expect("validated graph workflows set entry");
+		let max = wf.graph_max_transitions();
+		let mut transitions = 0u32;
+		loop {
+			if transitions >= max {
+				bail!("graph exceeded max_transitions ({max}) before reaching {END_NODE}");
 			}
-			Step::Parallel(p) => {
-				ex.exec_parallel(p, input).await?;
+			let step = wf
+				.steps
+				.iter()
+				.find(|step| step.name() == current)
+				.expect("validator guarantees every graph node exists");
+			ex.exec_node(step, input).await?;
+			transitions += 1;
+
+			let next = ex.next_graph_node(wf, &current)?;
+			info_line(&format!("route: {current} -> {next}"));
+			if next == END_NODE {
+				break;
 			}
-			Step::Loop(l) => {
-				ex.exec_loop(l, input).await?;
-			}
-			Step::Conditional(c) => {
-				ex.exec_conditional(c, input).await?;
-			}
+			current = next;
+		}
+	} else {
+		for step in &wf.steps {
+			ex.exec_node(step, input).await?;
 		}
 	}
 
@@ -1272,5 +1414,52 @@ mod tests {
 		let d = continue_delta(&mut base, &cumulative(0.40, 400));
 		assert_eq!(d.cost, 0.0);
 		assert_eq!(d.total_tokens, 0);
+	}
+
+	#[test]
+	fn graph_edge_selects_condition_then_default() {
+		let edges = vec![
+			Edge {
+				from: "review".into(),
+				to: END_NODE.into(),
+				when: Some(Condition {
+					output: None,
+					contains: Some("PASS".into()),
+					matches: None,
+				}),
+			},
+			Edge {
+				from: "review".into(),
+				to: "fix".into(),
+				when: None,
+			},
+		];
+		let mut outputs = HashMap::from([("review".to_string(), "needs work".to_string())]);
+		assert_eq!(
+			select_graph_edge(&edges, &outputs, "review").unwrap(),
+			"fix"
+		);
+
+		outputs.insert("review".into(), "PASS".into());
+		assert_eq!(
+			select_graph_edge(&edges, &outputs, "review").unwrap(),
+			END_NODE
+		);
+	}
+
+	#[test]
+	fn graph_edge_rejects_unavailable_condition_output() {
+		let edges = vec![Edge {
+			from: "review".into(),
+			to: END_NODE.into(),
+			when: Some(Condition {
+				output: Some("verdict".into()),
+				contains: Some("PASS".into()),
+				matches: None,
+			}),
+		}];
+		let err = select_graph_edge(&edges, &HashMap::new(), "review")
+			.expect_err("missing route output must fail");
+		assert!(err.to_string().contains("unavailable"), "got: {err}");
 	}
 }

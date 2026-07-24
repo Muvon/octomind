@@ -549,3 +549,113 @@ pub async fn send_done(session_name: &str, workdir: Option<&Path>) -> Result<()>
 	let _ = child.wait().await;
 	Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use serde_json::json;
+
+	#[test]
+	fn truncate_keeps_short_text_and_flattens_newlines() {
+		assert_eq!(truncate("abc", 10), "abc");
+		assert_eq!(truncate("a\nb\nc", 10), "a b c");
+		// Exactly at the cap is not truncated.
+		assert_eq!(truncate("12345", 5), "12345");
+	}
+
+	#[test]
+	fn truncate_counts_chars_not_bytes() {
+		// 6 multi-byte chars capped at 4 → 3 kept + ellipsis. A byte-based
+		// slice here would panic on a char boundary.
+		assert_eq!(truncate("привет", 4), "при…");
+		let out = truncate("日本語テキスト", 3);
+		assert_eq!(out.chars().count(), 3);
+		assert!(out.ends_with('…'));
+	}
+
+	#[test]
+	fn truncate_zero_cap_is_ellipsis_only() {
+		assert_eq!(truncate("anything", 0), "…");
+	}
+
+	#[test]
+	fn truncate_tail_keeps_the_end() {
+		assert_eq!(truncate_tail("  short  ", 800), "short");
+		// The tail is what matters — panics land at the end of stderr.
+		let long: String = std::iter::repeat_n('x', 100)
+			.chain(['E', 'N', 'D'])
+			.collect();
+		let tail = truncate_tail(&long, 5);
+		assert_eq!(tail, "…xxEND");
+	}
+
+	#[test]
+	fn truncate_tail_counts_chars_not_bytes() {
+		let s = "日本語テキストです";
+		let tail = truncate_tail(s, 4);
+		assert_eq!(tail, "…ストです");
+	}
+
+	#[test]
+	fn fmt_dur_compact_pads_seconds_after_a_minute() {
+		assert_eq!(fmt_dur_compact(Duration::from_secs(0)), "0s");
+		assert_eq!(fmt_dur_compact(Duration::from_secs(59)), "59s");
+		assert_eq!(fmt_dur_compact(Duration::from_secs(60)), "1m00s");
+		assert_eq!(fmt_dur_compact(Duration::from_secs(125)), "2m05s");
+		assert_eq!(fmt_dur_compact(Duration::from_secs(3600)), "60m00s");
+	}
+
+	#[test]
+	fn format_value_short_drops_uninformative_values() {
+		assert_eq!(format_value_short(&json!(null)), None);
+		assert_eq!(format_value_short(&json!("")), None);
+		assert_eq!(format_value_short(&json!("   ")), None);
+		assert_eq!(format_value_short(&json!([])), None);
+		assert_eq!(format_value_short(&json!({})), None);
+		// An array whose every element is uninformative carries nothing either.
+		assert_eq!(format_value_short(&json!([null, null])), None);
+	}
+
+	#[test]
+	fn format_value_short_renders_scalars_and_containers() {
+		assert_eq!(format_value_short(&json!(true)).unwrap(), "true");
+		assert_eq!(format_value_short(&json!(42)).unwrap(), "42");
+		assert_eq!(format_value_short(&json!(" hi ")).unwrap(), "\"hi\"");
+		assert_eq!(
+			format_value_short(&json!(["a", "b"])).unwrap(),
+			"[\"a\", \"b\"]"
+		);
+		// Three or more elements collapse to a count.
+		assert_eq!(format_value_short(&json!([1, 2, 3])).unwrap(), "[3 items]");
+		assert_eq!(
+			format_value_short(&json!({"a": 1, "b": 2})).unwrap(),
+			"{2 keys}"
+		);
+	}
+
+	#[test]
+	fn format_value_short_truncates_long_strings() {
+		let long = "y".repeat(200);
+		let out = format_value_short(&json!(long)).unwrap();
+		// 60 visible chars (59 + ellipsis) inside quotes.
+		assert_eq!(out.chars().count(), 62);
+		assert!(out.starts_with('"') && out.ends_with('"'));
+	}
+
+	#[test]
+	fn compact_params_skips_empty_and_ignores_non_objects() {
+		let params = json!({
+			"path": "src/main.rs",
+			"empty": "",
+			"nothing": null,
+			"lines": 12,
+		});
+		let pairs = compact_params(&params);
+		assert_eq!(pairs.len(), 2);
+		assert!(pairs.contains(&("path".to_string(), "\"src/main.rs\"".to_string())));
+		assert!(pairs.contains(&("lines".to_string(), "12".to_string())));
+
+		assert!(compact_params(&json!("not an object")).is_empty());
+		assert!(compact_params(&json!(null)).is_empty());
+	}
+}

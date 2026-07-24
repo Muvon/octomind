@@ -468,3 +468,67 @@ pub(super) fn calculate_self_tuning_accuracy(info: &crate::session::SessionInfo)
 	// Clamp: don't let a single bad cycle adjust by more than 4x in either direction
 	ratio.clamp(0.25, 4.0)
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::session::SessionInfo;
+
+	fn info_after_compression(predicted: f64, calls_at_last: u64, total_calls: u64) -> SessionInfo {
+		let mut info = SessionInfo {
+			predicted_turns_at_last_compression: predicted,
+			api_calls_at_last_compression: calls_at_last,
+			total_api_calls: total_calls,
+			..Default::default()
+		};
+		info.compression_stats.conversation_compressions = 1;
+		info
+	}
+
+	#[test]
+	fn accuracy_is_neutral_before_the_first_compression() {
+		assert_eq!(calculate_self_tuning_accuracy(&SessionInfo::default()), 1.0);
+	}
+
+	#[test]
+	fn accuracy_scales_down_when_we_overestimated() {
+		// Predicted 20 more calls, only 10 happened → halve future estimates.
+		let info = info_after_compression(20.0, 100, 110);
+		assert!((calculate_self_tuning_accuracy(&info) - 0.5).abs() < 1e-9);
+	}
+
+	#[test]
+	fn accuracy_scales_up_when_we_underestimated() {
+		let info = info_after_compression(10.0, 100, 120);
+		assert!((calculate_self_tuning_accuracy(&info) - 2.0).abs() < 1e-9);
+	}
+
+	#[test]
+	fn accuracy_is_clamped_to_a_sane_band() {
+		// One wild cycle must not dominate all later estimates.
+		let way_over = info_after_compression(1.0, 100, 1_000);
+		assert_eq!(calculate_self_tuning_accuracy(&way_over), 4.0);
+
+		let way_under = info_after_compression(1_000.0, 100, 101);
+		assert_eq!(calculate_self_tuning_accuracy(&way_under), 0.25);
+	}
+
+	#[test]
+	fn accuracy_is_neutral_when_a_sample_is_degenerate() {
+		// No calls since the last compression — nothing measured yet.
+		assert_eq!(
+			calculate_self_tuning_accuracy(&info_after_compression(20.0, 100, 100)),
+			1.0
+		);
+		// No prediction recorded (older session logs).
+		assert_eq!(
+			calculate_self_tuning_accuracy(&info_after_compression(0.0, 100, 110)),
+			1.0
+		);
+		// Counters out of order must not yield a negative multiplier.
+		assert_eq!(
+			calculate_self_tuning_accuracy(&info_after_compression(20.0, 200, 100)),
+			1.0
+		);
+	}
+}

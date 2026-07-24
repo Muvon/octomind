@@ -492,3 +492,71 @@ pub(super) fn collect_preserved_skills(
 		.filter_map(|name| last_idx.get(&name).map(|&i| messages[i].clone()))
 		.collect()
 }
+
+#[cfg(test)]
+mod apply_tests {
+	use super::*;
+
+	#[test]
+	fn continuation_detection_ignores_ordinary_messages() {
+		assert!(!is_continuation_message("fix the parser"));
+		assert!(!is_continuation_message(""));
+		// A mention of the tag mid-message is not a wrapper.
+		assert!(!is_continuation_message("talk about <continuation> tags"));
+
+		assert!(is_continuation_message("<continuation>\nbody"));
+		// Leading whitespace/newlines still count — the wrapper may be re-indented.
+		assert!(is_continuation_message("\n  <continuation>\nbody"));
+	}
+
+	#[test]
+	fn built_wrapper_round_trips_through_the_extractor() {
+		let intent = "add retry logic to the uploader";
+		let wrapper = build_continuation_content(Some(intent));
+		assert!(is_continuation_message(&wrapper));
+		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
+	}
+
+	#[test]
+	fn fallback_wrapper_carries_no_extractable_intent() {
+		// Without a real user ask the wrapper holds only the placeholder, which
+		// must not propagate as if it were the active task.
+		let wrapper = build_continuation_content(None);
+		assert!(wrapper.contains(CONTINUATION_FALLBACK_INTENT));
+		assert_eq!(extract_continuation_task(&wrapper), None);
+	}
+
+	#[test]
+	fn extract_returns_none_for_non_wrappers_and_malformed_tags() {
+		assert_eq!(extract_continuation_task("plain user message"), None);
+		// Wrapper without a task block.
+		assert_eq!(extract_continuation_task("<continuation>\nno task"), None);
+		// Unclosed task block.
+		assert_eq!(
+			extract_continuation_task("<continuation>\n<task>\nhalf"),
+			None
+		);
+		// Empty task block.
+		assert_eq!(
+			extract_continuation_task("<continuation>\n<task></task>"),
+			None
+		);
+	}
+
+	#[test]
+	fn extract_trims_and_keeps_multiline_intent() {
+		let wrapper =
+			"<continuation>\n<task>\n  first line\n  second line  \n</task>\n</continuation>";
+		assert_eq!(
+			extract_continuation_task(wrapper).as_deref(),
+			Some("first line\n  second line")
+		);
+	}
+
+	#[test]
+	fn extract_handles_multibyte_intent_without_panicking() {
+		let intent = "почини парсер 日本語";
+		let wrapper = build_continuation_content(Some(intent));
+		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
+	}
+}

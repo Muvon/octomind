@@ -34,17 +34,25 @@ extern "C" {
 	fn sandbox_free_error(errorbuf: *mut c_char);
 }
 
+/// Escape a path for embedding in a Seatbelt string literal. The profile is
+/// Scheme source: an unescaped `"` in a path would close the literal and let
+/// the rest of the path be parsed as policy, silently widening the sandbox.
+fn escape_profile_str(s: &str) -> String {
+	s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 pub fn apply(dir: &std::path::Path) -> Result<()> {
 	let dir_str = dir
 		.to_str()
-		.ok_or_else(|| anyhow::anyhow!("sandbox: working directory path is not valid UTF-8"))?;
+		.ok_or_else(|| anyhow::anyhow!("sandbox: working directory path is not valid UTF-8"))
+		.map(escape_profile_str)?;
 
 	// Resolve home dir and XDG data home (~/.local/share) so MCP servers (e.g. octocode)
 	// can write their logs/state there without being blocked.
 	let home = dirs::home_dir().unwrap_or_default();
-	let home_str = home.to_str().unwrap_or_default().to_owned();
+	let home_str = escape_profile_str(home.to_str().unwrap_or_default());
 	let xdg_data_home = home.join(".local").join("share");
-	let xdg_data_home_str = xdg_data_home.to_str().unwrap_or_default().to_owned();
+	let xdg_data_home_str = escape_profile_str(xdg_data_home.to_str().unwrap_or_default());
 
 	// Build the Seatbelt profile.
 	// - Allow everything by default (reads, network, process ops, etc.)
@@ -109,4 +117,32 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 		dir.display()
 	);
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn ordinary_paths_are_unchanged() {
+		assert_eq!(
+			escape_profile_str("/Users/dev/project"),
+			"/Users/dev/project"
+		);
+		assert_eq!(escape_profile_str("/tmp/a b/c-d.e"), "/tmp/a b/c-d.e");
+	}
+
+	#[test]
+	fn quotes_and_backslashes_stay_inside_the_string_literal() {
+		// A directory literally named `x") (allow file-write* (subpath "/` would
+		// otherwise close the literal and re-open writes to the whole disk.
+		let escaped = escape_profile_str("/tmp/x\") (allow file-write* (subpath \"/");
+		// Every quote that reaches the profile is escaped — none can terminate it.
+		assert_eq!(escaped.matches('"').count(), 2);
+		assert_eq!(escaped.matches("\\\"").count(), 2);
+
+		assert_eq!(escape_profile_str(r"a\b"), r"a\\b");
+		// Backslashes are escaped before quotes, so `\"` does not become `\\"`.
+		assert_eq!(escape_profile_str("a\\\"b"), "a\\\\\\\"b");
+	}
 }

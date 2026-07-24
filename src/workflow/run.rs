@@ -1040,9 +1040,10 @@ fn fmt_dur(d: Duration) -> String {
 	if secs < 60.0 {
 		format!("{secs:.1}s")
 	} else {
-		let m = (secs / 60.0) as u64;
-		let s = secs - (m as f64 * 60.0);
-		format!("{m}m{s:02.0}s")
+		// Round to whole seconds BEFORE splitting: rounding the remainder
+		// afterwards renders 119.6s as "1m60s".
+		let total = secs.round() as u64;
+		format!("{}m{:02}s", total / 60, total % 60)
 	}
 }
 
@@ -1461,5 +1462,193 @@ mod tests {
 		let err = select_graph_edge(&edges, &HashMap::new(), "review")
 			.expect_err("missing route output must fail");
 		assert!(err.to_string().contains("unavailable"), "got: {err}");
+	}
+
+	#[test]
+	fn graph_edge_without_route_is_an_error() {
+		let edges = vec![Edge {
+			from: "a".into(),
+			to: "b".into(),
+			when: None,
+		}];
+		let err = select_graph_edge(&edges, &HashMap::new(), "orphan")
+			.expect_err("a node with no outgoing edge must fail");
+		assert!(err.to_string().contains("no matching route"), "got: {err}");
+	}
+
+	#[test]
+	fn graph_edge_named_output_is_read_instead_of_current_node() {
+		// `output = "verdict"` routes on another step's text, not the node's own.
+		let edges = vec![
+			Edge {
+				from: "fix".into(),
+				to: END_NODE.into(),
+				when: Some(Condition {
+					output: Some("verdict".into()),
+					contains: Some("PASS".into()),
+					matches: None,
+				}),
+			},
+			Edge {
+				from: "fix".into(),
+				to: "review".into(),
+				when: None,
+			},
+		];
+		let outputs = HashMap::from([
+			("fix".to_string(), "PASS".to_string()),
+			("verdict".to_string(), "FAIL".to_string()),
+		]);
+		assert_eq!(
+			select_graph_edge(&edges, &outputs, "fix").unwrap(),
+			"review"
+		);
+	}
+
+	#[test]
+	fn graph_edge_ignores_other_nodes_edges() {
+		let edges = vec![
+			Edge {
+				from: "other".into(),
+				to: "wrong".into(),
+				when: None,
+			},
+			Edge {
+				from: "here".into(),
+				to: "right".into(),
+				when: None,
+			},
+		];
+		assert_eq!(
+			select_graph_edge(&edges, &HashMap::new(), "here").unwrap(),
+			"right"
+		);
+	}
+
+	#[test]
+	fn condition_matches_contains_and_regex() {
+		let contains = Condition {
+			output: None,
+			contains: Some("PASS".into()),
+			matches: None,
+		};
+		assert!(condition_matches(&contains, "verdict: PASS"));
+		// Case-sensitive by design.
+		assert!(!condition_matches(&contains, "verdict: pass"));
+
+		let regex = Condition {
+			output: None,
+			contains: None,
+			matches: Some(r"^\s*DONE\b".into()),
+		};
+		assert!(condition_matches(&regex, "  DONE with the task"));
+		assert!(!condition_matches(&regex, "not DONE"));
+	}
+
+	#[test]
+	fn condition_matches_is_a_disjunction_and_empty_is_false() {
+		let both = Condition {
+			output: None,
+			contains: Some("NOPE".into()),
+			matches: Some(r"\bok\b".into()),
+		};
+		// Either side matching is enough.
+		assert!(condition_matches(&both, "all ok here"));
+		assert!(condition_matches(&both, "NOPE"));
+		assert!(!condition_matches(&both, "neither"));
+
+		// A condition that tests nothing never fires — it must not default to true.
+		let empty = Condition {
+			output: None,
+			contains: None,
+			matches: None,
+		};
+		assert!(!condition_matches(&empty, "anything"));
+	}
+
+	#[test]
+	fn sanitize_replaces_everything_but_alphanumerics_and_dash() {
+		assert_eq!(sanitize("plan-step"), "plan-step");
+		assert_eq!(sanitize("build & test"), "build---test");
+		assert_eq!(sanitize("../etc/passwd"), "---etc-passwd");
+		// Non-ASCII collapses too — session names end up on the filesystem.
+		assert_eq!(sanitize("шаг"), "---");
+	}
+
+	#[test]
+	fn fmt_dur_never_renders_sixty_seconds() {
+		assert_eq!(fmt_dur(Duration::from_millis(1500)), "1.5s");
+		assert_eq!(fmt_dur(Duration::from_secs(60)), "1m00s");
+		assert_eq!(fmt_dur(Duration::from_secs(125)), "2m05s");
+		// 119.6s must roll over to 2m00s, not "1m60s".
+		assert_eq!(fmt_dur(Duration::from_millis(119_600)), "2m00s");
+	}
+
+	#[test]
+	fn fmt_tools_flags_failures_only_when_present() {
+		assert_eq!(fmt_tools(3, 0), "⚒3");
+		assert!(fmt_tools(3, 1).contains("⚒3"));
+		assert!(fmt_tools(3, 1).contains('1'));
+	}
+
+	#[test]
+	fn workflow_output_names_includes_block_and_substep_names() {
+		let wf: WorkflowDef = toml::from_str(
+			r#"
+name = "t"
+[[steps]]
+name = "plan"
+role = "developer:general"
+prompt = "{{input}}"
+
+[[steps]]
+name = "fanout"
+parallel = true
+[[steps.run]]
+name = "worker"
+role = "developer:general"
+prompt = "{{plan}}"
+
+[[steps]]
+name = "refine"
+loop = true
+[[steps.run]]
+name = "iterate"
+role = "developer:general"
+prompt = "{{worker}}"
+"#,
+		)
+		.expect("workflow parses");
+		let names = workflow_output_names(&wf);
+		for expected in ["plan", "fanout", "worker", "refine", "iterate"] {
+			assert!(names.contains(expected), "missing {expected} in {names:?}");
+		}
+		assert_eq!(names.len(), 5);
+	}
+
+	#[test]
+	fn resolve_workdir_passes_through_none_and_rejects_missing_dir() {
+		assert!(resolve_workdir("s", None).unwrap().is_none());
+
+		let dir = tempfile::tempdir().unwrap();
+		let abs = resolve_workdir("s", Some(dir.path().to_str().unwrap()))
+			.unwrap()
+			.expect("existing dir resolves");
+		assert_eq!(abs, dir.path());
+
+		let missing = dir.path().join("nope");
+		let err = resolve_workdir("build", Some(missing.to_str().unwrap()))
+			.expect_err("missing workdir must fail loudly");
+		assert!(err.to_string().contains("build"), "got: {err}");
+		assert!(err.to_string().contains("not a directory"), "got: {err}");
+	}
+
+	#[test]
+	fn resolve_workdir_makes_relative_paths_absolute() {
+		let resolved = resolve_workdir("s", Some("src"))
+			.unwrap()
+			.expect("src exists relative to the crate root");
+		assert!(resolved.is_absolute());
+		assert!(resolved.ends_with("src"));
 	}
 }

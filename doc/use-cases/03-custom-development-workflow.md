@@ -12,7 +12,7 @@ Use the external `octomind workflow <file.toml>` CLI to chain multiple independe
 
 > The session-internal `[[workflows]]` system and `/workflow` command have been removed. Workflows now sit **above** sessions, not inside them. See [Workflows](../usage/09-workflows.md) for the full reference.
 
-> This use-case covers **sequential** steps and the **loop** step. Workflows also support **parallel** and **conditional** steps — see [Workflows](../usage/09-workflows.md) for those, plus the full reference for `retries`, `timeout`, `model`, and variable substitution.
+> This use-case covers **sequential** steps and the **loop** step. Workflows also support **parallel** and **conditional** steps, plus **graph routing** (a bounded `[[edges]]` control-flow graph with `entry` and `max_transitions`) — see [Workflows](../usage/09-workflows.md) for those, plus the full reference for `retries`, `timeout`, `model`, and variable substitution.
 
 ### Architecture
 
@@ -122,7 +122,7 @@ workflow · dev
 total · 16.7s  · $0.0268  · 7520 tok  · ⚒13
 ```
 
-> **In workflow step prompts, only `{{input}}` and `{{step_name}}` resolve.** Pre-flight validation (`src/workflow/validate.rs`, run even under `--dry-run`) rejects **any** `{{var}}` that is not `{{input}}` or a declared step name — so built-in placeholders like `{{DATE}}`/`{{CWD}}`/`{{GIT_STATUS}}` **cannot** be used in a step prompt (the workflow aborts before running). Put date/context text directly in the prompt, or inline a file with a `<context>path</context>` / `<context>path:start:end</context>` block. (Built-in placeholders work in role/layer system prompts, not workflow steps.) See [Workflows → Variable substitution](../usage/09-workflows.md#variable-substitution).
+> **Workflow step prompts resolve three kinds of `{{var}}`:** `{{input}}` (stdin), any prior `{{step_name}}` output, and built-in placeholders (`{{DATE}}`, `{{CWD}}`, `{{GIT_STATUS}}`, …) — the same three-pass substitution the interactive chat uses. Pre-flight validation (`src/workflow/validate.rs`, run even under `--dry-run`) rejects **any other** `{{var}}` before the workflow runs. You can also inline a file with a `<context>path</context>` / `<context>path:start:end</context>` block. See [Workflows → Variable substitution](../usage/09-workflows.md#variable-substitution).
 
 ## Advanced: Validation Loop
 
@@ -207,4 +207,4 @@ Each step is a separate `octomind run` invocation, so you can match the model to
 - All progress, timing, cost, tokens print to **stderr**; a plain run produces **no stdout** — pass `--format jsonl` to stream per-step `assistant` + a final `cost` event to stdout for machine parsing
 - `--dry-run` validates the file and prints the execution plan to **stdout** (the only stdout a *default* run produces; `--format jsonl` adds per-step + cost events), then exits — it never reads stdin and spawns no sessions
 - Pre-flight validation (before any step runs) rejects: empty workflows, duplicate step names, a step named `input` (reserved), forward references to a not-yet-completed step, parallel blocks with fewer than 2 sub-steps, loops missing `exit_when`, an invalid `matches` regex, and an empty `model` string
-- This page covers sequential and loop steps; for **parallel** and **conditional** steps see [Workflows](../usage/09-workflows.md#step-types)
+- This page covers sequential and loop steps; for **parallel** and **conditional** steps see [Workflows](../usage/09-workflows.md#step-types), and for **graph routing** (`entry` + `[[edges]]` + `max_transitions`) see [Workflows → Graph routing](../usage/09-workflows.md#graph-routing)

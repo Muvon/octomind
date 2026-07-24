@@ -78,7 +78,7 @@ pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result
 	}
 
 	// Run the actor and the ACP event loop together on a single-threaded LocalSet.
-	// The 0.14 SDK requires `Send` handlers while our session machinery is `!Send`;
+	// The SDK requires `Send` handlers while our session machinery is `!Send`;
 	// the bridge lives in `agent::serve` (see the module-level notes there).
 	let local = tokio::task::LocalSet::new();
 	local.run_until(agent::serve(config, role, options)).await

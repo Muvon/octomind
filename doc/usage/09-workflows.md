@@ -1,6 +1,6 @@
 # Workflows
 
-`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Each step is an independent subprocess; outputs flow between steps by name; per-step responses, progress, costs, and totals are written to **stderr** for a human to watch (stdout stays empty unless you pass `--format jsonl`).
+`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Workflows run in declaration order by default or use explicit graph edges when `entry` is set. Each step is an independent subprocess; outputs flow between steps by name; per-step responses, progress, costs, and totals are written to **stderr** for a human to watch (stdout stays empty unless you pass `--format jsonl`).
 
 > **By default a real run writes nothing to stdout** — the human view is on stderr, and stdout carries only the `--dry-run` plan. For a machine-readable result, pass **`--format jsonl`**: each step emits an `assistant` JSON line to stdout as it completes (the last is the final result), followed by an aggregated `cost` line (see [Machine-readable output](#machine-readable-output---format-jsonl)). Without that flag, a shell pipeline reading the workflow's stdout gets nothing — use `--format jsonl`, read stderr, or have the final step write a file itself.
 
@@ -123,6 +123,65 @@ SCORE: <n>/10
 """
 ```
 
+## Graph routing
+
+Ordered workflows remain the default. To connect the same step types as a
+bounded control-flow graph, declare `entry`, `max_transitions`, and ordered
+`[[edges]]`:
+
+```toml
+name            = "review-cycle"
+entry           = "implement"
+max_transitions = 12
+
+[[steps]]
+name   = "implement"
+role   = "developer:general"
+prompt = "Implement:\n{{input}}"
+
+[[steps]]
+name    = "review"
+role    = "developer:brief"
+session = "continue"
+prompt  = "Review the implementation. Reply PASS when complete."
+
+[[steps]]
+name    = "fix"
+role    = "developer:general"
+session = "continue"
+prompt  = "Apply this review:\n{{review}}"
+
+[[edges]]
+from = "implement"
+to   = "review"
+
+[[edges]]
+from = "review"
+to   = "$end"
+when = { contains = "PASS" }
+
+[[edges]]
+from = "review"
+to   = "fix"       # required unconditional route, declared last
+
+[[edges]]
+from = "fix"
+to   = "review"
+```
+
+Edges from a node are tested in declaration order. A conditional edge uses the
+completed node's canonical output unless `when.output` names another available
+output. Every node must finish with exactly one unconditional edge; `$end` is
+the reserved terminal target. Cycles are allowed, while `max_transitions`
+strictly bounds total node executions.
+
+All existing step kinds are graph nodes, so composition does not require
+recursive syntax: a parallel block can route into a loop, a conditional block,
+another parallel block, or back to an earlier node. If neither `entry` nor
+`[[edges]]` is present, declaration-order behavior is unchanged.
+A ready-to-run parallel-review/fix cycle is available at
+[`config-templates/workflow-graph.toml`](../../config-templates/workflow-graph.toml).
+
 ## Variable substitution
 
 Every step prompt is resolved in **three passes**, in order, exactly like the interactive chat resolves user input:
@@ -133,7 +192,7 @@ Every step prompt is resolved in **three passes**, in order, exactly like the in
 |--------------------|------------------------------------------------------------------------|
 | `{{input}}`        | The raw stdin content (trimmed)                                        |
 | `{{step_name}}`    | The full text output of a previously completed step (by name)          |
-| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-parallel--true)). In a **dynamic parallel block** (with `match`), the block's own name is the *loop variable* — inside the template it resolves to this branch's matched item; the accumulated output is read downstream via the **sub-step's** name (see [Dynamic fan-out](#dynamic-fan-out-match)). |
+| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-parallel--true)). In a **dynamic parallel block** (with `match`), the block's name is the per-item loop variable inside the template and becomes the joined block output after fan-out completes (see [Dynamic fan-out](#dynamic-fan-out-match)). |
 
 An unknown `{{var}}` is left **untouched** in this pass so the next pass can claim it as a built-in.
 
@@ -235,7 +294,7 @@ Everything above is **static** — branches are fixed in the file. To fan out a
 you want one branch per item), add a `match` regex to the parallel block. Its
 presence flips the block to **dynamic** mode:
 
-- `match` is a regex applied to the **previous step's output**. Each match is one branch.
+- `match` is a regex applied to the explicitly named `source` output. Each match is one branch.
 - The block has **exactly one** sub-step — the per-item template.
 - The block's own name is the **loop variable**. Inside the template, `{{<block-name>}}` resolves to *this branch's matched item* (one task). Each branch's output accumulates under the **sub-step's name**, so a later step reads `{{<sub-step-name>}}` to get *all branches joined*.
 - Item text = **capture group 1** of the regex (the regex must define one — `{{...}}`-style content). Trimmed; empty matches dropped.
@@ -250,6 +309,7 @@ prompt = "Break this into independent research tasks, each wrapped in <task>…<
 [[steps]]
 name         = "research"
 parallel     = true
+source       = "plan"
 match        = "(?s)<task>(.*?)</task>"   # one branch per <task> block
 max_parallel = 4
 min_success  = 1
@@ -264,7 +324,7 @@ role   = "developer:general"
 prompt = "Synthesize all findings:\n\n{{researcher}}"         # {{researcher}} = every branch's output joined
 ```
 
-`(?s)` lets a task body span lines; `(.*?)` is non-greedy so each `<task>…</task>` is its own item. The two names play distinct roles: `{{research}}` (the block) is the loop variable — one matched task per branch — while `{{researcher}}` (the sub-step) is every branch's output accumulated. Downstream steps read the sub-step name to get the joined result; the block name is scoped to the template only. A ready-to-run copy is at [`config-templates/workflow-research.toml`](../../config-templates/workflow-research.toml).
+`(?s)` lets a task body span lines; `(.*?)` is non-greedy so each `<task>…</task>` is its own item. The two names play distinct roles during fan-out: `{{research}}` (the block) is the loop variable — one matched task per branch — while `{{researcher}}` (the sub-step) accumulates every branch's output. After the block completes, both `{{researcher}}` and the canonical block output `{{research}}` contain the joined result. A ready-to-run copy is at [`config-templates/workflow-research.toml`](../../config-templates/workflow-research.toml).
 
 ### Loop (`loop = true`)
 Sub-steps run sequentially within each iteration. Between iterations, `exit_when` is checked against the named step's output:
@@ -377,14 +437,15 @@ Pre-flight checks (all hard-fail before any step runs):
 - File exists, valid TOML.
 - Step names unique across the whole file.
 - `'input'` is reserved (you can't name a step `input`).
-- Every `{{var}}` references either `input`, a built-in placeholder (`{{DATE}}`, `{{CWD}}`, `{{CONTEXT}}`, `{{GIT_STATUS}}`, …), or a step that completes before the referencing step.
+- Every `{{var}}` references `input`, a built-in placeholder (`{{DATE}}`, `{{CWD}}`, `{{CONTEXT}}`, `{{GIT_STATUS}}`, …), or a declared output. Ordered workflows require the producer earlier in declaration order; graph workflows fail at runtime if the selected route reaches a consumer before that producer has run.
 - A `parallel` step has at least 2 sub-steps; `loop` has ≥1 sub-step + `exit_when`; `conditional` has `condition` and at least one of `on_match` / `on_no_match`.
 - Regex patterns in `matches` compile.
 - `model`, when specified on any step, must not be an empty string.
 - `max_cost`, when set, is a positive finite number.
+- Graph mode requires `entry`, `max_transitions >= 1`, and at least one edge. Every edge target must exist or be `$end`; every node must be reachable and have exactly one last, unconditional route; at least one route to `$end` must be reachable.
 - `count` appears only on parallel sub-steps and is ≥ 2.
 - `min_success`, when set, is between 1 and the block's total replica count; `max_parallel`, when set, is ≥ 1.
-- A parallel block with `match` (dynamic): the regex compiles, it has **exactly one** sub-step, is **not** the first step, and its template does not use `count`. `min_success` (when set) is ≥ 1.
+- A parallel block with `match` (dynamic): `source` names an available output, the regex compiles, it has **exactly one** sub-step, and its template does not use `count`. `min_success` (when set) is ≥ 1.
 
 ## End-to-end example
 
@@ -499,6 +560,7 @@ echo "JSON-to-CSV CLI in Rust" | octomind workflow config-templates/workflow-fan
 5. **`--dry-run` before every change** to catch unresolved variables and typos.
 6. **Pick cheap models for utility steps** (briefs, classifiers) by setting `model` on individual steps in the workflow file; reserve expensive models for the main work.
 7. **Watch the totals.** Stats are right there on stderr — if a workflow runs hot, the per-step breakdown shows exactly where.
+8. **Keep graph nodes top-level.** Compose existing parallel, loop, and conditional blocks with edges instead of deeply nesting syntax.
 
 ## Out of scope
 

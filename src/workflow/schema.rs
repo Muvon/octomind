@@ -16,12 +16,23 @@
 
 use serde::{Deserialize, Deserializer};
 
+/// Reserved graph target that terminates workflow execution.
+pub const END_NODE: &str = "$end";
+
 /// Top-level workflow definition.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowDef {
 	pub name: String,
 	#[serde(default)]
 	pub description: Option<String>,
+	/// Graph-mode entry node. When omitted together with `edges`, steps retain
+	/// their legacy declaration-order execution.
+	#[serde(default)]
+	pub entry: Option<String>,
+	/// Maximum nodes executed in graph mode, including repeated visits through
+	/// cycles. Required when graph mode is enabled.
+	#[serde(default)]
+	pub max_transitions: Option<u32>,
 	/// Optional hard spending cap (USD) for the whole workflow. Once the summed
 	/// cost across completed steps exceeds this, the workflow aborts before the
 	/// next step — bounds runaway loops where per-session caps reset each step.
@@ -30,6 +41,21 @@ pub struct WorkflowDef {
 	pub max_cost: Option<f64>,
 	#[serde(default)]
 	pub steps: Vec<Step>,
+	/// Ordered graph routes. The first matching conditional edge is selected;
+	/// every node must end with one unconditional default edge.
+	#[serde(default)]
+	pub edges: Vec<Edge>,
+}
+
+impl WorkflowDef {
+	pub fn is_graph(&self) -> bool {
+		self.entry.is_some() || !self.edges.is_empty()
+	}
+
+	pub fn graph_max_transitions(&self) -> u32 {
+		self.max_transitions
+			.expect("validated graph workflows set max_transitions")
+	}
 }
 
 /// Session reuse policy for a single step.
@@ -102,6 +128,16 @@ pub struct Condition {
 	pub matches: Option<String>,
 }
 
+/// One directed graph route. Edges are evaluated in declaration order for a
+/// completed `from` node. `when = None` is the required default route.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Edge {
+	pub from: String,
+	pub to: String,
+	#[serde(default)]
+	pub when: Option<Condition>,
+}
+
 /// Top-level step kinds.
 ///
 /// TOML uses boolean flags (`parallel = true`, `loop = true`,
@@ -118,8 +154,11 @@ pub enum Step {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParallelStep {
 	pub name: String,
-	/// Dynamic fan-out: a regex applied to the PREVIOUS step's output, splitting
-	/// it into items (capture group 1 of each match; the regex must define one).
+	/// Output to split in dynamic fan-out mode. Required when `match` is set.
+	#[serde(default)]
+	pub source: Option<String>,
+	/// Dynamic fan-out: a regex applied to `source`, splitting it into items
+	/// (capture group 1 of each match; the regex must define one).
 	/// Each item becomes one branch running the single sub-step template. The
 	/// block's OWN name is the loop variable — within each branch it resolves to
 	/// that branch's item, so the template references `{{<block-name>}}` to get

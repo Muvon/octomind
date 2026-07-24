@@ -4,7 +4,7 @@
 #
 #   stdin ─► plan (list)  ─►  [ research item 1 | item 2 | … ]  ─►  summary
 #
-# How: the parallel block has a `match` regex applied to the PREVIOUS step's
+# How: the parallel block has a `match` regex applied to the named `source`
 # output. `match` splits that output into items and loops the single sub-step
 # over them. The block's own name (`research`) is the loop variable: inside the
 # template `{{research}}` is THIS branch's one task. Each branch's output
@@ -41,6 +41,7 @@ Output ONLY the sub-questions, each wrapped exactly as <task>…</task>:
 [[steps]]
 name         = "research"
 parallel     = true
+source       = "plan"
 match        = "(?s)<task>(.*?)</task>"
 max_parallel = 4
 min_success  = 1

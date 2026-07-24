@@ -275,6 +275,7 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 		AvailableCommand::new("agents", "Show running/offloaded agents in this session")
 			.input(unstructured("[session]")),
 		AvailableCommand::new("usage", "Show spend and quotas for your Octomind account"),
+		AvailableCommand::new("login", "Sign in to your Octomind account"),
 		AvailableCommand::new("exit", "Exit the session"),
 	]
 }

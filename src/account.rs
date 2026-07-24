@@ -268,6 +268,144 @@ struct HubUsageResponse {
 	account: Account,
 }
 
+// ── Device-authorization login flow (RFC 8628) ──────────────────────────────
+//
+// Shared by `octomind login` (the CLI subcommand) and the ACP `/login` command
+// the octoweb panel drives, so both mint credentials the exact same way.
+
+/// Stop polling well after the server's own TTL rather than hanging forever.
+pub const MAX_LOGIN_POLL: Duration = Duration::from_secs(15 * 60);
+
+/// The start of a device-authorization flow: a short code to show the user and
+/// the browser URL where they confirm it.
+#[derive(Deserialize)]
+pub struct LoginStart {
+	pub device_code: String,
+	pub user_code: String,
+	pub verification_url: String,
+	pub verification_url_complete: String,
+	pub interval: u64,
+}
+
+/// What a confirmed login hands back: a hub key plus a panel session.
+#[derive(Deserialize)]
+pub struct LoginClaim {
+	pub api_key: String,
+	pub jwt: String,
+	pub refresh_token: String,
+	/// What the key ended up called in the Keys page.
+	#[serde(default = "default_key_name")]
+	pub key_name: String,
+}
+
+fn default_key_name() -> String {
+	"octomind-cli".to_string()
+}
+
+/// Begin a device-authorization login. The device id scopes the key this mints,
+/// so signing in here supersedes only this machine's key — others keep working.
+pub async fn start_login() -> Result<LoginStart> {
+	let device_id = machine_id()?;
+	post_public(
+		"/auth/cli",
+		serde_json::json!({
+			"client": format!("octomind/{} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS),
+			"device_id": device_id,
+		}),
+	)
+	.await?
+	.map_err(|e| anyhow::anyhow!("could not start login: {e}"))
+}
+
+/// Poll the token endpoint until the user confirms the code in the browser, the
+/// code expires, or the server TTL runs out.
+pub async fn poll_login(device_code: &str, interval: Duration) -> Result<LoginClaim> {
+	let interval = interval.clamp(Duration::from_secs(1), Duration::from_secs(30));
+	let deadline = std::time::Instant::now() + MAX_LOGIN_POLL;
+	loop {
+		if std::time::Instant::now() >= deadline {
+			bail!("login timed out — start again");
+		}
+		tokio::time::sleep(interval).await;
+		match post_public::<LoginClaim>(
+			"/auth/cli/token",
+			serde_json::json!({ "device_code": device_code }),
+		)
+		.await?
+		{
+			Ok(c) => return Ok(c),
+			Err(e) if e == "pending" => continue,
+			Err(e) if e == "expired" => bail!("that code expired — start again"),
+			Err(e) => bail!("login failed: {e}"),
+		}
+	}
+}
+
+/// Persist a confirmed login: hub key into the user-scope `.env`, panel session
+/// into `auth.json`, and this process's env so later work in the same run picks
+/// it up without a restart. Returns the `.env` path that was written.
+pub fn finish_login(claim: &LoginClaim) -> Result<PathBuf> {
+	let env_path = write_hub_key(&claim.api_key)?;
+	save_session(&Session {
+		jwt: claim.jwt.clone(),
+		refresh_token: claim.refresh_token.clone(),
+		api_url: api_url(),
+	})?;
+	std::env::set_var(HUB_KEY_ENV, &claim.api_key);
+	Ok(env_path)
+}
+
+/// Repoint a server-supplied verification URL at the local panel when
+/// `OCTOMIND_PANEL_URL` is set; otherwise return it unchanged.
+pub fn panel_url(url: &str) -> String {
+	match std::env::var(PANEL_URL_ENV).ok() {
+		Some(panel) => repoint(url, &panel),
+		None => url.to_string(),
+	}
+}
+
+/// Swap the origin of a server-supplied verification URL for the local panel.
+fn repoint(url: &str, panel: &str) -> String {
+	match url.find("/app") {
+		Some(i) => format!("{}{}", panel.trim_end_matches('/'), &url[i..]),
+		None => url.to_string(),
+	}
+}
+
+/// Upsert `OCTOHUB_API_KEY` in the user-scope `.env` — the one every octomind
+/// process loads at startup. Other variables in that file are left alone; a new
+/// login replaces the previous key rather than appending a second line.
+fn write_hub_key(key: &str) -> Result<PathBuf> {
+	let path = get_config_dir()?.join(".env");
+	let existing = std::fs::read_to_string(&path).unwrap_or_default();
+	std::fs::write(&path, upsert(&existing, key))
+		.with_context(|| format!("could not write {}", path.display()))?;
+
+	// It holds a live credential: keep it owner-only.
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+	}
+	Ok(path)
+}
+
+/// Replace any existing `OCTOHUB_API_KEY` line, keep every other line as-is.
+fn upsert(existing: &str, key: &str) -> String {
+	let prefix = format!("{}=", HUB_KEY_ENV);
+	let mut out: Vec<&str> = existing
+		.lines()
+		.filter(|l| {
+			!l.trim_start()
+				.trim_start_matches("export ")
+				.starts_with(&prefix)
+		})
+		.collect();
+	let line = format!("{prefix}{key}");
+	out.push(&line);
+	out.join("\n") + "\n"
+}
+
 /// The one control-plane read a bare hub key opens: GET /hub/usage. `None`
 /// when there is no key, or the server rejects/predates it — a self-hosted
 /// octohub key means nothing to this API and must degrade silently.
@@ -289,5 +427,49 @@ async fn hub_usage() -> Result<Option<HubUsageResponse>> {
 	match envelope::<HubUsageResponse>(res).await {
 		Ok(Ok(r)) => Ok(Some(r)),
 		_ => Ok(None),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn upsert_replaces_the_key_and_keeps_the_rest() {
+		let before = "OPENROUTER_API_KEY=abc\nOCTOHUB_API_KEY=old\nFOO=bar\n";
+		let after = upsert(before, "new");
+		assert_eq!(
+			after,
+			"OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=new\n"
+		);
+		// Empty file, exported form, and repeated logins all converge on one line.
+		assert_eq!(upsert("", "k"), "OCTOHUB_API_KEY=k\n");
+		assert_eq!(
+			upsert("export OCTOHUB_API_KEY=old", "k"),
+			"OCTOHUB_API_KEY=k\n"
+		);
+		assert_eq!(
+			upsert(&after, "third"),
+			"OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=third\n"
+		);
+	}
+
+	#[test]
+	fn repoint_swaps_origin_keeps_path_and_query() {
+		assert_eq!(
+			repoint(
+				"https://octomind.run/app/login/cli?code=AB12-CD34",
+				"http://localhost:5199"
+			),
+			"http://localhost:5199/app/login/cli?code=AB12-CD34"
+		);
+	}
+
+	#[test]
+	fn repoint_leaves_unrecognized_urls_alone() {
+		assert_eq!(
+			repoint("https://example.com/x", "http://localhost:1"),
+			"https://example.com/x"
+		);
 	}
 }

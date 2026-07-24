@@ -2514,6 +2514,44 @@ pub fn display_usage(output: &CommandOutput) {
 	println!();
 }
 
+pub fn display_login(output: &CommandOutput) {
+	let CommandOutput::Login {
+		already_signed_in,
+		account,
+		verification_url,
+		user_code,
+	} = output
+	else {
+		return;
+	};
+
+	block_open("/login", Some("octomind account"));
+	if *already_signed_in {
+		if let Some(a) = account {
+			block_row(
+				"account",
+				&a.bright_green().to_string(),
+				key_width(["account"]),
+			);
+		}
+		block_close_ok("/login", Some("already signed in"));
+		println!();
+		return;
+	}
+
+	let kw = key_width(["code", "url"]);
+	if let Some(code) = user_code {
+		block_row("code", &code.bright_yellow().bold().to_string(), kw);
+	}
+	if let Some(url) = verification_url {
+		block_row("url", &url.bright_cyan().to_string(), kw);
+	}
+	block_line("");
+	block_line("Confirm the code in your browser to finish signing in.");
+	block_close_ok("/login", Some("waiting…"));
+	println!();
+}
+
 pub fn display_share(output: &CommandOutput) {
 	if let CommandOutput::Share { id, url } = output {
 		block_open("/share", None);

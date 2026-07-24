@@ -29,6 +29,7 @@ mod image;
 mod info;
 mod learning;
 mod list;
+mod login;
 mod loglevel;
 mod mcp;
 mod model;
@@ -212,6 +213,15 @@ pub enum CommandOutput {
 		network_used_gb: f64,
 		network_included_gb: f64,
 	},
+	/// Result of starting an Octomind sign-in. When `already_signed_in`, the URL
+	/// and code are absent — there was nothing to do. Otherwise the client opens
+	/// `verification_url`, shows `user_code`, and polls `/usage` for completion.
+	Login {
+		already_signed_in: bool,
+		account: Option<String>,
+		verification_url: Option<String>,
+		user_code: Option<String>,
+	},
 	Analyze {
 		url: String,
 		port: u16,
@@ -302,6 +312,7 @@ impl CommandOutput {
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
 			Self::Usage { .. } => display::display_usage(self),
+			Self::Login { .. } => display::display_login(self),
 			Self::Analyze { .. } => display::display_analyze(self),
 			Self::Agents { .. } => display::display_agents(self),
 			Self::Error { error, .. } => {
@@ -392,6 +403,7 @@ pub async fn process_command(
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
 		AGENTS_COMMAND => agents::handle_agents(params),
 		USAGE_COMMAND => usage::handle_usage().await,
+		LOGIN_COMMAND => login::handle_login().await,
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

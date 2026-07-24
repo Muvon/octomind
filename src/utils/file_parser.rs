@@ -33,6 +33,25 @@ static CONTEXT_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 	Regex::new(r"(?s)<context>.*?</context>").expect("Failed to compile context block regex")
 });
 
+// Reference-parsing patterns, compiled once (parse_file_references is called
+// per rendered file-context block, so per-call compilation was pure waste).
+static CONTEXT_TAG_PATTERN: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"(?s)<context>(.*?)</context>").expect("valid context-tag regex"));
+static CODE_BLOCK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"```(?:\w+)?\s*\n((?:[^\n`]+:[0-9]+:[0-9]+\s*\n?)+)\s*```")
+		.expect("valid code-block regex")
+});
+static FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"^([A-Za-z]:[^\n]+|[^\n]+):(\d+):(\d+)\s*$").expect("valid file-ref regex")
+});
+static GENERAL_FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"(?:^|\s|-)([A-Za-z]:[^\s\n:]+|[^\s\n:]+):(\d+):(\d+)")
+		.expect("valid general file-ref regex")
+});
+static FALLBACK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"([A-Za-z]:[^\s:]+|[^\s:]+):(\d+):(\d+)").expect("valid fallback file-ref regex")
+});
+
 /// Extremely fast detection of context blocks in text
 /// Returns true if any complete <context>...</context> blocks are found
 /// This is used as a gate before expensive parsing operations
@@ -78,18 +97,8 @@ pub struct FileContent {
 pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 	let mut file_refs = HashMap::new();
 
-	// Pre-compile regex patterns for efficiency - Windows drive letter aware
-	let context_tag_pattern = Regex::new(r"(?s)<context>(.*?)</context>").unwrap();
-	let code_block_pattern =
-		Regex::new(r"```(?:\w+)?\s*\n((?:[^\n`]+:[0-9]+:[0-9]+\s*\n?)+)\s*```").unwrap();
-	// Windows-aware pattern: allows drive letters (C:) followed by path
-	let file_pattern = Regex::new(r"^([A-Za-z]:[^\n]+|[^\n]+):(\d+):(\d+)\s*$").unwrap();
-	let general_file_pattern =
-		Regex::new(r"(?:^|\s|-)([A-Za-z]:[^\s\n:]+|[^\s\n:]+):(\d+):(\d+)").unwrap();
-	let fallback_pattern = Regex::new(r"([A-Za-z]:[^\s:]+|[^\s:]+):(\d+):(\d+)").unwrap();
-
 	// PRIORITY 1: Try to find contexts within <context> tags (NEW preferred format)
-	for context_block in context_tag_pattern.captures_iter(content) {
+	for context_block in CONTEXT_TAG_PATTERN.captures_iter(content) {
 		if let Some(block_content) = context_block.get(1) {
 			// Parse each line in the context block
 			for line in block_content.as_str().lines() {
@@ -97,7 +106,7 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 				if line.is_empty() {
 					continue;
 				}
-				if let Some(captures) = file_pattern.captures(line) {
+				if let Some(captures) = FILE_PATTERN.captures(line) {
 					if let Some((filepath, range)) = extract_file_range(&captures) {
 						file_refs
 							.entry(filepath)
@@ -111,12 +120,12 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 
 	// PRIORITY 2: Try to find contexts within code blocks (legacy format)
 	if file_refs.is_empty() {
-		for code_block in code_block_pattern.captures_iter(content) {
+		for code_block in CODE_BLOCK_PATTERN.captures_iter(content) {
 			if let Some(block_content) = code_block.get(1) {
 				// Parse each line in the code block
 				for line in block_content.as_str().lines() {
 					let line = line.trim();
-					if let Some(captures) = file_pattern.captures(line) {
+					if let Some(captures) = FILE_PATTERN.captures(line) {
 						if let Some((filepath, range)) = extract_file_range(&captures) {
 							file_refs
 								.entry(filepath)
@@ -146,7 +155,7 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 			let section_content = &content_after_header[..section_end];
 
 			// More flexible pattern for general text (handles paths with spaces/special chars)
-			for captures in general_file_pattern.captures_iter(section_content) {
+			for captures in GENERAL_FILE_PATTERN.captures_iter(section_content) {
 				if let Some((filepath, range)) = extract_file_range(&captures) {
 					file_refs
 						.entry(filepath)
@@ -159,7 +168,7 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 
 	// Final fallback: look anywhere in the content (most permissive)
 	if file_refs.is_empty() {
-		for captures in fallback_pattern.captures_iter(content) {
+		for captures in FALLBACK_PATTERN.captures_iter(content) {
 			if let Some((filepath, range)) = extract_file_range(&captures) {
 				file_refs
 					.entry(filepath)

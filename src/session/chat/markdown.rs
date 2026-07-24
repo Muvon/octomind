@@ -18,7 +18,13 @@ use super::syntax::SyntaxHighlighter;
 use anyhow::Result;
 use regex::Regex;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use termimad::MadSkin;
+
+// Fenced code-block matcher, compiled once. Reused by every render call
+// (streaming re-renders the same buffer repeatedly).
+static CODE_BLOCK_REGEX: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").expect("valid code-block regex"));
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum MarkdownTheme {
@@ -595,13 +601,10 @@ impl MarkdownRenderer {
 	}
 
 	fn preprocess_code_blocks(&self, markdown: &str) -> Result<String> {
-		// Regex to match fenced code blocks with optional language specification
-		let code_block_regex = Regex::new(r"```(\w+)?\n([\s\S]*?)\n```")?;
-
 		let mut result = String::new();
 		let mut last_end = 0;
 
-		for cap in code_block_regex.captures_iter(markdown) {
+		for cap in CODE_BLOCK_REGEX.captures_iter(markdown) {
 			// Add content before this code block
 			result.push_str(&markdown[last_end..cap.get(0).unwrap().start()]);
 
@@ -660,11 +663,9 @@ impl MarkdownRenderer {
 
 	fn render_with_syntax_highlighting(&self, markdown: &str) -> Result<()> {
 		// Split markdown by code blocks and process each part separately
-		let code_block_regex = Regex::new(r"```(\w+)?\n([\s\S]*?)\n```")?;
-
 		let mut last_end = 0;
 
-		for cap in code_block_regex.captures_iter(markdown) {
+		for cap in CODE_BLOCK_REGEX.captures_iter(markdown) {
 			// Render content before this code block with termimad.
 			// `skin.print_text` writes straight to stdout and bypasses our
 			// shadowed print macros, so suspend the spinner explicitly here.

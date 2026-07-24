@@ -369,16 +369,19 @@ pub async fn execute_schedule_tool(call: &McpToolCall) -> Result<McpToolResult> 
 
 /// Format interval_secs as a human-readable string, e.g. "1h 30m", "10m", "45s".
 fn format_interval(secs: i64) -> String {
-	let hours = secs / 3600;
-	let mins = (secs % 3600) / 60;
-	let s = secs % 60;
-	match (hours, mins, s) {
-		(h, m, 0) if h > 0 && m > 0 => format!("{}h {}m", h, m),
-		(h, 0, 0) if h > 0 => format!("{}h", h),
-		(0, m, s) if m > 0 && s > 0 => format!("{}m {}s", m, s),
-		(0, m, 0) if m > 0 => format!("{}m", m),
-		_ => format!("{}s", secs),
+	let parts: Vec<String> = [
+		(secs / 3600, 'h'),
+		((secs % 3600) / 60, 'm'),
+		(secs % 60, 's'),
+	]
+	.into_iter()
+	.filter(|(v, _)| *v > 0)
+	.map(|(v, unit)| format!("{v}{unit}"))
+	.collect();
+	if parts.is_empty() {
+		return format!("{}s", secs);
 	}
+	parts.join(" ")
 }
 
 fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
@@ -773,5 +776,45 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 			call.tool_id.clone(),
 			format!("No scheduled entry found with id '{}'.", id),
 		))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn interval_renders_every_non_zero_unit() {
+		assert_eq!(format_interval(45), "45s");
+		assert_eq!(format_interval(600), "10m");
+		assert_eq!(format_interval(605), "10m 5s");
+		assert_eq!(format_interval(3_600), "1h");
+		assert_eq!(format_interval(5_400), "1h 30m");
+	}
+
+	#[test]
+	fn interval_keeps_units_when_hours_and_seconds_coexist() {
+		// `every = "1h30m45s"` parses fine, so the label must not collapse
+		// back to a raw second count.
+		assert_eq!(format_interval(5_445), "1h 30m 45s");
+		assert_eq!(format_interval(3_605), "1h 5s");
+	}
+
+	#[test]
+	fn interval_zero_is_seconds() {
+		assert_eq!(format_interval(0), "0s");
+	}
+
+	#[test]
+	fn interval_round_trips_parsed_durations() {
+		for input in ["45s", "10m", "1h", "1h30m", "2h 30m 10s"] {
+			let secs = parse_duration_secs(input).expect("parses");
+			let label = format_interval(secs);
+			assert_eq!(
+				parse_duration_secs(&label.replace(' ', "")).unwrap(),
+				secs,
+				"{input} -> {label} did not round-trip"
+			);
+		}
 	}
 }

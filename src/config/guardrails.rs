@@ -725,4 +725,34 @@ mod tests {
 			Some("first"),
 		);
 	}
+
+	#[test]
+	fn role_filter_is_empty_means_all_roles() {
+		assert!(role_matches(&[], "developer:general"));
+	}
+
+	#[test]
+	fn role_filter_matches_exact_and_domain_prefix() {
+		let filter = vec!["developer".to_string()];
+		assert!(role_matches(&filter, "developer"));
+		assert!(role_matches(&filter, "developer:general"));
+		// A `:` separator is required — a longer name that merely starts with
+		// the filter is a different role.
+		assert!(!role_matches(&filter, "developer-lite"));
+		assert!(!role_matches(&filter, "developerx"));
+		assert!(!role_matches(&filter, "assistant"));
+		// Prefix direction matters: the filter must not match a shorter role.
+		assert!(!role_matches(
+			&["developer:general".to_string()],
+			"developer"
+		));
+	}
+
+	#[test]
+	fn role_filter_matches_any_listed_entry() {
+		let filter = vec!["assistant".to_string(), "doctor".to_string()];
+		assert!(role_matches(&filter, "doctor:blood"));
+		assert!(role_matches(&filter, "assistant"));
+		assert!(!role_matches(&filter, "developer:general"));
+	}
 }

@@ -470,3 +470,139 @@ impl SessionReport {
 		print!("{}", plain_text);
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn entry(user_request: &str, tools_used: &str) -> ReportEntry {
+		ReportEntry {
+			user_request: user_request.to_string(),
+			cost: "0.01000".to_string(),
+			tool_calls: 2,
+			tools_used: tools_used.to_string(),
+			task_time: "1.0s".to_string(),
+			ai_time: "0.5s".to_string(),
+			processing_time: "0.5s".to_string(),
+		}
+	}
+
+	fn report(entries: Vec<ReportEntry>) -> SessionReport {
+		let total_requests = entries.len() as u32;
+		SessionReport {
+			entries,
+			totals: ReportTotals {
+				total_cost: 0.02,
+				total_tool_calls: 4,
+				total_task_time_ms: 2_000,
+				total_ai_time_ms: 1_000,
+				total_processing_time_ms: 1_000,
+				total_requests,
+			},
+		}
+	}
+
+	#[test]
+	fn tools_used_is_sorted_and_dash_when_empty() {
+		assert_eq!(SessionReport::format_tools_used(&HashMap::new()), "-");
+
+		let tools = HashMap::from([
+			("shell".to_string(), 3u32),
+			("read".to_string(), 1u32),
+			("write".to_string(), 2u32),
+		]);
+		// Sorted so the same tool set always renders identically.
+		assert_eq!(
+			SessionReport::format_tools_used(&tools),
+			"read(1), shell(3), write(2)"
+		);
+	}
+
+	#[test]
+	fn truncate_request_respects_the_cap_in_chars() {
+		assert_eq!(SessionReport::truncate_request("short", 35), "short");
+		// Exactly at the cap is untouched.
+		let exact = "x".repeat(35);
+		assert_eq!(SessionReport::truncate_request(&exact, 35), exact);
+
+		let long = "y".repeat(100);
+		let out = SessionReport::truncate_request(&long, 35);
+		assert_eq!(out.chars().count(), 35);
+		assert!(out.ends_with("..."));
+	}
+
+	#[test]
+	fn truncate_request_does_not_split_multibyte_chars() {
+		// A byte-based slice would panic here.
+		let long = "日".repeat(100);
+		let out = SessionReport::truncate_request(&long, 35);
+		assert_eq!(out.chars().count(), 35);
+		assert!(out.starts_with('日'));
+	}
+
+	#[test]
+	fn escape_markdown_protects_table_cells() {
+		let r = report(vec![]);
+		// A raw pipe or newline in a cell would break the table layout.
+		assert_eq!(r.escape_markdown("a|b"), "a\\|b");
+		assert_eq!(r.escape_markdown("line1\nline2"), "line1 line2");
+		assert_eq!(r.escape_markdown("crlf\r\n"), "crlf ");
+	}
+
+	#[test]
+	fn markdown_table_escapes_every_cell_it_renders() {
+		let r = report(vec![entry("fix a|b bug", "shell|read(1)")]);
+		let table = r.generate_markdown_table();
+		let row = table
+			.lines()
+			.find(|l| l.contains("fix a"))
+			.expect("entry row present");
+		// The row keeps exactly the 8 pipes of a 7-column table — the two
+		// pipes coming from the data are escaped, not counted as separators.
+		assert_eq!(row.matches("\\|").count(), 2);
+		assert_eq!(row.replace("\\|", "").matches('|').count(), 8);
+		assert!(table.contains("**TOTAL**"));
+	}
+
+	#[test]
+	fn markdown_table_has_header_separator_and_one_row_per_entry() {
+		let r = report(vec![entry("first", "read(1)"), entry("second", "-")]);
+		let table = r.generate_markdown_table();
+		let lines: Vec<&str> = table.lines().collect();
+		// header + separator + 2 entries + totals
+		assert_eq!(lines.len(), 5);
+		assert!(lines[1].starts_with("|---"));
+		assert!(lines[2].contains("first"));
+		assert!(lines[3].contains("second"));
+		assert!(lines[4].contains("**TOTAL**"));
+	}
+
+	#[test]
+	fn json_report_mirrors_entries_and_totals() {
+		let r = report(vec![entry("do a thing", "read(1)")]);
+		let json = r.to_json();
+		assert_eq!(json["entries"].as_array().unwrap().len(), 1);
+		assert_eq!(json["entries"][0]["user_request"], "do a thing");
+		assert_eq!(json["totals"]["total_requests"], 1);
+		assert_eq!(json["totals"]["total_tool_calls"], 4);
+	}
+
+	#[test]
+	fn plain_string_drops_markdown_markers() {
+		let r = report(vec![entry("do a thing", "read(1)")]);
+		let plain = r.to_plain_string();
+		assert!(!plain.contains("**"));
+		assert!(!plain.contains('|'));
+		assert!(plain.contains("Session Usage Report"));
+		assert!(plain.contains("do a thing"));
+	}
+
+	#[test]
+	fn empty_report_still_renders_a_table_and_summary() {
+		let mut r = report(vec![]);
+		r.totals.total_requests = 0;
+		let md = r.to_markdown_string();
+		assert!(md.contains("| **TOTAL** |"));
+		assert!(md.contains("**0** requests"));
+	}
+}

@@ -270,3 +270,85 @@ pub fn handle_followup_api_error(model: &str, error: &anyhow::Error, mode: Outpu
 		error_message
 	);
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn err(msg: &str) -> anyhow::Error {
+		anyhow::anyhow!(msg.to_string())
+	}
+
+	#[test]
+	fn unknown_status_codes_get_actionable_context() {
+		for (code, marker) in [
+			("520", "overloaded"),
+			("429", "Rate limit"),
+			("503", "temporarily unavailable"),
+			("502", "Gateway"),
+			("504", "Gateway"),
+			("500", "Internal server error"),
+		] {
+			let raw = format!("API error {code} <unknown status code>");
+			let out = format_provider_error("openai", &err(&raw));
+			assert!(out.starts_with(&format!("HTTP {code} - ")), "got: {out}");
+			assert!(out.contains(marker), "got: {out}");
+		}
+	}
+
+	#[test]
+	fn unmapped_status_code_falls_back_to_a_generic_note() {
+		let out = format_provider_error("openai", &err("API error 418 <unknown status code>"));
+		assert_eq!(
+			out,
+			"HTTP 418 - Server error - temporary issue with the provider."
+		);
+	}
+
+	#[test]
+	fn octohub_errors_are_passed_through_verbatim() {
+		// The server's own message is more specific than any rewrite here — in
+		// particular it must not be swallowed by the "API key" branch below.
+		let raw = "OctoHub API error 403: model 'x' is not permitted for this API key";
+		assert_eq!(format_provider_error("octohub", &err(raw)), raw);
+	}
+
+	#[test]
+	fn common_failure_shapes_are_rewritten() {
+		assert!(format_provider_error("openai", &err("rate limit reached")).contains("Rate limit"));
+		assert!(format_provider_error("openai", &err("Rate limit hit")).contains("Rate limit"));
+		assert!(format_provider_error("openai", &err("connection timeout")).contains("timed out"));
+		assert!(format_provider_error("openai", &err("Timeout after 60s")).contains("timed out"));
+		assert!(format_provider_error("openai", &err("model overloaded")).contains("overloaded"));
+		assert!(format_provider_error("openai", &err("at capacity")).contains("overloaded"));
+	}
+
+	#[test]
+	fn auth_failures_name_the_provider() {
+		for raw in ["invalid API key", "authentication failed", "unauthorized"] {
+			let out = format_provider_error("anthropic", &err(raw));
+			assert_eq!(
+				out,
+				"Authentication failed - check your anthropic API key configuration."
+			);
+		}
+	}
+
+	#[test]
+	fn unrecognised_errors_are_returned_unchanged() {
+		let raw = "socket hang up while streaming";
+		assert_eq!(format_provider_error("openai", &err(raw)), raw);
+	}
+
+	#[test]
+	fn multibyte_error_text_does_not_panic() {
+		// The status-code branch slices by byte offset — non-ASCII text around
+		// the marker must not split a char.
+		let raw = "провайдер: API error 520 <unknown status code> — недоступен";
+		assert!(format_provider_error("openai", &err(raw)).starts_with("HTTP 520"));
+		assert_eq!(
+			format_provider_error("openai", &err("сетевая ошибка 日本語")),
+			"сетевая ошибка 日本語"
+		);
+	}
+}

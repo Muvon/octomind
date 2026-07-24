@@ -73,10 +73,17 @@ pub fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
 		return text.to_string();
 	}
 	tokens.truncate(max_tokens);
-	tokenizer.decode(&tokens).unwrap_or_else(|_| {
-		let boundary = crate::utils::truncation::floor_char_boundary(text, text.len() / 2);
-		text[..boundary].to_string()
-	})
+	// Cutting inside a multi-token character leaves an incomplete UTF-8
+	// sequence that `decode` rejects. Drop trailing tokens until it succeeds —
+	// falling back to a fraction of the input would return text far over
+	// `max_tokens`, which is the one thing this function must not do.
+	while !tokens.is_empty() {
+		if let Ok(decoded) = tokenizer.decode(&tokens) {
+			return decoded;
+		}
+		tokens.pop();
+	}
+	String::new()
 }
 
 /// Calculate tokens for a single message including ALL fields
@@ -310,4 +317,152 @@ Consider increasing for better session continuity.",
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::session::image::{ImageAttachment, ImageData, SourceType};
+	use crate::session::Message;
+
+	fn msg(role: &str, content: &str) -> Message {
+		Message {
+			role: role.to_string(),
+			content: content.to_string(),
+			timestamp: 0,
+			cached: false,
+			cache_ttl: None,
+			tool_call_id: None,
+			name: None,
+			tool_calls: None,
+			images: None,
+			videos: None,
+			thinking: None,
+			id: None,
+		}
+	}
+
+	#[test]
+	fn empty_text_costs_nothing() {
+		assert_eq!(estimate_tokens(""), 0);
+	}
+
+	#[test]
+	fn token_count_grows_with_text() {
+		let short = estimate_tokens("hello world");
+		let long = estimate_tokens(&"hello world ".repeat(50));
+		assert!(short > 0);
+		assert!(long > short * 10, "short={short} long={long}");
+	}
+
+	#[test]
+	fn truncate_returns_input_untouched_when_under_cap() {
+		let text = "a short sentence";
+		assert_eq!(truncate_to_tokens(text, 1_000), text);
+	}
+
+	#[test]
+	fn truncate_never_exceeds_the_cap() {
+		let text = "The quick brown fox jumps over the lazy dog. ".repeat(50);
+		for cap in [1, 5, 32, 100] {
+			let out = truncate_to_tokens(&text, cap);
+			assert!(
+				estimate_tokens(&out) <= cap,
+				"cap={cap} produced {} tokens",
+				estimate_tokens(&out)
+			);
+			assert!(text.starts_with(&out), "cap={cap} produced a non-prefix");
+		}
+	}
+
+	#[test]
+	fn truncate_to_zero_is_empty() {
+		assert_eq!(truncate_to_tokens("anything at all", 0), "");
+	}
+
+	#[test]
+	fn truncate_is_safe_on_multibyte_text() {
+		// Emoji and CJK sit across several BPE tokens; decoding a cut token
+		// sequence must not panic or produce invalid UTF-8.
+		let text = "日本語のテキスト 🎉🎉🎉 más texto ".repeat(20);
+		for cap in [1, 2, 3, 7, 40] {
+			let out = truncate_to_tokens(&text, cap);
+			assert!(text.starts_with(&out), "cap={cap} produced a non-prefix");
+			assert!(
+				estimate_tokens(&out) <= cap,
+				"cap={cap} produced {} tokens",
+				estimate_tokens(&out)
+			);
+		}
+	}
+
+	#[test]
+	fn message_tokens_include_the_per_message_overhead() {
+		let empty = estimate_message_tokens(&msg("user", ""));
+		// 3 formatting tokens + the role itself.
+		assert_eq!(empty, 3 + estimate_tokens("user"));
+
+		let with_content = estimate_message_tokens(&msg("user", "hello there"));
+		assert_eq!(with_content, empty + estimate_tokens("hello there"));
+	}
+
+	#[test]
+	fn message_tokens_count_name_tool_calls_and_images() {
+		let base = estimate_message_tokens(&msg("assistant", "text"));
+
+		let mut named = msg("assistant", "text");
+		named.name = Some("read_file".to_string());
+		// name + 1 overhead token, per the OpenAI formula.
+		assert_eq!(
+			estimate_message_tokens(&named),
+			base + estimate_tokens("read_file") + 1
+		);
+
+		let mut with_tools = msg("assistant", "text");
+		with_tools.tool_calls = Some(serde_json::json!([{"name": "shell", "args": {"cmd": "ls"}}]));
+		assert!(estimate_message_tokens(&with_tools) > base);
+
+		let mut with_images = msg("user", "text");
+		with_images.images = Some(vec![
+			ImageAttachment {
+				data: ImageData::Base64("x".to_string()),
+				media_type: "image/png".to_string(),
+				source_type: SourceType::Clipboard,
+				dimensions: None,
+				size_bytes: None,
+			};
+			2
+		]);
+		// Flat 85 tokens per image.
+		assert_eq!(
+			estimate_message_tokens(&with_images),
+			estimate_message_tokens(&msg("user", "text")) + 170
+		);
+	}
+
+	#[test]
+	fn session_tokens_add_priming_overhead_only_when_non_empty() {
+		assert_eq!(estimate_session_tokens(&[]), 0);
+
+		let messages = vec![msg("user", "hi"), msg("assistant", "hello")];
+		let sum: usize = messages.iter().map(estimate_message_tokens).sum();
+		assert_eq!(estimate_session_tokens(&messages), sum + 3);
+	}
+
+	#[test]
+	fn full_context_without_tools_equals_session_tokens() {
+		let messages = vec![msg("user", "hi")];
+		assert_eq!(
+			estimate_full_context_tokens(&messages, None),
+			estimate_session_tokens(&messages)
+		);
+	}
+
+	#[test]
+	fn fallback_estimator_never_returns_zero_for_non_empty_text() {
+		// Guards the degraded path: a zero estimate would make budget maths
+		// treat arbitrarily large text as free.
+		assert_eq!(fallback_token_count("abc"), 1);
+		assert_eq!(fallback_token_count("12345678"), 2);
+	}
 }

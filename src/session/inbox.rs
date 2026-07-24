@@ -323,3 +323,76 @@ pub fn get_inbox_notify() -> Option<Arc<Notify>> {
 		.and_then(|r| r.get(&session_id))
 		.map(|q| Arc::clone(&q.notify))
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn all_sources() -> Vec<InboxSource> {
+		vec![
+			InboxSource::Schedule { id: "s1".into() },
+			InboxSource::BackgroundAgent {
+				name: "reviewer".into(),
+			},
+			InboxSource::TapRun {
+				id: "t1".into(),
+				role: "developer".into(),
+			},
+			InboxSource::Skill {
+				name: "deploy".into(),
+			},
+			InboxSource::SkillValidator {
+				name: "deploy".into(),
+			},
+			InboxSource::Inject,
+			InboxSource::Webhook { hook: "ci".into() },
+			InboxSource::GuardrailHook {
+				script: "check.sh".into(),
+			},
+			InboxSource::GuardValidator {
+				name: "tests".into(),
+			},
+		]
+	}
+
+	#[test]
+	fn every_source_kind_is_distinct_snake_case() {
+		let kinds: Vec<&str> = all_sources().iter().map(|s| s.display_kind()).collect();
+		let unique: std::collections::HashSet<&&str> = kinds.iter().collect();
+		assert_eq!(unique.len(), kinds.len(), "duplicate kind in {kinds:?}");
+		for kind in kinds {
+			assert!(
+				kind.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+				"'{kind}' is not snake_case — structured clients key on it"
+			);
+		}
+	}
+
+	#[test]
+	fn every_source_renders_a_label_and_an_icon() {
+		for source in all_sources() {
+			assert!(!source.display_label().is_empty());
+			assert!(!source.display_icon().is_empty());
+		}
+	}
+
+	#[test]
+	fn only_user_initiated_sources_are_not_system_managed() {
+		// Schedule and Inject are user-authored; everything else is machinery.
+		assert!(!InboxSource::Schedule { id: "s".into() }.is_system_managed());
+		assert!(!InboxSource::Inject.is_system_managed());
+		assert!(!InboxSource::Webhook { hook: "h".into() }.is_system_managed());
+		for source in all_sources() {
+			let expected = !matches!(
+				source,
+				InboxSource::Schedule { .. } | InboxSource::Inject | InboxSource::Webhook { .. }
+			);
+			assert_eq!(
+				source.is_system_managed(),
+				expected,
+				"{} classified wrong",
+				source.display_kind()
+			);
+		}
+	}
+}

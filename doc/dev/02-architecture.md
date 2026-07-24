@@ -205,7 +205,7 @@ src/
 
   workflow/
     mod.rs                   # Module root, re-exports (execute_workflow, WorkflowDef)
-    schema.rs                # WorkflowDef, Step (enum), Condition, Sequential/Parallel/Loop steps
+    schema.rs                # WorkflowDef, Step (enum: Sequential/Parallel/Loop/Conditional), Condition, Edge (graph routing)
     validate.rs              # Pre-flight validation (validate)
     run.rs                   # Orchestrator: execute(), stats aggregation, progress to stderr
     proc.rs                  # Per-step subprocess (octomind run --format jsonl), JSONL stream parsing

@@ -1089,4 +1089,24 @@ mod tests {
 		let wf = parse(include_str!("../../config-templates/workflow-graph.toml"));
 		validate(&wf).expect("shipped graph template should validate");
 	}
+
+	#[test]
+	fn basic_template_validates() {
+		let wf = parse(include_str!("../../config-templates/workflow.toml"));
+		validate(&wf).expect("shipped basic template should validate");
+	}
+
+	#[test]
+	fn research_template_validates() {
+		let wf = parse(include_str!(
+			"../../config-templates/workflow-research.toml"
+		));
+		validate(&wf).expect("shipped research template should validate");
+	}
+
+	#[test]
+	fn fanout_template_validates() {
+		let wf = parse(include_str!("../../config-templates/workflow-fanout.toml"));
+		validate(&wf).expect("shipped fan-out template should validate");
+	}
 }

@@ -1104,7 +1104,7 @@ impl OctomindAgent {
 						// Forward cost / token usage as a SessionInfoUpdate carrying an
 						// `octomind.usage` block in `_meta`. We don't gate on the unstable
 						// `UsageUpdate` variant — `_meta` is the spec-blessed extensibility
-						// channel and works on all 0.10.x clients that pass `_meta` through.
+						// channel and works on all clients that pass `_meta` through.
 						// Side-channel: we send the notification ourselves here (bypassing
 						// the `update` pattern below) because we need to attach `meta`.
 						ServerMessage::Cost(p) => {
@@ -1313,9 +1313,9 @@ impl OctomindAgent {
 }
 
 // ============================================================================
-// ACP 0.14 bridge
+// ACP Send bridge
 //
-// The 0.14 SDK requires every handler closure and its future to be `Send`, but
+// The SDK requires every handler closure and its future to be `Send`, but
 // Octomind's session machinery (`ChatSession`, thread-local session context,
 // `spawn_local`, `Rc<RefCell<_>>`) is `!Send`. We therefore run a `!Send` actor
 // that owns `OctomindAgent` and reach it from thin `Send` handler shims over a
@@ -1328,7 +1328,7 @@ impl OctomindAgent {
 /// request carries a `oneshot` for its typed reply.
 pub(super) enum Command {
 	SetConnection(ConnectionTo<Client>),
-	// Boxed: ACP 1.x InitializeRequest is ~600 bytes, dwarfing every other variant.
+	// Boxed: InitializeRequest is ~600 bytes, dwarfing every other variant.
 	Initialize(
 		Box<InitializeRequest>,
 		oneshot::Sender<Result<InitializeResponse, agent_client_protocol::Error>>,
@@ -1358,7 +1358,7 @@ pub(super) enum Command {
 
 /// Actor loop: owns the `!Send` `OctomindAgent` and dispatches each command on its
 /// own `spawn_local` task, so a long `prompt` never blocks a concurrent `cancel`
-/// (mirrors the pre-0.14 concurrent trait-dispatch behaviour).
+/// (mirrors the earlier concurrent trait-dispatch behaviour).
 async fn run_actor(agent: Rc<OctomindAgent>, mut rx: mpsc::UnboundedReceiver<Command>) {
 	while let Some(cmd) = rx.recv().await {
 		match cmd {

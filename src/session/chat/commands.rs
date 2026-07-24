@@ -44,8 +44,9 @@ pub const SHARE_COMMAND: &str = "/share";
 pub const ANALYZE_COMMAND: &str = "/analyze";
 pub const AGENTS_COMMAND: &str = "/agents";
 pub const USAGE_COMMAND: &str = "/usage";
+pub const LOGIN_COMMAND: &str = "/login";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 29] = [
+pub const COMMANDS: [&str; 30] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -75,4 +76,5 @@ pub const COMMANDS: [&str; 29] = [
 	ANALYZE_COMMAND,
 	AGENTS_COMMAND,
 	USAGE_COMMAND,
+	LOGIN_COMMAND,
 ];

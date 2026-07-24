@@ -101,6 +101,14 @@ pub fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
 pub fn format_provider_error(provider_name: &str, error: &anyhow::Error) -> String {
 	let error_str = error.to_string();
 
+	// octolib's OctoHub errors already carry the server's exact message (e.g.
+	// 403 "model 'X' is not permitted for this API key") plus a login hint on
+	// 401 — the generic rewrites below would mask them behind "Authentication
+	// failed" because the text happens to contain "API key".
+	if error_str.contains("OctoHub API error") {
+		return error_str;
+	}
+
 	// Check if this is a status code error (like "520 <unknown status code>")
 	if error_str.contains("API error") && error_str.contains("<unknown status code>") {
 		// Extract status code and provide better context
@@ -190,6 +198,18 @@ pub fn handle_api_error(
 
 	// Provider-specific help message
 	match provider_name.to_lowercase().as_str() {
+		// octolib's error text already carries the actionable hint (login for
+		// 401, the server's model-restriction message for 403) — a generic
+		// "check your API key" line here would contradict it.
+		"octohub" => {
+			if error_message.contains("not permitted for this API key") {
+				println!(
+					"{}",
+					"This model is not included in your current plan — pick an included model or upgrade."
+						.yellow()
+				);
+			}
+		}
 		"openrouter" => {
 			println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
 		}

@@ -179,6 +179,10 @@ pub async fn run_interactive_session(
 
 	let session_id = chat_session.session.info.name.clone();
 
+	// Owned copies for the telemetry row recorded when the loop below ends —
+	// `args`/`config` are borrows that don't cross into the session scope.
+	let (resumed, sandbox, mcp_servers) = telemetry_context(args, config);
+
 	// Now that the session ID is known, set the process & terminal title so
 	// `ps`/htop and the terminal tab show which run/role/session this is.
 	let title = format!("octomind-run {role} [{session_id}]");
@@ -1377,9 +1381,45 @@ pub async fn run_interactive_session(
 			}
 		}
 
+		record_session_telemetry(&chat_session, "interactive", resumed, sandbox, mcp_servers);
+
 		Ok(())
 	})
 	.await
+}
+
+/// The three session facts telemetry needs that live on the args/config rather
+/// than on the session itself.
+fn telemetry_context(
+	args: &super::params::GenericSessionArgs,
+	config: &Config,
+) -> (bool, bool, u32) {
+	(
+		args.resume.is_some() || args.resume_recent,
+		config.sandbox,
+		config.mcp.servers.len() as u32,
+	)
+}
+
+/// One row per finished session — which agent and model, how long, how many
+/// turns and tools, what it cost. Reaching a caller means the loop ended
+/// normally; failures bail earlier and are recorded as `error` in main.
+fn record_session_telemetry(
+	chat_session: &ChatSession,
+	kind: &str,
+	resumed: bool,
+	sandbox: bool,
+	mcp_servers: u32,
+) {
+	crate::telemetry::record_session(crate::telemetry::SessionEnd {
+		kind,
+		outcome: "ok",
+		error_kind: "",
+		resumed,
+		sandbox,
+		mcp_servers,
+		info: &chat_session.session.info,
+	});
 }
 
 // Run a single non-interactive session with provided input
@@ -1396,6 +1436,8 @@ pub async fn run_interactive_session_with_input(
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
+
+	let (resumed, sandbox, mcp_servers) = telemetry_context(args, config);
 
 	// Now that the session ID is known, set the process & terminal title so
 	// `ps`/htop and the terminal tab show which run/role/session this is.
@@ -1869,6 +1911,14 @@ pub async fn run_interactive_session_with_input(
 
 	// Save session before exit
 	if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
+
+	record_session_telemetry(
+		&chat_session,
+		if daemon { "daemon" } else { "piped" },
+		resumed,
+		sandbox,
+		mcp_servers,
+	);
 	Ok(())
 	}).await
 }

@@ -14,6 +14,7 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 | `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run`. See note below. |
 | `max_tokens` | u32 | `16384` | Global max tokens for all operations |
 | `sandbox` | bool | `false` | Restrict filesystem writes to working directory. Also available as `--sandbox` CLI flag. |
+| `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `auto_capabilities` | bool | `true` | Enable automatic capability activation on user messages. Disable to require manual `capability(action="enable")` calls. |
 | `system` | string (optional) | _none_ | Legacy global system-prompt override. When set, it applies as a fallback system prompt for roles that define none. Shown commented-out in `default.toml`; prefer per-role `system` instead. |
 

@@ -222,7 +222,10 @@ fn handle_interrupt(
 		first_interrupt.store(true, Ordering::SeqCst);
 		let _ = op_tx.lock().unwrap().send(true);
 
-		// Now safe to log — even if this blocks briefly, cancellation is already sent
+		// Now safe to log — even if this blocks briefly, cancellation is already sent.
+		// Telemetry sits below the send for the same reason: it must never be on
+		// the path that makes Ctrl+C feel unresponsive.
+		crate::telemetry::record_cancel();
 		crate::log_debug!("Ctrl+C: Interrupting current operation...");
 		crate::log_debug!("Press Ctrl+C again to force exit");
 		std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());

@@ -169,6 +169,10 @@ fn default_knowledge_retention() -> usize {
 	10
 }
 
+fn default_telemetry() -> bool {
+	true
+}
+
 /// Skill auto-activation and validation configuration.
 /// Required `[skills]` section in config TOML.
 ///
@@ -359,6 +363,12 @@ pub struct Config {
 	// Sandbox mode: restrict all filesystem writes to the current working directory
 	// Can also be enabled at runtime with --sandbox CLI flag
 	pub sandbox: bool,
+
+	// Anonymous usage telemetry (see src/telemetry.rs for exactly what is sent).
+	// Defaults on so upgrades don't silently turn it back off for people who
+	// never had the key; DO_NOT_TRACK=1 and OCTOMIND_TELEMETRY=0 override it.
+	#[serde(default = "default_telemetry")]
+	pub telemetry: bool,
 
 	// Capability provider overrides (capability_name → provider_name)
 	// Empty by default — uses "default" provider for each capability.

@@ -39,6 +39,14 @@ max_tokens = 16384
 # Can also be enabled at runtime with --sandbox CLI flag.
 sandbox = false
 
+# Anonymous usage telemetry: which commands, tools, slash commands and models
+# are used, plus timings, token counts and outcomes. Never your code, prompts,
+# file paths, arguments or environment values — see the "telemetry" section of
+# the docs for the exact field list.
+# Also switchable per-run with OCTOMIND_TELEMETRY=0, and DO_NOT_TRACK=1 is
+# honoured before either.
+telemetry = true
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERFORMANCE & LIMITS
 # Configure thresholds and performance-related settings

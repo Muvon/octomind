@@ -166,6 +166,8 @@ pub fn handle_api_error(
 	error: &anyhow::Error,
 	mode: OutputMode,
 ) {
+	crate::telemetry::record_api_error(error);
+
 	// Remove user message on API failure
 	if user_message_index < chat_session.session.messages.len() {
 		chat_session.session.messages.truncate(user_message_index);
@@ -247,6 +249,8 @@ pub fn handle_api_error(
 // tool_results sequence. Truncating would discard completed tool work. The session
 // is in a state where the same API call can simply be retried.
 pub fn handle_followup_api_error(model: &str, error: &anyhow::Error, mode: OutputMode) {
+	crate::telemetry::record_api_error(error);
+
 	let provider_name =
 		if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {
 			provider

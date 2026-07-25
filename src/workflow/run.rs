@@ -1291,6 +1291,17 @@ pub async fn execute(
 		}));
 	}
 
+	crate::telemetry::record_workflow(crate::telemetry::WorkflowEnd {
+		name: &wf.name,
+		steps: wf.steps.len() as u32,
+		duration_ms: ex.totals.duration.as_millis() as u64,
+		cost_usd: ex.totals.cost,
+		tokens_in: ex.totals.input_tokens,
+		tokens_out: ex.totals.output_tokens,
+		tool_calls: ex.totals.tools as u32,
+		graph: wf.is_graph(),
+	});
+
 	// Drop any keypresses the user typed during animation so they don't
 	// leak into the shell's input queue when control returns.
 	if ex.interactive {

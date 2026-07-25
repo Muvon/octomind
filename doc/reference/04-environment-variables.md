@@ -73,7 +73,47 @@ Octomind also loads `.env` files from the current directory (see [.env File Supp
 | `OCTOMIND_SKILLS` | Comma-delimited skill names to preload at session start (e.g., `programming-rust,git-workflow`). Skills are activated permanently without evaluating declarative rules. |
 | `OCTOMIND_CAPABILITIES` | Comma-delimited capability names to force-enable at session start (e.g., `cron,docker`). Bypasses the auto-activation embedding pipeline; capabilities are loaded deterministically regardless of intent matching. Already-active entries are no-ops. |
 | `OCTOMIND_SHARE_URL` | Base URL of the web viewer used by `/share` (upload endpoint) and `/analyze` (viewer link). Defaults to `https://octomind.run`. Override only when pointing at a self-hosted instance or a local dev server. |
+| `OCTOMIND_TELEMETRY` | Set to `0`/`false`/`off`/`no` to disable anonymous usage telemetry for this run, or to any other value to force it on regardless of the config. Unset = follow `telemetry` in the config (default on). See [Telemetry](#telemetry). |
+| `DO_NOT_TRACK` | The cross-tool opt-out standard ([consoledonottrack.com](https://consoledonottrack.com)). Any value other than empty/`0`/`false` disables telemetry, and is honoured **before** `OCTOMIND_TELEMETRY` and the config. |
 | `RUST_LOG` | Tracing filter (standard `tracing`/`env_logger` syntax, e.g. `RUST_LOG=debug` or `RUST_LOG=octomind=debug`). In CLI mode, setting it turns on the stderr tracing subscriber (unset = only the colored log macros, no tracing emitted). In ACP/WebSocket/daemon modes it overrides the `log_level`-derived filter for the per-mode debug log file. |
+
+## Telemetry
+
+Octomind reports anonymous usage so the CLI can be shaped by evidence rather
+than guesses. Turn it off with `DO_NOT_TRACK=1`, `OCTOMIND_TELEMETRY=0`, or
+`telemetry = false` in the config — opting out is local and instant, no request
+is made to announce it.
+
+**What is sent** — a `start` row per invocation, a `session` row per finished
+session, and an `error` row when a command fails:
+
+- subcommand name and the long flag **names** used (never their values)
+- CLI version, OS, architecture, install source (brew/cargo/docker/binary)
+- whether the run is interactive, in CI, signed in, or a first run
+- session shape: agent tag, provider and model id, duration, turns, tool-call
+  count, token counts, cost, compression count, MCP server count, outcome, and
+  how many times you interrupted it with Ctrl+C
+- per-tool call **counts**, per-tool failure **counts**, and per-slash-command
+  **counts**. Built-in tool names are sent as themselves; every other (MCP) tool
+  is reduced to a fixed category such as `ext:github`, because MCP tool names
+  come from your config
+- provider failure **counts** by fixed kind (`rate_limit`, `overloaded`, `auth`,
+  `context_length`, `server`, `timeout`, `network`) — counts only, never the
+  provider's message
+- for `octomind workflow`: the workflow's declared `name` (the label inside the
+  file, never the path it was loaded from), step count and totals
+- a random local install id, generated on your machine, tied to no identity. If
+  you are signed in, the event is attributed to your account.
+
+**What is never sent** — your code, prompts, model responses, file paths, tool
+arguments, shell commands, environment values, repository names or remotes, and
+error messages. Failures are reported only as a fixed slug (`network`,
+`timeout`, `io`, `parse`, `other`).
+
+Everything transmitted is a named field on a struct in `src/telemetry.rs`;
+there is no free-form field, so nothing else can travel by accident. Events are
+buffered in memory and sent once at exit behind a 2-second timeout — telemetry
+never delays or fails a command.
 
 ## Installation Script
 

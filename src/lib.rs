@@ -101,6 +101,7 @@ pub mod sandbox;
 pub mod session;
 pub mod state;
 pub mod supervisor;
+pub mod telemetry;
 pub mod utils;
 pub mod websocket;
 pub mod workflow;

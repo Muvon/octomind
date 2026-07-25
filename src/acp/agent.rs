@@ -95,6 +95,31 @@ impl OctomindAgent {
 		}
 	}
 
+	/// One telemetry row per session this agent served, recorded when the client
+	/// disconnects — an ACP session lives as long as the editor keeps us open, so
+	/// that disconnect is its only real end boundary.
+	///
+	/// Per-tool counters are process-wide, so in the rare multi-session ACP
+	/// process they all land on whichever session is written first. Totals stay
+	/// correct; the per-session split does not.
+	pub fn record_telemetry(&self) {
+		let (sandbox, mcp_servers) = {
+			let config = self.config.borrow();
+			(config.sandbox, config.mcp.servers.len() as u32)
+		};
+		for (chat_session, _) in self.sessions.borrow().values() {
+			crate::telemetry::record_session(crate::telemetry::SessionEnd {
+				kind: "acp",
+				outcome: "ok",
+				error_kind: "",
+				resumed: false,
+				sandbox,
+				mcp_servers,
+				info: &chat_session.session.info,
+			});
+		}
+	}
+
 	/// Inject the client connection once the ACP event loop starts serving. Supplied
 	/// by the `with_spawned` runner, which hands us a long-lived `ConnectionTo<Client>`.
 	pub fn set_connection(&self, conn: ConnectionTo<Client>) {
@@ -1581,6 +1606,7 @@ pub(super) async fn serve(
 	if let Err(e) = result {
 		log_debug!("ACP: connection ended: {}", e);
 	}
+	agent.record_telemetry();
 	Ok(())
 }
 

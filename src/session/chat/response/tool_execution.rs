@@ -74,8 +74,10 @@ impl ToolExecutionContext<'_> {
 		}
 	}
 
-	/// Increment tool call counter
-	pub fn increment_tool_calls(&mut self) {
+	/// Increment tool call counter. Also the single funnel every tool execution
+	/// passes through, so it is where per-tool telemetry is counted.
+	pub fn increment_tool_calls(&mut self, tool_name: &str) {
+		crate::telemetry::record_tool(tool_name);
 		if let ToolExecutionContext::MainSession { chat_session, .. } = self {
 			chat_session.session.info.tool_calls += 1;
 		}
@@ -135,6 +137,7 @@ pub async fn execute_tools_parallel(
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	if current_tool_calls.len() == 1 && is_tap_capability_call(&current_tool_calls[0]) {
 		chat_session.session.info.tool_calls += 1;
+		crate::telemetry::record_tool(&current_tool_calls[0].tool_name);
 		let (result, elapsed_ms) =
 			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
 		let processed = handle_large_tool_results(vec![result], config, mode).await?;
@@ -259,7 +262,7 @@ async fn execute_tools_with_context(
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
-		context.increment_tool_calls();
+		context.increment_tool_calls(&tool_call.tool_name);
 
 		// CRITICAL FIX: Use the EXACT tool_id from the original API response
 		// Don't generate a new UUID - use the one from the original tool_calls

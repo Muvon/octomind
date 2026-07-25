@@ -130,6 +130,18 @@ async fn main() -> Result<(), anyhow::Error> {
 	// Load configuration
 	let config = Config::load()?;
 
+	// Arm telemetry before the command runs, so a crash still leaves a `start`
+	// row behind. No-op when opted out; never touches the network here.
+	//
+	// `complete` is excluded: the shell runs it on every TAB press, which would
+	// both flood the ingest endpoint and risk printing the first-run notice into
+	// the middle of a completion. Everything downstream no-ops when uninitialised.
+	let command = command_name(&args.command);
+	if command != "complete" {
+		octomind::telemetry::init(&config);
+		octomind::telemetry::record_start(command, used_flags(command));
+	}
+
 	// Setup cleanup for MCP server processes when the program exits
 	let result = run_with_cleanup(args, config).await;
 
@@ -138,7 +150,54 @@ async fn main() -> Result<(), anyhow::Error> {
 		octomind::log_error!("Warning: Error cleaning up MCP servers: {}", e);
 	}
 
+	if let Err(e) = &result {
+		octomind::telemetry::record_error(command, octomind::telemetry::error_kind(e));
+	}
+	octomind::telemetry::flush().await;
+
 	result
+}
+
+/// Stable slug for the subcommand that ran. Derived from the enum rather than
+/// argv so a shell alias or abbreviation still reports the same name.
+fn command_name(command: &Commands) -> &'static str {
+	match command {
+		Commands::Config(_) => "config",
+		Commands::Run(_) => "run",
+		Commands::Login(_) => "login",
+		Commands::Server(_) => "server",
+		Commands::Acp(_) => "acp",
+		Commands::Tap(_) => "tap",
+		Commands::Untap(_) => "untap",
+		Commands::Vars(_) => "vars",
+		Commands::Send(_) => "send",
+		Commands::Workflow(_) => "workflow",
+		Commands::Completion { .. } => "completion",
+		Commands::Complete(_) => "complete",
+	}
+}
+
+/// Long flag NAMES present in argv, validated against the flags clap actually
+/// defines for this subcommand. Checking against clap is what makes this safe:
+/// an argument VALUE that happens to look like a flag is not a known flag, so
+/// it is dropped rather than transmitted.
+fn used_flags(command: &str) -> Vec<String> {
+	let app = CliArgs::command();
+	let Some(sub) = app.find_subcommand(command) else {
+		return Vec::new();
+	};
+	let known: std::collections::HashSet<&str> =
+		sub.get_arguments().filter_map(|a| a.get_long()).collect();
+	let mut flags: Vec<String> = std::env::args()
+		.skip(2)
+		.filter_map(|a| {
+			let name = a.strip_prefix("--")?.split('=').next()?.to_string();
+			known.contains(name.as_str()).then_some(name)
+		})
+		.collect();
+	flags.sort();
+	flags.dedup();
+	flags
 }
 
 async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {

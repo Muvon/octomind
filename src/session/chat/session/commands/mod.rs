@@ -357,7 +357,7 @@ pub async fn process_command(
 	// Use current session role instead of original startup role
 	let current_role = session.role.clone();
 
-	match command {
+	let result = match command {
 		EXIT_COMMAND | QUIT_COMMAND => {
 			exit::handle_exit()?;
 			Ok(CommandResult::Exit)
@@ -408,5 +408,14 @@ pub async fn process_command(
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)
 		}
+	};
+
+	// Which slash commands people reach for is the clearest signal of which
+	// surfaces earn their keep. Only count what actually dispatched — anything
+	// else was chat that happened to start with a slash.
+	if !matches!(result, Ok(CommandResult::TreatAsUserInput)) {
+		crate::telemetry::record_command(command);
 	}
+
+	result
 }

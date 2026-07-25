@@ -33,6 +33,9 @@ impl ToolErrorTracker {
 
 	// Record an error for a tool and return true if we've hit the error threshold
 	pub fn record_error(&mut self, tool_name: &str) -> bool {
+		// Paired with the per-tool call count, this is a per-tool success rate.
+		crate::telemetry::record_tool_error(tool_name);
+
 		// Get the nested hash map for this tool, creating it if it doesn't exist
 		let server_map = self.tool_errors.entry(tool_name.to_string()).or_default();
 

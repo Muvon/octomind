@@ -474,7 +474,11 @@ mod tests {
 	use super::*;
 	use crate::session::SessionInfo;
 
-	fn info_after_compression(predicted: f64, calls_at_last: u64, total_calls: u64) -> SessionInfo {
+	fn info_after_compression(
+		predicted: f64,
+		calls_at_last: usize,
+		total_calls: usize,
+	) -> SessionInfo {
 		let mut info = SessionInfo {
 			predicted_turns_at_last_compression: predicted,
 			api_calls_at_last_compression: calls_at_last,

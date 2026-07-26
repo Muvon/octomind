@@ -231,8 +231,10 @@ pub struct SessionEnd<'a> {
 /// Arm telemetry for this process. Must run once, early, before any `record_*`
 /// call — everything before it is silently dropped, which is the safe default.
 ///
-/// Prints the one-time disclosure on first run. Deliberately synchronous and
-/// local: nothing here touches the network.
+/// Deliberately silent: a session start is not the place for a paragraph the
+/// user did not ask for. Disclosure lives in the docs (`doc/reference/
+/// 04-environment-variables.md#telemetry`) and in the commented `telemetry` key
+/// the default config writes out. Nothing here touches the network.
 pub fn init(config: &crate::config::Config) {
 	if opted_out(config) {
 		return;
@@ -250,7 +252,6 @@ pub fn init(config: &crate::config::Config) {
 	ENABLED.store(true, Ordering::Relaxed);
 	LazyLock::force(&STARTED);
 	FIRST_RUN.store(!known, Ordering::Relaxed);
-	show_notice_once();
 }
 
 fn opted_out(config: &crate::config::Config) -> bool {
@@ -271,28 +272,6 @@ fn truthy(var: &str) -> bool {
 		let v = v.trim();
 		!v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
 	})
-}
-
-/// The one-time disclosure, marked as shown only once it has actually been
-/// printed. An editor launching us over ACP has no terminal to read it on, so
-/// the notice waits for a run the user can actually see rather than being
-/// silently consumed by a background process.
-fn show_notice_once() {
-	if !std::io::stderr().is_terminal() {
-		return;
-	}
-	let Ok(dir) = crate::directories::get_config_dir() else {
-		return;
-	};
-	let marker = dir.join("telemetry-notice");
-	if marker.exists() {
-		return;
-	}
-	eprintln!(
-		"Octomind collects anonymous usage stats (commands, tool names, timings — never your code, \
-		 prompts or paths). Turn it off with `{TELEMETRY_ENV}=0` or `telemetry = false` in the config."
-	);
-	let _ = std::fs::write(&marker, SCHEMA_VERSION.to_string());
 }
 
 fn enabled() -> bool {

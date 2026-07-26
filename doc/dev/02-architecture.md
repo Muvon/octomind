@@ -12,6 +12,7 @@ src/
   branding.rs                # Branding assets
   proctitle.rs               # Process title management
   state.rs                   # IndexState (current_directory, indexed_files, embedding_calls, graphrag_blocks)
+  telemetry.rs               # Anonymous usage events: buffered in memory, flushed once at exit
 
   commands/
     mod.rs                   # Command definitions (run, server, acp, tap, etc.)

@@ -1,6 +1,6 @@
 [package]
 name = "octomind"
-version = "0.38.2"
+version = "0.39.0"
 edition = "2021"
 authors = ["Muvon Un Limited <contact@muvon.io>"]
 license = "Apache-2.0"

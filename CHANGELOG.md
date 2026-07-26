@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.39.0] - 2026-07-26
+
+### 📋 Release Summary
+
+This release introduces a graph-based execution mode for workflows, a secure device-authorization login flow, and anonymous usage tracking (5115e9f7, 9e736137, d8a6df17). General performance optimizations and dependency updates enhance overall system stability and speed (e300a934, 7611c6bd, fd8e90b0, 665d3b0e). Additionally, expanded test coverage and refined session handling resolve several critical bugs (db035fae, 4b13303e, 4d496757).
+
+
+### ✨ New Features & Enhancements
+
+- **telemetry**: implement anonymous usage tracking `d8a6df17`
+- **workflow**: implement graph-based execution mode `5115e9f7`
+- **auth**: implement RFC 8628 device-authorization flow `9e736137`
+
+### 🔧 Improvements & Optimizations
+
+- **compression**: align session info types in tests `4b13303e`
+- **core**: expand test coverage and fix critical bugs `db035fae`
+- **workflow**: add validation tests for templates `4d496757`
+- **core**: optimize regexes and build settings `e300a934`
+
+### 📚 Documentation & Examples
+
+- **telemetry**: document usage and remove startup notice `82cafc9b`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.38.2] - 2026-07-22
 
 ### 📋 Release Summary

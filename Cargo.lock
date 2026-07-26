@@ -2973,7 +2973,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.26.0"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45a992d3ff080b6fadc0b781cc6edafbe8cd2cea47d32d8021e4fc62368b9774"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3000,7 +3002,7 @@ dependencies = [
 
 [[package]]
 name = "octomind"
-version = "0.38.2"
+version = "0.39.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

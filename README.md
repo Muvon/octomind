@@ -454,8 +454,23 @@ Key areas:
 - **Guardrails** — deterministic policy (guards, hooks, validators) and input pipes
 - **MCP Servers** — external tools and capabilities
 - **Spending Limits** — per-request and per-session thresholds
+- **Telemetry** — anonymous usage stats, on by default
 
 Full reference: [Configuration Reference](doc/reference/03-config-reference.md).
+
+### Telemetry
+
+Octomind reports anonymous usage — which commands, tools and models get used,
+plus timings, token counts and error kinds. Never your code, prompts, file
+paths, tool arguments or environment values. Turn it off any of three ways:
+
+```bash
+export DO_NOT_TRACK=1           # the cross-tool standard, honoured first
+export OCTOMIND_TELEMETRY=0     # per-run
+# or set `telemetry = false` in config.toml
+```
+
+Exact field list: [Telemetry](doc/reference/04-environment-variables.md#telemetry).
 
 ### Session commands
 

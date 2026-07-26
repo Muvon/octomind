@@ -80,9 +80,10 @@ Octomind also loads `.env` files from the current directory (see [.env File Supp
 ## Telemetry
 
 Octomind reports anonymous usage so the CLI can be shaped by evidence rather
-than guesses. Turn it off with `DO_NOT_TRACK=1`, `OCTOMIND_TELEMETRY=0`, or
-`telemetry = false` in the config — opting out is local and instant, no request
-is made to announce it.
+than guesses. It is **on by default and prints nothing** — turn it off with
+`DO_NOT_TRACK=1`, `OCTOMIND_TELEMETRY=0`, or `telemetry = false` in the config.
+Opting out is local and instant: no request is made to announce it, and nothing
+is buffered.
 
 **What is sent** — a `start` row per invocation, a `session` row per finished
 session, and an `error` row when a command fails:

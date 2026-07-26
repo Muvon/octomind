@@ -84,7 +84,7 @@ Real-world examples showing how to solve practical problems with Octomind.
 | [CLI Reference](reference/01-cli-reference.md) | All CLI commands and flags |
 | [Session Commands](reference/02-session-commands.md) | All interactive session commands (25 distinct, plus /quit and /? aliases) |
 | [Config Reference](reference/03-config-reference.md) | Every configuration field documented |
-| [Environment Variables](reference/04-environment-variables.md) | API keys, overrides, template variables |
+| [Environment Variables](reference/04-environment-variables.md) | API keys, overrides, template variables, telemetry |
 
 ## Links
 

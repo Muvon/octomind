@@ -108,7 +108,7 @@ landlock = "0.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 [profile.dev]
 opt-level = 1          # Basic optimizations without slowing compilation too much

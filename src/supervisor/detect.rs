@@ -702,14 +702,15 @@ pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool 
 	}
 	match report {
 		Some(SelfReport::Done) => false,
-		// No-progress, distraction, and sequential-batching can be legitimate while
-		// exploring; every other signal steers regardless of intent.
+		// No-progress and distraction can be legitimate while exploring; every
+		// other signal steers regardless of intent. Sequential is NOT suppressed
+		// here: serializing independent calls is never "legitimate exploring" —
+		// the detector already gates on N consecutive single-call rounds, so the
+		// exploring excuse double-gates and leaves Opus unsteered.
 		Some(SelfReport::Exploring)
 			if matches!(
 				signal,
-				DetectorSignal::NoProgress
-					| DetectorSignal::Distraction
-					| DetectorSignal::Sequential
+				DetectorSignal::NoProgress | DetectorSignal::Distraction
 			) =>
 		{
 			false
@@ -1457,6 +1458,26 @@ mod tests {
 		// Without the progressing claim it stays the generic no-progress note.
 		let generic = steer_note(DetectorSignal::NoProgress, None, 0);
 		assert!(!generic.contains("disagree"));
+	}
+
+	#[test]
+	fn sequential_steers_even_while_exploring() {
+		// Serializing independent calls is never "legitimate exploring" — the
+		// detector already gates on N consecutive single-call rounds, so the
+		// exploring excuse must not suppress the Sequential steer.
+		assert!(should_steer(
+			DetectorSignal::Sequential,
+			Some(SelfReport::Exploring)
+		));
+		assert!(should_steer(
+			DetectorSignal::Sequential,
+			Some(SelfReport::Progressing)
+		));
+		// Still defers to the gate on done.
+		assert!(!should_steer(
+			DetectorSignal::Sequential,
+			Some(SelfReport::Done)
+		));
 	}
 
 	#[test]

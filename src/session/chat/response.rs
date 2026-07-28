@@ -824,8 +824,10 @@ pub async fn process_response<S: OutputSink>(
 
 						// Parameter-free adaptive backoff — no thresholds, no periods. Derived
 						// purely from the escalation ladder length + whether the model is ignoring:
-						//   • advisory → deliver every distinct frame once, then hard-mute (a
-						//     batching hint repeated adds nothing).
+						//   • advisory (Sequential) → deliver the full ladder (0..PERSISTENT_ATTEMPT),
+						//     then re-emit on a DOUBLING schedule (gaps 1,2,4,8…) — same as critical.
+						//     A batching hint that goes permanently silent after 3 frames is one Opus
+						//     can simply wait out; the doubling backoff keeps it alive at O(log N) cost.
 						//   • critical → deliver the full ladder + persistent frame, then while it
 						//     keeps ignoring, re-emit on a DOUBLING schedule (gaps 1,2,4,8…): never
 						//     fully silent, self-scaling to how persistently it is ignored.
@@ -837,9 +839,7 @@ pub async fn process_response<S: OutputSink>(
 						// The doubling is intentionally UNCAPPED — emissions are O(log N)→0, so an
 						// ignored run is cheap, not silently expensive; the opt-in circuit-breaker
 						// (max_consecutive_steers) is the single terminal stop.
-						let emit = if advisory {
-							attempt < crate::supervisor::detect::PERSISTENT_ATTEMPT
-						} else if ignoring
+						let emit = if ignoring
 							&& attempt >= crate::supervisor::detect::PERSISTENT_ATTEMPT
 						{
 							(attempt - crate::supervisor::detect::PERSISTENT_ATTEMPT + 1)

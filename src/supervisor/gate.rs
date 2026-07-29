@@ -80,6 +80,15 @@ Do not reward length, formatting, or tone — only verifiable substance.
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
 claim has no supporting evidence. Each gap must name the specific unmet item.
 
+When the request was to fix a reported problem, two result shapes are gaps in their own right,
+whatever the domain:
+- Suppression instead of repair: the change hides, absorbs, or special-cases the visible
+  symptom while whatever produced it is unchanged. The symptom disappearing is not the
+  problem being fixed.
+- Shared-dependency blast radius: the change alters something many other flows depend on in
+  order to satisfy the single reported case, with no evidence the other dependents were
+  considered. Prefer evidence of a targeted change on the reported case's own path.
+
 If every part is evidenced — or you cannot point to a concrete unmet item — output exactly:
 <verdict>PASS</verdict>
 

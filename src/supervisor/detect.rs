@@ -206,46 +206,76 @@ fn normalize_ws(s: &str) -> String {
 /// not hold on disk — the file is missing, or the line number is beyond EOF.
 /// High-precision by construction: only paths containing a `/` and an extension
 /// starting with a letter are checked (bare `x.rs:3` or version-like `1.2:3`
-/// never match), and URL interiors are excluded by the preceding-char guard.
-/// Relative paths resolve against the process cwd (the project dir in a
-/// session). No model call.
+/// never match), URL interiors are excluded by the preceding-char guard, and
+/// GitHub-style `#L<n>` anchors count as line references too. Prose often
+/// abbreviates a path cited in full elsewhere in the same response
+/// ("deals/create.php:199" after "app/actions/deals/create.php:199"), so a
+/// path missing at cwd is resolved as a suffix of the response's existing
+/// cited paths before being flagged. Relative paths resolve against the
+/// process cwd (the project dir in a session). No model call.
 pub fn unverified_file_refs(response: &str) -> Vec<String> {
 	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 	let re = RE.get_or_init(|| {
 		regex::Regex::new(
-			r"(?:^|[^A-Za-z0-9_./:-])(/?(?:[A-Za-z0-9_@~.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]{0,7}):([0-9]+)",
+			r"(?:^|[^A-Za-z0-9_./:-])(/?(?:[A-Za-z0-9_@~.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]{0,7})(?::|#L)([0-9]+)",
 		)
 		.expect("static pattern")
 	});
-	// Bound-check only files we can cheaply read as text.
+	// Bound-check only files we can cheaply read as text; an unreadable or
+	// oversized file gets the benefit of the doubt (None = cannot check).
 	const MAX_CHECKED_FILE: u64 = 2_000_000;
-	let mut flagged = Vec::new();
+	fn line_count(path: &str) -> Option<usize> {
+		let p = std::path::Path::new(path);
+		if p.metadata().ok()?.len() > MAX_CHECKED_FILE {
+			return None;
+		}
+		Some(std::fs::read_to_string(p).ok()?.lines().count())
+	}
+	let mut refs: Vec<(String, usize)> = Vec::new();
 	let mut seen = std::collections::HashSet::new();
 	for cap in re.captures_iter(response) {
-		let path = &cap[1];
 		let Ok(line) = cap[2].parse::<usize>() else {
 			continue;
 		};
-		let key = format!("{path}:{line}");
-		if !seen.insert(key.clone()) {
-			continue;
+		if seen.insert(format!("{}:{}", &cap[1], line)) {
+			refs.push((cap[1].to_string(), line));
 		}
-		let p = std::path::Path::new(path);
-		if !p.exists() {
+	}
+	let existing: Vec<String> = refs
+		.iter()
+		.map(|(p, _)| p.clone())
+		.filter(|p| std::path::Path::new(p).exists())
+		.collect();
+	let mut flagged = Vec::new();
+	for (path, line) in &refs {
+		let key = format!("{path}:{line}");
+		let candidates: Vec<String> = if std::path::Path::new(path).exists() {
+			vec![path.clone()]
+		} else {
+			let suffix = format!("/{path}");
+			existing
+				.iter()
+				.filter(|full| full.ends_with(&suffix))
+				.cloned()
+				.collect()
+		};
+		if candidates.is_empty() {
 			flagged.push(format!("{key} (file not found)"));
 			continue;
 		}
-		let Ok(meta) = p.metadata() else {
-			continue;
-		};
-		if meta.len() > MAX_CHECKED_FILE {
-			continue;
+		// The reference holds if the line lands inside ANY candidate; an
+		// uncheckable candidate also passes (skip, not a flag).
+		let mut beyond_eof = None;
+		for c in &candidates {
+			match line_count(c) {
+				Some(count) if *line == 0 || *line > count => beyond_eof = Some(count),
+				_ => {
+					beyond_eof = None;
+					break;
+				}
+			}
 		}
-		let Ok(content) = std::fs::read_to_string(p) else {
-			continue;
-		};
-		let count = content.lines().count();
-		if line == 0 || line > count {
+		if let Some(count) = beyond_eof {
 			flagged.push(format!("{key} (file has only {count} lines)"));
 		}
 	}
@@ -1362,6 +1392,39 @@ mod tests {
 	fn file_refs_deduplicated() {
 		let bad = unverified_file_refs("a/missing.rs:1 and again a/missing.rs:1 twice");
 		assert_eq!(bad.len(), 1);
+	}
+
+	#[test]
+	fn file_refs_github_anchor_matched() {
+		assert!(unverified_file_refs("see src/supervisor/detect.rs#L1 for it").is_empty());
+		let bad = unverified_file_refs("see src/supervisor/zz_no_such_file.rs#L5 now");
+		assert_eq!(
+			bad,
+			vec!["src/supervisor/zz_no_such_file.rs:5 (file not found)"]
+		);
+	}
+
+	#[test]
+	fn file_refs_suffix_shorthand_resolves_against_cited_full_path() {
+		// Prose abbreviation of a path cited in full elsewhere is not fabrication.
+		assert!(unverified_file_refs(
+			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs:1)"
+		)
+		.is_empty());
+		// Also when the full path was cited GitHub-style.
+		assert!(unverified_file_refs(
+			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs#L1-L20)"
+		)
+		.is_empty());
+	}
+
+	#[test]
+	fn file_refs_suffix_shorthand_still_bound_checked() {
+		let bad = unverified_file_refs(
+			"comment at supervisor/mod.rs:999999 (full: src/supervisor/mod.rs:1)",
+		);
+		assert_eq!(bad.len(), 1);
+		assert!(bad[0].starts_with("supervisor/mod.rs:999999 (file has only "));
 	}
 
 	#[test]

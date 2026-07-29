@@ -264,7 +264,24 @@ pub fn unverified_file_refs(response: &str) -> Vec<String> {
 /// [`Detectors::note_round_verification`]: a candidate that dirtied the tree
 /// is a mutator, not a verifier.
 pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
-	if !parameters.get("command").is_some_and(|v| v.is_string()) {
+	let Some(cmd) = parameters.get("command").and_then(|v| v.as_str()) else {
+		return false;
+	};
+	// A tool whose NAME declares mutation intent is never a verification
+	// candidate, whatever its parameter shape: editor tools also take a string
+	// `command` (octofs text_editor's command="str_replace" selects an edit
+	// operation, it executes nothing) — without this guard an edit round
+	// classified itself as its own verifier.
+	if is_mutation_tool(tool) {
+		crate::log_debug!("verifier-shape: {} rejected: mutation tool", tool);
+		return false;
+	}
+	// The command itself must look like a CHECK (test/build/lint/type runner):
+	// a successful `grep`/`find`/`ls` also arrives as a shell command, and on
+	// an unchanged tree it would otherwise mark a preceding mutation as
+	// verified — a read is not a verification.
+	if !is_check_command(cmd) {
+		crate::log_debug!("verifier-shape: {} rejected: not a check: {}", tool, cmd);
 		return false;
 	}
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
@@ -276,6 +293,67 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 		// observational tree check still guards against false verification.
 		None => true,
 	}
+}
+
+/// Heuristic: does this command line run a build/test/lint/type check?
+/// Program-token based (per `&&`/`;`/`|` segment, skipping `cd`/env/timeout
+/// prefixes) so path fragments like `/testbed` or grepping inside `tests/`
+/// don't false-match. Same cheap-heuristic philosophy as [`is_mutation_tool`];
+/// deliberately generous — the observational tree check still guards candidates.
+pub fn is_check_command(cmd: &str) -> bool {
+	let c = cmd.to_ascii_lowercase();
+	for seg in c.split(['&', ';', '|', '\n']) {
+		let mut toks = seg.split_whitespace();
+		let mut prog = None;
+		while let Some(t) = toks.next() {
+			if t == "cd" {
+				let _ = toks.next();
+				continue;
+			}
+			if t.contains('=') || matches!(t, "sudo" | "env" | "timeout" | "nice") {
+				continue;
+			}
+			if t.chars().all(|ch| ch.is_ascii_digit()) {
+				continue; // timeout seconds
+			}
+			prog = Some(t);
+			break;
+		}
+		let Some(p) = prog else { continue };
+		let base = p.rsplit('/').next().unwrap_or(p);
+		if matches!(
+			base,
+			"pytest"
+				| "tox" | "cargo"
+				| "make" | "mvn"
+				| "gradle" | "gradlew"
+				| "tsc" | "eslint"
+				| "mypy" | "ruff"
+				| "clippy" | "jest"
+				| "vitest" | "rspec"
+				| "phpunit" | "ctest"
+				| "go" | "npm"
+				| "yarn" | "pnpm"
+				| "npx" | "dotnet"
+				| "gcc" | "g++"
+				| "javac" | "flake8"
+				| "pylint" | "black"
+				| "rustc"
+		) {
+			return true;
+		}
+		if base.starts_with("python") || matches!(base, "node" | "ruby" | "php" | "perl") {
+			if seg.contains("pytest")
+				|| seg.contains("unittest")
+				|| seg.contains("assert")
+				|| seg.contains("test_")
+				|| seg.contains("_test")
+			{
+				return true;
+			}
+		}
+	}
+	false
 }
 
 /// Heuristic: does this tool change state, so a success is inherently progress?
@@ -587,6 +665,12 @@ impl Detectors {
 		} else if mutation_ok {
 			self.dirty_shape = true;
 		}
+		crate::log_debug!(
+			"round verification: tree_unchanged={} -> verified_fp={:?} dirty_shape={}",
+			tree_unchanged,
+			self.verified_fp,
+			self.dirty_shape
+		);
 	}
 
 	/// Reset the rolling windows (e.g. on a new user turn).
@@ -680,10 +764,18 @@ impl Detectors {
 	/// been run since to check it. `fp_now` is the live fingerprint measured at
 	/// decision time; without fingerprints the shape-based fallback answers.
 	pub fn needs_verification(&self, fp_now: Option<u64>) -> bool {
-		match (fp_now, self.verified_fp) {
+		let r = match (fp_now, self.verified_fp) {
 			(Some(now), Some(verified)) => now != verified,
 			_ => self.dirty_shape,
-		}
+		};
+		crate::log_debug!(
+			"needs_verification: fp_now={:?} verified_fp={:?} dirty_shape={} -> {}",
+			fp_now,
+			self.verified_fp,
+			self.dirty_shape,
+			r
+		);
+		r
 	}
 }
 

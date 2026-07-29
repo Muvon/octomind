@@ -520,6 +520,21 @@ pub async fn process_response<S: OutputSink>(
 					return Ok(());
 				}
 
+				// Observational verification (free pre-gate): fingerprint the working
+				// tree BEFORE this round's tools run. Measuring after execution (the
+				// old site, inside the bookkeeping loop) made fp_before == fp_after
+				// unconditionally, so "tree_unchanged" was trivially true and a round
+				// that both edited and looked verifier-shaped marked its own mutation
+				// as verified — blinding require_check_after_mutation.
+				let track_verification = params.config.supervisor.enabled
+					&& params.config.supervisor.gate.enabled
+					&& params.config.supervisor.gate.require_check_after_mutation;
+				let fp_before = if track_verification {
+					crate::supervisor::workdir::fingerprint()
+				} else {
+					None
+				};
+
 				// Execute all tool calls in parallel using the new module
 
 				// Emit ToolUse notifications before execution so ACP/WebSocket clients
@@ -637,18 +652,8 @@ pub async fn process_response<S: OutputSink>(
 					let mut round_truncated = false;
 					let mut round_dedup = false;
 					let mut round_drift = false;
-					// Observational verification (free pre-gate): fingerprint the working
-					// tree around the round — a changed tree IS the mutation signal,
-					// whatever tool made the change. Only measured when the pre-gate
-					// consumes it (one git spawn per round).
-					let track_verification = params.config.supervisor.enabled
-						&& params.config.supervisor.gate.enabled
-						&& params.config.supervisor.gate.require_check_after_mutation;
-					let fp_before = if track_verification {
-						crate::supervisor::workdir::fingerprint()
-					} else {
-						None
-					};
+					// (fp_before / track_verification are captured above, BEFORE
+					// execute_tools_parallel — see the pre-execution comment.)
 					let mut round_verifier = false;
 					let mut round_mutation = false;
 
@@ -745,6 +750,13 @@ pub async fn process_response<S: OutputSink>(
 					// round itself did not change.
 					if track_verification {
 						let fp_after = crate::supervisor::workdir::fingerprint();
+						crate::log_debug!(
+							"round fold: fp_before={:?} fp_after={:?} verifier={} mutation={}",
+							fp_before,
+							fp_after,
+							round_verifier,
+							round_mutation
+						);
 						params.chat_session.detectors.note_round_verification(
 							fp_before,
 							fp_after,

@@ -36,7 +36,12 @@ overflow-checks = false # Disable overflow checks in release mode
 octolib = { version = "0.26.1", default-features = false, features = ["huggingface"] }
 # fancy-regex: 0.23+ requires an explicit regex backend; pure-Rust over onig (C)
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] } # model's own tokenizer for exact token counts
-rmcp = { version = "2.2.0", default-features = false }
+rmcp = { version = "3.0.0", default-features = false, features = [
+	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
+	"transport-child-process",                 # stdio servers via tokio child process
+	"transport-streamable-http-client-reqwest", # Streamable HTTP client transport
+	"reqwest",                                 # rustls backend for the transport's reqwest
+] }
 
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }
 crossterm = "0.29.0"

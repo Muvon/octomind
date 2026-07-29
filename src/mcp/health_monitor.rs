@@ -16,7 +16,6 @@
 
 use super::process::{self, is_server_running, ServerHealth};
 use crate::config::{Config, McpConnectionType, McpServerConfig};
-use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -35,55 +34,6 @@ static HEALTH_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // Health monitoring configuration
 const HEALTH_CHECK_INTERVAL_SECONDS: u64 = 120; // Check every 2 minutes (balanced for production)
-
-/// Parse Server-Sent Events (SSE) response format used by some MCP servers like GitHub
-/// SSE format: "event: <type>\ndata: <json>\n\n"
-fn parse_sse_response(body: &str) -> Option<Value> {
-	// Look for "data:" prefix and extract JSON
-	for line in body.lines() {
-		if line.starts_with("data:") {
-			let json_data = line.trim_start_matches("data:").trim();
-			if let Ok(value) = serde_json::from_str(json_data) {
-				return Some(value);
-			}
-		}
-	}
-	None
-}
-
-/// Check if response content-type indicates SSE format
-fn is_sse_response(response: &reqwest::Response) -> bool {
-	response
-		.headers()
-		.get(reqwest::header::CONTENT_TYPE)
-		.and_then(|v| v.to_str().ok())
-		.map(|ct| ct.contains("text/event-stream"))
-		.unwrap_or(false)
-}
-
-/// Parse HTTP response body - handles both plain JSON and SSE format
-async fn parse_http_response_body(response: reqwest::Response) -> Result<Value, anyhow::Error> {
-	if is_sse_response(&response) {
-		// GitHub MCP uses SSE format: "event: message\ndata: {...}\n\n"
-		let body = response.text().await?;
-		crate::log_debug!(
-			"SSE response body (first 500 chars): {}",
-			body.chars().take(500).collect::<String>()
-		);
-
-		if let Some(json_value) = parse_sse_response(&body) {
-			return Ok(json_value);
-		}
-
-		return Err(anyhow::anyhow!(
-			"Failed to parse SSE response - no valid JSON data found"
-		));
-	}
-
-	// Default: plain JSON response
-	let jsonrpc_response: Value = response.json().await?;
-	Ok(jsonrpc_response)
-}
 
 /// Start the background health monitoring task
 pub async fn start_health_monitor(config: Arc<Config>) -> Result<(), anyhow::Error> {
@@ -460,166 +410,60 @@ pub async fn force_health_check(config: &Config) -> Result<(), anyhow::Error> {
 	Ok(())
 }
 
-/// Perform HTTP health check for remote servers
+/// Perform HTTP health check for remote servers.
+///
+/// A live rmcp client connection counts as healthy. When there is none (or it
+/// died), a reconnect attempt doubles as the health probe — the client speaks
+/// MCP 2026-07-28 with automatic legacy fallback, so this exercises the same
+/// path tool execution uses.
 async fn perform_http_health_check(
 	server: &McpServerConfig,
 ) -> Result<HttpHealthResult, anyhow::Error> {
-	if let Some(url) = server.url() {
-		let client = reqwest::Client::builder()
-			.timeout(std::time::Duration::from_secs(5)) // 5 second timeout for health checks
-			.build()?;
+	if server.url().is_none() {
+		return Err(anyhow::anyhow!("No URL configured for HTTP server"));
+	}
 
-		// Try to make a JSON-RPC tools/list request to check if server is responding
-		let health_url = url.trim_end_matches("/");
-
-		// Use the same header setup as the main server implementation
-		let mut headers = reqwest::header::HeaderMap::new();
-		headers.insert(
-			reqwest::header::ACCEPT,
-			reqwest::header::HeaderValue::from_static("application/json, text/event-stream"),
+	if crate::mcp::client::is_connected(server.name()) {
+		crate::log_debug!(
+			"HTTP health check for '{}': ✅ Healthy (client connection alive)",
+			server.name()
 		);
-		headers.insert(
-			reqwest::header::CONTENT_TYPE,
-			reqwest::header::HeaderValue::from_static("application/json"),
-		);
+		return Ok(HttpHealthResult::Healthy);
+	}
 
-		// Add authentication via MCP Authorization Discovery (RFC 9728)
-		match crate::mcp::oauth::discover_oauth_from_mcp_server(health_url, server.name()).await {
-			Ok(discovered_oauth) => {
-				crate::log_debug!(
-					"HEALTH_CHECK: MCP Authorization discovery succeeded for server '{}', attempting OAuth",
-					server.name()
-				);
-
-				match crate::mcp::oauth::get_access_token(&discovered_oauth, server.name(), false)
-					.await
-				{
-					Ok(Some(token)) => {
-						headers.insert(
-							reqwest::header::AUTHORIZATION,
-							reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))?,
-						);
-						crate::log_debug!(
-							"HEALTH_CHECK: Using discovered OAuth access token for server '{}', token_prefix='{}...'",
-							server.name(),
-							token.chars().take(10).collect::<String>()
-						);
-					}
-					Ok(None) => {
-						crate::log_debug!(
-							"HEALTH_CHECK: OAuth authentication was cancelled for server '{}'",
-							server.name()
-						);
-					}
-					Err(e) => {
-						crate::log_debug!(
-							"HEALTH_CHECK: Failed to get OAuth access token for server '{}': {}",
-							server.name(),
-							e
-						);
-					}
-				}
-			}
-			Err(e) => {
-				crate::log_debug!(
-					"HEALTH_CHECK: MCP Authorization discovery failed for server '{}': {}",
-					server.name(),
-					e
-				);
-			}
+	// No live connection — try to (re)connect as the health probe.
+	crate::mcp::client::disconnect(server.name());
+	match crate::mcp::client::connect_http(server).await {
+		Ok(_) => {
+			crate::log_debug!(
+				"HTTP health check for '{}': ✅ Healthy (reconnected)",
+				server.name()
+			);
+			Ok(HttpHealthResult::Healthy)
 		}
-
-		// Use tools/list for health check (same as main functionality)
-		let jsonrpc_request = crate::mcp::server::create_tools_list_request();
-
-		// Include Mcp-Session-Id if server has an active session
-		crate::mcp::server::add_session_id_header(&mut headers, server.name());
-
-		match client
-			.post(health_url)
-			.headers(headers)
-			.json(&jsonrpc_request)
-			.send()
-			.await
-		{
-			Ok(response) => {
-				// Check the actual response to determine health
-				let status = response.status();
-
-				if status.is_success() {
-					// 2xx - Parse response body to verify it's valid JSON-RPC
-					match parse_http_response_body(response).await {
-						Ok(json_response) => {
-							// Check if response contains valid result (tools list)
-							if json_response.get("result").is_some() {
-								crate::log_debug!(
-								"HTTP health check for '{}': ✅ Healthy (status: {}, valid JSON-RPC response)",
-								server.name(),
-								status
-							);
-								Ok(HttpHealthResult::Healthy)
-							} else if json_response.get("error").is_some() {
-								// JSON-RPC error response - server is responding but returned an error
-								crate::log_debug!(
-									"HTTP health check for '{}': ⚠️ Server returned JSON-RPC error",
-									server.name()
-								);
-								Ok(HttpHealthResult::Healthy) // Server is still healthy, just returned an error
-							} else {
-								crate::log_error!(
-									"HTTP health check for '{}': ❌ Invalid JSON-RPC response",
-									server.name()
-								);
-								Ok(HttpHealthResult::Dead)
-							}
-						}
-						Err(e) => {
-							crate::log_error!(
-								"HTTP health check for '{}': ❌ Failed to parse response body: {}",
-								server.name(),
-								e
-							);
-							Ok(HttpHealthResult::Dead)
-						}
-					}
-				} else if status == 401 || status == 403 {
-					// 401/403 - Server reachable but authentication/authorization failed
-					// This is NOT "running" - it's an auth failure - show as "Auth Failed"
-					crate::log_error!(
-					"HTTP health check for '{}': 🔒 Authentication failed (status: {}) - check your credentials",
+		Err(e) => {
+			let msg = e.to_string();
+			let lower = msg.to_lowercase();
+			// 401/403 means reachable but auth/config failed — don't treat as dead.
+			if lower.contains("401")
+				|| lower.contains("403")
+				|| lower.contains("unauthorized")
+				|| lower.contains("forbidden")
+			{
+				crate::log_error!(
+					"HTTP health check for '{}': 🔒 Authentication failed - check your credentials ({})",
 					server.name(),
-					status
+					msg
 				);
-					Ok(HttpHealthResult::Unreachable)
-				} else if status.is_server_error() {
-					// 5xx - Server has issues
-					crate::log_error!(
-						"HTTP health check for '{}': ⚠️ Server error (status: {})",
-						server.name(),
-						status
-					);
-					Ok(HttpHealthResult::Dead)
-				} else {
-					// Other 4xx errors - treat as not healthy
-					crate::log_error!(
-						"HTTP health check for '{}': ❌ Unhealthy (status: {})",
-						server.name(),
-						status
-					);
-					Ok(HttpHealthResult::Dead)
-				}
-			}
-			Err(e) => {
-				// Connection failed - server is unreachable
+				Ok(HttpHealthResult::Unreachable)
+			} else {
 				crate::log_error!(
 					"HTTP health check for '{}': ❌ Connection failed - {}",
 					server.name(),
-					e
+					msg
 				);
 				Ok(HttpHealthResult::Dead)
 			}
 		}
-	} else {
-		Err(anyhow::anyhow!("No URL configured for HTTP server"))
 	}
 }

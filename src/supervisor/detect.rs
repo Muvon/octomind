@@ -448,15 +448,18 @@ pub struct Detectors {
 	/// Observational verification state (see `supervisor::workdir::fingerprint`):
 	/// the working-tree fingerprint at the last clean verification — a
 	/// verifier-shaped call that succeeded on an UNCHANGED tree. Seeded from the
-	/// first observed round's pre-fingerprint (the task-start tree). The pre-gate
-	/// compares the live fingerprint against this: any difference, made through
-	/// ANY tool, means unverified change. Trajectory state, NOT a streak: it
-	/// persists across turns, so [`Detectors::reset_streak`] leaves it untouched.
+	/// first observed round's pre-fingerprint (the task-start tree). Once
+	/// `agent_dirty` is armed, the pre-gate compares the live fingerprint
+	/// against this. Trajectory state, NOT a streak: it persists across turns,
+	/// so [`Detectors::reset_streak`] leaves it untouched.
 	verified_fp: Option<u64>,
-	/// Fallback verification state for when fingerprints are unavailable (not a
-	/// git repo): a mutation-shaped success was seen with no verifier-shaped
-	/// success since.
-	dirty_shape: bool,
+	/// True when some agent ROUND changed the tree — its pre/post fingerprints
+	/// differ (a change made through ANY tool, `shell sed -i` included) or,
+	/// without fingerprints, a mutation-shaped success — and no clean
+	/// verification has run since. Keyed to the agent's own rounds, so external
+	/// drift between rounds (the user editing their tree mid-session) never
+	/// arms it: an agent that changed nothing has nothing to verify.
+	agent_dirty: bool,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -691,20 +694,20 @@ impl Detectors {
 			if let Some(a) = fp_after {
 				self.verified_fp = Some(a);
 			}
-			self.dirty_shape = false;
-		} else if mutation_ok {
-			self.dirty_shape = true;
+			self.agent_dirty = false;
+		} else if !tree_unchanged {
+			self.agent_dirty = true;
 		}
 		crate::log_debug!(
-			"round verification: tree_unchanged={} -> verified_fp={:?} dirty_shape={}",
+			"round verification: tree_unchanged={} -> verified_fp={:?} agent_dirty={}",
 			tree_unchanged,
 			self.verified_fp,
-			self.dirty_shape
+			self.agent_dirty
 		);
 	}
 
 	/// Reset the rolling windows (e.g. on a new user turn).
-	/// Verification state (`verified_fp`/`dirty_shape`) is intentionally NOT
+	/// Verification state (`verified_fp`/`agent_dirty`) is intentionally NOT
 	/// reset — it is trajectory state that only a clean verification clears,
 	/// not a per-streak counter.
 	pub fn reset_streak(&mut self) {
@@ -789,20 +792,24 @@ impl Detectors {
 		self.consecutive_drift = 0;
 	}
 
-	/// Free pre-gate signal: the working tree differs from its state at the last
-	/// clean verification — something changed (through ANY tool) and nothing has
-	/// been run since to check it. `fp_now` is the live fingerprint measured at
-	/// decision time; without fingerprints the shape-based fallback answers.
+	/// Free pre-gate signal: an agent round changed the tree and nothing has
+	/// been run since to check it. Armed ONLY by the agent's own rounds
+	/// (`agent_dirty`) — an agent that changed nothing is reporting, not
+	/// claiming work, and has nothing to verify, however much the tree drifts
+	/// externally. `fp_now` is the live fingerprint measured at decision time;
+	/// it stands the gate down when the tree is back at its last verified
+	/// state (e.g. the change was reverted).
 	pub fn needs_verification(&self, fp_now: Option<u64>) -> bool {
-		let r = match (fp_now, self.verified_fp) {
-			(Some(now), Some(verified)) => now != verified,
-			_ => self.dirty_shape,
-		};
+		let r = self.agent_dirty
+			&& match (fp_now, self.verified_fp) {
+				(Some(now), Some(verified)) => now != verified,
+				_ => true,
+			};
 		crate::log_debug!(
-			"needs_verification: fp_now={:?} verified_fp={:?} dirty_shape={} -> {}",
+			"needs_verification: fp_now={:?} verified_fp={:?} agent_dirty={} -> {}",
 			fp_now,
 			self.verified_fp,
-			self.dirty_shape,
+			self.agent_dirty,
 			r
 		);
 		r
@@ -1302,9 +1309,26 @@ mod tests {
 		// Clean verifier on an unchanged tree → verified at 12.
 		d.note_round_verification(Some(12), Some(12), true, false);
 		assert!(!d.needs_verification(Some(12)));
-		// Out-of-band change (e.g. an edit made through `shell sed -i`, which no
-		// name table could classify) — the fingerprint moves → unverified again.
-		assert!(d.needs_verification(Some(13)));
+		// Drift with NO agent round in between is external (the user editing
+		// their own tree): the agent changed nothing since its clean
+		// verification, so there is nothing for it to verify. Agent-made edits
+		// through ANY tool (`shell sed -i` included) are still caught — they
+		// move the fingerprint ACROSS their own round, as above.
+		assert!(!d.needs_verification(Some(13)));
+	}
+
+	#[test]
+	fn external_drift_never_arms_verification() {
+		let mut d = Detectors::default();
+		// Read-only rounds over a tree that drifts externally mid-session — the
+		// observe-only job shape (review/brief/audit): the deliverable is a
+		// report, and a done-claim needs no check run.
+		d.note_round_verification(Some(10), Some(10), false, false);
+		assert!(!d.needs_verification(Some(11)));
+		// A round that itself moved the tree arms it, even when no call was
+		// mutation-shaped (an edit hidden inside a shell command).
+		d.note_round_verification(Some(11), Some(12), false, false);
+		assert!(d.needs_verification(Some(12)));
 	}
 
 	#[test]

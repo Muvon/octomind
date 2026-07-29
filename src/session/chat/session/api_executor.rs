@@ -351,7 +351,19 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				.iter()
 				.any(|m| m.content.contains(PREGATE_MARKER))
 		};
+		// A project with `[[validator]]` guardrails has declared its own
+		// verification regime: end-of-turn scripts that run on their configured
+		// conditions and fail loudly into the inbox. Nudging the model to "run
+		// a check" on top of that second-guesses the project's regime — and
+		// misfires on jobs whose deliverable is a report, where running checks
+		// is not the task. Job-agnostic by design: keyed on configuration
+		// presence, never on message or job content.
+		let validators_configured =
+			crate::session::guardrails::get_rules(&chat_session.session.info.name)
+				.map(|r| !r.validators.is_empty())
+				.unwrap_or(false);
 		if config.supervisor.gate.require_check_after_mutation
+			&& !validators_configured
 			&& chat_session
 				.detectors
 				.needs_verification(crate::supervisor::workdir::fingerprint())

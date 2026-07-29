@@ -40,6 +40,12 @@ pub type McpService = RunningService<RoleClient, OctoClientHandler>;
 lazy_static::lazy_static! {
 	/// Active MCP client connections, keyed by server name.
 	static ref CLIENTS: RwLock<HashMap<String, Arc<McpService>>> = RwLock::new(HashMap::new());
+
+	/// OAuth bearer token baked into each HTTP connection's transport at
+	/// connect time. Compared against the token store before reusing a
+	/// connection so refreshed/rotated tokens trigger a reconnect (the
+	/// transport cannot change its Authorization header in place).
+	static ref HTTP_AUTH_TOKENS: RwLock<HashMap<String, Option<String>>> = RwLock::new(HashMap::new());
 }
 
 /// Client handler: identifies octomind (with the session context as an
@@ -107,6 +113,67 @@ impl ClientHandler for OctoClientHandler {
 		crate::mcp::server::clear_function_cache_for_server(&self.server_name);
 		self.emit("notifications/tools/list_changed", &serde_json::Value::Null);
 	}
+
+	async fn on_cancelled(
+		&self,
+		params: CancelledNotificationParam,
+		_context: NotificationContext<RoleClient>,
+	) {
+		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
+		self.emit("notifications/cancelled", &value);
+	}
+
+	async fn on_resource_updated(
+		&self,
+		params: rmcp::model::ResourceUpdatedNotificationParam,
+		_context: NotificationContext<RoleClient>,
+	) {
+		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
+		self.emit("notifications/resources/updated", &value);
+	}
+
+	async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
+		self.emit(
+			"notifications/resources/list_changed",
+			&serde_json::Value::Null,
+		);
+	}
+
+	async fn on_prompt_list_changed(&self, _context: NotificationContext<RoleClient>) {
+		self.emit(
+			"notifications/prompts/list_changed",
+			&serde_json::Value::Null,
+		);
+	}
+
+	async fn on_subscriptions_acknowledged(
+		&self,
+		params: rmcp::model::SubscriptionsAcknowledgedNotificationParams,
+		_context: NotificationContext<RoleClient>,
+	) {
+		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
+		self.emit("notifications/subscriptions/acknowledged", &value);
+	}
+
+	async fn on_task_status(
+		&self,
+		params: rmcp::model::TaskStatusNotificationParams,
+		_context: NotificationContext<RoleClient>,
+	) {
+		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
+		self.emit("notifications/tasks/status", &value);
+	}
+
+	/// Forward vendor/unknown notifications under their real method name —
+	/// the pre-rmcp implementation forwarded every JSON-RPC notification.
+	async fn on_custom_notification(
+		&self,
+		notification: rmcp::model::CustomNotification,
+		_context: NotificationContext<RoleClient>,
+	) {
+		let params = notification.params.unwrap_or(serde_json::Value::Null);
+		self.emit(&notification.method, &params);
+	}
 }
 
 /// Client identity + capabilities sent on every request (modern) or during
@@ -172,6 +239,7 @@ pub fn disconnect(server_name: &str) {
 	if let Some(service) = CLIENTS.write().unwrap().remove(server_name) {
 		service.cancellation_token().cancel();
 	}
+	HTTP_AUTH_TOKENS.write().unwrap().remove(server_name);
 }
 
 /// Remove and cancel every client connection (program shutdown).
@@ -180,6 +248,7 @@ pub fn disconnect_all() {
 	for (_, service) in services {
 		service.cancellation_token().cancel();
 	}
+	HTTP_AUTH_TOKENS.write().unwrap().clear();
 }
 
 /// Names of all registered client connections.
@@ -298,27 +367,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 	};
 	let server_name = server.name().to_string();
 
-	// Authentication via MCP Authorization Discovery (RFC 9728), same flow as before.
-	let mut auth_token: Option<String> = None;
-	match oauth::discover_oauth_from_mcp_server(&url, &server_name).await {
-		Ok(discovered) => match oauth::get_access_token(&discovered, &server_name, false).await {
-			Ok(Some(token)) => auth_token = Some(token),
-			Ok(None) => crate::log_error!(
-				"OAuth authentication was cancelled for server '{}'",
-				server_name
-			),
-			Err(e) => crate::log_error!(
-				"Failed to get OAuth access token for server '{}': {}",
-				server_name,
-				e
-			),
-		},
-		Err(e) => crate::log_debug!(
-			"MCP Authorization discovery failed for server '{}': {}",
-			server_name,
-			e
-		),
-	}
+	let auth_token = fetch_http_token(&url, &server_name).await;
 
 	let make_transport = || {
 		let mut config =
@@ -381,27 +430,99 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 		}
 	};
 
+	HTTP_AUTH_TOKENS
+		.write()
+		.unwrap()
+		.insert(server_name.clone(), auth_token);
 	Ok(register(&server_name, service))
+}
+
+/// Resolve the current OAuth access token for an HTTP server via MCP
+/// Authorization Discovery (RFC 9728). Returns None when the server needs no
+/// auth or no token is obtainable non-interactively.
+async fn fetch_http_token(url: &str, server_name: &str) -> Option<String> {
+	match oauth::discover_oauth_from_mcp_server(url, server_name).await {
+		Ok(discovered) => match oauth::get_access_token(&discovered, server_name, false).await {
+			Ok(Some(token)) => Some(token),
+			Ok(None) => {
+				crate::log_error!(
+					"OAuth authentication was cancelled for server '{}'",
+					server_name
+				);
+				None
+			}
+			Err(e) => {
+				crate::log_error!(
+					"Failed to get OAuth access token for server '{}': {}",
+					server_name,
+					e
+				);
+				None
+			}
+		},
+		Err(e) => {
+			crate::log_debug!(
+				"MCP Authorization discovery failed for server '{}': {}",
+				server_name,
+				e
+			);
+			None
+		}
+	}
 }
 
 /// Get the existing connection for a server or establish a new one.
 /// Stdio servers go through process-management bookkeeping in `process.rs`.
 pub async fn get_or_connect(server: &McpServerConfig) -> Result<Arc<McpService>> {
-	if let Some(service) = get(server.name()) {
-		if !service.is_closed() {
-			return Ok(service);
-		}
-		disconnect(server.name());
-	}
 	match server.connection_type() {
-		McpConnectionType::Http => connect_http(server).await,
+		McpConnectionType::Http => {
+			if let Some(service) = get(server.name()) {
+				if !service.is_closed() && http_auth_token_still_current(server).await {
+					return Ok(service);
+				}
+				disconnect(server.name());
+			}
+			connect_http(server).await
+		}
 		McpConnectionType::Stdin => {
+			if let Some(service) = get(server.name()) {
+				if !service.is_closed() {
+					return Ok(service);
+				}
+				disconnect(server.name());
+			}
 			super::process::ensure_server_running(server).await?;
 			get(server.name())
 				.ok_or_else(|| anyhow!("Server '{}' started but not registered", server.name()))
 		}
 		McpConnectionType::Builtin => Err(anyhow!("Builtin servers have no MCP client")),
 	}
+}
+
+/// True when the token store still yields the same bearer token this HTTP
+/// connection was created with. The transport's Authorization header is fixed
+/// at connect time, so an expired/rotated token requires a reconnect — the
+/// pre-rmcp implementation resolved the token before every HTTP call, and
+/// this check preserves that self-healing behavior for persistent connections.
+async fn http_auth_token_still_current(server: &McpServerConfig) -> bool {
+	let McpServerConfig::Http { url, .. } = server else {
+		return true;
+	};
+	let current = fetch_http_token(url, server.name()).await;
+	let stored = HTTP_AUTH_TOKENS
+		.read()
+		.unwrap()
+		.get(server.name())
+		.cloned()
+		.unwrap_or(None);
+	if current != stored {
+		crate::log_debug!(
+			"OAuth token changed for server '{}' — reconnecting with fresh credentials",
+			server.name()
+		);
+		return false;
+	}
+	true
 }
 
 /// List all tools from a server (rmcp drives pagination internally).

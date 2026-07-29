@@ -26,11 +26,22 @@ use std::hash::{Hash, Hasher};
 /// degrade to shape-based signals. Cost: one git spawn plus a stat per dirty
 /// file — run at most once per tool round.
 pub fn fingerprint() -> Option<u64> {
-	let out = std::process::Command::new("git")
+	let out = match std::process::Command::new("git")
 		.args(["status", "--porcelain", "-uall"])
 		.output()
-		.ok()?;
+	{
+		Ok(o) => o,
+		Err(e) => {
+			crate::log_debug!("workdir fingerprint: git spawn failed: {}", e);
+			return None;
+		}
+	};
 	if !out.status.success() {
+		crate::log_debug!(
+			"workdir fingerprint: git status rc={:?}: {}",
+			out.status.code(),
+			String::from_utf8_lossy(&out.stderr).trim()
+		);
 		return None;
 	}
 	let text = String::from_utf8_lossy(&out.stdout);

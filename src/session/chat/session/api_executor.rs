@@ -317,6 +317,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 
 	// Supervisor verify-gate: on self-reported completion, verify before accepting.
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
+	if config.supervisor.gate.enabled {
+		crate::log_debug!(
+			"gate: self_report={:?} iter={}/{} needs_verification={}",
+			chat_session.last_self_report,
+			chat_session.gate_iterations,
+			config.supervisor.gate.max_iterations,
+			chat_session
+				.detectors
+				.needs_verification(crate::supervisor::workdir::fingerprint())
+		);
+	}
 	if config.supervisor.gate.enabled
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
 		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations

@@ -568,7 +568,12 @@ async fn perform_http_health_check_sync(server: &crate::config::McpServerConfig)
 		);
 
 		// Use tools/list for health check (same as main functionality)
-		let jsonrpc_request = crate::mcp::server::create_tools_list_request();
+		let jsonrpc_request = serde_json::json!({
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list",
+			"params": {}
+		});
 
 		match client
 			.post(health_url)

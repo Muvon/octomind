@@ -12,173 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// External MCP server provider
+// External MCP server provider.
+//
+// Both stdio and Streamable HTTP servers are reached through the rmcp client
+// in `super::client` (MCP 2026-07-28 with automatic legacy fallback). This
+// module adds function caching, health gating, and result wrapping on top.
 
 use super::process;
 use super::{McpFunction, McpToolCall, McpToolResult};
 use crate::config::{Config, McpConnectionType, McpServerConfig};
-use crate::mcp::oauth::{self, token_store};
-use anyhow::{anyhow, Result};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
-use reqwest::Client;
-use serde_json::{json, Value};
+use crate::mcp::oauth::token_store;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-// Global cache for server function definitions to avoid repeated JSON-RPC calls
+// Global cache for server function definitions to avoid repeated tools/list calls
 // Functions are cached until server restarts (no TTL needed)
 lazy_static::lazy_static! {
 	static ref FUNCTION_CACHE: Arc<RwLock<HashMap<String, Vec<McpFunction>>>> =
 		Arc::new(RwLock::new(HashMap::new()));
-
-	// Per-server MCP session IDs (assigned by server during initialize)
-	static ref HTTP_SESSION_IDS: Arc<RwLock<HashMap<String, String>>> =
-		Arc::new(RwLock::new(HashMap::new()));
 }
 
-// Shared JSON-RPC message builders for MCP protocol
-pub fn create_tools_list_request() -> Value {
-	create_tools_list_request_with_cursor(None)
-}
-
-/// Create a tools/list request with optional pagination cursor.
-pub fn create_tools_list_request_with_cursor(cursor: Option<&str>) -> Value {
-	let mut params = json!({});
-	if let Some(c) = cursor {
-		params["cursor"] = json!(c);
-	}
-	json!({
-		"jsonrpc": "2.0",
-		"id": 1,
-		"method": "tools/list",
-		"params": params
-	})
-}
-
-/// Parse Server-Sent Events (SSE) response format used by some MCP servers like GitHub
-/// SSE format: "event: <type>\ndata: <json>\n\n"
-fn parse_sse_response(body: &str) -> Option<Value> {
-	// Look for "data:" prefix and extract JSON
-	for line in body.lines() {
-		if line.starts_with("data:") {
-			let json_data = line.trim_start_matches("data:").trim();
-			if let Ok(value) = serde_json::from_str(json_data) {
-				return Some(value);
-			}
-		}
-	}
-	None
-}
-
-/// Check if response content-type indicates SSE format
-fn is_sse_response(response: &reqwest::Response) -> bool {
-	response
-		.headers()
-		.get(CONTENT_TYPE)
-		.and_then(|v| v.to_str().ok())
-		.map(|ct| ct.contains("text/event-stream"))
-		.unwrap_or(false)
-}
-
-/// Parse HTTP response body - handles both plain JSON and SSE format
-async fn parse_http_response_body(response: reqwest::Response) -> Result<Value> {
-	if is_sse_response(&response) {
-		// GitHub MCP uses SSE format: "event: message\ndata: {...}\n\n"
-		let body = response.text().await?;
-		crate::log_debug!(
-			"SSE response body (first 500 chars): {}",
-			body.chars().take(500).collect::<String>()
-		);
-
-		if let Some(json_value) = parse_sse_response(&body) {
-			return Ok(json_value);
-		}
-
-		return Err(anyhow!(
-			"Failed to parse SSE response - no valid JSON data found"
-		));
-	}
-
-	// Default: plain JSON response
-	let jsonrpc_response: Value = response.json().await?;
-	Ok(jsonrpc_response)
-}
-
-pub fn create_initialize_request() -> Value {
-	json!({
-		"jsonrpc": "2.0",
-		"id": 1,
-		"method": "initialize",
-		"params": {
-			"protocolVersion": "2025-03-26",
-			"capabilities": {},
-			"clientInfo": {
-				"name": "octomind-health-check",
-				"version": env!("CARGO_PKG_VERSION")
-			}
-		}
-	})
-}
-
-fn create_session_initialize_request() -> Value {
-	let (role, spec, project, session_id, workdir) = process::get_session_context();
-	let session_obj = serde_json::json!({
-		"role": role,
-		"spec": spec,
-		"project": project,
-		"session_id": session_id,
-		"workdir": workdir,
-	});
-	json!({
-		"jsonrpc": "2.0",
-		"id": 1,
-		"method": "initialize",
-		"params": {
-			"protocolVersion": "2025-03-26",
-			"clientInfo": {
-				"name": "octomind",
-				"version": env!("CARGO_PKG_VERSION")
-			},
-			"capabilities": {
-				"experimental": {
-					"session": session_obj
-				}
-			}
-		}
-	})
-}
-
-fn create_tools_call_request(tool_name: &str, parameters: &Value) -> Value {
-	json!({
-		"jsonrpc": "2.0",
-		"id": 1,
-		"method": "tools/call",
-		"params": {
-			"name": tool_name,
-			"arguments": parameters
-		}
-	})
-}
-
-/// Add Mcp-Session-Id header if one was stored for this server
-pub fn add_session_id_header(headers: &mut HeaderMap, server_name: &str) {
-	if let Ok(ids) = HTTP_SESSION_IDS.read() {
-		if let Some(sid) = ids.get(server_name) {
-			if let Ok(val) = HeaderValue::from_str(sid) {
-				headers.insert("mcp-session-id", val);
-			}
-		}
-	}
-}
-
-/// Clear stored session ID for a server (called on disconnect/cleanup)
-pub fn clear_http_session_id(server_name: &str) {
-	if let Ok(mut ids) = HTTP_SESSION_IDS.write() {
-		ids.remove(server_name);
-	}
-}
-
-/// Parse tools from a ListToolsResult.
+/// Map rmcp tools to octomind function definitions.
 ///
 /// Returns the server's FULL tool inventory — no role/capability filtering
 /// applied here. The cached result is reused across role merges and runtime
@@ -187,11 +42,8 @@ pub fn clear_http_session_id(server_name: &str) {
 /// `capability enable <cap>` whose runtime overlay extends that filter
 /// (see `server_functions_for` in `src/mcp/mod.rs` for the union with
 /// `runtime_overlay::extras_for_server`).
-pub fn parse_tools_from_list_result(
-	list_result: &rmcp::model::ListToolsResult,
-) -> Vec<McpFunction> {
-	list_result
-		.tools
+pub fn tools_to_functions(tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
+	tools
 		.iter()
 		.map(|tool| McpFunction {
 			name: tool.name.as_ref().to_string(),
@@ -201,248 +53,22 @@ pub fn parse_tools_from_list_result(
 		.collect()
 }
 
-// Shared function to parse tools from JSON-RPC response
-fn parse_tools_from_jsonrpc_response(
-	response: &Value,
-) -> Result<(Vec<McpFunction>, Option<String>)> {
-	// Check for JSON-RPC error
-	if let Some(error) = response.get("error") {
-		return Err(anyhow::anyhow!("JSON-RPC error from MCP server: {}", error));
-	}
-
-	// Deserialize result into ListToolsResult for typed tool extraction
-	if let Some(result_value) = response.get("result").cloned() {
-		let list_result = serde_json::from_value::<rmcp::model::ListToolsResult>(result_value)
-			.map_err(|e| anyhow::anyhow!("Failed to deserialize ListToolsResult: {}", e))?;
-		let next_cursor = list_result.next_cursor.clone();
-		let functions = parse_tools_from_list_result(&list_result);
-		Ok((functions, next_cursor))
-	} else {
-		Err(anyhow::anyhow!(
-			"Invalid JSON-RPC response: missing 'result' field"
-		))
-	}
-}
-
-// Get server function definitions (will start server if needed)
+// Get server function definitions (will start/connect the server if needed)
 pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
 	// Note: enabled check is now handled at the role level via server_refs
-	// All servers in the registry are considered available
-
-	// Handle different server connection types
 	match server.connection_type() {
-		McpConnectionType::Http => {
-			// Handle local vs remote servers
-			let server_url = get_server_base_url(server).await?;
-
-			// Create a client
-			let client = Client::new();
-
-			// Prepare headers
-			let mut headers = HeaderMap::new();
-			headers.insert(
-				ACCEPT,
-				HeaderValue::from_static("application/json, text/event-stream"),
-			);
-			headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-			// Add authentication via MCP Authorization Discovery (RFC 9728)
-			match oauth::discover_oauth_from_mcp_server(&server_url, server.name()).await {
-				Ok(discovered_oauth) => {
-					crate::log_debug!(
-						"MCP Authorization discovery succeeded for server '{}', attempting OAuth flow",
-						server.name()
-					);
-
-					match oauth::get_access_token(&discovered_oauth, server.name(), false).await {
-						Ok(Some(token)) => {
-							headers.insert(
-								AUTHORIZATION,
-								HeaderValue::from_str(&format!("Bearer {}", token))?,
-							);
-							crate::log_debug!(
-								"Using discovered OAuth access token for HTTP server '{}'",
-								server.name()
-							);
-						}
-						Ok(None) => {
-							crate::log_error!(
-								"OAuth authentication was cancelled for server '{}'",
-								server.name()
-							);
-						}
-						Err(e) => {
-							crate::log_error!(
-								"Failed to get OAuth access token for server '{}': {}",
-								server.name(),
-								e
-							);
-						}
-					}
-				}
-				Err(e) => {
-					crate::log_debug!(
-						"MCP Authorization discovery failed for server '{}': {}",
-						server.name(),
-						e
-					);
-				}
-			}
-
-			// MCP uses JSON-RPC over HTTP with POST requests
-			let schema_url = server_url; // Use base URL for JSON-RPC
-
-			// MCP protocol: initialize → wait for response → send notifications/initialized → then tools/list
-			let init_request = create_session_initialize_request();
-			let init_response = client
-				.post(&schema_url)
-				.headers(headers.clone())
-				.json(&init_request)
-				.send()
-				.await?;
-
-			if !init_response.status().is_success() {
-				return Err(anyhow::anyhow!(
-					"Failed to initialize MCP server: {}",
-					init_response.status()
-				));
-			}
-
-			// Extract Mcp-Session-Id from response header (if server assigns one)
-			if let Some(session_id) = init_response.headers().get("mcp-session-id") {
-				if let Ok(sid) = session_id.to_str() {
-					crate::log_debug!(
-						"HTTP server '{}' assigned session ID: {}",
-						server.name(),
-						sid
-					);
-					if let Ok(mut ids) = HTTP_SESSION_IDS.write() {
-						ids.insert(server.name().to_string(), sid.to_string());
-					}
-				}
-			}
-
-			// Parse the initialize response and extract server capabilities
-			let init_result = parse_http_response_body(init_response).await?;
-			if init_result.get("error").is_some() {
-				return Err(anyhow::anyhow!(
-					"Server returned error during initialization: {}",
-					init_result["error"]
-				));
-			}
-
-			// Parse and store server capabilities from the initialize result
-			if let Some(result_value) = init_result.get("result").cloned() {
-				match serde_json::from_value::<rmcp::model::InitializeResult>(result_value) {
-					Ok(init_info) => {
-						crate::log_debug!(
-							"HTTP server '{}': {} v{}, protocol {}",
-							server.name(),
-							init_info.server_info.name,
-							init_info.server_info.version,
-							init_info.protocol_version
-						);
-						if let Some(ref instructions) = init_info.instructions {
-							crate::log_debug!(
-								"Server '{}' instructions: {}",
-								server.name(),
-								instructions
-							);
-						}
-						process::store_server_capabilities(server.name(), init_info);
-					}
-					Err(e) => {
-						crate::log_debug!(
-							"Failed to parse InitializeResult for '{}': {}",
-							server.name(),
-							e
-						);
-					}
-				}
-			}
-
-			// Send notifications/initialized (no id — it's a notification, not a request)
-			let initialized_notification = json!({
-				"jsonrpc": "2.0",
-				"method": "notifications/initialized"
-			});
-			let mut notif_headers = headers.clone();
-			add_session_id_header(&mut notif_headers, server.name());
-			let _ = client
-				.post(&schema_url)
-				.headers(notif_headers)
-				.json(&initialized_notification)
-				.send()
-				.await;
-
-			// Now list tools with pagination support (with session ID if assigned)
-			let mut all_functions = Vec::new();
-			let mut cursor: Option<String> = None;
-			const MAX_PAGES: usize = 20; // Safety limit
-
-			for page in 0..MAX_PAGES {
-				let jsonrpc_request = create_tools_list_request_with_cursor(cursor.as_deref());
-
-				crate::log_debug!(
-					"Making JSON-RPC tools/list request to HTTP server '{}' (page {}, cursor: {:?})",
-					server.name(),
-					page + 1,
-					cursor
-				);
-
-				let mut list_headers = headers.clone();
-				add_session_id_header(&mut list_headers, server.name());
-
-				let response = client
-					.post(&schema_url)
-					.headers(list_headers)
-					.json(&jsonrpc_request)
-					.send()
-					.await?;
-
-				if !response.status().is_success() {
-					return Err(anyhow::anyhow!(
-						"Failed to get schema from MCP server: {}",
-						response.status()
-					));
-				}
-
-				let jsonrpc_response = parse_http_response_body(response).await?;
-
-				crate::log_debug!(
-					"JSON-RPC response from server '{}': {}",
-					server.name(),
-					serde_json::to_string_pretty(&jsonrpc_response)
-						.unwrap_or_else(|_| jsonrpc_response.to_string())
-				);
-
-				let (functions, next_cursor) =
-					parse_tools_from_jsonrpc_response(&jsonrpc_response)?;
-				all_functions.extend(functions);
-
-				match next_cursor {
-					Some(c) if !c.is_empty() => cursor = Some(c),
-					_ => break,
-				}
-			}
-
-			Ok(all_functions)
+		McpConnectionType::Http | McpConnectionType::Stdin => {
+			let tools = super::client::list_tools(server).await?;
+			Ok(tools_to_functions(&tools))
 		}
-		McpConnectionType::Stdin => {
-			// For stdin-based servers, ensure the server is running and get functions
-			process::ensure_server_running(server).await?;
-			process::get_stdin_server_functions(server).await
-		}
-		McpConnectionType::Builtin => {
-			// Built-in servers don't need external processes
-			Err(anyhow::anyhow!(
-				"Built-in servers should not use get_server_functions"
-			))
-		}
+		McpConnectionType::Builtin => Err(anyhow::anyhow!(
+			"Built-in servers should not use get_server_functions"
+		)),
 	}
 }
 
-// Get server function definitions WITHOUT making JSON-RPC calls (optimized for system prompt generation)
+// Get server function definitions WITHOUT connecting when the server isn't
+// available (optimized for system prompt generation)
 pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
 	let server_id = server.name();
 
@@ -455,10 +81,10 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 	}
 
 	// For HTTP servers with a URL, always try to get tools - they're endpoints we can reach
-	// For stdin servers, check if process is running first
+	// For stdin servers, check if the connection is alive first
 	let should_fetch = match server.connection_type() {
 		McpConnectionType::Http => server.url().is_some(), // Always try for HTTP servers
-		McpConnectionType::Stdin => is_server_running_for_cache_check(server),
+		McpConnectionType::Stdin => super::client::is_connected(server_id),
 		McpConnectionType::Builtin => false, // Builtin servers handled separately
 	};
 
@@ -504,9 +130,9 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 				Ok(functions)
 			}
 			Err(e) => {
-				// HTTP server failed - log error and return empty
+				// Server failed - log error and return empty
 				crate::log_error!(
-					"Failed to connect to HTTP server '{}': {}. Verify the server is running at the configured URL.",
+					"Failed to connect to MCP server '{}': {}. Verify the server is running at the configured URL.",
 					server_id,
 					e
 				);
@@ -518,7 +144,7 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 			}
 		}
 	} else {
-		// Server is not running (stdin server without process). We only know a
+		// Server is not running (stdin server without connection). We only know a
 		// server's real tool names after it starts and answers tools/list.
 		// `server.tools()` holds the role's allowed_tools *filter patterns*
 		// (e.g. `*`, `text_*`), not real tool names — fabricating functions
@@ -529,40 +155,6 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 			server_id
 		);
 		Ok(Vec::new())
-	}
-}
-
-// Optimized server running check that doesn't hold locks for long
-fn is_server_running_for_cache_check(server: &McpServerConfig) -> bool {
-	// For HTTP servers, we can't know if they're running without actually connecting
-	// Just check if there's a process running for local servers
-	let processes = process::SERVER_PROCESSES.read().unwrap();
-	if let Some(process_arc) = processes.get(server.name()) {
-		// Try to get a quick lock - if we can't, assume it's busy and running
-		if let Ok(mut process) = process_arc.try_lock() {
-			match &mut *process {
-				process::ServerProcess::Http(child) => child
-					.try_wait()
-					.map(|status| status.is_none())
-					.unwrap_or(false),
-				process::ServerProcess::Stdin {
-					child, is_shutdown, ..
-				} => {
-					let process_alive = child
-						.try_wait()
-						.map(|status| status.is_none())
-						.unwrap_or(false);
-					let not_marked_shutdown =
-						!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
-					process_alive && not_marked_shutdown
-				}
-			}
-		} else {
-			// If we can't get the lock, assume the server is busy and running
-			true
-		}
-	} else {
-		false
 	}
 }
 
@@ -604,58 +196,8 @@ pub fn is_server_already_running_with_config(server: &crate::config::McpServerCo
 			true
 		}
 		McpConnectionType::Http | McpConnectionType::Stdin => {
-			// External servers - check the process registry.
-			// Use try_lock(): if held by in-flight spawn_blocking I/O, the server
-			// IS alive (actively running). Blocking on the std::sync::Mutex from
-			// this async context would freeze a tokio worker for the full
-			// read_line() duration → runtime deadlock. See is_server_running().
-			let is_process_running = {
-				let processes = process::SERVER_PROCESSES.read().unwrap();
-				if let Some(process_arc) = processes.get(server.name()) {
-					match process_arc.try_lock() {
-						Ok(mut process) => match &mut *process {
-							process::ServerProcess::Http(child) => child
-								.try_wait()
-								.map(|status| status.is_none())
-								.unwrap_or(false),
-							process::ServerProcess::Stdin {
-								child, is_shutdown, ..
-							} => {
-								let process_alive = child
-									.try_wait()
-									.map(|status| status.is_none())
-									.unwrap_or(false);
-								let not_marked_shutdown =
-									!is_shutdown.load(std::sync::atomic::Ordering::SeqCst);
-								process_alive && not_marked_shutdown
-							}
-						},
-						// Mutex held by active I/O — server is alive by definition.
-						Err(_) => true,
-					}
-				} else {
-					false
-				}
-			};
-
-			// Update health status based on actual process state
-			let health_status = if is_process_running {
-				process::ServerHealth::Running
-			} else {
-				process::ServerHealth::Dead
-			};
-
-			// Update restart tracking
-			{
-				let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
-				let info = restart_info_guard
-					.entry(server.name().to_string())
-					.or_default();
-				info.health_status = health_status;
-				info.last_health_check = Some(std::time::SystemTime::now());
-			}
-
-			is_process_running
+			// External servers — client connection liveness (updates health tracking).
+			process::is_server_running(server.name())
 		}
 	}
 }
@@ -690,11 +232,11 @@ pub async fn execute_tool_call(
 			));
 		}
 		process::ServerHealth::Dead => {
-			// For HTTP servers, "Dead" might just mean health check failed
-			// Allow execution to proceed - it has its own OAuth token loading
+			// For HTTP servers, "Dead" might just mean health check failed —
+			// execution reconnects with a fresh OAuth token on demand.
 			if server.connection_type() == McpConnectionType::Http {
 				crate::log_debug!(
-					"HTTP server '{}' health check failed, but allowing tool execution to proceed with fresh OAuth token",
+					"HTTP server '{}' health check failed, but allowing tool execution to proceed with fresh connection",
 					server.name()
 				);
 			} else {
@@ -716,10 +258,9 @@ pub async fn execute_tool_call(
 		}
 		process::ServerHealth::Unreachable => {
 			// For HTTP servers with OAuth, "Unreachable" often means auth failed in health check
-			// But tool execution has its own OAuth flow that might succeed
-			// Allow execution to proceed and let it fail with proper error if needed
+			// But tool execution reconnects with its own OAuth token that might succeed
 			crate::log_debug!(
-				"Server '{}' marked as unreachable (likely auth issue in health check), but allowing tool execution to proceed with fresh OAuth token",
+				"Server '{}' marked as unreachable (likely auth issue in health check), but allowing tool execution to proceed",
 				server.name()
 			);
 		}
@@ -728,7 +269,6 @@ pub async fn execute_tool_call(
 		}
 	}
 
-	// Execute the tool call with cancellation support
 	execute_tool_with_cancellation(call, server, cancellation_token).await
 }
 
@@ -745,215 +285,30 @@ async fn execute_tool_with_cancellation(
 		}
 	}
 
-	// Note: enabled check is now handled at the role level via server_refs
-	// All servers in the registry are considered available for execution
-
-	// Extract tool name and parameters
-	let tool_name = &call.tool_name;
-	let parameters = &call.parameters;
-
-	// Tool execution display is now handled in response.rs to avoid duplication
-
-	// Handle different server connection types
 	match server.connection_type() {
-		McpConnectionType::Http => {
-			// Check for cancellation before HTTP request
-			if let Some(ref token) = cancellation_token {
-				if *token.borrow() {
-					return Err(anyhow::anyhow!("External tool execution cancelled"));
-				}
-			}
-
-			// Handle local vs remote servers for HTTP mode
-			let server_url = get_server_base_url(server).await?;
-
-			// Create a client with configured timeout
-			let client = Client::builder()
-				.timeout(std::time::Duration::from_secs(server.timeout_seconds()))
-				.build()
-				.unwrap_or_else(|_| Client::new());
-
-			// Prepare headers
-			let mut headers = HeaderMap::new();
-			headers.insert(
-				ACCEPT,
-				HeaderValue::from_static("application/json, text/event-stream"),
-			);
-			headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-			// Add authentication - Try MCP Authorization discovery first, then manual OAuth, then static token
-			// Add authentication via MCP Authorization Discovery (RFC 9728)
-			match oauth::discover_oauth_from_mcp_server(&server_url, server.name()).await {
-				Ok(discovered_oauth) => {
-					crate::log_debug!(
-						"MCP Authorization discovery succeeded for server '{}' tool execution",
-						server.name()
-					);
-
-					match oauth::get_access_token(&discovered_oauth, server.name(), false).await {
-						Ok(Some(token)) => {
-							headers.insert(
-								AUTHORIZATION,
-								HeaderValue::from_str(&format!("Bearer {}", token))?,
-							);
-							crate::log_debug!(
-							"Using discovered OAuth access token for HTTP server '{}' tool execution",
-							server.name()
-						);
-						}
-						Ok(None) => {
-							crate::log_error!(
-								"OAuth authentication was cancelled for server '{}'",
-								server.name()
-							);
-						}
-						Err(e) => {
-							crate::log_error!(
-								"Failed to get OAuth access token for server '{}': {}",
-								server.name(),
-								e
-							);
-						}
-					}
-				}
-				Err(e) => {
-					crate::log_debug!(
-						"MCP Authorization discovery failed for server '{}' tool execution: {}",
-						server.name(),
-						e
-					);
-				}
-			}
-
-			// Use base URL for JSON-RPC tool execution
-			let execute_url = server_url;
-
-			// Use shared JSON-RPC request builder
-			let request_body = create_tools_call_request(tool_name, parameters);
-
-			// Check for cancellation one more time before sending request
-			if let Some(ref token) = cancellation_token {
-				if *token.borrow() {
-					return Err(anyhow::anyhow!("External tool execution cancelled"));
-				}
-			}
-
-			// Include Mcp-Session-Id if server assigned one during initialization
-			add_session_id_header(&mut headers, server.name());
-
-			// Make request to execute tool
-			let response = client
-				.post(&execute_url)
-				.headers(headers)
-				.json(&request_body)
-				.send()
-				.await?;
-
-			// Check if request was successful
-			if !response.status().is_success() {
-				// Save the status before consuming the response with text()
-				let status = response.status();
-				let error_text = response.text().await?;
-				return Err(anyhow::anyhow!(
-					"Failed to execute tool on MCP server: {}, {}",
-					status,
-					error_text
-				));
-			}
-
-			// Parse JSON-RPC response (handles both plain JSON and SSE format)
-			let result = parse_http_response_body(response).await?;
-
-			// Create MCP-compliant tool result - check if external server returned an error
-			let tool_result = if result.get("error").is_some() {
-				// External server returned an error - create error result
-				let error_message = result
-					.get("error")
-					.and_then(|e| e.get("message"))
-					.and_then(|m| m.as_str())
-					.unwrap_or("External MCP server error");
-				McpToolResult::error(
-					tool_name.clone(),
-					call.tool_id.clone(),
-					error_message.to_string(),
-				)
-			} else {
-				// External server returned success — deserialize CallToolResult directly
-				let output = result.get("result").cloned().unwrap_or_default();
-				let call_tool_result = serde_json::from_value::<rmcp::model::CallToolResult>(
-					output,
-				)
-				.unwrap_or_else(|_| {
-					rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
-						"No result",
-					)])
-				});
-				McpToolResult {
-					tool_name: tool_name.clone(),
+		McpConnectionType::Http | McpConnectionType::Stdin => {
+			match super::client::call_tool(server, call, cancellation_token).await {
+				Ok(result) => Ok(McpToolResult {
+					tool_name: call.tool_name.clone(),
 					tool_id: call.tool_id.clone(),
-					result: call_tool_result,
+					result,
+				}),
+				Err(e) => {
+					crate::log_error!("Error executing tool call '{}': {}", call.tool_name, e);
+					// Return a formatted error as the tool result rather than failing
+					Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						format!("Error executing tool: {}", e),
+					))
 				}
-			};
-
-			Ok(tool_result)
-		}
-		McpConnectionType::Stdin => {
-			// For stdin-based servers, use the stdin communication channel with cancellation support
-			process::execute_stdin_tool_call(call, server, cancellation_token).await
+			}
 		}
 		McpConnectionType::Builtin => {
 			// Built-in servers should not use this function
 			Err(anyhow::anyhow!(
 				"Built-in servers should not use execute_tool_call"
 			))
-		}
-	}
-}
-
-// Get the base URL for a server, starting it if necessary for local servers
-async fn get_server_base_url(server: &McpServerConfig) -> Result<String> {
-	match server.connection_type() {
-		McpConnectionType::Http => {
-			// First check if this is a remote server with a URL (should not be started)
-			if let Some(url) = server.url() {
-				// This is a remote server with a URL - return it directly
-				crate::log_debug!(
-					"Using remote HTTP server '{}' at URL: {}",
-					server.name(),
-					url
-				);
-				let base_url = url.trim_end_matches("/").to_string();
-				crate::log_debug!(
-					"Processed base URL for server '{}': {}",
-					server.name(),
-					base_url
-				);
-				Ok(base_url)
-			} else if server.command().is_some() {
-				// This is a local server, ensure it's running
-				crate::log_debug!(
-					"Starting local HTTP server '{}' with command: {:?}",
-					server.name(),
-					server.command()
-				);
-				process::ensure_server_running(server).await
-			} else {
-				// Neither remote nor local configuration
-				Err(anyhow::anyhow!("Invalid server configuration: neither URL nor command specified for server '{}'", server.name()))
-			}
-		}
-		McpConnectionType::Stdin => {
-			// For stdin-based servers, return a pseudo-URL
-			if server.command().is_some() {
-				// Ensure the stdin server is running
-				process::ensure_server_running(server).await
-			} else {
-				Err(anyhow::anyhow!("Invalid server configuration: command not specified for stdin-based server '{}'", server.name()))
-			}
-		}
-		McpConnectionType::Builtin => {
-			// Built-in servers don't have URLs
-			Err(anyhow::anyhow!("Built-in servers don't have URLs"))
 		}
 	}
 }

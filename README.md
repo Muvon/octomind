@@ -22,6 +22,7 @@
 ## Table of Contents
 
 - [The Problem](#the-problem)
+- [Benchmarks — Real PRs, Held-Out Tests](#benchmarks--real-prs-held-out-tests)
 - [Five Pillars](#five-pillars)
 - [Pillar 1 — Zero Config, Full Flexibility](#pillar-1--zero-config-full-flexibility)
 - [Pillar 2 — Sessions That Stay Sharp at Hour 4](#pillar-2--sessions-that-stay-sharp-at-hour-4)
@@ -51,6 +52,23 @@ Building a specialist AI agent in 2026 means stitching together three different 
 - **Bills surprise you.** Cursor users posting $7K daily overages. No per-task budget, no kill switch.
 
 Octomind ships specialist agents ready to run — and a runtime that grows with you.
+
+---
+
+## Benchmarks — Real PRs, Held-Out Tests
+
+We benchmark on [octobench](https://github.com/Muvon/octobench): **25 tasks harvested from pull requests merged in 2026** — mostly after model training cutoffs — across python, php, rust, c++, and js. Each agent works in the pre-fix repo; the merged fix's own maintainer-written tests (which the agent never sees) decide pass or fail. Four agents, stock single-agent invocations, no tuning:
+
+| | solved | judge Σ / 2500 | cost | wall time |
+|---|---|---|---|---|
+| **octomind + glm-5.2** | **24/25** | **2264** | $63.43 | 3.6h |
+| claude code + claude-opus-5 | 23/25 | 2262 | $81.79 | 6.7h |
+| codex + gpt-5.6-sol | 21/25 | 2127 | $14.86 | 1.0h |
+| opencode + glm-5.2 | 19/25 | 2093 | $129.54 | 3.3h |
+
+- **The harness is the leverage.** opencode ran the same model on the same endpoint at the same prices — a pure harness A/B. octomind solved 24 vs 19, at half the cost: context discipline plus supervision on exactly the deep-root-cause tasks where unsupervised agents declare victory too early.
+- **Worst-case pricing, still ahead.** glm-5.2 ran without prompt caching (every token at list price) while Opus billed ~97% of context re-reads at 1/10 cache rates — and octomind still led on solves, cost, and wall time.
+- **Reproducible.** Full per-case table, run artifacts, and reproduction guide: [BENCHMARK.md @ 8aa3968](https://github.com/Muvon/octobench/blob/8aa39684ff6103782aacb1bd79ea98e96e50d6cf/BENCHMARK.md). The story behind the benchmark: [blog post](https://octomind.run/blog/coding-agent-benchmark-real-prs).
 
 ---
 

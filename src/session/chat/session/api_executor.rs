@@ -28,6 +28,7 @@ use tokio::sync::watch;
 use crate::session::output::{OutputMode, OutputSink};
 
 const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
+const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
 const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run this project's check (build / test / lint — whatever it uses), watch the result, and report the actual outcome: pass, fail, or — if this project has no such check — which command you tried and why none applies. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
@@ -313,6 +314,41 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			animation_manager.stop_current().await;
 			return Err(e);
 		}
+	}
+
+	// Unfinished hand-back pre-gate (free, deterministic): in non-interactive
+	// runs there is no user to pick the turn back up, so a final message with no
+	// tool calls while the agent's OWN status still says exploring/progressing is
+	// a promise, not a result ("Let me implement the fix." → session end). Advisory
+	// continuation driven purely by the self-report — done stays gated,
+	// blocked/need_input stay legitimate hand-backs. Bounded by the shared gate
+	// budget, so a model that keeps yielding cannot loop it.
+	if config.supervisor.gate.enabled
+		&& !mode.is_interactive()
+		&& matches!(
+			chat_session.last_self_report,
+			Some(crate::supervisor::detect::SelfReport::Exploring)
+				| Some(crate::supervisor::detect::SelfReport::Progressing)
+		) && chat_session.gate_iterations < config.supervisor.gate.max_iterations
+	{
+		chat_session.add_system_managed_user_message(CONTINUE_NOTE)?;
+		chat_session.last_self_report = None;
+		chat_session.gate_iterations += 1;
+		crate::supervisor::stats::pregate_block();
+		crate::supervisor::notify("turn ended while still in progress — continuing");
+		crate::log_debug!(
+			"Pre-gate: unfinished hand-back; re-running turn (iter {})",
+			chat_session.gate_iterations
+		);
+		return Box::pin(execute_api_call_and_process_response(
+			chat_session,
+			config,
+			role,
+			operation_rx,
+			mode,
+			sink,
+		))
+		.await;
 	}
 
 	// Supervisor verify-gate: on self-reported completion, verify before accepting.

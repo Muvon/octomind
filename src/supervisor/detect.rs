@@ -372,15 +372,14 @@ pub fn is_check_command(cmd: &str) -> bool {
 		) {
 			return true;
 		}
-		if base.starts_with("python") || matches!(base, "node" | "ruby" | "php" | "perl") {
-			if seg.contains("pytest")
+		if (base.starts_with("python") || matches!(base, "node" | "ruby" | "php" | "perl"))
+			&& (seg.contains("pytest")
 				|| seg.contains("unittest")
 				|| seg.contains("assert")
 				|| seg.contains("test_")
-				|| seg.contains("_test")
-			{
-				return true;
-			}
+				|| seg.contains("_test"))
+		{
+			return true;
 		}
 	}
 	false

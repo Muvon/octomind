@@ -2059,9 +2059,9 @@ dependencies = [
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
+checksum = "707114b52a152fa7bdb290cd7cd5912d9467273b6d74e21b8d81aca1f8533f6b"
 dependencies = [
  "typenum",
 ]
@@ -2985,6 +2985,8 @@ dependencies = [
 [[package]]
 name = "octolib"
 version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f11fa1be703796aa4e2f75843f754ce63843d29933cf1ca70c0d5e1d0bd30947"
 dependencies = [
  "anyhow",
  "arc-swap",

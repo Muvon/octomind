@@ -74,8 +74,6 @@ pub async fn setup_and_initialize_session(
 )> {
 	use indicatif::{ProgressBar, ProgressStyle};
 
-	let is_interactive = std::io::stdin().is_terminal();
-
 	// Read session parameters directly off the args struct.
 	let name = args.name.clone();
 	let resume = args.resume.clone();
@@ -95,6 +93,11 @@ pub async fn setup_and_initialize_session(
 	} else {
 		"plain".to_string()
 	};
+	// ACP/WebSocket/JSONL are structured transports even when somebody launches
+	// them from a terminal. Never create a spinner there: besides corrupting the
+	// wire stream, its synchronous suspend path uses `block_in_place`, which
+	// panics inside ACP's LocalSet.
+	let is_interactive = output_mode == "plain" && std::io::stdin().is_terminal();
 
 	// Validate role exists before doing anything — give a clean error instead of a panic
 	if !config.has_role(&role) {

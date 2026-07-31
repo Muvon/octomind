@@ -510,6 +510,10 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 						TapJobStatus::Done,
 						format!("[Tap-run '{id_owned}' ({role_owned}) completed]\n\n{text}"),
 					),
+					Err(e) if crate::session::cancellation::is_cancelled(&e) => (
+						TapJobStatus::Cancelled,
+						format!("[Tap-run '{id_owned}' ({role_owned}) cancelled]"),
+					),
 					Err(e) => (
 						TapJobStatus::Failed,
 						format!("[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}"),
@@ -580,15 +584,24 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			))
 		}
 		Err(e) => {
+			let cancelled = crate::session::cancellation::is_cancelled(&e);
 			if let Ok(mut s) = status.write() {
 				if *s == TapJobStatus::Running {
-					*s = TapJobStatus::Failed;
+					*s = if cancelled {
+						TapJobStatus::Cancelled
+					} else {
+						TapJobStatus::Failed
+					};
 				}
 			}
 			Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Tap-run '{id}' ({role}) failed: {e:#}"),
+				if cancelled {
+					format!("Tap-run '{id}' ({role}) cancelled")
+				} else {
+					format!("Tap-run '{id}' ({role}) failed: {e:#}")
+				},
 			))
 		}
 	}

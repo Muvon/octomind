@@ -697,13 +697,17 @@ pub async fn run_acp_command(
 	mut cancel_rx: watch::Receiver<bool>,
 	tap_run_id: Option<&str>,
 ) -> Result<String> {
-	let mut child = Command::new(program)
+	let mut command = Command::new(program);
+	command
 		.args(args)
 		.current_dir(workdir)
 		.stdin(std::process::Stdio::piped())
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::null())
-		.spawn()?;
+		// Every error path below must own the subprocess lifetime. Without this,
+		// a handshake error/cancellation drops `Child` but leaves octomind running.
+		.kill_on_drop(true);
+	let mut child = command.spawn()?;
 
 	let mut stdin = child
 		.stdin
@@ -730,7 +734,7 @@ pub async fn run_acp_command(
 			.as_bytes(),
 		)
 		.await?;
-	wait_for_response(&mut lines, 1).await?;
+	wait_for_response(&mut lines, 1, &mut cancel_rx).await?;
 
 	// 2. session/new
 	stdin
@@ -745,7 +749,7 @@ pub async fn run_acp_command(
 		)
 		.await?;
 
-	let session_resp = wait_for_response(&mut lines, 2).await?;
+	let session_resp = wait_for_response(&mut lines, 2, &mut cancel_rx).await?;
 	let session_id = session_resp
 		.get("result")
 		.and_then(|r| r.get("sessionId"))
@@ -772,13 +776,14 @@ pub async fn run_acp_command(
 	// returning an empty string. Without this the parent sees `output: ""`
 	// with status `done` even when the API call inside the subprocess failed.
 	let mut prompt_error: Option<Value> = None;
+	let mut prompt_response_received = false;
 
 	loop {
 		// Check for cancellation before each line read
 		if *cancel_rx.borrow() {
 			// Kill the child process on cancellation
 			let _ = child.kill().await;
-			return Err(anyhow::anyhow!("Agent task cancelled"));
+			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
 
 		// Use tokio::select to handle both cancellation and line reading
@@ -792,7 +797,9 @@ pub async fn run_acp_command(
 			_ = cancel_rx.changed() => {
 				// Cancellation received - kill child and return
 				let _ = child.kill().await;
-				return Err(anyhow::anyhow!("Agent task cancelled"));
+				return Err(anyhow::Error::new(
+					crate::session::cancellation::Cancelled,
+				));
 			}
 		};
 
@@ -827,6 +834,7 @@ pub async fn run_acp_command(
 		// Stop when we get the prompt response (id=3). Capture any error
 		// payload so we can fail the call instead of returning empty output.
 		if msg.get("id").and_then(|i| i.as_u64()) == Some(3) {
+			prompt_response_received = true;
 			if let Some(err) = msg.get("error") {
 				prompt_error = Some(err.clone());
 			}
@@ -843,6 +851,18 @@ pub async fn run_acp_command(
 		.is_err()
 	{
 		let _ = child.kill().await;
+	}
+
+	if !prompt_response_received {
+		let partial = output.trim();
+		if partial.is_empty() {
+			return Err(anyhow::anyhow!(
+				"ACP subprocess closed before the session/prompt response"
+			));
+		}
+		return Err(anyhow::anyhow!(
+			"ACP subprocess closed before the session/prompt response\n\nPartial output:\n{partial}"
+		));
 	}
 
 	if let Some(err) = prompt_error {
@@ -1068,11 +1088,27 @@ fn acp_prompt_params(session_id: &str, task: &str) -> Value {
 async fn wait_for_response(
 	lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
 	id: u64,
+	cancel_rx: &mut watch::Receiver<bool>,
 ) -> Result<Value> {
 	loop {
-		let line = match lines.next_line().await? {
-			Some(l) => l,
-			None => return Err(anyhow::anyhow!("Subprocess closed before response id={id}")),
+		if *cancel_rx.borrow() {
+			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+		}
+		let line = tokio::select! {
+			line = lines.next_line() => match line? {
+				Some(line) => line,
+				None => return Err(anyhow::anyhow!("Subprocess closed before response id={id}")),
+			},
+			changed = cancel_rx.changed() => {
+				// A dropped sender has the same terminal meaning as an explicit
+				// cancellation: nobody can resume ownership of this request.
+				if changed.is_err() || *cancel_rx.borrow() {
+					return Err(anyhow::Error::new(
+						crate::session::cancellation::Cancelled,
+					));
+				}
+				continue;
+			}
 		};
 		if line.trim().is_empty() {
 			continue;
@@ -1254,8 +1290,39 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 		let err = run_fake_server(script, cancel_rx)
 			.await
 			.expect_err("cancellation must fail the run");
-		assert!(err.to_string().contains("cancelled"), "got: {err:#}");
+		assert!(
+			crate::session::cancellation::is_cancelled(&err),
+			"got: {err:#}"
+		);
 		// Cancel must act immediately — not wait out any grace period.
 		assert!(started.elapsed() < Duration::from_secs(4));
+	}
+
+	#[tokio::test]
+	async fn cancellation_kills_child_during_handshake() {
+		let (cancel_tx, cancel_rx) = watch::channel(false);
+		tokio::spawn(async move {
+			tokio::time::sleep(Duration::from_millis(200)).await;
+			let _ = cancel_tx.send(true);
+		});
+		let started = Instant::now();
+		let err = run_fake_server("exec sleep 1000".to_string(), cancel_rx)
+			.await
+			.expect_err("handshake cancellation must fail the run");
+		assert!(crate::session::cancellation::is_cancelled(&err));
+		assert!(started.elapsed() < Duration::from_secs(4));
+	}
+
+	#[tokio::test]
+	async fn eof_before_prompt_response_is_failure() {
+		let script = format!("{HANDSHAKE}IFS= read -r _\nIFS= read -r _\nIFS= read -r _\nexit 0");
+		let err = run_fake_server(script, watch::channel(false).1)
+			.await
+			.expect_err("missing id=3 response must fail the run");
+		assert!(
+			err.to_string()
+				.contains("closed before the session/prompt response"),
+			"got: {err:#}"
+		);
 	}
 }

@@ -24,12 +24,16 @@ use crate::config::{McpConnectionType, McpServerConfig};
 use crate::mcp::{oauth, McpToolCall};
 use anyhow::{anyhow, Result};
 use rmcp::model::{
-	CallToolRequest, CallToolRequestParams, CancelledNotificationParam, ClientCapabilities,
-	ClientInfo, ClientRequest, ElicitationCapability, ExtensionCapabilities, Implementation,
-	ProtocolVersion, RootsCapabilities, SamplingCapability, ServerResult, TASKS_EXTENSION_ID,
+	CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams,
+	CancelledNotificationParam, ClientCapabilities, ClientInfo, ClientRequest, ElicitRequestParams,
+	ElicitResult, ElicitationAction, ElicitationCapability, ExtensionCapabilities,
+	FormElicitationCapability, GetTaskParams, Implementation, InputRequest, InputResponses,
+	ProtocolVersion, ServerResult, TaskPayload, UpdateTaskParams, UrlElicitationCapability,
+	DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
-	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RunningService,
+	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
+	RunningService,
 };
 use rmcp::{ClientHandler, RoleClient};
 use std::collections::HashMap;
@@ -165,6 +169,20 @@ impl ClientHandler for OctoClientHandler {
 		self.emit("notifications/tasks/status", &value);
 	}
 
+	/// Elicitation needs an application UI capable of collecting and validating
+	/// arbitrary schema-bound input. Octomind currently has no such response
+	/// channel in CLI, ACP, or WebSocket mode, so make the protocol decision
+	/// explicit and deterministic instead of relying on rmcp's silent default.
+	async fn create_elicitation(
+		&self,
+		request: ElicitRequestParams,
+		_context: RequestContext<RoleClient>,
+	) -> std::result::Result<ElicitResult, rmcp::ErrorData> {
+		let value = serde_json::to_value(&request).unwrap_or(serde_json::Value::Null);
+		self.emit("elicitation/requested", &value);
+		Ok(ElicitResult::new(ElicitationAction::Decline))
+	}
+
 	/// Forward vendor/unknown notifications under their real method name —
 	/// the pre-rmcp implementation forwarded every JSON-RPC notification.
 	async fn on_custom_notification(
@@ -197,14 +215,18 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientInfo {
 		capabilities.experimental = Some([("session".to_string(), map)].into());
 	}
 
-	// MCP 3.0 capabilities: tasks, elicitation, sampling, roots.
-	let mut extensions = ExtensionCapabilities::new();
-	extensions.insert(TASKS_EXTENSION_ID.to_string(), serde_json::Map::new());
-	capabilities.extensions = Some(extensions);
-	capabilities.elicitation = Some(ElicitationCapability::new());
-	capabilities.sampling = Some(SamplingCapability::default());
-	capabilities.roots = Some(RootsCapabilities::default());
-
+	// Advertise only capabilities that this handler actually services. Roots
+	// and Sampling are deprecated by SEP-2577 and are intentionally absent.
+	if protocol_version >= ProtocolVersion::V_2026_07_28 {
+		let mut extensions = ExtensionCapabilities::new();
+		extensions.insert(TASKS_EXTENSION_ID.to_string(), serde_json::Map::new());
+		capabilities.extensions = Some(extensions);
+		capabilities.elicitation = Some(
+			ElicitationCapability::new()
+				.with_form(FormElicitationCapability::default())
+				.with_url(UrlElicitationCapability::default()),
+		);
+	}
 	ClientInfo::new(
 		capabilities,
 		Implementation::new("octomind", env!("CARGO_PKG_VERSION")),
@@ -546,11 +568,12 @@ pub async fn list_tools(server: &McpServerConfig) -> Result<Vec<rmcp::model::Too
 	.map_err(|e| anyhow!("tools/list failed for server '{}': {}", server.name(), e))
 }
 
-/// Wait until the cancellation token fires. Mirrors the previous semantics:
-/// a dropped sender counts as cancellation.
-async fn wait_cancelled(token: Option<tokio::sync::watch::Receiver<bool>>) {
+/// Wait until the cancellation token fires. A dropped sender has the same
+/// terminal meaning as an explicit cancellation: no owner remains to resume
+/// the operation.
+async fn wait_cancelled(token: &mut Option<tokio::sync::watch::Receiver<bool>>) {
 	match token {
-		Some(mut rx) => {
+		Some(rx) => {
 			while !*rx.borrow() {
 				if rx.changed().await.is_err() {
 					break;
@@ -561,20 +584,12 @@ async fn wait_cancelled(token: Option<tokio::sync::watch::Receiver<bool>>) {
 	}
 }
 
-/// Execute a tool call with timeout and cancellation. On cancellation the
-/// server is sent `notifications/cancelled` so it can stop the work.
-pub async fn call_tool(
+async fn call_tool_round(
+	service: &McpService,
 	server: &McpServerConfig,
-	call: &McpToolCall,
-	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
-) -> Result<rmcp::model::CallToolResult> {
-	let service = get_or_connect(server).await?;
-
-	let mut params = CallToolRequestParams::new(call.tool_name.clone());
-	if let serde_json::Value::Object(arguments) = call.parameters.clone() {
-		params = params.with_arguments(arguments);
-	}
-
+	params: CallToolRequestParams,
+	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<CallToolResponse> {
 	let options = PeerRequestOptions::with_timeout(Duration::from_secs(server.timeout_seconds()))
 		.reset_timeout_on_progress();
 	let handle = service
@@ -585,10 +600,8 @@ pub async fn call_tool(
 		)
 		.await
 		.map_err(|e| anyhow!("Failed to send tools/call to '{}': {}", server.name(), e))?;
-
 	let request_id = handle.id.clone();
 	let peer = handle.peer.clone();
-
 	let result = tokio::select! {
 		result = handle.await_response() => result,
 		_ = wait_cancelled(cancellation_token) => {
@@ -598,25 +611,237 @@ pub async fn call_tool(
 					Some("cancelled by user".to_string()),
 				))
 				.await;
-			return Err(anyhow!("Tool execution cancelled"));
+			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
-	};
-
+	}?;
 	match result {
-		Ok(ServerResult::CallToolResult(result)) => Ok(result),
-		Ok(ServerResult::InputRequiredResult(_)) => Err(anyhow!(
-			"Tool '{}' requires interactive input (MRTR), which octomind does not support",
-			call.tool_name
-		)),
-		Ok(_) => Err(anyhow!(
-			"Unexpected response type for tools/call '{}'",
-			call.tool_name
-		)),
-		Err(e) => Err(anyhow!(
-			"Tool '{}' failed on server '{}': {}",
-			call.tool_name,
-			server.name(),
-			e
-		)),
+		ServerResult::CallToolResult(result) => Ok(CallToolResponse::Complete(result)),
+		ServerResult::InputRequiredResult(result) => Ok(CallToolResponse::InputRequired(result)),
+		ServerResult::CreateTaskResult(result) => Ok(CallToolResponse::Task(result)),
+		_ => Err(anyhow!("Unexpected response type for tools/call")),
+	}
+}
+
+async fn fulfill_input_requests(
+	service: &McpService,
+	requests: rmcp::model::InputRequests,
+) -> Result<InputResponses> {
+	let mut responses = InputResponses::new();
+	for (key, request) in requests {
+		let context = RequestContext::new(
+			rmcp::model::NumberOrString::String(Arc::from(key.as_str())),
+			service.peer().clone(),
+		);
+		let value = match request {
+			InputRequest::Elicitation(request) => serde_json::to_value(
+				service
+					.service()
+					.create_elicitation(request.params, context)
+					.await
+					.map_err(|e| anyhow!(e.to_string()))?,
+			)?,
+			InputRequest::ListRoots(_) => {
+				return Err(anyhow!(
+					"server requested deprecated roots/list although Octomind did not advertise roots"
+				));
+			}
+			InputRequest::CreateMessage(_) => {
+				return Err(anyhow!(
+					"server requested sampling/createMessage although Octomind did not advertise sampling"
+				));
+			}
+			_ => return Err(anyhow!("server returned an unsupported MRTR input request")),
+		};
+		responses.insert(key, value);
+	}
+	Ok(responses)
+}
+
+async fn sleep_or_cancel(
+	duration: Duration,
+	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<()> {
+	tokio::select! {
+		_ = tokio::time::sleep(duration) => Ok(()),
+		_ = wait_cancelled(cancellation_token) => {
+			Err(anyhow::Error::new(crate::session::cancellation::Cancelled))
+		}
+	}
+}
+
+async fn drive_task(
+	service: &McpService,
+	server: &McpServerConfig,
+	task: rmcp::model::CreateTaskResult,
+	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<rmcp::model::CallToolResult> {
+	let task_id = task.task.task_id.clone();
+	let mut poll_interval_ms = task.task.poll_interval_ms.unwrap_or(500).max(50);
+	loop {
+		if cancellation_token.as_ref().is_some_and(|rx| *rx.borrow()) {
+			let _ = tokio::time::timeout(
+				Duration::from_secs(server.timeout_seconds()),
+				service
+					.peer()
+					.cancel_task(CancelTaskParams::new(task_id.clone())),
+			)
+			.await;
+			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+		}
+		if let Err(error) =
+			sleep_or_cancel(Duration::from_millis(poll_interval_ms), cancellation_token).await
+		{
+			if crate::session::cancellation::is_cancelled(&error) {
+				let _ = tokio::time::timeout(
+					Duration::from_secs(server.timeout_seconds()),
+					service
+						.peer()
+						.cancel_task(CancelTaskParams::new(task_id.clone())),
+				)
+				.await;
+			}
+			return Err(error);
+		}
+		let state = tokio::select! {
+			result = tokio::time::timeout(
+				Duration::from_secs(server.timeout_seconds()),
+				service.peer().get_task(GetTaskParams::new(task_id.clone())),
+			) => result
+				.map_err(|_| anyhow!("tasks/get timed out for task '{task_id}'"))?
+				.map_err(|e| anyhow!("tasks/get failed for task '{task_id}': {e}"))?,
+			_ = wait_cancelled(cancellation_token) => {
+				let _ = tokio::time::timeout(
+					Duration::from_secs(server.timeout_seconds()),
+					service.peer().cancel_task(CancelTaskParams::new(task_id.clone())),
+				).await;
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+			}
+		};
+		poll_interval_ms = state
+			.task
+			.task
+			.poll_interval_ms
+			.unwrap_or(poll_interval_ms)
+			.max(50);
+		match state.task.payload {
+			TaskPayload::Working => {}
+			TaskPayload::InputRequired { input_requests } => {
+				let responses = fulfill_input_requests(service, input_requests).await?;
+				tokio::time::timeout(
+					Duration::from_secs(server.timeout_seconds()),
+					service
+						.peer()
+						.update_task(UpdateTaskParams::new(task_id.clone(), responses)),
+				)
+				.await
+				.map_err(|_| anyhow!("tasks/update timed out for task '{task_id}'"))?
+				.map_err(|e| anyhow!("tasks/update failed for task '{task_id}': {e}"))?;
+			}
+			TaskPayload::Completed { result } => {
+				return serde_json::from_value(serde_json::Value::Object(result))
+					.map_err(|e| anyhow!("invalid completed result for task '{task_id}': {e}"));
+			}
+			TaskPayload::Failed { error } => {
+				return Err(anyhow!(
+					"MCP task '{task_id}' failed: {}",
+					serde_json::Value::Object(error)
+				));
+			}
+			TaskPayload::Cancelled => {
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+			}
+			_ => return Err(anyhow!("MCP task '{task_id}' returned an unknown status")),
+		}
+	}
+}
+
+/// Execute a tool call with progress-resetting request timeouts, targeted
+/// cancellation, SEP-2322 MRTR follow-up rounds, and SEP-2663 task polling.
+pub async fn call_tool(
+	server: &McpServerConfig,
+	call: &McpToolCall,
+	mut cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<rmcp::model::CallToolResult> {
+	let service = get_or_connect(server).await?;
+
+	let mut params = CallToolRequestParams::new(call.tool_name.clone());
+	if let serde_json::Value::Object(arguments) = call.parameters.clone() {
+		params = params.with_arguments(arguments);
+	}
+
+	let mut state_only_rounds = 0usize;
+	for _ in 0..DEFAULT_MRTR_MAX_ROUNDS {
+		match call_tool_round(&service, server, params.clone(), &mut cancellation_token).await? {
+			CallToolResponse::Complete(result) => return Ok(result),
+			CallToolResponse::Task(task) => {
+				return drive_task(&service, server, task, &mut cancellation_token).await;
+			}
+			CallToolResponse::InputRequired(result) => {
+				let had_requests = result
+					.input_requests
+					.as_ref()
+					.is_some_and(|requests| !requests.is_empty());
+				if !had_requests && result.request_state.is_none() {
+					return Err(anyhow!(
+						"server returned input_required without inputRequests or requestState"
+					));
+				}
+				let responses =
+					fulfill_input_requests(&service, result.input_requests.unwrap_or_default())
+						.await?;
+				params.input_responses = (!responses.is_empty()).then_some(responses);
+				params.request_state = result.request_state;
+				if had_requests {
+					state_only_rounds = 0;
+				} else {
+					let delay = (50u64.saturating_mul(1 << state_only_rounds.min(3))).min(250);
+					sleep_or_cancel(Duration::from_millis(delay), &mut cancellation_token).await?;
+					state_only_rounds += 1;
+				}
+			}
+			_ => return Err(anyhow!("server returned an unsupported tools/call result")),
+		}
+	}
+	Err(anyhow!(
+		"Tool '{}' exceeded the MCP input-required round limit ({DEFAULT_MRTR_MAX_ROUNDS})",
+		call.tool_name
+	))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn advertised_mcp3_capabilities_have_handlers() {
+		let info = build_client_info(ProtocolVersion::V_2026_07_28);
+		assert!(info.capabilities.supports_tasks());
+		assert!(info.capabilities.sampling.is_none());
+		let elicitation = info
+			.capabilities
+			.elicitation
+			.expect("elicitation must be advertised");
+		assert!(elicitation.form.is_some());
+		assert!(elicitation.url.is_some());
+		assert!(info.capabilities.roots.is_none());
+	}
+
+	#[test]
+	fn legacy_handshake_does_not_claim_mcp3_features() {
+		let info = build_client_info(ProtocolVersion::V_2025_03_26);
+		assert!(!info.capabilities.supports_tasks());
+		assert!(info.capabilities.elicitation.is_none());
+		assert!(info.capabilities.sampling.is_none());
+		assert!(info.capabilities.roots.is_none());
+	}
+
+	#[tokio::test]
+	async fn dropped_cancellation_sender_is_terminal() {
+		let (sender, receiver) = tokio::sync::watch::channel(false);
+		drop(sender);
+		let mut token = Some(receiver);
+		tokio::time::timeout(Duration::from_millis(100), wait_cancelled(&mut token))
+			.await
+			.expect("dropped sender must wake cancellation waiter");
 	}
 }

@@ -356,16 +356,35 @@ async fn handle_list(call: &McpToolCall, config: &Config) -> Result<McpToolResul
 	}
 	let mut output = format!("Installed capabilities ({}):\n", caps.len());
 	for cap in &caps {
+		let env_missing = if cap.required_env_keys.is_empty() {
+			None
+		} else {
+			check_env_readiness(&cap.required_env_keys).err()
+		};
+		if let Some(missing) = &env_missing {
+			crate::log_debug!(
+				"capability list: '{}' not env-ready — missing: {}",
+				cap.name,
+				missing.join(", ")
+			);
+		}
 		let marker = if is_active(&cap.name) {
 			"[active] "
+		} else if env_missing.is_some() {
+			"[missing env] "
 		} else {
 			""
 		};
+		let env_note = match &env_missing {
+			Some(missing) => format!(" (missing env: {})", missing.join(", ")),
+			None => String::new(),
+		};
 		output.push_str(&format!(
-			"- {}{} — {}\n",
+			"- {}{} — {}{}\n",
 			marker,
 			cap.name,
-			triggers_preview(&cap.triggers)
+			triggers_preview(&cap.triggers),
+			env_note
 		));
 	}
 	output.push_str("\nUse capability(action=\"enable\", name=\"<name>\") to activate.");
@@ -423,6 +442,22 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			));
 		}
 	};
+
+	// Env readiness gate: refuse to activate a capability whose required
+	// env vars are not set. Prevents activating a server that will fail
+	// at first use because its API key is missing.
+	if !resolved.required_env_keys.is_empty() {
+		if let Err(missing) = check_env_readiness(&resolved.required_env_keys) {
+			return Ok(McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!(
+					"Capability '{name}' requires env vars: {} — set them before activating.",
+					missing.join(", ")
+				),
+			));
+		}
+	}
 
 	// Domain gate. Refuses to enable a capability that's bound to other
 	// domains, regardless of whether the user invoked `capability enable`
@@ -1014,8 +1049,27 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 	// well against medical-domain triggers.
 	let caps = filter_caps_by_domain(caps);
 
-	let inactive: Vec<&crate::agent::registry::ResolvedCapability> =
-		caps.iter().filter(|c| !is_active(&c.name)).collect();
+	// Env readiness gate: filter out caps whose required env vars are not
+	// set before scoring. Saves embedding compute on caps that can't
+	// activate, and prevents the auto-activator from picking a cap that
+	// would fail at activation time.
+	let inactive: Vec<&crate::agent::registry::ResolvedCapability> = caps
+		.iter()
+		.filter(|c| {
+			if is_active(&c.name) {
+				return false;
+			}
+			if let Err(missing) = check_env_readiness(&c.required_env_keys) {
+				crate::log_debug!(
+					"capability auto-activate: filtering out '{}' — missing env vars: {}",
+					c.name,
+					missing.join(", ")
+				);
+				return false;
+			}
+			true
+		})
+		.collect();
 	if inactive.is_empty() {
 		return Vec::new();
 	}
@@ -1165,12 +1219,39 @@ fn filter_for_server(allowed_tools: &[String], server_name: &str) -> Option<Vec<
 /// Register + enable a capability's MCP servers and mark the capability
 /// active. Mirrors `handle_enable`'s logic minus the `McpToolResult`
 /// wrapping — errors propagate as `anyhow::Error` for the caller to log
+/// Check that all required env keys are set and non-empty.
+/// Returns Ok(()) if all present, Err(missing_keys) listing the unset ones.
+pub(crate) fn check_env_readiness(required: &[String]) -> Result<(), Vec<String>> {
+	let missing: Vec<String> = required
+		.iter()
+		.filter(|key| std::env::var(key).map(|v| v.is_empty()).unwrap_or(true))
+		.cloned()
+		.collect();
+	if missing.is_empty() {
+		Ok(())
+	} else {
+		Err(missing)
+	}
+}
+
 /// or surface. Idempotent: returns `Ok(empty)` when already active.
 async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<String>> {
 	if is_active(name) {
 		return Ok(Vec::new());
 	}
 	let resolved = crate::agent::registry::parse_capability_toml(name, &config.capabilities)?;
+	if let Err(missing) = check_env_readiness(&resolved.required_env_keys) {
+		crate::log_debug!(
+			"capability activation: skipping '{}' — missing env vars: {}",
+			name,
+			missing.join(", ")
+		);
+		anyhow::bail!(
+			"capability '{}' requires env vars: {} — set them before activating",
+			name,
+			missing.join(", ")
+		);
+	}
 	// Deps-only capability: activation installs its toolchain. Mirrors
 	// `handle_enable` so auto-activation and manual `enable` behave the same.
 	if resolved.mcp_servers.is_empty() {
@@ -1370,6 +1451,7 @@ mod tests {
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),
 			mcp_servers: Vec::new(),
+			required_env_keys: Vec::new(),
 			tap_root: std::path::PathBuf::new(),
 		}
 	}

@@ -1035,6 +1035,24 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 		for cap_name in &meta.capabilities {
 			match crate::agent::registry::parse_capability_toml(cap_name, &overrides) {
 				Ok(resolved) => {
+					// Env readiness gate: skip capabilities whose required env
+					// vars are not set. The skill still activates but without
+					// the unconfigured capability.
+					if let Err(missing) = crate::mcp::runtime::capability::check_env_readiness(
+						&resolved.required_env_keys,
+					) {
+						crate::log_debug!(
+							"skill: skipping capability '{}' — missing env vars: {}",
+							cap_name,
+							missing.join(", ")
+						);
+						cap_messages.push(format!(
+							"⚠️ Capability '{}' skipped — missing env vars: {}",
+							cap_name,
+							missing.join(", ")
+						));
+						continue;
+					}
 					let mut loaded_servers = Vec::new();
 					for server_config in resolved.mcp_servers {
 						let server_name = server_config.name().to_string();

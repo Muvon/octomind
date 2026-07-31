@@ -853,6 +853,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 				args,
 				timeout_seconds,
 				tools,
+				env: HashMap::new(),
 				auto_bind: None,
 			}
 		}

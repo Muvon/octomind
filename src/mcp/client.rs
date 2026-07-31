@@ -330,6 +330,20 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 
 	let mut cmd = tokio::process::Command::new(&command);
 	cmd.args(&args);
+	// Pass env vars from the server config to the child process.
+	// {{ENV:KEY}} placeholders are resolved from the parent environment.
+	if let Some(env_map) = server.env() {
+		for (key, value) in env_map {
+			let mut resolved = value.clone();
+			for env_key in crate::agent::inputs::extract_env_keys(value) {
+				if let Ok(env_val) = std::env::var(&env_key) {
+					let placeholder = format!("{{{{ENV:{env_key}}}}}");
+					resolved = resolved.replace(&placeholder, &env_val);
+				}
+			}
+			cmd.env(key, resolved);
+		}
+	}
 	// Isolate from the parent process group so terminal Ctrl+C doesn't kill servers.
 	#[cfg(unix)]
 	cmd.process_group(0);

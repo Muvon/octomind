@@ -464,6 +464,7 @@ impl McpConfig {
 						args,
 						timeout_seconds,
 						tools,
+						env,
 						auto_bind,
 						..
 					} => McpServerConfig::Stdin {
@@ -472,6 +473,7 @@ impl McpConfig {
 						args,
 						timeout_seconds,
 						tools,
+						env,
 						auto_bind,
 					},
 				}

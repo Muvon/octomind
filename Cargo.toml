@@ -41,6 +41,7 @@ rmcp = { version = "3.0.0", default-features = false, features = [
 	"transport-child-process",                 # stdio servers via tokio child process
 	"transport-streamable-http-client-reqwest", # Streamable HTTP client transport
 	"reqwest",                                 # rustls backend for the transport's reqwest
+	"elicitation",                             # elicitation/create handler support (SEP-2322)
 ] }
 
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync", "signal", "io-std", "net"] }

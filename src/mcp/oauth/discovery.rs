@@ -267,6 +267,7 @@ pub fn build_oauth_config_from_metadata(
 		scopes,
 		state: None,
 		refresh_buffer_seconds: 300,
+		resource: Some(resource_metadata.resource.clone()),
 	}
 }
 

@@ -80,11 +80,18 @@ pub fn build_authorization_url(
 		.append_pair("state", state)
 		.append_pair("scope", &config.scopes.join(" "));
 
+	// RFC 9728 §2.1: include the resource parameter so the authorization
+	// server can issue audience-scoped tokens.
+	if let Some(resource) = &config.resource {
+		url.query_pairs_mut().append_pair("resource", resource);
+	}
+
 	crate::log_debug!(
-		"Building authorization URL - client_id: {}, scopes: {:?}, redirect_uri: {}",
+		"Building authorization URL - client_id: {}, scopes: {:?}, redirect_uri: {}, resource: {:?}",
 		config.client_id,
 		config.scopes,
-		redirect_uri
+		redirect_uri,
+		config.resource
 	);
 
 	url.to_string()
@@ -129,6 +136,11 @@ pub async fn exchange_code_for_token(
 		"redirect_uri": redirect_uri,
 		"code_verifier": code_verifier,
 	});
+
+	// RFC 9728 §2.1: include the resource parameter in the token exchange.
+	if let Some(resource) = &config.resource {
+		body["resource"] = serde_json::json!(resource);
+	}
 
 	// Only add client_secret if it's not empty (confidential clients)
 	if !config.client_secret.is_empty() {

@@ -494,6 +494,10 @@ pub struct ResolvedCapability {
 	pub server_refs: Vec<String>,
 	pub allowed_tools: Vec<String>,
 	pub mcp_servers: Vec<crate::config::McpServerConfig>,
+	/// Env keys required by this capability's MCP server `env` blocks.
+	/// Extracted from `{{ENV:KEY}}` placeholders at parse time. Activation
+	/// gates on all keys being set and non-empty in the environment.
+	pub required_env_keys: Vec<String>,
 	/// Root of the tap that provided this capability (first-wins across
 	/// `get_taps()`). Used to resolve `<tap_root>/deps/<org>/<tool>.sh`
 	/// paths when activation needs to run dep installers.
@@ -609,6 +613,7 @@ pub fn parse_capability_toml(
 			server_refs: Vec::new(),
 			allowed_tools: Vec::new(),
 			mcp_servers: Vec::new(),
+			required_env_keys: Vec::new(),
 			tap_root: tap_root.clone(),
 		};
 
@@ -659,7 +664,20 @@ pub fn parse_capability_toml(
 			for server_val in servers {
 				let server_str = toml::to_string(server_val).unwrap_or_default();
 				match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
-					Ok(server_config) => resolved.mcp_servers.push(server_config),
+					Ok(server_config) => {
+						// Collect {{ENV:KEY}} placeholders from the server's env
+						// block — these gate activation when the env var is unset.
+						if let Some(env) = server_config.env() {
+							for value in env.values() {
+								for key in crate::agent::inputs::extract_env_keys(value) {
+									if !resolved.required_env_keys.contains(&key) {
+										resolved.required_env_keys.push(key);
+									}
+								}
+							}
+						}
+						resolved.mcp_servers.push(server_config);
+					}
 					// Don't silently drop — a malformed block means the capability
 					// activates without the server it needs. Surface it.
 					Err(e) => crate::log_error!(

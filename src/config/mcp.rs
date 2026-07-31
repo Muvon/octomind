@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // Type-specific MCP server configuration using tagged enums
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -45,6 +46,12 @@ pub enum McpServerConfig {
 		args: Vec<String>,
 		timeout_seconds: u64,
 		tools: Vec<String>,
+		/// Environment variables to pass to the child process. Values may contain
+		/// `{{ENV:KEY}}` placeholders resolved at spawn time from the parent
+		/// environment. Capabilities whose placeholders reference unset env
+		/// vars are gated from activation.
+		#[serde(default)]
+		env: HashMap<String, String>,
 		/// Roles that should automatically include this server (without explicit server_refs)
 		#[serde(skip_serializing_if = "Option::is_none")]
 		auto_bind: Option<Vec<String>>,
@@ -157,6 +164,14 @@ impl McpServerConfig {
 		}
 	}
 
+	/// Get env vars for stdio servers (if available)
+	pub fn env(&self) -> Option<&HashMap<String, String>> {
+		match self {
+			McpServerConfig::Stdin { env, .. } => Some(env),
+			_ => None,
+		}
+	}
+
 	/// Create a builtin server configuration
 	pub fn builtin(name: &str, timeout_seconds: u64, tools: Vec<String>) -> Self {
 		Self::Builtin {
@@ -192,6 +207,7 @@ impl McpServerConfig {
 			args,
 			timeout_seconds,
 			tools,
+			env: HashMap::new(),
 			auto_bind: None,
 		}
 	}
@@ -231,6 +247,7 @@ impl McpServerConfig {
 				args,
 				timeout_seconds,
 				tools,
+				env,
 				..
 			} => McpServerConfig::Stdin {
 				name: name.clone(),
@@ -238,6 +255,7 @@ impl McpServerConfig {
 				args: args.clone(),
 				timeout_seconds: *timeout_seconds,
 				tools: tools.clone(),
+				env: env.clone(),
 				auto_bind,
 			},
 		}
@@ -379,6 +397,7 @@ impl RoleMcpConfig {
 							command,
 							args,
 							timeout_seconds,
+							env,
 							auto_bind,
 							..
 						} => McpServerConfig::Stdin {
@@ -387,6 +406,7 @@ impl RoleMcpConfig {
 							args,
 							timeout_seconds,
 							tools: filtered_tools,
+							env,
 							auto_bind,
 						},
 					};

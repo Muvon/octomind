@@ -202,7 +202,7 @@ pub fn restore_escaped_braces(s: &str) -> String {
 }
 
 /// Extract all unique `{{ENV:KEY}}` keys from a raw string.
-fn extract_env_keys(raw: &str) -> Vec<String> {
+pub(crate) fn extract_env_keys(raw: &str) -> Vec<String> {
 	let mut keys = Vec::new();
 	let mut search = raw;
 	while let Some(start) = search.find(ENV_PLACEHOLDER_PREFIX) {

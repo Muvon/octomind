@@ -214,8 +214,11 @@ pub async fn execute_tool_call(
 			return Err(anyhow::anyhow!("External tool execution cancelled"));
 		}
 	}
-
 	// Check server health before attempting execution. Dead stdin servers are restarted here.
+	// Refresh OS-level liveness first: a killed child may leave the cached health as Running.
+	if server.connection_type() == McpConnectionType::Stdin {
+		process::is_server_running(server.name());
+	}
 	let server_health = process::get_server_health(server.name());
 	match server_health {
 		process::ServerHealth::Failed => {

@@ -319,6 +319,19 @@ pub(crate) fn register_pgid(server_name: &str, pid: u32) {
 #[cfg(not(unix))]
 pub(crate) fn register_pgid(_server_name: &str, _pid: u32) {}
 
+/// Check whether the OS process for a stdio server is still alive.
+/// Returns `None` when no pid is recorded (non-Unix, or server not started here).
+#[cfg(unix)]
+pub(crate) fn is_stdio_process_alive(server_name: &str) -> Option<bool> {
+	let pgids = SERVER_PGIDS.read().unwrap();
+	pgids.get(server_name).map(|&pid| unsafe { libc::kill(pid, 0) == 0 })
+}
+
+#[cfg(not(unix))]
+pub(crate) fn is_stdio_process_alive(_server_name: &str) -> Option<bool> {
+	None
+}
+
 /// Kill a server's process group: SIGTERM first for graceful cleanup, then SIGKILL.
 #[cfg(unix)]
 fn kill_process_group(server_name: &str) {
@@ -438,7 +451,10 @@ async fn start_server_once_if_needed(server: &McpServerConfig) -> Result<String>
 
 	// Check if the server is already running and healthy.
 	let is_alive = match server.connection_type() {
-		McpConnectionType::Stdin => super::client::is_connected(server_id),
+		McpConnectionType::Stdin => {
+			super::client::is_connected(server_id)
+				&& is_stdio_process_alive(server_id).unwrap_or(true)
+		}
 		McpConnectionType::Http => {
 			let processes = SERVER_PROCESSES.read().unwrap();
 			match processes.get(server_id) {
@@ -770,7 +786,8 @@ pub fn cleanup_server_process(server_name: &str) -> Result<()> {
 }
 
 // Check if a server is still running with health tracking.
-// Stdio servers: the rmcp service loop is alive. HTTP processes: try_wait.
+// Stdio servers: the rmcp service loop is alive AND the OS child still exists.
+// HTTP processes: try_wait.
 pub fn is_server_running(server_name: &str) -> bool {
 	let client_alive = super::client::is_connected(server_name);
 	let process_state = {
@@ -786,38 +803,29 @@ pub fn is_server_running(server_name: &str) -> bool {
 			}
 		})
 	};
+	// Stdio children can die without rmcp noticing immediately. If we know the
+	// pid and the OS child is gone, treat the server as dead even when the
+	// service handle hasn't marked itself closed yet.
+	let stdio_process_alive = is_stdio_process_alive(server_name);
 
-	match (client_alive, process_state) {
-		// Known locally (client connection and/or spawned process)
-		(true, _) | (_, Some(_)) => {
-			let is_alive = client_alive || process_state.unwrap_or(false);
-			{
-				let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-				let info = restart_info_guard
-					.entry(server_name.to_string())
-					.or_default();
-				info.health_status = if is_alive {
-					ServerHealth::Running
-				} else {
-					ServerHealth::Dead
-				};
-				info.last_health_check = Some(SystemTime::now());
-			}
-			is_alive
-		}
-		// Not tracked locally — could be a remote server or not started yet.
-		(false, None) => {
-			{
-				let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
-				let info = restart_info_guard
-					.entry(server_name.to_string())
-					.or_default();
-				// Don't automatically mark as Dead - let proper health check handle it
-				info.last_health_check = Some(SystemTime::now());
-			}
-			false // Return false for "not running locally" but don't mark as Dead
-		}
+	let is_alive = match stdio_process_alive {
+		Some(false) => false,
+		_ => client_alive || process_state.unwrap_or(false),
+	};
+
+	{
+		let mut restart_info_guard = SERVER_RESTART_INFO.write().unwrap();
+		let info = restart_info_guard
+			.entry(server_name.to_string())
+			.or_default();
+		info.health_status = if is_alive {
+			ServerHealth::Running
+		} else {
+			ServerHealth::Dead
+		};
+		info.last_health_check = Some(SystemTime::now());
 	}
+	is_alive
 }
 
 // Get server health status

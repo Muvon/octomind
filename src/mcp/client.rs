@@ -25,7 +25,8 @@ use crate::mcp::{oauth, McpToolCall};
 use anyhow::{anyhow, Result};
 use rmcp::model::{
 	CallToolRequest, CallToolRequestParams, CancelledNotificationParam, ClientCapabilities,
-	ClientInfo, ClientRequest, Implementation, ProtocolVersion, ServerResult,
+	ClientInfo, ClientRequest, ElicitationCapability, ExtensionCapabilities, Implementation,
+	ProtocolVersion, RootsCapabilities, SamplingCapability, ServerResult, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
 	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RunningService,
@@ -195,6 +196,14 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientInfo {
 	if let serde_json::Value::Object(map) = session {
 		capabilities.experimental = Some([("session".to_string(), map)].into());
 	}
+
+	// MCP 3.0 capabilities: tasks, elicitation, sampling, roots.
+	let mut extensions = ExtensionCapabilities::new();
+	extensions.insert(TASKS_EXTENSION_ID.to_string(), serde_json::Map::new());
+	capabilities.extensions = Some(extensions);
+	capabilities.elicitation = Some(ElicitationCapability::new());
+	capabilities.sampling = Some(SamplingCapability::default());
+	capabilities.roots = Some(RootsCapabilities::default());
 
 	ClientInfo::new(
 		capabilities,

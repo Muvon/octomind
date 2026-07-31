@@ -63,6 +63,12 @@ pub struct OAuthConfig {
 	/// Token refresh buffer in seconds before expiry.
 	#[serde(default = "default_refresh_buffer")]
 	pub refresh_buffer_seconds: u64,
+
+	/// Protected resource identifier (RFC 9728 §2.1). Sent as the `resource`
+	/// parameter in authorization and token requests so the authorization
+	/// server can issue audience-scoped tokens.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub resource: Option<String>,
 }
 
 fn default_refresh_buffer() -> u64 {
@@ -88,6 +94,7 @@ impl OAuthConfig {
 			scopes,
 			state: None,
 			refresh_buffer_seconds: default_refresh_buffer(),
+			resource: None,
 		}
 	}
 

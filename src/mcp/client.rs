@@ -531,7 +531,9 @@ pub async fn get_or_connect(server: &McpServerConfig) -> Result<Arc<McpService>>
 		}
 		McpConnectionType::Stdin => {
 			if let Some(service) = get(server.name()) {
-				if !service.is_closed() {
+				if !service.is_closed()
+					&& super::process::is_stdio_process_alive(server.name()).unwrap_or(true)
+				{
 					return Ok(service);
 				}
 				disconnect(server.name());

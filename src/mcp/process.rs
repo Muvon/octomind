@@ -324,7 +324,9 @@ pub(crate) fn register_pgid(_server_name: &str, _pid: u32) {}
 #[cfg(unix)]
 pub(crate) fn is_stdio_process_alive(server_name: &str) -> Option<bool> {
 	let pgids = SERVER_PGIDS.read().unwrap();
-	pgids.get(server_name).map(|&pid| unsafe { libc::kill(pid, 0) == 0 })
+	pgids
+		.get(server_name)
+		.map(|&pid| unsafe { libc::kill(pid, 0) == 0 })
 }
 
 #[cfg(not(unix))]

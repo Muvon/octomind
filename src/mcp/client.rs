@@ -319,11 +319,67 @@ pub async fn connect_stdio(server: &McpServerConfig) -> Result<Arc<McpService>> 
 		})
 }
 
+/// Collect `{{ENV:KEY}}` placeholders from a server's command, args, and env
+/// values that reference unset or empty environment variables.
+/// Returns the list of missing keys (empty = all resolved).
+pub(crate) fn missing_env_keys(server: &McpServerConfig) -> Vec<String> {
+	let mut keys = Vec::new();
+	if let Some(cmd) = server.command() {
+		keys.extend(crate::agent::inputs::extract_env_keys(cmd));
+	}
+	for arg in server.args() {
+		keys.extend(crate::agent::inputs::extract_env_keys(arg));
+	}
+	if let Some(env_map) = server.env() {
+		for value in env_map.values() {
+			keys.extend(crate::agent::inputs::extract_env_keys(value));
+		}
+	}
+	keys.sort();
+	keys.dedup();
+	keys.into_iter()
+		.filter(|key| std::env::var(key).map(|v| v.is_empty()).unwrap_or(true))
+		.collect()
+}
+
+/// Resolve `{{ENV:KEY}}` placeholders in a string from the parent environment.
+/// Unresolved placeholders are left as-is — callers should guard with
+/// `missing_env_keys` before relying on the result.
+fn resolve_env_placeholders(s: &str) -> String {
+	let mut result = s.to_string();
+	for key in crate::agent::inputs::extract_env_keys(s) {
+		if let Ok(val) = std::env::var(&key) {
+			if !val.is_empty() {
+				let placeholder = format!("{{{{ENV:{key}}}}}");
+				result = result.replace(&placeholder, &val);
+			}
+		}
+	}
+	result
+}
 /// Single stdio connection attempt. The spawned child is owned by the rmcp
 /// transport and killed when the transport drops (including on failure).
 async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Arc<McpService>> {
+	// Guard: refuse to spawn a stdio server whose {{ENV:KEY}} placeholders
+	// reference unset env vars. Spawning with the literal placeholder
+	// produces a confusing crash in the child process.
+	let missing = missing_env_keys(server);
+	if !missing.is_empty() {
+		return Err(anyhow!(
+			"MCP server '{}' requires env vars: {} — set them before starting the server",
+			server.name(),
+			missing.join(", ")
+		));
+	}
+
 	let (command, args) = match server {
-		McpServerConfig::Stdin { command, args, .. } => (command.clone(), args.clone()),
+		McpServerConfig::Stdin { command, args, .. } => {
+			// Resolve {{ENV:KEY}} in command and args from the parent environment.
+			let cmd = resolve_env_placeholders(command);
+			let resolved_args: Vec<String> =
+				args.iter().map(|a| resolve_env_placeholders(a)).collect();
+			(cmd, resolved_args)
+		}
 		_ => return Err(anyhow!("connect_stdio requires a stdio server config")),
 	};
 	let server_name = server.name().to_string();
@@ -334,13 +390,7 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 	// {{ENV:KEY}} placeholders are resolved from the parent environment.
 	if let Some(env_map) = server.env() {
 		for (key, value) in env_map {
-			let mut resolved = value.clone();
-			for env_key in crate::agent::inputs::extract_env_keys(value) {
-				if let Ok(env_val) = std::env::var(&env_key) {
-					let placeholder = format!("{{{{ENV:{env_key}}}}}");
-					resolved = resolved.replace(&placeholder, &env_val);
-				}
-			}
+			let resolved = resolve_env_placeholders(value);
 			cmd.env(key, resolved);
 		}
 	}

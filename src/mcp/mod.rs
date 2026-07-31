@@ -215,6 +215,21 @@ pub async fn initialize_servers_for_role_with_callback(
 				McpConnectionType::Http | McpConnectionType::Stdin
 			)
 		})
+		.filter(|server| {
+			// Skip stdio servers whose {{ENV:KEY}} placeholders reference
+			// unset env vars — they would crash on spawn with a literal
+			// placeholder in their args/command.
+			let missing = client::missing_env_keys(server);
+			if !missing.is_empty() {
+				crate::log_debug!(
+					"Skipping server '{}' — missing env vars: {}",
+					server.name(),
+					missing.join(", ")
+				);
+				return false;
+			}
+			true
+		})
 		.filter(|server| !server::is_server_already_running_with_config(server))
 		.collect();
 

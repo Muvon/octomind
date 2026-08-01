@@ -1,148 +1,149 @@
 {
  "meta": {
-  "date": "2026-07-19",
-  "model": "glm-5.1",
-  "judge": "octohub:minimax",
+  "date": "2026-08-01",
+  "version": "0.40.0",
+  "model": "glm-5.2",
+  "judge": "ollama:minimax-m3",
   "suite": "swe-bench-live lite pilot (15 instances)",
   "k": "2",
-  "ref": "0.37.1 + kept 2026-07-17/19 work: empty-completion bounded retry at the completion choke point, observe-only task classification in the verify-gate prompt. Observation masking and mid-turn plan recitation were tried, measured, and REMOVED (see note). octocode ENABLED (0.18.1, --no-git, host-mounted octolib model cache).",
+  "ref": "0.40.0 HEAD build (v0.39.0 binary, config v2). Model upgraded glm-5.1->glm-5.2 (ollama provider). Judge upgraded octohub:minimax->ollama:minimax-m3. octocode ENABLED.",
   "runs": 30,
   "executor": "docker",
   "octocode": "ON",
-  "harness": "HEAD-only k=2, single leg, same binary/config/day; infra-exclusion per compare_to_baseline.py; 0 infra-excluded (empty-completion retry recovers provider flakes in-binary).",
-  "note": "21/30 = 70% solved, $3.28/solved, median 1.92M tokens (solved), avg judge 64.2 \u2014 best of the 2026-07-17/19 campaign, no per-instance regression vs the 07-18 reference. Improvement came from REMOVING speculative logic: an A/B on identical binary/day showed observation masking cost more than it saved ($3.39 vs $3.07/solved, 2.44M vs 2.06M median solved tokens, same 20/30 solve) because rewriting history at the moving frontier forfeits prompt-cache reuse; mid-turn plan recitation caused early wrap-ups and duplicated octomind's existing compression-time plan injection. Both deleted. Unsolved 0/N headroom: conan-17366, jupyter-ai-1125, matplotlib-29007, xarray-9586; aiogram-1594 1/2 (drifted glm sprint-fails it). Guardrail for future checks: per-instance solve, overall success, cost/solved, and per-instance avg_judge slide. k=2 here vs k=4 previously \u2014 re-run k=4 when a change needs finer resolution."
+  "harness": "HEAD-only k=2, single leg, same binary/config/day; infra-exclusion per compare_to_baseline.py; 0 infra-excluded.",
+  "note": "25/30 = 83% solved, $3.70/solved, median 1.35M tokens (solved), avg judge 77.4. vs prior baseline (0.37.1, 2026-07-19): +4 solved (70%->83%), -30% median tokens solved (1.92M->1.35M), +13.2 judge score (64.2->77.4). 5 instances improved (aiogram 1->2, conan 0->1, jupyter-ai-1125 0->1, matplotlib 0->2, xarray 0->1). 2 regressions (llama-deploy-356 2->1, tox-3409 2->1) both timeout-related at 1800s. cfn-lint r2 needed 3 attempts (timeout on att 2). llama-deploy-356 r1 timed out twice. Guardrail for future checks: per-instance solve, overall success, cost/solved, and per-instance avg_judge slide."
  },
  "arms": {
   "base": {
    "n": 30,
-   "solved": 21,
-   "success_rate": 0.7,
-   "median_tokens": 1391304,
-   "median_tokens_solved": 1923430,
-   "cost_per_solved": 3.28,
-   "avg_judge": 64.2,
-   "median_sec": 262
+   "solved": 25,
+   "success_rate": 0.83,
+   "median_tokens": 1565812,
+   "median_tokens_solved": 1347823,
+   "cost_per_solved": 3.7,
+   "avg_judge": 77.4,
+   "median_sec": 328
   }
  },
  "per_task": {
   "aiogram__aiogram-1594": {
    "base": {
-    "solved": 1,
+    "solved": 2,
     "n": 2,
-    "median_tokens": 630776,
-    "avg_judge": 58
+    "median_tokens": 497898,
+    "avg_judge": 98
    }
   },
   "aws-cloudformation__cfn-lint-3749": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 6441855,
-    "avg_judge": 74
+    "median_tokens": 2042108,
+    "avg_judge": 80
    }
   },
   "conan-io__conan-17366": {
    "base": {
-    "solved": 0,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 1660719,
-    "avg_judge": 10
+    "median_tokens": 2506217,
+    "avg_judge": 45
    }
   },
   "falconry__falcon-2366": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 940529,
-    "avg_judge": 84
+    "median_tokens": 1606072,
+    "avg_judge": 95
    }
   },
   "instructlab__instructlab-2526": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 1388232,
-    "avg_judge": 94
+    "median_tokens": 553327,
+    "avg_judge": 95
    }
   },
   "jupyterlab__jupyter-ai-1022": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 5734442,
-    "avg_judge": 90
+    "median_tokens": 4296331,
+    "avg_judge": 86
    }
   },
   "jupyterlab__jupyter-ai-1125": {
    "base": {
-    "solved": 0,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 1280280,
-    "avg_judge": 46
+    "median_tokens": 5021256,
+    "avg_judge": 48
    }
   },
   "matplotlib__matplotlib-29007": {
    "base": {
-    "solved": 0,
+    "solved": 2,
     "n": 2,
-    "median_tokens": 388425,
-    "avg_judge": 12
+    "median_tokens": 933444,
+    "avg_judge": 94
    }
   },
   "pydata__xarray-9586": {
    "base": {
-    "solved": 0,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 2015797,
-    "avg_judge": 35
+    "median_tokens": 846712,
+    "avg_judge": 48
    }
   },
   "run-llama__llama_deploy-330": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 3664681,
-    "avg_judge": 45
+    "median_tokens": 2023704,
+    "avg_judge": 90
    }
   },
   "run-llama__llama_deploy-356": {
    "base": {
-    "solved": 2,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 490918,
-    "avg_judge": 82
+    "median_tokens": 4414288,
+    "avg_judge": 55
    }
   },
   "run-llama__llama_deploy-372": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 5397516,
-    "avg_judge": 92
+    "median_tokens": 4757204,
+    "avg_judge": 94
    }
   },
   "run-llama__llama_deploy-384": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 918667,
-    "avg_judge": 64
+    "median_tokens": 1394773,
+    "avg_judge": 95
    }
   },
   "streamlink__streamlink-6242": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 104645,
-    "avg_judge": 88
+    "median_tokens": 226760,
+    "avg_judge": 95
    }
   },
   "tox-dev__tox-3409": {
    "base": {
-    "solved": 2,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 3353807,
-    "avg_judge": 90
+    "median_tokens": 1520520,
+    "avg_judge": 45
    }
   }
  }

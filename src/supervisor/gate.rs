@@ -98,14 +98,14 @@ Do not reward length, formatting, or tone — only verifiable substance.
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
 claim has no supporting evidence. Each gap must name the specific unmet item.
 
-When the request was to fix a reported problem, two result shapes are gaps in their own right,
-whatever the domain:
-- Suppression instead of repair: the change hides, absorbs, or special-cases the visible
+When the request was to correct a reported problem, two result shapes are gaps in their own
+right, whatever the domain:
+- Suppression instead of resolution: the work hides, absorbs, or special-cases the visible
   symptom while whatever produced it is unchanged. The symptom disappearing is not the
   problem being fixed.
-- Shared-dependency blast radius: the change alters something many other flows depend on in
-  order to satisfy the single reported case, with no evidence the other dependents were
-  considered. Prefer evidence of a targeted change on the reported case's own path.
+- Unexamined collateral impact: the repair changes a shared dependency, process, resource, or
+  rule to satisfy one reported case, with no evidence that other affected uses were considered.
+  Prefer evidence of the narrowest repair that addresses the cause.
 
 If every part is evidenced — or you cannot point to a concrete unmet item — output exactly:
 <verdict>PASS</verdict>
@@ -566,7 +566,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the file and line, the passing test, or the command output. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }
@@ -813,5 +813,18 @@ mod tests {
 		);
 		assert!(gt.contains("MISSING: definitely/not/a/real/file.xyz"));
 		assert!(gt.contains("$ cargo test\n12 passed"));
+	}
+
+	#[test]
+	fn verifier_guidance_is_domain_agnostic() {
+		assert!(GATE_PROMPT.contains("whatever the domain"));
+		assert!(GATE_PROMPT.contains("process, resource, or"));
+		assert!(!GATE_PROMPT.contains("Shared-dependency blast radius"));
+
+		let advisory = format_advisory(&["missing evidence".to_string()]);
+		assert!(advisory.contains("resulting artifact"));
+		assert!(advisory.contains("observed state"));
+		assert!(advisory.contains("delivered output"));
+		assert!(!advisory.contains("the file and line, the passing test"));
 	}
 }

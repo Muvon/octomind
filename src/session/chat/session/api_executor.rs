@@ -29,7 +29,7 @@ use crate::session::output::{OutputMode, OutputSink};
 
 const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
-const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run whatever check this work has (build / test / lint for code; a re-read or consistency pass for documents and data), watch the result, and report the actual outcome: pass, fail, or — if no such check exists — which check you tried and why none applies. Base the report on the observed result, not on what you expect.\n</pay-attention>";
+const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with state changes still unverified, so that claim isn't trustworthy yet. Run the check appropriate to this work (for example, inspect the resulting state, exercise the changed behavior, or use a domain-specific validator), watch the result, and report the actual outcome: pass, fail, or — if no meaningful check exists — what you inspected and why that is sufficient. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
 fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
 	messages
@@ -509,7 +509,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session.last_self_report = None; // force the re-run to re-evaluate
 			chat_session.gate_iterations += 1;
 			crate::supervisor::stats::pregate_block();
-			crate::supervisor::notify("done claimed without a check after changes — re-running");
+			crate::supervisor::notify("done claimed with unverified state changes — re-running");
 			if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
 				crate::log_debug!(
 					"Pre-gate: unverified mutation; re-running turn (iter {})",
@@ -758,5 +758,13 @@ mod tests {
 		let start = latest_real_user_turn_start(&messages);
 		let outputs = current_turn_tool_outputs(&messages, start);
 		assert_eq!(outputs, ["current evidence"]);
+	}
+
+	#[test]
+	fn pregate_feedback_is_domain_agnostic() {
+		assert!(PREGATE_NOTE.contains("state changes"));
+		assert!(PREGATE_NOTE.contains("domain-specific validator"));
+		assert!(!PREGATE_NOTE.contains("code changes"));
+		assert!(!PREGATE_NOTE.contains("build / test / lint"));
 	}
 }

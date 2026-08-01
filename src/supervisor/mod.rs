@@ -214,10 +214,11 @@ pub struct GateConfig {
 	/// and rubber-stamps them, so the strongest signal comes from a *different*
 	/// family. Required — no silent fallback to the generator model.
 	pub verifier_model: String,
-	/// Free deterministic pre-gate: refuse a self-reported `done` when code was
-	/// changed but no successful check (build/test/lint/etc.) ran since the last
-	/// change. Tool-agnostic — keyed on the mutation-without-clean-check pattern,
-	/// not on tool names. Runs before the LLM verify-gate (zero model calls).
+	/// Free deterministic pre-gate: refuse a self-reported `done` when state
+	/// was changed but no successful command execution ran since the change.
+	/// A verifier is any non-mutation command-execution tool that succeeds on an
+	/// unchanged tree; the framework does not hard-code program names, so it is
+	/// domain-agnostic out of the box.
 	pub require_check_after_mutation: bool,
 	/// Free deterministic pre-gate: refuse a self-reported `done` while the live
 	/// plan checklist still has open items — the drift-by-omission failure. The

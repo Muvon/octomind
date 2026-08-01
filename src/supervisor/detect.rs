@@ -283,11 +283,12 @@ pub fn unverified_file_refs(response: &str) -> Vec<String> {
 }
 
 /// Shape-based: is this call a candidate VERIFIER — something that executes a
-/// command whose outcome can genuinely check a prior change? Judged from what
-/// the runtime actually knows, not from the tool's name: the call must carry a
-/// string `command` parameter (the execution signature — shells, runners,
-/// remote executors all take one), and the tool must not belong to one of
-/// octomind's own builtin control-plane servers (authoritative: resolved via
+/// command whose outcome can validate that the job is done? Judged from what
+/// the runtime actually knows, not from hard-coded program names: the call must
+/// carry a string `command` parameter (the execution signature — shells,
+/// runners, remote executors and domain-specific validators all take one), the
+/// tool itself must not declare mutation intent, and it must not belong to one
+/// of octomind's own builtin control-plane servers (authoritative: resolved via
 /// the same registry the dispatcher routes with — `plan` takes a `command`
 /// parameter too, but the runtime knows it executes nothing). Whether the
 /// round actually verified is then decided OBSERVATIONALLY in
@@ -306,14 +307,13 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 		crate::log_debug!("verifier-shape: {} rejected: mutation tool", tool);
 		return false;
 	}
-	// The command itself must look like a CHECK (test/build/lint/type runner):
-	// a successful `grep`/`find`/`ls` also arrives as a shell command, and on
-	// an unchanged tree it would otherwise mark a preceding mutation as
-	// verified — a read is not a verification.
-	if !is_check_command(cmd) {
-		crate::log_debug!("verifier-shape: {} rejected: not a check: {}", tool, cmd);
+	// Reject empty command strings: they execute nothing and cannot validate
+	// completion.
+	if cmd.trim().is_empty() {
+		crate::log_debug!("verifier-shape: {} rejected: empty command", tool);
 		return false;
 	}
+	crate::log_debug!("verifier-shape: {} accepted: {}", tool, cmd);
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
 		Some(server) => !matches!(
 			server.as_str(),
@@ -323,66 +323,6 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 		// observational tree check still guards against false verification.
 		None => true,
 	}
-}
-
-/// Heuristic: does this command line run a build/test/lint/type check?
-/// Program-token based (per `&&`/`;`/`|` segment, skipping `cd`/env/timeout
-/// prefixes) so path fragments like `/testbed` or grepping inside `tests/`
-/// don't false-match. Same cheap-heuristic philosophy as [`is_mutation_tool`];
-/// deliberately generous — the observational tree check still guards candidates.
-pub fn is_check_command(cmd: &str) -> bool {
-	let c = cmd.to_ascii_lowercase();
-	for seg in c.split(['&', ';', '|', '\n']) {
-		let mut toks = seg.split_whitespace();
-		let mut prog = None;
-		while let Some(t) = toks.next() {
-			if t == "cd" {
-				let _ = toks.next();
-				continue;
-			}
-			if t.contains('=') || matches!(t, "sudo" | "env" | "timeout" | "nice") {
-				continue;
-			}
-			if t.chars().all(|ch| ch.is_ascii_digit()) {
-				continue; // timeout seconds
-			}
-			prog = Some(t);
-			break;
-		}
-		let Some(p) = prog else { continue };
-		let base = p.rsplit('/').next().unwrap_or(p);
-		if matches!(
-			base,
-			"pytest"
-				| "tox" | "cargo"
-				| "make" | "mvn"
-				| "gradle" | "gradlew"
-				| "tsc" | "eslint"
-				| "mypy" | "ruff"
-				| "clippy" | "jest"
-				| "vitest" | "rspec"
-				| "phpunit" | "ctest"
-				| "go" | "npm"
-				| "yarn" | "pnpm"
-				| "npx" | "dotnet"
-				| "gcc" | "g++"
-				| "javac" | "flake8"
-				| "pylint" | "black"
-				| "rustc"
-		) {
-			return true;
-		}
-		if (base.starts_with("python") || matches!(base, "node" | "ruby" | "php" | "perl"))
-			&& (seg.contains("pytest")
-				|| seg.contains("unittest")
-				|| seg.contains("assert")
-				|| seg.contains("test_")
-				|| seg.contains("_test"))
-		{
-			return true;
-		}
-	}
-	false
 }
 
 /// Heuristic: does this tool change state, so a success is inherently progress?
@@ -705,10 +645,9 @@ impl Detectors {
 		);
 	}
 
-	/// Reset the rolling windows (e.g. on a new user turn).
-	/// Verification state (`verified_fp`/`agent_dirty`) is intentionally NOT
-	/// reset — it is trajectory state that only a clean verification clears,
-	/// not a per-streak counter.
+	/// Reset per-task detector state on a new genuine user turn. Rolling
+	/// windows and the unverified-mutation latch must not cross task boundaries;
+	/// the verified fingerprint remains as the accepted working-tree baseline.
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
@@ -716,6 +655,7 @@ impl Detectors {
 		self.consecutive_dedups = 0;
 		self.consecutive_drift = 0;
 		self.consecutive_singletons = 0;
+		self.agent_dirty = false;
 	}
 
 	/// Record the arity of a completed tool round (one AI turn's batch) and return
@@ -1342,16 +1282,45 @@ mod tests {
 		assert!(!is_verifier_shaped("view", &json!({"path": "a.rs"})));
 		assert!(!is_verifier_shaped("shell", &json!({"command": 42})));
 		assert!(!is_verifier_shaped("shell", &json!({})));
+		assert!(!is_verifier_shaped("shell", &json!({"command": ""})));
 	}
 
 	#[test]
-	fn reset_streak_keeps_verification_state() {
+	fn verifier_shape_is_domain_agnostic() {
+		use serde_json::json;
+		// Any non-mutation command execution is a verifier candidate: the
+		// framework does not hard-code program or script names. Whether a
+		// candidate actually verifies is decided observationally (tree unchanged).
+		assert!(is_verifier_shaped(
+			"shell",
+			&json!({"command": "bash scripts/lint-capabilities.sh \"$PWD/capabilities/\""})
+		));
+		assert!(is_verifier_shaped(
+			"shell",
+			&json!({"command": "cd /proj && sh scripts/test.sh"})
+		));
+		assert!(is_verifier_shaped(
+			"shell",
+			&json!({"command": "bash scripts/deploy.sh"})
+		));
+		assert!(is_verifier_shaped(
+			"shell",
+			&json!({"command": "python check_booking.py --ref ABC123"})
+		));
+		assert!(!is_verifier_shaped(
+			"text_editor",
+			&json!({"command": "str_replace"})
+		));
+	}
+
+	#[test]
+	fn reset_streak_clears_previous_task_verification_latch() {
 		let mut d = Detectors::default();
 		d.note_round_verification(None, None, false, true);
 		assert!(d.needs_verification(None));
-		// reset_streak is for the rolling windows — trajectory state survives.
+		// A new genuine task must not inherit an earlier task's mutation.
 		d.reset_streak();
-		assert!(d.needs_verification(None));
+		assert!(!d.needs_verification(None));
 	}
 
 	#[test]

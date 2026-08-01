@@ -739,8 +739,11 @@ max_iterations = 2
 # them; cross-family catches far more (e.g. openai:gpt-5-mini, google:gemini-2.5-flash).
 # Defaults to the cheap supervisor model so it works out of the box; change it.
 verifier_model = "octohub:auto"
-# Free deterministic pre-gate (no model call): refuse a `done` claim when code
-# was changed but no successful check (build/test/lint/etc.) ran since the change.
+# Free deterministic pre-gate (no model call): refuse a `done` claim when state
+# was changed but no successful command execution ran since the change. A
+# verifier is any non-mutation command-execution tool that succeeds on an
+# unchanged tree; the framework does not hard-code program names, so it works
+# for any domain (build/test/lint, booking confirmations, health checks, etc.).
 require_check_after_mutation = true
 # Free deterministic pre-gate (no model call): refuse a `done` claim while the
 # live plan checklist still has open items -- finish them or close them out via

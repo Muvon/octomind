@@ -473,7 +473,7 @@ mod tests {
 			assert!(!payload.contains("Older request"));
 			assert!(!payload.contains("Older session goal"));
 			assert!(!payload.contains("Older checklist"));
-			assert!(!parse_context_dependency(r#"{"scope":"self_contained"}"#));
+			assert!(!parse_classifier(r#"{"scope":"self_contained"}"#).context_dependent);
 		}
 	}
 
@@ -574,13 +574,13 @@ mod tests {
 
 	#[test]
 	fn only_explicit_context_dependency_unlocks_follow_up_resolution() {
-		assert!(parse_context_dependency(r#"{"scope":"context_dependent"}"#));
+		assert!(parse_classifier(r#"{"scope":"context_dependent"}"#).context_dependent);
 		for response in [
 			r#"{"scope":"self_contained"}"#,
 			r#"{"scope":"related"}"#,
 			"not json",
 		] {
-			assert!(!parse_context_dependency(response));
+			assert!(!parse_classifier(response).context_dependent);
 		}
 	}
 

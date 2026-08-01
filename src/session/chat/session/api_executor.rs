@@ -29,7 +29,7 @@ use crate::session::output::{OutputMode, OutputSink};
 
 const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
-const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run this project's check (build / test / lint — whatever it uses), watch the result, and report the actual outcome: pass, fail, or — if this project has no such check — which command you tried and why none applies. Base the report on the observed result, not on what you expect.\n</pay-attention>";
+const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run whatever check this work has (build / test / lint for code; a re-read or consistency pass for documents and data), watch the result, and report the actual outcome: pass, fail, or — if no such check exists — which check you tried and why none applies. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
 fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
 	messages
@@ -486,8 +486,20 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::session::guardrails::get_rules(&chat_session.session.info.name)
 				.map(|r| !r.validators.is_empty())
 				.unwrap_or(false);
+		// The user can explicitly forbid running checks ("don't run cargo —
+		// I'll run it myself", in any language). Nudging "run a check" then
+		// pushes the agent to violate that prohibition — the pre-gate must
+		// stand down. The verdict comes from the resolver's LLM classifier
+		// (language-agnostic, judges meaning not keywords) on the current user
+		// turn; the LLM verify-gate still runs and judges prohibitions on its
+		// own.
+		let check_run_forbidden = resolved_task.forbids_verification;
+		if check_run_forbidden {
+			crate::log_debug!("Pre-gate: check-run forbidden by user/instructions; standing down");
+		}
 		if config.supervisor.gate.require_check_after_mutation
 			&& !validators_configured
+			&& !check_run_forbidden
 			&& chat_session
 				.detectors
 				.needs_verification(crate::supervisor::workdir::fingerprint())

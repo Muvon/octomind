@@ -40,6 +40,7 @@ pub mod detect;
 pub mod gate;
 pub mod learning;
 pub mod recite;
+pub mod resolve;
 pub mod stats;
 pub mod workdir;
 

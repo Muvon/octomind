@@ -32,8 +32,8 @@ opt-level = "s"         # Optimize for size while keeping vectorization ("z" dis
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-# octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
-octolib = { version = "0.28.0", default-features = false, features = ["huggingface"] }
+ octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
+#octolib = { version = "0.28.0", default-features = false, features = ["huggingface"] }
 # fancy-regex: 0.23+ requires an explicit regex backend; pure-Rust over onig (C)
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] } # model's own tokenizer for exact token counts
 rmcp = { version = "3.0.0", default-features = false, features = [

@@ -622,6 +622,7 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 	use crate::supervisor::stats::CallKind;
 	match kind {
 		CallKind::Gate => ModelPurpose::SupervisorGate,
+		CallKind::Resolve => ModelPurpose::SupervisorGate,
 		CallKind::Condense => ModelPurpose::SupervisorCondense,
 		CallKind::Distill => ModelPurpose::SupervisorDistill,
 		CallKind::Recall => ModelPurpose::SupervisorRecall,
@@ -635,6 +636,32 @@ pub(crate) async fn call_learning_llm(
 	system_content: String,
 	user_content: String,
 	kind: crate::supervisor::stats::CallKind,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<String> {
+	call_supervisor_llm(
+		config,
+		model,
+		system_content,
+		user_content,
+		kind,
+		0.3,
+		4096,
+		operation_rx,
+	)
+	.await
+}
+
+/// Shared supervisor-model transport with mechanic-specific sampling/output
+/// limits. Most generative mechanics use [`call_learning_llm`]; narrow
+/// classifiers such as task resolution can request deterministic short output.
+pub(crate) async fn call_supervisor_llm(
+	config: &Config,
+	model: &str,
+	system_content: String,
+	user_content: String,
+	kind: crate::supervisor::stats::CallKind,
+	temperature: f32,
+	max_tokens: u32,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
 	let now = crate::utils::time::now_secs();
@@ -670,10 +697,12 @@ pub(crate) async fn call_learning_llm(
 	];
 
 	let params = crate::session::ChatCompletionWithValidationParams::new(
-		&messages, model, 0.3,  // low temperature for structured output
-		1.0,  // top_p
-		0,    // top_k (0 = default)
-		4096, // max_tokens
+		&messages,
+		model,
+		temperature,
+		1.0, // top_p
+		0,   // top_k (0 = default)
+		max_tokens,
 		config,
 	)
 	.with_max_retries(1)

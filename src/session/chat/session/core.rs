@@ -244,6 +244,9 @@ pub struct ChatSession {
 	/// the verify-gate checks completion claims against. Reset on each genuine
 	/// user turn; gate/steer re-runs (system-managed messages) keep accumulating.
 	pub evidence: crate::supervisor::gate::EvidenceLedger,
+	/// Supervisor: turn-start task/context snapshot, then its stable resolution.
+	/// Reset on each genuine user turn and cached across gate re-runs.
+	pub gate_task: Option<crate::supervisor::resolve::TaskResolutionState>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -377,6 +380,7 @@ impl ChatSession {
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
+			gate_task: None,
 		}
 	}
 
@@ -590,6 +594,7 @@ impl ChatSession {
 						last_self_report_reason: None,
 						recalled_refs: Vec::new(),
 						evidence: crate::supervisor::gate::EvidenceLedger::default(),
+						gate_task: None,
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
@@ -1344,6 +1349,7 @@ mod tests {
 			last_self_report_reason: None,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
+			gate_task: None,
 		}
 	}
 

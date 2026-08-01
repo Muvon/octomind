@@ -31,6 +31,8 @@ pub enum CallKind {
 	Recall,
 	/// Verify-gate completion check.
 	Gate,
+	/// Current-turn dependency classification and minimal resolution.
+	Resolve,
 	/// End-of-trajectory lesson/orientation extraction.
 	Distill,
 	/// Tool-output condensation (task-aware narrowing).
@@ -44,6 +46,7 @@ struct Stats {
 	calls: u64,
 	recall_calls: u64,
 	gate_calls: u64,
+	resolve_calls: u64,
 	distill_calls: u64,
 	condense_calls: u64,
 	delegate_calls: u64,
@@ -87,7 +90,7 @@ fn with<F: FnOnce(&mut Stats)>(f: F) {
 }
 
 /// Record one supervisor model call's usage, attributed to the mechanic that
-/// made it (verify-gate / distill / recall-prep).
+/// made it (task resolution / verify-gate / distill / recall-prep).
 pub fn record_call(
 	kind: CallKind,
 	input_tokens: u64,
@@ -100,6 +103,7 @@ pub fn record_call(
 		match kind {
 			CallKind::Recall => s.recall_calls += 1,
 			CallKind::Gate => s.gate_calls += 1,
+			CallKind::Resolve => s.resolve_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Delegate => s.delegate_calls += 1,
@@ -215,6 +219,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"calls": s.calls,
 		"recall_calls": s.recall_calls,
 		"gate_calls": s.gate_calls,
+		"resolve_calls": s.resolve_calls,
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
 		"delegate_calls": s.delegate_calls,

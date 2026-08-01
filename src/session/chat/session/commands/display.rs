@@ -612,6 +612,7 @@ pub fn display_info(output: &CommandOutput) {
 			let calls = get_u64("calls");
 			let recall_calls = get_u64("recall_calls");
 			let gate_calls = get_u64("gate_calls");
+			let resolve_calls = get_u64("resolve_calls");
 			let distill_calls = get_u64("distill_calls");
 			let condense_calls = get_u64("condense_calls");
 			let delegate_calls = get_u64("delegate_calls");
@@ -724,6 +725,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if gate_calls > 0 {
 					parts.push(format!("{} gate", gate_calls));
+				}
+				if resolve_calls > 0 {
+					parts.push(format!("{} resolve", resolve_calls));
 				}
 				if condense_calls > 0 {
 					parts.push(format!("{} condense", condense_calls));

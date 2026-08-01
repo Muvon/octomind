@@ -31,6 +31,26 @@ const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
 const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with code changes still unverified, so that claim isn't trustworthy yet. Run this project's check (build / test / lint — whatever it uses), watch the result, and report the actual outcome: pass, fail, or — if this project has no such check — which command you tried and why none applies. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
+fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
+	messages
+		.iter()
+		.rposition(crate::session::is_real_user_task_message)
+		.unwrap_or(messages.len())
+}
+
+fn current_turn_tool_outputs(
+	messages: &[crate::session::Message],
+	turn_start: usize,
+) -> Vec<String> {
+	messages
+		.get(turn_start..)
+		.unwrap_or_default()
+		.iter()
+		.filter(|message| message.role == "tool")
+		.map(|message| message.content.clone())
+		.collect()
+}
+
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
 /// positive `delta` reinforces (the recall helped); negative decays (it may have
 /// misled). Clears the recalled set either way.
@@ -118,6 +138,23 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 
 	// CRITICAL: Connect session cancellation to animation for INSTANT Ctrl+C response
 	animation_manager.set_cancel_receiver(operation_rx.clone());
+
+	// Snapshot task-resolution context before this turn's work changes the plan or
+	// compaction anchor. Resolution itself stays lazy: only a completion claim pays
+	// for the classifier/rewriter call, and recursive gate re-runs reuse its result.
+	if config.supervisor.enabled
+		&& config.supervisor.gate.enabled
+		&& chat_session.gate_task.is_none()
+	{
+		let session_context = chat_session.session.info.anchor.to_xml();
+		let active_plan = crate::mcp::core::plan::render_plan_checklist();
+		chat_session.gate_task = crate::supervisor::resolve::TaskContext::capture(
+			&chat_session.session.messages,
+			&session_context,
+			active_plan.as_deref(),
+		)
+		.map(crate::supervisor::resolve::TaskResolutionState::Pending);
+	}
 
 	// Inject learned lessons. Two triggers:
 	//   - first call of the session → global tier + full hybrid scoped recall;
@@ -371,12 +408,58 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// One genuine user message defines the verification turn. Supervisor,
 		// recall, skill, and continuation injections after it remain part of the
 		// runtime conversation but cannot move this boundary.
-		let turn_start = chat_session
+		let turn_start = latest_real_user_turn_start(&chat_session.session.messages);
+		let task = chat_session
 			.session
 			.messages
-			.iter()
-			.rposition(crate::session::is_real_user_task_message)
-			.unwrap_or(chat_session.session.messages.len());
+			.get(turn_start)
+			.filter(|message| crate::session::is_real_user_task_message(message))
+			.map(|message| message.content.clone())
+			.unwrap_or_default();
+		let live_plan = crate::mcp::core::plan::render_plan_checklist().unwrap_or_default();
+		// Resolve references before any deterministic gate that consults session-
+		// persistent state. Otherwise an old open plan could block a new unrelated
+		// self-contained request before the resolver gets a chance to reject it.
+		let resolved_task = match chat_session.gate_task.clone() {
+			Some(crate::supervisor::resolve::TaskResolutionState::Resolved(resolved))
+				if resolved.original_request == task =>
+			{
+				resolved
+			}
+			Some(crate::supervisor::resolve::TaskResolutionState::Pending(context))
+				if context.current_request == task =>
+			{
+				animation_manager
+					.set_phase("Resolving current task …")
+					.await;
+				let resolved =
+					crate::supervisor::resolve::resolve(config, &context, operation_rx.clone())
+						.await;
+				animation_manager.clear_phase();
+				chat_session.gate_task = Some(
+					crate::supervisor::resolve::TaskResolutionState::Resolved(resolved.clone()),
+				);
+				resolved
+			}
+			_ => {
+				// A missing/mismatched snapshot is uncertain. Keep the literal task and
+				// treat the current plan as pre-existing so it cannot gain authority
+				// merely because resolution state was unavailable.
+				let mut resolved =
+					crate::supervisor::resolve::ResolvedTask::self_contained(task.clone());
+				resolved.plan_at_turn_start = live_plan.clone();
+				resolved
+			}
+		};
+		let plan_changed_this_turn = live_plan != resolved_task.plan_at_turn_start;
+		let plan_applies = crate::supervisor::resolve::plan_applies(&resolved_task, &live_plan);
+		crate::log_debug!(
+			"gate task scope={} sources={} plan_relevant={} plan_changed={}",
+			resolved_task.scope.as_str(),
+			resolved_task.context_sources.join(","),
+			resolved_task.plan_relevant,
+			plan_changed_this_turn
+		);
 		// Free pre-gate (no model call): the most common false-done is claiming
 		// completion right after a code change without re-running any check. Catch
 		// it deterministically before paying for the LLM verify-gate. Shares the
@@ -437,7 +520,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// plan still has open items is drift-by-omission — parts of the decomposed
 		// task silently dropped. The agent must finish them or close them out via
 		// the plan tool. Same marker/budget pattern as the mutation pre-gate above.
-		if config.supervisor.gate.require_plan_complete {
+		if config.supervisor.gate.require_plan_complete && plan_applies {
 			let open = crate::mcp::core::plan::open_plan_tasks();
 			let already_nudged_plan = {
 				let msgs = &chat_session.session.messages;
@@ -481,15 +564,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// hold on disk, is fabricating its support. Catch both deterministically
 		// and re-ground via the same bounded re-run.
 		if config.supervisor.claim_check {
-			let tool_outputs: Vec<String> = chat_session
-				.session
-				.messages
-				.get(turn_start..)
-				.unwrap_or_default()
-				.iter()
-				.filter(|m| m.role == "tool")
-				.map(|m| m.content.clone())
-				.collect();
+			let tool_outputs =
+				current_turn_tool_outputs(&chat_session.session.messages, turn_start);
 			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&tool_outputs,
@@ -549,23 +625,16 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 		}
 
-		// The genuine task is the most recent user turn that is NOT a supervisor
-		// injection — so re-runs verify against the real request, not our advisory.
-		let task = chat_session
-			.session
-			.messages
-			.get(turn_start)
-			.filter(|m| crate::session::is_real_user_task_message(m))
-			.map(|m| m.content.clone())
-			.unwrap_or_default();
 		let result = chat_session.last_response.clone();
 		let claim = chat_session.last_self_report_reason.clone();
 		let actions = chat_session.evidence.render();
-		// Durable role context and plan state stay available to the verifier, but
-		// are serialized as separate, lower-authority sections — never concatenated
-		// into the current user's request.
-		let context = chat_session.session.info.anchor.intent.clone();
-		let plan = crate::mcp::core::plan::render_plan_checklist().unwrap_or_default();
+		// Only a relevant pre-existing plan or a plan changed by this turn reaches
+		// the verifier. Unrelated old plan state remains alive but cannot add scope.
+		let plan = if plan_applies {
+			live_plan
+		} else {
+			String::new()
+		};
 		// Runtime-gathered ground truth: the diff of what actually changed and
 		// the last command's recorded output — the verifier judges state, not story.
 		let ground_truth = crate::supervisor::gate::render_ground_truth(
@@ -578,11 +647,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let verdict = crate::supervisor::gate::verify(
 			config,
 			crate::supervisor::gate::GateInput {
-				task: &task,
+				original_task: &resolved_task.original_request,
+				task: &resolved_task.resolved_request,
+				task_scope: resolved_task.scope,
+				context_sources: &resolved_task.context_sources,
+				resolution_evidence: &resolved_task.resolution_evidence,
 				result: &result,
 				claim: claim.as_deref(),
 				actions: &actions,
-				context: &context,
 				plan: &plan,
 				ground_truth: &ground_truth,
 				prior_gaps: &prior_gaps,
@@ -647,4 +719,32 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	run_deferred_plan_compression(chat_session).await;
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn message(role: &str, content: &str) -> crate::session::Message {
+		crate::session::Message {
+			role: role.to_string(),
+			content: content.to_string(),
+			..Default::default()
+		}
+	}
+
+	#[test]
+	fn current_turn_evidence_excludes_older_tool_outputs() {
+		let messages = vec![
+			message("user", "Old request"),
+			message("tool", "old evidence that must not validate a later quote"),
+			message("assistant", "Old answer quotes old evidence"),
+			message("user", "New request"),
+			message("assistant", "Current answer quotes old evidence"),
+			message("tool", "current evidence"),
+		];
+		let start = latest_real_user_turn_start(&messages);
+		let outputs = current_turn_tool_outputs(&messages, start);
+		assert_eq!(outputs, ["current evidence"]);
+	}
 }

@@ -254,6 +254,7 @@ impl ChatSession {
 		// deliberately NOT reset: it labels the trajectory for distill and is cleared
 		// only by a later PASS.
 		self.evidence.reset();
+		self.gate_task = None;
 		self.gate_iterations = 0;
 		self.last_gate_gaps.clear();
 		// New genuine task: the delegate gate's rewrite budget starts fresh, so a

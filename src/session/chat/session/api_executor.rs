@@ -368,6 +368,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
 		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations
 	{
+		// One genuine user message defines the verification turn. Supervisor,
+		// recall, skill, and continuation injections after it remain part of the
+		// runtime conversation but cannot move this boundary.
+		let turn_start = chat_session
+			.session
+			.messages
+			.iter()
+			.rposition(crate::session::is_real_user_task_message)
+			.unwrap_or(chat_session.session.messages.len());
 		// Free pre-gate (no model call): the most common false-done is claiming
 		// completion right after a code change without re-running any check. Catch
 		// it deterministically before paying for the LLM verify-gate. Shares the
@@ -379,10 +388,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// turn also avoids matching a pre-gate note left in earlier history.
 		let already_nudged = {
 			let msgs = &chat_session.session.messages;
-			let turn_start = msgs
-				.iter()
-				.rposition(crate::session::is_real_user_task_message)
-				.unwrap_or(0);
 			msgs[turn_start..]
 				.iter()
 				.any(|m| m.content.contains(PREGATE_MARKER))
@@ -436,10 +441,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			let open = crate::mcp::core::plan::open_plan_tasks();
 			let already_nudged_plan = {
 				let msgs = &chat_session.session.messages;
-				let turn_start = msgs
-					.iter()
-					.rposition(crate::session::is_real_user_task_message)
-					.unwrap_or(0);
 				msgs[turn_start..].iter().any(|m| {
 					m.content
 						.contains(crate::supervisor::gate::PLAN_GATE_MARKER)
@@ -483,6 +484,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			let tool_outputs: Vec<String> = chat_session
 				.session
 				.messages
+				.get(turn_start..)
+				.unwrap_or_default()
 				.iter()
 				.filter(|m| m.role == "tool")
 				.map(|m| m.content.clone())
@@ -551,21 +554,18 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let task = chat_session
 			.session
 			.messages
-			.iter()
-			.rev()
-			.find(|m| crate::session::is_real_user_task_message(m))
+			.get(turn_start)
+			.filter(|m| crate::session::is_real_user_task_message(m))
 			.map(|m| m.content.clone())
 			.unwrap_or_default();
 		let result = chat_session.last_response.clone();
 		let claim = chat_session.last_self_report_reason.clone();
 		let actions = chat_session.evidence.render();
-		// Durable goal + live plan for the verifier: a terse follow-up turn
-		// ("continue") is only verifiable against what it refers to.
-		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
-		let context = crate::supervisor::gate::render_session_context(
-			&chat_session.session.info.anchor.intent,
-			plan_checklist.as_deref(),
-		);
+		// Durable role context and plan state stay available to the verifier, but
+		// are serialized as separate, lower-authority sections — never concatenated
+		// into the current user's request.
+		let context = chat_session.session.info.anchor.intent.clone();
+		let plan = crate::mcp::core::plan::render_plan_checklist().unwrap_or_default();
 		// Runtime-gathered ground truth: the diff of what actually changed and
 		// the last command's recorded output — the verifier judges state, not story.
 		let ground_truth = crate::supervisor::gate::render_ground_truth(
@@ -583,6 +583,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				claim: claim.as_deref(),
 				actions: &actions,
 				context: &context,
+				plan: &plan,
 				ground_truth: &ground_truth,
 				prior_gaps: &prior_gaps,
 			},

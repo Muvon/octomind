@@ -614,6 +614,9 @@ pub fn display_info(output: &CommandOutput) {
 			let gate_calls = get_u64("gate_calls");
 			let distill_calls = get_u64("distill_calls");
 			let condense_calls = get_u64("condense_calls");
+			let delegate_calls = get_u64("delegate_calls");
+			let delegate_runs = get_u64("delegate_runs");
+			let delegate_blocks = get_u64("delegate_blocks");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
 			let sup_in = get_u64("input_tokens");
@@ -691,6 +694,12 @@ pub fn display_info(output: &CommandOutput) {
 					format_number(condense_saved)
 				));
 			}
+			if delegate_runs > 0 {
+				activity.push(format!(
+					"{} handoff-checks ({} rejected)",
+					delegate_runs, delegate_blocks
+				));
+			}
 			if !activity.is_empty() {
 				block_row("activity", &activity.join(&format!(" {} ", dot)), kw_sv);
 			}
@@ -718,6 +727,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if condense_calls > 0 {
 					parts.push(format!("{} condense", condense_calls));
+				}
+				if delegate_calls > 0 {
+					parts.push(format!("{} delegate", delegate_calls));
 				}
 				let breakdown = if parts.is_empty() {
 					format_number(calls).bright_white().to_string()

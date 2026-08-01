@@ -35,6 +35,7 @@
 //! fail loudly instead of degrading to silent defaults.
 
 pub mod condense;
+pub mod delegate;
 pub mod detect;
 pub mod gate;
 pub mod learning;
@@ -95,6 +96,8 @@ pub struct SupervisorConfig {
 	pub recite: ReciteConfig,
 	/// Task-aware condensation of oversized tool outputs.
 	pub condense: CondenseConfig,
+	/// Handoff quality gate on subagent delegation (`tap run`, `agent_*`).
+	pub delegate: DelegateConfig,
 	/// Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that
 	/// emitted (or backed-off-but-still-dominant) a steer without the model breaking out.
 	/// `0` = unlimited (off). The terminal hard ceiling under the adaptive steer backoff,
@@ -129,6 +132,23 @@ pub struct CondenseConfig {
 	pub tokens_threshold: usize,
 	/// Model that does the narrowing (cheap + fast recommended).
 	pub model: String,
+}
+
+/// Delegate gate: handoff quality check before a subagent is spawned.
+/// `tap run` and `agent_*` start a context-isolated child that sees only the
+/// prompt string, so an incomplete prompt is unrecoverable downstream. One
+/// cheap-model call per round judges each handoff against the parent's goal;
+/// a handoff that is unfaithful to the request or not self-contained is
+/// rejected before the tool runs and the agent rewrites it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelegateConfig {
+	pub enabled: bool,
+	/// Model that judges the handoff (cheap + fast recommended).
+	pub model: String,
+	/// Rejected rounds allowed per turn before the gate stops judging and lets
+	/// handoffs through. Bounds the rewrite loop — a gate that can block forever
+	/// is worse than a thin prompt. `0` = never judge (same as disabled).
+	pub max_revisions: u8,
 }
 
 /// Orientation memory: durable, expensive-to-re-derive understanding of the

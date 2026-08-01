@@ -256,6 +256,9 @@ impl ChatSession {
 		self.evidence.reset();
 		self.gate_iterations = 0;
 		self.last_gate_gaps.clear();
+		// New genuine task: the delegate gate's rewrite budget starts fresh, so a
+		// previous task's exhausted budget can't latch the gate off.
+		self.delegate_revisions = 0;
 		// Reset the detector rolling windows (loop / no-progress / truncation /
 		// dedup / drift streaks) so a new task doesn't inherit the previous task's
 		// streaks. Verification state (verified fingerprint) is intentionally kept.

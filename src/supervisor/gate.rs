@@ -23,14 +23,25 @@ use tokio::sync::watch;
 
 const GATE_PROMPT: &str = r#"You are a strict completion verifier. A different agent claims its task is COMPLETE.
 Judge the END STATE, not the agent's story: ignore its self-report and stated claim, and
-check only what the AGENT FINAL RESULT actually evidences against the USER REQUEST.
+check only what the AGENT FINAL RESULT actually evidences against the CURRENT USER REQUEST.
 
-First classify what the USER REQUEST asks for: CHANGING state (create, edit, fix, run, send),
+First classify what the CURRENT USER REQUEST asks for: CHANGING state (create, edit, fix, run, send),
 or only OBSERVING existing state and reporting on it (review, audit, analyze, investigate,
 explain, summarize). For an observe-only request the report itself is the deliverable:
 files, diffs, or changes described in the result are what the agent FOUND, not work it claims
 to have performed — do not demand [mut] evidence for them; successful [read] actions covering
 the inspected artifacts are the supporting evidence.
+
+CURRENT USER REQUEST is the authority for this verification pass. You may also receive
+SESSION CONTEXT: durable role/task context retained across turns. It may supply only the
+referent of an explicitly context-dependent request (for example what "continue" or "fix
+that" refers to). Apart from that explicitly referenced scope, it must never add an action,
+prohibition, or completion requirement. When the current request is self-contained, do not
+broaden it from session context.
+
+When the current request asks to schedule or arrange recurring future work, successful
+registration of that schedule satisfies the request. Do not require the first scheduled action
+to execute immediately unless the current request separately asks for a check or report now.
 
 You may also receive RECORDED ACTIONS — the runtime's own log of every tool call the agent
 actually executed for this task ([mut] = state-changing, [read] = inspection; each line shows
@@ -47,11 +58,9 @@ outranks the narrative:
 - When RECORDED ACTIONS is absent or empty, the task may be pure reasoning — judge the result
   text on its own terms.
 
-You may also receive SESSION CONTEXT — the durable goal this session is pursuing and/or the
-live plan checklist. The request may be terse ("continue", "finish it", "fix that"): resolve
-what it refers to using this context, and verify against the resolved meaning. An open plan
-item is a gap only when the request (so resolved) asks for it — do not demand work beyond
-the request's own scope.
+You may also receive an ACTIVE PLAN CHECKLIST. It is execution state, not another user
+request. Use it to detect unfinished work in the current plan, but never treat the checklist
+as evidence that the user requested anything absent from CURRENT USER REQUEST.
 
 You may also receive GROUND TRUTH — runtime-gathered state (the working-tree diff of the
 files the agent changed, current content of new files, and the last command's recorded
@@ -266,30 +275,6 @@ impl EvidenceLedger {
 	}
 }
 
-/// Render the SESSION CONTEXT block for the verifier: the durable goal (anchor
-/// intent) and the live plan checklist. This is what lets the gate verify a
-/// terse follow-up turn ("continue") against the real goal instead of the
-/// fragment. Empty when neither exists — short single-task sessions hand the
-/// gate nothing extra.
-pub fn render_session_context(intent: &str, plan: Option<&str>) -> String {
-	let intent = intent.trim();
-	let plan = plan.map(str::trim).filter(|p| !p.is_empty());
-	if intent.is_empty() && plan.is_none() {
-		return String::new();
-	}
-	let mut s = String::new();
-	if !intent.is_empty() {
-		s.push_str("Session goal: ");
-		s.push_str(intent);
-		s.push('\n');
-	}
-	if let Some(p) = plan {
-		s.push_str(p);
-		s.push('\n');
-	}
-	s
-}
-
 /// Cap on the git diff inside the ground-truth block.
 const GT_DIFF_MAX: usize = 10_000;
 /// Overall cap on the ground-truth block.
@@ -423,8 +408,10 @@ pub struct GateInput<'a> {
 	pub claim: Option<&'a str>,
 	/// Rendered [`EvidenceLedger`] (empty when no tools ran — pure reasoning).
 	pub actions: &'a str,
-	/// Rendered [`render_session_context`] block (durable goal + live plan).
+	/// Durable session/role context. Reference context only, never extra intent.
 	pub context: &'a str,
+	/// Live plan checklist. Execution state only, never additional user intent.
+	pub plan: &'a str,
 	/// Rendered [`render_ground_truth`] block (diff + last command output).
 	pub ground_truth: &'a str,
 	/// Gaps the previous verification pass found this task, so the re-verify
@@ -442,40 +429,7 @@ pub async fn verify(
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Pass;
 	}
-	let claim_line = match input.claim {
-		Some(c) if !c.trim().is_empty() => format!("\n\nAGENT'S STATED CLAIM: {c}"),
-		_ => String::new(),
-	};
-	let actions_block = if input.actions.trim().is_empty() {
-		String::new()
-	} else {
-		format!("\n\nRECORDED ACTIONS:\n{}", input.actions)
-	};
-	let context_block = if input.context.trim().is_empty() {
-		String::new()
-	} else {
-		format!("\n\nSESSION CONTEXT:\n{}", input.context)
-	};
-	let ground_truth_block = if input.ground_truth.trim().is_empty() {
-		String::new()
-	} else {
-		format!("\n\nGROUND TRUTH:\n{}", input.ground_truth)
-	};
-	let prior_gaps_block = if input.prior_gaps.is_empty() {
-		String::new()
-	} else {
-		let mut b = String::from("\n\nPREVIOUSLY FLAGGED GAPS:\n");
-		for g in input.prior_gaps {
-			b.push_str("- ");
-			b.push_str(g);
-			b.push('\n');
-		}
-		b
-	};
-	let (task, result) = (input.task, input.result);
-	let user = format!(
-		"USER REQUEST:\n{task}{context_block}\n\nAGENT FINAL RESULT:\n{result}{claim_line}{actions_block}{ground_truth_block}{prior_gaps_block}"
-	);
+	let user = render_gate_input(&input);
 	// Verify with a deliberately separate (ideally different-family) model — a
 	// same-family verifier shares the generator's blind spots and rubber-stamps
 	// them. Strict config guarantees this is set; no fallback to the generator.
@@ -496,6 +450,51 @@ pub async fn verify(
 			GateVerdict::Pass
 		}
 	}
+}
+
+/// Serialize the verifier inputs with explicit authority boundaries. Session
+/// context and plan state remain available, but neither is nested under the
+/// current request where a verifier could mistake it for additional intent.
+fn render_gate_input(input: &GateInput<'_>) -> String {
+	let claim_line = match input.claim {
+		Some(c) if !c.trim().is_empty() => format!("\n\nAGENT'S STATED CLAIM: {c}"),
+		_ => String::new(),
+	};
+	let actions_block = if input.actions.trim().is_empty() {
+		String::new()
+	} else {
+		format!("\n\nRECORDED ACTIONS:\n{}", input.actions)
+	};
+	let context_block = if input.context.trim().is_empty() {
+		String::new()
+	} else {
+		format!("\n\nSESSION CONTEXT (REFERENCE ONLY):\n{}", input.context)
+	};
+	let plan_block = if input.plan.trim().is_empty() {
+		String::new()
+	} else {
+		format!("\n\nACTIVE PLAN CHECKLIST:\n{}", input.plan)
+	};
+	let ground_truth_block = if input.ground_truth.trim().is_empty() {
+		String::new()
+	} else {
+		format!("\n\nGROUND TRUTH:\n{}", input.ground_truth)
+	};
+	let prior_gaps_block = if input.prior_gaps.is_empty() {
+		String::new()
+	} else {
+		let mut b = String::from("\n\nPREVIOUSLY FLAGGED GAPS:\n");
+		for g in input.prior_gaps {
+			b.push_str("- ");
+			b.push_str(g);
+			b.push('\n');
+		}
+		b
+	};
+	let (task, result) = (input.task, input.result);
+	format!(
+		"CURRENT USER REQUEST (ONLY SOURCE OF REQUIREMENTS):\n{task}\n--- END CURRENT USER REQUEST ---{context_block}{plan_block}\n\nAGENT FINAL RESULT:\n{result}{claim_line}{actions_block}{ground_truth_block}{prior_gaps_block}"
+	)
 }
 
 fn parse_verdict(resp: &str) -> GateVerdict {
@@ -559,6 +558,39 @@ mod tests {
 	#[test]
 	fn no_markers_is_pass() {
 		assert_eq!(parse_verdict("looks good to me"), GateVerdict::Pass);
+	}
+
+	#[test]
+	fn gate_input_keeps_request_context_and_plan_separate() {
+		let gaps = Vec::new();
+		let rendered = render_gate_input(&GateInput {
+			task: "Schedule a status check every two hours",
+			result: "Scheduled successfully",
+			claim: None,
+			actions: "[mut] schedule add → ok",
+			context: "Earlier turn requested an immediate status report",
+			plan: "Live plan: schedule recurring checks",
+			ground_truth: "",
+			prior_gaps: &gaps,
+		});
+
+		let request_end = rendered
+			.find("--- END CURRENT USER REQUEST ---")
+			.expect("request boundary");
+		let context_start = rendered
+			.find("SESSION CONTEXT (REFERENCE ONLY):")
+			.expect("session context section");
+		let plan_start = rendered
+			.find("ACTIVE PLAN CHECKLIST:")
+			.expect("plan section");
+		let result_start = rendered
+			.find("AGENT FINAL RESULT:")
+			.expect("result section");
+
+		assert!(request_end < context_start);
+		assert!(context_start < plan_start);
+		assert!(plan_start < result_start);
+		assert!(!rendered[..request_end].contains("Earlier turn"));
 	}
 
 	#[test]
@@ -627,28 +659,6 @@ mod tests {
 			1,
 		);
 		assert!(l.render().contains('…'));
-	}
-
-	#[test]
-	fn session_context_empty_when_no_goal_or_plan() {
-		assert_eq!(render_session_context("", None), "");
-		assert_eq!(render_session_context("  ", Some("  ")), "");
-	}
-
-	#[test]
-	fn session_context_renders_goal_and_plan() {
-		let c = render_session_context(
-			"Ship the feature",
-			Some("Live plan (1/2 done):\n✅ a\n🔄 b ← current"),
-		);
-		assert!(c.starts_with("Session goal: Ship the feature\n"));
-		assert!(c.contains("🔄 b ← current"));
-		// Each part also renders alone.
-		assert_eq!(
-			render_session_context("Ship it", None),
-			"Session goal: Ship it\n"
-		);
-		assert_eq!(render_session_context("", Some("plan")), "plan\n");
 	}
 
 	#[test]

@@ -202,6 +202,11 @@ pub struct ChatSession {
 	pub detectors: crate::supervisor::detect::Detectors,
 	/// Supervisor: verify-gate re-entry counter for the current turn.
 	pub gate_iterations: u8,
+	/// Supervisor: rounds the delegate gate rejected a subagent handoff in the
+	/// current turn. Bounds the rewrite loop — at `delegate.max_revisions` the
+	/// gate stops judging and lets the handoff through. Reset on each genuine
+	/// user turn.
+	pub delegate_revisions: u8,
 	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining;
 	/// suppresses distill so we never learn from an unverified trajectory.
 	pub gate_failed: bool,
@@ -361,6 +366,7 @@ impl ChatSession {
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
+			delegate_revisions: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),
 			steer_pending: None,
@@ -573,6 +579,7 @@ impl ChatSession {
 						last_self_report: None,
 						detectors: crate::supervisor::detect::Detectors::default(),
 						gate_iterations: 0,
+						delegate_revisions: 0,
 						gate_failed: false,
 						last_gate_gaps: Vec::new(),
 						steer_pending: None,
@@ -1326,6 +1333,7 @@ mod tests {
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
+			delegate_revisions: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),
 			steer_pending: None,

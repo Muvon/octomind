@@ -254,11 +254,50 @@ async fn execute_tools_with_context(
 	// spawned; they return an immediate error result, saving the execution
 	// roundtrip entirely.
 	let session_id_for_guardrails = context.session_name().to_string();
-	let block_messages: Vec<Option<String>> = crate::session::guardrails::check_batch(
+	// Messages are stored already prefixed with their source, so the spawn loop
+	// below emits them verbatim (guardrails and the delegate gate both land here).
+	let mut block_messages: Vec<Option<String>> = crate::session::guardrails::check_batch(
 		&session_id_for_guardrails,
 		config,
 		&current_tool_calls,
-	);
+	)
+	.into_iter()
+	.map(|m| m.map(|msg| format!("[guardrail] {msg}")))
+	.collect();
+
+	// Supervisor delegate gate: subagent handoffs (`tap run`, `agent_*`) start a
+	// context-isolated child that sees only the prompt string, so an incomplete
+	// prompt is unrecoverable once spawned. Judged here — same pre-spawn seam as
+	// guardrails — against the parent's goal/request/plan, which only the main
+	// session has (a subagent's own supervisor gates its onward handoffs).
+	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
+		let not_blocked: Vec<crate::mcp::McpToolCall> = current_tool_calls
+			.iter()
+			.enumerate()
+			.filter(|(i, _)| block_messages.get(*i).is_none_or(Option::is_none))
+			.map(|(_, c)| c.clone())
+			.collect();
+		let task = parent_task_context(chat_session);
+		let cancel_rx = operation_cancelled
+			.clone()
+			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+		let rejected = crate::supervisor::delegate::gate_round(
+			&not_blocked,
+			config,
+			&task,
+			chat_session.delegate_revisions,
+			cancel_rx,
+		)
+		.await;
+		if !rejected.is_empty() {
+			chat_session.delegate_revisions = chat_session.delegate_revisions.saturating_add(1);
+			for (tool_id, message) in rejected {
+				if let Some(i) = current_tool_calls.iter().position(|c| c.tool_id == tool_id) {
+					block_messages[i] = Some(message);
+				}
+			}
+		}
+	}
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
@@ -290,11 +329,7 @@ async fn execute_tools_with_context(
 			let tool_id_for_err = original_tool_id.clone();
 			tokio::spawn(async move {
 				Ok::<_, anyhow::Error>((
-					crate::mcp::McpToolResult::error(
-						tool_name_for_err,
-						tool_id_for_err,
-						format!("[guardrail] {msg}"),
-					),
+					crate::mcp::McpToolResult::error(tool_name_for_err, tool_id_for_err, msg),
 					0u64,
 				))
 			})
@@ -663,19 +698,7 @@ async fn execute_tools_with_context(
 	// cap below, which still applies to whatever survives as the ceiling.
 	// Main-session only: layers have no anchor/user-request to condition on.
 	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		let mut task = String::new();
-		let intent = chat_session.session.info.anchor.intent.trim();
-		if !intent.is_empty() {
-			task.push_str(&format!("Goal: {intent}\n"));
-		}
-		if let Some(req) =
-			crate::session::latest_real_user_task_content(&chat_session.session.messages)
-		{
-			task.push_str(&format!("Current request: {req}\n"));
-		}
-		if let Some(plan) = crate::mcp::core::plan::render_plan_checklist() {
-			task.push_str(&plan);
-		}
+		let task = parent_task_context(chat_session);
 		// Agent-objective conditioning: the condenser distills a short profile
 		// from this on its first call and caches it for the session.
 		let system_prompt = chat_session
@@ -702,6 +725,26 @@ async fn execute_tools_with_context(
 	// Handle large outputs with batched confirmation
 	let processed_results = handle_large_tool_results(tool_results, config, mode).await?;
 	Ok((processed_results, total_tool_time_ms))
+}
+
+/// The parent session's live task framing — durable goal, current user request
+/// and open plan items. Shared by the supervisor mechanics that must judge
+/// something against "what are we actually doing right now" (condense, the
+/// delegate gate).
+fn parent_task_context(chat_session: &ChatSession) -> String {
+	let mut task = String::new();
+	let intent = chat_session.session.info.anchor.intent.trim();
+	if !intent.is_empty() {
+		task.push_str(&format!("Goal: {intent}\n"));
+	}
+	if let Some(req) = crate::session::latest_real_user_task_content(&chat_session.session.messages)
+	{
+		task.push_str(&format!("Current request: {req}\n"));
+	}
+	if let Some(plan) = crate::mcp::core::plan::render_plan_checklist() {
+		task.push_str(&plan);
+	}
+	task
 }
 
 // Handle large tool results: apply token-cap truncation (warnings removed).

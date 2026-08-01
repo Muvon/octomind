@@ -625,6 +625,7 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 		CallKind::Condense => ModelPurpose::SupervisorCondense,
 		CallKind::Distill => ModelPurpose::SupervisorDistill,
 		CallKind::Recall => ModelPurpose::SupervisorRecall,
+		CallKind::Delegate => ModelPurpose::SupervisorDelegate,
 	}
 }
 

@@ -35,6 +35,8 @@ pub enum CallKind {
 	Distill,
 	/// Tool-output condensation (task-aware narrowing).
 	Condense,
+	/// Subagent handoff quality gate (`tap run` / `agent_*`).
+	Delegate,
 }
 
 #[derive(Default, Clone)]
@@ -44,6 +46,9 @@ struct Stats {
 	gate_calls: u64,
 	distill_calls: u64,
 	condense_calls: u64,
+	delegate_calls: u64,
+	delegate_runs: u64,
+	delegate_blocks: u64,
 	condensed_results: u64,
 	condense_saved_tokens: u64,
 	input_tokens: u64,
@@ -97,6 +102,7 @@ pub fn record_call(
 			CallKind::Gate => s.gate_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
+			CallKind::Delegate => s.delegate_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -166,6 +172,14 @@ pub fn condensed(results: u64, saved_tokens: u64) {
 		s.condense_saved_tokens += saved_tokens;
 	});
 }
+/// A delegate-gate check ran over a round's subagent handoffs.
+pub fn delegate_run() {
+	with(|s| s.delegate_runs += 1);
+}
+/// `n` subagent handoffs were rejected before spawning.
+pub fn delegate_block(n: u64) {
+	with(|s| s.delegate_blocks += n);
+}
 
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
@@ -179,7 +193,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.plan_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
-		&& s.recalls_injected == 0;
+		&& s.recalls_injected == 0
+		&& s.delegate_runs == 0;
 	if idle {
 		return None;
 	}
@@ -202,6 +217,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"gate_calls": s.gate_calls,
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
+		"delegate_calls": s.delegate_calls,
+		"delegate_runs": s.delegate_runs,
+		"delegate_blocks": s.delegate_blocks,
 		"condensed_results": s.condensed_results,
 		"condense_saved_tokens": s.condense_saved_tokens,
 		"input_tokens": s.input_tokens,

@@ -771,6 +771,21 @@ tokens_threshold = 5000
 # Model that does the narrowing (cheap + fast recommended).
 model = "anthropic:claude-haiku-4-5"
 
+# Delegate gate: handoff quality check before a subagent is spawned. `tap run`
+# and `agent_*` start a CONTEXT-ISOLATED child that sees only the prompt string
+# -- no transcript, no prior tool output. ONE cheap-model call per round judges
+# each proposed handoff against the parent's goal, live request and plan: is it
+# faithful to what the user asked, self-contained (concrete paths, symbols,
+# commands, constraints), does it state the deliverable and the scope edge?
+# A handoff that fails is NOT spawned -- the gaps come back as a tool error so
+# the agent rewrites the prompt. Fail-open on any gate outage.
+[supervisor.delegate]
+enabled = true
+# Model that judges the handoff (cheap + fast recommended).
+model = "anthropic:claude-haiku-4-5"
+# Rejected rounds allowed per turn before the gate stops judging and lets the
+# handoff through -- bounds the rewrite loop. 0 = never judge (same as off).
+max_revisions = 2
 # MCP backend configuration (uncomment to use instead of file backend):
 # Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.
 # Empty string = omit that field. Missing = omit.

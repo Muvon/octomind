@@ -84,6 +84,11 @@ check RECORDED ACTIONS and the GROUND TRUTH diff for evidence the forbidden thin
 the diff). A violated prohibition is a gap even when all requested work is complete — name
 the prohibition and the violating action.
 
+Prohibitions also bound what you may demand: when the request forbids running checks or
+verifying ("don't run tests", "no verification needed", "I'll review it myself"), the
+absence of a verification run is compliance, not a gap. Never flag missing verification
+the request itself forbade.
+
 Work through every part of the request, one at a time. For each, find the concrete proof it
 was done — a recorded action, file path, line or code excerpt, command output, or named test
 in the result. A part counts as done only if such evidence is present; a confident or

@@ -133,8 +133,7 @@ impl ResolvedTask {
 /// was already open but classified as unrelated is ignored without deleting
 /// it; any plan created or changed by the current turn applies deterministically.
 pub fn plan_applies(task: &ResolvedTask, live_plan: &str) -> bool {
-	!live_plan.is_empty()
-		&& (task.plan_relevant || live_plan != task.plan_at_turn_start)
+	!live_plan.is_empty() && (task.plan_relevant || live_plan != task.plan_at_turn_start)
 }
 
 #[derive(Debug, Clone)]
@@ -222,8 +221,10 @@ pub async fn resolve(
 		CLASSIFIER_PROMPT.to_string(),
 		context.render_classification_payload(),
 		crate::supervisor::stats::CallKind::Resolve,
-		0.0,
-		256,
+		crate::supervisor::learning::extract::SupervisorSampling {
+			temperature: 0.0,
+			max_tokens: 256,
+		},
 		operation_rx.clone(),
 	)
 	.await;
@@ -251,8 +252,10 @@ pub async fn resolve(
 		FOLLOWUP_PROMPT.to_string(),
 		context.render_resolution_payload(),
 		crate::supervisor::stats::CallKind::Resolve,
-		0.0,
-		512,
+		crate::supervisor::learning::extract::SupervisorSampling {
+			temperature: 0.0,
+			max_tokens: 512,
+		},
 		operation_rx,
 	)
 	.await;
@@ -278,7 +281,10 @@ fn parse_context_dependency(response: &str) -> bool {
 	let Ok(parsed) = serde_json::from_str::<ClassifierOutput>(&response[start..=end]) else {
 		return false;
 	};
-	parsed.scope.trim().eq_ignore_ascii_case("context_dependent")
+	parsed
+		.scope
+		.trim()
+		.eq_ignore_ascii_case("context_dependent")
 }
 
 fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
@@ -317,9 +323,11 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 					if !context_sources.iter().any(|known| known == source) {
 						context_sources.push(source.to_string());
 					}
-					if !resolution_evidence.iter().any(|known: &ResolutionEvidence| {
-						known.source == source && known.excerpt == excerpt
-					}) {
+					if !resolution_evidence
+						.iter()
+						.any(|known: &ResolutionEvidence| {
+							known.source == source && known.excerpt == excerpt
+						}) {
 						resolution_evidence.push(ResolutionEvidence {
 							source: source.to_string(),
 							excerpt: excerpt.to_string(),
@@ -406,8 +414,7 @@ mod tests {
 	fn context(request: &str) -> TaskContext {
 		TaskContext {
 			current_request: request.to_string(),
-			recent_history: "Earlier user: Schedule the status check every two hours\n"
-				.to_string(),
+			recent_history: "Earlier user: Schedule the status check every two hours\n".to_string(),
 			session_context: "<intent>Implement websocket acknowledgements</intent>".to_string(),
 			active_plan: "Implement the active websocket acknowledgement task".to_string(),
 		}
@@ -431,9 +438,7 @@ mod tests {
 			assert!(!payload.contains("Older request"));
 			assert!(!payload.contains("Older session goal"));
 			assert!(!payload.contains("Older checklist"));
-			assert!(!parse_context_dependency(
-				r#"{"scope":"self_contained"}"#
-			));
+			assert!(!parse_context_dependency(r#"{"scope":"self_contained"}"#));
 		}
 	}
 
@@ -441,8 +446,7 @@ mod tests {
 	fn scheduling_follow_up_resolves_subject_without_importing_immediate_action() {
 		let context = TaskContext {
 			current_request:
-				"check periodically like every 2h and report status and how is it going"
-					.to_string(),
+				"check periodically like every 2h and report status and how is it going".to_string(),
 			recent_history: "Earlier user: Check live Cointrapper now\n".to_string(),
 			session_context: String::new(),
 			active_plan: String::new(),
@@ -535,9 +539,7 @@ mod tests {
 
 	#[test]
 	fn only_explicit_context_dependency_unlocks_follow_up_resolution() {
-		assert!(parse_context_dependency(
-			r#"{"scope":"context_dependent"}"#
-		));
+		assert!(parse_context_dependency(r#"{"scope":"context_dependent"}"#));
 		for response in [
 			r#"{"scope":"self_contained"}"#,
 			r#"{"scope":"related"}"#,

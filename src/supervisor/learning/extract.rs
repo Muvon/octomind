@@ -644,11 +644,20 @@ pub(crate) async fn call_learning_llm(
 		system_content,
 		user_content,
 		kind,
-		0.3,
-		4096,
+		SupervisorSampling {
+			temperature: 0.3,
+			max_tokens: 4096,
+		},
 		operation_rx,
 	)
 	.await
+}
+
+/// Sampling/output limits for supervisor-model calls.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SupervisorSampling {
+	pub temperature: f32,
+	pub max_tokens: u32,
 }
 
 /// Shared supervisor-model transport with mechanic-specific sampling/output
@@ -660,8 +669,7 @@ pub(crate) async fn call_supervisor_llm(
 	system_content: String,
 	user_content: String,
 	kind: crate::supervisor::stats::CallKind,
-	temperature: f32,
-	max_tokens: u32,
+	sampling: SupervisorSampling,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
 	let now = crate::utils::time::now_secs();
@@ -699,10 +707,10 @@ pub(crate) async fn call_supervisor_llm(
 	let params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages,
 		model,
-		temperature,
+		sampling.temperature,
 		1.0, // top_p
 		0,   // top_k (0 = default)
-		max_tokens,
+		sampling.max_tokens,
 		config,
 	)
 	.with_max_retries(1)

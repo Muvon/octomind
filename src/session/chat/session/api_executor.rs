@@ -492,8 +492,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// stand down. The verdict comes from the resolver's LLM classifier
 		// (language-agnostic, judges meaning not keywords) on the current user
 		// turn; the LLM verify-gate still runs and judges prohibitions on its
-		// own.
-		let check_run_forbidden = resolved_task.forbids_verification;
+		// own. The classifier sees ONE turn, but the prohibition is a standing
+		// rule — latch it on the detectors so later turns inherit it (it expires
+		// when a clean verification round actually runs).
+		if resolved_task.forbids_verification {
+			chat_session.detectors.note_forbids_verification();
+		}
+		let check_run_forbidden =
+			resolved_task.forbids_verification || chat_session.detectors.check_run_forbidden();
 		if check_run_forbidden {
 			crate::log_debug!("Pre-gate: check-run forbidden by user/instructions; standing down");
 		}
@@ -572,19 +578,28 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 
 		// Free evidence check (no model call): a `done` answer that cites « » quotes
-		// which appear in NO tool result, or `file:line` references that do not
-		// hold on disk, is fabricating its support. Catch both deterministically
+		// which appear in NO tool result, `file:line` references that do not
+		// hold on disk, or source URLs that appear in nothing the agent received
+		// is fabricating its support. Catch all three deterministically
 		// and re-ground via the same bounded re-run.
 		if config.supervisor.claim_check {
-			let tool_outputs =
+			let mut grounds =
 				current_turn_tool_outputs(&chat_session.session.messages, turn_start);
+			// A link the user supplied is legitimate to reference back.
+			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
+				grounds.push(user_msg.content.clone());
+			}
 			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
-				&tool_outputs,
+				&grounds,
 			);
 			let bad_refs =
 				crate::supervisor::detect::unverified_file_refs(&chat_session.last_response);
-			if !unverified.is_empty() || !bad_refs.is_empty() {
+			let bad_urls = crate::supervisor::detect::unverified_urls(
+				&chat_session.last_response,
+				&grounds,
+			);
+			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
 				let mut note = String::from("<pay-attention>\n");
 				if !unverified.is_empty() {
 					note.push_str(
@@ -606,21 +621,33 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						note.push('\n');
 					}
 				}
+				if !bad_urls.is_empty() {
+					note.push_str(
+						"Each URL below was cited as a source, but it appears in nothing you received this turn — no tool result and no user message contains it, so it is an unverified source. Fetch it now and ground the claim in what it actually says, or drop the link and the claim it supported. Never present a link you did not open as evidence. Unverified URLs:\n",
+					);
+					for u in &bad_urls {
+						note.push_str("- ");
+						note.push_str(u);
+						note.push('\n');
+					}
+				}
 				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
 				chat_session.gate_iterations += 1;
 				crate::supervisor::stats::claim_block();
 				crate::supervisor::notify(&format!(
-					"{} unverifiable citation(s), {} invalid file reference(s) — re-running",
+					"{} unverifiable citation(s), {} invalid file reference(s), {} unverified URL(s) — re-running",
 					unverified.len(),
-					bad_refs.len()
+					bad_refs.len(),
+					bad_urls.len()
 				));
 				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
 					crate::log_debug!(
-						"Evidence check: {} unverified citation(s), {} bad file ref(s); re-running (iter {})",
+						"Evidence check: {} unverified citation(s), {} bad file ref(s), {} bad URL(s); re-running (iter {})",
 						unverified.len(),
 						bad_refs.len(),
+						bad_urls.len(),
 						chat_session.gate_iterations
 					);
 					return Box::pin(execute_api_call_and_process_response(

@@ -210,9 +210,8 @@ fn normalize_ws(s: &str) -> String {
 /// accepted, so only genuinely absent links are flagged. No model call.
 pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-	let re = RE.get_or_init(|| {
-		regex::Regex::new(r#"https?://[^\s<>"')\]]+"#).expect("static pattern")
-	});
+	let re =
+		RE.get_or_init(|| regex::Regex::new(r#"https?://[^\s<>"')\]]+"#).expect("static pattern"));
 	let haystack = grounds
 		.iter()
 		.map(|o| normalize_ws(o))

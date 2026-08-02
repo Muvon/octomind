@@ -583,8 +583,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// is fabricating its support. Catch all three deterministically
 		// and re-ground via the same bounded re-run.
 		if config.supervisor.claim_check {
-			let mut grounds =
-				current_turn_tool_outputs(&chat_session.session.messages, turn_start);
+			let mut grounds = current_turn_tool_outputs(&chat_session.session.messages, turn_start);
 			// A link the user supplied is legitimate to reference back.
 			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
 				grounds.push(user_msg.content.clone());
@@ -595,10 +594,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			);
 			let bad_refs =
 				crate::supervisor::detect::unverified_file_refs(&chat_session.last_response);
-			let bad_urls = crate::supervisor::detect::unverified_urls(
-				&chat_session.last_response,
-				&grounds,
-			);
+			let bad_urls =
+				crate::supervisor::detect::unverified_urls(&chat_session.last_response, &grounds);
 			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
 				let mut note = String::from("<pay-attention>\n");
 				if !unverified.is_empty() {
@@ -697,6 +694,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				plan: &plan,
 				ground_truth: &ground_truth,
 				prior_gaps: &prior_gaps,
+				role_context: &crate::supervisor::role_context(&chat_session.session.messages),
 			},
 			operation_rx.clone(),
 		)

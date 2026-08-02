@@ -370,7 +370,28 @@ async fn handle_start_command(call: &McpToolCall) -> Result<McpToolResult> {
 							None => None,
 						};
 
-						tasks.push(TaskData::new(title, description, phase));
+						// Optional valid_if field — a falsifiable condition the task's
+						// approach depends on (e.g. "file_exists: src/foo.rs").
+						let valid_if = match task_obj.get("valid_if") {
+							Some(Value::String(v)) => {
+								if v.trim().is_empty() {
+									None
+								} else {
+									Some(v.clone())
+								}
+							}
+							Some(Value::Null) => None,
+							Some(_) => {
+								return Ok(McpToolResult::error(
+									call.tool_name.clone(),
+									call.tool_id.clone(),
+									format!("Task {} valid_if must be a string", i + 1),
+								));
+							}
+							None => None,
+						};
+
+						tasks.push(TaskData::new(title, description, phase, valid_if));
 					}
 					_ => {
 						return Ok(McpToolResult::error(
@@ -899,6 +920,22 @@ pub fn render_plan_checklist() -> Option<String> {
 		let marker = if num == current { " ← current" } else { "" };
 		s.push_str(&format!("{icon} {title}{marker}\n"));
 	}
+	// Surface falsifiable validity conditions on open tasks so the agent sees
+	// what each remaining task's approach depends on.
+	for (i, task) in storage
+		.get_plan()
+		.map(|p| p.tasks.clone())
+		.unwrap_or_default()
+		.iter()
+		.enumerate()
+	{
+		if matches!(task.status, TaskStatus::Completed) {
+			continue;
+		}
+		if let Some(cond) = &task.valid_if {
+			s.push_str(&format!("   ⤷ task {} valid if: {cond}\n", i + 1));
+		}
+	}
 	Some(s)
 }
 
@@ -924,6 +961,50 @@ pub fn open_plan_tasks() -> Vec<String> {
 		Ok(list) => open_titles(list),
 		Err(_) => Vec::new(),
 	}
+}
+
+/// Evaluate one validity condition deterministically. Returns Some(true) when
+/// it holds, Some(false) when it is broken, None when the condition is not
+/// machine-checkable (free-form prose — left for the agent/verifier to judge).
+/// Supported grammar: `file_exists: <path>` / `file_absent: <path>`.
+fn check_condition(cond: &str) -> Option<bool> {
+	let (op, path) = cond.split_once(':')?;
+	let path = path.trim();
+	if path.is_empty() {
+		return None;
+	}
+	match op.trim().to_ascii_lowercase().as_str() {
+		"file_exists" => Some(std::path::Path::new(path).exists()),
+		"file_absent" => Some(!std::path::Path::new(path).exists()),
+		_ => None,
+	}
+}
+
+/// Open tasks whose declared `valid_if` condition is deterministically broken
+/// right now. Returns (task_number, title, condition) per broken item. Cheap:
+/// filesystem stat per checkable condition, no model call.
+pub fn broken_plan_conditions() -> Vec<(usize, String, String)> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return Vec::new();
+	}
+	let Ok(plan) = storage.get_plan() else {
+		return Vec::new();
+	};
+	let mut broken = Vec::new();
+	for (i, task) in plan.tasks.iter().enumerate() {
+		if i < plan.current_task_index || matches!(task.status, TaskStatus::Completed) {
+			continue;
+		}
+		let Some(cond) = &task.valid_if else {
+			continue;
+		};
+		if check_condition(cond) == Some(false) {
+			broken.push((i + 1, task.title.clone(), cond.clone()));
+		}
+	}
+	broken
 }
 
 /// Get current plan display for session commands
@@ -968,8 +1049,6 @@ pub async fn get_current_plan_display() -> Result<String> {
 		response.push_str(&format!(
 			"{status_icon} {task_num}. {task_title}{status_text}\n"
 		));
-
-		// Add description with proper indentation
 		let description_lines: Vec<&str> = task_description.lines().collect();
 		for line in description_lines {
 			response.push_str(&format!("   📝 {}\n", line));
@@ -1044,5 +1123,22 @@ mod tests {
 		];
 		assert_eq!(open_titles(list), vec!["open one", "open two"]);
 		assert!(open_titles(vec![]).is_empty());
+	}
+
+	#[test]
+	fn condition_check_only_answers_the_machine_checkable() {
+		assert_eq!(check_condition("file_exists: Cargo.toml"), Some(true));
+		assert_eq!(
+			check_condition("file_exists: definitely/not/a/real/path.xyz"),
+			Some(false)
+		);
+		assert_eq!(
+			check_condition("file_absent: definitely/not/a/real/path.xyz"),
+			Some(true)
+		);
+		assert_eq!(check_condition("file_absent: Cargo.toml"), Some(false));
+		// Free-form prose is not machine-checkable — left to the agent/verifier.
+		assert_eq!(check_condition("the API still returns 200"), None);
+		assert_eq!(check_condition("file_exists:"), None);
 	}
 }

@@ -239,6 +239,47 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
+	// Supervisor: falsifiable plan commitments. A plan task can declare a
+	// machine-checkable `valid_if` condition (the assumption its approach rests
+	// on). Re-checked cheaply each turn; a broken condition means the plan is
+	// drifting on a dead assumption — steer the agent to revise it. Dedup by a
+	// marker keyed on the broken set so the same break is flagged once, but a
+	// NEW break still lands.
+	if config.supervisor.enabled {
+		let broken = crate::mcp::core::plan::broken_plan_conditions();
+		if !broken.is_empty() {
+			let key = broken
+				.iter()
+				.map(|(n, _, c)| format!("{n}:{c}"))
+				.collect::<Vec<_>>()
+				.join("|");
+			let marker = format!("<!-- octomind:plan_condition_broken:{} -->", {
+				use std::hash::{Hash, Hasher};
+				let mut h = std::collections::hash_map::DefaultHasher::new();
+				key.hash(&mut h);
+				h.finish()
+			});
+			let already_flagged = chat_session
+				.session
+				.messages
+				.iter()
+				.any(|m| m.content.contains(&marker));
+			if !already_flagged {
+				let mut note = format!("<pay-attention>\n{marker}\nA condition your plan declared as required is no longer true — the approach for the affected task(s) rested on an assumption that has broken. Do not keep executing the plan as if it still holds: revise the plan (plan reset + start with corrected tasks, or complete/close the affected task with the reason), or state explicitly why the task is still valid despite the broken condition. Broken condition(s):\n");
+				for (n, title, cond) in &broken {
+					note.push_str(&format!("- task {n} \"{title}\": valid if {cond}\n"));
+				}
+				note.push_str("</pay-attention>");
+				chat_session.add_system_managed_user_message(&note)?;
+				crate::supervisor::notify(&format!(
+					"{} broken plan condition(s) — plan revision steered",
+					broken.len()
+				));
+				crate::log_debug!("Plan condition steer: {} broken condition(s)", broken.len());
+			}
+		}
+	}
+
 	// Advance Anthropic-style content cache markers after all pre-call message injections
 	// (learning context, inbox hints, etc.) and immediately before building the request.
 	// This preserves the previous marker while moving the oldest marker to the latest
@@ -561,6 +602,50 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					crate::log_debug!(
 						"Plan pre-gate: {} open item(s); re-running turn (iter {})",
 						open.len(),
+						chat_session.gate_iterations
+					);
+					return Box::pin(execute_api_call_and_process_response(
+						chat_session,
+						config,
+						role,
+						operation_rx,
+						mode,
+						sink,
+					))
+					.await;
+				}
+				// Budget exhausted — fall through to the LLM gate / acceptance.
+			}
+		}
+
+		// Free plan-coverage floor (no model call): the plan was actively worked
+		// this turn (plan-tool calls in the ledger) but ZERO non-plan actions were
+		// recorded — closing plan items without any action is fabricated coverage,
+		// not work. Same marker/budget pattern as the plan pre-gate above.
+		if config.supervisor.gate.require_plan_complete
+			&& plan_applies
+			&& crate::mcp::core::plan::open_plan_tasks().is_empty()
+			&& chat_session.evidence.plan_activity_without_actions()
+		{
+			let already_nudged_coverage = {
+				let msgs = &chat_session.session.messages;
+				msgs[turn_start..].iter().any(|m| {
+					m.content
+						.contains(crate::supervisor::gate::COVERAGE_GATE_MARKER)
+				})
+			};
+			if !already_nudged_coverage {
+				let note = crate::supervisor::gate::format_coverage_advisory();
+				chat_session.add_system_managed_user_message(&note)?;
+				chat_session.last_self_report = None; // force the re-run to re-evaluate
+				chat_session.gate_iterations += 1;
+				crate::supervisor::stats::plan_block();
+				crate::supervisor::notify(
+					"done claimed with plan coverage but no recorded actions — re-running",
+				);
+				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+					crate::log_debug!(
+						"Plan-coverage floor: plan-only activity; re-running turn (iter {})",
 						chat_session.gate_iterations
 					);
 					return Box::pin(execute_api_call_and_process_response(

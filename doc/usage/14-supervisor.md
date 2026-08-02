@@ -47,19 +47,44 @@ Both derive from one primitive — **information novelty**: did the action add n
 
 - **Loop** — the same *result* repeats `loop_threshold` times in a row (default `3`). Keyed on the result, so reworded calls that return the same thing are caught too. Unambiguous; no model needed.
 - **No-progress** — `no_progress_window` actions (default `5`) with **zero novelty** — churn, not genuine work.
+- **Truncation** — `truncation_threshold` truncated tool results in a row: the model is re-querying without narrowing instead of reading the spill file.
+- **Dedup** — `dedup_threshold` deduplicated results in a row: the model is re-issuing calls whose output it already received.
+- **Distraction** (opt-in, `distraction_threshold = 0` is off) — a result is drift when its embedding cosine to the centroid of recent on-task results falls below `drift_floor`. Self-referential (no task anchor needed); costs one embedding per sizable tool result when enabled.
+- **Sequential** (opt-in, `sequential_threshold = 0` is off) — single-tool-call rounds in a row where independent calls could have been batched into one parallel round.
 
 The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate; no-progress while `exploring` waits; loop, or no-progress otherwise, steers. Agreement needs no model at all.
 
 ## Verify-gate
 
-When the agent self-reports `done` and `[supervisor.gate] enabled = true`, an independent pass checks the result against your request before completion is accepted:
+When the agent self-reports `done` and `[supervisor.gate] enabled = true`, the claim is checked before completion is accepted — free deterministic pre-gates first, an independent model pass only if those pass:
+
+**Free pre-gates (no model call):**
+
+- **Mutation → check** (`require_check_after_mutation`) — state was changed but no successful command execution ran since the change. Tool-agnostic: any non-mutation command that succeeds on an unchanged tree counts as a check, so it works for any domain (build/test/lint, booking confirmations, health checks).
+- **Plan complete** (`require_plan_complete`) — the live plan checklist still has open items.
+- **Plan coverage** — the plan advanced (tasks completed) but the evidence ledger shows no real tool actions since; finishing paperwork is not doing the work.
+- **Plan conditions** — an open task's declared `valid_if` condition (e.g. `file_exists: src/foo.rs`) is deterministically broken right now.
+
+**Model pass (rare):** an independent verifier checks the result against your request:
 
 - **Pass** → the run is labelled verified; distill is allowed to learn from it.
 - **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by `max_iterations` (default `2`, to avoid over-verifying). If gaps remain after the bound, the run is marked unverified and **distill is suppressed** — we never learn from an unverified trajectory.
 
+Set `verifier_model` to a **different model family** than your agent model — a same-family verifier inherits the same blind spots and rubber-stamps them.
+
+### Evidence-bound claims
+
+With `claim_check = true`, the agent backs load-bearing repo facts with a verbatim «quote» plus a file:line reference. Each quote is verified deterministically — it must occur in an actual tool result, and each file:line reference must hold on disk. Fabricated citations are re-grounded through the verify-gate. Verification here is abstract: a quote from a web page, a file read, or a command output all count — it is not tied to coding.
+
+### Compaction fidelity
+
+Compression is lossy by design. After a compression is applied, one cheap verifier pass (a *different* model than the summarizer) checks that the surviving view still entails the authoritative pre-compression requirements — the goal plus every explicit constraint. Anything lost is re-injected, so a binding requirement ("never X", a scope boundary) can never be silently dropped by compaction. Fail-open: a verifier outage accepts the compression.
+
 ## Steer
 
 When a detector fires (loop, or no-progress that the self-report doesn't excuse), the supervisor queues an advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report `blocked`"* — injected at the next request's safe point. It nudges; it never forces.
+
+**Circuit-breaker.** A steer is advisory, so a loop can otherwise ignore it forever and burn tokens. `max_consecutive_steers` (default `0` = off) hard-stops the turn after that many consecutive steered rounds without breakout. Before the hard stop, one cheap **on-track checkpoint** classifies whether the current line of work still serves your request: on-track (retrying a failing check, iterating on a fix) resets the steer counter and gets more room; off-track (drifted to unrequested work, cycling on an irrelevant file) stops immediately. Any uncertainty keeps the hard stop.
 
 ## Condense
 
@@ -84,6 +109,16 @@ The rule for what to store: *cache what is expensive to re-derive, never what on
 
 **Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict: entries that were in context when a run **passes** get reinforced (importance up); entries present when a run **fails after retries** are decayed (importance down) and dropped once they fall below a floor. A distill-time pass additionally prunes entries that have gone both stale (older than `decay_days`) and weak. So memory is validated by *outcome*, not by assertion — useful knowledge strengthens, misleading or unused knowledge fades out.
 
+**Verified lessons.** Extraction is quote-first: every lesson must carry a verbatim user quote as evidence. At distill time, one batched verifier pass re-checks each candidate lesson's evidence against the transcript and drops any lesson whose quote is unsupported — a lesson the model invented or stretched never reaches storage.
+
+## Recite
+
+On long (already-compacted) sessions, the live goal — anchor intent plus next steps — is re-injected at the context tail each turn, so it stays in the high-attention recency window instead of buried in the mid-transcript summary. Short sessions (no compaction yet, empty anchor) pay nothing. Config: `[supervisor.recite] enabled`.
+
+## Delegate gate
+
+`tap run` / `agent_*` spawn a **context-isolated** child that sees only the prompt string — no transcript, no prior tool output. Before the spawn, one cheap-model call judges each proposed handoff against the parent's goal, live request and plan: is it faithful to what you asked, self-contained (concrete paths, symbols, commands, constraints), does it state the deliverable and the scope edge? A failing handoff is **not spawned** — the gaps come back as a tool error so the agent rewrites the prompt, bounded by `max_revisions` per turn. Fail-open on any gate outage.
+
 ## Configuration
 
 The supervisor is configured under `[supervisor]`. It is **strict**: a missing `[supervisor]` section — or any required key within it — is a hard parse error. We own the schema, so we fail loudly instead of degrading to silent defaults.
@@ -92,6 +127,8 @@ The supervisor is configured under `[supervisor]`. It is **strict**: a missing `
 [supervisor]
 enabled = true
 model   = "anthropic:claude-haiku-4-5"   # shared cheap model for gate/reflection
+claim_check = true                       # evidence-bound claims, verified deterministically
+max_consecutive_steers = 0               # steer circuit-breaker; 0 = off
 
 [supervisor.learning]      # procedural lessons — see 13-learning.md
 enabled = true
@@ -106,16 +143,32 @@ decay_days = 90
 [supervisor.detectors]     # deterministic, free, every turn
 loop_threshold = 3
 no_progress_window = 5
+truncation_threshold = 2
+dedup_threshold = 2
+distraction_threshold = 0  # opt-in embedding drift detector
+drift_floor = 0.7
 self_report = true
+sequential_threshold = 0   # opt-in over-sequencing advisory
 
 [supervisor.gate]          # verify on self-reported `done`
 enabled = true
 max_iterations = 2
+verifier_model = "openai:gpt-5-mini"     # recommended: a DIFFERENT family than the agent model
+require_check_after_mutation = true
+require_plan_complete = true
+
+[supervisor.recite]        # goal recitation on compacted sessions
+enabled = true
 
 [supervisor.condense]      # task-aware narrowing of oversized tool outputs
 enabled = true
-tokens_threshold = 2000
+tokens_threshold = 5000
 model = "anthropic:claude-haiku-4-5"
+
+[supervisor.delegate]      # handoff quality check before spawning subagents
+enabled = true
+model = "anthropic:claude-haiku-4-5"
+max_revisions = 2
 ```
 
 Every field is documented in [`[supervisor]` — Config Reference](../reference/03-config-reference.md#supervisor).
@@ -131,9 +184,15 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 | Mechanic | When | Cost | Config |
 |----------|------|------|--------|
 | Self-report | Every turn | Free | `[supervisor.detectors] self_report` |
-| Detectors (loop / no-progress) | Every turn | Free | `[supervisor.detectors]` |
-| Verify-gate | On self-reported `done` | Model (rare) | `[supervisor.gate]` |
+| Detectors (loop / no-progress / truncation / dedup / distraction / sequential) | Every turn | Free (distraction: 1 embedding) | `[supervisor.detectors]` |
+| Evidence-bound claims | Every answer with repo facts | Free | `[supervisor] claim_check` |
+| Free pre-gates (mutation→check, plan complete / coverage / conditions) | On self-reported `done` | Free | `[supervisor.gate]` |
+| Verify-gate | On self-reported `done`, pre-gates passed | Model (rare) | `[supervisor.gate]` |
+| Compaction fidelity | After each compression | Model (cheap) | — (uses `gate.verifier_model`) |
 | Condense | On oversized tool results | Model (cheap) | `[supervisor.condense]` |
 | Steer | On loop / no-progress | Free | `[supervisor.detectors]` |
-| Distill (learn) | End of a verified run | Model (cheap) | `[supervisor.learning]`, `[supervisor.orientation]` |
+| Steer circuit-breaker + on-track checkpoint | After `max_consecutive_steers` steers | Model (cheap, per breaker trip) | `[supervisor] max_consecutive_steers` |
+| Recite | Every turn on compacted sessions | Free | `[supervisor.recite]` |
+| Delegate gate | Before each subagent spawn | Model (cheap) | `[supervisor.delegate]` |
+| Distill (learn) + lesson verification | End of a verified run | Model (cheap) | `[supervisor.learning]`, `[supervisor.orientation]` |
 | Recall | Session start + per turn | Embedding | `[supervisor.learning]`, `[supervisor.orientation]` |

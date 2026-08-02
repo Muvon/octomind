@@ -37,10 +37,11 @@ pub use compression::{
 	set_pending_compression_range, CompressionMetrics, PhaseCompression, ProjectCompression,
 };
 pub use core::{
-	clear_plan_data, clear_task_start_index, execute_plan, get_and_clear_start_index,
-	get_completed_task_count, get_current_plan_display, get_current_task_start_index,
-	get_last_completed_task_for_compression, has_active_plan, open_plan_tasks,
-	render_plan_checklist, set_current_task_start_index, set_last_task_message_range,
+	broken_plan_conditions, clear_plan_data, clear_task_start_index, execute_plan,
+	get_and_clear_start_index, get_completed_task_count, get_current_plan_display,
+	get_current_task_start_index, get_last_completed_task_for_compression, has_active_plan,
+	open_plan_tasks, render_plan_checklist, set_current_task_start_index,
+	set_last_task_message_range,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};
@@ -87,6 +88,10 @@ Each task requires title (short) and description (detailed: file paths, commands
                             "description": {
                                 "type": "string",
                                 "description": "Comprehensive explanation of exactly what needs to be done. Include: specific file paths, exact commands to run, configuration details, expected outcomes, error handling steps, validation criteria, and any dependencies. Write as if someone else needs to complete this task from scratch with zero context. Minimum 2-3 sentences with technical specifics."
+                            },
+                            "valid_if": {
+                                "type": "string",
+                                "description": "OPTIONAL falsifiable condition this task's approach depends on — the assumption whose breakage invalidates the task. Machine-checkable forms: 'file_exists: <path>' or 'file_absent: <path>' (re-checked automatically each turn; a broken condition triggers a plan-revision steer). Free-form prose is allowed but only judged by the verifier, not auto-checked."
                             }
                         }
                     },

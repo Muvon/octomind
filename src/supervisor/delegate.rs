@@ -460,7 +460,7 @@ mod tests {
 			),
 			call("agent_b", "a2", json!({"task":"p2"})),
 		]);
-		let p = build_prompt(&h, "Goal: ship the parser");
+		let p = build_prompt(&h, "Goal: ship the parser", "");
 		assert!(p.contains("Goal: ship the parser"));
 		assert!(p.contains("=== HANDOFF id=t1 via=tap to=a kind=new session"));
 		assert!(p.contains("=== HANDOFF id=a2 via=agent_b to=b"));
@@ -475,7 +475,7 @@ mod tests {
 			"t1",
 			json!({"action":"run","role":"a","prompt":"p1"}),
 		)]);
-		assert!(build_prompt(&h, "   ").contains("parent context unavailable"));
+		assert!(build_prompt(&h, "   ", "").contains("parent context unavailable"));
 	}
 
 	#[test]
@@ -485,7 +485,7 @@ mod tests {
 			"t1",
 			json!({"action":"run","session":"s","prompt":"p"}),
 		)]);
-		assert!(build_prompt(&h, "goal").contains("kind=resume"));
+		assert!(build_prompt(&h, "goal", "").contains("kind=resume"));
 	}
 
 	fn two_handoffs() -> Vec<Handoff> {
@@ -657,7 +657,7 @@ mod tests {
 			"t1",
 			json!({"action":"run","role":"a","prompt":huge.clone()}),
 		)]);
-		let p = build_prompt(&h, &huge);
+		let p = build_prompt(&h, &huge, "");
 		// Both blocks are capped, so the judge input stays bounded regardless of
 		// how large the parent context or the proposed prompt is.
 		assert!(p.len() < huge.len());

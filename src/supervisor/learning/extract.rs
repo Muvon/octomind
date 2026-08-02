@@ -312,14 +312,6 @@ fn build_transcript(messages: &[crate::session::Message]) -> String {
 	transcript
 }
 
-/// Parse `<lesson>` tags from LLM response.
-fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) -> Vec<Lesson> {
-	parse_lessons_with_evidence(response, role, project, source)
-		.into_iter()
-		.map(|(lesson, _)| lesson)
-		.collect()
-}
-
 /// Parse `<lesson>` tags, keeping each lesson's verbatim evidence quote
 /// alongside it for the verification gate.
 fn parse_lessons_with_evidence(
@@ -881,6 +873,14 @@ pub(crate) async fn call_supervisor_llm(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	/// Test helper: parse lessons, discarding the evidence quotes.
+	fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) -> Vec<Lesson> {
+		parse_lessons_with_evidence(response, role, project, source)
+			.into_iter()
+			.map(|(lesson, _)| lesson)
+			.collect()
+	}
 
 	#[test]
 	fn test_parse_lesson_tags_single() {

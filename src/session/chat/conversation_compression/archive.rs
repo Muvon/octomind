@@ -89,6 +89,18 @@ fn write_archive_to(dir: &Path, compression_id: &str, messages: &[Message]) -> R
 	Ok(path)
 }
 
+/// Read every archive file of `session_name`, up to `max_total` chars total.
+/// Used to re-ground supervisor evidence checks after a mid-turn compression
+/// drained the tool outputs those checks match against — the archive is the
+/// verbatim record of everything drained. Empty when no archives exist.
+pub(crate) fn read_session_archives(session_name: &str, max_total: usize) -> Vec<String> {
+	let dir = match crate::directories::get_sessions_dir() {
+		Ok(d) => d.join("archive").join(session_name),
+		Err(_) => return Vec::new(),
+	};
+	crate::utils::spill::read_text_files(&dir, max_total)
+}
+
 /// Render the `<archive>` pointer embedded into a compressed summary.
 ///
 /// The pointer tells the model the full raw transcript of the replaced

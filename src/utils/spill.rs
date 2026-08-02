@@ -77,3 +77,45 @@ pub fn clear_current_session() {
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }
+
+/// Read every file in `dir` as text, up to `max_total` chars total (files are
+/// appended in directory order until the cap is hit; a partially-read last file
+/// is truncated to fit). Non-text or unreadable entries are skipped. Shared by
+/// the spill and archive readers that re-ground supervisor evidence checks.
+pub fn read_text_files(dir: &std::path::Path, max_total: usize) -> Vec<String> {
+	let Ok(entries) = std::fs::read_dir(dir) else {
+		return Vec::new();
+	};
+	let mut out = Vec::new();
+	let mut remaining = max_total;
+	for entry in entries.flatten() {
+		if remaining == 0 {
+			break;
+		}
+		let Ok(mut content) = std::fs::read_to_string(entry.path()) else {
+			continue;
+		};
+		if content.len() > remaining {
+			// Floor to a char boundary so the slice never splits a UTF-8 sequence.
+			let mut end = remaining;
+			while !content.is_char_boundary(end) {
+				end -= 1;
+			}
+			content.truncate(end);
+		}
+		remaining -= content.len();
+		out.push(content);
+	}
+	out
+}
+
+/// Read every spill file of the current session, up to `max_total` chars total.
+/// Spill files hold the FULL verbatim body of over-cap tool outputs, so they
+/// re-ground evidence checks after condensing replaced the in-context copy
+/// with a handle. Empty when there is no session context or no spills.
+pub fn read_session_spills(max_total: usize) -> Vec<String> {
+	match session_spill_dir() {
+		Some(dir) => read_text_files(&dir, max_total),
+		None => Vec::new(),
+	}
+}

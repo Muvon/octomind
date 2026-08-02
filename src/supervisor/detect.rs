@@ -174,23 +174,37 @@ pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<Stri
 		.collect()
 }
 
-/// Extract the text inside each `«…»` pair (the evidence-tag quote delimiters).
+/// Extract the text inside each `«…»` pair — but only within an `[evidence: …]`
+/// tag (the contract in [`EVIDENCE_INSTRUCTION`]). Guillemets in ordinary prose
+/// (a meta-mention like "the «quote» check") are not citations and must not be
+/// checked, or every discussion of the mechanism false-positives.
 fn extract_quotes(text: &str) -> Vec<String> {
+	const TAG: &str = "[evidence:";
 	const OPEN: char = '«';
 	const CLOSE: char = '»';
 	let mut out = Vec::new();
 	let mut rest = text;
-	while let Some(s) = rest.find(OPEN) {
-		let after = &rest[s + OPEN.len_utf8()..];
-		match after.find(CLOSE) {
-			Some(e) => {
-				let q = after[..e].trim();
-				if !q.is_empty() {
-					out.push(q.to_string());
+	while let Some(s) = rest.find(TAG) {
+		let after = &rest[s + TAG.len()..];
+		// The quote is the first «…» pair inside the tag. A `]` before any «
+		// means this tag carries no quote (quote text may itself contain `]`,
+		// so the bracket only rules out a quote when it comes first).
+		match (after.find(']'), after.find(OPEN)) {
+			(Some(b), Some(o)) if b < o => rest = &after[b + 1..],
+			(_, Some(o)) => {
+				let qstart = &after[o + OPEN.len_utf8()..];
+				match qstart.find(CLOSE) {
+					Some(e) => {
+						let q = qstart[..e].trim();
+						if !q.is_empty() {
+							out.push(q.to_string());
+						}
+						rest = &qstart[e + CLOSE.len_utf8()..];
+					}
+					None => break,
 				}
-				rest = &after[e + CLOSE.len_utf8()..];
 			}
-			None => break,
+			_ => break,
 		}
 	}
 	out
@@ -227,9 +241,19 @@ pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 			continue;
 		}
 		// Grounded when the URL (with or without a trailing slash) appears in
-		// anything the agent actually received this turn.
+		// anything the agent actually received this turn — OR when it is a
+		// permalink CONSTRUCTED from verified pieces: `git remote` + `rev-parse`
+		// + diff paths never occur as one concatenated URL in any tool output,
+		// but every significant segment (host, repo, commit SHA, file name)
+		// does. Require ≥2 significant segments so a bare domain never passes.
 		let with_slash = format!("{url}/");
-		if !haystack.contains(url) && !haystack.contains(&with_slash) {
+		if haystack.contains(url) || haystack.contains(&with_slash) {
+			continue;
+		}
+		let path = url.split('#').next().unwrap_or(url);
+		let segments: Vec<&str> = path.split('/').filter(|s| s.len() >= 8).collect();
+		let constructed = segments.len() >= 2 && segments.iter().all(|s| haystack.contains(s));
+		if !constructed {
 			flagged.push(url.to_string());
 		}
 	}
@@ -359,6 +383,23 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 	}
 }
 
+/// Does this call already carry range/limit parameters — i.e. the model IS
+/// narrowing (paging a large result with start/end, capping with limit)? The
+/// truncation steer diagnoses "re-querying without narrowing"; a paged call's
+/// truncation is the display cap, not ignored advice, so it must not feed the
+/// streak.
+pub fn has_narrowing_params(parameters: &serde_json::Value) -> bool {
+	const NARROWING: [&str; 6] = [
+		"start",
+		"end",
+		"offset",
+		"limit",
+		"max_results",
+		"max_count",
+	];
+	NARROWING.iter().any(|k| parameters.get(k).is_some())
+}
+
 /// Heuristic: does this tool change state, so a success is inherently progress?
 /// (Reads/searches only count as progress when they surface *new* content.)
 pub fn is_mutation_tool(tool: &str) -> bool {
@@ -410,6 +451,13 @@ pub struct Detectors {
 	/// when it carries exactly one call and the model could have batched independent
 	/// calls, the streak grows. Reset by any multi-call (parallel) round.
 	consecutive_singletons: usize,
+	/// The current round carried at least one errored call (set by [`Detectors::note_call`],
+	/// consumed by [`Detectors::record_round_arity`]). An errored round — and the
+	/// singleton retry that follows it — is recovery, not a batchable drip-feed,
+	/// so neither may grow the singleton streak.
+	round_had_error: bool,
+	/// The PREVIOUS completed round carried an errored call.
+	prev_round_had_error: bool,
 	/// EMA centroid of recent ON-TASK result embeddings — the "working set". A
 	/// result far from it (low cosine) is drift. Empty until the first one seeds it.
 	centroid: Vec<f32>,
@@ -535,6 +583,7 @@ impl Detectors {
 			}
 		}
 		let novel = is_mutation || (!is_error && fresh);
+		self.round_had_error |= is_error;
 		(rhash, novel)
 	}
 
@@ -698,6 +747,8 @@ impl Detectors {
 		self.consecutive_dedups = 0;
 		self.consecutive_drift = 0;
 		self.consecutive_singletons = 0;
+		self.round_had_error = false;
+		self.prev_round_had_error = false;
 		self.agent_dirty = false;
 	}
 
@@ -726,11 +777,17 @@ impl Detectors {
 	/// it is recorded once per turn — separately from the per-round
 	/// [`Detectors::record_round_signals`].
 	pub fn record_round_arity(&mut self, call_count: usize, threshold: usize) -> DetectorSignal {
-		if call_count == 1 {
-			self.consecutive_singletons += 1;
-		} else {
+		// A round containing an errored call — or the singleton RETRY right after
+		// one — is recovery, not a silent drip-feed of independent calls: it must
+		// not grow the streak (but does not reset a legitimately accumulated one).
+		let recovery = self.round_had_error || self.prev_round_had_error;
+		if call_count > 1 {
 			self.consecutive_singletons = 0;
+		} else if call_count == 1 && !recovery {
+			self.consecutive_singletons += 1;
 		}
+		self.prev_round_had_error = self.round_had_error;
+		self.round_had_error = false;
 		if threshold > 0 && self.consecutive_singletons >= threshold {
 			DetectorSignal::Sequential
 		} else {
@@ -1739,6 +1796,23 @@ mod tests {
 		// is silent instead of nudging again every turn (the spam being fixed).
 		d.reset_sequential_streak();
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
+	}
+
+	#[test]
+	fn sequential_streak_ignores_error_recovery_rounds() {
+		let mut d = Detectors::default();
+		// One legit singleton accumulates.
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		// An errored singleton round (e.g. git_diff ref not resolving) must not
+		// grow the streak — it is a failure, not a batching choice.
+		d.note_call("git_diff", "ref did not resolve", true, false);
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		// The singleton RETRY right after the errored round is recovery, not a
+		// drip-feed — still no growth, and the earlier streak is preserved.
+		d.note_call("shell", "65ab1db…", false, false);
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		// Recovery over: the next ordinary singleton resumes the streak and fires.
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
 	}
 

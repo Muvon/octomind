@@ -673,6 +673,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
 				grounds.push(user_msg.content.clone());
 			}
+			// Mid-turn compression and condensing drain or replace the very tool
+			// outputs these checks ground against — recover the verbatim originals
+			// from disk (lossless archive + spill files) so a compaction cannot
+			// fabricate an "unverified" verdict. Capped; best-effort.
+			grounds.extend(crate::utils::spill::read_session_spills(4_000_000));
+			grounds.extend(
+				crate::session::chat::conversation_compression::archive::read_session_archives(
+					&chat_session.session.info.name,
+					4_000_000,
+				),
+			);
 			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&grounds,

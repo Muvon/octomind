@@ -184,32 +184,18 @@ pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<Stri
 /// Extract the quote text inside each `<evidence …>…</evidence>` tag (the
 /// contract in [`EVIDENCE_INSTRUCTION`]). The locator attribute is metadata
 /// for the reader, not checked here — only the quote body is verified against
-/// tool outputs.
+/// tool outputs. Literal examples inside Markdown code spans/fences, escaped
+/// markup, and longer tag names such as `<evidence-note>` are not citations.
 fn extract_quotes(text: &str) -> Vec<String> {
-	const OPEN: &str = "<evidence";
-	const CLOSE: &str = "</evidence>";
 	let mut out = Vec::new();
-	let mut rest = text;
-	while let Some(s) = rest.find(OPEN) {
-		let after = &rest[s + OPEN.len()..];
-		// Skip the tag attributes up to `>`; a tag with no body end is not a
-		// citation (and a self-closing `<evidence/>` carries no quote).
-		let Some(gt) = after.find('>') else { break };
-		if after[..gt].trim_end().ends_with('/') {
-			rest = &after[gt + 1..];
-			continue;
+	let literal_ranges = markdown_code_ranges(text);
+	let mut cursor = 0;
+	while let Some(tag) = next_evidence_tag(text, cursor, &literal_ranges) {
+		let q = text[tag.body_start..tag.body_end].trim();
+		if !q.is_empty() {
+			out.push(q.to_string());
 		}
-		let body = &after[gt + 1..];
-		match body.find(CLOSE) {
-			Some(e) => {
-				let q = body[..e].trim();
-				if !q.is_empty() {
-					out.push(q.to_string());
-				}
-				rest = &body[e + CLOSE.len()..];
-			}
-			None => break,
-		}
+		cursor = tag.end;
 	}
 	out
 }
@@ -217,26 +203,190 @@ fn extract_quotes(text: &str) -> Vec<String> {
 /// Remove `<evidence …>…</evidence>` tags for user-facing display. The tags
 /// stay in the stored message (the verifier and the model's own context need
 /// them); only the screen rendering drops them. Unclosed tags are left
-/// untouched — partial markup is a model error the user should see.
+/// untouched — partial markup is a model error the user should see. Literal
+/// tag examples in Markdown code or escaped markup remain visible.
 pub fn strip_evidence(text: &str) -> String {
+	let mut out = String::with_capacity(text.len());
+	let literal_ranges = markdown_code_ranges(text);
+	let mut copied_to = 0;
+	let mut cursor = 0;
+	while let Some(tag) = next_evidence_tag(text, cursor, &literal_ranges) {
+		out.push_str(&text[copied_to..tag.start]);
+		copied_to = tag.end;
+		cursor = tag.end;
+	}
+	out.push_str(&text[copied_to..]);
+	out.trim().to_string()
+}
+
+#[derive(Clone, Copy)]
+struct EvidenceTag {
+	start: usize,
+	body_start: usize,
+	body_end: usize,
+	end: usize,
+}
+
+/// Find the next real metadata tag. Markdown code is a literal-content boundary:
+/// examples shown to a user must not become supervisor instructions merely
+/// because they contain the same bytes as the internal protocol.
+fn next_evidence_tag(
+	text: &str,
+	from: usize,
+	literal_ranges: &[std::ops::Range<usize>],
+) -> Option<EvidenceTag> {
 	const OPEN: &str = "<evidence";
 	const CLOSE: &str = "</evidence>";
-	let mut out = String::with_capacity(text.len());
-	let mut rest = text;
-	while let Some(s) = rest.find(OPEN) {
-		let after = &rest[s + OPEN.len()..];
-		let Some(gt) = after.find('>') else { break };
-		let body = &after[gt + 1..];
-		match body.find(CLOSE) {
-			Some(e) => {
-				out.push_str(&rest[..s]);
-				rest = &body[e + CLOSE.len()..];
+	let mut search_from = from;
+	while let Some(relative) = text[search_from..].find(OPEN) {
+		let start = search_from + relative;
+		let after_name = start + OPEN.len();
+		let boundary = text.as_bytes().get(after_name).copied();
+		let valid_name =
+			boundary.is_some_and(|b| b == b'>' || b == b'/' || b.is_ascii_whitespace());
+		let literal_index = literal_ranges.partition_point(|range| range.end <= start);
+		let in_literal = literal_ranges
+			.get(literal_index)
+			.is_some_and(|range| range.contains(&start));
+		if !valid_name || is_backslash_escaped(text.as_bytes(), start) || in_literal {
+			search_from = after_name;
+			continue;
+		}
+
+		let after = &text[after_name..];
+		let gt = after.find('>')?;
+		if after[..gt].trim_end().ends_with('/') {
+			search_from = after_name + gt + 1;
+			continue;
+		}
+		let body_start = after_name + gt + 1;
+		let body_end = body_start + text[body_start..].find(CLOSE)?;
+		return Some(EvidenceTag {
+			start,
+			body_start,
+			body_end,
+			end: body_end + CLOSE.len(),
+		});
+	}
+	None
+}
+
+fn is_backslash_escaped(bytes: &[u8], offset: usize) -> bool {
+	let mut count = 0;
+	let mut cursor = offset;
+	while cursor > 0 && bytes[cursor - 1] == b'\\' {
+		count += 1;
+		cursor -= 1;
+	}
+	count % 2 == 1
+}
+
+/// Byte ranges occupied by Markdown inline code spans or fenced code blocks.
+/// This intentionally recognizes only Markdown's structural delimiters; prose,
+/// XML, and ordinary source quotes remain eligible evidence bodies.
+fn markdown_code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+	let fenced = fenced_code_ranges(text);
+	let mut ranges = Vec::new();
+	let bytes = text.as_bytes();
+	let mut cursor = 0;
+	let mut fence_index = 0;
+	while cursor < bytes.len() {
+		while fenced
+			.get(fence_index)
+			.is_some_and(|range| range.end <= cursor)
+		{
+			fence_index += 1;
+		}
+		if let Some(range) = fenced
+			.get(fence_index)
+			.filter(|range| range.contains(&cursor))
+		{
+			cursor = range.end;
+			fence_index += 1;
+			continue;
+		}
+		if bytes[cursor] != b'`' {
+			cursor += 1;
+			continue;
+		}
+		let run = delimiter_run(bytes, cursor, b'`');
+		let mut close = cursor + run;
+		let mut found = None;
+		while close < bytes.len() {
+			if fenced
+				.get(fence_index)
+				.is_some_and(|range| close >= range.start)
+			{
+				break;
 			}
-			None => break,
+			if bytes[close] == b'`' {
+				let close_run = delimiter_run(bytes, close, b'`');
+				if close_run == run {
+					found = Some(close + close_run);
+					break;
+				}
+				close += close_run;
+			} else {
+				close += 1;
+			}
+		}
+		if let Some(end) = found {
+			ranges.push(cursor..end);
+			cursor = end;
+		} else {
+			cursor += run;
 		}
 	}
-	out.push_str(rest);
-	out.trim().to_string()
+	ranges.extend(fenced);
+	ranges.sort_by_key(|range| range.start);
+	ranges
+}
+
+fn fenced_code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+	let mut ranges = Vec::new();
+	let mut fence: Option<(u8, usize, usize)> = None;
+	let mut line_start = 0;
+	for line in text.split_inclusive('\n') {
+		let line_end = line_start + line.len();
+		let content = line.strip_suffix('\n').unwrap_or(line);
+		let indent = content
+			.as_bytes()
+			.iter()
+			.take_while(|b| **b == b' ')
+			.count();
+		if indent <= 3 {
+			let marker = content.as_bytes().get(indent).copied();
+			match fence {
+				Some((kind, width, start)) if marker == Some(kind) => {
+					let run = delimiter_run(content.as_bytes(), indent, kind);
+					if run >= width && content[indent + run..].trim().is_empty() {
+						ranges.push(start..line_end);
+						fence = None;
+					}
+				}
+				None if matches!(marker, Some(b'`' | b'~')) => {
+					let kind = marker.expect("matched marker");
+					let run = delimiter_run(content.as_bytes(), indent, kind);
+					if run >= 3 {
+						fence = Some((kind, run, line_start));
+					}
+				}
+				_ => {}
+			}
+		}
+		line_start = line_end;
+	}
+	if let Some((_, _, start)) = fence {
+		ranges.push(start..text.len());
+	}
+	ranges
+}
+
+fn delimiter_run(bytes: &[u8], start: usize, delimiter: u8) -> usize {
+	bytes[start..]
+		.iter()
+		.take_while(|byte| **byte == delimiter)
+		.count()
 }
 
 /// Collapse every run of whitespace to a single space and trim — the normal form
@@ -1526,6 +1676,41 @@ mod tests {
 		let outputs = vec!["x".to_string()];
 		assert!(unverified_citations("a <evidence/> b", &outputs).is_empty());
 		assert!(unverified_citations("a <evidence locator=\"f\" b", &outputs).is_empty());
+	}
+
+	#[test]
+	fn evidence_examples_in_markdown_code_are_not_citations() {
+		let inline =
+			"Use `<evidence locator=\"source:line\">verbatim text</evidence>` for citations.";
+		let fenced =
+			"Example:\n```xml\n<evidence locator=\"source:line\">verbatim text</evidence>\n```";
+		assert!(unverified_citations(inline, &[]).is_empty());
+		assert!(unverified_citations(fenced, &[]).is_empty());
+		assert_eq!(strip_evidence(inline), inline);
+		assert_eq!(strip_evidence(fenced), fenced);
+	}
+
+	#[test]
+	fn escaped_and_longer_evidence_markup_is_literal() {
+		let escaped = r#"Show \<evidence locator="source:line">text</evidence> literally."#;
+		let longer = "The <evidence-note>text</evidence> element is unrelated.";
+		assert!(unverified_citations(escaped, &[]).is_empty());
+		assert!(unverified_citations(longer, &[]).is_empty());
+		assert_eq!(strip_evidence(escaped), escaped);
+		assert_eq!(strip_evidence(longer), longer);
+	}
+
+	#[test]
+	fn real_evidence_next_to_literal_example_is_still_checked_and_stripped() {
+		let response = "Syntax: `<evidence locator=\"x\">quote</evidence>`. Claim: <evidence locator=\"real\">actual quote</evidence>.";
+		assert_eq!(
+			unverified_citations(response, &[]),
+			["actual quote".to_string()]
+		);
+		assert_eq!(
+			strip_evidence(response),
+			"Syntax: `<evidence locator=\"x\">quote</evidence>`. Claim: ."
+		);
 	}
 
 	#[test]
